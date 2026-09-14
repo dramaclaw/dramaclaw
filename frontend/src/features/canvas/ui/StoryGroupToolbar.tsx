@@ -83,6 +83,8 @@ function StoryGroupActions({ id, data }: { id: string; data: GroupNodeData }) {
           countdown: t('canvas.story.choiceCountdown'),
           flagOn: t('canvas.story.flagOn'),
           flagOff: t('canvas.story.flagOff'),
+          replayExperience: t('canvas.story.replayExperience'),
+          ctaUnconfigured: t('canvas.story.ctaUnconfigured'),
           defaultChoice: t('canvas.story.defaultChoice'),
           endingBadge: t('canvas.story.endingBadge', { label: '' }).replace(/[ ·]+$/, '').trim() || '结局',
           endingFallback: t('canvas.story.endingFallback'),

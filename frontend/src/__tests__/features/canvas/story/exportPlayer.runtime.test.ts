@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
 import { Compiler } from 'inkjs/full';
+import type { BuildPlayerHtmlOptions } from '@/features/canvas/story/export/buildPlayerHtml';
 import { buildPlayerHtml } from '@/features/canvas/story/export/buildPlayerHtml';
 import type { CompiledStory } from '@/features/canvas/story/storyTypes';
 
@@ -19,11 +20,11 @@ function compiled(overrides: Partial<CompiledStory> = {}): CompiledStory {
     variables: [], warnings: [], ...overrides,
   };
 }
-async function openExport(story = compiled(), rejectPlay = false) {
+async function openExport(story = compiled(), rejectPlay = false, options: BuildPlayerHtmlOptions = {}) {
   const errors: string[] = [];
   const virtualConsole = new VirtualConsole();
   virtualConsole.on('jsdomError', (error: Error) => errors.push(error.message));
-  const html = buildPlayerHtml(story, new Compiler(story.ink).Compile().ToJson()!, { origin: 'https://editor.example' });
+  const html = buildPlayerHtml(story, new Compiler(story.ink).Compile().ToJson()!, { origin: 'https://editor.example', ...options });
   const dom = new JSDOM(html, {
     url: 'file:///offline/story.html', runScripts: 'dangerously', pretendToBeVisual: true, virtualConsole,
     beforeParse(window: Window & typeof globalThis) {
@@ -41,6 +42,49 @@ async function openExport(story = compiled(), rejectPlay = false) {
 afterEach(() => { windows.splice(0).forEach((window) => window.close()); });
 
 describe('exported HTML using the shared player', () => {
+  it('uses supplied English labels for CTA endings in the exported runtime', async () => {
+    const { document } = await openExport(compiled({
+      ink: '-> ending\n=== ending ===\n# clip:ending\nDone\n-> END',
+      endingByNodeId: { ending: { title: 'Done', cta: { label: 'Book a test drive', url: '' } } },
+    }), false, { labels: {
+      defaultChoice: 'Default', endingBadge: 'Ending', endingFallback: 'The End',
+      restart: 'Restart', loadError: 'Failed to load', placeholderBadge: 'Placeholder',
+      placeholderHint: 'Choose to continue', replayExperience: 'Experience again',
+      ctaUnconfigured: 'Destination not configured',
+    } });
+    const ending = document.querySelector('[data-story-ending]')!;
+    expect(ending.querySelector('button')?.textContent).toBe('Experience again');
+    expect(ending.querySelector('[role="status"]')?.textContent).toBe('Book a test drive · Destination not configured');
+  });
+
+  it('video CTA ending hides story labels and keeps replay secondary', async () => {
+    const { document, window } = await openExport(compiled({
+      ink: '-> ending\n=== ending ===\n# clip:ending\n结局\n-> END',
+      clipByNodeId: { ending: 'https://editor.example/ending.mp4' },
+      endingByNodeId: { ending: { title: '重复标题', label: '预约试驾', cta: { label: '预约试驾', url: 'https://example.com/book' } } },
+    }));
+    expect(document.querySelector('[data-story-ending]')).toBeNull();
+    document.querySelector('video')!.dispatchEvent(new window.Event('ended', { bubbles: true }));
+    await pause();
+    const ending = document.querySelector('[data-story-ending]')!;
+    expect(ending.querySelector('h2')).toBeNull();
+    expect(ending.textContent?.match(/预约试驾/g)).toHaveLength(1);
+    expect(ending.querySelector('button')?.textContent).toBe('重新体验');
+    expect(ending.className).toContain('safe-area-inset-bottom');
+  });
+  it('exports functional HTTPS CTA and emits a click event without claiming a lead', async () => {
+    const { document, window } = await openExport(compiled({
+      ink: '-> ending\n=== ending ===\n# clip:ending\n结局\n-> END',
+      endingByNodeId: { ending: { title: '试驾', cta: { label: '预约试驾', url: 'https://example.com/book' } } },
+    }));
+    const events: string[] = [];
+    window.addEventListener('dramaclaw:story', (event) => events.push((event as CustomEvent).detail.type));
+    const link = document.querySelector('a')!;
+    expect(link.href).toBe('https://example.com/book');
+    link.addEventListener('click', (event) => event.preventDefault());
+    link.click();
+    expect(events).toEqual(['cta_click']);
+  });
   it('file:// 下真正运行：占位剧情、选项、结局、重玩，无外部脚本', async () => {
     const { document, errors } = await openExport();
     expect(document.querySelector('script[src]')).toBeNull();

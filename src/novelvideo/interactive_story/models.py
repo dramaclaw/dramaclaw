@@ -89,6 +89,20 @@ class StoryChoiceLoop(StoryContractModel):
     media: StoryMediaRef = Field(default_factory=StoryMediaRef)
 
 
+class StoryCallToAction(StoryContractModel):
+    label: str = Field(min_length=1, max_length=120)
+    url: str = Field(default="", max_length=4096)
+
+    @model_validator(mode="after")
+    def validate_url(self) -> "StoryCallToAction":
+        from urllib.parse import urlsplit
+        if self.url:
+            parsed = urlsplit(self.url)
+            if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+                raise ValueError("CTA requires an absolute HTTPS URL without credentials")
+        return self
+
+
 class StorySegment(StoryContractModel):
     id: EntityId
     title: str = Field(min_length=1, max_length=200)
@@ -101,9 +115,12 @@ class StorySegment(StoryContractModel):
     video_prompt: str = Field(default="", max_length=20_000)
     media: StoryMediaRef = Field(default_factory=StoryMediaRef)
     choice_loop: StoryChoiceLoop | None = None
+    cta: StoryCallToAction | None = None
 
     @model_validator(mode="after")
     def validate_ending(self) -> "StorySegment":
+        if self.cta is not None and self.kind != "ending":
+            raise ValueError("CTA is only allowed on ending segments")
         if self.kind == "ending" and not self.ending_label:
             raise ValueError("ending segment requires ending_label")
         if self.kind == "scene" and self.ending_label is not None:
@@ -202,6 +219,8 @@ class StoryChoiceInteraction(StoryContractModel):
     ui_style: Literal["glass", "tag", "warning"] = "glass"
     motion: Literal["fade", "pop", "pulse"] = "fade"
     transition: Literal["fade", "flash", "cut"] = "fade"
+    trigger: Literal["click", "hold"] = "click"
+    hold_ms: int = Field(default=1000, ge=300, le=5000)
 
     @model_validator(mode="after")
     def validate_anchor(self) -> "StoryChoiceInteraction":
@@ -368,6 +387,7 @@ class StoryMetadataChanges(StoryContractModel):
 
 
 class StorySegmentChanges(StoryContractModel):
+    cta: StoryCallToAction | None = None
     title: str | None = Field(default=None, min_length=1, max_length=200)
     script: str | None = Field(default=None, min_length=1, max_length=20_000)
     kind: Literal["scene", "ending"] | None = None

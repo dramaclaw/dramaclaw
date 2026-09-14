@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { Compiler, Story } from 'inkjs/full';
-import type { CompiledStory, StoryChoiceInteraction, StoryStateChange } from '@/features/canvas/story/storyTypes';
+import type { CompiledStory, StoryChoiceInteraction, StoryStateChange, StoryEnding } from '@/features/canvas/story/storyTypes';
 import { readStorySave, writeStorySave, clearStorySave } from '@/features/canvas/story/storySave';
 import { recordChoice, recordEnding, statsKeyFromSaveKey } from '@/features/canvas/story/storyStats';
 
@@ -32,7 +32,7 @@ interface StoryRuntimeState {
   choiceTimeByNodeId: Record<string, number>;
   defaultChoiceIndexByNodeId: Record<string, number>;
   /** 叶子结局节点 id → 结局页标题/标。 */
-  endingByNodeId: Record<string, { title: string; label?: string }>;
+  endingByNodeId: Record<string, StoryEnding>;
   /** 节点 id → 占位卡文案(无视频时占位试玩用)。 */
   placeholderByNodeId: Record<string, { text: string; label?: string }>;
   /** Ink 选项 tag id → 玩家选择后展示的短暂剧情反馈。 */
@@ -51,7 +51,7 @@ interface StoryRuntimeState {
   currentChoiceTimeSec: number | null;
   currentDefaultChoiceIndex: number | null;
   /** 当前结局(仅 ended 相位的叶子节点);null = 非结局。 */
-  currentEnding: { title: string; label?: string } | null;
+  currentEnding: StoryEnding | null;
   /** 当前占位卡(仅无视频且有选项的 playing 节点);null = 有视频或非占位。 */
   currentPlaceholder: { text: string; label?: string } | null;
   phase: StoryPhase;
@@ -154,7 +154,7 @@ function advanceToClip(
   clipByNodeId: Record<string, string>,
   choiceTimeByNodeId: Record<string, number>,
   defaultChoiceIndexByNodeId: Record<string, number>,
-  endingByNodeId: Record<string, { title: string; label?: string }>,
+  endingByNodeId: Record<string, StoryEnding>,
   placeholderByNodeId: Record<string, { text: string; label?: string }>,
   choiceFeedbackById: Record<string, string>,
   choiceStateChangesById: Record<string, StoryStateChange[]>,
@@ -166,7 +166,7 @@ function advanceToClip(
   nextClipUrls: string[];
   currentChoiceTimeSec: number | null;
   currentDefaultChoiceIndex: number | null;
-  currentEnding: { title: string; label?: string } | null;
+  currentEnding: StoryEnding | null;
   currentPlaceholder: { text: string; label?: string } | null;
   phase: StoryPhase;
 } {
@@ -222,7 +222,7 @@ const INITIAL_RUNTIME = {
   choiceLoopClipByNodeId: {} as Record<string, string>,
   choiceTimeByNodeId: {} as Record<string, number>,
   defaultChoiceIndexByNodeId: {} as Record<string, number>,
-  endingByNodeId: {} as Record<string, { title: string; label?: string }>,
+  endingByNodeId: {} as Record<string, StoryEnding>,
   placeholderByNodeId: {} as Record<string, { text: string; label?: string }>,
   choiceFeedbackById: {} as Record<string, string>,
   choiceStateChangesById: {} as Record<string, StoryStateChange[]>,
@@ -233,7 +233,7 @@ const INITIAL_RUNTIME = {
   nextClipUrls: [] as string[],
   currentChoiceTimeSec: null as number | null,
   currentDefaultChoiceIndex: null as number | null,
-  currentEnding: null as { title: string; label?: string } | null,
+  currentEnding: null as StoryEnding | null,
   currentPlaceholder: null as { text: string; label?: string } | null,
   phase: 'idle' as StoryPhase,
   error: null as string | null,
@@ -328,16 +328,16 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
     try {
       if (json === null) throw new Error('no save');
       story.state.LoadJson(json);
+      // LoadJson 可能接受过期指针，直到继续执行或分支预取才抛错。
+      // 整个恢复过程都必须成功，才能发布恢复后的运行态。
+      const next = advanceToClip(story, clipByNodeId, choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId, choiceFeedbackById, choiceStateChangesById, choiceInteractionById);
+      set({ resumeAvailable: false, ...next });
     } catch {
       // 存档与当前 ink 不匹配/损坏:清档,从头开始。
       clearStorySave(saveKey);
       get().startFresh();
       return false;
     }
-    set({
-      resumeAvailable: false,
-      ...advanceToClip(story, clipByNodeId, choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId, choiceFeedbackById, choiceStateChangesById, choiceInteractionById),
-    });
     persist(saveKey, story);
     return true;
   },

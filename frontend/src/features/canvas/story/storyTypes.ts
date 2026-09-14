@@ -89,6 +89,8 @@ export function defaultStoryChoiceAnchor(
  * anchor / 外观 / 动画仍由各选项独立保存，可分别落在不同物品或视频 UI 上。
  */
 export interface StoryChoiceInteraction {
+  trigger?: 'click' | 'hold';
+  holdMs?: number;
   presentation?: StoryChoicePresentation;
   anchor?: StoryChoiceAnchor;
   uiStyle?: StoryChoiceUiStyle;
@@ -99,7 +101,7 @@ export interface StoryChoiceInteraction {
 /** 容错处理画布/导入数据，保证播放器只消费合法比例坐标和已知枚举。 */
 export function normalizeStoryChoiceInteraction(
   value: StoryChoiceInteraction | undefined,
-): Required<Pick<StoryChoiceInteraction, 'presentation' | 'uiStyle' | 'motion' | 'transition'>> & Pick<StoryChoiceInteraction, 'anchor'> {
+): Required<Pick<StoryChoiceInteraction, 'presentation' | 'uiStyle' | 'motion' | 'transition'>> & Pick<StoryChoiceInteraction, 'anchor' | 'trigger' | 'holdMs'> {
   const rawPresentation = value?.presentation;
   const presentation: StoryChoicePresentation = rawPresentation === 'object-anchor' || rawPresentation === 'baked-video'
     ? rawPresentation
@@ -133,6 +135,8 @@ export function normalizeStoryChoiceInteraction(
     : undefined;
   const normalizedPresentation = presentation !== 'overlay' && !anchor ? 'overlay' : presentation;
   return {
+    ...(value?.trigger === 'hold'
+      ? { trigger: value.trigger, holdMs: Math.min(5000, Math.max(300, Number.isFinite(value.holdMs) ? value.holdMs! : 1000)) } : {}),
     presentation: normalizedPresentation,
     uiStyle: uiStyle === 'tag'
     ? 'tag'
@@ -195,6 +199,8 @@ export interface StoryFlag {
 }
 
 /** 编译产物:knot 名 ↔ 节点 id 互查 + 节点 id → 视频 URL。 */
+export interface StoryEnding { title: string; label?: string; cta?: { label: string; url: string } }
+
 export interface CompiledStory {
   ink: string;
   /** originalNodeId -> 视频 URL(可能为空串,占位片段)。 */
@@ -208,7 +214,7 @@ export interface CompiledStory {
   /** 源节点 id → 默认选项的 order(超时自动选)。 */
   defaultChoiceIndexByNodeId: Record<string, number>;
   /** 叶子结局节点 id → 结局页标题/标(title=旁白,label=GE/NE/BE)。 */
-  endingByNodeId: Record<string, { title: string; label?: string }>;
+  endingByNodeId: Record<string, StoryEnding>;
   /** 节点 id → 占位卡文案(text=旁白,label=显示名)。视频未生成时播放器据此渲染占位卡,可先跑通结构再生成视频。 */
   placeholderByNodeId: Record<string, { text: string; label?: string }>;
   /** Ink 选项 tag id → 玩家选择后展示的短暂剧情反馈。 */

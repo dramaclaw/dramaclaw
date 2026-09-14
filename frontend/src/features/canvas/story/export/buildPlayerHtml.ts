@@ -16,6 +16,8 @@ export interface PlayerLabels {
   countdown?: string;
   flagOn?: string;
   flagOff?: string;
+  replayExperience?: string;
+  ctaUnconfigured?: string;
 }
 
 export interface BuildPlayerHtmlOptions {
@@ -39,6 +41,8 @@ const DEFAULT_LABELS: PlayerLabels = {
   countdown: '选择倒计时',
   flagOn: '开启',
   flagOff: '关闭',
+  replayExperience: '重新体验',
+  ctaUnconfigured: '访问地址待配置',
 };
 
 /** HTML 文本转义（用于 <title>）。 */

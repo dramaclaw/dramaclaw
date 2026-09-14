@@ -254,6 +254,7 @@ export interface VideoNodeData extends NodeDisplayData {
   choiceTimeLimitSec?: number;
   /** 互动影游:结局标(如 GE/NE/BE),仅叶子结局片段。结局页作 badge 显示。 */
   endingLabel?: string;
+  storyCta?: { label: string; url: string };
   /** 导入互动影游时的旁白文本(占位片段,无视频时展示)。 */
   narration?: string;
   /** 导入时 `# video: x.mp4` 的期望文件名提示。 */

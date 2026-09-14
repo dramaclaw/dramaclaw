@@ -170,6 +170,7 @@ def project_story_to_canvas(
         _set_optional(data, "storyRole", "start" if segment.id == story.start_segment_id else None)
         _set_optional(data, "choiceTimeLimitSec", segment.choice_time_limit_sec)
         _set_optional(data, "endingLabel", segment.ending_label)
+        _set_optional(data, "storyCta", segment.cta.model_dump() if segment.cta else None)
         clip_position = current.get("position")
         if not clip_position:
             clip_position = _vacant_clip_position(computed_positions[segment.id], occupied)
@@ -311,6 +312,7 @@ def story_from_canvas(canvas: dict[str, Any], story_id: str) -> StoryDraftV2:
                 script=_required_text(data.get("narration"), fallback="待补充剧情内容"),
                 kind="ending" if ending_label else "scene",
                 ending_label=ending_label,
+                cta=data.get("storyCta"),
                 character_ids=_string_list(data.get("storyCharacterIds")),
                 choice_time_limit_sec=_positive_int(data.get("choiceTimeLimitSec")),
                 production_notes=str(data.get("storyProductionNotes") or ""),
@@ -544,6 +546,8 @@ def _interaction_from_canvas(raw: Any) -> dict[str, Any]:
         "ui_style": raw.get("uiStyle") or "glass",
         "motion": raw.get("motion") or "fade",
         "transition": raw.get("transition") or "fade",
+        "trigger": raw.get("trigger") or "click",
+        "hold_ms": raw.get("holdMs", 1000),
     }
 
 
@@ -556,6 +560,8 @@ def _interaction_to_canvas(interaction: StoryChoiceInteraction) -> dict[str, Any
         and interaction.ui_style == "glass"
         and interaction.motion == "fade"
         and interaction.transition == "fade"
+        and interaction.trigger == "click"
+        and interaction.hold_ms == 1000
     ):
         return None
     return {
@@ -580,6 +586,7 @@ def _interaction_to_canvas(interaction: StoryChoiceInteraction) -> dict[str, Any
         "uiStyle": interaction.ui_style,
         "motion": interaction.motion,
         "transition": interaction.transition,
+        **({"trigger": interaction.trigger, "holdMs": interaction.hold_ms} if interaction.trigger != "click" or interaction.hold_ms != 1000 else {}),
     }
 
 

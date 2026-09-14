@@ -157,6 +157,7 @@ def _story_segment_schema() -> dict[str, Any]:
             "video_prompt": {"type": "string", "maxLength": 20_000},
             "media": _story_media_schema(),
             "choice_loop": _nullable(_story_choice_loop_schema()),
+            "cta": _nullable(_strict_object({"label": {"type": "string", "minLength": 1, "maxLength": 120}, "url": {"type": "string", "maxLength": 4096}}, ["label"])),
         },
         ["id", "title", "script"],
     )
@@ -300,6 +301,8 @@ def _story_interaction_schema() -> dict[str, Any]:
             "ui_style": {"enum": ["glass", "tag", "warning"]},
             "motion": {"enum": ["fade", "pop", "pulse"]},
             "transition": {"enum": ["fade", "flash", "cut"]},
+            "trigger": {"enum": ["click", "hold"]},
+            "hold_ms": {"type": "integer", "minimum": 300, "maximum": 5000},
         }
     )
     schema["allOf"] = [
@@ -354,6 +357,8 @@ def _default_story_interaction_schema() -> dict[str, Any]:
         "ui_style": {"const": "glass"},
         "motion": {"const": "fade"},
         "transition": {"const": "fade"},
+        "trigger": {"const": "click"},
+        "hold_ms": {"const": 1000},
     })
 
 
@@ -478,6 +483,7 @@ def _story_segment_changes_schema() -> dict[str, Any]:
             "video_prompt": {"type": "string", "maxLength": 20_000},
             "media": _nullable(_story_media_schema()),
             "choice_loop": _nullable(_story_choice_loop_schema()),
+            "cta": _nullable(_strict_object({"label": {"type": "string", "minLength": 1, "maxLength": 120}, "url": {"type": "string", "maxLength": 4096}}, ["label"])),
         },
         minProperties=1,
     )

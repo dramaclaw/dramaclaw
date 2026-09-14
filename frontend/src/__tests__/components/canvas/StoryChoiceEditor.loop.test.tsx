@@ -47,6 +47,30 @@ describe('StoryChoiceEditor 渲染不触发无限重渲染', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
+  it('试玩只显示反馈，不写回画布或触发玩家事件', () => {
+    const update = vi.spyOn(useCanvasStore.getState(), 'updateStoryChoiceEdgeData');
+    const storyEvent = vi.fn();
+    window.addEventListener('dramaclaw:story', storyEvent);
+    render(<StoryChoiceEditor edgeId="e1" sourceNodeId="v1" choiceText="周末跑山"
+      interaction={{ presentation: 'object-anchor', trigger: 'click', anchor: { x: .5, y: .5 } }} variables={[]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'canvas.story.testInteraction' }));
+    expect(screen.queryByLabelText('canvas.story.interactionPickAnchor')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '周末跑山' }));
+    expect(screen.getByRole('status')).toHaveTextContent('周末跑山');
+    expect(update).not.toHaveBeenCalled();
+    expect(storyEvent).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'canvas.story.editPosition' }));
+    expect(screen.getByLabelText('canvas.story.interactionPickAnchor')).toBeInTheDocument();
+    window.removeEventListener('dramaclaw:story', storyEvent);
+  });
+
+  it('底部呈现也保留完整视频预览', () => {
+    render(<StoryChoiceEditor edgeId="e1" sourceNodeId="v1" choiceText="继续"
+      interaction={{ presentation: 'overlay' }} variables={[]} />);
+    expect(screen.getByTestId('story-hotspot-preview').querySelector('video')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '继续' })).toBeInTheDocument();
+  });
+
   it.each(['object-anchor', 'baked-video'] as const)('竖屏 %s 预览完整画面并按媒体比例定位', (presentation) => {
     render(<StoryChoiceEditor edgeId="e1" sourceNodeId="v1" choiceText="选择"
       interaction={{ presentation, anchor: { x: 0.5, y: 0.25, width: 0.2, height: 0.1 } }} variables={[]} />);
@@ -314,8 +338,8 @@ describe('StoryChoiceEditor 渲染不触发无限重渲染', () => {
   });
 });
 
-describe('锚定选项共同预览与对齐', () => {
-  it('显示其他锚点、点击切换，并一次对齐及撤销，保留热区和其他片段', () => {
+describe('锚定选项共同预览', () => {
+  it('显示其他锚点、点击切换，无横向对齐入口，外观修改保留锚点和其他片段', () => {
     seedStoryGroup();
     const makeEdge = (id: string, x: number, y: number, presentation = 'object-anchor', source = 'v1') => ({
       id, source, target: 'v2', type: 'storyChoiceEdge', data: {
@@ -335,12 +359,7 @@ describe('锚定选项共同预览与对齐', () => {
     expect(screen.getByLabelText('canvas.story.interactionPickAnchor')).toHaveTextContent('b');
     fireEvent.click(Array.from(preview.querySelectorAll('button')).find((button) => button.textContent === 'a')!);
     expect(screen.getByTestId('story-hotspot-preview').querySelector('video')).toBe(video);
-    const before = useCanvasStore.getState().history.past.length;
-    fireEvent.click(screen.getByText('canvas.story.alignAnchors'));
-    const values = useCanvasStore.getState().edges.map((edge) => (edge.data as typeof edges[0]['data']).interaction.anchor);
-    expect(values.map(({ x, y }) => [x, y])).toEqual([[0.2, 0.7], [0.5, 0.7], [0.8, 0.7], [0.4, 0.2], [0.6, 0.3]]);
-    expect(useCanvasStore.getState().history.past).toHaveLength(before + 1);
-    useCanvasStore.getState().undo();
+    expect(screen.queryByText('canvas.story.alignAnchors')).not.toBeInTheDocument();
     expect((useCanvasStore.getState().edges[1].data as typeof edges[0]['data']).interaction.anchor.y).toBe(0.6);
     const readInteractions = () => useCanvasStore.getState().edges.map((edge) => (edge.data as typeof edges[0]['data']).interaction);
     const anchors = readInteractions().map((value) => value.anchor);

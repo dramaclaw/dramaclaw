@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { memo, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
-import { Clapperboard, FileText, Film, Repeat2 } from 'lucide-react';
+import { Clapperboard, FileText, Film, MousePointerClick, Repeat2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import type { VideoNodeData } from '@/features/canvas/domain/canvasNodes';
@@ -13,8 +13,12 @@ import {
   clearChoiceLoopMediaPatch,
 } from '@/features/canvas/story/choiceLoopBinding';
 import { useCanvasStore } from '@/stores/canvasStore';
+import { safeCtaUrl } from '@/features/canvas/story/storyEvents';
+import styles from './StoryClipNarrativePanel.module.css';
 
 type StoryClipMediaState = 'missing' | 'uploading' | 'generating' | 'ready' | 'failed';
+
+const CTA_INPUT_CLASS = 'w-full min-w-0 rounded-xl border border-transparent bg-white/[0.035] px-2.5 py-2 text-xs leading-5 text-text-dark outline-none transition-colors placeholder:text-text-muted/60 hover:bg-white/[0.055] focus:border-accent/45 focus:bg-white/[0.06]';
 
 interface StoryClipNarrativePanelProps {
   nodeId: string;
@@ -47,11 +51,14 @@ export const StoryClipNarrativePanel = memo(function StoryClipNarrativePanel({
   const { t } = useTranslation();
   const [narrationDraft, setNarrationDraft] = useState(narration);
   const [notesDraft, setNotesDraft] = useState(productionNotes);
+  const [loopPickerOpen, setLoopPickerOpen] = useState(false);
   const nodes = useCanvasStore((state) => state.nodes);
   const hasOutgoingChoices = useCanvasStore((state) =>
     state.edges.some((edge) => edge.type === STORY_CHOICE_EDGE_TYPE && edge.source === nodeId),
   );
   const nodeData = nodes.find((node) => node.id === nodeId)?.data as VideoNodeData | undefined;
+  const [ctaUrlDraft, setCtaUrlDraft] = useState(nodeData?.storyCta?.url ?? '');
+  useEffect(() => setCtaUrlDraft(nodeData?.storyCta?.url ?? ''), [nodeData?.storyCta?.url, nodeId]);
   const loopCandidates = useMemo(
     () => choiceLoopVideoCandidates(nodes, nodeId),
     [nodes, nodeId],
@@ -70,6 +77,20 @@ export const StoryClipNarrativePanel = memo(function StoryClipNarrativePanel({
   const commitNotes = () => {
     const next = notesDraft.trim();
     if (next !== productionNotes) onChange({ storyProductionNotes: next });
+  };
+
+  const handleCtaLabelChange = (label: string) => {
+    // Keep the destination while editing; clearing the label removes the CTA.
+    onChange({
+      endingLabel: nodeData?.endingLabel || '体验结束',
+      storyCta: label.trim() ? { label, url: nodeData?.storyCta?.url ?? '' } : undefined,
+    });
+  };
+  const commitCtaUrl = () => {
+    const cta = nodeData?.storyCta;
+    const url = ctaUrlDraft.trim();
+    if (!cta || (url && !safeCtaUrl(url))) return;
+    onChange({ storyCta: { label: cta.label, url } });
   };
 
   const showMediaState = mediaState === 'uploading' || mediaState === 'generating' || mediaState === 'failed';
@@ -93,46 +114,79 @@ export const StoryClipNarrativePanel = memo(function StoryClipNarrativePanel({
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
     >
-      <div className="flex min-h-0 flex-1 flex-col gap-3 px-3 py-3">
-        <label className="flex min-h-0 flex-1 flex-col gap-1.5">
+      <div className="nowheel flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-3">
+        <label className="flex shrink-0 flex-col gap-1.5">
           <span className="flex items-center gap-1.5 text-[11px] font-medium text-text-muted">
             <FileText className="h-3.5 w-3.5" />
             {t('canvas.story.narrationLabel')}
           </span>
+          <div className={styles.textareaFrame}>
           <textarea
             value={narrationDraft}
+            rows={3}
             aria-label={t('canvas.story.narrationLabel')}
             placeholder={t('canvas.story.narrationPlaceholder')}
-            className="nowheel min-h-[84px] flex-1 resize-none rounded-[10px] border border-transparent bg-white/[0.035] px-2.5 py-2 text-[12px] leading-5 text-text-dark outline-none transition-colors placeholder:text-text-muted/60 hover:bg-white/[0.055] focus:border-accent/45 focus:bg-white/[0.06]"
+            className={`${styles.textarea} nowheel text-xs leading-5 text-text-dark placeholder:text-text-muted/60`}
             onChange={(event) => setNarrationDraft(event.target.value)}
             onBlur={commitNarration}
             onKeyDown={blurOnCommitShortcut}
           />
+          </div>
         </label>
 
-        <label className="flex flex-col gap-1.5">
+        <label className="flex shrink-0 flex-col gap-1.5">
           <span className="flex items-center gap-1.5 text-[11px] font-medium text-text-muted">
             <Clapperboard className="h-3.5 w-3.5" />
             {t('canvas.story.productionNotesLabel')}
           </span>
+          <div className={styles.textareaFrame}>
           <textarea
             value={notesDraft}
             aria-label={t('canvas.story.productionNotesLabel')}
             placeholder={t('canvas.story.productionNotesPlaceholder')}
-            rows={2}
-            className="nowheel resize-none rounded-[10px] border border-transparent bg-white/[0.035] px-2.5 py-2 text-[11px] leading-4 text-text-dark outline-none transition-colors placeholder:text-text-muted/60 hover:bg-white/[0.055] focus:border-accent/45 focus:bg-white/[0.06]"
+            rows={3}
+            className={`${styles.textarea} nowheel text-xs leading-5 text-text-dark placeholder:text-text-muted/60`}
             onChange={(event) => setNotesDraft(event.target.value)}
             onBlur={commitNotes}
             onKeyDown={blurOnCommitShortcut}
           />
+          </div>
         </label>
 
+        {!hasOutgoingChoices && <fieldset className="min-w-0 shrink-0 text-xs text-text-dark">
+          <legend className="mb-3 flex items-center gap-1.5 text-xs font-medium text-text-muted">
+            <MousePointerClick className="h-3.5 w-3.5" aria-hidden="true" />
+            {t('canvas.story.ctaTitle', { defaultValue: '结尾转化按钮' })}
+          </legend>
+          <div className="flex flex-col gap-3">
+          <label className="flex min-w-0 flex-col gap-1.5">
+            <span className="text-xs text-text-dark/75">{t('canvas.story.ctaLabel', { defaultValue: '按钮文案' })}</span>
+            <input className={CTA_INPUT_CLASS} value={nodeData?.storyCta?.label ?? ''}
+              maxLength={120}
+              onChange={(event) => handleCtaLabelChange(event.target.value)} />
+          </label>
+          {nodeData?.storyCta && <label className="flex min-w-0 flex-col gap-1.5">
+            <span className="text-xs text-text-dark/75">{t('canvas.story.ctaUrl', { defaultValue: '访问地址（HTTPS）' })}</span>
+            <input className={CTA_INPUT_CLASS} type="url" maxLength={4096} value={ctaUrlDraft}
+              onChange={(event) => setCtaUrlDraft(event.target.value)}
+              onBlur={commitCtaUrl} />
+            {!safeCtaUrl(ctaUrlDraft) && <span role="status">{t('canvas.story.ctaInvalidUrl')}</span>}
+          </label>}
+          </div>
+        </fieldset>}
         {hasOutgoingChoices && (
-          <label className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5">
             <span className="flex items-center gap-1.5 text-[11px] font-medium text-text-muted">
               <Repeat2 className="h-3.5 w-3.5" />
-              {t('canvas.story.choiceLoop.label')}
+              {t('canvas.story.waitingBehavior')}
             </span>
+            <div className="flex gap-1" role="group" aria-label={t('canvas.story.waitingBehavior')}>
+              <button type="button" className="tap-button aria-pressed:text-accent" aria-pressed={!boundCandidateId && !loopPickerOpen}
+                onClick={() => { handleLoopChange(''); setLoopPickerOpen(false); }}>{t('canvas.story.freezeFrame')}</button>
+              <button type="button" className="tap-button aria-pressed:text-accent" aria-pressed={!!boundCandidateId || loopPickerOpen}
+                onClick={() => setLoopPickerOpen(true)}>{t('canvas.story.loopVideo')}</button>
+            </div>
+            {(!!boundCandidateId || loopPickerOpen) && <>
             <select
               value={boundCandidateId}
               aria-label={t('canvas.story.choiceLoop.label')}
@@ -154,7 +208,8 @@ export const StoryClipNarrativePanel = memo(function StoryClipNarrativePanel({
                 ? t('canvas.story.choiceLoop.hint')
                 : t('canvas.story.choiceLoop.empty')}
             </span>
-          </label>
+            </>}
+          </div>
         )}
       </div>
 

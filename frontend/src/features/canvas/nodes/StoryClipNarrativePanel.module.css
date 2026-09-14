@@ -1,0 +1,41 @@
+.textareaFrame {
+  box-sizing: border-box;
+  height: 96px;
+  min-height: 80px;
+  padding: 8px 8px 16px 10px;
+  overflow: hidden;
+  resize: vertical;
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius-xl);
+  background: rgb(var(--text-rgb) / .035);
+}
+
+.textareaFrame:hover { background: rgb(var(--text-rgb) / .055); }
+.textareaFrame:focus-within { border-color: rgb(var(--accent-rgb) / .45); background: rgb(var(--text-rgb) / .06); }
+
+.textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 0 4px 0 0;
+  resize: none;
+  overflow-y: auto;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  scrollbar-gutter: stable;
+}
+
+.textarea::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.textareaFrame::-webkit-resizer {
+  background:
+    linear-gradient(135deg, transparent 45%, rgb(var(--text-rgb) / .7) 45%, rgb(var(--text-rgb) / .7) 55%, transparent 55%) right 3px bottom 3px / 8px 8px no-repeat,
+    linear-gradient(135deg, transparent 45%, rgb(var(--text-rgb) / .7) 45%, rgb(var(--text-rgb) / .7) 65%, transparent 65%) right 3px bottom 3px / 4px 4px no-repeat;
+  border: 0;
+}

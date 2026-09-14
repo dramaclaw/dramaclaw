@@ -31,6 +31,32 @@ vi.mock('react-i18next', () => ({
 }));
 
 describe('StoryClipNarrativePanel', () => {
+  it('CTA edits preserve the destination and reject invalid URLs', () => {
+    const previous = useCanvasStore.getState();
+    useCanvasStore.setState({ nodes: [{
+      id: 'clip', type: CANVAS_NODE_TYPES.video, position: { x: 0, y: 0 },
+      data: { endingLabel: '结束', storyCta: { label: '预约', url: 'https://example.com/book' } },
+    } as CanvasNode], edges: [] });
+    const onChange = vi.fn();
+    try {
+      render(<StoryClipNarrativePanel nodeId="clip" mediaState="ready" onChange={onChange} />);
+      fireEvent.change(screen.getByLabelText('canvas.story.ctaLabel'), { target: { value: '了解更多' } });
+      expect(onChange).toHaveBeenLastCalledWith({ endingLabel: '结束', storyCta: { label: '了解更多', url: 'https://example.com/book' } });
+      onChange.mockClear();
+      const url = screen.getByLabelText('canvas.story.ctaUrl');
+      fireEvent.change(url, { target: { value: 'http://example.com' } });
+      fireEvent.blur(url);
+      expect(onChange).not.toHaveBeenCalled();
+      fireEvent.change(url, { target: { value: ' https://example.com/new ' } });
+      fireEvent.blur(url);
+      expect(onChange).toHaveBeenLastCalledWith({ storyCta: { label: '预约', url: 'https://example.com/new' } });
+      fireEvent.change(screen.getByLabelText('canvas.story.ctaLabel'), { target: { value: '' } });
+      expect(onChange).toHaveBeenLastCalledWith({ endingLabel: '结束', storyCta: undefined });
+    } finally {
+      useCanvasStore.setState({ nodes: previous.nodes, edges: previous.edges });
+    }
+  });
+
   it('有视频时展示剧情与制作备注，不展示冗余就绪状态', () => {
     render(
       <StoryClipNarrativePanel
@@ -108,6 +134,9 @@ describe('StoryClipNarrativePanel', () => {
     const onChange = vi.fn();
     try {
       render(<StoryClipNarrativePanel nodeId="clip" mediaState="ready" onChange={onChange} />);
+      expect(screen.queryByLabelText('选择循环')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'canvas.story.loopVideo' }));
+      expect(onChange).not.toHaveBeenCalled();
       fireEvent.change(screen.getByLabelText('选择循环'), { target: { value: 'loop' } });
       expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
         choiceLoopVideoUrl: '/loop.mp4',
@@ -115,6 +144,8 @@ describe('StoryClipNarrativePanel', () => {
           media: expect.objectContaining({ source: 'generated', status: 'ready', url: '/loop.mp4' }),
         }),
       }));
+      fireEvent.click(screen.getByRole('button', { name: 'canvas.story.freezeFrame' }));
+      expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ choiceLoopVideoUrl: null }));
     } finally {
       useCanvasStore.setState({ nodes: previous.nodes, edges: previous.edges });
     }

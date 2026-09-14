@@ -232,7 +232,7 @@ export function compileGraphToInk(
   const choiceTimeByNodeId: Record<string, number> = {};
   const defaultChoiceIndexByNodeId: Record<string, number> = {};
   // 叶子结局节点 → 结局页标题/标。
-  const endingByNodeId: Record<string, { title: string; label?: string }> = {};
+  const endingByNodeId: CompiledStory['endingByNodeId'] = {};
   // 节点 → 占位卡文案(旁白 + 显示名),供无视频时占位试玩。
   const placeholderByNodeId: Record<string, { text: string; label?: string }> = {};
   // 选项反馈通过 Ink choice tag 与当前可选项稳定关联，不影响视频资源。
@@ -286,10 +286,11 @@ export function compileGraphToInk(
     const choices = choicesBySource.get(id) ?? [];
     if (choices.length === 0) {
       // 叶子 = 结局；剧情描述不是面向玩家的结局标题。
-      const data = node.data as { endingLabel?: string };
+      const data = node.data as { endingLabel?: string; storyCta?: { label: string; url: string } };
       const title = '';
       endingByNodeId[id] = {
         title,
+        ...(data.storyCta ? { cta: data.storyCta } : {}),
         ...(data.endingLabel ? { label: data.endingLabel } : {}),
       };
       lines.push('-> END');
@@ -334,7 +335,7 @@ export function compileGraphToInk(
           if (stateChanges.length > 0) choiceStateChangesById[feedbackId] = stateChanges;
         }
         const normalizedInteraction = normalizeStoryChoiceInteraction(choice.interaction);
-        const interactionId = normalizedInteraction.presentation !== 'overlay'
+        const interactionId = normalizedInteraction.presentation !== 'overlay' || (normalizedInteraction.trigger && normalizedInteraction.trigger !== 'click')
           ? `interaction-${choiceInteractionSequence++}`
           : null;
         if (interactionId) choiceInteractionById[interactionId] = normalizedInteraction;

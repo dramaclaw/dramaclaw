@@ -1,5 +1,21 @@
 # Interactive Story Tool Contract
 
+## Interactive advertisements
+
+Visible Choices additionally accept `interaction.trigger`: `click` (default) or `hold`. `interaction.hold_ms` is an integer 300–5000,
+default 1000. Gestures also work with bottom overlays. Holds can be cancelled and support held Space/Enter. Automatic Choices
+must keep `trigger: click` and `hold_ms: 1000` (or omit them).
+
+Ending Segments may have `cta: {"label": "预约试驾", "url": ""}`. An empty URL is
+an explicitly unconfigured draft; use only the user's actual HTTPS booking URL when
+available, never invent a destination. Set `cta: null` in a segment Patch to clear it.
+CTA is only valid on endings. The player opens the link; it does not collect leads.
+Ads can use short converging or route-specific flows; do not add game endings merely
+to satisfy the default narrative branch budget. Separate footage from decision time.
+Runtime `dramaclaw:story` events provide host integration hooks, not server analytics;
+`cta_click` is not a successful form submission. Gestures activate at the existing
+end-of-clip choice point, not at arbitrary timestamps inside footage.
+
 The four business tools have the same names and semantics in the Codex MCP and Hermes adapter. `project_id` and `canvas_id` may be omitted when the session already binds them. Successful writes return `canvas_id`, `revision`, and `refresh_canvas=true`, which the host can use to refresh the current canvas.
 
 Create and Patch write the canvas atomically through `InteractiveStoryService`; they do not use the browser bridge for ordinary Freezone node commands. The in-product Agent refreshes the matching canvas from a successful `agent.tool.updated` frame. If unsaved local edits exist, the frontend preserves a local copy and enters conflict state. An external stdio MCP client receives only the write receipt; unless its host implements a refresh adapter, the user must refresh or reopen the canvas.

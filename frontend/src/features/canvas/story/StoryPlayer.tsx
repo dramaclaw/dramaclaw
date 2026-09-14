@@ -5,6 +5,8 @@ import { useChoicePointMachine } from '@/components/canvas/useChoicePointMachine
 import { normalizeStoryChoiceInteraction, type StoryChoiceInteraction, type StoryChoiceTransition, type StoryStateChange } from './storyTypes';
 import { objectContainRenderRect, mediaAnchorToContainPoint, type MediaRenderRect } from './objectCoverCoordinates';
 import './storyPlayer.css';
+import { StoryGestureButton } from './StoryGestureButton';
+import { emitStoryEvent, safeCtaUrl } from './storyEvents';
 
 /** 选择确认后给玩家阅读剧情反馈的停留时间；不会改变当前或后续视频资源。 */
 export const STORY_OUTCOME_FEEDBACK_MS = 1500;
@@ -100,6 +102,14 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
   const resolvedUrl = currentClipUrl ? resolveUrl(currentClipUrl) : null;
   // 有视频的结局必须等片段真正播完；phase=ended 只表示 Ink 已到叶子，不代表媒体已结束。
   const showChoices = videoEnded || !resolvedUrl;
+  const ctaUrl = safeCtaUrl(currentEnding?.cta?.url);
+  useEffect(() => { emitStoryEvent('experience_view'); }, []);
+  useEffect(() => {
+    if (currentNodeId) emitStoryEvent('segment_view', { nodeId: currentNodeId });
+  }, [currentNodeId, playbackRevision]);
+  useEffect(() => {
+    if (phase === 'ended' && showChoices && currentEnding?.cta) emitStoryEvent('cta_view', { nodeId: currentNodeId });
+  }, [phase, showChoices, currentNodeId, currentEnding]);
   const resolvedChoiceLoopUrl = currentNodeId
     ? resolveUrl(choiceLoopClipByNodeId[currentNodeId] ?? '')
     : null;
@@ -164,6 +174,7 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
     const stateChanges = selectedChoice?.stateChanges ?? [];
     const transition = normalizeStoryChoiceInteraction(selectedChoice?.interaction).transition;
     const commitChoice = () => {
+      emitStoryEvent('choice_selected', { nodeId: currentNodeId, index, text: selectedChoice?.text });
       setBranchTransition(transition);
       choose(index);
     };
@@ -179,7 +190,7 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
       setOutcomeFeedback(null);
       commitChoice();
     }, STORY_OUTCOME_FEEDBACK_MS);
-  }, [choose, currentChoices]);
+  }, [choose, currentChoices, currentNodeId]);
 
   // 退出试玩时取消未完成的反馈，避免离开后仍推进故事。
   useEffect(() => () => {
@@ -518,9 +529,11 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
             const enteredTransform = 'scale-100';
             const hiddenTransform = interaction.motion === 'pop' ? 'scale-75' : 'scale-95';
             return (
-              <button
-                key={choice.index}
-                onClick={() => select(choice.index)}
+              <StoryGestureButton
+                key={`${playbackKey}:${choice.index}`}
+                interaction={interaction}
+                eventContext={{ nodeId: currentNodeId, index: choice.index, text: choice.text }}
+                onSelect={() => select(choice.index)}
                 disabled={choiceExiting}
                 aria-label={choice.text}
                 aria-pressed={isSelected}
@@ -547,7 +560,7 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
                     : {}),
                 }}
               >
-                {isTechTag && !isBaked && (
+                {isTechTag && !isBaked && interaction.trigger !== 'hold' && (
                   <>
                     <span
                       data-tech-hit-highlight="true"
@@ -565,7 +578,7 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
                   </>
                 )}
                 {!isTechTag && !isBaked ? <span>{choice.text}</span> : null}
-              </button>
+              </StoryGestureButton>
             );
           })}
         <div
@@ -599,9 +612,11 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
             const isSelected = selectedIndex === choice.index;
             const dimmed = selectedIndex != null && !isSelected;
             return (
-              <button
-                key={choice.index}
-                onClick={() => select(choice.index)}
+              <StoryGestureButton
+                key={`${playbackKey}:${choice.index}`}
+                interaction={choice.interaction}
+                eventContext={{ nodeId: currentNodeId, index: choice.index, text: choice.text }}
+                onSelect={() => select(choice.index)}
                 disabled={choiceExiting}
                 aria-pressed={isSelected}
                 className={`w-full min-h-12 max-w-xl rounded-lg border px-5 py-3 text-center text-base font-medium leading-snug text-white backdrop-blur-sm transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black disabled:cursor-default motion-reduce:transition-none ${
@@ -618,7 +633,7 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
                     {t('canvas.story.defaultChoice')}
                   </span>
                 )}
-              </button>
+              </StoryGestureButton>
             );
           })}
         </div>
@@ -628,14 +643,14 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
       {/* 结局页:叶子结局标题 + 重玩。续玩提示期间(idle)不显示。 */}
       {phase === 'ended' && !resumeAvailable && showChoices && currentChoices.length === 0 && (
         <div data-story-ending
-          className={`absolute inset-0 z-10 flex flex-col items-center px-6 text-center ${currentClipUrl ? 'justify-end pb-10' : 'overflow-y-auto overscroll-contain py-10 bg-black/55'}`}>
-          <div className={`flex w-full shrink-0 flex-col items-center gap-5 ${currentClipUrl ? '' : 'my-auto'}`}>
-          {currentEnding?.label && (
+          className={`absolute inset-0 z-10 flex flex-col items-center px-6 text-center ${currentEnding?.cta ? 'pb-[calc(1rem+env(safe-area-inset-bottom,0px))]' : 'pb-10'} ${currentClipUrl ? 'justify-end' : 'overflow-y-auto overscroll-contain pt-10 bg-black/55'}`}>
+          <div className={`flex w-full shrink-0 flex-col items-center ${currentEnding?.cta ? 'gap-2' : 'gap-5'} ${currentClipUrl ? '' : 'my-auto'}`}>
+          {currentEnding?.label && !currentEnding.cta && (
             <span className="rounded-full border border-white/25 px-3 py-1 text-sm font-medium tracking-wide text-white/80">
               {t('canvas.story.endingBadge', { label: currentEnding.label })}
             </span>
           )}
-          {(currentEnding?.title?.trim() || !currentClipUrl) && <h2 className="max-w-2xl text-3xl font-semibold text-white [text-shadow:0_2px_16px_rgba(0,0,0,0.8)]">
+          {(!currentEnding?.cta || !currentClipUrl) && (currentEnding?.title?.trim() || !currentClipUrl) && <h2 className="max-w-2xl text-3xl font-semibold text-white [text-shadow:0_2px_16px_rgba(0,0,0,0.8)]">
             {currentEnding?.title?.trim() || (!currentClipUrl && currentPlaceholder?.label?.trim()) || t('canvas.story.endingFallback')}
           </h2>}
           {!currentClipUrl && currentPlaceholder?.text.trim() && (
@@ -643,11 +658,18 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
               {currentPlaceholder.text}
             </p>
           )}
+          {currentEnding?.cta && (ctaUrl ? <a href={ctaUrl} target="_blank" rel="noopener noreferrer"
+            onClick={() => emitStoryEvent('cta_click', { nodeId: currentNodeId, url: ctaUrl })}
+            className="flex min-h-12 w-full max-w-xs items-center justify-center rounded-lg bg-white px-8 py-3 font-semibold text-black transition-colors hover:bg-white/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white">
+            {currentEnding.cta.label}
+          </a> : <p role="status" className="text-sm text-white/80">{currentEnding.cta.label} · {t('canvas.story.ctaUnconfigured', { defaultValue: '访问地址待配置' })}</p>)}
           <button
             onClick={handleRestart}
-            className="mt-2 rounded-full border border-white/30 bg-white/5 px-8 py-2.5 text-base font-medium text-white/95 backdrop-blur-sm transition-colors hover:bg-white/15"
+            className={currentEnding?.cta
+              ? 'min-h-11 rounded-lg px-4 py-2 text-sm font-normal text-white underline decoration-white/40 underline-offset-4 [text-shadow:0_1px_4px_black] hover:decoration-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white'
+              : 'mt-2 rounded-full border border-white/30 bg-white/5 px-8 py-2.5 text-base font-medium text-white/95 backdrop-blur-sm transition-colors hover:bg-white/15'}
           >
-            {t('canvas.story.restart')}
+            {currentEnding?.cta ? t('canvas.story.replayExperience', { defaultValue: '重新体验' }) : t('canvas.story.restart')}
           </button>
           </div>
         </div>

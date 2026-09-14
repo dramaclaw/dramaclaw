@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type CSSProperties,
   type CompositionEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent,
@@ -14,6 +15,8 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useShallow } from 'zustand/react/shallow';
 import { X } from 'lucide-react';
+import editorStyles from './StoryChoiceEditor.module.css';
+import { StoryGestureButton } from '@/features/canvas/story/StoryGestureButton';
 
 import { useCanvasStore } from '@/stores/canvasStore';
 import { resolveMediaUrl } from '@/lib/media-url';
@@ -54,10 +57,10 @@ const OPS: StoryChoiceCondition['op'][] = ['>=', '<=', '==', '>', '<'];
 const EMPTY_MEMBER_NODES: CanvasNode[] = [];
 
 const FIELD_CLASS =
-  'rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-white/90 outline-none transition-colors focus:border-accent/50 focus:bg-white/[0.08]';
+  'rounded-md border border-text-dark/10 bg-text-dark/[0.04] px-2 py-1 text-text-dark/90 outline-none transition-colors focus:border-accent/50 focus:bg-text-dark/[0.08]';
 const SELECT_CLASS = `${FIELD_CLASS} cursor-pointer`;
 const CHECKBOX_CLASS = 'h-3.5 w-3.5 shrink-0 accent-[rgb(var(--accent-rgb))]';
-const SECTION_LABEL_CLASS = 'text-[11px] font-medium uppercase tracking-wide text-white/45';
+const SECTION_LABEL_CLASS = 'text-[11px] font-medium uppercase tracking-wide text-text-dark/75';
 const ANCHOR_PREVIEW_STYLE_CLASS: Record<NonNullable<StoryChoiceInteraction['uiStyle']>, string> = {
   glass: 'rounded-xl border border-white/30 bg-black/35 text-white/95 shadow-[0_10px_24px_rgba(0,0,0,0.45)] backdrop-blur-md',
   tag: 'h-[52px] w-[52px] rounded-full border-0 bg-transparent p-0',
@@ -181,7 +184,6 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
   const { t } = useTranslation();
   const update = useCanvasStore((s) => s.updateStoryChoiceEdgeData);
   const setChoiceAppearance = useCanvasStore((s) => s.setStoryChoiceAppearance);
-  const alignAnchors = useCanvasStore((s) => s.alignStoryChoiceAnchors);
   const setChoicePresentation = useCanvasStore((s) => s.setStoryChoicePresentation);
   const setDefault = useCanvasStore((s) => s.setStoryDefaultChoice);
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
@@ -224,6 +226,9 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
   const previewFrameRef = useRef<HTMLDivElement>(null);
   const previewMediaSizeRef = useRef<MediaSize | null>(null);
   const [previewAspectRatio, setPreviewAspectRatio] = useState(16 / 9);
+  const [isTrial, setIsTrial] = useState(false);
+  const [trialResult, setTrialResult] = useState('');
+  useEffect(() => { setTrialResult(''); }, [edgeId, isTrial]);
   const [previewRenderRect, setPreviewRenderRect] = useState<MediaRenderRect | null>(null);
   const anchorPointerIdRef = useRef<number | null>(null);
   const hotspotGestureRef = useRef<HotspotGesture | null>(null);
@@ -262,7 +267,6 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
     setPreviewRenderRect(null);
   }, [previewVideoUrl]);
   useEffect(() => {
-    if (!isAnchored) return;
     measurePreview();
     const frame = previewFrameRef.current;
     const observer = frame && typeof ResizeObserver !== 'undefined'
@@ -583,144 +587,11 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
 
   if (typeof document === 'undefined') return null;
 
-  return createPortal(
-    <div className="fixed inset-0 z-[1001] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={t('canvas.story.choiceEditorTitle')}>
-      <button
-        type="button"
-        tabIndex={-1}
-        aria-label={t('common.close')}
-        className="absolute inset-0 cursor-default bg-black/65 backdrop-blur-sm"
-        onClick={onClose}
-      />
-    <div
-      className="nodrag nopan relative flex max-h-[calc(100dvh-32px)] w-[min(1000px,calc(100vw-32px))] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#16181c]/98 text-sm text-white/90 shadow-[0_24px_64px_rgba(0,0,0,0.55)] backdrop-blur-xl"
-      // 拦住编辑器内的指针/点击事件,避免冒泡到 ReactFlow 把选项边取消选中、误选父级故事组。
-      onPointerDown={(e) => e.stopPropagation()}
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div className="flex shrink-0 items-center justify-between border-b border-white/[0.08] px-5 py-4">
-        <div>
-          <h2 className="text-base font-semibold text-white">{t('canvas.story.choiceEditorTitle')}</h2>
-          <p className="mt-0.5 text-xs text-white/45">{t('canvas.story.choicePrompt')}</p>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-white/50 transition-colors hover:bg-white/10 hover:text-white"
-          aria-label={t('common.close')}
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-
-      <div className="flex min-h-0 flex-1">
-        <aside className="hidden w-48 shrink-0 border-r border-white/[0.08] bg-black/15 p-3 sm:block">
-          <p className={`${SECTION_LABEL_CLASS} px-2 pb-2`}>{t('canvas.story.choiceEditorTitle')}</p>
-          <div className="flex max-h-full flex-col gap-1 overflow-y-auto">
-            {sourceChoiceEdges.map((edge) => {
-              const item = edge.data as StoryChoiceEdgeData | undefined;
-              const active = edge.id === edgeId;
-              return (
-                <button
-                  key={edge.id}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => setActiveChoiceId(edge.id)}
-                  className={`w-full rounded-lg px-2.5 py-2 text-left text-xs transition-colors ${
-                    active
-                      ? 'bg-cyan-300/15 text-cyan-50 ring-1 ring-cyan-200/25'
-                      : 'text-white/60 hover:bg-white/[0.07] hover:text-white/90'
-                  }`}
-                >
-                  <span className="block truncate">{item?.transitionMode === 'automatic' ? t('canvas.story.automaticTransition') : (item?.choiceText || t('canvas.story.choicePlaceholder'))}</span>
-                </button>
-              );
-            })}
-          </div>
-        </aside>
-
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto p-4 sm:p-5">
-
-      <div className="grid grid-cols-2 gap-1.5 rounded-xl border border-white/[0.08] bg-black/[0.08] p-1.5" role="group" aria-label={t('canvas.story.transitionType')}>
-        {(['visible', 'automatic'] as const).map((mode) => (
-          <button
-            key={mode}
-            type="button"
-            aria-pressed={resolvedTransitionMode === mode}
-            onClick={() => {
-              update(edgeId, {
-                transitionMode: mode,
-                ...(mode === 'automatic' ? { choiceText: '', feedbackText: '', interaction: undefined } : {}),
-              });
-              if (mode === 'automatic' && isDefault) setDefault(edgeId, false);
-            }}
-            className={`min-h-9 rounded-lg px-3 text-xs font-medium transition-colors ${resolvedTransitionMode === mode ? 'bg-accent/20 text-white ring-1 ring-accent/35' : 'text-white/60 hover:bg-white/[0.06] hover:text-white/90'}`}
-          >
-            {t(mode === 'automatic' ? 'canvas.story.transitionAutomatic' : 'canvas.story.transitionVisible')}
-          </button>
-        ))}
-      </div>
-
-      {resolvedTransitionMode === 'visible' ? (
-        <input
-          {...choiceTextField}
-          placeholder={t('canvas.story.choicePrompt')}
-          className={`${FIELD_CLASS} w-full px-2.5 py-1.5`}
-        />
-      ) : (
-        <p className="rounded-xl border border-accent/20 bg-accent/[0.08] px-3 py-2 text-xs leading-5 text-white/75">
-          {t('canvas.story.automaticTransitionHint')}
-        </p>
-      )}
-
-      {resolvedTransitionMode === 'visible' && (
-      <div className="flex flex-col gap-2 rounded-xl border border-cyan-200/[0.12] bg-cyan-950/[0.08] p-3">
-        <div className="flex items-center justify-between gap-2">
-          <span className={SECTION_LABEL_CLASS}>{t('canvas.story.interactionPresentation')}</span>
-        </div>
-        <div className="grid grid-cols-3 gap-1.5" role="group" aria-label={t('canvas.story.interactionPresentation')}>
-          {([
-            ['overlay', 'interactionOverlay'],
-            ['object-anchor', 'interactionObjectAnchor'],
-            ['baked-video', 'interactionBakedVideo'],
-          ] as const).map(([presentation, label]) => (
-            <button
-              key={presentation}
-              type="button"
-              aria-pressed={choicePresentation === presentation}
-              onClick={() => setPresentation(presentation)}
-              className={`min-h-9 rounded-lg border px-2 py-1.5 text-xs font-medium transition-colors ${
-                choicePresentation === presentation
-                  ? 'border-cyan-200/45 bg-cyan-200/15 text-cyan-50'
-                  : 'border-white/10 bg-black/10 text-white/55 hover:border-white/25 hover:text-white/85'
-              }`}
-            >
-              {t(`canvas.story.${label}`)}
-            </button>
-          ))}
-        </div>
-
-        {isAnchored && (
-          <>
-            <p className="text-[11px] leading-4 text-white/45">
-              {resolvedInteraction.presentation === 'baked-video'
-                ? t('canvas.story.interactionBakedHint')
-                : t('canvas.story.interactionAnchorHint')}
-            </p>
-            {resolvedInteraction.presentation === 'object-anchor' && otherAnchoredChoices.length > 0 && (
-              <div className="flex justify-end">
-                <button type="button" onClick={() => alignAnchors(edgeId)}
-                  title={t('canvas.story.alignAnchorsHint', '将本片段其他锚定选项对齐到当前选项的高度，保留左右位置')}
-                  className="rounded-md px-2 py-1 text-xs text-white/70 hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
-                  {t('canvas.story.alignAnchors', '横向对齐')}
-                </button>
-              </div>
-            )}
-            <div
+  const preview = (<div
               ref={previewFrameRef}
               data-testid="story-hotspot-preview"
-              className="relative mx-auto overflow-hidden rounded-lg border border-white/10 bg-[#0b0d12]"
-              style={{ aspectRatio: previewAspectRatio, width: `min(100%, ${previewAspectRatio * 56}vh)` }}
+              className={editorStyles.frame}
+              style={{ aspectRatio: previewAspectRatio, width: `min(100cqw, ${previewAspectRatio * 100}cqh)` }}
             >
               {previewVideoUrl ? (
                 <video
@@ -747,7 +618,7 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
                 </div>
               )}
               <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/35 to-transparent" />
-              {resolvedInteraction.presentation === 'baked-video' ? (
+              {!isTrial && resolvedInteraction.presentation === 'baked-video' ? (
                 <div
                   aria-label={t('canvas.story.interactionDrawHotspot')}
                   onPointerDown={(event) => startHotspotGesture(event, 'draw')}
@@ -760,7 +631,7 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
                   className="absolute inset-0 z-[1] cursor-crosshair touch-none"
                 />
               ) : null}
-              {horizontalGuideY !== null && (
+              {!isTrial && horizontalGuideY !== null && (
                 <div aria-hidden="true" data-testid="story-horizontal-guide"
                   className="pointer-events-none absolute inset-x-0 z-[4] h-px"
                   style={{
@@ -769,7 +640,7 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
                   }}
                 />
               )}
-              {displayAnchor && (resolvedInteraction.presentation === 'object-anchor' ? (
+              {!isTrial && isAnchored && displayAnchor && (resolvedInteraction.presentation === 'object-anchor' ? (
                 <>
                   {[{ edge: { id: edgeId }, data: { choiceText }, value: resolvedInteraction, anchor: displayAnchor }, ...otherAnchoredChoices]
                     .sort((a, b) => a.edge.id.localeCompare(b.edge.id))
@@ -830,9 +701,175 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
                   ))}
                 </div>
               ))}
+              {(isTrial || !isAnchored) && resolvedTransitionMode === 'visible' && (
+                <div className={!isAnchored ? editorStyles.bottomChoices : 'pointer-events-none absolute inset-0'}>
+                  {(sourceChoiceEdges.length ? sourceChoiceEdges.map((edge) => ({ id: edge.id, data: edge.data as unknown as StoryChoiceEdgeData })) : [{ id: edgeId, data: { choiceText, interaction: resolvedInteraction } as StoryChoiceEdgeData }])
+                    .filter(({ data }) => data?.transitionMode !== 'automatic')
+                    .map(({ id, data }) => (
+                      <ChoicePreviewButton
+                        key={id + JSON.stringify(data.interaction) + String(isTrial)}
+                        data={data}
+                        isTrial={isTrial}
+                        renderRect={previewRenderRect}
+                        placeholder={t('canvas.story.choicePlaceholder')}
+                        onSelect={() => isTrial
+                          ? setTrialResult(data.feedbackText || data.choiceText || '')
+                          : setActiveChoiceId(id)}
+                      />
+                    ))}
+                </div>
+              )}
+            </div>);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[1001] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={t('canvas.story.choiceEditorTitle')}>
+      <button
+        type="button"
+        tabIndex={-1}
+        aria-label={t('common.close')}
+        className="absolute inset-0 cursor-default bg-black/65 backdrop-blur-sm"
+        onClick={onClose}
+      />
+    <div
+      className={`nodrag nopan ${editorStyles.dialog}`}
+      // 拦住编辑器内的指针/点击事件,避免冒泡到 ReactFlow 把选项边取消选中、误选父级故事组。
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex shrink-0 items-center justify-between border-b border-text-dark/[0.08] px-5 py-4">
+        <div>
+          <h2 className="text-base font-semibold text-text-dark">{t('canvas.story.choiceEditorTitle')}</h2>
+          <p className="mt-0.5 text-xs text-text-dark/75">{t('canvas.story.choicePrompt')}</p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-text-dark/75 transition-colors hover:bg-text-dark/10 hover:text-text-dark"
+          aria-label={t('common.close')}
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className={editorStyles.workspace}>
+        <aside className={editorStyles.choiceList}>
+          <p className={`${SECTION_LABEL_CLASS} px-2 pb-2`}>{t('canvas.story.choiceEditorTitle')}</p>
+          <div className="flex max-h-full flex-col gap-1 overflow-y-auto">
+            {sourceChoiceEdges.map((edge) => {
+              const item = edge.data as StoryChoiceEdgeData | undefined;
+              const active = edge.id === edgeId;
+              return (
+                <button
+                  key={edge.id}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setActiveChoiceId(edge.id)}
+                  className={`w-full rounded-lg px-2.5 py-2 text-left text-xs transition-colors ${
+                    active
+                      ? 'bg-cyan-300/15 text-text-dark ring-1 ring-cyan-200/25'
+                      : 'text-text-dark/75 hover:bg-text-dark/[0.07] hover:text-text-dark/90'
+                  }`}
+                >
+                  <span className="block truncate">{item?.transitionMode === 'automatic' ? t('canvas.story.automaticTransition') : (item?.choiceText || t('canvas.story.choicePlaceholder'))}</span>
+                </button>
+              );
+            })}
+          </div>
+        </aside>
+
+        <section className={editorStyles.preview} aria-label={t('canvas.story.authorPreview')}>
+          <div className={editorStyles.toolbar}>
+            <div className={editorStyles.modeSwitch} role="group" aria-label={t('canvas.story.authorPreview')}>
+              <button type="button" aria-pressed={!isTrial} onClick={() => setIsTrial(false)}>{t('canvas.story.editPosition')}</button>
+              <button type="button" aria-pressed={isTrial} onClick={() => setIsTrial(true)}>{t('canvas.story.testInteraction')}</button>
             </div>
+            <span>{previewAspectRatio < 1 ? t('canvas.story.portraitVideo') : t('canvas.story.landscapeVideo')}</span>
+          </div>
+          <div className={editorStyles.stage}>{preview}</div>
+          <div className={editorStyles.previewStatus} role="status">{trialResult || t(isTrial ? 'canvas.story.testInteractionHint' : 'canvas.story.editPositionHint')}</div>
+        </section><div className={editorStyles.inspector}>
+
+      <div className="grid grid-cols-2 gap-1.5 rounded-xl border border-text-dark/[0.08] bg-black/[0.08] p-1.5" role="group" aria-label={t('canvas.story.transitionType')}>
+        {(['visible', 'automatic'] as const).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            aria-pressed={resolvedTransitionMode === mode}
+            onClick={() => {
+              update(edgeId, {
+                transitionMode: mode,
+                ...(mode === 'automatic' ? { choiceText: '', feedbackText: '', interaction: undefined } : {}),
+              });
+              if (mode === 'automatic' && isDefault) setDefault(edgeId, false);
+            }}
+            className={`min-h-9 rounded-lg px-3 text-xs font-medium transition-colors ${resolvedTransitionMode === mode ? 'bg-accent/20 text-text-dark ring-1 ring-accent/35' : 'text-text-dark/75 hover:bg-text-dark/[0.06] hover:text-text-dark/90'}`}
+          >
+            {t(mode === 'automatic' ? 'canvas.story.transitionAutomatic' : 'canvas.story.transitionVisible')}
+          </button>
+        ))}
+      </div>
+
+      {resolvedTransitionMode === 'visible' ? (
+        <input
+          {...choiceTextField}
+          placeholder={t('canvas.story.choicePrompt')}
+          className={`${FIELD_CLASS} w-full px-2.5 py-1.5`}
+        />
+      ) : (
+        <p className="rounded-xl border border-accent/20 bg-accent/[0.08] px-3 py-2 text-xs leading-5 text-text-dark/75">
+          {t('canvas.story.automaticTransitionHint')}
+        </p>
+      )}
+
+      {resolvedTransitionMode === 'visible' && (
+      <div className="flex flex-col gap-2 rounded-xl border border-cyan-200/[0.12] bg-cyan-950/[0.08] p-3">
+        <label className="flex items-center justify-between gap-2 text-xs text-text-dark/80">
+          {t('canvas.story.gesture', { defaultValue: '触发手势' })}
+          <select className={SELECT_CLASS} value={resolvedInteraction.trigger ?? 'click'}
+            onChange={(event) => writeInteraction({ trigger: event.target.value as StoryChoiceInteraction['trigger'] })}>
+            <option value="click">{t('canvas.story.gestureClick', { defaultValue: '点击' })}</option>
+            <option value="hold">{t('canvas.story.gestureHold', { defaultValue: '长按' })}</option>
+          </select>
+        </label>
+        {resolvedInteraction.trigger === 'hold' && <label className="flex items-center justify-between gap-2 text-xs text-text-dark/80">
+          {t('canvas.story.holdSeconds')}
+          <input className={FIELD_CLASS} type="number" min={0.3} max={5} step={0.1} value={(resolvedInteraction.holdMs ?? 1000) / 1000}
+            onChange={(event) => writeInteraction({ holdMs: Math.min(5000, Math.max(300, Number(event.target.value) * 1000 || 1000)) })} />
+        </label>}
+        <div className="flex items-center justify-between gap-2">
+          <span className={SECTION_LABEL_CLASS}>{t('canvas.story.interactionPresentation')}</span>
+        </div>
+        <div className="grid grid-cols-3 gap-1.5" role="group" aria-label={t('canvas.story.interactionPresentation')}>
+          {([
+            ['overlay', 'interactionOverlay'],
+            ['object-anchor', 'interactionObjectAnchor'],
+            ['baked-video', 'interactionBakedVideo'],
+          ] as const).map(([presentation, label]) => (
+            <button
+              key={presentation}
+              type="button"
+              aria-pressed={choicePresentation === presentation}
+              onClick={() => setPresentation(presentation)}
+              className={`min-h-9 rounded-lg border px-2 py-1.5 text-xs font-medium transition-colors ${
+                choicePresentation === presentation
+                  ? 'border-cyan-200/45 bg-cyan-200/15 text-text-dark'
+                  : 'border-text-dark/10 bg-black/10 text-text-dark/75 hover:border-text-dark/25 hover:text-text-dark/85'
+              }`}
+            >
+              {t(`canvas.story.${label}`)}
+            </button>
+          ))}
+        </div>
+
+        {isAnchored && (
+          <>
+            <p className="text-[11px] leading-4 text-text-dark/75">
+              {resolvedInteraction.presentation === 'baked-video'
+                ? t('canvas.story.interactionBakedHint')
+                : t('canvas.story.interactionAnchorHint')}
+            </p>
             {resolvedInteraction.presentation === 'object-anchor' && (
-              <div className="grid grid-cols-2 gap-1.5">
+              <details><summary className="cursor-pointer py-2 text-xs text-text-dark/75">{t('canvas.story.appearanceAndMotion')}</summary><div className="grid grid-cols-2 gap-1.5">
                 <select
                   value={resolvedInteraction.uiStyle}
                   onChange={(event) => setChoiceAppearance(edgeId, { uiStyle: event.target.value as StoryChoiceUiStyle })}
@@ -853,7 +890,7 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
                   <option value="pop">{t('canvas.story.interactionMotionPop')}</option>
                   <option value="pulse">{t('canvas.story.interactionMotionPulse')}</option>
                 </select>
-              </div>
+              </div></details>
             )}
           </>
         )}
@@ -861,7 +898,7 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
       )}
 
       {resolvedTransitionMode === 'visible' && (
-      <div className="flex flex-col gap-1.5 rounded-xl border border-white/[0.08] bg-black/[0.08] p-3">
+      <details className="rounded-xl border border-text-dark/[0.08] p-3"><summary className="cursor-pointer text-xs text-text-dark/75">{t('canvas.story.choiceFeedbackLabel')}</summary><div className="flex flex-col gap-1.5 pt-2">
         <label className={SECTION_LABEL_CLASS} htmlFor={`${edgeId}-feedback`}>
           {t('canvas.story.choiceFeedbackLabel')}
         </label>
@@ -873,19 +910,19 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
           placeholder={t('canvas.story.choiceFeedbackPlaceholder')}
           className={`${FIELD_CLASS} min-h-16 w-full resize-y px-2.5 py-1.5 leading-relaxed`}
         />
-        <span className="text-[11px] leading-4 text-white/45">
+        <span className="text-[11px] leading-4 text-text-dark/75">
           {t('canvas.story.choiceFeedbackHint')}
         </span>
-      </div>
+      </div></details>
       )}
 
-      <details className="rounded-xl border border-white/[0.08] bg-black/[0.06]">
-        <summary className="cursor-pointer select-none px-3 py-2.5 text-xs font-medium text-white/60 transition-colors hover:text-white/90">
+      <details className="rounded-xl border border-text-dark/[0.08] bg-black/[0.06]">
+        <summary className="cursor-pointer select-none px-3 py-2.5 text-xs font-medium text-text-dark/75 transition-colors hover:text-text-dark/90">
           {t('canvas.story.choiceAdvanced')}
         </summary>
-        <div className="flex flex-col gap-3 border-t border-white/[0.08] p-3">
+        <div className="flex flex-col gap-3 border-t border-text-dark/[0.08] p-3">
       {!hasVariables && !hasFlags && (
-        <span className="rounded-md border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-xs text-amber-300/90">
+        <span className="rounded-md border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-xs text-text-dark">
           {t('canvas.story.noVariablesHint')}
         </span>
       )}
@@ -893,7 +930,7 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
       {/* 条件:多条(变量 / 去过片段)+ 单一 AND/OR 连接(≥2 条时可切换)。 */}
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2">
-          <label className="flex cursor-pointer select-none items-center gap-2 font-medium text-white/80">
+          <label className="flex cursor-pointer select-none items-center gap-2 font-medium text-text-dark/80">
             <input
               type="checkbox"
               className={CHECKBOX_CLASS}
@@ -978,7 +1015,7 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
                   />
                 </>
               )}
-              <button onClick={() => writeCondition(leaves.filter((_, j) => j !== i), join)} className="rounded p-1 text-white/45 transition-colors hover:bg-white/10 hover:text-red-400" aria-label={t('common.delete')}>✕</button>
+              <button onClick={() => writeCondition(leaves.filter((_, j) => j !== i), join)} className="rounded p-1 text-text-dark/75 transition-colors hover:bg-text-dark/10 hover:text-red-400" aria-label={t('common.delete')}>✕</button>
             </div>
           );
         })}
@@ -986,14 +1023,14 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
           <button
             disabled={!canCondition}
             onClick={() => writeCondition([...leaves, newLeaf()], join)}
-            className="ml-6 self-start rounded-md border border-white/10 bg-white/[0.06] px-2.5 py-1 text-xs font-medium text-white/80 transition-colors hover:bg-white/[0.12] disabled:cursor-not-allowed disabled:opacity-40"
+            className="ml-6 self-start rounded-md border border-text-dark/10 bg-text-dark/[0.06] px-2.5 py-1 text-xs font-medium text-text-dark/80 transition-colors hover:bg-text-dark/[0.12] disabled:cursor-not-allowed disabled:opacity-40"
           >
             + {t('canvas.story.addCondition')}
           </button>
         )}
       </div>
 
-      <div className="h-px bg-white/[0.07]" />
+      <div className="h-px bg-text-dark/[0.07]" />
 
       {/* 效果 */}
       <div className="flex flex-col gap-2">
@@ -1021,32 +1058,32 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
                 }} className={`${SELECT_CLASS} min-w-0 flex-1`}>
                   {variables.map((v) => <option key={v.name} value={v.name}>{v.label}</option>)}
                 </select>
-                <span className="text-white/40">+=</span>
+                <span className="text-text-dark/75">+=</span>
                 <input type="number" value={eff.delta} onChange={(e) => {
                   const next = [...(effects ?? [])]; next[i] = { ...eff, delta: Number(e.target.value) }; update(edgeId, { effects: next });
                 }} className={`${FIELD_CLASS} w-14`} />
               </>
             )}
-            <button onClick={() => update(edgeId, { effects: (effects ?? []).filter((_, j) => j !== i) })} className="rounded p-1 text-white/45 transition-colors hover:bg-white/10 hover:text-red-400" aria-label={t('common.delete')}>✕</button>
+            <button onClick={() => update(edgeId, { effects: (effects ?? []).filter((_, j) => j !== i) })} className="rounded p-1 text-text-dark/75 transition-colors hover:bg-text-dark/10 hover:text-red-400" aria-label={t('common.delete')}>✕</button>
           </div>
         ))}
         <div className="flex flex-wrap gap-1.5">
-          <button disabled={!hasVariables} onClick={() => update(edgeId, { effects: [...(effects ?? []), { var: firstVar, delta: 1 }] })} className="rounded-md border border-white/10 bg-white/[0.06] px-2.5 py-1 text-xs font-medium text-white/80 transition-colors hover:bg-white/[0.12] disabled:cursor-not-allowed disabled:opacity-40">
+          <button disabled={!hasVariables} onClick={() => update(edgeId, { effects: [...(effects ?? []), { var: firstVar, delta: 1 }] })} className="rounded-md border border-text-dark/10 bg-text-dark/[0.06] px-2.5 py-1 text-xs font-medium text-text-dark/80 transition-colors hover:bg-text-dark/[0.12] disabled:cursor-not-allowed disabled:opacity-40">
             + {t('canvas.story.addNumberEffect')}
           </button>
-          <button disabled={!hasFlags} onClick={() => update(edgeId, { effects: [...(effects ?? []), { flag: firstFlag, value: true }] })} className="rounded-md border border-white/10 bg-white/[0.06] px-2.5 py-1 text-xs font-medium text-white/80 transition-colors hover:bg-white/[0.12] disabled:cursor-not-allowed disabled:opacity-40">
+          <button disabled={!hasFlags} onClick={() => update(edgeId, { effects: [...(effects ?? []), { flag: firstFlag, value: true }] })} className="rounded-md border border-text-dark/10 bg-text-dark/[0.06] px-2.5 py-1 text-xs font-medium text-text-dark/80 transition-colors hover:bg-text-dark/[0.12] disabled:cursor-not-allowed disabled:opacity-40">
             + {t('canvas.story.addFlagEffect')}
           </button>
         </div>
       </div>
 
       {resolvedTransitionMode === 'visible' && (<>
-      <div className="h-px bg-white/[0.07]" />
+      <div className="h-px bg-text-dark/[0.07]" />
 
       {/* 限时:本片段的选择时限(写源节点,同源所有选项共享)+ 默认选项(超时自动选,同源单选)。 */}
       <div className="flex flex-col gap-2">
         <label className="flex items-center justify-between gap-2">
-          <span className="font-medium text-white/80">{t('canvas.story.choiceTimeLimit')}</span>
+          <span className="font-medium text-text-dark/80">{t('canvas.story.choiceTimeLimit')}</span>
           <span className="flex items-center gap-1.5">
             <input
               type="number"
@@ -1061,10 +1098,10 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
               }}
               className={`${FIELD_CLASS} w-14 text-right`}
             />
-            <span className="text-xs text-white/40">{t('canvas.story.choiceTimeLimitUnit')}</span>
+            <span className="text-xs text-text-dark/75">{t('canvas.story.choiceTimeLimitUnit')}</span>
           </span>
         </label>
-        <label className="flex cursor-pointer select-none items-center gap-2 font-medium text-white/80">
+        <label className="flex cursor-pointer select-none items-center gap-2 font-medium text-text-dark/80">
           <input
             type="checkbox"
             className={CHECKBOX_CLASS}
@@ -1084,3 +1121,53 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
     document.body,
   );
 });
+
+
+/** Render one trial choice without coupling its appearance to editor selection state. */
+function ChoicePreviewButton({ data, isTrial, renderRect, placeholder, onSelect }: {
+  data: StoryChoiceEdgeData;
+  isTrial: boolean;
+  renderRect: MediaRenderRect | null;
+  placeholder: string;
+  onSelect: () => void;
+}) {
+  const interaction = normalizeStoryChoiceInteraction(data.interaction);
+  const anchor = interaction.anchor ?? defaultStoryChoiceAnchor(interaction.presentation);
+  const anchored = interaction.presentation !== 'overlay';
+  const hotspot = interaction.presentation === 'baked-video';
+  const targetRing = anchored && interaction.uiStyle === 'tag';
+  const positionStyle: CSSProperties | undefined = anchored ? {
+    left: renderRect ? renderRect.left + anchor.x * renderRect.width : `${anchor.x * 100}%`,
+    top: renderRect ? renderRect.top + anchor.y * renderRect.height : `${anchor.y * 100}%`,
+    ...(hotspot ? {
+      width: renderRect ? (anchor.width ?? .2) * renderRect.width : `${(anchor.width ?? .2) * 100}%`,
+      height: renderRect ? (anchor.height ?? .12) * renderRect.height : `${(anchor.height ?? .12) * 100}%`,
+    } : {}),
+  } : undefined;
+
+  let appearanceClass = 'relative px-4 py-3 rounded-xl bg-black/60 text-white border border-white/30';
+  if (anchored) {
+    appearanceClass = 'absolute -translate-x-1/2 -translate-y-1/2 ';
+    appearanceClass += hotspot
+      ? 'bg-transparent border-0'
+      : `${ANCHOR_PREVIEW_STYLE_CLASS[interaction.uiStyle]} ${targetRing ? '' : 'px-3 py-2'}`;
+  }
+  const motionClass = isTrial && !hotspot ? editorStyles[interaction.motion] : '';
+  let content = <>{data.choiceText}</>;
+  if (hotspot) content = <span className="sr-only">{data.choiceText}</span>;
+  else if (targetRing) content = <>{interaction.trigger === 'hold' ? null : <TechTargetRingPreview />}</>;
+
+  return (
+    <StoryGestureButton
+      interaction={isTrial ? interaction : { ...interaction, trigger: 'click' }}
+      eventContext={{}}
+      emitEvents={false}
+      aria-label={data.choiceText || placeholder}
+      onSelect={onSelect}
+      className={`pointer-events-auto text-xs font-semibold ${motionClass} ${appearanceClass}`}
+      style={positionStyle}
+    >
+      {content}
+    </StoryGestureButton>
+  );
+}

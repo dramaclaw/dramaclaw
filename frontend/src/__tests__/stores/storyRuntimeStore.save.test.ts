@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { compileGraphToInk } from '@/features/canvas/story/compileGraphToInk';
 import { CANVAS_NODE_TYPES, type CanvasEdge, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { STORY_CHOICE_EDGE_TYPE } from '@/features/canvas/story/storyTypes';
@@ -111,6 +111,30 @@ describe('storyRuntimeStore 存档/续玩', () => {
     expect(ok).toBe(false);
     expect(s.resumeAvailable).toBe(false);
     expect(s.currentClipUrl).toBe('intro.mp4');
+  });
+
+  it('存档加载成功但继续执行失败时回到起点，且后续选择仍可用', () => {
+    const store = useStoryRuntimeStore.getState();
+    store.enterPlay(fixture(), { saveKey: KEY });
+    store.exitPlay();
+    store.enterPlay(fixture(), { saveKey: KEY });
+    const story = useStoryRuntimeStore.getState().story!;
+    // Ink 可接受旧存档，但直到继续执行旧指针才报告不兼容。
+    const continuation = vi.spyOn(story, 'Continue').mockImplementationOnce(() => {
+      throw new Error('obj is null or undefined');
+    });
+    try {
+      expect(store.resumeSaved()).toBe(false);
+      expect(useStoryRuntimeStore.getState()).toMatchObject({
+        resumeAvailable: false,
+        currentClipUrl: 'intro.mp4',
+        phase: 'playing',
+      });
+      store.choose(0);
+      expect(useStoryRuntimeStore.getState().currentClipUrl).toBe('meet.mp4');
+    } finally {
+      continuation.mockRestore();
+    }
   });
 
   it('exitPlay 保留存档(下次可续玩)', () => {

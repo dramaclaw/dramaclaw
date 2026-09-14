@@ -32,10 +32,12 @@ const labelKeys: Record<string, keyof PlayerLabels> = {
   'canvas.story.choiceCountdown': 'countdown',
   'canvas.story.flagOn': 'flagOn',
   'canvas.story.flagOff': 'flagOff',
+  'canvas.story.replayExperience': 'replayExperience',
+  'canvas.story.ctaUnconfigured': 'ctaUnconfigured',
 };
 function t(key: string, values?: Record<string, unknown>): string {
   if (key === 'canvas.story.endingBadge') return `${data.labels.endingBadge} · ${values?.label ?? ''}`;
-  return data.labels[labelKeys[key]] ?? key;
+  return data.labels[labelKeys[key]] ?? String(values?.defaultValue ?? key);
 }
 useStoryRuntimeStore.getState().enterPlay({
   ink: '',
