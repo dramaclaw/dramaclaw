@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CreditCenterDialog } from "@/components/credits/CreditCenterDialog";
@@ -14,12 +14,17 @@ import {
 } from "@/lib/payment-navigation";
 import type { RechargeOrder, RechargePackage } from "@/lib/queries/payments";
 
-const { ordersQuery, packagesQuery, orderQuery } = vi.hoisted(() => ({
+const { invalidateQueries, ordersQuery, packagesQuery, orderQuery } = vi.hoisted(() => ({
+  invalidateQueries: vi.fn(),
   ordersQuery: vi.fn(),
   packagesQuery: vi.fn(),
   orderQuery: vi.fn(),
 }));
 
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
+  useQueryClient: () => ({ invalidateQueries }),
+}));
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key, i18n: { language: "zh" } }),
 }));
@@ -82,6 +87,7 @@ const rechargePackage: RechargePackage = {
 describe("closed order presentation and repurchase", () => {
   beforeEach(() => {
     sessionStorage.clear();
+    invalidateQueries.mockReset();
     orderQuery.mockReturnValue({ data: undefined, isError: false });
     ordersQuery.mockReturnValue({ data: { data: { items: [closedOrder] } }, isPending: false });
     packagesQuery.mockReturnValue({ data: { data: { items: [rechargePackage] } }, isPending: false });
@@ -100,9 +106,40 @@ describe("closed order presentation and repurchase", () => {
     vi.stubGlobal("location", { ...window.location, search: "?merchant_order_no=DC-CLOSED&state=2" });
     render(<PaymentReturnPage />);
     expect(orderQuery).toHaveBeenCalledWith(null);
-    expect(ordersQuery).toHaveBeenCalledWith({ poll: true, enabled: true });
+    expect(ordersQuery).toHaveBeenCalledWith({
+      pollForMerchantOrderNo: "DC-CLOSED",
+      enabled: true,
+    });
     expect(screen.getByRole("heading", { name: "paymentReturn.states.closed.title" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "paymentReturn.states.credited.title" })).not.toBeInTheDocument();
+  });
+
+  it("refreshes the server balance once when fulfillment becomes credited", async () => {
+    const creditedOrder: RechargeOrder = {
+      ...closedOrder,
+      order_id: "order-credited",
+      merchant_order_no: "DC-CREDITED",
+      payment_status: "paid",
+      fulfillment_status: "credited",
+      failure_code: null,
+    };
+    rememberPaymentOrder(creditedOrder);
+    orderQuery.mockReturnValue({
+      data: { data: creditedOrder },
+      isError: false,
+    });
+
+    const page = render(<PaymentReturnPage />);
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: ["credits", "summary"],
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledOnce();
+
+    page.rerender(<PaymentReturnPage />);
+    expect(invalidateQueries).toHaveBeenCalledOnce();
   });
 
   it("shows closed instead of credit failure in the billing history", () => {

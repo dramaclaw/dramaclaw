@@ -14,6 +14,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import {
+  rechargeOrderNeedsPolling,
   submitPaymentCheckout,
   useCreateRechargeOrder,
   useCreateRechargeLinkOrder,
@@ -41,6 +42,23 @@ function wrapper(queryClient: QueryClient) {
 }
 
 describe("recharge checkout", () => {
+  it.each([
+    ["pending", "pending", true],
+    ["paid", "processing", true],
+    ["paid", "credited", false],
+    ["paid", "failed", false],
+    ["failed", "pending", false],
+    ["refunded", "credited", false],
+  ] as const)(
+    "polls payment %s with fulfillment %s only while confirmation can progress",
+    (paymentStatus, fulfillmentStatus, expected) => {
+      expect(rechargeOrderNeedsPolling({
+        payment_status: paymentStatus,
+        fulfillment_status: fulfillmentStatus,
+      } as import("@/lib/queries/payments").RechargeOrder)).toBe(expected);
+    },
+  );
+
   it.each([
     ["PAYMENT_QUOTE_CHANGED", true],
     ["PAYMENT_QUOTE_REQUIRED", true],

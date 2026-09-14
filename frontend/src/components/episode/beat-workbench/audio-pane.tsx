@@ -134,7 +134,7 @@ export function AudioPane({
         showAudioError(res.error || t("episode.workbench.audio.regenFailed"));
         return;
       }
-      audioTask.start({ scope: res.scope });
+      audioTask.start({ scope: res.scope, taskId: res.task_id });
       toast.success(t("episode.workbench.audio.regenerated", { n: beat.beat_number }));
     } catch (error) {
       toast.error(backendErrorToastMessage(error, t));

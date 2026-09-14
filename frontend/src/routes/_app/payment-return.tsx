@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { createFileRoute } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -11,6 +12,7 @@ import {
   TriangleAlert,
   XCircle,
 } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -26,6 +28,7 @@ import {
 } from "@/lib/payment-navigation";
 import { resolvePaymentReturnState, type PaymentReturnState } from "@/lib/payment-return";
 import { useRechargeOrder, useRechargeOrders } from "@/lib/queries/payments";
+import { queryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 
 const STATE_PRESENTATION: Record<
@@ -44,6 +47,8 @@ const STATE_PRESENTATION: Record<
 
 export function PaymentReturnPage() {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const refreshedCreditedOrderRef = useRef<string | null>(null);
   const expectedOrderNo = sessionStorage.getItem(PAYMENT_RETURN_ORDER_KEY)?.trim() || null;
   const providerOrderNo = paymentOrderNumberFromSearch(window.location.search);
   const merchantOrderNo = providerOrderNo ?? expectedOrderNo;
@@ -51,7 +56,10 @@ export function PaymentReturnPage() {
     ? sessionStorage.getItem(PAYMENT_RETURN_ORDER_ID_KEY)?.trim() || null
     : null;
   const orderQuery = useRechargeOrder(expectedOrderId);
-  const ordersQuery = useRechargeOrders({ poll: true, enabled: !expectedOrderId });
+  const ordersQuery = useRechargeOrders({
+    pollForMerchantOrderNo: merchantOrderNo,
+    enabled: !expectedOrderId && Boolean(merchantOrderNo),
+  });
   const order =
     orderQuery.data?.data ??
     ordersQuery.data?.data.items.find((item) => item.merchant_order_no === merchantOrderNo);
@@ -63,6 +71,15 @@ export function PaymentReturnPage() {
   const displayOrderNo = order?.merchant_order_no ?? merchantOrderNo;
   const presentation = STATE_PRESENTATION[state];
   const StatusIcon = presentation.icon;
+
+  useEffect(() => {
+    const orderId = order?.order_id;
+    if (state !== "credited" || !orderId || refreshedCreditedOrderRef.current === orderId) {
+      return;
+    }
+    refreshedCreditedOrderRef.current = orderId;
+    void queryClient.invalidateQueries({ queryKey: queryKeys.creditSummary() });
+  }, [order?.order_id, queryClient, state]);
 
   const returnToDramaClaw = () => {
     const returnPath = safePaymentReturnPath(sessionStorage.getItem(CHECKOUT_RETURN_KEY));

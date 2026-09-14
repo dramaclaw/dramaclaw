@@ -66,6 +66,16 @@ export interface RechargeOrder {
   updated_at: string;
 }
 
+export function rechargeOrderNeedsPolling(order: RechargeOrder): boolean {
+  const terminalPayment = ["failed", "expired", "closed", "refunded"].includes(
+    order.payment_status,
+  );
+  const terminalFulfillment = ["credited", "failed", "reversed"].includes(
+    order.fulfillment_status,
+  );
+  return !terminalPayment && !terminalFulfillment;
+}
+
 export interface EpayCheckout {
   action: string;
   method: "POST";
@@ -134,7 +144,9 @@ export function usePaymentQuote(baseAmountCents: number, enabled: boolean) {
   });
 }
 
-export function useRechargeOrders(options: { poll?: boolean; enabled?: boolean } = {}) {
+export function useRechargeOrders(
+  options: { pollForMerchantOrderNo?: string | null; enabled?: boolean } = {},
+) {
   return useQuery({
     queryKey: queryKeys.rechargeOrders(),
     queryFn: ({ signal }) =>
@@ -148,12 +160,19 @@ export function useRechargeOrders(options: { poll?: boolean; enabled?: boolean }
     staleTime: 5_000,
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
-    refetchInterval: (query) =>
-      options.poll || query.state.data?.data.items.some(
+    refetchInterval: (query) => {
+      const items = query.state.data?.data.items;
+      const merchantOrderNo = options.pollForMerchantOrderNo?.trim();
+      if (merchantOrderNo) {
+        const order = items?.find((item) => item.merchant_order_no === merchantOrderNo);
+        return !order || rechargeOrderNeedsPolling(order) ? 5_000 : false;
+      }
+      return items?.some(
         (order) => order.payment_status === "pending" || order.fulfillment_status === "processing",
       )
         ? 5_000
-        : false,
+        : false;
+    },
     retry: false,
   });
 }
@@ -172,13 +191,7 @@ export function useRechargeOrder(orderId: string | null) {
     refetchInterval: (query) => {
       const order = query.state.data?.data;
       if (!order) return 3_000;
-      const terminalPayment = ["failed", "expired", "closed", "refunded"].includes(
-        order.payment_status,
-      );
-      const terminalFulfillment = ["credited", "failed", "reversed"].includes(
-        order.fulfillment_status,
-      );
-      return terminalPayment || terminalFulfillment ? false : 3_000;
+      return rechargeOrderNeedsPolling(order) ? 3_000 : false;
     },
     retry: false,
   });
