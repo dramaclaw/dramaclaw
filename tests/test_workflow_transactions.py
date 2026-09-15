@@ -237,3 +237,34 @@ def test_compact_intent_preparation_and_revision_use_authenticated_catalog(monke
     assert revised["intent"]["title"] == "新标题"
     assert all(user == "alice" for user, _ in calls)
     assert catalog._REQUEST_CATALOG.get() is None
+@pytest.mark.parametrize("source", ["compact", "exact"])
+def test_revise_execution_policy_preserves_workflow_source(source):
+    from novelvideo.freezone.workflow_transactions import revise_workflow_source
+    plan = _plan()
+    payload = {"intent": {"plan": plan} if source == "exact" else {"skill_id": "video-ad"},
+               "compiled": {"ok": True, "plan": plan}, "run_after_create": False}
+    before = deepcopy(payload)
+    result = revise_workflow_source(payload, {"run_after_create": True}, username="tester")
+    assert result["run_after_create"] is True
+    assert result["intent"] == before["intent"]
+    assert result["compiled"] == before["compiled"]
+    assert result["last_changes"] == {"run_after_create": True}
+    assert payload == before
+
+
+@pytest.mark.parametrize("value", ["true", 1, None])
+def test_revise_execution_policy_rejects_non_boolean(value):
+    from novelvideo.freezone.workflow_transactions import revise_workflow_source
+    with pytest.raises(WorkflowOperationError, match="boolean"):
+        revise_workflow_source({"intent": {}, "compiled": {}}, {"run_after_create": value}, username="tester")
+def test_legacy_patch_execution_policy_does_not_recompile_source():
+    from novelvideo.freezone.agent_workflows.drafts import build_workflow_draft_patch
+    payload = {"intent": {"skill_id": "video-ad"}, "compiled": {"ok": True, "plan": _plan()}}
+    result, error = build_workflow_draft_patch(
+        payload=payload, changes={"run_after_create": True},
+        compile_intent=lambda _: pytest.fail("policy change must not recompile topology"),
+    )
+    assert error is None
+    assert result["run_after_create"] is True
+    assert result["compiled"] == payload["compiled"]
+    assert result["intent"] == payload["intent"]

@@ -1,6 +1,6 @@
 """Generated from schemas/workflow/v1/stable-contract.json; do not edit."""
 
-SOURCE_SHA256 = "22333a008ac8ec1d7aa427900daeb50354852af5e2789303840fd716b64b63fc"
+SOURCE_SHA256 = "1d3add9e7fc736e3ae534db40069e84882b9f00159bcb1bdf22e04a48c5f1666"
 WORKFLOW_CONTRACT_SCHEMA_VERSION = "freezone_workflow_contract.v1"
 WORKFLOW_PLAN_SCHEMA_VERSION = "freezone_workflow_plan.v1"
 WORKFLOW_INTENT_SCHEMA_VERSION = "freezone_workflow_intent.v1"
@@ -55,17 +55,21 @@ MODEL_ALIASES_BY_NODE_TYPE = {
         "openai/gpt-image-2": "newapi_gpt_image2",
     },
     "videoNode": {
-        "omni-flash": "newapi_seedance-2.0-fast",
-        "omni_flash": "newapi_seedance-2.0-fast",
-        "seedance_2_0_fast": "newapi_seedance-2.0-fast",
-        "seedance-2.0-fast": "newapi_seedance-2.0-fast",
-        "seedance-2.0": "newapi_seedance-2.0",
-        "seedance-1.5-pro": "newapi_seedance-1.5-pro",
-        "seedance-1.0-pro-fast": "newapi_seedance-1.0-pro-fast",
-        "huimeng_seedance-2.0-fast": "newapi_seedance-2.0-fast",
-        "huimeng_seedance-2.0": "newapi_seedance-2.0",
-        "huimeng_seedance-1.5-pro": "newapi_seedance-1.5-pro",
-        "huimeng_seedance-1.0-pro-fast": "newapi_seedance-1.0-pro-fast",
+        "omni-flash": "seedance-2.0-fast",
+        "omni_flash": "seedance-2.0-fast",
+        "seedance_2_0_fast": "seedance-2.0-fast",
+        "seedance-2.0-fast": "seedance-2.0-fast",
+        "seedance-2.0": "seedance-2.0",
+        "seedance-1.5-pro": "seedance-1.5-pro",
+        "seedance-1.0-pro-fast": "seedance-1.0-pro-fast",
+        "huimeng_seedance-2.0-fast": "seedance-2.0-fast",
+        "huimeng_seedance-2.0": "seedance-2.0",
+        "huimeng_seedance-1.5-pro": "seedance-1.5-pro",
+        "huimeng_seedance-1.0-pro-fast": "seedance-1.0-pro-fast",
+        "newapi_seedance-2.0-fast": "seedance-2.0-fast",
+        "newapi_seedance-2.0": "seedance-2.0",
+        "newapi_seedance-1.5-pro": "seedance-1.5-pro",
+        "newapi_seedance-1.0-pro-fast": "seedance-1.0-pro-fast",
     },
 }
 RECIPE_ENVELOPE_CONTRACT = {

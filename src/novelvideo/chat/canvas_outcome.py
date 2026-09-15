@@ -5,6 +5,19 @@ from __future__ import annotations
 import json
 from typing import Any
 
+CANVAS_FINAL_RESPONSE_INSTRUCTIONS = (
+    "Your final response must be exactly one JSON object with message, mode, and "
+    "canvas_receipts. No Markdown fences, headings, or prose outside that object. "
+    "Put all user-facing explanations and success summaries in the message field. "
+    "Instructions from tools to report success apply only to the message field; "
+    "they never change the final response format. For a successful canvas mutation, "
+    "use mode=mutation and include every exact same-turn successful receipt as "
+    "{\"bridge_key\":\"actual returned key\",\"revision\":null}, or "
+    "{\"bridge_key\":null,\"revision\":actual_returned_integer} for direct apply. "
+    "Never invent receipts. For read_only or blocked, use canvas_receipts=[]. "
+    "A creation receipt does not prove media generation or parameter persistence."
+)
+
 CANVAS_REPLY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,

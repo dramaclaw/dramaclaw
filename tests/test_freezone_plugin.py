@@ -2188,6 +2188,44 @@ def test_freezone_get_workflow_skill_returns_json_when_registry_summarizes(monke
     assert decoded["recipe_definitions_omitted"] is True
 
 
+def test_freezone_get_workflow_skill_preserves_planning_package_through_mcp(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_minimal_builtin_catalog(monkeypatch, catalog)
+    plugin = _load_plugin_module_with_registry_result(lambda value: "summarized")
+    monkeypatch.setattr(plugin, "get_workflow_skill", catalog.get_workflow_skill)
+    result = json.loads(plugin._handle_get_workflow_skill({"skill_id": "ecommerce-product"}))
+
+    structured = _assert_real_mcp_output(plugin, "freezone_get_workflow_skill", result)
+
+    for field in (
+        "skill_id", "user_goal", "source", "recipe_definitions_omitted",
+        "available_recipes", "capabilities", "allowed_node_types", "allowed_link_types",
+        "input_contract", "planning_contract",
+    ):
+        assert structured[field] == result[field]
+    assert structured["available_recipes"]
+    assert structured["recipe_definitions_omitted"] is True
+    assert structured["recipes"] == []
+
+
+def test_compiled_workflow_timeline_role_passes_plan_submission_schema(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_minimal_builtin_catalog(monkeypatch, catalog)
+    plugin = _load_plugin_module()
+    compiled = catalog.compile_workflow_intent({
+        "skill_id": "ecommerce-product", "user_goal": "产品图",
+        "items": [{"id": "product", "title": "产品", "recipe_id": "general-image",
+                   "prompt": "产品图", "timeline_role": "act1_setup"}],
+    })
+    assert compiled["ok"] is True
+    plan = compiled["plan"]
+    assert any(n.get("data", {}).get("workflowCatalog", {}).get("timelineRole") == "act1_setup"
+               for n in plan["nodes"])
+    schema = {name: schema for name, schema, _ in plugin.TOOLS}[
+        "freezone_prepare_workflow_plan_draft"]["parameters"]
+    Draft202012Validator(schema).validate({"operation_id": "agent_product_test", "plan": plan})
+
+
 def test_freezone_get_workflow_skill_accepts_native_skill_id(monkeypatch):
     plugin = _load_plugin_module_with_registry_result(lambda value: "summarized")
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
@@ -2211,6 +2249,9 @@ def test_freezone_get_workflow_skill_always_omits_recipe_definitions(monkeypatch
     assert decoded["recipe_definitions_omitted"] is True
     assert decoded["available_recipes"]
     assert decoded["planning_contract"]["mode"] == "dynamic_only"
+    assert decoded["planning_contract"]["node_prompt_role"] == "task_brief"
+    assert "upstream outputs" in decoded["agent_instruction"]
+    assert "Do not invent" in decoded["agent_instruction"]
 
 
 def test_freezone_get_workflow_skill_records_structured_result_side_channel(

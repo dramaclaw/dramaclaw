@@ -522,10 +522,13 @@ def get_workflow_skill(args: dict[str, Any]) -> dict[str, Any]:
             source_anchor_recipe_ids.setdefault(output_kind, []).append(recipe_id)
     input_contract = _skill_input_contract(skill, args)
     compact = bool(args.get("compact"))
+    from novelvideo.freezone.workflow_planning import WORKFLOW_PLANNING_INSTRUCTIONS
+
     planning_skill = _without_private_fields(skill)
     return {
         "ok": True,
         "schema_version": "freezone_workflow_skill_package.v1",
+        "agent_instruction": WORKFLOW_PLANNING_INSTRUCTIONS,
         "skill_id": _text(skill.get("id")),
         "user_goal": _workflow_goal_text(args),
         "source": _catalog_source(skill),
@@ -558,6 +561,8 @@ def get_workflow_skill(args: dict[str, Any]) -> dict[str, Any]:
         "allowed_link_types": sorted(ALLOWED_LINK_TYPES),
         "input_contract": input_contract,
         "planning_contract": {
+            "node_prompt_role": "task_brief",
+            "execution_prompt_owner": "runtime_recipe_compiler",
             "schema_version": PLAN_SCHEMA_VERSION,
             "workflow_type_prefix": "dynamic.",
             "mode": "dynamic_only",

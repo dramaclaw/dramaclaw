@@ -9,6 +9,10 @@ production Skill does not turn an exact topology request into the normal draft f
    `freezone_get_workflow_skill(skill_id=...)`.
 2. Author one complete `freezone_workflow_plan.v1` using only that Skill's allowed node capabilities
    and Recipe IDs returned in `available_recipes`.
+   Node prompts are short task briefs, not final production prompts. Describe the node's task and
+   which actual upstream outputs/reference assets it must consume. Do not prewrite generated
+   scripts, shot-by-shot storyboards, dialogue, or camera/sound details. Preserve user-supplied
+   content and constraints; execution-time Recipe compilation produces the executable prompt.
    Author semantic Plan fields only. Do not construct `canvas_chat_commands.v1` yourself: the graph
    compiler owns command defaults, stable IDs, layout, grouping, and final static command validation.
    Use only canonical `node_type` for each node's portable kind. The public MCP contract rejects
@@ -73,3 +77,7 @@ groups, or layout after the graph call. Never write placeholder or diagnostic no
 `T1/T2`, or “测试节点” to the user's canvas. If read-only diagnosis is required, pass the same
 complete plan to `workflow_graph_compile`; never compile a reduced probe or a multi-node plan with
 an empty `edges` array.
+
+For compact Intent submissions, composition policy belongs at `intent.include_compose`
+and must not be placed inside `intent.planner`. The planner object contains only its
+advertised planning fields; `include_compose` is a sibling of `planner` and `items`.

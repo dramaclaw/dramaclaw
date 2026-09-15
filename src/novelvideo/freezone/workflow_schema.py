@@ -98,6 +98,7 @@ def _catalog_schema(*, recipe_required: bool = False) -> dict[str, Any]:
             "skillId": {"type": "string", "minLength": 1},
             "skillVersion": _version_schema(),
             "stepId": {"type": "string", "minLength": 1},
+            "timelineRole": {"type": "string"},
             "operationType": {"type": "string", "minLength": 1},
             "recipeId": {"type": "string", "minLength": 1},
             "recipeName": {"type": "string"},
@@ -516,7 +517,10 @@ def workflow_intent_json_schema() -> dict[str, Any]:
     }
     return {
         "type": "object",
-        "description": "Compact freezone_workflow_intent.v1 planning decision.",
+        "description": (
+            "Compact freezone_workflow_intent.v1 planning decision. "
+            "Put composition policy at intent.include_compose, never inside intent.planner."
+        ),
         "properties": {
             "schema_version": {
                 "type": "string",
@@ -529,6 +533,11 @@ def workflow_intent_json_schema() -> dict[str, Any]:
             "inputs": {"type": "object"},
             "planner": {
                 "type": "object",
+                "description": (
+                    "Planning mode, deliverable, duration, and units. "
+                    "Composition is controlled by sibling intent.include_compose; "
+                    "do not put include_compose here."
+                ),
                 "properties": {
                     "mode": {"type": "string", "enum": ["standard"]},
                     "deliverable": {
@@ -549,7 +558,10 @@ def workflow_intent_json_schema() -> dict[str, Any]:
             },
             "items": {"type": "array", "maxItems": 24, "items": item},
             "include_audio": {"type": "boolean"},
-            "include_compose": {"type": "boolean"},
+            "include_compose": {
+                "type": "boolean",
+                "description": "Composition policy at intent.include_compose, outside intent.planner.",
+            },
             "assumptions": {"type": "array", "items": {"type": "string"}},
         },
         "required": ["skill_id", "user_goal"],

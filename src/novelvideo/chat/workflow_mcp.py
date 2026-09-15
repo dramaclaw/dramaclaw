@@ -105,6 +105,7 @@ _WORKFLOW_OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
     ),
     "workflow_skill_get": _output_schema(
         {
+            "agent_instruction": {"type": "string"},
             "schema_version": {"const": "freezone_workflow_skill_package.v1"},
             "skill_id": {"type": "string", "minLength": 1},
             "skill": {"type": "object"},

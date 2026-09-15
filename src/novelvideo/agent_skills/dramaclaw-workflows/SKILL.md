@@ -9,6 +9,13 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
 
 ## Required behavior
 
+- Planning authors topology, Recipe selection, dependencies, confirmed parameters, and short
+  node task briefs. Each node prompt should state its task, scope, upstream outputs, and reference
+  roles in one or two concise sentences. Preserve user-provided story facts and source material.
+  Do not invent finished scripts, detailed shot-by-shot storyboards, dialogue, camera choreography,
+  sound cues, or final media prompts before upstream stages execute. Execution-time Recipe
+  compilation uses actual upstream outputs to produce executable prompts.
+
 - Read this Skill and its references only through the exact locator advertised by the current host.
   Never invent `project://` paths. Use a canvas summary already supplied by the host; if current
   canvas data must be refreshed, call `freezone_get_canvas_ontology` instead of inventing a

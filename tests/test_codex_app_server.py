@@ -224,7 +224,14 @@ def test_turn_metadata_is_sent_on_raw_turn_start(output_schema):
 
     assert handle.id == "turn-1"
     assert calls[0][0] == "thread-1"
-    assert calls[0][1] == [{"type": "text", "text": "hello"}]
+    if output_schema is None:
+        assert calls[0][1] == [{"type": "text", "text": "hello"}]
+    else:
+        text = calls[0][1][0]["text"]
+        assert text.startswith("hello")
+        assert "final response" in text
+        assert "JSON object" in text
+        assert json.dumps(output_schema, ensure_ascii=False) in text
     expected = {
         "responsesapiClientMetadata": {
             "dramaclaw_gateway_api_key": "turn-secret",

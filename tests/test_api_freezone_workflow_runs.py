@@ -2019,3 +2019,21 @@ def test_shared_project_generation_session_uses_requester_private_catalog(
         assert saved.json()['data']['manifest'] == manifest
     else:
         assert 'reused Recipe is unavailable' in response.json()['detail']
+def test_workflow_policy_change_persists_new_revision(workflow_run_client):
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-drafts"
+    created = workflow_run_client.post(base, json={
+        "intent": {"skill_id": "video-ad", "user_goal": "广告"},
+        "compiled": _valid_draft_compiled(), "run_after_create": False,
+    }).json()["data"]
+    response = workflow_run_client.patch(f"{base}/{created['draft_id']}", json={
+        "expected_revision": created["revision"], "changes": {"run_after_create": True},
+    })
+    assert response.status_code == 200
+    patched = response.json()["data"]
+    assert patched["revision"] == created["revision"] + 1
+    assert patched["run_after_create"] is True
+    assert patched["draft_id"] == created["draft_id"]
+    stale = workflow_run_client.patch(f"{base}/{created['draft_id']}", json={
+        "expected_revision": created["revision"], "changes": {"run_after_create": False},
+    })
+    assert stale.json()["status"] == "workflow_draft_revision_conflict"
