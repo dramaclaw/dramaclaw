@@ -202,7 +202,8 @@ def test_resume_does_not_hide_non_stale_invalid_request():
         _start_or_resume_codex_thread(FakeCodex(), "thread-1", {})
 
 
-def test_turn_metadata_is_sent_on_raw_turn_start():
+@pytest.mark.parametrize("output_schema", [None, {"type": "object"}])
+def test_turn_metadata_is_sent_on_raw_turn_start(output_schema):
     calls = []
 
     class FakeClient:
@@ -218,17 +219,35 @@ def test_turn_metadata_is_sent_on_raw_turn_start():
             "dramaclaw_gateway_api_key": "turn-secret",
             "dramaclaw_control_context_capability": "signed-capability",
         },
+        output_schema=output_schema,
     )
 
     assert handle.id == "turn-1"
     assert calls[0][0] == "thread-1"
     assert calls[0][1] == [{"type": "text", "text": "hello"}]
-    assert calls[0][2] == {
+    expected = {
         "responsesapiClientMetadata": {
             "dramaclaw_gateway_api_key": "turn-secret",
             "dramaclaw_control_context_capability": "signed-capability",
         }
     }
+    if output_schema is not None:
+        expected["outputSchema"] = output_schema
+    assert calls[0][2] == expected
+
+
+def test_output_schema_is_sent_even_without_turn_metadata():
+    calls = []
+
+    class FakeClient:
+        def turn_start(self, thread_id, input_items, params=None):
+            calls.append(params)
+            return SimpleNamespace(turn=SimpleNamespace(id="turn-schema"))
+
+    thread = SimpleNamespace(id="thread-schema", _client=FakeClient())
+    schema = {"type": "object"}
+    assert _start_codex_turn(thread, "hello", {}, schema).id == "turn-schema"
+    assert calls == [{"outputSchema": schema}]
 
 
 def test_codex_149_sdk_exposes_required_runtime_notifications():
