@@ -164,6 +164,9 @@ def test_external_mcp_ready_draft_honors_explicit_create_without_changing_plugin
         in adapted["agent_instruction"]
     )
     assert "without asking for another confirmation" in adapted["agent_instruction"]
+    assert "parameter clarification card" in adapted["agent_instruction"]
+    assert "named draft_id and revision" in adapted["agent_instruction"]
+    assert "actual canvas write receipt" in adapted["agent_instruction"]
 
 
 def test_external_mcp_ready_draft_removes_legacy_ce_billing_metadata():

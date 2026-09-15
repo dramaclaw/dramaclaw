@@ -1,4 +1,16 @@
 {
+  "workflowDraftContinuation": {
+    "ariaLabel": "工作流创建确认",
+    "title": "待确认的工作流方案",
+    "summary": "{{nodes}} 个节点 · {{edges}} 条连线。尚未写入画布。",
+    "changed": "方案状态已更新，请重新查看后确认。",
+    "failed": "未能提交确认，请重试；没有重新创建草稿。",
+    "confirmMessage": "确认创建此工作流",
+    "confirmRunMessage": "确认创建并执行此工作流",
+    "sending": "正在提交确认…",
+    "confirmRun": "确认创建并执行",
+    "confirm": "确认创建"
+  },
   "app": {
     "title": "SuperTale",
     "subtitle": "SuperTale 候选图生成与资产提交工作台",

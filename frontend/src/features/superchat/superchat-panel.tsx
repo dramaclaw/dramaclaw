@@ -1,6 +1,7 @@
 import { RECIPE_OUTPUT_CHOICES, recipeOutputChoice, recipeOutputFields, type RecipeOutputChoice } from "@/lib/recipe-output";
 import { type HtmlArtifactReference, parseHtmlArtifactReference, appendHtmlArtifactTransportContext } from '@/features/html-artifacts/chatReference';
 import { HtmlArtifactResultCard } from '@/features/html-artifacts/HtmlArtifactResultCard';
+import { WorkflowDraftContinuation } from './WorkflowDraftContinuation';
 import { activeHtmlArtifactContext, HTML_ARTIFACT_REFERENCE_EVENT } from '@/features/html-artifacts/api';
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
@@ -15281,6 +15282,15 @@ export function SuperChatPanel({
                     freezoneRecipeCatalog={freezoneRecipeCatalog}
                   />
                 ))}
+                {variant === "freezone" && params.project && effectiveFreezoneCanvasId && (
+                  <WorkflowDraftContinuation
+                    messages={chat.messages}
+                    projectId={params.project}
+                    canvasId={effectiveFreezoneCanvasId}
+                    busy={chat.busy}
+                    onConfirm={(display, transport) => chat.send(display, [], transport)}
+                  />
+                )}
                 {thinkingCanvasContextActivity && !thinkingCanvasContextMessageId && (
                   <MessageBubble
                     message={{
