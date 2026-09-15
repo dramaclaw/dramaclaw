@@ -744,7 +744,12 @@ export const VideoNode = memo(
             VIDEO_GENERATION_ASPECT_RATIOS,
             "16:9",
           );
-    const followsInputAspectRatio = videoModeForcesAutomaticAspectRatio(genMode);
+    // 智能续写虽然是全能参考模式，但 Seedance 会按提示词把它识别成「视频延长」，
+    // 这类任务硬校验比例必须跟随原片（`ratio` must be `adaptive`），指定具体比例
+    // 整单打回。时长不受此约束，照常用用户所选。isExtendMode 在下方才声明，这里
+    // 直接读 data，避免暂时性死区。
+    const followsInputAspectRatio =
+      videoModeForcesAutomaticAspectRatio(genMode) || Boolean(data.isExtendMode);
     // 关键帧/视频编辑的画幅跟随输入素材；只改变本次请求值，不覆盖节点保存的比例。
     // 其它模式在 Admin 配置存在时原样提交，未配置时保留旧版 auto 推导逻辑。
     const submitAspectRatio: FreezoneVideoAspectRatio =

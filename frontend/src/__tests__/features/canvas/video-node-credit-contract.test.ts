@@ -80,4 +80,14 @@ describe("canvas video generation credit contract", () => {
       "const submitDisabled =\n      isGenerating ||\n      videoBillingRuleMissing ||",
     );
   });
+
+  it("submits a source-following ratio for smart extend nodes", () => {
+    // 续写节点是全能参考模式，但 Seedance 会识别成「视频延长」并硬校验
+    // ratio 必须是 adaptive；前端提交 auto（跟随输入），后端在带参考视频的
+    // Seedance 请求上换成厂商原词 adaptive（_apply_seedance_source_video_ratio）。
+    expect(nodeSource).toMatch(
+      /const followsInputAspectRatio =\s*videoModeForcesAutomaticAspectRatio\(genMode\) \|\| Boolean\(data\.isExtendMode\);/,
+    );
+    expect(nodeSource).toMatch(/followsInputAspectRatio\s*\?\s*"auto"/);
+  });
 });

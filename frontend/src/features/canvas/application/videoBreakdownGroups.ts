@@ -305,6 +305,10 @@ export function planVideoBreakdownGroups(
   result: VideoBreakdownResultLike,
   options: PlanVideoBreakdownGroupsOptions
 ): VideoBreakdownGroupPlan[] {
+  // i18n-exempt-start 兜底的兜底：生产环境下 VideoBreakdownNode 总是传入
+  // 已翻译好的 *FallbackLabel（见 t('videoBreakdown.groups.*')），这三个中文
+  // 字面量只在调用方不传 options（例如单测直接调本函数）时才会被用到，不是
+  // 真正会展示给用户的文案，无需接 i18n。
   const storyboardFallback =
     options.storyboardFallbackLabel ??
     ((index: number) => `分镜组${String(index).padStart(2, '0')}`);
@@ -314,6 +318,7 @@ export function planVideoBreakdownGroups(
     planMotionGroup(result, options.motionFallbackLabel ?? '动态｜运镜动作参考'),
     planMusicGroup(result, options.musicFallbackLabel ?? '音乐｜BGM参考片段'),
   ].filter((plan): plan is VideoBreakdownGroupPlan => plan !== null);
+  // i18n-exempt-end
 
   let cursorY = Math.round(options.origin.y);
   for (const plan of plans) {

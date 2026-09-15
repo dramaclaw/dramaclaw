@@ -34,6 +34,7 @@ from novelvideo.egress_context import (
     TrustedEgressContext,
     ambient_organization_egress_context,
 )
+from novelvideo.i18n_message import MessageLike, lmsg
 from novelvideo.ports.egress import EgressError
 from novelvideo.task_backend.subprocesses import (
     EgressBoundaryError,
@@ -2264,7 +2265,7 @@ async def run_freezone_video_breakdown(
     motion_clip_max_sec: float = 6.0,
     music_clip_sec: float = 15.0,
     model: Optional[str] = None,
-    progress: Optional[Callable[[float, str], None]] = None,
+    progress: Optional[Callable[[float, MessageLike], None]] = None,
     egress_context: TrustedEgressContext | None = None,
 ) -> dict[str, Any]:
     """逐帧拉片：抽帧 → Vision 拆解 → 真的把分镜图 / 运镜片段 / BGM 切出来。
@@ -2307,7 +2308,7 @@ async def run_freezone_video_breakdown(
     out_dir = outputs_dir(project_dir, "freezone_video_breakdown") / job_id
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    def report(ratio: float, message: str) -> None:
+    def report(ratio: float, message: MessageLike) -> None:
         if progress is not None:
             progress(ratio, message)
 
@@ -2319,7 +2320,14 @@ async def run_freezone_video_breakdown(
     frame_target = plan_breakdown_frame_count(
         duration_sec=total_duration, max_frames=max_frames
     )
-    report(0.08, f"ffmpeg 抽取关键帧（目标 {frame_target} 帧）...")
+    report(
+        0.08,
+        lmsg(
+            "tasks.progress.videoBreakdown.extractFrames",
+            f"ffmpeg 抽取关键帧（目标 {frame_target} 帧）...",
+            frameTarget=frame_target,
+        ),
+    )
     frame_paths = await _extract_breakdown_frames(
         video_path=video_path,
         out_dir=out_dir / "frames",
@@ -2330,7 +2338,14 @@ async def run_freezone_video_breakdown(
     if not frame_paths:
         raise RuntimeError("no keyframes extracted from video")
 
-    report(0.28, f"Vision 拉片解析 {len(frame_paths)} 帧...")
+    report(
+        0.28,
+        lmsg(
+            "tasks.progress.videoBreakdown.analyzing",
+            f"Vision 拉片解析 {len(frame_paths)} 帧...",
+            frameCount=len(frame_paths),
+        ),
+    )
     prompt = build_video_breakdown_prompt(
         frame_count=len(frame_paths),
         duration_sec=total_duration,
@@ -2386,7 +2401,13 @@ async def run_freezone_video_breakdown(
                     f"vision model returned unusable output: {exc}; raw saved"
                 ) from exc
             logger.warning("breakdown vision output unusable (%s); retrying once", exc)
-            report(0.28, "模型输出无法解析，重试一次...")
+            report(
+                0.28,
+                lmsg(
+                    "tasks.progress.videoBreakdown.retrying",
+                    "模型输出无法解析，重试一次...",
+                ),
+            )
             continue
         raw = parsed
         break
@@ -2416,7 +2437,14 @@ async def run_freezone_video_breakdown(
 
     # ---- 分镜：在每一镜的中点抽图 --------------------------------------
     if "storyboard" in wanted:
-        report(0.5, f"切分镜图 {len(shots)} 张...")
+        report(
+            0.5,
+            lmsg(
+                "tasks.progress.videoBreakdown.storyboard",
+                f"切分镜图 {len(shots)} 张...",
+                shotCount=len(shots),
+            ),
+        )
         segments = raw.get("segments")
         groups = _group_breakdown_shots(
             shots,
@@ -2441,7 +2469,10 @@ async def run_freezone_video_breakdown(
 
     # ---- 动态：按运镜切视频片段 ----------------------------------------
     if "motion" in wanted:
-        report(0.68, "切运镜参考片段...")
+        report(
+            0.68,
+            lmsg("tasks.progress.videoBreakdown.motion", "切运镜参考片段..."),
+        )
         width, height = await _probe_video_size(source_path)
         clips: list[dict[str, Any]] = []
         for index, shot in enumerate(_select_motion_shots(shots, max_clips=max_motion_clips), 1):
@@ -2491,7 +2522,10 @@ async def run_freezone_video_breakdown(
 
     # ---- 音乐：从原片截一段 BGM ----------------------------------------
     if "music" in wanted:
-        report(0.86, "截取 BGM 参考片段...")
+        report(
+            0.86,
+            lmsg("tasks.progress.videoBreakdown.music", "截取 BGM 参考片段..."),
+        )
         clip: Optional[dict[str, Any]] = None
         if await _probe_has_audio(source_path):
             raw_music = raw.get("music") if isinstance(raw.get("music"), dict) else {}
@@ -2531,7 +2565,7 @@ async def run_freezone_video_breakdown(
     out_file = out_dir / "breakdown.json"
     out_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     payload["output_path"] = str(out_file)
-    report(0.95, "拉片结果写入完成")
+    report(0.95, lmsg("tasks.progress.videoBreakdown.saved", "拉片结果写入完成"))
     return payload
 
 

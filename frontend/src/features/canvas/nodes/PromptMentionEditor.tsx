@@ -209,7 +209,7 @@ function buildTimecodeChipElement(token: string): HTMLElement {
   span.contentEditable = 'false';
   span.dataset.timecode = token;
   span.className = 'mention-chip mention-chip-timecode';
-  span.title = '片段重拍截取的时间区间';
+  span.title = i18n.t('canvas.mentionChip.reshootTimecode');
   const labelEl = document.createElement('span');
   labelEl.className = 'mention-chip-label';
   labelEl.textContent = token;
@@ -250,8 +250,8 @@ function buildPrefixElement(prefix: PromptEditorPrefix, removable: boolean): HTM
     remove.contentEditable = 'false';
     remove.dataset.promptPrefixRemove = '';
     remove.className = 'prompt-prefix-chip-remove';
-    remove.setAttribute('aria-label', '删除前缀');
-    remove.title = '删除';
+    remove.setAttribute('aria-label', i18n.t('canvas.mentionChip.removePrefix'));
+    remove.title = i18n.t('common.delete');
     remove.innerHTML =
       '<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
       '<path d="M3.2 3.2 8.8 8.8M8.8 3.2 3.2 8.8" fill="none" stroke="currentColor" ' +

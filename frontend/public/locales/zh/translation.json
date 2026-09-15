@@ -4521,7 +4521,8 @@
         "placeholder": "请输入文件夹名称",
         "createHint": "创建后可立即用于归档和上传资产",
         "renameHint": "修改后会同步更新资产库中的显示名称"
-      }
+      },
+      "commitDragHint": "按住拖到左侧素材库,替换同类型素材"
     },
     "referencePick": {
       "kind": {
@@ -4974,7 +4975,10 @@
       "muteTodo": "静音（待实现）",
       "loopTodo": "循环（待实现）",
       "submitting": "截取中…",
-      "submit": "提交截取"
+      "submit": "提交截取",
+      "retryExtract": "重新提取画面帧",
+      "startHandle": "截取起点",
+      "endHandle": "截取终点"
     },
     "mentionReplace": {
       "empty": "没有可替换的素材",
@@ -5059,7 +5063,9 @@
     "mentionChip": {
       "doubleClickReplace": "双击替换引用",
       "clickToPlay": "{{label}} · 点击播放",
-      "replace": "替换引用"
+      "replace": "替换引用",
+      "removePrefix": "删除前缀",
+      "reshootTimecode": "片段重拍截取的时间区间"
     },
     "naming": {
       "copySuffix": "{{name}} - 副本",
@@ -5131,6 +5137,30 @@
     },
     "assetDrop": {
       "fallbackNodeLabel": "节点"
+    },
+    "videoExtend": {
+      "boundMin": "所选视频最短不小于 {{seconds}} 秒",
+      "boundMax": "所选视频最长不大于 {{seconds}} 秒",
+      "defaultSourceName": "原视频",
+      "defaultLabel": "视频",
+      "promptPrefix": "对 {{name}} 的 {{start}}-{{end}} 片段进行续写：",
+      "nodeDisplayName": "续写 {{name}}",
+      "durationSeconds": "{{seconds}} 秒",
+      "exit": "退出续写截取",
+      "startHandle": "续写片段起点",
+      "endHandle": "续写片段终点",
+      "tooShort": "视频不足 {{seconds}} 秒，无法续写",
+      "confirm": "确认续写"
+    },
+    "videoReshoot": {
+      "clickToCapture": "点击可截取新片段",
+      "dragStart": "拖动以调整起点",
+      "dragEnd": "拖动以调整终点",
+      "deleteClip": "删除该片段",
+      "countFullHint": "已达 {{max}} 段上限，删掉一段再截",
+      "durationFullHint": "Seedance 2.5 视频素材总时长上限 {{seconds}}s，已用满；拖短某一段再截",
+      "hint": "点击截取 {{clipSeconds}}s，拖动两端微调（单段不短于 {{clipSeconds}}s，合计不超过 {{maxSeconds}}s）",
+      "clipCount": "{{count}}/{{max}} 个片段"
     }
   },
   "tool": {
@@ -5762,7 +5792,8 @@
       },
       "aspect": {
         "title": "比例",
-        "auto": "Auto"
+        "auto": "Auto",
+        "followsSource": "跟随原片"
       },
       "quality": {
         "title": "清晰度"
@@ -5871,7 +5902,8 @@
         "failed": "截取失败：{{detail}}"
       },
       "videoEdit": {
-        "imageLimit": "视频编辑最多支持 {{limit}} 张参考图，已使用前 {{limit}} 张（忽略其余 {{ignored}} 张）"
+        "imageLimit": "视频编辑最多支持 {{limit}} 张参考图，已使用前 {{limit}} 张（忽略其余 {{ignored}} 张）",
+        "followsSourceHint": "视频编辑的画面比例与时长由原片决定，不可指定。"
       },
       "allReference": {
         "happyHorseUnsupported": "HappyHorse 不支持全能参考模式，请切换为文生视频或图生视频。",
@@ -6290,7 +6322,11 @@
         "videoUpstreamAllRefOnly": "上游含视频素材时只能用「全能参考」",
         "hasImageOrAudioRefs": "已引用图片/音频素材时不可用",
         "moreThanTwoImages": "上游图片超过 2 张时不可用"
-      }
+      },
+      "extendLockReason": "智能续写仅支持 Seedance 2.5 的全能参考模式",
+      "extendPlaceholder": "请输入需要续写的内容",
+      "reshootLockedReason": "片段重拍仅支持 Seedance 2.5",
+      "modeRestrictedDefault": "该节点不支持切换生成模式"
     },
     "threeDWorld": {
       "upstreamNodeFallback": "上游节点",

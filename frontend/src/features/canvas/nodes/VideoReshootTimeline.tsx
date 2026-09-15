@@ -11,6 +11,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
 import { captureVideoFrames } from '@/features/canvas/application/videoFrameStrip';
@@ -76,6 +77,7 @@ export const VideoReshootTimeline = memo(function VideoReshootTimeline({
   clips,
   onChange,
 }: VideoReshootTimelineProps) {
+  const { t } = useTranslation();
   const totalMs = useMemo(
     () => (typeof durationMs === 'number' && durationMs > 0 ? durationMs : null),
     [durationMs],
@@ -255,17 +257,17 @@ export const VideoReshootTimeline = memo(function VideoReshootTimeline({
 
         {thumbsState === 'loading' && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[11px] text-text-muted/70">
-            提取画面帧中…
+            {t('canvas.videoClip.extractingFrames')}
           </div>
         )}
         {thumbsState === 'error' && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[11px] text-text-muted/70">
-            画面帧加载失败
+            {t('canvas.videoClip.framesFailed')}
           </div>
         )}
         {thumbsState === 'ready' && clips.length === 0 && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-md bg-black/45 text-[11px] text-white/85">
-            点击可截取新片段
+            {t('canvas.videoReshoot.clickToCapture')}
           </div>
         )}
 
@@ -284,14 +286,14 @@ export const VideoReshootTimeline = memo(function VideoReshootTimeline({
             <div
               className="absolute inset-y-0 left-0 flex w-3 cursor-ew-resize items-center justify-center rounded-l-md bg-[#2f6bff]"
               onPointerDown={startResize(clip.id, 'start')}
-              title="拖动以调整起点"
+              title={t('canvas.videoReshoot.dragStart')}
             >
               <div className="pointer-events-none h-4 w-[2px] rounded-full bg-white/85" />
             </div>
             <div
               className="absolute inset-y-0 right-0 flex w-3 cursor-ew-resize items-center justify-center rounded-r-md bg-[#2f6bff]"
               onPointerDown={startResize(clip.id, 'end')}
-              title="拖动以调整终点"
+              title={t('canvas.videoReshoot.dragEnd')}
             >
               <div className="pointer-events-none h-4 w-[2px] rounded-full bg-white/85" />
             </div>
@@ -306,8 +308,8 @@ export const VideoReshootTimeline = memo(function VideoReshootTimeline({
                 event.stopPropagation();
                 onChange(removeReshootClip(clips, clip.id));
               }}
-              title="删除该片段"
-              aria-label="删除该片段"
+              title={t('canvas.videoReshoot.deleteClip')}
+              aria-label={t('canvas.videoReshoot.deleteClip')}
             >
               <X className="h-2.5 w-2.5" />
             </button>
@@ -321,14 +323,22 @@ export const VideoReshootTimeline = memo(function VideoReshootTimeline({
         className="flex shrink-0 flex-col items-end gap-0.5 px-1 text-[11px] leading-tight tabular-nums text-text-muted/80"
         title={
           countFull
-            ? '已达 5 段上限，删掉一段再截'
+            ? t('canvas.videoReshoot.countFullHint', { max: MAX_RESHOOT_CLIPS })
             : full
-              ? 'Seedance 2.5 视频素材总时长上限 30s，已用满；拖短某一段再截'
-              : '点击截取 4s，拖动两端微调（单段不短于 4s，合计不超过 30s）'
+              ? t('canvas.videoReshoot.durationFullHint', {
+                  seconds: MAX_RESHOOT_TOTAL_MS / 1000,
+                })
+              : t('canvas.videoReshoot.hint', {
+                  clipSeconds: MIN_RESHOOT_CLIP_MS / 1000,
+                  maxSeconds: MAX_RESHOOT_TOTAL_MS / 1000,
+                })
         }
       >
         <span>
-          {clips.length}/{MAX_RESHOOT_CLIPS} 个片段
+          {t('canvas.videoReshoot.clipCount', {
+            count: clips.length,
+            max: MAX_RESHOOT_CLIPS,
+          })}
         </span>
         <span className={full && !countFull ? 'text-amber-400/90' : undefined}>
           {formatSeconds(usedMs)}/{formatSeconds(MAX_RESHOOT_TOTAL_MS)}

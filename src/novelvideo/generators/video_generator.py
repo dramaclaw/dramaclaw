@@ -50,6 +50,7 @@ from novelvideo.storage.media_relay import (
     media_relay_ttl_seconds,
     upload_media_bytes,
 )
+from novelvideo.i18n_message import lmsg
 from novelvideo.task_backend.cancel import TaskCancelled, TaskTimedOut
 from novelvideo.task_backend.envelope import RunningTaskAuthorityIndeterminate
 from novelvideo.task_backend.subprocesses import run_project_subprocess
@@ -2355,6 +2356,35 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             return False
         return self.model.strip().lower().startswith("seedance-")
 
+    def _apply_seedance_source_video_ratio(self, payload: dict) -> dict:
+        """Seedance 带输入视频时，「跟随输入」的比例要按厂商原词发 `adaptive`。
+
+        规范契约把跟随输入写成 `auto`，网关方舟适配器把 metadata.ratio 原样透传，
+        而 Seedance 的比例枚举里没有 `auto`。纯首帧任务厂商不深究，但它按提示词
+        把任务识别成视频编辑 / 视频延长（画布「智能续写」）时会硬校验::
+
+            Issues: [0] `ratio` must be `adaptive`.
+
+        所以只在「Seedance + 比例已是 auto + 带参考视频」时换成 `adaptive`；
+        用户明确选了比例、或没有视频输入的请求一律不动。必须放在所有契约规范化
+        之后调用，否则会被重新折回 `auto`。
+        """
+
+        if not self.model.strip().lower().startswith("seedance-"):
+            return payload
+        metadata = payload.get("metadata")
+        if not isinstance(metadata, dict):
+            return payload
+        if str(metadata.get("ratio") or "").strip().lower() != "auto":
+            return payload
+        videos = metadata.get("reference_videos")
+        if not isinstance(videos, list) or not any(
+            isinstance(url, str) and url.strip() for url in videos
+        ):
+            return payload
+        metadata["ratio"] = "adaptive"
+        return payload
+
     @staticmethod
     def _happyhorse_ratio(value: str | None) -> str:
         text = str(value or "").strip()
@@ -3139,7 +3169,12 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 # 走 payload["seconds"]，与上面的常规路径同一个入口；
                 # `_canonicalize_video_payload` 认得这个 -1 并原样发出去。
                 payload["seconds"] = str(SOURCE_FOLLOWING_DURATION)
-                log("视频编辑：比例与时长跟随原片（不下发用户所选值）")
+                log(
+                    lmsg(
+                        "tasks.log.videoGen.editFollowsSource",
+                        "视频编辑：比例与时长跟随原片（不下发用户所选值）",
+                    )
+                )
         elif self._is_happyhorse_model():
             if len(prompt) > 2500:
                 prompt = prompt[:2500]
@@ -3406,6 +3441,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                 payload, media_type="video"
             )
             payload = enforce_newapi_video_duration_contract(payload)
+            payload = self._apply_seedance_source_video_ratio(payload)
             reservation_id = await _reserve_video_model_call(
                 self.model,
                 source="newapi_video_generation",

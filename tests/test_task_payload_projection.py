@@ -132,8 +132,9 @@ def _registered_task_types() -> tuple[str, ...]:
 
 def test_registered_task_types_are_the_full_bridge_set() -> None:
     """Guards the iteration source itself: T1 is only meaningful if it sees them all."""
+    # 2026-09-15 由 19 → 20：新增 `freezone_video_breakdown`（逐帧拉片）。
     task_types = _registered_task_types()
-    assert len(task_types) == 19, task_types
+    assert len(task_types) == 20, task_types
     assert {
         "mainline_sketch_from_context",
         "mainline_frame_from_context",

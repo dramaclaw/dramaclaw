@@ -8,6 +8,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from novelvideo.i18n_message import MessageLike, lmsg
 from novelvideo.egress_context import (
     TRUSTED_EGRESS_CONTEXT_KEY,
     TrustedEgressContext,
@@ -176,7 +177,7 @@ def _update(
     task_type: str,
     scope: str,
     progress: float,
-    current_task: str,
+    current_task: MessageLike,
     *,
     episode: int = 0,
 ) -> None:
@@ -567,10 +568,10 @@ async def _run_freezone_video_breakdown_async(
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
 
-    def report(ratio: float, message: str) -> None:
+    def report(ratio: float, message: MessageLike) -> None:
         _update(ctx, "freezone_video_breakdown", job_id, ratio, message)
 
-    report(0.05, "开始逐帧拉片...")
+    report(0.05, lmsg("tasks.progress.videoBreakdown.start", "开始逐帧拉片..."))
     result = await _call_freezone_leaf(
         envelope,
         run_freezone_video_breakdown,

@@ -65,7 +65,7 @@ describe("canvas video breakdown credit contract", () => {
     // 用户以为点一下就花钱（对比「解析」：那颗是直接提交，所以它带价签）。
     const entry = toolbarSource.slice(
       toolbarSource.indexOf('key="video-frame-analysis"'),
-      toolbarSource.indexOf('key="video-extend"'),
+      toolbarSource.indexOf('key="video-subtitle-removal"'),
     );
     expect(entry).not.toBe("");
     expect(entry).not.toContain("CreditCostPill");
@@ -76,7 +76,7 @@ describe("canvas video breakdown credit contract", () => {
     // 上一条已经保证这段没有价签，这里只钉住它接的是真处理器而不是占位。
     const entry = toolbarSource.slice(
       toolbarSource.indexOf('key="video-frame-analysis"'),
-      toolbarSource.indexOf('key="video-extend"'),
+      toolbarSource.indexOf('key="video-subtitle-removal"'),
     );
     expect(entry).toContain("onSelect={handleVideoMotionCapture}");
     expect(entry).not.toContain('handleVideoStub("motion-capture")');
@@ -86,7 +86,7 @@ describe("canvas video breakdown credit contract", () => {
     // 画面裁切在浏览器里裁、不扣费；入口只切源节点的 isCropMode，框和浮条由 VideoNode 挂。
     const entry = toolbarSource.slice(
       toolbarSource.indexOf('key="video-frame-analysis"'),
-      toolbarSource.indexOf('key="video-extend"'),
+      toolbarSource.indexOf('key="video-subtitle-removal"'),
     );
     expect(entry).toContain("isCropMode: true");
     expect(entry).not.toContain('handleVideoStub("frame-crop")');
@@ -116,7 +116,7 @@ describe("canvas video breakdown credit contract", () => {
 
     const frameAnalysisEntry = toolbarSource.slice(
       toolbarSource.indexOf('key="video-frame-analysis"'),
-      toolbarSource.indexOf('key="video-extend"'),
+      toolbarSource.indexOf('key="video-subtitle-removal"'),
     );
     expect(frameAnalysisEntry).toContain("guardVideoCropInFlight(node.id)");
     expect(toolbarSource).toMatch(
@@ -124,6 +124,18 @@ describe("canvas video breakdown credit contract", () => {
         "if (guardVideoCropInFlight(node.id)) return; updateNodeData(node.id, { isExtendPickMode: true, isCropMode: false });",
       ),
     );
+  });
+
+  it("groups reshoot and smart extend under one dropdown", () => {
+    // 两个入口依赖同一个 Seedance 2.5 模型，合进「片段重拍」下拉，不再各占一颗按钮。
+    expect(toolbarSource).not.toContain('key="video-extend"');
+    const entry = toolbarSource.slice(
+      toolbarSource.indexOf('key="video-reshoot"'),
+      toolbarSource.indexOf('key="video-hd"'),
+    );
+    expect(entry).toContain("onSelect={() => handleVideoReshoot()}");
+    expect(entry).toContain("onSelect={() => handleVideoExtendPick()}");
+    expect(entry.match(/disabled=\{!hasVideo \|\| !reshootModel\}/g)).toHaveLength(2);
   });
 
   it("clears isCropMode from both subtitle-erase entries", () => {

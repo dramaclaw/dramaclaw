@@ -1530,3 +1530,45 @@ async def test_newapi_video_seedance2_references_normalize_only_image_refs(
         item["ttl"] == video_module.NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS
         for item in captured
     )
+
+
+@pytest.mark.parametrize(
+    ("model", "metadata", "expected_ratio"),
+    [
+        # 智能续写 / 视频编辑：Seedance + 跟随输入 + 带参考视频 → 厂商原词 adaptive
+        (
+            "seedance-2.5",
+            {"ratio": "auto", "reference_videos": ["https://example.com/source.mp4"]},
+            "adaptive",
+        ),
+        # 纯首帧任务没有视频输入，保持规范契约的 auto
+        ("seedance-2.5", {"ratio": "auto"}, "auto"),
+        # 用户明确选了比例，不替用户改
+        (
+            "seedance-2.5",
+            {"ratio": "16:9", "reference_videos": ["https://example.com/source.mp4"]},
+            "16:9",
+        ),
+        # 非 Seedance 渠道走各自协议，不动
+        (
+            "happyhorse-1.0",
+            {"ratio": "auto", "reference_videos": ["https://example.com/source.mp4"]},
+            "auto",
+        ),
+    ],
+)
+def test_newapi_seedance_source_video_ratio_uses_vendor_adaptive(
+    model, metadata, expected_ratio
+):
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+
+    generator = NewApiVideoGenerator(
+        api_key="test-key",
+        endpoint="https://newapi.example",
+        model=model,
+    )
+    payload = {"model": model, "metadata": dict(metadata)}
+
+    result = generator._apply_seedance_source_video_ratio(payload)
+
+    assert result["metadata"]["ratio"] == expected_ratio

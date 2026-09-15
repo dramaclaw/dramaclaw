@@ -4521,7 +4521,8 @@
         "placeholder": "Enter a folder name",
         "createHint": "Ready to use for filing and uploading assets as soon as it exists",
         "renameHint": "The new name shows up across the asset library"
-      }
+      },
+      "commitDragHint": "Hold and drag to the asset library on the left to replace assets of the same type"
     },
     "referencePick": {
       "kind": {
@@ -4974,7 +4975,10 @@
       "muteTodo": "Mute (not implemented yet)",
       "loopTodo": "Loop (not implemented yet)",
       "submitting": "Extracting…",
-      "submit": "Extract segment"
+      "submit": "Extract segment",
+      "retryExtract": "Retry extracting frames",
+      "startHandle": "Clip start",
+      "endHandle": "Clip end"
     },
     "mentionReplace": {
       "empty": "No assets available to swap in",
@@ -5059,7 +5063,9 @@
     "mentionChip": {
       "doubleClickReplace": "Double-click to replace this reference",
       "clickToPlay": "{{label}} · click to play",
-      "replace": "Replace reference"
+      "replace": "Replace reference",
+      "removePrefix": "Remove prefix",
+      "reshootTimecode": "Reshoot clip time range"
     },
     "naming": {
       "copySuffix": "{{name}} - Copy",
@@ -5131,6 +5137,30 @@
     },
     "assetDrop": {
       "fallbackNodeLabel": "Node"
+    },
+    "videoExtend": {
+      "boundMin": "The selected clip must be at least {{seconds}}s",
+      "boundMax": "The selected clip can't exceed {{seconds}}s",
+      "defaultSourceName": "the source video",
+      "defaultLabel": "video",
+      "promptPrefix": "Extend the {{start}}-{{end}} clip of {{name}}: ",
+      "nodeDisplayName": "Extend {{name}}",
+      "durationSeconds": "{{seconds}}s",
+      "exit": "Exit extend clip selection",
+      "startHandle": "Extend clip start",
+      "endHandle": "Extend clip end",
+      "tooShort": "Video is shorter than {{seconds}}s and can't be extended",
+      "confirm": "Confirm extend"
+    },
+    "videoReshoot": {
+      "clickToCapture": "Click to capture a new clip",
+      "dragStart": "Drag to adjust the start",
+      "dragEnd": "Drag to adjust the end",
+      "deleteClip": "Delete this clip",
+      "countFullHint": "Reached the {{max}}-clip limit; delete one to add another",
+      "durationFullHint": "Seedance 2.5 caps total clip length at {{seconds}}s and it's full; shorten a clip to add more",
+      "hint": "Click to capture {{clipSeconds}}s, drag either end to fine-tune (each clip ≥ {{clipSeconds}}s, total ≤ {{maxSeconds}}s)",
+      "clipCount": "{{count}}/{{max}} clips"
     }
   },
   "tool": {
@@ -5762,7 +5792,8 @@
       },
       "aspect": {
         "title": "Aspect Ratio",
-        "auto": "Auto"
+        "auto": "Auto",
+        "followsSource": "Follows source"
       },
       "quality": {
         "title": "Quality"
@@ -5871,7 +5902,8 @@
         "failed": "Extraction failed: {{detail}}"
       },
       "videoEdit": {
-        "imageLimit": "Video editing supports at most {{limit}} reference images; the first {{limit}} were used ({{ignored}} ignored)"
+        "imageLimit": "Video editing supports at most {{limit}} reference images; the first {{limit}} were used ({{ignored}} ignored)",
+        "followsSourceHint": "Video edit's aspect ratio and duration follow the source video and can't be set manually."
       },
       "allReference": {
         "happyHorseUnsupported": "HappyHorse doesn’t support omni reference. Switch to text-to-video or image-to-video.",
@@ -6290,7 +6322,11 @@
         "videoUpstreamAllRefOnly": "With video upstream, only “All reference” is available",
         "hasImageOrAudioRefs": "Unavailable while image/audio assets are referenced",
         "moreThanTwoImages": "Unavailable with more than 2 upstream images"
-      }
+      },
+      "extendLockReason": "Smart extend only supports Seedance 2.5's all-reference mode",
+      "extendPlaceholder": "Enter what you want to extend with",
+      "reshootLockedReason": "Reshoot only supports Seedance 2.5",
+      "modeRestrictedDefault": "This node doesn't support switching generation mode"
     },
     "threeDWorld": {
       "upstreamNodeFallback": "Upstream node",

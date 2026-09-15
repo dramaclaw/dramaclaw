@@ -2203,29 +2203,60 @@ export const NodeActionToolbar = memo(
 
                 return (
                   <>
-                    <UiChipButton
-                      key="video-reshoot"
-                      className={`${stubButtonClass} ${
-                        !hasVideo || !reshootModel
-                          ? "opacity-50 cursor-not-allowed"
-                          : ""
-                      }`}
-                      title={
-                        !hasVideo
-                          ? t("nodeToolbar.video.requiresVideo")
-                          : !reshootModel
-                            ? t("nodeToolbar.video.reshootRequiresSeedance25")
-                            : undefined
-                      }
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        if (!hasVideo || !reshootModel) return;
-                        handleVideoReshoot();
+                    {/* 片段重拍 / 智能续写都要一个能改视频的 Seedance 2.5 模型，
+                        共用一个下拉；没有视频或没有模型时两项一起置灰，原因挂在
+                        触发按钮的 title 上。 */}
+                    <DropdownMenu
+                      onOpenChange={(open) => {
+                        if (open) closeDownloadMenu();
                       }}
                     >
-                      <Clapperboard className="h-3.5 w-3.5" />
-                      {t("nodeToolbar.video.reshoot")}
-                    </UiChipButton>
+                      <DropdownMenuTrigger asChild>
+                        <UiChipButton
+                          key="video-reshoot"
+                          className={`${stubButtonClass} ${
+                            !hasVideo || !reshootModel
+                              ? "opacity-50 cursor-not-allowed"
+                              : ""
+                          }`}
+                          title={
+                            !hasVideo
+                              ? t("nodeToolbar.video.requiresVideo")
+                              : !reshootModel
+                                ? t("nodeToolbar.video.reshootRequiresSeedance25")
+                                : undefined
+                          }
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <Clapperboard className="h-3.5 w-3.5" />
+                          {t("nodeToolbar.video.reshoot")}
+                          <ChevronDown className="h-3 w-3" />
+                        </UiChipButton>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        align="start"
+                        sideOffset={6}
+                        className={`${TOOLBAR_MENU_CONTENT_CLASS} min-w-[160px]`}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <DropdownMenuItem
+                          className={TOOLBAR_MENU_ITEM_CLASS}
+                          disabled={!hasVideo || !reshootModel}
+                          onSelect={() => handleVideoReshoot()}
+                        >
+                          <Clapperboard className="h-4 w-4" />
+                          {t("nodeToolbar.video.reshoot")}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className={TOOLBAR_MENU_ITEM_CLASS}
+                          disabled={!hasVideo || !reshootModel}
+                          onSelect={() => handleVideoExtendPick()}
+                        >
+                          <ClockPlus className="h-4 w-4" />
+                          {t("nodeToolbar.video.extend")}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                     <UiChipButton
                       key="video-hd"
                       className={`${stubButtonClass} ${!hasVideo ? "opacity-50 cursor-not-allowed" : ""}`}
@@ -2372,29 +2403,6 @@ export const NodeActionToolbar = memo(
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
-                    <UiChipButton
-                      key="video-extend"
-                      className={`${stubButtonClass} ${
-                        !hasVideo || !reshootModel
-                          ? "opacity-50 cursor-not-allowed"
-                          : ""
-                      }`}
-                      title={
-                        !hasVideo
-                          ? t("nodeToolbar.video.requiresVideo")
-                          : !reshootModel
-                            ? t("nodeToolbar.video.extendRequiresSeedance25")
-                            : undefined
-                      }
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        if (!hasVideo || !reshootModel) return;
-                        handleVideoExtendPick();
-                      }}
-                    >
-                      <ClockPlus className="h-3.5 w-3.5" />
-                      {t("nodeToolbar.video.extend")}
-                    </UiChipButton>
                     <DropdownMenu
                       onOpenChange={(open) => {
                         if (open) closeDownloadMenu();

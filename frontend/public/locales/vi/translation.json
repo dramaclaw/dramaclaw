@@ -4521,7 +4521,8 @@
         "placeholder": "Nhập tên thư mục",
         "createHint": "Tạo xong là dùng ngay được để xếp và tải asset vào",
         "renameHint": "Tên mới hiện ra khắp thư viện asset"
-      }
+      },
+      "commitDragHint": "Giữ và kéo sang thư viện tư liệu bên trái để thay thế tư liệu cùng loại"
     },
     "referencePick": {
       "kind": {
@@ -4974,7 +4975,10 @@
       "muteTodo": "Tắt tiếng (chưa hỗ trợ)",
       "loopTodo": "Lặp lại (chưa hỗ trợ)",
       "submitting": "Đang trích…",
-      "submit": "Trích đoạn"
+      "submit": "Trích đoạn",
+      "retryExtract": "Trích xuất lại khung hình",
+      "startHandle": "Điểm bắt đầu cắt",
+      "endHandle": "Điểm kết thúc cắt"
     },
     "mentionReplace": {
       "empty": "Không có asset nào để thay vào",
@@ -5059,7 +5063,9 @@
     "mentionChip": {
       "doubleClickReplace": "Bấm đúp để thay tham chiếu này",
       "clickToPlay": "{{label}} · bấm để phát",
-      "replace": "Thay tham chiếu"
+      "replace": "Thay tham chiếu",
+      "removePrefix": "Xóa tiền tố",
+      "reshootTimecode": "Khoảng thời gian cắt để quay lại đoạn"
     },
     "naming": {
       "copySuffix": "{{name}} - Bản sao",
@@ -5131,6 +5137,30 @@
     },
     "assetDrop": {
       "fallbackNodeLabel": "Node"
+    },
+    "videoExtend": {
+      "boundMin": "Đoạn video đã chọn phải dài ít nhất {{seconds}} giây",
+      "boundMax": "Đoạn video đã chọn không được dài quá {{seconds}} giây",
+      "defaultSourceName": "video gốc",
+      "defaultLabel": "video",
+      "promptPrefix": "Nối tiếp đoạn {{start}}-{{end}} của {{name}}: ",
+      "nodeDisplayName": "Nối tiếp {{name}}",
+      "durationSeconds": "{{seconds}} giây",
+      "exit": "Thoát chọn đoạn nối tiếp",
+      "startHandle": "Điểm bắt đầu đoạn nối tiếp",
+      "endHandle": "Điểm kết thúc đoạn nối tiếp",
+      "tooShort": "Video ngắn hơn {{seconds}} giây nên không thể nối tiếp",
+      "confirm": "Xác nhận nối tiếp"
+    },
+    "videoReshoot": {
+      "clickToCapture": "Nhấp để cắt đoạn mới",
+      "dragStart": "Kéo để chỉnh điểm bắt đầu",
+      "dragEnd": "Kéo để chỉnh điểm kết thúc",
+      "deleteClip": "Xóa đoạn này",
+      "countFullHint": "Đã đạt giới hạn {{max}} đoạn, hãy xóa một đoạn rồi cắt tiếp",
+      "durationFullHint": "Seedance 2.5 giới hạn tổng thời lượng {{seconds}}s và đã dùng hết; hãy rút ngắn một đoạn rồi cắt tiếp",
+      "hint": "Nhấp để cắt {{clipSeconds}}s, kéo hai đầu để tinh chỉnh (mỗi đoạn ≥ {{clipSeconds}}s, tổng ≤ {{maxSeconds}}s)",
+      "clipCount": "{{count}}/{{max}} đoạn"
     }
   },
   "tool": {
@@ -5762,7 +5792,8 @@
       },
       "aspect": {
         "title": "Tỉ lệ khung hình",
-        "auto": "Tự động"
+        "auto": "Tự động",
+        "followsSource": "Theo video gốc"
       },
       "quality": {
         "title": "Chất lượng"
@@ -5871,7 +5902,8 @@
         "failed": "Trích đoạn thất bại: {{detail}}"
       },
       "videoEdit": {
-        "imageLimit": "Sửa video hỗ trợ tối đa {{limit}} ảnh tham chiếu; đã dùng {{limit}} ảnh đầu ({{ignored}} ảnh bị bỏ qua)"
+        "imageLimit": "Sửa video hỗ trợ tối đa {{limit}} ảnh tham chiếu; đã dùng {{limit}} ảnh đầu ({{ignored}} ảnh bị bỏ qua)",
+        "followsSourceHint": "Tỷ lệ khung hình và thời lượng của chỉnh sửa video theo video gốc và không thể tùy chỉnh."
       },
       "allReference": {
         "happyHorseUnsupported": "HappyHorse không hỗ trợ tham chiếu đa năng. Chuyển sang chữ-sang-video hoặc ảnh-sang-video.",
@@ -6290,7 +6322,11 @@
         "videoUpstreamAllRefOnly": "Khi phía trên là video, chỉ dùng được “Tham chiếu đa năng”",
         "hasImageOrAudioRefs": "Không dùng được khi đang tham chiếu asset ảnh/âm thanh",
         "moreThanTwoImages": "Không dùng được khi phía trên có hơn 2 ảnh"
-      }
+      },
+      "extendLockReason": "Nối tiếp thông minh chỉ hỗ trợ chế độ tham chiếu toàn năng của Seedance 2.5",
+      "extendPlaceholder": "Nhập nội dung cần nối tiếp",
+      "reshootLockedReason": "Quay lại đoạn chỉ hỗ trợ Seedance 2.5",
+      "modeRestrictedDefault": "Node này không hỗ trợ chuyển chế độ tạo"
     },
     "threeDWorld": {
       "upstreamNodeFallback": "Node phía trên",
