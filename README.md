@@ -224,11 +224,15 @@ docker compose -f docker-compose.release.yml up -d
 git clone https://github.com/dramaclaw/dramaclaw.git
 cd dramaclaw
 
-uv sync
 cp .env.example .env && $EDITOR .env
 
-uv run novelvideo api --port 8780   # start the REST API (CE defaults to inline tasks, no Ray/Redis)
+scripts/start-ce.sh   # installs dependencies, then starts the API and bundled frontend
 ```
+
+The local launcher installs Hermes in an isolated environment and explicitly uses it as the
+safe source-checkout chat runtime. Docker images instead ship the patched Codex App Server
+runtime and default to Codex. To run the API command directly, configure a supported chat
+backend first; do not rely on the stock Codex binary for gateway credentials.
 
 <br/>
 
