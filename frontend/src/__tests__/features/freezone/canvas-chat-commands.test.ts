@@ -3701,14 +3701,9 @@ describe("canvas chat commands", () => {
         },
       }),
     );
-    expect(agentCatalog.actions).toContainEqual(
-      expect.objectContaining({
-        action: "sync_beat_context_to_mainline",
-        execution: "manual_ui",
-        command_type: "run_node_action",
-        parameters: { node_id: "context-beat" },
-      }),
-    );
+    expect(
+      agentCatalog.actions.map((action: { action: string }) => action.action),
+    ).not.toContain("sync_beat_context_to_mainline");
     expect(
       agentCatalog.actions.find(
         (action: { action: string }) => action.action === "update_node_data",
@@ -3717,7 +3712,7 @@ describe("canvas chat commands", () => {
     expect(agentCatalog.instruction).toContain(
       "修改这些字段时使用 update_node_data",
     );
-    expect(agentCatalog.instruction).toContain("不要调用 sync_beat_context_to_mainline");
+    expect(agentCatalog.instruction).toContain("只能由用户使用界面中的手动入口");
     expect(
       agentCatalog.actions.map((action: { action: string }) => action.action),
     ).not.toContain("add_next_node");
@@ -3755,10 +3750,27 @@ describe("canvas chat commands", () => {
 
     expect(response).not.toContain('"editable_fields"');
     expect(response).not.toContain('"editable_schema"');
-    expect(response).toContain("sync_beat_context_to_mainline");
+    expect(response).not.toContain("sync_beat_context_to_mainline");
     expect(response).toContain("For node editable parameters");
 
     useCanvasStore.getState().setCanvasData([node], []);
+    const replayedMainlineWrite = applyCanvasChatCommands([
+      {
+        schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+        commands: [
+          {
+            type: "run_node_action",
+            node_id: node.id,
+            action: "sync_beat_context_to_mainline",
+          },
+        ],
+      },
+    ]);
+    expect(replayedMainlineWrite.applied).toBe(0);
+    expect(replayedMainlineWrite.errors.join("\n")).toContain(
+      "mainline write action is manual-only",
+    );
+
     const result = applyCanvasChatCommands(
       extractCanvasChatCommandEnvelopes([
         {

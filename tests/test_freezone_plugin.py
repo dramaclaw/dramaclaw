@@ -613,6 +613,21 @@ def test_freezone_run_workflow_command_passes_write_shape_validation():
     assert error is None
 
 
+@pytest.mark.parametrize("action", ["commit_node", "sync_beat_context_to_mainline"])
+def test_agent_canvas_writes_reject_manual_mainline_actions(action):
+    plugin = _load_plugin_module()
+
+    error = plugin._validate_write_commands_shape(
+        "project-a",
+        "canvas-a",
+        [{"type": "run_node_action", "node_id": "node-a", "action": action}],
+    )
+
+    assert error["ok"] is False
+    assert error["status"] == "manual_mainline_action_required"
+    assert "manual-only mainline write" in error["error"]
+
+
 @pytest.mark.parametrize(
     "command",
     [

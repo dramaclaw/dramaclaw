@@ -2729,6 +2729,10 @@ _COMMAND_REQUIRED_FIELDS = {
     "open_mainline_projection": ("request",),
 }
 
+_AGENT_FORBIDDEN_MAINLINE_ACTIONS = frozenset(
+    {"commit_node", "sync_beat_context_to_mainline"}
+)
+
 
 _WORKFLOW_LIKE_NODE_TYPES = {
     "imageGenNode",
@@ -2920,6 +2924,20 @@ def _validate_write_commands_shape(
                 canvas,
                 "invalid_command_schema",
                 f"commands[{index}] {command_type} missing required field(s): {', '.join(missing_required)}",
+            )
+        if (
+            command_type == "run_node_action"
+            and str(command.get("action") or "").strip()
+            in _AGENT_FORBIDDEN_MAINLINE_ACTIONS
+        ):
+            return _emit_command_error(
+                project,
+                canvas,
+                "manual_mainline_action_required",
+                (
+                    f"commands[{index}].action is a manual-only mainline write and "
+                    "cannot be executed by an Agent"
+                ),
             )
         if command_type == "run_workflow":
             node_ids = command.get("node_ids")
