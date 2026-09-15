@@ -10,6 +10,10 @@
 # the maintainers' release pipeline and published to Docker Hub; this image
 # only verifies and copies it (tests/test_docker_persistence_config.py keeps the
 # tag consistent with the patch file and CODEX_REF).
+#
+# Platform status: the pinned image above is linux/amd64 only today. Publishing
+# an arm64 artifact is a hard prerequisite before this Dockerfile reaches main,
+# since release-images.yml builds both platforms.
 ARG CODEX_REF="758ef40f50c1a458425c7cfbf1eb12cbc07af0b0"
 ARG CODEX_RUNTIME_IMAGE="docker.io/claymorelab/codex-dramaclaw:758ef40-pc9db6e46@sha256:b53773645294faade3dbb397d91efb7110358d55806a9f291c2a409172da30a6"
 
@@ -42,6 +46,7 @@ ENV ST_EDITION=ce \
 
 COPY --from=codex-runtime /codex /usr/local/bin/codex-dramaclaw
 COPY --from=codex-runtime /codex-runtime.sha /opt/codex-runtime.sha
+COPY --from=codex-runtime /codex-runtime.json /opt/codex-runtime.json
 
 # ffmpeg for media; bubblewrap (`bwrap`) for the Hermes Linux sandbox — the
 # vendored codex-linux-sandbox binary's default pipeline execs system bwrap
@@ -51,11 +56,23 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg bubblewrap \
     && rm -rf /var/lib/apt/lists/*
 
+# deploy/codex/ is copied again, in full, further down as part of the
+# application source (COPY deploy ./deploy); this narrow copy only makes the
+# patch file available here, before WORKDIR /app, for the identity check below.
+COPY deploy/codex/ /tmp/codex-bom/
+
 # Fail the build (not the container's preflight an hour later) if the prebuilt
-# runtime is not the upstream commit this image claims, or if the binary cannot
-# start on this base image (shared libraries).
-RUN test "$(cat /opt/codex-runtime.sha)" = "${CODEX_REF}" \
-    && codex-dramaclaw --version >/dev/null
+# runtime is not the upstream commit this image claims, if its patch does not
+# match the one recorded in codex-runtime.json, or if the binary cannot start
+# on this base image (shared libraries).
+RUN set -eux; \
+    test "$(cat /opt/codex-runtime.sha)" = "${CODEX_REF}" \
+        || { echo "codex-runtime.sha ($(cat /opt/codex-runtime.sha)) does not match CODEX_REF (${CODEX_REF})" >&2; exit 1; }; \
+    want_patch_sha256="$(python3 -c 'import json; print(json.load(open("/opt/codex-runtime.json"))["patch_sha256"])')"; \
+    got_patch_sha256="$(sha256sum /tmp/codex-bom/*.patch | cut -d' ' -f1)"; \
+    test "$got_patch_sha256" = "$want_patch_sha256" \
+        || { echo "codex-runtime patch_sha256 mismatch: codex-runtime.json says $want_patch_sha256, deploy/codex/*.patch hashes to $got_patch_sha256" >&2; exit 1; }; \
+    codex-dramaclaw --version
 
 WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./

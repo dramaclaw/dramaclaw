@@ -87,7 +87,10 @@ def test_container_consumes_only_the_pinned_prebuilt_codex_runtime() -> None:
     assert "FROM ${CODEX_RUNTIME_IMAGE} AS codex-runtime" in dockerfile
     assert "COPY --from=codex-runtime /codex /usr/local/bin/codex-dramaclaw" in dockerfile
     assert "COPY --from=codex-runtime /codex-runtime.sha /opt/codex-runtime.sha" in dockerfile
+    assert "COPY --from=codex-runtime /codex-runtime.json /opt/codex-runtime.json" in dockerfile
     assert 'test "$(cat /opt/codex-runtime.sha)" = "${CODEX_REF}"' in dockerfile
+    assert "patch_sha256" in dockerfile
+    assert "/opt/codex-runtime.json" in dockerfile
     assert "codex-dramaclaw --version" in dockerfile
     assert "codex-builder" not in dockerfile
     assert "cargo build --release -p codex-cli" not in dockerfile
