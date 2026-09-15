@@ -486,6 +486,11 @@ let nodeActionMountQueue: Promise<void> = Promise.resolve();
 const WORKFLOW_ACTION_CONCURRENCY = 3;
 const WORKFLOW_ACTION_MAX_RETRIES = 2;
 const WORKFLOW_STOPPED_MESSAGE = "工作流已停止，未启动后续节点。";
+const WORKFLOW_LEASE_LOST_MESSAGE = "工作流执行租约已失效，已停止启动后续节点。"; // i18n-exempt
+const workflowPersistenceFailureMessage = (error: unknown) =>
+  `工作流状态保存失败，已停止启动后续节点：${errorMessage(error)}`; // i18n-exempt
+const workflowCreationFailureMessage = (error: unknown) =>
+  `无法创建持久化工作流记录，未启动节点动作：${errorMessage(error)}`; // i18n-exempt
 const TERMINAL_WORKFLOW_ACTION_STATUSES = new Set<WorkflowRunActionStatus>([
   "completed",
   "failed",
@@ -2765,6 +2770,7 @@ async function executeQueuedNodeActions(
         ? `canvas-runner:${crypto.randomUUID()}`
         : `canvas-runner:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 10)}`;
     let workflowLeaseLost = false;
+    let workflowPersistenceError: string | null = null;
     let workflowHeartbeat: ReturnType<typeof setInterval> | null = null;
     let workflowHeartbeatQueue: Promise<void> = Promise.resolve();
     let workflowPersistenceDrain: Promise<void> | null = null;
@@ -2776,7 +2782,6 @@ async function executeQueuedNodeActions(
         "pending" as WorkflowRunActionStatus,
       ]),
     );
-    let workflowCompletionPresented = false;
     const enqueueWorkflowHeartbeat = (operation: () => Promise<void>): Promise<void> => {
       const queued = workflowHeartbeatQueue
         .catch(() => undefined)
@@ -2851,6 +2856,9 @@ async function executeQueuedNodeActions(
             });
           }).catch((error) => {
             if (error instanceof ApiError && error.status === 409) workflowLeaseLost = true;
+            workflowPersistenceError = error instanceof ApiError && error.status === 409
+              ? WORKFLOW_LEASE_LOST_MESSAGE
+              : workflowPersistenceFailureMessage(error);
           });
         }, 15_000);
       } catch (error) {
@@ -2870,7 +2878,20 @@ async function executeQueuedNodeActions(
           }
           return;
         }
-        // Execution records are additive. A persistence outage must not block generation.
+        const message = workflowCreationFailureMessage(error);
+        result.errors.push(message);
+        for (const action of pendingActions) {
+          result.commandResults.push({
+            commandIndex: action.commandIndex,
+            type: "run_node_action",
+            status: "error",
+            label: action.label,
+            nodeId: action.nodeId,
+            action: action.action,
+            error: message,
+          });
+        }
+        return;
       }
     }
     const drainWorkflowPersistence = (): Promise<void> => {
@@ -2895,14 +2916,18 @@ async function executeQueuedNodeActions(
                   projectId,
                   canvasId,
                   runId,
-                  ...(status ? { status } : {}),
+                  status: updatedRun.status,
                   run: updatedRun,
                 },
               }));
             }
           } catch (error) {
             if (error instanceof ApiError && error.status === 409) workflowLeaseLost = true;
-            // Keep the established in-browser runner available when persistence is unavailable.
+            workflowPersistenceError = error instanceof ApiError && error.status === 409
+              ? WORKFLOW_LEASE_LOST_MESSAGE
+              : workflowPersistenceFailureMessage(error);
+            pendingWorkflowUpdates.clear();
+            pendingWorkflowStatus = undefined;
           }
         }
       })().finally(() => {
@@ -2933,7 +2958,6 @@ async function executeQueuedNodeActions(
         return true;
       });
       if (acceptedUpdates.length === 0 && !status) return;
-      const runId = workflowRunId;
       for (const update of acceptedUpdates) {
         const key = `${update.node_id}:${update.action}`;
         pendingWorkflowUpdates.set(key, {
@@ -2942,27 +2966,8 @@ async function executeQueuedNodeActions(
         });
       }
       if (status) pendingWorkflowStatus = status;
-      const allActionsCompleted =
-        workflowActionStatuses.size > 0 &&
-        [...workflowActionStatuses.values()].every(
-          (actionStatus) => actionStatus === "completed" || actionStatus === "skipped",
-        );
-      const presentedStatus =
-        status ??
-        (allActionsCompleted && !workflowCompletionPresented ? "completed" : undefined);
-      if (presentedStatus === "completed") workflowCompletionPresented = true;
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent(FREEZONE_WORKFLOW_RUN_UPDATED_EVENT, {
-          detail: {
-            projectId,
-            canvasId,
-            runId,
-            ...(presentedStatus ? { status: presentedStatus } : {}),
-            ...(acceptedUpdates.length > 0 ? { actionUpdates: acceptedUpdates } : {}),
-          },
-        }));
-      }
       await drainWorkflowPersistence();
+      if (workflowPersistenceError) throw new Error(workflowPersistenceError);
     };
     const { levels, dependenciesByNodeId, cycleError } = orderedNodeActionsByCanvasEdges(pendingActions);
     if (cycleError) {
@@ -3041,7 +3046,7 @@ async function executeQueuedNodeActions(
         action: action.action,
         status: "running",
         phase: detail.phase,
-      }]);
+      }]).catch(() => undefined);
     };
     if (typeof window !== "undefined") {
       window.addEventListener(WORKFLOW_EXECUTION_ACTIVITY_EVENT, handleWorkflowActivity);
@@ -3065,7 +3070,12 @@ async function executeQueuedNodeActions(
       }
       if (workflowLeaseLost) {
         runFailed = true;
-        result.errors.push("工作流执行租约已失效，已停止启动后续节点。");
+        result.errors.push(WORKFLOW_LEASE_LOST_MESSAGE);
+        break;
+      }
+      if (workflowPersistenceError) {
+        runFailed = true;
+        result.errors.push(workflowPersistenceError);
         break;
       }
       if (workflowGraphSignature(pendingActions) !== initialGraphSignature) {
@@ -3168,7 +3178,7 @@ async function executeQueuedNodeActions(
                     action: action.action,
                     status: "running",
                     phase: "waiting_capacity",
-                  }]);
+                  }]).catch(() => undefined);
                 },
               );
               if (!capacityReady) {
@@ -3428,7 +3438,7 @@ async function executeQueuedNodeActions(
           releaseActionSlot();
         }
         })();
-        void persistRunUpdate([{
+        await persistRunUpdate([{
           node_id: settled.action.nodeId,
           action: settled.action.action,
           status: settled.failed
@@ -3491,6 +3501,25 @@ async function executeQueuedNodeActions(
         [],
         runCancelled ? "cancelled" : runFailed || blockedNodeIds.size > 0 ? "failed" : "completed",
       );
+    } catch (error) {
+      if (!workflowPersistenceError) throw error;
+      runFailed = true;
+      if (!result.errors.includes(workflowPersistenceError)) {
+        result.errors.push(workflowPersistenceError);
+      }
+      for (const action of pendingActions) {
+        const key = `${action.nodeId}:${action.action}`;
+        if (settledActionKeys.has(key)) continue;
+        result.commandResults.push({
+          commandIndex: action.commandIndex,
+          type: "run_node_action",
+          status: "error",
+          label: action.label,
+          nodeId: action.nodeId,
+          action: action.action,
+          error: workflowPersistenceError,
+        });
+      }
     } finally {
       if (typeof window !== "undefined") {
         window.removeEventListener(WORKFLOW_EXECUTION_ACTIVITY_EVENT, handleWorkflowActivity);

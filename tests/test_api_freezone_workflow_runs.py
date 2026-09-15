@@ -165,7 +165,7 @@ def test_workflow_run_api_lifecycle(workflow_run_client: TestClient) -> None:
     base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
     created_response = workflow_run_client.post(
         base,
-        json={"actions": [{"node_id": "image-1", "action": "generate_image"}]},
+        json={"actions": [{"node_id": "image-1", "action": "save"}]},
     )
     assert created_response.status_code == 200
     created = created_response.json()["data"]
@@ -177,7 +177,7 @@ def test_workflow_run_api_lifecycle(workflow_run_client: TestClient) -> None:
             "action_updates": [
                 {
                     "node_id": "image-1",
-                    "action": "generate_image",
+                    "action": "save",
                     "status": "completed",
                     "phase": "syncing_result",
                 }
@@ -820,6 +820,30 @@ def test_workflow_run_api_reuses_idempotent_creation(
     assert duplicate.status_code == 200
     assert duplicate.json()["data"]["run_id"] == first.json()["data"]["run_id"]
     assert len(workflow_run_client.get(base).json()["data"]["runs"]) == 1
+
+
+def test_workflow_run_api_rejects_idempotency_key_rebinding(
+    workflow_run_client: TestClient,
+) -> None:
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    first = workflow_run_client.post(
+        base,
+        json={
+            "actions": [{"node_id": "image-1", "action": "generate_image"}],
+            "idempotency_key": "canvas-run:request-1",
+        },
+    )
+    conflict = workflow_run_client.post(
+        base,
+        json={
+            "actions": [{"node_id": "video-1", "action": "generate_video"}],
+            "idempotency_key": "canvas-run:request-1",
+        },
+    )
+
+    assert first.status_code == 200
+    assert conflict.status_code == 409
+    assert "different request" in conflict.json()["detail"]
 
 
 def test_workflow_run_api_rejects_competing_runner(

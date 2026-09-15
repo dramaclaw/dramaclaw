@@ -182,6 +182,7 @@ from novelvideo.freezone.agent_product_operations import (
     save_agent_generation_session,
 )
 from novelvideo.freezone.workflow_runs import (
+    WorkflowRunIdempotencyConflict,
     WorkflowRunLeaseConflict,
     bind_workflow_action_product_operation,
     create_workflow_run,
@@ -14682,7 +14683,7 @@ async def create_canvas_workflow_run(
                 body.get("runner_id") if isinstance(body.get("runner_id"), str) else ""
             ),
         )
-    except WorkflowRunLeaseConflict as exc:
+    except (WorkflowRunLeaseConflict, WorkflowRunIdempotencyConflict) as exc:
         raise HTTPException(409, str(exc)) from exc
     except (ValueError, CanvasLockBusy) as exc:
         raise HTTPException(
