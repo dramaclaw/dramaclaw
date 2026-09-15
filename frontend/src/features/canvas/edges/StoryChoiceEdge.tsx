@@ -130,6 +130,12 @@ export const StoryChoiceEdge = memo(function StoryChoiceEdge(props: EdgeProps) {
         {/* 选项文案 chip */}
         <button
           type="button"
+          onPointerDown={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            selectEdge([{ type: 'select', id, selected: true }]);
+          }}
           onClick={(event) => {
             event.stopPropagation();
             // EdgeLabelRenderer 的标签不在 SVG 边上，点击不会自动触发 React Flow 的边选中。

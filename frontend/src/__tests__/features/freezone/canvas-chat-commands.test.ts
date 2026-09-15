@@ -6726,6 +6726,54 @@ describe("canvas chat commands", () => {
     }
   });
 
+  it.each([
+    { action: "capture_video_first_frame", mode: "first", seekSec: 0, displayName: "视频首帧" },
+    { action: "capture_video_last_frame", mode: "last", seekSec: 7.95, displayName: "视频尾帧" },
+  ])("captures $mode frame with provenance without submitting generation", async ({ action, mode, seekSec, displayName }) => {
+    const sourceId = useCanvasStore.getState().addNode(CANVAS_NODE_TYPES.video, { x: 0, y: 0 }, {
+      videoUrl: "/static/project/current.mp4", durationMs: 8000,
+      storyMedia: { version: 3 }, generationTaskJobId: "job-current",
+    });
+    expect(buildCanvasNodeActionCatalog(useCanvasStore.getState().nodes.find((n) => n.id === sourceId)!).actions)
+      .toContainEqual(expect.objectContaining({ action }));
+    const events: string[] = [];
+    const unsubscribe = subscribeNodeAction((event) => { events.push(event.action); });
+    try {
+      const result = await applyCanvasChatCommandsAsync([{
+        schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+        commands: [{ type: "run_node_action", node_id: sourceId, action }],
+      }], { projectId: "project-a" });
+      expect(result.errors).toEqual([]);
+      expect(result.createdNodeIds).toHaveLength(1);
+      expect(captureVideoFrameBlob).toHaveBeenCalledWith("/static/project/current.mp4", seekSec);
+      expect(result.commandResults[0]).toMatchObject({ action, status: "success" });
+      const frameNode = useCanvasStore.getState().nodes.find((node) => node.id === result.createdNodeIds[0]);
+      expect(frameNode?.data).toMatchObject({ displayName, videoFrameSource: { captureMode: mode, seekSec } });
+      expect(result.commandResults[0].output).toMatchObject({
+        imageUrl: "/static/project/tail-frame.png", sourceVideoNodeId: sourceId,
+        sourceVideoUrl: "/static/project/current.mp4", sourceMediaVersion: 3, sourceTaskJobId: "job-current",
+      });
+      expect(events).toEqual([]);
+      expect(createFreezoneWorkflowRun).not.toHaveBeenCalled();
+    } finally { unsubscribe(); }
+  });
+
+  it.each(["capture_video_first_frame", "capture_video_last_frame"])("reports %s failure without creating a frame or starting generation", async (action) => {
+    const sourceId = useCanvasStore.getState().addNode(CANVAS_NODE_TYPES.video, { x: 0, y: 0 }, {
+      videoUrl: "/static/project/current.mp4",
+    });
+    captureVideoFrameBlob.mockRejectedValueOnce(new Error("capture unavailable"));
+    const result = await applyCanvasChatCommandsAsync([{
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: [{ type: "run_node_action", node_id: sourceId, action }],
+    }], { projectId: "project-a" });
+    expect(result.errors).toContain("capture unavailable");
+    expect(result.createdNodeIds).toEqual([]);
+    expect(result.commandResults[0]).toMatchObject({ action, status: "error" });
+    expect(uploadFreezoneImage).not.toHaveBeenCalled();
+    expect(createFreezoneWorkflowRun).not.toHaveBeenCalled();
+  });
+
   it("captures the upstream video tail frame before running a dependent video", async () => {
     const store = useCanvasStore.getState();
     const firstVideoId = store.addNode(

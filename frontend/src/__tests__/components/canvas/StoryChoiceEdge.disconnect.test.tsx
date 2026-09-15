@@ -60,3 +60,15 @@ it('短暂经过标签不会显示剪刀', () => {
   act(() => vi.advanceTimersByTime(600));
   expect(queryByRole('button', { name: 'canvas.story.disconnect' })).toBeNull();
 });
+
+it('双击选项保持选中并隔离画布的双击删除事件', () => {
+  const canvasDoubleClick = vi.fn(() => useCanvasStore.getState().deleteEdge('choice-a'));
+  const { getByRole } = render(<div onDoubleClick={canvasDoubleClick}><StoryChoiceEdge {...props} /></div>);
+  const label = getByRole('button', { name: 'canvas.story.choiceEditorTitle' });
+  fireEvent.click(label, { detail: 1 });
+  fireEvent.click(label, { detail: 2 });
+  fireEvent.doubleClick(label);
+  expect(canvasDoubleClick).not.toHaveBeenCalled();
+  expect(useCanvasStore.getState().edges).toHaveLength(2);
+  expect(useCanvasStore.getState().edges.find((edge) => edge.id === 'choice-a')?.selected).toBe(true);
+});

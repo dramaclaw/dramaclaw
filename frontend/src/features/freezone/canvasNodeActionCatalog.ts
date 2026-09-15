@@ -1456,6 +1456,22 @@ function downstreamSpawnTypesForNode(node: CanvasNode): CanvasNodeType[] {
 function addMediaActions(node: CanvasNode, actions: CanvasNodeActionCatalogEntry[]): void {
   if (node.type === CANVAS_NODE_TYPES.video && hasString((node.data as { videoUrl?: unknown }).videoUrl)) {
     actions.push({
+      action: "capture_video_first_frame",
+      execution: "frontend_node",
+      command_type: "run_node_action",
+      description: "截取当前选用视频的首帧并上传为派生图片节点，返回图片节点及来源信息。可用于开场参考或与前片尾帧对照人物、道具和构图；只准备素材，不自动绑定参考或生成视频。",
+      parameters: { node_id: node.id },
+      result_effect: { target: "derived image node", next_step: "Read the returned createdNodeId and output and verify the source before using it as a reference; binding and generation require separate authorization." },
+    });
+    actions.push({
+      action: "capture_video_last_frame",
+      execution: "frontend_node",
+      command_type: "run_node_action",
+      description: "截取当前选用视频的尾帧并上传为派生图片节点，返回图片节点及来源信息。只准备素材，不生成视频；完成后回读图片并绑定到需要承接的片段。",
+      parameters: { node_id: node.id },
+      result_effect: { target: "derived image node", next_step: "Read the returned createdNodeId and output before binding references; generation requires separate authorization and readiness checks." },
+    });
+    actions.push({
       action: "open_video_viewer",
       execution: "manual_ui",
       command_type: "run_node_action",

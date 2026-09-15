@@ -1810,13 +1810,17 @@ export function Canvas({
     (event: ReactMouseEvent, edge: CanvasEdge) => {
       event.preventDefault();
       event.stopPropagation();
+      if (edge.type === 'storyChoiceEdge') {
+        applyEdgesChange([{ type: 'select', id: edge.id, selected: true }]);
+        return;
+      }
       if (isPresetManagedEdge(edge)) {
         return;
       }
       deleteEdge(edge.id);
       scheduleCanvasPersist(0);
     },
-    [deleteEdge, scheduleCanvasPersist]
+    [applyEdgesChange, deleteEdge, scheduleCanvasPersist]
   );
 
   const handleEdgeClick = useCallback((event: ReactMouseEvent) => {

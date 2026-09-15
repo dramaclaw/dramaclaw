@@ -255,6 +255,12 @@ type ApplyCanvasChatCommandsOptions = {
   actionRetryDelayMs?: number;
 };
 
+type PendingVideoFrameCapture = {
+  nodeId: string;
+  commandIndex: number;
+  action: "capture_video_first_frame" | "capture_video_last_frame";
+};
+
 export type CanvasChatCommandPartition = {
   immediate: CanvasChatCommandEnvelope[];
   requiresApproval: CanvasChatCommandEnvelope[];
@@ -356,6 +362,8 @@ const RUN_NODE_ACTIONS = new Set([
   "run_grid_frame_projection_5s_earlier",
   "open_grid_frame_projection_5s_earlier",
   "open_video_viewer",
+  "capture_video_last_frame",
+  "capture_video_first_frame",
   "download_image",
   "download_video",
   "open_video_clip_tool",
@@ -3507,6 +3515,71 @@ async function executeQueuedNodeActions(
   }
 }
 
+// Stop on the first capture failure so dependent actions are not executed.
+async function executePendingVideoFrameCaptures(
+  pendingCaptures: PendingVideoFrameCapture[],
+  result: CanvasChatCommandApplyResult,
+  options: ApplyCanvasChatCommandsOptions,
+): Promise<boolean> {
+  for (const capture of pendingCaptures) {
+    const mode = capture.action === "capture_video_first_frame" ? "first" : "last";
+    const frameName = mode === "first" ? "首帧" : "尾帧";
+    const label = `截取视频${frameName}`;
+    const source = nodeById(capture.nodeId);
+    const data = source?.data as JsonRecord | undefined;
+    const videoUrl = nonEmptyString(data?.videoUrl);
+    try {
+      if (!videoUrl) throw new Error(`来源视频缺失，无法截取${frameName}。`);
+      const seekSec = resolveCaptureSeekSec(mode, {
+        fallbackDurationSec: isFiniteNumber(data?.durationMs) ? data.durationMs / 1000 : null,
+      });
+      const captured = await captureVideoFrameToNode(capture.nodeId, {
+        videoUrl,
+        seekSec,
+        projectId: options.projectId,
+        displayName: `视频${frameName}`,
+      });
+      if (!captured.nodeId) throw new Error(captured.error ?? `${frameName}截取失败。`);
+      const provenance = {
+        sourceVideoNodeId: capture.nodeId,
+        sourceVideoUrl: videoUrl,
+        sourceMediaVersion: isRecord(data?.storyMedia) ? data.storyMedia.version ?? null : null,
+        sourceTaskJobId: data?.generationTaskJobId ?? null,
+        captureMode: mode,
+        seekSec,
+        capturedAt: new Date().toISOString(),
+      };
+      useCanvasStore.getState().updateNodeData(captured.nodeId, { videoFrameSource: provenance });
+      result.createdNodeIds.push(captured.nodeId);
+      result.applied += 1;
+      result.commandResults.push({
+        commandIndex: capture.commandIndex,
+        type: "run_node_action",
+        status: "success",
+        label,
+        nodeId: capture.nodeId,
+        action: capture.action,
+        createdNodeId: captured.nodeId,
+        output: { imageUrl: nodeById(captured.nodeId)?.data.imageUrl, ...provenance },
+      });
+    } catch (error) {
+      const message = errorMessage(error);
+      result.errors.push(message);
+      result.commandResults.push({
+        commandIndex: capture.commandIndex,
+        type: "run_node_action",
+        status: "error",
+        label,
+        nodeId: capture.nodeId,
+        action: capture.action,
+        error: message,
+      });
+      return false;
+    }
+  }
+  return true;
+}
+
 async function executePendingMainlineProjections(
   pendingProjections: PendingMainlineProjection[],
   result: CanvasChatCommandApplyResult,
@@ -3804,6 +3877,7 @@ function applyCanvasChatCommandsInternal(
     commandResults: [],
   };
   const pendingNodeActions: PendingNodeAction[] = [];
+  const pendingVideoFrameCaptures: PendingVideoFrameCapture[] = [];
   const pendingMainlineProjections: PendingMainlineProjection[] = [];
   const queuedNodeActionKeys = new Set<string>();
   const normalizedEnvelopes = normalizeCanvasChatCommandEnvelopesForValidation(envelopes);
@@ -4114,6 +4188,11 @@ function applyCanvasChatCommandsInternal(
           case "run_node_action": {
             const targetId = resolveNodeId(command.node_id, clientIdMap);
             assertNodeActionAvailable(targetId, command.action);
+            if (command.action === "capture_video_last_frame" || command.action === "capture_video_first_frame") {
+              if (!options.queueNodeActions) throw new Error("截取视频帧需要异步执行入口。");
+              pendingVideoFrameCaptures.push({ nodeId: targetId, commandIndex: currentCommandIndex, action: command.action });
+              break;
+            }
             if (!RESULT_SPAWNING_NODE_ACTIONS.has(command.action)) {
               selectAndFocusNode(targetId);
             }
@@ -4343,6 +4422,7 @@ function applyCanvasChatCommandsInternal(
 
   if (options.queueNodeActions) {
     return (async () => {
+      if (!(await executePendingVideoFrameCaptures(pendingVideoFrameCaptures, result, options))) return result;
       await executePendingMainlineProjections(pendingMainlineProjections, result);
       await executeQueuedNodeActions(pendingNodeActions, result, options);
       result.errors = dedupeGenerationErrors(result.errors);

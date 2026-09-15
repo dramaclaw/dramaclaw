@@ -589,7 +589,7 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
         <div
           role="status"
           aria-live="polite"
-          className="pointer-events-none absolute inset-x-6 top-20 z-30 text-center sm:top-24"
+          className="pointer-events-none absolute inset-x-6 top-6 z-30 text-center sm:top-8"
         >
           <div className="flex flex-col items-center gap-1.5">
             {outcomeFeedback.stateChanges.length > 0 && (
