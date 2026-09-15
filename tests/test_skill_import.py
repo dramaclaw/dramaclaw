@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 import zipfile
@@ -148,6 +149,45 @@ def test_runner_failure_is_recorded(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError):
         runner.run_skill_import({'payload': {'import_id': record['id'], 'username': 'alice'}}, SimpleNamespace(state_dir=tmp_path, requester_username='alice'))
     assert module.get_record(tmp_path, 'alice', record['id'])['status'] == 'failed'
+
+
+def test_runner_uses_shared_model_timeout(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from novelvideo.freezone import skill_import as module
+    from novelvideo.task_backend.runners import skill_import as runner
+
+    monkeypatch.setattr(
+        'novelvideo.freezone.agent_config_store.list_user_agent_config_items',
+        lambda *args: [],
+    )
+    record = module.create_record(
+        tmp_path,
+        'alice',
+        read_source('x.md', base64.b64encode(b'Method').decode()),
+        'b',
+    )
+
+    async def call_leaf(*args, **kwargs):
+        return 'model', 'converted'
+
+    async def convert(root, username, import_id, generate, progress):
+        assert await generate('prompt') == 'converted'
+        return {'status': 'ready'}
+
+    async def forbidden_wait_for(*args, **kwargs):
+        raise AssertionError('Skill imports must use the shared model timeout')
+
+    monkeypatch.setattr(runner, '_call_freezone_leaf', call_leaf)
+    monkeypatch.setattr(runner, 'convert_record', convert)
+    monkeypatch.setattr(runner, '_run_cancellable', lambda envelope, coro: asyncio.run(coro))
+    monkeypatch.setattr(asyncio, 'wait_for', forbidden_wait_for)
+
+    result = runner.run_skill_import(
+        {'payload': {'import_id': record['id'], 'username': 'alice'}},
+        SimpleNamespace(state_dir=tmp_path, requester_username='alice'),
+    )
+
+    assert result == {'ok': True, 'import_id': record['id'], 'status': 'ready'}
 
 
 def test_bundle_install_rolls_back_new_recipes(tmp_path, monkeypatch):
