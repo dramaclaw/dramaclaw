@@ -5060,7 +5060,10 @@ async def _record_recipe_compile_product_evidence(
     admitted_recipe_id = str((operation.get("metadata") or {}).get("recipe_id") or "")
     if admitted_recipe_id and admitted_recipe_id not in set(compiled.recipe_ids):
         raise HTTPException(409, "Recipe compilation does not match admitted operation")
-    if operation.get("status") in {"delivered", "failed", "cancelled"}:
+    if operation.get("status") == "delivered":
+        await _reconcile_recipe_delivery(ctx=ctx, operation=operation)
+        return
+    if operation.get("status") in {"failed", "cancelled"}:
         return
     if (
         compiled.mode == "model"
@@ -5081,10 +5084,10 @@ async def _record_recipe_compile_product_evidence(
             # the actual server-produced text in the operation's immutable
             # result receipt, rather than waiting for a nonexistent task key.
             # finish_agent_product_operation atomically stores this receipt and
-            # transitions to delivered; the existing worker handles settlement.
+            # transitions to delivered; reconcile even if the worker timed out.
             if body.node_kind != "text" or not compiled.prompt.strip():
                 raise ValueError("text delivery requires a non-empty text result")
-            await asyncio.to_thread(
+            operation = await asyncio.to_thread(
                 finish_agent_product_operation,
                 project_dir=state_dir,
                 operation_id=operation_id,
@@ -5096,6 +5099,31 @@ async def _record_recipe_compile_product_evidence(
                     "content": compiled.prompt,
                 },
             )
+            await _reconcile_recipe_delivery(ctx=ctx, operation=operation)
+        return
+    if compiled.prompt.strip() and compiled.mode in {
+        "timeout_fallback",
+        "memory_cache",
+        "persistent_cache",
+        "deterministic",
+    }:
+        # Recipe use is billable regardless of compilation mode. Persist the
+        # usable prompt as server-owned delivery evidence, not fake model evidence.
+        operation = await asyncio.to_thread(
+            finish_agent_product_operation,
+            project_dir=state_dir,
+            operation_id=operation_id,
+            outcome="delivered",
+            expected_task_id=str(operation.get("task_id") or ""),
+            result_ref={
+                "kind": "recipe_compile_result",
+                "id": operation_id,
+                "reason": compiled.mode,
+                "content": compiled.prompt,
+            },
+            server_recipe_compile=True,
+        )
+        await _reconcile_recipe_delivery(ctx=ctx, operation=operation)
         return
     await asyncio.to_thread(
         finish_agent_product_operation,
@@ -5109,7 +5137,7 @@ async def _record_recipe_compile_product_evidence(
 async def _require_recipe_compile_product_admission(
     *, body: FreezoneRecipeCompileRequest, user: dict
 ) -> None:
-    """Fail closed before a Recipe request can reach the model compiler."""
+    """Require metered Recipe admission for every compilation strategy."""
     operation_id = str(body.product_operation_id or "").strip()
     project_id = str(body.project_id or "").strip()
     if bool(operation_id) != bool(project_id):
@@ -5117,14 +5145,12 @@ async def _require_recipe_compile_product_admission(
             400,
             "project_id and product_operation_id must be supplied together",
         )
-    if body.prompt_strategy != "llm_refine" or isinstance(
-        get_usage_meter(), NoOpUsageMeter
-    ):
+    if isinstance(get_usage_meter(), NoOpUsageMeter):
         return
     if not operation_id:
         raise HTTPException(
             400,
-            "product_operation_id is required for metered model Recipe compilation",
+            "product_operation_id is required for metered Recipe compilation",
         )
     ctx, _username, _project_name, project_dir, _output_dir = (
         await _resolve_freezone_project(project_id, user)
@@ -5321,6 +5347,7 @@ async def generate_freezone_recipe_text(
 ):
     """Compile and execute one catalog-backed text node."""
     username = str(user.get("username") or "")
+    await _require_recipe_compile_product_admission(body=body, user=user)
     try:
         content = await generate_recipe_text(
             username=username,
@@ -14272,6 +14299,7 @@ async def get_agent_product_operation(
     )
     if operation is None:
         raise HTTPException(404, "agent product operation not found")
+    await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
     return {"ok": True, "data": operation}
 
 
@@ -14326,6 +14354,82 @@ async def _settle_delivered_agent_product_task(
             expected_task_id=expected_task_id,
         )
         evidence_metrics.observe("agent_product_reconciled")
+
+
+_RECIPE_SETTLEMENT_RETRY_DELAYS = (1, 5, 15)
+_recipe_settlement_retries: dict[tuple[str, str], asyncio.Task] = {}
+
+
+async def _reconcile_recipe_delivery(
+    *, ctx: ProjectContext, operation: dict[str, Any]
+) -> None:
+    """A saved result stays successful even when billing is temporarily unavailable."""
+    try:
+        await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
+        return
+    except Exception:
+        logger.warning(
+            "Recipe delivery saved; settlement pending: %s",
+            operation["operation_id"],
+            exc_info=True,
+        )
+    # The immutable delivered receipt survives process restarts. Preserve the
+    # original reservation for review, never refund or create a second charge.
+    try:
+        task = get_task_manager().get_task_for_project(
+            ctx,
+            operation["task_type"],
+            0,
+            scope=operation["operation_id"],
+        )
+        if task and task.task_id == operation.get("task_id"):
+            metadata = task.metadata if isinstance(task.metadata, dict) else {}
+            reservation_id = metadata.get(
+                "feature_credit_reservation_id"
+            ) or metadata.get("feature_credit_charge_id")
+            if reservation_id:
+                await get_usage_meter().mark_feature_credit_settlement_for_review(
+                    str(reservation_id),
+                    metadata={
+                        "source": "recipe_delivery_settlement_pending",
+                        "operation_id": operation["operation_id"],
+                        "operation_status": "delivered",
+                        "settlement_status": "awaiting_reconciliation",
+                    },
+                )
+    except Exception:
+        logger.warning(
+            "Recipe settlement review deferred: %s",
+            operation["operation_id"],
+            exc_info=True,
+        )
+    _schedule_recipe_settlement_retry(ctx=ctx, operation=operation)
+
+
+def _schedule_recipe_settlement_retry(
+    *, ctx: ProjectContext, operation: dict[str, Any]
+) -> None:
+    key = (str(ctx.project_id), str(operation["operation_id"]))
+    if key in _recipe_settlement_retries:
+        return
+
+    async def retry() -> None:
+        try:
+            for delay in _RECIPE_SETTLEMENT_RETRY_DELAYS:
+                await asyncio.sleep(delay)
+                try:
+                    await _settle_delivered_agent_product_task(
+                        ctx=ctx, operation=operation
+                    )
+                    return
+                except Exception:
+                    logger.warning(
+                        "Recipe settlement retry pending: %s", key[1], exc_info=True
+                    )
+        finally:
+            _recipe_settlement_retries.pop(key, None)
+
+    _recipe_settlement_retries[key] = asyncio.create_task(retry())
 
 
 @router.get(
@@ -14429,6 +14533,10 @@ async def complete_agent_product_operation(
         raise HTTPException(404, "agent product operation not found")
     if str(current.get("task_id") or "") != str(body.get("task_id") or ""):
         raise HTTPException(400, "agent product operation task identity mismatch")
+    if result_ref.get("kind") in {"recipe_compile_result", "recipe_nonbillable"}:
+        raise HTTPException(
+            400, "Recipe reuse receipts are recorded only by the server compiler"
+        )
     if outcome == "delivered":
         product_kind = str(current.get("product_kind") or "")
         if product_kind not in {"workflow_generate", "recipe_generate"}:
@@ -14660,15 +14768,19 @@ async def create_canvas_workflow_run(
             if not isinstance(action, dict):
                 continue
             action_name = str(action.get("action") or "")
-            if action_name in {
-                "generate_text",
-                "generate_story_script",
-                "generate_image",
-                "generate_video",
-                "generate_text_video",
-                "generate_audio",
-                "generate_3gs_world",
-            } and (
+            if (
+                action_name
+                in {
+                    "generate_text",
+                    "generate_story_script",
+                    "generate_image",
+                    "generate_video",
+                    "generate_text_video",
+                    "generate_audio",
+                    "generate_3gs_world",
+                }
+                or (action_name == "generate_html" and action.get("recipe_id"))
+            ) and (
                 not action.get("recipe_id") or not action.get("generation_attempt_id")
             ):
                 raise HTTPException(
@@ -14715,7 +14827,7 @@ async def create_canvas_workflow_run(
                 "generate_text_video",
                 "generate_audio",
                 "generate_3gs_world",
-            }:
+            } and not (action_name == "generate_html" and action.get("recipe_id")):
                 continue
             node_id = str(action.get("node_id") or "")
             recipe_id = str(action.get("recipe_id") or "")

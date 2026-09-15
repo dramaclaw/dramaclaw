@@ -260,6 +260,127 @@ def test_agent_product_pending_timeout_is_reviewed_without_refund(monkeypatch):
     assert observed_metrics == ["agent_product_awaiting_reconciliation"]
 
 
+@pytest.mark.parametrize(
+    "compile_mode",
+    ["timeout_fallback", "memory_cache", "persistent_cache", "deterministic"],
+)
+@pytest.mark.parametrize("confirm_fails", [False, True])
+def test_recipe_reuse_confirms_original_reservation_without_refund(
+    monkeypatch, tmp_path, compile_mode, confirm_fails
+):
+    from novelvideo.freezone.agent_product_operations import (
+        bind_agent_product_task,
+        create_agent_product_operation,
+        finish_agent_product_operation,
+    )
+    from novelvideo.task_backend import run_core
+    from novelvideo.task_backend.registry import register_project_task_runner
+    from novelvideo.task_backend.runners.freezone import (
+        _run_freezone_agent_product_async,
+    )
+
+    operation = create_agent_product_operation(
+        project_dir=tmp_path,
+        project_id="proj_timeout",
+        product_kind="recipe_result",
+        idempotency_key="recipe-reuse",
+        generation_session_id="recipe-reuse",
+    )
+    operation_id = operation["operation_id"]
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation_id,
+        task_id="task_1",
+        root_task_id="task_1",
+    )
+    finish_agent_product_operation(
+        project_dir=tmp_path,
+        operation_id=operation_id,
+        outcome="delivered",
+        expected_task_id="task_1",
+        result_ref={
+            "kind": "recipe_compile_result",
+            "id": operation_id,
+            "reason": compile_mode,
+            "content": "usable prompt",
+        },
+        server_recipe_compile=True,
+    )
+
+    events: list[tuple[str, str]] = []
+
+    class UsageMeter:
+        async def resolve_feature_credit_reservation(self, _identity):
+            from novelvideo.ports.usage import FeatureSettlementResolution
+
+            return FeatureSettlementResolution(
+                outcome="resolved",
+                reservation_id="reservation_1",
+                feature_key="freezone.agent.recipe_result",
+                model_call_credit_policy="feature_included",
+            )
+
+        async def settle_cancelled_feature_credit_reservation(self, *_args, **_kwargs):
+            events.append(("refund", "unexpected"))
+
+        async def settle_feature_credit_reservation(
+            self, reservation_id, *, action, metadata
+        ):
+            assert action == "confirm"
+            assert metadata["business_outcome"] == "delivered"
+            events.append(("confirm", reservation_id))
+            if confirm_fails:
+                raise RuntimeError("ledger temporarily unavailable")
+
+    def delivered_runner(envelope, ctx):
+        envelope["payload"] = {
+            "operation_id": operation_id,
+            "product_kind": "recipe_result",
+        }
+        return asyncio.run(_run_freezone_agent_product_async(envelope, ctx))
+
+    async def not_cancelled(**_kwargs):
+        return False
+
+    async def no_metrics(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(run_core, "_ensure_builtin_runners_registered", lambda: None)
+    monkeypatch.setattr(run_core, "is_cancel_requested", not_cancelled)
+    monkeypatch.setattr(run_core, "get_usage_meter", lambda: UsageMeter())
+    monkeypatch.setattr(run_core, "_emit_project_task_metrics", no_metrics)
+    monkeypatch.setattr(
+        run_core, "_set_project_task_metrics_context", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(run_core, "_clear_project_task_metrics_context", lambda: None)
+    register_project_task_runner(
+        "freezone_agent_recipe_result", delivered_runner, requires_home_node=True
+    )
+
+    manager = _FakeTaskManager()
+    result = run_core.run_project_task_core_sync(
+        _verified_delivery(
+            task_type="freezone_agent_recipe_result",
+            billing_metadata={"feature_credit_reservation_id": "reservation_1"},
+        ),
+        SimpleNamespace(
+            project_id="proj_timeout",
+            requester_user_id="usr_1",
+            is_home_node=True,
+            state_dir=tmp_path,
+        ),
+        manager,
+        run_task_id="task_1",
+    )
+
+    assert result["delivery_status"] == "delivered"
+    assert result["compile_mode"] == compile_mode
+    assert events == [("confirm", "reservation_1")]
+    assert manager.failed == []
+    assert len(manager.completed) == 1
+    assert "正常计费" in manager.completed[0]["current_task"]
+
+
 def test_run_project_task_core_rejects_raw_dict_before_side_effects():
     from novelvideo.task_backend import run_core
 

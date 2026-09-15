@@ -305,12 +305,15 @@ async def test_completed_task_notifies_and_triggers_one_server_continuation(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("store_read_delay", [0, 0.1])
 async def test_failure_pauses_without_starting_downstream_turn(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    store_read_delay: float,
 ) -> None:
     failed = task("new-failed", "failed")
     failed.error = "upstream rejected"
+    notified = asyncio.Event()
 
     class Manager:
         def list_tasks_for_project(self, _ctx):
@@ -324,6 +327,7 @@ async def test_failure_pauses_without_starting_downstream_turn(
 
         async def _notify(self, run, text):
             self.notifications.append(text)
+            notified.set()
             return {"content": text}
 
         async def _broadcast_status(self, run, **_kwargs):
@@ -337,16 +341,27 @@ async def test_failure_pauses_without_starting_downstream_turn(
     monkeypatch.setattr(director_auto, "POLL_SECONDS", 0.01)
     store = DirectorAutoStore(tmp_path / "director-auto.db")
     store.upsert(run_record(tmp_path))
+    original_get = store.get
+
+    def delayed_get(*args, **kwargs):
+        # Slow SQLite/thread scheduling must not turn this into a timing assertion.
+        time.sleep(store_read_delay)
+        return original_get(*args, **kwargs)
+
+    monkeypatch.setattr(store, "get", delayed_get)
     coordinator = RecordingCoordinator(store)
 
-    coordinator._ensure_worker(store.get("alice", "project-1"))  # type: ignore[arg-type]
-    await asyncio.sleep(0.08)
+    try:
+        coordinator._ensure_worker(store.get("alice", "project-1"))  # type: ignore[arg-type]
+        # Failure notification is emitted only after the paused state is persisted.
+        await asyncio.wait_for(notified.wait(), timeout=5)
 
-    saved = store.get("alice", "project-1")
-    assert saved is not None and saved.status == "paused"
-    assert coordinator.continuations == 0
-    assert "upstream rejected" in coordinator.notifications[0]
-    await coordinator.shutdown()
+        saved = store.get("alice", "project-1")
+        assert saved is not None and saved.status == "paused"
+        assert coordinator.continuations == 0
+        assert "upstream rejected" in coordinator.notifications[0]
+    finally:
+        await coordinator.shutdown()
 
 
 def test_missing_portrait_recovery_only_matches_exact_identity_failure() -> None:
