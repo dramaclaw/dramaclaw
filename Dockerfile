@@ -1,37 +1,29 @@
+# Codex runtime pin — the single source of truth for every image that ships the
+# credential-safe Codex App Server (this file, and downstream images that read
+# these two lines). The tag encodes <upstream ref[:7]>-p<patch sha256[:8]>; the
+# digest pins the exact published index. Bump both lines together.
+#
+# Why prebuilt: the stock openai/codex 0.149 binary logs the full per-turn
+# metadata map (which carries per-turn gateway credentials) to logs_2.sqlite.
+# deploy/codex/0.149.0-redact-turn-metadata.patch redacts it and consumes the
+# per-turn key as Responses bearer auth. The patched binary is compiled once by
+# the maintainers' release pipeline and published to Docker Hub; this image
+# only verifies and copies it (tests/test_docker_persistence_config.py keeps the
+# tag consistent with the patch file and CODEX_REF).
+#
+# Platform status: the pinned image above is linux/amd64 only today. Publishing
+# an arm64 artifact is a hard prerequisite before this Dockerfile reaches main,
+# since release-images.yml builds both platforms.
+ARG CODEX_REF="758ef40f50c1a458425c7cfbf1eb12cbc07af0b0"
+ARG CODEX_RUNTIME_IMAGE="docker.io/claymorelab/codex-dramaclaw:758ef40-pc9db6e46@sha256:b53773645294faade3dbb397d91efb7110358d55806a9f291c2a409172da30a6"
+
 FROM rust:1.95-bookworm AS vtracer-builder
 RUN cargo install --locked --version 1.0.0-alpha.3 vtracer-cli
 
-FROM rust:1.95-bookworm AS codex-builder
-
-# The Codex 0.149 runtime logs the full turn metadata map
-# to logs_2.sqlite. DramaClaw carries per-turn gateway credentials and control
-# capabilities there, so the stock binary is not safe for a shared home-node
-# App Server. Build the official 0.149.0 tagged runtime, redact Debug/log
-# output, and consume the per-turn gateway key as Responses bearer auth.
-ARG CODEX_REPO="https://github.com/openai/codex.git"
-ARG CODEX_REF="758ef40f50c1a458425c7cfbf1eb12cbc07af0b0"
-WORKDIR /opt/codex-src
-RUN git init \
-    && git remote add origin "$CODEX_REPO" \
-    && git fetch --depth 1 origin "$CODEX_REF" \
-    && git checkout --detach FETCH_HEAD \
-    && git rev-parse HEAD > /opt/codex-runtime.sha
-COPY deploy/codex/0.149.0-redact-turn-metadata.patch /tmp/codex-turn-metadata.patch
-# The official release tag changes workspace.package.version to 0.149.0
-# without rewriting Cargo.lock's local workspace package versions. Cargo must
-# perform that metadata-only lock refresh; external dependency pins remain
-# those committed in the release tag.
-RUN git apply --check /tmp/codex-turn-metadata.patch \
-    && git apply /tmp/codex-turn-metadata.patch \
-    && cd codex-rs \
-    && cargo test -p codex-protocol debug_redacts_responses_api_client_metadata_values \
-    && cargo test -p codex-core turn_metadata_extracts_dramaclaw_gateway_key_without_serializing_it \
-    && cargo test -p codex-core turn_scoped_responses_auth_replaces_the_provider_placeholder \
-    && cargo build --release -p codex-cli --bin codex \
-    && strip target/release/codex \
-    && target/release/codex --version
+FROM ${CODEX_RUNTIME_IMAGE} AS codex-runtime
 
 FROM python:3.12-slim
+ARG CODEX_REF
 COPY --from=vtracer-builder /usr/local/cargo/bin/vtracer /usr/local/bin/vtracer
 
 # 项目全程用 uv 管理(与 host 一致)。Dockerfile 也用 uv,使 uv.lock 锁版本 +
@@ -52,8 +44,9 @@ ENV ST_EDITION=ce \
     HERMES_CLI_PATH=/usr/local/bin/hermes \
     CODEX_BIN=/usr/local/bin/codex-dramaclaw
 
-COPY --from=codex-builder /opt/codex-src/codex-rs/target/release/codex /usr/local/bin/codex-dramaclaw
-COPY --from=codex-builder /opt/codex-runtime.sha /opt/codex-runtime.sha
+COPY --from=codex-runtime /codex /usr/local/bin/codex-dramaclaw
+COPY --from=codex-runtime /codex-runtime.sha /opt/codex-runtime.sha
+COPY --from=codex-runtime /codex-runtime.json /opt/codex-runtime.json
 
 # ffmpeg for media; bubblewrap (`bwrap`) for the Hermes Linux sandbox — the
 # vendored codex-linux-sandbox binary's default pipeline execs system bwrap
@@ -62,6 +55,24 @@ COPY --from=codex-builder /opt/codex-runtime.sha /opt/codex-runtime.sha
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg bubblewrap \
     && rm -rf /var/lib/apt/lists/*
+
+# deploy/codex/ is copied again, in full, further down as part of the
+# application source (COPY deploy ./deploy); this narrow copy only makes the
+# patch file available here, before WORKDIR /app, for the identity check below.
+COPY deploy/codex/ /tmp/codex-bom/
+
+# Fail the build (not the container's preflight an hour later) if the prebuilt
+# runtime is not the upstream commit this image claims, if its patch does not
+# match the one recorded in codex-runtime.json, or if the binary cannot start
+# on this base image (shared libraries).
+RUN set -eux; \
+    test "$(cat /opt/codex-runtime.sha)" = "${CODEX_REF}" \
+        || { echo "codex-runtime.sha ($(cat /opt/codex-runtime.sha)) does not match CODEX_REF (${CODEX_REF})" >&2; exit 1; }; \
+    want_patch_sha256="$(python3 -c 'import json; print(json.load(open("/opt/codex-runtime.json"))["patch_sha256"])')"; \
+    got_patch_sha256="$(sha256sum /tmp/codex-bom/*.patch | cut -d' ' -f1)"; \
+    test "$got_patch_sha256" = "$want_patch_sha256" \
+        || { echo "codex-runtime patch_sha256 mismatch: codex-runtime.json says $want_patch_sha256, deploy/codex/*.patch hashes to $got_patch_sha256" >&2; exit 1; }; \
+    codex-dramaclaw --version
 
 WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
@@ -53,13 +54,48 @@ def test_env_example_configures_data_root_instead_of_individual_directories() ->
     assert "# NOVELVIDEO_DATA_ROOT=" in env_example
 
 
-def test_container_builds_only_the_pinned_redacted_codex_runtime() -> None:
+CODEX_REF_RE = re.compile(r'^ARG CODEX_REF="([0-9a-f]{40})"$', re.MULTILINE)
+CODEX_RUNTIME_IMAGE_RE = re.compile(
+    r'^ARG CODEX_RUNTIME_IMAGE="docker\.io/claymorelab/codex-dramaclaw:'
+    r"([0-9a-f]{7})-p([0-9a-f]{8})@sha256:[0-9a-f]{64}\"$",
+    re.MULTILINE,
+)
+
+
+def test_container_consumes_only_the_pinned_prebuilt_codex_runtime() -> None:
+    """The CE image must not compile codex; it copies the prebuilt, digest-pinned
+    credential-safe runtime whose tag encodes (upstream ref, patch sha). The two
+    ARG lines are the single source of truth for every consumer of this repo."""
     dockerfile = (REPOSITORY_ROOT / "Dockerfile").read_text()
 
-    assert 'ARG CODEX_REF="758ef40f50c1a458425c7cfbf1eb12cbc07af0b0"' in dockerfile
-    assert "0.149.0-redact-turn-metadata.patch" in dockerfile
-    assert "cargo test -p codex-protocol" in dockerfile
-    assert "cargo build --release -p codex-cli --bin codex" in dockerfile
+    refs = CODEX_REF_RE.findall(dockerfile)
+    assert len(refs) == 1, refs
+    pins = CODEX_RUNTIME_IMAGE_RE.findall(dockerfile)
+    assert len(pins) == 1, pins
+    (codex_ref,) = refs
+    ((tag_ref, tag_patch),) = pins
+
+    first_from = dockerfile.index("\nFROM ")
+    assert dockerfile.index("ARG CODEX_REF=") < first_from
+    assert dockerfile.index("ARG CODEX_RUNTIME_IMAGE=") < first_from
+
+    assert tag_ref == codex_ref[:7]
+    patches = sorted((REPOSITORY_ROOT / "deploy" / "codex").glob("*.patch"))
+    assert len(patches) == 1, patches
+    assert tag_patch == hashlib.sha256(patches[0].read_bytes()).hexdigest()[:8]
+
+    assert "FROM ${CODEX_RUNTIME_IMAGE} AS codex-runtime" in dockerfile
+    assert "COPY --from=codex-runtime /codex /usr/local/bin/codex-dramaclaw" in dockerfile
+    assert "COPY --from=codex-runtime /codex-runtime.sha /opt/codex-runtime.sha" in dockerfile
+    assert "COPY --from=codex-runtime /codex-runtime.json /opt/codex-runtime.json" in dockerfile
+    assert 'test "$(cat /opt/codex-runtime.sha)" = "${CODEX_REF}"' in dockerfile
+    assert "patch_sha256" in dockerfile
+    assert "/opt/codex-runtime.json" in dockerfile
+    assert "codex-dramaclaw --version" in dockerfile
+    assert "codex-builder" not in dockerfile
+    assert "cargo build --release -p codex-cli" not in dockerfile
+    assert "cargo test -p codex-" not in dockerfile
+
     assert "CODEX_BIN=/usr/local/bin/codex-dramaclaw" in dockerfile
     assert "--no-install-package openai-codex-cli-bin" in dockerfile
     assert "apt-get install -y --no-install-recommends git" in dockerfile
