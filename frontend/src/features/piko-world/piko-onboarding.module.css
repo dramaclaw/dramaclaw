@@ -20,7 +20,7 @@
 .portrait::before { content: ''; position: absolute; bottom: -1%; left: 25%; width: 50%; height: 4%; border-radius: 50%; background: rgb(52 45 26 / .23); filter: blur(5px); }
 .portrait img { display: block; height: var(--portrait-height); max-width: 100%; object-fit: contain; transform: translateY(7.4%); position: relative; }
 .name { position: absolute; bottom: calc(var(--portrait-height) * var(--player-visible-ratio) + 20px); left: 50%; transform: translateX(-50%); width: max-content; max-width: 110%; padding: 0; background: none; color: #fff; font-weight: 500; font-size: clamp(14px, 1.3vw, 18px); line-height: 1.4; text-align: center; overflow-wrap: anywhere; text-shadow: 0 1px 3px rgb(40 31 18 / .5); }
-.form { position: absolute; top: 45%; right: clamp(24px, 17vw, 400px); transform: translateY(-50%); width: clamp(310px, 30vw, 420px); background: rgb(255 245 223 / .58); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); color: var(--piko-ink); border: 0; border-radius: var(--piko-corner); padding: 28px; box-shadow: none; border-radius: 18px; }
+.form { position: absolute; top: 45%; right: clamp(24px, 17vw, 400px); transform: translateY(-50%); width: clamp(310px, 30vw, 420px); background: rgb(255 245 223 / .58); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); color: var(--piko-ink); border: 0; border-radius: 18px; padding: 28px; box-shadow: none; }
 .formTitle { margin: 0 0 16px; font-size: 20px; font-weight: 600; }
 .form fieldset { margin: 0 0 24px; border: 0; padding: 0; }
 .form legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
@@ -36,7 +36,7 @@
 .field > input::placeholder { color: var(--piko-muted); }
 .feedback { min-height: 36px; margin: 12px 0; font-size: 12px; line-height: 1.5; color: var(--piko-muted); }
 .feedback[role=alert] { color: #9c342a; }
-.primary { min-height: 50px; padding: 12px 20px; border: 1px solid rgb(117 96 71 / .22); border-radius: var(--piko-corner); background: var(--piko-honey); color: var(--piko-ink); box-shadow: none; border: 0; font-weight: 700; font-size: 18px; cursor: pointer; transition: transform var(--duration-fast), filter var(--duration-fast); }
+.primary { min-height: 50px; padding: 12px 20px; border-radius: var(--piko-corner); background: var(--piko-honey); color: var(--piko-ink); box-shadow: none; border: 0; font-weight: 700; font-size: 18px; cursor: pointer; transition: transform var(--duration-fast), filter var(--duration-fast); }
 .primary:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); }
 .primary:active:not(:disabled) { transform: translateY(2px); box-shadow: none; }
 .primary:disabled { opacity: .5; cursor: default; }

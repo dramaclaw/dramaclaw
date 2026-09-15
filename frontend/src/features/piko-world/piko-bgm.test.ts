@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { startPikoMusic } from "./piko-bgm";
+import { startPikoMusic, setPikoMusicMuted } from "./piko-bgm";
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 it("retries denied playback, fades in and releases on exit", async () => {
  vi.useFakeTimers();
@@ -10,13 +10,13 @@ it("retries denied playback, fades in and releases on exit", async () => {
  document.dispatchEvent(new Event("pointerdown"));
  await Promise.resolve();
  vi.advanceTimersByTime(2000);
- expect(audio.volume).toBe(0.5);
+ expect(audio.volume).toBe(0.7);
  expect(audio.loop).toBe(false);
  document.dispatchEvent(new Event("piko-notification-sound"));
  vi.advanceTimersByTime(150);
  expect(audio.volume).toBeCloseTo(0.09);
  vi.advanceTimersByTime(1800);
- expect(audio.volume).toBe(0.5);
+ expect(audio.volume).toBe(0.7);
  stop();
  vi.advanceTimersByTime(800);
  expect(audio.volume).toBe(0);
@@ -24,7 +24,7 @@ it("retries denied playback, fades in and releases on exit", async () => {
  document.dispatchEvent(new Event("pointerdown"));
  expect(audio.play).toHaveBeenCalledTimes(2);
 });
-it("ignores a stale play result after returning from the background", async () => {
+it("continues pending playback without restarting when tab visibility changes", async () => {
  vi.useFakeTimers();
  let hidden = false;
  const visibility = vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
@@ -34,12 +34,12 @@ it("ignores a stale play result after returning from the background", async () =
  const stop = startPikoMusic(["/piko/world/audio/bgm/welcome-courtyard-01.mp3"]);
  hidden = true; document.dispatchEvent(new Event("visibilitychange"));
  hidden = false; document.dispatchEvent(new Event("visibilitychange"));
- resolvers[1](); await Promise.resolve();
- const pauses = audio.pause.mock.calls.length;
+ expect(audio.play).toHaveBeenCalledTimes(1);
+ const pauses = 0;
  resolvers[0](); await Promise.resolve();
  expect(audio.pause).toHaveBeenCalledTimes(pauses);
  vi.advanceTimersByTime(2000);
- expect(audio.volume).toBe(0.5);
+ expect(audio.volume).toBe(0.7);
  stop(); vi.advanceTimersByTime(800);
  visibility.mockRestore();
 });
@@ -74,7 +74,7 @@ it("waits 30 seconds between rounds, ignores gestures during the pause and cance
  expect(audio.play).toHaveBeenCalledTimes(2);
  expect(audio.removeAttribute).toHaveBeenCalledWith("src");
 });
-it("stays silent if the repeat pause finishes in a hidden tab", async () => {
+it("continues repeating in a hidden tab", async () => {
  vi.useFakeTimers();
  let hidden = false;
  const visibility = vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
@@ -84,7 +84,7 @@ it("stays silent if the repeat pause finishes in a hidden tab", async () => {
  try {
   await Promise.resolve(); audio.dispatchEvent(new Event("ended"));
   hidden = true; document.dispatchEvent(new Event("visibilitychange"));
-  vi.advanceTimersByTime(30000); expect(audio.play).toHaveBeenCalledTimes(1);
+  vi.advanceTimersByTime(30000); expect(audio.play).toHaveBeenCalledTimes(2);
   hidden = false; document.dispatchEvent(new Event("visibilitychange"));
   await Promise.resolve(); expect(audio.play).toHaveBeenCalledTimes(2);
  } finally { stop(); vi.advanceTimersByTime(800); visibility.mockRestore(); }
@@ -101,4 +101,29 @@ it("pauses after the whole playlist rather than between tracks", async () => {
  vi.advanceTimersByTime(1); await Promise.resolve();
  expect(audio.src).toBe("first.mp3"); expect(audio.play).toHaveBeenCalledTimes(3);
  stop(); vi.advanceTimersByTime(800);
+});
+
+it("mutes without resetting playback and keeps new map music muted", async () => {
+ vi.useFakeTimers();
+ const clips: Array<{ volume: number; currentTime: number; paused: boolean; play: ReturnType<typeof vi.fn> }> = [];
+ vi.stubGlobal("Audio", class extends EventTarget {
+  volume = 0; currentTime = 12; paused = true;
+  play = vi.fn(async () => { this.paused = false; });
+  pause = vi.fn(() => { this.paused = true; });
+  removeAttribute = vi.fn(); load = vi.fn();
+  constructor(public src: string) { super(); clips.push(this); }
+ });
+ const stop = startPikoMusic(["courtyard.mp3"]);
+ await Promise.resolve(); vi.advanceTimersByTime(2000);
+ setPikoMusicMuted(true);
+ expect(clips[0].paused).toBe(true); expect(clips[0].volume).toBe(0);
+ document.dispatchEvent(new Event("pointerdown"));
+ expect(clips[0].play).toHaveBeenCalledTimes(1);
+ setPikoMusicMuted(false); await Promise.resolve();
+ expect(clips[0].currentTime).toBe(12);
+ expect(clips[0].play).toHaveBeenCalledTimes(2);
+ setPikoMusicMuted(true);
+ const stopNext = startPikoMusic(["highlands.mp3"]);
+ expect(clips[1].play).not.toHaveBeenCalled();
+ stop(); stopNext(); vi.advanceTimersByTime(800); setPikoMusicMuted(false);
 });

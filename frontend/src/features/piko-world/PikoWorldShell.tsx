@@ -29,8 +29,10 @@ import { prepareMapTravel, type MapExit, type MapLocation } from "./runtime/map-
 import { PikoWorldCanvas } from "./PikoWorldCanvas";
 import { PikoMapTransition } from "./PikoMapTransition";
 import { PikoLoadingScreen } from "./PikoLoadingScreen";
+import { PikoMusicDialog } from "./PikoMusicDialog";
 import { PikoWardrobeDialog } from "./PikoWardrobeDialog";
 import type { PikoPlayerGender } from "./piko-player";
+import { PikoMusicMarquee } from "./PikoMusicMarquee";
 import { useMapMusic } from "./piko-bgm";
 import { playPikoUiSound } from "./piko-audio";
 import { PikoThreeSlicePanelSkin } from "./PikoThreeSlicePanelSkin";
@@ -143,6 +145,8 @@ export function PikoWorldShell({ playerGender, onMusicMapChange }: { playerGende
   ]);
   const chatButtonRef = useRef<HTMLButtonElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
+  const wardrobeButtonRef = useRef<HTMLButtonElement>(null);
+  const [musicOpen, setMusicOpen] = useState(false);
   const chatMessageListRef = useRef<HTMLDivElement>(null);
   const unreadChatCount = chatMessages.reduce(
     (count, message) => count + (!message.mine && message.unread ? 1 : 0),
@@ -328,7 +332,7 @@ export function PikoWorldShell({ playerGender, onMusicMapChange }: { playerGende
   const handleResidentSelectorOpenChange = (open: boolean) => {
     if (open !== residentSelectorOpen) playPikoUiSound(open ? "open" : "close");
     setResidentSelectorOpen(open);
-    if (!open) window.requestAnimationFrame(() => settingsButtonRef.current?.focus());
+    if (!open) window.requestAnimationFrame(() => wardrobeButtonRef.current?.focus());
   };
 
   return (
@@ -435,7 +439,26 @@ export function PikoWorldShell({ playerGender, onMusicMapChange }: { playerGende
           </div>
         </nav>
 
-        <div className="absolute right-4 top-4 z-20">
+        <div className="absolute right-4 top-4 z-20 flex items-start gap-5">
+          {!musicOpen && <PikoMusicMarquee />}
+          <div className="flex w-9 flex-col items-center gap-0.5">
+            <button type="button" id="piko-world-music" aria-label={t("pikoWorld.musicToggle")} aria-haspopup="dialog" aria-expanded={musicOpen}
+              title={t("pikoWorld.musicToggle")}
+              className={`inline-flex size-9 items-center justify-center ${iconStyles.button}`}
+              onClick={() => { setMusicOpen(true); setSettingsOpen(false); playPikoUiSound("open"); }}>
+              <img src="/piko/world/ui/piko-world-music-icon-v2.png" alt="" className="size-9 object-contain" draggable={false} />
+            </button>
+            <img src="/piko/world/ui/control-labels/piko-world-control-label-music-v2.png" alt="" aria-hidden="true" className="w-[34px] translate-y-0.5 object-contain" draggable={false} />
+          </div>
+          <div className="flex w-9 flex-col items-center gap-0.5">
+            <button type="button" id="piko-world-wardrobe" ref={wardrobeButtonRef} aria-label={t("pikoWorld.wardrobe.title")}
+              aria-haspopup="dialog" aria-expanded={residentSelectorOpen}
+              className={`inline-flex size-9 items-center justify-center ${iconStyles.button}`}
+              onClick={() => { setSettingsOpen(false); setChatOpen(false); handleResidentSelectorOpenChange(true); }}>
+              <img src="/piko/world/ui/piko-world-wardrobe-icon-v2.png" alt="" className="size-9 object-contain" draggable={false} />
+            </button>
+            <img src="/piko/world/ui/control-labels/piko-world-control-label-wardrobe-v2.png" alt="" aria-hidden="true" className="w-[34px] translate-y-0.5 object-contain" draggable={false} />
+          </div>
           <div className="flex w-9 flex-col items-center gap-0.5">
             <DropdownMenu open={settingsOpen} onOpenChange={open => {
               setSettingsOpen(open);
@@ -457,10 +480,6 @@ export function PikoWorldShell({ playerGender, onMusicMapChange }: { playerGende
                   onClick={() => { setSettingsOpen(false); setProfileOpen(true); playPikoUiSound("open"); }}>
                   {t("pikoWorld.editProfile")}
                 </DropdownMenuItem>
-                <DropdownMenuItem className={popupStyles.item}
-                  onClick={() => { setSettingsOpen(false); handleResidentSelectorOpenChange(true); }}>
-                  {t("pikoWorld.wardrobe.title")}
-                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
             <img
@@ -480,6 +499,8 @@ export function PikoWorldShell({ playerGender, onMusicMapChange }: { playerGende
           onSave={saveProfile}
           onOpenChange={open => { setProfileOpen(open); playPikoUiSound(open ? "open" : "close"); }}
         />
+
+        <PikoMusicDialog open={musicOpen} onOpenChange={setMusicOpen} />
 
         <PikoWardrobeDialog
           open={residentSelectorOpen}

@@ -1,5 +1,6 @@
 {
   "pikoWorld": {
+    "musicToggle": "Nhạc",
     "mapLoading": "Đang tải {{mapName}}…",
     "mapLoadError": "Không thể tải {{mapName}}",
     "mapTransitionAnnouncement": "Đang vào {{mapName}}",
@@ -32,6 +33,7 @@
       "invitation": "Một lời mời từ thị trấn đang chờ bạn.",
       "retry": "Thử lại",
       "play": "Phát lời mời",
+      "skipAnimation": "Bỏ qua hoạt ảnh",
       "unmute": "Bật âm thanh",
       "mute": "Tắt âm thanh",
       "join": "Cùng tham gia nhé",

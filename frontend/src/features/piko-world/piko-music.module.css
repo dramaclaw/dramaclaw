@@ -1,0 +1,53 @@
+.dialog { width: min(540px, calc(100vw - 40px)); max-width: min(540px, calc(100vw - 40px)) !important; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; gap: 0; color: #493523; }
+.content { position: relative; z-index: 2; padding: 20% 12% 17%; max-height: calc(100dvh - 64px); display: flex; flex-direction: column; overflow: hidden; }
+.description { font-size: 12px; color: #756047; text-align: center; margin-top: 6px; }
+.turntable { position: relative; width: min(95%, 275.5px); aspect-ratio: 1; margin: 0 auto 4px; filter: drop-shadow(0 7px 7px rgb(116 77 33 / 38%)); }
+.body { width: 100%; height: 100%; }
+.record { position: absolute; width: 68%; left: 13.2%; top: 15.5%; aspect-ratio: 1; animation: spin 18s linear infinite; }
+.record > img:first-child { width: 100%; height: 100%; }
+.cover { position: absolute; width: 58.2%; height: 58.2%; left: 20.9%; top: 20.9%; object-fit: cover; border-radius: 50%; }
+.arm { position: absolute; width: 31%; height: auto; left: 63.35%; top: 19%; transform-origin: 53.1% 14.4%; transform: rotate(-25deg); transition: transform 650ms ease-in-out 650ms; }
+.arm.engaged { transform: rotate(8deg); transition-delay: 0ms; }
+.list { list-style: none; padding: 2px 3px; margin: 0; display: grid; gap: 6px; max-height: 166px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #b98d52 transparent; }
+.list button { width: 100%; display: flex; align-items: center; gap: 10px; text-align: left; min-height: 44px; padding: 8px 10px; border-radius: 8px; border: 1px solid transparent; background: rgb(207 167 105 / 28%); cursor: pointer; }
+.list button[aria-current=true] { border-color: #c69a63; background: rgb(232 184 94 / 52%); }
+.track { flex: 1; min-width: 0; }
+.track strong { display: block; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.number, .state { font-size: 11px; color: #756047; }
+.close { position: absolute; z-index: 3; right: -4px; top: -12px; width: 32px; height: 32px; cursor: pointer; }
+.close img { width: 100%; }
+.dialog button:focus-visible { outline: 2px solid #526b40; outline-offset: 2px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (max-height: 760px) { .turntable { width: 199.5px; } }
+@media (prefers-reduced-motion: reduce) { .record { animation: none; } .arm { transition: none; } }
+
+.scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #c69a63 transparent; padding: 3px; }
+
+.state { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 18px; color: #76502c; }
+
+.marquee { position: absolute; right: calc(100% + 12px); top: 8px; width: clamp(60px, 6vw, 84px); overflow: hidden; color: #fff5df; font-size: 12px; text-shadow: 0 1px 3px #493523; white-space: nowrap; pointer-events: none; }
+.marqueeTrack { display: flex; width: max-content; animation: marquee 16s linear infinite; }
+.marqueeTrack span { padding-right: 32px; }
+@keyframes marquee { to { transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) { .marqueeTrack { animation: none; } }
+
+.caption { width: 100%; overflow: hidden; font-size: 13px; font-weight: 600; white-space: nowrap; margin-bottom: 0; }
+
+.captionRow { display: flex; align-items: center; gap: 7px; margin: 4px 3px 20px; flex-wrap: nowrap; }
+.captionRow .caption { flex: 1 1 0; min-width: 0; text-overflow: ellipsis; }
+.time { flex-shrink: 0; color: #8b7254; font-size: 10px; font-weight: 400; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Non-auto standard scrollbar-color overrides WebKit scrollbar styling in Chromium. */
+@supports selector(::-webkit-scrollbar) {
+  .dialog .list, .dialog .scroll { scrollbar-width: auto; scrollbar-color: auto; }
+  .dialog .list::-webkit-scrollbar, .dialog .scroll::-webkit-scrollbar { width: 3px; height: 3px; }
+  .dialog .list::-webkit-scrollbar-thumb, .dialog .scroll::-webkit-scrollbar-thumb { background: #b98d52; border: 0; border-radius: 3px; }
+}
+
+.follow { display: inline-flex; align-items: center; justify-content: center; color: #76502c; border-radius: 6px; cursor: pointer; white-space: nowrap; flex: none; gap: 7px; margin-left: auto; width: auto; height: 24px; font-size: 11px; font-weight: 400; }
+.toggle { width: 26px; height: 14px; border-radius: 8px; background: #cdb58e; position: relative; transition: background-color 150ms; }
+.toggle::after { content: ""; position: absolute; width: 10px; height: 10px; border-radius: 50%; top: 2px; left: 2px; background: #fff5df; transition: transform 150ms; }
+.follow[aria-checked=true] .toggle { background: #b98d42; }
+.follow[aria-checked=true] .toggle::after { transform: translateX(12px); }
+
+.list .time { margin-left: 2px; margin-right: 2px; }
+@media (prefers-reduced-motion: reduce) { .toggle, .toggle::after { transition: none; } }

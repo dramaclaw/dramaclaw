@@ -122,10 +122,10 @@ it("uses the existing click sound for invitation, changed gender and valid confi
   expect(sound).toHaveBeenLastCalledWith("open");
 });
 
-it("holds the last frame until invited and exposes only the mute control while playing", async () => {
+it("holds the last frame until invited and exposes mute and skip controls while playing", async () => {
   const { container } = render(<PikoOnboarding initialNickname="" onSave={() => true} onEnter={vi.fn()} />);
   await ready();
-  expect(screen.queryByRole("button", { name: "跳过动画" })).toBeNull();
+  expect(screen.getByRole("button", { name: "跳过动画" })).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: "回到工作台" })).toBeNull();
   const video = container.querySelector("video")!;
   fireEvent.ended(video);
@@ -172,4 +172,50 @@ it("starts the silent loop only after the half-second hold and retains the last 
   act(() => vi.advanceTimersByTime(800));
   expect(container.querySelector("video")).toBeNull();
   expect(vi.mocked(HTMLMediaElement.prototype.pause).mock.contexts).toContain(loop);
+});
+
+
+it("does not start delayed intro playback after the page becomes hidden", async () => {
+  vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+  render(<PikoOnboarding initialNickname="" onSave={() => true} onEnter={vi.fn()} />);
+  await ready();
+  vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+  fireEvent(document, new Event("visibilitychange"));
+  await act(async () => { vi.advanceTimersByTime(800); });
+  expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+});
+
+it("does not restart the invitation hold when creation artwork finishes loading", async () => {
+  const loaded: Array<() => void> = [];
+  vi.stubGlobal("Image", class {
+    onload: (() => void) | null = null; onerror: (() => void) | null = null;
+    set src(_src: string) { loaded.push(() => this.onload?.()); }
+  });
+  render(<PikoOnboarding initialNickname="" onSave={() => true} onEnter={vi.fn()} />);
+  fireEvent.ended(document.querySelector("video")!);
+  act(() => vi.advanceTimersByTime(300));
+  await act(async () => { loaded.forEach(finish => finish()); });
+  act(() => vi.advanceTimersByTime(200));
+  expect(screen.getByRole("button", { name: "你也一起来吧" })).toBeInTheDocument();
+});
+
+it("does not retry audible autoplay silently after the page is hidden", async () => {
+  let rejectPlay!: (reason: Error) => void;
+  vi.mocked(HTMLMediaElement.prototype.play).mockImplementation(() => new Promise<void>((_resolve, reject) => { rejectPlay = reject; }));
+  render(<PikoOnboarding initialNickname="" onSave={() => true} onEnter={vi.fn()} />);
+  await ready();
+  act(() => vi.advanceTimersByTime(800));
+  expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
+  vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+  fireEvent(document, new Event("visibilitychange"));
+  await act(async () => { rejectPlay(new Error("blocked")); });
+  expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
+});
+
+it("skips the intro into the invitation and pauses its video", async () => {
+  const { container } = render(<PikoOnboarding initialNickname="" onSave={vi.fn()} onEnter={vi.fn()} />);
+  await ready();
+  fireEvent.click(screen.getByRole("button", { name: "跳过动画" }));
+  expect(screen.queryByRole("button", { name: "跳过动画" })).toBeNull();
+  expect(container.querySelector('img[src*="invitation-wordmark"]')).toBeTruthy();
 });

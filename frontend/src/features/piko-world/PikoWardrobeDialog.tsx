@@ -13,7 +13,7 @@ export function PikoWardrobeDialog({ open, onOpenChange, gender, nickname }: {
   const { t } = useTranslation();
   const art = PIKO_PLAYER_ART[gender];
   return <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent showCloseButton={false} overlayClassName="!bg-black/25 !backdrop-blur-none" className={`dark ${styles.dialog}`} finalFocus={() => document.getElementById("piko-world-settings")}>
+    <DialogContent showCloseButton={false} overlayClassName="!bg-black/25 !backdrop-blur-none" className={`dark ${styles.dialog}`} finalFocus={() => document.getElementById("piko-world-wardrobe")}>
       <PikoThreeSlicePanelSkin blendSeams
         topSrc="/piko/world/ui/wardrobe/wardrobe-top-v1.png"
         middleSrc="/piko/world/ui/wardrobe/wardrobe-middle-v1.png"

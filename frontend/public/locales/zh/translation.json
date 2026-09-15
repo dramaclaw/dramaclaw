@@ -2237,6 +2237,7 @@
     }
   },
   "pikoWorld": {
+    "musicToggle": "音乐",
     "mapTravel": {
       "retry": "重新加载",
       "return": "返回上一张地图",
@@ -2392,6 +2393,7 @@
       "invitation": "有一封来自小镇的邀请，等你打开。",
       "retry": "重试",
       "play": "播放邀请影片",
+      "skipAnimation": "跳过动画",
       "unmute": "开启声音",
       "mute": "静音",
       "join": "你也一起来吧",

@@ -62,8 +62,7 @@ it("opens settings before either dialog, saves the nickname to the map and prese
   await user.click(screen.getByRole("button", { name: "关闭" }));
   await waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
   expect(screen.getByTestId("map")).toHaveTextContent("小禾");
-  await user.click(screen.getByRole("button", { name: "设置" }));
-  await user.click(await screen.findByRole("menuitem", { name: "角色装扮" }));
+  await user.click(screen.getByRole("button", { name: "角色装扮" }));
   expect(screen.getByTestId("wardrobe")).toBeInTheDocument();
 });
 

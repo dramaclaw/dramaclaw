@@ -71,13 +71,15 @@ export function PikoOnboarding({ initialNickname, onSave, onEnter, onMusicStart 
     // A route entry is normally still within the entrance gesture. If audible
     // autoplay is denied, continue silently and expose the existing sound control.
     const start = async () => {
+      if (!active || document.hidden) return;
       try { await element.play(); }
       catch {
-        if (!active) return;
+        if (!active || document.hidden) return;
         element.muted = true; setMuted(true);
         try { await element.play(); }
         catch { if (active) { setBlocked(true); setWaiting(false); } }
       }
+      if (!active || document.hidden) element.pause();
     };
     const timer = window.setTimeout(() => { void start(); }, reduce() ? 0 : 800);
     const hide = () => { if (document.hidden) { element.pause(); setPlaying(false); setWaiting(false); setBlocked(true); } };
@@ -85,8 +87,9 @@ export function PikoOnboarding({ initialNickname, onSave, onEnter, onMusicStart 
     return () => { active = false; clearTimeout(timer); element.pause(); document.removeEventListener("visibilitychange", hide); };
   }, [stage]);
 
+  const waitingForAssets = stage === "out" && assets !== "ready";
   useEffect(() => {
-    if (stage === "intro" || stage === "invitation" || stage === "create" || (stage === "out" && assets !== "ready")) return;
+    if (stage === "intro" || stage === "invitation" || stage === "create" || waitingForAssets) return;
     const timer = window.setTimeout(() => {
       if (stage === "hold") setStage("invitation");
       else if (stage === "out") setStage("reveal");
@@ -94,7 +97,7 @@ export function PikoOnboarding({ initialNickname, onSave, onEnter, onMusicStart 
       else if (stage === "depart" && !entered.current) { entered.current = true; onEnterRef.current(); }
     }, stage === "hold" ? 500 : reduce() ? 0 : 800);
     return () => clearTimeout(timer);
-  }, [stage, assets]);
+  }, [stage, waitingForAssets]);
 
   useEffect(() => { if (stage === "create") input.current?.focus(); if (stage === "invitation") invitation.current?.focus(); }, [stage]);
 
@@ -105,7 +108,9 @@ export function PikoOnboarding({ initialNickname, onSave, onEnter, onMusicStart 
     let active = true;
     const sync = () => {
       if (document.hidden) element.pause();
-      else void element.play().catch(() => { if (active) setLoopPlaying(false); });
+      else void element.play().then(() => {
+        if (!active || document.hidden) element.pause();
+      }, () => { if (active) setLoopPlaying(false); });
     };
     sync();
     document.addEventListener("visibilitychange", sync);
@@ -193,6 +198,13 @@ export function PikoOnboarding({ initialNickname, onSave, onEnter, onMusicStart 
         playsInline preload="auto" muted loop aria-hidden="true"
         onPlaying={() => setLoopPlaying(true)} onError={() => setLoopPlaying(false)} />
       <div className={styles.videoControls}>
+        {stage === "intro" && <button type="button" onClick={() => {
+          if (stageRef.current !== "intro") return;
+          stageRef.current = "invitation";
+          video.current?.pause();
+          setPlaying(false); setWaiting(false); setBlocked(false);
+          setStage("invitation");
+        }}>{t("pikoWorld.onboarding.skipAnimation")}</button>}
         <button type="button" onClick={() => { soundMuted.current = !muted; setMuted(value => !value); }}>{t(muted ? "pikoWorld.onboarding.unmute" : "pikoWorld.onboarding.mute")}</button>
 
       </div>

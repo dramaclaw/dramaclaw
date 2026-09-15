@@ -1,17 +1,61 @@
 // SPDX-License-Identifier: Elastic-2.0
-import { useEffect } from "react";
-import { PIKO_MAP_MUSIC } from "./piko-map-music";
+import { useEffect, useSyncExternalStore } from "react";
+import { PIKO_MAP_MUSIC, PIKO_MUSIC_PLAYLISTS } from "./piko-map-music";
 import type { PikoMapId } from "./piko-map-transitions";
 
-const MUSIC_VOLUME = 0.5;
+const MUSIC_VOLUME = 0.7;
 const DUCKED_VOLUME = 0.09;
 const REPEAT_PAUSE_MS = 30_000;
 
-/** A separate music channel; survives popup changes, fades out on map disposal. */
+// Session preference shared by creation and map music; never recreate the track to mute.
+let musicMuted = false;
+let selectedTracks: readonly string[] | null = null;
+let playback = { src: "", playing: false, error: false, currentTime: 0, duration: 0 };
+const STATUS_CHANGE = "piko-music-status";
+function reportPlayback(src: string, playing: boolean, error = false) {
+  playback = { src, playing, error, currentTime: src === playback.src ? playback.currentTime : 0, duration: src === playback.src ? playback.duration : 0 };
+  document.dispatchEvent(new Event(STATUS_CHANGE));
+}
+export function usePikoPlayback() {
+  return useSyncExternalStore(listener => {
+    document.addEventListener(STATUS_CHANGE, listener);
+    return () => document.removeEventListener(STATUS_CHANGE, listener);
+  }, () => playback);
+}
+export function selectPikoMusic(tracks: readonly string[] | null) {
+  selectedTracks = tracks;
+  setPikoMusicMuted(false);
+}
+export function usePikoSelection() {
+  return useSyncExternalStore(subscribeMusic, () => selectedTracks, () => null);
+}
+const MUSIC_CHANGE = "piko-music-change";
+export function setPikoMusicMuted(muted: boolean) {
+  if (musicMuted === muted) { document.dispatchEvent(new Event(MUSIC_CHANGE)); return; }
+  musicMuted = muted;
+  document.dispatchEvent(new Event(MUSIC_CHANGE));
+}
+const subscribeMusic = (listener: () => void) => {
+  document.addEventListener(MUSIC_CHANGE, listener);
+  return () => document.removeEventListener(MUSIC_CHANGE, listener);
+};
+export function usePikoMusicMuted() {
+  return useSyncExternalStore(subscribeMusic, () => musicMuted, () => false);
+}
+
+/** One music channel; popup changes preserve playback, track changes release it immediately. */
 export function startPikoMusic(tracks: readonly string[]) {
   if (typeof Audio === "undefined" || tracks.length === 0) return () => {};
   let trackIndex = 0;
+  reportPlayback("", false);
+  reportPlayback(tracks[0], false);
   const audio = new Audio(tracks[trackIndex]);
+  const updateTime = () => {
+    playback = { ...playback, currentTime: Number.isFinite(audio.currentTime) ? audio.currentTime : 0, duration: Number.isFinite(audio.duration) ? audio.duration : 0 };
+    document.dispatchEvent(new Event(STATUS_CHANGE));
+  };
+  audio.addEventListener("timeupdate", updateTime);
+  audio.addEventListener("loadedmetadata", updateTime);
   audio.loop = false;
   audio.preload = "auto";
   audio.volume = 0;
@@ -35,7 +79,7 @@ export function startPikoMusic(tracks: readonly string[]) {
   };
   const start = (event?: Event) => {
     const gesture = event?.type === "pointerdown" || event?.type === "keydown" || event?.type === "touchend";
-    if (disposed || document.hidden || resting) return;
+    if (disposed || musicMuted || resting) return;
     // Browsers can pause a silent autoplay when its volume becomes audible.
     if (playing && audio.paused !== true) return;
     if (pending && !gesture) return;
@@ -43,22 +87,28 @@ export function startPikoMusic(tracks: readonly string[]) {
     const attempt = ++generation;
     try {
       Promise.resolve(audio.play()).then(() => {
+        if (disposed) { audio.pause(); return; }
         if (attempt !== generation) return;
-        if (disposed || document.hidden) { audio.pause(); return; }
+        if (disposed || musicMuted) { audio.pause(); return; }
         pending = false;
         playing = true;
+        reportPlayback(tracks[trackIndex], true);
         fade(MUSIC_VOLUME, 2000);
-      }, () => { if (attempt === generation) pending = false; });
-    } catch { pending = false; }
+      }, () => { if (attempt === generation) { pending = false; reportPlayback(tracks[trackIndex], false, true); } });
+    } catch { pending = false; reportPlayback(tracks[trackIndex], false, true); }
   };
-  const visibility = () => {
-    if (document.hidden) {
+  const syncPreference = (event?: Event) => {
+    if (event?.type === MUSIC_CHANGE && !musicMuted && resting) {
+      clearTimeout(restTimer); resting = false; advance(); return;
+    }
+    if (musicMuted) {
       generation++;
       pending = false;
       playing = false;
       clearInterval(fadeTimer);
       clearTimeout(duckTimer);
       audio.pause();
+      reportPlayback(tracks[trackIndex], false);
       audio.volume = 0;
     } else start();
   };
@@ -70,13 +120,21 @@ export function startPikoMusic(tracks: readonly string[]) {
   };
   const advance = () => {
     trackIndex = (trackIndex + 1) % tracks.length;
+    reportPlayback("", false);
+    reportPlayback(tracks[trackIndex], false);
     audio.src = tracks[trackIndex];
     audio.currentTime = 0;
     audio.load();
     start();
   };
   const nextTrack = () => {
+    reportPlayback(tracks[trackIndex], false);
     if (disposed || resting) return;
+    if (selectedTracks === tracks) {
+      const library = Object.values(PIKO_MUSIC_PLAYLISTS);
+      const index = library.findIndex(list => list[0] === tracks[0]);
+      if (index >= 0) { selectPikoMusic(library[(index + 1) % library.length]); return; }
+    }
     generation++;
     pending = false;
     playing = false;
@@ -91,15 +149,28 @@ export function startPikoMusic(tracks: readonly string[]) {
       }, REPEAT_PAUSE_MS);
     } else advance();
   };
+  const paused = () => { if (!disposed) reportPlayback(tracks[trackIndex], false); };
+  audio.addEventListener("pause", paused);
+  const failed = () => {
+    generation++; pending = false; playing = false;
+    clearInterval(fadeTimer);
+    reportPlayback(tracks[trackIndex], false, true);
+  };
+  audio.addEventListener("error", failed);
   audio.addEventListener("ended", nextTrack);
   document.addEventListener("pointerdown", start, true);
   document.addEventListener("keydown", start, true);
   document.addEventListener("touchend", start, true);
-  document.addEventListener("visibilitychange", visibility);
+  document.addEventListener(MUSIC_CHANGE, syncPreference);
   document.addEventListener("piko-notification-sound", duck);
   start();
   return () => {
     disposed = true;
+    reportPlayback("", false);
+    audio.removeEventListener("timeupdate", updateTime);
+    audio.removeEventListener("loadedmetadata", updateTime);
+    audio.removeEventListener("error", failed);
+    audio.removeEventListener("pause", paused);
     audio.removeEventListener("ended", nextTrack);
     clearTimeout(restTimer);
     generation++;
@@ -107,14 +178,16 @@ export function startPikoMusic(tracks: readonly string[]) {
     document.removeEventListener("pointerdown", start, true);
     document.removeEventListener("keydown", start, true);
     document.removeEventListener("touchend", start, true);
-    document.removeEventListener("visibilitychange", visibility);
+    document.removeEventListener(MUSIC_CHANGE, syncPreference);
     document.removeEventListener("piko-notification-sound", duck);
-    fade(0, 800, () => { audio.pause(); audio.removeAttribute("src"); audio.load(); });
+    clearInterval(fadeTimer);
+    audio.volume = 0; audio.pause(); audio.removeAttribute("src"); audio.load();
   };
 }
 
 // Same playlist identity across related regions prevents restarting a shared track.
 export function useMapMusic(mapId: PikoMapId | null) {
-  const tracks = mapId ? PIKO_MAP_MUSIC[mapId] : null;
+  const selected = usePikoSelection();
+  const tracks = mapId ? selected ?? PIKO_MAP_MUSIC[mapId] : null;
   useEffect(() => tracks ? startPikoMusic(tracks) : undefined, [tracks]);
 }

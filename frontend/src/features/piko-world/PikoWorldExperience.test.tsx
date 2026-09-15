@@ -37,7 +37,7 @@ it("keeps the same music channel from creation through map entry and releases it
     fireEvent.click(screen.getByText("listen"));
     await act(async () => {});
     act(() => vi.advanceTimersByTime(2000));
-    expect(clips).toHaveLength(1); expect(clips[0].volume).toBe(0.5);
+    expect(clips).toHaveLength(1); expect(clips[0].volume).toBe(0.7);
     fireEvent.click(screen.getByText("create"));
     expect(screen.getByTestId("world")).toBeInTheDocument();
     expect(clips).toHaveLength(1); expect(clips[0].removeAttribute).not.toHaveBeenCalled();

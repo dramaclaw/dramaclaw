@@ -2237,6 +2237,7 @@
     }
   },
   "pikoWorld": {
+    "musicToggle": "Music",
     "mapTravel": {
       "retry": "Retry",
       "return": "Return to previous map",
@@ -2392,6 +2393,7 @@
       "invitation": "An invitation from the town is waiting for you.",
       "retry": "Retry",
       "play": "Play invitation",
+      "skipAnimation": "Skip animation",
       "unmute": "Enable sound",
       "mute": "Mute",
       "join": "Come join us",
