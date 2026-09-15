@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Elastic-2.0
 # Copyright (c) 2026 ClaymoreLab
 
+import sqlite3
+
 from novelvideo.freezone import canvas_command_bridge
 
 
@@ -67,9 +69,7 @@ def test_late_canvas_cancellation_does_not_replace_accepted_result(tmp_path) -> 
     )
 
     assert resolved == accepted
-    persisted = canvas_command_bridge._read_json(
-        bridge_dir / "bridge-a.result.json"
-    )
+    persisted = canvas_command_bridge._read_json(bridge_dir / "bridge-a.result.json")
     assert persisted == accepted
 
 
@@ -137,6 +137,270 @@ def test_reused_key_with_different_payload_returns_conflict(tmp_path) -> None:
 
     assert conflict is not None
     assert conflict["status"] == "canvas_command_idempotency_conflict"
-    assert canvas_command_bridge._read_json(
-        bridge_dir / "stable-key.result.json"
-    ) == accepted
+    assert (
+        canvas_command_bridge._read_json(bridge_dir / "stable-key.result.json")
+        == accepted
+    )
+
+
+def test_legacy_terminal_result_is_migrated_before_sqlite_enqueue(tmp_path) -> None:
+    bridge_dir = tmp_path / "bridge"
+    commands = [{"type": "create_node", "node_type": "imageGenNode"}]
+    fingerprint = canvas_command_bridge._canvas_command_request_fingerprint(
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+    )
+    legacy_result = {
+        "ok": True,
+        "applied": True,
+        "canvas_apply_status": "applied",
+        "request_fingerprint": fingerprint,
+    }
+    canvas_command_bridge._write_json(
+        bridge_dir / "legacy-complete.result.json",
+        legacy_result,
+    )
+
+    replayed = canvas_command_bridge.put_pending_canvas_command(
+        key="legacy-complete",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+        envelope={"commands": commands},
+        bridge_dir=bridge_dir,
+    )
+
+    assert replayed is not None
+    assert replayed["canvas_apply_status"] == "applied"
+    assert (
+        canvas_command_bridge.list_pending_bridge_messages(
+            project_id="project-a",
+            canvas_id="canvas-a",
+            kinds={"canvas_command"},
+            bridge_dir=bridge_dir,
+        )
+        == []
+    )
+    assert (
+        canvas_command_bridge.read_bridge_message(
+            "legacy-complete", bridge_dir=bridge_dir
+        )["transport_status"]
+        == "applied"
+    )
+
+
+def test_legacy_terminal_result_is_inserted_without_pending_transition(
+    monkeypatch, tmp_path
+) -> None:
+    bridge_dir = tmp_path / "bridge"
+    commands = [{"type": "create_node", "node_type": "imageGenNode"}]
+    fingerprint = canvas_command_bridge._canvas_command_request_fingerprint(
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+    )
+    canvas_command_bridge._write_json(
+        bridge_dir / "legacy-atomic.result.json",
+        {
+            "ok": True,
+            "applied": True,
+            "canvas_apply_status": "applied",
+            "request_fingerprint": fingerprint,
+        },
+    )
+    original_terminal_status = canvas_command_bridge._terminal_status
+
+    def assert_no_visible_pending(result):
+        # _terminal_status is evaluated inside the same BEGIN IMMEDIATE that
+        # performs the insert. A second connection must not observe a pending
+        # row because migration never commits that intermediate state.
+        with sqlite3.connect(
+            canvas_command_bridge._bridge_db_path(bridge_dir)
+        ) as observer:
+            row = observer.execute(
+                "SELECT status FROM canvas_command_messages "
+                "WHERE bridge_key = 'legacy-atomic'"
+            ).fetchone()
+        assert row is None
+        return original_terminal_status(result)
+
+    monkeypatch.setattr(
+        canvas_command_bridge, "_terminal_status", assert_no_visible_pending
+    )
+
+    replayed = canvas_command_bridge.put_pending_canvas_command(
+        key="legacy-atomic",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+        envelope={"commands": commands},
+        bridge_dir=bridge_dir,
+    )
+
+    assert replayed is not None
+    assert replayed["canvas_apply_status"] == "applied"
+    assert (
+        canvas_command_bridge.read_bridge_message(
+            "legacy-atomic", bridge_dir=bridge_dir
+        )["transport_status"]
+        == "applied"
+    )
+
+
+def test_legacy_result_conflict_does_not_create_sqlite_pending_row(tmp_path) -> None:
+    bridge_dir = tmp_path / "bridge"
+    canvas_command_bridge._write_json(
+        bridge_dir / "legacy-conflict.result.json",
+        {
+            "ok": True,
+            "applied": True,
+            "canvas_apply_status": "applied",
+            "request_fingerprint": "different-payload",
+        },
+    )
+
+    conflict = canvas_command_bridge.put_pending_canvas_command(
+        key="legacy-conflict",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=[{"type": "create_node", "node_type": "imageGenNode"}],
+        envelope={"commands": []},
+        bridge_dir=bridge_dir,
+    )
+
+    assert conflict is not None
+    assert conflict["status"] == "canvas_command_idempotency_conflict"
+    assert (
+        canvas_command_bridge.read_bridge_message(
+            "legacy-conflict", bridge_dir=bridge_dir
+        )
+        is None
+    )
+
+
+def test_sqlite_inbox_survives_worker_and_file_bridge_loss(tmp_path) -> None:
+    bridge_dir = tmp_path / "bridge"
+    commands = [{"type": "create_node", "node_type": "imageGenNode"}]
+    canvas_command_bridge.put_pending_canvas_command(
+        key="cross-worker",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+        envelope={"external_mcp_command": True, "commands": commands},
+        bridge_dir=bridge_dir,
+    )
+    (bridge_dir / "cross-worker.pending.json").unlink()
+
+    pending = canvas_command_bridge.list_pending_bridge_messages(
+        project_id="project-a",
+        canvas_id="canvas-a",
+        kinds={"canvas_command"},
+        bridge_dir=bridge_dir,
+    )
+
+    assert [item["key"] for item in pending] == ["cross-worker"]
+    assert canvas_command_bridge.mark_bridge_message_delivered(
+        "cross-worker", consumer_id="api-worker-b", bridge_dir=bridge_dir
+    )
+    assert not canvas_command_bridge.mark_bridge_message_delivered(
+        "cross-worker", consumer_id="api-worker-c", bridge_dir=bridge_dir
+    )
+    assert (
+        canvas_command_bridge.list_pending_bridge_messages(
+            project_id="project-a",
+            canvas_id="canvas-a",
+            kinds={"canvas_command"},
+            bridge_dir=bridge_dir,
+        )
+        == []
+    )
+
+    with sqlite3.connect(canvas_command_bridge._bridge_db_path(bridge_dir)) as conn:
+        conn.execute(
+            "UPDATE canvas_command_messages SET lease_expires_at = 0 "
+            "WHERE bridge_key = 'cross-worker'"
+        )
+    assert (
+        canvas_command_bridge.list_pending_bridge_messages(
+            project_id="project-a",
+            canvas_id="canvas-a",
+            kinds={"canvas_command"},
+            bridge_dir=bridge_dir,
+        )[0]["key"]
+        == "cross-worker"
+    )
+
+
+def test_sqlite_outbox_returns_result_without_result_file(tmp_path) -> None:
+    bridge_dir = tmp_path / "bridge"
+    commands = [{"type": "create_node", "node_type": "imageGenNode"}]
+    canvas_command_bridge.put_pending_canvas_command(
+        key="durable-result",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+        envelope={"commands": commands},
+        bridge_dir=bridge_dir,
+    )
+    expected = canvas_command_bridge.resolve_canvas_command(
+        "durable-result",
+        {"ok": True, "applied": True, "canvas_apply_status": "applied"},
+        bridge_dir=bridge_dir,
+    )
+    (bridge_dir / "durable-result.result.json").unlink()
+
+    assert (
+        canvas_command_bridge.wait_canvas_command_result(
+            "durable-result", timeout_seconds=0, bridge_dir=bridge_dir
+        )
+        == expected
+    )
+    assert canvas_command_bridge.bridge_status_counts(bridge_dir=bridge_dir) == {
+        "applied": 1
+    }
+
+
+def test_sqlite_bridge_prunes_expired_terminal_results(tmp_path) -> None:
+    bridge_dir = tmp_path / "bridge"
+    canvas_command_bridge.resolve_canvas_command(
+        "expired-result",
+        {"ok": False, "cancelled": True, "canvas_apply_status": "timeout"},
+        bridge_dir=bridge_dir,
+    )
+    with sqlite3.connect(canvas_command_bridge._bridge_db_path(bridge_dir)) as conn:
+        conn.execute(
+            "UPDATE canvas_command_messages SET expires_at = 0 "
+            "WHERE bridge_key = 'expired-result'"
+        )
+
+    assert canvas_command_bridge.bridge_status_counts(bridge_dir=bridge_dir) == {}
+
+
+def test_sqlite_bridge_expires_abandoned_pending_message(tmp_path) -> None:
+    bridge_dir = tmp_path / "bridge"
+    commands = [{"type": "create_node", "node_type": "imageGenNode"}]
+    canvas_command_bridge.put_pending_canvas_command(
+        key="abandoned",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+        envelope={"commands": commands},
+        bridge_dir=bridge_dir,
+    )
+    with sqlite3.connect(canvas_command_bridge._bridge_db_path(bridge_dir)) as conn:
+        conn.execute(
+            "UPDATE canvas_command_messages SET created_at = 0 "
+            "WHERE bridge_key = 'abandoned'"
+        )
+
+    result = canvas_command_bridge.wait_canvas_command_result(
+        "abandoned", timeout_seconds=0, bridge_dir=bridge_dir
+    )
+
+    assert result is not None
+    assert result["canvas_apply_status"] == "timeout"
+    assert canvas_command_bridge.bridge_status_counts(bridge_dir=bridge_dir) == {
+        "expired": 1
+    }
+    assert not (bridge_dir / "abandoned.pending.json").exists()

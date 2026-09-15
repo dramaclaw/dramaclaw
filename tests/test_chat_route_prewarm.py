@@ -1,3 +1,5 @@
+import sqlite3
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -5,6 +7,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from novelvideo.api.routes import chat as chat_route
 from novelvideo.chat.store import ChatScope
+from novelvideo.freezone import canvas_command_bridge
 from novelvideo.freezone.canvas_command_bridge import (
     put_pending_canvas_command,
     put_pending_clarification_event,
@@ -765,6 +768,7 @@ async def test_pending_canvas_command_poll_only_returns_external_mcp_commands(
         },
         bridge_dir=bridge_dir,
     )
+    (bridge_dir / "approved-external-command.pending.json").unlink()
 
     result = await chat_route.list_pending_canvas_commands(
         chat_route.PendingCanvasCommandsIn(
@@ -777,6 +781,189 @@ async def test_pending_canvas_command_poll_only_returns_external_mcp_commands(
     frames = result["data"]["frames"]
     assert [frame["bridge_key"] for frame in frames] == ["approved-external-command"]
     assert frames[0]["agent_id"] == "agent-2"
+
+
+@pytest.mark.anyio
+async def test_pending_canvas_command_json_mirror_cannot_bypass_sqlite_lease(
+    monkeypatch, tmp_path
+) -> None:
+    bridge_dir = tmp_path / "bridge"
+    monkeypatch.setattr(
+        chat_route,
+        "_candidate_canvas_bridge_dirs_for_scope",
+        lambda *_args, **_kwargs: [bridge_dir],
+    )
+    commands = [{"type": "select_nodes", "nodeIds": ["node-a"]}]
+    put_pending_canvas_command(
+        key="leased-command",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+        envelope={
+            "schema_version": "canvas_chat_commands.v1",
+            "canvas_id": "canvas-a",
+            "external_mcp_command": True,
+            "commands": commands,
+        },
+        bridge_dir=bridge_dir,
+    )
+    request = chat_route.PendingCanvasCommandsIn(
+        project_id="project-a",
+        canvas_id="canvas-a",
+    )
+
+    first = await chat_route.list_pending_canvas_commands(
+        request,
+        user={"username": "admin"},
+    )
+    second = await chat_route.list_pending_canvas_commands(
+        request,
+        user={"username": "admin"},
+    )
+
+    assert [frame["bridge_key"] for frame in first["data"]["frames"]] == [
+        "leased-command"
+    ]
+    assert second["data"]["frames"] == []
+
+
+@pytest.mark.anyio
+async def test_expired_canvas_command_json_mirror_is_not_redelivered(
+    monkeypatch, tmp_path
+) -> None:
+    bridge_dir = tmp_path / "bridge"
+    monkeypatch.setattr(
+        chat_route,
+        "_candidate_canvas_bridge_dirs_for_scope",
+        lambda *_args, **_kwargs: [bridge_dir],
+    )
+    commands = [{"type": "select_nodes", "nodeIds": ["node-a"]}]
+    put_pending_canvas_command(
+        key="expired-command",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+        envelope={
+            "schema_version": "canvas_chat_commands.v1",
+            "canvas_id": "canvas-a",
+            "external_mcp_command": True,
+            "commands": commands,
+        },
+        bridge_dir=bridge_dir,
+    )
+    pending_path = bridge_dir / "expired-command.pending.json"
+    pending = chat_route._load_pending_canvas_command(pending_path)
+    assert pending is not None
+    pending["created_at"] = 0
+    canvas_command_bridge._write_json(pending_path, pending)
+    with sqlite3.connect(canvas_command_bridge._bridge_db_path(bridge_dir)) as conn:
+        conn.execute(
+            "UPDATE canvas_command_messages "
+            "SET created_at = 0, expires_at = 0 "
+            "WHERE bridge_key = 'expired-command'"
+        )
+
+    result = await chat_route.list_pending_canvas_commands(
+        chat_route.PendingCanvasCommandsIn(
+            project_id="project-a",
+            canvas_id="canvas-a",
+        ),
+        user={"username": "admin"},
+    )
+
+    assert result["data"]["frames"] == []
+    assert not pending_path.exists()
+
+
+@pytest.mark.parametrize(
+    ("key", "payload", "loader"),
+    [
+        (
+            "legacy-context",
+            {
+                "kind": "canvas_context",
+                "requests": [{"type": "get_selected_nodes"}],
+                "envelope": {
+                    "schema_version": "canvas_context_request.v1",
+                    "canvas_id": "canvas-a",
+                    "requests": [{"type": "get_selected_nodes"}],
+                },
+            },
+            chat_route._load_pending_canvas_context,
+        ),
+        (
+            "legacy-skill-studio",
+            {
+                "kind": "skill_studio_event",
+                "event": {
+                    "type": "skill_studio.questions",
+                    "skill_studio_session_id": "skill-studio-a",
+                },
+            },
+            chat_route._load_pending_skill_studio_event,
+        ),
+        (
+            "legacy-clarification",
+            {
+                "kind": "clarification_event",
+                "event": {
+                    "type": "assistant.clarification.request",
+                    "clarification_id": "clarification-a",
+                },
+            },
+            chat_route._load_pending_clarification_event,
+        ),
+    ],
+)
+def test_legacy_bridge_filter_accepts_each_supported_message_type(
+    tmp_path, key, payload, loader
+) -> None:
+    bridge_dir = tmp_path / "bridge"
+    bridge_dir.mkdir()
+    pending_path = bridge_dir / f"{key}.pending.json"
+    canvas_command_bridge._write_json(
+        pending_path,
+        {
+            "key": key,
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "created_at": time.time(),
+            **payload,
+        },
+    )
+
+    assert loader(pending_path) is not None
+    assert chat_route._is_unmigrated_legacy_bridge_file(
+        bridge_dir=bridge_dir,
+        key=key,
+    )
+
+
+def test_legacy_bridge_filter_uses_raw_message_kind_ttl(tmp_path) -> None:
+    bridge_dir = tmp_path / "bridge"
+    bridge_dir.mkdir()
+    key = "expired-legacy-context"
+    pending_path = bridge_dir / f"{key}.pending.json"
+    canvas_command_bridge._write_json(
+        pending_path,
+        {
+            "key": key,
+            "kind": "canvas_context",
+            "created_at": time.time() - 46,
+            "requests": [{"type": "get_selected_nodes"}],
+            "envelope": {
+                "schema_version": "canvas_context_request.v1",
+                "canvas_id": "canvas-a",
+                "requests": [{"type": "get_selected_nodes"}],
+            },
+        },
+    )
+
+    assert not chat_route._is_unmigrated_legacy_bridge_file(
+        bridge_dir=bridge_dir,
+        key=key,
+    )
+    assert not pending_path.exists()
 
 
 @pytest.mark.anyio
@@ -1931,8 +2118,10 @@ def test_catalog_save_error_overrides_frontend_success(
     assert result["saved_skill_ids"] == []
     assert result["saved_recipe_ids"] == (["recipe-a"] if partial else [])
     assert "可立即使用" not in result["message"]
-    assert ("部分" in result["message"]) if partial else (
-        "未保存任何" in result["message"]
+    assert (
+        ("部分" in result["message"])
+        if partial
+        else ("未保存任何" in result["message"])
     )
     assert result["draft"] == payload.draft
     assert result["errors"]

@@ -94,7 +94,10 @@ import { prefetchFreezoneVideoModels } from "@/features/canvas/hooks/useFreezone
 import { prefetchFreezoneCameraOptions } from "@/features/canvas/hooks/useFreezoneCameraOptions";
 import { prefetchFreezoneStyleTemplates } from "@/features/canvas/hooks/useFreezoneStyleTemplates";
 import { prefetchFreezoneVideoCameraTemplates } from "@/features/canvas/hooks/useFreezoneVideoCameraTemplates";
-import { claimExternalCanvasCommand } from "./externalCanvasCommandDedupe";
+import {
+  claimExternalCanvasCommand,
+  confirmedExternalCanvasCommandKeys,
+} from "./externalCanvasCommandDedupe";
 import {
   normalizePresetProjectionRequest,
   projectionMetadataWithRequest,
@@ -145,7 +148,10 @@ import {
   type FreezoneCanvasAgentState,
 } from "@/features/freezone/canvasAgents";
 import { validateCanvasChatCommandEnvelopes } from "@/features/freezone/context/canvasCommandValidator";
-import { reportCanvasCommandToolResult } from "@/features/freezone/canvasCommandToolResult";
+import {
+  replayCanvasCommandToolResult,
+  reportCanvasCommandToolResult,
+} from "@/features/freezone/canvasCommandToolResult";
 import {
   emitCanvasContextActivity,
   reportCanvasContextToolResult,
@@ -1607,7 +1613,10 @@ export function FreezoneShell({
         frame,
         detail?.externalMcpCommand === true,
       );
-      if (!claim.accepted) return;
+      if (!claim.accepted) {
+        if (claim.terminalReceipt) replayCanvasCommandToolResult(claim.terminalReceipt);
+        return;
+      }
       const isExternalMcpCommand = claim.externalMcpCommand;
       const turnId = typeof frame.turn_id === "string" ? frame.turn_id : null;
       const bridgeKey = claim.bridgeKey;
@@ -1884,7 +1893,9 @@ export function FreezoneShell({
     const tick = async () => {
       if (cancelled) return;
       try {
-        const seenKeys = Array.from(emittedExternalCanvasCommandKeysRef.current).slice(-200);
+        const seenKeys = confirmedExternalCanvasCommandKeys(
+          emittedExternalCanvasCommandKeysRef.current,
+        ).slice(-200);
         const agentIds = loadFreezoneCanvasAgentsWithSource(projectId, canvasId).state.agents
           .map((agent) => agent.id);
         const frames = await listPendingCanvasCommandFrames({
@@ -1913,7 +1924,7 @@ export function FreezoneShell({
               : typeof frameRecord.bridgeKey === "string"
                 ? frameRecord.bridgeKey
                 : null;
-          if (!bridgeKey || emittedExternalCanvasCommandKeysRef.current.has(bridgeKey)) return;
+          if (!bridgeKey) return;
           window.dispatchEvent(new CustomEvent(SUPERCHAT_CANVAS_COMMAND_EVENT, {
             detail: {
               frame,
