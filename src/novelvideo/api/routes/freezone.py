@@ -5103,19 +5103,21 @@ async def _record_recipe_compile_product_evidence(
         "persistent_cache",
         "deterministic",
     }:
-        # The request can use this prompt, but no fresh model product was
-        # delivered. Cancel only the billable operation and retain the reason.
+        # Recipe use is billable regardless of compilation mode. Persist the
+        # usable prompt as server-owned delivery evidence, not fake model evidence.
         await asyncio.to_thread(
             finish_agent_product_operation,
             project_dir=state_dir,
             operation_id=operation_id,
-            outcome="cancelled",
+            outcome="delivered",
             expected_task_id=str(operation.get("task_id") or ""),
             result_ref={
-                "kind": "recipe_nonbillable",
+                "kind": "recipe_compile_result",
                 "id": operation_id,
                 "reason": compiled.mode,
+                "content": compiled.prompt,
             },
+            server_recipe_compile=True,
         )
         return
     await asyncio.to_thread(
@@ -5130,7 +5132,7 @@ async def _record_recipe_compile_product_evidence(
 async def _require_recipe_compile_product_admission(
     *, body: FreezoneRecipeCompileRequest, user: dict
 ) -> None:
-    """Fail closed before a Recipe request can reach the model compiler."""
+    """Require metered Recipe admission for every compilation strategy."""
     operation_id = str(body.product_operation_id or "").strip()
     project_id = str(body.project_id or "").strip()
     if bool(operation_id) != bool(project_id):
@@ -5138,14 +5140,12 @@ async def _require_recipe_compile_product_admission(
             400,
             "project_id and product_operation_id must be supplied together",
         )
-    if body.prompt_strategy != "llm_refine" or isinstance(
-        get_usage_meter(), NoOpUsageMeter
-    ):
+    if isinstance(get_usage_meter(), NoOpUsageMeter):
         return
     if not operation_id:
         raise HTTPException(
             400,
-            "product_operation_id is required for metered model Recipe compilation",
+            "product_operation_id is required for metered Recipe compilation",
         )
     ctx, _username, _project_name, project_dir, _output_dir = (
         await _resolve_freezone_project(project_id, user)
@@ -5342,6 +5342,7 @@ async def generate_freezone_recipe_text(
 ):
     """Compile and execute one catalog-backed text node."""
     username = str(user.get("username") or "")
+    await _require_recipe_compile_product_admission(body=body, user=user)
     try:
         content = await generate_recipe_text(
             username=username,
@@ -14450,7 +14451,7 @@ async def complete_agent_product_operation(
         raise HTTPException(404, "agent product operation not found")
     if str(current.get("task_id") or "") != str(body.get("task_id") or ""):
         raise HTTPException(400, "agent product operation task identity mismatch")
-    if result_ref.get("kind") == "recipe_nonbillable":
+    if result_ref.get("kind") in {"recipe_compile_result", "recipe_nonbillable"}:
         raise HTTPException(
             400, "Recipe reuse receipts are recorded only by the server compiler"
         )

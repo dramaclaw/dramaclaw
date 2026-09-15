@@ -43,6 +43,87 @@ def test_agent_product_operation_is_durable_and_idempotent(tmp_path):
     )
 
 
+@pytest.mark.parametrize(
+    "mode", ["timeout_fallback", "memory_cache", "persistent_cache", "deterministic"]
+)
+def test_server_recipe_delivery_is_immutable_and_requires_server_authority(
+    tmp_path, mode
+):
+    operation = _create(tmp_path, kind="recipe_result")
+    operation_id = operation["operation_id"]
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation_id,
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+    receipt = {
+        "kind": "recipe_compile_result",
+        "id": operation_id,
+        "reason": mode,
+        "content": "usable prompt",
+    }
+    kwargs = {
+        "project_dir": tmp_path,
+        "operation_id": operation_id,
+        "outcome": "delivered",
+        "expected_task_id": "task-a",
+        "result_ref": receipt,
+    }
+    with pytest.raises(ValueError, match="trusted server delivery"):
+        finish_agent_product_operation(**kwargs)
+    delivered = finish_agent_product_operation(**kwargs, server_recipe_compile=True)
+    assert delivered["model_evidence"] == {}
+    assert delivered["status"] == "delivered"
+    assert (
+        finish_agent_product_operation(**kwargs, server_recipe_compile=True)
+        == delivered
+    )
+    with pytest.raises(ValueError, match="result reference mismatch"):
+        finish_agent_product_operation(
+            **{**kwargs, "result_ref": {**receipt, "content": "different"}},
+            server_recipe_compile=True,
+        )
+
+
+@pytest.mark.parametrize("kind", ["recipe_result", "workflow_result"])
+@pytest.mark.parametrize(
+    "bad_field,value",
+    [
+        ("content", "   "),
+        ("reason", "unknown"),
+        ("id", "another-operation"),
+    ],
+)
+def test_invalid_server_recipe_receipt_cannot_be_delivered(
+    tmp_path, kind, bad_field, value
+):
+    operation = _create(tmp_path, kind=kind)
+    operation_id = operation["operation_id"]
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation_id,
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+    receipt = {
+        "kind": "recipe_compile_result",
+        "id": operation_id,
+        "reason": "timeout_fallback",
+        "content": "usable prompt",
+        bad_field: value,
+    }
+    with pytest.raises(ValueError, match="trusted server delivery"):
+        finish_agent_product_operation(
+            project_dir=tmp_path,
+            operation_id=operation_id,
+            outcome="delivered",
+            expected_task_id="task-a",
+            result_ref=receipt,
+            server_recipe_compile=True,
+        )
+
+
 def test_agent_product_operation_rejects_idempotency_key_rebinding(tmp_path):
     _create(tmp_path)
 

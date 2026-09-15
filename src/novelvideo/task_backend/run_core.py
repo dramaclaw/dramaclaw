@@ -1001,43 +1001,9 @@ def run_project_task_core_sync(
                         feature_reservation_id = result_reservation_id
             except BaseException as exc:
                 from novelvideo.freezone.agent_product_operations import (
-                    AgentProductNotBillable,
                     AgentProductSettlementPending,
                 )
 
-                if isinstance(exc, AgentProductNotBillable):
-                    settlement = asyncio.run(
-                        _refund_undelivered_feature_credit_reservation(
-                            feature_reservation_id,
-                            metadata={
-                                "source": "recipe_nonbillable",
-                                "reason": exc.reason,
-                            },
-                        )
-                    )
-                    result = {
-                        "ok": True,
-                        "operation_id": exc.operation_id,
-                        "delivery_status": "nonbillable",
-                        "compile_mode": exc.reason,
-                        "message": str(exc),
-                        "settlement_status": (
-                            "refund_requested" if settlement.accepted else "pending"
-                        ),
-                    }
-                    manager.complete_task_for_project(
-                        ctx,
-                        task_type,
-                        episode,
-                        beat_num=beat_num,
-                        scope=scope,
-                        result=result,
-                        current_task=str(exc),
-                        logs=[str(exc)],
-                        metadata={**run_metadata, "recipe_compile_mode": exc.reason},
-                        expected_task_id=run_task_id,
-                    )
-                    return result
                 if isinstance(exc, AgentProductSettlementPending):
                     from novelvideo.chat import evidence_metrics
 
@@ -1196,6 +1162,9 @@ def run_project_task_core_sync(
                 raise
 
             completion_error: BaseException | None = None
+            completion_message = "完成"
+            if task_type == "freezone_agent_recipe_result" and isinstance(result, dict):
+                completion_message = str(result.get("message") or completion_message)
             try:
                 manager.complete_task_for_project(
                     ctx,
@@ -1204,8 +1173,8 @@ def run_project_task_core_sync(
                     beat_num=beat_num,
                     scope=scope,
                     result=result or {"ok": True},
-                    current_task="完成",
-                    logs=["完成"],
+                    current_task=completion_message,
+                    logs=[completion_message],
                     metadata=_completion_metadata_with_provider_task_id(
                         run_metadata, result
                     ),

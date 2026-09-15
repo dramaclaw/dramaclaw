@@ -640,35 +640,64 @@ async def test_recipe_compile_binds_only_fresh_model_evidence(
         assert stored_cached["status"] == "failed"
         assert stored_cached["model_evidence"] == {}
         return
-    assert stored_cached["status"] == "cancelled"
+    assert stored_cached["status"] == "delivered"
     assert stored_cached["result_ref"] == {
-        "kind": "recipe_nonbillable",
+        "kind": "recipe_compile_result",
         "id": cached_operation["operation_id"],
         "reason": reuse_mode,
+        "content": "cached",
     }
-    from novelvideo.freezone.agent_product_operations import AgentProductNotBillable
     from novelvideo.task_backend.runners.freezone import (
         _run_freezone_agent_product_async,
     )
 
-    with pytest.raises(AgentProductNotBillable) as exc:
-        await _run_freezone_agent_product_async(
-            {
-                "__run_task_id": stored_cached["task_id"],
-                "payload": {
-                    "operation_id": cached_operation["operation_id"],
-                    "product_kind": "recipe_result",
-                },
+    result = await _run_freezone_agent_product_async(
+        {
+            "__run_task_id": stored_cached["task_id"],
+            "payload": {
+                "operation_id": cached_operation["operation_id"],
+                "product_kind": "recipe_result",
             },
-            SimpleNamespace(state_dir=workflow_run_client.state_dir),
-        )
-    assert exc.value.reason == reuse_mode
+        },
+        SimpleNamespace(state_dir=workflow_run_client.state_dir),
+    )
+    assert result["compile_mode"] == reuse_mode
+    assert result["delivery_status"] == "delivered"
+    assert "正常计费" in result["message"]
     assert stored_cached["model_evidence"] == {}
+    # A repeated compiler result cannot create another operation or overwrite delivery.
+    repeated_admission = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/agent-product-operations",
+        json={
+            "product_kind": "recipe_result",
+            "generation_session_id": "cached-compile",
+            "canvas_id": "default",
+            "artifact_id": "image-1",
+            "normalized_inputs_hash": "cached-compile",
+        },
+    )
+    assert repeated_admission.status_code == 400
+    assert "already terminal" in repeated_admission.json()["detail"]
+    await freezone._record_recipe_compile_product_evidence(
+        body=request(cached_operation["operation_id"]),
+        compiled=RecipeCompileResult("changed", reuse_mode, ("product-image",)),
+        user={"id": "u-alice", "username": "alice"},
+        deliver_text=node_kind == "text",
+    )
+    assert (
+        read_agent_product_operation(
+            project_dir=workflow_run_client.state_dir,
+            operation_id=cached_operation["operation_id"],
+        )
+        == stored_cached
+    )
 
 
-def test_metered_model_recipe_compile_requires_operation_before_compiler(
+@pytest.mark.parametrize("strategy", ["llm_refine", "template", "user_message", "previous_output"])
+def test_metered_recipe_compile_requires_operation_before_compiler(
     workflow_run_client: TestClient,
     monkeypatch,
+    strategy,
 ) -> None:
     from novelvideo.api.routes import freezone
 
@@ -684,7 +713,11 @@ def test_metered_model_recipe_compile_requires_operation_before_compiler(
 
     response = workflow_run_client.post(
         "/api/v1/freezone/recipes/compile",
-        json={"recipe_id": "product-image", "node_kind": "image"},
+        json={
+            "recipe_id": "product-image",
+            "node_kind": "image",
+            "prompt_strategy": strategy,
+        },
     )
 
     assert response.status_code == 400
@@ -692,9 +725,13 @@ def test_metered_model_recipe_compile_requires_operation_before_compiler(
     assert compiler_called is False
 
 
-def test_metered_model_recipe_compile_batch_fails_before_any_compiler_call(
+@pytest.mark.parametrize(
+    "strategy", ["llm_refine", "template", "user_message", "previous_output"]
+)
+def test_metered_recipe_compile_batch_fails_before_any_compiler_call(
     workflow_run_client: TestClient,
     monkeypatch,
+    strategy,
 ) -> None:
     from novelvideo.api.routes import freezone
 
@@ -716,6 +753,7 @@ def test_metered_model_recipe_compile_batch_fails_before_any_compiler_call(
                     "request_id": "request-a",
                     "recipe_id": "product-image",
                     "node_kind": "image",
+                    "prompt_strategy": strategy,
                 }
             ]
         },
@@ -726,34 +764,34 @@ def test_metered_model_recipe_compile_batch_fails_before_any_compiler_call(
     assert compiler_called is False
 
 
-def test_metered_deterministic_recipe_compile_does_not_require_product_operation(
+def test_metered_recipe_text_requires_operation_before_generation(
     workflow_run_client: TestClient,
     monkeypatch,
 ) -> None:
     from novelvideo.api.routes import freezone
-    from novelvideo.freezone.recipe_runtime import RecipeCompileResult
 
-    async def fake_compile(**_kwargs):
-        return RecipeCompileResult(
-            "deterministic prompt",
-            "deterministic",
-            ("product-image",),
-        )
+    generated = False
+
+    async def fake_generate(**_kwargs):
+        nonlocal generated
+        generated = True
+        raise AssertionError("text generation must not run without admission")
 
     monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
-    monkeypatch.setattr(freezone, "compile_recipe_prompt_result", fake_compile)
+    monkeypatch.setattr(freezone, "generate_recipe_text", fake_generate)
 
     response = workflow_run_client.post(
-        "/api/v1/freezone/recipes/compile",
+        "/api/v1/freezone/recipes/generate-text",
         json={
             "recipe_id": "product-image",
-            "node_kind": "image",
+            "node_kind": "text",
             "prompt_strategy": "template",
         },
     )
 
-    assert response.status_code == 200
-    assert response.json()["data"]["compile_mode"] == "deterministic"
+    assert response.status_code == 400
+    assert "product_operation_id is required" in response.json()["detail"]
+    assert generated is False
 
 
 def test_canvas_revision_endpoint_returns_only_revision(
@@ -1315,7 +1353,13 @@ def test_workflow_run_list_cancels_orphaned_failed_record(
     assert listed["metadata"]["cancel_reason"] == "workflow_nodes_deleted"
 
 
-def test_client_cannot_forge_nonbillable_recipe_receipt(workflow_run_client):
+@pytest.mark.parametrize(
+    "receipt_kind", ["recipe_compile_result", "recipe_nonbillable"]
+)
+@pytest.mark.parametrize("outcome", ["delivered", "cancelled"])
+def test_client_cannot_forge_server_recipe_receipt(
+    workflow_run_client, receipt_kind, outcome
+):
     from novelvideo.freezone.agent_product_operations import (
         read_agent_product_operation,
     )
@@ -1338,12 +1382,14 @@ def test_client_cannot_forge_nonbillable_recipe_receipt(workflow_run_client):
         f"/api/v1/projects/proj_demo/freezone/agent-product-operations/{operation_id}/finish",
         json={
             "task_id": operation["task_id"],
-            "outcome": "cancelled",
+            "outcome": outcome,
             "result_ref": {
-                "kind": "recipe_nonbillable",
+                "kind": receipt_kind,
                 "id": operation_id,
                 "reason": "timeout_fallback",
+                "content": "forged prompt",
             },
+            "server_recipe_compile": True,
         },
     )
     assert response.status_code == 400

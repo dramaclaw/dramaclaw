@@ -46,20 +46,29 @@ TERMINAL_STATUSES = {"delivered", "failed", "cancelled"}
 OPERATION_ID_RE = re.compile(r"^agent_product_[a-zA-Z0-9_-]{1,96}$")
 
 
-class AgentProductNotBillable(RuntimeError):
-    """A Recipe used a fallback or reused text, without a fresh model delivery."""
+RECIPE_COMPILE_MESSAGES = {
+    "timeout_fallback": "Recipe 提示词优化超时，已使用备用提示词；本次 Recipe 正常计费",
+    "memory_cache": "Recipe 已复用缓存提示词；本次 Recipe 正常计费",
+    "persistent_cache": "Recipe 已复用缓存提示词；本次 Recipe 正常计费",
+    "deterministic": "Recipe 已使用模板提示词；本次 Recipe 正常计费",
+}
 
-    MESSAGES = {
-        "timeout_fallback": "Recipe 提示词优化超时，已使用备用提示词；本次 Recipe 不计费",
-        "memory_cache": "Recipe 已复用缓存提示词；本次 Recipe 不计费",
-        "persistent_cache": "Recipe 已复用缓存提示词；本次 Recipe 不计费",
-        "deterministic": "Recipe 已使用模板提示词；本次 Recipe 不计费",
-    }
 
-    def __init__(self, *, operation_id: str, reason: str) -> None:
-        self.operation_id = operation_id
-        self.reason = reason
-        super().__init__(self.MESSAGES[reason])
+def is_recipe_compile_receipt(
+    product_kind: str, operation_id: str, result: dict[str, Any]
+) -> bool:
+    """Validate a server-owned Recipe delivery without inventing model evidence."""
+    reason = result.get("reason")
+    content = result.get("content")
+    return (
+        product_kind == "recipe_result"
+        and result.get("kind") == "recipe_compile_result"
+        and result.get("id") == operation_id
+        and isinstance(reason, str)
+        and reason in RECIPE_COMPILE_MESSAGES
+        and isinstance(content, str)
+        and bool(content.strip())
+    )
 
 
 class AgentProductSettlementPending(RuntimeError):
@@ -397,6 +406,7 @@ def finish_agent_product_operation(
     outcome: str,
     expected_task_id: str,
     result_ref: dict[str, Any] | None = None,
+    server_recipe_compile: bool = False,
 ) -> dict[str, Any]:
     status = str(outcome or "").strip()
     if status not in PENDING_STATUSES | TERMINAL_STATUSES:
@@ -413,6 +423,13 @@ def finish_agent_product_operation(
         if payload["task_id"] != str(expected_task_id or "").strip():
             raise ValueError("agent product operation task identity mismatch")
         result = result_ref if isinstance(result_ref, dict) else {}
+        recipe_delivery = is_recipe_compile_receipt(
+            payload["product_kind"], operation_id, result
+        )
+        if result.get("kind") == "recipe_compile_result" and (
+            not server_recipe_compile or not recipe_delivery or status != "delivered"
+        ):
+            raise ValueError("Recipe compile receipts require trusted server delivery")
         if payload["status"] in TERMINAL_STATUSES:
             if payload["status"] != status:
                 raise ValueError(
@@ -425,12 +442,15 @@ def finish_agent_product_operation(
             return payload
         evidence = payload["model_evidence"]
         if status == "delivered":
-            if not evidence.get("model_call_id") or not evidence.get("executed_at"):
+            if not recipe_delivery and (
+                not evidence.get("model_call_id") or not evidence.get("executed_at")
+            ):
                 raise ValueError(
                     "delivered result requires trusted model execution evidence"
                 )
             if (
                 payload["product_kind"] == "recipe_result"
+                and not recipe_delivery
                 and evidence.get("compile_mode") != "model"
             ):
                 raise ValueError(

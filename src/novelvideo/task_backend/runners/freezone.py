@@ -75,6 +75,8 @@ async def _run_freezone_agent_product_async(
     """Wait for a trusted, persisted product result before EE settlement."""
     from novelvideo.freezone.agent_product_operations import (
         PENDING_STATUSES,
+        RECIPE_COMPILE_MESSAGES,
+        is_recipe_compile_receipt,
         read_agent_product_operation,
     )
 
@@ -103,6 +105,17 @@ async def _run_freezone_agent_product_async(
         if status == "delivered":
             evidence = operation.get("model_evidence") or {}
             result_ref = operation.get("result_ref") or {}
+            if is_recipe_compile_receipt(product_kind, operation_id, result_ref):
+                reason = result_ref["reason"]
+                return {
+                    "ok": True,
+                    "operation_id": operation_id,
+                    "product_kind": product_kind,
+                    "delivery_status": "delivered",
+                    "compile_mode": reason,
+                    "message": RECIPE_COMPILE_MESSAGES[reason],
+                    "result_ref": result_ref,
+                }
             if not evidence.get("model_call_id") or not result_ref.get("id"):
                 raise RuntimeError(
                     "agent product result lacks trusted delivery evidence"
@@ -115,20 +128,6 @@ async def _run_freezone_agent_product_async(
                 "model_evidence": evidence,
                 "result_ref": result_ref,
             }
-        if status == "cancelled" and product_kind == "recipe_result":
-            from novelvideo.freezone.agent_product_operations import (
-                AgentProductNotBillable,
-            )
-
-            receipt = operation.get("result_ref") or {}
-            reason = receipt.get("reason")
-            if (
-                receipt.get("kind") == "recipe_nonbillable"
-                and receipt.get("id") == operation_id
-                and isinstance(reason, str)
-                and reason in AgentProductNotBillable.MESSAGES
-            ):
-                raise AgentProductNotBillable(operation_id=operation_id, reason=reason)
         if status in {"failed", "cancelled"}:
             raise RuntimeError(
                 f"agent product generation ended without delivery: {status}"
