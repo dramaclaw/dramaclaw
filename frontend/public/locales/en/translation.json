@@ -3139,6 +3139,12 @@
       },
       "props": {
         "deferred": "Props are generated on demand during episode planning"
+      },
+      "video": {
+        "waitingForArchive": "Video generation completed; waiting for gateway archival...",
+        "writingProjectStorage": "Video archived; writing to project storage...",
+        "downloading": "Video generation completed; downloading...",
+        "retryingDelivery": "Project storage is not ready; retrying delivery..."
       }
     },
     "toast": {

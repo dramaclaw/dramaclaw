@@ -3139,6 +3139,12 @@
       },
       "props": {
         "deferred": "道具将在分集规划时按需生成"
+      },
+      "video": {
+        "waitingForArchive": "视频生成完成，正在等待虾驿归档...",
+        "writingProjectStorage": "视频归档完成，正在写入项目存储...",
+        "downloading": "视频生成完成，正在下载...",
+        "retryingDelivery": "项目存储暂未就绪，正在重试交付..."
       }
     },
     "toast": {

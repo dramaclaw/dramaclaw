@@ -34,6 +34,7 @@ from dotenv import load_dotenv
 
 from novelvideo.egress_context import ambient_egress_context
 from novelvideo.authz_retry import retry_authz_read
+from novelvideo.i18n_message import lmsg
 from novelvideo.ports import (
     get_usage_meter,
     get_video_result_delivery,
@@ -3550,7 +3551,12 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                                     last_delivery_error,
                                 )
                                 if poll_count % 6 == 0:
-                                    log("视频生成完成，正在等待虾驿归档...")
+                                    log(
+                                        lmsg(
+                                            "tasks.log.video.waitingForArchive",
+                                            "视频生成完成，正在等待虾驿归档...",
+                                        )
+                                    )
                                 await asyncio.sleep(poll_interval)
                                 continue
                             last_delivery_error = "VIDEO_ARCHIVE_FAILED"
@@ -3634,13 +3640,23 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                             raise running_authority_error from None
                     try:
                         if archived_source is not None:
-                            log("视频归档完成，正在写入项目存储...")
+                            log(
+                                lmsg(
+                                    "tasks.log.video.writingProjectStorage",
+                                    "视频归档完成，正在写入项目存储...",
+                                )
+                            )
                             delivery = await archive_delivery.deliver(
                                 source=archived_source,
                                 output_path=output_path,
                             )
                         else:
-                            log("视频生成完成，正在下载...")
+                            log(
+                                lmsg(
+                                    "tasks.log.video.downloading",
+                                    "视频生成完成，正在下载...",
+                                )
+                            )
                             delivery = await self._download_video(
                                 video_url, output_path
                             )
@@ -3652,7 +3668,12 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                             last_delivery_error,
                         )
                         if exc.retryable and poll_count + 1 < max_polls:
-                            log("项目存储暂未就绪，正在重试交付...")
+                            log(
+                                lmsg(
+                                    "tasks.log.video.retryingDelivery",
+                                    "项目存储暂未就绪，正在重试交付...",
+                                )
+                            )
                             await asyncio.sleep(poll_interval)
                             continue
                         if organization_request:
