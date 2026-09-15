@@ -27,6 +27,33 @@ def test_read_only_answer_needs_no_canvas_receipt():
     )
 
 
+def test_freezone_instructions_embed_schema_and_valid_greeting_example():
+    from novelvideo.chat import service
+
+    instructions = service._codex_developer_instructions("freezone_canvas")
+    schema = json.loads(instructions.rsplit("\n", 1)[1])
+    assert schema == CANVAS_REPLY_SCHEMA
+    example, _ = json.JSONDecoder().raw_decode(
+        instructions.split("For a greeting, return ", 1)[1]
+    )
+    Draft202012Validator(schema).validate(example)
+    assert (
+        finalize_canvas_reply(json.dumps(example), attempts={}, receipts=set())
+        == example["message"]
+    )
+    assert example["mode"] == "read_only"
+    assert example["canvas_receipts"] == []
+    assert "not plain text or Markdown" in instructions
+    assert "ordinary conversation" in instructions
+    assert "canvas_receipts" not in service._codex_developer_instructions("default")
+
+
+def test_plain_success_claim_is_still_rejected_without_receipts():
+    assert "未返回结构化结果" in finalize_canvas_reply(
+        "图片节点已创建成功。", attempts={}, receipts=set()
+    )
+
+
 def test_catalog_only_success_needs_no_canvas_receipt():
     assert (
         finalize_canvas_reply(

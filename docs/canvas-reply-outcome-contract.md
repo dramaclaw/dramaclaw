@@ -57,3 +57,11 @@ write authorization, and the #571 Inbox/Outbox transport are unchanged.
 
 The Freezone thread protocol version is bumped so existing threads are recreated
 with the new developer instructions. No database migration is needed.
+
+Compatibility gateways may not expose the transport `outputSchema` to the
+model. The Freezone developer instructions therefore also embed the complete
+schema and a valid read-only greeting example. Greetings must produce the same
+structured envelope; plain prose is not exempt from receipt validation.
+After updating the backend, restart the API so it loads the new instructions
+and thread protocol version. Prompt/schema unit tests do not replace a live
+gateway smoke test.
