@@ -92,7 +92,7 @@ export function PikoOnboarding({ initialNickname, onSave, onEnter, onMusicStart 
       else if (stage === "out") setStage("reveal");
       else if (stage === "reveal") setStage("create");
       else if (stage === "depart" && !entered.current) { entered.current = true; onEnterRef.current(); }
-    }, stage === "hold" ? 1000 : reduce() ? 0 : 800);
+    }, stage === "hold" ? 500 : reduce() ? 0 : 800);
     return () => clearTimeout(timer);
   }, [stage, assets]);
 
@@ -126,6 +126,7 @@ export function PikoOnboarding({ initialNickname, onSave, onEnter, onMusicStart 
   const finishVideo = () => {
     if (stageRef.current !== "invitation" && !(stageRef.current === "intro" && mediaError)) return;
     stageRef.current = "out";
+    if (!soundMuted.current) playPikoUiSound("open");
     video.current?.pause(); setStage("out");
   };
   const play = () => {
