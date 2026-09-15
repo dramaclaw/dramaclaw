@@ -72,6 +72,7 @@ import {
 import { nodeCatalog } from '@/features/canvas/application/nodeCatalog';
 import { canvasNodeFactory } from '@/features/canvas/application/canvasServices';
 import { resetStyleNodeSyncStates } from '@/features/canvas/application/styleNodeSync';
+import { cancelVideoCrop } from '@/features/canvas/application/videoCrop/videoCropInFlight';
 import {
   aspectRatioFromImageDimensions,
   ensureAtLeastOneMinEdge,
@@ -735,6 +736,14 @@ function normalizeNodes(rawNodes: CanvasNode[]): CanvasNode[] {
         if ('breakdownStartedAt' in mergedData) {
           mergedData.breakdownStartedAt = null;
         }
+      }
+
+      // 画面裁切也一样没有续跑机制，框/比例本来就只在组件本地 state（见
+      // VideoNode 的注释），存图里的 isCropMode: true 重新打开后既没有框也接不
+      // 回在途请求，一律复位成关闭；isClipMode / subtitleEraseMode /
+      // isExtendPickMode 不受影响。
+      if ('isCropMode' in mergedData && mergedData.isCropMode) {
+        mergedData.isCropMode = false;
       }
 
       const normalizedNode = {
@@ -2921,6 +2930,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         if (deleteSet.has(node.id) && isPresetManagedNode(node)) {
           deleteSet.delete(node.id);
         }
+      }
+      // 源节点被删了，挂在它身上的画面裁切也得跟着断——不然那次裁剪（下载 /
+      // 裁剪 / 上传的某一步）还在跑，跑完才后知后觉发现节点没了。cancelVideoCrop
+      // 对没在裁的节点是空操作，批量删除时全量调一遍没有额外代价。
+      for (const nodeId of deleteSet) {
+        cancelVideoCrop(nodeId);
       }
       const nextNodes = state.nodes
         .filter((node) => !deleteSet.has(node.id))

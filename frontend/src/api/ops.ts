@@ -2417,6 +2417,8 @@ export interface FreezoneUploadOptions {
    * (see uploadApi in lib/api.ts). Pass a number only to bound a specific call.
    */
   timeoutMs?: number | false;
+  /** ky 直接透传给底层 fetch；不传就是不可取消（历史行为）。 */
+  signal?: AbortSignal;
 }
 
 export async function uploadFreezoneImage(
@@ -2434,6 +2436,7 @@ export async function uploadFreezoneImage(
       method: "POST",
       body: fd,
       timeout: options?.timeoutMs ?? false,
+      signal: options?.signal,
     },
   ).json<{ ok: boolean; data?: FreezoneUploadResult; error?: string }>();
   if (!resp.ok || !resp.data) {
@@ -2495,11 +2498,12 @@ export async function uploadFreezoneVideo(
   project: string,
   file: File | Blob,
   filename?: string,
+  options?: FreezoneUploadOptions,
 ): Promise<FreezoneUploadResult> {
   // Timeouts are off by default for uploads (see FreezoneUploadOptions):
   // video files routinely run into the tens of MB and the body is streamed, so
   // any clock cancels the request before the server sees the end of it.
-  return await uploadFreezoneImage(project, file, filename);
+  return await uploadFreezoneImage(project, file, filename, options);
 }
 
 function dataUrlToBlob(dataUrl: string): Blob {

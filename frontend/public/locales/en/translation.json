@@ -4965,7 +4965,7 @@
       "gray": "Gray"
     },
     "videoClip": {
-      "exit": "Exit trimming",
+      "exit": "Exit segment extract",
       "subtitleTodo": "Subtitles (not implemented yet)",
       "extractingFrames": "Extracting frames…",
       "framesFailed": "Failed to load frames",
@@ -4973,8 +4973,8 @@
       "dragEnd": "Drag or use arrow keys to move the out point",
       "muteTodo": "Mute (not implemented yet)",
       "loopTodo": "Loop (not implemented yet)",
-      "submitting": "Trimming…",
-      "submit": "Apply trim"
+      "submitting": "Extracting…",
+      "submit": "Extract segment"
     },
     "mentionReplace": {
       "empty": "No assets available to swap in",
@@ -5210,11 +5210,13 @@
       }
     },
     "video": {
-      "clip": "Clip",
       "reshoot": "Reshoot Clip",
       "hd": "HD",
       "analyze": "Analyze",
       "frameAnalysis": "Frame-by-Frame",
+      "segmentExtract": "Segment Extract",
+      "frameCrop": "Frame Crop",
+      "motionCapture": "Deep Motion Capture",
       "extend": "Smart Extend",
       "separateAudioVideo": "Separate A/V",
       "frameEdit": "Frame Editing",
@@ -5839,10 +5841,34 @@
         "allReferenceGroup": "Omni reference group",
         "firstLastFrameGroup": "First & last frame video group"
       },
+      "crop": {
+        "displayName": "{{name}}_Cropped",
+        "cancel": "Exit crop",
+        "abort": "Cancel crop",
+        "submit": "Generate crop",
+        "ratioGroup": "Crop ratio",
+        "ratio": {
+          "free": "Free",
+          "original": "Original"
+        },
+        "boxLabel": "Crop box. Arrow keys to move, Shift to move faster, Alt+Arrow to resize, Esc to exit",
+        "processing": "Cropping video, please wait…",
+        "success": "Crop complete",
+        "canceled": "Crop canceled",
+        "busy": "This video is being cropped — cancel it from the bar below first",
+        "errors": {
+          "noProject": "No current project found; cannot save the result",
+          "fetchFailed": "Failed to load the source video ({{detail}})",
+          "cannotDecode": "This browser cannot decode the video (common with HEVC sources). Try Chrome or transcode it first",
+          "noVideoTrack": "The source video has no usable picture",
+          "tooLarge": "The video is too large ({{detail}}) to crop",
+          "failed": "Crop failed: {{detail}}"
+        }
+      },
       "clip": {
-        "displayName": "Clip",
-        "noUrl": "Clip finished but returned no video URL",
-        "failed": "Clip failed: {{detail}}"
+        "displayName": "Segment Extract",
+        "noUrl": "Extraction finished but returned no video URL",
+        "failed": "Extraction failed: {{detail}}"
       },
       "videoEdit": {
         "imageLimit": "Video editing supports at most {{limit}} reference images; the first {{limit}} were used ({{ignored}} ignored)"
@@ -5878,7 +5904,23 @@
       "emptyState": {
         "tryLabel": "Try:"
       },
-      "videoLoadFailed": "Video failed to load"
+      "videoLoadFailed": "Video failed to load",
+      "depthCapture": {
+        "preparing": "Loading depth model…",
+        "processing": "Capturing depth {{percent}}%",
+        "failed": "Depth capture failed",
+        "interrupted": "Processing was interrupted (page reloaded or closed). You can capture again.",
+        "retry": "Capture again",
+        "noWebGpu": "This browser has no WebGPU, so depth capture will be slow",
+        "errors": {
+          "tooLong": "Videos longer than {{seconds}} seconds are not supported",
+          "noVideoTrack": "The source video has no usable frames",
+          "cannotDecode": "This browser cannot decode the video format",
+          "cancelled": "Processing was cancelled",
+          "failed": "Processing error",
+          "noProject": "No current project found, so the result cannot be saved"
+        }
+      }
     },
     "pano360": {
       "captureGroup2x2": "Panorama capture set (4)",

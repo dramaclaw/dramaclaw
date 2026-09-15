@@ -5,6 +5,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
 import { projectionScopedId } from "@/features/freezone/projectionGraphIds";
 import { useCanvasStore } from "@/stores/canvasStore";
+import {
+  clearVideoCropInFlight,
+  isVideoCropInFlight,
+  markVideoCropInFlight,
+} from "@/features/canvas/application/videoCrop/videoCropInFlight";
 
 describe("canvasStore projection groups", () => {
   const scoped = projectionScopedId;
@@ -89,6 +94,36 @@ describe("canvasStore projection groups", () => {
     useCanvasStore.getState().deleteNode("no_prop");
 
     expect(useCanvasStore.getState().nodes).toEqual([]);
+  });
+
+  it("cancels an in-flight frame crop when its source node is deleted", () => {
+    // 裁切在跑的时候源节点被删掉：不跟着中止的话，下载/裁剪/上传会一直跑到
+    // 结尾才发现节点没了——白等一轮还可能在 OSS 上留个孤儿文件，不如一开始
+    // 删除时就把 signal 打断，见 canvasStore.ts deleteNodes 里的 cancelVideoCrop。
+    const nodeId = "video_being_cropped";
+    useCanvasStore.setState({
+      nodes: [
+        {
+          id: nodeId,
+          type: CANVAS_NODE_TYPES.video,
+          position: { x: 0, y: 0 },
+          data: { videoUrl: "https://oss/src.mp4" },
+        },
+      ],
+      edges: [],
+    });
+
+    const signal = markVideoCropInFlight(nodeId);
+    expect(signal).not.toBeNull();
+    expect(signal?.aborted).toBe(false);
+
+    useCanvasStore.getState().deleteNode(nodeId);
+
+    expect(signal?.aborted).toBe(true);
+    // 取消只发信号，不摘登记表——真正清表是裁切流程自己的 finally。
+    expect(isVideoCropInFlight(nodeId)).toBe(true);
+
+    clearVideoCropInFlight(nodeId);
   });
 
   it("deduplicates persisted reference input edges that target the same skill identity handle", () => {

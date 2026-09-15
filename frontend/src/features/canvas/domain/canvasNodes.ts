@@ -120,6 +120,25 @@ export type VideoGenQuality = string;
 export type VideoGenCount = 1 | 2 | 4;
 export type Seedance2SceneOptimize = 'anime' | 'realistic';
 
+/** 深度动作捕捉失败原因；`failed` 是兜底，原始报错放在 errorDetail。 */
+export type DepthCaptureErrorCode =
+  | 'tooLong'
+  | 'noVideoTrack'
+  | 'cannotDecode'
+  | 'cancelled'
+  | 'failed';
+
+/** 深度动作捕捉（浏览器端计算）的处理态；成功后写回 videoUrl 并清成 null。 */
+export interface DepthCaptureState {
+  status: 'running' | 'failed';
+  /** 0–100 的整数百分比。 */
+  progress: number;
+  /** 重试时重跑的源视频地址。 */
+  sourceVideoUrl: string;
+  errorCode: DepthCaptureErrorCode | null;
+  errorDetail: string | null;
+}
+
 export interface VideoNodeData extends NodeDisplayData {
   videoUrl: string | null;
   previewImageUrl?: string | null;
@@ -138,6 +157,8 @@ export interface VideoNodeData extends NodeDisplayData {
   heightPx?: number | null;
   durationMs?: number | null;
   isUploading?: boolean;
+  /** 深度动作捕捉产出节点的处理态，见 DepthCaptureState。 */
+  depthCapture?: DepthCaptureState | null;
   isAnalyzing?: boolean;
   analysisResult?: string | null;
   analysisError?: string | null;
@@ -146,6 +167,13 @@ export interface VideoNodeData extends NodeDisplayData {
   isClipMode?: boolean;
   clipStartMs?: number | null;
   clipEndMs?: number | null;
+  // frame crop (画面裁切) ------------------------------------------------------
+  /**
+   * **源**视频节点上的临时态：画面上叠裁剪框、底下挂比例浮条。框本身不落盘
+   * （按 pointermove 频率写 store 会冲掉撤销栈），只有这个开关是节点数据。
+   * 与 isClipMode / isExtendPickMode / subtitleEraseMode 互斥。
+   */
+  isCropMode?: boolean;
   // reshoot clips (libtv-style 片段重拍) --------------------------------------
   /**
    * 「片段重拍」产出的下游节点：视频本体下面挂一条时间轨道，最多截 5 段，

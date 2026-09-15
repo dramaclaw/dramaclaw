@@ -4965,7 +4965,7 @@
       "gray": "Xám"
     },
     "videoClip": {
-      "exit": "Thoát cắt video",
+      "exit": "Thoát trích đoạn",
       "subtitleTodo": "Phụ đề (chưa hỗ trợ)",
       "extractingFrames": "Đang trích khung hình…",
       "framesFailed": "Tải khung hình thất bại",
@@ -4973,8 +4973,8 @@
       "dragEnd": "Kéo hoặc dùng phím mũi tên để chỉnh điểm ra",
       "muteTodo": "Tắt tiếng (chưa hỗ trợ)",
       "loopTodo": "Lặp lại (chưa hỗ trợ)",
-      "submitting": "Đang cắt…",
-      "submit": "Áp dụng đoạn cắt"
+      "submitting": "Đang trích…",
+      "submit": "Trích đoạn"
     },
     "mentionReplace": {
       "empty": "Không có asset nào để thay vào",
@@ -5210,11 +5210,13 @@
       }
     },
     "video": {
-      "clip": "Cắt đoạn",
       "reshoot": "Quay lại đoạn",
       "hd": "HD",
       "analyze": "Phân tích",
       "frameAnalysis": "Phân tích từng khung hình",
+      "segmentExtract": "Trích đoạn",
+      "frameCrop": "Cắt khung hình",
+      "motionCapture": "Bắt chuyển động chuyên sâu",
       "extend": "Viết tiếp thông minh",
       "separateAudioVideo": "Tách tiếng/hình",
       "frameEdit": "Chỉnh sửa khung hình",
@@ -5839,10 +5841,34 @@
         "allReferenceGroup": "Nhóm tham chiếu đa năng",
         "firstLastFrameGroup": "Nhóm video từ khung đầu & khung cuối"
       },
+      "crop": {
+        "displayName": "{{name}}_Cắt khung",
+        "cancel": "Thoát cắt khung",
+        "abort": "Hủy cắt khung",
+        "submit": "Tạo bản cắt",
+        "ratioGroup": "Tỷ lệ cắt",
+        "ratio": {
+          "free": "Tự do",
+          "original": "Gốc"
+        },
+        "boxLabel": "Khung cắt. Phím mũi tên để di chuyển, giữ Shift để nhanh hơn, Alt+mũi tên để đổi kích thước, Esc để thoát",
+        "processing": "Đang cắt video, vui lòng chờ…",
+        "success": "Đã cắt xong",
+        "canceled": "Đã hủy cắt khung",
+        "busy": "Video đang được cắt khung — hãy hủy ở thanh bên dưới trước",
+        "errors": {
+          "noProject": "Không tìm thấy dự án hiện tại, không thể lưu kết quả",
+          "fetchFailed": "Không tải được video nguồn ({{detail}})",
+          "cannotDecode": "Trình duyệt không giải mã được video này (thường gặp với nguồn HEVC). Hãy dùng Chrome hoặc chuyển mã trước",
+          "noVideoTrack": "Video nguồn không có hình ảnh dùng được",
+          "tooLarge": "Video quá lớn ({{detail}}), chưa hỗ trợ cắt",
+          "failed": "Cắt thất bại: {{detail}}"
+        }
+      },
       "clip": {
-        "displayName": "Cắt đoạn",
-        "noUrl": "Cắt xong nhưng không trả về URL video",
-        "failed": "Cắt thất bại: {{detail}}"
+        "displayName": "Trích đoạn",
+        "noUrl": "Trích xong nhưng không trả về URL video",
+        "failed": "Trích đoạn thất bại: {{detail}}"
       },
       "videoEdit": {
         "imageLimit": "Sửa video hỗ trợ tối đa {{limit}} ảnh tham chiếu; đã dùng {{limit}} ảnh đầu ({{ignored}} ảnh bị bỏ qua)"
@@ -5878,7 +5904,23 @@
       "emptyState": {
         "tryLabel": "Thử:"
       },
-      "videoLoadFailed": "Tải video thất bại"
+      "videoLoadFailed": "Tải video thất bại",
+      "depthCapture": {
+        "preparing": "Đang tải mô hình độ sâu…",
+        "processing": "Đang bắt chiều sâu {{percent}}%",
+        "failed": "Bắt chuyển động chiều sâu thất bại",
+        "interrupted": "Quá trình bị gián đoạn (trang đã tải lại hoặc đóng). Có thể bắt lại.",
+        "retry": "Bắt lại",
+        "noWebGpu": "Trình duyệt không hỗ trợ WebGPU nên xử lý sẽ chậm",
+        "errors": {
+          "tooLong": "Không hỗ trợ video dài hơn {{seconds}} giây",
+          "noVideoTrack": "Video nguồn không có khung hình dùng được",
+          "cannotDecode": "Trình duyệt không giải mã được định dạng video này",
+          "cancelled": "Đã hủy xử lý",
+          "failed": "Lỗi xử lý",
+          "noProject": "Không tìm thấy dự án hiện tại nên không thể lưu kết quả"
+        }
+      }
     },
     "pano360": {
       "captureGroup2x2": "Bộ ảnh chụp toàn cảnh (4)",

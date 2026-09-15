@@ -62,6 +62,33 @@ describe("拉片进行态在水合时复位", () => {
   });
 });
 
+describe("画面裁切在水合时复位", () => {
+  it("clears isCropMode but leaves isClipMode untouched", () => {
+    // 同拉片一样没有续跑机制；框/比例本来就只活在组件本地 state，存图里的
+    // isCropMode: true 重新打开后既没有框也接不回在途请求。
+    useCanvasStore.getState().setCanvasData(
+      [
+        {
+          ...SOURCE_VIDEO,
+          data: { ...SOURCE_VIDEO.data, isCropMode: true, isClipMode: true },
+        },
+      ],
+      [],
+    );
+
+    const node = useCanvasStore.getState().nodes.find((item) => item.id === "v1");
+    expect(node?.data.isCropMode).toBe(false);
+    expect(node?.data.isClipMode).toBe(true);
+  });
+
+  it("leaves an idle node untouched", () => {
+    useCanvasStore.getState().setCanvasData([SOURCE_VIDEO], []);
+
+    const node = useCanvasStore.getState().nodes.find((item) => item.id === "v1");
+    expect(node?.data.isCropMode ?? false).toBe(false);
+  });
+});
+
 describe("从画布拾取视频", () => {
   beforeEach(() => {
     useCanvasStore.setState({ nodes: [SOURCE_VIDEO, BREAKDOWN_NODE()], edges: [] });

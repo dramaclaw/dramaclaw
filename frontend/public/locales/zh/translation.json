@@ -4965,7 +4965,7 @@
       "gray": "灰"
     },
     "videoClip": {
-      "exit": "退出剪辑",
+      "exit": "退出片段截取",
       "subtitleTodo": "字幕（待实现）",
       "extractingFrames": "提取画面帧中…",
       "framesFailed": "画面帧加载失败",
@@ -4973,8 +4973,8 @@
       "dragEnd": "拖动或用方向键调整终点",
       "muteTodo": "静音（待实现）",
       "loopTodo": "循环（待实现）",
-      "submitting": "剪辑中…",
-      "submit": "提交剪辑"
+      "submitting": "截取中…",
+      "submit": "提交截取"
     },
     "mentionReplace": {
       "empty": "没有可替换的素材",
@@ -5210,11 +5210,13 @@
       }
     },
     "video": {
-      "clip": "剪辑",
       "reshoot": "片段重拍",
       "hd": "高清",
       "analyze": "解析",
       "frameAnalysis": "逐帧拉片",
+      "segmentExtract": "片段截取",
+      "frameCrop": "画面裁切",
+      "motionCapture": "深度动作捕捉",
       "extend": "智能续写",
       "separateAudioVideo": "分离音视频",
       "frameEdit": "画面编辑",
@@ -5839,10 +5841,34 @@
         "allReferenceGroup": "全能参考组",
         "firstLastFrameGroup": "首尾帧生成视频组"
       },
+      "crop": {
+        "displayName": "{{name}}_裁剪",
+        "cancel": "退出裁剪",
+        "abort": "取消裁剪",
+        "submit": "生成裁剪",
+        "ratioGroup": "裁剪比例",
+        "ratio": {
+          "free": "自由",
+          "original": "原始"
+        },
+        "boxLabel": "裁剪框，方向键移动，Shift 加速，Alt 加方向键调整大小，Esc 退出",
+        "processing": "正在裁剪视频，请稍候…",
+        "success": "裁剪完成",
+        "canceled": "已取消裁剪",
+        "busy": "视频正在裁剪中，可在底部浮条上取消",
+        "errors": {
+          "noProject": "未找到当前项目，无法保存结果",
+          "fetchFailed": "读取源视频失败（{{detail}}）",
+          "cannotDecode": "当前浏览器无法解码此视频（常见于 HEVC 源视频），请换用 Chrome 或先转码",
+          "noVideoTrack": "源视频没有可用的画面",
+          "tooLarge": "视频过大（{{detail}}），暂不支持裁剪",
+          "failed": "裁剪失败：{{detail}}"
+        }
+      },
       "clip": {
-        "displayName": "剪辑",
-        "noUrl": "剪辑完成但未返回视频地址",
-        "failed": "剪辑失败：{{detail}}"
+        "displayName": "片段截取",
+        "noUrl": "截取完成但未返回视频地址",
+        "failed": "截取失败：{{detail}}"
       },
       "videoEdit": {
         "imageLimit": "视频编辑最多支持 {{limit}} 张参考图，已使用前 {{limit}} 张（忽略其余 {{ignored}} 张）"
@@ -5878,7 +5904,23 @@
       "emptyState": {
         "tryLabel": "试试："
       },
-      "videoLoadFailed": "视频加载失败"
+      "videoLoadFailed": "视频加载失败",
+      "depthCapture": {
+        "preparing": "正在加载深度模型…",
+        "processing": "深度动作捕捉中 {{percent}}%",
+        "failed": "深度动作捕捉失败",
+        "interrupted": "处理已中断（页面刷新或关闭），可重新捕捉",
+        "retry": "重新捕捉",
+        "noWebGpu": "当前浏览器不支持 WebGPU，深度动作捕捉会比较慢",
+        "errors": {
+          "tooLong": "视频超过 {{seconds}} 秒，暂不支持深度动作捕捉",
+          "noVideoTrack": "源视频没有可用的画面",
+          "cannotDecode": "浏览器无法解码该视频格式",
+          "cancelled": "处理已取消",
+          "failed": "处理出错",
+          "noProject": "未找到当前项目，无法保存结果"
+        }
+      }
     },
     "pano360": {
       "captureGroup2x2": "全景截图组 (4 张)",
