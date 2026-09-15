@@ -2,7 +2,6 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { StoryVariablesPanel } from '@/components/canvas/StoryVariablesPanel';
 import { StoryLintPanel } from '@/components/canvas/StoryLintPanel';
-import { StoryBatchGenPanel } from '@/components/canvas/StoryBatchGenPanel';
 import { StoryTreePanel } from '@/components/canvas/StoryTreePanel';
 import { FREEZONE_DOCK_OFFSET_ANIMATED_STYLE } from '@/features/freezone/dockOffset';
 import { useCanvasStore } from '@/stores/canvasStore';
@@ -13,7 +12,6 @@ afterEach(cleanup);
 it.each([
   ['states', StoryVariablesPanel],
   ['readiness', StoryLintPanel],
-  ['generation', StoryBatchGenPanel],
   ['tree', StoryTreePanel],
 ] as const)('%s panel follows the chat dock offset and remains closable', (_name, Panel) => {
   useCanvasStore.setState({ nodes: [], edges: [] });

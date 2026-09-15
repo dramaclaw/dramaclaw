@@ -228,8 +228,6 @@ interface CanvasState {
   openStoryVariablesGroupId: string | null;
   /** 当前打开校验(lint)面板的故事组 id；null 表示关闭。 */
   openStoryLintGroupId: string | null;
-  /** 当前打开批量生成面板的故事组 id；null 表示关闭。 */
-  openStoryGenGroupId: string | null;
   openStoryTreeGroupId: string | null;
 
   onNodesChange: (changes: NodeChange<CanvasNode>[]) => void;
@@ -419,9 +417,6 @@ interface CanvasState {
   /** 打开/关闭某故事组的校验面板。 */
   openStoryLint: (groupId: string) => void;
   closeStoryLint: () => void;
-  /** 打开/关闭某故事组的批量生成面板。 */
-  openStoryGen: (groupId: string) => void;
-  closeStoryGen: () => void;
   /** 打开/关闭某故事组的剧情树面板。 */
   openStoryTree: (groupId: string) => void;
   closeStoryTree: () => void;
@@ -1784,7 +1779,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
   openStoryVariablesGroupId: null,
   openStoryLintGroupId: null,
-  openStoryGenGroupId: null,
   openStoryTreeGroupId: null,
 
   onNodesChange: (changes) => {
@@ -3827,8 +3821,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   openStoryLint: (groupId) => set({ openStoryLintGroupId: groupId }),
   closeStoryLint: () => set({ openStoryLintGroupId: null }),
 
-  openStoryGen: (groupId) => set({ openStoryGenGroupId: groupId }),
-  closeStoryGen: () => set({ openStoryGenGroupId: null }),
 
   openStoryTree: (groupId) => set({ openStoryTreeGroupId: groupId }),
   closeStoryTree: () => set({ openStoryTreeGroupId: null }),

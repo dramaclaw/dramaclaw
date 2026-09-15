@@ -166,7 +166,6 @@ import { StoryPlayerOverlay } from '@/components/canvas/StoryPlayerOverlay';
 import { StoryGroupToolbar } from './ui/StoryGroupToolbar';
 import { StoryVariablesPanel } from '@/components/canvas/StoryVariablesPanel';
 import { StoryLintPanel } from '@/components/canvas/StoryLintPanel';
-import { StoryBatchGenPanel } from '@/components/canvas/StoryBatchGenPanel';
 import { StoryTreePanel } from '@/components/canvas/StoryTreePanel';
 
 const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, zoom: 1 };
@@ -799,8 +798,6 @@ export function Canvas({
   const closeStoryVariables = useCanvasStore((s) => s.closeStoryVariables);
   const openStoryLintGroupId = useCanvasStore((s) => s.openStoryLintGroupId);
   const closeStoryLint = useCanvasStore((s) => s.closeStoryLint);
-  const openStoryGenGroupId = useCanvasStore((s) => s.openStoryGenGroupId);
-  const closeStoryGen = useCanvasStore((s) => s.closeStoryGen);
   const openStoryTreeGroupId = useCanvasStore((s) => s.openStoryTreeGroupId);
   const closeStoryTree = useCanvasStore((s) => s.closeStoryTree);
   useEffect(() => {
@@ -5104,10 +5101,6 @@ export function Canvas({
 
         {openStoryLintGroupId && (
           <StoryLintPanel groupId={openStoryLintGroupId} onClose={closeStoryLint} />
-        )}
-
-        {openStoryGenGroupId && (
-          <StoryBatchGenPanel groupId={openStoryGenGroupId} onClose={closeStoryGen} />
         )}
 
         {openStoryTreeGroupId && (

@@ -1,6 +1,6 @@
 import { memo, useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Download, ListTree, MoreHorizontal, Play, Plus, ShieldCheck, SlidersHorizontal, Wand2 } from 'lucide-react';
+import { Download, ListTree, MoreHorizontal, Play, Plus, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 import { toast } from 'sonner';
 import { Compiler } from 'inkjs/full';
 import { useCanvasStore } from '@/stores/canvasStore';
@@ -139,7 +139,6 @@ function StoryGroupActions({ id, data }: { id: string; data: GroupNodeData }) {
           <DropdownMenuContent side="bottom" align="end" className="min-w-48">
             <DropdownMenuItem onSelect={() => useCanvasStore.getState().openStoryVariables(id)}><SlidersHorizontal className="mr-2 size-4" />{t('canvas.story.states')}</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => useCanvasStore.getState().openStoryLint(id)}><ShieldCheck className="mr-2 size-4" />{t('canvas.story.lint.open')}</DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => useCanvasStore.getState().openStoryGen(id)}><Wand2 className="mr-2 size-4" />{t('canvas.story.gen.open')}</DropdownMenuItem>
             <DropdownMenuItem disabled={exporting} onSelect={() => void handleStoryGroupExport(id)}><Download className="mr-2 size-4" />{t('canvas.story.export')}</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

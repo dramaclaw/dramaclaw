@@ -4579,22 +4579,6 @@
       "choiceTimeLimit": "选择时限",
       "choiceTimeLimitUnit": "秒(0=不限时)",
       "defaultChoiceToggle": "默认(超时自动选)",
-      "gen": {
-        "nodeSettingsHint": "使用各片段已设置的模型、时长、画幅、声音和参考素材。请先完成制作参数与参考准备。",
-        "open": "生成缺失片段",
-        "title": "批量生成缺失片段",
-        "missingCount": "缺 {{count}} 个片段",
-        "skippedHint": "{{count}} 个片段尚未准备视频提示词，将跳过；可让 Agent 补充或在节点中填写",
-        "resolution": "清晰度",
-        "duration": "时长(秒)",
-        "generate": "生成 {{count}} 个",
-        "none": "没有缺失片段",
-        "starting": "开始生成 {{count}} 个片段…",
-        "done": "已生成 {{succeeded}} 个片段",
-        "donePartial": "完成:成功 {{succeeded}}、失败 {{failed}}",
-        "failed": "批量生成失败",
-        "noProject": "当前不在项目上下文,无法生成"
-      },
       "map": {
         "open": "路径回顾图",
         "title": "路径回顾",
