@@ -1,4 +1,16 @@
 {
+  "workflowDraftContinuation": {
+    "ariaLabel": "Confirm workflow creation",
+    "title": "Workflow plan awaiting confirmation",
+    "summary": "{{nodes}} nodes · {{edges}} connections. Not yet applied to the canvas.",
+    "changed": "The plan has changed. Review it again before confirming.",
+    "failed": "Confirmation could not be submitted. Retry; no new draft was created.",
+    "confirmMessage": "Confirm creation of this workflow",
+    "confirmRunMessage": "Confirm creation and execution of this workflow",
+    "sending": "Submitting confirmation…",
+    "confirmRun": "Confirm and run",
+    "confirm": "Confirm creation"
+  },
   "app": {
     "title": "SuperTale",
     "subtitle": "SuperTale candidate generation and asset commit workbench",
@@ -876,6 +888,7 @@
         "continue": "Continue with selected voice"
       },
       "canvasExecuting": "Executing...",
+      "canvasConfirmedExecuting": "Parameters confirmed. Execution is in progress; no further confirmation is needed.",
       "canvasConfirmExecution": "Confirm execution",
       "canvasTimeoutCancelled": "The canvas operation timed out and was cancelled without being applied.",
       "canvasManuallyCancelled": "The canvas operation was manually cancelled without being applied.",

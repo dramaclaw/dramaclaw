@@ -1,6 +1,7 @@
 import { RECIPE_OUTPUT_CHOICES, recipeOutputChoice, recipeOutputFields, type RecipeOutputChoice } from "@/lib/recipe-output";
 import { type HtmlArtifactReference, parseHtmlArtifactReference, appendHtmlArtifactTransportContext } from '@/features/html-artifacts/chatReference';
 import { HtmlArtifactResultCard } from '@/features/html-artifacts/HtmlArtifactResultCard';
+import { WorkflowDraftContinuation } from './WorkflowDraftContinuation';
 import { activeHtmlArtifactContext, HTML_ARTIFACT_REFERENCE_EVENT } from '@/features/html-artifacts/api';
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
@@ -3382,20 +3383,23 @@ function CanvasCommandApprovalCard({
     : null;
 
   useEffect(() => {
-    setImageParams(initialImageParams);
-  }, [initialImageParams]);
+    // Keep the confirmed groups visible while dependencies finish. Recomputing
+    // pending targets would remove completed images/audio and leave a misleading
+    // video-only approval card for a mixed workflow.
+    if (!isExecuting) setImageParams(initialImageParams);
+  }, [initialImageParams, isExecuting]);
 
   useEffect(() => {
-    setVideoParams(initialVideoParams);
-  }, [initialVideoParams]);
+    if (!isExecuting) setVideoParams(initialVideoParams);
+  }, [initialVideoParams, isExecuting]);
 
   useEffect(() => {
-    setVideoUpscaleParams(initialVideoUpscaleParams);
-  }, [initialVideoUpscaleParams]);
+    if (!isExecuting) setVideoUpscaleParams(initialVideoUpscaleParams);
+  }, [initialVideoUpscaleParams, isExecuting]);
 
   useEffect(() => {
-    setAudioParams(initialAudioParams);
-  }, [initialAudioParams]);
+    if (!isExecuting) setAudioParams(initialAudioParams);
+  }, [initialAudioParams, isExecuting]);
 
   useEffect(() => {
     setHumanReviewEnabled(true);
@@ -3520,12 +3524,16 @@ function CanvasCommandApprovalCard({
         <ShieldAlert className="mt-0.5 size-4 shrink-0 text-amber-500" />
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium text-foreground">
-            {approval.requiresUserChoice
+            {isExecuting
+              ? t("freezone.chat.canvasExecuting", { defaultValue: "执行中..." })
+              : approval.requiresUserChoice
               ? t("freezone.chat.audioApproval.chooseVoiceTitle", { defaultValue: "请选择旁白声线" })
               : "待确认的画布操作"}
           </div>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            {approval.requiresUserChoice
+            {isExecuting
+              ? t("freezone.chat.canvasConfirmedExecuting")
+              : approval.requiresUserChoice
               ? t("freezone.chat.audioApproval.chooseVoiceDescription", {
                   defaultValue: "请选择自定义声线；如果暂不选择，本次将跳过旁白生成。",
                 })
@@ -3812,6 +3820,8 @@ function CanvasCommandApprovalCard({
     </div>
   );
 }
+
+export const CanvasCommandApprovalCardForTest = CanvasCommandApprovalCard;
 
 function canvasCommandFeedbackHasFailure(feedback: CanvasCommandFeedback): boolean {
   return feedback.errors.length > 0 || (feedback.commandResults ?? []).some((step) => step.status !== "success");
@@ -15281,6 +15291,16 @@ export function SuperChatPanel({
                     freezoneRecipeCatalog={freezoneRecipeCatalog}
                   />
                 ))}
+                {variant === "freezone" && params.project && effectiveFreezoneCanvasId && (
+                  <WorkflowDraftContinuation
+                    messages={chat.messages}
+                    projectId={params.project}
+                    canvasId={effectiveFreezoneCanvasId}
+                    busy={chat.busy}
+                    hasApproval={pendingCanvasCommandApprovals.length > 0}
+                    onConfirm={(display, transport) => chat.send(display, [], transport)}
+                  />
+                )}
                 {thinkingCanvasContextActivity && !thinkingCanvasContextMessageId && (
                   <MessageBubble
                     message={{

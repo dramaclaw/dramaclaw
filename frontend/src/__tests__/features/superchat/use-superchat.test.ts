@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, render, renderHook, waitFor } from "@testing-library/react";
+import { createElement } from "react";
+import { useCanvasStore } from "@/stores/canvasStore";
+import { workflowGenerationTargetsForPreflight } from "@/features/freezone/canvasChatCommands";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { normalizeMessage } from "@/features/superchat/message";
 import { buildCanvasCommandToolResultPayloadForTest } from "@/features/freezone/canvasCommandToolResult";
@@ -37,6 +40,7 @@ import {
   isCanvasNodeReferenceAttachment,
 } from "@/features/freezone/chatNodeReferences";
 import {
+  CanvasCommandApprovalCardForTest,
   buildAssistantClarificationResponseForTest,
   activeAssistantClarificationIsSkillStudioRevisionForTest,
   buildPersistedAssistantClarificationEventForTest,
@@ -131,6 +135,55 @@ vi.mock("@/lib/api", () => ({
     post: apiPostMock,
   },
 }));
+
+vi.mock("@tanstack/react-router", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@tanstack/react-router")>(),
+  useParams: () => ({ project: "project-a" }),
+}));
+vi.mock("@/features/canvas/hooks/useFreezoneImageModels", async (importOriginal) => {
+  const models = [{ id: "image-model", label: "测试图片模型" }];
+  return { ...await importOriginal<typeof import("@/features/canvas/hooks/useFreezoneImageModels")>(), useFreezoneImageModels: () => ({ models }) };
+});
+vi.mock("@/features/canvas/hooks/useFreezoneVideoModels", async (importOriginal) => {
+  const models = [{ id: "video-model", label: "测试视频模型", minDuration: 5, maxDuration: 15 }];
+  return { ...await importOriginal<typeof import("@/features/canvas/hooks/useFreezoneVideoModels")>(), useFreezoneVideoModels: () => ({ models }) };
+});
+
+describe("mixed workflow approval execution", () => {
+  it("keeps confirmed media groups when upstream image/audio nodes complete", () => {
+    const previous = useCanvasStore.getState();
+    const nodes = [
+      { id: "image-a", type: "imageGenNode" as const, position: { x: 0, y: 0 }, data: { prompt: "城市", model: "image-model" } },
+      { id: "video-a", type: "videoNode" as const, position: { x: 0, y: 0 }, data: { prompt: "城市", model: "video-model", durationSec: 5 } },
+      { id: "audio-a", type: "audioNode" as const, position: { x: 0, y: 0 }, data: { prompt: "音乐", audioKind: "music", forceInstrumental: true } },
+    ];
+    useCanvasStore.setState({ nodes, edges: [] });
+    expect(workflowGenerationTargetsForPreflight({ type: "run_workflow", scope: "canvas" })).toHaveLength(3);
+    const approval = {
+      id: "mixed", key: "mixed", messageId: "assistant", receivedAt: 1,
+      commandCount: 1, plans: [],
+      envelopes: [{ schema_version: "canvas_chat_commands.v1" as const,
+        commands: [{ type: "run_workflow" as const, scope: "canvas" as const }] }],
+    };
+    const props = { approval, onApply: vi.fn(), onCancel: vi.fn() };
+    const view = render(createElement(CanvasCommandApprovalCardForTest, props));
+    try {
+      expect(view.getByLabelText("图片模型")).toBeTruthy();
+      expect(view.getByLabelText("视频模型")).toBeTruthy();
+      view.rerender(createElement(CanvasCommandApprovalCardForTest, { ...props, isExecuting: true }));
+      act(() => useCanvasStore.setState({ nodes: nodes.map((node) => ({
+        ...node, data: { ...node.data, imageUrl: "image.png", audioUrl: "audio.mp3" },
+      })) }));
+      expect(view.getByLabelText("图片模型")).toBeTruthy();
+      expect(view.getByLabelText("视频模型")).toBeTruthy();
+      expect(view.container.textContent).toContain("纯音乐");
+      expect(view.queryByText("待确认的画布操作")).toBeNull();
+    } finally {
+      view.unmount();
+      useCanvasStore.setState({ nodes: previous.nodes, edges: previous.edges });
+    }
+  });
+});
 
 function message(
   id: string,
@@ -3487,6 +3540,40 @@ describe("Canvas command approval image params", () => {
       },
       { type: "run_workflow", node_ids: ["image-a"], scope: "selection" },
     ]);
+  });
+
+  it("groups mixed workflow media in one approval and amends one run request", () => {
+    const approval = {
+      id: "mixed-approval", key: "mixed-approval", messageId: "assistant",
+      receivedAt: 1, commandCount: 6, plans: [],
+      envelopes: [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [
+          { type: "create_node" as const, client_id: "image-a", node_type: "imageGenNode" as const, data: { model: "image-model" } },
+          { type: "create_node" as const, client_id: "image-b", node_type: "imageGenNode" as const, data: { model: "image-model" } },
+          { type: "create_node" as const, client_id: "video-a", node_type: "videoNode" as const, data: { model: "video-model", durationSec: 5 } },
+          { type: "create_node" as const, client_id: "video-b", node_type: "videoNode" as const, data: { model: "video-model", durationSec: 5 } },
+          { type: "create_node" as const, client_id: "audio-a", node_type: "audioNode" as const, data: { audioKind: "music" } },
+          { type: "run_workflow" as const, scope: "canvas" as const },
+        ],
+      }],
+    };
+    const images = imageApprovalParamGroupsForTest(approval as never, [], "image-model");
+    const videos = videoApprovalParamGroupsForTest(
+      approval as never, [], [], [{ id: "video-model", minDuration: 5, maxDuration: 15 }], "video-model",
+    );
+    const audio = audioApprovalInitialParamsForTest(approval as never, []);
+    expect(images).toHaveLength(1);
+    expect(images[0].nodeIds).toEqual(["image-a", "image-b"]);
+    expect(videos).toHaveLength(1);
+    expect(videos[0].nodeIds).toEqual(["video-a", "video-b"]);
+    expect(audio).toHaveLength(1);
+    let amended = amendCanvasApprovalWithImageParamsForTest(approval as never, { ...images[0], count: 2 });
+    amended = amendCanvasApprovalWithVideoParamsForTest(amended, { ...videos[0], count: 2 });
+    amended = amendCanvasApprovalWithAudioParamsForTest(amended, audio[0]);
+    expect(amended.envelopes).toHaveLength(1);
+    expect(amended.envelopes[0].commands.filter((command) => command.type === "run_workflow")).toHaveLength(1);
+    expect(amended.envelopes[0].commands.filter((command) => command.type === "create_node" && command.node_type !== "audioNode").map((command) => (command as { data?: Record<string, unknown> }).data?.count)).toEqual([2, 2, 2, 2]);
   });
 
   it("keeps intentionally different image and video settings in separate rows", () => {

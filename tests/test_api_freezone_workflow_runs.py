@@ -208,7 +208,15 @@ def test_metered_workflow_run_admits_each_model_recipe_before_run_creation(
 
     rejected = workflow_run_client.post(
         base,
-        json={"actions": [{"node_id": "image-1", "action": "generate_image"}]},
+        json={
+            "actions": [
+                {
+                    "node_id": "image-1",
+                    "action": "generate_image",
+                    "recipe_id": "product-image",
+                }
+            ]
+        },
     )
     assert rejected.status_code == 400
     assert workflow_run_client.get(base).json()["data"]["runs"] == []
@@ -283,6 +291,100 @@ def test_metered_ordinary_html_keeps_existing_non_recipe_path(
     assert response.status_code == 200
     assert not response.json()["data"]["actions"][0]["product_operation_id"]
     assert not workflow_run_client.enqueued_tasks
+
+
+@pytest.mark.parametrize(
+    "action_name",
+    [
+        "generate_image",
+        "generate_video",
+        "generate_text_video",
+        "generate_audio",
+        "generate_story_script",
+        "generate_3gs_world",
+    ],
+)
+def test_metered_ordinary_generation_does_not_require_recipe_admission(
+    workflow_run_client: TestClient, monkeypatch, action_name: str
+) -> None:
+    from novelvideo.api.routes import freezone
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    request = {
+        "idempotency_key": f"ordinary-{action_name}",
+        "actions": [
+            {
+                "node_id": "ordinary-1",
+                "action": action_name,
+                "generation_attempt_id": "ordinary-attempt",
+            }
+        ],
+    }
+    first = workflow_run_client.post(base, json=request)
+    duplicate = workflow_run_client.post(base, json=request)
+    assert first.status_code == duplicate.status_code == 200
+    assert first.json()["data"]["run_id"] == duplicate.json()["data"]["run_id"]
+    action = first.json()["data"]["actions"][0]
+    assert not action["product_operation_id"]
+    assert action["generation_attempt_id"] == "ordinary-attempt"
+    assert not workflow_run_client.enqueued_tasks
+
+
+@pytest.mark.parametrize(
+    "action_name",
+    [
+        "generate_text",
+        "generate_image",
+        "generate_video",
+        "generate_text_video",
+        "generate_audio",
+        "generate_story_script",
+        "generate_3gs_world",
+        "generate_html",
+    ],
+)
+def test_metered_recipe_generation_still_requires_attempt_identity(
+    workflow_run_client: TestClient, monkeypatch, action_name: str
+) -> None:
+    from novelvideo.api.routes import freezone
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    response = workflow_run_client.post(
+        base,
+        json={
+            "actions": [
+                {"node_id": "recipe-1", "action": action_name, "recipe_id": "recipe-a"},
+            ]
+        },
+    )
+    assert response.status_code == 400
+    assert workflow_run_client.get(base).json()["data"]["runs"] == []
+    assert not workflow_run_client.enqueued_tasks
+
+
+def test_metered_recipe_text_still_requires_recipe_identity(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    from novelvideo.api.routes import freezone
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    response = workflow_run_client.post(
+        base,
+        json={
+            "actions": [
+                {
+                    "node_id": "text-1",
+                    "action": "generate_text",
+                    "generation_attempt_id": "text-attempt",
+                },
+            ]
+        },
+    )
+    assert response.status_code == 400
+    assert workflow_run_client.get(base).json()["data"]["runs"] == []
 
 
 @pytest.mark.asyncio

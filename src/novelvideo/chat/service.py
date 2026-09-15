@@ -246,7 +246,7 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
 _CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v2"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v23"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v24"
 
 
 def _codex_developer_instructions(tool_mode: str | None) -> str:
@@ -256,7 +256,10 @@ def _codex_developer_instructions(tool_mode: str | None) -> str:
         return _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS + (
             " " + WORKFLOW_PLANNING_INSTRUCTIONS +
             " " + CANVAS_FINAL_RESPONSE_INSTRUCTIONS +
-            " Your final response MUST follow the supplied JSON schema. "
+            " Your final response MUST be a JSON object, not plain text or Markdown. "
+            "This applies even to greetings and ordinary conversation. "
+            'For a greeting, return {"message":"你好！有什么我可以帮你的吗？",'
+            '"mode":"read_only","canvas_receipts":[]}. '
             "Use mode=read_only for explanations, checks, proposals, clarification answers, "
             "and catalog-only Skill saves, with canvas_receipts=[]. Never claim a canvas "
             "mutation in a read_only message. Use mode=blocked when no canvas operation was "
@@ -266,7 +269,10 @@ def _codex_developer_instructions(tool_mode: str | None) -> str:
             "for the unused field. Never invent receipt identities, reuse historical receipts, "
             "or claim nodes exist when only a workflow draft is ready for approval. "
             "A canvas receipt proves apply/submission, not generated-media completion. "
-            "Put the user-facing answer in message, not raw JSON inside message."
+            "Put the user-facing answer in message, not raw JSON inside message. "
+            "The complete final-response schema is included here because compatibility "
+            "gateways may not expose the transport outputSchema to the model:\n"
+            + json.dumps(CANVAS_REPLY_SCHEMA, ensure_ascii=False)
         )
     return _CODEX_DEVELOPER_INSTRUCTIONS
 
@@ -759,7 +765,9 @@ def _codex_freezone_is_write_event(event: Any) -> bool:
     if name not in _FREEZONE_CANVAS_WRITE_TOOLS:
         return False
     if name == "freezone_run_node_action":
-        for payload in _json_objects_from_codex_tool_value(getattr(event, "input", None)):
+        for payload in _json_objects_from_codex_tool_value(
+            getattr(event, "input", None)
+        ):
             action = payload.get("action")
             if action in {"read_source", "history"}:
                 return False

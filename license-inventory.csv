@@ -1513,6 +1513,8 @@ frontend/src/features/skill-imports/SkillImportDialog.tsx,Elastic-2.0,2026 Super
 frontend/src/features/skill-imports/api.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/skill-imports/api.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/superchat/FreezoneNodeSuggestionMenu.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/superchat/WorkflowDraftContinuation.test.tsx,Elastic-2.0,2026 ClaymoreLab,SPDX header
+frontend/src/features/superchat/WorkflowDraftContinuation.tsx,Elastic-2.0,2026 ClaymoreLab,SPDX header
 frontend/src/features/superchat/ai-avatar.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/superchat/canvas-command-display.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/superchat/canvas-execution-narration.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

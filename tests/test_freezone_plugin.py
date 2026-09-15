@@ -1195,6 +1195,34 @@ def test_dynamic_workflow_creation_stops_when_live_model_catalog_is_unavailable(
     assert result["preflight"]["blockers"][0]["code"] == "model_catalog_unavailable"
 
 
+def test_workflow_confirmation_clarifies_before_claiming_task(monkeypatch, tmp_path):
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    compiled = {"ok": True, "skill_id": "video-ad", "plan": {
+        "summary": "广告", "nodes": [{"id": "input", "node_type": "textAnnotationNode",
+                                     "stage": "input"}], "edges": [],
+    }}
+    monkeypatch.setattr(plugin, "compile_workflow_intent", lambda _: compiled)
+    prepared = plugin._handle_prepare_workflow_draft({
+        "intent": {"skill_id": "video-ad", "user_goal": "广告"},
+    })
+    monkeypatch.setattr(plugin, "_external_generation_parameter_preflight", lambda *args: {
+        "ok": False, "status": "clarification_required",
+    })
+    monkeypatch.setattr(plugin, "_emit_canvas_commands", lambda *args, **kwargs:
+                        pytest.fail("must not emit before parameter confirmation"))
+    result = plugin._handle_confirm_workflow_draft({"draft_id": prepared["draft_id"],
+                                                  "revision": 1})
+    assert result["status"] == "clarification_required"
+    from novelvideo.freezone.workflow_drafts import read_workflow_draft
+    stored, error = read_workflow_draft(project_dir=tmp_path, canvas_id="canvas-a",
+                                      draft_id=prepared["draft_id"])
+    assert error is None
+    assert stored["status"] == "ready"
+    assert not stored["task_id"]
+    assert stored["confirmation_started_at"] is None
+
+
 def test_workflow_draft_can_be_prepared_patched_and_confirmed_once(
     monkeypatch, tmp_path
 ):

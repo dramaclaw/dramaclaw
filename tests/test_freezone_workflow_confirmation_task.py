@@ -94,6 +94,7 @@ async def test_workflow_confirmation_task_fails_only_from_canvas_outcome(
     tmp_path,
 ) -> None:
     draft, envelope = _claimed_task(tmp_path)
+    envelope["payload"]["confirmation_started_at"] = 1_000
     finish_workflow_draft_confirmation(
         project_dir=tmp_path,
         canvas_id="default",

@@ -160,7 +160,13 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
         "or run the workflow and all required clarification answers are available, that "
         "imperative is authorization: call freezone_confirm_workflow_draft exactly once now "
         "with this draft_id and revision, without asking for another confirmation. Otherwise "
-        "wait for explicit user confirmation. "
+        "wait for explicit user confirmation. A submitted model/parameter clarification card "
+        "is not proof that canvas nodes were created. When confirmation is still required, "
+        "present the exact preview; the product exposes a draft continuation action. "
+        "When the user confirms a named draft_id and revision, call "
+        "freezone_confirm_workflow_draft with those exact values and scope; never prepare "
+        "another draft instead. Do not report workflow creation success until the actual "
+        "canvas write receipt confirms the nodes were applied. "
     )
     instruction += (
         "For adjustments, prepare a new complete Plan draft."
