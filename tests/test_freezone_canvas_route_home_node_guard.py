@@ -289,7 +289,9 @@ def test_only_placement_free_canvas_routes_opt_out_of_the_home_node_guard() -> N
 
     # 合并后新增 video-extend、upscale/quote、upscale/probe 三条非画布路由。
     # 画布路由数保持 staging 的 31 条，home-node opt-out 白名单仍逐项检查。
-    assert router_decorators == 113
+    # 113 → 114：新增 `POST .../freezone/video-breakdown`（逐帧拉片）。
+    # 非画布路由、未传 require_home_node=False，同样过守卫。
+    assert router_decorators == 114
     assert len(canvas_routes) == 31
 
     assert set(canvas_routes) >= PLACEMENT_FREE_CANVAS_ROUTES

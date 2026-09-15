@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import i18n from 'i18next';
+
 import { formatTimecode } from '@/features/canvas/application/videoReshootClips';
 
 /**
@@ -28,8 +30,12 @@ export interface ExtendClipRange {
 export type ExtendClipBound = 'min' | 'max' | null;
 
 export function extendClipBoundMessage(bound: ExtendClipBound): string | null {
-  if (bound === 'min') return `所选视频最短不小于 ${MIN_EXTEND_CLIP_MS / 1000} 秒`;
-  if (bound === 'max') return `所选视频最长不大于 ${MAX_EXTEND_CLIP_MS / 1000} 秒`;
+  if (bound === 'min') {
+    return i18n.t('canvas.videoExtend.boundMin', { seconds: MIN_EXTEND_CLIP_MS / 1000 });
+  }
+  if (bound === 'max') {
+    return i18n.t('canvas.videoExtend.boundMax', { seconds: MAX_EXTEND_CLIP_MS / 1000 });
+  }
   return null;
 }
 
@@ -122,11 +128,16 @@ export function resolveExtendRange(
  * prompt 的最前面，并在输入框里渲染成一枚不可编辑的 chip。
  */
 export function extendPromptPrefix(sourceName: string, range: ExtendClipRange): string {
-  const name = sourceName.trim() || '原视频';
-  return `对 ${name} 的 ${formatTimecode(range.startMs)}-${formatTimecode(range.endMs)} 片段进行续写：`;
+  const name = sourceName.trim() || i18n.t('canvas.videoExtend.defaultSourceName');
+  return i18n.t('canvas.videoExtend.promptPrefix', {
+    name,
+    start: formatTimecode(range.startMs),
+    end: formatTimecode(range.endMs),
+  });
 }
 
 /** 续写节点的名字：`续写 视频 (2)`。 */
 export function extendNodeDisplayName(sourceName: string): string {
-  return `续写 ${sourceName.trim() || '视频'}`;
+  const name = sourceName.trim() || i18n.t('canvas.videoExtend.defaultLabel');
+  return i18n.t('canvas.videoExtend.nodeDisplayName', { name });
 }

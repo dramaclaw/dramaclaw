@@ -2,8 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useRef, type ChangeEvent } from 'react';
 import { Loader2, Upload } from 'lucide-react';
-
-import { ASSET_COMMIT_DRAG_HINT } from '@/features/canvas/ui/useAssetCommitDrag';
+import { useTranslation } from 'react-i18next';
 
 /**
  * 结果卡片右上角的「替换素材」按钮：拉起本地文件选择器，把选中的文件交回调用方
@@ -44,12 +43,16 @@ export function NodeMediaReplaceButton({
   onPick,
   onCommitDragStart,
 }: NodeMediaReplaceButtonProps) {
+  const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement | null>(null);
   // 本次手势已经升级成拖拽 → 松手时别再把它当点击去拉文件选择器。
   const draggedRef = useRef(false);
-  // 两种手势都在时 title 得同时说清，不然「按住拖」这层没有任何提示。
+  // 两种手势都在时 title 得同时说清，不然「按住拖」这层没有任何提示——缀在
+  // 「替换」title 后面的第二行，图标本身说不清「按住拖」这层语义。
   const fullTitle =
-    onPick && onCommitDragStart ? `${title}（${ASSET_COMMIT_DRAG_HINT}）` : title;
+    onPick && onCommitDragStart
+      ? `${title}（${t('canvas.assetLibrary.commitDragHint')}）`
+      : title;
 
   const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];

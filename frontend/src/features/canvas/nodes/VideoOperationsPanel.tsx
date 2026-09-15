@@ -204,9 +204,6 @@ function audioReferenceFileName(item: {
   }
 }
 
-/** 智能续写把模型 / 模式钉死时给出的统一理由，模型选择器和模式选择器共用一句。 */
-const EXTEND_LOCK_REASON = "智能续写仅支持 Seedance 2.5 的全能参考模式";
-
 interface VideoOperationsPanelProps {
   id: string;
   data: VideoNodeData;
@@ -868,7 +865,8 @@ export function VideoOperationsPanel({
                         isHappyHorseModel ? upstreamTypeCounts : upstreamCounts
                       }
                       restrictToMode={isExtendMode ? "allReference" : undefined}
-                      restrictReason={EXTEND_LOCK_REASON}
+                      // 智能续写把模型 / 模式钉死时给出的统一理由，与下面模型选择器共用一句。
+                      restrictReason={t("node.videoOps.extendLockReason")}
                       onChange={(nextMode) =>
                         updateNodeData(id, {
                           genMode: nextMode,
@@ -1051,7 +1049,7 @@ export function VideoOperationsPanel({
                 }
                 placeholder={
                   extendPrefix
-                    ? "请输入需要续写的内容"
+                    ? t("node.videoOps.extendPlaceholder")
                     : upstreamTextJoined.length > 0
                       ? t("node.videoOps.upstreamPlaceholder")
                       : t("node.videoNode.placeholder")
@@ -1066,7 +1064,7 @@ export function VideoOperationsPanel({
                     // 片段重拍是 Seedance 2.5 独占的：时间码只有它的视频编辑吃得下，
                     // 换任何一个模型这个节点都白做。所以这里直接锁死，不给切。
                     locked={Boolean(data.isReshootMode)}
-                    lockedReason="片段重拍仅支持 Seedance 2.5"
+                    lockedReason={t("node.videoOps.reshootLockedReason")}
                     onChange={(nextModelId) => {
                       const nextModel = availableVideoModels.find(
                         (item) => item.id === nextModelId,
@@ -1099,7 +1097,7 @@ export function VideoOperationsPanel({
                       // 一个模型这个节点都白做，所以其余项直接给出理由置灰。
                       (isExtendMode &&
                       !isSeedance25VideoModel(model.apiModel ?? model.id)
-                        ? EXTEND_LOCK_REASON
+                        ? t("node.videoOps.extendLockReason")
                         : null) ??
                       // 传整个 ModelOption,不要塌成 id —— 能力口径以后台「媒体模型」
                       // 声明的 supportedModes 为准,只传 id 会退到启发式,把目录里的
@@ -1474,7 +1472,7 @@ function GenModeSelect({
             const isActive = tab.key === value;
             const disabledReason =
               restrictToMode && tab.key !== restrictToMode
-                ? (restrictReason ?? "该节点不支持切换生成模式")
+                ? (restrictReason ?? t("node.videoOps.modeRestrictedDefault"))
                 : videoModeDisabledReason(
                     tab.key,
                     modelId,
@@ -1631,7 +1629,7 @@ function VideoConfigChip({
         className={NODE_TEXT_CONTROL_TRIGGER_CLASS}
       >
         {followsSourceVideo ? (
-          <span>跟随原片</span>
+          <span>{t("node.videoNode.aspect.followsSource")}</span>
         ) : (
           <span>
             {followInputAspectRatio || aspectRatio === "auto"
@@ -1665,7 +1663,7 @@ function VideoConfigChip({
         >
           {followsSourceVideo && (
             <div className="mb-3 rounded-md bg-white/[0.045] px-2.5 py-1.5 text-[11px] leading-5 text-text-muted/85">
-              视频编辑的画面比例与时长由原片决定，不可指定。
+              {t("node.videoNode.videoEdit.followsSourceHint")}
             </div>
           )}
 

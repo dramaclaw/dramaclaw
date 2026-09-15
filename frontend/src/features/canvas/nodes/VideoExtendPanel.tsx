@@ -11,7 +11,9 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { Loader2, RotateCcw, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
+import type { TFn } from '@/lib/i18n-types';
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
 import { captureVideoFrames } from '@/features/canvas/application/videoFrameStrip';
 import {
@@ -53,8 +55,8 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 /** `15.07 秒`。两位小数是设计稿的口径——续写对前情长度敏感，取整会看不出刚过 4s。 */
-function formatDuration(ms: number): string {
-  return `${(ms / 1000).toFixed(2)} 秒`;
+function formatDuration(ms: number, t: TFn): string {
+  return t('canvas.videoExtend.durationSeconds', { seconds: (ms / 1000).toFixed(2) });
 }
 
 /**
@@ -72,6 +74,7 @@ export const VideoExtendPanel = memo(function VideoExtendPanel({
   onExit,
   onConfirm,
 }: VideoExtendPanelProps) {
+  const { t } = useTranslation();
   const totalMs = useMemo(() => {
     if (typeof durationMs === 'number' && durationMs > 0) return durationMs;
     return null;
@@ -267,8 +270,8 @@ export const VideoExtendPanel = memo(function VideoExtendPanel({
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-text-dark/80 transition-colors hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-55"
           onClick={onExit}
           disabled={isSubmitting}
-          aria-label="退出续写截取"
-          title="退出续写截取"
+          aria-label={t('canvas.videoExtend.exit')}
+          title={t('canvas.videoExtend.exit')}
         >
           <X className="h-4 w-4" />
         </button>
@@ -296,23 +299,23 @@ export const VideoExtendPanel = memo(function VideoExtendPanel({
 
           {thumbsState === 'loading' && thumbs.length === 0 && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[11px] text-text-muted/70">
-              提取画面帧中…
+              {t('canvas.videoClip.extractingFrames')}
             </div>
           )}
           {/* z-30 + pointer-events-none：重试按钮要压在选区框上面才点得到，
               但整块蒙层不能吃掉把手的拖拽。 */}
           {thumbsState === 'error' && (
             <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center gap-1.5 text-[11px] text-text-muted/70">
-              <span>画面帧加载失败</span>
+              <span>{t('canvas.videoClip.framesFailed')}</span>
               <button
                 type="button"
                 className="pointer-events-auto flex items-center gap-1 rounded px-1.5 py-0.5 text-text-dark/80 transition-colors hover:bg-white/[0.1] hover:text-white"
                 onClick={() => setThumbsAttempt((value) => value + 1)}
                 onPointerDown={(event) => event.stopPropagation()}
-                aria-label="重新提取画面帧"
+                aria-label={t('canvas.videoClip.retryExtract')}
               >
                 <RotateCcw className="h-3 w-3" />
-                重试
+                {t('common.retry')}
               </button>
             </div>
           )}
@@ -339,31 +342,31 @@ export const VideoExtendPanel = memo(function VideoExtendPanel({
             <div
               role="slider"
               tabIndex={isSubmitting ? -1 : 0}
-              aria-label="续写片段起点"
+              aria-label={t('canvas.videoExtend.startHandle')}
               aria-valuemin={0}
               aria-valuemax={totalMs ?? 0}
               aria-valuenow={range.startMs}
-              aria-valuetext={formatDuration(range.startMs)}
+              aria-valuetext={formatDuration(range.startMs, t)}
               // after:* 是把手的隐形热区：视觉仍是细条，实际能点到 28px 宽。
               className="absolute inset-y-0 left-0 flex w-3 cursor-ew-resize items-center justify-center rounded-l-md bg-[#2f6bff] outline-none after:absolute after:inset-y-0 after:-left-2 after:-right-2 after:content-[''] focus-visible:ring-2 focus-visible:ring-sky-400"
               onPointerDown={startDrag('start')}
               onKeyDown={handleKeyDown('start')}
-              title="拖动或用方向键调整起点"
+              title={t('canvas.videoClip.dragStart')}
             >
               <div className="pointer-events-none h-4 w-[2px] rounded-full bg-white/85" />
             </div>
             <div
               role="slider"
               tabIndex={isSubmitting ? -1 : 0}
-              aria-label="续写片段终点"
+              aria-label={t('canvas.videoExtend.endHandle')}
               aria-valuemin={0}
               aria-valuemax={totalMs ?? 0}
               aria-valuenow={range.endMs}
-              aria-valuetext={formatDuration(range.endMs)}
+              aria-valuetext={formatDuration(range.endMs, t)}
               className="absolute inset-y-0 right-0 flex w-3 cursor-ew-resize items-center justify-center rounded-r-md bg-[#2f6bff] outline-none after:absolute after:inset-y-0 after:-left-2 after:-right-2 after:content-[''] focus-visible:ring-2 focus-visible:ring-sky-400"
               onPointerDown={startDrag('end')}
               onKeyDown={handleKeyDown('end')}
-              title="拖动或用方向键调整终点"
+              title={t('canvas.videoClip.dragEnd')}
             >
               <div className="pointer-events-none h-4 w-[2px] rounded-full bg-white/85" />
             </div>
@@ -374,7 +377,7 @@ export const VideoExtendPanel = memo(function VideoExtendPanel({
             className="pointer-events-none absolute top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 rounded-md bg-black/70 px-2 py-0.5 text-[12px] font-medium tabular-nums text-white"
             style={{ left: `${chipLeftPct}%` }}
           >
-            {formatDuration(selectionMs)}
+            {formatDuration(selectionMs, t)}
           </div>
         </div>
 
@@ -396,14 +399,14 @@ export const VideoExtendPanel = memo(function VideoExtendPanel({
           disabled={!canConfirm}
           title={
             totalMs && totalMs < MIN_EXTEND_CLIP_MS
-              ? `视频不足 ${MIN_EXTEND_CLIP_MS / 1000} 秒，无法续写`
+              ? t('canvas.videoExtend.tooShort', { seconds: MIN_EXTEND_CLIP_MS / 1000 })
               : selectionMs > MAX_EXTEND_CLIP_MS
                 ? (extendClipBoundMessage('max') ?? undefined)
                 : undefined
           }
         >
           {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-          确认续写
+          {t('canvas.videoExtend.confirm')}
         </button>
       </div>
     </div>

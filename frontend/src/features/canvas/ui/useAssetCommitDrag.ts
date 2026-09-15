@@ -16,9 +16,6 @@ import type { CanvasNode } from '@/features/canvas/domain/canvasNodes';
  * - 松手命中左侧同类型素材卡片时才提交替换;
  * - 拖拽预览浮层由 NodeReplaceDragPreview 读 store 渲染。
  */
-/** 缀在「替换」title 后面的第二行 —— 图标本身说不清「按住拖」这层语义。 */
-export const ASSET_COMMIT_DRAG_HINT = '按住拖到左侧素材库,替换同类型素材';
-
 export function useAssetCommitDrag(node: CanvasNode | null | undefined) {
   const dropInfo = node ? deriveNodeDropInfo(node) : null;
   const sourceUrl = dropInfo?.sourceUrl ?? null;

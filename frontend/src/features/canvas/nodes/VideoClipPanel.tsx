@@ -389,10 +389,10 @@ export const VideoClipPanel = memo(function VideoClipPanel({
               className="pointer-events-auto flex items-center gap-1 rounded px-1.5 py-0.5 text-text-dark/80 transition-colors hover:bg-white/[0.1] hover:text-white"
               onClick={() => setThumbsAttempt((value) => value + 1)}
               onPointerDown={(event) => event.stopPropagation()}
-              aria-label="重新提取画面帧"
+              aria-label={t('canvas.videoClip.retryExtract')}
             >
               <RotateCcw className="h-3 w-3" />
-              重试
+              {t('common.retry')}
             </button>
           </div>
         )}
@@ -418,7 +418,7 @@ export const VideoClipPanel = memo(function VideoClipPanel({
           <div
             role="slider"
             tabIndex={isSubmitting ? -1 : 0}
-            aria-label="截取起点"
+            aria-label={t('canvas.videoClip.startHandle')}
             aria-valuemin={0}
             aria-valuemax={totalMs ?? 0}
             aria-valuenow={startMs}
@@ -435,7 +435,7 @@ export const VideoClipPanel = memo(function VideoClipPanel({
           <div
             role="slider"
             tabIndex={isSubmitting ? -1 : 0}
-            aria-label="截取终点"
+            aria-label={t('canvas.videoClip.endHandle')}
             aria-valuemin={0}
             aria-valuemax={totalMs ?? 0}
             aria-valuenow={endMs}
