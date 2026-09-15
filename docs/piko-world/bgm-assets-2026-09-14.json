@@ -1,0 +1,42 @@
+[
+  {
+    "source": "初遇庭院.mp3",
+    "file": "welcome-courtyard-01.mp3",
+    "sha256": "4decd12d317104de5c55d12360ce2151bfdf58ade5e9bcd9436824b014cbae02"
+  },
+  {
+    "source": "霜月苔原.mp3",
+    "file": "frostmoon-tundra.mp3",
+    "sha256": "8bb535c178f16cdfc9b23d2f6bcf45030d80c4b24e93d9891630301af9f8752e"
+  },
+  {
+    "source": "灯河街、星灯码头共用.mp3",
+    "file": "lantern-waterfront.mp3",
+    "sha256": "625e68e38ab088c0cfc82bb31bbb94440ec74ec8407e981e49e0f4ca9af29730"
+  },
+  {
+    "source": "低语森林.mp3",
+    "file": "whispering-forest.mp3",
+    "sha256": "f13a96c37b5ffde55206cdef6aa92a39840059be4d6718abf0eba0b0d6a4effd"
+  },
+  {
+    "source": "湿地、海岸、海域公用.mp3",
+    "file": "tidal-seas.mp3",
+    "sha256": "d228f3b8ab73780c366ba88e41cbc7c05a09160bcad57dbce3f2a2588f2b602b"
+  },
+  {
+    "source": "草甸、云顶、琥珀共用.mp3",
+    "file": "open-highlands.mp3",
+    "sha256": "d5e06c3cd707925a2c51c0fcf4f4a3a9efc6df94cf9aaec05958641ae32b250e"
+  },
+  {
+    "source": "鲸歌天港.mp3",
+    "file": "whalesong-skyport.mp3",
+    "sha256": "471c1ed91d89dc558d18c2a56db2f0d41e55e2bfaf6ad2538389cfdc58d4f5f9"
+  },
+  {
+    "source": "赤霞峡谷.mp3",
+    "file": "crimson-canyon.mp3",
+    "sha256": "06c26a74d4a1927b039809b1c80562404b9edfa1456e400d12d50942b155eb46"
+  }
+]

@@ -7,6 +7,7 @@ const mock=vi.hoisted(()=>({setFrame:vi.fn(),destroy:vi.fn(),step:vi.fn(),stop:v
 vi.mock("./footstep-audio",()=>({createGrassFootsteps:()=>({step:mock.step,stop:mock.stop,unlock:mock.unlock,destroy:mock.audioDestroy})}));
 vi.mock("./character-actor",()=>({createCharacterActor:()=>({
   container:{position:{x:1190,y:485,set(x:number,y:number){this.x=x;this.y=y;}},zIndex:485},
+  body:{texture:null,anchor:{set:vi.fn()},scale:{set:vi.fn()}},
   setFrame:mock.setFrame,destroy:mock.destroy,
 })}));
 afterEach(()=>{document.body.innerHTML="";vi.restoreAllMocks();vi.unstubAllGlobals();vi.clearAllMocks();});
@@ -88,5 +89,21 @@ it("walks to a click without overshoot and lets keyboard and pause cancel the ro
   actor.walkTo({ x: 1300, y: 485 });
   active = false; tick({ deltaMS: 16 }); active = true; tick({ deltaMS: 16 });
   expect(actor.container.position.x).toBe(stopped);
+  actor.destroy();
+});
+
+it("keeps new player portrait visible while movement advances without pretending it is a directional sheet", () => {
+  const host = document.createElement("div"); host.tabIndex = 0; document.body.append(host); host.focus();
+  const navigation = { walkableAreas: [{ id: "ground", points: [{x:0,y:0},{x:2000,y:0},{x:2000,y:1200},{x:0,y:1200}] }], colliders: [] } as unknown as PikoNavigation;
+  const ticker = { add: vi.fn(), remove: vi.fn() };
+  const portrait = { height: 1476 } as Texture;
+  const actor = createResidentActor({} as Texture, ticker as unknown as Ticker, () => true, {
+    host, navigation, portrait: { texture: portrait, baseline: 1400, top: 130 },
+  });
+  window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyD" }));
+  ticker.add.mock.calls[0][0]({ deltaMS: 16 });
+  expect(actor.container.position.x).toBeGreaterThan(1190);
+  expect(actor.body.texture).toBe(portrait);
+  expect(mock.setFrame).not.toHaveBeenCalled();
   actor.destroy();
 });

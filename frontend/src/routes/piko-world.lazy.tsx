@@ -2,10 +2,10 @@
 // Copyright (c) 2026 ClaymoreLab
 import { createLazyFileRoute } from "@tanstack/react-router";
 
-import { PikoWorldShell } from "@/features/piko-world/PikoWorldShell";
+import { PikoWorldExperience } from "@/features/piko-world/PikoWorldExperience";
 
 function PikoWorldPage() {
-  return <PikoWorldShell />;
+  return <PikoWorldExperience />;
 }
 
 export const Route = createLazyFileRoute("/piko-world")({

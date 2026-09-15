@@ -1,0 +1,83 @@
+.screen {
+  --piko-paper: #fff5df;
+  --piko-wood: #c69a63;
+  --piko-ink: #493523;
+  --piko-muted: #756047;
+  --piko-moss: #526b40;
+  --piko-honey: #e8b85e;
+  --piko-field: #fffaf0;
+  --piko-corner: 12px;
+  --piko-fade: 800ms;
+  position: fixed; inset: 0; background: #000; overflow: auto; color: var(--piko-ink);
+}
+.scene { height: 100dvh; min-height: 580px; position: relative; isolation: isolate; overflow: hidden; }
+.background { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: -2; }
+.title { position: absolute; z-index: 2; left: 16px; top: 20px; margin: 0; width: clamp(130.2px, 10.5vw, 151.2px); height: auto; }
+.title img { display: block; width: 100%; height: auto;  }
+.back { position: absolute; z-index: 2; right: 24px; top: 24px; font-size: 14px; padding: 10px 16px; border: 1px solid rgb(198 154 99 / .38); border-radius: var(--piko-corner); background: var(--piko-paper); color: var(--piko-ink); }
+.creation { position: absolute; inset: 0; }
+.portrait { --portrait-height: clamp(300px, 61dvh, 670px); position: absolute; left: calc(50% - max(15vw, 26.65dvh)); bottom: 16%; transform: translateX(-50%); width: min(36vw, 430px); display: flex; justify-content: center; }
+.portrait::before { content: ''; position: absolute; bottom: -1%; left: 25%; width: 50%; height: 4%; border-radius: 50%; background: rgb(52 45 26 / .23); filter: blur(5px); }
+.portrait img { display: block; height: var(--portrait-height); max-width: 100%; object-fit: contain; transform: translateY(7.4%); position: relative; }
+.name { position: absolute; bottom: calc(var(--portrait-height) * var(--player-visible-ratio) + 20px); left: 50%; transform: translateX(-50%); width: max-content; max-width: 110%; padding: 0; background: none; color: #fff; font-weight: 500; font-size: clamp(14px, 1.3vw, 18px); line-height: 1.4; text-align: center; overflow-wrap: anywhere; text-shadow: 0 1px 3px rgb(40 31 18 / .5); }
+.form { position: absolute; top: 45%; right: clamp(24px, 17vw, 400px); transform: translateY(-50%); width: clamp(310px, 30vw, 420px); background: rgb(255 245 223 / .58); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); color: var(--piko-ink); border: 0; border-radius: var(--piko-corner); padding: 28px; box-shadow: none; border-radius: 18px; }
+.formTitle { margin: 0 0 16px; font-size: 20px; font-weight: 600; }
+.form fieldset { margin: 0 0 24px; border: 0; padding: 0; }
+.form legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.form legend, .field { font-size: 16px; font-weight: 600; }
+.gender { display: flex; gap: 12px; margin-top: 12px; }
+.gender label { display: flex; align-items: center; justify-content: center; gap: 8px; flex: 1; padding: 12px; min-height: 48px; border: 1px solid rgb(117 96 71 / .22); border-radius: var(--piko-corner); background: var(--piko-field); cursor: pointer; font-size: 16px; transition: background var(--duration-fast), transform var(--duration-fast); }
+.gender label[data-selected=true] { border-color: var(--piko-honey); background: var(--piko-honey); color: var(--piko-ink); box-shadow: none; }
+.gender label:hover { background: #eee8d7; transform: translateY(-1px); }
+.gender label[data-selected=true]:hover { background: #efc775; }
+.gender input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.field { display: grid; gap: 12px; }
+.field > input { width: 100%; min-height: 50px; padding: 12px; border: 1px solid rgb(117 96 71 / .22); border-radius: var(--piko-corner); background: var(--piko-field); color: var(--piko-ink); box-shadow: none; font-size: 16px; }
+.field > input::placeholder { color: var(--piko-muted); }
+.feedback { min-height: 36px; margin: 12px 0; font-size: 12px; line-height: 1.5; color: var(--piko-muted); }
+.feedback[role=alert] { color: #9c342a; }
+.primary { min-height: 50px; padding: 12px 20px; border: 1px solid rgb(117 96 71 / .22); border-radius: var(--piko-corner); background: var(--piko-honey); color: var(--piko-ink); box-shadow: none; border: 0; font-weight: 700; font-size: 18px; cursor: pointer; transition: transform var(--duration-fast), filter var(--duration-fast); }
+.primary:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); }
+.primary:active:not(:disabled) { transform: translateY(2px); box-shadow: none; }
+.primary:disabled { opacity: .5; cursor: default; }
+.form > .primary { width: 100%; }
+.screen button:focus-visible, .screen a:focus-visible { outline: 2px solid var(--piko-moss); outline-offset: 4px; }
+.gender label:has(input:focus-visible) { text-decoration: underline; text-underline-offset: 5px; }
+.gender input:focus { outline: none; box-shadow: none; }
+.cinema { position: fixed; inset: 0; background: #000; z-index: 5; }
+.video { width: 100%; height: 100%; object-fit: contain; opacity: 0; transition: opacity var(--piko-fade) linear; }
+.video[data-ready=true] { opacity: 1; }
+.videoControls { position: absolute; right: 18px; top: 18px; display: flex; gap: 8px; align-items: center; }
+.videoControls > * { padding: 7px 11px; min-height: 34px; border: 1px solid rgb(255 255 255 / .18); border-radius: 9px; background: rgb(35 30 23 / .35); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); color: #fff; font-size: 12px; }
+.playPrompt { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 20px; align-items: center; justify-content: center; background: rgb(0 0 0 / .4); color: #fff; }
+.blackout { position: fixed; inset: 0; z-index: 10; background: #000; opacity: 0; pointer-events: none; transition: opacity var(--piko-fade) linear; }
+.blackout[data-visible=true] { opacity: 1; pointer-events: auto; }
+.assetStatus { position: fixed; inset: 0; z-index: 11; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 20px; background: #000; color: #fff; }
+@media (max-width: 700px) {
+  .scene { height: auto; min-height: 100dvh; background: var(--piko-paper); }
+  .background { height: 530px; object-position: 24% bottom; mask-image: linear-gradient(#000 88%, transparent); }
+  .creation { position: relative; display: flex; flex-direction: column; align-items: center; gap: 20px; padding: 116px 24px 40px; }
+  .portrait { --portrait-height: 330px; position: relative; left: auto; bottom: auto; transform: none; width: 240px; }
+
+  .form { position: relative; top: auto; right: auto; transform: none; width: 100%; max-width: 420px; padding: 24px; }
+  .videoControls { right: 12px; top: 12px; }
+  .videoControls > * { padding: 8px; font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) { .screen { --piko-fade: 0ms; } .primary, .gender label { transition: none; } }
+
+.background > img, .background > video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: inherit; }
+.background > video { opacity: 0; }
+
+.field > input:focus { outline: none; box-shadow: none; border-color: rgb(117 96 71 / .65); }
+.videoViewport { container-type: inline-size; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(100vw, calc(100dvh * var(--video-ratio))); height: min(100dvh, calc(100vw / var(--video-ratio))); }
+.invitation { position: absolute; top: calc(90% + 8px); left: calc(38% - 14px); transform: translate(-50%, -50%) rotate(4deg); width: 17.04775%; text-align: center; animation: invitation-in 600ms ease-out both; }
+.invitationButton { display: block; width: 100%; padding: 0; border: 0; background: transparent; cursor: pointer; transition: filter 150ms; }
+.invitationButton > img { display: block; width: 100%; height: auto; }
+.invitationButton:hover { filter: brightness(1.08); }
+.screen .invitationButton:focus-visible { outline: none; box-shadow: none; }
+@keyframes invitation-in { from { opacity: 0; } to { opacity: 1; } }
+.videoControls > button { cursor: pointer; transition: background-color 150ms, border-color 150ms; }
+.videoControls > button:hover { background: rgb(35 30 23 / .48); border-color: rgb(255 255 255 / .32); }
+@media (prefers-reduced-motion: reduce) { .invitation { animation: none; } .invitationButton, .videoControls > button { transition: none; } }
+
+.invitationVideo { position: absolute; inset: 0; pointer-events: none; transition: opacity 300ms linear; }

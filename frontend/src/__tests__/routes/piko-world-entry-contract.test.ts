@@ -53,8 +53,8 @@ describe("Piko World 项目中心入口", () => {
     expect(worldShell).toContain('className="size-full object-cover"');
     expect(worldShell).toContain('className="absolute inset-0 bg-black/35"');
     expect(worldShell).toContain('className="absolute right-4 top-4 z-20"');
-    expect(worldShell).toContain("<PikoResidentSelectorDialog");
-    expect(worldShell).toContain("safeLocalStorageSet(PIKO_RESIDENT_STORAGE_KEY, residentId)");
+    expect(worldShell).toContain("<PikoWardrobeDialog");
+    expect(worldShell).not.toContain("<PikoResidentSelectorDialog");
     expect(worldShell).toContain("piko-world-public-chat-panel-top-v3.png");
     expect(worldShell).toContain("piko-world-public-chat-panel-middle-v2.png");
     expect(worldShell).toContain("piko-world-public-chat-panel-bottom-v2.png");

@@ -32,7 +32,7 @@ describe("Piko loading screen", () => {
         expect(scenes[id].line).toBeTruthy();
         return scenes[id].line;
       });
-      expect(new Set(lines).size).toBe(8);
+      expect(new Set(lines).size).toBe(12);
     }
   });
   it("cancels automatic entry when an error arrives during the final fill", async () => {
@@ -44,8 +44,8 @@ describe("Piko loading screen", () => {
     act(() => vi.advanceTimersByTime(500));
     expect(enter).not.toHaveBeenCalled();
   });
-  it("ships exactly the selected eight backgrounds and the two active controls", () => {
-    expect(PIKO_LOADING_BACKGROUNDS).toHaveLength(8);
+  it("ships exactly the selected twelve backgrounds and the two active controls", () => {
+    expect(PIKO_LOADING_BACKGROUNDS).toHaveLength(12);
     for (const path of [...PIKO_LOADING_BACKGROUNDS, ...Object.values(PIKO_LOADING_CONTROLS)]) {
       expect(existsSync(`public${path}`), path).toBe(true);
     }

@@ -29,12 +29,12 @@ import { prepareMapTravel, type MapExit, type MapLocation } from "./runtime/map-
 import { PikoWorldCanvas } from "./PikoWorldCanvas";
 import { PikoMapTransition } from "./PikoMapTransition";
 import { PikoLoadingScreen } from "./PikoLoadingScreen";
-import { PikoResidentSelectorDialog } from "./PikoResidentSelectorDialog";
-import { useCourtyardMusic } from "./piko-bgm";
+import { PikoWardrobeDialog } from "./PikoWardrobeDialog";
+import type { PikoPlayerGender } from "./piko-player";
+import { useMapMusic } from "./piko-bgm";
 import { playPikoUiSound } from "./piko-audio";
 import { PikoThreeSlicePanelSkin } from "./PikoThreeSlicePanelSkin";
 import {
-  PIKO_RESIDENT_STORAGE_KEY,
   readSelectedPikoResidentId,
   resolvePlayablePikoResident,
 } from "./piko-residents";
@@ -103,14 +103,15 @@ function currentChatTime(): string {
   }).format(new Date());
 }
 
-export function PikoWorldShell() {
+export function PikoWorldShell({ playerGender, onMusicMapChange }: { playerGender?: PikoPlayerGender; onMusicMapChange?: (mapId: MapLocation["mapId"]) => void } = {}) {
   usePikoCursors();
-  useCourtyardMusic();
   const { t } = useTranslation();
   const username = useAuthStore(state => state.username);
   const { profile, saveProfile } = usePikoProfile(username);
   const nickname = profile.nickname || t("pikoWorld.defaultNickname");
   const [location, setLocation] = useState<MapLocation>({ mapId: "welcome-courtyard" });
+  useMapMusic(onMusicMapChange ? null : location.mapId);
+  useEffect(() => { onMusicMapChange?.(location.mapId); }, [location.mapId, onMusicMapChange]);
   const [travelFade, setTravelFade] = useState<"idle" | "out" | "black" | "loading" | "in">("idle");
   const travelPending = travelFade !== "idle";
   const [travelTarget, setTravelTarget] = useState(location.mapId);
@@ -133,7 +134,7 @@ export function PikoWorldShell() {
     "loading",
   );
   const [residentSelectorOpen, setResidentSelectorOpen] = useState(false);
-  const [selectedResidentId, setSelectedResidentId] = useState(() => resolvePlayablePikoResident(readSelectedPikoResidentId()));
+  const [selectedResidentId] = useState(() => resolvePlayablePikoResident(readSelectedPikoResidentId()));
   const publicChat = usePikoPublicChat(username);
   const [chatError, setChatError] = useState<string | null>(null);
   const [chatDraft, setChatDraft] = useState("");
@@ -356,6 +357,7 @@ export function PikoWorldShell() {
           nickname={nickname}
           speech={publicChat.speech}
           residentId={selectedResidentId}
+          playerGender={playerGender}
           showMayorHint={mapTitleComplete && entered && mapLoadState === "ready"}
           mayorHintVisible={entered && mapLoadState === "ready"}
           movementBlocked={travelPending || privateOpen || chatOpen || settingsOpen || profileOpen || residentSelectorOpen || entryFade !== "done"}
@@ -457,7 +459,7 @@ export function PikoWorldShell() {
                 </DropdownMenuItem>
                 <DropdownMenuItem className={popupStyles.item}
                   onClick={() => { setSettingsOpen(false); handleResidentSelectorOpenChange(true); }}>
-                  {t("pikoWorld.changeResident")}
+                  {t("pikoWorld.wardrobe.title")}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -479,14 +481,11 @@ export function PikoWorldShell() {
           onOpenChange={open => { setProfileOpen(open); playPikoUiSound(open ? "open" : "close"); }}
         />
 
-        <PikoResidentSelectorDialog
+        <PikoWardrobeDialog
           open={residentSelectorOpen}
-          selectedResidentId={selectedResidentId}
           onOpenChange={handleResidentSelectorOpenChange}
-          onConfirm={(residentId) => {
-            setSelectedResidentId(resolvePlayablePikoResident(residentId));
-            safeLocalStorageSet(PIKO_RESIDENT_STORAGE_KEY, residentId);
-          }}
+          gender={playerGender ?? "male"}
+          nickname={nickname}
         />
 
         <aside

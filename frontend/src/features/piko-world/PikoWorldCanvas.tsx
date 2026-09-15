@@ -31,6 +31,7 @@ import { PikoWelcomeDialog } from "./PikoWelcomeDialog";
 import { addCharacterPresentation } from "./runtime/character-presentation";
 import { PIKO_DEFAULT_CURSOR } from "./piko-cursors";
 import { createClickFeedback } from "./runtime/click-feedback";
+import { PIKO_PLAYER_ART, type PikoPlayerGender } from "./piko-player";
 import { PIKO_PLAYABLE_RESIDENTS, type PlayablePikoResidentId } from "./piko-residents";
 import { PIKO_SIMULATED_RESIDENT } from "./piko-simulated-resident";
 import { playPikoUiSound } from "./piko-audio";
@@ -50,13 +51,14 @@ type PikoWorldCanvasProps = {
   onExit?: (exit: MapExit) => void;
   speech?: PikoSpeech | null;
   residentId?: PlayablePikoResidentId;
+  playerGender?: PikoPlayerGender;
   showMayorHint?: boolean;
   mayorHintVisible?: boolean;
   movementBlocked?: boolean;
   onLoadStateChange?: (loadState: PikoMapLoadState) => void;
 };
 
-export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, residentId = "m01", onLoadStateChange, showMayorHint = false, mayorHintVisible = showMayorHint, movementBlocked = false }: PikoWorldCanvasProps) {
+export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, residentId = "m01", playerGender, onLoadStateChange, showMayorHint = false, mayorHintVisible = showMayorHint, movementBlocked = false }: PikoWorldCanvasProps) {
   const { t } = useTranslation();
   const exitDefinitions = isPikoMapId(mapId) ? MAP_EXIT_MARKERS[mapId] ?? [] : [];
   const onExitRef = useRef(onExit);
@@ -333,9 +335,13 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, resi
             playPikoUiSound("open");
             welcomeOpenRef.current=true; setWelcomeOpen(true);
           };
+          const portraitSpec = playerGender ? PIKO_PLAYER_ART[playerGender] : null;
+          const portraitTexture = portraitSpec ? await loadTexture(portraitSpec.src) : null;
+          if (portraitSpec && !portraitTexture) return;
           residentActor = createResidentActor(residentTextures.get(residentIdRef.current)!, nextApp.ticker,
             () => mayorActiveRef.current && !blockedRef.current && !welcomeOpenRef.current && !socialBusyRef.current && !debugEditingRef.current,
-            {host, navigation, position: spawn?.position, facing: spawn?.facing, footsteps: mapId !== "boundless-sea"});
+            {host, navigation, position: spawn?.position, facing: spawn?.facing, footsteps: mapId !== "boundless-sea",
+              portrait: portraitSpec && portraitTexture ? { texture: portraitTexture, ...portraitSpec } : undefined});
           activateTransportRef.current = exitId => {
             const definition = exitDefinitions.find(marker => marker.exitId === exitId);
             if (!residentActor || disposed || !definition || !canActivateTransport(definition, residentActor.container,
@@ -443,7 +449,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, resi
 
     void mountMap();
     return disposeMap;
-  }, [mapId, spawnId]);
+  }, [playerGender, mapId, spawnId]);
 
   return (
     <div className="absolute inset-0 bg-background">

@@ -199,7 +199,7 @@ function AppLayout() {
       (Boolean(username && validated) && productSurfaces.isPending))
   ) {
     return (
-      <div className="flex h-dvh items-center justify-center">
+      <div className="flex h-dvh items-center justify-center bg-background">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
       </div>
     );
@@ -207,7 +207,7 @@ function AppLayout() {
 
   if (!username || !validated) {
     return (
-      <div className="flex h-dvh items-center justify-center">
+      <div className="flex h-dvh items-center justify-center bg-background">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
       </div>
     );
@@ -217,7 +217,7 @@ function AppLayout() {
     <TaskCenterProvider projectId={canonicalProject}>
       <div className="flex h-dvh flex-col overflow-hidden">
         <div className="flex min-h-0 flex-1 overflow-hidden">
-          <div className="relative isolate flex min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="relative isolate flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
             {isProjectDashboard ? (
               <div
                 className="pointer-events-none absolute inset-0 -z-10 overflow-hidden"

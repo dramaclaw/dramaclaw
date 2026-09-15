@@ -1,0 +1,19 @@
+.dialog { width: min(594px, calc(100vw - 64px)); max-width: min(594px, calc(100vw - 64px)) !important; overflow: visible; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--primary-foreground); box-shadow: none; gap: 0; }
+.content { position: relative; z-index: 10; max-height: calc(100dvh - 80px); overflow-y: auto; padding: 19% 11% 14%; }
+
+.title { text-align: center; font-size: 16px; font-weight: 600; }
+.description { margin-top: 8px; color: color-mix(in srgb, var(--primary-foreground) 70%, transparent); text-align: center; font-size: 12px; line-height: 1.5; }
+.layout { margin-top: 20px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(100px, 1.4fr) minmax(0, 1fr); gap: 12px; align-items: center; }
+.slots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; max-width: 102.8px; margin-inline: auto; gap: 6px; }
+.slot, .current { aspect-ratio: 1; width: 100%; min-width: 0; min-height: 48.4px; border: 1px solid rgb(120 83 37 / 25%); border-radius: 8px; background: rgb(255 255 255 / 60%); }
+.current { display: flex; align-items: center; justify-content: center; padding: 2px; border-color: #b49951; font-size: 12px; line-height: 1.05; text-align: center; }
+.character { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.characterArt { position: relative; width: 100%; overflow: hidden; }
+.characterArt img { position: absolute; left: 50%; transform: translateX(-50%); width: auto; max-width: none; }
+.nickname { font-size: 14px; overflow-wrap: anywhere; max-width: 100%; }
+.dialog .close { top: -28px; right: -28px; width: 32px; height: 32px; }
+.dialog button:focus-visible { outline: 2px solid #b49951; outline-offset: 4px; }
+@media(max-width: 540px) { .dialog { width: calc(100vw - 48px); max-width: calc(100vw - 48px) !important; } .content { padding: 22% 9% 16%; } .layout { gap: 8px; grid-template-columns: minmax(0, 1fr) minmax(80px, 1.5fr) minmax(0, 1fr); } .slots { gap: 4px; } .slot, .current { border-radius: 8px; } .current { padding: 2px; font-size: 12px; } }
+
+.layout > * { min-width: 0; }
+@media (max-width: 540px) { .dialog .close { right: -8px; top: -24px; width: 32px; height: 32px; } }

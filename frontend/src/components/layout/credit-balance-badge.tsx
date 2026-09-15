@@ -7,7 +7,6 @@ import { useEffect, useRef, useState } from "react";
 
 import { CREDIT_VALUE_CLASS, CreditSparkIcon } from "@/components/credits/credit-visual";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { useCurrentUser } from "@/lib/queries/auth";
 import { useCreditSummary } from "@/lib/queries/credits";
 import { isCeRuntime } from "@/lib/runtime-config";
 import { cn } from "@/lib/utils";
@@ -20,8 +19,7 @@ function formatFullCredits(value: number, language: string): string {
 }
 
 export function CreditBalanceBadge() {
-  // Hooks must run unconditionally (Rules of Hooks); gate the CE/auth checks
-  // after them. `useCurrentUser` stays disabled in CE so we don't fetch there.
+  // Keep hooks unconditional; disable requests in CE and when signed out.
   const ce = isCeRuntime();
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
@@ -30,10 +28,10 @@ export function CreditBalanceBadge() {
   const pinnedRef = useRef(false);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const username = useAuthStore((s) => s.username);
-  const { data, isLoading, isError } = useCurrentUser(Boolean(username) && !ce);
   const summaryQuery = useCreditSummary(Boolean(username) && !ce);
   const summary = summaryQuery.data?.data;
-  const balance = summary?.balance ?? data?.data.credit_balance;
+  // Auth may describe a different wallet; never use it as a loading fallback.
+  const balance = summary?.balance;
   const language = i18n?.resolvedLanguage ?? i18n?.language ?? "en";
 
   useEffect(
@@ -46,7 +44,7 @@ export function CreditBalanceBadge() {
     [],
   );
 
-  if (ce || !username || isError) return null;
+  if (ce || !username) return null;
 
   const cancelScheduledClose = () => {
     if (closeTimerRef.current !== null) {
@@ -124,7 +122,7 @@ export function CreditBalanceBadge() {
               CREDIT_VALUE_CLASS,
             )}
           >
-            {isLoading || balance === undefined ? "--" : formatFullCredits(balance, language)}
+            {balance === undefined ? "--" : formatFullCredits(balance, language)}
           </span>
         </PopoverTrigger>
         <PopoverContent

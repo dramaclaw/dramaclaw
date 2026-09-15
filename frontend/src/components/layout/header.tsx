@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { enterPikoWorld } from "@/features/piko-world/piko-entry-transition";
 import { playPikoUiSound } from "@/features/piko-world/piko-audio";
 import { Button } from "@/components/ui/button";
 import { AvatarUploadDialog } from "@/components/account/avatar-upload-dialog";
@@ -406,7 +407,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger openOnHover delay={100} closeDelay={180}
               render={<Button id="piko-hub-entry" variant="ghost" size="sm" className={`${entryStyles.trigger} px-2 text-xs font-medium`} />}>
-              Piko Piko
+              <img src="/brand/piko-piko-wordmark.png" alt="Piko Piko" width={60} height={9.63} className={entryStyles.pikoWordmark} draggable={false} />
             </DropdownMenuTrigger>
             <HeaderMenuPanel dropdown compact>
               <HeaderMenuRow menuItem id="mybuddy-companion-entry"
@@ -416,7 +417,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
               <HeaderMenuRow menuItem
                 icon={<Map className="size-3.5" />}
                 label={t("header.pikoHub.world")}
-                onClick={() => { playPikoUiSound("open"); void navigate({ to: "/piko-world" }); }} />
+                onClick={() => { playPikoUiSound("open"); void enterPikoWorld(() => navigate({ to: "/piko-world" })); }} />
               <HeaderMenuRow menuItem
                 icon={<Gamepad2 className="size-3.5" />}
                 label={t("header.pikoHub.play")}

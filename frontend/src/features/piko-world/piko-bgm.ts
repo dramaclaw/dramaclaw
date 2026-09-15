@@ -1,20 +1,26 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { useEffect } from "react";
+import { PIKO_MAP_MUSIC } from "./piko-map-music";
+import type { PikoMapId } from "./piko-map-transitions";
 
-const MUSIC_VOLUME = 0.16;
-const DUCKED_VOLUME = 0.07;
+const MUSIC_VOLUME = 0.5;
+const DUCKED_VOLUME = 0.09;
+const REPEAT_PAUSE_MS = 30_000;
 
 /** A separate music channel; survives popup changes, fades out on map disposal. */
-export function startCourtyardMusic() {
-  if (typeof Audio === "undefined") return () => {};
-  const audio = new Audio("/piko/world/audio/first-meeting-courtyard-bgm-v1.mp3");
-  audio.loop = true;
+export function startPikoMusic(tracks: readonly string[]) {
+  if (typeof Audio === "undefined" || tracks.length === 0) return () => {};
+  let trackIndex = 0;
+  const audio = new Audio(tracks[trackIndex]);
+  audio.loop = false;
   audio.preload = "auto";
   audio.volume = 0;
   let disposed = false;
   let playing = false;
   let pending = false;
   let generation = 0;
+  let resting = false;
+  let restTimer: ReturnType<typeof setTimeout> | undefined;
   let fadeTimer: ReturnType<typeof setInterval> | undefined;
   let duckTimer: ReturnType<typeof setTimeout> | undefined;
   const fade = (target: number, duration: number, done?: () => void) => {
@@ -29,7 +35,7 @@ export function startCourtyardMusic() {
   };
   const start = (event?: Event) => {
     const gesture = event?.type === "pointerdown" || event?.type === "keydown" || event?.type === "touchend";
-    if (disposed || document.hidden) return;
+    if (disposed || document.hidden || resting) return;
     // Browsers can pause a silent autoplay when its volume becomes audible.
     if (playing && audio.paused !== true) return;
     if (pending && !gesture) return;
@@ -62,6 +68,30 @@ export function startCourtyardMusic() {
     fade(Math.min(audio.volume, DUCKED_VOLUME), 150);
     duckTimer = setTimeout(() => fade(MUSIC_VOLUME, 700), 1100);
   };
+  const advance = () => {
+    trackIndex = (trackIndex + 1) % tracks.length;
+    audio.src = tracks[trackIndex];
+    audio.currentTime = 0;
+    audio.load();
+    start();
+  };
+  const nextTrack = () => {
+    if (disposed || resting) return;
+    generation++;
+    pending = false;
+    playing = false;
+    clearInterval(fadeTimer);
+    clearTimeout(duckTimer);
+    audio.volume = 0;
+    if (trackIndex === tracks.length - 1) {
+      resting = true;
+      restTimer = setTimeout(() => {
+        resting = false;
+        if (!disposed) advance();
+      }, REPEAT_PAUSE_MS);
+    } else advance();
+  };
+  audio.addEventListener("ended", nextTrack);
   document.addEventListener("pointerdown", start, true);
   document.addEventListener("keydown", start, true);
   document.addEventListener("touchend", start, true);
@@ -70,6 +100,8 @@ export function startCourtyardMusic() {
   start();
   return () => {
     disposed = true;
+    audio.removeEventListener("ended", nextTrack);
+    clearTimeout(restTimer);
     generation++;
     clearTimeout(duckTimer);
     document.removeEventListener("pointerdown", start, true);
@@ -81,6 +113,8 @@ export function startCourtyardMusic() {
   };
 }
 
-export function useCourtyardMusic() {
-  useEffect(startCourtyardMusic, []);
+// Same playlist identity across related regions prevents restarting a shared track.
+export function useMapMusic(mapId: PikoMapId | null) {
+  const tracks = mapId ? PIKO_MAP_MUSIC[mapId] : null;
+  useEffect(() => tracks ? startPikoMusic(tracks) : undefined, [tracks]);
 }

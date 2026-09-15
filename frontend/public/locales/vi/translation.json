@@ -13,6 +13,62 @@
       "returnShore": "Trở về Bờ biển Dấu Sao",
       "ascend": "Đến Thiên cảng Cá Voi",
       "returnSlope": "Trở về Đồi Đỉnh Mây"
+    },
+    "onboarding": {
+      "title": "Chỉ còn thiếu tên bạn nữa thôi.",
+      "description": "Chọn diện mạo và làm quen với mọi người.",
+      "newFriend": "Người bạn mới",
+      "appearance": "Diện mạo của bạn",
+      "male": "Nam",
+      "female": "Nữ",
+      "nickname": "Biệt danh",
+      "namePlaceholder": "Mọi người nên gọi bạn là gì?",
+      "nameHint": "Tối đa 16 ký tự. Có thể đổi trong cài đặt.",
+      "nameError": "Nhập biệt danh từ 1–16 ký tự.",
+      "saveError": "Không thể lưu. Hãy thử lại; nội dung vẫn được giữ.",
+      "enter": "Bắt đầu hành trình",
+      "videoError": "Không thể phát lời mời. Hãy thử lại hoặc bỏ qua.",
+      "videoSlow": "Phim tải chậm. Bạn có thể chờ hoặc bỏ qua.",
+      "invitation": "Một lời mời từ thị trấn đang chờ bạn.",
+      "retry": "Thử lại",
+      "play": "Phát lời mời",
+      "unmute": "Bật âm thanh",
+      "mute": "Tắt âm thanh",
+      "join": "Cùng tham gia nhé",
+      "skip": "Bỏ qua hoạt ảnh",
+      "assetError": "Không thể tải hình nhân vật. Hãy thử lại.",
+      "preparing": "Đang chuẩn bị một chỗ cho bạn…",
+      "resume": "Tiếp tục phát",
+      "resumeHint": "Tiếp tục phát hoặc bỏ qua đoạn phim.",
+      "createTitle": "Tạo nhân vật"
+    },
+    "wardrobe": {
+      "title": "Trang phục nhân vật",
+      "description": "Chọn quần áo và phụ kiện tại đây.",
+      "clothes": "Quần áo",
+      "base": "Trang phục cơ bản",
+      "noClothes": "Chưa có quần áo khác",
+      "accessories": "Phụ kiện",
+      "noAccessories": "Chưa có phụ kiện thay thế",
+      "confirm": "Xác nhận"
+    },
+    "loadingScenes": {
+      "mountain-observatory": {
+        "title": "Đài quan sát trên mây",
+        "line": "Bên kia biển mây, một khám phá mới đang chờ."
+      },
+      "amber-expedition": {
+        "title": "Chuyến đi hổ phách",
+        "line": "Mở bản đồ và cùng bạn bè tìm con đường tiếp theo."
+      },
+      "frozen-lake-rest": {
+        "title": "Nghỉ bên hồ băng",
+        "line": "Ôm một tách trà ấm và nghỉ chân dưới ánh sao."
+      },
+      "tidal-discovery": {
+        "title": "Khám phá vùng nước nông",
+        "line": "Nhìn kỹ hơn, một thế giới nhỏ đang ẩn trong làn nước."
+      }
     }
   },
   "app": {

@@ -1,0 +1,5 @@
+# Character creation BGM — English generation prompt
+
+Create a lighthearted, cozy instrumental loop for the character creation screen of a whimsical small-town life simulation game. Imagine a sunny, open grassy hillside overlooking a charming village, with the feeling of a new journey about to begin. Around 100 BPM, 4/4 time, warm major-key harmony. Use soft ukulele or nylon-string guitar plucks, mellow wooden mallets, gentle pizzicato strings, a little warm piano, and occasional playful flute or clarinet phrases. Keep the melody simple, memorable, and spacious, with small pauses and subtle variations that stay pleasant during repeated listening. Cheerful, curious, welcoming, and gently playful, with restrained percussion and soft dynamics. Instrumental only, no vocals, no spoken words, no environmental sounds, no sound effects, no heavy drums, no piercing bells, and no dramatic build-ups or cinematic climax. Create a 2–3 minute arrangement suitable for seamless looping, with matching harmony and energy at the beginning and end, no final cadence, and no fade-out.
+
+用户自行生成；尚未接入音乐文件。接入时在开场视频结束后淡入，点击“开始旅程”后淡出。

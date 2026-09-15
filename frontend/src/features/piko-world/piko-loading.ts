@@ -12,6 +12,10 @@ export const PIKO_LOADING_SCENES = [
   ["startrace-coast", "startrace-coast-concept-v1.png"],
   ["starlight-dock", "starlight-dock-concept-v1.png"],
   ["whispering-forest", "whispering-forest-concept-v1.png"],
+  ["mountain-observatory", "mountain-observatory-v1.png"],
+  ["amber-expedition", "amber-expedition-v1.png"],
+  ["frozen-lake-rest", "frozen-lake-rest-v1.png"],
+  ["tidal-discovery", "tidal-discovery-v1.png"],
 ].map(([id, file]) => ({ id, src: `${ROOT}/backgrounds/${file}` }));
 export const PIKO_LOADING_BACKGROUNDS = PIKO_LOADING_SCENES.map((scene) => scene.src);
 

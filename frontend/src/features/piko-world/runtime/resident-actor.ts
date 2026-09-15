@@ -30,15 +30,24 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
     label?: string; position?: Point; facing?: Facing;
     simulatedInput?: () => Point;
     footsteps?: boolean;
+    portrait?: { texture: Texture; baseline: number; top: number };
   }) {
   const actor = createCharacterActor(sheet, ticker, isActive, {
     label: controls.label ?? "piko-player", frameSize: 64, frameCount: 44, columns: 11, manual: true, pivot: { x: 32, y: 57 },
     position: controls.position ?? { x: 1190, y: 485 }, scale: RESIDENT_WORLD_SCALE,
     shadow: { width: 24, height: 8 }, durationMs: 4800, frameAt: residentFrameAt,
   });
+  // Front portrait is an explicit interim display, not a fabricated motion atlas.
+  // Shared movement/pathfinding remains active until real directional art is available.
+  if (controls.portrait) {
+    const { texture, baseline, top } = controls.portrait;
+    actor.body.texture = texture;
+    actor.body.anchor.set(0.5, baseline / texture.height);
+    actor.body.scale.set(56 * RESIDENT_WORLD_SCALE / (baseline - top));
+  }
   const keyboardControlled = !controls.simulatedInput;
   let facing: Facing = controls.facing ?? "south";
-  actor.setFrame(FACINGS.indexOf(facing) * 11);
+  if (!controls.portrait) actor.setFrame(FACINGS.indexOf(facing) * 11);
   const footsteps = keyboardControlled && controls.footsteps !== false ? createGrassFootsteps() : { unlock() {}, step() {}, stop() {}, destroy() {} };
   let elapsed = 0, wasMoving = false;
   let gaitDistance = 0;
@@ -86,7 +95,7 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
     gaitDistance = moving ? advanceGait(gaitDistance, travelled, cycleDistance) : 0;
     if(!document.hidden && isActive()) elapsed=(elapsed+Math.min(time.deltaMS,50))%4800;
     const column = motion?.matches ? 0 : moving ? gaitColumn(gaitDistance, cycleDistance) : residentFrameAt(elapsed);
-    actor.setFrame(FACINGS.indexOf(facing)*11+column);
+    if (!controls.portrait) actor.setFrame(FACINGS.indexOf(facing)*11+column);
   };
   if (keyboardControlled) {
   window.addEventListener("keydown",keyDown);

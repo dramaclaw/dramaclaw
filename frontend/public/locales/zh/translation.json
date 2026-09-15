@@ -423,7 +423,11 @@
     }
   },
   "header": {
-    "pikoHub": {"play": "Piko 一下", "companion": "搭子", "world": "Piko 小镇"},
+    "pikoHub": {
+      "play": "Piko 一下",
+      "companion": "搭子",
+      "world": "Piko 小镇"
+    },
     "partyFounding105": "庆祝建党105周年",
     "settings": "设置",
     "settingsWithWarning": "设置，有未配置项",
@@ -2020,6 +2024,22 @@
       "whispering-forest": {
         "title": "低语森林",
         "line": "笛声穿过树隙，连午睡的风也放轻了脚步。"
+      },
+      "mountain-observatory": {
+        "title": "云端观测台",
+        "line": "把目光交给望远镜，云海之外还有新的发现。"
+      },
+      "amber-expedition": {
+        "title": "琥珀探险",
+        "line": "展开地图，和伙伴一起寻找下一段小路。"
+      },
+      "frozen-lake-rest": {
+        "title": "冰湖小憩",
+        "line": "捧一杯热饮，让星光陪我们歇歇脚。"
+      },
+      "tidal-discovery": {
+        "title": "浅滩发现",
+        "line": "俯下身看看，清浅的水里也藏着小小世界。"
       }
     },
     "loadingTitle": "前往 Piko 小镇",
@@ -2091,6 +2111,44 @@
       "returnShore": "返回星痕海岸",
       "ascend": "前往鲸歌天港",
       "returnSlope": "返回云顶坡"
+    },
+    "onboarding": {
+      "title": "还差一个名字，就到齐啦。",
+      "description": "选一个喜欢的模样，让大家认识你。",
+      "newFriend": "新来的朋友",
+      "appearance": "你的模样",
+      "male": "男生",
+      "female": "女生",
+      "nickname": "昵称",
+      "namePlaceholder": "想让大家怎么称呼你？",
+      "nameHint": "最多 16 个字符，之后可在设置中修改。",
+      "nameError": "请输入 1–16 个字符的昵称。",
+      "saveError": "保存失败，请重试。你的填写内容已保留。",
+      "enter": "开始旅程",
+      "videoError": "邀请影片暂时无法播放，可以重试或跳过。",
+      "videoSlow": "影片加载较慢，你可以继续等待或跳过。",
+      "invitation": "有一封来自小镇的邀请，等你打开。",
+      "retry": "重试",
+      "play": "播放邀请影片",
+      "unmute": "开启声音",
+      "mute": "静音",
+      "join": "你也一起来吧",
+      "skip": "跳过动画",
+      "assetError": "角色画面加载失败，请重试。",
+      "preparing": "正在为你准备一个位置…",
+      "resume": "继续播放",
+      "resumeHint": "点击继续播放，或跳过动画。",
+      "createTitle": "创建角色"
+    },
+    "wardrobe": {
+      "title": "角色装扮",
+      "description": "在这里搭配你喜欢的衣服和配饰。",
+      "clothes": "服装",
+      "base": "当前基础服饰",
+      "noClothes": "还没有其他服装",
+      "accessories": "配饰",
+      "noAccessories": "还没有可替换的配饰",
+      "confirm": "确认"
     }
   },
   "project": {

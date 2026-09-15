@@ -21,8 +21,8 @@ vi.mock("./PikoWorldCanvas", () => ({
   },
 }));
 vi.mock("./PikoLoadingScreen", () => ({ PikoLoadingScreen: ({ onEnter }: { onEnter: () => void }) => <button onClick={onEnter}>Enter test map</button> }));
-vi.mock("./PikoResidentSelectorDialog", () => ({
-  PikoResidentSelectorDialog: ({ open }: { open: boolean }) => open ? <div data-testid="resident-selector" /> : null,
+vi.mock("./PikoWardrobeDialog", () => ({
+  PikoWardrobeDialog: ({ open }: { open: boolean }) => open ? <div data-testid="wardrobe" /> : null,
 }));
 
 beforeEach(() => {
@@ -46,7 +46,7 @@ it("opens settings before either dialog, saves the nickname to the map and prese
   expect(screen.getByTestId("map")).toHaveTextContent("alice");
   await user.click(screen.getByRole("button", { name: "设置" }));
   expect(await screen.findByRole("menuitem", { name: "修改个人信息" })).toBeVisible();
-  expect(screen.queryByTestId("resident-selector")).toBeNull();
+  expect(screen.queryByTestId("wardrobe")).toBeNull();
   await user.click(await screen.findByRole("menuitem", { name: "修改个人信息" }));
   await user.clear(screen.getByLabelText("昵称"));
   await user.type(screen.getByLabelText("昵称"), "小禾");
@@ -63,8 +63,8 @@ it("opens settings before either dialog, saves the nickname to the map and prese
   await waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
   expect(screen.getByTestId("map")).toHaveTextContent("小禾");
   await user.click(screen.getByRole("button", { name: "设置" }));
-  await user.click(await screen.findByRole("menuitem", { name: "更换角色" }));
-  expect(screen.getByTestId("resident-selector")).toBeInTheDocument();
+  await user.click(await screen.findByRole("menuitem", { name: "角色装扮" }));
+  expect(screen.getByTestId("wardrobe")).toBeInTheDocument();
 });
 
 it("rejects blank nicknames and keeps the profile form open if persistence fails", () => {

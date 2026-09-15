@@ -423,7 +423,11 @@
     }
   },
   "header": {
-    "pikoHub": {"play": "Piko Play", "companion": "Companions", "world": "Piko Town"},
+    "pikoHub": {
+      "play": "Piko Play",
+      "companion": "Companions",
+      "world": "Piko Town"
+    },
     "partyFounding105": "庆祝建党105周年",
     "settings": "Settings",
     "settingsWithWarning": "Settings, missing configuration",
@@ -2020,6 +2024,22 @@
       "whispering-forest": {
         "title": "Whispering Forest",
         "line": "A flute sings between the trees, and even the resting wind steps softly."
+      },
+      "mountain-observatory": {
+        "title": "Cloudtop Observatory",
+        "line": "Beyond the sea of clouds, another discovery awaits."
+      },
+      "amber-expedition": {
+        "title": "Amber Expedition",
+        "line": "Unfold the map and find the next trail together."
+      },
+      "frozen-lake-rest": {
+        "title": "Frozen Lake Rest",
+        "line": "Warm your hands around a cup and rest beneath the stars."
+      },
+      "tidal-discovery": {
+        "title": "Tidal Discoveries",
+        "line": "Look a little closer: a tiny world waits in the shallows."
       }
     },
     "loadingTitle": "Travel to Piko Town",
@@ -2091,6 +2111,44 @@
       "returnShore": "Return to Startrace Coast",
       "ascend": "Travel to Whalesong Skyport",
       "returnSlope": "Return to Cloudtop Slope"
+    },
+    "onboarding": {
+      "title": "One more name, and everyone is here.",
+      "description": "Choose a look and introduce yourself.",
+      "newFriend": "New friend",
+      "appearance": "Your appearance",
+      "male": "Male",
+      "female": "Female",
+      "nickname": "Nickname",
+      "namePlaceholder": "What should we call you?",
+      "nameHint": "Up to 16 characters. You can change it in settings.",
+      "nameError": "Enter a nickname of 1–16 characters.",
+      "saveError": "Could not save. Please retry; your entries are preserved.",
+      "enter": "Begin the journey",
+      "videoError": "The invitation could not play. Retry or skip it.",
+      "videoSlow": "The film is loading slowly. You can wait or skip.",
+      "invitation": "An invitation from the town is waiting for you.",
+      "retry": "Retry",
+      "play": "Play invitation",
+      "unmute": "Enable sound",
+      "mute": "Mute",
+      "join": "Come join us",
+      "skip": "Skip animation",
+      "assetError": "Character artwork could not load. Please retry.",
+      "preparing": "Preparing a place for you…",
+      "resume": "Continue playback",
+      "resumeHint": "Continue playing, or skip the film.",
+      "createTitle": "Create your character"
+    },
+    "wardrobe": {
+      "title": "Character wardrobe",
+      "description": "Choose clothes and accessories here.",
+      "clothes": "Clothes",
+      "base": "Current base outfit",
+      "noClothes": "No other clothes yet",
+      "accessories": "Accessories",
+      "noAccessories": "No interchangeable accessories yet",
+      "confirm": "Confirm"
     }
   },
   "project": {
