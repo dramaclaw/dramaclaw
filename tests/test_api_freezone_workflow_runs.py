@@ -359,13 +359,13 @@ async def test_late_recipe_compile_receipt_reconciles_timed_out_task(
         executed_at=1.0 if mode == "model" else None,
     )
     if settlement_fails_once:
-        with pytest.raises(RuntimeError, match="temporary settlement failure"):
-            await freezone._record_recipe_compile_product_evidence(
-                body=body,
-                compiled=compiled,
-                user={"id": "u-alice", "username": "alice"},
-                deliver_text=True,
-            )
+        monkeypatch.setattr(freezone, "_schedule_recipe_settlement_retry", lambda **_kwargs: None)
+        await freezone._record_recipe_compile_product_evidence(
+            body=body,
+            compiled=compiled,
+            user={"id": "u-alice", "username": "alice"},
+            deliver_text=True,
+        )
         assert task.status == "failed"
         recovered = await freezone.get_agent_product_operation(
             project="proj_demo",
@@ -393,6 +393,147 @@ async def test_late_recipe_compile_receipt_reconciles_timed_out_task(
         4 if settlement_fails_once else 2
     )
     assert settlements == {("original-reservation", "confirm")}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mode",
+    ["model", "memory_cache", "persistent_cache", "deterministic", "timeout_fallback"],
+)
+@pytest.mark.parametrize("persistent_outage", [False, True])
+async def test_settlement_failure_preserves_successful_recipe_response(
+    workflow_run_client: TestClient, monkeypatch, mode: str, persistent_outage: bool
+) -> None:
+    import asyncio
+    import httpx
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.agent_product_operations import (
+        read_agent_product_operation,
+    )
+    from novelvideo.freezone.recipe_runtime import RecipeCompileResult
+
+    operation = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/agent-product-operations",
+        json={
+            "product_kind": "recipe_result",
+            "generation_session_id": "billing-outage",
+            "canvas_id": "default",
+            "artifact_id": "html-1",
+            "normalized_inputs_hash": "attempt",
+            "metadata": {"recipe_id": "html-recipe"},
+        },
+    ).json()["data"]
+    task = SimpleNamespace(
+        task_id=operation["task_id"],
+        status="failed",
+        metadata={
+            "feature_credit_reservation_id": "original-reservation",
+            "error_code": "AGENT_PRODUCT_SETTLEMENT_PENDING",
+        },
+    )
+    attempts = []
+    reviews = []
+    generated = []
+    completed = asyncio.Event()
+    content = "<!doctype html><html><body>saved</body></html>"
+    failure_limit = 99 if persistent_outage else 1
+
+    class Meter:
+        async def settle_feature_credit_reservation(
+            self, reservation_id, *, action, metadata=None
+        ):
+            attempts.append((reservation_id, action))
+            if len(attempts) <= failure_limit:
+                raise RuntimeError("billing service unavailable")
+
+        async def mark_feature_credit_settlement_for_review(
+            self, reservation_id, *, metadata=None
+        ):
+            reviews.append((reservation_id, metadata))
+
+    class Manager:
+        def get_task_for_project(self, *_args, **_kwargs):
+            return task
+
+        def complete_task_for_project(self, *_args, **kwargs):
+            assert kwargs["result"]["result_ref"]["content"] == content
+            task.status = "completed"
+            completed.set()
+            return True
+
+    async def writer(**_kwargs):
+        generated.append(mode)
+        return content
+
+    async def compiler(**_kwargs):
+        generated.append(mode)
+        return RecipeCompileResult(content, mode, ("html-recipe",))
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: Meter())
+    monkeypatch.setattr(freezone, "get_task_manager", lambda: Manager())
+    monkeypatch.setattr(freezone, "generate_recipe_text", writer)
+    monkeypatch.setattr(freezone, "compile_recipe_prompt_result", compiler)
+    monkeypatch.setattr(freezone, "_RECIPE_SETTLEMENT_RETRY_DELAYS", (0, 0, 0))
+    endpoint = (
+        "/api/v1/freezone/recipes/generate-text"
+        if mode == "model"
+        else "/api/v1/freezone/recipes/compile"
+    )
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=workflow_run_client.app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                endpoint,
+                json={
+                    "project_id": "proj_demo",
+                    "product_operation_id": operation["operation_id"],
+                    "recipe_id": "html-recipe",
+                    "node_kind": "text",
+                },
+            )
+            assert response.status_code == 200, response.text
+            assert (
+                response.json()["data"]["content" if mode == "model" else "prompt"]
+                == content
+            )
+            if persistent_outage:
+                pending = freezone._recipe_settlement_retries.get(
+                    ("proj_demo", operation["operation_id"])
+                )
+                if pending:
+                    await asyncio.wait_for(pending, timeout=5)
+                assert not completed.is_set()
+                assert len(attempts) == 4
+                failure_limit = 0
+                recovered = await client.get(
+                    f"/api/v1/projects/proj_demo/freezone/agent-product-operations/{operation['operation_id']}"
+                )
+                assert recovered.status_code == 200
+            else:
+                # No GET or second generation: independent retry completes.
+                await asyncio.wait_for(completed.wait(), timeout=5)
+        stored = read_agent_product_operation(
+            project_dir=workflow_run_client.state_dir,
+            operation_id=operation["operation_id"],
+        )
+        assert stored["status"] == "delivered"
+        assert stored["result_ref"]["content"] == content
+        assert generated == [mode]
+        assert attempts == [("original-reservation", "confirm")] * (
+            5 if persistent_outage else 2
+        )
+        assert reviews[0][0] == "original-reservation"
+        assert reviews[0][1]["settlement_status"] == "awaiting_reconciliation"
+        assert len(workflow_run_client.enqueued_tasks) == 1
+    finally:
+        pending = freezone._recipe_settlement_retries.get(
+            ("proj_demo", operation["operation_id"])
+        )
+        if pending:
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
 
 
 @pytest.mark.asyncio

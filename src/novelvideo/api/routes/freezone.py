@@ -5061,7 +5061,7 @@ async def _record_recipe_compile_product_evidence(
     if admitted_recipe_id and admitted_recipe_id not in set(compiled.recipe_ids):
         raise HTTPException(409, "Recipe compilation does not match admitted operation")
     if operation.get("status") == "delivered":
-        await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
+        await _reconcile_recipe_delivery(ctx=ctx, operation=operation)
         return
     if operation.get("status") in {"failed", "cancelled"}:
         return
@@ -5099,7 +5099,7 @@ async def _record_recipe_compile_product_evidence(
                     "content": compiled.prompt,
                 },
             )
-            await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
+            await _reconcile_recipe_delivery(ctx=ctx, operation=operation)
         return
     if compiled.prompt.strip() and compiled.mode in {
         "timeout_fallback",
@@ -5123,7 +5123,7 @@ async def _record_recipe_compile_product_evidence(
             },
             server_recipe_compile=True,
         )
-        await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
+        await _reconcile_recipe_delivery(ctx=ctx, operation=operation)
         return
     await asyncio.to_thread(
         finish_agent_product_operation,
@@ -14354,6 +14354,82 @@ async def _settle_delivered_agent_product_task(
             expected_task_id=expected_task_id,
         )
         evidence_metrics.observe("agent_product_reconciled")
+
+
+_RECIPE_SETTLEMENT_RETRY_DELAYS = (1, 5, 15)
+_recipe_settlement_retries: dict[tuple[str, str], asyncio.Task] = {}
+
+
+async def _reconcile_recipe_delivery(
+    *, ctx: ProjectContext, operation: dict[str, Any]
+) -> None:
+    """A saved result stays successful even when billing is temporarily unavailable."""
+    try:
+        await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
+        return
+    except Exception:
+        logger.warning(
+            "Recipe delivery saved; settlement pending: %s",
+            operation["operation_id"],
+            exc_info=True,
+        )
+    # The immutable delivered receipt survives process restarts. Preserve the
+    # original reservation for review, never refund or create a second charge.
+    try:
+        task = get_task_manager().get_task_for_project(
+            ctx,
+            operation["task_type"],
+            0,
+            scope=operation["operation_id"],
+        )
+        if task and task.task_id == operation.get("task_id"):
+            metadata = task.metadata if isinstance(task.metadata, dict) else {}
+            reservation_id = metadata.get(
+                "feature_credit_reservation_id"
+            ) or metadata.get("feature_credit_charge_id")
+            if reservation_id:
+                await get_usage_meter().mark_feature_credit_settlement_for_review(
+                    str(reservation_id),
+                    metadata={
+                        "source": "recipe_delivery_settlement_pending",
+                        "operation_id": operation["operation_id"],
+                        "operation_status": "delivered",
+                        "settlement_status": "awaiting_reconciliation",
+                    },
+                )
+    except Exception:
+        logger.warning(
+            "Recipe settlement review deferred: %s",
+            operation["operation_id"],
+            exc_info=True,
+        )
+    _schedule_recipe_settlement_retry(ctx=ctx, operation=operation)
+
+
+def _schedule_recipe_settlement_retry(
+    *, ctx: ProjectContext, operation: dict[str, Any]
+) -> None:
+    key = (str(ctx.project_id), str(operation["operation_id"]))
+    if key in _recipe_settlement_retries:
+        return
+
+    async def retry() -> None:
+        try:
+            for delay in _RECIPE_SETTLEMENT_RETRY_DELAYS:
+                await asyncio.sleep(delay)
+                try:
+                    await _settle_delivered_agent_product_task(
+                        ctx=ctx, operation=operation
+                    )
+                    return
+                except Exception:
+                    logger.warning(
+                        "Recipe settlement retry pending: %s", key[1], exc_info=True
+                    )
+        finally:
+            _recipe_settlement_retries.pop(key, None)
+
+    _recipe_settlement_retries[key] = asyncio.create_task(retry())
 
 
 @router.get(
