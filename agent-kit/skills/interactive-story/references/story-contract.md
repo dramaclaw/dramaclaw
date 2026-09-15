@@ -1,35 +1,23 @@
-# Interactive Story Tool Contract
+# 互动故事工具契约
 
-## Interactive advertisements
+仅在构造 Create 或 Patch 参数时读取本文档。本文档定义持久化故事的数据结构和写入硬约束。可选的选择呈现、choice loop、反馈和 CTA 见 [interaction-options.md](interaction-options.md)。
 
-Visible Choices additionally accept `interaction.trigger`: `click` (default) or `hold`. `interaction.hold_ms` is an integer 300–5000,
-default 1000. Gestures also work with bottom overlays. Holds can be cancelled and support held Space/Enter. Automatic Choices
-must keep `trigger: click` and `hold_ms: 1000` (or omit them).
+## 工具与写入
 
-Ending Segments may have `cta: {"label": "预约试驾", "url": ""}`. An empty URL is
-an explicitly unconfigured draft; use only the user's actual HTTPS booking URL when
-available, never invent a destination. Set `cta: null` in a segment Patch to clear it.
-CTA is only valid on endings. The player opens the link; it does not collect leads.
-Ads can use short converging or route-specific flows; do not add game endings merely
-to satisfy the default narrative branch budget. Separate footage from decision time.
-Runtime `dramaclaw:story` events provide host integration hooks, not server analytics;
-`cta_click` is not a successful form submission. Gestures activate at the existing
-end-of-clip choice point, not at arbitrary timestamps inside footage.
+Codex MCP 和 Hermes adapter 中的四个业务工具名称和语义一致：
 
-The four business tools have the same names and semantics in the Codex MCP and Hermes adapter. `project_id` and `canvas_id` may be omitted when the session already binds them. Successful writes return `canvas_id`, `revision`, and `refresh_canvas=true`, which the host can use to refresh the current canvas.
+- `dramaclaw_create_interactive_story`：`base_revision`、`idempotency_key` 和完整 `story`。
+- `dramaclaw_get_interactive_story`：`story_id`。
+- `dramaclaw_patch_interactive_story`：`story_id`、`base_revision`、`idempotency_key` 和 `operations`。
+- `dramaclaw_validate_interactive_story`：`story_id`。
 
-Create and Patch write the canvas atomically through `InteractiveStoryService`; they do not use the browser bridge for ordinary Freezone node commands. The in-product Agent refreshes the matching canvas from a successful `agent.tool.updated` frame. If unsaved local edits exist, the frontend preserves a local copy and enters conflict state. An external stdio MCP client receives only the write receipt; unless its host implements a refresh adapter, the user must refresh or reopen the canvas.
+会话已经绑定项目和画布时可省略 `project_id`、`canvas_id`。成功写入返回 `canvas_id`、`revision` 和 `refresh_canvas=true`。
 
-The Agent produces `StoryDraftV2` and Patch data objects, not Ink source. The frontend deterministically compiles the canvas story group to Ink when previewing or exporting. Validate does not currently compile Ink.
+Create 和 Patch 通过 `InteractiveStoryService` 原子写入画布，不使用普通 Freezone 节点命令的 browser bridge。同一授权阶段的相关操作合并到一个 Patch。后续阶段可在 Get 刷新当前 revision 后再次 Patch，例如取得真实尾帧之后。
 
-## Tools
+Agent 生成 StoryDraftV2 和 Patch 数据对象，不生成 Ink 源码。前端在预览或导出时把画布故事组确定性编译为 Ink。
 
-- `dramaclaw_create_interactive_story`: `base_revision`, `idempotency_key`, and a complete `story`.
-- `dramaclaw_get_interactive_story`: `story_id`.
-- `dramaclaw_patch_interactive_story`: `story_id`, `base_revision`, `idempotency_key`, and `operations`.
-- `dramaclaw_validate_interactive_story`: `story_id`.
-
-Combine related operations atomically per stage. Authorized later stages may Patch after Get refreshes the current revision, for example after obtaining a real tail frame. Do not repeat successful writes or replay ambiguous results.
+产品内 Agent 从成功的 `agent.tool.updated` 帧刷新匹配画布；存在未保存的本地编辑时保留本地副本并进入冲突状态。外部 stdio 客户端收到相同写入回执，但需要宿主自行实现刷新适配，否则用户必须刷新或重新打开画布。
 
 ## StoryDraftV2
 
@@ -49,10 +37,11 @@ Combine related operations atomically per stage. Authorized later stages may Pat
 }
 ```
 
-- Use stable, short ASCII slugs for every ID.
-- `story_id` and Segment, Choice, and Character IDs may contain letters, digits, `_`, and `-`, and must begin with a letter or digit.
-- A Variable `name` is an Ink-compatible identifier: begin with a letter or `_`, followed only by letters, digits, or `_`.
-- Set the story revision to `0` when creating. The service returns the persisted canvas revision.
+- 所有 ID 使用稳定、简短的 ASCII slug。
+- Story、Segment、Choice、Character 的 ID 可包含字母、数字、`_`、`-`，且必须以字母或数字开头。
+- Variable 的 `name` 必须兼容 Ink：以字母或 `_` 开头，之后只能包含字母、数字、`_`。
+- 创建时 story revision 设为 `0`；服务返回持久化后的画布 revision。
+- 提交前检查内部引用闭合：片段的 `character_ids` 必须存在于 `characters`，起点及选项两端必须存在于 `segments`，条件与效果引用的变量或开关必须已声明。局部编辑保留 Get 返回的现有实体，不用删掉人物定义的完整故事重建。
 
 ### Character
 
@@ -60,21 +49,19 @@ Combine related operations atomically per stage. Authorized later stages may Pat
 {"id":"traveler","name":"旅人","description":"身份、目标和性格","visual_description":"稳定外观"}
 ```
 
-### Variable
+### Variable 与 Flag
 
 ```json
 {"name":"courage","label":"勇气","initial":0,"minimum":0,"maximum":5}
 ```
 
-Numeric variables use integer values. The initial value must be within the optional bounds.
-
-### Flag
+数值变量使用整数，初始值必须位于可选边界内。
 
 ```json
 {"name":"has_key","label":"已拿到钥匙","initial":false}
 ```
 
-Flags represent simple yes/no story facts. Variable and flag names share one namespace and must be unique.
+Flag 表示是/否剧情事实。Variable 和 Flag 的名称共用一个命名空间且必须唯一。
 
 ### Segment
 
@@ -88,29 +75,16 @@ Flags represent simple yes/no story facts. Variable and flag names share one nam
   "character_ids": ["traveler"],
   "choice_time_limit_sec": null,
   "production_notes": "镜头与连续性提示",
-  "video_prompt": "夜间站台，中景镜头缓慢推进；旅人停在站牌前，雨水沿大衣滴落，末尾停在旅人等待决定的画面。",
-  "media": {"source":"placeholder","status":"missing","version":1},
-  "choice_loop": {
-    "description": "角色保持等待姿势，雨水和灯光轻微流动。",
-    "production_notes": "2–4 秒无缝循环；固定镜头；互动对象不得漂移；首尾帧连续。",
-    "media": {"source":"placeholder","status":"missing","version":1}
-  }
+  "video_prompt": "夜间站台，中景镜头缓慢推进；旅人停在站牌前。",
+  "media": {"source":"placeholder","status":"missing","version":1}
 }
 ```
 
-`kind=ending` requires an `ending_label` and must have no outgoing Choice. A scene must have a null `ending_label`. A timed choice must use 1–300 seconds and should have exactly one default Choice among Choices with the same source.
+`kind=ending` 必须有 `ending_label` 且没有出边 Choice；scene 使用 null `ending_label`。限时选择为 1–300 秒，同一来源的可见 Choice 应恰有一个默认项。
 
-`video_prompt` is the independent, model-facing video description (at most 20,000
-characters, default empty). It maps to the existing canvas video node `prompt`;
-`script` maps to `narration` and `production_notes` to `storyProductionNotes`.
-Create/Get/Patch preserve all three independently. Use `update_segment.changes.video_prompt`
-to prepare or revise a prompt; use an empty string to clear it, not null. Omission
-in a Patch preserves the existing value. Preparing prompts must not clear media.
-Batch generation uses only non-empty video prompts, never narrative or notes as
-fallback. Existing nodes without prompts remain playable placeholders/imported
-clips but must have prompts prepared before generating missing video.
+Segment 的可选 `choice_loop` 字段、必填说明及媒体语义见 [interaction-options.md](interaction-options.md)。
 
-`choice_loop` is optional and is valid only on a Segment with outgoing Choices. It is one dedicated short animation shared by the entire choice point, not one clip per Choice. The main Segment `media` always plays once. When choices appear, the player switches to ready `choice_loop.media`; when it is missing, the player freezes the main video's tail frame. A 2–4 second loop with a fixed camera and subtle ambient motion is a useful default, not a required creative format. Adapt duration and motion to the scene while keeping the loop transition stable and any clickable targets usable. Do not bake branch logic into this clip; Choice `interaction` still owns the UI or hotspot.
+`video_prompt` 是独立、面向模型且不超过 20,000 字符的视频描述。它映射到画布视频节点的 `prompt`；`script` 映射到 `narration`，`production_notes` 映射到 `storyProductionNotes`。Create/Get/Patch 分别保存三者。空 `video_prompt` 表示清空，Patch 中省略表示保留。批量生成不会用 narrative 或 notes 替代空提示词。
 
 ### Choice
 
@@ -124,14 +98,14 @@ clips but must have prompts prepared before generating missing video.
   "order":0,
   "condition":null,
   "effects":[],
-  "feedback_text":"她没有立刻回答，却把手电筒递给了你。",
+  "feedback_text":"",
   "is_default":false
 }
 ```
 
-Choices from the same source must have unique `order` values. An ending segment must not be a Choice source.
+同一来源的 Choice 必须具有不同的 `order`。结局 Segment 不能作为 Choice 来源。
 
-Set `mode` to `automatic` and use an empty `text` when the system should choose the path after the source clip finishes. Automatic transitions are checked by ascending `order`. Use one final automatic transition without a condition as the fallback. Here, fallback means “the last unconditional automatic Choice by `order`”; it is not a timed default Choice. Every automatic Choice must use `is_default:false`, `text:""`, and `feedback_text:""`, and must use the default interaction: omit `interaction`, use `{}`, or preserve the serialized default object (`overlay`, null anchor, `glass`, `fade`, `fade`). Automatic Choices may apply `effects`; the empty feedback rule does not require moving or removing those effects. A source with only conditional automatic transitions and no fallback can stop when no rule matches. Do not mix an unconditional automatic fallback with visible Choices.
+源片段结束后需由系统自动选路时，将 `mode` 设为 `automatic`，并使用空 `text`、`feedback_text`。自动转场按 `order` 升序检查；最后一个无条件 automatic Choice 是兜底，不是限时默认 Choice。每个 automatic Choice 使用 `is_default:false` 和默认 interaction，但可以保留 `effects`。只有条件自动转场的来源在条件均不满足时可以停止。无条件自动兜底不能与可见 Choice 混用。
 
 ```json
 {
@@ -148,47 +122,45 @@ Set `mode` to `automatic` and use an empty `text` when the system should choose 
 }
 ```
 
-`feedback_text` is an optional, short line shown immediately after a player confirms a Choice. Prefer feedback when it adds meaningful information or emotion (for example, “她的戒备似乎少了一些。”). Avoid repetitive feedback; consecutive Choices may each have feedback when the story benefits. When that Choice also has variable effects, the player sees each variable's semantic label with an ↑/↓ direction (for example, `信任 ↑`), never the numeric value. It does not generate, replace, or alter a video asset.
+### 条件与效果
 
-`interaction` is optional. Omit it by default so the player sees an explicit bottom `overlay` decision. Use `object_anchor` or `baked_video` only after the user requests an in-frame interaction and the final media target position is known; do not infer precise coordinates from placeholder media or script text. `object_anchor` renders a real frontend choice at the normalized `anchor` point in the video frame; use `object_label` to name the prop or character it belongs to. `baked_video` expects visible UI to already exist in the video and creates only an accessible transparent rectangular hotspot. Its `anchor.x`/`anchor.y` are the rectangle center and `anchor.width`/`anchor.height` are required normalized dimensions; the full rectangle must stay within the source frame. Anchored interactions can use `glass`, `tag`, or `warning` UI styles, `fade`, `pop`, or `pulse` entrance motion, and `fade`, `flash`, or `cut` branch transition.
-
-Variable condition:
+数值变量条件：
 
 ```json
 {"kind":"variable","variable":"courage","operator":">=","value":2}
 ```
 
-Visited condition:
+访问条件：
 
 ```json
 {"kind":"visited","segment_id":"arrival","operator":">=","value":1}
 ```
 
-Flag condition:
+Flag 条件：
 
 ```json
 {"kind":"flag","flag":"has_key","value":true}
 ```
 
-Flat condition group:
+扁平条件组：
 
 ```json
 {"kind":"group","join":"and","items":[{"kind":"variable","variable":"courage","operator":">=","value":2}]}
 ```
 
-Numeric increment:
+数值增量：
 
 ```json
 {"kind":"increment","variable":"courage","delta":1}
 ```
 
-Set a flag:
+设置 Flag：
 
 ```json
 {"kind":"set_flag","flag":"has_key","value":true}
 ```
 
-## Patch Operations
+## Patch 操作
 
 ```json
 {
@@ -223,31 +195,27 @@ Set a flag:
 }
 ```
 
-Supported operations:
+支持的操作：
 
-- `update_story_metadata`: `changes {title?, synopsis?}`
-- `set_story_start`: `segment_id`
+- `update_story_metadata`：`changes {title?, synopsis?}`
+- `set_story_start`：`segment_id`
 - `add_segment` / `update_segment` / `remove_segment`
 - `add_choice` / `update_choice` / `remove_choice`
 - `upsert_variable` / `remove_variable`
 - `upsert_flag` / `remove_flag`
 - `upsert_character` / `remove_character`
 
-When adding a branch, add both the target Segment and its Choice in the same Patch. Do not send the complete Story returned by Get as a Patch.
+增加分支时，在同一个 Patch 中同时增加目标 Segment 和对应 Choice。不要把 Get 返回的完整 Story 作为 Patch 发送。每项操作使用精确的 `{"op":"...", ...}` envelope：新增操作把值放入 `segment` 或 `choice`，更新操作把变更字段放入 `changes`。
 
-Set `update_segment.changes.media` to `null` to clear existing media and restore a placeholder. Set `update_segment.changes.choice_loop` to `null` to remove the dedicated choice animation. Do not construct an empty media object manually.
+### 省略、空值和 null
 
-Every Patch operation uses the exact `{"op":"...", ...}` envelope shown above. `add_segment` wraps its value in `segment`; `add_choice` wraps it in `choice`; updates put changed fields under `changes`. Never substitute `type`, `operation`, `data`, or `value` for these names.
+- 从 `changes` 省略字段表示保留现值。
+- 使用 `condition:null` 删除 Choice 条件；ending 改为 scene 时使用 `ending_label:null`；使用 `choice_time_limit_sec:null` 删除计时器。
+- 使用 `media:null` 恢复占位媒体，`choice_loop:null` 删除选择动画，`cta:null` 清除 CTA。不要手工构造空 media 对象。
+- 使用 `video_prompt:""`、`production_notes:""`、`synopsis:""`、`feedback_text:""` 清空字符串；使用 `effects:[]`、`character_ids:[]` 清空列表。
+- `title`、`synopsis`、`script`、`kind`、`character_ids`、`production_notes`、`video_prompt`、Choice 的 `source_segment_id`/`target_segment_id`、`mode`、`text`、`order`、`effects`、`feedback_text`、`interaction`、`is_default` 不能发送 null。Patch 中这些字段可省略以保留现值，但可省略不代表可传 null。
 
-### Omission, empty values, and null
-
-- Omit a field from `changes` to preserve its stored value.
-- Use `condition:null` to remove a Choice condition, `ending_label:null` when changing an ending to a scene, and `choice_time_limit_sec:null` to remove a timer.
-- Use `media:null` to restore placeholder media and `choice_loop:null` to remove the choice animation.
-- Use `video_prompt:""`, `production_notes:""`, `synopsis:""`, or `feedback_text:""` to clear those strings; use `effects:[]` or `character_ids:[]` to clear those lists.
-- Do not send null for `title`, `script`, `kind`, `character_ids`, `production_notes`, `video_prompt`, Choice IDs, `mode`, `text`, `order`, `effects`, `feedback_text`, `interaction`, or `is_default`. Omit them when unchanged.
-
-For example, convert a visible Choice into an automatic transition atomically so no visible-only state survives:
+把可见 Choice 改为 automatic 时，在同一操作中清空全部仅可见状态：
 
 ```json
 {
@@ -262,11 +230,3 @@ For example, convert a visible Choice into an automatic transition atomically so
   }
 }
 ```
-
-## Validation Results
-
-- `error` blocks later publication.
-- `warning` identifies a production or experience issue that should be addressed.
-- `info` is non-blocking guidance.
-- Bounded condition-aware analysis also checks automatic cycles and unreachable conditional paths. Treat `path_analysis_incomplete` as incomplete coverage, not proof of correctness; test actual playback separately.
-- Common issue codes include `missing_video`, `media_url_unresolved`, `timed_choice_uses_first_default`, `unreachable`, and `leaf_no_ending`.

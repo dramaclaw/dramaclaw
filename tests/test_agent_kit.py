@@ -3,9 +3,11 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tomllib
+from urllib.parse import unquote, urlsplit
 from pathlib import Path
 
 import pytest
@@ -91,17 +93,22 @@ def test_interactive_story_discovery_and_duration_contract() -> None:
         CE_ROOT / "src" / "novelvideo" / "agent_skills" / "interactive-story" / "SKILL.md"
     ).read_text(encoding="utf-8")
     frontmatter = skill.split("---", 2)[1]
-    for trigger in ("FMV", "剧情画布", "占位素材试玩", "互动剧片段制作准备"):
+    for trigger in (
+        "FMV", "剧情画布", "占位素材试玩", "互动剧片段制作准备",
+        "互动广告", "交互式视频广告", "interactive ad", "interactive video ad",
+    ):
         assert trigger in frontmatter
+    for boundary in ("story tools", "通用 canvas", "线性 novel-to-video", "普通线性广告"):
+        assert boundary in frontmatter
 
-    guidance = skill.split("## User-facing guidance", 1)[1].split(
-        "## Responsibilities", 1
+    guidance = skill.split("## 面向用户的引导", 1)[1].split(
+        "## 职责", 1
     )[0]
     for invariant in (
-        "each playable route",
-        "mutually exclusive",
-        "decision time",
-        "Do not open a structured clarification card",
+        "每条可玩路径",
+        "互斥分支",
+        "选择等待时间",
+        "不要仅为收集该确认而打开结构化澄清卡片",
     ):
         assert invariant in guidance
 
@@ -112,6 +119,29 @@ def test_codex_template_renders_valid_toml() -> None:
     assert payload["mcp_servers"]["dramaclaw"]["env"]["DRAMACLAW_PROJECT_ID"] == (
         "project-a"
     )
+
+
+def test_interactive_story_reference_links_are_local_and_reachable() -> None:
+    """Check progressive-disclosure navigation, not model compliance with prose."""
+    root = (CE_ROOT / "src/novelvideo/agent_skills/interactive-story").resolve()
+    documents = set(root.rglob("*.md"))
+    pending = [root / "SKILL.md"]
+    visited: set[Path] = set()
+    while pending:
+        document = pending.pop()
+        if document in visited:
+            continue
+        visited.add(document)
+        for href in re.findall(r"\[[^\]]*\]\(([^)]+)\)", document.read_text(encoding="utf-8")):
+            url = urlsplit(href)
+            if url.scheme or not url.path:
+                continue
+            target = (document.parent / unquote(url.path)).resolve()
+            assert target.is_relative_to(root), (document, href)
+            assert target.is_file(), (document, href)
+            if target.suffix == ".md":
+                pending.append(target)
+    assert visited == documents, f"Unreachable references: {documents - visited}"
 
 
 @pytest.mark.parametrize("host", ["claude-code", "openclaw", "workbuddy", "generic"])

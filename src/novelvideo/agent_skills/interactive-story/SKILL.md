@@ -1,117 +1,87 @@
 ---
 name: interactive-story
-description: "Create, inspect, validate, or incrementally edit a playable branching interactive story (FMV) in DramaClaw, including story trees, choices, automatic transitions, multiple endings, story state, placeholder-media playtests, and per-segment video production planning for models, duration, references, and prompts. Use for interactive films, FMV, branching narratives, 互动短剧、互动剧、互动影游、互动电影、互动故事、剧情画布、分支剧情、剧情树、多结局、互动剧片段制作准备、占位素材试玩. Do not use for linear novel-to-video episodes or ordinary script uploads."
+description: "在 DramaClaw 中规划、创建、检查或增量编辑互动影游和互动广告；只做互动广告方案也适用，提案前须读取 references/interactive-ads.md。适用于 interactive film、FMV、branching narrative、interactive ad、interactive video ad，以及互动短剧、互动剧、互动电影、互动故事、交互式视频广告、剧情画布、分支剧情、剧情树、多结局、互动剧片段制作准备、占位素材试玩。故事持久化必须使用专用 story tools，不得替换为通用 canvas 或 workflow 操作。不适用于普通线性广告、线性 novel-to-video 剧集或普通剧本上传。"
 ---
 
-# Interactive Story Creation
+# 互动故事创作
 
-Turn a natural-language idea into a playable branching story on the canvas. Discuss the story, outline, choices, and endings in the user's language. Do not ask the user to provide JSON, Ink, node IDs, revisions, or idempotency keys.
+把自然语言创意变成画布上可试玩的分支故事。使用用户的语言讨论故事、梗概、选择和结局。不要要求用户提供 JSON、Ink、节点 ID、revision 或 idempotency key。
 
-## User-facing guidance
+## 面向用户的引导
 
-For an end-to-end interactive short drama, guide the user through three stages: **定故事 → 审制作 → 看成品** (use the user's language). These are conversation milestones, not nine separate approval steps or a mandatory wizard for every request.
+默认使用普通用户能理解的创作语言：Choice 称“互动选项”，choice_loop 称“等待选择时播放的循环画面”，Segment／节点称“剧情片段”，CTA 称“行动按钮”（如“预约试驾”），placeholder 称“占位画面，尚未制作视频”。使用片段标题定位结果，不主动展示字段名、工具名、ID、revision 或原始状态码；仅在用户询问技术细节或排错需要时补充。工具参数和技术文档中的标识符保持原样。
 
-When the user explicitly asks for a proposal before later confirmation and has supplied enough context, return the complete proposal in chat and end with one natural confirmation prompt. Do not open a structured clarification card merely to collect that confirmation.
+交付时区分“方案已确定”“配置已保存”“视频已制作”和“实际试玩已验证”，只报告有结果支持的状态；不把设计描述说成当前可见效果。用一句话说明本次改了什么、目前能看到什么及尚缺什么，不要求用户理解内部数据结构。
 
-- **定故事**: propose the creative direction, branches, endings and a target viewing duration for one playthrough. If the user has no duration preference, recommend an estimate rather than asking them to assign seconds to each segment. Count the actual segments and sum durations along each playable route; mutually exclusive branches and endings do not belong to the same playthrough. Report decision time separately and reconcile the route totals with the requested duration before presenting the outline. After outline approval, create and validate the story. Offer placeholder playtesting as an optional way to revise the story, not a required checkpoint.
-- **审制作**: after story creation, briefly introduce production preparation as the next step. If the user requested the complete video work, continue into a reviewable production plan; if they requested only a story or placeholder prototype, offer this next step without preparing or writing all production fields. Read production-planning.md for the combined asset, timing, settings, reference, tail-frame and prompt plan. Present a short summary first and segment details on request; let the user revise exceptions in one reply rather than configuring each node.
-- **看成品**: after production-plan approval and explicit generation authorization, apply the agreed preparation and generate in dependency-aware batches using available tools. Finalize downstream prompts against real tail frames when available. Continue routine work within the approved scope without repeated confirmations; surface missing inputs or material changes in creative direction, settings or spending scope. Preserve the failure-handling rules below. Invite playback review and targeted revisions; export only when requested and supported, without claiming automatic publication.
+互动广告按下方广告文档入口先读后提案；其创作默认值优先于通用影游。仅要求方案时在对话中交付，不写入画布或生成媒体。
 
-Recommend coherent defaults from the user's intent and actual model capabilities. The Agent owns per-segment analysis; the user reviews creative choices and exceptions. Do not ask separately about every asset, model, duration or reference. A plan-only confirmation does not authorize paid generation. Existing approval remains valid for unchanged scope. For a local edit, inspection or wording-only request, perform only that task rather than restarting these stages.
+端到端互动短剧按 **定故事 → 审制作 → 看成品** 三个阶段引导（使用用户的语言）。这些是对话里程碑，不是九个独立审批步骤，也不是每次请求都必须走完的向导。
 
-## Responsibilities
+用户明确要求先给方案、稍后确认，且上下文已经充分时，在对话中给出完整方案，最后自然地询问一次确认。不要仅为收集该确认而打开结构化澄清卡片。
 
-The Agent plans story semantics, segment timing, assets and prompts. Story tools own
-story persistence and validation; canvas tools own production settings and references;
-the existing runner executes media generation. Use returned IDs, revisions and results,
-and do not recreate these responsibilities through direct canvas JSON or simulated results.
+- **定故事**：提出创作方向、分支、结局和单次游玩的目标观看时长。用户没有时长偏好时主动给出估算，不要求其逐片段分配秒数。统计实际片段并分别汇总每条可玩路径；互斥分支和结局不能计入同一次游玩。选择等待时间单独报告，并在展示大纲前让路径总时长与用户目标一致。大纲获批后创建并校验故事。占位素材试玩是可选的修订方式，不是强制检查点。
+- **审制作**：故事创建后，简要说明制作准备是下一阶段。用户要求完整视频工作时继续形成可审核的制作方案；只要求故事或占位原型时，只提供下一步选项，不预先填写所有制作字段。先给摘要，逐段细节按需展开；允许用户一次提出多个例外，不要求逐节点配置。
+- **看成品**：制作方案获批且用户明确授权生成后，应用已确认的准备，并按依赖分批生成。真实尾帧可用后完善下游提示词。在授权范围不变时连续完成常规工作；遇到缺少输入或创作方向、设置、费用范围的实质变化时再说明。邀请用户试玩并定点修订；仅在用户请求且能力支持时导出，不宣称自动发布。
 
-## Boundaries
+根据用户意图和模型实际能力推荐一致的默认方案。Agent 负责逐片段分析，用户审核创作选择和例外。不要分别追问每项资产、模型、时长或参考。仅确认方案不授权付费生成；范围不变时已有授权继续有效。局部编辑、检查或只改文案的请求只完成该任务，不重新启动完整三阶段。
 
-- Handle interactive stories only. Do not route the request into the linear novel-to-video pipeline.
-- Interactive short dramas (互动短剧/互动剧) use this Skill even when the user calls the deliverable a 剧情画布. Its story tools take precedence over generic workflow or canvas-command instructions. If the four story tools are unavailable after tool discovery, report that story creation is blocked. Never fall back to ordinary text nodes, generic canvas commands or workflow edges and call that an interactive story.
-- Create and Patch are write operations. Combine related edits into one atomic Patch per preparation stage. An authorized multi-stage task may write again after new media or tool results become available; Get the latest story before each stage and validate each successful story write. Never replay an ambiguous write.
-- Do not write canvas JSON directly or replace the four story tools with generic REST tools. Production-only node parameters use the existing Freezone node-edit tools described below; they are not StoryDraft fields.
-- Missing final video does not block story creation. Start with placeholder media, then import or generate video later.
-- Validate covers the schema, fallback ordering and bounded condition-aware path analysis, including automatic cycles. Analysis may report incomplete coverage. It does not compile Ink or replace playback verification.
-- If the session has no bound project, stop and ask the user to open a project. If a write result is ambiguous, do not submit it again.
+## 职责
 
-Read [references/story-contract.md](references/story-contract.md) in full whenever constructing Create or Patch arguments.
+Agent 规划故事语义、片段时长、资产和提示词；story tools 负责故事持久化和校验；canvas tools 负责制作设置和参考；现有 runner 执行媒体生成。使用工具返回的 ID、revision 和结果，不重建这些职责，也不模拟成功结果。
 
-## Create
+## 按任务加载文档
 
-1. Converge on genre, protagonist goal, branch budget, and ending direction. Ask only for information that would materially change the story.
-2. Present a natural-language outline first: title, synopsis, protagonist and conflict, segment/choice/ending counts, key branches, variables, timed choices, and an estimated viewing-duration budget for the main paths (separate from player decision time).
-3. Obtain approval for the concrete outline before creating it on the canvas, unless the user has already approved that outline. Story creation does not authorize paid media generation.
-4. Read the current canvas revision with `dramaclaw_get_freezone_canvas`.
-5. Call `dramaclaw_create_interactive_story` once with the complete StoryDraftV2. Never replay a successful or ambiguous write. An explicit deterministic pre-write validation rejection may be corrected once under the rules below.
-6. After success, call `dramaclaw_validate_interactive_story` and report the title, size, revision, and validation summary.
+- 所有互动广告请求（包括只做方案）在提出创意、交互承诺或方案前读取 [references/interactive-ads.md](references/interactive-ads.md)，不依赖用户是否提到 CTA、长按或热点。当前上下文没有正文时先发现并读取资源，不能只凭 description 或延迟到创建时再读；读取失败时说明限制，不承诺未经核实的互动能力。
+- 构造 Create 或 Patch 参数前，完整读取 [references/story-contract.md](references/story-contract.md)。
+- 涉及选择反馈、choice loop、锚点或烘焙视频选择、长按手势、广告 CTA 时，读取 [references/interaction-options.md](references/interaction-options.md)。
+- 校验故事或解释校验结果前，读取 [references/validation.md](references/validation.md)。
+- 涉及制作方案、节点参数、资产、参考、尾帧或就绪状态时，读取 [references/production-planning.md](references/production-planning.md)。
+- 准备或修正视频提示词时，额外读取 [references/prompt-fidelity.md](references/prompt-fidelity.md)。
+- 生成、继续或重做视频前，读取 [references/generation-execution.md](references/generation-execution.md)。
+- Create 或 Patch 失败后，仅在准备执行允许的恢复操作前读取 [references/error-recovery.md](references/error-recovery.md)。
 
-If Create succeeds but validation reveals a repair that is still within the approved outline, call Get before Patch. Do not reuse the revision from the Create receipt because canvas refresh or another writer may already have advanced it.
+## 边界
 
-When the user has no preference, default to about seven story segments, two major choice points, and two endings. Prefer converging branches, use boolean flags for simple facts, avoid unnecessary numeric variables, and begin with placeholder media. `feedback_text` is optional: prefer short in-story feedback when it adds meaningful information or emotion. Avoid repetitive feedback; consecutive Choices may each have feedback when the story benefits. When a feedback Choice has variable effects, the player sees the variables' semantic labels with ↑/↓ rather than their numeric values, so choose labels such as “信任” or “危险” instead of generic scores. When present, feedback must acknowledge the behavior in-story and must not claim a new video was generated. Default every visible Choice to the bottom `overlay` presentation by omitting `interaction`; this makes the decision explicit and remains reliable before final video composition exists. Use `object_anchor` or `baked_video` only when the user explicitly requests an in-frame interaction and the target position in the final media is known. Never invent precise anchor coordinates from a placeholder or script alone. Never loop a Segment's main `media`. When motion should continue while the player chooses, put one dedicated `choice_loop` on that source Segment. A 2–4 second loop with a fixed camera and subtle ambient motion is a useful default, not a required creative format. Adapt duration and motion to the scene while keeping the loop transition stable and any clickable targets usable. All outgoing Choices share it. If its media is missing, the player freezes the main video on its tail frame.
+- 处理互动故事和互动广告；普通线性广告不因包含“广告”而触发本 Skill，不把互动请求路由到线性 novel-to-video 管线。
+- 互动短剧/互动剧即使被用户称为“剧情画布”，也使用本 Skill。四个 story tools 优先于通用 workflow 或 canvas 操作。工具发现后仍不可用时，报告故事创建受阻，不降级为普通节点或连线。
+- Create 和 Patch 是原子故事写入。每个已授权阶段开始前 Get 最新故事，每次成功写入后 Validate。不得重放成功或结果不明的写入。
+- 仅用于生产的节点参数使用现有 Freezone 节点编辑工具，不属于 StoryDraft 字段。不得通过直接 canvas JSON 或通用 REST 工具持久化故事。
+- 缺少最终视频不阻塞故事创建。先使用占位媒体，之后再导入或生成视频。
+- 会话没有绑定项目时停止并请用户打开项目。
 
-Default to a reachable ending with no outgoing Choices. Use the player’s restart control for replay; do not add a final-to-start Choice merely to offer replay. Explicitly requested narrative loops are an exception: explain that their loop segment is not an ending and preserve a reachable exit. Validate and actual playback are separate checks.
+## 创建
 
-## Edit
+1. 收敛题材、主角目标、分支预算和结局方向。只询问会实质改变故事的信息。
+2. 先给自然语言大纲：标题、梗概、主角和冲突、片段/选择/结局数量、关键分支、变量、限时选择，以及主要路径的预计观看时长；玩家选择等待时间单列。
+3. 创建到画布前取得具体大纲的批准，除非用户已经批准该大纲。故事创建不授权付费媒体生成。
+4. 用 `dramaclaw_get_freezone_canvas` 读取当前画布 revision。
+5. 用完整 StoryDraftV2 调用一次 `dramaclaw_create_interactive_story`。
+6. 成功后调用 `dramaclaw_validate_interactive_story`，报告故事标题、片段和主要选择数量，以及用户可理解的检查结果；版本号留在内部操作中。
 
-1. Confirm the story ID. If it is unknown, read the canvas, find a group node whose `data.storyGroup` is `true`, match its `data.label` or `data.displayName` to the requested title, and use its `data.interactiveStoryId`. Never use the group node's `id` as `story_id`. If multiple groups match, ask the user which story they mean.
-2. Call `dramaclaw_get_interactive_story`; treat the returned story and revision as authoritative.
-3. Apply explicitly requested edits directly when the target and scope are clear, including deletion or start changes. Ask for clarification or confirmation only when the intent is ambiguous or the operation has material consequences outside the requested scope; explain those consequences.
-4. Combine all operations for the same user intent into one `dramaclaw_patch_interactive_story` call.
-5. Validate after success and explain the result using story-facing names.
+Create 成功后若校验发现的修复仍属于已批准大纲，先 Get 再 Patch。不要复用 Create 回执中的 revision，因为画布刷新或其他写入方可能已经推进版本。
 
-`remove_segment` cascades to directly connected Choices. When removing the start segment, set a new start in the same Patch. When removing an entity referenced by a condition, update that condition in the same Patch.
+用户没有偏好时，默认约七个故事片段、两个主要选择点和两个结局。优先汇合分支，用 boolean flag 表示简单事实，并从占位媒体开始。默认使用没有出边的可达结局，由播放器的重新开始功能负责重玩。明确要求的叙事循环必须保留可达出口，循环片段本身不是结局。
 
-## Prepare video production
+## 编辑
 
-For production preparation of even one segment, including requests to write prompts,
-connect references, assess tail frames, or make clips ready to generate, first read
-[references/production-planning.md](references/production-planning.md).
-A request to plan produces a combined reviewable plan with prompt drafts; after
-approval, apply the agreed node parameters and finalize prompts from real references.
-This does not authorize video generation.
-For any prompt preparation or correction, first read
-[references/prompt-fidelity.md](references/prompt-fidelity.md).
-For an explicitly wording-only edit, preserve existing settings and use actual reference
-mentions from node detail; never treat story choice edges as media inputs. This narrow
-exception does not establish generation readiness: report any unchecked duration or
-continuity as unverified. Before saying a clip is ready or submitting generation, complete
-the per-segment readiness check in production-planning.md; prompt/reference writes alone
-are not completion evidence.
+1. 确认 story ID。未知时读取画布，查找 `data.storyGroup` 为 `true` 的分组，按 `data.label` 或 `data.displayName` 匹配，并使用 `data.interactiveStoryId`。不得把分组节点的 `id` 当作 `story_id`；多个分组匹配时请用户指定。
+2. 调用 `dramaclaw_get_interactive_story`，把返回的故事和 revision 视为权威状态。
+3. 目标和范围清楚时直接应用用户要求；只有意图含糊或操作会对请求范围外产生实质影响时才询问。优先使用明确指定或当前选中的片段；“丰富一点／润色”默认在现有片段内改写，不新增片段、连线、选择或改变时长预算。目标无法唯一确定时只询问要改哪个片段。结构扩写需先提出差异并取得确认；用户明确要求增删分支时按该范围执行。
+4. 同一用户意图的全部操作合并到一次 `dramaclaw_patch_interactive_story` 调用。
+5. 成功后 Validate，并用面向故事的名称解释结果。
 
+既有故事编辑使用 Patch，不用 Create 重建。写入前对照本次目标检查操作集合，省略不需改动的字段；仅改提示词时只更新目标片段的 `video_prompt`，保留剧情、选项、媒体和制作参数。
 
-When asked to prepare or generate story videos, Get the current story first. Keep
-`script` as narrative, use `production_notes` for the production brief, and write
-the final model-facing description into `video_prompt` through `update_segment`.
-Do not merely copy narrative into the prompt. In the brief, describe the scene,
-participating characters and their stable appearance, visible action, camera,
-dialogue/sound intent, opening/ending composition, and continuity with adjacent
-segments. Ask only about missing choices that materially affect production.
-For converging branches, use an opening that works for all incoming paths rather
-than assuming one predecessor. Describe only the current segment's visible action;
-keep conditions, flags and outcome routing out of the video prompt.
-Default to player-rendered choices, but allow requested decorative UI or baked
-choice visuals. Baked visuals require real player hotspots to become clickable;
-follow prompt-fidelity.md rather than adding a blanket UI prohibition.
-Use production-planning.md for timing, actual node settings, references and tail-frame
-readiness; use prompt-fidelity.md for narrative fidelity and prompt wording.
-Preserve existing media and branching rules. Do not prepare all prompts during
-ordinary placeholder story creation unless the user requested video preparation.
+`remove_segment` 会级联删除直接连接的 Choice。删除起点片段时，在同一个 Patch 中设置新起点。删除被条件引用的实体时，在同一个 Patch 中更新该条件。
 
-## Execution and completion
+## 制作与执行
 
-For authorized generation or resume requests, follow the execution handoff in
-[references/production-planning.md](references/production-planning.md). Submit only
-prepared story segments and preserve existing results unless regeneration was requested.
-An accepted or running request is not a completed video; do not submit another run
-merely because the first request has not finished.
+制作工作开始前先 Get 当前故事。`script` 保持剧情叙述，`production_notes` 保存制作说明，最终面向模型的描述通过 `update_segment` 写入 `video_prompt`。保留现有媒体和分支规则。普通占位故事创建期间，除非用户要求视频准备，否则不要预先准备全部提示词。
 
-## Read and Failure Handling
+制作规划或提示词准备不授权视频生成。只有制作方案获批且用户明确授权生成后才能执行。`accepted` 或 `running` 不代表视频已经完成。
 
-- Use Get before explaining an existing story. Use Validate alone for read-only validation.
-- Never replay a successful or ambiguous write. After a failed Create/Patch, stop and
-  report it unless the explicit revision-conflict recovery or deterministic pre-write
-  validation correction applies. Before any recovery attempt, read
-  [references/error-recovery.md](references/error-recovery.md) and follow its retry limits.
-- `missing_video` is a production task, not a story-creation failure.
+## 读取与失败处理
+
+- 解释已有故事前先 Get；只读校验直接使用 Validate。
+- Create 或 Patch 失败后停止并报告，除非 `error-recovery.md` 明确允许一次恢复尝试。
+- `missing_video` 是制作任务，不是故事创建失败。

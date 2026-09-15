@@ -1238,7 +1238,11 @@ async def test_synced_story_skill_loads_through_existing_mcp_resources(monkeypat
         async with ClientSession(reader, writer) as session:
             await session.initialize()
             resources = {resource.name: resource for resource in (await session.list_resources()).resources}
-            for relative in ("SKILL.md", "references/production-planning.md", "references/story-contract.md"):
+            expected = sorted(
+                path.relative_to(source).as_posix()
+                for path in source.rglob("*.md")
+            )
+            for relative in expected:
                 resource = resources[f"interactive-story/{relative}"]
                 result = await session.read_resource(resource.uri)
                 assert result.contents[0].text == (source / relative).read_text(encoding="utf-8")
