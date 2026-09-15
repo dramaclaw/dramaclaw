@@ -5060,7 +5060,10 @@ async def _record_recipe_compile_product_evidence(
     admitted_recipe_id = str((operation.get("metadata") or {}).get("recipe_id") or "")
     if admitted_recipe_id and admitted_recipe_id not in set(compiled.recipe_ids):
         raise HTTPException(409, "Recipe compilation does not match admitted operation")
-    if operation.get("status") in {"delivered", "failed", "cancelled"}:
+    if operation.get("status") == "delivered":
+        await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
+        return
+    if operation.get("status") in {"failed", "cancelled"}:
         return
     if (
         compiled.mode == "model"
@@ -5081,10 +5084,10 @@ async def _record_recipe_compile_product_evidence(
             # the actual server-produced text in the operation's immutable
             # result receipt, rather than waiting for a nonexistent task key.
             # finish_agent_product_operation atomically stores this receipt and
-            # transitions to delivered; the existing worker handles settlement.
+            # transitions to delivered; reconcile even if the worker timed out.
             if body.node_kind != "text" or not compiled.prompt.strip():
                 raise ValueError("text delivery requires a non-empty text result")
-            await asyncio.to_thread(
+            operation = await asyncio.to_thread(
                 finish_agent_product_operation,
                 project_dir=state_dir,
                 operation_id=operation_id,
@@ -5096,6 +5099,7 @@ async def _record_recipe_compile_product_evidence(
                     "content": compiled.prompt,
                 },
             )
+            await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
         return
     if compiled.prompt.strip() and compiled.mode in {
         "timeout_fallback",
@@ -5105,7 +5109,7 @@ async def _record_recipe_compile_product_evidence(
     }:
         # Recipe use is billable regardless of compilation mode. Persist the
         # usable prompt as server-owned delivery evidence, not fake model evidence.
-        await asyncio.to_thread(
+        operation = await asyncio.to_thread(
             finish_agent_product_operation,
             project_dir=state_dir,
             operation_id=operation_id,
@@ -5119,6 +5123,7 @@ async def _record_recipe_compile_product_evidence(
             },
             server_recipe_compile=True,
         )
+        await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
         return
     await asyncio.to_thread(
         finish_agent_product_operation,
@@ -14294,6 +14299,7 @@ async def get_agent_product_operation(
     )
     if operation is None:
         raise HTTPException(404, "agent product operation not found")
+    await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
     return {"ok": True, "data": operation}
 
 
@@ -14686,15 +14692,19 @@ async def create_canvas_workflow_run(
             if not isinstance(action, dict):
                 continue
             action_name = str(action.get("action") or "")
-            if action_name in {
-                "generate_text",
-                "generate_story_script",
-                "generate_image",
-                "generate_video",
-                "generate_text_video",
-                "generate_audio",
-                "generate_3gs_world",
-            } and (
+            if (
+                action_name
+                in {
+                    "generate_text",
+                    "generate_story_script",
+                    "generate_image",
+                    "generate_video",
+                    "generate_text_video",
+                    "generate_audio",
+                    "generate_3gs_world",
+                }
+                or (action_name == "generate_html" and action.get("recipe_id"))
+            ) and (
                 not action.get("recipe_id") or not action.get("generation_attempt_id")
             ):
                 raise HTTPException(
@@ -14741,7 +14751,7 @@ async def create_canvas_workflow_run(
                 "generate_text_video",
                 "generate_audio",
                 "generate_3gs_world",
-            }:
+            } and not (action_name == "generate_html" and action.get("recipe_id")):
                 continue
             node_id = str(action.get("node_id") or "")
             recipe_id = str(action.get("recipe_id") or "")

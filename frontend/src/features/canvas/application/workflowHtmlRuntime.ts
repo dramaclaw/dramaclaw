@@ -16,6 +16,12 @@ import {
 } from "./graphContentResolver";
 import { isExecutionDependencyEdge } from "../nodes/referenceOrdering";
 import { generateWorkflowText } from "./workflowRecipeRuntime";
+import { admitFreezoneRecipeResult } from '@/api/canvas';
+import {
+  bindWorkflowProductOperation,
+  clearWorkflowProductOperation,
+  workflowProductOperation,
+} from './workflowExecutionActivity';
 import {
   fetchFreezoneTextGenerateResult,
   submitFreezoneTextGenerate,
@@ -188,7 +194,7 @@ async function generateAndSave(
     : '';
   const generated = recipeId
     ? {
-        source: await generateWorkflowText({
+        source: await generateHtmlRecipeText(projectId, canvasId, recipeId, {
         nodeId,
         nodeData: data,
         nodePrompt,
@@ -226,6 +232,30 @@ async function generateAndSave(
     });
   } finally {
     if (generated.taskKey) releaseGenerationTaskOwnership(generated.taskKey);
+  }
+}
+
+/** Standalone HTML buttons share the workflow's Recipe admission and binding. */
+async function generateHtmlRecipeText(
+  projectId: string,
+  canvasId: string,
+  recipeId: string,
+  input: Parameters<typeof generateWorkflowText>[0] & { nodeId: string },
+): Promise<string> {
+  const existing = workflowProductOperation(input.nodeId);
+  if (existing) {
+    if (existing.projectId !== projectId) throw new Error('Recipe operation belongs to another project');
+    return generateWorkflowText(input);
+  }
+  const attemptId = `html-recipe:${crypto.randomUUID()}`;
+  const operation = await admitFreezoneRecipeResult(projectId, canvasId, input.nodeId, recipeId, attemptId);
+  const operationId = operation.operation_id;
+  if (!operationId) throw new Error('Recipe admission did not return an operation');
+  bindWorkflowProductOperation(input.nodeId, { projectId, operationId });
+  try {
+    return await generateWorkflowText(input);
+  } finally {
+    clearWorkflowProductOperation(input.nodeId);
   }
 }
 

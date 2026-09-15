@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiCall } from "@/api/client";
 import {
   buildProjectionFromPreset,
+  admitFreezoneRecipeResult,
   createBlankFreezoneCanvas,
   getFreezoneCanvas,
   getProjectionStatuses,
@@ -19,6 +20,19 @@ vi.mock("@/api/client", () => ({
 describe("canvas projection api", () => {
   beforeEach(() => {
     vi.mocked(apiCall).mockReset();
+  });
+
+  it('admits a standalone Recipe result using the existing product endpoint', async () => {
+    vi.mocked(apiCall).mockResolvedValueOnce({ operation_id: 'op' });
+    expect(await admitFreezoneRecipeResult('project a', 'canvas', 'html', 'recipe', 'attempt'))
+      .toEqual({ operation_id: 'op' });
+    expect(apiCall).toHaveBeenCalledWith('projects/project%20a/freezone/agent-product-operations', {
+      method: 'POST', json: {
+        product_kind: 'recipe_result', generation_session_id: 'attempt', canvas_id: 'canvas',
+        artifact_id: 'html', normalized_inputs_hash: 'attempt',
+        metadata: { recipe_id: 'recipe', generation_attempt_id: 'attempt' },
+      },
+    });
   });
 
   it("passes abort signals through canvas detail GETs", async () => {

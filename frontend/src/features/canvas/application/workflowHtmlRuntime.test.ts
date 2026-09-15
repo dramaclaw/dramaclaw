@@ -1,7 +1,9 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { executeWorkflowHtmlNode } from "./workflowHtmlRuntime";
+import { bindWorkflowProductOperation, clearWorkflowProductOperation, workflowProductOperation } from './workflowExecutionActivity';
 const mocks = vi.hoisted(() => ({
   generate: vi.fn(),
+  admit: vi.fn(),
   submitText: vi.fn(),
   awaitTask: vi.fn(),
   fetchText: vi.fn(),
@@ -13,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./workflowRecipeRuntime", () => ({
   generateWorkflowText: mocks.generate,
 }));
+vi.mock('@/api/canvas', () => ({ admitFreezoneRecipeResult: mocks.admit }));
 vi.mock("@/api/ops", () => ({
   submitFreezoneTextGenerate: mocks.submitText,
   fetchFreezoneTextGenerateResult: mocks.fetchText,
@@ -36,6 +39,9 @@ vi.mock("@/stores/canvasStore", () => ({
 }));
 beforeEach(() => {
   vi.clearAllMocks();
+  clearWorkflowProductOperation('page');
+  mocks.admit.mockReset();
+  mocks.admit.mockResolvedValue({ operation_id: 'html-recipe-operation' });
   mocks.state.updateNodeData.mockReset();
   mocks.state.updateNodeData.mockImplementation((nodeId: string, patch: Record<string, unknown>) => {
     const node = mocks.state.nodes.find((item) => item.id === nodeId);
@@ -81,6 +87,41 @@ it("uses actual media and saves source independently from node data", async () =
   expect(mocks.state.updateNodeData.mock.calls[0][1]).not.toHaveProperty(
     "html",
   );
+});
+it('admits standalone Recipe HTML before generation and clears its binding', async () => {
+  mocks.generate.mockImplementationOnce(async () => {
+    expect(workflowProductOperation('page')).toEqual({ projectId: 'p', operationId: 'html-recipe-operation' });
+    return '<!doctype html><html><body>ok</body></html>';
+  });
+  await executeWorkflowHtmlNode('page', 'p', 'c');
+  expect(mocks.admit).toHaveBeenCalledWith('p', 'c', 'page', 'text', expect.stringMatching(/^html-recipe:/));
+  expect(workflowProductOperation('page')).toBeUndefined();
+});
+it('reuses a workflow admission without creating a second charge', async () => {
+  bindWorkflowProductOperation('page', { projectId: 'p', operationId: 'workflow-op' });
+  await executeWorkflowHtmlNode('page', 'p', 'c');
+  expect(mocks.admit).not.toHaveBeenCalled();
+  expect(workflowProductOperation('page')?.operationId).toBe('workflow-op');
+});
+it('does not generate when standalone admission fails', async () => {
+  mocks.admit.mockRejectedValueOnce(new Error('insufficient credit'));
+  await expect(executeWorkflowHtmlNode('page', 'p', 'c')).rejects.toThrow('insufficient credit');
+  expect(mocks.generate).not.toHaveBeenCalled();
+  expect(mocks.create).not.toHaveBeenCalled();
+  expect(workflowProductOperation('page')).toBeUndefined();
+});
+it('clears standalone admission after a generation failure', async () => {
+  mocks.generate.mockRejectedValueOnce(new Error('compiler failed'));
+  await expect(executeWorkflowHtmlNode('page', 'p', 'c')).rejects.toThrow('compiler failed');
+  expect(workflowProductOperation('page')).toBeUndefined();
+});
+it('deduplicates concurrent standalone submissions but admits regeneration separately', async () => {
+  mocks.save.mockResolvedValueOnce({ id: 'artifact', version: 2, title: 'Page' });
+  await Promise.all([executeWorkflowHtmlNode('page', 'p', 'c'), executeWorkflowHtmlNode('page', 'p', 'c')]);
+  expect(mocks.admit).toHaveBeenCalledTimes(1);
+  await executeWorkflowHtmlNode('page', 'p', 'c');
+  expect(mocks.admit).toHaveBeenCalledTimes(2);
+  expect(mocks.admit.mock.calls[0][4]).not.toBe(mocks.admit.mock.calls[1][4]);
 });
 it("refuses missing generated outputs even when a preview/reference exists", async () => {
   mocks.state.nodes[1].data = { referenceImageUrl: "reference.png" };
