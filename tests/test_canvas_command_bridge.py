@@ -377,6 +377,55 @@ def test_sqlite_bridge_prunes_expired_terminal_results(tmp_path) -> None:
     assert canvas_command_bridge.bridge_status_counts(bridge_dir=bridge_dir) == {}
 
 
+def test_sqlite_bridge_keeps_workflow_approval_alive_until_browser_confirmation(
+    tmp_path, monkeypatch
+) -> None:
+    bridge_dir = tmp_path / "bridge"
+    clock = [1000.0]
+    monkeypatch.setattr(canvas_command_bridge.time, "time", lambda: clock[0])
+    commands = [{"type": "run_workflow", "scope": "canvas"}]
+    canvas_command_bridge.put_pending_canvas_command(
+        key="mixed-workflow",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+        envelope={"commands": commands},
+        bridge_dir=bridge_dir,
+    )
+    assert canvas_command_bridge.mark_bridge_message_delivered(
+        "mixed-workflow", consumer_id="browser", bridge_dir=bridge_dir
+    )
+    # A user taking almost all of the card's five-minute window must still be
+    # able to confirm the original run, rather than spawn a second approval.
+    clock[0] += 299
+    assert (
+        canvas_command_bridge.wait_canvas_command_result(
+            "mixed-workflow", timeout_seconds=0, bridge_dir=bridge_dir
+        )
+        is None
+    )
+    receipt = canvas_command_bridge.resolve_canvas_command(
+        "mixed-workflow",
+        {"ok": True, "applied": True, "canvas_apply_status": "accepted"},
+        bridge_dir=bridge_dir,
+    )
+    # Media generation can outlive transport expiry; accepted requests must
+    # replay the same receipt instead of becoming deliverable again.
+    clock[0] += 1000
+    assert (
+        canvas_command_bridge.wait_canvas_command_result(
+            "mixed-workflow", timeout_seconds=0, bridge_dir=bridge_dir
+        )
+        == receipt
+    )
+    assert (
+        canvas_command_bridge.list_pending_bridge_messages(
+            project_id="project-a", canvas_id="canvas-a", bridge_dir=bridge_dir
+        )
+        == []
+    )
+
+
 def test_sqlite_bridge_expires_abandoned_pending_message(tmp_path) -> None:
     bridge_dir = tmp_path / "bridge"
     commands = [{"type": "create_node", "node_type": "imageGenNode"}]

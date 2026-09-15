@@ -24,7 +24,12 @@ from novelvideo.sqlite_pragmas import configure_sqlite_connection
 BRIDGE_RESULT_TTL_SECONDS = 24 * 60 * 60
 BRIDGE_DELIVERY_LEASE_SECONDS = 15
 BRIDGE_PENDING_TTL_SECONDS = {
-    "canvas_command": 75,
+    # Commands include a browser approval (up to five minutes), validation,
+    # and receipt delivery. A 75-second transport TTL expired a live approval
+    # before the user confirmed it, causing the agent to submit a second run.
+    # Keep this aligned with the default tool wait, not generation duration:
+    # long-running actions return an accepted receipt and leave this inbox.
+    "canvas_command": 10 * 60,
     "canvas_context": 45,
     "skill_studio_event": 10 * 60,
     "clarification_event": 10 * 60,
