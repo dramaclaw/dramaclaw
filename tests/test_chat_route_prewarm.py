@@ -798,6 +798,10 @@ async def test_pending_canvas_command_poll_only_returns_external_mcp_commands(
 async def test_pending_canvas_command_json_mirror_cannot_bypass_sqlite_lease(
     monkeypatch, tmp_path
 ) -> None:
+    async def project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", project_state)
     bridge_dir = tmp_path / "bridge"
     monkeypatch.setattr(
         chat_route,
@@ -842,6 +846,10 @@ async def test_pending_canvas_command_json_mirror_cannot_bypass_sqlite_lease(
 async def test_expired_canvas_command_json_mirror_is_not_redelivered(
     monkeypatch, tmp_path
 ) -> None:
+    async def project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", project_state)
     bridge_dir = tmp_path / "bridge"
     monkeypatch.setattr(
         chat_route,
