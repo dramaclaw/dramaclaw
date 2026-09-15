@@ -1,4 +1,5 @@
 import sqlite3
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -871,6 +872,97 @@ async def test_expired_canvas_command_json_mirror_is_not_redelivered(
     )
 
     assert result["data"]["frames"] == []
+    assert not pending_path.exists()
+
+
+@pytest.mark.parametrize(
+    ("key", "payload", "loader"),
+    [
+        (
+            "legacy-context",
+            {
+                "kind": "canvas_context",
+                "requests": [{"type": "get_selected_nodes"}],
+                "envelope": {
+                    "schema_version": "canvas_context_request.v1",
+                    "canvas_id": "canvas-a",
+                    "requests": [{"type": "get_selected_nodes"}],
+                },
+            },
+            chat_route._load_pending_canvas_context,
+        ),
+        (
+            "legacy-skill-studio",
+            {
+                "kind": "skill_studio_event",
+                "event": {
+                    "type": "skill_studio.questions",
+                    "skill_studio_session_id": "skill-studio-a",
+                },
+            },
+            chat_route._load_pending_skill_studio_event,
+        ),
+        (
+            "legacy-clarification",
+            {
+                "kind": "clarification_event",
+                "event": {
+                    "type": "assistant.clarification.request",
+                    "clarification_id": "clarification-a",
+                },
+            },
+            chat_route._load_pending_clarification_event,
+        ),
+    ],
+)
+def test_legacy_bridge_filter_accepts_each_supported_message_type(
+    tmp_path, key, payload, loader
+) -> None:
+    bridge_dir = tmp_path / "bridge"
+    bridge_dir.mkdir()
+    pending_path = bridge_dir / f"{key}.pending.json"
+    canvas_command_bridge._write_json(
+        pending_path,
+        {
+            "key": key,
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "created_at": time.time(),
+            **payload,
+        },
+    )
+
+    assert loader(pending_path) is not None
+    assert chat_route._is_unmigrated_legacy_bridge_file(
+        bridge_dir=bridge_dir,
+        key=key,
+    )
+
+
+def test_legacy_bridge_filter_uses_raw_message_kind_ttl(tmp_path) -> None:
+    bridge_dir = tmp_path / "bridge"
+    bridge_dir.mkdir()
+    key = "expired-legacy-context"
+    pending_path = bridge_dir / f"{key}.pending.json"
+    canvas_command_bridge._write_json(
+        pending_path,
+        {
+            "key": key,
+            "kind": "canvas_context",
+            "created_at": time.time() - 46,
+            "requests": [{"type": "get_selected_nodes"}],
+            "envelope": {
+                "schema_version": "canvas_context_request.v1",
+                "canvas_id": "canvas-a",
+                "requests": [{"type": "get_selected_nodes"}],
+            },
+        },
+    )
+
+    assert not chat_route._is_unmigrated_legacy_bridge_file(
+        bridge_dir=bridge_dir,
+        key=key,
+    )
     assert not pending_path.exists()
 
 

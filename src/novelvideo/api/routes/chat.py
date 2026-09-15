@@ -2304,13 +2304,17 @@ def _is_unmigrated_legacy_bridge_file(*, bridge_dir: Any, key: str) -> bool:
         if bridge_message_exists(key, bridge_dir=bridge_dir):
             return False
         pending_path = bridge_dir / f"{key}.pending.json"
-        pending = _load_pending_canvas_command(pending_path)
-        if pending is None:
+        payload = json.loads(pending_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
             return False
-        kind = str(pending.get("kind") or "canvas_command")
+        # This guard is shared by all legacy bridge watchers. Read the raw
+        # payload here so canvas context (requests), Skill Studio (event), and
+        # clarification (event) mirrors are not rejected by the stricter
+        # canvas-command parser before their own watcher can validate them.
+        kind = str(payload.get("kind") or "canvas_command")
         ttl = BRIDGE_PENDING_TTL_SECONDS.get(kind, 10 * 60)
         try:
-            created_at = float(pending.get("created_at"))
+            created_at = float(payload.get("created_at"))
         except (TypeError, ValueError):
             created_at = pending_path.stat().st_mtime
         if created_at + ttl <= time.time():
