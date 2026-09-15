@@ -629,9 +629,11 @@ function videoGenModeSchema(node: CanvasNode): CanvasEditableFieldSchema {
   const snapshot = getFreezoneVideoModelsSnapshot();
   const modelId = (node.data as { model?: unknown }).model
     ?? (getNodeDefinition(CANVAS_NODE_TYPES.video).createDefaultData() as { model?: unknown }).model;
-  const model = typeof modelId === "string" && modelId
+  // Match the generation form when a remembered/persisted model is unavailable.
+  // Explicit invalid model fields are still rejected by model schema validation.
+  const model = (typeof modelId === "string" && modelId
     ? snapshot.models.find((item) => item.id === modelId)
-    : snapshot.models[0];
+    : undefined) ?? snapshot.models[0];
   const options = model
     ? VIDEO_GEN_MODE_OPTIONS.filter((mode) => isVideoModeSupportedByModel(mode, model))
     : [];

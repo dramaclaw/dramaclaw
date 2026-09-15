@@ -865,6 +865,57 @@ describe("node-specific mode command validation", () => {
       .toEqual(["textToVideo", "firstFrame"]);
   });
 
+  it.each([null, "retired-model"])("falls back to the first live model for missing default/remembered model %s", (remembered) => {
+    catalog();
+    vi.spyOn(lastVideoModel, "readLastVideoModel").mockReturnValue(remembered);
+    const target = node({ id: "v", type: CANVAS_NODE_TYPES.video, data: {} });
+    expect(buildCanvasNodeActionCatalog(target).editable_schema.genMode.options)
+      .toEqual(["textToVideo"]);
+    const result = validateCanvasChatCommandEnvelopes([{
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: [{ type: "create_node", node_type: CANVAS_NODE_TYPES.video,
+        client_id: "v", data: { genMode: "textToVideo" } }],
+    }], [], []);
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+
+  it("generates and updates modes on a persisted retired model using live fallback capabilities", () => {
+    catalog();
+    const target = node({ id: "v", type: CANVAS_NODE_TYPES.video,
+      data: { model: "retired-model", genMode: "textToVideo" } });
+    const result = validateCanvasChatCommandEnvelopes([{
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: [
+        { type: "update_node_data", node_id: "v", data: { genMode: "textToVideo" } },
+        { type: "run_node_action", node_id: "v", action: "generate_video" },
+      ],
+    }], [target], []);
+    expect(result).toEqual({ ok: true, issues: [] });
+    const invalid = validateCanvasChatCommandEnvelopes([{
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: [{ type: "update_node_data", node_id: "v", data: { genMode: "firstFrame" } }],
+    }], [target], []);
+    expect(invalid.ok).toBe(false);
+    expect(invalid.issues[0]?.message).toContain("field genMode");
+  });
+
+  it("still rejects explicit retired model fields on create and update", () => {
+    catalog();
+    const target = node({ id: "v", type: CANVAS_NODE_TYPES.video,
+      data: { model: "text-only", genMode: "textToVideo" } });
+    for (const command of [
+      { type: "create_node", node_type: CANVAS_NODE_TYPES.video,
+        data: { model: "retired-model", genMode: "textToVideo" } },
+      { type: "update_node_data", node_id: "v", data: { model: "retired-model" } },
+    ] as CanvasChatCommandEnvelope["commands"]) {
+      const result = validateCanvasChatCommandEnvelopes([{
+        schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION, commands: [command],
+      }], [target], []);
+      expect(result.ok).toBe(false);
+      expect(result.issues.some((issue) => issue.message.includes("field model"))).toBe(true);
+    }
+  });
+
   it.each([undefined, "v"])("inherits the factory model for create_node with alias %s", (client_id) => {
     catalog();
     vi.spyOn(lastVideoModel, "readLastVideoModel").mockReturnValue("first-only");
