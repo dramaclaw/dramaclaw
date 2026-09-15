@@ -13,7 +13,11 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
   Never invent `project://` paths. Use a canvas summary already supplied by the host; if current
   canvas data must be refreshed, call `freezone_get_canvas_ontology` instead of inventing a
   `canvas://` resource. MCP clients must use only resource URIs returned by `resources/list` or
-  `resources/templates/list`.
+  `resources/templates/list`. The Workflow MCP intentionally returns an empty static
+  `resources/list`; this is supported and does not mean the catalog is unavailable.
+  Discover accessible Skill/Recipe IDs with `workflow_catalog_search`, then use the
+  advertised templates for resource reads. Do not enumerate or guess another user's
+  private catalog IDs.
 - The Skill package/server display name does not determine a host's MCP registration key. Use the
   exact `server` returned by the host. In DramaClaw's Codex adapter, filesystem-backed Skill files
   are read from `dramaclaw`; workflow catalog resources use `dramaclaw_workflows` (underscore).

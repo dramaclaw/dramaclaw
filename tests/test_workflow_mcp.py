@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
+from pathlib import Path
 
 import pytest
 from jsonschema import Draft202012Validator, ValidationError
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+from mcp.shared.exceptions import McpError
 
 from novelvideo.chat import workflow_mcp
 from novelvideo.freezone.agent_workflows import registry
@@ -17,6 +23,77 @@ from novelvideo.freezone.agent_workflows.graph import (
 def _result_payload(result):
     content = result.content if hasattr(result, "content") else result
     return json.loads(content[0].text)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("username", ["alice", "bob"])
+async def test_workflow_resources_real_stdio_protocol_and_private_isolation(
+    tmp_path, username
+):
+    root = Path(__file__).resolve().parents[1]
+    output = tmp_path / "output"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    builtin = root / "src/novelvideo/freezone/agent_catalog/builtins"
+    for user in ("alice", "bob"):
+        for kind, source in (
+            ("skills", "text-to-image-video"),
+            ("recipes", "general-image"),
+        ):
+            folder = output / user / "_account/freezone/agent_config" / kind
+            folder.mkdir(parents=True)
+            item = json.loads((builtin / kind / f"{source}.json").read_text())
+            item.update(id=f"private-{user}", name=f"{user} private")
+            (folder / f"private-{user}.json").write_text(json.dumps(item))
+    parameters = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "novelvideo.chat.workflow_mcp"],
+        cwd=str(workspace),
+        env={
+            **os.environ,
+            "PYTHONPATH": str(root / "src"),
+            "ST_EDITION": "ce",
+            "DRAMACLAW_USERNAME": username,
+            "NOVELVIDEO_OUTPUT_DIR": str(output),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+    )
+    async with stdio_client(parameters) as (reader, writer):
+        async with ClientSession(reader, writer) as session:
+            initialized = await session.initialize()
+            assert initialized.capabilities.resources is not None
+            assert initialized.capabilities.resources.subscribe is False
+            assert initialized.capabilities.resources.listChanged is False
+            listed = await session.list_resources()
+            assert listed.resources == []
+            assert listed.nextCursor is None
+            templates = await session.list_resource_templates()
+            assert len(templates.resourceTemplates) == 3
+            assert len((await session.list_tools()).tools) == 6
+            for kind in ("skills", "recipes"):
+                search = await session.call_tool(
+                    "workflow_catalog_search", {"kind": kind, "query": "private"}
+                )
+                items = _result_payload(search)["items"]
+                assert {item["id"] for item in items} == {f"private-{username}"}
+                result = await session.read_resource(
+                    f"dramaclaw-workflow://{kind}/private-{username}"
+                )
+                payload = json.loads(result.contents[0].text)
+                item = payload["skill" if kind == "skills" else "recipe"]
+                assert item["name"] == f"{username} private"
+                peer = "bob" if username == "alice" else "alice"
+                with pytest.raises(McpError):
+                    await session.read_resource(
+                        f"dramaclaw-workflow://{kind}/private-{peer}"
+                    )
+            reference = await session.read_resource(
+                "dramaclaw-workflow://skills/short-drama-quick/references/custom-topology.md"
+            )
+            assert (
+                json.loads(reference.contents[0].text)["status"]
+                == "workflow_reference_ready"
+            )
 
 
 @pytest.mark.asyncio
