@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.responses import FileResponse, JSONResponse
 
 from novelvideo.api.auth import get_api_user, require_scope
+from novelvideo.api.upload_workers import run_asset_upload_operation
 from novelvideo.api.deps import (
     get_user_base_dir,
     get_state_dir,
@@ -548,41 +549,50 @@ def _register_uploaded_pool_image(
     from novelvideo.generators.pool_indexer import (
         add_cell_with_dedup,
         build_pool_index,
-        load_pool_index,
-        save_pool_index,
+        _state_pool_index_path,
+        _load_pool_index_for_update,
+        _save_pool_index_unlocked,
+        index_file_lock,
     )
 
     grids_dir = project_dir / "grids" / f"ep{episode_num:03d}"
-    pool = load_pool_index(grids_dir) or build_pool_index(grids_dir, episode_num)
-    upload_dir = grids_dir / image_type
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    cell_path = upload_dir / f"beat_{beat_num:02d}_t{timestamp}.png"
-    image.save(cell_path, format="PNG")
+    with index_file_lock(_state_pool_index_path(grids_dir)):
+        index_path, pool = _load_pool_index_for_update(grids_dir)
+        pool = pool or build_pool_index(grids_dir, episode_num)
+        upload_dir = grids_dir / image_type
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        cell_path = upload_dir / f"beat_{beat_num:02d}_t{timestamp}.png"
+        canonical_dir = project_dir / (
+            "sketches" if image_type == "sketch" else "frames"
+        ) / f"ep{episode_num:03d}"
+        canonical_dir.mkdir(parents=True, exist_ok=True)
+        image.save(canonical_dir / f"beat_{beat_num:02d}.png", format="PNG")
+        image.save(cell_path, format="PNG")
 
-    pool_image = add_cell_with_dedup(
-        pool,
-        cell_path,
-        grids_dir,
-        beat_num,
-        timestamp,
-        img_type=image_type,
-        mode="upload",
-        grid_index=0,
-        cell_index=0,
-        grid_path="",
-        row=0,
-        col=0,
-    )
-    if pool_image is None:
-        pool_id = f"beat_{beat_num:02d}_t{timestamp}_{image_type}"
-        assignment_path = None
-    else:
-        pool_id = pool_image.id
-        assignment_path = pool_image.cell_path
-    if image_type != "sketch" and assignment_path:
-        pool.beat_assignments[str(beat_num)] = assignment_path
-    save_pool_index(pool, grids_dir)
+        pool_image = add_cell_with_dedup(
+            pool,
+            cell_path,
+            grids_dir,
+            beat_num,
+            timestamp,
+            img_type=image_type,
+            mode="upload",
+            grid_index=0,
+            cell_index=0,
+            grid_path="",
+            row=0,
+            col=0,
+        )
+        if pool_image is None:
+            pool_id = f"beat_{beat_num:02d}_t{timestamp}_{image_type}"
+            assignment_path = None
+        else:
+            pool_id = pool_image.id
+            assignment_path = pool_image.cell_path
+        if image_type != "sketch" and assignment_path:
+            pool.beat_assignments[str(beat_num)] = assignment_path
+        _save_pool_index_unlocked(pool, index_path)
     return pool_id
 
 
@@ -5271,11 +5281,11 @@ async def select_pool_image(
         compute_beat_content_hash,
         is_pool_image_stale,
         load_pool_index,
-        save_pool_index,
+        assign_beat_image,
     )
 
     grids_dir = project_dir / "grids" / f"ep{episode_num:03d}"
-    pool = load_pool_index(grids_dir)
+    pool = await run_asset_upload_operation(load_pool_index, grids_dir)
     if not pool:
         return {"ok": False, "error": "No pool index found. Generate grids first."}
 
@@ -5335,18 +5345,16 @@ async def select_pool_image(
         )
     else:
         frames_dir = project_dir / "frames" / f"ep{episode_num:03d}"
-        frames_dir.mkdir(parents=True, exist_ok=True)
         dest = frames_dir / f"beat_{beat_num:02d}.png"
-        shutil.copy2(str(cell_full), str(dest))
-        pool.beat_assignments[str(beat_num)] = cell_path
+        await run_asset_upload_operation(
+            assign_beat_image, grids_dir, beat_num, cell_path, image_type
+        )
         rel = f"frames/ep{episode_num:03d}/beat_{beat_num:02d}.png"
         data["frame_url"] = make_static_url_for_context(
             resolved.ctx,
             rel,
             local_path=dest,
         )
-
-    save_pool_index(pool, grids_dir)
 
     return {
         "ok": True,
@@ -5371,11 +5379,10 @@ async def upload_beat_sketch(
         return {"ok": False, "error": str(exc)}
 
     sketches_dir = project_dir / "sketches" / f"ep{episode_num:03d}"
-    sketches_dir.mkdir(parents=True, exist_ok=True)
     sketch_path = sketches_dir / f"beat_{beat_num:02d}.png"
-    image.save(sketch_path, format="PNG")
 
-    pool_id = _register_uploaded_pool_image(
+    pool_id = await run_asset_upload_operation(
+        _register_uploaded_pool_image,
         project_dir=project_dir,
         episode_num=episode_num,
         beat_num=beat_num,
@@ -5415,11 +5422,10 @@ async def upload_beat_render(
         return {"ok": False, "error": str(exc)}
 
     frames_dir = project_dir / "frames" / f"ep{episode_num:03d}"
-    frames_dir.mkdir(parents=True, exist_ok=True)
     frame_path = frames_dir / f"beat_{beat_num:02d}.png"
-    image.save(frame_path, format="PNG")
 
-    pool_id = _register_uploaded_pool_image(
+    pool_id = await run_asset_upload_operation(
+        _register_uploaded_pool_image,
         project_dir=project_dir,
         episode_num=episode_num,
         beat_num=beat_num,
@@ -5624,48 +5630,29 @@ async def upload_grid(
     if suffix == "jpeg":
         suffix = "jpg"
 
-    from datetime import datetime
-    from novelvideo.generators.pool_indexer import (
-        build_pool_index,
-        load_pool_index,
-        register_grid_entry,
-        save_pool_index,
+    from novelvideo.api.upload_workers import (
+        asset_resource_lock,
+        run_asset_upload_operation,
     )
+    from novelvideo.generators.pool_indexer import persist_uploaded_grid
 
     grids_dir = project_dir / "grids" / f"ep{episode_num:03d}"
-    upload_dir = grids_dir / "custom"
-    upload_dir.mkdir(parents=True, exist_ok=True)
     filename = _uploaded_grid_filename(grid_type, mode_key, parsed_beats, suffix)
-    grid_path = upload_dir / filename
-    grid_path.write_bytes(content)
-    grid_rel = grid_path.relative_to(grids_dir).as_posix()
-
-    pool = load_pool_index(grids_dir) or build_pool_index(grids_dir, episode_num)
-    entry = pool.find_grid(grid_type, mode_key, parsed_beats) if parsed_beats else None
-    if entry is None:
-        entry = register_grid_entry(
-            pool=pool,
-            grid_type=grid_type,
-            mode_key=mode_key,
-            beat_nums=parsed_beats,
-            preset="custom",
-            grid_path=grid_rel,
-            prompt_path="",
+    # All scopes in this episode share the same index. Keep the async lock until
+    # the worker has committed or rolled back, including repeated cancellation.
+    async with asset_resource_lock(("grid-upload", str(grids_dir))):
+        grid_path = await run_asset_upload_operation(
+            persist_uploaded_grid,
+            grids_dir,
+            episode_num,
+            grid_index,
+            grid_type,
+            mode_key,
+            parsed_beats,
+            filename,
+            content,
         )
-    else:
-        entry.grid_path = grid_rel
-        entry.preset = "custom"
-        entry.generated_at = datetime.now()
-
-    for image in pool.images:
-        if image.type != grid_type or image.grid_index != grid_index:
-            continue
-        if parsed_beats and image.original_beat not in parsed_beats:
-            continue
-        image.grid_path = grid_rel
-        image.mode = mode_key
-
-    save_pool_index(pool, grids_dir)
+    grid_rel = grid_path.relative_to(grids_dir).as_posix()
 
     return {
         "ok": True,
