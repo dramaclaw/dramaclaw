@@ -1,6 +1,6 @@
 """Generated from schemas/workflow/v1/stable-contract.json; do not edit."""
 
-SOURCE_SHA256 = "4e285a455ea3ac91711cd79f799650424d48181ce083e1cd6859e084d096fff5"
+SOURCE_SHA256 = "22333a008ac8ec1d7aa427900daeb50354852af5e2789303840fd716b64b63fc"
 WORKFLOW_CONTRACT_SCHEMA_VERSION = "freezone_workflow_contract.v1"
 WORKFLOW_PLAN_SCHEMA_VERSION = "freezone_workflow_plan.v1"
 WORKFLOW_INTENT_SCHEMA_VERSION = "freezone_workflow_intent.v1"
@@ -11,6 +11,7 @@ WORKFLOW_NODE_TYPES = [
     "imageGenNode",
     "videoNode",
     "audioNode",
+    "htmlArtifactNode",
     "videoComposeNode",
 ]
 AGENT_CREATABLE_NODE_TYPES = [
@@ -25,6 +26,7 @@ AGENT_CREATABLE_NODE_TYPES = [
     "pano360ViewerNode",
     "threeDWorldNode",
     "skillNode",
+    "htmlArtifactNode",
 ]
 WORKFLOW_LINK_TYPES = [
     "context_for",

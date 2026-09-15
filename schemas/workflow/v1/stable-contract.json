@@ -9,6 +9,7 @@
     "imageGenNode",
     "videoNode",
     "audioNode",
+    "htmlArtifactNode",
     "videoComposeNode"
   ],
   "agent_creatable_node_types": [
@@ -22,7 +23,8 @@
     "scriptNode",
     "pano360ViewerNode",
     "threeDWorldNode",
-    "skillNode"
+    "skillNode",
+    "htmlArtifactNode"
   ],
   "link_types": [
     "context_for",
