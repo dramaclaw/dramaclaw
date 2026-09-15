@@ -265,6 +265,17 @@ def _read_skill_reference(skill_id: Any, reference: Any) -> dict[str, Any]:
     }
 
 
+@SERVER.list_resources()
+async def list_resources() -> list[types.Resource]:
+    """Advertise the resource protocol without enumerating private catalogs.
+
+    Catalog items are discovered through scoped search and read via templates.
+    Registering this standard method also lets the SDK declare resources during
+    initialization; a template-only server still needs a valid resources/list.
+    """
+    return []
+
+
 @SERVER.list_resource_templates()
 async def list_resource_templates() -> list[types.ResourceTemplate]:
     """Expose Skills and Recipes through standard parameterized MCP resources."""
