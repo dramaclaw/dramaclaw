@@ -7,7 +7,7 @@ import {
   type CanvasEdge,
   type CanvasNodeType,
 } from "@/features/canvas/domain/canvasNodes";
-import { getDownstreamSpawnTypes } from "@/features/canvas/domain/nodeRegistry";
+import { getDownstreamSpawnTypes, getNodeDefinition } from "@/features/canvas/domain/nodeRegistry";
 import {
   isPresetManagedNode,
   isSystemManagedNodeData,
@@ -627,7 +627,8 @@ function videoDurationSchema(node: CanvasNode): CanvasEditableFieldSchema {
 
 function videoGenModeSchema(node: CanvasNode): CanvasEditableFieldSchema {
   const snapshot = getFreezoneVideoModelsSnapshot();
-  const modelId = (node.data as { model?: unknown }).model;
+  const modelId = (node.data as { model?: unknown }).model
+    ?? (getNodeDefinition(CANVAS_NODE_TYPES.video).createDefaultData() as { model?: unknown }).model;
   const model = typeof modelId === "string" && modelId
     ? snapshot.models.find((item) => item.id === modelId)
     : snapshot.models[0];

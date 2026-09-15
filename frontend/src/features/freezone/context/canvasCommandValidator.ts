@@ -9,7 +9,7 @@ import {
   VIDEO_UPSCALE_DENOISE_OPTIONS,
   VIDEO_UPSCALE_RESOLUTIONS,
 } from "@/features/canvas/application/videoUpscale";
-import { getDownstreamSpawnTypes, nodeHasSourceHandle } from "@/features/canvas/domain/nodeRegistry";
+import { getDownstreamSpawnTypes, getNodeDefinition, nodeHasSourceHandle } from "@/features/canvas/domain/nodeRegistry";
 import { buildCanvasNodeActionCatalog } from "@/features/freezone/context/canvasActionCatalog";
 import { isAgentExecutableNodeAction } from "@/features/freezone/canvasNodeActionCatalog";
 import {
@@ -80,7 +80,7 @@ function makeVirtualNode(command: {
     id: command.client_id,
     type: command.node_type,
     position: { x: 0, y: 0 },
-    data: command.data ?? {},
+    data: { ...getNodeDefinition(command.node_type).createDefaultData(), ...command.data },
   } as CanvasNode;
 }
 
@@ -238,7 +238,7 @@ export function validateCanvasChatCommandEnvelopes(
               id: `__validate__:${command.node_type}`,
               type: command.node_type,
               position: { x: 0, y: 0 },
-              data,
+              data: { ...getNodeDefinition(command.node_type).createDefaultData(), ...data },
             } as CanvasNode),
             data,
           );
@@ -290,7 +290,7 @@ export function validateCanvasChatCommandEnvelopes(
                 id: command.client_id ?? `__validate__:${nodeType}`,
                 type: nodeType,
                 position: { x: 0, y: 0 },
-                data,
+                data: { ...getNodeDefinition(nodeType).createDefaultData(), ...data },
               } as CanvasNode,
               data,
             );

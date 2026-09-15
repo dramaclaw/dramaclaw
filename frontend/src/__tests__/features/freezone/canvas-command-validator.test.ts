@@ -1,4 +1,5 @@
 import * as videoModels from "@/features/canvas/hooks/useFreezoneVideoModels";
+import * as lastVideoModel from "@/features/canvas/domain/lastVideoModel";
 import i18next from "i18next";
 import { buildCanvasNodeActionCatalog } from "@/features/freezone/canvasNodeActionCatalog";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -856,6 +857,50 @@ describe("node-specific mode command validation", () => {
       .toEqual(["textToVideo", "firstFrame"]);
   });
 
+  it("advertises the remembered model's modes when model is omitted", () => {
+    catalog();
+    vi.spyOn(lastVideoModel, "readLastVideoModel").mockReturnValue("first-only");
+    const target = node({ id: "v", type: CANVAS_NODE_TYPES.video, data: {} });
+    expect(buildCanvasNodeActionCatalog(target).editable_schema.genMode.options)
+      .toEqual(["textToVideo", "firstFrame"]);
+  });
+
+  it.each([undefined, "v"])("inherits the factory model for create_node with alias %s", (client_id) => {
+    catalog();
+    vi.spyOn(lastVideoModel, "readLastVideoModel").mockReturnValue("first-only");
+    const result = validateCanvasChatCommandEnvelopes([{
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: [{ type: "create_node", node_type: CANVAS_NODE_TYPES.video,
+        client_id, data: { genMode: "firstFrame" } }],
+    }], [], []);
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+
+  it.each([undefined, "v"])("inherits the factory model for add_next_node with alias %s", (client_id) => {
+    catalog();
+    vi.spyOn(lastVideoModel, "readLastVideoModel").mockReturnValue("first-only");
+    const source = node({ id: "source", type: CANVAS_NODE_TYPES.textAnnotation });
+    const result = validateCanvasChatCommandEnvelopes([{
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: [{ type: "add_next_node", source_node_id: "source", node_type: CANVAS_NODE_TYPES.video,
+        client_id, data: { genMode: "firstFrame" } }],
+    }], [source], []);
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+
+  it("preserves inherited model defaults for later commands in the batch", () => {
+    catalog();
+    vi.spyOn(lastVideoModel, "readLastVideoModel").mockReturnValue("first-only");
+    const result = validateCanvasChatCommandEnvelopes([{
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: [
+        { type: "create_node", node_type: CANVAS_NODE_TYPES.video, client_id: "v" },
+        { type: "update_node_data", node_id: "v", data: { genMode: "firstFrame" } },
+      ],
+    }], [], []);
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+
   it("resolves mode labels at query time so language changes are reflected", () => {
     catalog();
     const target = node({ id: "v", type: CANVAS_NODE_TYPES.video, data: { model: "first-only" } });
@@ -870,6 +915,7 @@ describe("node-specific mode command validation", () => {
 
   it("rejects an AI-created imageToVideo mode for a text-only model", () => {
     catalog();
+    vi.spyOn(lastVideoModel, "readLastVideoModel").mockReturnValue("first-only");
     const result = validateCanvasChatCommandEnvelopes([{
       schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
       commands: [{ type: "create_node", node_type: CANVAS_NODE_TYPES.video,
