@@ -4476,6 +4476,8 @@
         "autoPlayShort": "自动播放",
         "playbackRate": "播放速度 {{value}} 倍",
         "playCurrent": "播放当前片段",
+        "pauseCurrent": "暂停当前片段",
+        "seek": "播放进度",
         "editStructure": "编辑结构",
         "noSelection": "选择一个故事片段"
       },

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Play } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Pause, Play } from 'lucide-react';
 import { useStoryRuntimeStore } from '@/stores/storyRuntimeStore';
 import { useChoicePointMachine } from '@/components/canvas/useChoicePointMachine';
 import { normalizeStoryChoiceInteraction, type StoryChoiceInteraction, type StoryChoiceTransition, type StoryStateChange } from './storyTypes';
@@ -10,6 +10,7 @@ import { emitStoryEvent, safeCtaUrl } from './storyEvents';
 
 /** 选择确认后给玩家阅读剧情反馈的停留时间；不会改变当前或后续视频资源。 */
 export const STORY_OUTCOME_FEEDBACK_MS = 1500;
+const PLAYER_CONTROLS_HIDE_MS = 1500;
 
 interface OutcomeFeedback {
   text?: string;
@@ -30,6 +31,17 @@ const ANCHOR_MOTION_CLASS: Record<NonNullable<StoryChoiceInteraction['motion']>,
 };
 
 const identityUrl = (url: string) => url;
+
+function formatPlaybackTime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+  const wholeSeconds = Math.floor(seconds);
+  const hours = Math.floor(wholeSeconds / 3600);
+  const minutes = Math.floor((wholeSeconds % 3600) / 60);
+  const remainingSeconds = wholeSeconds % 60;
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`
+    : `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
+}
 
 /** Shared player surface for editor playtests and the standalone HTML build. No canvas dependencies. */
 export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revision = 0, resolveUrl = identityUrl, onRestart, fitToMedia = true, children }: {
@@ -60,6 +72,8 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
   const advanceAutomatic = useStoryRuntimeStore((s) => s.advanceAutomatic);
   const restart = useStoryRuntimeStore((s) => s.restart);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const controlsHideTimerRef = useRef<number | null>(null);
+  const keyboardFocusWithinRef = useRef(false);
   const [mediaAspectRatio, setMediaAspectRatio] = useState(16 / 9);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const [previewRect, setPreviewRect] = useState<MediaRenderRect | null>(null);
@@ -85,6 +99,9 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
   const [branchTransition, setBranchTransition] = useState<StoryChoiceTransition>('fade');
   const [mediaRenderRect, setMediaRenderRect] = useState<MediaRenderRect | null>(null);
   const [videoPaused, setVideoPaused] = useState(false);
+  const [playbackPosition, setPlaybackPosition] = useState({ currentTime: 0, duration: 0 });
+  const [controlsVisible, setControlsVisible] = useState(false);
+  const [seeking, setSeeking] = useState(false);
   const [mediaError, setMediaError] = useState(false);
   const [choiceLoopFailed, setChoiceLoopFailed] = useState(false);
   // A revisit to the same node/URL is still a new clip and choice window.
@@ -208,6 +225,7 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
   // 每次进入片段重置暂停、错误与循环加载状态；结束状态由 playbackKey 隔离。
   useEffect(() => {
     setVideoPaused(false);
+    setPlaybackPosition({ currentTime: 0, duration: 0 });
     setMediaError(false);
     setChoiceLoopFailed(false);
     setChoiceLoopReady(false);
@@ -306,6 +324,63 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
     });
   }, []);
 
+  const cancelControlsHide = useCallback(() => {
+    if (controlsHideTimerRef.current === null) return;
+    window.clearTimeout(controlsHideTimerRef.current);
+    controlsHideTimerRef.current = null;
+  }, []);
+
+  const revealControls = useCallback(() => {
+    cancelControlsHide();
+    setControlsVisible(true);
+    controlsHideTimerRef.current = window.setTimeout(() => {
+      controlsHideTimerRef.current = null;
+      setControlsVisible(false);
+    }, PLAYER_CONTROLS_HIDE_MS);
+  }, [cancelControlsHide]);
+
+  const pinControls = useCallback(() => {
+    cancelControlsHide();
+    setControlsVisible(true);
+  }, [cancelControlsHide]);
+
+  const handlePointerActivity = useCallback(() => {
+    keyboardFocusWithinRef.current = false;
+    if (videoPaused || seeking) pinControls();
+    else revealControls();
+  }, [pinControls, revealControls, seeking, videoPaused]);
+
+  useEffect(() => {
+    cancelControlsHide();
+    keyboardFocusWithinRef.current = false;
+    setControlsVisible(false);
+    setSeeking(false);
+  }, [cancelControlsHide, playbackKey]);
+
+  useEffect(() => () => cancelControlsHide(), [cancelControlsHide]);
+
+  const syncPlaybackPosition = useCallback((video: HTMLVideoElement) => {
+    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
+    const currentTime = Number.isFinite(video.currentTime)
+      ? Math.max(0, duration > 0 ? Math.min(video.currentTime, duration) : video.currentTime)
+      : 0;
+    setPlaybackPosition({ currentTime, duration });
+  }, []);
+
+  const togglePlayback = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (videoPaused) {
+      requestPlayback(video);
+      revealControls();
+    }
+    else {
+      video.pause();
+      setVideoPaused(true);
+      pinControls();
+    }
+  }, [pinControls, requestPlayback, revealControls, videoPaused]);
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video || (showChoices && !choiceLoopActive)) return;
@@ -326,6 +401,23 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
   return <div ref={viewportRef} className="story-player-viewport">
     <div data-story-player data-media-fit={fitToMedia || undefined}
       className="story-player relative min-h-0 min-w-0 overflow-hidden bg-black text-white"
+      onPointerDown={handlePointerActivity}
+      onKeyDown={() => {
+        keyboardFocusWithinRef.current = true;
+        pinControls();
+      }}
+      onFocusCapture={(event) => {
+        const keyboardFocused = event.target instanceof HTMLElement
+          && event.target.matches(':focus-visible');
+        keyboardFocusWithinRef.current = keyboardFocused;
+        if (keyboardFocused || videoPaused) pinControls();
+        else revealControls();
+      }}
+      onBlurCapture={(event) => {
+        if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+        keyboardFocusWithinRef.current = false;
+        if (!videoPaused) revealControls();
+      }}
       style={fitToMedia ? {
         aspectRatio: String(mediaAspectRatio),
         width: previewRect?.width,
@@ -364,7 +456,9 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
               measureVideoFrame(video);
               window.requestAnimationFrame(() => measureVideoFrame(video));
             }
+            syncPlaybackPosition(video);
           }}
+          onDurationChange={(event) => syncPlaybackPosition(event.currentTarget)}
           onCanPlay={(event) => {
             measureVideoFrame(event.currentTarget);
             if (activeVideoUrl === resolvedChoiceLoopUrl) setChoiceLoopReady(true);
@@ -392,12 +486,72 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
             setEndedPlaybackKey(playbackKey);
           }}
           onTimeUpdate={(event) => {
+            syncPlaybackPosition(event.currentTarget);
             if (!choiceLoopActive) revealChoicesAtTailFrame(event.currentTarget);
           }}
           onSeeked={(event) => {
+            syncPlaybackPosition(event.currentTarget);
             if (!choiceLoopActive) revealChoicesAtTailFrame(event.currentTarget);
           }}
         />
+      )}
+
+      {phase !== 'error' && activeVideoUrl && !mediaError && !showChoices && (
+        <div
+          data-story-player-controls
+          className={`story-player-controls absolute inset-x-0 bottom-0 z-20 flex items-center gap-2 px-3 pb-[max(0.375rem,env(safe-area-inset-bottom))] pt-6 transition-opacity duration-150 motion-reduce:transition-none ${
+            controlsVisible ? 'opacity-100' : 'pointer-events-none opacity-0'
+          }`}
+        >
+          <button
+            type="button"
+            onClick={togglePlayback}
+            className="grid size-9 shrink-0 place-items-center rounded-full text-white/90 transition-[background-color,color,transform] duration-150 hover:bg-white/12 hover:text-white active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/90"
+            aria-label={videoPaused ? t('canvas.story.playMode.playCurrent') : t('canvas.story.playMode.pauseCurrent')}
+          >
+            {videoPaused ? <Play className="ml-0.5 size-4" /> : <Pause className="size-4" />}
+          </button>
+          <input
+            data-story-player-seek
+            type="range"
+            min={0}
+            max={playbackPosition.duration || 1}
+            step="any"
+            value={Math.min(playbackPosition.currentTime, playbackPosition.duration || 1)}
+            disabled={playbackPosition.duration <= 0}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+              setSeeking(true);
+              pinControls();
+            }}
+            onPointerUp={(event) => {
+              event.stopPropagation();
+              setSeeking(false);
+              if (!videoPaused) revealControls();
+            }}
+            onPointerCancel={(event) => {
+              event.stopPropagation();
+              setSeeking(false);
+              if (!videoPaused) revealControls();
+            }}
+            onChange={(event) => {
+              const video = videoRef.current;
+              if (!video) return;
+              const nextTime = Number(event.currentTarget.value);
+              video.currentTime = nextTime;
+              setPlaybackPosition((position) => ({ ...position, currentTime: nextTime }));
+            }}
+            aria-label={t('canvas.story.playMode.seek')}
+            aria-valuetext={`${formatPlaybackTime(playbackPosition.currentTime)} / ${formatPlaybackTime(playbackPosition.duration)}`}
+            className="story-player-seek min-w-0 flex-1"
+            style={{
+              '--story-progress': `${playbackPosition.duration > 0 ? (playbackPosition.currentTime / playbackPosition.duration) * 100 : 0}%`,
+            } as CSSProperties}
+          />
+          <output className="min-w-[5.5rem] text-right text-xs font-medium tabular-nums text-white/75 [text-shadow:0_1px_3px_rgba(0,0,0,0.8)]" aria-live="off">
+            {formatPlaybackTime(playbackPosition.currentTime)} / {formatPlaybackTime(playbackPosition.duration)}
+          </output>
+        </div>
       )}
 
       {phase !== 'error' && activeVideoUrl && !mediaError && videoPaused && (!showChoices || choiceLoopActive) && (

@@ -139,6 +139,8 @@ describe('buildPlayerHtml', () => {
     const data = extractData(html) as { labels: Record<string, string> };
     expect(data.labels.restart).toBe('AGAIN');
     expect(data.labels.placeholderHint).toBe('NO VIDEO');
+    expect(data.labels.pause).toBe('暂停当前片段');
+    expect(data.labels.seek).toBe('播放进度');
   });
 
   it('安全转义占位剧情中的 script 结束标签', () => {

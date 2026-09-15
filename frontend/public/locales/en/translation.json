@@ -4476,6 +4476,8 @@
         "autoPlayShort": "Autoplay",
         "playbackRate": "Playback speed {{value}}x",
         "playCurrent": "Play current scene",
+        "pauseCurrent": "Pause current scene",
+        "seek": "Playback progress",
         "editStructure": "Edit structure",
         "noSelection": "Select a story scene"
       },

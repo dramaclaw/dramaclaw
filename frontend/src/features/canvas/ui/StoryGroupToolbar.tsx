@@ -78,6 +78,8 @@ function StoryGroupActions({ id, data }: { id: string; data: GroupNodeData }) {
         title,
         labels: {
           play: t('canvas.story.playMode.playCurrent'),
+          pause: t('canvas.story.playMode.pauseCurrent'),
+          seek: t('canvas.story.playMode.seek'),
           mediaError: t('canvas.story.mediaError'),
           retry: t('canvas.story.retryMedia'),
           countdown: t('canvas.story.choiceCountdown'),

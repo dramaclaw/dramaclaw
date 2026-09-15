@@ -11,6 +11,8 @@ export interface PlayerLabels {
   placeholderBadge: string;
   placeholderHint: string;
   play?: string;
+  pause?: string;
+  seek?: string;
   mediaError?: string;
   retry?: string;
   countdown?: string;
@@ -36,6 +38,8 @@ const DEFAULT_LABELS: PlayerLabels = {
   placeholderBadge: '占位片段',
   placeholderHint: '此片段尚未生成视频,点选下方选项继续试玩',
   play: '播放当前片段',
+  pause: '暂停当前片段',
+  seek: '播放进度',
   mediaError: '视频加载失败，请重试。',
   retry: '重试播放',
   countdown: '选择倒计时',

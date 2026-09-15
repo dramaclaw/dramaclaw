@@ -37,8 +37,59 @@
 .story-player [data-choice-stage] > button { flex-shrink: 0; overflow-wrap: anywhere; }
 .story-player [data-story-placeholder] { top: 12%; bottom: 54%; }
 .story-player [data-story-ending] { overflow-y: auto; padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+.story-player-controls {
+  background: linear-gradient(to bottom, transparent, rgba(0, 0, 0, .7));
+}
+.story-player-seek {
+  height: 2.25rem;
+  appearance: none;
+  cursor: pointer;
+  background: linear-gradient(
+    to right,
+    rgba(255, 255, 255, .92) 0 var(--story-progress),
+    rgba(255, 255, 255, .3) var(--story-progress) 100%
+  ) center / 100% .1875rem no-repeat;
+}
+.story-player-seek:disabled { cursor: wait; opacity: .45; }
+.story-player-seek::-webkit-slider-thumb {
+  width: .75rem;
+  height: .75rem;
+  appearance: none;
+  border: 1px solid rgba(0, 0, 0, .45);
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, .5);
+  transition: transform 150ms ease-out, box-shadow 150ms ease-out;
+}
+.story-player-seek::-moz-range-thumb {
+  width: .75rem;
+  height: .75rem;
+  border: 1px solid rgba(0, 0, 0, .45);
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, .5);
+  transition: transform 150ms ease-out, box-shadow 150ms ease-out;
+}
+.story-player-seek:hover::-webkit-slider-thumb,
+.story-player-seek:focus-visible::-webkit-slider-thumb {
+  transform: scale(1.15);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .55);
+}
+.story-player-seek:hover::-moz-range-thumb,
+.story-player-seek:focus-visible::-moz-range-thumb {
+  transform: scale(1.15);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .55);
+}
+.story-player-seek:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, .9);
+  outline-offset: 2px;
+}
 @container (max-height: 480px) and (min-width: 600px) {
   .story-player [data-choice-stage] { flex-direction: row; flex-wrap: wrap; justify-content: center; align-items: stretch; gap: .5rem; }
   .story-player [data-choice-stage] > button { width: calc(50% - .5rem); }
   .story-player [data-choice-stage] > [role=timer] { flex-basis: 100%; }
+}
+@container (max-width: 420px) {
+  .story-player [data-story-player-controls] { gap: .125rem; padding-inline: .375rem; }
+  .story-player [data-story-player-controls] output { min-width: 5rem; }
 }
