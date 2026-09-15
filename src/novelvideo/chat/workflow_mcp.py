@@ -34,6 +34,7 @@ from novelvideo.freezone.workflow_schema import (
     normalize_workflow_tool_arguments,
     workflow_intent_json_schema,
     workflow_plan_json_schema,
+    workflow_plan_schema_diagnostics,
 )
 
 SERVER = Server("dramaclaw-workflows", version="1.0.0")
@@ -441,13 +442,17 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
         raise ValueError(f"unknown workflow tool: {name}")
     errors = list(Draft202012Validator(tool.inputSchema).iter_errors(args))
     if errors:
+        diagnostics = workflow_plan_schema_diagnostics(args)
         return _result(name, {
             "ok": False,
             "status": "tool_arguments_invalid",
             "error": "; ".join(
+                f"{issue['path']}: {issue['message']}" for issue in diagnostics
+            ) if diagnostics else "; ".join(
                 f"{'.'.join(map(str, error.absolute_path)) or 'arguments'}: {error.message}"
                 for error in errors
             ),
+            **({"errors": diagnostics} if diagnostics else {}),
         })
     if name == "workflow_catalog_search":
         kind = str(args.get("kind") or "")

@@ -2192,6 +2192,7 @@ def test_dramaclaw_mcp_server_config_is_agent_neutral():
         "DRAMACLAW_SKILLS_DIR",
         "DRAMACLAW_TOOL_MODE",
         "DRAMACLAW_USERNAME",
+        "NOVELVIDEO_OUTPUT_DIR",
     ]
 
 
@@ -2205,7 +2206,7 @@ def test_freezone_adds_independent_workflow_mcp_without_changing_default():
         "type": "stdio",
         "command": __import__("sys").executable,
         "args": ["-m", "novelvideo.chat.workflow_mcp"],
-        "env_vars": ["DRAMACLAW_USERNAME"],
+        "env_vars": ["DRAMACLAW_USERNAME", "NOVELVIDEO_OUTPUT_DIR"],
     }
 
 
@@ -2240,7 +2241,7 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
         '"DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",'
         '"DRAMACLAW_AGENT_PROFILE","DRAMACLAW_PROJECT_ID",'
         '"DRAMACLAW_SKILLS_DIR","DRAMACLAW_TOOL_MODE",'
-        '"DRAMACLAW_USERNAME"]' in overrides
+        '"DRAMACLAW_USERNAME","NOVELVIDEO_OUTPUT_DIR"]' in overrides
     )
     assert "mcp_servers.dramaclaw.required=true" in overrides
     assert 'mcp_servers.dramaclaw.default_tools_approval_mode="approve"' in overrides
@@ -2482,6 +2483,9 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
         lambda: ("secret-value", "https://gateway.example/v1"),
     )
 
+    from novelvideo import config
+    monkeypatch.setattr(config, "OUTPUT_DIR", str(tmp_path / "authoritative-output"))
+    monkeypatch.delenv("NOVELVIDEO_OUTPUT_DIR", raising=False)
     project_state = tmp_path / "ee-project-state"
     env = chat_service._build_codex_env(
         "admin",
@@ -2491,6 +2495,9 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
         agent_token_file=project_state / "turn.token",
     )
 
+    assert env["NOVELVIDEO_OUTPUT_DIR"] == str(tmp_path / "authoritative-output")
+    for server in chat_service._dramaclaw_mcp_servers("freezone_canvas").values():
+        assert "NOVELVIDEO_OUTPUT_DIR" in server["env_vars"]
     assert env["CODEX_HOME"] == str(tmp_path / "state" / ".codex-app-server")
     assert env["DRAMACLAW_AGENT_SCOPE"] == "project"
     assert env["SUPERTALE_AGENT_SCOPE"] == "project"
@@ -2519,6 +2526,7 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
     assert freezone_env["DRAMACLAW_TOOL_MODE"] == "freezone_canvas"
     assert freezone_env["DRAMACLAW_CANVAS_ID"] == "canvas-a"
     assert freezone_env["DRAMACLAW_AGENT_PROFILE"] == "freezone:agent-2"
+    assert Path(freezone_env["DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR"]).is_relative_to(project_state)
     assert freezone_env["DRAMACLAW_EXTERNAL_MCP"] == "1"
     assert freezone_env["DRAMACLAW_MCP_DIRECT_CANVAS_APPLY"] == "0"
     assert freezone_env["DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR"].endswith(

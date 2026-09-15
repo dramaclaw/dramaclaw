@@ -254,7 +254,9 @@ def test_c1_eg07_child_env_is_minimal_and_ignores_process_provider_secrets(
         "HOME",
         "HERMES_HOME",
         "TMPDIR",
+        "DRAMACLAW_USERNAME",
         "DRAMACLAW_USER",
+        "NOVELVIDEO_OUTPUT_DIR",
         "DRAMACLAW_AGENT_TOKEN",
         "DRAMACLAW_API_URL",
         "DRAMACLAW_PROJECT_ID",
@@ -680,7 +682,9 @@ def test_c1_s3_05_project_scope_env_keeps_project_id_and_minimal_allowlist(tmp_p
         "HOME",
         "HERMES_HOME",
         "TMPDIR",
+        "DRAMACLAW_USERNAME",
         "DRAMACLAW_USER",
+        "NOVELVIDEO_OUTPUT_DIR",
         "DRAMACLAW_AGENT_TOKEN",
         "DRAMACLAW_API_URL",
         "DRAMACLAW_PROJECT_ID",
@@ -794,3 +798,31 @@ def test_c1_s3_04b_pool_build_env_home_scope_keeps_the_two_project_ids_apart(tmp
 
     assert "DRAMACLAW_PROJECT_ID" not in env
     assert env["NEWAPI_API_KEY"] == "dramaclaw-per-turn-placeholder"
+
+
+@pytest.mark.parametrize('credentialed', [False, True])
+def test_hermes_catalog_scope_uses_each_trusted_user_and_backend_output_root(
+    tmp_path, monkeypatch, credentialed
+):
+    from novelvideo import config
+    from novelvideo.chat import hermes_pool
+    from novelvideo.ports.auth_contract import AgentSessionToken
+
+    output_root = tmp_path / 'custom-data-root' / 'output'
+    monkeypatch.setattr(config, 'OUTPUT_DIR', str(output_root))
+    monkeypatch.setenv('NOVELVIDEO_OUTPUT_DIR', str(tmp_path / 'stale-output'))
+    monkeypatch.setenv('DRAMACLAW_USERNAME', 'stale-host-user')
+    monkeypatch.setenv('ST_EDITION', 'ce')
+    monkeypatch.setattr(hermes_pool, 'effective_gateway_credentials', lambda: ('', ''))
+    pool = hermes_pool.HermesPool()
+    environments = []
+    for username in ('alice', 'bob'):
+        token = AgentSessionToken(value='agent-token', session_id=f'session-{username}', user=username, scopes=(), exp=9999999999, worker_id=f'worker-{username}')
+        extra = {'authorization': _authorization(), 'requester_user_id': 'user-id-1', 'egress_project_id': 'project-1'} if credentialed else {}
+        environments.append(pool._build_env(tmp_path / username, username, token, project_id='project-1', **extra))
+    assert [env['DRAMACLAW_USERNAME'] for env in environments] == ['alice', 'bob']
+    assert [env['DRAMACLAW_USER'] for env in environments] == ['alice', 'bob']
+    assert all(env['NOVELVIDEO_OUTPUT_DIR'] == str(output_root) for env in environments)
+    import os
+    assert os.environ['DRAMACLAW_USERNAME'] == 'stale-host-user'
+    assert os.environ['NOVELVIDEO_OUTPUT_DIR'] == str(tmp_path / 'stale-output')

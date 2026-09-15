@@ -1,5 +1,5 @@
 // Generated from schemas/workflow/v1/stable-contract.json; do not edit.
-export const WORKFLOW_CONTRACT_SOURCE_SHA256 = "4e285a455ea3ac91711cd79f799650424d48181ce083e1cd6859e084d096fff5";
+export const WORKFLOW_CONTRACT_SOURCE_SHA256 = "22333a008ac8ec1d7aa427900daeb50354852af5e2789303840fd716b64b63fc";
 export const WORKFLOW_STABLE_CONTRACT = {
   "schema_version": "freezone_workflow_contract.v1",
   "workflow_plan_schema_version": "freezone_workflow_plan.v1",
@@ -11,6 +11,7 @@ export const WORKFLOW_STABLE_CONTRACT = {
     "imageGenNode",
     "videoNode",
     "audioNode",
+    "htmlArtifactNode",
     "videoComposeNode"
   ],
   "agent_creatable_node_types": [
@@ -24,7 +25,8 @@ export const WORKFLOW_STABLE_CONTRACT = {
     "scriptNode",
     "pano360ViewerNode",
     "threeDWorldNode",
-    "skillNode"
+    "skillNode",
+    "htmlArtifactNode"
   ],
   "link_types": [
     "context_for",

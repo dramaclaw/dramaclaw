@@ -1613,6 +1613,7 @@ export function Canvas({
       void resumeNodeGeneration({
         node: pendingNode,
         projectId,
+        canvasId,
         updateNodeData,
         getNodeData: (nodeId) =>
           (useCanvasStore
@@ -1623,7 +1624,7 @@ export function Canvas({
         activeTaskResumeNodeIdsRef.current.delete(pendingNode.id);
       });
     }
-  }, [pendingResumeNodeKey, updateNodeData]);
+  }, [canvasId, pendingResumeNodeKey, updateNodeData]);
 
   useEffect(() => {
     const element = wrapperRef.current;

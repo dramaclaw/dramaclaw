@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
+import compiledHtmlPlan from "@/features/html-artifacts/compiledHtmlPlan.fixture.json";
 
 import { CANVAS_NODE_TYPES, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { validateCanvasChatCommandEnvelopes } from "@/features/freezone/context/canvasCommandValidator";
 import { CANVAS_CHAT_COMMANDS_SCHEMA_VERSION, type CanvasChatCommandEnvelope } from "@/features/freezone/canvasChatCommands";
-import { canvasLinkTypeCatalogJson, canvasLinkTypeCatalogText } from "@/features/freezone/canvasEdgeSemantics";
+import { canvasLinkTypeCatalogJson, canvasLinkTypeCatalogText, canvasNodeTypeLinkObjectType, allowedCanvasLinkTypesForNodes } from "@/features/freezone/canvasEdgeSemantics";
 
 function node(partial: Partial<CanvasNode> & { id: string; type: CanvasNode["type"] }): CanvasNode {
   return {
@@ -15,6 +16,52 @@ function node(partial: Partial<CanvasNode> & { id: string; type: CanvasNode["typ
 }
 
 describe("canvas command validator", () => {
+  it("validates HTML source action parameters and same-batch aliases", () => {
+    const createAndSave: CanvasChatCommandEnvelope = {
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: [
+        {type:"create_node",client_id:"page",node_type:CANVAS_NODE_TYPES.htmlArtifact,data:{displayName:"Page"}},
+        {type:"run_node_action",node_id:"page",action:"update_source",parameters:{html:"<!doctype html><html></html>"}},
+      ],
+    };
+    expect(validateCanvasChatCommandEnvelopes([createAndSave], [], [])).toEqual({ok:true,issues:[]});
+
+    const existing = node({id:"saved",type:CANVAS_NODE_TYPES.htmlArtifact,data:{artifactId:"a1",artifactVersion:2}});
+    const missingVersion: CanvasChatCommandEnvelope = {
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: [{type:"run_node_action",node_id:"saved",action:"update_source",parameters:{html:"<html></html>"}}],
+    };
+    expect(validateCanvasChatCommandEnvelopes([missingVersion], [existing], []).issues[0]?.message).toContain("base_version");
+
+    const selectVersion: CanvasChatCommandEnvelope = {
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: [{type:"run_node_action",node_id:"saved",action:"select_version",parameters:{version:1}}],
+    };
+    expect(validateCanvasChatCommandEnvelopes([selectVersion], [existing], [])).toEqual({ok:true,issues:[]});
+    const invalidSelection = {...selectVersion, commands: [{...selectVersion.commands[0], parameters:{version:0}}]} as CanvasChatCommandEnvelope;
+    expect(validateCanvasChatCommandEnvelopes([invalidSelection], [existing], []).issues[0]?.message).toContain("positive version");
+  });
+  it("accepts the backend-compiled HTML plan with text prompt and media input edges", () => {
+    const envelope = compiledHtmlPlan.compiled as unknown as CanvasChatCommandEnvelope;
+    expect(envelope.commands.filter(command => command.type === "create_edge")).toHaveLength(2);
+    expect(validateCanvasChatCommandEnvelopes([envelope], [], [])).toEqual({ok:true,issues:[]});
+  });
+
+  it.each(["imageGenNode", "videoNode", "audioNode"] as const)("accepts %s as an HTML media input or ordering dependency", (sourceType) => {
+    const source = node({id:"media",type:sourceType});
+    const html = node({id:"html",type:CANVAS_NODE_TYPES.htmlArtifact});
+    for (const link_type of ["media_input_for", "dependency_for"] as const) {
+      expect(validateCanvasChatCommandEnvelopes([{schema_version:CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,commands:[{type:"create_edge",source:"media",target:"html",link_type}]}],[source,html],[])).toEqual({ok:true,issues:[]});
+    }
+  });
+
+  it("does not offer outbound HTML media or composition links", () => {
+    expect(canvasNodeTypeLinkObjectType(CANVAS_NODE_TYPES.htmlArtifact)).toBe("HtmlNode");
+    expect(allowedCanvasLinkTypesForNodes(node({id:"html",type:CANVAS_NODE_TYPES.htmlArtifact}),node({id:"video",type:CANVAS_NODE_TYPES.video}))).toEqual([]);
+    for (const item of canvasLinkTypeCatalogJson()) expect(item.source_object_types).not.toContain("HtmlNode");
+    expect(canvasLinkTypeCatalogJson().find(item=>item.link_type==="composition_input_for")?.target_object_types).not.toContain("HtmlNode");
+  });
+
   it("describes context_for as a text planning relationship only", () => {
     const contextLinkType = canvasLinkTypeCatalogJson().find((item) => item.link_type === "context_for");
 
