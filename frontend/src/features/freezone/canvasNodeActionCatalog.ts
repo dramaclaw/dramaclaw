@@ -68,6 +68,15 @@ export type CanvasNodeActionCatalogContext = {
   edges?: readonly CanvasEdge[];
 };
 
+const AGENT_FORBIDDEN_MAINLINE_ACTIONS = new Set([
+  "commit_node",
+  "sync_beat_context_to_mainline",
+]);
+
+export function isAgentExecutableNodeAction(action: string): boolean {
+  return !AGENT_FORBIDDEN_MAINLINE_ACTIONS.has(action);
+}
+
 const IMAGE_TOOL_NODE_TYPES = new Set<CanvasNodeType>([
   CANVAS_NODE_TYPES.upload,
   CANVAS_NODE_TYPES.imageEdit,
@@ -692,7 +701,7 @@ function beatContextEditableSchema(node: CanvasNode): Record<string, CanvasEdita
         stringOrNull(snapshot.visualDescription) ??
         stringOrNull(data.content) ??
         "",
-      description: "镜头上下文节点的起始画面草稿。只修改画布本地草稿；如需写回主线，再运行 sync_beat_context_to_mainline。",
+      description: "镜头上下文节点的起始画面草稿。只修改画布本地草稿；如需写回主线，请使用界面中的手动入口。",
     },
     scene_ref: {
       type: "object",

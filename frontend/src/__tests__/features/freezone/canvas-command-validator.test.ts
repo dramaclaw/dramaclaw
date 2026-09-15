@@ -532,6 +532,32 @@ describe("canvas command validator", () => {
     expect(result.issues).toEqual([]);
   });
 
+  it.each([
+    ["sync_beat_context_to_mainline", CANVAS_NODE_TYPES.beatContext, {
+      projectId: "project-a",
+      episode: 1,
+      beat: 2,
+    }],
+    ["commit_node", CANVAS_NODE_TYPES.imageGen, {
+      user_spawned: true,
+      imageUrl: "/static/project/image.png",
+      slot_target: { kind: "frame", episode: 1, beat: 2 },
+    }],
+  ])("rejects forged manual mainline action %s", (action, nodeType, data) => {
+    const target = node({ id: "target", type: nodeType, data });
+    const envelope: CanvasChatCommandEnvelope = {
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: [{ type: "run_node_action", node_id: target.id, action }],
+    };
+
+    const result = validateCanvasChatCommandEnvelopes([envelope], [target], []);
+
+    expect(result.ok).toBe(false);
+    expect(result.issues.map((issue) => issue.message)).toContain(
+      `mainline write action is manual-only: ${action}`,
+    );
+  });
+
   it("rejects run_skill when required upstream image inputs are still pending", () => {
     const beatNode = node({
       id: "beat-node",

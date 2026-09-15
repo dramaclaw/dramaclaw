@@ -212,6 +212,15 @@ hash，CI 执行“重新生成后 git diff 为空”的检查。模型 catalog�
 - alias 只存在于入站迁移层，持久化前归一化。
 - 未知 major fail closed；未知可选字段透传但不能参与授权。
 
+当前迁移基线：`schemas/workflow/v1/stable-contract.json` 已成为 Workflow node/link、生成
+action、兼容 model alias 与 Recipe envelope 的发布源；Python、TypeScript 和 MCP JSON
+片段由 `scripts/generate_workflow_contract.py` 生成，并由 CI 的 `--check` 模式阻止生成物
+漂移。动态模型可用性和参数仍只来自 live catalog，不写入该稳定契约。
+
+Chat 的 provider-neutral event/stream Protocol 位于 `chat/runtime_port.py`，Surface 与 Agent
+Profile 的工具策略位于 `chat/tool_policy.py`。旧 `backend_sdk` 和 `chat.service` 暂时保留
+兼容导出，后续 adapter/route 拆分只能让旧入口委托新模块，不得重新复制常量或策略。
+
 ## 可观测性与清理
 
 最低指标包括 pending commands、oldest age、delivery latency、lease steals、retry count、

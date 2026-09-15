@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from novelvideo.freezone.paths import CANVAS_ID_RE
+from novelvideo.freezone.workflow_contract_generated import GENERATION_ACTION_TYPES
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
 
 RUN_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,80}$")
@@ -37,16 +39,7 @@ TERMINAL_RUN_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
 WORKFLOW_RUN_LEASE_SECONDS = 45
 ACTIVE_TASK_STATUSES = {"pending", "starting", "submitting", "queued", "running"}
 TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
-GENERATION_ACTIONS = {
-    "generate_text",
-    "generate_story_script",
-    "generate_image",
-    "generate_video",
-    "generate_text_video",
-    "generate_audio",
-    "generate_3gs_world",
-    "auto_compose_video",
-}
+GENERATION_ACTIONS = set(GENERATION_ACTION_TYPES)
 NON_RETRYABLE_ERROR_MARKERS = {
     "invalid token",
     "model_not_found",
@@ -129,6 +122,10 @@ _SCHEMA_READY_LOCK = threading.Lock()
 
 class WorkflowRunLeaseConflict(RuntimeError):
     """Raised when another live runner owns the canvas workflow lease."""
+
+
+class WorkflowRunIdempotencyConflict(RuntimeError):
+    """Raised when an idempotency key is reused for a different workflow."""
 
 
 def _now() -> str:
@@ -311,7 +308,7 @@ def _validate_action_artifact(
         value for key, value in candidates if _is_output_artifact_key(key)
     ]
     if not media_candidates:
-        return "unverified", None
+        return "unverified", "任务已结束但没有可核验的持久化产物。"
     missing_local_paths: list[str] = []
     for value in media_candidates:
         lowered = value.lower()
@@ -633,6 +630,29 @@ def _normalize_actions(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return normalized
 
 
+def _workflow_request_fingerprint(
+    *, project_id: str, canvas_id: str, actions: list[dict[str, Any]]
+) -> str:
+    identity = {
+        "project_id": project_id,
+        "canvas_id": canvas_id,
+        "actions": [
+            {
+                "node_id": item.get("node_id"),
+                "action": item.get("action"),
+                "recipe_id": item.get("recipe_id"),
+                "recipe_version": item.get("recipe_version"),
+                "generation_attempt_id": item.get("generation_attempt_id"),
+            }
+            for item in actions
+        ],
+    }
+    encoded = json.dumps(
+        identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def bind_workflow_action_product_operation(
     *,
     project_dir: Path,
@@ -694,7 +714,13 @@ def create_workflow_run(
     current = datetime.now(timezone.utc)
     now = _timestamp(current)
     normalized_actions = _normalize_actions(actions)
+    request_fingerprint = _workflow_request_fingerprint(
+        project_id=project_id,
+        canvas_id=canvas_id,
+        actions=normalized_actions,
+    )
     run_metadata = dict(metadata or {})
+    run_metadata["request_fingerprint"] = request_fingerprint
     if checked_idempotency_key:
         run_metadata["idempotency_key"] = checked_idempotency_key
     payload: dict[str, Any] = {
@@ -731,6 +757,23 @@ def create_workflow_run(
                     run_id=existing_row["run_id"],
                 )
                 if existing is not None:
+                    existing_metadata = existing.get("metadata")
+                    existing_metadata = (
+                        existing_metadata if isinstance(existing_metadata, dict) else {}
+                    )
+                    existing_fingerprint = str(
+                        existing_metadata.get("request_fingerprint") or ""
+                    )
+                    if not existing_fingerprint:
+                        existing_fingerprint = _workflow_request_fingerprint(
+                            project_id=str(existing.get("project_id") or ""),
+                            canvas_id=str(existing.get("canvas_id") or ""),
+                            actions=existing.get("actions") or [],
+                        )
+                    if existing_fingerprint != request_fingerprint:
+                        raise WorkflowRunIdempotencyConflict(
+                            "workflow run idempotency key reused for a different request"
+                        )
                     return existing
         existing_runs = _list_runs_in_transaction(conn, canvas_id=canvas_id)
         for existing in existing_runs:
@@ -927,14 +970,22 @@ def update_workflow_run(
             return None
         current_status = str(payload.get("status") or "")
         stored_runner_id = str(payload.get("runner_id") or "").strip()
+        lease_expires_at = _parse_timestamp(payload.get("lease_expires_at"))
         if (
             current_status == "running"
             and stored_runner_id
-            and checked_runner_id != stored_runner_id
+            and (
+                checked_runner_id != stored_runner_id
+                or (
+                    status != "cancelled"
+                    and lease_expires_at is not None
+                    and lease_expires_at <= datetime.now(timezone.utc)
+                )
+            )
             and status != "cancelled"
         ):
             raise WorkflowRunLeaseConflict(
-                "workflow run lease is owned by another runner"
+                "workflow run lease is not owned by this active runner"
             )
         if current_status == "cancelled":
             return payload
@@ -969,6 +1020,29 @@ def update_workflow_run(
             item = by_key.get((node_id, action))
             if item is None:
                 raise ValueError(f"workflow action not found: {node_id}:{action}")
+            current_node_status = str(item.get("status") or "")
+            if current_node_status in {"completed", "skipped"} and (
+                node_status != current_node_status
+            ):
+                if node_status in {"pending", "running"}:
+                    # Task reconciliation may finish an action while a delayed
+                    # browser progress callback is still in flight. Treat that
+                    # stale non-terminal update as an idempotent no-op instead
+                    # of rejecting the whole workflow update.
+                    continue
+                raise ValueError(
+                    f"terminal workflow action cannot transition from "
+                    f"{current_node_status} to {node_status}"
+                )
+            if (
+                action in GENERATION_ACTIONS
+                and node_status == "completed"
+                and item.get("artifact_status") != "valid"
+            ):
+                # Browser callbacks are delivery hints, not completion authority.
+                # Durable task reconciliation below is the only path that can mark
+                # a generation action completed.
+                node_status = "running"
             item["status"] = node_status
             item["updated_at"] = now
             item["error"] = str(update.get("error") or "").strip() or None
@@ -999,11 +1073,32 @@ def update_workflow_run(
                 except (TypeError, ValueError):
                     raise ValueError("workflow retry_count must be an integer")
         if status is not None:
-            payload["status"] = status
-            if status in TERMINAL_RUN_STATUSES:
+            accepted_status = status
+            if status == "completed":
+                action_statuses = {
+                    str(item.get("status") or "")
+                    for item in actions
+                    if isinstance(item, dict)
+                }
+                if not action_statuses or not action_statuses <= {
+                    "completed",
+                    "skipped",
+                }:
+                    accepted_status = "running"
+            payload["status"] = accepted_status
+            if accepted_status in TERMINAL_RUN_STATUSES:
                 payload["completed_at"] = now
-                payload["resumable"] = status in {"failed", "interrupted"}
-            if status == "cancelled":
+                payload["resumable"] = accepted_status in {"failed", "interrupted"}
+            if accepted_status == "failed":
+                for item in actions:
+                    if isinstance(item, dict) and item.get("status") in {
+                        "pending",
+                        "running",
+                    }:
+                        item["status"] = "blocked"
+                        item["updated_at"] = now
+                        item["error"] = item.get("error") or "workflow failed"
+            if accepted_status == "cancelled":
                 for item in actions:
                     if isinstance(item, dict) and item.get("status") not in {
                         "completed",
@@ -1056,7 +1151,10 @@ def reconcile_workflow_runs_with_tasks(
                     continue
                 # Frontend completion is not a durable artifact validation.
                 # Reconcile completed actions too when their proof is pending.
-                if item.get("status") == "completed" and item.get("artifact_status") == "valid":
+                if (
+                    item.get("status") == "completed"
+                    and item.get("artifact_status") == "valid"
+                ):
                     continue
                 task_key = str(item.get("task_key") or "").strip()
                 task = tasks_by_key.get(task_key) if task_key else None
@@ -1091,7 +1189,7 @@ def reconcile_workflow_runs_with_tasks(
                         ),
                         project_dir=project_dir,
                     )
-                    if artifact_status == "missing":
+                    if artifact_status != "valid":
                         updates = {
                             "status": "failed",
                             "error": artifact_error,

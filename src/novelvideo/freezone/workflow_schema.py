@@ -12,8 +12,15 @@ from copy import deepcopy
 import re
 from typing import Any
 
-WORKFLOW_PLAN_SCHEMA_VERSION = "freezone_workflow_plan.v1"
-WORKFLOW_INTENT_SCHEMA_VERSION = "freezone_workflow_intent.v1"
+from novelvideo.freezone.workflow_contract_generated import (
+    WORKFLOW_INTENT_SCHEMA_VERSION,
+    WORKFLOW_LINK_TYPES,
+    WORKFLOW_NODE_TYPES,
+    WORKFLOW_PLAN_SCHEMA_VERSION,
+)
+
+NODE_TYPE_VALUES = WORKFLOW_NODE_TYPES
+LINK_TYPE_VALUES = WORKFLOW_LINK_TYPES
 
 
 def normalize_workflow_tool_arguments(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -48,25 +55,6 @@ def normalize_workflow_tool_arguments(name: str, arguments: dict[str, Any]) -> d
                 if isinstance(item, dict) and item.get("duration_seconds") is None:
                     item.pop("duration_seconds", None)
     return result
-
-NODE_TYPE_VALUES = [
-    "textAnnotationNode",
-    "scriptNode",
-    "beatContextNode",
-    "imageGenNode",
-    "videoNode",
-    "audioNode",
-    "videoComposeNode",
-]
-
-LINK_TYPE_VALUES = [
-    "context_for",
-    "prompt_for",
-    "dependency_for",
-    "media_input_for",
-    "derived_from",
-    "composition_input_for",
-]
 
 
 def _version_schema() -> dict[str, Any]:

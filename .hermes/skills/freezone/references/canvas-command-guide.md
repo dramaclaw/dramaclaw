@@ -392,9 +392,10 @@ Plan id 不是画布节点 id。如果确认后的自定义方案需要变成多
 - `open_light_tool`
 - `open_rotate_tool`
 - `open_video_viewer`
-- `commit_node`
 
 对于 `execution="manual_ui"`，`run_node_action` 会打开 UI 或确认入口。对于 `execution="frontend_node"`，它会运行节点自己的前端行为，例如在 `imageGenNode` 上运行 `generate_image`。
+
+主线写回是例外：`commit_node` 和 `sync_beat_context_to_mainline` 不属于 Agent 可发现或可执行动作。即使用户在对话中要求、提供手写命令或重放旧命令，也不得调用；只能请用户使用画布中的手动 Commit/同步入口。
 
 如果用户要求运行/执行/生成一个引用的 imageGenNode，且它的 `action_summary_json.actions` 中包含 `generate_image`，输出且只输出一个针对该节点 id 和 action 的 `run_node_action` 命令。
 

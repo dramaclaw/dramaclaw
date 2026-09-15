@@ -6,9 +6,23 @@ import logging
 import os
 import threading
 import tomllib
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncIterator, Literal, Protocol, runtime_checkable
+from typing import Any, AsyncIterator, Literal
+
+from novelvideo.chat.runtime_port import (
+    AgentRuntimeThreadPort,
+    ChatBackendEvent,
+    ChatRunResult,
+)
+
+__all__ = [
+    "AgentRuntimeThreadPort",
+    "ChatBackendEvent",
+    "ChatRunResult",
+    "ClaudeCliClient",
+    "ClaudeSdkClient",
+    "CodexClient",
+]
 
 _log = logging.getLogger(__name__)
 
@@ -59,63 +73,6 @@ _CODEX_USER_INPUT_TOOL_NAMES = {
 def _codex_tool_waits_for_user_input(name: str | None) -> bool:
     normalized = str(name or "").strip()
     return normalized.rsplit(".", 1)[-1] in _CODEX_USER_INPUT_TOOL_NAMES
-
-
-@dataclass(slots=True)
-class ChatBackendEvent:
-    type: Literal[
-        "thread_started",
-        "turn_started",
-        "turn_completed",
-        "assistant_delta",
-        "thought_delta",
-        "plan_update",
-        "tool_started",
-        "tool_updated",
-        "tool_update",
-        "permission_requested",
-        "usage_update",
-        "complete",
-        # Internal lifecycle signals. They never reach a WebSocket, a chat
-        # transcript or model text; the streaming loop already carries turn
-        # boundaries, and the egress ledger needs to know exactly where the
-        # request crossed into the agent.
-        "egress_submitted",
-        "egress_disposition",
-    ]
-    thread_id: str | None = None
-    turn_id: str | None = None
-    #: Set on ``egress_disposition`` only. States how the turn ended, because
-    #: ``complete`` is also synthesised for timeouts and cannot prove success.
-    disposition: str | None = None
-    text: str | None = None
-    name: str | None = None
-    call_id: str | None = None
-    status: str | None = None
-    input: Any | None = None
-    output: Any | None = None
-    error: Any | None = None
-    request_id: str | int | None = None
-    options: list[dict[str, Any]] | None = None
-    entries: list[dict[str, Any]] | None = None
-    usage: dict[str, Any] | None = None
-    structured: Any | None = None
-    raw: Any | None = None
-
-
-@dataclass(slots=True)
-class ChatRunResult:
-    thread_id: str
-    text: str
-
-
-@runtime_checkable
-class AgentRuntimeThreadPort(Protocol):
-    """Stable DramaClaw boundary implemented by Codex, Hermes, and Claude."""
-
-    id: str | None
-
-    def stream(self, prompt: str) -> AsyncIterator[ChatBackendEvent]: ...
 
 
 _LIVE_CODEX_TURNS: dict[tuple[str, str], Any] = {}

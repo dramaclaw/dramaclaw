@@ -18,6 +18,7 @@ import {
 } from "@/features/canvas/nodes/referenceOrdering";
 import {
   buildCanvasNodeActionCatalog,
+  isAgentExecutableNodeAction,
   type CanvasNodeActionCatalog,
 } from "@/features/freezone/canvasNodeActionCatalog";
 import {
@@ -218,15 +219,19 @@ function buildAgentCanvasNodeActionCatalog(
   context?: { nodes?: readonly CanvasNode[]; edges?: readonly CanvasEdge[] },
 ): CanvasNodeActionCatalog & Record<string, unknown> {
   const catalog = buildCanvasNodeActionCatalog(node, context);
-  if (node.type !== CANVAS_NODE_TYPES.beatContext) return catalog;
+  const executableActions = catalog.actions.filter((action) =>
+    isAgentExecutableNodeAction(action.action));
+  if (node.type !== CANVAS_NODE_TYPES.beatContext) {
+    return { ...catalog, actions: executableActions };
+  }
   return {
     ...catalog,
     downstream_spawn_types: [],
-    actions: catalog.actions.filter(
+    actions: executableActions.filter(
       (action) => action.action !== "add_next_node",
     ),
     instruction:
-      "这是镜头上下文节点。agent 可以修改的参数只有 node_detail.parameters 中的 visual_description、scene_ref、time_of_day；不要修改出场身份或出场道具。修改这些字段时使用 update_node_data。写回主线必须由用户在界面中手动确认；不要调用 sync_beat_context_to_mainline。",
+      "这是镜头上下文节点。agent 可以修改的参数只有 node_detail.parameters 中的 visual_description、scene_ref、time_of_day；不要修改出场身份或出场道具。修改这些字段时使用 update_node_data。写回主线只能由用户使用界面中的手动入口。",
   };
 }
 
@@ -270,6 +275,10 @@ function buildAgentCanvasActionCatalog(
   const catalog = buildCanvasActionCatalog([...nodes], [...edges]);
   return {
     ...catalog,
+    frontend_command_catalog: catalog.frontend_command_catalog.filter((capability) => {
+      const action = capability.id.startsWith("ui.") ? capability.id.slice(3) : capability.id;
+      return isAgentExecutableNodeAction(action);
+    }),
     node_action_catalogs: nodes.map((node) =>
       buildAgentCanvasNodeActionCatalog(node, { nodes, edges }),
     ),

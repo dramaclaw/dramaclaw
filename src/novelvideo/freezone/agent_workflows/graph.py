@@ -11,6 +11,7 @@ from novelvideo.freezone.workflow_schema import (
     LINK_TYPE_VALUES as PORTABLE_LINK_TYPE_VALUES,
     NODE_TYPE_VALUES,
 )
+from novelvideo.freezone.workflow_contract_generated import MODEL_ALIASES_BY_NODE_TYPE
 from novelvideo.freezone.workflow_semantics import text_edge_error
 
 CANVAS_CHAT_COMMANDS_SCHEMA_VERSION = "canvas_chat_commands.v1"
@@ -64,32 +65,6 @@ LINK_TYPE_RULES = {
         {"TextNode", "ScriptNode", "ImageNode", "VideoNode", "AudioNode"},
         {"VideoNode"},
     ),
-}
-
-MODEL_ALIASES_BY_NODE_TYPE = {
-    "imageGenNode": {
-        "nano-banana-2": "newapi_nanobanana2",
-        "nanobanana2": "newapi_nanobanana2",
-        "nano_banana_2": "newapi_nanobanana2",
-        "gpt-image-2": "newapi_gpt_image2",
-        "openai/gpt-image-2": "newapi_gpt_image2",
-    },
-    "videoNode": {
-        # Canvas model selection IDs include the newapi_ prefix. Do not strip
-        # it into a transport/pricing model name. Keep this alias list explicit:
-        # unknown/custom IDs must survive for authoritative live enum validation.
-        "omni-flash": "newapi_seedance-2.0-fast",
-        "omni_flash": "newapi_seedance-2.0-fast",
-        "seedance_2_0_fast": "newapi_seedance-2.0-fast",
-        "seedance-2.0-fast": "newapi_seedance-2.0-fast",
-        "seedance-2.0": "newapi_seedance-2.0",
-        "seedance-1.5-pro": "newapi_seedance-1.5-pro",
-        "seedance-1.0-pro-fast": "newapi_seedance-1.0-pro-fast",
-        "huimeng_seedance-2.0-fast": "newapi_seedance-2.0-fast",
-        "huimeng_seedance-2.0": "newapi_seedance-2.0",
-        "huimeng_seedance-1.5-pro": "newapi_seedance-1.5-pro",
-        "huimeng_seedance-1.0-pro-fast": "newapi_seedance-1.0-pro-fast",
-    },
 }
 
 STAGE_ORDER = {

@@ -695,6 +695,8 @@ def put_pending_canvas_command(
             bridge_dir=bridge_dir,
         )
         if durable_result is not None:
+            if existing_result is not None:
+                _unlink_if_exists(pending_path)
             return durable_result
         if existing_pending is not None:
             return None
