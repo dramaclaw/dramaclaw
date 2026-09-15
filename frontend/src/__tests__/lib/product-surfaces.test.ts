@@ -22,6 +22,12 @@ describe("product surface access", () => {
             available: false,
             unavailable_message: "虾导功能暂未开放",
           },
+          {
+            surface_code: "payment" as const,
+            label: "积分充值",
+            available: false,
+            unavailable_message: "积分充值暂未开放",
+          },
         ],
       },
     };
@@ -31,5 +37,6 @@ describe("product surface access", () => {
       unavailable_message: "虾导功能暂未开放",
     });
     expect(surfaceAccess(data, "freezone")).toBeUndefined();
+    expect(surfaceAccess(data, "payment")?.available).toBe(false);
   });
 });

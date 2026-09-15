@@ -249,7 +249,7 @@ async def preview_file(
     ``st_thumb`` 请求一个降采样变体（见 ``novelvideo.utils.thumbnails``）；
     未知值等同于没传，回落原图。
     """
-    resolved = await resolve_project_scope(project, user, required_role="viewer")
+    resolved = await resolve_project_scope(project, user, required_role="viewer", media_read=True)
     requested = _resolve_project_file(resolved, file_path)
     thumbnail = _maybe_thumbnail_response(
         resolved.project_dir, requested, st_thumb, request
@@ -267,7 +267,7 @@ async def preview_project_media_file(
     request: Request | None = None,
 ):
     """Serve a project media file for non-/api routes such as /static/projects."""
-    resolved = await resolve_project_scope(project, user, required_role="viewer")
+    resolved = await resolve_project_scope(project, user, required_role="viewer", media_read=True)
     requested = _resolve_project_file(resolved, file_path)
     thumbnail = _maybe_thumbnail_response(
         resolved.project_dir, requested, st_thumb, request
