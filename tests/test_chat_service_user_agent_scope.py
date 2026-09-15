@@ -1348,6 +1348,23 @@ def test_codex_freezone_write_request_detection_ignores_injected_context_and_que
 @pytest.mark.parametrize(
     ("prompt", "expected"),
     [
+        ("创建一个网页", True),
+        ("创建一个 HTML 页面", True),
+        ("Generate a webpage", True),
+        ("不要创建网页，只解释方案", False),
+        ("Do not create a webpage; only explain the approach", False),
+        ("如何创建 HTML 页面？", False),
+    ],
+)
+def test_codex_freezone_write_request_detection_handles_html_creation(
+    prompt: str, expected: bool
+):
+    assert chat_service._freezone_canvas_write_requested(prompt) is expected
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
         ("创建图片转黑白线稿 Skill，先展示草稿，确认后保存，暂不运行", False),
         ("帮我生成一个图片转黑白线稿 Skill", False),
         ("修改这个 Skill，添加画幅选项，保存但不要创建画布节点", False),
