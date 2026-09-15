@@ -41,7 +41,7 @@ describe("workflow draft continuation", () => {
     await waitFor(() => expect(value.onConfirm).toHaveBeenCalledOnce());
     expect(value.onConfirm.mock.calls[0][1]).toContain('"draft_id":"draft-a","revision":1');
     expect(value.onConfirm.mock.calls[0][1]).toContain('"canvas_id":"canvas-a"');
-    expect(screen.getByText(/5 个节点/)).toBeTruthy();
+    expect(screen.queryByRole("button")).toBeNull();
     expect(api).toHaveBeenCalledTimes(2);
   });
   it.each(["confirming", "submitted", "confirmed", "failed"])("does not offer repeat creation for %s", async (status) => {
@@ -65,9 +65,15 @@ describe("workflow draft continuation", () => {
     expect(await screen.findByRole("alert")).toBeTruthy();
     expect(value.onConfirm.mock.calls[0][1]).not.toContain('"run_after_create":true');
   });
-  it("disables confirmation while a turn is active", async () => {
+  it("hides the fallback while a turn is active", async () => {
     render(<WorkflowDraftContinuation {...props()} busy />);
-    expect((await screen.findByRole("button", { name: "确认创建" }) as HTMLButtonElement).disabled).toBe(true);
+    await waitFor(() => expect(api).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+  it("hides the fallback when a canvas approval already exists", async () => {
+    render(<WorkflowDraftContinuation {...props()} hasApproval />);
+    await waitFor(() => expect(api).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("button")).toBeNull();
   });
   it("does not submit twice while confirmation is pending", async () => {
     const value = props();
@@ -78,7 +84,7 @@ describe("workflow draft continuation", () => {
     fireEvent.click(button); fireEvent.click(button);
     await waitFor(() => expect(value.onConfirm).toHaveBeenCalledOnce());
     resolve(true);
-    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(screen.queryByRole("button")).toBeNull());
   });
   it("does not offer confirmation for an expired draft", async () => {
     api.mockResolvedValue({ ...draft, expires_at: 1 });

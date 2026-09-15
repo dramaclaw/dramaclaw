@@ -42,17 +42,20 @@ export function latestWorkflowDraftId(messages: ChatMessage[]): string | null {
 }
 
 /** Recover the actionable continuation even when the agent stops at draft-ready. */
-export function WorkflowDraftContinuation({ messages, projectId, canvasId, busy, onConfirm }: {
+export function WorkflowDraftContinuation({ messages, projectId, canvasId, busy, hasApproval = false, onConfirm }: {
   messages: ChatMessage[];
   projectId: string;
   canvasId: string;
   busy: boolean;
+  hasApproval?: boolean;
   onConfirm: (display: string, transport: string) => boolean | Promise<boolean>;
 }) {
   const { t } = useTranslation();
   const draftId = latestWorkflowDraftId(messages);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [sending, setSending] = useState(false);
+  const [awaitingTurn, setAwaitingTurn] = useState(false);
+  const sawBusy = useRef(false);
   const [error, setError] = useState("");
   const inFlight = useRef(false);
   const scope = `${projectId}:${canvasId}:${draftId}`;
@@ -62,6 +65,8 @@ export function WorkflowDraftContinuation({ messages, projectId, canvasId, busy,
     setDraft(null);
     setError("");
     setSending(false);
+    setAwaitingTurn(false);
+    sawBusy.current = false;
     inFlight.current = false;
     if (!draftId || !projectId || !canvasId) return;
     let active = true;
@@ -77,7 +82,15 @@ export function WorkflowDraftContinuation({ messages, projectId, canvasId, busy,
     const timer = window.setInterval(() => void read(), 5000);
     return () => { active = false; window.clearInterval(timer); };
   }, [projectId, canvasId, draftId]);
-  if (!draft || draft.status !== "ready" ||
+  useEffect(() => {
+    if (!awaitingTurn) return;
+    if (busy) sawBusy.current = true;
+    if (!busy && sawBusy.current) {
+      sawBusy.current = false;
+      setAwaitingTurn(false);
+    }
+  }, [busy, awaitingTurn]);
+  if (busy || hasApproval || awaitingTurn || !draft || draft.status !== "ready" ||
     (draft.expires_at && draft.expires_at * 1000 <= Date.now())) return null;
   const confirm = async () => {
     if (inFlight.current || busy) return;
@@ -104,6 +117,7 @@ export function WorkflowDraftContinuation({ messages, projectId, canvasId, busy,
       })}。使用这份已确认草稿，不要重新准备方案。等待真实画布回执后再报告创建结果。`; // i18n-exempt
       // i18n-exempt-end
       if (!await onConfirm(display, transport)) throw new Error("not sent");
+      if (scopeRef.current === currentScope) setAwaitingTurn(true);
     } catch {
       if (scopeRef.current === currentScope) {
         setError(t("workflowDraftContinuation.failed"));

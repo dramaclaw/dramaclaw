@@ -221,7 +221,14 @@ async def _run_freezone_workflow_confirm_async(
                 raise RuntimeError("workflow confirmation draft revision changed")
             if str(draft.get("plan_digest") or "") != plan_digest:
                 raise RuntimeError("workflow confirmation plan changed")
-            if attempt_started_at is not None and (
+            # A same-task rejection resets ready's timestamp. Report the
+            # delivery rejection rather than misclassifying it as a newer run.
+            same_task_rejected = (
+                draft.get("status") == "ready"
+                and str(draft.get("task_id") or "") == run_task_id
+                and draft.get("confirmation_started_at") is None
+            )
+            if attempt_started_at is not None and not same_task_rejected and (
                 draft.get("confirmation_started_at") != attempt_started_at
             ):
                 raise RuntimeError("workflow confirmation attempt changed")

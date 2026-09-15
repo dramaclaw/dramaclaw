@@ -5531,6 +5531,23 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
                 "error": "Patch the draft and confirm its new revision to change run_after_create.",
             }
         )
+    # Check turn-scoped generation choices before admitting a durable task.
+    # A resumed/new turn may need clarification; that is not a failed canvas
+    # delivery and must not create a task only to immediately reset its attempt.
+    checked_graph = None
+    if current_payload.get("status") == "ready":
+        checked_graph = build_workflow_graph_commands({
+            "plan": (current_payload.get("compiled") or {}).get("plan"),
+            "run_after_create": bool(current_payload.get("run_after_create")),
+            "workflow_instance_id": draft_id,
+        })
+        if not checked_graph.get("ok"):
+            return tool_result(checked_graph)
+        missing_choices = _external_generation_parameter_preflight(
+            project_id, canvas_id, checked_graph.get("commands") or []
+        )
+        if missing_choices is not None:
+            return tool_result(missing_choices)
     payload, claim_result = _workflow_draft_response(
         _request(
             "POST",
@@ -5611,7 +5628,7 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             }
         )
     plan = compiled.get("plan")
-    built = build_workflow_graph_commands(
+    built = checked_graph or build_workflow_graph_commands(
         {
             "plan": plan,
             "run_after_create": run_after_create,

@@ -15288,6 +15288,7 @@ export function SuperChatPanel({
                     projectId={params.project}
                     canvasId={effectiveFreezoneCanvasId}
                     busy={chat.busy}
+                    hasApproval={pendingCanvasCommandApprovals.length > 0}
                     onConfirm={(display, transport) => chat.send(display, [], transport)}
                   />
                 )}
