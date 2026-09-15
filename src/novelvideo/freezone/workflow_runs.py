@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from novelvideo.freezone.paths import CANVAS_ID_RE
+from novelvideo.freezone.workflow_contract_generated import GENERATION_ACTION_TYPES
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
 
 RUN_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,80}$")
@@ -37,16 +38,7 @@ TERMINAL_RUN_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
 WORKFLOW_RUN_LEASE_SECONDS = 45
 ACTIVE_TASK_STATUSES = {"pending", "starting", "submitting", "queued", "running"}
 TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
-GENERATION_ACTIONS = {
-    "generate_text",
-    "generate_story_script",
-    "generate_image",
-    "generate_video",
-    "generate_text_video",
-    "generate_audio",
-    "generate_3gs_world",
-    "auto_compose_video",
-}
+GENERATION_ACTIONS = set(GENERATION_ACTION_TYPES)
 NON_RETRYABLE_ERROR_MARKERS = {
     "invalid token",
     "model_not_found",

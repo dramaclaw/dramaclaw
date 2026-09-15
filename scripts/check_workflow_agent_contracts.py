@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import json
 import os
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -520,6 +521,22 @@ async def _exercise_mcp(
 async def _run(args: argparse.Namespace) -> DiagnosticReport:
     root = Path(__file__).resolve().parents[1]
     report = DiagnosticReport()
+    generated_contract = subprocess.run(
+        [
+            sys.executable,
+            str(root / "scripts/generate_workflow_contract.py"),
+            "--check",
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    report.check(
+        generated_contract.returncode == 0,
+        "Generated Workflow stable contract is stale: "
+        + (generated_contract.stdout or generated_contract.stderr).strip(),
+    )
     Draft202012Validator.check_schema(workflow_plan_json_schema())
     Draft202012Validator.check_schema(workflow_intent_json_schema())
     report.check(True, "shared workflow JSON Schemas are invalid")
