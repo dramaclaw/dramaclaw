@@ -151,17 +151,9 @@ DramaClaw is a **source-available production line for AI drama** — and, increa
 
 It's built for creators, indie studios and creative engineers — run the whole "drama factory" on your own machine, without stitching together a dozen disconnected tools or handing your material to an opaque black-box cloud service. Although it's built around drama, the same canvas and pipeline carry to short-form ads, e-commerce product videos and other visual formats.
 
-<p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/dual-mode-workflow.jpg?v=2" width="600" alt="双模式工作流 · Dual-mode Workflow"/>
-</p>
-
 <br/>
 
 ## Core Capabilities
-
-<p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/oss-launch.jpg?v=2" width="760" alt="DramaClaw 源码发布 · source-available launch"/>
-</p>
 
 ### XiaHua — infinite canvas
 
@@ -177,8 +169,14 @@ It's built for creators, indie studios and creative engineers — run the whole 
 - **Canvas skills** &mdash; one-click skills such as sketch-from-context, frame-from-context, set-background, scene-360, frame review and beat-graph planning
 - **Built for big canvases** &mdash; canvas tabs, element outline, minimap and viewport bookmarks, snap-align, level-of-detail rendering, multi-select and group nodes, keyboard shortcuts, revision history with restore, per-canvas locking
 - **Commit to the series** &mdash; preview the impact, then promote a single node or a whole batch into the asset library or an episode; project the series back onto a canvas from presets
-- **Director World — spatially consistent sets** &mdash; image → 3D Gaussian Splat set and scene-360 panoramas as canvas nodes: a framable virtual set that locks spatial structure, character blocking and camera placement, so the same location stays consistent across shots; frame the shot in the 3D viewer, capture it, and use it as the background for the next generation<br/>
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/world-model.jpg?v=2" width="600" alt="世界模型 · World Model (3GS)"/>
+- **Director World — spatially consistent sets** &mdash; image → 3D Gaussian Splat set and scene-360 panoramas as canvas nodes: a framable virtual set that locks spatial structure, character blocking and camera placement, so the same location stays consistent across shots; frame the shot in the 3D viewer, capture it, and use it as the background for the next generation
+
+#### Director World
+
+<p align="center">
+  <img src="./assets/readme/director-world.jpg" width="900" alt="Director World"/>
+</p>
+<p align="center"><sub>Screenshot-based feature illustration; interface details may differ from the current release.</sub></p>
 
 ### Series (XiaJi) — the pipeline
 
@@ -191,17 +189,31 @@ Every step has its own interface — run them in order, skip steps, resume from 
 - **Structured ingest** &mdash; new projects build episodes, characters and scenes straight from the manuscript or screenplay (Fountain supported), no knowledge graph or embeddings required; the Cognee story-graph path remains for legacy projects
 - **Asset library & identity consistency** &mdash; characters, scenes, props and voices organised by purpose and folder; stable identities across episodes, character portraits and per-episode variants
 - **Episode planning & script generation** &mdash; chapter segmentation, beat planning, multi-episode arcs; adaptive / literal / staged script modes with review-and-repair loops
-- **Storyboards & first frames** &mdash; beat-driven stylized generation, grid splitting, image-pool selection<br/>
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/storyboard-sketch.jpg?v=2" width="600" alt="独家线稿草图系统 · Line-art Storyboard System"/>
+- **Storyboards & first frames** &mdash; beat-driven stylized generation, grid splitting, image-pool selection
 - **Voice-over, video composition & export** &mdash; emotion-aware speech, episode assembly, video + subtitle export and the full asset pack
 - **Visual Style** &mdash; upload a reference image to extract style parameters and apply them across the whole project
 - **Task Center** &mdash; status, progress, logs, cancel / retry, resume-from-checkpoint for long runs; prerequisites are validated before a job is queued
 
+#### XiaTang — asset library
+
+<p align="center">
+  <img src="./assets/readme/asset-library.jpg" width="900" alt="XiaTang — asset library"/>
+</p>
+<p align="center"><sub>Screenshot-based feature illustration; interface details may differ from the current release.</sub></p>
+
+#### Storyboards & first frames
+
+<p align="center">
+  <img src="./assets/readme/storyboards.jpg" width="900" alt="Storyboards & first frames"/>
+</p>
+<p align="center"><sub>Screenshot-based feature illustration; interface details may differ from the current release.</sub></p>
+
 ### Xia Director — the agent
 
 <p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/director-agent.jpg?v=2" width="600" alt="导演智能体 · Director Agent"/>
+  <img src="./assets/readme/xia-director.jpg" width="900" alt="Xia Director — project context and reviewed actions"/>
 </p>
+<p align="center"><sub>Screenshot-based feature illustration; interface details may differ from the current release.</sub></p>
 
 **Today**
 
@@ -419,6 +431,11 @@ The people building DramaClaw — thank you. 💜
     <td align="center"><a href="https://github.com/vkiki"><img src="https://github.com/vkiki.png?size=100" width="72" alt="vkiki"/><br/><sub>vkiki</sub></a></td>
     <td align="center"><a href="https://github.com/wangwenqq"><img src="https://github.com/wangwenqq.png?size=100" width="72" alt="wangwenqq"/><br/><sub>wangwenqq</sub></a></td>
     <td align="center"><a href="https://github.com/zhen2025109"><img src="https://github.com/zhen2025109.png?size=100" width="72" alt="zhen2025109"/><br/><sub>zhen2025109</sub></a></td>
+    <td align="center"><a href="https://github.com/revolutionarybukhari"><img src="https://github.com/revolutionarybukhari.png?size=100" width="72" alt="revolutionarybukhari"/><br/><sub>revolutionarybukhari</sub></a></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://github.com/yhay81"><img src="https://github.com/yhay81.png?size=100" width="72" alt="yhay81"/><br/><sub>yhay81</sub></a></td>
+    <td align="center"><a href="https://github.com/hoanglongggggggggg"><img src="https://github.com/hoanglongggggggggg.png?size=100" width="72" alt="hoanglongggggggggg"/><br/><sub>hoanglongggggggggg</sub></a></td>
   </tr>
 </table>
 

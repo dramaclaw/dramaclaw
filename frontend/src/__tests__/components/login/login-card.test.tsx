@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LoginCard } from "@/components/login/login-card";
 
@@ -43,7 +43,9 @@ vi.mock("react-i18next", () => ({
 }));
 
 describe("LoginCard", () => {
+  afterEach(() => vi.unstubAllGlobals());
   beforeEach(() => {
+    sessionStorage.clear();
     navigate.mockReset();
     login.mockReset();
     loginWithOtp.mockReset();
@@ -51,6 +53,36 @@ describe("LoginCard", () => {
     toast.success.mockReset();
     toast.error.mockReset();
     otpEntryVisible.mockReturnValue(true);
+  });
+
+  it.each(["password", "otp"])("returns to the recharge link after %s login", async (mode) => {
+    const replace = vi.fn();
+    const browserWindow = window;
+    vi.stubGlobal("window", new Proxy(browserWindow, {
+      get(target, key) {
+        return key === "location" ? { replace } : Reflect.get(target, key);
+      },
+    }));
+    sessionStorage.setItem("supertale-payment-login-redirect", "/recharge");
+    login.mockResolvedValue(undefined);
+    requestOtp.mockResolvedValue({ verification_id: "A".repeat(26), expires_in_seconds: 300 });
+    loginWithOtp.mockResolvedValue({ created_user: false, password_configured: true });
+    render(<LoginCard />);
+    if (mode === "password") {
+      fireEvent.click(screen.getByRole("tab", { name: "auth.passwordTab" }));
+      fireEvent.change(screen.getByLabelText("auth.accountOrPhone"), { target: { value: "alice" } });
+      fireEvent.change(screen.getByLabelText("auth.password"), { target: { value: "password123" } });
+      fireEvent.click(screen.getByRole("button", { name: "auth.loginButton" }));
+    } else {
+      fireEvent.change(screen.getByLabelText("auth.otp.phone"), { target: { value: "13800138000" } });
+      fireEvent.click(screen.getByRole("button", { name: "auth.otp.send" }));
+      await waitFor(() => expect(screen.getByLabelText("auth.otp.code")).not.toBeDisabled());
+      fireEvent.change(screen.getByLabelText("auth.otp.code"), { target: { value: "123456" } });
+      fireEvent.click(screen.getByRole("button", { name: "auth.otp.loginButton" }));
+    }
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/recharge"));
+    expect(navigate).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem("supertale-payment-login-redirect")).toBeNull();
   });
 
   it("uses OTP as the default sign-in path and completes auto-registration", async () => {

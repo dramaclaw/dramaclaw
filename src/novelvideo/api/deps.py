@@ -103,12 +103,14 @@ async def resolve_project_scope(
     user: dict,
     *,
     required_role: str = "viewer",
+    media_read: bool = False,
 ) -> ProjectResolution:
     """Resolve a route project_id to ProjectContext-backed local paths."""
     ctx = await resolve_project_context(
         user=user,
         project_id=project,
         required_role=required_role,
+        **({"media_read": True} if media_read else {}),
     )
     require_project_home_node(ctx, operation="resolve project files")
     return ProjectResolution(

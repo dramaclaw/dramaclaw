@@ -151,17 +151,9 @@ DramaClaw คือ**สายการผลิตละคร AI แบบเ�
 
 มันถูกสร้างมาเพื่อครีเอเตอร์ สตูดิโออิสระ และ creative engineer — รัน "โรงงานผลิตละคร" ทั้งโรงบนเครื่องของคุณเอง โดยไม่ต้องปะติดปะต่อเครื่องมือกระจัดกระจายเป็นสิบตัว หรือส่งวัตถุดิบของคุณให้บริการคลาวด์กล่องดำที่มองไม่เห็นข้างใน แม้จะสร้างขึ้นโดยมีละครเป็นแกนกลาง แต่ canvas และสายการผลิตชุดเดียวกันนี้ก็ใช้ทำโฆษณาสั้น วิดีโอสินค้าอีคอมเมิร์ซ และรูปแบบภาพอื่น ๆ ได้เช่นกัน
 
-<p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/dual-mode-workflow.jpg?v=2" width="600" alt="双模式工作流 · Dual-mode Workflow"/>
-</p>
-
 <br/>
 
 ## ความสามารถหลัก
-
-<p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/oss-launch.jpg?v=2" width="760" alt="DramaClaw 源码发布 · source-available launch"/>
-</p>
 
 ### XiaHua — canvas ไร้ขอบเขต
 
@@ -177,8 +169,14 @@ DramaClaw คือ**สายการผลิตละคร AI แบบเ�
 - **Canvas skills** &mdash; skill แบบคลิกเดียว เช่น sketch-from-context, frame-from-context, set-background, scene-360, ตรวจทานเฟรม และวางแผน beat-graph
 - **สร้างมาเพื่อ canvas ขนาดใหญ่** &mdash; แท็บ canvas, โครงร่างองค์ประกอบ, minimap และบุ๊กมาร์ก viewport, snap-align, การ render แบบ level-of-detail, เลือกหลายรายการและ node แบบกลุ่ม, คีย์ลัด, ประวัติการแก้ไขพร้อมกู้คืน, ล็อกแยกราย canvas
 - **ส่งเข้าซีรีส์** &mdash; ดูตัวอย่างผลกระทบก่อน แล้วส่ง node เดียวหรือทั้งชุดเข้าคลังแอสเซ็ตหรือตอนใดตอนหนึ่ง; ฉายซีรีส์กลับลง canvas จาก preset ได้
-- **Director World — ฉากที่คงความสม่ำเสมอเชิงพื้นที่** &mdash; ภาพ → ฉาก 3D Gaussian Splat และพาโนรามา scene-360 ในรูป node บน canvas: ฉากเสมือนที่จัดเฟรมได้ ล็อกโครงสร้างพื้นที่ ตำแหน่งตัวละคร และการวางกล้อง เพื่อให้สถานที่เดียวกันคงเดิมข้ามช็อต; จัดเฟรมช็อตในตัวดู 3D จับภาพ แล้วใช้เป็นพื้นหลังสำหรับการสร้างครั้งถัดไป<br/>
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/world-model.jpg?v=2" width="600" alt="世界模型 · World Model (3GS)"/>
+- **Director World — ฉากที่คงความสม่ำเสมอเชิงพื้นที่** &mdash; ภาพ → ฉาก 3D Gaussian Splat และพาโนรามา scene-360 ในรูป node บน canvas: ฉากเสมือนที่จัดเฟรมได้ ล็อกโครงสร้างพื้นที่ ตำแหน่งตัวละคร และการวางกล้อง เพื่อให้สถานที่เดียวกันคงเดิมข้ามช็อต; จัดเฟรมช็อตในตัวดู 3D จับภาพ แล้วใช้เป็นพื้นหลังสำหรับการสร้างครั้งถัดไป
+
+#### Director World — ฉาก 3D
+
+<p align="center">
+  <img src="../assets/readme/director-world.jpg" width="900" alt="Director World — ฉาก 3D"/>
+</p>
+<p align="center"><sub>ภาพแนะนำฟีเจอร์จากภาพหน้าจอเดิม รายละเอียดอาจแตกต่างจากเวอร์ชันปัจจุบัน</sub></p>
 
 ### Series (XiaJi) — สายการผลิต
 
@@ -191,17 +189,31 @@ DramaClaw คือ**สายการผลิตละคร AI แบบเ�
 - **นำเข้าแบบมีโครงสร้าง** &mdash; โปรเจกต์ใหม่สร้างตอน ตัวละคร และฉากตรงจากต้นฉบับหรือบทภาพยนตร์ (รองรับ Fountain) ไม่ต้องใช้ knowledge graph หรือ embedding; เส้นทาง story-graph ของ Cognee ยังคงไว้สำหรับโปรเจกต์เก่า
 - **คลังแอสเซ็ตและความสม่ำเสมอของตัวตน** &mdash; ตัวละคร ฉาก พร็อพ และเสียง จัดระเบียบตามวัตถุประสงค์และโฟลเดอร์; ตัวตนคงที่ข้ามตอน ภาพพอร์ตเทรตตัวละคร และตัวแปรรายตอน
 - **วางแผนตอนและสร้างบท** &mdash; แบ่งบท วางแผน beat โครงเรื่องหลายตอน; โหมดบทแบบดัดแปลง / ตามตัวอักษร / แบ่งเป็นขั้น พร้อมวงจรตรวจทานและซ่อมแซม
-- **สตอรีบอร์ดและเฟรมแรก** &mdash; การสร้างแบบมีสไตล์ที่ขับเคลื่อนด้วย beat, แบ่งกริด, เลือกจาก image pool<br/>
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/storyboard-sketch.jpg?v=2" width="600" alt="独家线稿草图系统 · Line-art Storyboard System"/>
+- **สตอรีบอร์ดและเฟรมแรก** &mdash; การสร้างแบบมีสไตล์ที่ขับเคลื่อนด้วย beat, แบ่งกริด, เลือกจาก image pool
 - **เสียงพากย์ ประกอบวิดีโอ และส่งออก** &mdash; เสียงพูดที่รับรู้อารมณ์, ประกอบตอน, ส่งออกวิดีโอ + ซับไตเติล และชุดแอสเซ็ตครบถ้วน
 - **Visual Style** &mdash; อัปโหลดภาพอ้างอิงเพื่อดึงพารามิเตอร์สไตล์แล้วนำไปใช้กับทั้งโปรเจกต์
 - **Task Center** &mdash; สถานะ ความคืบหน้า log ยกเลิก / ลองใหม่ ทำต่อจาก checkpoint สำหรับงานที่รันยาว; ตรวจสอบเงื่อนไขเบื้องต้นก่อนงานเข้าคิว
 
+#### XiaTang — คลังแอสเซ็ต
+
+<p align="center">
+  <img src="../assets/readme/asset-library.jpg" width="900" alt="XiaTang — คลังแอสเซ็ต"/>
+</p>
+<p align="center"><sub>ภาพแนะนำฟีเจอร์จากภาพหน้าจอเดิม รายละเอียดอาจแตกต่างจากเวอร์ชันปัจจุบัน</sub></p>
+
+#### สตอรีบอร์ดและเฟรมแรก
+
+<p align="center">
+  <img src="../assets/readme/storyboards.jpg" width="900" alt="สตอรีบอร์ดและเฟรมแรก"/>
+</p>
+<p align="center"><sub>ภาพแนะนำฟีเจอร์จากภาพหน้าจอเดิม รายละเอียดอาจแตกต่างจากเวอร์ชันปัจจุบัน</sub></p>
+
 ### Xia Director — agent
 
 <p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/director-agent.jpg?v=2" width="600" alt="导演智能体 · Director Agent"/>
+  <img src="../assets/readme/xia-director.jpg" width="900" alt="Xia Director — project context and reviewed actions"/>
 </p>
+<p align="center"><sub>ภาพแนะนำฟีเจอร์จากภาพหน้าจอเดิม รายละเอียดอาจแตกต่างจากเวอร์ชันปัจจุบัน</sub></p>
 
 **วันนี้**
 
@@ -419,6 +431,11 @@ adapter ของผู้ให้บริการที่มากับ ga
     <td align="center"><a href="https://github.com/vkiki"><img src="https://github.com/vkiki.png?size=100" width="72" alt="vkiki"/><br/><sub>vkiki</sub></a></td>
     <td align="center"><a href="https://github.com/wangwenqq"><img src="https://github.com/wangwenqq.png?size=100" width="72" alt="wangwenqq"/><br/><sub>wangwenqq</sub></a></td>
     <td align="center"><a href="https://github.com/zhen2025109"><img src="https://github.com/zhen2025109.png?size=100" width="72" alt="zhen2025109"/><br/><sub>zhen2025109</sub></a></td>
+    <td align="center"><a href="https://github.com/revolutionarybukhari"><img src="https://github.com/revolutionarybukhari.png?size=100" width="72" alt="revolutionarybukhari"/><br/><sub>revolutionarybukhari</sub></a></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://github.com/yhay81"><img src="https://github.com/yhay81.png?size=100" width="72" alt="yhay81"/><br/><sub>yhay81</sub></a></td>
+    <td align="center"><a href="https://github.com/hoanglongggggggggg"><img src="https://github.com/hoanglongggggggggg.png?size=100" width="72" alt="hoanglongggggggggg"/><br/><sub>hoanglongggggggggg</sub></a></td>
   </tr>
 </table>
 

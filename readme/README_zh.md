@@ -150,17 +150,9 @@ DramaClaw 是一条**源码可见的 AI 漫剧工业化生产线** —— 而且
 
 它为创作者、独立工作室以及创意工程师而生 —— 在自己的机器上跑完整个「漫剧智造工厂」，不必拼接十几个割裂的工具，也不必把素材交给一个看不见内部的黑盒云服务。虽然以漫剧为核心，同一套画布和流水线同样能产出短视频广告、电商带货视频等其它视觉内容。
 
-<p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/dual-mode-workflow.jpg?v=2" width="600" alt="双模式工作流"/>
-</p>
-
 <br/>
 
 ## 核心能力
-
-<p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/oss-launch.jpg?v=2" width="760" alt="DramaClaw 源码发布"/>
-</p>
 
 ### 虾画 —— 无限画布
 
@@ -176,8 +168,14 @@ DramaClaw 是一条**源码可见的 AI 漫剧工业化生产线** —— 而且
 - **画布技能** &mdash; 一键技能：按上下文出线稿、按上下文出首帧、设置背景、场景 360、画面审校、节拍图规划
 - **为大画布而生** &mdash; 画布分页、元素大纲、小地图与视口书签、吸附对齐、分级渲染、多选与分组、快捷键、历史版本回滚、画布级锁
 - **提交回剧集** &mdash; 先预览影响，再把单个节点或整批结果写入资产库或某一集；也能按预设把剧集投影回画布
-- **导演世界 —— 空间一致的片场** &mdash; 图片 → 3D 高斯片场、场景 360 全景，都是画布上的节点：可取景的虚拟片场，锁定空间结构、人物站位与镜头机位，同一场景跨镜头保持一致；在 3D 视图里取好景、截下来，直接作为下一次生成的背景<br/>
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/world-model.jpg?v=2" width="600" alt="世界模型"/>
+- **导演世界 —— 空间一致的片场** &mdash; 图片 → 3D 高斯片场、场景 360 全景，都是画布上的节点：可取景的虚拟片场，锁定空间结构、人物站位与镜头机位，同一场景跨镜头保持一致；在 3D 视图里取好景、截下来，直接作为下一次生成的背景
+
+#### 导演世界 —— 3D 片场
+
+<p align="center">
+  <img src="../assets/readme/director-world.jpg" width="900" alt="导演世界 —— 3D 片场"/>
+</p>
+<p align="center"><sub>基于已有截图重新制作的功能展示图；界面细节可能与当前版本不同。</sub></p>
 
 ### 虾集 —— 剧集流水线
 
@@ -190,17 +188,31 @@ DramaClaw 是一条**源码可见的 AI 漫剧工业化生产线** —— 而且
 - **结构化导入** &mdash; 新项目直接从原稿或剧本（支持 Fountain 格式）构建剧集、角色、场景，不需要知识图谱和向量；Cognee 故事图谱路径保留给老项目
 - **资产库与身份一致性（虾塘）** &mdash; 角色、场景、道具、声线按用途和文件夹管理；多集之间保持稳定身份，生成角色肖像与单集变体
 - **剧集规划与剧本生成** &mdash; 章节切分、节拍规划、多集叙事弧；改编 / 直译 / 分镜稿多种模式，带审校修复循环
-- **分镜与首帧** &mdash; 按节拍风格化生成，网格切分，图像池选优<br/>
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/storyboard-sketch.jpg?v=2" width="600" alt="独家线稿草图系统"/>
+- **分镜与首帧** &mdash; 按节拍风格化生成，网格切分，图像池选优
 - **配音、合成与导出** &mdash; 带情绪的语音合成，组装剧集，导出视频 + 字幕与整套素材包
 - **风格模板（虾格）** &mdash; 上传参考图自动解析风格参数，一键应用到整个项目
 - **任务中心（虾条）** &mdash; 状态、进度、日志、取消 / 重试，长任务断点续跑；入队前先校验前置条件
 
+#### 虾塘 —— 资产库
+
+<p align="center">
+  <img src="../assets/readme/asset-library.jpg" width="900" alt="虾塘 —— 资产库"/>
+</p>
+<p align="center"><sub>基于已有截图重新制作的功能展示图；界面细节可能与当前版本不同。</sub></p>
+
+#### 分镜与首帧
+
+<p align="center">
+  <img src="../assets/readme/storyboards.jpg" width="900" alt="分镜与首帧"/>
+</p>
+<p align="center"><sub>基于已有截图重新制作的功能展示图；界面细节可能与当前版本不同。</sub></p>
+
 ### 虾导 —— 智能体
 
 <p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/director-agent.jpg?v=2" width="600" alt="导演智能体"/>
+  <img src="../assets/readme/xia-director.jpg" width="900" alt="Xia Director — project context and reviewed actions"/>
 </p>
+<p align="center"><sub>基于已有截图重新制作的功能展示图；界面细节可能与当前版本不同。</sub></p>
 
 **现在**
 
@@ -418,6 +430,11 @@ DramaClaw 对模型侧保持中立 —— 所有文本 / 图片 / 视频 / 音�
     <td align="center"><a href="https://github.com/vkiki"><img src="https://github.com/vkiki.png?size=100" width="72" alt="vkiki"/><br/><sub>vkiki</sub></a></td>
     <td align="center"><a href="https://github.com/wangwenqq"><img src="https://github.com/wangwenqq.png?size=100" width="72" alt="wangwenqq"/><br/><sub>wangwenqq</sub></a></td>
     <td align="center"><a href="https://github.com/zhen2025109"><img src="https://github.com/zhen2025109.png?size=100" width="72" alt="zhen2025109"/><br/><sub>zhen2025109</sub></a></td>
+    <td align="center"><a href="https://github.com/revolutionarybukhari"><img src="https://github.com/revolutionarybukhari.png?size=100" width="72" alt="revolutionarybukhari"/><br/><sub>revolutionarybukhari</sub></a></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://github.com/yhay81"><img src="https://github.com/yhay81.png?size=100" width="72" alt="yhay81"/><br/><sub>yhay81</sub></a></td>
+    <td align="center"><a href="https://github.com/hoanglongggggggggg"><img src="https://github.com/hoanglongggggggggg.png?size=100" width="72" alt="hoanglongggggggggg"/><br/><sub>hoanglongggggggggg</sub></a></td>
   </tr>
 </table>
 

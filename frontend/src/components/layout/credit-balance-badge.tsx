@@ -2,7 +2,6 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useTranslation } from "react-i18next";
 import { ChevronRight, Sparkles } from "lucide-react";
-import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
 import { CREDIT_VALUE_CLASS, CreditSparkIcon } from "@/components/credits/credit-visual";
@@ -11,6 +10,10 @@ import { useCreditSummary } from "@/lib/queries/credits";
 import { isCeRuntime } from "@/lib/runtime-config";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
+
+import { CreditCenterDialog, type CreditCenterTab } from "@/components/credits/CreditCenterDialog";
+import { surfaceAccess, useProductSurfaces } from "@/lib/queries/product-surfaces";
+import { CREDIT_CENTER_TAB_KEY, OPEN_CREDIT_CENTER_KEY } from "@/lib/payment-navigation";
 
 import entryStyles from "./header-entry.module.css";
 
@@ -22,13 +25,16 @@ export function CreditBalanceBadge() {
   // Keep hooks unconditional; disable requests in CE and when signed out.
   const ce = isCeRuntime();
   const { t, i18n } = useTranslation();
-  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
+  const [centerOpen, setCenterOpen] = useState(false);
+  const [centerTab, setCenterTab] = useState<CreditCenterTab>("packages");
   const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pinnedRef = useRef(false);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const username = useAuthStore((s) => s.username);
   const summaryQuery = useCreditSummary(Boolean(username) && !ce);
+  const productSurfaces = useProductSurfaces(Boolean(username) && !ce);
+  const paymentAvailable = surfaceAccess(productSurfaces.data, "payment")?.available ?? false;
   const summary = summaryQuery.data?.data;
   // Auth may describe a different wallet; never use it as a loading fallback.
   const balance = summary?.balance;
@@ -43,6 +49,15 @@ export function CreditBalanceBadge() {
     },
     [],
   );
+
+  useEffect(() => {
+    if (sessionStorage.getItem(OPEN_CREDIT_CENTER_KEY) !== "1") return;
+    const requestedTab = sessionStorage.getItem(CREDIT_CENTER_TAB_KEY);
+    sessionStorage.removeItem(OPEN_CREDIT_CENTER_KEY);
+    sessionStorage.removeItem(CREDIT_CENTER_TAB_KEY);
+    if (requestedTab === "orders") setCenterTab("orders");
+    setCenterOpen(true);
+  }, []);
 
   if (ce || !username) return null;
 
@@ -78,13 +93,14 @@ export function CreditBalanceBadge() {
     }, 180);
   };
 
-  const openCredits = () => {
+  const openCredits = (tab: CreditCenterTab) => {
     if (openTimerRef.current) clearTimeout(openTimerRef.current);
     openTimerRef.current = null;
     pinnedRef.current = false;
     cancelScheduledClose();
     setOpen(false);
-    void navigate({ to: "/credits" });
+    setCenterTab(tab);
+    setCenterOpen(true);
   };
 
   return (
@@ -137,13 +153,24 @@ export function CreditBalanceBadge() {
           <div className="px-4 pb-2.5 pt-3.5">
             <div className="flex items-center justify-between">
               <div className="text-xs font-semibold">{t("credits.availableBalance")}</div>
-              <button
-                type="button"
-                onClick={openCredits}
-                className="text-xs font-medium text-primary outline-none transition-colors hover:text-primary/80 focus:outline-none focus:shadow-none focus:ring-0 focus-visible:outline-none focus-visible:shadow-none focus-visible:ring-0"
-              >
-                {t("credits.details")}
-              </button>
+              <div className="flex items-center gap-3">
+                {paymentAvailable ? (
+                  <button
+                    type="button"
+                    onClick={() => openCredits("custom")}
+                    className="text-xs font-medium text-primary outline-none transition-colors hover:text-primary/80 focus:outline-none focus:shadow-none focus:ring-0 focus-visible:outline-none focus-visible:shadow-none focus-visible:ring-0"
+                  >
+                    {t("credits.centerModal.tabs.custom")}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => openCredits("usage")}
+                  className="text-xs font-medium text-white/65 outline-none transition-colors hover:text-white focus:outline-none focus:shadow-none focus:ring-0 focus-visible:outline-none focus-visible:shadow-none focus-visible:ring-0"
+                >
+                  {t("credits.details")}
+                </button>
+              </div>
             </div>
             <div className="mt-3 flex items-center gap-1.5">
               <CreditSparkIcon className="size-5" />
@@ -171,7 +198,7 @@ export function CreditBalanceBadge() {
           {summary && summary.promotion_count > 0 ? (
             <button
               type="button"
-              onClick={openCredits}
+              onClick={() => openCredits("benefits")}
               className={`${entryStyles.actionHover} flex w-full items-center gap-3 border-t border-white/8 px-4 py-3 text-left`}
             >
               <span className="flex size-8 items-center justify-center rounded-lg bg-amber-400/12 text-amber-300">
@@ -188,6 +215,7 @@ export function CreditBalanceBadge() {
           ) : null}
         </PopoverContent>
       </Popover>
+      {centerOpen ? <CreditCenterDialog open={centerOpen} onOpenChange={setCenterOpen} initialTab={centerTab} paymentAvailable={paymentAvailable} /> : null}
     </>
   );
 }

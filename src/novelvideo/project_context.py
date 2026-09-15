@@ -109,7 +109,10 @@ async def resolve_project_context(
     project_id: str | None = None,
     project_name: str | None = None,
     required_role: str = "viewer",
+    media_read: bool = False,
 ) -> ProjectContext:
+    if media_read and required_role != "viewer":
+        raise ValueError("media read authorization is viewer-only")
     try:
         registry = get_project_registry()
         access = get_project_access()
@@ -129,7 +132,13 @@ async def resolve_project_context(
     if record is None:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    role = await access.effective_project_role(record, principals)
+    # Optional capability: old EE providers remain compatible and fully check
+    # authorization. Only media-serving callers may opt into this read cache.
+    media_resolver = getattr(access, "effective_media_read_role", None) if media_read else None
+    if media_resolver is not None:
+        role = await media_resolver(record, principals)
+    else:
+        role = await access.effective_project_role(record, principals)
     require_role_value(role, required_role)
     return _ctx_from_record(
         project=record,
