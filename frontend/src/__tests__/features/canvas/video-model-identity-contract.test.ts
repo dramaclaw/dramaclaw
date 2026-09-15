@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { selectVideoModel } from "@/features/canvas/domain/catalogVideoModels";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
@@ -75,5 +76,37 @@ describe("VideoNode feeds capability helpers the api model, not the catalog id",
 
   it("modelId 只作为 catalogId 的兜底出现在提交参数里", () => {
     expect(videoFormSource).toContain("selectedVideoModel?.catalogId ?? modelId");
+  });
+});
+
+describe("video catalog model selection", () => {
+  it("preserves an exact EE catalog id even when model names are duplicated", () => {
+    const other = {
+      ...EE_SEEDANCE2_ROW,
+      id: "another-route",
+      catalogId: "another-route",
+      providerId: "huimeng",
+      label: "Other route",
+    } as const;
+    const selected = { ...EE_SEEDANCE2_ROW, providerId: "newapi", label: "Selected route" } as const;
+    expect(selectVideoModel([other, selected], EE_CATALOG_ULID)).toBe(selected);
+  });
+
+  it("resolves a workflow alias to a unique live catalog row and retains its submission id", () => {
+    const row = { ...EE_SEEDANCE2_ROW, providerId: "newapi", label: "Standard" } as const;
+    expect(selectVideoModel([row], "newapi_seedance-2.0")?.catalogId).toBe(EE_CATALOG_ULID);
+  });
+
+  it("does not guess a provider route from an ambiguous model alias", () => {
+    const row = { ...EE_SEEDANCE2_ROW, providerId: "newapi", label: "Standard" } as const;
+    const other = { ...row, id: "another-route", catalogId: "another-route" };
+    expect(selectVideoModel([row, other], "seedance-2.0")).toBeUndefined();
+  });
+
+  it("preserves the existing default for missing or unavailable models", () => {
+    const row = { ...EE_SEEDANCE2_ROW, providerId: "newapi", label: "Standard" } as const;
+    expect(selectVideoModel([row], undefined)).toBe(row);
+    expect(selectVideoModel([row], "unknown-model")).toBe(row);
+    expect(selectVideoModel([], undefined)).toBeUndefined();
   });
 });

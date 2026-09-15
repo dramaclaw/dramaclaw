@@ -1139,6 +1139,7 @@ frontend/src/features/canvas/domain/cameraMovementPresets.ts,Elastic-2.0,2026 Su
 frontend/src/features/canvas/domain/canvasAssets.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/domain/canvasNodes.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/domain/catalogImageModels.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/domain/catalogVideoModels.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/domain/directorWorldSceneSaveRegistry.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/domain/directorWorldSources.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/domain/fixedFeatureModelRequest.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
