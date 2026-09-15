@@ -45,7 +45,10 @@ from similar arguments or user text.
 
 A ready Workflow draft remains pending user confirmation; it is not evidence
 that nodes already exist. An answered clarification by itself is not a failed
-canvas write. Runtime timeout/cancellation retains the existing runtime reason.
+canvas write. Runtime timeout retains the existing runtime reason. On runtime
+cancellation, Freezone discards all unvalidated structured output (including
+partial JSON) and emits and persists only an explicit cancellation notice.
+Cancellation does not roll back tool operations that already completed.
 
 Freezone assistant prose is buffered until the response is validated. Tool
 progress and approval/clarification cards continue to stream. JSON transport

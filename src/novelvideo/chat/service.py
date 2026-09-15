@@ -7270,7 +7270,11 @@ async def _stream_assistant_reply_codex(
     # the runtime's actionable reason instead of replacing it with the
     # misleading "no canvas write" postcondition message.
     canvas_postcondition_applies = turn_disposition not in {"timeout", "cancelled"}
-    if structured_canvas_reply and canvas_postcondition_applies:
+    if structured_canvas_reply and turn_disposition == "cancelled":
+        # Interrupted turns can complete with partial structured JSON. None of
+        # that unvalidated payload may reach presentation or persisted history.
+        assistant_text = "已取消本轮请求。"
+    elif structured_canvas_reply and canvas_postcondition_applies:
         assistant_text = finalize_canvas_reply(
             assistant_text,
             attempts=canvas_write_attempts,

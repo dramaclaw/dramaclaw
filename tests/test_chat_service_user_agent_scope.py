@@ -1809,7 +1809,27 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
 
 
 @pytest.mark.anyio
-async def test_codex_freezone_timeout_preserves_runtime_reason(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "disposition,runtime_text,expected",
+    [
+        (
+            "timeout",
+            "Codex App Server 响应超时，请重试。",
+            "Codex App Server 响应超时，请重试。",
+        ),
+        ("cancelled", '{"mode":"mutation","text":"已创建成功', "已取消本轮请求。"),
+        (
+            "cancelled",
+            '{"mode":"mutation","text":"已创建成功","canvas_receipts":[]}',
+            "已取消本轮请求。",
+        ),
+        ("cancelled", "", "已取消本轮请求。"),
+    ],
+)
+@pytest.mark.parametrize("notification", ["egress_disposition", "turn_completed"])
+async def test_codex_freezone_interruption_discards_unvalidated_output(
+    monkeypatch, tmp_path, disposition, runtime_text, expected, notification
+):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     events = []
 
@@ -1830,15 +1850,20 @@ async def test_codex_freezone_timeout_preserves_runtime_reason(monkeypatch, tmp_
                 thread_id="codex-thread",
                 turn_id="codex-turn",
             )
+            yield SimpleNamespace(type="assistant_delta", text=runtime_text)
             yield SimpleNamespace(
-                type="egress_disposition",
-                disposition="timeout",
+                type=notification,
+                disposition=disposition,
+                status=disposition,
+                thread_id="codex-thread",
+                turn_id="codex-turn",
+                error=None,
             )
             yield SimpleNamespace(
                 type="complete",
                 thread_id="codex-thread",
                 turn_id="codex-turn",
-                text="Codex App Server 响应超时，请重试。",
+                text=runtime_text,
             )
 
     monkeypatch.setattr(chat_service, "authorize_hermes_launch", fake_authorize)
@@ -1875,10 +1900,15 @@ async def test_codex_freezone_timeout_preserves_runtime_reason(monkeypatch, tmp_
         route_prompt="创建一个图片工作流",
     )
 
-    assert result["content"] == "Codex App Server 响应超时，请重试。"
+    assert result["content"] == expected
     assert [
         event["text"] for event in events if event["type"] == "assistant_delta"
-    ] == ["Codex App Server 响应超时，请重试。"]
+    ] == [expected]
+    from novelvideo.chat.store import chat_store
+
+    assert await chat_store.history_contents_async(
+        "admin", scope, "assistant", limit=10
+    ) == [expected]
 
 
 @pytest.mark.asyncio
