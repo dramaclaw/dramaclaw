@@ -433,7 +433,6 @@
       "open": "Mở menu tài khoản",
       "changeAvatar": "Đổi ảnh đại diện",
       "changePassword": "Đổi mật khẩu",
-      "setPassword": "Đặt mật khẩu",
       "selectLanguage": "Chọn ngôn ngữ",
       "languageChinese": "中文",
       "languageEnglish": "English",
@@ -450,25 +449,25 @@
       "passwordDialog": {
         "title": "Đổi mật khẩu",
         "description": "Đổi mật khẩu sẽ đăng xuất bạn trên mọi thiết bị. Hãy đăng nhập lại bằng mật khẩu mới.",
-        "initializeTitle": "Đặt mật khẩu đăng nhập",
-        "initializeDescription": "Sau khi đặt mật khẩu, bạn có thể đăng nhập bằng số điện thoại và mật khẩu. Bạn sẽ cần đăng nhập lại sau khi hoàn tất.",
         "current": "Mật khẩu hiện tại",
         "new": "Mật khẩu mới",
         "confirm": "Xác nhận mật khẩu mới",
         "requirement": "Dùng ít nhất 8 ký tự và chọn mật khẩu khác mật khẩu hiện tại.",
-        "initializeRequirement": "Dùng ít nhất 8 ký tự. Bạn phải đăng nhập bằng mã xác minh trong vòng 10 phút gần đây.",
         "mismatch": "Hai mật khẩu mới không khớp.",
         "unchanged": "Mật khẩu mới phải khác mật khẩu hiện tại.",
         "currentIncorrect": "Mật khẩu hiện tại không đúng.",
         "submit": "Đổi mật khẩu",
-        "initializeSubmit": "Đặt mật khẩu",
         "saving": "Đang đổi…",
         "success": "Đã đổi mật khẩu. Hãy đăng nhập lại bằng mật khẩu mới.",
         "partialSuccess": "Đã đổi mật khẩu. Hãy đăng nhập lại; một số phiên vẫn đang được đăng xuất.",
+        "error": "Không đổi được mật khẩu. Vui lòng thử lại.",
+        "initializeTitle": "Đặt mật khẩu đăng nhập",
+        "initializeDescription": "Sau khi đặt mật khẩu, bạn có thể đăng nhập bằng số điện thoại và mật khẩu. Bạn sẽ cần đăng nhập lại sau khi hoàn tất.",
+        "initializeRequirement": "Dùng ít nhất 8 ký tự. Bạn phải đăng nhập bằng mã xác minh trong vòng 10 phút gần đây.",
+        "initializeSubmit": "Đặt mật khẩu",
         "initializeSuccess": "Đã đặt mật khẩu. Hãy đăng nhập lại bằng số điện thoại và mật khẩu mới.",
         "initializePartialSuccess": "Đã đặt mật khẩu. Hãy đăng nhập lại; một số phiên vẫn đang được đăng xuất.",
-        "initializeExpired": "Lần đăng nhập bằng mã xác minh này đã quá lâu. Hãy đăng nhập bằng mã mới rồi thử lại.",
-        "error": "Không đổi được mật khẩu. Vui lòng thử lại."
+        "initializeExpired": "Lần đăng nhập bằng mã xác minh này đã quá lâu. Hãy đăng nhập bằng mã mới rồi thử lại."
       },
       "avatarDialog": {
         "title": "Đổi ảnh đại diện",
@@ -480,7 +479,8 @@
         "save": "Lưu ảnh đại diện",
         "saving": "Đang lưu…",
         "error": "Tải ảnh đại diện thất bại, vui lòng thử lại"
-      }
+      },
+      "setPassword": "Đặt mật khẩu"
     }
   },
   "organization": {
@@ -1425,7 +1425,8 @@
       "all": "Tất cả",
       "earned": "Nhận vào",
       "spent": "Đã dùng",
-      "refunded": "Hoàn lại"
+      "refunded": "Hoàn lại",
+      "pending": "Đang chờ"
     },
     "status": {
       "pending": "Chờ xử lý",
@@ -1450,6 +1451,171 @@
       "active": "Khuyến mãi",
       "discount": "Giảm {{percentOff}}%",
       "limitedDiscount": "Giảm {{percentOff}}%, có hạn"
+    },
+    "recharge": {
+      "title": "Nạp điểm",
+      "subtitle": "Chọn gói và phương thức thanh toán. Trạng thái đơn hàng là thông tin xác nhận chính thức.",
+      "loading": "Đang tải gói nạp…",
+      "unavailable": "Tạm thời không thể nạp điểm",
+      "empty": "Hiện chưa có gói nạp khả dụng",
+      "credits": "{{count}} điểm",
+      "gift": "bao gồm {{count}} điểm tặng",
+      "paymentMethod": "Phương thức thanh toán",
+      "methods": {
+        "alipay": "Alipay",
+        "wxpay": "WeChat Pay",
+        "dodo": "Dodo Payments"
+      },
+      "pay": "Thanh toán ngay",
+      "creating": "Đang tạo đơn…",
+      "createFailed": "Không thể tạo đơn thanh toán. Vui lòng thử lại sau.",
+      "errors": {
+        "tooManyPending": "Bạn đang có nhiều đơn chưa thanh toán. Hãy thanh toán hoặc chờ các đơn đóng trước khi thử lại.",
+        "packageUnavailable": "Gói nạp này không còn khả dụng. Hãy tải lại và chọn gói khác.",
+        "purchaseLimit": "Gói nạp này đã đạt giới hạn mua.",
+        "methodUnavailable": "Phương thức thanh toán đã chọn hiện không khả dụng.",
+        "orgCreditsInsufficient": "Tổ chức không có đủ điểm cho giao dịch này.",
+        "accountUnavailable": "Tài khoản này không đủ điều kiện cho gói nạp đã chọn.",
+        "linkUnavailable": "Liên kết nạp đã hết hạn, bị tắt hoặc không thuộc tài khoản này.",
+        "requestChanged": "Cấu hình nạp đã thay đổi. Hãy tải lại và gửi đơn lần nữa.",
+        "serviceUnavailable": "Dịch vụ thanh toán tạm thời không khả dụng. Vui lòng thử lại sau.",
+        "checkoutUnknown": "Đang xác minh việc tạo trang thanh toán. Hãy kiểm tra lịch sử hóa đơn trước khi tạo đơn khác.",
+        "quoteChanged": "Báo giá đã thay đổi. Hãy kiểm tra số tiền mới và xác nhận thanh toán lại.",
+        "belowMinimum": "Số tiền thấp hơn mức tối thiểu của kênh thanh toán. Vui lòng tăng số tiền hoặc chọn phương thức thanh toán khác."
+      },
+      "orderAlreadyCreated": "Đơn này đã tồn tại. Kiểm tra trạng thái trong lịch sử nạp.",
+      "history": "Lịch sử nạp",
+      "loadingOrders": "Đang tải lịch sử nạp…",
+      "noOrders": "Chưa có đơn nạp",
+      "columns": {
+        "billId": "Mã hóa đơn",
+        "transactionTime": "Thời gian giao dịch",
+        "content": "Nội dung",
+        "time": "Ngày tạo",
+        "package": "Gói",
+        "amount": "Số tiền",
+        "credits": "Điểm",
+        "status": "Trạng thái"
+      },
+      "status": {
+        "pending": "Chờ thanh toán",
+        "paid": "Đã thanh toán, đang cộng điểm",
+        "credited": "Đã cộng điểm",
+        "failed": "Thanh toán thất bại",
+        "expired": "Đã hết hạn",
+        "closed": "Đã đóng",
+        "refunded": "Đã hoàn tiền",
+        "manualReview": "Cần kiểm tra thủ công",
+        "creditFailed": "Lỗi cộng điểm"
+      }
+    },
+    "centerModal": {
+      "account": "Tài khoản điểm",
+      "groups": {
+        "recharge": "Điểm",
+        "account": "Quyền lợi và hóa đơn",
+        "support": "Trợ giúp và hỗ trợ"
+      },
+      "tabs": {
+        "packages": "Gói điểm",
+        "custom": "Nạp tùy chọn",
+        "benefits": "Quyền lợi của tôi",
+        "orders": "Lịch sử hóa đơn",
+        "usage": "Thống kê sử dụng",
+        "help": "Trợ giúp nạp điểm"
+      },
+      "descriptions": {
+        "packages": "Mua các gói điểm không có ngày hết hạn.",
+        "custom": "Chọn số điểm bạn cần.",
+        "benefits": "Xem ưu đãi và quyền lợi dành cho tài khoản này.",
+        "orders": "Xem các bản ghi nạp, cộng điểm, hoàn tiền và đơn bất thường.",
+        "usage": "Xem điểm nhận được, điểm đã dùng và hoạt động gần đây.",
+        "help": "Tìm hiểu quy định cộng điểm, thời hạn và hoàn tiền."
+      },
+      "firstPurchase": "Khách hàng mới",
+      "mostPopular": "Phổ biến nhất",
+      "oneTimePurchase": "Mua một lần · Điểm không hết hạn",
+      "baseCredits": "Điểm cơ bản",
+      "giftCredits": "Điểm tặng",
+      "totalCredits": "Điểm nhận được",
+      "buyNow": "Mua ngay",
+      "packagesUnavailable": "Hiện chưa có gói nạp khả dụng",
+      "pendingConfiguration": "Chờ cấu hình",
+      "packageViews": {
+        "packages": "Gói điểm",
+        "enterprise": "Doanh nghiệp"
+      },
+      "packageTiers": {
+        "choose": "Chọn tùy chọn mua {{tier}}",
+        "starter": {
+          "description": "Dành cho những dự án sáng tạo AI đầu tiên",
+          "note": "Mỗi tài khoản chỉ được mua một lần"
+        },
+        "pro": {
+          "description": "Dành cho sáng tạo thường xuyên và dự án ngắn",
+          "note": "Từ thử nghiệm đến sản xuất ổn định"
+        },
+        "plus": {
+          "description": "Dành cho nhóm và quy trình cộng tác",
+          "note": "Thiết kế cho sản xuất dự án theo nhóm"
+        },
+        "max": {
+          "description": "Dành cho sản xuất và bàn giao khối lượng lớn",
+          "note": "Thiết kế cho sản xuất nội dung nhiều tập quy mô lớn"
+        }
+      },
+      "enterprise": {
+        "headline": "Tiếp sức cho những ý tưởng sáng tạo lớn phát triển và tự tin lên màn ảnh.",
+        "subtitle": "Cộng tác doanh nghiệp và giải pháp tùy chỉnh",
+        "benefitsTitle": "Giải pháp tùy chỉnh",
+        "contact": "Liên hệ kinh doanh",
+        "benefits": {
+          "quota": "Hạn mức hình ảnh, video và nhân vật tùy chỉnh",
+          "priority": "Hàng đợi riêng với ưu tiên cao nhất",
+          "templates": "Tùy chỉnh mẫu cho doanh nghiệp",
+          "security": "Bảo vệ an toàn dữ liệu nhiều lớp",
+          "support": "Dịch vụ chuyên biệt và phản hồi nhanh"
+        }
+      },
+      "chooseCredits": "Chọn số điểm",
+      "customCredits": "Số điểm",
+      "orderSummary": "Tóm tắt nạp điểm",
+      "exchangeRate": "Tỷ lệ quy đổi hiện tại",
+      "amountDue": "Số tiền cần trả",
+      "rechargeNow": "Nạp ngay",
+      "noBenefits": "Hiện chưa có quyền lợi khả dụng",
+      "usage": {
+        "totalSpent": "Tổng điểm đã dùng",
+        "dailyPeak": "Mức cao nhất trong ngày",
+        "weeklyAverage": "Trung bình mỗi tuần trong mẫu",
+        "activeDays": "Số ngày hoạt động",
+        "longestStreak": "Chuỗi ngày hoạt động dài nhất",
+        "activity": "Hoạt động điểm",
+        "daily": "Hàng ngày",
+        "weekly": "Hàng tuần",
+        "cumulative": "Lũy kế",
+        "sampled": "{{count}} bản ghi gần nhất",
+        "noRecords": "Không có bản ghi điểm phù hợp với bộ lọc",
+        "recordCount": "{{count}} bản ghi",
+        "page": "Trang {{page}} / {{total}}",
+        "previousPage": "Trang trước",
+        "nextPage": "Trang sau"
+      },
+      "help": {
+        "arrival": {
+          "question": "Khi nào tôi nhận được điểm?",
+          "answer": "Điểm được cộng tự động sau khi nhà cung cấp thanh toán xác nhận thành công. Theo dõi tiến độ trong lịch sử hóa đơn."
+        },
+        "validity": {
+          "question": "Điểm đã mua có hết hạn không?",
+          "answer": "Hiện tại điểm đã mua không hết hạn. Điểm tặng khuyến mãi tuân theo điều khoản của chương trình tương ứng."
+        },
+        "refund": {
+          "question": "Đơn nạp có thể được hoàn tiền không?",
+          "answer": "Yêu cầu hoàn tiền được xem xét theo mức sử dụng và quy định nền tảng. Điểm đã tiêu thụ không thể được hoàn lại hai lần."
+        }
+      },
+      "customUnavailable": "Tài khoản này không hỗ trợ nạp điểm tùy chọn"
     }
   },
   "nav": {
@@ -1807,13 +1973,7 @@
     "login": "Đăng nhập",
     "logout": "Đăng xuất",
     "username": "Tên đăng nhập",
-    "account": "Tài khoản",
-    "accountPlaceholder": "Nhập tài khoản",
-    "accountOrPhone": "Tài khoản hoặc số điện thoại",
-    "accountOrPhonePlaceholder": "Nhập tài khoản hoặc số điện thoại",
     "password": "Mật khẩu",
-    "passwordTab": "Mật khẩu",
-    "loginMethod": "Chọn phương thức đăng nhập",
     "loginButton": "Đăng nhập",
     "loginFailed": "Sai tên đăng nhập hoặc mật khẩu",
     "welcomeBack": "Chào mừng trở lại",
@@ -1839,12 +1999,12 @@
       "subtitle": "Tiếp tục với truyện, asset và cú máy của bạn",
       "noAccount": "Chưa có tài khoản?",
       "applyAccount": "Đăng ký dùng thử",
-      "otpRegistration": "Lần đầu đăng nhập bằng số điện thoại đã xác minh sẽ tự động tạo tài khoản",
       "showcaseLabel": "Thư viện DramaClaw",
       "showcaseEyebrow": "LÀM BẰNG DRAMACLAW",
       "showcaseMeta": "Dây chuyền đang chạy",
       "showcaseTitle": "Trí tưởng tượng chạy hết công suất",
-      "showcaseDescription": "Nhân vật, storyboard, âm thanh và cú máy cùng tiến trên một dây chuyền"
+      "showcaseDescription": "Nhân vật, storyboard, âm thanh và cú máy cùng tiến trên một dây chuyền",
+      "otpRegistration": "Lần đầu đăng nhập bằng số điện thoại đã xác minh sẽ tự động tạo tài khoản"
     },
     "otp": {
       "existingAccountHint": "Đã có tài khoản? Hãy đăng nhập bằng tài khoản và mật khẩu, rồi liên kết số điện thoại trong menu tài khoản để tránh tạo tài khoản khác.",
@@ -1967,7 +2127,13 @@
         "windows": "Windows"
       },
       "aria": "Tải app desktop"
-    }
+    },
+    "account": "Tài khoản",
+    "accountPlaceholder": "Nhập tài khoản",
+    "accountOrPhone": "Tài khoản hoặc số điện thoại",
+    "accountOrPhonePlaceholder": "Nhập tài khoản hoặc số điện thoại",
+    "passwordTab": "Mật khẩu",
+    "loginMethod": "Chọn phương thức đăng nhập"
   },
   "project": {
     "create": "Tạo dự án",
@@ -7465,5 +7631,101 @@
     "reload": "Tải lại",
     "statusUnknown": "Chưa xác nhận được tính năng nào đang dùng được. Vui lòng thử lại sau.",
     "unavailableTitle": "Tính năng không dùng được"
+  },
+  "checkout": {
+    "account": "Tài khoản hiện tại",
+    "loading": "Đang chuẩn bị thanh toán an toàn…",
+    "invalidTitle": "Phiên thanh toán đã hết hạn",
+    "invalidDescription": "Quay lại trung tâm điểm và chọn lại gói nạp.",
+    "subjectMismatch": "Gói đã chọn không khớp với tài khoản nhận điểm. Hãy quay lại và tải lại các gói khả dụng.",
+    "back": "Quay lại",
+    "amountDue": "Tổng số tiền cần trả",
+    "orderSummary": "Tóm tắt đơn hàng",
+    "customRecharge": "Nạp điểm tùy chọn",
+    "quantity": "Số lượng {{count}}",
+    "rechargeSubject": "Tài khoản nhận điểm",
+    "personalCredits": "Nạp điểm cá nhân",
+    "orgCredits": "{{organization}} · Tài khoản điểm thành viên",
+    "paymentMethod": "Phương thức thanh toán",
+    "securePayment": "Thông tin giao dịch được gửi qua kết nối an toàn",
+    "continue": "Tiếp tục thanh toán",
+    "paymentPending": "Chờ thanh toán · Còn {{time}}",
+    "paymentClosing": "Đã hết thời gian thanh toán. Đang xác nhận trạng thái cuối cùng",
+    "paymentClosed": "Đơn đã đóng",
+    "paymentFailed": "Thanh toán thất bại. Hãy quay lại và tạo đơn nạp mới",
+    "viewResult": "Xem kết quả thanh toán",
+    "restart": "Chọn gói nạp khác",
+    "creating": "Đang tạo phiên thanh toán…",
+    "footerSecurity": "Trạng thái thanh toán được xác định theo thông báo từ máy chủ",
+    "customPending": "Nạp tùy chọn đang chờ hỗ trợ từ máy chủ",
+    "leaveTitle": "Rời trang thanh toán hay tiếp tục?",
+    "leaveDescription": "Bạn sẽ quay lại trung tâm điểm và lựa chọn hiện tại sẽ được giữ lại.",
+    "leave": "Rời trang",
+    "stay": "Tiếp tục",
+    "dodoTax": "Thuế áp dụng sẽ được hiển thị tại trang thanh toán Dodo trước khi trả tiền.",
+    "retryQuote": "Làm mới báo giá"
+  },
+  "paymentReturn": {
+    "back": "Quay lại DramaClaw",
+    "returnButton": "Quay lại DramaClaw",
+    "orderNumber": "Mã đơn của người bán",
+    "retry": "Kiểm tra lại",
+    "states": {
+      "confirming": {
+        "title": "Đang xác nhận thanh toán",
+        "description": "Thông báo từ nhà cung cấp có thể cần chút thời gian. Đừng thanh toán lại. Trang này sẽ hiển thị trạng thái cộng điểm cuối cùng sau khi xác nhận."
+      },
+      "credited": {
+        "title": "Đã cộng điểm",
+        "description": "Máy chủ đã xác nhận thanh toán và cộng điểm. Bạn có thể quay lại DramaClaw."
+      },
+      "closed": {
+        "title": "Đơn đã đóng",
+        "description": "Thời hạn thanh toán đã hết hoặc nhà cung cấp đã đóng đơn này. Điểm sẽ không được cộng. Bạn có thể quay lại và tạo đơn nạp mới."
+      },
+      "failed": {
+        "title": "Thanh toán chưa hoàn tất",
+        "description": "Nhà cung cấp thanh toán đã xác nhận giao dịch thất bại. Điểm sẽ không được cộng. Bạn có thể quay lại và tạo đơn nạp mới."
+      },
+      "fulfillment_failed": {
+        "title": "Đã nhận thanh toán, đang chờ cộng điểm",
+        "description": "Đã nhận thanh toán nhưng quá trình cộng điểm cần được xử lý. Đừng thanh toán lại. Theo dõi tiến độ trong lịch sử hóa đơn."
+      },
+      "manual_review": {
+        "title": "Đơn cần được kiểm tra",
+        "description": "Chưa xác nhận đầy đủ việc hoàn tiền từ nhà cung cấp và hoàn tác điểm. Đừng thanh toán lại; bản ghi hóa đơn sẽ hiển thị kết quả sau kiểm tra."
+      },
+      "refunded": {
+        "title": "Đơn được hoàn tiền",
+        "description": "Đơn này đang được hoàn tiền hoặc hoàn tác. Lịch sử hóa đơn là nguồn thông tin xác nhận chính thức."
+      },
+      "unavailable": {
+        "title": "Chưa thể xem kết quả thanh toán",
+        "description": "Điều này không gây thu tiền trùng lặp. Hãy thử lại sau hoặc kiểm tra lịch sử hóa đơn."
+      }
+    }
+  },
+  "rechargeLink": {
+    "title": "Nạp điểm",
+    "subtitle": "Chọn gói nạp và phương thức thanh toán.",
+    "checking": "Đang kiểm tra tài khoản…",
+    "loading": "Đang tải gói nạp…",
+    "loginTitle": "Đăng nhập để tiếp tục",
+    "loginRequired": "Liên kết nạp này được gắn với một tài khoản hoặc tổ chức. Hãy đăng nhập bằng tài khoản phù hợp trước khi thanh toán.",
+    "login": "Đăng nhập",
+    "invalidTitle": "Liên kết nạp không hợp lệ",
+    "invalid": "Mã liên kết nạp bị thiếu hoặc sai định dạng. Hãy yêu cầu bên cấp gửi liên kết mới.",
+    "unavailableTitle": "Liên kết nạp không khả dụng",
+    "unavailable": "Liên kết đã hết hạn, bị tắt, không thuộc tài khoản này hoặc không có gói đang hoạt động.",
+    "credits": "{{count}} điểm",
+    "methods": {
+      "alipay": "Alipay",
+      "wxpay": "WeChat Pay",
+      "dodo": "Dodo Payments"
+    },
+    "pay": "Thanh toán ngay",
+    "creating": "Đang tạo đơn…",
+    "createFailed": "Không thể tạo đơn thanh toán. Vui lòng thử lại sau.",
+    "orderAlreadyCreated": "Đơn này đã tồn tại. Hãy kiểm tra lịch sử nạp."
   }
 }

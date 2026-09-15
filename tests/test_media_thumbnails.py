@@ -404,7 +404,8 @@ def _client(monkeypatch, project_dir: Path) -> TestClient:
     from novelvideo.api.deps import ProjectResolution
     from novelvideo.api.routes import files
 
-    async def fake_resolve_project_scope(project, user, *, required_role="viewer"):
+    async def fake_resolve_project_scope(project, user, *, required_role="viewer", media_read=False):
+        assert media_read is True
         return ProjectResolution(
             ctx=None,
             username="admin",

@@ -19,6 +19,7 @@ import {
   creditScopeOf,
   dormantPersonalBalanceOf,
   useCreditSummary,
+  useCreditTransactions,
 } from "@/lib/queries/credits";
 
 const server = setupServer();
@@ -179,6 +180,40 @@ describe("credit summary query", () => {
     expect(creditScopeOf(summary)).toBe("personal");
     expect(creditOrgOf(summary)).toBeNull();
     expect(dormantPersonalBalanceOf(summary)).toBeNull();
+  });
+});
+
+describe("credit transaction query", () => {
+  it("forwards the pending status to server-side pagination", async () => {
+    let requestUrl = "";
+    server.use(
+      http.get("http://localhost:3000/api/v1/credits/me/transactions", ({ request }) => {
+        requestUrl = request.url;
+        return HttpResponse.json({
+          ok: true,
+          data: { items: [], page: 3, page_size: 20, total: 41, scope: "personal" },
+        });
+      }),
+    );
+    const queryClient = new QueryClient();
+
+    const { result } = renderHook(
+      () =>
+        useCreditTransactions({
+          category: "all",
+          status: "pending",
+          page: 3,
+          pageSize: 20,
+        }),
+      { wrapper: wrapper(queryClient) },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const search = new URL(requestUrl).searchParams;
+    expect(search.get("status")).toBe("pending");
+    expect(search.get("page")).toBe("3");
+    expect(search.get("page_size")).toBe("20");
+    expect(result.current.data?.data.total).toBe(41);
   });
 });
 

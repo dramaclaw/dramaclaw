@@ -125,6 +125,12 @@ function PasswordLoginForm({
     try {
       clearErrors();
       await login(data.username, data.password);
+      const paymentRedirect = sessionStorage.getItem("supertale-payment-login-redirect");
+      if (paymentRedirect === "/recharge") {
+        sessionStorage.removeItem("supertale-payment-login-redirect");
+        window.location.replace(paymentRedirect);
+        return;
+      }
       void navigate({ to: "/", replace: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : t("auth.loginFailed");
@@ -276,6 +282,12 @@ function OtpLoginForm({ needsRegion }: { needsRegion: boolean }) {
         toast.success(t("auth.otp.accountCreated"));
       } else if (!result.password_configured) {
         toast.success(t("auth.otp.passwordNotSet"));
+      }
+      const paymentRedirect = sessionStorage.getItem("supertale-payment-login-redirect");
+      if (paymentRedirect === "/recharge") {
+        sessionStorage.removeItem("supertale-payment-login-redirect");
+        window.location.replace(paymentRedirect);
+        return;
       }
       void navigate({ to: "/", replace: true });
     } catch (verifyError) {
