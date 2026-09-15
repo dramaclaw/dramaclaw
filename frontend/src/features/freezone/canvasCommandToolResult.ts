@@ -68,6 +68,18 @@ function storeCanvasCommandReceipt(payload: CanvasCommandToolResultPayload) {
   }
 }
 
+function removeCanvasCommandReceipt(bridgeKey: string) {
+  if (typeof window === "undefined" || !bridgeKey) return;
+  const receipts = loadCanvasCommandReceipts();
+  if (!(bridgeKey in receipts)) return;
+  delete receipts[bridgeKey];
+  try {
+    window.localStorage.setItem(CANVAS_COMMAND_RECEIPTS_STORAGE_KEY, JSON.stringify(receipts));
+  } catch {
+    // A failed cleanup only causes a harmless idempotent replay on reconnect.
+  }
+}
+
 export function readCanvasCommandReceipt(
   bridgeKey: string,
 ): CanvasCommandToolResultPayload | null {
@@ -82,6 +94,8 @@ function emitCanvasCommandToolResult(payload: CanvasCommandToolResultPayload) {
   void api.post("api/v1/chat/canvas-command-tool-result", {
     json: body,
     timeout: 30_000,
+  }).then(() => {
+    removeCanvasCommandReceipt(payload.bridge_key);
   }).catch((error) => {
     console.warn("[freezone-canvas-command] failed to report canvas command result", error);
   });

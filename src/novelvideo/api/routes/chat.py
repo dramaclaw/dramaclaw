@@ -45,6 +45,7 @@ from novelvideo.chat.hermes_workspace import (
 )
 from novelvideo.chat.store import ChatScope, chat_store
 from novelvideo.freezone.canvas_command_bridge import (
+    bridge_message_exists,
     list_pending_bridge_messages,
     mark_bridge_message_delivered,
     read_bridge_message,
@@ -2201,6 +2202,11 @@ async def list_pending_canvas_commands(
             key = path.name.removesuffix(".pending.json")
             if key in seen_keys:
                 continue
+            if not _is_unmigrated_legacy_bridge_file(
+                bridge_dir=bridge_dir,
+                key=key,
+            ):
+                continue
             # A result file is authoritative. The browser may have applied the
             # command just before a reconnect, while this polling endpoint is
             # still scanning the old pending file. Never re-emit that command
@@ -2289,6 +2295,16 @@ def _drop_resolved_pending_bridge_file(
     with contextlib.suppress(FileNotFoundError):
         pending_path.unlink()
     return True
+
+
+def _is_unmigrated_legacy_bridge_file(*, bridge_dir: Any, key: str) -> bool:
+    """Allow JSON fallback only when no durable row owns this bridge key."""
+    try:
+        return not bridge_message_exists(key, bridge_dir=bridge_dir)
+    except Exception:
+        # SQLite is the source of truth. If its state cannot be checked, do not
+        # risk bypassing an active delivery lease through the legacy mirror.
+        return False
 
 
 def _resolve_stale_pending_canvas_command(
@@ -2508,6 +2524,11 @@ async def _watch_pending_canvas_commands(
             except Exception:
                 continue
             key = path.name.removesuffix(".pending.json")
+            if not _is_unmigrated_legacy_bridge_file(
+                bridge_dir=bridge_dir,
+                key=key,
+            ):
+                continue
             if _drop_resolved_pending_bridge_file(
                 bridge_dir=bridge_dir,
                 key=key,
@@ -2643,6 +2664,11 @@ async def _watch_pending_skill_studio_events(
                 continue
             key = path.name.removesuffix(".pending.json")
             if key in emitted_bridge_keys:
+                continue
+            if not _is_unmigrated_legacy_bridge_file(
+                bridge_dir=bridge_dir,
+                key=key,
+            ):
                 continue
             if _drop_resolved_pending_bridge_file(
                 bridge_dir=bridge_dir,
@@ -2784,6 +2810,11 @@ async def _watch_pending_clarification_events(
             key = path.name.removesuffix(".pending.json")
             if key in emitted_bridge_keys:
                 continue
+            if not _is_unmigrated_legacy_bridge_file(
+                bridge_dir=bridge_dir,
+                key=key,
+            ):
+                continue
             if _drop_resolved_pending_bridge_file(
                 bridge_dir=bridge_dir,
                 key=key,
@@ -2906,6 +2937,11 @@ async def _watch_pending_canvas_context_requests(
             except Exception:
                 continue
             key = path.name.removesuffix(".pending.json")
+            if not _is_unmigrated_legacy_bridge_file(
+                bridge_dir=bridge_dir,
+                key=key,
+            ):
+                continue
             if _drop_resolved_pending_bridge_file(
                 bridge_dir=bridge_dir,
                 key=key,

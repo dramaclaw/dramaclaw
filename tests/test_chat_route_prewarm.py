@@ -781,6 +781,50 @@ async def test_pending_canvas_command_poll_only_returns_external_mcp_commands(
 
 
 @pytest.mark.anyio
+async def test_pending_canvas_command_json_mirror_cannot_bypass_sqlite_lease(
+    monkeypatch, tmp_path
+) -> None:
+    bridge_dir = tmp_path / "bridge"
+    monkeypatch.setattr(
+        chat_route,
+        "_candidate_canvas_bridge_dirs_for_scope",
+        lambda *_args, **_kwargs: [bridge_dir],
+    )
+    commands = [{"type": "select_nodes", "nodeIds": ["node-a"]}]
+    put_pending_canvas_command(
+        key="leased-command",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+        envelope={
+            "schema_version": "canvas_chat_commands.v1",
+            "canvas_id": "canvas-a",
+            "external_mcp_command": True,
+            "commands": commands,
+        },
+        bridge_dir=bridge_dir,
+    )
+    request = chat_route.PendingCanvasCommandsIn(
+        project_id="project-a",
+        canvas_id="canvas-a",
+    )
+
+    first = await chat_route.list_pending_canvas_commands(
+        request,
+        user={"username": "admin"},
+    )
+    second = await chat_route.list_pending_canvas_commands(
+        request,
+        user={"username": "admin"},
+    )
+
+    assert [frame["bridge_key"] for frame in first["data"]["frames"]] == [
+        "leased-command"
+    ]
+    assert second["data"]["frames"] == []
+
+
+@pytest.mark.anyio
 async def test_watch_pending_skill_studio_events_emits_freezone_bridge_event(
     monkeypatch, tmp_path
 ) -> None:
@@ -1932,8 +1976,10 @@ def test_catalog_save_error_overrides_frontend_success(
     assert result["saved_skill_ids"] == []
     assert result["saved_recipe_ids"] == (["recipe-a"] if partial else [])
     assert "可立即使用" not in result["message"]
-    assert ("部分" in result["message"]) if partial else (
-        "未保存任何" in result["message"]
+    assert (
+        ("部分" in result["message"])
+        if partial
+        else ("未保存任何" in result["message"])
     )
     assert result["draft"] == payload.draft
     assert result["errors"]

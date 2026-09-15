@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { claimExternalCanvasCommand } from "@/features/freezone/externalCanvasCommandDedupe";
+import {
+  claimExternalCanvasCommand,
+  confirmedExternalCanvasCommandKeys,
+} from "@/features/freezone/externalCanvasCommandDedupe";
 
 const RECEIPTS_KEY = "dramaclaw.canvas-command-receipts.v1";
 
@@ -99,7 +102,9 @@ describe("external canvas command delivery dedupe", () => {
       },
     };
 
-    expect(claimExternalCanvasCommand(new Set(), frame)).toMatchObject({
+    const seen = new Set(["bridge-reconnect", "bridge-confirmed"]);
+    expect(confirmedExternalCanvasCommandKeys(seen)).toEqual(["bridge-confirmed"]);
+    expect(claimExternalCanvasCommand(seen, frame)).toMatchObject({
       accepted: false,
       bridgeKey: "bridge-reconnect",
       terminalReceipt: receipt,

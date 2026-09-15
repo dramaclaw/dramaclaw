@@ -143,6 +143,84 @@ def test_reused_key_with_different_payload_returns_conflict(tmp_path) -> None:
     )
 
 
+def test_legacy_terminal_result_is_migrated_before_sqlite_enqueue(tmp_path) -> None:
+    bridge_dir = tmp_path / "bridge"
+    commands = [{"type": "create_node", "node_type": "imageGenNode"}]
+    fingerprint = canvas_command_bridge._canvas_command_request_fingerprint(
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+    )
+    legacy_result = {
+        "ok": True,
+        "applied": True,
+        "canvas_apply_status": "applied",
+        "request_fingerprint": fingerprint,
+    }
+    canvas_command_bridge._write_json(
+        bridge_dir / "legacy-complete.result.json",
+        legacy_result,
+    )
+
+    replayed = canvas_command_bridge.put_pending_canvas_command(
+        key="legacy-complete",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+        envelope={"commands": commands},
+        bridge_dir=bridge_dir,
+    )
+
+    assert replayed is not None
+    assert replayed["canvas_apply_status"] == "applied"
+    assert (
+        canvas_command_bridge.list_pending_bridge_messages(
+            project_id="project-a",
+            canvas_id="canvas-a",
+            kinds={"canvas_command"},
+            bridge_dir=bridge_dir,
+        )
+        == []
+    )
+    assert (
+        canvas_command_bridge.read_bridge_message(
+            "legacy-complete", bridge_dir=bridge_dir
+        )["transport_status"]
+        == "applied"
+    )
+
+
+def test_legacy_result_conflict_does_not_create_sqlite_pending_row(tmp_path) -> None:
+    bridge_dir = tmp_path / "bridge"
+    canvas_command_bridge._write_json(
+        bridge_dir / "legacy-conflict.result.json",
+        {
+            "ok": True,
+            "applied": True,
+            "canvas_apply_status": "applied",
+            "request_fingerprint": "different-payload",
+        },
+    )
+
+    conflict = canvas_command_bridge.put_pending_canvas_command(
+        key="legacy-conflict",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=[{"type": "create_node", "node_type": "imageGenNode"}],
+        envelope={"commands": []},
+        bridge_dir=bridge_dir,
+    )
+
+    assert conflict is not None
+    assert conflict["status"] == "canvas_command_idempotency_conflict"
+    assert (
+        canvas_command_bridge.read_bridge_message(
+            "legacy-conflict", bridge_dir=bridge_dir
+        )
+        is None
+    )
+
+
 def test_sqlite_inbox_survives_worker_and_file_bridge_loss(tmp_path) -> None:
     bridge_dir = tmp_path / "bridge"
     commands = [{"type": "create_node", "node_type": "imageGenNode"}]

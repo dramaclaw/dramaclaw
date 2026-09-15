@@ -190,6 +190,16 @@ def read_bridge_message(
     }
 
 
+def bridge_message_exists(key: str, *, bridge_dir: str | Path | None = None) -> bool:
+    """Return whether SQLite owns a key, even if its payload cannot be decoded."""
+    with _bridge_db(bridge_dir) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM canvas_command_messages WHERE bridge_key = ?",
+            (key,),
+        ).fetchone()
+    return row is not None
+
+
 def list_pending_bridge_messages(
     *,
     project_id: str,
@@ -597,34 +607,57 @@ def put_pending_canvas_command(
         "request_fingerprint": fingerprint,
         "created_at": time.time(),
     }
-    durable_result = _put_pending_bridge_message(
-        key=key,
-        kind="canvas_command",
-        project_id=project_id,
-        canvas_id=canvas_id,
-        payload=durable_payload,
-        request_fingerprint=fingerprint,
-        bridge_dir=bridge_dir,
-    )
-    if durable_result is not None:
-        return durable_result
     with _key_lock(key, bridge_dir):
+        # SQLite is authoritative once a row exists. Consult it before the
+        # compatibility mirror so stale files cannot override durable state.
+        if bridge_message_exists(key, bridge_dir=bridge_dir):
+            return _put_pending_bridge_message(
+                key=key,
+                kind="canvas_command",
+                project_id=project_id,
+                canvas_id=canvas_id,
+                payload=durable_payload,
+                request_fingerprint=fingerprint,
+                bridge_dir=bridge_dir,
+            )
+
+        # Pre-SQLite workers may have completed or queued this key already.
+        # Validate those files before inserting a pending row; otherwise a
+        # legacy terminal result (or conflict) would leave a deliverable row.
         existing_result = _read_json(_path("result", key, bridge_dir))
         if existing_result is not None:
-            if existing_result.get("request_fingerprint") == fingerprint:
-                return existing_result
-            return _canvas_command_idempotency_conflict(
-                key=key, project_id=project_id, canvas_id=canvas_id
-            )
+            if existing_result.get("request_fingerprint") != fingerprint:
+                return _canvas_command_idempotency_conflict(
+                    key=key, project_id=project_id, canvas_id=canvas_id
+                )
 
         pending_path = _path("pending", key, bridge_dir)
         existing_pending = _read_json(pending_path)
         if existing_pending is not None:
-            if existing_pending.get("request_fingerprint") == fingerprint:
-                return None
-            return _canvas_command_idempotency_conflict(
-                key=key, project_id=project_id, canvas_id=canvas_id
+            if existing_pending.get("request_fingerprint") != fingerprint:
+                return _canvas_command_idempotency_conflict(
+                    key=key, project_id=project_id, canvas_id=canvas_id
+                )
+
+        durable_result = _put_pending_bridge_message(
+            key=key,
+            kind="canvas_command",
+            project_id=project_id,
+            canvas_id=canvas_id,
+            payload=durable_payload,
+            request_fingerprint=fingerprint,
+            bridge_dir=bridge_dir,
+        )
+        if durable_result is not None:
+            return durable_result
+        if existing_result is not None:
+            return _resolve_durable_bridge_message(
+                key,
+                existing_result,
+                bridge_dir=bridge_dir,
             )
+        if existing_pending is not None:
+            return None
 
         _write_json(pending_path, durable_payload)
     return None
