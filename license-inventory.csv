@@ -133,6 +133,7 @@ docker-compose.selfhosted.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml
 docker-compose.yml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/README.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/adr/0002-ffmpeg-system-dependency.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+docs/canvas-reply-outcome-contract.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/changes/2026-08-26.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/changes/2026-08-27.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/changes/2026-08-28.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1853,6 +1854,7 @@ src/novelvideo/brainclaw_outcome_runtime.py,Elastic-2.0,2026 SuperTale contribut
 src/novelvideo/chat/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/agent_kit_contract.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/backend_sdk.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/chat/canvas_outcome.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/codex_app_server.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/director_auto.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/dramaclaw_mcp.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2416,6 +2418,7 @@ tests/test_brainclaw_non_regression.py,Elastic-2.0,2026 SuperTale contributors,R
 tests/test_brainclaw_outcome_runtime.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_build_style_gallery.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_command_bridge.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_canvas_outcome.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_scene_refs_override.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_canvas_write_receipt_compatibility.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_ce_allowlist.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

@@ -33,6 +33,11 @@ from novelvideo.chat.backend_sdk import (
     interrupt_live_claude_client,
     interrupt_live_codex_turn,
 )
+from novelvideo.chat.canvas_outcome import (
+    CANVAS_REPLY_SCHEMA,
+    finalize_canvas_reply,
+    receipt_reference,
+)
 from novelvideo.chat.execution_context import AgentExecutionContext
 from novelvideo.chat.runtime_port import AgentRuntimeThreadPort
 from novelvideo.chat.tool_policy import (
@@ -230,12 +235,24 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
 _CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v2"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v18"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v19"
 
 
 def _codex_developer_instructions(tool_mode: str | None) -> str:
     if str(tool_mode or "").strip() == "freezone_canvas":
-        return _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS
+        return _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS + (
+            " Your final response MUST follow the supplied JSON schema. "
+            "Use mode=read_only for explanations, checks, proposals, clarification answers, "
+            "and catalog-only Skill saves, with canvas_receipts=[]. Never claim a canvas "
+            "mutation in a read_only message. Use mode=blocked when no canvas operation was "
+            "performed because of a limitation, also with canvas_receipts=[]. Use mode=mutation "
+            "only after all attempted canvas writes returned successful persistence receipts; "
+            "list their exact bridge_key (browser apply) or revision (direct apply), using null "
+            "for the unused field. Never invent receipt identities, reuse historical receipts, "
+            "or claim nodes exist when only a workflow draft is ready for approval. "
+            "A canvas receipt proves apply/submission, not generated-media completion. "
+            "Put the user-facing answer in message, not raw JSON inside message."
+        )
     return _CODEX_DEVELOPER_INSTRUCTIONS
 
 
@@ -647,7 +664,7 @@ _FREEZONE_CANVAS_WRITE_TOOLS = frozenset(
 
 
 def _freezone_canvas_write_requested(prompt: str | None) -> bool:
-    """Recognize explicit user canvas mutations without matching injected context."""
+    """Legacy intent hint; never use this to enforce canvas receipt postconditions."""
 
     raw_prompt = str(prompt or "")
     user_text = raw_prompt.split("[SUPERTALE_", 1)[0].strip()
@@ -682,8 +699,14 @@ def _freezone_canvas_write_requested(prompt: str | None) -> bool:
     # exclusion here.
     if (
         _FREEZONE_TEXT_ONLY_REQUEST_RE.search(user_text)
-        and not re.search(r"(?:根据|用|按照|基于|带|包含|from|using|based\s+on|with)", user_text, re.IGNORECASE)
-        and not re.search(r"(?:节点|画布|连线|node|canvas|edge)", user_text, re.IGNORECASE)
+        and not re.search(
+            r"(?:根据|用|按照|基于|带|包含|from|using|based\s+on|with)",
+            user_text,
+            re.IGNORECASE,
+        )
+        and not re.search(
+            r"(?:节点|画布|连线|node|canvas|edge)", user_text, re.IGNORECASE
+        )
     ):
         return False
     return has_action and (
@@ -717,11 +740,22 @@ def _json_objects_from_codex_tool_value(value: Any) -> list[dict[str, Any]]:
 
 
 def _codex_freezone_write_result_succeeded(event: Any) -> bool:
+    return _codex_freezone_write_receipt(event) is not None
+
+
+def _codex_freezone_write_receipt(
+    event: Any,
+    *,
+    expected_project: str | None = None,
+    expected_canvas: str | None = None,
+) -> dict[str, Any] | None:
     if _codex_freezone_tool_name(event) not in _FREEZONE_CANVAS_WRITE_TOOLS:
-        return False
+        return None
     status = str(getattr(event, "status", "") or "").strip().lower()
-    if status not in {"completed", "success", "succeeded"} or getattr(event, "error", None):
-        return False
+    if status not in {"completed", "success", "succeeded"} or getattr(
+        event, "error", None
+    ):
+        return None
     values = [getattr(event, "structured", None), getattr(event, "output", None)]
     for value in values:
         for payload in _json_objects_from_codex_tool_value(value):
@@ -730,6 +764,10 @@ def _codex_freezone_write_result_succeeded(event: Any) -> bool:
             apply_status = str(payload.get("canvas_apply_status") or "").strip().lower()
             project_id = str(payload.get("project_id") or "").strip()
             canvas_id = str(payload.get("canvas_id") or "").strip()
+            if expected_project is not None and project_id != expected_project:
+                continue
+            if expected_canvas is not None and canvas_id != expected_canvas:
+                continue
             bridge_key = str(payload.get("bridge_key") or "").strip()
             revision = payload.get("revision")
             # A transport/tool status is not proof that the canvas mutation
@@ -746,10 +784,12 @@ def _codex_freezone_write_result_succeeded(event: Any) -> bool:
                 and payload.get("applied") is True
                 and bool(project_id and canvas_id)
                 and isinstance(revision, int)
+                and not isinstance(revision, bool)
+                and revision >= 0
             )
             if browser_receipt or direct_receipt:
-                return True
-    return False
+                return payload
+    return None
 
 
 def _codex_freezone_write_result_error(event: Any) -> str:
@@ -782,6 +822,32 @@ def _codex_freezone_write_result_error(event: Any) -> str:
     if isinstance(raw_error, str) and raw_error.strip():
         return raw_error.strip()[:1000]
     return ""
+
+
+def _codex_freezone_write_result_state(event: Any) -> str:
+    """Keep cancellation, timeout, and pending approval separate from failure."""
+    for value in (
+        getattr(event, "structured", None),
+        getattr(event, "output", None),
+        {"tool_call_status": getattr(event, "status", None)},
+    ):
+        for payload in _json_objects_from_codex_tool_value(value):
+            states = {
+                str(payload.get(key) or "").lower()
+                for key in ("canvas_apply_status", "tool_call_status", "status")
+            }
+            if states & {"cancelled", "canceled", "rejected"}:
+                return "cancelled"
+            if states & {"timeout", "timed_out", "expired"}:
+                return "timeout"
+            if states & {
+                "pending",
+                "awaiting_approval",
+                "waiting_approval",
+                "in_progress",
+            }:
+                return "waiting_approval"
+    return "failed"
 
 
 def _codex_freezone_clarification_answered(event: Any) -> bool:
@@ -2048,11 +2114,8 @@ def _acquire_chat_run_lock(username: str, project: str) -> str:
             )
             if not existing_lock_id and _chat_run_lock_file_is_new(lock_path):
                 raise RuntimeError("当前用户已有 AI 对话正在处理中，请稍后再试。")
-            if (
-                existing_lock_id
-                and _chat_run_lock_owner_is_active(
-                    owner_id, owner_pid, started_at, updated_at
-                )
+            if existing_lock_id and _chat_run_lock_owner_is_active(
+                owner_id, owner_pid, started_at, updated_at
             ):
                 raise RuntimeError("当前用户已有 AI 对话正在处理中，请稍后再试。")
             _remove_chat_run_lock_file(lock_path)
@@ -2103,11 +2166,8 @@ def chat_run_lock_is_active(username: str, project: str = "") -> bool:
     existing_lock_id, owner_id, owner_pid, started_at, updated_at = (
         _read_chat_run_lock_file(lock_path)
     )
-    if (
-        existing_lock_id
-        and _chat_run_lock_owner_is_active(
-            owner_id, owner_pid, started_at, updated_at
-        )
+    if existing_lock_id and _chat_run_lock_owner_is_active(
+        owner_id, owner_pid, started_at, updated_at
     ):
         return True
     _remove_chat_run_lock_file(lock_path)
@@ -2282,7 +2342,10 @@ def _completion_text_or_existing(event_text: object, existing: str) -> str:
 
 def _bounded_workflow_planning_reply(text: str, *, draft_ready: bool) -> str:
     """Do not deliver a large unmetered text artifact as a planning reply."""
-    if not draft_ready or count_billable_text_chars(text) <= MAX_WORKFLOW_PLANNING_TEXT_CHARS:
+    if (
+        not draft_ready
+        or count_billable_text_chars(text) <= MAX_WORKFLOW_PLANNING_TEXT_CHARS
+    ):
         return text
     return (
         "工作流草稿已准备完成，但规划回复包含大段正文，已拒绝直接交付。"
@@ -5690,6 +5753,7 @@ def _build_codex_thread(
         config_overrides=node_config_overrides,
         thread_config_overrides=thread_config_overrides,
         turn_metadata=turn_metadata,
+        output_schema=CANVAS_REPLY_SCHEMA if tool_mode == "freezone_canvas" else None,
     )
     thread_id = _get_codex_thread_id(
         username,
@@ -5795,7 +5859,10 @@ async def stream_assistant_reply(
     if execution_context is not None:
         if project != execution_context.project_id:
             raise ValueError("agent execution context project mismatch")
-        if requester_user_id and requester_user_id != execution_context.requester_user_id:
+        if (
+            requester_user_id
+            and requester_user_id != execution_context.requester_user_id
+        ):
             raise ValueError("agent execution context requester mismatch")
         requester_user_id = execution_context.requester_user_id
         egress_project_id = execution_context.project_id
@@ -6902,15 +6969,11 @@ async def _stream_assistant_reply_codex(
 ) -> dict[str, Any]:
     assistant_text = ""
     tool_text = ""
-    requires_canvas_write_receipt = str(
-        tool_mode or ""
-    ).strip() == "freezone_canvas" and _freezone_canvas_write_requested(prompt)
-    canvas_write_attempted = False
-    canvas_write_succeeded = False
+    structured_canvas_reply = str(tool_mode or "").strip() == "freezone_canvas"
+    canvas_write_attempts: dict[str, str] = {}
+    canvas_receipts: set[tuple[str, int | None]] = set()
     canvas_write_failure = ""
     ready_workflow_draft: dict[str, Any] | None = None
-    clarification_answered = False
-    workflow_draft_attempted = False
     authorization = await authorize_hermes_launch(
         egress_context=egress_context,
         username=username,
@@ -7064,7 +7127,7 @@ async def _stream_assistant_reply_codex(
                 continue
             if event.type == "assistant_delta":
                 assistant_text = _merge_stream_text(assistant_text, event.text)
-                if not requires_canvas_write_receipt:
+                if not structured_canvas_reply:
                     streamed_text = _redact_local_filesystem_paths(assistant_text)
                     await on_event(
                         {
@@ -7101,22 +7164,27 @@ async def _stream_assistant_reply_codex(
                     project_state_dir=project_state_dir,
                 )
                 if event.type == "tool_updated":
-                    tool_name = _codex_freezone_tool_name(event)
-                    if _codex_freezone_clarification_answered(event):
-                        clarification_answered = True
-                    if tool_name in _FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS:
-                        workflow_draft_attempted = True
                     prepared_draft = _codex_freezone_ready_workflow_draft(event)
                     if prepared_draft is not None:
                         ready_workflow_draft = prepared_draft
                 if _codex_freezone_tool_name(event) in _FREEZONE_CANVAS_WRITE_TOOLS:
-                    canvas_write_attempted = True
-                    if (
-                        event.type == "tool_updated"
-                        and _codex_freezone_write_result_succeeded(event)
-                    ):
-                        canvas_write_succeeded = True
-                    elif event.type == "tool_updated":
+                    call_id = str(getattr(event, "call_id", "") or "")
+                    identifiable_call = bool(call_id)
+                    # An unidentified write cannot be associated with a final
+                    # claim. Keep it failed rather than merging unrelated calls.
+                    call_id = call_id or f"unidentified:{len(canvas_write_attempts)}"
+                    canvas_write_attempts.setdefault(call_id, "in_progress")
+                    if event.type == "tool_updated":
+                        receipt = _codex_freezone_write_receipt(
+                            event, expected_project=project, expected_canvas=canvas_id
+                        )
+                        canvas_write_attempts[call_id] = (
+                            "succeeded"
+                            if receipt is not None and identifiable_call
+                            else _codex_freezone_write_result_state(event)
+                        )
+                        if receipt is not None and identifiable_call:
+                            canvas_receipts.add(receipt_reference(receipt))
                         failure = _codex_freezone_write_result_error(event)
                         if failure:
                             canvas_write_failure = failure
@@ -7202,31 +7270,17 @@ async def _stream_assistant_reply_codex(
     # the runtime's actionable reason instead of replacing it with the
     # misleading "no canvas write" postcondition message.
     canvas_postcondition_applies = turn_disposition not in {"timeout", "cancelled"}
-    if (
-        requires_canvas_write_receipt
-        and not canvas_write_succeeded
-        and canvas_postcondition_applies
-    ):
-        if canvas_write_attempted:
-            failure_detail = (
-                canvas_write_failure or "没有收到成功的画布写入回执，请重试。"
-            )
-        elif ready_workflow_draft is not None:
-            # Preparing a draft explicitly requires a subsequent user approval.
-            # It is neither a failed write nor proof that nodes already exist.
-            failure_detail = ""
-        elif clarification_answered and not workflow_draft_attempted:
-            failure_detail = (
-                "参数已确认，但工作流草稿尚未生成；本轮未写入画布，请重试。"
-            )
-        elif _FREEZONE_CANVAS_NO_WRITE_FAILURE_RE.search(assistant_text):
-            failure_detail = assistant_text.strip()
-        else:
-            failure_detail = "本轮没有执行画布写入，请重试。"
-        assistant_text = (
-            "画布操作未完成：" + failure_detail
-            if failure_detail
-            else "工作流草稿已准备完成，等待你确认后创建画布节点；尚未执行生成。"
+    if structured_canvas_reply and turn_disposition == "cancelled":
+        # Interrupted turns can complete with partial structured JSON. None of
+        # that unvalidated payload may reach presentation or persisted history.
+        assistant_text = "已取消本轮请求。"
+    elif structured_canvas_reply and canvas_postcondition_applies:
+        assistant_text = finalize_canvas_reply(
+            assistant_text,
+            attempts=canvas_write_attempts,
+            receipts=canvas_receipts,
+            failure=canvas_write_failure,
+            draft_ready=ready_workflow_draft is not None,
         )
     assistant_text = assistant_text.strip() or "已执行，但没有返回正文。"
     assistant_text = _bounded_workflow_planning_reply(
@@ -7234,7 +7288,7 @@ async def _stream_assistant_reply_codex(
         draft_ready=ready_workflow_draft is not None,
     )
     assistant_text = _normalize_json_render_reply(assistant_text)
-    if requires_canvas_write_receipt:
+    if structured_canvas_reply:
         await on_event(
             {
                 "type": "assistant_delta",

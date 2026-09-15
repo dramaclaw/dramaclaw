@@ -1144,7 +1144,13 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
             yield SimpleNamespace(
                 type="complete",
                 thread_id="codex-thread",
-                text="done",
+                text=(
+                    json.dumps(
+                        {"message": "done", "mode": "read_only", "canvas_receipts": []}
+                    )
+                    if tool_mode == "freezone_canvas"
+                    else "done"
+                ),
             )
 
     def fake_build_thread(*args, **kwargs):
@@ -1220,7 +1226,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "scope-filtered concrete MCP tools" in (
             chat_service._codex_developer_instructions(tool_mode)
         )
-    assert [event["type"] for event in events] == [
+    expected_events = [
         "thread_started",
         "turn_started",
         "plan_update",
@@ -1230,6 +1236,9 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         "turn_completed",
         "done",
     ]
+    if tool_mode == "freezone_canvas":
+        expected_events.insert(-1, "assistant_delta")
+    assert [event["type"] for event in events] == expected_events
     assert events[2] == {
         "type": "plan_update",
         "text": "Inspect the project",
@@ -1481,7 +1490,9 @@ def test_codex_freezone_write_result_error_preserves_canvas_validation_reason():
 
 
 @pytest.mark.parametrize("container", ["structured", "structuredContent", "text"])
-@pytest.mark.parametrize("outcome", ["answered", "failed", "cancelled", "submitted", "transport_error"])
+@pytest.mark.parametrize(
+    "outcome", ["answered", "failed", "cancelled", "submitted", "transport_error"]
+)
 def test_codex_clarification_requires_successful_answer(container, outcome):
     payload = {"ok": True, "clarification_status": "answered", "action": "submit"}
     if outcome == "failed":
@@ -1492,13 +1503,22 @@ def test_codex_clarification_requires_successful_answer(container, outcome):
         payload.pop("clarification_status")
     event = SimpleNamespace(
         name="dramaclaw.freezone_request_user_clarification",
-        status="completed", error="connection lost" if outcome == "transport_error" else None,
+        status="completed",
+        error="connection lost" if outcome == "transport_error" else None,
         structured=payload if container == "structured" else None,
-        output={"structuredContent": payload} if container == "structuredContent" else {
-            "content": [{"type": "text", "text": json.dumps(payload)}]
-        } if container == "text" else None,
+        output=(
+            {"structuredContent": payload}
+            if container == "structuredContent"
+            else (
+                {"content": [{"type": "text", "text": json.dumps(payload)}]}
+                if container == "text"
+                else None
+            )
+        ),
     )
-    assert chat_service._codex_freezone_clarification_answered(event) is (outcome == "answered")
+    assert chat_service._codex_freezone_clarification_answered(event) is (
+        outcome == "answered"
+    )
 
 
 @pytest.mark.anyio
@@ -1513,6 +1533,9 @@ def test_codex_clarification_requires_successful_answer(container, outcome):
         "plan_draft_ready",
         "clarification_answered",
         "skill_saved",
+        "read_only",
+        "mixed",
+        "wrong_scope",
     ],
 )
 async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
@@ -1522,6 +1545,11 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    monkeypatch.setattr(
+        chat_service,
+        "_freezone_canvas_write_requested",
+        lambda *_: pytest.fail("Receipt enforcement must not classify user prose"),
+    )
     events = []
     revoked = []
 
@@ -1608,7 +1636,7 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                     structured={"ok": True, "status": "saved", "skill_id": "line-art"},
                     error=None,
                 )
-            elif tool_outcome not in {"missing", "blocked"}:
+            elif tool_outcome not in {"missing", "blocked", "read_only"}:
                 result_payload = (
                     {
                         "ok": True,
@@ -1618,13 +1646,15 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                         "project_id": "project-a",
                         "canvas_id": "canvas-a",
                     }
-                    if tool_outcome == "success"
+                    if tool_outcome in {"success", "mixed", "wrong_scope"}
                     else {
                         "ok": False,
                         "status": "invalid_command_schema",
                         "error": "文本节点缺少 content 字段",
                     }
                 )
+                if tool_outcome == "wrong_scope":
+                    result_payload["canvas_id"] = "another-canvas"
                 yield SimpleNamespace(
                     type="tool_updated",
                     text="[mcp:completed] dramaclaw.freezone_emit_canvas_command",
@@ -1643,6 +1673,18 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                     error=None,
                     structured=None,
                 )
+                if tool_outcome == "mixed":
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        text="[mcp:completed] dramaclaw.freezone_create_node",
+                        name="dramaclaw.freezone_create_node",
+                        call_id="call-2",
+                        status="completed",
+                        input={},
+                        output=None,
+                        structured={"ok": False, "error": "第二个节点未保存"},
+                        error=None,
+                    )
             assistant_reply = (
                 "未能创建工作流：找不到匹配的 Workflow Skill。"
                 if tool_outcome == "blocked"
@@ -1652,7 +1694,27 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                     else "好的，已创建一个图片节点。"
                 )
             )
-            yield SimpleNamespace(type="assistant_delta", text=assistant_reply)
+            if tool_outcome == "read_only":
+                assistant_reply = "建议保持当前节点位置，先检查配置。"
+            if tool_outcome == "clarification_answered":
+                assistant_reply = "参数已确认，尚未执行画布操作。"
+            structured_reply = json.dumps(
+                {
+                    "message": assistant_reply,
+                    "mode": (
+                        "read_only"
+                        if tool_outcome
+                        in {"skill_saved", "read_only", "clarification_answered"}
+                        else "blocked" if tool_outcome == "blocked" else "mutation"
+                    ),
+                    "canvas_receipts": (
+                        [{"bridge_key": "bridge-call-1", "revision": None}]
+                        if tool_outcome == "success"
+                        else []
+                    ),
+                },
+            )
+            yield SimpleNamespace(type="assistant_delta", text=structured_reply)
             yield SimpleNamespace(
                 type="complete",
                 thread_id="codex-thread",
@@ -1685,6 +1747,10 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         if tool_outcome == "skill_saved"
         else "创建一个图片节点"
     )
+    if tool_outcome == "read_only":
+        request_prompt = "不要移动节点，只给我布局建议"
+    elif tool_outcome == "missing":
+        request_prompt = "做个咖啡店宣传页"
     result = await chat_service._stream_assistant_reply_codex(
         "admin",
         "project-a",
@@ -1709,7 +1775,10 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "missing":
         assert "已创建" not in result["content"]
-        assert result["content"] == "画布操作未完成：本轮没有执行画布写入，请重试。"
+        assert (
+            result["content"]
+            == "画布操作未完成：本轮没有可验证的画布写入回执，请重试。"
+        )
         assert assistant_deltas == [result["content"]]
     elif tool_outcome in {"draft_ready", "plan_draft_ready"}:
         assert result["content"] == (
@@ -1717,25 +1786,50 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         )
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "clarification_answered":
-        assert result["content"] == (
-            "画布操作未完成：参数已确认，但工作流草稿尚未生成；本轮未写入画布，请重试。"
-        )
+        assert result["content"] == "参数已确认，尚未执行画布操作。"
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "skill_saved":
         assert result["content"] == (
             "图片转黑白线稿 Skill 已保存，当前没有运行或写入画布。"
         )
         assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "read_only":
+        assert result["content"] == "建议保持当前节点位置，先检查配置。"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "mixed":
+        assert result["content"] == "画布操作未完成：第二个节点未保存"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "wrong_scope":
+        assert "成功画布写入回执" in result["content"]
+        assert assistant_deltas == [result["content"]]
     else:
-        assert result["content"] == (
-            "画布操作未完成：未能创建工作流：找不到匹配的 Workflow Skill。"
-        )
+        assert result["content"] == ("未能创建工作流：找不到匹配的 Workflow Skill。")
         assert assistant_deltas == [result["content"]]
     assert revoked == ["agent-token"]
 
 
 @pytest.mark.anyio
-async def test_codex_freezone_timeout_preserves_runtime_reason(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "disposition,runtime_text,expected",
+    [
+        (
+            "timeout",
+            "Codex App Server 响应超时，请重试。",
+            "Codex App Server 响应超时，请重试。",
+        ),
+        ("cancelled", '{"mode":"mutation","text":"已创建成功', "已取消本轮请求。"),
+        (
+            "cancelled",
+            '{"mode":"mutation","text":"已创建成功","canvas_receipts":[]}',
+            "已取消本轮请求。",
+        ),
+        ("cancelled", "", "已取消本轮请求。"),
+    ],
+)
+@pytest.mark.parametrize("notification", ["egress_disposition", "turn_completed"])
+async def test_codex_freezone_interruption_discards_unvalidated_output(
+    monkeypatch, tmp_path, disposition, runtime_text, expected, notification
+):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     events = []
 
@@ -1756,15 +1850,20 @@ async def test_codex_freezone_timeout_preserves_runtime_reason(monkeypatch, tmp_
                 thread_id="codex-thread",
                 turn_id="codex-turn",
             )
+            yield SimpleNamespace(type="assistant_delta", text=runtime_text)
             yield SimpleNamespace(
-                type="egress_disposition",
-                disposition="timeout",
+                type=notification,
+                disposition=disposition,
+                status=disposition,
+                thread_id="codex-thread",
+                turn_id="codex-turn",
+                error=None,
             )
             yield SimpleNamespace(
                 type="complete",
                 thread_id="codex-thread",
                 turn_id="codex-turn",
-                text="Codex App Server 响应超时，请重试。",
+                text=runtime_text,
             )
 
     monkeypatch.setattr(chat_service, "authorize_hermes_launch", fake_authorize)
@@ -1801,10 +1900,15 @@ async def test_codex_freezone_timeout_preserves_runtime_reason(monkeypatch, tmp_
         route_prompt="创建一个图片工作流",
     )
 
-    assert result["content"] == "Codex App Server 响应超时，请重试。"
+    assert result["content"] == expected
     assert [
         event["text"] for event in events if event["type"] == "assistant_delta"
-    ] == ["Codex App Server 响应超时，请重试。"]
+    ] == [expected]
+    from novelvideo.chat.store import chat_store
+
+    assert await chat_store.history_contents_async(
+        "admin", scope, "assistant", limit=10
+    ) == [expected]
 
 
 @pytest.mark.asyncio
@@ -2324,7 +2428,9 @@ def test_codex_gateway_fails_closed_for_incomplete_model_catalog(monkeypatch, tm
         chat_service._codex_gateway_config_overrides("https://gateway.example/v1")
 
 
-def test_codex_gateway_accepts_disabled_tool_search_for_chat_compat(monkeypatch, tmp_path):
+def test_codex_gateway_accepts_disabled_tool_search_for_chat_compat(
+    monkeypatch, tmp_path
+):
     bundled = (
         Path(chat_service.__file__).resolve().parents[3]
         / "deploy"
@@ -2575,12 +2681,17 @@ def test_bundled_catalogs_cover_every_ce_codex_model(monkeypatch, catalog_name, 
     """Every model _codex_model() can return must have a complete catalog entry,
     otherwise Codex refuses to start (the Official-mode failure behind #517)."""
     catalog_path = (
-        Path(chat_service.__file__).resolve().parents[3] / "deploy" / "codex" / catalog_name
+        Path(chat_service.__file__).resolve().parents[3]
+        / "deploy"
+        / "codex"
+        / catalog_name
     )
     monkeypatch.setenv("DRAMACLAW_CODEX_MODEL_CATALOG_FILE", str(catalog_path))
     monkeypatch.setattr(chat_service, "_codex_model", lambda: model)
 
-    overrides = chat_service._codex_gateway_config_overrides("https://gateway.example/v1")
+    overrides = chat_service._codex_gateway_config_overrides(
+        "https://gateway.example/v1"
+    )
 
     assert any(item.startswith("model_catalog_json=") for item in overrides)
 
@@ -2953,7 +3064,9 @@ def test_chat_run_lock_trusts_fresh_heartbeat_from_another_pod(monkeypatch, tmp_
     assert chat_service.chat_run_lock_is_active("admin", "project-a") is True
     with pytest.raises(RuntimeError, match="当前用户已有 AI 对话"):
         chat_service._acquire_chat_run_lock("admin", "project-a")
-    assert json.loads(lock_path.read_text(encoding="utf-8"))["lock_id"] == "old-pod-lock"
+    assert (
+        json.loads(lock_path.read_text(encoding="utf-8"))["lock_id"] == "old-pod-lock"
+    )
 
 
 def test_chat_run_lock_still_has_max_runtime(monkeypatch, tmp_path):

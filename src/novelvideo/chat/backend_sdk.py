@@ -1176,6 +1176,7 @@ def _start_codex_turn(
     thread: Any,
     prompt: str,
     turn_metadata: dict[str, str],
+    output_schema: dict[str, Any] | None = None,
 ) -> Any:
     """Start a turn with metadata omitted by the 0.147 generated facade.
 
@@ -1185,7 +1186,7 @@ def _start_codex_turn(
     of the long-lived thread configuration.
     """
 
-    if not turn_metadata:
+    if not turn_metadata and output_schema is None:
         from openai_codex import TextInput
 
         return thread.turn(TextInput(prompt))
@@ -1194,10 +1195,15 @@ def _start_codex_turn(
     from openai_codex.api import TurnHandle
 
     wire_input = _to_wire_input(_normalize_run_input(TextInput(prompt)))
+    params: dict[str, Any] = {}
+    if turn_metadata:
+        params["responsesapiClientMetadata"] = dict(turn_metadata)
+    if output_schema is not None:
+        params["outputSchema"] = output_schema
     started = thread._client.turn_start(
         thread.id,
         wire_input,
-        params={"responsesapiClientMetadata": dict(turn_metadata)},
+        params=params,
     )
     return TurnHandle(thread._client, thread.id, started.turn.id)
 
@@ -1215,6 +1221,7 @@ class CodexClient:
         config_overrides: tuple[str, ...] = (),
         thread_config_overrides: tuple[str, ...] | None = None,
         turn_metadata: dict[str, str] | None = None,
+        output_schema: dict[str, Any] | None = None,
     ) -> None:
         self._codex_bin = codex_bin
         self._cwd = cwd
@@ -1230,6 +1237,7 @@ class CodexClient:
         )
         self._thread_config = _codex_thread_config(effective_thread_overrides, env)
         self._turn_metadata = dict(turn_metadata or {})
+        self._output_schema = output_schema
 
     def thread_start(self) -> "CodexThread":
         return CodexThread(
@@ -1242,6 +1250,7 @@ class CodexClient:
             config_overrides=self._config_overrides,
             thread_config=self._thread_config,
             turn_metadata=self._turn_metadata,
+            output_schema=self._output_schema,
             thread_id=None,
         )
 
@@ -1256,6 +1265,7 @@ class CodexClient:
             config_overrides=self._config_overrides,
             thread_config=self._thread_config,
             turn_metadata=self._turn_metadata,
+            output_schema=self._output_schema,
             thread_id=thread_id,
         )
 
@@ -1274,6 +1284,7 @@ class CodexThread:
         thread_config: dict[str, Any],
         turn_metadata: dict[str, str],
         thread_id: str | None,
+        output_schema: dict[str, Any] | None = None,
     ) -> None:
         self._codex_bin = codex_bin
         self._cwd = cwd
@@ -1284,6 +1295,7 @@ class CodexThread:
         self._config_overrides = tuple(config_overrides)
         self._thread_config = dict(thread_config)
         self._turn_metadata = dict(turn_metadata)
+        self._output_schema = output_schema
         self.id = thread_id
 
     async def stream(self, prompt: str) -> AsyncIterator[ChatBackendEvent]:
@@ -1360,7 +1372,9 @@ class CodexThread:
                     thread_options,
                 )
                 self.id = thread.id
-                turn = _start_codex_turn(thread, prompt, self._turn_metadata)
+                turn = _start_codex_turn(
+                    thread, prompt, self._turn_metadata, self._output_schema
+                )
                 nonlocal current_turn_id
                 current_turn_id = turn.id
                 register_live_codex_turn(self.id, turn.id, turn)
