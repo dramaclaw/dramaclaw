@@ -426,6 +426,68 @@ def test_task_reconciliation_completes_run_with_existing_artifact(
     assert reconciled["actions"][0]["artifact_status"] == "valid"
 
 
+def test_late_browser_progress_does_not_reopen_reconciled_compose_action(
+    tmp_path: Path,
+) -> None:
+    run = create_workflow_run(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        actions=[
+            {"node_id": "compose", "action": "auto_compose_video"},
+            {"node_id": "publish", "action": "save"},
+        ],
+    )
+    update_workflow_run(
+        project_dir=tmp_path,
+        canvas_id="default",
+        run_id=run["run_id"],
+        action_updates=[
+            {
+                "node_id": "compose",
+                "action": "auto_compose_video",
+                "status": "running",
+                "task_key": "task:compose-one",
+                "task_type": "freezone_video_compose",
+                "job_id": "compose-one",
+            }
+        ],
+    )
+
+    reconcile_workflow_runs_with_tasks(
+        project_dir=tmp_path,
+        canvas_id="default",
+        tasks_by_key={
+            "task:compose-one": {
+                "status": "completed",
+                "result": {"video_url": "/static/project/final.mp4"},
+                "error": None,
+            }
+        },
+    )
+
+    late_progress = update_workflow_run(
+        project_dir=tmp_path,
+        canvas_id="default",
+        run_id=run["run_id"],
+        action_updates=[
+            {
+                "node_id": "compose",
+                "action": "auto_compose_video",
+                "status": "running",
+                "phase": "syncing_result",
+            }
+        ],
+    )
+
+    assert late_progress is not None
+    compose_action = late_progress["actions"][0]
+    assert compose_action["status"] == "completed"
+    assert compose_action["artifact_status"] == "valid"
+    assert compose_action["phase"] == "waiting_dependencies"
+    assert late_progress["status"] == "running"
+
+
 def test_task_reconciliation_rejects_missing_artifact(tmp_path: Path) -> None:
     input_path = tmp_path / "inputs" / "source.png"
     input_path.parent.mkdir(parents=True)

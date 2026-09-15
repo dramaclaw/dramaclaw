@@ -1032,6 +1032,12 @@ def update_workflow_run(
             if current_node_status in {"completed", "skipped"} and (
                 node_status != current_node_status
             ):
+                if node_status in {"pending", "running"}:
+                    # Task reconciliation may finish an action while a delayed
+                    # browser progress callback is still in flight. Treat that
+                    # stale non-terminal update as an idempotent no-op instead
+                    # of rejecting the whole workflow update.
+                    continue
                 raise ValueError(
                     f"terminal workflow action cannot transition from "
                     f"{current_node_status} to {node_status}"
