@@ -303,6 +303,94 @@ def test_validator_accepts_owned_dirs(monkeypatch, tmp_path):
     assert validated.state_dir == (tmp_path / "state" / "alice" / "demo").resolve()
 
 
+@pytest.mark.parametrize("root_link", ["root", "ancestor"])
+@pytest.mark.parametrize("organization", [False, True])
+@pytest.mark.parametrize("resolved_record", [False, True])
+def test_validator_accepts_trusted_symlink_roots(
+    monkeypatch, tmp_path, root_link, organization, resolved_record
+):
+    from novelvideo.security import assert_owned_project_storage
+    from novelvideo.shared.project_dirs import default_project_dirs
+
+    real = tmp_path / "real"
+    real.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(real, target_is_directory=True)
+    roots = []
+    for kind in ("output", "state", "runtime"):
+        target = real / kind
+        target.mkdir()
+        if root_link == "root":
+            root = tmp_path / kind
+            root.symlink_to(target, target_is_directory=True)
+        else:
+            root = alias / kind
+        monkeypatch.setattr(config, f"{kind.upper()}_DIR", root)
+        roots.append(root)
+
+    suffix = (
+        Path("_orgs", "acme", "alice", "demo")
+        if organization
+        else Path("alice", "demo")
+    )
+    if organization:
+        paths = tuple(str((root / suffix).resolve()) for root in roots)
+    else:
+        paths = default_project_dirs("alice", "demo")
+    if not resolved_record:
+        paths = tuple(str(root / suffix) for root in roots)
+    validated = assert_owned_project_storage(
+        owner_username="alice",
+        project_name="demo",
+        storage_org_id="org_01HXYZ" if organization else None,
+        storage_org_name="acme" if organization else None,
+        output_dir=paths[0],
+        state_dir=paths[1],
+        runtime_dir=paths[2],
+    )
+    assert validated.as_tuple() == tuple(
+        (real / kind / suffix).resolve() for kind in ("output", "state", "runtime")
+    )
+
+
+@pytest.mark.parametrize(
+    "boundary", ["_orgs", "_orgs/acme", "_orgs/acme/alice", "_orgs/acme/alice/demo"]
+)
+@pytest.mark.parametrize("resolved_record", [False, True])
+def test_validator_rejects_boundary_symlinks_below_trusted_symlink_root(
+    monkeypatch, tmp_path, boundary, resolved_record
+):
+    from novelvideo.security import (
+        ProjectStorageOwnershipError,
+        assert_owned_project_storage,
+    )
+
+    real = tmp_path / "real"
+    real.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(real, target_is_directory=True)
+    _patch_roots(monkeypatch, alias)
+    link = real / "state" / boundary
+    link.parent.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link.symlink_to(outside, target_is_directory=True)
+    suffix = Path("_orgs", "acme", "alice", "demo")
+    paths = [alias / kind / suffix for kind in ("output", "state", "runtime")]
+    if resolved_record:
+        paths = [path.resolve() for path in paths]
+    with pytest.raises(ProjectStorageOwnershipError):
+        assert_owned_project_storage(
+            owner_username="alice",
+            project_name="demo",
+            storage_org_id="org_01HXYZ",
+            storage_org_name="acme",
+            output_dir=paths[0],
+            state_dir=paths[1],
+            runtime_dir=paths[2],
+        )
+
+
 def test_validator_rejects_personal_owner_that_collides_with_org_namespace(
     monkeypatch, tmp_path
 ):

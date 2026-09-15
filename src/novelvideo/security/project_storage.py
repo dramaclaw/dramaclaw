@@ -99,14 +99,18 @@ def _absolute_without_symlink_resolution(path: Path) -> Path:
 
 def _validate_one(kind: str, root: Path, suffix: tuple[str, ...], raw: Path) -> Path:
     root_absolute = _absolute_without_symlink_resolution(root)
-    expected = root_absolute.joinpath(*suffix)
+    # Configuration roots are trusted and may contain symlinks. Registry paths
+    # may retain that spelling or already be canonical (default_project_dirs).
+    # Resolve only the root here: resolving raw would hide boundary symlinks.
+    root_real = root_absolute.resolve(strict=False)
+    expected = root_real.joinpath(*suffix)
     raw_absolute = _absolute_without_symlink_resolution(raw)
-    if raw_absolute != expected:
+    if raw_absolute not in (expected, root_absolute.joinpath(*suffix)):
         raise ProjectStorageOwnershipError(
             f"{kind}: path {raw_absolute} does not match expected project path {expected}"
         )
 
-    current = root_absolute
+    current = root_real
     for segment in suffix:
         current = current / segment
         if current.is_symlink():
@@ -114,12 +118,10 @@ def _validate_one(kind: str, root: Path, suffix: tuple[str, ...], raw: Path) -> 
                 f"{kind}: storage boundary {current} is a symlink; refusing"
             )
 
-    root_real = root_absolute.resolve(strict=False)
     real = raw_absolute.resolve(strict=False)
-    expected_real = root_real.joinpath(*suffix)
-    if real != expected_real:
+    if real != expected:
         raise ProjectStorageOwnershipError(
-            f"{kind}: resolved path {real} escaped expected project path {expected_real}"
+            f"{kind}: resolved path {real} escaped expected project path {expected}"
         )
     return real
 
