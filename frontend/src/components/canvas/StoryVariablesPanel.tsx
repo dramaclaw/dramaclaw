@@ -5,6 +5,7 @@ import { Plus, Trash2, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 
 import { useCanvasStore } from '@/stores/canvasStore';
+import { FREEZONE_DOCK_OFFSET_ANIMATED_STYLE } from '@/features/freezone/dockOffset';
 import { selectGroupStoryFlags, selectGroupStoryVariables } from '@/features/canvas/story/storyVariableSelectors';
 
 /** 故事变量面板:按组增/删变量、改 label 与初始值。变量 name 创建后只读。 */
@@ -22,7 +23,7 @@ export const StoryVariablesPanel = memo(function StoryVariablesPanel({ groupId, 
   const [newFlagLabel, setNewFlagLabel] = useState('');
 
   return (
-    <div className="absolute right-4 top-16 z-30 w-80 rounded-xl border border-white/15 bg-[#17191d]/97 p-3 text-white/90 shadow-2xl backdrop-blur">
+    <div style={FREEZONE_DOCK_OFFSET_ANIMATED_STYLE} className="absolute right-4 top-16 z-30 max-h-[calc(100%_-_5rem)] w-80 max-w-[calc(100%_-_2rem_-_var(--freezone-dock-width,0px))] overflow-y-auto rounded-xl border border-white/15 bg-[#17191d]/97 p-3 text-white/90 shadow-2xl backdrop-blur">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-sm font-medium">{t('canvas.story.states')}</span>
         <button onClick={onClose} aria-label={t('common.close')} className="text-white/60 hover:text-white"><X className="h-4 w-4" /></button>

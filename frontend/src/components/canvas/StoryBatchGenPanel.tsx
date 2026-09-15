@@ -4,6 +4,7 @@ import { Wand2, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { useCanvasStore } from '@/stores/canvasStore';
+import { FREEZONE_DOCK_OFFSET_ANIMATED_STYLE } from '@/features/freezone/dockOffset';
 import { collectMissingStoryClips } from '@/features/canvas/story/batchClipPlan';
 import { batchGenerateStoryClips } from '@/features/canvas/application/batchGenerateStoryClips';
 /** Generate missing clips using each node’s configured settings and references. */
@@ -43,7 +44,7 @@ export const StoryBatchGenPanel = memo(function StoryBatchGenPanel({
   };
 
   return (
-    <div className="absolute right-4 top-16 z-30 w-72 rounded-xl border border-white/15 bg-[#17191d]/97 p-3 text-white/90 shadow-2xl backdrop-blur">
+    <div style={FREEZONE_DOCK_OFFSET_ANIMATED_STYLE} className="absolute right-4 top-16 z-30 max-h-[calc(100%_-_5rem)] w-72 max-w-[calc(100%_-_2rem_-_var(--freezone-dock-width,0px))] overflow-y-auto rounded-xl border border-white/15 bg-[#17191d]/97 p-3 text-white/90 shadow-2xl backdrop-blur">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-sm font-medium">{t('canvas.story.gen.title')}</span>
         <button onClick={onClose} aria-label={t('common.close')} className="text-white/60 hover:text-white">

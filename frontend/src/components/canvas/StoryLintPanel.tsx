@@ -5,6 +5,7 @@ import { AlertCircle, AlertTriangle, CheckCircle2, Info, X } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow';
 
 import { useCanvasStore } from '@/stores/canvasStore';
+import { FREEZONE_DOCK_OFFSET_ANIMATED_STYLE } from '@/features/freezone/dockOffset';
 import { isVideoNode } from '@/features/canvas/domain/canvasNodes';
 import { STORY_CHOICE_EDGE_TYPE } from '@/features/canvas/story/storyTypes';
 import { selectGroupStoryFlags, selectGroupStoryVariables } from '@/features/canvas/story/storyVariableSelectors';
@@ -92,7 +93,7 @@ export const StoryLintPanel = memo(function StoryLintPanel({
   };
 
   return (
-    <div className="absolute right-4 top-16 z-30 max-h-[60vh] w-80 overflow-y-auto rounded-xl border border-white/15 bg-[#17191d]/97 p-3 text-white/90 shadow-2xl backdrop-blur">
+    <div style={FREEZONE_DOCK_OFFSET_ANIMATED_STYLE} className="absolute right-4 top-16 z-30 max-h-[min(60vh,calc(100%_-_5rem))] w-80 max-w-[calc(100%_-_2rem_-_var(--freezone-dock-width,0px))] overflow-y-auto rounded-xl border border-white/15 bg-[#17191d]/97 p-3 text-white/90 shadow-2xl backdrop-blur">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-sm font-medium">{t('canvas.story.lint.title')}</span>
         <button onClick={onClose} aria-label={t('common.close')} className="text-white/60 hover:text-white">
