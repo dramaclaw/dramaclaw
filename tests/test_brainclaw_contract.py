@@ -21,6 +21,7 @@ from novelvideo.brainclaw_contract import (
     merge_brainclaw_headers,
 )
 from novelvideo.model_gateway_settings import (
+    get_model_gateway_settings,
     CUSTOM_LLM_MODE_ADVANCED,
     CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW,
     get_effective_llm_config,
@@ -58,7 +59,7 @@ def test_mixed_mode_routes_llm_to_relayclaw_without_changing_media(
 ):
     _isolate_settings_db(monkeypatch, tmp_path)
     _configure_custom_media()
-    save_relayclaw_brainclaw_key(api_key="sk-relay-secret", activate=True)
+    save_relayclaw_brainclaw_key(api_key="sk-relay-secret")
 
     llm = get_effective_llm_config()
     media = get_effective_newapi_config()
@@ -77,7 +78,7 @@ def test_cognee_legacy_llm_and_embedding_ignore_brainclaw_selector(
 ):
     _isolate_settings_db(monkeypatch, tmp_path)
     _configure_custom_media()
-    save_relayclaw_brainclaw_key(api_key="sk-relay-secret", activate=True)
+    save_relayclaw_brainclaw_key(api_key="sk-relay-secret")
 
     from novelvideo.cognee import config as cognee_config
 
@@ -394,7 +395,7 @@ def test_recipe_variant_header_requires_recipe_text_profile():
 def test_effective_text_defaults_force_brainclaw_for_mixed_mode(monkeypatch, tmp_path):
     _isolate_settings_db(monkeypatch, tmp_path)
     _configure_custom_media()
-    save_relayclaw_brainclaw_key(api_key="sk-relay-secret", activate=True)
+    save_relayclaw_brainclaw_key(api_key="sk-relay-secret")
 
     assert config.get_effective_newapi_text_model_name(
         "FREEZONE_VISION_MODEL",
@@ -416,7 +417,7 @@ def test_brainclaw_factory_forces_model_and_central_profile_headers(
 ):
     _isolate_settings_db(monkeypatch, tmp_path)
     _configure_custom_media()
-    save_relayclaw_brainclaw_key(api_key="sk-relay-secret", activate=True)
+    save_relayclaw_brainclaw_key(api_key="sk-relay-secret")
     captured: dict[str, object] = {}
 
     def fake_model(model_name, **kwargs):
@@ -444,7 +445,7 @@ def test_brainclaw_factory_forces_model_and_central_profile_headers(
 def test_brainclaw_factory_emits_trusted_recipe_variant_header(monkeypatch, tmp_path):
     _isolate_settings_db(monkeypatch, tmp_path)
     _configure_custom_media()
-    save_relayclaw_brainclaw_key(api_key="sk-relay-secret", activate=True)
+    save_relayclaw_brainclaw_key(api_key="sk-relay-secret")
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
@@ -473,7 +474,7 @@ def test_brainclaw_factory_emits_trusted_recipe_variant_header(monkeypatch, tmp_
 def test_hermes_brainclaw_has_no_fixed_profile(monkeypatch, tmp_path):
     _isolate_settings_db(monkeypatch, tmp_path)
     _configure_custom_media()
-    save_relayclaw_brainclaw_key(api_key="sk-relay-secret", activate=True)
+    save_relayclaw_brainclaw_key(api_key="sk-relay-secret")
 
     from novelvideo.chat import hermes_workspace
 
@@ -558,8 +559,8 @@ def test_custom_brainclaw_endpoint_does_not_replace_official_gateway(
     save_relayclaw_brainclaw_key(
         api_key="sk-local-secret",
         base_url="http://127.0.0.1:8317",
-        activate=True,
     )
+    set_model_gateway_mode("custom")
 
     custom_llm = get_effective_llm_config()
     assert custom_llm.base_url == "http://127.0.0.1:8317/v1"
@@ -582,7 +583,6 @@ def test_custom_llm_mode_accepts_dedicated_brainclaw_without_official_key(
     save_relayclaw_brainclaw_key(
         api_key="sk-local-secret",
         base_url="http://127.0.0.1:8317",
-        activate=False,
     )
     monkeypatch.setattr(
         model_gateway,
@@ -602,3 +602,30 @@ def test_custom_llm_mode_accepts_dedicated_brainclaw_without_official_key(
     assert response.json()["data"]["llmEffective"]["baseUrl"] == (
         "http://127.0.0.1:8317/v1"
     )
+
+
+def test_brainclaw_settings_never_switch_the_active_gateway_mode(monkeypatch, tmp_path):
+    """BrainClaw is a setting inside Custom mode; touching it must not activate Custom."""
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_official_newapi_key(api_key="sk-official-secret")  # activates Official
+
+    save_relayclaw_brainclaw_key(api_key="sk-local-secret", base_url="http://127.0.0.1:8317")
+    assert get_model_gateway_settings().get("model_gateway_mode") == "official"
+    llm = get_effective_llm_config()
+    assert llm.mode == "official"
+    assert llm.base_url == OFFICIAL_NEWAPI_BASE_URL
+    assert llm.api_key == "sk-official-secret"
+
+    set_custom_llm_mode(CUSTOM_LLM_MODE_ADVANCED)
+    assert get_model_gateway_settings().get("model_gateway_mode") == "official"
+    assert get_effective_llm_config().mode == "official"
+
+    # Only the explicit enable action activates Custom, and then the saved
+    # BrainClaw endpoint / sub-mode applies.
+    set_model_gateway_mode("custom")
+    assert get_effective_llm_config().mode == CUSTOM_LLM_MODE_ADVANCED
+    set_custom_llm_mode(CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW)
+    custom_llm = get_effective_llm_config()
+    assert custom_llm.mode == CUSTOM_LLM_MODE_RELAYCLAW_BRAINCLAW
+    assert custom_llm.base_url == "http://127.0.0.1:8317/v1"
+    assert custom_llm.api_key == "sk-local-secret"

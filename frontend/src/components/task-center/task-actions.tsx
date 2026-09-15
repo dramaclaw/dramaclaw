@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { useState } from "react";
+import { SkillImportDialog } from "@/features/skill-imports/SkillImportDialog";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Link } from "@tanstack/react-router";
@@ -12,6 +14,7 @@ import { Button } from "@/components/ui/button";
 
 export function TaskActions({ task }: { task: TaskState }) {
   const { t } = useTranslation();
+  const [importsOpen, setImportsOpen] = useState(false);
   const cancelMut = useCancelTask();
   const deepLink = originDeepLink(task);
 
@@ -62,6 +65,10 @@ export function TaskActions({ task }: { task: TaskState }) {
 
   return (
     <div className="flex shrink-0 items-center gap-1 border-t border-border px-3 py-2">
+      {task.task_type === "freezone_skill_import" && <>
+        <Button variant="ghost" size="sm" onClick={() => setImportsOpen(true)}>{t("skillImport.results", { defaultValue: "Conversion results" })}</Button>
+        <SkillImportDialog open={importsOpen} onOpenChange={setImportsOpen} project={task.project_id ?? task.project} taskId={task.task_id} />
+      </>}
       {isActive(task) && (
         <Button
           variant="ghost"

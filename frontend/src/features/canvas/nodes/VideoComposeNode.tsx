@@ -49,6 +49,7 @@ import {
   publishNodeActionSuccess,
   subscribeNodeAction,
 } from "@/features/canvas/application/nodeActionResult";
+import { generationTaskDescriptor } from "@/features/canvas/application/resumeGeneration";
 
 type VideoComposeNodeProps = NodeProps & {
   id: string;
@@ -134,7 +135,10 @@ export const VideoComposeNode = memo(
             fps: 30,
           }),
         );
-        await awaitTaskCompletion(ref.task_key, project);
+        updateNodeData(id, generationTaskDescriptor(ref));
+        await awaitTaskCompletion(ref.task_key, project, {
+          taskType: ref.task_type,
+        });
         const result = await fetchFreezoneJobResult(
           project,
           "freezone_video_compose",
@@ -171,7 +175,13 @@ export const VideoComposeNode = memo(
           generationStartedAt: null,
           generationError: null,
         });
-        return { videoUrl: result.url, output_url: result.url };
+        return {
+          videoUrl: result.url,
+          output_url: result.url,
+          task_key: ref.task_key,
+          task_type: ref.task_type,
+          job_id: ref.job_id,
+        };
       } catch (error) {
         updateNodeData(id, {
           isGenerating: false,

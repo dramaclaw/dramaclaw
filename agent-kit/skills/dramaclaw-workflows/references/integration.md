@@ -19,8 +19,11 @@ The portable MCP supports progressive discovery through:
 
 The host's authorized adapter must expose the high-level write contract used by this Skill:
 
-- `freezone_prepare_workflow_draft`
-- `freezone_patch_workflow_draft`
+- `freezone_get_workflow_capabilities`
+- `freezone_prepare_workflow`
+- `freezone_revise_workflow`
+- `freezone_get_workflow`
+- `freezone_observe_workflow_run`
 - `freezone_confirm_workflow_draft`
 - `freezone_prepare_workflow_plan_draft`
 - `freezone_run_workflow`
@@ -42,3 +45,13 @@ The portable model value `"recommended"` represents an explicit request to use t
 recommended/default model; it is not a provider model id. The authorized adapter must resolve or
 remove this sentinel immediately before commit so the local canvas applies its live default. Agents
 must not invent a concrete model id or regenerate a complete graph only to replace this sentinel.
+
+The authenticated adapter delegates deterministic preparation and revision to the backend using the
+request identity. Compilation rules are not duplicated in the host Skill. Capability contract
+`workflow-operations.v1`, `workflow-runtime-preflight.v1`, and `workflow-observation.v1`
+are required by Agent Kit 0.3.0. The portable read/compile MCP is unchanged.
+
+The current execution adapter is `canvas_approval_bridge`; `headless_execution` is false.
+Third-party hosts can prepare, revise, and query through authenticated MCP/API, but canvas commit
+and generation require the existing approval and receipt path. A headless host must report this
+limit; it must not impersonate browser receipts or set a client-side confirmed flag.

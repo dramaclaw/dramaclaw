@@ -2294,3 +2294,19 @@ class StylePreviewRequest(BaseModel):
     project: Optional[str] = None
     prompt: str = "A beautiful woman standing in a garden"
     model: str = "nanobanana"
+
+
+class FreezoneImageAnimateRequest(BaseModel):
+    image_url: str = Field(min_length=1)
+    canvas_id: str = Field(default="", max_length=200)
+    node_id: str = Field(default="", max_length=200)
+
+
+class FreezoneImageVectorizeRequest(FreezoneImageAnimateRequest):
+    pass
+
+
+class FreezoneImageAnimateGifRequest(BaseModel):
+    video_url: str = Field(min_length=1)
+    canvas_id: str = Field(default="", max_length=200)
+    node_id: str = Field(default="", max_length=200)

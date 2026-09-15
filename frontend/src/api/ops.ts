@@ -373,6 +373,8 @@ export interface FreezoneGenPayload extends FreezoneNodeContext {
 
 export interface FreezoneJobRef {
   task_type:
+    | "freezone_image_vectorize"
+    | "freezone_image_animate_gif"
     | "freezone_gen"
     | "freezone_edit"
     | "freezone_multi_view"
@@ -2254,6 +2256,12 @@ export async function submitFreezoneTemplateEdit(
 // /freezone/jobs/{type}/{id}/result --------------------------------------- //
 
 export interface FreezoneJobResult {
+  gif_task_key?: string;
+  gif_job_id?: string;
+  gif_task_type?: string;
+  output_url?: string;
+  gif_url?: string;
+  svg_url?: string;
   url: string;
   size: number;
   cover_url?: string | null;
@@ -2262,6 +2270,8 @@ export interface FreezoneJobResult {
 export async function fetchFreezoneJobResult(
   project: string,
   taskType:
+    | "freezone_image_vectorize"
+    | "freezone_image_animate_gif"
     | "freezone_gen"
     | "freezone_edit"
     | "freezone_upscale"

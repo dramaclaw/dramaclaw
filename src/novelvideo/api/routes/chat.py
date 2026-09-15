@@ -31,6 +31,7 @@ from novelvideo.api.auth import (
 from novelvideo.api.deps import list_user_projects
 from novelvideo.api.egress_binding import request_egress_scope
 from novelvideo.chat import service as chat_service
+from novelvideo.chat.execution_context import AgentExecutionContext
 from novelvideo.chat.hermes_egress import EgressBoundaryError
 from novelvideo.chat.hermes_pool import canvas_bridge_dir_for_profile
 from novelvideo.chat.director_auto import coordinator as director_auto_coordinator
@@ -44,6 +45,11 @@ from novelvideo.chat.hermes_workspace import (
 )
 from novelvideo.chat.store import ChatScope, chat_store
 from novelvideo.freezone.canvas_command_bridge import (
+    BRIDGE_PENDING_TTL_SECONDS,
+    bridge_message_exists,
+    list_pending_bridge_messages,
+    mark_bridge_message_delivered,
+    read_bridge_message,
     resolve_clarification_result,
     resolve_canvas_command,
     resolve_canvas_context,
@@ -55,6 +61,7 @@ from novelvideo.ports import get_product_surface_access, get_usage_meter
 from novelvideo.ports.local.usage import NoOpUsageMeter
 from novelvideo.project_context import (
     ProjectContext,
+    require_project_home_node,
     resolve_project_context,
     user_id_from_api_user,
 )
@@ -537,9 +544,30 @@ async def list_freezone_canvas_agents(
     return {"ok": True, "data": {"agents": agents}}
 
 
-def _canvas_bridge_dir(username: str, *, profile: str = "director") -> Any:
+async def _bridge_project_state_dir(user: dict, payload: Any) -> Any:
+    project_id = str(getattr(payload, "project_id", None) or "").strip()
+    if not project_id:
+        return None
+    ctx = await resolve_project_context(
+        user=user, project_id=project_id, required_role="viewer"
+    )
+    require_project_home_node(ctx)
+    return ctx.state_dir
+
+
+def _canvas_bridge_dir(
+    username: str, *, profile: str = "director", project_state_dir: Any = None
+) -> Any:
     workspace_profile = "freezone" if profile.startswith("freezone") else "director"
-    home = ensure_user_hermes_workspace(username, profile=workspace_profile)
+    home = ensure_user_hermes_workspace(
+        username,
+        profile=workspace_profile,
+        **(
+            {"project_state_dir": project_state_dir}
+            if project_state_dir is not None
+            else {}
+        ),
+    )
     return canvas_bridge_dir_for_profile(home, profile)
 
 
@@ -632,10 +660,20 @@ def _candidate_canvas_bridge_dirs_for_scope(
     username: str, scope: ChatScope
 ) -> list[Any]:
     if not _is_freezone_scope(scope):
-        return [_canvas_bridge_dir(username, profile="director")]
+        return [
+            _canvas_bridge_dir(
+                username, profile="director", project_state_dir=scope.state_dir
+            )
+        ]
     dirs = [
-        _canvas_bridge_dir(username, profile=_canvas_bridge_profile_for_scope(scope)),
-        _canvas_bridge_dir(username, profile="freezone"),
+        _canvas_bridge_dir(
+            username,
+            profile=_canvas_bridge_profile_for_scope(scope),
+            project_state_dir=scope.state_dir,
+        ),
+        _canvas_bridge_dir(
+            username, profile="freezone", project_state_dir=scope.state_dir
+        ),
     ]
     unique: list[Any] = []
     seen: set[str] = set()
@@ -667,7 +705,9 @@ def _freezone_agent_id_from_payload(payload: Any) -> str:
     return agent_id or "main"
 
 
-def _candidate_canvas_bridge_dirs(username: str, payload: Any) -> list[Any]:
+def _candidate_canvas_bridge_dirs(
+    username: str, payload: Any, *, project_state_dir: Any = None
+) -> list[Any]:
     """Return bridge dirs that may contain the pending file for a canvas tool call.
 
     Older/freezone-main workers wrote pending files into the Freezone workspace's
@@ -681,11 +721,18 @@ def _candidate_canvas_bridge_dirs(username: str, payload: Any) -> list[Any]:
             _canvas_bridge_dir(
                 username,
                 profile=f"freezone:{_freezone_agent_id_from_payload(payload)}",
+                project_state_dir=project_state_dir,
             ),
-            _canvas_bridge_dir(username, profile="freezone"),
+            _canvas_bridge_dir(
+                username, profile="freezone", project_state_dir=project_state_dir
+            ),
         ]
     else:
-        dirs = [_canvas_bridge_dir(username, profile="director")]
+        dirs = [
+            _canvas_bridge_dir(
+                username, profile="director", project_state_dir=project_state_dir
+            )
+        ]
     unique: list[Any] = []
     seen: set[str] = set()
     for path in dirs:
@@ -697,58 +744,85 @@ def _candidate_canvas_bridge_dirs(username: str, payload: Any) -> list[Any]:
     return unique
 
 
-def _bridge_dir_for_pending_key(username: str, payload: Any) -> Any:
+def _bridge_dir_for_pending_key(
+    username: str, payload: Any, *, project_state_dir: Any = None
+) -> Any:
     key = str(getattr(payload, "bridge_key", "") or "").strip()
-    candidates = _candidate_canvas_bridge_dirs(username, payload)
+    candidates = _candidate_canvas_bridge_dirs(
+        username, payload, project_state_dir=project_state_dir
+    )
     for directory in candidates:
         try:
-            if (directory / f"{key}.pending.json").exists():
+            if (directory / f"{key}.pending.json").exists() or read_bridge_message(
+                key, bridge_dir=directory
+            ):
                 return directory
         except Exception:
             continue
     return candidates[0]
 
 
-def _pending_workflow_draft_id(
+def _pending_workflow_draft_receipt(
     username: str,
     payload: CanvasCommandToolResultIn,
-) -> str:
-    """Read the draft identity before resolving (and removing) its pending bridge file."""
+    project_state_dir: Any = None,
+) -> dict[str, Any] | None:
+    """Recover task/version binding from the pending command, never the callback body."""
     key = payload.bridge_key.strip()
     if not key:
-        return ""
-    directory = _bridge_dir_for_pending_key(username, payload)
+        return None
+    directory = _bridge_dir_for_pending_key(
+        username, payload, project_state_dir=project_state_dir
+    )
     pending = _load_pending_canvas_command(directory / f"{key}.pending.json")
+    if pending is None:
+        durable = read_bridge_message(key, bridge_dir=directory)
+        if isinstance(durable, dict):
+            pending = durable
     commands = (
         pending.get("envelope", {}).get("commands")
         if isinstance(pending, dict)
         else None
     )
     if not isinstance(commands, list):
-        return ""
-    identities = {
-        str(command.get("data", {}).get("workflowInstanceId") or "").strip()
-        for command in commands
-        if isinstance(command, dict)
-        and command.get("type") == "create_node"
-        and isinstance(command.get("data"), dict)
-    }
-    identities.discard("")
+        return None
+    identities = set()
+    for command in commands:
+        if not isinstance(command, dict) or command.get("type") != "create_node":
+            continue
+        data = command.get("data")
+        if not isinstance(data, dict):
+            return None
+        draft_id = data.get("workflowInstanceId")
+        revision = data.get("workflowDraftRevision")
+        task_id = data.get("workflowConfirmationTaskId")
+        if (
+            not isinstance(draft_id, str)
+            or not draft_id.startswith("workflow_draft_")
+            or isinstance(revision, bool)
+            or not isinstance(revision, int)
+            or revision <= 0
+            or not isinstance(task_id, str)
+            or not task_id.strip()
+        ):
+            return None
+        identities.add((draft_id, revision, task_id))
     if len(identities) != 1:
-        return ""
-    identity = next(iter(identities))
-    return identity if identity.startswith("workflow_draft_") else ""
+        return None
+    draft_id, revision, task_id = identities.pop()
+    return {"draft_id": draft_id, "revision": revision, "task_id": task_id}
 
 
 async def _record_workflow_draft_canvas_result(
     *,
     user: dict[str, Any],
     payload: CanvasCommandToolResultIn,
-    draft_id: str,
+    draft_receipt: dict[str, Any] | None,
     resolved: dict[str, Any],
 ) -> None:
-    if not draft_id:
+    if not draft_receipt:
         return
+    draft_id = draft_receipt["draft_id"]
     project_id = str(payload.project_id or "").strip()
     canvas_id = str(payload.canvas_id or "").strip()
     if not project_id or not canvas_id:
@@ -780,14 +854,27 @@ async def _record_workflow_draft_canvas_result(
             return
         task_id = str(draft.get("task_id") or "")
         revision = int(draft.get("revision") or 0)
-        task_state = await asyncio.to_thread(
-            get_task_manager().get_task_for_project,
-            project_ctx,
-            "freezone_workflow_confirm",
-            0,
-            beat_num=None,
-            scope=f"{canvas_id}:{draft_id}:{revision}",
-        )
+        attempt_started_at = draft.get("confirmation_started_at")
+        if task_id != draft_receipt["task_id"] or revision != draft_receipt["revision"]:
+            return
+        if attempt_started_at is None:
+            return
+        task_manager = get_task_manager()
+        task_state = None
+        for task_scope in (
+            f"{canvas_id}:{draft_id}:{revision}:{attempt_started_at}",
+            f"{canvas_id}:{draft_id}:{revision}",
+        ):
+            task_state = await asyncio.to_thread(
+                task_manager.get_task_for_project,
+                project_ctx,
+                "freezone_workflow_confirm",
+                0,
+                beat_num=None,
+                scope=task_scope,
+            )
+            if task_state is not None:
+                break
         if (
             task_state is None
             or str(task_state.task_id) != task_id
@@ -805,6 +892,8 @@ async def _record_workflow_draft_canvas_result(
             draft_id=draft_id,
             outcome="confirmed" if resolved.get("ok") else "ready",
             expected_task_id=task_id,
+            expected_revision=revision,
+            expected_confirmation_started_at=attempt_started_at,
         )
     except Exception:
         logger.exception(
@@ -849,6 +938,7 @@ def _resolve_canvas_command_tool_result_payload(
     payload: CanvasCommandToolResultIn,
     *,
     username: str,
+    project_state_dir: Any = None,
 ) -> dict[str, Any]:
     key = payload.bridge_key.strip()
     if not key:
@@ -928,7 +1018,9 @@ def _resolve_canvas_command_tool_result_payload(
     return resolve_canvas_command(
         key,
         result,
-        bridge_dir=_bridge_dir_for_pending_key(username, payload),
+        bridge_dir=_bridge_dir_for_pending_key(
+            username, payload, project_state_dir=project_state_dir
+        ),
     )
 
 
@@ -936,6 +1028,7 @@ def _resolve_canvas_context_tool_result_payload(
     payload: CanvasContextToolResultIn,
     *,
     username: str,
+    project_state_dir: Any = None,
 ) -> dict[str, Any]:
     key = payload.bridge_key.strip()
     if not key:
@@ -958,7 +1051,9 @@ def _resolve_canvas_context_tool_result_payload(
     return resolve_canvas_context(
         key,
         result,
-        bridge_dir=_bridge_dir_for_pending_key(username, payload),
+        bridge_dir=_bridge_dir_for_pending_key(
+            username, payload, project_state_dir=project_state_dir
+        ),
     )
 
 
@@ -1027,17 +1122,19 @@ def _resolve_skill_studio_tool_result_payload(
     payload: SkillStudioToolResultIn,
     *,
     username: str,
+    project_state_dir: Any = None,
 ) -> dict[str, Any]:
     key = payload.bridge_key.strip()
     if not key:
         raise HTTPException(status_code=400, detail="bridge_key is required")
     ok = payload.ok and payload.tool_call_status == "completed" and not payload.errors
-    draft_skill_ids, draft_recipe_ids = _skill_studio_draft_catalog_ids(payload.draft)
     saved_to_catalog = (
         payload.saved_to_catalog or payload.skill_studio_status == "catalog_saved"
     )
-    saved_skill_ids = payload.saved_skill_ids or draft_skill_ids
-    saved_recipe_ids = payload.saved_recipe_ids or draft_recipe_ids
+    save_requested = saved_to_catalog
+    saved_skill_ids: list[str] = []
+    saved_recipe_ids: list[str] = []
+    skill_studio_status = payload.skill_studio_status
     errors = list(payload.errors)
     cancelled = (
         payload.action == "cancel" or payload.skill_studio_status == "catalog_cancelled"
@@ -1066,6 +1163,17 @@ def _resolve_skill_studio_tool_result_payload(
                 logger.exception(
                     "failed to mark Freezone Hermes worker dirty after Skill Studio save"
                 )
+    if save_requested:
+        saved_to_catalog = ok
+        skill_studio_status = (
+            "catalog_saved"
+            if ok
+            else (
+                "catalog_partially_saved"
+                if saved_skill_ids or saved_recipe_ids
+                else "catalog_save_failed"
+            )
+        )
     if ok:
         if saved_to_catalog:
             agent_instruction = (
@@ -1111,11 +1219,26 @@ def _resolve_skill_studio_tool_result_payload(
                 payload.message or "Frontend returned the user's Skill Studio response."
             )
     else:
-        agent_instruction = "Do not continue the Skill Studio flow; handle the frontend error or ask the user to retry."
-        message = (
-            payload.message
-            or "Frontend reported that the Skill Studio interaction failed."
-        )
+        if save_requested:
+            message = (
+                "Skill / Recipe 仅部分保存成功，请修正失败项后重试。"
+                if saved_skill_ids or saved_recipe_ids
+                else "Skill / Recipe 保存失败，未保存任何条目，请修正错误后重试。"
+            )
+            agent_instruction = (
+                "Catalog saving did not fully succeed. Report the errors and only the IDs "
+                "in saved_skill_ids / saved_recipe_ids as saved. Do not claim the draft "
+                "is ready to use or start its workflow. Keep the draft available for correction."
+            )
+        else:
+            agent_instruction = (
+                "Do not continue the Skill Studio flow; handle the frontend error or ask "
+                "the user to retry."
+            )
+            message = (
+                payload.message
+                or "Frontend reported that the Skill Studio interaction failed."
+            )
     agent_visible_draft = (
         None if saved_to_catalog or cancelled or revision_started else payload.draft
     )
@@ -1123,8 +1246,10 @@ def _resolve_skill_studio_tool_result_payload(
         "ok": ok,
         "status": "skill_studio_frontend_result",
         "turn_id": payload.turn_id,
-        "tool_call_status": payload.tool_call_status,
-        "skill_studio_status": payload.skill_studio_status,
+        "tool_call_status": (
+            "failed" if save_requested and not ok else payload.tool_call_status
+        ),
+        "skill_studio_status": skill_studio_status,
         "action": payload.action,
         "selections": payload.selections,
         "draft": agent_visible_draft,
@@ -1144,6 +1269,7 @@ def _resolve_skill_studio_tool_result_payload(
         result,
         bridge_dir=_canvas_bridge_dir(
             username,
+            project_state_dir=project_state_dir,
             profile=(
                 f"freezone:{_freezone_agent_id_from_payload(payload)}"
                 if result.get("canvas_id")
@@ -1181,6 +1307,7 @@ def _resolve_clarification_tool_result_payload(
     payload: ClarificationToolResultIn,
     *,
     username: str,
+    project_state_dir: Any = None,
 ) -> dict[str, Any]:
     key = payload.bridge_key.strip()
     if not key:
@@ -1220,6 +1347,7 @@ def _resolve_clarification_tool_result_payload(
         result,
         bridge_dir=_canvas_bridge_dir(
             username,
+            project_state_dir=project_state_dir,
             profile=(
                 f"freezone:{_freezone_agent_id_from_payload(payload)}"
                 if result.get("canvas_id")
@@ -1384,13 +1512,22 @@ async def resolve_canvas_command_tool_result(
     payload: CanvasCommandToolResultIn,
     user: dict = Depends(get_api_user),
 ) -> dict[str, Any]:
+    if user.get("credential_kind") == "agent_session":
+        raise HTTPException(
+            403, "canvas execution receipts must come from the browser session"
+        )
     username = str(user["username"])
-    workflow_draft_id = _pending_workflow_draft_id(username, payload)
-    resolved = _resolve_canvas_command_tool_result_payload(payload, username=username)
+    project_state_dir = await _bridge_project_state_dir(user, payload)
+    workflow_draft_receipt = _pending_workflow_draft_receipt(
+        username, payload, project_state_dir=project_state_dir
+    )
+    resolved = _resolve_canvas_command_tool_result_payload(
+        payload, username=username, project_state_dir=project_state_dir
+    )
     await _record_workflow_draft_canvas_result(
         user=user,
         payload=payload,
-        draft_id=workflow_draft_id,
+        draft_receipt=workflow_draft_receipt,
         resolved=resolved,
     )
     if payload.cancelled or payload.canvas_apply_status == "cancelled_by_user":
@@ -1404,7 +1541,11 @@ async def resolve_canvas_context_tool_result(
     user: dict = Depends(get_api_user),
 ) -> dict[str, Any]:
     username = str(user["username"])
-    resolved = _resolve_canvas_context_tool_result_payload(payload, username=username)
+    resolved = _resolve_canvas_context_tool_result_payload(
+        payload,
+        username=username,
+        project_state_dir=await _bridge_project_state_dir(user, payload),
+    )
     context_turn_id = str(payload.turn_id or "").strip()
     project_id = str(resolved.get("project_id") or payload.project_id or "").strip()
     canvas_id = str(resolved.get("canvas_id") or payload.canvas_id or "").strip()
@@ -1441,7 +1582,11 @@ async def resolve_skill_studio_tool_result(
     )
     # Saving is persistence only. Generation charges are admitted before the
     # model call and settled by the corresponding durable product operation.
-    resolved = _resolve_skill_studio_tool_result_payload(payload, username=username)
+    resolved = _resolve_skill_studio_tool_result_payload(
+        payload,
+        username=username,
+        project_state_dir=await _bridge_project_state_dir(user, payload),
+    )
     logger.info(
         "resolved skill_studio.result via http bridge_key=%s action=%s status=%s ok=%s saved=%s",
         payload.bridge_key,
@@ -1488,7 +1633,11 @@ async def resolve_clarification_tool_result(
     user: dict = Depends(get_api_user),
 ) -> dict[str, Any]:
     username = str(user["username"])
-    resolved = _resolve_clarification_tool_result_payload(payload, username=username)
+    resolved = _resolve_clarification_tool_result_payload(
+        payload,
+        username=username,
+        project_state_dir=await _bridge_project_state_dir(user, payload),
+    )
     try:
         await _persist_clarification_result_ui_event(
             user=user, username=username, payload=payload
@@ -1528,29 +1677,24 @@ async def _receive_bridge_results_during_turn(
         event_type = str(raw.get("type") or "")
         if event_type == "canvas.command.result":
             payload = CanvasCommandToolResultIn.model_validate(raw)
-            workflow_draft_id = _pending_workflow_draft_id(username, payload)
-            resolved = _resolve_canvas_command_tool_result_payload(
-                payload, username=username
-            )
-            await _record_workflow_draft_canvas_result(
-                user=user,
-                payload=payload,
-                draft_id=workflow_draft_id,
-                resolved=resolved,
-            )
-            if payload.cancelled or payload.canvas_apply_status == "cancelled_by_user":
-                await _close_canvas_command_worker(username, payload)
+            await resolve_canvas_command_tool_result(payload, user)
             continue
 
         if event_type == "canvas.context.result":
             payload = CanvasContextToolResultIn.model_validate(raw)
-            _resolve_canvas_context_tool_result_payload(payload, username=username)
+            _resolve_canvas_context_tool_result_payload(
+                payload,
+                username=username,
+                project_state_dir=await _bridge_project_state_dir(user, payload),
+            )
             continue
 
         if event_type == "skill_studio.result":
             payload = SkillStudioToolResultIn.model_validate(raw)
             resolved = _resolve_skill_studio_tool_result_payload(
-                payload, username=username
+                payload,
+                username=username,
+                project_state_dir=await _bridge_project_state_dir(user, payload),
             )
             try:
                 await _persist_skill_studio_result_ui_event(
@@ -1565,7 +1709,11 @@ async def _receive_bridge_results_during_turn(
 
         if event_type == "assistant.clarification.result":
             payload = ClarificationToolResultIn.model_validate(raw)
-            _resolve_clarification_tool_result_payload(payload, username=username)
+            _resolve_clarification_tool_result_payload(
+                payload,
+                username=username,
+                project_state_dir=await _bridge_project_state_dir(user, payload),
+            )
             try:
                 await _persist_clarification_result_ui_event(
                     user=user, username=username, payload=payload
@@ -2065,6 +2213,7 @@ async def list_pending_canvas_commands(
     if not canvas_id:
         raise HTTPException(status_code=400, detail="canvas_id is required")
 
+    project_state_dir = await _bridge_project_state_dir(user, payload)
     requested_agent_ids = [
         str(value).strip() for value in payload.agent_ids if str(value).strip()
     ]
@@ -2082,6 +2231,7 @@ async def list_pending_canvas_commands(
             surface="freezone",
             canvas_id=canvas_id,
             agent_id=agent_id,
+            state_dir=str(project_state_dir) if project_state_dir is not None else None,
         )
         for bridge_dir in _candidate_canvas_bridge_dirs_for_scope(username, scope):
             marker = str(bridge_dir)
@@ -2090,6 +2240,45 @@ async def list_pending_canvas_commands(
             seen_bridge_dirs.add(marker)
             bridge_targets.append((agent_id, bridge_dir))
     for agent_id, bridge_dir in bridge_targets:
+        try:
+            durable_pending = list_pending_bridge_messages(
+                project_id=project_id,
+                canvas_id=canvas_id,
+                kinds={"canvas_command"},
+                limit=10,
+                bridge_dir=bridge_dir,
+            )
+        except Exception:
+            durable_pending = []
+        for pending in durable_pending:
+            key = str(pending.get("key") or "")
+            if not key or key in seen_keys:
+                continue
+            envelope = pending.get("envelope")
+            if not isinstance(envelope, dict):
+                continue
+            if not _pending_canvas_command_allows_external_poll(envelope):
+                continue
+            if not mark_bridge_message_delivered(
+                key,
+                consumer_id=f"poll:{username}:{agent_id}",
+                bridge_dir=bridge_dir,
+            ):
+                continue
+            seen_keys.add(key)
+            frames.append(
+                {
+                    "type": "canvas.command",
+                    "turn_id": f"external-agent:{key}",
+                    "canvas_id": envelope.get("canvas_id") or canvas_id,
+                    "agent_id": str(envelope.get("agent_id") or agent_id),
+                    "bridge_key": key,
+                    "envelope": envelope,
+                    "source": "pending_canvas_bridge",
+                }
+            )
+            if len(frames) >= 10:
+                return {"ok": True, "data": {"frames": frames}}
         try:
             pending_paths = sorted(
                 bridge_dir.glob("*.pending.json"),
@@ -2100,6 +2289,11 @@ async def list_pending_canvas_commands(
         for path in pending_paths:
             key = path.name.removesuffix(".pending.json")
             if key in seen_keys:
+                continue
+            if not _is_unmigrated_legacy_bridge_file(
+                bridge_dir=bridge_dir,
+                key=key,
+            ):
                 continue
             # A result file is authoritative. The browser may have applied the
             # command just before a reconnect, while this polling endpoint is
@@ -2189,6 +2383,36 @@ def _drop_resolved_pending_bridge_file(
     with contextlib.suppress(FileNotFoundError):
         pending_path.unlink()
     return True
+
+
+def _is_unmigrated_legacy_bridge_file(*, bridge_dir: Any, key: str) -> bool:
+    """Allow JSON fallback only when no durable row owns this bridge key."""
+    try:
+        if bridge_message_exists(key, bridge_dir=bridge_dir):
+            return False
+        pending_path = bridge_dir / f"{key}.pending.json"
+        payload = json.loads(pending_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            return False
+        # This guard is shared by all legacy bridge watchers. Read the raw
+        # payload here so canvas context (requests), Skill Studio (event), and
+        # clarification (event) mirrors are not rejected by the stricter
+        # canvas-command parser before their own watcher can validate them.
+        kind = str(payload.get("kind") or "canvas_command")
+        ttl = BRIDGE_PENDING_TTL_SECONDS.get(kind, 10 * 60)
+        try:
+            created_at = float(payload.get("created_at"))
+        except (TypeError, ValueError):
+            created_at = pending_path.stat().st_mtime
+        if created_at + ttl <= time.time():
+            with contextlib.suppress(FileNotFoundError):
+                pending_path.unlink()
+            return False
+        return True
+    except Exception:
+        # SQLite is the source of truth. If its state cannot be checked, do not
+        # risk bypassing an active delivery lease through the legacy mirror.
+        return False
 
 
 def _resolve_stale_pending_canvas_command(
@@ -2352,6 +2576,47 @@ async def _watch_pending_canvas_commands(
     bridge_dirs = _candidate_canvas_bridge_dirs_for_scope(username, scope)
     while True:
         await asyncio.sleep(0.4)
+        for bridge_dir in bridge_dirs:
+            try:
+                durable_pending = list_pending_bridge_messages(
+                    project_id=str(scope.id or ""),
+                    canvas_id=str(scope.canvas_id or ""),
+                    kinds={"canvas_command"},
+                    limit=100,
+                    bridge_dir=bridge_dir,
+                )
+            except Exception:
+                durable_pending = []
+            for pending in durable_pending:
+                key = str(pending.get("key") or "")
+                envelope = pending.get("envelope")
+                if (
+                    not key
+                    or key in emitted_bridge_keys
+                    or not isinstance(envelope, dict)
+                ):
+                    continue
+                if not mark_bridge_message_delivered(
+                    key,
+                    consumer_id=f"websocket:{username}:{turn_id}",
+                    bridge_dir=bridge_dir,
+                ):
+                    continue
+                emitted_bridge_keys.add(key)
+                sent = await _send_json_best_effort(
+                    websocket,
+                    {
+                        "type": "canvas.command",
+                        "turn_id": turn_id,
+                        "canvas_id": envelope.get("canvas_id"),
+                        "agent_id": scope.agent_id or "main",
+                        "bridge_key": key,
+                        "envelope": envelope,
+                    },
+                    send_lock,
+                )
+                if not sent:
+                    return
         pending_items = []
         for bridge_dir in bridge_dirs:
             try:
@@ -2367,6 +2632,11 @@ async def _watch_pending_canvas_commands(
             except Exception:
                 continue
             key = path.name.removesuffix(".pending.json")
+            if not _is_unmigrated_legacy_bridge_file(
+                bridge_dir=bridge_dir,
+                key=key,
+            ):
+                continue
             if _drop_resolved_pending_bridge_file(
                 bridge_dir=bridge_dir,
                 key=key,
@@ -2429,10 +2699,66 @@ async def _watch_pending_skill_studio_events(
     if not _is_freezone_scope(scope):
         return
     bridge_dir = _canvas_bridge_dir(
-        username, profile=_canvas_bridge_profile_for_scope(scope)
+        username,
+        project_state_dir=scope.state_dir,
+        profile=_canvas_bridge_profile_for_scope(scope),
     )
     while True:
         await asyncio.sleep(0.4)
+        try:
+            durable_pending = list_pending_bridge_messages(
+                project_id=str(scope.id or ""),
+                canvas_id=str(scope.canvas_id or ""),
+                kinds={"skill_studio_event"},
+                limit=100,
+                bridge_dir=bridge_dir,
+            )
+        except Exception:
+            durable_pending = []
+        for pending in durable_pending:
+            key = str(pending.get("key") or "")
+            event = pending.get("event")
+            if not key or key in emitted_bridge_keys or not isinstance(event, dict):
+                continue
+            if not mark_bridge_message_delivered(
+                key,
+                consumer_id=f"websocket:{username}:{turn_id}",
+                bridge_dir=bridge_dir,
+            ):
+                continue
+            emitted_bridge_keys.add(key)
+            ui_event = {
+                **event,
+                "bridge_key": key,
+                "project_id": pending.get("project_id") or scope.id,
+                "canvas_id": pending.get("canvas_id") or scope.canvas_id,
+                "agent_id": scope.agent_id or "main",
+                "turn_id": turn_id,
+            }
+            try:
+                await chat_store.append_ui_event_async(
+                    username,
+                    store_scope or scope,
+                    turn_id,
+                    ui_event,
+                )
+            except Exception:
+                logger.exception("failed to persist skill_studio.event ui event")
+            sent = await _send_json_best_effort(
+                websocket,
+                {
+                    "type": "skill_studio.event",
+                    "scope": scope.to_dict(),
+                    "turn_id": turn_id,
+                    "canvas_id": pending.get("canvas_id"),
+                    "agent_id": scope.agent_id or "main",
+                    "bridge_key": key,
+                    "event": event,
+                },
+                send_lock,
+            )
+            if not sent:
+                return
         try:
             pending_paths = sorted(
                 bridge_dir.glob("*.pending.json"),
@@ -2448,6 +2774,11 @@ async def _watch_pending_skill_studio_events(
                 continue
             key = path.name.removesuffix(".pending.json")
             if key in emitted_bridge_keys:
+                continue
+            if not _is_unmigrated_legacy_bridge_file(
+                bridge_dir=bridge_dir,
+                key=key,
+            ):
                 continue
             if _drop_resolved_pending_bridge_file(
                 bridge_dir=bridge_dir,
@@ -2515,10 +2846,66 @@ async def _watch_pending_clarification_events(
     if not _is_freezone_scope(scope):
         return
     bridge_dir = _canvas_bridge_dir(
-        username, profile=_canvas_bridge_profile_for_scope(scope)
+        username,
+        project_state_dir=scope.state_dir,
+        profile=_canvas_bridge_profile_for_scope(scope),
     )
     while True:
         await asyncio.sleep(0.4)
+        try:
+            durable_pending = list_pending_bridge_messages(
+                project_id=str(scope.id or ""),
+                canvas_id=str(scope.canvas_id or ""),
+                kinds={"clarification_event"},
+                limit=100,
+                bridge_dir=bridge_dir,
+            )
+        except Exception:
+            durable_pending = []
+        for pending in durable_pending:
+            key = str(pending.get("key") or "")
+            event = pending.get("event")
+            if not key or key in emitted_bridge_keys or not isinstance(event, dict):
+                continue
+            if not mark_bridge_message_delivered(
+                key,
+                consumer_id=f"websocket:{username}:{turn_id}",
+                bridge_dir=bridge_dir,
+            ):
+                continue
+            emitted_bridge_keys.add(key)
+            ui_event = {
+                **event,
+                "bridge_key": key,
+                "project_id": pending.get("project_id") or scope.id,
+                "canvas_id": pending.get("canvas_id") or scope.canvas_id,
+                "agent_id": scope.agent_id or "main",
+                "turn_id": turn_id,
+            }
+            try:
+                await chat_store.append_ui_event_async(
+                    username,
+                    store_scope or scope,
+                    turn_id,
+                    ui_event,
+                )
+            except Exception:
+                logger.exception("failed to persist assistant.clarification ui event")
+            sent = await _send_json_best_effort(
+                websocket,
+                {
+                    "type": "assistant.clarification.event",
+                    "scope": scope.to_dict(),
+                    "turn_id": turn_id,
+                    "canvas_id": pending.get("canvas_id"),
+                    "agent_id": scope.agent_id or "main",
+                    "bridge_key": key,
+                    "event": event,
+                },
+                send_lock,
+            )
+            if not sent:
+                return
         try:
             pending_paths = sorted(
                 bridge_dir.glob("*.pending.json"),
@@ -2534,6 +2921,11 @@ async def _watch_pending_clarification_events(
                 continue
             key = path.name.removesuffix(".pending.json")
             if key in emitted_bridge_keys:
+                continue
+            if not _is_unmigrated_legacy_bridge_file(
+                bridge_dir=bridge_dir,
+                key=key,
+            ):
                 continue
             if _drop_resolved_pending_bridge_file(
                 bridge_dir=bridge_dir,
@@ -2601,6 +2993,47 @@ async def _watch_pending_canvas_context_requests(
     bridge_dirs = _candidate_canvas_bridge_dirs_for_scope(username, scope)
     while True:
         await asyncio.sleep(0.4)
+        for bridge_dir in bridge_dirs:
+            try:
+                durable_pending = list_pending_bridge_messages(
+                    project_id=str(scope.id or ""),
+                    canvas_id=str(scope.canvas_id or ""),
+                    kinds={"canvas_context"},
+                    limit=100,
+                    bridge_dir=bridge_dir,
+                )
+            except Exception:
+                durable_pending = []
+            for pending in durable_pending:
+                key = str(pending.get("key") or "")
+                envelope = pending.get("envelope")
+                if (
+                    not key
+                    or key in emitted_bridge_keys
+                    or not isinstance(envelope, dict)
+                ):
+                    continue
+                if not mark_bridge_message_delivered(
+                    key,
+                    consumer_id=f"websocket:{username}:{turn_id}",
+                    bridge_dir=bridge_dir,
+                ):
+                    continue
+                emitted_bridge_keys.add(key)
+                sent = await _send_json_best_effort(
+                    websocket,
+                    {
+                        "type": "canvas.context.request",
+                        "turn_id": turn_id,
+                        "canvas_id": envelope.get("canvas_id"),
+                        "agent_id": scope.agent_id or "main",
+                        "bridge_key": key,
+                        "envelope": envelope,
+                    },
+                    send_lock,
+                )
+                if not sent:
+                    return
         pending_items = []
         for bridge_dir in bridge_dirs:
             try:
@@ -2616,6 +3049,11 @@ async def _watch_pending_canvas_context_requests(
             except Exception:
                 continue
             key = path.name.removesuffix(".pending.json")
+            if not _is_unmigrated_legacy_bridge_file(
+                bridge_dir=bridge_dir,
+                key=key,
+            ):
+                continue
             if _drop_resolved_pending_bridge_file(
                 bridge_dir=bridge_dir,
                 key=key,
@@ -2712,6 +3150,11 @@ async def _stream_project_turn(
         raise EgressBoundaryError("ORG_CONTEXT_REQUIRED")
     project_dir = project_ctx.output_dir
     project_state_dir = project_ctx.state_dir
+    scope = replace(scope, state_dir=str(project_state_dir))
+    execution_context = AgentExecutionContext.from_project_scope(
+        scope=scope,
+        project=project_ctx,
+    )
     storage_scope = (
         _chat_store_scope_for_project_context(store_scope, project_ctx)
         if store_scope is not None
@@ -2741,9 +3184,7 @@ async def _stream_project_turn(
     disconnected = asyncio.Event()
     runtime_backend = chat_service.get_chat_backend_name()
     runtime_ids: dict[str, str | None] = {"thread_id": None, "turn_id": None}
-    agent_profile = (
-        _freezone_agent_profile(scope) if _is_freezone_scope(scope) else "main"
-    )
+    agent_profile = execution_context.agent_profile
     heartbeat_task = asyncio.create_task(
         _chat_heartbeat(
             websocket,
@@ -3045,6 +3486,7 @@ async def _stream_project_turn(
                 turn_id=turn_id,
                 route_prompt=display_text,
                 backend=runtime_backend,
+                execution_context=execution_context,
             )
     finally:
         heartbeat_task.cancel()
@@ -3833,17 +4275,16 @@ async def chat_ws(websocket: WebSocket) -> None:
 
             if event_type == "canvas.command.result":
                 payload = CanvasCommandToolResultIn.model_validate(raw)
-                _resolve_canvas_command_tool_result_payload(payload, username=username)
-                if (
-                    payload.cancelled
-                    or payload.canvas_apply_status == "cancelled_by_user"
-                ):
-                    await _close_canvas_command_worker(username, payload)
+                await resolve_canvas_command_tool_result(payload, user)
                 continue
 
             if event_type == "canvas.context.result":
                 payload = CanvasContextToolResultIn.model_validate(raw)
-                _resolve_canvas_context_tool_result_payload(payload, username=username)
+                _resolve_canvas_context_tool_result_payload(
+                    payload,
+                    username=username,
+                    project_state_dir=await _bridge_project_state_dir(user, payload),
+                )
                 continue
 
             if event_type == "skill_studio.result":
@@ -3853,7 +4294,9 @@ async def chat_ws(websocket: WebSocket) -> None:
                     _skill_studio_result_log_fields(payload, username=username),
                 )
                 resolved = _resolve_skill_studio_tool_result_payload(
-                    payload, username=username
+                    payload,
+                    username=username,
+                    project_state_dir=await _bridge_project_state_dir(user, payload),
                 )
                 logger.info(
                     "resolved skill_studio.result via ws bridge_key=%s action=%s status=%s ok=%s saved=%s",
@@ -3876,7 +4319,11 @@ async def chat_ws(websocket: WebSocket) -> None:
 
             if event_type == "assistant.clarification.result":
                 payload = ClarificationToolResultIn.model_validate(raw)
-                _resolve_clarification_tool_result_payload(payload, username=username)
+                _resolve_clarification_tool_result_payload(
+                    payload,
+                    username=username,
+                    project_state_dir=await _bridge_project_state_dir(user, payload),
+                )
                 try:
                     await _persist_clarification_result_ui_event(
                         user=user, username=username, payload=payload
@@ -3935,9 +4382,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                         attachments=msg.attachments,
                         turn_id=turn_id,
                         user_text=user_text,
-                        surface=(
-                            "freezone" if _is_freezone_scope(scope) else msg.surface
-                        ),
+                        surface=("freezone" if _is_freezone_scope(scope) else None),
                         surface_context=(
                             msg.context if _is_freezone_scope(scope) else None
                         ),

@@ -1,3 +1,6 @@
+FROM rust:1.95-bookworm AS vtracer-builder
+RUN cargo install --locked --version 1.0.0-alpha.3 vtracer-cli
+
 FROM rust:1.95-bookworm AS codex-builder
 
 # The Codex 0.149 runtime logs the full turn metadata map
@@ -29,6 +32,7 @@ RUN git apply --check /tmp/codex-turn-metadata.patch \
     && target/release/codex --version
 
 FROM python:3.12-slim
+COPY --from=vtracer-builder /usr/local/cargo/bin/vtracer /usr/local/bin/vtracer
 
 # 项目全程用 uv 管理(与 host 一致)。Dockerfile 也用 uv,使 uv.lock 锁版本 +
 # [[tool.uv.dependency-metadata]] override(da2 的 torch==2.5.0 冲突、sharp 的 gsplat)

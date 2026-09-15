@@ -326,3 +326,12 @@ describe("originDeepLink", () => {
     expect(originDeepLink(sampleTask({ task_type: "no_such_type_ever" }))).toBeNull();
   });
 });
+
+it.each([
+  ["freezone_image_vectorize", "生成矢量图", "Generate vector image"],
+  ["freezone_image_animate_gif", "转换动态图 GIF", "Convert animated GIF"],
+])("labels %s without internal job IDs", (task_type, zh, en) => {
+  const task = sampleTask({ task_type, scope: "opaque-job-gif" });
+  expect(displayLabel(task, zhT)).toBe(zh);
+  expect(displayLabel(task, enT)).toBe(en);
+});

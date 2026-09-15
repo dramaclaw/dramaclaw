@@ -1,11 +1,13 @@
 import * as videoModels from "@/features/canvas/hooks/useFreezoneVideoModels";
+import i18next from "i18next";
 import { buildCanvasNodeActionCatalog } from "@/features/freezone/canvasNodeActionCatalog";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import compiledHtmlPlan from "@/features/html-artifacts/compiledHtmlPlan.fixture.json";
 
 import { CANVAS_NODE_TYPES, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { validateCanvasChatCommandEnvelopes } from "@/features/freezone/context/canvasCommandValidator";
 import { CANVAS_CHAT_COMMANDS_SCHEMA_VERSION, type CanvasChatCommandEnvelope } from "@/features/freezone/canvasChatCommands";
-import { canvasLinkTypeCatalogJson, canvasLinkTypeCatalogText } from "@/features/freezone/canvasEdgeSemantics";
+import { canvasLinkTypeCatalogJson, canvasLinkTypeCatalogText, canvasNodeTypeLinkObjectType, allowedCanvasLinkTypesForNodes } from "@/features/freezone/canvasEdgeSemantics";
 
 function node(partial: Partial<CanvasNode> & { id: string; type: CanvasNode["type"] }): CanvasNode {
   return {
@@ -17,6 +19,52 @@ function node(partial: Partial<CanvasNode> & { id: string; type: CanvasNode["typ
 }
 
 describe("canvas command validator", () => {
+  it("validates HTML source action parameters and same-batch aliases", () => {
+    const createAndSave: CanvasChatCommandEnvelope = {
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: [
+        {type:"create_node",client_id:"page",node_type:CANVAS_NODE_TYPES.htmlArtifact,data:{displayName:"Page"}},
+        {type:"run_node_action",node_id:"page",action:"update_source",parameters:{html:"<!doctype html><html></html>"}},
+      ],
+    };
+    expect(validateCanvasChatCommandEnvelopes([createAndSave], [], [])).toEqual({ok:true,issues:[]});
+
+    const existing = node({id:"saved",type:CANVAS_NODE_TYPES.htmlArtifact,data:{artifactId:"a1",artifactVersion:2}});
+    const missingVersion: CanvasChatCommandEnvelope = {
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: [{type:"run_node_action",node_id:"saved",action:"update_source",parameters:{html:"<html></html>"}}],
+    };
+    expect(validateCanvasChatCommandEnvelopes([missingVersion], [existing], []).issues[0]?.message).toContain("base_version");
+
+    const selectVersion: CanvasChatCommandEnvelope = {
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: [{type:"run_node_action",node_id:"saved",action:"select_version",parameters:{version:1}}],
+    };
+    expect(validateCanvasChatCommandEnvelopes([selectVersion], [existing], [])).toEqual({ok:true,issues:[]});
+    const invalidSelection = {...selectVersion, commands: [{...selectVersion.commands[0], parameters:{version:0}}]} as CanvasChatCommandEnvelope;
+    expect(validateCanvasChatCommandEnvelopes([invalidSelection], [existing], []).issues[0]?.message).toContain("positive version");
+  });
+  it("accepts the backend-compiled HTML plan with text prompt and media input edges", () => {
+    const envelope = compiledHtmlPlan.compiled as unknown as CanvasChatCommandEnvelope;
+    expect(envelope.commands.filter(command => command.type === "create_edge")).toHaveLength(2);
+    expect(validateCanvasChatCommandEnvelopes([envelope], [], [])).toEqual({ok:true,issues:[]});
+  });
+
+  it.each(["imageGenNode", "videoNode", "audioNode"] as const)("accepts %s as an HTML media input or ordering dependency", (sourceType) => {
+    const source = node({id:"media",type:sourceType});
+    const html = node({id:"html",type:CANVAS_NODE_TYPES.htmlArtifact});
+    for (const link_type of ["media_input_for", "dependency_for"] as const) {
+      expect(validateCanvasChatCommandEnvelopes([{schema_version:CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,commands:[{type:"create_edge",source:"media",target:"html",link_type}]}],[source,html],[])).toEqual({ok:true,issues:[]});
+    }
+  });
+
+  it("does not offer outbound HTML media or composition links", () => {
+    expect(canvasNodeTypeLinkObjectType(CANVAS_NODE_TYPES.htmlArtifact)).toBe("HtmlNode");
+    expect(allowedCanvasLinkTypesForNodes(node({id:"html",type:CANVAS_NODE_TYPES.htmlArtifact}),node({id:"video",type:CANVAS_NODE_TYPES.video}))).toEqual([]);
+    for (const item of canvasLinkTypeCatalogJson()) expect(item.source_object_types).not.toContain("HtmlNode");
+    expect(canvasLinkTypeCatalogJson().find(item=>item.link_type==="composition_input_for")?.target_object_types).not.toContain("HtmlNode");
+  });
+
   it("describes context_for as a text planning relationship only", () => {
     const contextLinkType = canvasLinkTypeCatalogJson().find((item) => item.link_type === "context_for");
 
@@ -534,6 +582,32 @@ describe("canvas command validator", () => {
     expect(result.issues).toEqual([]);
   });
 
+  it.each([
+    ["sync_beat_context_to_mainline", CANVAS_NODE_TYPES.beatContext, {
+      projectId: "project-a",
+      episode: 1,
+      beat: 2,
+    }],
+    ["commit_node", CANVAS_NODE_TYPES.imageGen, {
+      user_spawned: true,
+      imageUrl: "/static/project/image.png",
+      slot_target: { kind: "frame", episode: 1, beat: 2 },
+    }],
+  ])("rejects forged manual mainline action %s", (action, nodeType, data) => {
+    const target = node({ id: "target", type: nodeType, data });
+    const envelope: CanvasChatCommandEnvelope = {
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: [{ type: "run_node_action", node_id: target.id, action }],
+    };
+
+    const result = validateCanvasChatCommandEnvelopes([envelope], [target], []);
+
+    expect(result.ok).toBe(false);
+    expect(result.issues.map((issue) => issue.message)).toContain(
+      `mainline write action is manual-only: ${action}`,
+    );
+  });
+
   it("rejects run_skill when required upstream image inputs are still pending", () => {
     const beatNode = node({
       id: "beat-node",
@@ -780,6 +854,18 @@ describe("node-specific mode command validation", () => {
     const target = node({ id: "v", type: CANVAS_NODE_TYPES.video, data: { model: "first-only" } });
     expect(buildCanvasNodeActionCatalog(target).editable_schema.genMode.options)
       .toEqual(["textToVideo", "firstFrame"]);
+  });
+
+  it("resolves mode labels at query time so language changes are reflected", () => {
+    catalog();
+    const target = node({ id: "v", type: CANVAS_NODE_TYPES.video, data: { model: "first-only" } });
+    const translate = vi.spyOn(i18next, "t").mockReturnValue("First frame");
+    expect(buildCanvasNodeActionCatalog(target).editable_schema.genMode.option_labels?.firstFrame)
+      .toBe("First frame");
+    expect(translate).toHaveBeenCalledWith("node.videoNode.tabs.firstFrame");
+    translate.mockReturnValue("首帧");
+    expect(buildCanvasNodeActionCatalog(target).editable_schema.genMode.option_labels?.firstFrame)
+      .toBe("首帧");
   });
 
   it("rejects an AI-created imageToVideo mode for a text-only model", () => {

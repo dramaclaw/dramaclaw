@@ -356,32 +356,29 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
 
         {/* Actions */}
         <div className="flex min-w-0 flex-1 shrink-0 items-center justify-end gap-1">
-          {/* 设置仅在 CE 版显示，EE 版隐藏。 */}
-          {ceRuntime ? (
-            <div ref={settingsAnchorRef} className="relative">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="relative size-[32px] text-sidebar-foreground/82 transition-colors duration-150 ease-[var(--ease-out-quint)] hover:bg-white/[0.05] hover:text-white aria-expanded:bg-white/[0.05] aria-expanded:text-white"
-                aria-label={
-                  hasSettingsWarning ? t("header.settingsWithWarning") : t("header.settings")
-                }
-                aria-expanded={settingsOpen}
-                onClick={() => setSettingsOpen(true)}
-              >
-                <Bolt className="size-[17px]" />
-                {hasSettingsWarning ? (
-                  <span
-                    className="absolute right-[5px] top-[5px] flex size-[11px] items-center justify-center rounded-full bg-amber-400 text-black shadow-[0_0_7px_rgba(251,191,36,0.68)]"
-                    aria-hidden="true"
-                  >
-                    <AlertTriangle className="size-[8px]" strokeWidth={3} />
-                  </span>
-                ) : null}
-              </Button>
-            </div>
-          ) : null}
+          <div ref={settingsAnchorRef} className="relative">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="relative size-[32px] text-sidebar-foreground/82 transition-colors duration-150 ease-[var(--ease-out-quint)] hover:bg-white/[0.05] hover:text-white aria-expanded:bg-white/[0.05] aria-expanded:text-white"
+              aria-label={
+                hasSettingsWarning ? t("header.settingsWithWarning") : t("header.settings")
+              }
+              aria-expanded={settingsOpen}
+              onClick={() => setSettingsOpen(true)}
+            >
+              <Bolt className="size-[17px]" />
+              {hasSettingsWarning ? (
+                <span
+                  className="absolute right-[5px] top-[5px] flex size-[11px] items-center justify-center rounded-full bg-amber-400 text-black shadow-[0_0_7px_rgba(251,191,36,0.68)]"
+                  aria-hidden="true"
+                >
+                  <AlertTriangle className="size-[8px]" strokeWidth={3} />
+                </span>
+              ) : null}
+            </Button>
+          </div>
           <Button
             id="mybuddy-companion-entry"
             type="button"
@@ -487,7 +484,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
         onOpenChange={setPasswordDialogOpen}
         onPasswordChanged={handlePasswordChanged}
       />
-      {ceRuntime ? <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} /> : null}
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
       {settingsWarningBubble
         ? createPortal(
             <div
