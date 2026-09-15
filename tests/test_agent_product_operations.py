@@ -426,14 +426,18 @@ async def test_unsuccessful_result_update_does_not_bind_model_evidence(
 
 
 @pytest.mark.asyncio
-async def test_workflow_result_tool_binds_server_observed_model_execution(tmp_path):
+@pytest.mark.parametrize("tool_name", [
+    "freezone_prepare_workflow", "freezone_prepare_workflow_draft",
+    "freezone_prepare_workflow_plan_draft",
+])
+async def test_workflow_result_tool_binds_server_observed_model_execution(tmp_path, tool_name):
     from novelvideo.chat import service
 
     operation = _create(tmp_path, key="observed-workflow-result")
     await service._bind_server_observed_agent_product_execution(
         SimpleNamespace(
             type="tool_started",
-            name="freezone_prepare_workflow_draft",
+            name=tool_name,
             status="pending",
             error=None,
             turn_id="turn-a",

@@ -354,6 +354,21 @@ def prepare_workflow_source(body: dict, *, username: str) -> dict:
 def revise_workflow_source(payload: dict, changes: Any, *, username: str) -> dict:
     if not isinstance(changes, dict) or not changes:
         raise WorkflowOperationError("changes must be a non-empty object")
+    if "run_after_create" in changes:
+        policy = changes["run_after_create"]
+        if not isinstance(policy, bool):
+            raise WorkflowOperationError("run_after_create must be a boolean")
+        source_changes = {key: value for key, value in changes.items() if key != "run_after_create"}
+        prepared = (
+            revise_workflow_source(payload, source_changes, username=username)
+            if source_changes else {
+                "intent": deepcopy(payload["intent"]),
+                "compiled": deepcopy(payload["compiled"]),
+                "last_changes": {},
+            }
+        )
+        return {**prepared, "run_after_create": policy,
+                "last_changes": {**prepared.get("last_changes", {}), "run_after_create": policy}}
     graph_fields = {"step_updates", "bindings"}
     if graph_fields & set(changes):
         if set(changes) - graph_fields:

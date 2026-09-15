@@ -4643,18 +4643,6 @@ def _handle_get_workflow_skill(args: dict[str, Any], **_: Any) -> str:
     request = dict(args)
     request["compact"] = True
     package = get_workflow_skill(request)
-    if isinstance(package, dict) and package.get("ok"):
-        # 把编译期最常踩的三个坑在最新鲜的位置(编译前一步)提醒一遍;
-        # SKILL.md 文档层不保证被读到,这里是必经之路。
-        package.setdefault(
-            "agent_instruction",
-            "Next step: compile the intent from this package only (deliverable, "
-            "recipes, and field enums come from here) and call "
-            "freezone_prepare_workflow_draft through tool_call, writing the "
-            '"name" field BEFORE "arguments". If include_audio=true, '
-            "EVERY planner unit must carry narration with the literal voice-over "
-            "text for that unit.",
-        )
     return _structured_tool_result(
         package,
         tool_name="freezone_get_workflow_skill",
@@ -6636,7 +6624,11 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     ),
     "freezone_get_saved_skill": ("id", "kind", "item", "available_ids"),
     "freezone_get_saved_recipe": ("id", "kind", "item", "available_ids"),
-    "freezone_get_workflow_skill": ("schema_version", "skill", "recipes", "inputs"),
+    "freezone_get_workflow_skill": (
+        "schema_version", "skill_id", "user_goal", "source", "skill", "recipes",
+        "recipe_definitions_omitted", "available_recipes", "capabilities",
+        "allowed_node_types", "allowed_link_types", "input_contract", "planning_contract",
+    ),
     "freezone_prepare_workflow": (
         *_WORKFLOW_RESULT_FIELDS,
         "draft_status",
@@ -6762,7 +6754,10 @@ _RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
     "freezone_get_audio_voice_options": ("node_id", "voices", "count"),
     "freezone_get_slot_candidates": ("slot", "candidates", "count"),
     "freezone_get_mainline_projection_assets": ("assets", "count"),
-    "freezone_get_workflow_skill": ("schema_version", "skill", "recipes", "inputs"),
+    "freezone_get_workflow_skill": (
+        "schema_version", "skill_id", "skill", "recipes", "available_recipes",
+        "input_contract", "planning_contract",
+    ),
     "freezone_validate_canvas_commands": ("commands", "errors", "warnings"),
 }
 
@@ -7070,6 +7065,7 @@ _WORKFLOW_CATALOG_SCHEMA = {
             "oneOf": [{"type": "string"}, {"type": "integer"}],
         },
         "recipeId": {"type": "string", "minLength": 1},
+        "timelineRole": {"type": "string"},
         "recipeVersion": {
             "description": "Optional catalog Recipe version, as a string or integer.",
             "oneOf": [{"type": "string"}, {"type": "integer"}],
@@ -8905,6 +8901,7 @@ TOOLS = (
             "freezone_prepare_workflow_draft",
             (
                 "Compile a structured intent and persist its deterministic preview. "
+                "Put include_compose at intent.include_compose, not inside intent.planner. "
                 "Before choosing generation parameters, read freezone_get_node_create_schema "
                 "for imageGenNode/videoNode and use its live model ids and supported options. "
                 "Do not invent low/medium quality or a recommended model id. On preflight "

@@ -124,6 +124,19 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
     """
 
     raw = str(value or "")
+    try:
+        result = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        result = None
+    if isinstance(result, dict) and result.get("ok") is True and result.get("applied") is True:
+        from novelvideo.chat.canvas_outcome import CANVAS_FINAL_RESPONSE_INSTRUCTIONS
+
+        result["agent_instruction"] = (
+            CANVAS_FINAL_RESPONSE_INSTRUCTIONS + " " + str(result.get("agent_instruction") or "").replace(
+                "Report success briefly", "Report success briefly in the JSON message field"
+            )
+        )
+        return json.dumps(result, ensure_ascii=False)
     if name not in {
         "freezone_prepare_workflow",
         "freezone_prepare_workflow_draft",

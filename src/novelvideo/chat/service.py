@@ -36,6 +36,7 @@ from novelvideo.chat.backend_sdk import (
 )
 from novelvideo.chat.canvas_outcome import (
     CANVAS_REPLY_SCHEMA,
+    CANVAS_FINAL_RESPONSE_INSTRUCTIONS,
     finalize_canvas_reply,
     receipt_reference,
 )
@@ -245,12 +246,16 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
 _CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v2"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v19"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v23"
 
 
 def _codex_developer_instructions(tool_mode: str | None) -> str:
     if str(tool_mode or "").strip() == "freezone_canvas":
+        from novelvideo.freezone.workflow_planning import WORKFLOW_PLANNING_INSTRUCTIONS
+
         return _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS + (
+            " " + WORKFLOW_PLANNING_INSTRUCTIONS +
+            " " + CANVAS_FINAL_RESPONSE_INSTRUCTIONS +
             " Your final response MUST follow the supplied JSON schema. "
             "Use mode=read_only for explanations, checks, proposals, clarification answers, "
             "and catalog-only Skill saves, with canvas_receipts=[]. Never claim a canvas "
@@ -922,6 +927,7 @@ def _codex_freezone_ready_workflow_draft(event: Any) -> dict[str, Any] | None:
 
 
 _AGENT_PRODUCT_RESULT_TOOLS = {
+    "freezone_prepare_workflow",
     "freezone_prepare_workflow_draft",
     "freezone_prepare_workflow_plan_draft",
     "freezone_put_agent_catalog_skill",
@@ -974,6 +980,7 @@ async def _bind_server_observed_agent_product_execution(
 
     operation_ids: set[str] = set()
     if tool_name in {
+        "freezone_prepare_workflow",
         "freezone_prepare_workflow_draft",
         "freezone_prepare_workflow_plan_draft",
     }:

@@ -800,3 +800,34 @@ print(json.dumps(result, ensure_ascii=False))
             assert result.returncode == 0, result.stderr
             package = json.loads(result.stdout)
             assert package['skill']['name'] == user + ' private'
+
+
+@pytest.mark.asyncio
+async def test_builtin_workflow_skill_get_preserves_planning_instructions():
+    result = await workflow_mcp.call_tool(
+        "workflow_skill_get",
+        {"skill_id": "lego-minifigure-animation-video", "user_goal": "做个短片"},
+    )
+    payload = _result_payload(result)
+    assert payload["ok"] is True
+    assert result.isError is False
+    assert payload["planning_contract"]["node_prompt_role"] == "task_brief"
+    assert "Runtime Recipe compilation" in payload["agent_instruction"]
+    assert result.structuredContent == payload
+
+
+@pytest.mark.asyncio
+async def test_workflow_intent_schema_explains_compose_field_location():
+    tools = {tool.name: tool for tool in await workflow_mcp.list_tools()}
+    schema = tools["workflow_intent_compile"].inputSchema["properties"]["intent"]
+    assert "intent.include_compose" in schema["properties"]["planner"]["description"]
+    intent = {
+        "skill_id": "lego-minifigure-animation-video",
+        "user_goal": "做个短片",
+        "planner": {"mode": "standard"},
+        "include_compose": True,
+    }
+    Draft202012Validator(schema).validate(intent)
+    intent["planner"]["include_compose"] = intent.pop("include_compose")
+    with pytest.raises(ValidationError):
+        Draft202012Validator(schema).validate(intent)
