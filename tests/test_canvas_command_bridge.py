@@ -190,6 +190,64 @@ def test_legacy_terminal_result_is_migrated_before_sqlite_enqueue(tmp_path) -> N
     )
 
 
+def test_legacy_terminal_result_is_inserted_without_pending_transition(
+    monkeypatch, tmp_path
+) -> None:
+    bridge_dir = tmp_path / "bridge"
+    commands = [{"type": "create_node", "node_type": "imageGenNode"}]
+    fingerprint = canvas_command_bridge._canvas_command_request_fingerprint(
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+    )
+    canvas_command_bridge._write_json(
+        bridge_dir / "legacy-atomic.result.json",
+        {
+            "ok": True,
+            "applied": True,
+            "canvas_apply_status": "applied",
+            "request_fingerprint": fingerprint,
+        },
+    )
+    original_terminal_status = canvas_command_bridge._terminal_status
+
+    def assert_no_visible_pending(result):
+        # _terminal_status is evaluated inside the same BEGIN IMMEDIATE that
+        # performs the insert. A second connection must not observe a pending
+        # row because migration never commits that intermediate state.
+        with sqlite3.connect(
+            canvas_command_bridge._bridge_db_path(bridge_dir)
+        ) as observer:
+            row = observer.execute(
+                "SELECT status FROM canvas_command_messages "
+                "WHERE bridge_key = 'legacy-atomic'"
+            ).fetchone()
+        assert row is None
+        return original_terminal_status(result)
+
+    monkeypatch.setattr(
+        canvas_command_bridge, "_terminal_status", assert_no_visible_pending
+    )
+
+    replayed = canvas_command_bridge.put_pending_canvas_command(
+        key="legacy-atomic",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+        envelope={"commands": commands},
+        bridge_dir=bridge_dir,
+    )
+
+    assert replayed is not None
+    assert replayed["canvas_apply_status"] == "applied"
+    assert (
+        canvas_command_bridge.read_bridge_message(
+            "legacy-atomic", bridge_dir=bridge_dir
+        )["transport_status"]
+        == "applied"
+    )
+
+
 def test_legacy_result_conflict_does_not_create_sqlite_pending_row(tmp_path) -> None:
     bridge_dir = tmp_path / "bridge"
     canvas_command_bridge._write_json(
@@ -345,3 +403,4 @@ def test_sqlite_bridge_expires_abandoned_pending_message(tmp_path) -> None:
     assert canvas_command_bridge.bridge_status_counts(bridge_dir=bridge_dir) == {
         "expired": 1
     }
+    assert not (bridge_dir / "abandoned.pending.json").exists()

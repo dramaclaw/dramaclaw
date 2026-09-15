@@ -45,6 +45,7 @@ from novelvideo.chat.hermes_workspace import (
 )
 from novelvideo.chat.store import ChatScope, chat_store
 from novelvideo.freezone.canvas_command_bridge import (
+    BRIDGE_PENDING_TTL_SECONDS,
     bridge_message_exists,
     list_pending_bridge_messages,
     mark_bridge_message_delivered,
@@ -2300,7 +2301,23 @@ def _drop_resolved_pending_bridge_file(
 def _is_unmigrated_legacy_bridge_file(*, bridge_dir: Any, key: str) -> bool:
     """Allow JSON fallback only when no durable row owns this bridge key."""
     try:
-        return not bridge_message_exists(key, bridge_dir=bridge_dir)
+        if bridge_message_exists(key, bridge_dir=bridge_dir):
+            return False
+        pending_path = bridge_dir / f"{key}.pending.json"
+        pending = _load_pending_canvas_command(pending_path)
+        if pending is None:
+            return False
+        kind = str(pending.get("kind") or "canvas_command")
+        ttl = BRIDGE_PENDING_TTL_SECONDS.get(kind, 10 * 60)
+        try:
+            created_at = float(pending.get("created_at"))
+        except (TypeError, ValueError):
+            created_at = pending_path.stat().st_mtime
+        if created_at + ttl <= time.time():
+            with contextlib.suppress(FileNotFoundError):
+                pending_path.unlink()
+            return False
+        return True
     except Exception:
         # SQLite is the source of truth. If its state cannot be checked, do not
         # risk bypassing an active delivery lease through the legacy mirror.

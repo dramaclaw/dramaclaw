@@ -1,3 +1,4 @@
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -5,6 +6,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from novelvideo.api.routes import chat as chat_route
 from novelvideo.chat.store import ChatScope
+from novelvideo.freezone import canvas_command_bridge
 from novelvideo.freezone.canvas_command_bridge import (
     put_pending_canvas_command,
     put_pending_clarification_event,
@@ -822,6 +824,54 @@ async def test_pending_canvas_command_json_mirror_cannot_bypass_sqlite_lease(
         "leased-command"
     ]
     assert second["data"]["frames"] == []
+
+
+@pytest.mark.anyio
+async def test_expired_canvas_command_json_mirror_is_not_redelivered(
+    monkeypatch, tmp_path
+) -> None:
+    bridge_dir = tmp_path / "bridge"
+    monkeypatch.setattr(
+        chat_route,
+        "_candidate_canvas_bridge_dirs_for_scope",
+        lambda *_args, **_kwargs: [bridge_dir],
+    )
+    commands = [{"type": "select_nodes", "nodeIds": ["node-a"]}]
+    put_pending_canvas_command(
+        key="expired-command",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+        envelope={
+            "schema_version": "canvas_chat_commands.v1",
+            "canvas_id": "canvas-a",
+            "external_mcp_command": True,
+            "commands": commands,
+        },
+        bridge_dir=bridge_dir,
+    )
+    pending_path = bridge_dir / "expired-command.pending.json"
+    pending = chat_route._load_pending_canvas_command(pending_path)
+    assert pending is not None
+    pending["created_at"] = 0
+    canvas_command_bridge._write_json(pending_path, pending)
+    with sqlite3.connect(canvas_command_bridge._bridge_db_path(bridge_dir)) as conn:
+        conn.execute(
+            "UPDATE canvas_command_messages "
+            "SET created_at = 0, expires_at = 0 "
+            "WHERE bridge_key = 'expired-command'"
+        )
+
+    result = await chat_route.list_pending_canvas_commands(
+        chat_route.PendingCanvasCommandsIn(
+            project_id="project-a",
+            canvas_id="canvas-a",
+        ),
+        user={"username": "admin"},
+    )
+
+    assert result["data"]["frames"] == []
+    assert not pending_path.exists()
 
 
 @pytest.mark.anyio

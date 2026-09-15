@@ -111,7 +111,12 @@ def _terminal_status(result: dict[str, Any]) -> str:
     return "failed"
 
 
-def _prune_bridge_rows(conn: sqlite3.Connection, *, now: float) -> int:
+def _prune_bridge_rows(
+    conn: sqlite3.Connection,
+    *,
+    now: float,
+    bridge_dir: str | Path | None = None,
+) -> int:
     shortest_ttl = min(BRIDGE_PENDING_TTL_SECONDS.values())
     expirable = conn.execute(
         """
@@ -151,6 +156,10 @@ def _prune_bridge_rows(conn: sqlite3.Connection, *, now: float) -> int:
             """,
             (_canonical_json(result), now, row["bridge_key"]),
         )
+        # JSON is only a migration mirror. Once SQLite expires a message, its
+        # mirror must not survive long enough to be mistaken for an unmigrated
+        # command after the durable tombstone is eventually pruned.
+        _unlink_if_exists(_path("pending", str(row["bridge_key"]), bridge_dir))
     cursor = conn.execute(
         "DELETE FROM canvas_command_messages WHERE expires_at <= ?",
         (now,),
@@ -162,7 +171,7 @@ def bridge_status_counts(*, bridge_dir: str | Path | None = None) -> dict[str, i
     """Return observable queue depth by durable transport status."""
     with _bridge_db(bridge_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        _prune_bridge_rows(conn, now=time.time())
+        _prune_bridge_rows(conn, now=time.time(), bridge_dir=bridge_dir)
         rows = conn.execute(
             "SELECT status, COUNT(*) AS count FROM canvas_command_messages GROUP BY status"
         ).fetchall()
@@ -226,7 +235,7 @@ def list_pending_bridge_messages(
     parameters.append(max(1, min(int(limit), 500)))
     with _bridge_db(bridge_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        _prune_bridge_rows(conn, now=now)
+        _prune_bridge_rows(conn, now=now, bridge_dir=bridge_dir)
         rows = conn.execute(
             f"SELECT * FROM canvas_command_messages WHERE {where} "
             "ORDER BY created_at ASC LIMIT ?",
@@ -422,12 +431,13 @@ def _put_pending_bridge_message(
     canvas_id: str | None,
     payload: dict[str, Any],
     request_fingerprint: str | None = None,
+    terminal_result: dict[str, Any] | None = None,
     bridge_dir: str | Path | None = None,
 ) -> dict[str, Any] | None:
     now = time.time()
     with _bridge_db(bridge_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        _prune_bridge_rows(conn, now=now)
+        _prune_bridge_rows(conn, now=now, bridge_dir=bridge_dir)
         existing = conn.execute(
             "SELECT * FROM canvas_command_messages WHERE bridge_key = ?",
             (key,),
@@ -441,6 +451,41 @@ def _put_pending_bridge_message(
             if str(existing["status"]) in _TERMINAL_BRIDGE_STATUSES:
                 return _decode_bridge_json(existing["result_json"])
             return None
+        if terminal_result is not None:
+            resolved = {
+                "key": key,
+                "bridge_key": key,
+                "resolved_at": now,
+                **(
+                    {"request_fingerprint": request_fingerprint}
+                    if request_fingerprint
+                    else {}
+                ),
+                **terminal_result,
+            }
+            conn.execute(
+                """
+                INSERT INTO canvas_command_messages (
+                    bridge_key, kind, project_id, canvas_id, request_fingerprint,
+                    payload_json, result_json, status, created_at, updated_at,
+                    expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    key,
+                    kind,
+                    project_id,
+                    canvas_id,
+                    request_fingerprint,
+                    _canonical_json(payload),
+                    _canonical_json(resolved),
+                    _terminal_status(resolved),
+                    now,
+                    now,
+                    now + BRIDGE_RESULT_TTL_SECONDS,
+                ),
+            )
+            return resolved
         conn.execute(
             """
             INSERT INTO canvas_command_messages (
@@ -468,7 +513,7 @@ def _read_durable_bridge_result(
 ) -> dict[str, Any] | None:
     with _bridge_db(bridge_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        _prune_bridge_rows(conn, now=time.time())
+        _prune_bridge_rows(conn, now=time.time(), bridge_dir=bridge_dir)
         row = conn.execute(
             "SELECT status, result_json FROM canvas_command_messages WHERE bridge_key = ?",
             (key,),
@@ -646,16 +691,11 @@ def put_pending_canvas_command(
             canvas_id=canvas_id,
             payload=durable_payload,
             request_fingerprint=fingerprint,
+            terminal_result=existing_result,
             bridge_dir=bridge_dir,
         )
         if durable_result is not None:
             return durable_result
-        if existing_result is not None:
-            return _resolve_durable_bridge_message(
-                key,
-                existing_result,
-                bridge_dir=bridge_dir,
-            )
         if existing_pending is not None:
             return None
 
