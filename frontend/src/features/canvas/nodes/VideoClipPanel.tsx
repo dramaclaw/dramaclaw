@@ -418,7 +418,7 @@ export const VideoClipPanel = memo(function VideoClipPanel({
           <div
             role="slider"
             tabIndex={isSubmitting ? -1 : 0}
-            aria-label="剪辑起点"
+            aria-label="截取起点"
             aria-valuemin={0}
             aria-valuemax={totalMs ?? 0}
             aria-valuenow={startMs}
@@ -435,7 +435,7 @@ export const VideoClipPanel = memo(function VideoClipPanel({
           <div
             role="slider"
             tabIndex={isSubmitting ? -1 : 0}
-            aria-label="剪辑终点"
+            aria-label="截取终点"
             aria-valuemin={0}
             aria-valuemax={totalMs ?? 0}
             aria-valuenow={endMs}

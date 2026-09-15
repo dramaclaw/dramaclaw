@@ -2854,6 +2854,8 @@ export interface FreezoneUploadOptions {
    * the in-flight request and DevTools shows the row as `canceled`.
    */
   timeoutMs?: number | false;
+  /** ky 直接透传给底层 fetch；不传就是不可取消（历史行为）。 */
+  signal?: AbortSignal;
 }
 
 export async function uploadFreezoneImage(
@@ -2871,6 +2873,7 @@ export async function uploadFreezoneImage(
       method: "POST",
       body: fd,
       timeout: options?.timeoutMs ?? false,
+      signal: options?.signal,
     },
   ).json<{ ok: boolean; data?: FreezoneUploadResult; error?: string }>();
   if (!resp.ok || !resp.data) {
@@ -2932,11 +2935,12 @@ export async function uploadFreezoneVideo(
   project: string,
   file: File | Blob,
   filename?: string,
+  options?: FreezoneUploadOptions,
 ): Promise<FreezoneUploadResult> {
   // Disable the 30s default timeout: video files routinely run into the tens
   // of MB and the upload streams the body, so a short timeout cancels the
   // request before the server ever sees the end of the body.
-  return await uploadFreezoneImage(project, file, filename, { timeoutMs: false });
+  return await uploadFreezoneImage(project, file, filename, { timeoutMs: false, ...options });
 }
 
 function dataUrlToBlob(dataUrl: string): Blob {

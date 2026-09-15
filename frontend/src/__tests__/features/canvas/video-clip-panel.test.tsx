@@ -45,8 +45,8 @@ function renderPanel(overrides: Partial<Parameters<typeof VideoClipPanel>[0]> = 
 }
 
 function handles() {
-  const start = screen.getByRole('slider', { name: '剪辑起点' });
-  const end = screen.getByRole('slider', { name: '剪辑终点' });
+  const start = screen.getByRole('slider', { name: '截取起点' });
+  const end = screen.getByRole('slider', { name: '截取终点' });
   const selection = start.parentElement as HTMLElement;
   const track = selection.parentElement as HTMLElement;
   return { start, end, selection, track };
