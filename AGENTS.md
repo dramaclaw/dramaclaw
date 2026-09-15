@@ -15,9 +15,9 @@ This repository contains the SuperTale Community Edition backend and video pipel
 
 ## Coding Style & Naming Conventions
 
-Use Python 3.11-compatible code and keep imports/package paths rooted in `src/novelvideo`. Follow the existing style: 4-space indentation, type hints for public interfaces and dataclass/Pydantic models, snake_case for functions and modules, PascalCase for classes, and uppercase names for constants. Keep route handlers thin and move reusable behavior into services, ports, or task runners matching nearby modules. Avoid committing generated media or local runtime state.
+Use Python 3.11-compatible code and keep imports/package paths rooted in `src/novelvideo`. Follow the existing style: 4-space indentation, type hints for public interfaces and dataclass/Pydantic models, snake_case for functions and modules, PascalCase for classes, and uppercase names for constants. Keep route handlers thin and move reusable behavior into services, ports, or task runners matching nearby modules. Do not commit task outputs, temporary previews, or local runtime state. Approved static images, audio, and video required by the product may be committed under the existing asset conventions.
 
-For any frontend visual change, read `DESIGN.md` first — it is the source of truth for colors, typography, spacing, radii, elevation, and motion, and mirrors the CSS variables in `frontend/src/index.css`. When those variables change, update `DESIGN.md` in the same commit and keep `npx @google/design.md lint DESIGN.md` at 0 errors.
+For the first frontend visual change in a session, read the relevant sections of `DESIGN.md`; reuse that context unless the file changes or the task enters a different design area. It is the source of truth for design tokens and documented scene exceptions. When tokens or documented component specifications change, update the corresponding section and run the design linter once (0 errors; do not increase existing warnings). Pure component fixes do not require unrelated design documentation updates. Derived design-tool context must follow this source, not introduce a competing specification.
 
 ## Testing Guidelines
 
@@ -30,3 +30,13 @@ Recent history uses short conventional prefixes such as `fix:`, `feat(scope):`, 
 ## Security & Configuration Tips
 
 Do not commit provider keys, signed URLs, credentials, or generated secrets. Configure model access through environment variables such as `MODEL_PROVIDER` and `MODEL_API_KEY`. Run the gitleaks pre-commit hook before sharing changes that touch configuration, provisioning, backup, or gateway code.
+
+
+## Task Scope, Skills, and Verification
+
+- Treat the commands above as a reference, not a checklist for every task. Read only instructions and references relevant to the requested work; reuse unchanged context and successful checks within a session.
+- Use design tools for design exploration, alternatives, or an explicitly requested canvas workflow. Exact CSS sizing/spacing, copy corrections, existing asset swaps, and local UI fixes normally go directly to source code. Session reviews and repository progress use local session/Git evidence, not business pipeline APIs or product documentation by keyword alone.
+- For small visual or copy changes, use diff checks and a targeted rendered check when layout is uncertain; do not add tests that only repeat a constant. For behavior changes, run relevant regression tests. Run type/build checks for changes that affect types, imports, integration, or release readiness; use broader suites for shared contracts or cross-module changes. Repeat only after relevant edits, failures, or unresolved concerns.
+- Continue low-risk, reversible work already authorized by the user. Do not ask permission to read status, inspect files, make requested edits, or run appropriate checks. Ask only for necessary missing choices or actions beyond the existing scope/authorization.
+- Preserve sandbox permissions and explicit approval for destructive/irreversible actions, sensitive data disclosure, credentials, external publishing, permission changes, or additional paid work beyond the authorized provider/scope/budget. Existing authorization is not permission to expand these boundaries.
+- Reuse an authorized isolated browser and scoped verification script when practical. Keep audio muted during automated media checks and close browsers started solely for verification. Do not weaken execution permissions to avoid approval prompts.

@@ -234,7 +234,7 @@ Every step has its own interface — run them in order, skip steps, resume from 
 
 **Canvas and pipeline, not canvas or pipeline.** Most tools give you either a free node canvas or a rigid wizard. DramaClaw runs both as dual tracks over one asset library: explore on the canvas, commit what works to the series, project the series back onto a canvas. The agent works on both.
 
-**Every step is decomposable.** Each stage is an independent async task with its own interface. Run sequentially, skip steps, resume mid-way — the toolchain itself is the product, with no hidden black box.
+**Every step is decomposable.** Each stage is an independent async task with its own interface. Run sequentially, skip steps, resume midway — the toolchain itself is the product, with no hidden black box.
 
 **Self-hostable, model-neutral.** Your manuscript, your characters, your models, your servers. Use closed-source frontier models when you want the best results; switch to open-weight models when you want full control. DramaClaw won't lock you into any single vendor.
 
