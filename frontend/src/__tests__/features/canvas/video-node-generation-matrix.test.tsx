@@ -79,6 +79,10 @@ vi.mock("@/api/ops", async (importOriginal) => {
     ...(await importOriginal<typeof import("@/api/ops")>()),
     fetchFreezoneVideoModels: vi.fn(async () => [
       {
+        id: "text-only", providerId: "newapi", label: "Text only",
+        apiModel: "text-only", supportedModes: ["text_to_video"],
+      },
+      {
         id: "huimeng/seedance-1.5-pro",
         providerId: "huimeng",
         apiModel: "seedance-1.5-pro",
@@ -388,13 +392,14 @@ describe("视频节点：genMode → 提交端点的分派", () => {
         [edge("e1", "img-1")],
       );
 
-    await submitAndSettle();
+    const { result } = renderHook(() => useVideoGenerationForm("vid-1"));
+    await waitFor(() => expect(result.current.submitDisabled).toBe(true));
+    await result.current.submit();
 
     for (const endpoint of ALL_ENDPOINTS) {
       expect(vi.mocked(endpoint)).not.toHaveBeenCalled();
     }
-    expect(showErrorDialog).toHaveBeenCalled();
-    expect(String(vi.mocked(showErrorDialog).mock.calls[0][0])).toContain("Seedance 2.0");
+    expect(showErrorDialog).not.toHaveBeenCalled();
   });
 });
 
@@ -478,4 +483,18 @@ describe("视频节点：恢复与历史", () => {
       expect(onGenerationSettled).toHaveBeenCalled();
     });
   });
+});
+
+
+it("rejects AI-persisted imageToVideo on a text-only model before submitting", async () => {
+  useCanvasStore.getState().setCanvasData(
+    [videoNode({ model: "text-only", genMode: "imageToVideo" }),
+      uploadImageNode("img-1", "/static/a.png")],
+    [edge("e1", "img-1")],
+  );
+  const { result } = renderHook(() => useVideoGenerationForm("vid-1"));
+  await waitFor(() => expect(result.current.selectedVideoModelId).toBe("text-only"));
+  expect(result.current.submitDisabled).toBe(true);
+  await result.current.submit();
+  for (const endpoint of ALL_ENDPOINTS) expect(endpoint).not.toHaveBeenCalled();
 });

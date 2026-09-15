@@ -1,3 +1,4 @@
+import i18next from "i18next";
 import {
   CANVAS_NODE_TYPES,
   NODE_TOOL_TYPES,
@@ -6,13 +7,14 @@ import {
   type CanvasEdge,
   type CanvasNodeType,
 } from "@/features/canvas/domain/canvasNodes";
-import { getDownstreamSpawnTypes } from "@/features/canvas/domain/nodeRegistry";
+import { getDownstreamSpawnTypes, getNodeDefinition } from "@/features/canvas/domain/nodeRegistry";
 import {
   isPresetManagedNode,
   isSystemManagedNodeData,
 } from "@/features/canvas/domain/mainlineNodeFlags";
 import { getFreezoneImageModelsSnapshot } from "@/features/canvas/hooks/useFreezoneImageModels";
 import { getFreezoneVideoModelsSnapshot } from "@/features/canvas/hooks/useFreezoneVideoModels";
+import { isVideoModeSupportedByModel } from "@/features/canvas/nodes/shared/videoModelCapabilities";
 import type { ModelOption } from "@/features/canvas/ui/ProviderModelPicker";
 import {
   VIDEO_UPSCALE_DENOISE_OPTIONS,
@@ -527,16 +529,11 @@ const VIDEO_GEN_MODE_OPTIONS = [
   "textToVideo",
   "allReference",
   "imageToVideo",
+  "firstFrame",
+  "videoEdit",
   "firstLastFrame",
   "imageReference",
 ] as const;
-const VIDEO_GEN_MODE_OPTION_LABELS: Record<(typeof VIDEO_GEN_MODE_OPTIONS)[number], string> = {
-  textToVideo: "文生视频",
-  allReference: "全能参考",
-  imageToVideo: "图生视频",
-  firstLastFrame: "首尾帧视频",
-  imageReference: "图片参考视频",
-};
 
 function modelOptionLabels(models: ModelOption[]): Record<string, string> {
   return Object.fromEntries(models.map((model) => [model.id, model.label]));
@@ -629,14 +626,28 @@ function videoDurationSchema(node: CanvasNode): CanvasEditableFieldSchema {
 }
 
 function videoGenModeSchema(node: CanvasNode): CanvasEditableFieldSchema {
+  const snapshot = getFreezoneVideoModelsSnapshot();
+  const modelId = (node.data as { model?: unknown }).model
+    ?? (getNodeDefinition(CANVAS_NODE_TYPES.video).createDefaultData() as { model?: unknown }).model;
+  // Match the generation form when a remembered/persisted model is unavailable.
+  // Explicit invalid model fields are still rejected by model schema validation.
+  const model = (typeof modelId === "string" && modelId
+    ? snapshot.models.find((item) => item.id === modelId)
+    : undefined) ?? snapshot.models[0];
+  const options = model
+    ? VIDEO_GEN_MODE_OPTIONS.filter((mode) => isVideoModeSupportedByModel(mode, model))
+    : [];
   return {
     type: "enum",
     label: "视频生成模式",
-    options: [...VIDEO_GEN_MODE_OPTIONS],
-    option_labels: VIDEO_GEN_MODE_OPTION_LABELS,
+    options,
+    option_labels: Object.fromEntries(
+      options.map((mode) => [mode, i18next.t(`node.videoNode.tabs.${mode}`)]),
+    ),
+    loading: snapshot.isLoading,
     current_value: (node.data as { genMode?: unknown }).genMode ?? "textToVideo",
     description:
-      "决定视频节点如何消费上游输入。textToVideo=只用当前提示词；imageToVideo=以图片作为主要输入；firstLastFrame=需要首帧和尾帧；allReference=可同时参考图片/视频/音频；imageReference=以图片作为参考约束。改视频模式时更新 genMode，不要把“模式”误改成 model。",
+      "仅可使用当前节点所选模型的 options；切换模型后必须重新查询模式选项，不得套用其他节点的模式。决定视频节点如何消费上游输入。textToVideo=只用当前提示词；imageToVideo=以图片作为主要输入；firstLastFrame=需要首帧和尾帧；allReference=可同时参考图片/视频/音频；imageReference=以图片作为参考约束。改视频模式时更新 genMode，不要把“模式”误改成 model。",
   };
 }
 
