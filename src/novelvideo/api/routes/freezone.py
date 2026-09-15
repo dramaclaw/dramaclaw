@@ -14769,19 +14769,24 @@ async def create_canvas_workflow_run(
                 continue
             action_name = str(action.get("action") or "")
             if (
-                action_name
-                in {
-                    "generate_text",
-                    "generate_story_script",
-                    "generate_image",
-                    "generate_video",
-                    "generate_text_video",
-                    "generate_audio",
-                    "generate_3gs_world",
-                }
-                or (action_name == "generate_html" and action.get("recipe_id"))
-            ) and (
-                not action.get("recipe_id") or not action.get("generation_attempt_id")
+                (
+                    action_name
+                    in {
+                        "generate_text",
+                        "generate_story_script",
+                        "generate_image",
+                        "generate_video",
+                        "generate_text_video",
+                        "generate_audio",
+                        "generate_3gs_world",
+                    }
+                    or (action_name == "generate_html" and action.get("recipe_id"))
+                )
+                and (action_name == "generate_text" or action.get("recipe_id"))
+                and (
+                    not action.get("recipe_id")
+                    or not action.get("generation_attempt_id")
+                )
             ):
                 raise HTTPException(
                     400,
@@ -14828,6 +14833,11 @@ async def create_canvas_workflow_run(
                 "generate_audio",
                 "generate_3gs_world",
             } and not (action_name == "generate_html" and action.get("recipe_id")):
+                continue
+            # Ordinary media/script nodes use their generation endpoint's model
+            # billing. Only catalog Recipe executions need a recipe_result
+            # admission; do not invent a Recipe or charge both product paths.
+            if not action.get("recipe_id"):
                 continue
             node_id = str(action.get("node_id") or "")
             recipe_id = str(action.get("recipe_id") or "")
