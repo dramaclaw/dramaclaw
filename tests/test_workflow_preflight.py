@@ -2,6 +2,7 @@ from copy import deepcopy
 
 import pytest
 
+from novelvideo.freezone.agent_workflows.graph import build_workflow_graph_commands
 from novelvideo.freezone.workflow_preflight import evaluate_workflow_preflight
 
 
@@ -83,6 +84,45 @@ def test_canvas_catalog_id_is_valid_when_live_entry_has_separate_backend_api_mod
         "requested": ["seedance-2.0"],
         "available": True,
     }
+
+
+def test_ready_video_catalog_id_remains_valid_in_canvas_command():
+    plan = {
+        "schema_version": "freezone_workflow_plan.v1",
+        "workflow_type": "dynamic.video",
+        "nodes": [
+            {
+                "id": "video",
+                "node_type": "videoNode",
+                "stage": "video",
+                "data": {
+                    "model": "seedance-2.0",
+                    "durationSec": 5,
+                    "quality": "720P",
+                },
+            }
+        ],
+        "edges": [],
+    }
+    catalog_entry = {
+        "id": "seedance-2.0",
+        "apiModel": "newapi_seedance-2.0",
+        "resolutionOptions": ["720P"],
+        "minDuration": 4,
+        "maxDuration": 15,
+    }
+
+    preflight = evaluate_workflow_preflight(
+        {"plan": plan},
+        model_responses={"videoNode": {"ok": True, "data": [catalog_entry]}},
+        limits={"ok": True, "data": {"video": {"limit": 2, "remaining": 1}}},
+    )
+    assert preflight["status"] == "ready"
+
+    graph = build_workflow_graph_commands({"plan": plan, "run_after_create": True})
+    command = next(item for item in graph["commands"] if item["type"] == "create_node")
+    assert command["data"]["model"] == catalog_entry["id"]
+    assert command["data"]["model"] != catalog_entry["apiModel"]
 
 
 def test_live_catalog_failure_is_not_a_successful_preflight():
