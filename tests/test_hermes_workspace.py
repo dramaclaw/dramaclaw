@@ -827,15 +827,18 @@ def test_hermes_stops_mainline_writes_but_not_freezone_canvas_writes():
 
 
 def test_hermes_stops_duplicate_workflow_run_after_terminal_failure():
-    assert hermes_sdk._is_freezone_canvas_write_tool("freezone_run_workflow")
-    assert hermes_sdk._should_track_terminal_write("freezone_run_workflow")
+    runtime_name = "dramaclaw.freezone_run_workflow"
+
+    assert hermes_sdk._canonical_tool_name(runtime_name) == "freezone_run_workflow"
+    assert hermes_sdk._is_freezone_canvas_write_tool(runtime_name)
+    assert hermes_sdk._should_track_terminal_write(runtime_name)
     assert hermes_sdk._should_stop_after_write_tool(
-        "freezone_run_workflow",
-        "freezone_run_workflow",
+        runtime_name,
+        runtime_name,
     )
     assert not hermes_sdk._can_retry_failed_canvas_write(
-        "freezone_run_workflow",
-        "freezone_run_workflow",
+        runtime_name,
+        runtime_name,
         first_write_failed=True,
         failed_write_retry_count=0,
     )
