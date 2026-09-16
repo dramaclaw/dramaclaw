@@ -1,3 +1,4 @@
+import i18next from "i18next";
 import {
   CANVAS_NODE_TYPES,
   NODE_TOOL_TYPES,
@@ -6,13 +7,14 @@ import {
   type CanvasEdge,
   type CanvasNodeType,
 } from "@/features/canvas/domain/canvasNodes";
-import { getDownstreamSpawnTypes } from "@/features/canvas/domain/nodeRegistry";
+import { getDownstreamSpawnTypes, getNodeDefinition } from "@/features/canvas/domain/nodeRegistry";
 import {
   isPresetManagedNode,
   isSystemManagedNodeData,
 } from "@/features/canvas/domain/mainlineNodeFlags";
 import { getFreezoneImageModelsSnapshot } from "@/features/canvas/hooks/useFreezoneImageModels";
 import { getFreezoneVideoModelsSnapshot } from "@/features/canvas/hooks/useFreezoneVideoModels";
+import { isVideoModeSupportedByModel } from "@/features/canvas/nodes/shared/videoModelCapabilities";
 import type { ModelOption } from "@/features/canvas/ui/ProviderModelPicker";
 import {
   VIDEO_UPSCALE_DENOISE_OPTIONS,
@@ -25,13 +27,15 @@ import { resolveInputsForSkill } from "@/features/freezone/context/skillNodeInpu
 import type { SkillDefinition, SkillInputRole } from "@/features/freezone/context/skillRoles";
 import { STANDARD_TIME_OF_DAY_OPTIONS } from "@/lib/time-of-day";
 
-export type CanvasNodeActionExecution = "chat_command" | "requires_confirmation" | "manual_ui" | "frontend_node";
+export type CanvasNodeActionExecution = "chat_command" | "requires_confirmation" | "manual_ui" | "frontend_node" | "tool";
 
 export type CanvasNodeActionCatalogEntry = {
   action: string;
   execution: CanvasNodeActionExecution;
+  effect?: "read" | "write" | "ui";
   description: string;
   command_type?: string;
+  typed_tool?: string;
   can_run_now?: boolean;
   preconditions?: Array<Record<string, unknown>>;
   blocked_reasons?: string[];
@@ -67,6 +71,15 @@ export type CanvasNodeActionCatalogContext = {
   nodes?: readonly CanvasNode[];
   edges?: readonly CanvasEdge[];
 };
+
+const AGENT_FORBIDDEN_MAINLINE_ACTIONS = new Set([
+  "commit_node",
+  "sync_beat_context_to_mainline",
+]);
+
+export function isAgentExecutableNodeAction(action: string): boolean {
+  return !AGENT_FORBIDDEN_MAINLINE_ACTIONS.has(action);
+}
 
 const IMAGE_TOOL_NODE_TYPES = new Set<CanvasNodeType>([
   CANVAS_NODE_TYPES.upload,
@@ -522,16 +535,11 @@ const VIDEO_GEN_MODE_OPTIONS = [
   "textToVideo",
   "allReference",
   "imageToVideo",
+  "firstFrame",
+  "videoEdit",
   "firstLastFrame",
   "imageReference",
 ] as const;
-const VIDEO_GEN_MODE_OPTION_LABELS: Record<(typeof VIDEO_GEN_MODE_OPTIONS)[number], string> = {
-  textToVideo: "文生视频",
-  allReference: "全能参考",
-  imageToVideo: "图生视频",
-  firstLastFrame: "首尾帧视频",
-  imageReference: "图片参考视频",
-};
 
 function modelOptionLabels(models: ModelOption[]): Record<string, string> {
   return Object.fromEntries(models.map((model) => [model.id, model.label]));
@@ -624,14 +632,28 @@ function videoDurationSchema(node: CanvasNode): CanvasEditableFieldSchema {
 }
 
 function videoGenModeSchema(node: CanvasNode): CanvasEditableFieldSchema {
+  const snapshot = getFreezoneVideoModelsSnapshot();
+  const modelId = (node.data as { model?: unknown }).model
+    ?? (getNodeDefinition(CANVAS_NODE_TYPES.video).createDefaultData() as { model?: unknown }).model;
+  // Match the generation form when a remembered/persisted model is unavailable.
+  // Explicit invalid model fields are still rejected by model schema validation.
+  const model = (typeof modelId === "string" && modelId
+    ? snapshot.models.find((item) => item.id === modelId)
+    : undefined) ?? snapshot.models[0];
+  const options = model
+    ? VIDEO_GEN_MODE_OPTIONS.filter((mode) => isVideoModeSupportedByModel(mode, model))
+    : [];
   return {
     type: "enum",
     label: "视频生成模式",
-    options: [...VIDEO_GEN_MODE_OPTIONS],
-    option_labels: VIDEO_GEN_MODE_OPTION_LABELS,
+    options,
+    option_labels: Object.fromEntries(
+      options.map((mode) => [mode, i18next.t(`node.videoNode.tabs.${mode}`)]),
+    ),
+    loading: snapshot.isLoading,
     current_value: (node.data as { genMode?: unknown }).genMode ?? "textToVideo",
     description:
-      "决定视频节点如何消费上游输入。textToVideo=只用当前提示词；imageToVideo=以图片作为主要输入；firstLastFrame=需要首帧和尾帧；allReference=可同时参考图片/视频/音频；imageReference=以图片作为参考约束。改视频模式时更新 genMode，不要把“模式”误改成 model。",
+      "仅可使用当前节点所选模型的 options；切换模型后必须重新查询模式选项，不得套用其他节点的模式。决定视频节点如何消费上游输入。textToVideo=只用当前提示词；imageToVideo=以图片作为主要输入；firstLastFrame=需要首帧和尾帧；allReference=可同时参考图片/视频/音频；imageReference=以图片作为参考约束。改视频模式时更新 genMode，不要把“模式”误改成 model。",
   };
 }
 
@@ -698,7 +720,7 @@ function beatContextEditableSchema(node: CanvasNode): Record<string, CanvasEdita
         stringOrNull(snapshot.visualDescription) ??
         stringOrNull(data.content) ??
         "",
-      description: "镜头上下文节点的起始画面草稿。只修改画布本地草稿；如需写回主线，再运行 sync_beat_context_to_mainline。",
+      description: "镜头上下文节点的起始画面草稿。只修改画布本地草稿；如需写回主线，请使用界面中的手动入口。",
     },
     scene_ref: {
       type: "object",
@@ -723,7 +745,7 @@ function editableSchemaForNode(node: CanvasNode): Record<string, CanvasEditableF
   switch (node.type) {
     case CANVAS_NODE_TYPES.textAnnotation:
       return {
-        displayName: { type: "string", label: "显示名称" },
+        displayName: { type: "string", label: "Display name" },
         title: { type: "string", label: "标题" },
         content: { type: "string", label: "内容" },
         text: { type: "string", label: "文本" },
@@ -929,6 +951,16 @@ function editableSchemaForNode(node: CanvasNode): Record<string, CanvasEditableF
         displayName: { type: "string", label: "显示名称" },
         parameters: { type: "object", label: "参数" },
       };
+    case CANVAS_NODE_TYPES.htmlArtifact:
+      return {
+        displayName: { type: "string", label: "显示名称" },
+        prompt: {
+          type: "string",
+          label: "Webpage requirements",
+          description:
+            "Webpage generation requirements. Use @ mentions for connected text, image, or video inputs. Save HTML source through node actions.",
+        },
+      };
     default:
       return { displayName: { type: "string", label: "显示名称" } };
   }
@@ -1008,9 +1040,9 @@ function addChatCommandActions(node: CanvasNode, actions: CanvasNodeActionCatalo
   if (beatContextHasMainlineTarget(node)) {
     actions.push({
       action: "sync_beat_context_to_mainline",
-      execution: "frontend_node",
+      execution: "manual_ui",
       command_type: "run_node_action",
-      description: "把当前镜头上下文节点草稿同步到主线。通常先 update_node_data 修改起始画面/场景/时间，再运行这个动作。",
+      description: "把当前镜头上下文节点草稿同步到主线。该主线写入目前只能由用户在界面中手动确认，Agent 不得执行。",
       parameters: {
         node_id: node.id,
       },
@@ -1562,10 +1594,45 @@ function addCommitAction(node: CanvasNode, actions: CanvasNodeActionCatalogEntry
   if (!isCommitCandidateData(node.data)) return;
   actions.push({
     action: "commit_node",
-    execution: "requires_confirmation",
+    execution: "manual_ui",
     command_type: "run_node_action",
-    description: "Commit this node back to its mainline target slot. This requires explicit user confirmation.",
+    description: "Commit this node back to its mainline target slot through the user's manual Commit control. Agents cannot execute this mainline write.",
     parameters: { node_id: node.id },
+  });
+}
+
+function addHtmlArtifactActions(node: CanvasNode, actions: CanvasNodeActionCatalogEntry[]): void {
+  if (node.type !== CANVAS_NODE_TYPES.htmlArtifact) return;
+  const data = node.data as Record<string, unknown>;
+  const artifactId = stringOrNull(data.artifactId);
+  if (artifactId) {
+    actions.push({action: "read_source", effect: "read", execution: "frontend_node", command_type: "run_node_action",
+      description: "Read this node's saved HTML source and current version.", parameters: {node_id: node.id, version: {type: "number", optional: true}}});
+    actions.push({action: "history", effect: "read", execution: "frontend_node", command_type: "run_node_action",
+      description: "List this node's saved HTML versions.", parameters: {node_id: node.id}});
+    actions.push({action: "select_version", effect: "write", execution: "frontend_node", command_type: "run_node_action",
+      description: "Select a saved HTML version for this canvas node without creating a new Artifact revision.", parameters: {node_id: node.id, version: {type: "number", required: true}}});
+    actions.push({action: "restore", effect: "write", execution: "frontend_node", command_type: "run_node_action",
+      description: "Restore a historical HTML version as a new version.", parameters: {node_id: node.id, version: {type: "number", required: true}, base_version: {type: "number", required: true}}});
+    actions.push({action: "open", effect: "ui", execution: "frontend_node", command_type: "run_node_action",
+      description: "Open this saved webpage in the HTML preview.", parameters: {node_id: node.id}});
+    actions.push({action: "export", effect: "ui", execution: "frontend_node", command_type: "run_node_action",
+      description: "Export and download this saved webpage at its current version.", parameters: {node_id: node.id}});
+  } else {
+    actions.push({action: "upload", effect: "ui", execution: "manual_ui", command_type: "run_node_action",
+      description: "Open the local HTML file picker for this empty webpage node.", parameters: {node_id: node.id, accept: ".html,.htm,text/html"}});
+  }
+  actions.push({action: "update_source", effect: "write", execution: "frontend_node", command_type: "run_node_action",
+    description: artifactId
+      ? "Save complete revised HTML using the version returned by read_source as base_version."
+      : "Save complete HTML source to this empty webpage node.",
+    parameters: {node_id: node.id, html: {type: "string", required: true}, title: {type: "string", optional: true},
+      ...(artifactId ? {base_version: {type: "number", required: true}} : {})},
+    instruction: "Never write source or artifact identity through update_node_data. On version conflict re-read and reconcile."});
+  actions.push({action: "generate_html", effect: "write", execution: "frontend_node", command_type: "run_node_action",
+    description: "Generate and save this webpage from its prompt, using its bound Recipe when one is configured, and completed upstream outputs.",
+    parameters: {node_id: node.id},
+    result_effect: {artifact_identity: "saved artifact ID and version", completion: "after artifact persistence"},
   });
 }
 
@@ -1579,6 +1646,7 @@ export function buildCanvasNodeActionCatalog(
   addImageToolActions(node, actions);
   addMediaActions(node, actions);
   addCommitAction(node, actions);
+  addHtmlArtifactActions(node, actions);
 
   const skillId =
     node.type === CANVAS_NODE_TYPES.skill

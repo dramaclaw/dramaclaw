@@ -10,7 +10,8 @@ export type CanvasLinkObjectType =
   | "ImageNode"
   | "VideoNode"
   | "AudioNode"
-  | "ScriptNode";
+  | "ScriptNode"
+  | "HtmlNode";
 
 export type CanvasEdgeSemanticKind =
   | "context_for"
@@ -47,7 +48,7 @@ export const CANVAS_LINK_TYPE_CATALOG: CanvasLinkTypeCatalogItem[] = [
     link_type: "prompt_for",
     category: "generation_input",
     source_object_types: ["TextNode"],
-    target_object_types: ["ImageNode", "VideoNode", "AudioNode", "ScriptNode"],
+    target_object_types: ["ImageNode", "VideoNode", "AudioNode", "ScriptNode", "HtmlNode"],
     description: "上游文本/脚本是目标生成节点的直接提示词、文案、台词或任务输入。",
     instruction: "Use when upstream text is direct generation input, such as text-to-image, text-to-video, text-to-audio, script generation, or another direct textual instruction. A plain textAnnotationNode with no semanticOutputRole may be connected with prompt_for and will be treated as direct input text for that edge. If the source text is explicitly planning_text and is only a brief, plan, requirement note, or contextual documentation, keep it as planning_text and group it with the generator instead of connecting it directly, or create a separate input_text prompt node.",
   },
@@ -55,7 +56,7 @@ export const CANVAS_LINK_TYPE_CATALOG: CanvasLinkTypeCatalogItem[] = [
     link_type: "dependency_for",
     category: "context",
     source_object_types: ["TextNode", "ImageNode", "VideoNode", "AudioNode", "ScriptNode"],
-    target_object_types: ["TextNode", "ImageNode", "VideoNode", "AudioNode", "ScriptNode"],
+    target_object_types: ["TextNode", "ImageNode", "VideoNode", "AudioNode", "ScriptNode", "HtmlNode"],
     description: "上游节点只控制目标节点的执行顺序，目标节点不会消费其输出。",
     instruction: "Use only for execution ordering when the target must wait for the source but must not send the source output to a generation provider. Never use it for actual prompts, media references, or composition inputs.",
   },
@@ -63,7 +64,7 @@ export const CANVAS_LINK_TYPE_CATALOG: CanvasLinkTypeCatalogItem[] = [
     link_type: "media_input_for",
     category: "generation_input",
     source_object_types: ["ImageNode", "VideoNode", "AudioNode"],
-    target_object_types: ["TextNode", "ImageNode", "VideoNode", "AudioNode", "ScriptNode"],
+    target_object_types: ["TextNode", "ImageNode", "VideoNode", "AudioNode", "ScriptNode", "HtmlNode"],
     description: "上游图片/视频/音频作为目标节点的媒体输入或参考素材。",
     instruction: "Use for image/video/audio inputs or references consumed by the target node, including image-to-video, image editing, visual references, media analysis, audio separation, or direct media processing.",
   },
@@ -130,6 +131,7 @@ export function canvasNodeLinkObjectType(node: CanvasNode | undefined): CanvasLi
 
 export function canvasNodeTypeLinkObjectType(nodeType: CanvasNodeType | null | undefined): CanvasLinkObjectType | null {
   if (!nodeType) return null;
+  if (nodeType === CANVAS_NODE_TYPES.htmlArtifact) return "HtmlNode";
   if (nodeType === CANVAS_NODE_TYPES.textAnnotation || nodeType === CANVAS_NODE_TYPES.beatContext) {
     return "TextNode";
   }

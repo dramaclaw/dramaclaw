@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
+from pathlib import Path
 
 import pytest
 from jsonschema import Draft202012Validator, ValidationError
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+from mcp.shared.exceptions import McpError
 
 from novelvideo.chat import workflow_mcp
 from novelvideo.freezone.agent_workflows import registry
@@ -17,6 +23,77 @@ from novelvideo.freezone.agent_workflows.graph import (
 def _result_payload(result):
     content = result.content if hasattr(result, "content") else result
     return json.loads(content[0].text)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("username", ["alice", "bob"])
+async def test_workflow_resources_real_stdio_protocol_and_private_isolation(
+    tmp_path, username
+):
+    root = Path(__file__).resolve().parents[1]
+    output = tmp_path / "output"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    builtin = root / "src/novelvideo/freezone/agent_catalog/builtins"
+    for user in ("alice", "bob"):
+        for kind, source in (
+            ("skills", "text-to-image-video"),
+            ("recipes", "general-image"),
+        ):
+            folder = output / user / "_account/freezone/agent_config" / kind
+            folder.mkdir(parents=True)
+            item = json.loads((builtin / kind / f"{source}.json").read_text())
+            item.update(id=f"private-{user}", name=f"{user} private")
+            (folder / f"private-{user}.json").write_text(json.dumps(item))
+    parameters = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "novelvideo.chat.workflow_mcp"],
+        cwd=str(workspace),
+        env={
+            **os.environ,
+            "PYTHONPATH": str(root / "src"),
+            "ST_EDITION": "ce",
+            "DRAMACLAW_USERNAME": username,
+            "NOVELVIDEO_OUTPUT_DIR": str(output),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+    )
+    async with stdio_client(parameters) as (reader, writer):
+        async with ClientSession(reader, writer) as session:
+            initialized = await session.initialize()
+            assert initialized.capabilities.resources is not None
+            assert initialized.capabilities.resources.subscribe is False
+            assert initialized.capabilities.resources.listChanged is False
+            listed = await session.list_resources()
+            assert listed.resources == []
+            assert listed.nextCursor is None
+            templates = await session.list_resource_templates()
+            assert len(templates.resourceTemplates) == 3
+            assert len((await session.list_tools()).tools) == 6
+            for kind in ("skills", "recipes"):
+                search = await session.call_tool(
+                    "workflow_catalog_search", {"kind": kind, "query": "private"}
+                )
+                items = _result_payload(search)["items"]
+                assert {item["id"] for item in items} == {f"private-{username}"}
+                result = await session.read_resource(
+                    f"dramaclaw-workflow://{kind}/private-{username}"
+                )
+                payload = json.loads(result.contents[0].text)
+                item = payload["skill" if kind == "skills" else "recipe"]
+                assert item["name"] == f"{username} private"
+                peer = "bob" if username == "alice" else "alice"
+                with pytest.raises(McpError):
+                    await session.read_resource(
+                        f"dramaclaw-workflow://{kind}/private-{peer}"
+                    )
+            reference = await session.read_resource(
+                "dramaclaw-workflow://skills/short-drama-quick/references/custom-topology.md"
+            )
+            assert (
+                json.loads(reference.contents[0].text)["status"]
+                == "workflow_reference_ready"
+            )
 
 
 @pytest.mark.asyncio
@@ -138,6 +215,57 @@ async def test_graph_compile_accepts_canonical_plan_fields():
     assert payload["commands"][0]["node_type"] == "textAnnotationNode"
     assert payload["commands"][1]["node_type"] == "imageGenNode"
     assert payload["commands"][2]["link_type"] == "prompt_for"
+
+
+@pytest.mark.asyncio
+async def test_graph_compile_normalizes_agent_resource_aliases():
+    arguments = {
+        "plan": {
+            "schema_version": "freezone_workflow_plan.v1",
+            "skill": {"id": "video-tutorial", "version": 1},
+            "nodes": [
+                {
+                    "id": "input",
+                    "node_type": "textAnnotationNode",
+                    "data": {
+                        "stage": "input",
+                        "title": "用户需求",
+                        "prompt": "用户提供的固定文案",
+                        "workflowCatalog": {},
+                    },
+                },
+                {
+                    "id": "image",
+                    "node_type": "imageGenNode",
+                    "data": {
+                        "prompt": "未来城市雨夜",
+                        "workflowCatalog": {"recipeId": "general-image"},
+                    },
+                },
+            ],
+            "edges": [
+                {"source": "input", "target": "image", "link_type": "prompt_for"}
+            ],
+            "groups": [
+                {"id": "episode-1", "label": "第一集", "node_ids": ["input", "image"]}
+            ],
+        }
+    }
+    graph_tool = next(
+        tool
+        for tool in await workflow_mcp.list_tools()
+        if tool.name == "workflow_graph_compile"
+    )
+    Draft202012Validator(graph_tool.inputSchema).validate(arguments)
+
+    result = await workflow_mcp.call_tool("workflow_graph_compile", arguments)
+
+    payload = _result_payload(result)
+    assert payload["ok"] is True, payload
+    assert payload["commands"][0]["data"]["content"] == "用户提供的固定文案"
+    assert payload["commands"][0]["data"]["workflowCatalogRole"] == "user_input"
+    assert "stage" not in payload["commands"][0]["data"]
+    assert any(command["type"] == "group_nodes" for command in payload["commands"])
 
 
 @pytest.mark.asyncio
@@ -417,6 +545,7 @@ def test_catalog_search_is_compact_and_progressive(monkeypatch):
             "version": None,
             "description": "Create a video",
             "output_kind": "video",
+            "node_type": "videoNode",
             "requires_source_media": False,
             "action_keys": ["video.generate"],
         }
@@ -635,3 +764,70 @@ def test_graph_compiler_marks_portable_input_nodes_as_non_executable():
 
     assert result["ok"] is True
     assert result["commands"][0]["data"]["workflowCatalogRole"] == "user_input"
+
+
+def test_hosted_catalog_uses_bound_root_and_user_from_project_workspace(tmp_path):
+    """Both MCPs must see API-owned private catalogs, not cwd/output or peers."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    from novelvideo.chat import service, backend_sdk
+
+    root = Path(__file__).resolve().parents[1]
+    output = tmp_path / "api-output"
+    workspace = tmp_path / "project-agent-workspace"
+    workspace.mkdir()
+    base = json.loads((root / "src/novelvideo/freezone/agent_catalog/builtins/skills/text-to-image-video.json").read_text())
+    for user in ("alice", "bob"):
+        folder = output / user / "_account/freezone/agent_config/skills"
+        folder.mkdir(parents=True)
+        (folder / "private-test.json").write_text(json.dumps({**base, "id": "private-test", "name": user + " private"}))
+    overrides = service._codex_mcp_config_overrides(service._dramaclaw_mcp_servers("freezone_canvas"))
+    script = """
+import json
+from novelvideo.freezone.agent_workflows.catalog import get_workflow_skill
+result = get_workflow_skill({'skill_id':'private-test', 'username':'bob'})
+assert result['ok'], result
+print(json.dumps(result, ensure_ascii=False))
+"""
+    for user in ("alice", "bob"):
+        config = backend_sdk._codex_thread_config(overrides, {"DRAMACLAW_USERNAME": user, "NOVELVIDEO_OUTPUT_DIR": str(output)})
+        for server in ("dramaclaw", "dramaclaw_workflows"):
+            bound = config[f"mcp_servers.{server}.env"]
+            env = {**os.environ, **bound, "PYTHONPATH": str(root / "src"), "ST_EDITION": "ce"}
+            result = subprocess.run([sys.executable, "-c", script], cwd=workspace, env=env, capture_output=True, text=True, timeout=30)
+            assert result.returncode == 0, result.stderr
+            package = json.loads(result.stdout)
+            assert package['skill']['name'] == user + ' private'
+
+
+@pytest.mark.asyncio
+async def test_builtin_workflow_skill_get_preserves_planning_instructions():
+    result = await workflow_mcp.call_tool(
+        "workflow_skill_get",
+        {"skill_id": "lego-minifigure-animation-video", "user_goal": "做个短片"},
+    )
+    payload = _result_payload(result)
+    assert payload["ok"] is True
+    assert result.isError is False
+    assert payload["planning_contract"]["node_prompt_role"] == "task_brief"
+    assert "Runtime Recipe compilation" in payload["agent_instruction"]
+    assert result.structuredContent == payload
+
+
+@pytest.mark.asyncio
+async def test_workflow_intent_schema_explains_compose_field_location():
+    tools = {tool.name: tool for tool in await workflow_mcp.list_tools()}
+    schema = tools["workflow_intent_compile"].inputSchema["properties"]["intent"]
+    assert "intent.include_compose" in schema["properties"]["planner"]["description"]
+    intent = {
+        "skill_id": "lego-minifigure-animation-video",
+        "user_goal": "做个短片",
+        "planner": {"mode": "standard"},
+        "include_compose": True,
+    }
+    Draft202012Validator(schema).validate(intent)
+    intent["planner"]["include_compose"] = intent.pop("include_compose")
+    with pytest.raises(ValidationError):
+        Draft202012Validator(schema).validate(intent)

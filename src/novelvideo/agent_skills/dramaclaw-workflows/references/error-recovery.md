@@ -13,8 +13,10 @@
   exact source/target node kinds. Do not guess alternatives through repeated compiler calls. A
   successful recovery compile is not completion: immediately submit the exact same corrected Plan to
   `freezone_prepare_workflow_plan_draft`.
-- Revision conflict: read the existing draft and use its current revision; do not create a new draft.
-- Awaiting approval or timeout: keep the same operation/draft identity and wait for or report the
+- Revision conflict: call `freezone_get_workflow`, inspect the updated preview and requested changes,
+  and obtain authorization for the resulting revision before confirmation. Never silently adopt a
+  new revision or create a replacement draft.
+- Awaiting approval or timeout: call `freezone_get_workflow` with the same draft identity; report the
   existing approval state. Never replay the write as standalone commands.
 - Audio generation: Freezone has no preset/system voice fallback. Preserve a valid custom
   `voiceRef`; if none is selected, skip the audio node without submitting TTS and continue the

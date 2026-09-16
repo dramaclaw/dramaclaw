@@ -48,6 +48,15 @@ describe("dynamic workflow node action contract", () => {
     expect(source).toContain("DEFAULT_NODE_ACTION_TIMEOUT_MS = 30 * 60 * 1000");
   });
 
+  it("persists and reports the durable auto-compose task reference", () => {
+    const source = readNodeSource("VideoComposeNode");
+
+    expect(source).toContain("generationTaskDescriptor(ref)");
+    expect(source).toContain("task_key: ref.task_key");
+    expect(source).toContain("task_type: ref.task_type");
+    expect(source).toContain("job_id: ref.job_id");
+  });
+
   it("compiles catalog-backed image workflow prompts before generation", () => {
     const source = readSource("src/features/canvas/nodes/shared/useImageGenerationForm.ts");
 

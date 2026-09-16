@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from novelvideo.freezone.workflow_runs import (
+    WorkflowRunIdempotencyConflict,
     WorkflowRunLeaseConflict,
     classify_workflow_error,
     create_workflow_run,
@@ -47,7 +48,7 @@ def test_workflow_run_tracks_actions_and_completion(tmp_path: Path) -> None:
         project_id="project-a",
         canvas_id="default",
         actions=[
-            {"node_id": "image-1", "action": "generate_image"},
+            {"node_id": "image-1", "action": "save"},
             {"node_id": "video-1", "action": "generate_video"},
         ],
         actor_id="alice",
@@ -58,7 +59,7 @@ def test_workflow_run_tracks_actions_and_completion(tmp_path: Path) -> None:
         canvas_id="default",
         run_id=run["run_id"],
         action_updates=[
-            {"node_id": "image-1", "action": "generate_image", "status": "completed"},
+            {"node_id": "image-1", "action": "save", "status": "completed"},
             {"node_id": "video-1", "action": "generate_video", "status": "blocked"},
         ],
         status="failed",
@@ -69,9 +70,12 @@ def test_workflow_run_tracks_actions_and_completion(tmp_path: Path) -> None:
     assert updated["resumable"] is True
     assert updated["completed_at"]
     assert [item["status"] for item in updated["actions"]] == ["completed", "blocked"]
-    assert read_workflow_run(
-        project_dir=tmp_path, canvas_id="default", run_id=run["run_id"]
-    ) == updated
+    assert (
+        read_workflow_run(
+            project_dir=tmp_path, canvas_id="default", run_id=run["run_id"]
+        )
+        == updated
+    )
     assert workflow_runs_db_path(tmp_path).is_file()
     assert not (tmp_path / "freezone" / "_workflow_runs").exists()
 
@@ -113,6 +117,27 @@ def test_workflow_run_creation_is_idempotent(tmp_path: Path) -> None:
 
     assert duplicate["run_id"] == first["run_id"]
     assert len(list_workflow_runs(project_dir=tmp_path, canvas_id="default")) == 1
+
+
+def test_workflow_run_idempotency_key_rejects_a_different_request(
+    tmp_path: Path,
+) -> None:
+    create_workflow_run(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        actions=[{"node_id": "one", "action": "generate_image"}],
+        idempotency_key="canvas-run:request-1",
+    )
+
+    with pytest.raises(WorkflowRunIdempotencyConflict, match="different request"):
+        create_workflow_run(
+            project_dir=tmp_path,
+            project_id="project-a",
+            canvas_id="default",
+            actions=[{"node_id": "two", "action": "generate_video"}],
+            idempotency_key="canvas-run:request-1",
+        )
 
 
 def test_concurrent_workflow_run_creation_is_idempotent(tmp_path: Path) -> None:
@@ -162,7 +187,7 @@ def test_runner_lease_protects_updates_and_tracks_task_reference(
         runner_id="runner-one",
     )
 
-    with pytest.raises(WorkflowRunLeaseConflict, match="another runner"):
+    with pytest.raises(WorkflowRunLeaseConflict, match="active runner"):
         update_workflow_run(
             project_dir=tmp_path,
             canvas_id="default",
@@ -194,6 +219,62 @@ def test_runner_lease_protects_updates_and_tracks_task_reference(
     assert updated["actions"][0]["task_type"] == "image_generation"
     assert updated["actions"][0]["job_id"] == "job-one"
     assert updated["actions"][0]["retry_count"] == 2
+
+
+def test_expired_runner_lease_cannot_be_revived_by_a_late_heartbeat(
+    tmp_path: Path,
+) -> None:
+    run = create_workflow_run(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        actions=[{"node_id": "one", "action": "generate_image"}],
+        runner_id="runner-one",
+    )
+    expired = (
+        (datetime.now(timezone.utc) - timedelta(seconds=1))
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    with sqlite3.connect(workflow_runs_db_path(tmp_path)) as conn:
+        conn.execute(
+            "UPDATE workflow_runs SET lease_expires_at = ? WHERE run_id = ?",
+            (expired, run["run_id"]),
+        )
+
+    with pytest.raises(WorkflowRunLeaseConflict, match="active runner"):
+        update_workflow_run(
+            project_dir=tmp_path,
+            canvas_id="default",
+            run_id=run["run_id"],
+            status="running",
+            runner_id="runner-one",
+        )
+
+
+def test_browser_cannot_complete_generation_without_durable_artifact(
+    tmp_path: Path,
+) -> None:
+    run = create_workflow_run(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        actions=[{"node_id": "one", "action": "generate_image"}],
+    )
+
+    updated = update_workflow_run(
+        project_dir=tmp_path,
+        canvas_id="default",
+        run_id=run["run_id"],
+        action_updates=[
+            {"node_id": "one", "action": "generate_image", "status": "completed"}
+        ],
+        status="completed",
+    )
+
+    assert updated is not None
+    assert updated["status"] == "running"
+    assert updated["actions"][0]["status"] == "running"
 
 
 @pytest.mark.parametrize(
@@ -275,7 +356,7 @@ def test_failed_action_persists_normalized_error_diagnostics(tmp_path: Path) -> 
     assert action["error_fingerprint"] == "request:req-123"
     assert action["user_error"] == "上游模型服务暂时不可用，系统可稍后重试。"
 
-    completed = update_workflow_run(
+    retried = update_workflow_run(
         project_dir=tmp_path,
         canvas_id="default",
         run_id=run["run_id"],
@@ -283,17 +364,18 @@ def test_failed_action_persists_normalized_error_diagnostics(tmp_path: Path) -> 
             {
                 "node_id": "one",
                 "action": "generate_audio",
-                "status": "completed",
+                "status": "running",
             }
         ],
     )
 
-    assert completed is not None
-    completed_action = completed["actions"][0]
-    assert completed_action["error"] is None
-    assert "error_category" not in completed_action
-    assert "error_fingerprint" not in completed_action
-    assert "user_error" not in completed_action
+    assert retried is not None
+    retried_action = retried["actions"][0]
+    assert retried_action["status"] == "running"
+    assert retried_action["error"] is None
+    assert "error_category" not in retried_action
+    assert "error_fingerprint" not in retried_action
+    assert "user_error" not in retried_action
 
 
 @pytest.mark.parametrize("initial_status", ["running", "completed"])
@@ -344,6 +426,68 @@ def test_task_reconciliation_completes_run_with_existing_artifact(
     assert reconciled["actions"][0]["artifact_status"] == "valid"
 
 
+def test_late_browser_progress_does_not_reopen_reconciled_compose_action(
+    tmp_path: Path,
+) -> None:
+    run = create_workflow_run(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        actions=[
+            {"node_id": "compose", "action": "auto_compose_video"},
+            {"node_id": "publish", "action": "save"},
+        ],
+    )
+    update_workflow_run(
+        project_dir=tmp_path,
+        canvas_id="default",
+        run_id=run["run_id"],
+        action_updates=[
+            {
+                "node_id": "compose",
+                "action": "auto_compose_video",
+                "status": "running",
+                "task_key": "task:compose-one",
+                "task_type": "freezone_video_compose",
+                "job_id": "compose-one",
+            }
+        ],
+    )
+
+    reconcile_workflow_runs_with_tasks(
+        project_dir=tmp_path,
+        canvas_id="default",
+        tasks_by_key={
+            "task:compose-one": {
+                "status": "completed",
+                "result": {"video_url": "/static/project/final.mp4"},
+                "error": None,
+            }
+        },
+    )
+
+    late_progress = update_workflow_run(
+        project_dir=tmp_path,
+        canvas_id="default",
+        run_id=run["run_id"],
+        action_updates=[
+            {
+                "node_id": "compose",
+                "action": "auto_compose_video",
+                "status": "running",
+                "phase": "syncing_result",
+            }
+        ],
+    )
+
+    assert late_progress is not None
+    compose_action = late_progress["actions"][0]
+    assert compose_action["status"] == "completed"
+    assert compose_action["artifact_status"] == "valid"
+    assert compose_action["phase"] == "waiting_dependencies"
+    assert late_progress["status"] == "running"
+
+
 def test_task_reconciliation_rejects_missing_artifact(tmp_path: Path) -> None:
     input_path = tmp_path / "inputs" / "source.png"
     input_path.parent.mkdir(parents=True)
@@ -391,20 +535,60 @@ def test_task_reconciliation_rejects_missing_artifact(tmp_path: Path) -> None:
     assert reconciled["actions"][0]["artifact_status"] == "missing"
     assert reconciled["actions"][0]["error_category"] == "artifact_missing"
     assert reconciled["actions"][0]["retryable"] is False
-    assert reconcile_workflow_runs_with_tasks(
+    assert (
+        reconcile_workflow_runs_with_tasks(
+            project_dir=tmp_path,
+            canvas_id="default",
+            tasks_by_key={
+                "task:video-one": {
+                    "status": "completed",
+                    "result": {
+                        "input_image_path": str(input_path),
+                        "video_path": "freezone/_outputs/missing.mp4",
+                    },
+                    "error": None,
+                }
+            },
+        )
+        == []
+    )
+
+
+def test_task_reconciliation_rejects_unverifiable_artifact(tmp_path: Path) -> None:
+    run = create_workflow_run(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        actions=[{"node_id": "one", "action": "generate_image"}],
+    )
+    update_workflow_run(
+        project_dir=tmp_path,
+        canvas_id="default",
+        run_id=run["run_id"],
+        action_updates=[
+            {
+                "node_id": "one",
+                "action": "generate_image",
+                "status": "running",
+                "task_key": "task:image-one",
+            }
+        ],
+    )
+
+    reconcile_workflow_runs_with_tasks(
         project_dir=tmp_path,
         canvas_id="default",
         tasks_by_key={
-            "task:video-one": {
-                "status": "completed",
-                "result": {
-                    "input_image_path": str(input_path),
-                    "video_path": "freezone/_outputs/missing.mp4",
-                },
-                "error": None,
-            }
+            "task:image-one": {"status": "completed", "result": {}, "error": None}
         },
-    ) == []
+    )
+
+    reconciled = read_workflow_run(
+        project_dir=tmp_path, canvas_id="default", run_id=run["run_id"]
+    )
+    assert reconciled is not None
+    assert reconciled["status"] == "failed"
+    assert reconciled["actions"][0]["artifact_status"] == "unverified"
 
 
 def test_task_reconciliation_classifies_task_failure(tmp_path: Path) -> None:
@@ -457,13 +641,18 @@ def test_late_heartbeat_does_not_reopen_terminal_run(
         project_dir=tmp_path,
         project_id="project-a",
         canvas_id="default",
-        actions=[{"node_id": "one", "action": "generate_image"}],
+        actions=[{"node_id": "one", "action": "save"}],
     )
     update_workflow_run(
         project_dir=tmp_path,
         canvas_id="default",
         run_id=run["run_id"],
         status=terminal_status,
+        action_updates=(
+            [{"node_id": "one", "action": "save", "status": "completed"}]
+            if terminal_status == "completed"
+            else None
+        ),
     )
 
     late_heartbeat = update_workflow_run(
@@ -514,7 +703,9 @@ def test_new_workflow_run_supersedes_overlapping_resumable_run(tmp_path: Path) -
     assert stale_update["status"] == "cancelled"
 
 
-def test_new_workflow_run_supersedes_disjoint_active_run_on_same_canvas(tmp_path: Path) -> None:
+def test_new_workflow_run_supersedes_disjoint_active_run_on_same_canvas(
+    tmp_path: Path,
+) -> None:
     first = create_workflow_run(
         project_dir=tmp_path,
         project_id="project-a",
@@ -538,13 +729,15 @@ def test_new_workflow_run_supersedes_disjoint_active_run_on_same_canvas(tmp_path
     assert preserved["resumable"] is False
 
 
-def test_reconcile_cancels_run_after_all_unfinished_nodes_are_deleted(tmp_path: Path) -> None:
+def test_reconcile_cancels_run_after_all_unfinished_nodes_are_deleted(
+    tmp_path: Path,
+) -> None:
     run = create_workflow_run(
         project_dir=tmp_path,
         project_id="project-a",
         canvas_id="default",
         actions=[
-            {"node_id": "completed", "action": "generate_text"},
+            {"node_id": "completed", "action": "save"},
             {"node_id": "pending", "action": "generate_image"},
         ],
     )
@@ -553,7 +746,7 @@ def test_reconcile_cancels_run_after_all_unfinished_nodes_are_deleted(tmp_path: 
         canvas_id="default",
         run_id=run["run_id"],
         action_updates=[
-            {"node_id": "completed", "action": "generate_text", "status": "completed"}
+            {"node_id": "completed", "action": "save", "status": "completed"}
         ],
     )
 
@@ -581,7 +774,9 @@ def test_reconcile_cancels_run_after_all_unfinished_nodes_are_deleted(tmp_path: 
     assert late_heartbeat["status"] == "cancelled"
 
 
-def test_reconcile_keeps_run_when_an_unfinished_node_still_exists(tmp_path: Path) -> None:
+def test_reconcile_keeps_run_when_an_unfinished_node_still_exists(
+    tmp_path: Path,
+) -> None:
     run = create_workflow_run(
         project_dir=tmp_path,
         project_id="project-a",
@@ -661,7 +856,7 @@ def test_cancelled_run_skips_unfinished_actions_without_runner_lease(
         project_id="project-a",
         canvas_id="default",
         actions=[
-            {"node_id": "done", "action": "generate_text"},
+            {"node_id": "done", "action": "save"},
             {"node_id": "pending", "action": "generate_image"},
         ],
         runner_id="runner-one",
@@ -671,9 +866,7 @@ def test_cancelled_run_skips_unfinished_actions_without_runner_lease(
         canvas_id="default",
         run_id=run["run_id"],
         runner_id="runner-one",
-        action_updates=[
-            {"node_id": "done", "action": "generate_text", "status": "completed"}
-        ],
+        action_updates=[{"node_id": "done", "action": "save", "status": "completed"}],
     )
 
     cancelled = update_workflow_run(
@@ -704,13 +897,18 @@ def test_prune_workflow_runs_only_removes_old_non_resumable_records(
             project_dir=tmp_path,
             project_id="project-a",
             canvas_id="default",
-            actions=[{"node_id": label, "action": "generate_image"}],
+            actions=[{"node_id": label, "action": "save"}],
         )
         update_workflow_run(
             project_dir=tmp_path,
             canvas_id="default",
             run_id=run["run_id"],
             status=status,
+            action_updates=(
+                [{"node_id": label, "action": "save", "status": "completed"}]
+                if status == "completed"
+                else None
+            ),
         )
         old_timestamp = (now - timedelta(days=31)).isoformat().replace("+00:00", "Z")
         _set_run_timestamps(

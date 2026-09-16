@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import fcntl
+
 from copy import deepcopy
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
@@ -14,6 +16,8 @@ from novelvideo.freezone.agent_bundle_schema import (
 from novelvideo.freezone.agent_config_store import (
     list_user_agent_config_items,
     save_user_agent_config_item,
+    delete_user_agent_config_item,
+    user_agent_config_dir,
 )
 
 CURRENT_DRAMACLAW_VERSION = "1.1.2"
@@ -39,6 +43,15 @@ def validate_agent_bundle(payload: dict[str, Any], *, username: str | None = Non
 
 
 def install_agent_bundle(*, username: str, payload: dict[str, Any]) -> dict[str, Any]:
+    # Bundle installs share the account Recipe namespace, not an import/job namespace.
+    root = user_agent_config_dir(username, "skills").parent
+    root.mkdir(parents=True, exist_ok=True)
+    with (root / ".bundle-install.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _install_agent_bundle_unlocked(username=username, payload=payload)
+
+
+def _install_agent_bundle_unlocked(*, username: str, payload: dict[str, Any]) -> dict[str, Any]:
     validated = validate_agent_bundle(payload, username=username)["bundle"]
     skill = {
         **validated["skill"],
@@ -50,10 +63,20 @@ def install_agent_bundle(*, username: str, payload: dict[str, Any]) -> dict[str,
     skill = resolved_recipes["skill"]
 
     saved_recipes: list[str] = []
-    for recipe in resolved_recipes["recipes_to_install"]:
-        saved = save_user_agent_config_item(username=username, kind="recipes", payload=recipe)
-        saved_recipes.append(str(saved["id"]))
-    saved_skill = save_user_agent_config_item(username=username, kind="skills", payload=skill)
+    try:
+        for recipe in resolved_recipes["recipes_to_install"]:
+            saved = save_user_agent_config_item(username=username, kind="recipes", payload=recipe)
+            saved_recipes.append(str(saved["id"]))
+        saved_skill = save_user_agent_config_item(username=username, kind="skills", payload=skill)
+    except Exception:
+        # Roll back this bundle's newly created recipes, never shared/reused ones.
+        # The deletion guard also protects a concurrently created referencing skill.
+        for recipe_id in reversed(saved_recipes):
+            try:
+                delete_user_agent_config_item(username=username, kind="recipes", item_id=recipe_id)
+            except (ValueError, OSError):
+                pass
+        raise
     return {
         "bundle_id": validated["id"],
         "installed_skill": str(saved_skill["id"]),

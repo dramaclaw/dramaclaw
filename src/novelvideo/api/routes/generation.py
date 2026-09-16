@@ -6,14 +6,14 @@ import logging
 import os
 import re
 import uuid
-from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 
 from novelvideo.api.auth import get_api_user, require_scope
+from novelvideo.api.responses import TemporaryFileResponse
 from novelvideo.api.deps import (
     get_user_base_dir,
     get_state_dir,
@@ -94,15 +94,7 @@ from novelvideo.services.background_anchor_service import (
 from novelvideo.utils.path_resolver import PathResolver, compute_identity_path, compute_portrait_path
 
 
-class _TemporaryFileResponse(FileResponse):
-    """Delete the response file after ASGI delivery, including failed or cancelled sends."""
-
-    async def __call__(self, scope, receive, send) -> None:
-        try:
-            await super().__call__(scope, receive, send)
-        finally:
-            with suppress(OSError):
-                Path(self.path).unlink(missing_ok=True)
+_TemporaryFileResponse = TemporaryFileResponse
 
 router = APIRouter()
 

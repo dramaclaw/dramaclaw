@@ -1,0 +1,102 @@
+// Generated from schemas/workflow/v1/stable-contract.json; do not edit.
+export const WORKFLOW_CONTRACT_SOURCE_SHA256 = "1d3add9e7fc736e3ae534db40069e84882b9f00159bcb1bdf22e04a48c5f1666";
+export const WORKFLOW_STABLE_CONTRACT = {
+  "schema_version": "freezone_workflow_contract.v1",
+  "workflow_plan_schema_version": "freezone_workflow_plan.v1",
+  "workflow_intent_schema_version": "freezone_workflow_intent.v1",
+  "workflow_node_types": [
+    "textAnnotationNode",
+    "scriptNode",
+    "beatContextNode",
+    "imageGenNode",
+    "videoNode",
+    "audioNode",
+    "htmlArtifactNode",
+    "videoComposeNode"
+  ],
+  "agent_creatable_node_types": [
+    "uploadNode",
+    "imageGenNode",
+    "beatContextNode",
+    "textAnnotationNode",
+    "videoNode",
+    "audioNode",
+    "videoComposeNode",
+    "scriptNode",
+    "pano360ViewerNode",
+    "threeDWorldNode",
+    "skillNode",
+    "htmlArtifactNode"
+  ],
+  "link_types": [
+    "context_for",
+    "prompt_for",
+    "dependency_for",
+    "media_input_for",
+    "derived_from",
+    "composition_input_for"
+  ],
+  "generation_action_types": [
+    "generate_text",
+    "generate_story_script",
+    "generate_image",
+    "generate_video",
+    "generate_text_video",
+    "generate_audio",
+    "generate_3gs_world",
+    "auto_compose_video"
+  ],
+  "model_aliases_by_node_type": {
+    "imageGenNode": {
+      "nano-banana-2": "newapi_nanobanana2",
+      "nanobanana2": "newapi_nanobanana2",
+      "nano_banana_2": "newapi_nanobanana2",
+      "gpt-image-2": "newapi_gpt_image2",
+      "openai/gpt-image-2": "newapi_gpt_image2"
+    },
+    "videoNode": {
+      "omni-flash": "seedance-2.0-fast",
+      "omni_flash": "seedance-2.0-fast",
+      "seedance_2_0_fast": "seedance-2.0-fast",
+      "seedance-2.0-fast": "seedance-2.0-fast",
+      "seedance-2.0": "seedance-2.0",
+      "seedance-1.5-pro": "seedance-1.5-pro",
+      "seedance-1.0-pro-fast": "seedance-1.0-pro-fast",
+      "huimeng_seedance-2.0-fast": "seedance-2.0-fast",
+      "huimeng_seedance-2.0": "seedance-2.0",
+      "huimeng_seedance-1.5-pro": "seedance-1.5-pro",
+      "huimeng_seedance-1.0-pro-fast": "seedance-1.0-pro-fast",
+      "newapi_seedance-2.0-fast": "seedance-2.0-fast",
+      "newapi_seedance-2.0": "seedance-2.0",
+      "newapi_seedance-1.5-pro": "seedance-1.5-pro",
+      "newapi_seedance-1.0-pro-fast": "seedance-1.0-pro-fast"
+    }
+  },
+  "recipe_envelope": {
+    "schema_version": "dramaclaw.recipe.v1",
+    "required": [
+      "id",
+      "name",
+      "output_kind",
+      "action_keys",
+      "system_prompt",
+      "planning_prompt",
+      "result_summary"
+    ],
+    "identifier_fields": [
+      "id",
+      "action_keys",
+      "conflicts_with"
+    ],
+    "version_fields": [
+      "schema_version",
+      "version"
+    ]
+  }
+} as const;
+export const WORKFLOW_AGENT_CREATABLE_NODE_TYPES =
+  WORKFLOW_STABLE_CONTRACT.agent_creatable_node_types;
+export const WORKFLOW_NODE_TYPES = WORKFLOW_STABLE_CONTRACT.workflow_node_types;
+export const WORKFLOW_LINK_TYPES = WORKFLOW_STABLE_CONTRACT.link_types;
+export const WORKFLOW_GENERATION_ACTION_TYPES =
+  WORKFLOW_STABLE_CONTRACT.generation_action_types;

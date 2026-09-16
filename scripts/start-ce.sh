@@ -81,6 +81,15 @@ export NOVELVIDEO_STATE_DIR="${NOVELVIDEO_STATE_DIR:-$NOVELVIDEO_DATA_ROOT/state
 export NOVELVIDEO_OUTPUT_DIR="${NOVELVIDEO_OUTPUT_DIR:-$NOVELVIDEO_DATA_ROOT/output}"
 export NOVELVIDEO_RUNTIME_DIR="${NOVELVIDEO_RUNTIME_DIR:-$NOVELVIDEO_DATA_ROOT/runtime}"
 
+# A source checkout does not build the credential-safe, DramaClaw-patched
+# Codex runtime shipped by the Docker image. This local launcher installs
+# Hermes below, so use it unless the operator explicitly configured another
+# backend through either the current or legacy environment variable (and, for
+# Codex, a valid CODEX_BIN).
+if [ -z "${DRAMACLAW_CHAT_BACKEND:-}" ] && [ -z "${SUPERTALE_CHAT_BACKEND:-}" ]; then
+  export DRAMACLAW_CHAT_BACKEND=hermes
+fi
+
 if [ "${NEWAPI_API_KEY:-}" = "your_newapi_token" ] || [ -z "${NEWAPI_API_KEY:-}" ]; then
   echo "Warning: NEWAPI_API_KEY is not configured. API can start, but AI generation will fail." >&2
 fi

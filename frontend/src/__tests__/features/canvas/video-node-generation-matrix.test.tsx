@@ -17,10 +17,11 @@
 //     并配上不会触发纠正 effect 的模型 + 上游组合；
 //   - HappyHorse 三态（imageToVideo / imageReference / videoEdit）：**不写**
 //     genMode，交给状态机按上游类型推——那正是线上真实路径。
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  fetchFreezoneVideoModels,
   submitFreezoneVideoEdit,
   submitFreezoneVideoGen,
   submitFreezoneVideoI2v,
@@ -29,6 +30,7 @@ import {
 } from "@/api/ops";
 import { CANVAS_NODE_TYPES, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { showErrorDialog } from "@/features/canvas/application/errorDialog";
+import { getFreezoneVideoModelsSnapshot } from "@/features/canvas/hooks/useFreezoneVideoModels";
 import { useVideoGenerationForm } from "@/features/canvas/nodes/shared/useVideoGenerationForm";
 import { useCanvasStore } from "@/stores/canvasStore";
 
@@ -54,9 +56,11 @@ vi.mock("@/lib/queries/generation-credit-cost", async (importOriginal) => ({
   useGenerationCreditCost: () => ({ data: undefined, error: null }),
 }));
 
+const requestScope = vi.hoisted(() => ({ project: "demo-project" }));
+
 vi.mock("@/lib/url-params", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/url-params")>()),
-  readUrl: () => ({ project: "demo-project", canvas: "canvas-9" }),
+  readUrl: () => ({ project: requestScope.project, canvas: "canvas-9" }),
 }));
 
 // 提交序号：每次调用任一端点都 +1，任务 key 因此可辨认（task-1 / task-2 …），
@@ -78,6 +82,10 @@ vi.mock("@/api/ops", async (importOriginal) => {
   return {
     ...(await importOriginal<typeof import("@/api/ops")>()),
     fetchFreezoneVideoModels: vi.fn(async () => [
+      {
+        id: "text-only", providerId: "newapi", label: "Text only",
+        apiModel: "text-only", supportedModes: ["text_to_video"],
+      },
       {
         id: "huimeng/seedance-1.5-pro",
         providerId: "huimeng",
@@ -216,6 +224,7 @@ async function submitAndSettle(options?: { onGenerationSettled?: () => void }) {
 }
 
 beforeEach(() => {
+  requestScope.project = "demo-project";
   submits.seq = 0;
   inflight.snapshots = [];
   for (const endpoint of ALL_ENDPOINTS) vi.mocked(endpoint).mockClear();
@@ -405,13 +414,14 @@ describe("视频节点：genMode → 提交端点的分派", () => {
         [edge("e1", "img-1")],
       );
 
-    await submitAndSettle();
+    const { result } = renderHook(() => useVideoGenerationForm("vid-1"));
+    await waitFor(() => expect(result.current.submitDisabled).toBe(true));
+    await result.current.submit();
 
     for (const endpoint of ALL_ENDPOINTS) {
       expect(vi.mocked(endpoint)).not.toHaveBeenCalled();
     }
-    expect(showErrorDialog).toHaveBeenCalled();
-    expect(String(vi.mocked(showErrorDialog).mock.calls[0][0])).toContain("Seedance 2.0");
+    expect(showErrorDialog).not.toHaveBeenCalled();
   });
 });
 
@@ -494,5 +504,58 @@ describe("视频节点：恢复与历史", () => {
     await waitFor(() => {
       expect(onGenerationSettled).toHaveBeenCalled();
     });
+  });
+});
+
+
+it("rejects AI-persisted imageToVideo on a text-only model before submitting", async () => {
+  useCanvasStore.getState().setCanvasData(
+    [videoNode({ model: "text-only", genMode: "imageToVideo" }),
+      uploadImageNode("img-1", "/static/a.png")],
+    [edge("e1", "img-1")],
+  );
+  const { result } = renderHook(() => useVideoGenerationForm("vid-1"));
+  await waitFor(() => expect(result.current.selectedVideoModelId).toBe("text-only"));
+  expect(result.current.submitDisabled).toBe(true);
+  await result.current.submit();
+  for (const endpoint of ALL_ENDPOINTS) expect(endpoint).not.toHaveBeenCalled();
+});
+
+describe("video model selection when the catalog request fails", () => {
+  it.each([
+    ["seedance-2.0", "newapi_seedance-2.0"],
+    ["newapi_seedance-2.0", "newapi_seedance-2.0"],
+    ["seedance-1.5-pro", "newapi_seedance-1.5-pro"],
+    ["seedance-1.0-pro-fast", "newapi_seedance-1.0-pro-fast"],
+  ])("preserves %s in the fallback catalog", async (persisted, expected) => {
+    requestScope.project = `fallback-${persisted}`;
+    vi.mocked(fetchFreezoneVideoModels).mockRejectedValueOnce(new Error("catalog unavailable"));
+    useCanvasStore.getState().setCanvasData([videoNode({ model: persisted })], []);
+
+    const { result } = renderHook(() => useVideoGenerationForm("vid-1"));
+    await waitFor(() => {
+      expect(getFreezoneVideoModelsSnapshot(requestScope.project).error?.message)
+        .toBe("catalog unavailable");
+    });
+    expect(result.current.selectedVideoModelId).toBe(expected);
+  });
+
+  it("submits the standard model instead of Fast after a catalog failure", async () => {
+    requestScope.project = "fallback-standard-submit";
+    vi.mocked(fetchFreezoneVideoModels).mockRejectedValueOnce(new Error("catalog unavailable"));
+    useCanvasStore.getState().setCanvasData([
+      videoNode({ model: "seedance-2.0", genMode: "textToVideo" }),
+    ], []);
+
+    const { result } = renderHook(() => useVideoGenerationForm("vid-1"));
+    await waitFor(() => {
+      expect(getFreezoneVideoModelsSnapshot(requestScope.project).error?.message)
+        .toBe("catalog unavailable");
+    });
+    await act(async () => {
+      await result.current.submit();
+    });
+
+    expect(payloadOf(submitFreezoneVideoGen)).toMatchObject({ model: "newapi_seedance-2.0" });
   });
 });

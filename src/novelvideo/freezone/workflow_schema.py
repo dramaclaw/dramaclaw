@@ -12,8 +12,15 @@ from copy import deepcopy
 import re
 from typing import Any
 
-WORKFLOW_PLAN_SCHEMA_VERSION = "freezone_workflow_plan.v1"
-WORKFLOW_INTENT_SCHEMA_VERSION = "freezone_workflow_intent.v1"
+from novelvideo.freezone.workflow_contract_generated import (
+    WORKFLOW_INTENT_SCHEMA_VERSION,
+    WORKFLOW_LINK_TYPES,
+    WORKFLOW_NODE_TYPES,
+    WORKFLOW_PLAN_SCHEMA_VERSION,
+)
+
+NODE_TYPE_VALUES = WORKFLOW_NODE_TYPES
+LINK_TYPE_VALUES = WORKFLOW_LINK_TYPES
 
 
 def normalize_workflow_tool_arguments(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -49,25 +56,32 @@ def normalize_workflow_tool_arguments(name: str, arguments: dict[str, Any]) -> d
                     item.pop("duration_seconds", None)
     return result
 
-NODE_TYPE_VALUES = [
-    "textAnnotationNode",
-    "scriptNode",
-    "beatContextNode",
-    "imageGenNode",
-    "videoNode",
-    "audioNode",
-    "videoComposeNode",
-]
+def workflow_plan_schema_diagnostics(arguments: dict[str, Any]) -> list[dict[str, str]]:
+    """Explain actionable HTML branch failures hidden by JSON Schema anyOf.
 
-LINK_TYPE_VALUES = [
-    "context_for",
-    "prompt_for",
-    "dependency_for",
-    "media_input_for",
-    "derived_from",
-    "composition_input_for",
-]
-
+    This only describes invalid arguments; it never fills values or changes a
+    node's requested deliverable type. The strict validator remains authoritative.
+    """
+    plan = arguments.get("plan")
+    if not isinstance(plan, dict) or not isinstance(plan.get("nodes"), list):
+        return []
+    issues: list[dict[str, str]] = []
+    for index, node in enumerate(plan["nodes"]):
+        if not isinstance(node, dict) or node.get("node_type") != "htmlArtifactNode":
+            continue
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        if not any(isinstance(value, str) and value.strip() for value in (node.get("prompt"), data.get("prompt"))):
+            issues.append({
+                "path": f"plan.nodes[{index}].prompt",
+                "message": (
+                    "HTML workflow step requires a non-empty generation prompt. "
+                    f"Set plan.nodes[{index}].prompt or plan.nodes[{index}].data.prompt "
+                    "to the webpage's business requirements, not HTML source. "
+                    "Keep node_type=htmlArtifactNode and the existing Recipe and edges; "
+                    "correct this field and resubmit the same complete plan."
+                ),
+            })
+    return issues
 
 def _version_schema() -> dict[str, Any]:
     return {"oneOf": [{"type": "string"}, {"type": "integer"}]}
@@ -84,6 +98,7 @@ def _catalog_schema(*, recipe_required: bool = False) -> dict[str, Any]:
             "skillId": {"type": "string", "minLength": 1},
             "skillVersion": _version_schema(),
             "stepId": {"type": "string", "minLength": 1},
+            "timelineRole": {"type": "string"},
             "operationType": {"type": "string", "minLength": 1},
             "recipeId": {"type": "string", "minLength": 1},
             "recipeName": {"type": "string"},
@@ -178,7 +193,9 @@ def _catalog_schema(*, recipe_required: bool = False) -> dict[str, Any]:
     return schema
 
 
-def _node_data_schema(*, recipe_required: bool = False) -> dict[str, Any]:
+def _node_data_schema(
+    *, recipe_required: bool = False, resource_stage_allowed: bool = False
+) -> dict[str, Any]:
     return {
         "type": "object",
         "description": (
@@ -193,7 +210,14 @@ def _node_data_schema(*, recipe_required: bool = False) -> dict[str, Any]:
             "text": {"type": "string"},
             "prompt": {"type": "string"},
             "description": {"type": "string"},
-            "stage": False,
+            # Compatibility input for agent-authored resource text nodes. The
+            # compiler moves this to the portable top-level stage and removes
+            # it from emitted canvas node data. Executable nodes stay strict.
+            "stage": (
+                {"type": "string", "enum": ["input", "resource", "asset"]}
+                if resource_stage_allowed
+                else False
+            ),
             "model": {"type": "string"},
             "aspectRatio": {"type": "string"},
             "size": {"type": "string"},
@@ -239,7 +263,7 @@ def _recipe_node_schema() -> dict[str, Any]:
         {
             "node_type": {
                 "type": "string",
-                "enum": NODE_TYPE_VALUES[:-1],
+                "enum": [value for value in NODE_TYPE_VALUES if value not in {"videoComposeNode", "htmlArtifactNode"}],
             },
             "data": _node_data_schema(recipe_required=True),
         }
@@ -252,18 +276,58 @@ def _recipe_node_schema() -> dict[str, Any]:
     }
 
 
+def _html_node_schema() -> dict[str, Any]:
+    properties = _node_common_properties()
+    for field in ("content", "text"):
+        properties.pop(field, None)
+    properties["node_type"] = {"type": "string", "enum": ["htmlArtifactNode"]}
+    properties["prompt"] = {
+        "type": "string", "minLength": 1,
+        "description": "Required here or in data.prompt: business requirements for generating the webpage. Keep HTML source in Artifact storage.",
+    }
+    properties["data"] = {
+        "type": "object",
+        "properties": {
+            "workflowCatalog": _catalog_schema(recipe_required=True),
+            "prompt": {"type": "string"},
+            "title": {"type": "string"},
+            "displayName": {"type": "string"},
+        },
+        "required": ["workflowCatalog"],
+        "additionalProperties": False,
+    }
+    return {"type": "object", "properties": properties,
+            "required": ["id", "node_type", "data"], "additionalProperties": False,
+            "anyOf": [
+                {"required": ["prompt"], "properties": {"prompt": {"type": "string", "minLength": 1}}},
+                {"properties": {"data": {"required": ["prompt"], "properties": {"prompt": {"type": "string", "minLength": 1}}}}},
+            ]}
+
+
 def _resource_text_node_schema() -> dict[str, Any]:
     properties = _node_common_properties()
     properties.update(
         {
             "node_type": {"type": "string", "enum": ["textAnnotationNode"]},
             "stage": {"type": "string", "enum": ["input", "resource", "asset"]},
+            "data": _node_data_schema(resource_stage_allowed=True),
         }
     )
     return {
         "type": "object",
         "properties": properties,
-        "required": ["id", "node_type", "stage"],
+        "required": ["id", "node_type", "data"],
+        "anyOf": [
+            {"required": ["stage"]},
+            {
+                "properties": {
+                    "data": {
+                        "type": "object",
+                        "required": ["stage"],
+                    }
+                }
+            },
+        ],
         "additionalProperties": False,
     }
 
@@ -283,6 +347,9 @@ def _group_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {
+            # Agent hosts often attach a logical group id. Canvas group
+            # commands do not need it, so the compiler accepts and discards it.
+            "id": {"type": "string"},
             "label": {"type": "string"},
             "node_ids": {
                 "type": "array",
@@ -357,6 +424,7 @@ def workflow_plan_json_schema() -> dict[str, Any]:
                         _recipe_node_schema(),
                         _resource_text_node_schema(),
                         _compose_node_schema(),
+                        _html_node_schema(),
                     ]
                 },
             },
@@ -449,7 +517,10 @@ def workflow_intent_json_schema() -> dict[str, Any]:
     }
     return {
         "type": "object",
-        "description": "Compact freezone_workflow_intent.v1 planning decision.",
+        "description": (
+            "Compact freezone_workflow_intent.v1 planning decision. "
+            "Put composition policy at intent.include_compose, never inside intent.planner."
+        ),
         "properties": {
             "schema_version": {
                 "type": "string",
@@ -462,11 +533,16 @@ def workflow_intent_json_schema() -> dict[str, Any]:
             "inputs": {"type": "object"},
             "planner": {
                 "type": "object",
+                "description": (
+                    "Planning mode, deliverable, duration, and units. "
+                    "Composition is controlled by sibling intent.include_compose; "
+                    "do not put include_compose here."
+                ),
                 "properties": {
                     "mode": {"type": "string", "enum": ["standard"]},
                     "deliverable": {
                         "type": "string",
-                        "enum": ["images", "video", "mixed"],
+                        "enum": ["images", "video", "mixed", "html"],
                     },
                     "item_count": {"type": "integer", "minimum": 1, "maximum": 12},
                     "total_duration_seconds": {
@@ -482,7 +558,10 @@ def workflow_intent_json_schema() -> dict[str, Any]:
             },
             "items": {"type": "array", "maxItems": 24, "items": item},
             "include_audio": {"type": "boolean"},
-            "include_compose": {"type": "boolean"},
+            "include_compose": {
+                "type": "boolean",
+                "description": "Composition policy at intent.include_compose, outside intent.planner.",
+            },
             "assumptions": {"type": "array", "items": {"type": "string"}},
         },
         "required": ["skill_id", "user_goal"],

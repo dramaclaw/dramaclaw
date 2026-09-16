@@ -209,8 +209,9 @@ export function selectChatWorkflowRun(
 
 export function workflowRunStatusPollMs(
   runs: readonly FreezoneWorkflowRun[],
+  resuming = false,
 ): number {
-  return runs.some((run) => run.status === "running")
+  return resuming || runs.some((run) => run.status === "running")
     ? WORKFLOW_RUN_ACTIVE_POLL_MS
     : WORKFLOW_RUN_IDLE_POLL_MS;
 }
@@ -222,6 +223,23 @@ export function isStatusBarWorkflowContinuable(
     run?.resumable &&
     (run.status === "failed" || run.status === "interrupted"),
   );
+}
+
+export function workflowRunDisplayStatus(
+  run: FreezoneWorkflowRun | null,
+  resuming: boolean,
+): FreezoneWorkflowRun["status"] | null {
+  if (resuming && isStatusBarWorkflowContinuable(run)) return "running";
+  return run?.status ?? null;
+}
+
+export function shouldShowCancelAll(
+  activeStandaloneTaskCount: number,
+  run: FreezoneWorkflowRun | null,
+  resuming: boolean,
+): boolean {
+  if (resuming && run?.status !== "running") return false;
+  return activeStandaloneTaskCount > 0 || run?.status === "running";
 }
 
 export function resolveWorkflowRunDisplayCompletion(
@@ -540,6 +558,7 @@ export function ChatTaskStatusBar({
       RECENT_COMPLETED_MS
       ? null
       : resolvedWorkflowRun;
+  const workflowDisplayStatus = workflowRunDisplayStatus(workflowRun, resuming);
   const existingNodeIds = useMemo(
     () => new Set(nodes.map((node) => node.id)),
     [nodes],
@@ -576,7 +595,7 @@ export function ChatTaskStatusBar({
   const [workflowActivityIndex, setWorkflowActivityIndex] = useState(0);
   const hasTerminalItems =
     taskItems.some(({ task }) => isTerminal(task)) ||
-    Boolean(workflowRun && workflowRun.status !== "running");
+    Boolean(workflowDisplayStatus && workflowDisplayStatus !== "running");
 
   const refreshWorkflowRuns = useCallback(async () => {
     if (scope !== "canvas" || !projectId || !canvasId) {
@@ -635,10 +654,10 @@ export function ChatTaskStatusBar({
     if (!projectId || !canvasId) return;
     const timer = window.setInterval(
       () => void refreshWorkflowRuns(),
-      workflowRunStatusPollMs(workflowRuns),
+      workflowRunStatusPollMs(workflowRuns, resuming),
     );
     return () => window.clearInterval(timer);
-  }, [canvasId, projectId, refreshWorkflowRuns, workflowRuns]);
+  }, [canvasId, projectId, refreshWorkflowRuns, resuming, workflowRuns]);
 
   useEffect(() => {
     if (!hasTerminalItems) return;
@@ -687,7 +706,7 @@ export function ChatTaskStatusBar({
     return t(`taskCenter.chatStatus.workflowPhase.${action.phase ?? "waiting_dependencies"}`);
   };
   const summary = workflowRun
-    ? workflowRun.status === "completed"
+    ? workflowDisplayStatus === "completed"
       ? t("taskCenter.chatStatus.workflowCompletedShort", {
           completed: workflowSettledCount(workflowActions),
           total: workflowActions.length,
@@ -697,19 +716,19 @@ export function ChatTaskStatusBar({
             completed: workflowCounts.completed,
             total: workflowActions.length,
           }),
-          workflowRun.status === "interrupted"
+          workflowDisplayStatus === "interrupted"
             ? t("taskCenter.chatStatus.interruptedShort")
-            : workflowRun.status === "failed"
+            : workflowDisplayStatus === "failed"
               ? t("taskCenter.chatStatus.stoppedShort")
               : null,
           workflowCounts.inProgress > 0
-            && workflowRun.status === "running"
+            && workflowDisplayStatus === "running"
             ? t("taskCenter.chatStatus.inProgressShort", {
                 count: workflowCounts.inProgress,
               })
             : null,
           workflowCounts.waiting > 0
-            && workflowRun.status === "running"
+            && workflowDisplayStatus === "running"
             ? t("taskCenter.chatStatus.waitingShort", {
                 count: workflowCounts.waiting,
               })
@@ -789,6 +808,7 @@ export function ChatTaskStatusBar({
     }
   };
   const cancelAll = async () => {
+    if (resuming && workflowRun?.status !== "running") return;
     const workflowActive = workflowRun?.status === "running";
     const count = activeStandaloneTasks.length + (workflowActive ? 1 : 0);
     if (count === 0 || cancelling) return;
@@ -899,13 +919,18 @@ export function ChatTaskStatusBar({
     ? taskItems.filter(({ task }) => !linkedWorkflowTaskKeys.has(task.task_key))
     : taskItems;
   const waitingBatchItems = chatTaskBatchWaitingItems(detailItems);
-  const hasActiveStatus = activeItems.length > 0 || workflowRun?.status === "running";
+  const hasActiveStatus = activeItems.length > 0 || workflowDisplayStatus === "running";
+  const showCancelAll = shouldShowCancelAll(
+    activeStandaloneTasks.length,
+    workflowRun,
+    resuming,
+  );
   const hasFailedStatus =
     failedCount > 0 ||
     Boolean(
-      workflowRun &&
-      workflowRun.status !== "running" &&
-      workflowRun.status !== "completed",
+      workflowDisplayStatus &&
+      workflowDisplayStatus !== "running" &&
+      workflowDisplayStatus !== "completed",
     );
 
   return (
@@ -966,7 +991,7 @@ export function ChatTaskStatusBar({
                 : t("taskCenter.chatStatus.resume")}
           </Button>
         ) : null}
-        {hasActiveStatus ? (
+        {showCancelAll ? (
           <Button
             type="button"
             size="sm"

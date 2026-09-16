@@ -61,13 +61,15 @@ After it's up, open **`http://localhost:8080`** in your browser (the app UI); th
 git clone https://github.com/dramaclaw/dramaclaw.git
 cd dramaclaw
 
-uv sync                                  # install dependencies into .venv per uv.lock
 cp .env.example .env && $EDITOR .env     # set the gateway and key
 
-uv run novelvideo api --host 0.0.0.0 --port 8780
+scripts/start-ce.sh                      # install dependencies and start API + frontend
 ```
 
-CE defaults to `ST_EDITION=ce`, no-login single local user, and in-process inline task execution (no Ray/Redis/Celery).
+The launcher installs Hermes in an isolated environment and selects it for source-checkout chat.
+Docker images include the credential-safe patched Codex App Server runtime and default to Codex.
+CE defaults to `ST_EDITION=ce`, no-login single local user, and in-process inline task execution
+(no Ray/Redis/Celery).
 
 ### 3. Verify
 

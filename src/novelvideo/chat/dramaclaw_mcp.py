@@ -124,7 +124,21 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
     """
 
     raw = str(value or "")
+    try:
+        result = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        result = None
+    if isinstance(result, dict) and result.get("ok") is True and result.get("applied") is True:
+        from novelvideo.chat.canvas_outcome import CANVAS_FINAL_RESPONSE_INSTRUCTIONS
+
+        result["agent_instruction"] = (
+            CANVAS_FINAL_RESPONSE_INSTRUCTIONS + " " + str(result.get("agent_instruction") or "").replace(
+                "Report success briefly", "Report success briefly in the JSON message field"
+            )
+        )
+        return json.dumps(result, ensure_ascii=False)
     if name not in {
+        "freezone_prepare_workflow",
         "freezone_prepare_workflow_draft",
         "freezone_prepare_workflow_plan_draft",
     }:
@@ -146,7 +160,13 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
         "or run the workflow and all required clarification answers are available, that "
         "imperative is authorization: call freezone_confirm_workflow_draft exactly once now "
         "with this draft_id and revision, without asking for another confirmation. Otherwise "
-        "wait for explicit user confirmation. "
+        "wait for explicit user confirmation. A submitted model/parameter clarification card "
+        "is not proof that canvas nodes were created. When confirmation is still required, "
+        "present the exact preview; the product exposes a draft continuation action. "
+        "When the user confirms a named draft_id and revision, call "
+        "freezone_confirm_workflow_draft with those exact values and scope; never prepare "
+        "another draft instead. Do not report workflow creation success until the actual "
+        "canvas write receipt confirms the nodes were applied. "
     )
     instruction += (
         "For adjustments, prepare a new complete Plan draft."
@@ -579,11 +599,49 @@ async def read_resource(uri: Any) -> str:
         raise ValueError("skill resource is unavailable") from exc
 
 
+def _format_schema_path(parts: list[Any]) -> str:
+    path = ""
+    for part in parts:
+        if isinstance(part, int):
+            path += f"[{part}]"
+        elif path:
+            path += f".{part}"
+        else:
+            path = str(part)
+    return path or "arguments"
+
+
+def _schema_validation_diagnostic(exc: SchemaError | ValidationError) -> tuple[str, str]:
+    parts = list(getattr(exc, "absolute_path", ()))
+    if isinstance(exc, ValidationError) and exc.validator in {"oneOf", "anyOf"}:
+        instance = exc.instance
+        variants = exc.validator_value
+        if (
+            isinstance(instance, dict)
+            and "type" not in instance
+            and isinstance(variants, list)
+            and variants
+            and all(
+                isinstance(variant, dict)
+                and "type" in variant.get("required", [])
+                for variant in variants
+            )
+        ):
+            path = _format_schema_path([*parts, "type"])
+            return path, f"{path}: field is required"
+
+    path = _format_schema_path(parts)
+    return path, getattr(exc, "message", str(exc))
+
+
 @SERVER.call_tool(validate_input=False)
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
     # Validate below, after narrowly scoped serialization repair. The SDK's
     # pre-validation would reject recoverable inputs before this boundary.
-    from novelvideo.freezone.workflow_schema import normalize_workflow_tool_arguments
+    from novelvideo.freezone.workflow_schema import (
+        normalize_workflow_tool_arguments,
+        workflow_plan_schema_diagnostics,
+    )
 
     arguments = normalize_workflow_tool_arguments(name, arguments or {})
     call_started = time.monotonic()
@@ -674,6 +732,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                         result = await result
                     adapted = _adapt_external_agent_tool_result(name, result)
                     return _structured_tool_result(name, adapted)
+            diagnostics = workflow_plan_schema_diagnostics(arguments)
+            validation_path, validation_message = _schema_validation_diagnostic(exc)
             error_payload = {
                 "ok": False,
                 "error": "tool_arguments_invalid",
@@ -682,9 +742,14 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                     f"{len(details)} argument validation error(s); first at "
                     f"{details[0]['path'] or '<root>'}: {details[0]['message']}"
                     if story_write
-                    else getattr(exc, "message", str(exc))
+                    else ("; ".join(
+                        f"{issue['path']}: {issue['message']}" for issue in diagnostics
+                    ) if diagnostics else validation_message)
                 ),
-                "path": ".".join(str(part) for part in getattr(exc, "absolute_path", ())),
+                "path": (
+                    ".".join(str(part) for part in getattr(exc, "absolute_path", ()))
+                    if story_write else (diagnostics[0]["path"] if diagnostics else validation_path)
+                ),
                 **({"details": details} if story_write else {}),
                 "status": (
                     "workflow_validation_failed"

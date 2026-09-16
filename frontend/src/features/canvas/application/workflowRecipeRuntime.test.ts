@@ -165,6 +165,12 @@ describe('workflowRecipeRuntime', () => {
     }));
   });
 
+  it('keeps explicitly connected HTML text even when Recipe selects user assets', async () => {
+    generateTextMock.mockResolvedValue('<html></html>');
+    await generateWorkflowText({nodeData: {workflowCatalog: {recipeId: 'page', inputStrategy: {type: 'user_assets'}}}, nodePrompt: 'Build', upstreamText: 'Manually connected copy', upstreamInputMode: 'connected'});
+    expect(generateTextMock).toHaveBeenCalledWith(expect.objectContaining({upstreamText: 'Manually connected copy'}));
+  });
+
   it('executes a catalog-backed text node', async () => {
     generateTextMock.mockResolvedValue('# 电商方案');
 

@@ -164,6 +164,9 @@ def test_external_mcp_ready_draft_honors_explicit_create_without_changing_plugin
         in adapted["agent_instruction"]
     )
     assert "without asking for another confirmation" in adapted["agent_instruction"]
+    assert "parameter clarification card" in adapted["agent_instruction"]
+    assert "named draft_id and revision" in adapted["agent_instruction"]
+    assert "actual canvas write receipt" in adapted["agent_instruction"]
 
 
 def test_external_mcp_ready_draft_removes_legacy_ce_billing_metadata():
@@ -918,6 +921,51 @@ async def test_read_resource_remaps_stale_workspace_uri_to_current_skills_root(
 
 
 @pytest.mark.asyncio
+async def test_bundled_skill_studio_authoring_guide_is_listed_and_readable(
+    monkeypatch, tmp_path
+):
+    from novelvideo.chat import service as chat_service
+
+    skills_root = tmp_path / "workspace" / ".agents" / "skills"
+    chat_service._sync_project_skills(skills_root, agent_profile="freezone:main")
+    guide = (
+        skills_root
+        / "dramaclaw-workflows"
+        / "references"
+        / "skill-studio-authoring-guide.md"
+    )
+    hermes_guide = (
+        CE_ROOT
+        / ".hermes"
+        / "skills"
+        / "freezone"
+        / "references"
+        / "skill-studio-authoring-guide.md"
+    )
+    agent_kit_guide = (
+        CE_ROOT
+        / "agent-kit"
+        / "skills"
+        / "dramaclaw-workflows"
+        / "references"
+        / "skill-studio-authoring-guide.md"
+    )
+    monkeypatch.setenv("DRAMACLAW_SKILLS_DIR", str(skills_root))
+
+    resources = await dramaclaw_mcp.list_resources()
+    content = await dramaclaw_mcp.read_resource(guide.as_uri())
+
+    assert any(
+        resource.name
+        == "dramaclaw-workflows/references/skill-studio-authoring-guide.md"
+        for resource in resources
+    )
+    assert content == hermes_guide.read_text(encoding="utf-8")
+    assert content == agent_kit_guide.read_text(encoding="utf-8")
+    assert "capability modeling" in content
+
+
+@pytest.mark.asyncio
 async def test_read_resource_accepts_codex_agent_root_relative_skill_path(
     monkeypatch, tmp_path
 ):
@@ -1046,7 +1094,7 @@ async def test_tool_call_validates_and_dispatches_existing_handler(monkeypatch):
     assert invalid_payload["ok"] is False
     assert invalid_payload["error"] == "tool_arguments_invalid"
     assert invalid.structuredContent["tool_name"] == "dramaclaw_render_first_frames"
-    assert invalid.structuredContent["path"] == ""
+    assert invalid.structuredContent["path"] == "arguments"
     assert invalid.structuredContent["phase"] == "tool_validation"
     assert "details" not in invalid.structuredContent
     assert calls == []
@@ -1248,3 +1296,46 @@ async def test_synced_story_skill_loads_through_existing_mcp_resources(monkeypat
                 assert result.contents[0].text == (source / relative).read_text(encoding="utf-8")
     # Discovery returns metadata, not an eagerly concatenated skill package.
     assert resources["interactive-story/SKILL.md"].mimeType == "text/markdown"
+@pytest.mark.asyncio
+async def test_canvas_command_union_error_names_missing_type_without_echoing_html(
+    monkeypatch,
+):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    html = "<!doctype html><title>private page source</title>"
+
+    result = await dramaclaw_mcp.call_tool(
+        "freezone_emit_canvas_command",
+        {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "commands": [
+                {
+                    "node_id": "node-a",
+                    "action": "update_source",
+                    "parameters": {"html": html, "title": "Test page"},
+                }
+            ],
+        },
+    )
+
+    payload = result.structuredContent
+    raw_payload = json.loads(result.content[0].text)
+    assert result.isError is True
+    assert payload["error"] == "tool_arguments_invalid"
+    assert raw_payload["path"] == "commands[0].type"
+    assert payload["message"] == "commands[0].type: field is required"
+    assert html not in json.dumps(raw_payload, ensure_ascii=False)
+def test_successful_canvas_tool_instructs_json_final_response():
+    from novelvideo.chat import dramaclaw_mcp
+
+    result = json.loads(dramaclaw_mcp._adapt_external_agent_tool_result(
+        "freezone_confirm_workflow_draft",
+        json.dumps({"ok": True, "applied": True, "canvas_apply_status": "applied",
+                    "bridge_key": "receipt-a", "agent_instruction": "Report success briefly."}),
+    ))
+    instruction = result["agent_instruction"]
+    assert "JSON object" in instruction
+    assert "canvas_receipts" in instruction
+    assert "message field" in instruction

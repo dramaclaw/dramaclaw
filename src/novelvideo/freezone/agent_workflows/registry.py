@@ -34,9 +34,15 @@ def _summary(kind: CatalogKind, item: dict[str, Any]) -> dict[str, Any]:
             "keywords": list((item.get("triggers") or {}).get("keywords") or []),
             "allowed_recipe_ids": list(item.get("allowed_recipe_ids") or []),
         }
+    # Share the compiler's format-aware mapping so discovery cannot advertise
+    # an HTML Recipe as an ordinary text node.
+    from novelvideo.freezone.agent_workflows.catalog import _recipe_node_type
+
     return {
         **base,
         "output_kind": item.get("output_kind"),
+        "node_type": _recipe_node_type(item),
+        **({"output_format": item["output_format"]} if item.get("output_format") else {}),
         "requires_source_media": bool(item.get("requires_source_media")),
         "action_keys": list(item.get("action_keys") or []),
     }
@@ -66,6 +72,8 @@ def search_catalog(
                 summary.get("description"),
                 summary.get("category"),
                 summary.get("output_kind"),
+                summary.get("output_format"),
+                summary.get("node_type"),
                 " ".join(summary.get("keywords") or []),
                 " ".join(summary.get("action_keys") or []),
             )

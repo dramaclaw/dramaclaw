@@ -288,9 +288,9 @@ def test_only_placement_free_canvas_routes_opt_out_of_the_home_node_guard() -> N
         and _opts_out_of_the_guard(call)
     }
 
-    # 整合 staging 新路由与互动故事路由后的数量。
-    assert router_decorators == 107
-    assert len(canvas_routes) == 29
+    # 合并工作流能力查询、图片输出及互动故事路由后的数量。
+    assert router_decorators == 108
+    assert len(canvas_routes) == 30
 
     assert set(canvas_routes) >= PLACEMENT_FREE_CANVAS_ROUTES
 

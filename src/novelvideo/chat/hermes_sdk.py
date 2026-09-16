@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 from novelvideo.security import SandboxSpec, wrap_command
-from novelvideo.chat.backend_sdk import ChatBackendEvent
+from novelvideo.chat.runtime_port import ChatBackendEvent
 
 _log = logging.getLogger(__name__)
 
@@ -1263,7 +1263,9 @@ class HermesSdkThread:
                 {"sessionId": self.id, "cwd": str(self._cwd), "mcpServers": []},
             )
             resp, _ = await self._read_until_id(req_id, SESSION_NEW_TIMEOUT)
-            if resp and "error" not in resp and resp.get("result") is not None:
+            # Hermes returns model/mode metadata for a loaded session. Its ACP
+            # adapter may encode a missing session as an empty result object.
+            if resp and "error" not in resp and resp.get("result"):
                 return
             _log.warning("session/load failed, falling back to session/new: %s",
                          resp.get("error") if resp and resp.get("error") else "not found")

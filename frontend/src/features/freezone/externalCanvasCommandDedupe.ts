@@ -1,9 +1,14 @@
 import type { ServerFrame } from "@/features/superchat/types";
+import {
+  readCanvasCommandReceipt,
+  type CanvasCommandToolResultPayload,
+} from "@/features/freezone/canvasCommandToolResult";
 
 type ExternalCanvasCommandClaim = {
   externalMcpCommand: boolean;
   bridgeKey: string | null;
   accepted: boolean;
+  terminalReceipt?: CanvasCommandToolResultPayload;
 };
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -41,9 +46,27 @@ export function claimExternalCanvasCommand(
   if (!externalMcpCommand || !bridgeKey) {
     return { externalMcpCommand, bridgeKey, accepted: true };
   }
+  const terminalReceipt = readCanvasCommandReceipt(bridgeKey);
+  if (terminalReceipt) {
+    seenBridgeKeys.add(bridgeKey);
+    return { externalMcpCommand, bridgeKey, accepted: false, terminalReceipt };
+  }
   if (seenBridgeKeys.has(bridgeKey)) {
     return { externalMcpCommand, bridgeKey, accepted: false };
   }
   seenBridgeKeys.add(bridgeKey);
   return { externalMcpCommand, bridgeKey, accepted: true };
+}
+
+/**
+ * Seen keys normally suppress reconnect polling. A stored terminal receipt is
+ * different: the command was executed, but the server may not have received
+ * its result, so omit that key and let the server redeliver it for replay.
+ */
+export function confirmedExternalCanvasCommandKeys(
+  seenBridgeKeys: Set<string>,
+): string[] {
+  return Array.from(seenBridgeKeys).filter(
+    (bridgeKey) => readCanvasCommandReceipt(bridgeKey) === null,
+  );
 }

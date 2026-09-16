@@ -222,6 +222,7 @@ class AgentCatalogRecipeConfig(_CatalogBaseModel):
     name: str
     description: str = ""
     output_kind: RecipeOutputKind
+    output_format: Literal["html"] | None = None
     action_keys: list[str]
     system_prompt: str
     must_have_items: list[str] = Field(default_factory=list)
@@ -261,6 +262,8 @@ class AgentCatalogRecipeConfig(_CatalogBaseModel):
 
     @model_validator(mode="after")
     def validate_pipeline_contract(self) -> "AgentCatalogRecipeConfig":
+        if self.output_format == "html" and self.output_kind != "text":
+            raise ValueError("HTML output_format requires output_kind=text")
         if self.id in self.conflicts_with:
             raise ValueError("recipe cannot conflict with itself")
         if len(self.conflicts_with) != len(set(self.conflicts_with)):

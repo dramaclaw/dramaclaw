@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { selectVideoModel } from "@/features/canvas/domain/catalogVideoModels";
 import { compileWorkflowNodePrompt } from "@/features/canvas/application/workflowRecipeRuntime";
 import {
   memo,
@@ -697,21 +698,10 @@ export const VideoNode = memo(
       isLoading: videoModelsLoading,
       isFallback: videoModelsFallback,
     } = useFreezoneVideoModels();
-    // Same fix as ImageGenNode: when no model is explicitly picked, default to
-    // the FIRST live model (what ProviderModelPicker displays) rather than the
-    // static DEFAULT_VIDEO_MODEL_ID, so the displayed model matches the value
-    // actually sent to /freezone/video/gen.
-    const selectedVideoModel = useMemo(() => {
-      const persisted =
-        typeof data.model === "string" && data.model.length > 0
-          ? data.model
-          : null;
-      return (
-        (persisted
-          ? availableVideoModels.find((model) => model.id === persisted)
-          : undefined) ?? availableVideoModels[0]
-      );
-    }, [availableVideoModels, data.model]);
+    const selectedVideoModel = useMemo(
+      () => selectVideoModel(availableVideoModels, data.model),
+      [availableVideoModels, data.model],
+    );
     const modelId = selectedVideoModel?.id ?? "";
     const selectedVideoModelId = selectedVideoModel?.apiModel ?? selectedVideoModel?.id ?? modelId;
     const isHappyHorseModel = isHappyHorseVideoModel(selectedVideoModelId);
@@ -1564,7 +1554,7 @@ export const VideoNode = memo(
       } else {
         target = "textToVideo";
       }
-      if (genMode !== target) {
+      if (genMode !== target && isVideoModeSupportedByModel(target, selectedVideoModel)) {
         updateNodeData(id, { genMode: target });
       }
     }, [

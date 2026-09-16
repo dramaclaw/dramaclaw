@@ -35,6 +35,8 @@ class ProjectRecord:
     created_at: str = ""
     updated_at: str = ""
     purged_at: str | None = None
+    storage_org_id: str | None = None
+    storage_org_name: str | None = None
 
 
 @dataclass(frozen=True)

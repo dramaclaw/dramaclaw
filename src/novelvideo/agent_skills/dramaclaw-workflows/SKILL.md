@@ -10,11 +10,26 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
 ## Required behavior
 
 - For interactive short dramas, branching stories, choices or multiple endings, route story structure to the `interactive-story` Skill and its dedicated tools first. This workflow Skill applies only to the requested media production. Never replace an unavailable story tool with ordinary canvas commands or a WorkflowPlan.
+- Planning authors topology, Recipe selection, dependencies, confirmed parameters, and short
+  node task briefs. Each node prompt should state its task, scope, upstream outputs, and reference
+  roles in one or two concise sentences. Preserve user-provided story facts and source material.
+  Do not invent finished scripts, detailed shot-by-shot storyboards, dialogue, camera choreography,
+  sound cues, or final media prompts before upstream stages execute. Execution-time Recipe
+  compilation uses actual upstream outputs to produce executable prompts.
+
 - Read this Skill and its references only through the exact locator advertised by the current host.
   Never invent `project://` paths. Use a canvas summary already supplied by the host; if current
   canvas data must be refreshed, call `freezone_get_canvas_ontology` instead of inventing a
   `canvas://` resource. MCP clients must use only resource URIs returned by `resources/list` or
-  `resources/templates/list`.
+  `resources/templates/list`. The Workflow MCP intentionally returns an empty static
+  `resources/list`; this is supported and does not mean the catalog is unavailable.
+  Discover accessible Skill/Recipe IDs with `workflow_catalog_search`, then use the
+  advertised templates for resource reads. Do not enumerate or guess another user's
+  private catalog IDs.
+- The Skill package/server display name does not determine a host's MCP registration key. Use the
+  exact `server` returned by the host. In DramaClaw's Codex adapter, filesystem-backed Skill files
+  are read from `dramaclaw`; workflow catalog resources use `dramaclaw_workflows` (underscore).
+  Never call `resources/read` with an inferred `dramaclaw-workflows` server key.
 - Use the portable `dramaclaw-workflows` MCP server for catalog discovery and deterministic
   compilation when it is available. Use the authorized DramaClaw MCP server for draft persistence,
   approval, canvas commit, and execution. Tool names are host-neutral; call them through the MCP
@@ -40,6 +55,8 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
   approval event after required image/video parameters are known.
 - Use `freezone_request_user_clarification` for structured questions. Never substitute a host's
   built-in `request_user_input`, `update_plan`, or `create_goal` for canvas work.
+- For Skill/Recipe authoring, read and follow
+  `references/skill-studio-authoring-guide.md` before asking questions or drafting.
 
 ## Route the request
 
@@ -64,6 +81,9 @@ The image/video choices are:
 - Image: model preference, aspect ratio, resolution/quality, and variants per node.
 - Video: model or generation mode, aspect ratio, resolution, duration, sound generation, and output
   variants per node.
+- Provider thinking/reasoning level is server-managed. Never ask the user to choose
+  `thinking_level`, reasoning effort, or low/medium/high thinking options, and never add such a
+  question from a live model parameter schema.
 
 Do not include audio voice-source selection in this preliminary clarification. Never ask the user
 to choose system voice versus custom voice. A speech node uses an already selected custom
@@ -132,8 +152,10 @@ including `480P` whenever the schema lists it.
    and the normalized inputs before authoring the result. These Skill identities must match the
    later compiled result.
 4. For a normal workflow, submit one compact `freezone_workflow_intent.v1` and the admitted
-   `operation_id` to `freezone_prepare_workflow_draft`.
-5. Present the returned preview. Adjust it only with `freezone_patch_workflow_draft`.
+   `operation_id` to `freezone_prepare_workflow`. The backend compiles and validates it; do not
+   run a separate compile first.
+5. Present the returned preview. Adjust it with `freezone_revise_workflow`, sending the same
+   `draft_id`, `expected_revision`, and only changed fields.
 6. After explicit user confirmation, call `freezone_confirm_workflow_draft` once with the exact
    `draft_id` and `revision`.
 
@@ -146,11 +168,25 @@ also matches. For error recovery, read
 When packaging this Skill for another agent host, read
 [references/integration.md](references/integration.md).
 
+## Server-owned workflow operations
+
+On third-party hosts, call `freezone_get_workflow_capabilities` once before using the write path.
+The `workflow-operations.v1` capability provides prepare, revise, input binding, and compact query.
+Use `freezone_prepare_workflow(plan=...)` for an exact topology; preserve its complete graph and
+constraints. Use `freezone_get_workflow(draft_id=...)` to inspect a timeout or pending confirmation.
+See [references/workflow-operations.md](references/workflow-operations.md) for binding and patch fields.
+Legacy adapters may use `freezone_prepare_workflow_draft`, `freezone_prepare_workflow_plan_draft`,
+and `freezone_patch_workflow_draft`; do not fall back to another write after an ambiguous timeout.
+
 ## Execution and completion
 
 - When graph creation or draft confirmation uses `run_after_create=true`, its approved batch already
   contains the only `run_workflow` request. Do not call `freezone_run_workflow` again in the same
   turn. Start another run only after a terminal failure and a later explicit user retry.
+- Observe an existing run with `freezone_observe_workflow_run(run_id=..., wait_seconds=20)`;
+  reuse the returned `observation_token` as `after` for a later bounded wait. The backend reconciles
+  tasks and artifacts and returns compact progress and recovery decisions. A query timeout permits
+  another read of the same run, not resubmission of generation.
 - To continue or resume an existing workflow, call `freezone_run_workflow`; do not traverse and run
   nodes individually.
 - Freezone speech uses custom/reference voices only; never select or generate with a preset/system

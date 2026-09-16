@@ -34,6 +34,7 @@ from novelvideo.freezone.workflow_schema import (
     normalize_workflow_tool_arguments,
     workflow_intent_json_schema,
     workflow_plan_json_schema,
+    workflow_plan_schema_diagnostics,
 )
 
 SERVER = Server("dramaclaw-workflows", version="1.0.0")
@@ -104,6 +105,7 @@ _WORKFLOW_OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
     ),
     "workflow_skill_get": _output_schema(
         {
+            "agent_instruction": {"type": "string"},
             "schema_version": {"const": "freezone_workflow_skill_package.v1"},
             "skill_id": {"type": "string", "minLength": 1},
             "skill": {"type": "object"},
@@ -262,6 +264,17 @@ def _read_skill_reference(skill_id: Any, reference: Any) -> dict[str, Any]:
         "reference": normalized_reference,
         "content": path.read_text(encoding="utf-8"),
     }
+
+
+@SERVER.list_resources()
+async def list_resources() -> list[types.Resource]:
+    """Advertise the resource protocol without enumerating private catalogs.
+
+    Catalog items are discovered through scoped search and read via templates.
+    Registering this standard method also lets the SDK declare resources during
+    initialization; a template-only server still needs a valid resources/list.
+    """
+    return []
 
 
 @SERVER.list_resource_templates()
@@ -441,13 +454,17 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
         raise ValueError(f"unknown workflow tool: {name}")
     errors = list(Draft202012Validator(tool.inputSchema).iter_errors(args))
     if errors:
+        diagnostics = workflow_plan_schema_diagnostics(args)
         return _result(name, {
             "ok": False,
             "status": "tool_arguments_invalid",
             "error": "; ".join(
+                f"{issue['path']}: {issue['message']}" for issue in diagnostics
+            ) if diagnostics else "; ".join(
                 f"{'.'.join(map(str, error.absolute_path)) or 'arguments'}: {error.message}"
                 for error in errors
             ),
+            **({"errors": diagnostics} if diagnostics else {}),
         })
     if name == "workflow_catalog_search":
         kind = str(args.get("kind") or "")

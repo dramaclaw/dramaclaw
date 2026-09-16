@@ -11,6 +11,8 @@ from novelvideo.freezone.workflow_schema import (
     LINK_TYPE_VALUES as PORTABLE_LINK_TYPE_VALUES,
     NODE_TYPE_VALUES,
 )
+from novelvideo.freezone.workflow_contract_generated import MODEL_ALIASES_BY_NODE_TYPE
+from novelvideo.freezone.workflow_semantics import text_edge_error
 
 CANVAS_CHAT_COMMANDS_SCHEMA_VERSION = "canvas_chat_commands.v1"
 
@@ -24,6 +26,7 @@ LINK_TYPE_VALUES = set(PORTABLE_LINK_TYPE_VALUES)
 
 WORKFLOW_GRAPH_COMMAND_TYPES = {
     "create_node",
+    "html_artifact",
     "create_edge",
     "group_nodes",
     "layout_nodes",
@@ -39,21 +42,22 @@ LINK_OBJECT_TYPE_BY_NODE_TYPE = {
     "videoNode": "VideoNode",
     "audioNode": "AudioNode",
     "videoComposeNode": "VideoNode",
+    "htmlArtifactNode": "HtmlNode",
 }
 
 LINK_TYPE_RULES = {
     "context_for": ({"TextNode", "ScriptNode"}, {"TextNode", "ScriptNode"}),
     "prompt_for": (
         {"TextNode", "ScriptNode"},
-        {"ImageNode", "VideoNode", "AudioNode", "ScriptNode"},
+        {"ImageNode", "VideoNode", "AudioNode", "ScriptNode", "HtmlNode"},
     ),
     "dependency_for": (
         {"TextNode", "ScriptNode", "ImageNode", "VideoNode", "AudioNode"},
-        {"TextNode", "ScriptNode", "ImageNode", "VideoNode", "AudioNode"},
+        {"TextNode", "ScriptNode", "ImageNode", "VideoNode", "AudioNode", "HtmlNode"},
     ),
     "media_input_for": (
         {"ImageNode", "VideoNode", "AudioNode"},
-        {"TextNode", "ImageNode", "VideoNode", "AudioNode", "ScriptNode"},
+        {"TextNode", "ImageNode", "VideoNode", "AudioNode", "ScriptNode", "HtmlNode"},
     ),
     "derived_from": (
         {"ImageNode", "VideoNode", "AudioNode"},
@@ -63,32 +67,6 @@ LINK_TYPE_RULES = {
         {"TextNode", "ScriptNode", "ImageNode", "VideoNode", "AudioNode"},
         {"VideoNode"},
     ),
-}
-
-MODEL_ALIASES_BY_NODE_TYPE = {
-    "imageGenNode": {
-        "nano-banana-2": "newapi_nanobanana2",
-        "nanobanana2": "newapi_nanobanana2",
-        "nano_banana_2": "newapi_nanobanana2",
-        "gpt-image-2": "newapi_gpt_image2",
-        "openai/gpt-image-2": "newapi_gpt_image2",
-    },
-    "videoNode": {
-        # Canvas model selection IDs include the newapi_ prefix. Do not strip
-        # it into a transport/pricing model name. Keep this alias list explicit:
-        # unknown/custom IDs must survive for authoritative live enum validation.
-        "omni-flash": "newapi_seedance-2.0-fast",
-        "omni_flash": "newapi_seedance-2.0-fast",
-        "seedance_2_0_fast": "newapi_seedance-2.0-fast",
-        "seedance-2.0-fast": "newapi_seedance-2.0-fast",
-        "seedance-2.0": "newapi_seedance-2.0",
-        "seedance-1.5-pro": "newapi_seedance-1.5-pro",
-        "seedance-1.0-pro-fast": "newapi_seedance-1.0-pro-fast",
-        "huimeng_seedance-2.0-fast": "newapi_seedance-2.0-fast",
-        "huimeng_seedance-2.0": "newapi_seedance-2.0",
-        "huimeng_seedance-1.5-pro": "newapi_seedance-1.5-pro",
-        "huimeng_seedance-1.0-pro-fast": "newapi_seedance-1.0-pro-fast",
-    },
 }
 
 STAGE_ORDER = {
@@ -106,6 +84,7 @@ STAGE_ORDER = {
     "video": 5,
     "audio": 5,
     "compose": 6,
+    "html": 6,
     "quality": 7,
     "review": 7,
 }
@@ -185,8 +164,6 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
         }
 
     edge_records: list[dict[str, Any]] = []
-    prompt_source_plan_ids: set[str] = set()
-    context_source_plan_ids: set[str] = set()
     audio_prompt_target_plan_ids: set[str] = set()
     for edge_index, edge in enumerate(_edge_pairs(payload.get("edges"))):
         source_ref, target_ref, requested_link_type = edge
@@ -244,10 +221,6 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
             "link_type": link_type,
         }
         edge_records.append(record)
-        if link_type == "prompt_for" and source["node_type"] in TEXTUAL_NODE_TYPES:
-            prompt_source_plan_ids.add(source["plan_id"])
-        if link_type == "context_for" and source["node_type"] in TEXTUAL_NODE_TYPES:
-            context_source_plan_ids.add(source["plan_id"])
         if (
             link_type == "prompt_for"
             and source["node_type"] in TEXTUAL_NODE_TYPES
@@ -262,15 +235,16 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
             node["node_type"],
             audio_uses_upstream_text=node["plan_id"] in audio_prompt_target_plan_ids,
         )
-        raw_stage = str(raw_node.get("stage") or "").strip().lower()
+        raw_data = raw_node.get("data")
+        raw_stage = str(
+            raw_node.get("stage")
+            or (raw_data.get("stage") if isinstance(raw_data, dict) else "")
+            or ""
+        ).strip().lower()
         if node["node_type"] in TEXTUAL_NODE_TYPES and raw_stage in USER_INPUT_STAGES:
             data.setdefault("workflowCatalogRole", "user_input")
-        if (
-            node["plan_id"] in prompt_source_plan_ids
-            and node["plan_id"] not in context_source_plan_ids
-            and node["node_type"] in TEXTUAL_NODE_TYPES
-        ):
-            data.setdefault("semanticOutputRole", "input_text")
+        # Plain text with no role is inferred per edge, as in the frontend.
+        # Do not rewrite explicit roles (including the legacy ioRole alias).
         data.setdefault("workflowInstanceId", workflow_instance_id)
         data.setdefault("workflowPlanNodeId", node["plan_id"])
         # The graph approval is the single parameter confirmation point for a
@@ -292,6 +266,12 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
             "position": _node_position(raw_node, node["stage_index"], order),
             "data": data,
         }
+        if node["node_type"] == "htmlArtifactNode":
+            command = {
+                "type": "html_artifact", "action": "prepare",
+                "client_id": node["client_id"], "position": command["position"],
+                "workflow_data": data,
+            }
         commands.append(command)
 
     for record in edge_records:
@@ -488,6 +468,7 @@ def _stage_index(node: dict[str, Any], node_type: str) -> int:
         "videoNode": 5,
         "audioNode": 5,
         "videoComposeNode": 6,
+        "htmlArtifactNode": 6,
     }.get(node_type, 0)
 
 
@@ -520,6 +501,9 @@ def _node_data(
 ) -> dict[str, Any]:
     data = node.get("data")
     result = dict(data) if isinstance(data, dict) else {}
+    # ``data.stage`` is accepted as an agent compatibility input but stage is
+    # workflow metadata, not canvas node data.
+    result.pop("stage", None)
     label = node.get("label") or node.get("title") or node.get("name")
     description = (
         node.get("description") or node.get("responsibility") or node.get("purpose")
@@ -569,6 +553,9 @@ def _node_data(
                 if isinstance(candidate, str) and candidate.strip():
                     result["content"] = candidate.strip()
                     break
+    if node_type == "htmlArtifactNode":
+        result.pop("content", None)
+        result.pop("description", None)
     _normalize_model_alias(result, node_type)
     if node_type == "audioNode":
         result.setdefault("audioKind", "speech")
@@ -614,6 +601,7 @@ def validate_workflow_graph_commands(commands: Any) -> list[dict[str, str]]:
 
     errors: list[dict[str, str]] = []
     created_ids: set[str] = set()
+    created_nodes: dict[str, dict[str, Any]] = {}
     for index, command in enumerate(commands):
         path = f"commands[{index}]"
         if not isinstance(command, dict):
@@ -628,8 +616,12 @@ def validate_workflow_graph_commands(commands: Any) -> list[dict[str, str]]:
                 }
             )
             continue
-        if command_type != "create_node":
+        if command_type not in {"create_node", "html_artifact"}:
             continue
+        if command_type == "html_artifact":
+            if command.get("action") != "prepare":
+                errors.append({"path": path, "message": "workflow HTML requires prepare"})
+            command = {**command, "node_type": "htmlArtifactNode", "data": command.get("workflow_data")}
         client_id = command.get("client_id")
         if not isinstance(client_id, str) or not client_id.strip():
             errors.append(
@@ -644,6 +636,7 @@ def validate_workflow_graph_commands(commands: Any) -> list[dict[str, str]]:
             )
         else:
             created_ids.add(client_id)
+            created_nodes[client_id] = command
         node_type = command.get("node_type")
         if node_type not in ALLOWED_NODE_TYPES:
             errors.append(
@@ -683,6 +676,17 @@ def validate_workflow_graph_commands(commands: Any) -> list[dict[str, str]]:
         path = f"commands[{index}]"
         command_type = command.get("type")
         if command_type == "create_edge":
+            source = created_nodes.get(str(command.get("source") or ""))
+            target = created_nodes.get(str(command.get("target") or ""))
+            if source and target:
+                role_error = text_edge_error(
+                    str(command.get("link_type") or ""),
+                    source["node_type"],
+                    source.get("data"),
+                    target["node_type"],
+                )
+                if role_error:
+                    errors.append({"path": path, "message": role_error})
             for field in ("source", "target"):
                 value = command.get(field)
                 if not isinstance(value, str) or value not in created_ids:

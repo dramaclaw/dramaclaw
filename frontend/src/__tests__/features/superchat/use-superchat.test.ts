@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, render, renderHook, waitFor } from "@testing-library/react";
+import { createElement } from "react";
+import { useCanvasStore } from "@/stores/canvasStore";
+import { workflowGenerationTargetsForPreflight } from "@/features/freezone/canvasChatCommands";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { normalizeMessage } from "@/features/superchat/message";
 import { buildCanvasCommandToolResultPayloadForTest } from "@/features/freezone/canvasCommandToolResult";
@@ -37,6 +40,7 @@ import {
   isCanvasNodeReferenceAttachment,
 } from "@/features/freezone/chatNodeReferences";
 import {
+  CanvasCommandApprovalCardForTest,
   buildAssistantClarificationResponseForTest,
   activeAssistantClarificationIsSkillStudioRevisionForTest,
   buildPersistedAssistantClarificationEventForTest,
@@ -52,8 +56,11 @@ import {
   canvasApprovalRequiresAudioVoiceChoiceForTest,
   canvasApprovalRequiresManualUiActionForTest,
   canvasApprovalRequiresHumanReviewConfirmationForTest,
+  clarificationQuestionsWithLiveModelCatalogsForTest,
   imageApprovalInitialParamsForTest,
   imageApprovalParamGroupsForTest,
+  imageQualityOptionsForApprovalForTest,
+  normalizeImageQualityForApprovalForTest,
   textApprovalInitialParamsForTest,
   videoApprovalInitialParamsForTest,
   videoApprovalParamGroupsForTest,
@@ -96,6 +103,7 @@ import {
   skillStudioEventsFromUiEventsForTest,
   visibleCanvasContextActivitiesForMessageForTest,
   visibleAssistantOrderedPartsForMessageForTest,
+  visibleAssistantClarificationTimelineItemsForTest,
   visibleSkillStudioEventsForMessageForTest,
 } from "@/features/superchat/superchat-panel";
 import type { ChatMessage, ChatMessagePart, ChatRole } from "@/features/superchat/types";
@@ -127,6 +135,55 @@ vi.mock("@/lib/api", () => ({
     post: apiPostMock,
   },
 }));
+
+vi.mock("@tanstack/react-router", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@tanstack/react-router")>(),
+  useParams: () => ({ project: "project-a" }),
+}));
+vi.mock("@/features/canvas/hooks/useFreezoneImageModels", async (importOriginal) => {
+  const models = [{ id: "image-model", label: "测试图片模型" }];
+  return { ...await importOriginal<typeof import("@/features/canvas/hooks/useFreezoneImageModels")>(), useFreezoneImageModels: () => ({ models }) };
+});
+vi.mock("@/features/canvas/hooks/useFreezoneVideoModels", async (importOriginal) => {
+  const models = [{ id: "video-model", label: "测试视频模型", minDuration: 5, maxDuration: 15 }];
+  return { ...await importOriginal<typeof import("@/features/canvas/hooks/useFreezoneVideoModels")>(), useFreezoneVideoModels: () => ({ models }) };
+});
+
+describe("mixed workflow approval execution", () => {
+  it("keeps confirmed media groups when upstream image/audio nodes complete", () => {
+    const previous = useCanvasStore.getState();
+    const nodes = [
+      { id: "image-a", type: "imageGenNode" as const, position: { x: 0, y: 0 }, data: { prompt: "城市", model: "image-model" } },
+      { id: "video-a", type: "videoNode" as const, position: { x: 0, y: 0 }, data: { prompt: "城市", model: "video-model", durationSec: 5 } },
+      { id: "audio-a", type: "audioNode" as const, position: { x: 0, y: 0 }, data: { prompt: "音乐", audioKind: "music", forceInstrumental: true } },
+    ];
+    useCanvasStore.setState({ nodes, edges: [] });
+    expect(workflowGenerationTargetsForPreflight({ type: "run_workflow", scope: "canvas" })).toHaveLength(3);
+    const approval = {
+      id: "mixed", key: "mixed", messageId: "assistant", receivedAt: 1,
+      commandCount: 1, plans: [],
+      envelopes: [{ schema_version: "canvas_chat_commands.v1" as const,
+        commands: [{ type: "run_workflow" as const, scope: "canvas" as const }] }],
+    };
+    const props = { approval, onApply: vi.fn(), onCancel: vi.fn() };
+    const view = render(createElement(CanvasCommandApprovalCardForTest, props));
+    try {
+      expect(view.getByLabelText("图片模型")).toBeTruthy();
+      expect(view.getByLabelText("视频模型")).toBeTruthy();
+      view.rerender(createElement(CanvasCommandApprovalCardForTest, { ...props, isExecuting: true }));
+      act(() => useCanvasStore.setState({ nodes: nodes.map((node) => ({
+        ...node, data: { ...node.data, imageUrl: "image.png", audioUrl: "audio.mp3" },
+      })) }));
+      expect(view.getByLabelText("图片模型")).toBeTruthy();
+      expect(view.getByLabelText("视频模型")).toBeTruthy();
+      expect(view.container.textContent).toContain("纯音乐");
+      expect(view.queryByText("待确认的画布操作")).toBeNull();
+    } finally {
+      view.unmount();
+      useCanvasStore.setState({ nodes: previous.nodes, edges: previous.edges });
+    }
+  });
+});
 
 function message(
   id: string,
@@ -2093,6 +2150,53 @@ describe("Skill Studio question response", () => {
     ]);
   });
 
+  it("hides unanswered fields from submitted clarification summaries", () => {
+    const items = visibleAssistantClarificationTimelineItemsForTest(
+      [
+        {
+          id: "image_model",
+          title: "图片模型",
+          options: [{ id: "newapi_nanobanana2", label: "LingShan NB 2" }],
+        },
+        {
+          id: "image_quality",
+          title: "图片画质",
+          options: [
+            { id: "low", label: "低画质" },
+            { id: "medium", label: "标准画质" },
+            { id: "high", label: "高画质" },
+          ],
+        },
+      ],
+      { image_model: { option_ids: ["newapi_nanobanana2"] } },
+    );
+
+    expect(items).toEqual([
+      {
+        key: "image_model",
+        title: "图片模型",
+        summary: "LingShan NB 2",
+        answered: true,
+      },
+    ]);
+  });
+
+  it("keeps submitted option ids visible when dynamic labels are unavailable", () => {
+    const items = visibleAssistantClarificationTimelineItemsForTest(
+      [{ id: "image_resolution", title: "图片分辨率", options: [] }],
+      { image_resolution: { option_ids: ["1K"] } },
+    );
+
+    expect(items).toEqual([
+      {
+        key: "image_resolution",
+        title: "图片分辨率",
+        summary: "1K",
+        answered: true,
+      },
+    ]);
+  });
+
   it("builds a bridge tool result payload instead of a new chat message", () => {
     const payload = buildSkillStudioQuestionToolResultForTest(
       {
@@ -2233,6 +2337,15 @@ describe("Assistant clarification response", () => {
 
     expect(text).toContain("你想创建的 skill 是做什么的？\n工作流自动化；补充：用于海报生成");
     expect(text).toContain("这个 skill 的使用范围是？\n用户级（推荐）");
+  });
+
+  it("keeps clarification replies in the current project when tool metadata omits scope", () => {
+    const payload = buildAssistantClarificationToolResultForTest(
+      { type: "assistant.clarification.request", clarification_id: "c", bridge_key: "key", questions: [] },
+      {},
+      { projectId: "project-a", canvasId: "canvas-a", agentId: "main" },
+    );
+    expect(payload).toMatchObject({project_id: "project-a", canvas_id: "canvas-a", agent_id: "main"});
   });
 
   it("builds a generic bridge tool result payload", () => {
@@ -2933,6 +3046,15 @@ describe("Skill Studio draft response", () => {
     })).toBe("AI 调整中，请按后续问题补充修改方向");
   });
 
+  it("preserves HTML webpage deliverables when saving an imported Skill Studio recipe", () => {
+    const recipe = {id:"campaign-page",name:"Campaign page",output_kind:"text",output_format:"html",action_keys:["campaign-page"],system_prompt:"Create a complete page",planning_prompt:"Use campaign assets",result_summary:"A finished webpage"};
+    const normalized = normalizeSkillStudioDraftForCatalogForTest({recipes:[recipe]});
+    const saved = buildSkillStudioCatalogSaveItemsForTest(normalized);
+    expect(saved[0].payload).toMatchObject({output_kind:"text",output_format:"html"});
+    const reimported = JSON.parse(JSON.stringify(saved[0].payload));
+    expect(buildSkillStudioCatalogSaveItemsForTest({recipes:[reimported]})[0].payload).toMatchObject({output_kind:"text",output_format:"html"});
+  });
+
   it("normalizes the draft into catalog payloads before saving", () => {
     const items = buildSkillStudioCatalogSaveItemsForTest({
       skill: {
@@ -3035,6 +3157,162 @@ describe("Skill Studio draft response", () => {
 });
 
 describe("Canvas command approval image params", () => {
+  it("replaces a shortened image-model clarification with the complete live catalog", () => {
+    const questions = clarificationQuestionsWithLiveModelCatalogsForTest(
+      [{
+        id: "image_model",
+        title: "图片模型",
+        options: [{ id: "seedream-4.5", label: "Seedream 4.5", description: "快速" }],
+      }],
+      [
+        { id: "newapi_gpt_image2", label: "LingShan G2", apiModel: "LingShan-G2" },
+        { id: "seedream-catalog-id", label: "Seedream 4.5", apiModel: "seedream-4.5" },
+      ],
+      [],
+    );
+
+    expect(questions[0]?.options).toEqual([
+      { id: "newapi_gpt_image2", label: "LingShan G2" },
+      { id: "seedream-catalog-id", label: "Seedream 4.5", description: "快速" },
+    ]);
+  });
+
+  it("resolves a tool-declared video model source from the complete live catalog", () => {
+    const questions = clarificationQuestionsWithLiveModelCatalogsForTest(
+      [{
+        id: "preferred_model",
+        title: "视频模型",
+        options_source: "video_models",
+        options: [{ id: "video-fast", label: "快速模型", description: "速度优先" }],
+      }],
+      [],
+      [
+        { id: "video-quality", label: "高质量模型", apiModel: "video-quality-v1" },
+        { id: "video-fast", label: "快速模型", apiModel: "video-fast-v1" },
+      ],
+    );
+
+    expect(questions[0]?.options).toEqual([
+      { id: "video-quality", label: "高质量模型" },
+      { id: "video-fast", label: "快速模型", description: "速度优先" },
+    ]);
+  });
+
+  it("derives dependent generation options from the selected live model", () => {
+    const questions = clarificationQuestionsWithLiveModelCatalogsForTest(
+      [
+        { id: "image_model", title: "图片模型", options: [] },
+        { id: "image_aspect_ratio", title: "图片比例", options: [{ id: "1:1", label: "1:1" }] },
+        { id: "image_resolution", title: "图片分辨率", options: [] },
+        { id: "image_quality", title: "图片画质", options: [] },
+        { id: "video_model", title: "视频模型", options: [] },
+        { id: "video_resolution", title: "视频分辨率", options: [] },
+        { id: "video_duration_seconds", title: "视频时长", options: [] },
+        { id: "video_generate_audio", title: "生成声音", options: [] },
+      ],
+      [{
+        id: "image-a",
+        label: "图片 A",
+        ratioOptions: ["1:1", "16:9"],
+        resolutionOptions: ["1K", "2K"],
+        qualityOptions: ["low", "medium", "high"],
+      }],
+      [{
+        id: "video-a",
+        label: "视频 A",
+        resolutionOptions: ["480P", "720P"],
+        minDuration: 4,
+        maxDuration: 6,
+        supportsGenerateAudio: false,
+      }],
+      {
+        image_model: { option_ids: ["image-a"] },
+        video_model: { option_ids: ["video-a"] },
+      },
+    );
+
+    expect(questions.find((question) => question.id === "image_aspect_ratio")?.options)
+      .toEqual([{ id: "1:1", label: "1:1" }, { id: "16:9", label: "16:9" }]);
+    expect(questions.find((question) => question.id === "image_resolution")?.options)
+      .toEqual([{ id: "1K", label: "1K" }, { id: "2K", label: "2K" }]);
+    expect(questions.find((question) => question.id === "image_quality")?.options)
+      .toEqual([
+        { id: "low", label: "low" },
+        { id: "medium", label: "medium" },
+        { id: "high", label: "high" },
+      ]);
+    expect(questions.find((question) => question.id === "video_resolution")?.options)
+      .toEqual([{ id: "480P", label: "480P" }, { id: "720P", label: "720P" }]);
+    expect(questions.find((question) => question.id === "video_duration_seconds")?.options)
+      .toEqual([
+        { id: "4", label: "4 seconds" },
+        { id: "5", label: "5 seconds" },
+        { id: "6", label: "6 seconds" },
+      ]);
+    expect(questions.find((question) => question.id === "video_generate_audio")?.options)
+      .toEqual([]);
+  });
+
+  it("keeps tool-provided options when the model was already fixed outside the card", () => {
+    const questions = clarificationQuestionsWithLiveModelCatalogsForTest(
+      [{
+        id: "image_resolution",
+        title: "图片分辨率",
+        options_source: "selected_image_model_resolutions",
+        options: [{ id: "2K", label: "2K" }],
+      }],
+      [{ id: "image-a", label: "图片 A", resolutionOptions: ["1K", "2K"] }],
+      [],
+    );
+
+    expect(questions[0]?.options).toEqual([{ id: "2K", label: "2K" }]);
+  });
+
+  it("derives missing-field options from an already confirmed model answer", () => {
+    const questions = clarificationQuestionsWithLiveModelCatalogsForTest(
+      [
+        {
+          id: "image_resolution",
+          title: "图片分辨率",
+          options_source: "selected_image_model_resolutions",
+          options: [],
+        },
+        {
+          id: "video_duration_seconds",
+          title: "视频时长",
+          options_source: "selected_video_model_durations",
+          options: [],
+        },
+      ],
+      [{ id: "image-a", label: "图片 A", resolutionOptions: ["1K", "2K"] }],
+      [{ id: "video-a", label: "视频 A", minDuration: 4, maxDuration: 5 }],
+      {
+        image_model: { option_ids: ["image-a"] },
+        video_model: { option_ids: ["video-a"] },
+      },
+    );
+
+    expect(questions[0]?.options).toEqual([
+      { id: "1K", label: "1K" },
+      { id: "2K", label: "2K" },
+    ]);
+    expect(questions[1]?.options).toEqual([
+      { id: "4", label: "4 seconds" },
+      { id: "5", label: "5 seconds" },
+    ]);
+  });
+
+  it("derives image quality only from the selected model capability", () => {
+    expect(imageQualityOptionsForApprovalForTest({
+      qualityOptions: ["low", "medium", "high"],
+    })).toEqual(["low", "medium", "high"]);
+    expect(normalizeImageQualityForApprovalForTest(
+      "high",
+      ["low", "medium", "high"],
+    )).toBe("high");
+    expect(normalizeImageQualityForApprovalForTest("medium", [])).toBeNull();
+  });
+
   it("updates image node data before running generate_image", () => {
     const approval = {
       id: "approval-a",
@@ -3134,23 +3412,43 @@ describe("Canvas command approval image params", () => {
       }],
     };
 
-    expect(imageApprovalInitialParamsForTest(approval as never, [], "fallback-image")).toMatchObject({
+    expect(imageApprovalInitialParamsForTest(
+      approval as never,
+      [],
+      "fallback-image",
+      [{
+        id: "image-model",
+        ratioOptions: ["1:1"],
+        resolutionOptions: ["4K"],
+      }],
+    )).toMatchObject({
       nodeId: "image-a",
       nodeIds: ["image-a"],
       model: "image-model",
-      aspectRatio: "9:16",
+      aspectRatio: "1:1",
+      size: "4K",
     });
     expect(videoApprovalInitialParamsForTest(
       approval as never,
       [],
       [],
-      [{ id: "video-model", minDuration: 5, maxDuration: 15 }],
+      [{
+        id: "video-model",
+        ratioOptions: ["1:1"],
+        resolutionOptions: ["480P"],
+        minDuration: 4,
+        maxDuration: 6,
+        supportsGenerateAudio: false,
+      }],
       "fallback-video",
     )).toMatchObject({
       nodeId: "video-a",
       nodeIds: ["video-a"],
       model: "video-model",
-      durationSec: 10,
+      aspectRatio: "1:1",
+      quality: "480P",
+      durationSec: 6,
+      generateAudio: false,
     });
     expect(textApprovalInitialParamsForTest(approval as never, [])).toEqual({
       nodeIds: ["text-a"],
@@ -3223,7 +3521,7 @@ describe("Canvas command approval image params", () => {
       model: "seedream-4.5",
       aspectRatio: "16:9",
       size: "2K",
-      quality: "low",
+      quality: null,
       count: 1,
     });
 
@@ -3237,12 +3535,45 @@ describe("Canvas command approval image params", () => {
           model: "seedream-4.5",
           aspectRatio: "16:9",
           size: "2K",
-          quality: "low",
           count: 1,
         },
       },
       { type: "run_workflow", node_ids: ["image-a"], scope: "selection" },
     ]);
+  });
+
+  it("groups mixed workflow media in one approval and amends one run request", () => {
+    const approval = {
+      id: "mixed-approval", key: "mixed-approval", messageId: "assistant",
+      receivedAt: 1, commandCount: 6, plans: [],
+      envelopes: [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [
+          { type: "create_node" as const, client_id: "image-a", node_type: "imageGenNode" as const, data: { model: "image-model" } },
+          { type: "create_node" as const, client_id: "image-b", node_type: "imageGenNode" as const, data: { model: "image-model" } },
+          { type: "create_node" as const, client_id: "video-a", node_type: "videoNode" as const, data: { model: "video-model", durationSec: 5 } },
+          { type: "create_node" as const, client_id: "video-b", node_type: "videoNode" as const, data: { model: "video-model", durationSec: 5 } },
+          { type: "create_node" as const, client_id: "audio-a", node_type: "audioNode" as const, data: { audioKind: "music" } },
+          { type: "run_workflow" as const, scope: "canvas" as const },
+        ],
+      }],
+    };
+    const images = imageApprovalParamGroupsForTest(approval as never, [], "image-model");
+    const videos = videoApprovalParamGroupsForTest(
+      approval as never, [], [], [{ id: "video-model", minDuration: 5, maxDuration: 15 }], "video-model",
+    );
+    const audio = audioApprovalInitialParamsForTest(approval as never, []);
+    expect(images).toHaveLength(1);
+    expect(images[0].nodeIds).toEqual(["image-a", "image-b"]);
+    expect(videos).toHaveLength(1);
+    expect(videos[0].nodeIds).toEqual(["video-a", "video-b"]);
+    expect(audio).toHaveLength(1);
+    let amended = amendCanvasApprovalWithImageParamsForTest(approval as never, { ...images[0], count: 2 });
+    amended = amendCanvasApprovalWithVideoParamsForTest(amended, { ...videos[0], count: 2 });
+    amended = amendCanvasApprovalWithAudioParamsForTest(amended, audio[0]);
+    expect(amended.envelopes).toHaveLength(1);
+    expect(amended.envelopes[0].commands.filter((command) => command.type === "run_workflow")).toHaveLength(1);
+    expect(amended.envelopes[0].commands.filter((command) => command.type === "create_node" && command.node_type !== "audioNode").map((command) => (command as { data?: Record<string, unknown> }).data?.count)).toEqual([2, 2, 2, 2]);
   });
 
   it("keeps intentionally different image and video settings in separate rows", () => {

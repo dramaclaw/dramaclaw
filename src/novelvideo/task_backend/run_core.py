@@ -1162,6 +1162,9 @@ def run_project_task_core_sync(
                 raise
 
             completion_error: BaseException | None = None
+            completion_message = "完成"
+            if task_type == "freezone_agent_recipe_result" and isinstance(result, dict):
+                completion_message = str(result.get("message") or completion_message)
             try:
                 manager.complete_task_for_project(
                     ctx,
@@ -1170,8 +1173,8 @@ def run_project_task_core_sync(
                     beat_num=beat_num,
                     scope=scope,
                     result=result or {"ok": True},
-                    current_task="完成",
-                    logs=["完成"],
+                    current_task=completion_message,
+                    logs=[completion_message],
                     metadata=_completion_metadata_with_provider_task_id(
                         run_metadata, result
                     ),

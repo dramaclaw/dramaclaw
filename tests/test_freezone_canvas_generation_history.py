@@ -8,6 +8,7 @@ node file under a canvas — including nodes that no longer exist on the canvas.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -83,6 +84,42 @@ def test_canvas_history_rejects_bad_canvas_id(tmp_path: Path) -> None:
         read_canvas_generation_history(
             project_dir=tmp_path / "proj", canvas_id="../escape"
         )
+
+
+def test_idempotent_history_append_is_atomic_without_scanning_full_history(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import novelvideo.freezone.history as history
+
+    project_dir = tmp_path / "proj"
+    record = {
+        "id": "html:artifact:v1",
+        "job_id": "artifact:v1",
+        "status": "completed",
+        "media_type": "html",
+    }
+    monkeypatch.setattr(
+        history,
+        "_read_history_file",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("idempotent append must not scan the whole JSONL file")
+        ),
+    )
+
+    def append_once():
+        return append_generation_history(
+            project_dir=project_dir,
+            canvas_id="default",
+            node_id="html_node",
+            record=record,
+            idempotency_key=record["id"],
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(lambda _index: append_once(), range(8)))
+
+    path = generation_history_path(project_dir, "default", "html_node")
+    assert len(path.read_text(encoding="utf-8").splitlines()) == 1
 
 
 def test_delete_history_record_hides_only_target_and_keeps_append_only_file(

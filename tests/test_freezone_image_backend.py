@@ -8124,6 +8124,61 @@ async def test_freezone_image_models_prefers_ee_catalog(
     assert result == {"ok": True, "data": catalog}
 
 
+def test_freezone_image_request_defaults_quality_to_medium() -> None:
+    request = freezone_routes.FreezoneGenRequest(prompt="test")
+
+    assert request.quality == "medium"
+
+
+@pytest.mark.asyncio
+async def test_freezone_image_models_hides_server_managed_thinking_level(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_freezone_project(monkeypatch, tmp_path, project="58")
+    catalog = [
+        {
+            "id": "custom-image",
+            "providerId": "fal",
+            "apiModel": "nano-banana-2",
+            "request": {
+                "endpoint": "images/generations",
+                "parameters": [
+                    {
+                        "key": "thinking_level",
+                        "control": "select",
+                        "requestPath": "thinking_level",
+                        "options": ["low", "medium", "high"],
+                        "default": "low",
+                    },
+                    {
+                        "key": "style",
+                        "control": "select",
+                        "requestPath": "style",
+                        "options": ["natural", "vivid"],
+                        "default": "natural",
+                    },
+                ],
+            },
+        }
+    ]
+
+    async def fake_catalog(media_type: str) -> list[dict[str, object]]:
+        assert media_type == "image"
+        return catalog
+
+    monkeypatch.setattr(freezone_routes, "_ee_media_model_catalog", fake_catalog)
+
+    result = await freezone_routes.freezone_image_models(
+        project="58",
+        user={"username": "admin"},
+    )
+
+    parameters = result["data"][0]["request"]["parameters"]
+    assert [parameter["key"] for parameter in parameters] == ["style"]
+    assert len(catalog[0]["request"]["parameters"]) == 2
+
+
 def test_ce_media_catalog_overlay_preserves_unconfigured_defaults() -> None:
     defaults = [
         {
@@ -8240,6 +8295,52 @@ async def test_image_catalog_pixel_floor_is_added_to_execution_schema(
     assert schema["minPixels"] == 3_686_400
     assert values == {}
     assert entry is catalog[0]
+
+
+@pytest.mark.asyncio
+async def test_catalog_request_uses_default_for_server_managed_thinking_level(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = [
+        {
+            "id": "custom-image-id",
+            "providerId": "fal",
+            "apiModel": "nano-banana-2",
+            "request": {
+                "endpoint": "images/generations",
+                "parameters": [
+                    {
+                        "key": "thinking_level",
+                        "control": "select",
+                        "requestPath": "thinking_level",
+                        "options": ["low", "medium", "high"],
+                        "default": "low",
+                    },
+                    {
+                        "key": "style",
+                        "control": "select",
+                        "requestPath": "style",
+                        "options": ["natural", "vivid"],
+                        "default": "natural",
+                    },
+                ],
+            },
+        }
+    ]
+
+    async def fake_catalog(media_type: str) -> list[dict[str, object]]:
+        assert media_type == "image"
+        return catalog
+
+    monkeypatch.setattr(freezone_routes, "_ee_media_model_catalog", fake_catalog)
+
+    _schema, values, _entry = await freezone_routes._resolve_catalog_request(
+        "image",
+        "custom-image-id",
+        {"thinking_level": "high", "style": "vivid"},
+    )
+
+    assert values == {"thinking_level": "low", "style": "vivid"}
 
 
 @pytest.mark.asyncio

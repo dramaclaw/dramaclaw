@@ -80,11 +80,19 @@ def test_workflow_draft_lifecycle_uses_project_database(tmp_path: Path) -> None:
     assert claimed is not None
     assert claimed["status"] == "confirming"
 
+    bind_workflow_draft_task(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        task_id="task-1",
+        root_task_id="task-1",
+    )
     finished = finish_workflow_draft_confirmation(
         project_dir=tmp_path,
         canvas_id="default",
         draft_id=draft["draft_id"],
         outcome="confirmed",
+        expected_task_id="task-1",
     )
     assert finished is not None
     assert finished["status"] == "confirmed"
@@ -186,11 +194,25 @@ def test_confirmed_workflow_draft_is_not_claimed_twice(tmp_path: Path) -> None:
         intent={"skill_id": "video-ad", "user_goal": "广告"},
         compiled=_compiled(),
     )
+    claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        revision=1,
+    )
+    bind_workflow_draft_task(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        task_id="task-1",
+        root_task_id="task-1",
+    )
     finish_workflow_draft_confirmation(
         project_dir=tmp_path,
         canvas_id="default",
         draft_id=draft["draft_id"],
         outcome="confirmed",
+        expected_task_id="task-1",
     )
 
     claimed, error = claim_workflow_draft_confirmation(
@@ -355,3 +377,27 @@ def test_workflow_draft_rejects_task_identity_rebinding(tmp_path: Path) -> None:
             task_id="task-2",
             root_task_id="task-2",
         )
+
+
+def test_bound_draft_requires_task_identity_and_claimed_state(tmp_path):
+    scope = {"project_dir": tmp_path, "canvas_id": "default"}
+    draft = create_workflow_draft(
+        **scope, project_id="p", intent={}, compiled=_compiled()
+    )
+    scope["draft_id"] = draft["draft_id"]
+    with pytest.raises(ValueError, match="not been claimed"):
+        finish_workflow_draft_confirmation(**scope, outcome="confirmed")
+    claim_workflow_draft_confirmation(**scope, revision=1)
+    bind_workflow_draft_task(**scope, task_id="task-1", root_task_id="task-1")
+    with pytest.raises(ValueError, match="identity is required"):
+        finish_workflow_draft_confirmation(**scope, outcome="confirmed")
+    finish_workflow_draft_confirmation(
+        **scope, outcome="ready", expected_task_id="task-1"
+    )
+    claim_workflow_draft_confirmation(**scope, revision=1)
+    bind_workflow_draft_task(**scope, task_id="task-2", root_task_id="task-2")
+    with pytest.raises(ValueError, match="task changed"):
+        finish_workflow_draft_confirmation(
+            **scope, outcome="confirmed", expected_task_id="task-1"
+        )
+    assert read_workflow_draft(**scope)[0]["status"] == "confirming"

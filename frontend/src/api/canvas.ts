@@ -2,6 +2,27 @@
 // Copyright (c) 2026 ClaymoreLab
 import { apiCall } from "./client";
 
+/** Admit one standalone Recipe use before synchronous generation. */
+export async function admitFreezoneRecipeResult(
+  projectId: string,
+  canvasId: string,
+  nodeId: string,
+  recipeId: string,
+  attemptId: string,
+): Promise<{ operation_id: string }> {
+  return apiCall(`projects/${encodeURIComponent(projectId)}/freezone/agent-product-operations`, {
+    method: 'POST',
+    json: {
+      product_kind: 'recipe_result',
+      generation_session_id: attemptId,
+      canvas_id: canvasId,
+      artifact_id: nodeId,
+      normalized_inputs_hash: attemptId,
+      metadata: { recipe_id: recipeId, generation_attempt_id: attemptId },
+    },
+  });
+}
+
 // SuperTale-side canvas storage (`/api/v1/projects/<project_id>/freezone/canvases/*`).
 // The wire format is intentionally generic: `{nodes, edges, viewport}`. The
 // backend treats the canvas graph as opaque JSON, so node/capability evolutions stay

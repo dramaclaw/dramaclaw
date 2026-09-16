@@ -174,11 +174,14 @@ export async function generateWorkflowText(input: {
   nodePrompt: string;
   upstreamText?: string;
   upstreamContents?: UpstreamContent[];
+  requiredOutputContext?: string;
+  /** HTML uses every directly connected content input, independent of Recipe step selection. */
+  upstreamInputMode?: 'connected';
 }): Promise<string> {
   const catalog = readCatalog(input.nodeData);
   const recipeId = text(catalog?.recipeId);
   if (!recipeId) throw new Error('文本节点缺少 Recipe');
-  const upstreamText = selectWorkflowUpstreamText(
+  const upstreamText = input.upstreamInputMode === 'connected' ? input.upstreamText ?? '' : selectWorkflowUpstreamText(
     input.nodeData,
     input.upstreamContents,
     input.upstreamText ?? '',
@@ -198,7 +201,7 @@ export async function generateWorkflowText(input: {
     ...(pipeline.length > 0 ? { recipePipeline: pipeline } : {}),
     ...skillRuntimeContext(catalog),
     nodePrompt: input.nodePrompt,
-    upstreamText,
+    upstreamText: [input.requiredOutputContext, upstreamText].filter(Boolean).join("\n\n"),
     userGoal: text(catalog?.userGoal) || text(catalog?.promptBuilder?.userGoal),
   });
 }

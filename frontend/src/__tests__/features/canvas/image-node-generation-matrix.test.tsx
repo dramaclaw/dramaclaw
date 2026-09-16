@@ -54,6 +54,7 @@ vi.mock("@/api/ops", async (importOriginal) => ({
       providerId: "huimeng",
       apiModel: "test_image_api",
       label: "测试模型",
+      qualityOptions: ["low", "medium", "high"],
     },
   ]),
   listFreezoneStyleTemplates: vi.fn(async () => []),
@@ -147,7 +148,19 @@ describe("图片节点：三种参考图形态的提交载荷", () => {
       // 画布 id 从 URL 取，后端按它归档产物。
       canvasId: "canvas-7",
       nodeId: "img-1",
+      quality: "medium",
     });
+  });
+
+  it("只有节点显式设置画质时才下发 quality", async () => {
+    useCanvasStore.getState().setCanvasData(
+      [imageGenNode({ quality: "high" })],
+      [],
+    );
+
+    await submitAndSettle();
+
+    expect(payloads()[0]).toMatchObject({ quality: "high" });
   });
 
   it("图生图 —— 单张上游图", async () => {

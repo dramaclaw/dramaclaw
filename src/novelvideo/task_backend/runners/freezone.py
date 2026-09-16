@@ -75,6 +75,8 @@ async def _run_freezone_agent_product_async(
     """Wait for a trusted, persisted product result before EE settlement."""
     from novelvideo.freezone.agent_product_operations import (
         PENDING_STATUSES,
+        RECIPE_COMPILE_MESSAGES,
+        is_recipe_compile_receipt,
         read_agent_product_operation,
     )
 
@@ -103,6 +105,17 @@ async def _run_freezone_agent_product_async(
         if status == "delivered":
             evidence = operation.get("model_evidence") or {}
             result_ref = operation.get("result_ref") or {}
+            if is_recipe_compile_receipt(product_kind, operation_id, result_ref):
+                reason = result_ref["reason"]
+                return {
+                    "ok": True,
+                    "operation_id": operation_id,
+                    "product_kind": product_kind,
+                    "delivery_status": "delivered",
+                    "compile_mode": reason,
+                    "message": RECIPE_COMPILE_MESSAGES[reason],
+                    "result_ref": result_ref,
+                }
             if not evidence.get("model_call_id") or not result_ref.get("id"):
                 raise RuntimeError(
                     "agent product result lacks trusted delivery evidence"
@@ -183,6 +196,7 @@ async def _run_freezone_workflow_confirm_async(
     draft_id = str(payload.get("draft_id") or "").strip()
     revision = int(payload.get("revision") or 0)
     plan_digest = str(payload.get("plan_digest") or "").strip()
+    attempt_started_at = payload.get("confirmation_started_at")
     run_task_id = str(envelope.get("__run_task_id") or "").strip()
     if (
         not canvas_id
@@ -207,6 +221,17 @@ async def _run_freezone_workflow_confirm_async(
                 raise RuntimeError("workflow confirmation draft revision changed")
             if str(draft.get("plan_digest") or "") != plan_digest:
                 raise RuntimeError("workflow confirmation plan changed")
+            # A same-task rejection resets ready's timestamp. Report the
+            # delivery rejection rather than misclassifying it as a newer run.
+            same_task_rejected = (
+                draft.get("status") == "ready"
+                and str(draft.get("task_id") or "") == run_task_id
+                and draft.get("confirmation_started_at") is None
+            )
+            if attempt_started_at is not None and not same_task_rejected and (
+                draft.get("confirmation_started_at") != attempt_started_at
+            ):
+                raise RuntimeError("workflow confirmation attempt changed")
             bound_task_id = str(draft.get("task_id") or "")
             if bound_task_id and bound_task_id != run_task_id:
                 raise RuntimeError(
@@ -241,6 +266,7 @@ async def _run_freezone_workflow_confirm_async(
                 draft_id=draft_id,
                 outcome="ready",
                 expected_task_id=run_task_id,
+                expected_confirmation_started_at=attempt_started_at,
             )
         except ValueError:
             # A newer confirmation task owns the draft; the old task may fail,

@@ -1,4 +1,5 @@
-import type { CanvasEdge, CanvasNode } from "@/features/canvas/domain/canvasNodes";
+import {htmlArtifactCommandError} from '@/features/html-artifacts/commands';
+import type { CanvasEdge, CanvasNode, VideoGenMode } from "@/features/canvas/domain/canvasNodes";
 import { CANVAS_NODE_TYPES, type CanvasNodeData } from "@/features/canvas/domain/canvasNodes";
 import {
   isPresetManagedNode,
@@ -8,8 +9,9 @@ import {
   VIDEO_UPSCALE_DENOISE_OPTIONS,
   VIDEO_UPSCALE_RESOLUTIONS,
 } from "@/features/canvas/application/videoUpscale";
-import { getDownstreamSpawnTypes } from "@/features/canvas/domain/nodeRegistry";
+import { getDownstreamSpawnTypes, getNodeDefinition, nodeHasSourceHandle } from "@/features/canvas/domain/nodeRegistry";
 import { buildCanvasNodeActionCatalog } from "@/features/freezone/context/canvasActionCatalog";
+import { isAgentExecutableNodeAction } from "@/features/freezone/canvasNodeActionCatalog";
 import {
   isBeatContextAgentEditablePatch,
   normalizeCanvasCommandCreateNodeData,
@@ -78,24 +80,28 @@ function makeVirtualNode(command: {
     id: command.client_id,
     type: command.node_type,
     position: { x: 0, y: 0 },
-    data: command.data ?? {},
+    data: { ...getNodeDefinition(command.node_type).createDefaultData(), ...command.data },
   } as CanvasNode;
 }
 
-function validateModelEnumField(
+function validateModelAndModeFields(
   issues: CanvasCommandValidationIssue[],
   path: string,
   node: CanvasNode,
   data: Partial<CanvasNodeData>,
 ): void {
   const schema = buildCanvasNodeActionCatalog(node).editable_schema;
-  for (const [field, value] of Object.entries(data)) {
-    if (field !== "model") continue;
+  const values = { ...data } as Record<string, unknown>;
+  if (node.type === CANVAS_NODE_TYPES.video && ("model" in data || "genMode" in data)) {
+    values.genMode = (node.data as { genMode?: unknown }).genMode ?? "textToVideo";
+  }
+  for (const [field, value] of Object.entries(values)) {
+    if (field !== "model" && field !== "genMode") continue;
     if (value === undefined || value === null || value === "") continue;
     const fieldSchema = schema[field];
     if (fieldSchema?.type !== "enum") continue;
     const options = fieldSchema.options ?? [];
-    if (options.length === 0) continue;
+    if (options.length === 0 && field === "model") continue;
     if (options.some((option) => Object.is(option, value))) continue;
     addIssue(
       issues,
@@ -190,6 +196,20 @@ export function validateCanvasChatCommandEnvelopes(
     envelope.commands.forEach((command, commandIndex) => {
       const path = commandPath(envelopeIndex, commandIndex);
       switch (command.type) {
+        case "html_artifact": {
+          const error = htmlArtifactCommandError(command);
+          if (error) addIssue(issues,path,error);
+          for (const id of command.reference_node_ids ?? []) {
+            const source = nodeById.get(id);
+            if (!source || !nodeHasSourceHandle(source.type)) addIssue(issues,path,`HTML reference node is unavailable: ${id}`);
+          }
+          if (!error && (command.action === "create" || command.action === "prepare") && command.client_id) {
+            const virtualNode = makeVirtualNode({client_id:command.client_id,node_type:"htmlArtifactNode",data:command.workflow_data})!;
+            clientIds.add(virtualNode.id);
+            nodeById.set(virtualNode.id,virtualNode);
+          }
+          break;
+        }
         case "clear_canvas":
           // The executor resolves the current canvas contents at approval
           // time, so there are no ids to validate in the command payload.
@@ -211,14 +231,14 @@ export function validateCanvasChatCommandEnvelopes(
           if (reserved.length > 0) {
             addIssue(issues, path, `reserved data fields are not allowed: ${reserved.join(", ")}`);
           }
-          validateModelEnumField(
+          validateModelAndModeFields(
             issues,
             path,
             virtualNode ?? ({
               id: `__validate__:${command.node_type}`,
               type: command.node_type,
               position: { x: 0, y: 0 },
-              data,
+              data: { ...getNodeDefinition(command.node_type).createDefaultData(), ...data },
             } as CanvasNode),
             data,
           );
@@ -263,14 +283,14 @@ export function validateCanvasChatCommandEnvelopes(
             addIssue(issues, path, `reserved data fields are not allowed: ${reserved.join(", ")}`);
           }
           if (nodeType) {
-            validateModelEnumField(
+            validateModelAndModeFields(
               issues,
               path,
               {
                 id: command.client_id ?? `__validate__:${nodeType}`,
                 type: nodeType,
                 position: { x: 0, y: 0 },
-                data,
+                data: { ...getNodeDefinition(nodeType).createDefaultData(), ...data },
               } as CanvasNode,
               data,
             );
@@ -311,12 +331,13 @@ export function validateCanvasChatCommandEnvelopes(
             if (invalid.length > 0) {
               addIssue(issues, path, `fields are not editable on this node: ${invalid.join(", ")}`);
             }
-            validateModelEnumField(
+            validateModelAndModeFields(
               issues,
               path,
               { ...target, data: { ...target.data, ...data } as CanvasNodeData },
               data,
             );
+            nodeById.set(target.id, { ...target, data: { ...target.data, ...data } as CanvasNodeData });
           }
           break;
         }
@@ -427,10 +448,19 @@ export function validateCanvasChatCommandEnvelopes(
           break;
         }
         case "run_node_action": {
+          if (!isAgentExecutableNodeAction(command.action)) {
+            addIssue(issues, path, `mainline write action is manual-only: ${command.action}`);
+            break;
+          }
           const target = nodeById.get(command.node_id);
           if (!target) {
             addIssue(issues, path, `node not found: ${command.node_id}`);
             break;
+          }
+          if (target.type === CANVAS_NODE_TYPES.video && command.action === "generate_video") {
+            validateModelAndModeFields(issues, path, target, {
+              genMode: (target.data as { genMode?: VideoGenMode }).genMode ?? "textToVideo",
+            });
           }
           const action = buildCanvasNodeActionCatalog(target, { nodes, edges }).actions.find(
             (item) => item.action === command.action,
@@ -444,6 +474,40 @@ export function validateCanvasChatCommandEnvelopes(
               ? action.blocked_reasons.join("; ")
               : `action is blocked: ${command.action}`;
             addIssue(issues, path, `action preconditions are not satisfied: ${reasons}`);
+          }
+          if (
+            target.type === CANVAS_NODE_TYPES.htmlArtifact &&
+            (command.action === "update_source" || command.action === "restore" || command.action === "select_version")
+          ) {
+            const params = command.parameters && typeof command.parameters === "object" && !Array.isArray(command.parameters)
+              ? command.parameters as Record<string, unknown>
+              : {};
+            const artifactId = typeof target.data.artifactId === "string" ? target.data.artifactId.trim() : "";
+            const positiveInteger = (value: unknown) =>
+              typeof value === "number" && Number.isInteger(value) && value > 0;
+            if (command.action === "update_source") {
+              if (typeof params.html !== "string" || !params.html) {
+                addIssue(issues, path, "update_source requires complete HTML source");
+              } else if (new TextEncoder().encode(params.html).length > 2 * 1024 * 1024) {
+                addIssue(issues, path, "update_source HTML exceeds 2 MiB");
+              }
+              if (typeof params.title === "string" && params.title.length > 200) {
+                addIssue(issues, path, "update_source title exceeds 200 characters");
+              }
+              if (artifactId && !positiveInteger(params.base_version)) {
+                addIssue(issues, path, "update_source requires positive base_version for a saved HTML node");
+              }
+            } else if (command.action === "restore") {
+              if (!artifactId) addIssue(issues, path, "restore requires a saved HTML artifact");
+              if (!positiveInteger(params.version) || !positiveInteger(params.base_version)) {
+                addIssue(issues, path, "restore requires positive version and base_version");
+              }
+            } else {
+              if (!artifactId) addIssue(issues, path, "select_version requires a saved HTML artifact");
+              if (!positiveInteger(params.version)) {
+                addIssue(issues, path, "select_version requires positive version");
+              }
+            }
           }
           if (target.type === CANVAS_NODE_TYPES.audio && command.action === "download_audio") {
             const format =

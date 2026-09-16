@@ -19,6 +19,7 @@ import {
 } from "@/features/canvas/nodes/referenceOrdering";
 import {
   buildCanvasNodeActionCatalog,
+  isAgentExecutableNodeAction,
   type CanvasNodeActionCatalog,
 } from "@/features/freezone/canvasNodeActionCatalog";
 import {
@@ -45,6 +46,7 @@ import { canvasLinkTypeCatalogJson } from "@/features/freezone/canvasEdgeSemanti
 import { assetToPushTarget } from "@/features/freezone/commit/pushTarget";
 import { personalCanvasIdForUsername } from "@/features/freezone/projections";
 import { useAuthStore } from "@/stores/auth-store";
+import { executeHtmlNodeReadAction } from "@/features/html-artifacts/nodeActions";
 
 export const CANVAS_NODE_REFERENCE_ATTACHMENT_TYPE = "canvas_node_reference";
 export const CANVAS_NODE_REFERENCE_SCHEMA_VERSION = "canvas_node_reference.v1";
@@ -63,6 +65,7 @@ export function canvasSelectionAttachmentDeliveryKey(
 }
 
 type CanvasNodeReferenceItem = {
+  html_artifact?: { id: string; version: number };
   node_id: string;
   node_type: string | null;
   label: string;
@@ -116,6 +119,12 @@ export type CanvasContextRequest =
   | { type: "node_detail"; node_id?: string }
   | { type: "neighbor_graph"; node_id?: string; depth?: number }
   | { type: "node_action_catalog"; node_id?: string; action?: string }
+  | {
+      type: "node_action_read";
+      node_id?: string;
+      action?: "read_source" | "history";
+      parameters?: Record<string, unknown>;
+    }
   | { type: "action_catalog"; node_id?: string; action?: string }
   | { type: "action_catalog_by_id"; action_id?: string }
   | { type: "node_create_schema"; node_type?: CanvasNodeType }
@@ -219,15 +228,19 @@ function buildAgentCanvasNodeActionCatalog(
   context?: { nodes?: readonly CanvasNode[]; edges?: readonly CanvasEdge[] },
 ): CanvasNodeActionCatalog & Record<string, unknown> {
   const catalog = buildCanvasNodeActionCatalog(node, context);
-  if (node.type !== CANVAS_NODE_TYPES.beatContext) return catalog;
+  const executableActions = catalog.actions.filter((action) =>
+    isAgentExecutableNodeAction(action.action));
+  if (node.type !== CANVAS_NODE_TYPES.beatContext) {
+    return { ...catalog, actions: executableActions };
+  }
   return {
     ...catalog,
     downstream_spawn_types: [],
-    actions: catalog.actions.filter(
+    actions: executableActions.filter(
       (action) => action.action !== "add_next_node",
     ),
     instruction:
-      "这是镜头上下文节点。agent 可以修改的参数只有 node_detail.parameters 中的 visual_description、scene_ref、time_of_day；不要修改出场身份或出场道具。修改这些字段时使用 update_node_data。需要写回主线时，先更新草稿字段，再使用 run_node_action，action 必须是 sync_beat_context_to_mainline。",
+      "这是镜头上下文节点。agent 可以修改的参数只有 node_detail.parameters 中的 visual_description、scene_ref、time_of_day；不要修改出场身份或出场道具。修改这些字段时使用 update_node_data。写回主线只能由用户使用界面中的手动入口。",
   };
 }
 
@@ -271,6 +284,10 @@ function buildAgentCanvasActionCatalog(
   const catalog = buildCanvasActionCatalog([...nodes], [...edges]);
   return {
     ...catalog,
+    frontend_command_catalog: catalog.frontend_command_catalog.filter((capability) => {
+      const action = capability.id.startsWith("ui.") ? capability.id.slice(3) : capability.id;
+      return isAgentExecutableNodeAction(action);
+    }),
     node_action_catalogs: nodes.map((node) =>
       buildAgentCanvasNodeActionCatalog(node, { nodes, edges }),
     ),
@@ -303,13 +320,22 @@ function nodeTextReference(
 function nodeReferenceItem(
   node: CanvasNode,
   context?: { nodes?: readonly CanvasNode[]; edges?: readonly CanvasEdge[] },
+  options: { includeActionCatalog?: boolean } = {},
 ): CanvasNodeReferenceItem {
   const textReference = nodeTextReference(node);
+  const artifactId = node.data.artifactId;
+  const artifactVersion = node.data.artifactVersion;
+  const htmlArtifact = node.type === CANVAS_NODE_TYPES.htmlArtifact &&
+    typeof artifactId === "string" && artifactId.trim() &&
+    typeof artifactVersion === "number" && Number.isInteger(artifactVersion) && artifactVersion > 0
+      ? { id: artifactId, version: artifactVersion }
+      : null;
   return {
     node_id: node.id,
     node_type: node.type ?? null,
     label: resolveNodeDisplayName(node.type, node.data),
     ...textReference,
+    ...(htmlArtifact ? { html_artifact: htmlArtifact } : {}),
     media_type: nodeMediaType(node),
     source_url: nodeSourceUrl(node),
     preview_url: nodePreviewUrl(node),
@@ -319,7 +345,10 @@ function nodeReferenceItem(
     candidate_origin:
       (node.data as { candidate_origin?: unknown }).candidate_origin ?? null,
     position: { x: node.position.x, y: node.position.y },
-    action_catalog: buildAgentCanvasNodeActionCatalog(node, context),
+    action_catalog:
+      options.includeActionCatalog === false
+        ? ({} as CanvasNodeActionCatalog & Record<string, unknown>)
+        : buildAgentCanvasNodeActionCatalog(node, context),
   };
 }
 
@@ -483,17 +512,33 @@ function parseCanvasContextRequest(
                   : undefined,
       };
     case "node_detail":
+      return {
+        type: "node_detail",
+        node_id: typeof value.node_id === "string" ? value.node_id : undefined,
+      };
+    case "audio_voice_options":
+      return {
+        type: "audio_voice_options",
+        node_id: typeof value.node_id === "string" ? value.node_id : undefined,
+      };
     case "node_action_catalog":
     case "action_catalog":
-    case "audio_voice_options":
       return {
         type: value.type,
         node_id: typeof value.node_id === "string" ? value.node_id : undefined,
-        ...((value.type === "node_action_catalog" || value.type === "action_catalog") &&
-        typeof value.action === "string" &&
-        value.action.trim()
+        ...(typeof value.action === "string" && value.action.trim()
           ? { action: value.action.trim() }
           : {}),
+      };
+    case "node_action_read":
+      return {
+        type: "node_action_read",
+        node_id: typeof value.node_id === "string" ? value.node_id : undefined,
+        action:
+          value.action === "read_source" || value.action === "history"
+            ? value.action
+            : undefined,
+        parameters: isRecord(value.parameters) ? value.parameters : undefined,
       };
     case "neighbor_graph":
       return {
@@ -619,9 +664,9 @@ export function shouldIncludeCanvasSummary(
   text: string,
   options: { hasFocusedNodeContext?: boolean } = {},
 ): boolean {
-  void options;
   const trimmed = text.trim();
   if (!trimmed) return false;
+  if (options.hasFocusedNodeContext) return false;
   return true;
 }
 
@@ -762,7 +807,7 @@ export function buildCanvasNodeReferenceAttachment(
   nodes: CanvasNode[],
   edges: CanvasEdge[] = [],
   allNodes: CanvasNode[] = nodes,
-  options: { displayNodes?: CanvasNode[] } = {},
+  options: { displayNodes?: CanvasNode[]; includeActionCatalog?: boolean } = {},
 ): ChatAttachment | null {
   const referencedNodes = nodes.filter((node) => node.id);
   if (referencedNodes.length === 0) return null;
@@ -784,10 +829,10 @@ export function buildCanvasNodeReferenceAttachment(
     project,
     canvas_id: canvasId,
     display_nodes: displayNodes.map((node) =>
-      nodeReferenceItem(node, actionContext),
+      nodeReferenceItem(node, actionContext, options),
     ),
     nodes: referencedNodes.map((node) =>
-      nodeReferenceItem(node, actionContext),
+      nodeReferenceItem(node, actionContext, options),
     ),
     edges: referencedEdges.map((edge) => edgeReferenceItem(edge, nodeById)),
   };
@@ -1879,6 +1924,32 @@ export async function buildCanvasContextRequestResponses(params: {
           });
           break;
         }
+        case "node_action_read": {
+          const node = request.node_id
+            ? nodeById.get(request.node_id)
+            : undefined;
+          if (!node) throw new Error(`node not found: ${request.node_id ?? ""}`);
+          if (!request.action) throw new Error("unsupported HTML read action");
+          const actionDefinition = buildCanvasNodeActionCatalog(node, {
+            nodes: params.nodes,
+            edges: params.edges,
+          }).actions.find((item) => item.action === request.action);
+          if (!actionDefinition || actionDefinition.effect !== "read") {
+            throw new Error(`node action is not readable: ${request.action}`);
+          }
+          response.push({
+            type: "node_action_read",
+            node_id: node.id,
+            action: request.action,
+            data: await executeHtmlNodeReadAction({
+              projectId: params.project,
+              node,
+              action: request.action,
+              parameters: request.parameters,
+            }),
+          });
+          break;
+        }
         case "neighbor_graph": {
           const nodeIds = request.node_id
             ? collectNeighborNodeIds(
@@ -2035,6 +2106,7 @@ function compactActionSummary(
     ? catalog.actions.map((action) => ({
         action: action.action,
         execution: action.execution,
+        effect: action.effect ?? null,
         command_type: action.command_type ?? null,
       }))
     : [];
@@ -2146,6 +2218,7 @@ function compactNodeDetailItem(
     label: node.label,
     position: node.position,
   };
+  if (node.html_artifact) item.html_artifact = node.html_artifact;
   if (node.text_field) item.text_field = node.text_field;
   const textPreview = compactTextPreview(node.text_content);
   if (textPreview) item.text_preview = textPreview;
@@ -2220,6 +2293,7 @@ export function buildCanvasNodeReferenceContext(
     "These are compact references for the current user turn. Treat display nodes as the user's visible target; child summaries provide orientation only.",
     "Use action_summary_json for quick routing. Request freezone_get_node_detail for node parameters and dynamic options. Node parameters are not toolbar/action/tool parameters; for questions about an action or panel, request freezone_get_node_action_catalog with action before answering.",
     "Referenced edges are only for unlink, disconnect, or remove-connection requests.",
+    "html_artifact_json is read-only saved identity/version. Use the HTML node actions read_source and update_source; preserve artifact identity and pass the read base_version. Never change artifactId/artifactVersion via editable node fields.",
     "Keep user-visible replies concise and non-technical. Do not mention raw JSON, schema names, field ids, action ids, command ids, or node_id unless the user asks for implementation details.",
   ];
 
@@ -2250,6 +2324,8 @@ export function buildCanvasNodeReferenceContext(
       lines.push(`${prefix}_type: ${node.node_type ?? ""}`);
       lines.push(`${prefix}_label: ${node.label}`);
       lines.push(`${prefix}_position_json: ${JSON.stringify(node.position)}`);
+      if (node.html_artifact)
+        lines.push(`${prefix}_html_artifact_json: ${JSON.stringify(node.html_artifact)}`);
       if (node.text_field)
         lines.push(`${prefix}_text_field: ${node.text_field}`);
       const textPreview = compactTextPreview(node.text_content);

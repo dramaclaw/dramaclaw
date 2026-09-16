@@ -82,8 +82,16 @@ vi.mock("@/api/canvas", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/canvas")>();
   return {
     ...actual,
-    createFreezoneWorkflowRun: vi.fn(async () => ({ run_id: "run-test" })),
-    updateFreezoneWorkflowRun: vi.fn(async () => ({ run_id: "run-test" })),
+    createFreezoneWorkflowRun: vi.fn(async () => ({
+      run_id: "run-test",
+      status: "running",
+      actions: [],
+    })),
+    updateFreezoneWorkflowRun: vi.fn(async () => ({
+      run_id: "run-test",
+      status: "running",
+      actions: [],
+    })),
   };
 });
 
@@ -3744,14 +3752,9 @@ describe("canvas chat commands", () => {
         },
       }),
     );
-    expect(agentCatalog.actions).toContainEqual(
-      expect.objectContaining({
-        action: "sync_beat_context_to_mainline",
-        execution: "frontend_node",
-        command_type: "run_node_action",
-        parameters: { node_id: "context-beat" },
-      }),
-    );
+    expect(
+      agentCatalog.actions.map((action: { action: string }) => action.action),
+    ).not.toContain("sync_beat_context_to_mainline");
     expect(
       agentCatalog.actions.find(
         (action: { action: string }) => action.action === "update_node_data",
@@ -3760,7 +3763,7 @@ describe("canvas chat commands", () => {
     expect(agentCatalog.instruction).toContain(
       "修改这些字段时使用 update_node_data",
     );
-    expect(agentCatalog.instruction).toContain("sync_beat_context_to_mainline");
+    expect(agentCatalog.instruction).toContain("只能由用户使用界面中的手动入口");
     expect(
       agentCatalog.actions.map((action: { action: string }) => action.action),
     ).not.toContain("add_next_node");
@@ -3798,10 +3801,27 @@ describe("canvas chat commands", () => {
 
     expect(response).not.toContain('"editable_fields"');
     expect(response).not.toContain('"editable_schema"');
-    expect(response).toContain("sync_beat_context_to_mainline");
+    expect(response).not.toContain("sync_beat_context_to_mainline");
     expect(response).toContain("For node editable parameters");
 
     useCanvasStore.getState().setCanvasData([node], []);
+    const replayedMainlineWrite = applyCanvasChatCommands([
+      {
+        schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+        commands: [
+          {
+            type: "run_node_action",
+            node_id: node.id,
+            action: "sync_beat_context_to_mainline",
+          },
+        ],
+      },
+    ]);
+    expect(replayedMainlineWrite.applied).toBe(0);
+    expect(replayedMainlineWrite.errors.join("\n")).toContain(
+      "mainline write action is manual-only",
+    );
+
     const result = applyCanvasChatCommands(
       extractCanvasChatCommandEnvelopes([
         {
@@ -3958,6 +3978,11 @@ describe("canvas chat commands", () => {
     expect(shouldIncludeCanvasSummary("基于当前画布搭一个流程")).toBe(true);
     expect(shouldIncludeCanvasSummary("加一个图片节点")).toBe(true);
     expect(shouldIncludeCanvasSummary("我想做个公益短片没思路")).toBe(true);
+    expect(
+      shouldIncludeCanvasSummary("重新选择图片模型", {
+        hasFocusedNodeContext: true,
+      }),
+    ).toBe(false);
   });
 
   it("keeps text node references free of legacy semantic guidance", () => {
@@ -7836,6 +7861,72 @@ describe("canvas chat commands", () => {
       );
 
       expect(result.errors).toEqual(["当前画布已有工作流正在执行，请等待其完成后再试。"]);
+      expect(events).toEqual([]);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("does not start node actions when the workflow run cannot be persisted", async () => {
+    const store = useCanvasStore.getState();
+    const imageNodeId = store.addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { prompt: "商品主图" },
+    );
+    const events: string[] = [];
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      events.push(payload.nodeId);
+    });
+    vi.mocked(createFreezoneWorkflowRun).mockRejectedValueOnce(
+      new ApiError("database unavailable", 503),
+    );
+
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_workflow", node_ids: [imageNodeId] }],
+        }]),
+        { projectId: "project-a", canvasId: "canvas-a", actionTimeoutMs: 100 },
+      );
+
+      expect(result.errors).toEqual([
+        "无法创建持久化工作流记录，未启动节点动作：database unavailable",
+      ]);
+      expect(events).toEqual([]);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("stops before dispatch when the persisted workflow state cannot be updated", async () => {
+    const store = useCanvasStore.getState();
+    const imageNodeId = store.addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { prompt: "商品主图" },
+    );
+    const events: string[] = [];
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      events.push(payload.nodeId);
+    });
+    vi.mocked(updateFreezoneWorkflowRun).mockRejectedValueOnce(
+      new ApiError("database unavailable", 503),
+    );
+
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_workflow", node_ids: [imageNodeId] }],
+        }]),
+        { projectId: "project-a", canvasId: "canvas-a", actionTimeoutMs: 100 },
+      );
+
+      expect(result.errors).toEqual([
+        "工作流状态保存失败，已停止启动后续节点：database unavailable",
+      ]);
       expect(events).toEqual([]);
     } finally {
       unsubscribe();

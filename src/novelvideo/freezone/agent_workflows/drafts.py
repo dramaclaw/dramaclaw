@@ -28,6 +28,18 @@ def build_workflow_draft_patch(
     compile_intent: Any,
     run_after_create: bool | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    if "run_after_create" in changes:
+        policy = changes["run_after_create"]
+        if not isinstance(policy, bool) or (run_after_create is not None and run_after_create != policy):
+            return None, {"ok": False, "status": "invalid_workflow_draft_patch",
+                          "error": "run_after_create must be a boolean matching the explicit policy"}
+        run_after_create = policy
+        changes = {key: value for key, value in changes.items() if key != "run_after_create"}
+        if not changes and isinstance(payload.get("compiled"), dict):
+            return {"intent": deepcopy(payload.get("intent") or {}),
+                    "compiled": deepcopy(payload["compiled"]),
+                    "last_changes": {"run_after_create": policy},
+                    "run_after_create": policy}, None
     # 模型常把 skill_id/draft_id 原样回显进 changes；等值回显不是修改,直接忽略。
     changes = {
         key: value

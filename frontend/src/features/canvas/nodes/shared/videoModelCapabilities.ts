@@ -627,6 +627,12 @@ export function videoSubmitMediaRejectionReason(
   model: VideoModelRef,
   counts: { images: number; videos: number; audios: number },
 ): string | null {
+  if (!isVideoModeSupportedByModel(mode, model)) {
+    return "node.videoModel.reason.modeUnsupported";
+  }
+  if (counts.images > 0 && videoEmptyStateCtaModes(model).length === 0) {
+    return "node.videoModel.reason.imageUnsupported";
+  }
   if (counts.videos > 0 && mode !== "allReference" && mode !== "videoEdit") {
     return "node.videoModel.reason.videoUnsupported";
   }
@@ -674,6 +680,9 @@ export function videoModelReferenceDisabledReason(
   counts: { images: number; videos: number; audios: number },
 ): string | null {
   if (typeof model === "object" && model !== null && (model.supportedModes?.length ?? 0) > 0) {
+    if (counts.images > 0 && videoEmptyStateCtaModes(model).length === 0) {
+      return "node.videoModel.reason.imageUnsupported";
+    }
     const supportsAllReference = isVideoModeSupportedByModel("allReference", model);
     const supportsVideoEdit = isVideoModeSupportedByModel("videoEdit", model);
     if (counts.videos > 0 && !supportsAllReference && !supportsVideoEdit) {

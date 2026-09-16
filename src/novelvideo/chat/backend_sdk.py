@@ -6,9 +6,23 @@ import logging
 import os
 import threading
 import tomllib
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncIterator, Literal, Protocol, runtime_checkable
+from typing import Any, AsyncIterator, Literal
+
+from novelvideo.chat.runtime_port import (
+    AgentRuntimeThreadPort,
+    ChatBackendEvent,
+    ChatRunResult,
+)
+
+__all__ = [
+    "AgentRuntimeThreadPort",
+    "ChatBackendEvent",
+    "ChatRunResult",
+    "ClaudeCliClient",
+    "ClaudeSdkClient",
+    "CodexClient",
+]
 
 _log = logging.getLogger(__name__)
 
@@ -46,62 +60,19 @@ _CODEX_LIFECYCLE_ONLY_EVENTS = {
     "egress_submitted",
 }
 
-
-@dataclass(slots=True)
-class ChatBackendEvent:
-    type: Literal[
-        "thread_started",
-        "turn_started",
-        "turn_completed",
-        "assistant_delta",
-        "thought_delta",
-        "plan_update",
-        "tool_started",
-        "tool_updated",
-        "tool_update",
-        "permission_requested",
-        "usage_update",
-        "complete",
-        # Internal lifecycle signals. They never reach a WebSocket, a chat
-        # transcript or model text; the streaming loop already carries turn
-        # boundaries, and the egress ledger needs to know exactly where the
-        # request crossed into the agent.
-        "egress_submitted",
-        "egress_disposition",
-    ]
-    thread_id: str | None = None
-    turn_id: str | None = None
-    #: Set on ``egress_disposition`` only. States how the turn ended, because
-    #: ``complete`` is also synthesised for timeouts and cannot prove success.
-    disposition: str | None = None
-    text: str | None = None
-    name: str | None = None
-    call_id: str | None = None
-    status: str | None = None
-    input: Any | None = None
-    output: Any | None = None
-    error: Any | None = None
-    request_id: str | int | None = None
-    options: list[dict[str, Any]] | None = None
-    entries: list[dict[str, Any]] | None = None
-    usage: dict[str, Any] | None = None
-    structured: Any | None = None
-    raw: Any | None = None
+# These MCP tools intentionally keep the App Server turn open while a durable
+# frontend card waits for the user. Their own bridge timeout reports a
+# recoverable ``pending_user_input`` result, so the generic runtime idle guard
+# must not interrupt them first.
+_CODEX_USER_INPUT_TOOL_NAMES = {
+    "freezone_request_user_clarification",
+    "freezone_finish_agent_catalog_draft",
+}
 
 
-@dataclass(slots=True)
-class ChatRunResult:
-    thread_id: str
-    text: str
-
-
-@runtime_checkable
-class AgentRuntimeThreadPort(Protocol):
-    """Stable DramaClaw boundary implemented by Codex, Hermes, and Claude."""
-
-    id: str | None
-
-    def stream(self, prompt: str) -> AsyncIterator[ChatBackendEvent]: ...
+def _codex_tool_waits_for_user_input(name: str | None) -> bool:
+    normalized = str(name or "").strip()
+    return normalized.rsplit(".", 1)[-1] in _CODEX_USER_INPUT_TOOL_NAMES
 
 
 _LIVE_CODEX_TURNS: dict[tuple[str, str], Any] = {}
@@ -1205,6 +1176,7 @@ def _start_codex_turn(
     thread: Any,
     prompt: str,
     turn_metadata: dict[str, str],
+    output_schema: dict[str, Any] | None = None,
 ) -> Any:
     """Start a turn with metadata omitted by the 0.147 generated facade.
 
@@ -1214,7 +1186,7 @@ def _start_codex_turn(
     of the long-lived thread configuration.
     """
 
-    if not turn_metadata:
+    if not turn_metadata and output_schema is None:
         from openai_codex import TextInput
 
         return thread.turn(TextInput(prompt))
@@ -1222,11 +1194,24 @@ def _start_codex_turn(
     from openai_codex._inputs import TextInput, _normalize_run_input, _to_wire_input
     from openai_codex.api import TurnHandle
 
+    if output_schema is not None:
+        from novelvideo.chat.canvas_outcome import CANVAS_FINAL_RESPONSE_INSTRUCTIONS, CANVAS_REPLY_SCHEMA
+
+        contract = (
+            CANVAS_FINAL_RESPONSE_INSTRUCTIONS if output_schema == CANVAS_REPLY_SCHEMA
+            else "Your final response must be exactly one JSON object matching the supplied schema."
+        )
+        prompt += "\n\n" + contract + "\nFinal response JSON schema: " + json.dumps(output_schema, ensure_ascii=False)
     wire_input = _to_wire_input(_normalize_run_input(TextInput(prompt)))
+    params: dict[str, Any] = {}
+    if turn_metadata:
+        params["responsesapiClientMetadata"] = dict(turn_metadata)
+    if output_schema is not None:
+        params["outputSchema"] = output_schema
     started = thread._client.turn_start(
         thread.id,
         wire_input,
-        params={"responsesapiClientMetadata": dict(turn_metadata)},
+        params=params,
     )
     return TurnHandle(thread._client, thread.id, started.turn.id)
 
@@ -1244,6 +1229,7 @@ class CodexClient:
         config_overrides: tuple[str, ...] = (),
         thread_config_overrides: tuple[str, ...] | None = None,
         turn_metadata: dict[str, str] | None = None,
+        output_schema: dict[str, Any] | None = None,
     ) -> None:
         self._codex_bin = codex_bin
         self._cwd = cwd
@@ -1259,6 +1245,7 @@ class CodexClient:
         )
         self._thread_config = _codex_thread_config(effective_thread_overrides, env)
         self._turn_metadata = dict(turn_metadata or {})
+        self._output_schema = output_schema
 
     def thread_start(self) -> "CodexThread":
         return CodexThread(
@@ -1271,6 +1258,7 @@ class CodexClient:
             config_overrides=self._config_overrides,
             thread_config=self._thread_config,
             turn_metadata=self._turn_metadata,
+            output_schema=self._output_schema,
             thread_id=None,
         )
 
@@ -1285,6 +1273,7 @@ class CodexClient:
             config_overrides=self._config_overrides,
             thread_config=self._thread_config,
             turn_metadata=self._turn_metadata,
+            output_schema=self._output_schema,
             thread_id=thread_id,
         )
 
@@ -1303,6 +1292,7 @@ class CodexThread:
         thread_config: dict[str, Any],
         turn_metadata: dict[str, str],
         thread_id: str | None,
+        output_schema: dict[str, Any] | None = None,
     ) -> None:
         self._codex_bin = codex_bin
         self._cwd = cwd
@@ -1313,6 +1303,7 @@ class CodexThread:
         self._config_overrides = tuple(config_overrides)
         self._thread_config = dict(thread_config)
         self._turn_metadata = dict(turn_metadata)
+        self._output_schema = output_schema
         self.id = thread_id
 
     async def stream(self, prompt: str) -> AsyncIterator[ChatBackendEvent]:
@@ -1389,7 +1380,9 @@ class CodexThread:
                     thread_options,
                 )
                 self.id = thread.id
-                turn = _start_codex_turn(thread, prompt, self._turn_metadata)
+                turn = _start_codex_turn(
+                    thread, prompt, self._turn_metadata, self._output_schema
+                )
                 nonlocal current_turn_id
                 current_turn_id = turn.id
                 register_live_codex_turn(self.id, turn.id, turn)
@@ -1830,14 +1823,22 @@ class CodexThread:
         idle_deadline = started_at + CODEX_STREAM_IDLE_TIMEOUT
         total_deadline = started_at + CODEX_STREAM_TOTAL_TIMEOUT
         saw_runtime_progress = False
+        user_input_calls: set[str] = set()
         timed_out = False
 
         try:
             while True:
-                deadline = min(
-                    total_deadline,
-                    idle_deadline if saw_runtime_progress else first_progress_deadline,
-                )
+                if user_input_calls:
+                    deadline = total_deadline
+                else:
+                    deadline = min(
+                        total_deadline,
+                        (
+                            idle_deadline
+                            if saw_runtime_progress
+                            else first_progress_deadline
+                        ),
+                    )
                 remaining = deadline - loop.time()
                 try:
                     if remaining <= 0:
@@ -1848,7 +1849,9 @@ class CodexThread:
                 except asyncio.TimeoutError:
                     timed_out = True
                     now = loop.time()
-                    if now >= total_deadline:
+                    if user_input_calls:
+                        timeout_kind = "user-input"
+                    elif now >= total_deadline:
                         timeout_kind = "total"
                     elif saw_runtime_progress:
                         timeout_kind = "idle"
@@ -1878,8 +1881,13 @@ class CodexThread:
                                 exc_info=True,
                             )
 
+                    timeout_message = (
+                        "等待用户确认超时，请重新提交确认卡。"
+                        if timeout_kind == "user-input"
+                        else "Codex App Server 响应超时，请重试。"
+                    )
                     timeout_error = {
-                        "message": "Codex App Server 响应超时，请重试。",
+                        "message": timeout_message,
                         "kind": timeout_kind,
                     }
                     yield ChatBackendEvent(
@@ -1901,7 +1909,7 @@ class CodexThread:
                         thread_id=self.id,
                         turn_id=current_turn_id,
                         disposition="timeout",
-                        text="Codex App Server 响应超时，请重试。",
+                        text=timeout_message,
                         error=timeout_error,
                     )
                     break
@@ -1914,6 +1922,19 @@ class CodexThread:
                         total_deadline,
                         loop.time() + CODEX_STREAM_IDLE_TIMEOUT,
                     )
+                if event.type == "tool_started" and _codex_tool_waits_for_user_input(
+                    event.name
+                ):
+                    user_input_calls.add(event.call_id or str(event.name))
+                elif event.type == "tool_updated":
+                    call_key = event.call_id or str(event.name)
+                    status = str(event.status or "").strip().lower()
+                    if call_key in user_input_calls and status not in {
+                        "inprogress",
+                        "pending",
+                        "running",
+                    }:
+                        user_input_calls.discard(call_key)
                 yield event
                 if event.type == "complete":
                     break

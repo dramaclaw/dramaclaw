@@ -1,3 +1,5 @@
+import sqlite3
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -5,6 +7,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from novelvideo.api.routes import chat as chat_route
 from novelvideo.chat.store import ChatScope
+from novelvideo.freezone import canvas_command_bridge
 from novelvideo.freezone.canvas_command_bridge import (
     put_pending_canvas_command,
     put_pending_clarification_event,
@@ -323,9 +326,20 @@ def test_canvas_command_tool_result_accepts_background_workflow(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "receipt_revision,receipt_task,expected_status",
+    [
+        (1, "task-1", "confirmed"),
+        (2, "task-1", "submitted"),
+        (1, "old-task", "submitted"),
+    ],
+)
 async def test_late_canvas_result_completes_durable_workflow_draft(
     monkeypatch,
     tmp_path,
+    receipt_revision,
+    receipt_task,
+    expected_status,
 ) -> None:
     from novelvideo.freezone.workflow_drafts import (
         bind_workflow_draft_task,
@@ -364,6 +378,7 @@ async def test_late_canvas_result_completes_durable_workflow_draft(
         canvas_id="canvas-a",
         draft_id=draft["draft_id"],
         outcome="submitted",
+        expected_task_id="task-1",
     )
 
     async def project_context(_user, _scope):
@@ -390,11 +405,30 @@ async def test_late_canvas_result_completes_durable_workflow_draft(
         applied=True,
     )
 
-    await chat_route._record_workflow_draft_canvas_result(
-        user={"id": "u-admin", "username": "admin"},
-        payload=payload,
-        draft_id=draft["draft_id"],
-        resolved={"ok": True},
+    monkeypatch.setattr(
+        chat_route,
+        "_pending_workflow_draft_receipt",
+        lambda *_, **__: {
+            "draft_id": draft["draft_id"],
+            "revision": receipt_revision,
+            "task_id": receipt_task,
+        },
+    )
+
+    async def bridge_project_state_dir(*_args, **_kwargs):
+        return tmp_path
+
+    monkeypatch.setattr(
+        chat_route, "_bridge_project_state_dir", bridge_project_state_dir
+    )
+    monkeypatch.setattr(
+        chat_route,
+        "_resolve_canvas_command_tool_result_payload",
+        lambda *_, **__: {"ok": True},
+    )
+    await chat_route.resolve_canvas_command_tool_result(
+        payload,
+        {"id": "u-admin", "username": "admin"},
     )
     stored, error = read_workflow_draft(
         project_dir=tmp_path,
@@ -404,7 +438,208 @@ async def test_late_canvas_result_completes_durable_workflow_draft(
 
     assert error is None
     assert stored is not None
+    assert stored["status"] == expected_status
+
+
+@pytest.mark.anyio
+async def test_old_canvas_receipt_cannot_complete_a_retried_confirmation(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from novelvideo.freezone.workflow_drafts import (
+        bind_workflow_draft_task,
+        claim_workflow_draft_confirmation,
+        create_workflow_draft,
+        finish_workflow_draft_confirmation,
+        read_workflow_draft,
+    )
+
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="canvas-a",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled={
+            "ok": True,
+            "skill_id": "video-ad",
+            "plan": {"nodes": [], "edges": [], "phases": []},
+        },
+    )
+    first, error = claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        revision=1,
+        now=1_000,
+    )
+    assert error is None
+    assert first is not None
+    bind_workflow_draft_task(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        task_id="task-1",
+        root_task_id="task-1",
+    )
+
+    async def project_context(_user, _scope):
+        finish_workflow_draft_confirmation(
+            project_dir=tmp_path,
+            canvas_id="canvas-a",
+            draft_id=draft["draft_id"],
+            outcome="ready",
+            expected_task_id="task-1",
+        )
+        retried, retry_error = claim_workflow_draft_confirmation(
+            project_dir=tmp_path,
+            canvas_id="canvas-a",
+            draft_id=draft["draft_id"],
+            revision=1,
+            now=1_001,
+        )
+        assert retry_error is None
+        assert retried is not None
+        bind_workflow_draft_task(
+            project_dir=tmp_path,
+            canvas_id="canvas-a",
+            draft_id=draft["draft_id"],
+            task_id="task-2",
+            root_task_id="task-2",
+        )
+        return SimpleNamespace(state_dir=tmp_path)
+
+    monkeypatch.setattr(chat_route, "_project_context_for_scope", project_context)
+    from novelvideo import task_state
+
+    monkeypatch.setattr(
+        task_state,
+        "get_task_manager",
+        lambda: pytest.fail("stale receipt must be rejected before task lookup"),
+    )
+    await chat_route._record_workflow_draft_canvas_result(
+        user={"id": "u-admin", "username": "admin"},
+        payload=chat_route.CanvasCommandToolResultIn(
+            bridge_key="bridge-workflow",
+            project_id="project-a",
+            canvas_id="canvas-a",
+            canvas_apply_status="applied",
+            applied=True,
+        ),
+        draft_receipt={
+            "draft_id": draft["draft_id"],
+            "revision": 1,
+            "task_id": "task-1",
+        },
+        resolved={"ok": True},
+    )
+    stored, read_error = read_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+    )
+    assert read_error is None
+    assert stored is not None
+    assert stored["status"] == "confirming"
+    assert stored["task_id"] == "task-2"
+    assert stored["confirmation_started_at"] == 1_001
+
+
+@pytest.mark.anyio
+async def test_canvas_receipt_accepts_pre_upgrade_confirmation_scope(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from novelvideo.freezone.workflow_drafts import (
+        bind_workflow_draft_task,
+        claim_workflow_draft_confirmation,
+        create_workflow_draft,
+        finish_workflow_draft_confirmation,
+        read_workflow_draft,
+    )
+
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="canvas-a",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled={
+            "ok": True,
+            "skill_id": "video-ad",
+            "plan": {"nodes": [], "edges": [], "phases": []},
+        },
+    )
+    claimed, error = claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        revision=1,
+        now=1_000,
+    )
+    assert error is None
+    assert claimed is not None
+    bind_workflow_draft_task(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        task_id="task-1",
+        root_task_id="task-1",
+    )
+    finish_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        outcome="submitted",
+        expected_task_id="task-1",
+    )
+
+    async def project_context(_user, _scope):
+        return SimpleNamespace(state_dir=tmp_path)
+
+    monkeypatch.setattr(chat_route, "_project_context_for_scope", project_context)
+    from novelvideo import task_state
+
+    queried_scopes: list[str] = []
+    legacy_scope = f"canvas-a:{draft['draft_id']}:1"
+
+    def get_task(*_args, **kwargs):
+        queried_scopes.append(kwargs["scope"])
+        if kwargs["scope"] == legacy_scope:
+            return SimpleNamespace(task_id="task-1", status="running")
+        return None
+
+    monkeypatch.setattr(
+        task_state,
+        "get_task_manager",
+        lambda: SimpleNamespace(get_task_for_project=get_task),
+    )
+    await chat_route._record_workflow_draft_canvas_result(
+        user={"id": "u-admin", "username": "admin"},
+        payload=chat_route.CanvasCommandToolResultIn(
+            bridge_key="bridge-workflow",
+            project_id="project-a",
+            canvas_id="canvas-a",
+            canvas_apply_status="applied",
+            applied=True,
+        ),
+        draft_receipt={
+            "draft_id": draft["draft_id"],
+            "revision": 1,
+            "task_id": "task-1",
+        },
+        resolved={"ok": True},
+    )
+    stored, read_error = read_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+    )
+    assert read_error is None
+    assert stored is not None
     assert stored["status"] == "confirmed"
+    assert queried_scopes == [
+        f"{legacy_scope}:{claimed['confirmation_started_at']}",
+        legacy_scope,
+    ]
 
 
 def test_pending_canvas_result_recovers_workflow_draft_identity(
@@ -421,7 +656,11 @@ def test_pending_canvas_result_recovers_workflow_draft_identity(
             {
                 "type": "create_node",
                 "node_type": "textAnnotationNode",
-                "data": {"workflowInstanceId": draft_id},
+                "data": {
+                    "workflowInstanceId": draft_id,
+                    "workflowDraftRevision": 1,
+                    "workflowConfirmationTaskId": "task-1",
+                },
             }
         ],
         envelope={
@@ -429,7 +668,11 @@ def test_pending_canvas_result_recovers_workflow_draft_identity(
                 {
                     "type": "create_node",
                     "node_type": "textAnnotationNode",
-                    "data": {"workflowInstanceId": draft_id},
+                    "data": {
+                        "workflowInstanceId": draft_id,
+                        "workflowDraftRevision": 1,
+                        "workflowConfirmationTaskId": "task-1",
+                    },
                 }
             ]
         },
@@ -448,7 +691,11 @@ def test_pending_canvas_result_recovers_workflow_draft_identity(
         applied=True,
     )
 
-    assert chat_route._pending_workflow_draft_id("admin", payload) == draft_id
+    assert chat_route._pending_workflow_draft_receipt("admin", payload) == {
+        "draft_id": draft_id,
+        "revision": 1,
+        "task_id": "task-1",
+    }
 
 
 def test_canvas_command_tool_result_reports_open_node_action_as_opened_panel(
@@ -495,6 +742,10 @@ def test_canvas_command_tool_result_reports_open_node_action_as_opened_panel(
 async def test_pending_canvas_command_poll_only_returns_external_mcp_commands(
     monkeypatch, tmp_path
 ) -> None:
+    async def project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", project_state)
     bridge_dir = tmp_path / "bridge"
     monkeypatch.setattr(
         chat_route,
@@ -528,6 +779,7 @@ async def test_pending_canvas_command_poll_only_returns_external_mcp_commands(
         },
         bridge_dir=bridge_dir,
     )
+    (bridge_dir / "approved-external-command.pending.json").unlink()
 
     result = await chat_route.list_pending_canvas_commands(
         chat_route.PendingCanvasCommandsIn(
@@ -540,6 +792,197 @@ async def test_pending_canvas_command_poll_only_returns_external_mcp_commands(
     frames = result["data"]["frames"]
     assert [frame["bridge_key"] for frame in frames] == ["approved-external-command"]
     assert frames[0]["agent_id"] == "agent-2"
+
+
+@pytest.mark.anyio
+async def test_pending_canvas_command_json_mirror_cannot_bypass_sqlite_lease(
+    monkeypatch, tmp_path
+) -> None:
+    async def project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", project_state)
+    bridge_dir = tmp_path / "bridge"
+    monkeypatch.setattr(
+        chat_route,
+        "_candidate_canvas_bridge_dirs_for_scope",
+        lambda *_args, **_kwargs: [bridge_dir],
+    )
+    commands = [{"type": "select_nodes", "nodeIds": ["node-a"]}]
+    put_pending_canvas_command(
+        key="leased-command",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+        envelope={
+            "schema_version": "canvas_chat_commands.v1",
+            "canvas_id": "canvas-a",
+            "external_mcp_command": True,
+            "commands": commands,
+        },
+        bridge_dir=bridge_dir,
+    )
+    request = chat_route.PendingCanvasCommandsIn(
+        project_id="project-a",
+        canvas_id="canvas-a",
+    )
+
+    first = await chat_route.list_pending_canvas_commands(
+        request,
+        user={"username": "admin"},
+    )
+    second = await chat_route.list_pending_canvas_commands(
+        request,
+        user={"username": "admin"},
+    )
+
+    assert [frame["bridge_key"] for frame in first["data"]["frames"]] == [
+        "leased-command"
+    ]
+    assert second["data"]["frames"] == []
+
+
+@pytest.mark.anyio
+async def test_expired_canvas_command_json_mirror_is_not_redelivered(
+    monkeypatch, tmp_path
+) -> None:
+    async def project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", project_state)
+    bridge_dir = tmp_path / "bridge"
+    monkeypatch.setattr(
+        chat_route,
+        "_candidate_canvas_bridge_dirs_for_scope",
+        lambda *_args, **_kwargs: [bridge_dir],
+    )
+    commands = [{"type": "select_nodes", "nodeIds": ["node-a"]}]
+    put_pending_canvas_command(
+        key="expired-command",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+        envelope={
+            "schema_version": "canvas_chat_commands.v1",
+            "canvas_id": "canvas-a",
+            "external_mcp_command": True,
+            "commands": commands,
+        },
+        bridge_dir=bridge_dir,
+    )
+    pending_path = bridge_dir / "expired-command.pending.json"
+    pending = chat_route._load_pending_canvas_command(pending_path)
+    assert pending is not None
+    pending["created_at"] = 0
+    canvas_command_bridge._write_json(pending_path, pending)
+    with sqlite3.connect(canvas_command_bridge._bridge_db_path(bridge_dir)) as conn:
+        conn.execute(
+            "UPDATE canvas_command_messages "
+            "SET created_at = 0, expires_at = 0 "
+            "WHERE bridge_key = 'expired-command'"
+        )
+
+    result = await chat_route.list_pending_canvas_commands(
+        chat_route.PendingCanvasCommandsIn(
+            project_id="project-a",
+            canvas_id="canvas-a",
+        ),
+        user={"username": "admin"},
+    )
+
+    assert result["data"]["frames"] == []
+    assert not pending_path.exists()
+
+
+@pytest.mark.parametrize(
+    ("key", "payload", "loader"),
+    [
+        (
+            "legacy-context",
+            {
+                "kind": "canvas_context",
+                "requests": [{"type": "get_selected_nodes"}],
+                "envelope": {
+                    "schema_version": "canvas_context_request.v1",
+                    "canvas_id": "canvas-a",
+                    "requests": [{"type": "get_selected_nodes"}],
+                },
+            },
+            chat_route._load_pending_canvas_context,
+        ),
+        (
+            "legacy-skill-studio",
+            {
+                "kind": "skill_studio_event",
+                "event": {
+                    "type": "skill_studio.questions",
+                    "skill_studio_session_id": "skill-studio-a",
+                },
+            },
+            chat_route._load_pending_skill_studio_event,
+        ),
+        (
+            "legacy-clarification",
+            {
+                "kind": "clarification_event",
+                "event": {
+                    "type": "assistant.clarification.request",
+                    "clarification_id": "clarification-a",
+                },
+            },
+            chat_route._load_pending_clarification_event,
+        ),
+    ],
+)
+def test_legacy_bridge_filter_accepts_each_supported_message_type(
+    tmp_path, key, payload, loader
+) -> None:
+    bridge_dir = tmp_path / "bridge"
+    bridge_dir.mkdir()
+    pending_path = bridge_dir / f"{key}.pending.json"
+    canvas_command_bridge._write_json(
+        pending_path,
+        {
+            "key": key,
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "created_at": time.time(),
+            **payload,
+        },
+    )
+
+    assert loader(pending_path) is not None
+    assert chat_route._is_unmigrated_legacy_bridge_file(
+        bridge_dir=bridge_dir,
+        key=key,
+    )
+
+
+def test_legacy_bridge_filter_uses_raw_message_kind_ttl(tmp_path) -> None:
+    bridge_dir = tmp_path / "bridge"
+    bridge_dir.mkdir()
+    key = "expired-legacy-context"
+    pending_path = bridge_dir / f"{key}.pending.json"
+    canvas_command_bridge._write_json(
+        pending_path,
+        {
+            "key": key,
+            "kind": "canvas_context",
+            "created_at": time.time() - 46,
+            "requests": [{"type": "get_selected_nodes"}],
+            "envelope": {
+                "schema_version": "canvas_context_request.v1",
+                "canvas_id": "canvas-a",
+                "requests": [{"type": "get_selected_nodes"}],
+            },
+        },
+    )
+
+    assert not chat_route._is_unmigrated_legacy_bridge_file(
+        bridge_dir=bridge_dir,
+        key=key,
+    )
+    assert not pending_path.exists()
 
 
 @pytest.mark.anyio
@@ -1016,6 +1459,10 @@ def test_resolve_revision_skill_studio_tool_result_starts_question_flow(
 async def test_resolve_skill_studio_tool_result_persists_submitted_ui_event(
     monkeypatch, tmp_path
 ) -> None:
+    async def bridge_project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", bridge_project_state)
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setattr(
         chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path / "bridge"
@@ -1079,6 +1526,10 @@ async def test_resolve_skill_studio_tool_result_persists_submitted_ui_event(
 async def test_resolve_skill_studio_draft_tool_result_persists_submitted_ui_event(
     monkeypatch, tmp_path
 ) -> None:
+    async def bridge_project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", bridge_project_state)
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setattr(
         chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path / "bridge"
@@ -1142,6 +1593,10 @@ async def test_resolve_skill_studio_draft_tool_result_persists_submitted_ui_even
 async def test_receive_bridge_results_during_turn_resolves_skill_studio_result(
     monkeypatch, tmp_path
 ) -> None:
+    async def bridge_project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", bridge_project_state)
     monkeypatch.setattr(
         chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path / "bridge"
     )
@@ -1206,6 +1661,10 @@ async def test_receive_bridge_results_during_turn_resolves_skill_studio_result(
 async def test_receive_bridge_results_during_turn_resolves_clarification_result(
     monkeypatch, tmp_path
 ) -> None:
+    async def bridge_project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", bridge_project_state)
     monkeypatch.setattr(
         chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path / "bridge"
     )
@@ -1384,6 +1843,10 @@ def test_resolve_clarification_tool_result_writes_bridge_result(
 async def test_resolve_clarification_tool_result_persists_submitted_ui_event(
     monkeypatch, tmp_path
 ) -> None:
+    async def bridge_project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", bridge_project_state)
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setattr(
         chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path / "bridge"
@@ -1626,3 +2089,78 @@ async def test_freezone_prewarm_skips_unavailable_surface(monkeypatch) -> None:
 
     assert warmed is False
     assert calls == []
+
+
+@pytest.mark.anyio
+async def test_agent_session_cannot_forge_canvas_receipt(monkeypatch):
+    from fastapi import HTTPException
+
+    payload = chat_route.CanvasCommandToolResultIn(
+        bridge_key="bridge-workflow",
+        project_id="p",
+        canvas_id="c",
+        tool_call_status="completed",
+        canvas_apply_status="applied",
+        applied=True,
+    )
+    monkeypatch.setattr(
+        chat_route,
+        "_pending_workflow_draft_receipt",
+        lambda *_: pytest.fail(
+            "Agent receipt must be rejected before reading pending commands"
+        ),
+    )
+    with pytest.raises(HTTPException) as error:
+        await chat_route.resolve_canvas_command_tool_result(
+            payload,
+            {"username": "alice", "credential_kind": "agent_session"},
+        )
+    assert error.value.status_code == 403
+
+
+@pytest.mark.parametrize("partial", [False, True])
+def test_catalog_save_error_overrides_frontend_success(
+    monkeypatch, tmp_path, partial
+) -> None:
+    monkeypatch.setattr(
+        chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path
+    )
+
+    def save(*, username, kind, payload):
+        if partial and kind == "recipes":
+            return payload
+        raise ValueError("injected save failure")
+
+    monkeypatch.setattr(chat_route, "save_user_agent_config_item", save)
+    payload = chat_route.SkillStudioToolResultIn(
+        bridge_key="failed-save",
+        turn_id="turn-a",
+        action="confirm_add",
+        skill_studio_status="catalog_saved",
+        saved_to_catalog=True,
+        saved_skill_ids=["invented"],
+        saved_recipe_ids=["invented"],
+        draft={"skill": {"id": "skill-a"}, "recipes": [{"id": "recipe-a"}]},
+        message="已保存为正式 Skill / Recipe，可立即使用",
+    )
+
+    result = chat_route._resolve_skill_studio_tool_result_payload(
+        payload, username="alice"
+    )
+
+    assert result["ok"] is False
+    assert result["saved_to_catalog"] is False
+    assert result["tool_call_status"] == "failed"
+    assert result["skill_studio_status"] == (
+        "catalog_partially_saved" if partial else "catalog_save_failed"
+    )
+    assert result["saved_skill_ids"] == []
+    assert result["saved_recipe_ids"] == (["recipe-a"] if partial else [])
+    assert "可立即使用" not in result["message"]
+    assert (
+        ("部分" in result["message"])
+        if partial
+        else ("未保存任何" in result["message"])
+    )
+    assert result["draft"] == payload.draft
+    assert result["errors"]

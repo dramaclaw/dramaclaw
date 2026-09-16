@@ -61,13 +61,14 @@ docker compose up -d --build   # 起 api / web 两个服务
 git clone https://github.com/dramaclaw/dramaclaw.git
 cd dramaclaw
 
-uv sync                                  # 按 uv.lock 装依赖到 .venv
 cp .env.example .env && $EDITOR .env     # 填网关与 Key
 
-uv run novelvideo api --host 0.0.0.0 --port 8780
+scripts/start-ce.sh                      # 安装依赖并启动 API 与前端
 ```
 
-CE 默认 `ST_EDITION=ce`、免登录单本地用户、任务进程内 inline 执行(无 Ray/Redis/Celery)。
+该脚本会把 Hermes 安装到隔离环境，并将其作为源码运行时的聊天后端。Docker 镜像则
+内置经过凭据安全修补的 Codex App Server Runtime，并默认使用 Codex。CE 默认
+`ST_EDITION=ce`、免登录单本地用户、任务进程内 inline 执行(无 Ray/Redis/Celery)。
 
 ### 3. 验证
 

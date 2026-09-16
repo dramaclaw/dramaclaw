@@ -43,9 +43,12 @@ import {
 } from "@/lib/queries/freezone-agent-config";
 import { validateFreezoneAgentConfigPayload } from "@/lib/freezone-agent-config-schema";
 import { cn } from "@/lib/utils";
+import { SkillImportDialog } from "@/features/skill-imports/SkillImportDialog";
+import { useTaskCenterStore } from "@/task-center/store";
+import { RECIPE_OUTPUT_CHOICES, recipeOutputChoice, recipeOutputFields, type RecipeOutputChoice } from "@/lib/recipe-output";
 
 type FreezoneCatalogKind = "skills" | "recipes";
-type RecipeGenerationType = "image" | "video" | "audio" | "text";
+type RecipeGenerationType = RecipeOutputChoice;
 type SkillInputParameterType = "single_select" | "multi_select" | "text" | "number" | "boolean";
 
 const SKILL_INPUT_PARAMETER_TYPES: SkillInputParameterType[] = [
@@ -142,6 +145,8 @@ export function FreezoneSkillRecipeSettings({
 }: FreezoneSkillRecipeSettingsProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
+  const [externalImportOpen, setExternalImportOpen] = useState(false);
+  const importProject = useTaskCenterStore((state) => state.projectId);
   const [addingSkill, setAddingSkill] = useState(false);
   const [addingRecipe, setAddingRecipe] = useState(false);
   const [editingSkill, setEditingSkill] = useState<FreezoneAgentConfigPayload | null>(null);
@@ -442,7 +447,13 @@ export function FreezoneSkillRecipeSettings({
               )}
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {isSkills && <>
+              <Button type="button" variant="outline" size="sm" onClick={() => setExternalImportOpen(true)}>
+                <Download className="size-3.5" />{t("skillImport.title", { defaultValue: "Convert external skills" })}
+              </Button>
+              <SkillImportDialog open={externalImportOpen} onOpenChange={setExternalImportOpen} project={importProject ?? ""} />
+            </>}
             {isSkills && onOpenRecipes ? (
               <Button
                 type="button"
@@ -672,18 +683,7 @@ function NewRecipeEditor({
   };
 
   const rawRecipeJson = useMemo(
-    () => ({
-      ...(initialPayload ?? {}),
-      result_summary: recipeDraft.resultSummary,
-      planning_prompt: recipeDraft.planningPrompt,
-      action_keys: recipeDraft.actionKeys,
-      id: recipeDraft.id,
-      must_have_items: recipeDraft.mustHaveItems,
-      system_prompt: recipeDraft.system_prompt,
-      requires_source_media: recipeDraft.sourceMediaRequired,
-      output_kind: recipeDraft.outputKind,
-      name: recipeDraft.name,
-    }),
+    () => recipePayloadFromDraft(recipeDraft, initialPayload),
     [initialPayload, recipeDraft],
   );
   const rawRecipeJsonText = useMemo(
@@ -733,7 +733,7 @@ function NewRecipeEditor({
             />
           </div>
 
-          <div className="mt-4 max-w-28">
+          <div className="mt-4 max-w-40">
             <EditorLabel required>
               {t("settings.freezoneCatalog.newRecipe.outputKind")}
             </EditorLabel>
@@ -746,8 +746,8 @@ function NewRecipeEditor({
               <SelectTrigger className="h-9 w-full rounded-md border-input/80 bg-input/20 text-foreground focus-visible:ring-1 focus-visible:ring-ring/30">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent align="start" className="min-w-28">
-                {(["image", "video", "audio", "text"] as const).map((type) => (
+              <SelectContent align="start" className="min-w-40">
+                {RECIPE_OUTPUT_CHOICES.map((type) => (
                   <SelectItem key={type} value={type}>
                     {t(`settings.freezoneCatalog.newRecipe.outputKinds.${type}`)}
                   </SelectItem>
@@ -1275,11 +1275,26 @@ function getNextDraftId(items: Array<{ id: number }>) {
   return Math.max(0, ...items.map((item) => item.id)) + 1;
 }
 
-function recipeDraftFromPayload(payload: FreezoneAgentConfigPayload | null): RecipeDraft {
+export function recipePayloadFromDraft(recipeDraft: RecipeDraft, initialPayload: FreezoneAgentConfigPayload | null = null): FreezoneAgentConfigPayload {
+  return {
+    ...(initialPayload ?? {}),
+    result_summary: recipeDraft.resultSummary,
+    planning_prompt: recipeDraft.planningPrompt,
+    action_keys: recipeDraft.actionKeys,
+    id: recipeDraft.id,
+    must_have_items: recipeDraft.mustHaveItems,
+    system_prompt: recipeDraft.system_prompt,
+    requires_source_media: recipeDraft.sourceMediaRequired,
+    ...recipeOutputFields(recipeDraft.outputKind),
+    name: recipeDraft.name,
+  };
+}
+
+export function recipeDraftFromPayload(payload: FreezoneAgentConfigPayload | null): RecipeDraft {
   return {
     id: getString(payload?.id),
     name: getString(payload?.name),
-    outputKind: isRecipeGenerationType(payload?.output_kind) ? payload.output_kind : "image",
+    outputKind: recipeOutputChoice(payload),
     actionKeys: getStringArray(payload?.action_keys),
     system_prompt: getString(payload?.system_prompt),
     mustHaveItems: getStringArray(payload?.must_have_items),
@@ -1337,7 +1352,7 @@ function skillDraftFromPayload(payload: FreezoneAgentConfigPayload | null): {
 }
 
 function isRecipeGenerationType(value: unknown): value is RecipeGenerationType {
-  return value === "image" || value === "video" || value === "audio" || value === "text";
+  return RECIPE_OUTPUT_CHOICES.includes(value as RecipeGenerationType);
 }
 
 function isValidSkillDraft(draft: SkillDraft) {
@@ -3510,7 +3525,7 @@ function toManagedCatalogItem(
 ): ManagedCatalogItem {
   const id = typeof item.id === "string" ? item.id : "";
   if (kind === "recipes") {
-    const generationType = isRecipeGenerationType(item.output_kind) ? item.output_kind : undefined;
+    const generationType = isRecipeGenerationType(item.output_kind) ? recipeOutputChoice(item) : undefined;
     return {
       builtin: item._catalog_source === "builtin",
       customized: item._catalog_source === "user" && item._catalog_base_source === "builtin",

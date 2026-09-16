@@ -202,7 +202,8 @@ def test_resume_does_not_hide_non_stale_invalid_request():
         _start_or_resume_codex_thread(FakeCodex(), "thread-1", {})
 
 
-def test_turn_metadata_is_sent_on_raw_turn_start():
+@pytest.mark.parametrize("output_schema", [None, {"type": "object"}])
+def test_turn_metadata_is_sent_on_raw_turn_start(output_schema):
     calls = []
 
     class FakeClient:
@@ -218,17 +219,42 @@ def test_turn_metadata_is_sent_on_raw_turn_start():
             "dramaclaw_gateway_api_key": "turn-secret",
             "dramaclaw_control_context_capability": "signed-capability",
         },
+        output_schema=output_schema,
     )
 
     assert handle.id == "turn-1"
     assert calls[0][0] == "thread-1"
-    assert calls[0][1] == [{"type": "text", "text": "hello"}]
-    assert calls[0][2] == {
+    if output_schema is None:
+        assert calls[0][1] == [{"type": "text", "text": "hello"}]
+    else:
+        text = calls[0][1][0]["text"]
+        assert text.startswith("hello")
+        assert "final response" in text
+        assert "JSON object" in text
+        assert json.dumps(output_schema, ensure_ascii=False) in text
+    expected = {
         "responsesapiClientMetadata": {
             "dramaclaw_gateway_api_key": "turn-secret",
             "dramaclaw_control_context_capability": "signed-capability",
         }
     }
+    if output_schema is not None:
+        expected["outputSchema"] = output_schema
+    assert calls[0][2] == expected
+
+
+def test_output_schema_is_sent_even_without_turn_metadata():
+    calls = []
+
+    class FakeClient:
+        def turn_start(self, thread_id, input_items, params=None):
+            calls.append(params)
+            return SimpleNamespace(turn=SimpleNamespace(id="turn-schema"))
+
+    thread = SimpleNamespace(id="thread-schema", _client=FakeClient())
+    schema = {"type": "object"}
+    assert _start_codex_turn(thread, "hello", {}, schema).id == "turn-schema"
+    assert calls == [{"outputSchema": schema}]
 
 
 def test_codex_149_sdk_exposes_required_runtime_notifications():
@@ -1159,6 +1185,145 @@ async def test_codex_stream_times_out_after_runtime_becomes_idle(monkeypatch, tm
     assert events[-2].disposition == "timeout"
     assert events[-1].type == "complete"
     assert events[-1].disposition == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_codex_stream_does_not_idle_timeout_while_waiting_for_user_input(
+    monkeypatch, tmp_path
+):
+    from openai_codex.generated import v2_all as v2
+    from openai_codex.models import Notification
+
+    delay = threading.Event()
+    interrupt_calls = []
+    started_tool = {
+        "type": "mcpToolCall",
+        "id": "call-confirm",
+        "server": "dramaclaw",
+        "tool": "freezone_finish_agent_catalog_draft",
+        "arguments": {"skill_studio_session_id": "studio-1"},
+        "status": "inProgress",
+    }
+    completed_tool = {
+        **started_tool,
+        "status": "completed",
+        "result": {
+            "content": [{"type": "text", "text": "confirmed"}],
+            "structuredContent": {
+                "status": "skill_studio_frontend_result",
+                "action": "confirm",
+            },
+        },
+    }
+
+    class FakeTurn:
+        id = "turn-confirm"
+
+        def stream(self):
+            yield Notification(
+                method="turn/started",
+                payload=v2.TurnStartedNotification.model_validate(
+                    {
+                        "threadId": "thread-confirm",
+                        "turn": {
+                            "id": self.id,
+                            "items": [],
+                            "status": "inProgress",
+                        },
+                    }
+                ),
+            )
+            yield Notification(
+                method="item/started",
+                payload=v2.ItemStartedNotification.model_validate(
+                    {
+                        "threadId": "thread-confirm",
+                        "turnId": self.id,
+                        "startedAtMs": 1,
+                        "item": started_tool,
+                    }
+                ),
+            )
+            delay.wait(timeout=0.1)
+            yield Notification(
+                method="item/completed",
+                payload=v2.ItemCompletedNotification.model_validate(
+                    {
+                        "threadId": "thread-confirm",
+                        "turnId": self.id,
+                        "completedAtMs": 2,
+                        "item": completed_tool,
+                    }
+                ),
+            )
+            yield Notification(
+                method="item/agentMessage/delta",
+                payload=v2.AgentMessageDeltaNotification.model_validate(
+                    {
+                        "threadId": "thread-confirm",
+                        "turnId": self.id,
+                        "itemId": "message-confirm",
+                        "delta": "已确认",
+                    }
+                ),
+            )
+            yield Notification(
+                method="turn/completed",
+                payload=v2.TurnCompletedNotification.model_validate(
+                    {
+                        "threadId": "thread-confirm",
+                        "turn": {
+                            "id": self.id,
+                            "items": [],
+                            "status": "completed",
+                        },
+                    }
+                ),
+            )
+
+        def interrupt(self):
+            interrupt_calls.append(self.id)
+            delay.set()
+
+    class FakeThread:
+        id = "thread-confirm"
+
+    @contextmanager
+    def fake_shared_codex(_config):
+        yield object()
+
+    monkeypatch.setattr(codex_app_server, "shared_codex", fake_shared_codex)
+    monkeypatch.setattr(
+        backend_sdk,
+        "_start_or_resume_codex_thread",
+        lambda *_args, **_kwargs: FakeThread(),
+    )
+    monkeypatch.setattr(
+        backend_sdk, "_start_codex_turn", lambda *_args, **_kwargs: FakeTurn()
+    )
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_FIRST_PROGRESS_TIMEOUT", 1.0)
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 0.03)
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_TOTAL_TIMEOUT", 0.5)
+
+    thread = CodexThread(
+        codex_bin=None,
+        cwd=tmp_path,
+        env={},
+        model="DC-codex-agent-LLM",
+        model_provider="dramaclaw_gateway",
+        developer_instructions="Use DramaClaw MCP only.",
+        config_overrides=(),
+        thread_config={},
+        turn_metadata={},
+        thread_id=None,
+    )
+    events = [event async for event in thread.stream("Create a skill")]
+
+    assert interrupt_calls == []
+    assert events[-1].type == "complete"
+    assert events[-1].text == "已确认"
+    assert events[-2].type == "egress_disposition"
+    assert events[-2].disposition == "completed"
 
 
 @pytest.mark.asyncio
