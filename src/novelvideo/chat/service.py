@@ -5316,10 +5316,12 @@ def _dramaclaw_mcp_servers(
                 "DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",
                 "DRAMACLAW_AGENT_PROFILE",
                 "DRAMACLAW_PROJECT_ID",
+                "DRAMACLAW_ROOT",
                 "DRAMACLAW_SKILLS_DIR",
                 "DRAMACLAW_TOOL_MODE",
                 "DRAMACLAW_USERNAME",
                 "NOVELVIDEO_OUTPUT_DIR",
+                "PYTHONPATH",
             ],
         }
     }
@@ -5331,7 +5333,7 @@ def _dramaclaw_mcp_servers(
             "type": "stdio",
             "command": sys.executable,
             "args": ["-m", "novelvideo.chat.workflow_mcp"],
-            "env_vars": ["DRAMACLAW_USERNAME", "NOVELVIDEO_OUTPUT_DIR"],
+            "env_vars": ["DRAMACLAW_USERNAME", "NOVELVIDEO_OUTPUT_DIR", "PYTHONPATH"],
         }
     return servers
 
