@@ -5065,7 +5065,7 @@ async def list_grids(project: str, episode_num: int, user: dict = Depends(get_ap
     )
 
     grids_dir = project_dir / "grids" / f"ep{episode_num:03d}"
-    pool = load_pool_index(grids_dir)
+    pool = await run_asset_upload_operation(load_pool_index, grids_dir)
     if not pool:
         return {"ok": True, "data": None}
 
@@ -5181,7 +5181,7 @@ async def get_beat_sketch_candidates(
             local_path=current_path,
         )
 
-    pool = load_pool_index(grids_dir)
+    pool = await run_asset_upload_operation(load_pool_index, grids_dir)
     if not pool:
         return {
             "ok": True,
@@ -5696,7 +5696,7 @@ async def export_grid_prompt(
     from novelvideo.generators.pool_indexer import load_pool_index
 
     grids_dir = project_dir / "grids" / f"ep{episode_num:03d}"
-    pool = load_pool_index(grids_dir)
+    pool = await run_asset_upload_operation(load_pool_index, grids_dir)
     if not pool:
         return {"ok": False, "error": "No pool index found. Generate grids first."}
 
@@ -5763,7 +5763,7 @@ async def sketch_grid_preview(
         return {"ok": False, "error": "beat_numbers is required"}
 
     paths = build_beat_sketch_paths(ep_grids_dir, beat_numbers)
-    pool = load_pool_index(ep_grids_dir)
+    pool = await run_asset_upload_operation(load_pool_index, ep_grids_dir)
     if pool:
         latest_pool_paths: dict[int, tuple[float, str]] = {}
         for img in pool.images:
@@ -5852,7 +5852,7 @@ async def cut_grid(
     grid_image_path = None
     from novelvideo.generators.pool_indexer import load_pool_index
 
-    pool = load_pool_index(episode_grids_dir)
+    pool = await run_asset_upload_operation(load_pool_index, episode_grids_dir)
     entry = _find_pool_grid_entry(
         pool,
         grid_type=body.grid_type,

@@ -322,3 +322,102 @@ async def test_beat_upload_capacity_cancel_does_not_publish(upload, tmp_path, ki
     finally:
         for borrower in borrowers:
             limiter.release_on_behalf_of(borrower)
+
+
+@pytest.mark.parametrize(
+    "method, suffix, body",
+    [
+        ("GET", "/grids", None),
+        ("GET", "/beats/1/sketch-candidates", None),
+        ("GET", "/grids/99/prompt", None),
+        (
+            "POST",
+            "/grids/99/sketch-preview",
+            {"rows": 1, "cols": 1, "beat_numbers": [1]},
+        ),
+        (
+            "POST",
+            "/grids/99/cut",
+            {"rows": 1, "cols": 1, "beat_start": 1, "beat_end": 1},
+        ),
+    ],
+)
+async def test_pool_read_remains_responsive_while_upload_holds_lock(
+    upload,
+    tmp_path,
+    monkeypatch,
+    method,
+    suffix,
+    body,
+):
+    from contextlib import contextmanager
+    from unittest.mock import AsyncMock
+
+    import httpx
+    from fastapi import FastAPI
+
+    async def resolve(*args, **kwargs):
+        return SimpleNamespace(
+            project_dir=tmp_path,
+            output_dir=str(tmp_path),
+            username="admin",
+            project_name="demo",
+            ctx=SimpleNamespace(project_id="demo", output_dir=tmp_path),
+        )
+
+    monkeypatch.setattr(generation, "_resolve_generation_project", resolve)
+    store = SimpleNamespace(get_script_as_dict=AsyncMock(return_value={}))
+    monkeypatch.setattr(
+        generation, "make_sqlite_store_for_context", AsyncMock(return_value=store)
+    )
+    app = FastAPI()
+    app.include_router(generation.router)
+    app.dependency_overrides[generation.get_api_user] = lambda: {"username": "admin"}
+    held, reader_started, release, timed_out = (threading.Event() for _ in range(4))
+    original_save = pool_indexer._save_pool_index_unlocked
+    original_lock = pool_indexer.index_file_lock
+
+    def slow_save(*args):
+        held.set()
+        # Safety valve makes the broken synchronous-reader path fail, not hang.
+        if not release.wait(3):
+            timed_out.set()
+        return original_save(*args)
+
+    @contextmanager
+    def tracked_lock(path):
+        if held.is_set():
+            reader_started.set()
+        with original_lock(path):
+            yield
+
+    monkeypatch.setattr(pool_indexer, "_save_pool_index_unlocked", slow_save)
+    monkeypatch.setattr(pool_indexer, "index_file_lock", tracked_lock)
+    writer = asyncio.create_task(upload())
+    reader = None
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        try:
+            assert await asyncio.to_thread(held.wait, 2)
+            reader = asyncio.create_task(
+                client.request(
+                    method,
+                    "/projects/demo/episodes/1" + suffix,
+                    json=body,
+                )
+            )
+            assert await asyncio.to_thread(reader_started.wait, 2)
+            # This coroutine can resume while the real flock is still held.
+            assert not timed_out.is_set(), "index reader blocked the event loop"
+            assert not reader.done()
+            release.set()
+            assert (await writer)["ok"]
+            response = await reader
+            assert response.status_code == 200
+            assert "ok" in response.json()
+        finally:
+            release.set()
+            await asyncio.gather(
+                writer, *([reader] if reader else []), return_exceptions=True
+            )
