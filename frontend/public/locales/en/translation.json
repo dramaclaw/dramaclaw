@@ -444,35 +444,53 @@
     "account": {
       "open": "Open account menu",
       "changeAvatar": "Change avatar",
-      "selectLanguage": "Select language",
-      "languageChinese": "中文",
-      "languageEnglish": "English",
-      "avatarDialog": {
-        "title": "Change avatar",
-        "description": "Choose an image for your avatar. A clear square image works best.",
-        "previewHint": "Currently using the account initial avatar",
-        "choose": "Choose image",
-        "replace": "Replace image",
-        "fileHint": "PNG, JPG, WebP, or GIF",
-        "save": "Save avatar",
-        "saving": "Saving…",
-        "error": "Avatar upload failed, please try again"
-      },
-      "changePassword": "Change password",
+        "changePassword": "Change password",
+        "setPassword": "Set password",
+        "selectLanguage": "Select language",
+        "languageChinese": "中文",
+        "languageEnglish": "English",
+        "languageVietnamese": "Tiếng Việt",
+        "phoneBinding": {
+          "title": "Bind phone number",
+          "description": "Verify your current password and phone to link it to this account. You can then sign in by code. The phone cannot be changed or unlinked.",
+          "submit": "Confirm binding",
+          "success": "Phone linked. Your existing account and password still work.",
+          "inUse": "This phone belongs to another account and cannot be linked. Accounts are not merged automatically.",
+          "alreadyBound": "This account already has a phone. Refresh the page.",
+          "error": "Could not link the phone. Try again."
+        },
+        "avatarDialog": {
+          "title": "Change avatar",
+          "description": "Choose an image for your avatar. A clear square image works best.",
+          "previewHint": "Currently using the account initial avatar",
+          "choose": "Choose image",
+          "replace": "Replace image",
+          "fileHint": "PNG, JPG, WebP, or GIF",
+          "save": "Save avatar",
+          "saving": "Saving…",
+          "error": "Avatar upload failed, please try again"
+        },
       "passwordDialog": {
         "title": "Change password",
         "description": "Changing your password signs you out on every device. Sign in again with the new password.",
+        "initializeTitle": "Set a sign-in password",
+        "initializeDescription": "After setting a password, you can sign in with your phone and password. You will need to sign in again when finished.",
         "current": "Current password",
         "new": "New password",
         "confirm": "Confirm new password",
         "requirement": "Use at least 8 characters and choose a password different from the current one.",
+        "initializeRequirement": "Use at least 8 characters. This requires an OTP sign-in from the last 10 minutes.",
         "mismatch": "The new passwords do not match.",
         "unchanged": "The new password must differ from the current password.",
         "currentIncorrect": "The current password is incorrect.",
         "submit": "Change password",
+        "initializeSubmit": "Set password",
         "saving": "Changing…",
         "success": "Password changed. Sign in again with your new password.",
         "partialSuccess": "Password changed. Sign in again; some sessions are still being signed out.",
+        "initializeSuccess": "Password set. Sign in again with your phone and new password.",
+        "initializePartialSuccess": "Password set. Sign in again; some sessions are still being signed out.",
+        "initializeExpired": "This OTP sign-in is no longer recent enough. Sign in with a new code and try again.",
         "error": "Could not change the password. Try again."
       }
     }
@@ -733,7 +751,7 @@
       "title": "Script Format Check",
       "close": "Close",
       "viewDetails": "View details",
-      "recommended": "Standard script example:\nEpisode 1\n1-1 City Cafe DAY INT\nCharacters: Lin Xia, Chen Mo\n△ Afternoon light crosses the window as Lin Xia places a letter on the table.\nLin Xia: The answer you wanted is right here.",
+      "recommended": "Standard script example:\nEPISODE 1\nINT. City Cafe - DAY\nCharacters: Lin Xia, Chen Mo\n△ Afternoon light crosses the window as Lin Xia places a letter on the table.\nLin Xia: The answer you wanted is right here.",
       "lineLabel": "Line {{line}}",
       "noIssues": "No specific issues found"
     },
@@ -1400,7 +1418,9 @@
       "notRestorablePreset": "This canvas is not a restorable mainline preset.",
       "payloadTooLarge": "Canvas data exceeds the backend limit.",
       "revisionConflict": "This canvas was modified by another window or user.",
-      "unsavedConflictBeforeSync": "This canvas still has unsaved conflicts. Resolve them before syncing the mainline view."
+      "unsavedConflictBeforeSync": "This canvas still has unsaved conflicts. Resolve them before syncing the mainline view.",
+      "mediaScopeMismatch": "This canvas references media from another project and it could not be copied automatically — remove those nodes and add the media again.",
+      "mediaScopeRetryable": "Copying the media into this project did not go through — check your connection and try saving again."
     },
     "directorCommit": {
       "layerFetchFailed": "Failed to read the director layer: {{status}}",
@@ -1486,7 +1506,8 @@
       "all": "All",
       "earned": "Earned",
       "spent": "Spent",
-      "refunded": "Refunded"
+      "refunded": "Refunded",
+      "pending": "Pending"
     },
     "status": {
       "pending": "Pending",
@@ -1512,7 +1533,268 @@
       "active": "Promotion",
       "discount": "{{percentOff}}% off",
       "limitedDiscount": "{{percentOff}}% off, limited time"
+    },
+    "recharge": {
+      "title": "Add credits",
+      "subtitle": "Choose a package and payment method. The order status is the source of truth.",
+      "loading": "Loading recharge packages…",
+      "unavailable": "Recharge is temporarily unavailable",
+      "empty": "No recharge packages are currently available",
+      "credits": "{{count}} credits",
+      "gift": "includes {{count}} bonus",
+      "paymentMethod": "Payment method",
+      "methods": {
+        "alipay": "Alipay",
+        "wxpay": "WeChat Pay",
+        "dodo": "Dodo Payments"
+      },
+      "pay": "Pay now",
+      "creating": "Creating order…",
+      "createFailed": "Could not create the payment order. Try again later.",
+      "errors": {
+        "tooManyPending": "You already have several unpaid orders. Complete or wait for them to close before trying again.",
+        "packageUnavailable": "This recharge package is no longer available. Refresh and choose another package.",
+        "purchaseLimit": "This recharge package has already reached its purchase limit.",
+        "methodUnavailable": "The selected payment method is currently unavailable.",
+        "orgCreditsInsufficient": "The organization does not have enough credits for this purchase.",
+        "accountUnavailable": "This account is not eligible for the selected recharge.",
+        "linkUnavailable": "This recharge link is expired, disabled, or does not belong to this account.",
+        "requestChanged": "The recharge configuration changed. Refresh and submit the order again.",
+        "serviceUnavailable": "The payment service is temporarily unavailable. Try again later.",
+        "checkoutUnknown": "Checkout creation is being verified. Check your billing records before trying another order.",
+        "quoteChanged": "The quote has changed. Review the updated amount and confirm payment again.",
+        "belowMinimum": "The amount is below the payment channel minimum. Choose a larger amount or another payment method."
+      },
+      "orderAlreadyCreated": "This order already exists. Check its status in recharge history.",
+      "history": "Recharge history",
+      "loadingOrders": "Loading recharge history…",
+      "noOrders": "No recharge orders yet",
+      "columns": {
+        "billId": "Bill number",
+        "transactionTime": "Transaction time",
+        "content": "Description",
+        "time": "Created",
+        "package": "Package",
+        "amount": "Amount",
+        "credits": "Credits",
+        "status": "Status"
+      },
+      "status": {
+        "pending": "Pending payment",
+        "paid": "Paid, crediting",
+        "credited": "Credited",
+        "failed": "Payment failed",
+        "expired": "Expired",
+        "closed": "Closed",
+        "refunded": "Refunded",
+        "manualReview": "Manual review required",
+        "creditFailed": "Crediting exception"
+      }
+    },
+    "centerModal": {
+      "account": "Credit account",
+      "groups": {
+        "recharge": "Credits",
+        "account": "Benefits and billing",
+        "support": "Help and support"
+      },
+      "tabs": {
+        "packages": "Credit packages",
+        "custom": "Custom recharge",
+        "benefits": "My benefits",
+        "orders": "Billing history",
+        "usage": "Usage dashboard",
+        "help": "Recharge help"
+      },
+      "descriptions": {
+        "packages": "Purchase credit packages with no expiration date.",
+        "custom": "Choose the number of credits you need.",
+        "benefits": "Review promotions and benefits available to this account.",
+        "orders": "Review recharge, fulfillment, refund, and exception records.",
+        "usage": "Review earned credits, spending, and recent usage.",
+        "help": "Learn about fulfillment, validity, and refund rules."
+      },
+      "firstPurchase": "New customer",
+      "mostPopular": "Most popular",
+      "oneTimePurchase": "One-time purchase · Credits never expire",
+      "baseCredits": "Base credits",
+      "giftCredits": "Bonus credits",
+      "totalCredits": "Credits received",
+      "buyNow": "Buy now",
+      "packagesUnavailable": "No recharge packages are currently available",
+      "pendingConfiguration": "Pending setup",
+      "packageViews": {
+        "packages": "Credit packages",
+        "enterprise": "Enterprise"
+      },
+      "packageTiers": {
+        "choose": "Choose a {{tier}} purchase option",
+        "starter": {
+          "description": "For your first AI creation projects",
+          "note": "Limited to one purchase per account"
+        },
+        "pro": {
+          "description": "For ongoing creation and short-form projects",
+          "note": "From experiments to consistent production"
+        },
+        "plus": {
+          "description": "For teams and collaborative workflows",
+          "note": "Built for team-based project production"
+        },
+        "max": {
+          "description": "For high-volume production and delivery",
+          "note": "Built for serialized production at scale"
+        }
+      },
+      "enterprise": {
+        "headline": "Give ambitious creative visions the power to grow and reach the screen with confidence.",
+        "subtitle": "Enterprise collaboration and tailored solutions",
+        "benefitsTitle": "Custom solution",
+        "contact": "Contact sales",
+        "benefits": {
+          "quota": "Custom image, video, and character quotas",
+          "priority": "Dedicated highest-priority queue",
+          "templates": "Enterprise template customization",
+          "security": "Layered data security safeguards",
+          "support": "Dedicated service and rapid response"
+        }
+      },
+      "chooseCredits": "Choose credit amount",
+      "customCredits": "Credit amount",
+      "orderSummary": "Recharge summary",
+      "exchangeRate": "Current exchange rate",
+      "amountDue": "Amount due",
+      "rechargeNow": "Recharge now",
+      "noBenefits": "No benefits are currently available",
+      "usage": {
+        "totalSpent": "Total credits spent",
+        "dailyPeak": "Daily peak",
+        "weeklyAverage": "Average per sampled week",
+        "activeDays": "Active days",
+        "longestStreak": "Longest active streak",
+        "activity": "Credit activity",
+        "daily": "Daily",
+        "weekly": "Weekly",
+        "cumulative": "Cumulative",
+        "sampled": "Most recent {{count}} records",
+        "noRecords": "No credit records match these filters",
+        "recordCount": "{{count}} records",
+        "page": "Page {{page}} of {{total}}",
+        "previousPage": "Previous page",
+        "nextPage": "Next page"
+      },
+      "help": {
+        "arrival": {
+          "question": "When will my credits arrive?",
+          "answer": "Credits are fulfilled automatically after the payment provider confirms success. Track progress in billing history."
+        },
+        "validity": {
+          "question": "Do purchased credits expire?",
+          "answer": "Purchased credits currently do not expire. Promotional bonus credits follow the applicable campaign terms."
+        },
+        "refund": {
+          "question": "Can a recharge order be refunded?",
+          "answer": "Refunds are reviewed against usage and platform rules. Credits that have already been consumed cannot be refunded twice."
+        }
+      },
+      "customUnavailable": "Custom credit recharge is not available for this account"
     }
+  },
+  "checkout": {
+    "account": "Current account",
+    "loading": "Preparing secure checkout…",
+    "invalidTitle": "Checkout session expired",
+    "invalidDescription": "Return to the credit center and choose your recharge again.",
+    "subjectMismatch": "The selected package does not match the account that will receive the credits. Return and refresh the available packages.",
+    "back": "Back",
+    "amountDue": "Total due",
+    "orderSummary": "Order summary",
+    "customRecharge": "Custom credit recharge",
+    "quantity": "Quantity {{count}}",
+    "rechargeSubject": "Credit destination",
+    "personalCredits": "Recharge personal credits",
+    "orgCredits": "{{organization}} · Member credit account",
+    "paymentMethod": "Payment method",
+    "securePayment": "Transaction details are submitted over a secure connection",
+    "continue": "Continue to payment",
+    "paymentPending": "Awaiting payment · {{time}} remaining",
+    "paymentClosing": "Payment time ended. Confirming the final order status",
+    "paymentClosed": "Order closed",
+    "paymentFailed": "Payment failed. Return and start a new recharge",
+    "viewResult": "View payment result",
+    "restart": "Choose another recharge",
+    "creating": "Creating payment session…",
+    "footerSecurity": "Server notifications are the source of truth for payment status",
+    "customPending": "Custom recharge is waiting for backend support",
+    "leaveTitle": "Leave checkout or continue?",
+    "leaveDescription": "You will return to the credit center and your current selection will be preserved.",
+    "leave": "Leave",
+    "stay": "Continue",
+    "dodoTax": "Any applicable tax is shown in the Dodo checkout before payment.",
+    "retryQuote": "Refresh quote"
+  },
+  "paymentReturn": {
+    "back": "Back to DramaClaw",
+    "returnButton": "Back to DramaClaw",
+    "orderNumber": "Merchant order number",
+    "retry": "Check again",
+    "states": {
+      "confirming": {
+        "title": "Confirming payment",
+        "description": "The provider notification may take a moment. Do not pay again. This page will show the final fulfillment status once confirmed."
+      },
+      "credited": {
+        "title": "Credits added",
+        "description": "Both payment and credit fulfillment have been confirmed by the server. You can return to DramaClaw."
+      },
+      "closed": {
+        "title": "Order closed",
+        "description": "The payment window expired or the provider closed this order. No credits will be added. You can return and start a new recharge."
+      },
+      "failed": {
+        "title": "Payment not completed",
+        "description": "The payment provider reported a definitive failure. No credits will be added. You can return and start a new recharge."
+      },
+      "fulfillment_failed": {
+        "title": "Payment received, fulfillment pending",
+        "description": "Payment was received but credit fulfillment needs attention. Do not pay again. Track progress in billing history."
+      },
+      "manual_review": {
+        "title": "Order requires review",
+        "description": "The provider refund and credit reversal are not both confirmed. Do not pay again; the billing record will show the reviewed outcome."
+      },
+      "refunded": {
+        "title": "Order refunded",
+        "description": "This order is being refunded or reversed. Billing history remains the source of truth."
+      },
+      "unavailable": {
+        "title": "Payment result unavailable",
+        "description": "This will not cause a duplicate charge. Try again later or check billing history."
+      }
+    }
+  },
+  "rechargeLink": {
+    "title": "Recharge credits",
+    "subtitle": "Choose a recharge package and payment method.",
+    "checking": "Checking your account…",
+    "loading": "Loading recharge packages…",
+    "loginTitle": "Sign in to continue",
+    "loginRequired": "This recharge link is bound to an account or organization. Sign in with the intended account before paying.",
+    "login": "Sign in",
+    "invalidTitle": "Invalid recharge link",
+    "invalid": "The recharge token is missing or malformed. Ask the issuer for a new link.",
+    "unavailableTitle": "Recharge link unavailable",
+    "unavailable": "This link has expired, was disabled, does not belong to this account, or has no active package.",
+    "credits": "{{count}} credits",
+    "methods": {
+      "alipay": "Alipay",
+      "wxpay": "WeChat Pay",
+      "dodo": "Dodo Payments"
+    },
+    "pay": "Pay now",
+    "creating": "Creating order…",
+    "createFailed": "Could not create the payment order. Try again later.",
+    "orderAlreadyCreated": "This order already exists. Check your recharge history."
   },
   "nav": {
     "home": "Home",
@@ -1869,7 +2151,13 @@
     "login": "Login",
     "logout": "Logout",
     "username": "Username",
+    "account": "Account",
+    "accountPlaceholder": "Enter account",
+    "accountOrPhone": "Account or phone",
+    "accountOrPhonePlaceholder": "Enter account or phone number",
     "password": "Password",
+    "passwordTab": "Password",
+    "loginMethod": "Choose sign-in method",
     "loginButton": "Sign in",
     "loginFailed": "Invalid username or password",
     "welcomeBack": "Welcome back",
@@ -1895,11 +2183,37 @@
       "subtitle": "Continue your stories, assets, and shots",
       "noAccount": "Need an account?",
       "applyAccount": "Request access",
+      "otpRegistration": "Your first verified phone sign-in creates an account automatically",
       "showcaseLabel": "DramaClaw showcase",
       "showcaseEyebrow": "MADE WITH DRAMACLAW",
       "showcaseMeta": "Production in motion",
       "showcaseTitle": "Imagination, rolling at full speed",
       "showcaseDescription": "Characters, storyboards, sound, and shots move forward in one production line"
+    },
+    "otp": {
+      "existingAccountHint": "Already have an account? Sign in with your account and password, then link your phone in the account menu to avoid creating another account.",
+      "tab": "Verification code",
+      "phone": "Phone number",
+      "phonePlaceholder": "Enter phone number",
+      "changePhone": "Change phone",
+      "code": "Verification code",
+      "codePlaceholder": "6-digit code",
+      "send": "Send code",
+      "sending": "Sending…",
+      "resend": "Send again",
+      "resendIn": "Retry in {{seconds}}s",
+      "sent": "Code sent to {{phone}}",
+      "loginButton": "Verify and sign in",
+      "verifying": "Verifying…",
+      "autoRegisterHint": "A verified phone number without an account will be registered automatically.",
+      "accountCreated": "Account created. You can set a password from the account menu.",
+      "passwordNotSet": "This account has no password yet. You can set one from the account menu.",
+      "invalidPhone": "Enter a valid phone number.",
+      "invalidCode": "The code is incorrect or expired. Request a new one.",
+      "rateLimited": "Too many attempts. Try again later.",
+      "unavailable": "SMS is temporarily unavailable. Try again later.",
+      "requestFailed": "Could not send the verification code. Try again.",
+      "verifyFailed": "Could not sign in with this code. Try again."
     },
     "privacy": "Privacy",
     "terms": "Terms",
@@ -2147,6 +2461,7 @@
       "searchPlaceholder": "Search username",
       "alreadyInProject": "Already in project",
       "limitTitle": "Share limit reached",
+      "noShareableUser": "No shareable user found. This user may be outside this project's sharing scope.",
       "quotaUnknownTitle": "Member count not available yet",
       "quotaUnknown": "The member list is still loading. Try again once it finishes.",
       "limitReached": "A project can be shared with at most {{limit}} people",
@@ -2164,6 +2479,8 @@
       "roleAdmin": "Can manage shared members",
       "toastMemberUpdated": "Shared member updated",
       "toastShareFailed": "Share failed. Confirm the user exists and you have permission.",
+      "toastUserOutOfScope": "This user is outside this project's sharing scope.",
+      "toastUserNotFound": "User not found",
       "toastLinkCopied": "Project link copied",
       "toastCopyFailed": "Copy failed",
       "toastPermissionUpdated": "Permission updated",
@@ -2628,7 +2945,7 @@
         },
         "missingSceneHeaders": {
           "message": "No scene headings were recognized, so the system cannot tell where each scene begins.",
-          "fix": "Follow the standard format: start every episode with “Episode N”, give each scene its own “scene number, location, time, INT/EXT” heading, then list characters, action, and dialogue. For example: Episode 1 / 1-1 City Cafe DAY INT."
+          "fix": "Follow the standard format: start every episode with “EPISODE N”, give each scene its own “INT./EXT. location - TIME” heading, then list characters, action, and dialogue. For example: EPISODE 1 / INT. City Cafe - DAY."
         },
         "nonstandardSceneHeaders": {
           "message": "Scene boundaries were recognized, but some scene metadata is incomplete.",
@@ -2636,7 +2953,7 @@
         },
         "sceneHeadersMissingTime": {
           "message": "Some scene headings have no explicit time anchor, so time_of_day and scene variant inheritance may be unstable.",
-          "fix": "Add an explicit time to the scene heading, such as DAY, NIGHT, or LATE NIGHT. Scene boundaries are kept either way and normalized later."
+          "fix": "Add an explicit time to the scene heading. Only DAY, NIGHT, MORNING, AFTERNOON, EVENING, DAWN and DUSK are recognized. Scene boundaries are kept either way and normalized later."
         },
         "missingInteriorExterior": {
           "message": "The scene heading has no INT/EXT marker.",
@@ -2916,6 +3233,12 @@
       },
       "props": {
         "deferred": "Props are generated on demand during episode planning"
+      },
+      "video": {
+        "waitingForArchive": "Video generation completed; waiting for gateway archival...",
+        "writingProjectStorage": "Video archived; writing to project storage...",
+        "downloading": "Video generation completed; downloading...",
+        "retryingDelivery": "Project storage is not ready; retrying delivery..."
       }
     },
     "toast": {
@@ -4364,7 +4687,14 @@
     },
     "crossProjectAssets": {
       "success": "Copied {{count}} media asset(s) into this project",
-      "partialFailure": "{{count}} media asset(s) failed to copy; original links kept"
+      "partialFailure": "{{count}} media asset(s) failed to copy; the affected nodes are marked, delete them and paste again",
+      "copying": "Copying assets…",
+      "failedPlaceholder": "Asset copy failed. Delete this node and paste again.",
+      "removeNode": "Remove node",
+      "foreignMedia": "Media belongs to another project",
+      "copyIntoProject": "Copy into this project",
+      "foreignMediaCopyFailed": "Copy failed — you may not have access to the source project",
+      "foreignMediaCopyRetryable": "Copy did not go through — try again in a moment"
     },
     "emptyHintChips": {
       "textToVideo": "Text to Video",
@@ -7322,6 +7652,7 @@
           "LITERAL_BEAT_META": "Split and annotate shots line by line",
           "EPISODE_SCENE_PLANNER": "Plan episode scenes",
           "EPISODE_PROP_PLANNER": "Plan episode props",
+          "CHARACTER_BUILD": "Extract and adjudicate characters from the source text",
           "SCENE_BUILD": "Analyze and enrich scene descriptions",
           "FREEZONE_TRANSLATION": "Prompt zh/en translation",
           "FREEZONE_TEXT_WRITER": "AI text generation",

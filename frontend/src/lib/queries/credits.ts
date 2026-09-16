@@ -149,6 +149,7 @@ export interface CreditFilterOptions {
 
 export interface CreditTransactionFilters {
   category: CreditTransactionCategory;
+  status?: CreditTransaction["status"];
   page: number;
   pageSize: number;
   startAt?: string;
@@ -217,6 +218,7 @@ export function useCreditTransactions(filters: CreditTransactionFilters, enabled
         page_size: filters.pageSize,
       };
       if (filters.startAt) searchParams.start_at = filters.startAt;
+      if (filters.status) searchParams.status = filters.status;
       if (filters.endAt) searchParams.end_at = filters.endAt;
       if (filters.projectId) searchParams.project_id = filters.projectId;
       if (filters.featureKey) searchParams.feature_key = filters.featureKey;

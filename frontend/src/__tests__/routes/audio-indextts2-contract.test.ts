@@ -45,4 +45,18 @@ describe("audio IndexTTS2 alignment contract", () => {
     expect(audioHandler).not.toContain("for (const beatNum of beatList)");
     expect(audioHandler).toContain("beatNumbers: beatList");
   });
+
+  it("hands the backend task_id to the audio task controller", () => {
+    // 配音接口只返回 task_id，没有 scope。只传 scope 时 controller 认不出这次的任务，
+    // 会把 /tasks 里上一次已结束的配音任务当成这次，当场收尾，完成后 beats 不再刷新。
+    for (const path of [
+      "src/components/episode/beat-workbench/audio-pane.tsx",
+      "src/components/episode/beat-workbench/batch-bar.tsx",
+      "src/components/episode/beat-workbench/batch-panel.tsx",
+    ]) {
+      expect(read(path), path).toContain(
+        "audioTask.start({ scope: res.scope, taskId: res.task_id })",
+      );
+    }
+  });
 });

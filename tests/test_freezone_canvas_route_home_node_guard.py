@@ -287,8 +287,8 @@ def test_only_placement_free_canvas_routes_opt_out_of_the_home_node_guard() -> N
         and _opts_out_of_the_guard(call)
     }
 
-    # staging 的 3 条图片输出路由及工作流能力查询，共 108 条路由，画布标签占 30 条。
-    assert router_decorators == 108
+    # Combined Agent/Workflow routes plus main cross-project asset copy.
+    assert router_decorators == 109
     assert len(canvas_routes) == 30
 
     assert set(canvas_routes) >= PLACEMENT_FREE_CANVAS_ROUTES

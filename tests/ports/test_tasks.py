@@ -725,7 +725,9 @@ def test_local_bootstrap_bad_signing_config_registers_zero_ports(monkeypatch):
     from novelvideo.task_backend.signing import TaskEnvelopeSigningConfigError
 
     monkeypatch.setattr(registry, "_PORTS", {})
-    monkeypatch.delenv("ST_TASK_ENVELOPE_ACTIVE_KEY_ID", raising=False)
+    # Missing config is valid in default CE (a local key is generated).
+    # A partially supplied keyring must still fail before any port is registered.
+    monkeypatch.setenv("ST_TASK_ENVELOPE_ACTIVE_KEY_ID", "incomplete-keyring")
     monkeypatch.delenv("ST_TASK_ENVELOPE_KEYRING_B64_JSON", raising=False)
 
     with pytest.raises(TaskEnvelopeSigningConfigError):

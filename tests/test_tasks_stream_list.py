@@ -261,6 +261,57 @@ async def test_project_stream_emits_heartbeat_immediately(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_project_stream_completes_when_server_shuts_down(tmp_path, monkeypatch):
+    """On server shutdown the stream must end on its own and *complete* the
+    response (final empty chunk), so uvicorn does not log a truncated response.
+    The 10 s poll interval must not delay that."""
+    from sse_starlette import sse as sse_module
+    from sse_starlette.sse import AppStatus
+
+    ctx = _ctx(tmp_path)
+    _install_fake_project_context(monkeypatch, ctx)
+    _install_fake_task_manager(monkeypatch, tasks=[])
+    monkeypatch.setattr(AppStatus, "should_exit", False)
+    monkeypatch.setattr(sse_module._thread_state, "shutdown_state", None, raising=False)
+
+    from novelvideo.api.routes.tasks import stream_project_tasks
+
+    resp = await stream_project_tasks(
+        project=ctx.project_id,
+        request=None,  # type: ignore[arg-type]
+        interval=10.0,
+        heartbeat_sec=60.0,
+        snapshot=False,
+        user={"username": "admin", "role": "admin"},
+    )
+
+    sent: list[dict] = []
+    first_chunk = asyncio.Event()
+
+    async def send(message):
+        sent.append(message)
+        if message["type"] == "http.response.body":
+            first_chunk.set()
+
+    async def receive():
+        await asyncio.sleep(3600)  # the client never disconnects
+        return {"type": "http.disconnect"}
+
+    scope = {"type": "http", "method": "GET", "path": "/", "headers": []}
+    call = asyncio.create_task(resp(scope, receive, send))
+    try:
+        await asyncio.wait_for(first_chunk.wait(), timeout=3.0)
+        AppStatus.should_exit = True
+        await asyncio.wait_for(call, timeout=5.0)
+    finally:
+        AppStatus.should_exit = False
+        if not call.done():
+            call.cancel()
+
+    assert sent[-1] == {"type": "http.response.body", "body": b"", "more_body": False}
+
+
+@pytest.mark.asyncio
 async def test_project_stream_rejects_missing_auth():
     from novelvideo.api import api_router
     from novelvideo.ports import registry

@@ -20,6 +20,10 @@ import type {
   FreezoneCanvasPayload,
 } from "@/api/canvas";
 import type { CanvasMutationSource } from "@/stores/canvasStore";
+import {
+  parseCanvasMediaScopeRefs,
+  type ForeignMediaRef,
+} from "@/features/canvas/application/canvasMediaScope";
 import type { TFn } from "@/lib/i18n-types";
 
 /**
@@ -345,7 +349,7 @@ export function describePayloadViolation(v: PayloadLimitViolation, t: TFn): stri
 }
 
 export interface SaveErrorBody {
-  detail?: { code?: unknown };
+  detail?: { code?: unknown; refs?: unknown };
 }
 
 export type SaveResponseOutcome =
@@ -360,6 +364,11 @@ export type SaveResponseOutcome =
   | { kind: "dangerous_empty"; message: string }
   | { kind: "retry"; afterMs: number; code: "canvas_lock_busy" }
   | { kind: "fatal"; code: string; message: string }
+  /**
+   * 422 canvas_media_scope_mismatch：这次保存想引入别的项目的媒体地址。可以自愈——
+   * 把素材拷进本项目再重试，所以不能和「载荷过大」一样归到 fatal 里躺平。
+   */
+  | { kind: "media_scope"; refs: ForeignMediaRef[] }
   | { kind: "error"; message: string };
 
 /**
@@ -414,6 +423,10 @@ export function classifySaveError(
       backupStatus: "pending",
       message: t("freezone.canvasSync.backupPending"),
     };
+  }
+  const mediaScopeRefs = parseCanvasMediaScopeRefs(status, body);
+  if (mediaScopeRefs) {
+    return { kind: "media_scope", refs: mediaScopeRefs };
   }
   if (status === 413 || (status === 422 && code === "canvas_payload_too_large")) {
     return {
