@@ -18,6 +18,29 @@ from novelvideo.chat import dramaclaw_mcp
 CE_ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_plugin_path_uses_explicit_runtime_root_from_site_packages(monkeypatch, tmp_path):
+    runtime_root = tmp_path / "app"
+    plugin_path = runtime_root / ".hermes" / "plugins" / "dramaclaw" / "__init__.py"
+    plugin_path.parent.mkdir(parents=True)
+    plugin_path.write_text("TOOLS = []\n", encoding="utf-8")
+    monkeypatch.setenv("DRAMACLAW_ROOT", str(runtime_root))
+    monkeypatch.setattr(
+        dramaclaw_mcp,
+        "__file__",
+        "/usr/local/lib/python3.12/site-packages/novelvideo/chat/dramaclaw_mcp.py",
+    )
+
+    assert dramaclaw_mcp._plugin_path("dramaclaw") == plugin_path
+    assert dramaclaw_mcp._load_plugin("dramaclaw").TOOLS == []
+
+
+def test_plugin_path_rejects_invalid_explicit_runtime_root(monkeypatch, tmp_path):
+    monkeypatch.setenv("DRAMACLAW_ROOT", str(tmp_path))
+
+    with pytest.raises(RuntimeError, match="DRAMACLAW_ROOT does not contain"):
+        dramaclaw_mcp._plugin_path("dramaclaw")
+
+
 def _confirmed_canvas_receipt():
     return {
         "ok": True, "status": "completed", "project_id": "project-a",
