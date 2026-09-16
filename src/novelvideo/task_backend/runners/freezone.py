@@ -1828,6 +1828,8 @@ register_project_task_runner(
 register_project_task_runner(
     "freezone_image_animate_gif",
     run_freezone_image_animate_gif,
+    # Reads/writes job-scoped output only; EE output is shared OSS, not home state.
+    requires_home_node=False,
     lane="ffmpeg",
 )
 register_project_task_runner(

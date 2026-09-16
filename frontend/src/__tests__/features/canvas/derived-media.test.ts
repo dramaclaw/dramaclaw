@@ -54,6 +54,7 @@ describe('derived media task lifecycle', () => {
     expect(update).toHaveBeenLastCalledWith(
       expect.objectContaining({ imageUrl: '/image.gif', isGenerating: false }),
     );
+    expect(mocks.apiCall).not.toHaveBeenCalled();
   });
   it('resumes directly from persisted child', async () => {
     mocks.awaitTaskCompletion.mockResolvedValueOnce({
@@ -103,18 +104,19 @@ describe('derived media task lifecycle', () => {
       }),
     );
   });
-  it('preserves generated video when child dispatch was unsuccessful', async () => {
-    mocks.awaitTaskCompletion.mockResolvedValue({
+  it('does not auto-submit conversion when completed video has no child task', async () => {
+    mocks.awaitTaskCompletion.mockResolvedValueOnce({
       result: { output_url: '/video.mp4' },
     });
     const update = vi.fn();
-    await expect(
-      completeDerivedMedia(
-        'p',
-        { task_type: 'freezone_video_gen', task_key: 'p', job_id: 'p' },
-        update,
-      ),
-    ).rejects.toThrow('转换任务未创建');
+
+    await expect(completeDerivedMedia(
+      'p',
+      { task_type: 'freezone_video_gen', task_key: 'parent', job_id: 'video-job' },
+      update,
+    )).rejects.toThrow('转换任务未创建');
+
     expect(update).toHaveBeenCalledWith({ sourceVideoUrl: '/video.mp4' });
+    expect(mocks.apiCall).not.toHaveBeenCalled();
   });
 });

@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -139,6 +140,34 @@ def normalize_video_aspect_ratio(value: str | None) -> str:
     if not text:
         return "16:9"
     return text
+
+
+def supported_image_aspect_ratio(
+    frame_path: str, options: list[str] | None
+) -> str:
+    """Choose the closest supported fixed ratio for the locked first frame.
+
+    NewAPI canonicalizes adaptive to auto, which does not guarantee source
+    geometry; a fixed catalog ratio survives the final wire contract.
+    """
+    size = _read_reference_image_size(Path(frame_path))
+    if size is None:
+        return "auto"
+    supported: list[tuple[str, float]] = []
+    for option in options or []:
+        try:
+            width, height = (float(part) for part in option.split(":"))
+        except (ValueError, TypeError):
+            continue
+        if width > 0 and height > 0:
+            supported.append((option, width / height))
+    if not supported:
+        return "auto"
+    source_ratio = size[0] / size[1]
+    return min(
+        supported,
+        key=lambda candidate: abs(math.log(source_ratio / candidate[1])),
+    )[0]
 
 
 def normalize_video_resolution(value: str | None) -> str:

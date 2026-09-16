@@ -374,6 +374,7 @@ from novelvideo.freezone.video_node import (
     normalize_video_resolution_for_backend,
     rename_video_character_library_item,
     resolve_freezone_video_backend,
+    supported_image_aspect_ratio,
     summarize_omni_reference_counts,
     update_video_character_folder,
     validate_omni_reference_audio_durations,
@@ -9097,6 +9098,39 @@ def _catalog_resolution_options(
     return normalized or None
 
 
+def _catalog_ratio_options(capabilities: dict[str, Any] | None) -> list[str] | None:
+    if not capabilities:
+        return None
+    options = capabilities.get("ratioOptions")
+    if not isinstance(options, list):
+        return None
+    normalized = [str(option).strip() for option in options if str(option).strip()]
+    return normalized or None
+
+
+def _image_animate_ratio_options(
+    model: str, capabilities: dict[str, Any] | None
+) -> list[str] | None:
+    # Only fill a missing field on an already-authorized catalog entry. Explicit
+    # restrictions (including empty/auto-only lists) remain authoritative.
+    if capabilities is None or "ratioOptions" in capabilities:
+        return _catalog_ratio_options(capabilities)
+    from novelvideo.model_gateway_settings import get_bundled_media_model_catalog
+
+    identifier = str(
+        capabilities.get("gatewayModel") or capabilities.get("gateway_model") or model
+    )
+    entry = next(
+        (
+            item
+            for item in get_bundled_media_model_catalog("video")
+            if identifier in _catalog_entry_identifiers(item)
+        ),
+        None,
+    )
+    return _catalog_ratio_options(entry)
+
+
 def _catalog_reference_limits(
     capabilities: dict[str, Any] | None,
     *,
@@ -10017,7 +10051,10 @@ async def freezone_image_animate(
             job_id=_new_job_id(),
             prompt="保持首帧的主体、构图、画风与背景稳定，仅添加自然轻微的循环动作。镜头固定，无切换，无新增元素。",
             reference_items=[{"type": "image", "path": source_paths[0], "role": "首帧"}],
-            aspect_ratio="auto",
+            aspect_ratio=supported_image_aspect_ratio(
+                source_paths[0],
+                _image_animate_ratio_options(model, capabilities),
+            ),
             resolution=normalize_video_resolution_for_backend(
                 backend, "720p", _catalog_resolution_options(capabilities)
             ),
