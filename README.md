@@ -1,5 +1,67 @@
 <div align="center">
 
+# DramaClaw
+
+## CA Office Romance — Episode 1
+
+</div>
+
+### Story
+
+A modern corporate office in Seoul.
+
+A new young Chartered Accountant joins the company. He is calm, serious, professional, and slightly cold. He wears a neat black suit and carries a professional file.
+
+When he enters the office, the female employees naturally notice him and quietly look at him with curiosity.
+
+He looks around and says:
+
+"Everyone, please get back to work."
+
+Everyone immediately returns to their desks.
+
+At that moment, a young female employee arrives late. She is walking quickly through the office while holding some documents.
+
+She accidentally bumps into the new CA.
+
+Her papers almost fall from her hands.
+
+She quickly says:
+
+"Sorry!"
+
+The CA calmly looks at her and says:
+
+"Please be careful while walking."
+
+She looks slightly annoyed but says nothing.
+
+Later, the CA is checking some important company files.
+
+He notices that one file is missing.
+
+He calls the girl into his office.
+
+"Where is the file I asked for?"
+
+She looks confused and replies:
+
+"I don't have it."
+
+He calmly tells her:
+
+"Please find it and bring it to me as soon as possible."
+
+She leaves his office feeling irritated.
+
+While talking to another employee, she quietly says:
+
+"I really don't like the new CA. He's so cold."
+
+She doesn't realize that the CA is standing nearby and has heard everything.
+
+He looks at her silently.<div align="center">
+
 <!-- TBD: replace with official logo assets/logo.svg -->
 <h1>DramaClaw</h1>
 
