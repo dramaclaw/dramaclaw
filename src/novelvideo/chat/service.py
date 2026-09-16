@@ -5320,6 +5320,12 @@ def _dramaclaw_mcp_servers(
                 "DRAMACLAW_TOOL_MODE",
                 "DRAMACLAW_USERNAME",
                 "NOVELVIDEO_OUTPUT_DIR",
+                # Codex starts MCP servers with a minimal environment. Forward the
+                # parent's PYTHONPATH so the child imports the same `novelvideo`
+                # tree as the API process; otherwise a site-packages copy wins and
+                # `_repo_root()` (Path(__file__).parents[3]) points at the Python
+                # prefix, where `.hermes/plugins/dramaclaw` does not exist.
+                "PYTHONPATH",
             ],
         }
     }
@@ -5331,7 +5337,7 @@ def _dramaclaw_mcp_servers(
             "type": "stdio",
             "command": sys.executable,
             "args": ["-m", "novelvideo.chat.workflow_mcp"],
-            "env_vars": ["DRAMACLAW_USERNAME", "NOVELVIDEO_OUTPUT_DIR"],
+            "env_vars": ["DRAMACLAW_USERNAME", "NOVELVIDEO_OUTPUT_DIR", "PYTHONPATH"],
         }
     return servers
 
