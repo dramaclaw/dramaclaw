@@ -29,6 +29,7 @@ from novelvideo.chat.runtime_port import ChatBackendEvent
 
 _log = logging.getLogger(__name__)
 
+
 def _env_float(name: str, default: float) -> float:
     try:
         return float(os.environ.get(name, str(default)))
@@ -54,7 +55,9 @@ SESSION_NEW_TIMEOUT = 90.0
 # Per-line stdout read timeout while streaming a prompt. Freezone canvas write
 # tools can legitimately block while the browser validates/applies commands, so
 # keep this longer than the canvas bridge wait to avoid premature "(hermes timed out)".
-CANVAS_COMMAND_RESULT_TIMEOUT = _env_float("DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", 600.0)
+CANVAS_COMMAND_RESULT_TIMEOUT = _env_float(
+    "DRAMACLAW_CANVAS_COMMAND_RESULT_TIMEOUT_SECONDS", 600.0
+)
 HERMES_STDIO_LINE_LIMIT_BYTES = max(
     65536,
     _env_int("DRAMACLAW_HERMES_STDIO_LINE_LIMIT_BYTES", 4 * 1024 * 1024),
@@ -62,7 +65,9 @@ HERMES_STDIO_LINE_LIMIT_BYTES = max(
 STREAM_IDLE_TIMEOUT = 300.0
 STREAM_TOTAL_TIMEOUT = max(1800.0, STREAM_IDLE_TIMEOUT)
 try:
-    TURN_TOOL_CALL_LIMIT = max(0, int(os.environ.get("HERMES_TURN_TOOL_CALL_LIMIT", "0")))
+    TURN_TOOL_CALL_LIMIT = max(
+        0, int(os.environ.get("HERMES_TURN_TOOL_CALL_LIMIT", "0"))
+    )
 except ValueError:
     TURN_TOOL_CALL_LIMIT = 0
 FREEZONE_TURN_TOOL_CALL_LIMIT = max(
@@ -91,9 +96,7 @@ CONTENT_FILTER_MESSAGE = (
 DRAMACLAW_ONE_STEP_STOP_MESSAGE = (
     "当前任务已开始处理。请稍后让我查看当前任务进度，或在任务完成后再继续下一步。"
 )
-DRAMACLAW_WRITE_FAILED_STOP_MESSAGE = (
-    "刚才这一步没有成功启动任务，系统已阻止重复提交。请根据本轮返回的具体错误处理后再重试。"
-)
+DRAMACLAW_WRITE_FAILED_STOP_MESSAGE = "刚才这一步没有成功启动任务，系统已阻止重复提交。请根据本轮返回的具体错误处理后再重试。"
 
 
 class HermesSessionUnavailableError(RuntimeError):
@@ -117,9 +120,9 @@ def _is_session_unavailable_error(error: Any) -> bool:
         text = str(error)
     normalized = text.lower()
     return (
-        "session" in normalized
-        and "not found" in normalized
+        "session" in normalized and "not found" in normalized
     ) or "failed to recreate agent for acp session" in normalized
+
 
 _DRAMACLAW_WRITE_TOOLS = {
     "dramaclaw_post",
@@ -166,12 +169,15 @@ _FREEZONE_CANVAS_WRITE_TOOLS = {
     "freezone_select_nodes",
     "freezone_open_mainline_projection",
     "freezone_run_node_action",
+    "freezone_run_workflow",
 }
+_FREEZONE_TERMINAL_WRITE_TOOLS = {"freezone_run_workflow"}
 FREEZONE_FAILED_WRITE_RETRY_LIMIT = 1
 
 
 def _refresh_stream_idle_deadline(*, now: float, total_deadline: float) -> float:
     return min(total_deadline, now + STREAM_IDLE_TIMEOUT)
+
 
 _TOOL_DETAIL_FIELDS = (
     ("command", "命令"),
@@ -279,7 +285,10 @@ def _has_content_filter_signal(value: object) -> bool:
         return "content_filter" in lowered or "content filter triggered" in lowered
     if isinstance(value, dict):
         for key, item in value.items():
-            if str(key).lower() == "finish_reason" and str(item).lower() == "content_filter":
+            if (
+                str(key).lower() == "finish_reason"
+                and str(item).lower() == "content_filter"
+            ):
                 return True
             if _has_content_filter_signal(item):
                 return True
@@ -350,7 +359,9 @@ class _TurnToolCallGuard:
         if event.type == "tool_updated":
             failure_signature = _failed_tool_call_signature(event)
             if failure_signature is not None:
-                failure_count = self._failed_signature_counts.get(failure_signature, 0) + 1
+                failure_count = (
+                    self._failed_signature_counts.get(failure_signature, 0) + 1
+                )
                 self._failed_signature_counts[failure_signature] = failure_count
                 if failure_count >= REPEATED_FAILED_TOOL_CALL_LIMIT:
                     return (
@@ -391,7 +402,9 @@ class _TurnToolCallGuard:
                     "本轮操作已停止：虾画重复校验同一批画布命令，且没有执行新的写入。"
                     "请重新发送一条明确的继续或重试指令。"
                 )
-        if not _is_dramaclaw_write_tool(tool_name) and not _is_freezone_canvas_write_tool(tool_name):
+        if not _is_dramaclaw_write_tool(
+            tool_name
+        ) and not _is_freezone_canvas_write_tool(tool_name):
             if event.input is None:
                 # Hermes "polished" tools (skill_view, read_file, search_files…)
                 # omit rawInput in the ACP event, and _split_tool_title reduces
@@ -416,7 +429,9 @@ class _TurnToolCallGuard:
             repeat_count = self._read_signature_counts.get(signature, 0) + 1
             self._read_signature_counts[signature] = repeat_count
             if repeat_count > REPEATED_READ_TOOL_CALL_LIMIT:
-                subject = "同一个画布节点" if _is_freezone_tool(tool_name) else "同一项状态"
+                subject = (
+                    "同一个画布节点" if _is_freezone_tool(tool_name) else "同一项状态"
+                )
                 return (
                     f"本轮操作已停止：虾导重复读取{subject}，且没有产生新的操作。"
                     "请重新发送一条明确的继续或重试指令。"
@@ -468,13 +483,17 @@ def _tool_failure_payload(event: ChatBackendEvent) -> object | None:
         payload = _coerce_tool_result(candidate)
         if not isinstance(payload, dict):
             continue
-        result_status = str(
-            payload.get("status")
-            or payload.get("tool_call_status")
-            or payload.get("canvas_context_status")
-            or payload.get("canvas_apply_status")
-            or ""
-        ).strip().lower()
+        result_status = (
+            str(
+                payload.get("status")
+                or payload.get("tool_call_status")
+                or payload.get("canvas_context_status")
+                or payload.get("canvas_apply_status")
+                or ""
+            )
+            .strip()
+            .lower()
+        )
         if payload.get("ok") is False or result_status in {
             "failed",
             "error",
@@ -520,8 +539,24 @@ def _stable_tool_failure_payload(value: object) -> object:
     return value
 
 
-def _should_stop_after_write_tool(first_write_tool: str | None, next_tool_name: object) -> bool:
-    return _is_dramaclaw_write_tool(first_write_tool) and _is_dramaclaw_write_tool(next_tool_name)
+def _should_stop_after_write_tool(
+    first_write_tool: str | None, next_tool_name: object
+) -> bool:
+    return (
+        _is_dramaclaw_write_tool(first_write_tool)
+        and _is_dramaclaw_write_tool(next_tool_name)
+    ) or (
+        str(first_write_tool or "").strip() in _FREEZONE_TERMINAL_WRITE_TOOLS
+        and str(next_tool_name or "").strip() == str(first_write_tool or "").strip()
+    )
+
+
+def _should_track_terminal_write(name: object) -> bool:
+    normalized = str(name or "").strip()
+    return (
+        _is_dramaclaw_write_tool(normalized)
+        or normalized in _FREEZONE_TERMINAL_WRITE_TOOLS
+    )
 
 
 def _is_freezone_canvas_write_tool(name: object) -> bool:
@@ -540,6 +575,7 @@ def _can_retry_failed_canvas_write(
         and failed_write_retry_count < FREEZONE_FAILED_WRITE_RETRY_LIMIT
         and _is_freezone_canvas_write_tool(first_write_tool)
         and _is_freezone_canvas_write_tool(next_tool_name)
+        and str(first_write_tool or "").strip() not in _FREEZONE_TERMINAL_WRITE_TOOLS
     )
 
 
@@ -649,7 +685,9 @@ def _extract_tool_update_content_text(update: dict) -> str:
     for key in ("content", "result", "data", "output"):
         if key in update:
             visit(update.get(key))
-    return "\n".join(part for part in (_redact_tool_detail(part) for part in parts) if part)
+    return "\n".join(
+        part for part in (_redact_tool_detail(part) for part in parts) if part
+    )
 
 
 def _load_recent_freezone_tool_result(
@@ -683,7 +721,10 @@ def _load_recent_freezone_tool_result(
         if not isinstance(raw, dict) or raw.get("tool_name") != name:
             continue
         created_at = raw.get("created_at")
-        if isinstance(created_at, (int, float)) and now - float(created_at) > max_age_seconds:
+        if (
+            isinstance(created_at, (int, float))
+            and now - float(created_at) > max_age_seconds
+        ):
             continue
         return raw.get("result")
     return None
@@ -696,8 +737,8 @@ def _load_recent_freezone_tool_result(
 #: drain was added for. So an exception type at the start of a line counts as
 #: diagnostic on its own.
 _WORKER_DIAGNOSTIC = re.compile(
-    r"\b(ERROR|CRITICAL|Traceback)\b"
-    r"|^[A-Za-z_][\w.]*(?:Error|Exception)\b")
+    r"\b(ERROR|CRITICAL|Traceback)\b" r"|^[A-Za-z_][\w.]*(?:Error|Exception)\b"
+)
 _WORKER_ERROR_TYPE = re.compile(r"\b([A-Z][A-Za-z0-9_]*(?:Error|Exception))\b")
 
 
@@ -785,9 +826,7 @@ def _issue_turn_capability(
         # One greppable success line per minted turn. Names only — no key,
         # capability or prompt — so it is safe in api.log. Lets an operator
         # confirm the K1/K3 keys are live without a debugger or an endpoint.
-        _log.info(
-            "capability_issued turn=%s (evidence plane active)", turn_id
-        )
+        _log.info("capability_issued turn=%s (evidence plane active)", turn_id)
         return capability
     except Exception:
         # Elevated from debug: a mint failure is a HALTING evidence outcome —
@@ -836,9 +875,9 @@ class HermesSdkThread:
         self._initialized = False
         self._tool_names_by_call_id: dict[str, str] = {}
         self._tool_inputs_by_call_id: dict[str, Any] = {}
-        self._pending_permissions: dict[
-            str, tuple[str | int, set[str], float, str]
-        ] = {}
+        self._pending_permissions: dict[str, tuple[str | int, set[str], float, str]] = (
+            {}
+        )
         # Serializes the spawn→initialize→session prologue so a background
         # warm() and the first real stream() can't interleave on the shared
         # JSON-RPC stdio. Whichever runs first pays the cold start; the other
@@ -896,8 +935,12 @@ class HermesSdkThread:
     def _clear_pending_permissions_for_turn(self, turn_id: str) -> None:
         stale = [
             key
-            for key, (_request_id, _options, _expires_at, pending_turn_id)
-            in self._pending_permissions.items()
+            for key, (
+                _request_id,
+                _options,
+                _expires_at,
+                pending_turn_id,
+            ) in self._pending_permissions.items()
             if pending_turn_id == turn_id
         ]
         for key in stale:
@@ -909,9 +952,14 @@ class HermesSdkThread:
             return
         base_cmd = [str(self._cli_path), "acp"]
         # Wrap with OS sandbox (codex-linux-sandbox on Linux; sandbox-exec on macOS).
-        sandboxed = wrap_command(base_cmd, SandboxSpec(user=self._username, hermes_home=self._cwd))
-        _log.info("spawning hermes acp for user=%s (sandboxed=%s)", self._username,
-                  sandboxed[0] != base_cmd[0])
+        sandboxed = wrap_command(
+            base_cmd, SandboxSpec(user=self._username, hermes_home=self._cwd)
+        )
+        _log.info(
+            "spawning hermes acp for user=%s (sandboxed=%s)",
+            self._username,
+            sandboxed[0] != base_cmd[0],
+        )
         self._proc = await asyncio.create_subprocess_exec(
             *sandboxed,
             cwd=str(self._cwd),
@@ -961,7 +1009,9 @@ class HermesSdkThread:
                     match = _WORKER_ERROR_TYPE.search(text)
                     _log.warning(
                         "hermes worker pid=%s reported %s",
-                        pid, match.group(1) if match else "an error")
+                        pid,
+                        match.group(1) if match else "an error",
+                    )
                 else:
                     _log.debug("hermes[%s] %s", self._username, text)
         except asyncio.CancelledError:
@@ -1035,8 +1085,10 @@ class HermesSdkThread:
             # adapter may encode a missing session as an empty result object.
             if resp and "error" not in resp and resp.get("result"):
                 return
-            _log.warning("session/load failed, falling back to session/new: %s",
-                         resp.get("error") if resp and resp.get("error") else "not found")
+            _log.warning(
+                "session/load failed, falling back to session/new: %s",
+                resp.get("error") if resp and resp.get("error") else "not found",
+            )
             self._is_new = True
 
         req_id = await self._send(
@@ -1076,7 +1128,9 @@ class HermesSdkThread:
             return
         try:
             await self._prepare()
-            _log.info("hermes worker warmed for user=%s session=%s", self._username, self.id)
+            _log.info(
+                "hermes worker warmed for user=%s session=%s", self._username, self.id
+            )
         except Exception as e:  # noqa: BLE001 - best-effort prewarm
             _log.warning("hermes warm() failed for user=%s: %s", self._username, e)
 
@@ -1094,7 +1148,6 @@ class HermesSdkThread:
             # ledger as a success the day that string changes.
             disposition="timeout",
         )
-
 
     async def stream(
         self,
@@ -1147,7 +1200,9 @@ class HermesSdkThread:
             text = prompt
             if current_project:
                 text = f"[CONTEXT: current_project={current_project}]\n\n{prompt}"
-            yield ChatBackendEvent(type="thread_started", thread_id=self.id, turn_id=turn_id)
+            yield ChatBackendEvent(
+                type="thread_started", thread_id=self.id, turn_id=turn_id
+            )
 
             prompt_params: dict[str, Any] = {
                 "sessionId": self.id,
@@ -1179,7 +1234,8 @@ class HermesSdkThread:
             # wrong past this line cannot prove the upstream call did not
             # happen, so the ledger may no longer say "rejected before submit".
             yield ChatBackendEvent(
-                type="egress_submitted", thread_id=self.id, turn_id=turn_id)
+                type="egress_submitted", thread_id=self.id, turn_id=turn_id
+            )
 
             # Read until we see the final session/prompt response (id matches).
             # Along the way emit assistant/tool/plan/thought/usage events for any
@@ -1267,10 +1323,14 @@ class HermesSdkThread:
                     if err:
                         if _is_session_unavailable_error(err):
                             raise HermesSessionUnavailableError(
-                                str(err.get("message", err)) if isinstance(err, dict) else str(err)
+                                str(err.get("message", err))
+                                if isinstance(err, dict)
+                                else str(err)
                             )
                         yield ChatBackendEvent(
-                            type="complete", thread_id=self.id, turn_id=turn_id,
+                            type="complete",
+                            thread_id=self.id,
+                            turn_id=turn_id,
                             text=(
                                 CONTENT_FILTER_MESSAGE
                                 if _has_content_filter_signal(err)
@@ -1279,7 +1339,9 @@ class HermesSdkThread:
                         )
                     else:
                         yield ChatBackendEvent(
-                            type="complete", thread_id=self.id, turn_id=turn_id,
+                            type="complete",
+                            thread_id=self.id,
+                            turn_id=turn_id,
                             text="",
                         )
                     return
@@ -1374,7 +1436,7 @@ class HermesSdkThread:
                                     text=stop_text,
                                 )
                                 return
-                        if _is_dramaclaw_write_tool(tool_name):
+                        if _should_track_terminal_write(tool_name):
                             first_write_tool = tool_name
                             first_write_failed = False
                     elif (
@@ -1418,8 +1480,11 @@ class HermesSdkThread:
             params = msg.get("params") or {}
             request_id = msg.get("id")
             raw_options = params.get("options")
-            options = [option for option in raw_options if isinstance(option, dict)] \
-                if isinstance(raw_options, list) else []
+            options = (
+                [option for option in raw_options if isinstance(option, dict)]
+                if isinstance(raw_options, list)
+                else []
+            )
             allowed_options = {
                 str(option.get("optionId") or option.get("option_id") or "").strip()
                 for option in options
@@ -1453,39 +1518,55 @@ class HermesSdkThread:
             content = update.get("content") or {}
             text = content.get("text") if isinstance(content, dict) else None
             return ChatBackendEvent(
-                type="assistant_delta", thread_id=self.id, turn_id=turn_id,
+                type="assistant_delta",
+                thread_id=self.id,
+                turn_id=turn_id,
                 text=text or "",
             )
         if kind == "agent_thought_chunk":
             content = update.get("content") or {}
             text = content.get("text") if isinstance(content, dict) else None
             return ChatBackendEvent(
-                type="thought_delta", thread_id=self.id, turn_id=turn_id,
-                text=text or "", raw=update,
+                type="thought_delta",
+                thread_id=self.id,
+                turn_id=turn_id,
+                text=text or "",
+                raw=update,
             )
         if kind == "plan":
             raw_entries = update.get("entries")
-            entries = [entry for entry in raw_entries if isinstance(entry, dict)] \
-                if isinstance(raw_entries, list) else []
+            entries = (
+                [entry for entry in raw_entries if isinstance(entry, dict)]
+                if isinstance(raw_entries, list)
+                else []
+            )
             return ChatBackendEvent(
-                type="plan_update", thread_id=self.id, turn_id=turn_id,
-                entries=entries, raw=update,
+                type="plan_update",
+                thread_id=self.id,
+                turn_id=turn_id,
+                entries=entries,
+                raw=update,
             )
         if kind == "tool_call":
             title = update.get("title") or update.get("kind") or "tool"
             tool_name, _body = _split_tool_title(title)
             tool_input = _first_present(update, "rawInput", "raw_input")
-            call_id = str(
-                update.get("toolCallId")
-                or update.get("tool_call_id")
-                or update.get("id")
-                or ""
-            ).strip() or None
+            call_id = (
+                str(
+                    update.get("toolCallId")
+                    or update.get("tool_call_id")
+                    or update.get("id")
+                    or ""
+                ).strip()
+                or None
+            )
             if call_id:
                 self._tool_names_by_call_id[call_id] = tool_name
                 self._tool_inputs_by_call_id[call_id] = tool_input
             return ChatBackendEvent(
-                type="tool_started", thread_id=self.id, turn_id=turn_id,
+                type="tool_started",
+                thread_id=self.id,
+                turn_id=turn_id,
                 text=_format_tool_call_text(update, title),
                 name=tool_name,
                 call_id=call_id,
@@ -1495,12 +1576,15 @@ class HermesSdkThread:
             )
         if kind == "tool_call_update":
             status = str(update.get("status") or "updated")
-            call_id = str(
-                update.get("toolCallId")
-                or update.get("tool_call_id")
-                or update.get("id")
-                or ""
-            ).strip() or None
+            call_id = (
+                str(
+                    update.get("toolCallId")
+                    or update.get("tool_call_id")
+                    or update.get("id")
+                    or ""
+                ).strip()
+                or None
+            )
             update_title = update.get("title") or update.get("kind")
             tool_name = self._tool_names_by_call_id.get(call_id or "")
             if not tool_name and call_id and tool_name_by_call_id is not None:
@@ -1516,7 +1600,11 @@ class HermesSdkThread:
             if tool_error is None and isinstance(tool_output, dict):
                 tool_error = tool_output.get("error")
             if call_id and status.lower() in {
-                "completed", "failed", "cancelled", "canceled", "error"
+                "completed",
+                "failed",
+                "cancelled",
+                "canceled",
+                "error",
             }:
                 self._tool_names_by_call_id.pop(call_id, None)
                 self._tool_inputs_by_call_id.pop(call_id, None)
@@ -1525,7 +1613,9 @@ class HermesSdkThread:
                 tool_name,
             )
             return ChatBackendEvent(
-                type="tool_updated", thread_id=self.id, turn_id=turn_id,
+                type="tool_updated",
+                thread_id=self.id,
+                turn_id=turn_id,
                 text=f"  {status}",
                 name=tool_name,
                 call_id=call_id,
@@ -1538,8 +1628,14 @@ class HermesSdkThread:
             )
         if kind == "usage_update":
             return ChatBackendEvent(
-                type="usage_update", thread_id=self.id, turn_id=turn_id,
-                usage={key: value for key, value in update.items() if key != "sessionUpdate"},
+                type="usage_update",
+                thread_id=self.id,
+                turn_id=turn_id,
+                usage={
+                    key: value
+                    for key, value in update.items()
+                    if key != "sessionUpdate"
+                },
                 raw=update,
             )
         _log.debug("ignoring unsupported Hermes ACP session update: %s", kind)
