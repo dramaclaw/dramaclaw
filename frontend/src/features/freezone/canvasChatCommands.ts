@@ -260,6 +260,7 @@ type ApplyCanvasChatCommandsOptions = {
   actionAcceptTimeoutMs?: number;
   actionResultFieldTimeoutMs?: number;
   actionRetryDelayMs?: number;
+  onWorkflowRunPersisted?: (runId: string) => void;
 };
 
 export type CanvasChatCommandPartition = {
@@ -408,9 +409,24 @@ export function canvasCommandEnvelopesRunInBackground(
   ));
 }
 
+export function canvasCommandEnvelopesRequireDurableAcceptance(
+  envelopes: CanvasChatCommandEnvelope[],
+): boolean {
+  return envelopes.some((envelope) =>
+    envelope.commands.some((command) => command.type === "run_workflow"));
+}
+
 export async function waitForImmediateCanvasCommandResult(
   execution: Promise<CanvasChatCommandApplyResult>,
+  durableAcceptance?: Promise<unknown>,
 ): Promise<CanvasChatCommandApplyResult | null> {
+  if (durableAcceptance) {
+    const outcome = await Promise.race([
+      execution.then((result) => ({ kind: "result" as const, result })),
+      durableAcceptance.then(() => ({ kind: "accepted" as const })),
+    ]);
+    return outcome.kind === "result" ? outcome.result : null;
+  }
   return Promise.race([
     execution,
     new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 0)),
@@ -2853,6 +2869,7 @@ async function executeQueuedNodeActions(
           workflowRunnerId,
         );
         workflowRunId = createdRun.run_id;
+        options.onWorkflowRunPersisted?.(workflowRunId);
         for (const action of createdRun.actions) {
           if (action.product_operation_id) {
             bindWorkflowProductOperation(action.node_id, {
