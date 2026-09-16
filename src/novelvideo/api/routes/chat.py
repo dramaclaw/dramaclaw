@@ -192,16 +192,18 @@ async def clear_chat_scope(
 
     try:
         project_state_dir = project_ctx.state_dir if project_ctx is not None else None
-        agent_profile = (
-            f"freezone:{scope.agent_id or 'main'}"
-            if _is_freezone_scope(scope)
-            else "main"
+        execution_context = (
+            AgentExecutionContext.from_project_scope(scope=scope, project=project_ctx)
+            if project_ctx is not None
+            else None
         )
         chat_service.reset_codex_scope_thread(
             username,
             project,
-            agent_profile=agent_profile,
-            canvas_id=scope.canvas_id if _is_freezone_scope(scope) else None,
+            agent_profile=(
+                execution_context.agent_profile if execution_context else "main"
+            ),
+            canvas_id=execution_context.canvas_id if execution_context else None,
             project_state_dir=project_state_dir,
         )
         storage_scope = _chat_store_scope_for_project_context(scope, project_ctx)

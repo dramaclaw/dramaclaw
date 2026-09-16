@@ -167,7 +167,14 @@ async def test_clear_route_holds_freezone_lock_until_clear_finishes(
 
     async def resolve(*, user, project_id, required_role):
         assert required_role == "editor"
-        return SimpleNamespace(state_dir=tmp_path, project_name="project-1")
+        return SimpleNamespace(
+            state_dir=tmp_path,
+            project_name="project-1",
+            project_id="project-1",
+            requester_user_id="alice",
+            requester_username="alice",
+            requester_principals=(),
+        )
 
     monkeypatch.setattr(chat_routes, "resolve_project_context", resolve)
     acquired = []
@@ -208,3 +215,66 @@ async def test_clear_route_holds_freezone_lock_until_clear_finishes(
     )
     assert result["data"]["cleared_messages"] == 2
     assert released == [("alice", acquired[0][1], "lock-1")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "scope_payload",
+    [
+        {"kind": "project", "id": "project-1", "surface": "freezone"},
+        {"kind": "freezone", "id": "project-1"},
+    ],
+)
+async def test_clear_route_resets_default_canvas_thread(
+    tmp_path, monkeypatch, scope_payload
+):
+    monkeypatch.setattr(chat_service, "get_chat_backend_name", lambda: "codex")
+    monkeypatch.setattr(
+        chat_service,
+        "_active_codex_turns_path",
+        lambda _username: tmp_path / "active_codex_turns.json",
+    )
+
+    async def resolve(*, user, project_id, required_role):
+        assert required_role == "editor"
+        return SimpleNamespace(
+            state_dir=tmp_path,
+            project_name="project-1",
+            project_id="project-1",
+            requester_user_id="alice",
+            requester_username="alice",
+            requester_principals=(),
+        )
+
+    monkeypatch.setattr(chat_routes, "resolve_project_context", resolve)
+    monkeypatch.setattr(chat_service, "_acquire_chat_run_lock", lambda *_: "lock-1")
+    monkeypatch.setattr(chat_service, "_release_chat_run_lock", lambda *_: None)
+
+    async def clear(_username, _scope):
+        return 1
+
+    monkeypatch.setattr(chat_routes.chat_store, "clear_messages_async", clear)
+    chat_service._set_codex_thread_id(
+        "alice",
+        "project-1",
+        "old-thread",
+        agent_profile="freezone:main",
+        canvas_id="default",
+        project_state_dir=tmp_path,
+    )
+
+    await chat_routes.clear_chat_scope(
+        chat_routes.ClearChatRequest(scope=scope_payload),
+        user={"username": "alice"},
+    )
+
+    assert (
+        chat_service._get_codex_thread_id(
+            "alice",
+            "project-1",
+            agent_profile="freezone:main",
+            canvas_id="default",
+            project_state_dir=tmp_path,
+        )
+        is None
+    )
