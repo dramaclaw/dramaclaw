@@ -3043,6 +3043,12 @@
       },
       "props": {
         "deferred": "Đạo cụ được tạo khi cần ở bước lên kế hoạch tập"
+      },
+      "video": {
+        "waitingForArchive": "Video đã tạo xong; đang chờ cổng dịch vụ lưu trữ...",
+        "writingProjectStorage": "Video đã được lưu trữ; đang ghi vào kho dự án...",
+        "downloading": "Video đã tạo xong; đang tải xuống...",
+        "retryingDelivery": "Kho dự án chưa sẵn sàng; đang thử giao lại..."
       }
     },
     "toast": {
