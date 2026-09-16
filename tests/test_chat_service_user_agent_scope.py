@@ -1458,6 +1458,14 @@ def test_codex_freezone_instructions_forbid_invented_resource_uris():
     assert "the Freezone write tool creates that card" in instructions
     assert "never use the built-in request_user_input tool" in instructions
     assert "Never call create_goal for a canvas request" in instructions
+    assert "one-node workflow is still a workflow" in instructions
+    assert "do not read node detail before starting it" in instructions
+    assert "freezone_run_node_action" in instructions
+
+    canvas_instructions = chat_service._FREEZONE_CANVAS_ASSISTANT_INSTRUCTIONS
+    assert "one-node workflow is still a workflow" in canvas_instructions
+    assert "do not read node detail before starting it" in canvas_instructions
+    assert "freezone_run_node_action" in canvas_instructions
 
 
 def test_codex_freezone_write_result_error_preserves_canvas_validation_reason():

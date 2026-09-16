@@ -2129,6 +2129,78 @@ describe("canvas chat commands", () => {
     expect(context).toContain(`reference_1_edge_1_id: ${edgeId}`);
   });
 
+  it("preserves one-executable-node workflow identity in selected-group routing context", () => {
+    const store = useCanvasStore.getState();
+    const briefId = store.addNode(
+      CANVAS_NODE_TYPES.textAnnotation,
+      { x: 0, y: 120 },
+      {
+        displayName: "图片说明",
+        content: "使用已经确认的图片节点参数。",
+      },
+    );
+    const imageId = store.addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 120, y: 120 },
+      {
+        displayName: "已确认图片工作流",
+        prompt: "红色陶瓷杯，蓝色背景",
+        workflowInstanceId: "workflow-one",
+        workflowPlanNodeId: "image-one",
+        workflowConfigConfirmed: true,
+      },
+    );
+    const groupId = store.groupNodes([briefId, imageId], {
+      label: "已确认图片工作流",
+    });
+    if (!groupId) throw new Error("test group was not created");
+    const nodes = useCanvasStore.getState().nodes;
+    const group = nodes.find((node) => node.id === groupId);
+    if (!group) throw new Error("test group was not created");
+
+    const attachment = buildCanvasNodeReferenceAttachment(
+      "project-a",
+      "canvas-a",
+      nodes,
+      [],
+      nodes,
+      { displayNodes: [group] },
+    );
+    if (!attachment) throw new Error("test attachment was not created");
+
+    const payload = JSON.parse(attachment.content || "{}") as {
+      nodes?: Array<{
+        node_id?: string;
+        workflow_identity?: {
+          instance_id?: string;
+          plan_node_id?: string;
+          config_confirmed?: boolean;
+        };
+      }>;
+    };
+    const context = buildCanvasNodeReferenceContext([attachment]);
+    const imageReference = payload.nodes?.find(
+      (node) => node.node_id === imageId,
+    );
+
+    expect(imageReference?.workflow_identity).toEqual({
+      instance_id: "workflow-one",
+      plan_node_id: "image-one",
+      config_confirmed: true,
+    });
+    expect(context).toContain(
+      "reference_1_group_contains_workflow_nodes: true",
+    );
+    expect(context).toContain(
+      'reference_1_workflow_instance_ids_json: ["workflow-one"]',
+    );
+    expect(context).toContain(
+      "A one-node workflow is still a workflow",
+    );
+    expect(context).toContain("freezone_run_workflow");
+    expect(context).toContain("freezone_run_node_action");
+  });
+
   it("prunes stale canvas node references after nodes are deleted", () => {
     const store = useCanvasStore.getState();
     const firstId = store.addNode(
@@ -4612,6 +4684,9 @@ describe("canvas chat commands", () => {
       {
         displayName: "首帧",
         prompt: longPrompt,
+        workflowInstanceId: "workflow-detail",
+        workflowPlanNodeId: "image-detail",
+        workflowConfigConfirmed: true,
       },
     );
     const edgeId = store.addEdge(textId, imageId);
@@ -4640,6 +4715,11 @@ describe("canvas chat commands", () => {
         data?: {
           nodes?: Array<{
             node_id?: string;
+            workflow_identity?: {
+              instance_id?: string;
+              plan_node_id?: string;
+              config_confirmed?: boolean;
+            };
             action_catalog?: unknown;
             action_summary?: {
               downstream_spawn_types?: unknown[];
@@ -4682,6 +4762,11 @@ describe("canvas chat commands", () => {
     expect(imageDetail?.parameters?.prompt?.current_value).toBe(
       imageDetail?.text_preview,
     );
+    expect(imageDetail?.workflow_identity).toEqual({
+      instance_id: "workflow-detail",
+      plan_node_id: "image-detail",
+      config_confirmed: true,
+    });
     expect(response).not.toContain(longPrompt);
     expect(nodeDetail?.data).not.toHaveProperty("display_nodes");
   });

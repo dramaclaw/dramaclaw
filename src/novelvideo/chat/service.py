@@ -160,6 +160,10 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "Use the high-level "
     "workflow draft/graph tools; never use freezone_emit_canvas_command for a workflow and never "
     "fall back to repeated single-node or single-edge tools after an error. "
+    "A one-node workflow is still a workflow. When the user explicitly asks to run, execute, "
+    "continue, or resume an existing workflow, call freezone_run_workflow directly even when it "
+    "contains only one executable node; do not read node detail before starting it and never "
+    "substitute freezone_run_node_action. "
     "For a normal workflow request, follow that Skill's discovery, draft, preview, and confirmation "
     "sequence. When the user explicitly specifies exact nodes and dependencies, follow the Skill's "
     "custom-topology reference and call freezone_prepare_workflow_plan_draft once instead; do not "
@@ -513,6 +517,10 @@ Canvas write contract:
   Never call dramaclaw_get with guessed Skill or workflow HTTP paths. Use the workflow MCP catalog
   and its returned resource URI, or the documented freezone_get_workflow_skill fallback, exactly once.
   Do not use freezone_emit_canvas_command for a workflow.
+- A one-node workflow is still a workflow. When the user explicitly asks to run, execute, continue,
+  or resume an existing workflow, call freezone_run_workflow directly even when it contains only
+  one executable node; do not read node detail before starting it and never substitute
+  freezone_run_node_action.
 - `dramaclaw-workflows` is the Agent Skill package name, not a Workflow catalog `skill_id`. Never
   pass it to workflow_skill_get/freezone_get_workflow_skill or use it as intent.skill_id. Select the
   matching production Workflow Skill returned by the catalog, such as text-to-image-video for a

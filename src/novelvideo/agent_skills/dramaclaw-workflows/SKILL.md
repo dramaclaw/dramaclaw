@@ -188,6 +188,9 @@ and `freezone_patch_workflow_draft`; do not fall back to another write after an 
   another read of the same run, not resubmission of generation.
 - To continue or resume an existing workflow, call `freezone_run_workflow`; do not traverse and run
   nodes individually.
+- A workflow containing exactly one executable node is still a workflow. If the user calls the
+  target a workflow and asks to run, execute, continue, or resume it, call `freezone_run_workflow`
+  directly without reading node detail first; never downgrade it to `freezone_run_node_action`.
 - Freezone speech uses custom/reference voices only; never select or generate with a preset/system
   voice. Preserve an existing valid `voiceRef`. If no valid custom voice is selected, skip that
   audio node without submitting TTS and continue the remaining workflow. Never select the first

@@ -9357,7 +9357,7 @@ TOOLS = (
         "freezone_run_workflow",
         _schema(
             "freezone_run_workflow",
-            "Run, continue, retry, or locally regenerate a canvas workflow through the deterministic DAG runner. The runner expands dependencies, skips completed outputs by default, executes independent nodes in parallel, persists status, and blocks failed descendants without Agent polling. For nodes marked workflowConfigConfirmed=true, reuse the already approved model, size, duration, quality, voice, and composition fields; do not ask the user to choose them again. Ask again only when a required field is missing, the user changed it, or the provider rejects it. Use this directly for continue/resume requests instead of reading and running nodes one by one. If it reports content_policy, stop: do not infer sensitive words, rewrite prompts, or retry unless the user explicitly requests one specific prompt edit.",
+            "Run, continue, retry, or locally regenerate a canvas workflow through the deterministic DAG runner. A one-node workflow is still a workflow: when the user names the target a workflow, use this tool directly even if it contains exactly one executable node, without reading node detail or substituting a node action. The runner expands dependencies, skips completed outputs by default, executes independent nodes in parallel, persists status, and blocks failed descendants without Agent polling. For nodes marked workflowConfigConfirmed=true, reuse the already approved model, size, duration, quality, voice, and composition fields; do not ask the user to choose them again. Ask again only when a required field is missing, the user changed it, or the provider rejects it. Use this directly for continue/resume requests instead of reading and running nodes one by one. If it reports content_policy, stop: do not infer sensitive words, rewrite prompts, or retry unless the user explicitly requests one specific prompt edit.",
             {
                 **_SCOPE_PROPS,
                 "node_ids": {
@@ -9387,7 +9387,7 @@ TOOLS = (
         "freezone_run_node_action",
         _schema(
             "freezone_run_node_action",
-            "Single-operation tool only: run or open exactly one frontend node action listed by node_detail action_summary. If the node has workflowConfigConfirmed=true, reuse its persisted generation parameters and do not ask the user to choose them again unless a required field is missing or the user changed it. For non-default action parameters, inspect freezone_get_node_action_catalog with the specific action first. For multiple actions or mixed workflows, use one freezone_emit_canvas_command batch.",
+            "Single-operation tool only: run or open exactly one standalone frontend node action listed by node_detail action_summary. A one-node workflow is still a workflow: never use this tool to run, continue, or resume a target the user identifies as a workflow; use freezone_run_workflow instead. If the standalone node has workflowConfigConfirmed=true, reuse its persisted generation parameters and do not ask the user to choose them again unless a required field is missing or the user changed it. For non-default action parameters, inspect freezone_get_node_action_catalog with the specific action first. For multiple standalone actions use one freezone_emit_canvas_command batch; never use that batch as a workflow runner.",
             {
                 **_SCOPE_PROPS,
                 "node_id": {

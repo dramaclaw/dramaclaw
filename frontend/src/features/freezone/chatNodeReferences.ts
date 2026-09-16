@@ -65,6 +65,11 @@ export function canvasSelectionAttachmentDeliveryKey(
 
 type CanvasNodeReferenceItem = {
   html_artifact?: { id: string; version: number };
+  workflow_identity?: {
+    instance_id: string;
+    plan_node_id: string | null;
+    config_confirmed: boolean;
+  };
   node_id: string;
   node_type: string | null;
   label: string;
@@ -329,12 +334,27 @@ function nodeReferenceItem(
     typeof artifactVersion === "number" && Number.isInteger(artifactVersion) && artifactVersion > 0
       ? { id: artifactId, version: artifactVersion }
       : null;
+  const workflowInstanceId = stringOrNull(
+    (node.data as { workflowInstanceId?: unknown }).workflowInstanceId,
+  );
+  const workflowIdentity = workflowInstanceId
+    ? {
+        instance_id: workflowInstanceId,
+        plan_node_id: stringOrNull(
+          (node.data as { workflowPlanNodeId?: unknown }).workflowPlanNodeId,
+        ),
+        config_confirmed:
+          (node.data as { workflowConfigConfirmed?: unknown })
+            .workflowConfigConfirmed === true,
+      }
+    : null;
   return {
     node_id: node.id,
     node_type: node.type ?? null,
     label: resolveNodeDisplayName(node.type, node.data),
     ...textReference,
     ...(htmlArtifact ? { html_artifact: htmlArtifact } : {}),
+    ...(workflowIdentity ? { workflow_identity: workflowIdentity } : {}),
     media_type: nodeMediaType(node),
     source_url: nodeSourceUrl(node),
     preview_url: nodePreviewUrl(node),
@@ -2216,6 +2236,8 @@ function compactNodeDetailItem(
     position: node.position,
   };
   if (node.html_artifact) item.html_artifact = node.html_artifact;
+  if (node.workflow_identity)
+    item.workflow_identity = node.workflow_identity;
   if (node.text_field) item.text_field = node.text_field;
   const textPreview = compactTextPreview(node.text_content);
   if (textPreview) item.text_preview = textPreview;
@@ -2267,7 +2289,7 @@ function buildCompactCanvasNodeDetailPayload(
     }),
     edges: Array.isArray(payload.edges) ? payload.edges : [],
     instruction:
-      "This is compact node detail. Use node.parameters only for editable node data fields, current values, and enum options. Node parameters are not toolbar/action/tool parameters. If the user asks about an action or panel such as HD/upscale, crop, matting, split, lighting, rotate, or download, call freezone_get_node_action_catalog with node_id and action before answering. If a node includes reference_media, use mention values such as @图片1 in prompt edits; numbering matches the node's top reference thumbnails from left to right. For a group child that needs inspection, call freezone_get_node_detail with that child node_id.",
+      "This is compact node detail. workflow_identity means the node belongs to a persisted workflow; a one-node workflow is still a workflow and run/continue/resume must use freezone_run_workflow, never freezone_run_node_action. Use node.parameters only for editable node data fields, current values, and enum options. Node parameters are not toolbar/action/tool parameters. If the user asks about an action or panel such as HD/upscale, crop, matting, split, lighting, rotate, or download, call freezone_get_node_action_catalog with node_id and action before answering. If a node includes reference_media, use mention values such as @图片1 in prompt edits; numbering matches the node's top reference thumbnails from left to right. For a group child that needs inspection, call freezone_get_node_detail with that child node_id.",
   };
 }
 
@@ -2288,6 +2310,7 @@ export function buildCanvasNodeReferenceContext(
   const lines = [
     "[SUPERTALE_CANVAS_NODE_REFERENCES]",
     "These are compact references for the current user turn. Treat display nodes as the user's visible target; child summaries provide orientation only.",
+    "A one-node workflow is still a workflow. If the user asks to run, execute, continue, or resume a workflow, call freezone_run_workflow directly; do not inspect and run its children with freezone_run_node_action.",
     "Use action_summary_json for quick routing. Request freezone_get_node_detail for node parameters and dynamic options. Node parameters are not toolbar/action/tool parameters; for questions about an action or panel, request freezone_get_node_action_catalog with action before answering.",
     "Referenced edges are only for unlink, disconnect, or remove-connection requests.",
     "html_artifact_json is read-only saved identity/version. Use the HTML node actions read_source and update_source; preserve artifact identity and pass the read base_version. Never change artifactId/artifactVersion via editable node fields.",
@@ -2306,12 +2329,27 @@ export function buildCanvasNodeReferenceContext(
     const childNodes = payload.nodes.filter(
       (node) => !displayNodeIds.has(node.node_id),
     );
+    const workflowInstanceIds = [
+      ...new Set(
+        childNodes
+          .map((node) => node.workflow_identity?.instance_id)
+          .filter((value): value is string => Boolean(value)),
+      ),
+    ];
     if (childNodes.length > 0) {
       lines.push(
         `reference_${payloadIndex + 1}_group_children_count: ${childNodes.length}`,
       );
       lines.push(
         `reference_${payloadIndex + 1}_child_type_counts_json: ${JSON.stringify(nodeTypeCounts(childNodes))}`,
+      );
+    }
+    if (workflowInstanceIds.length > 0) {
+      lines.push(
+        `reference_${payloadIndex + 1}_group_contains_workflow_nodes: true`,
+      );
+      lines.push(
+        `reference_${payloadIndex + 1}_workflow_instance_ids_json: ${JSON.stringify(workflowInstanceIds)}`,
       );
     }
 
@@ -2323,6 +2361,10 @@ export function buildCanvasNodeReferenceContext(
       lines.push(`${prefix}_position_json: ${JSON.stringify(node.position)}`);
       if (node.html_artifact)
         lines.push(`${prefix}_html_artifact_json: ${JSON.stringify(node.html_artifact)}`);
+      if (node.workflow_identity)
+        lines.push(
+          `${prefix}_workflow_identity_json: ${JSON.stringify(node.workflow_identity)}`,
+        );
       if (node.text_field)
         lines.push(`${prefix}_text_field: ${node.text_field}`);
       const textPreview = compactTextPreview(node.text_content);
