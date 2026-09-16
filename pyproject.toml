@@ -46,7 +46,7 @@ dependencies = [
     "litellm>=1.85.0.dev1",
     "nest-asyncio>=1.5.0",
     "claude-agent-sdk>=0.1.72",
-    "mcp>=1.19.0",
+    "mcp==1.28.0",
     "jsonschema>=4.20.0",
     "celery>=5.4.0",
     "pypinyin>=0.55.0",
