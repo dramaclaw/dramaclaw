@@ -21,7 +21,6 @@ import {
   AlertTriangle,
   Boxes,
   ChevronDown,
-  Clapperboard,
   ClockPlus,
   Copy,
   Crop,
@@ -2039,65 +2038,6 @@ export const NodeActionToolbar = memo(
                   addEdge(node.id, breakdownNodeId);
                 };
 
-                // 片段重拍：在下游复制一个同内容的视频节点，卡片底部挂时间轨道。
-                // 复制而不是就地改，是因为重拍要跟原片对照着看；节点里只标注区间、
-                // 不裁视频，截出来的时间码自动写进 prompt 交给模型。
-                const handleVideoReshoot = () => {
-                  if (!hasVideo || !videoUrl || !reshootModel) {
-                    return;
-                  }
-                  const sourceName =
-                    typeof videoData.displayName === "string" &&
-                    videoData.displayName.trim().length > 0
-                      ? videoData.displayName.trim()
-                      : t("nodeToolbar.video.reshoot");
-                  const position = findNodePosition(node.id, 580, 380);
-                  const reshootNodeId = addNode(
-                    CANVAS_NODE_TYPES.video,
-                    position,
-                    {
-                      displayName: `${sourceName}-${t("nodeToolbar.video.reshoot")}`,
-                      videoUrl,
-                      previewImageUrl:
-                        typeof videoData.previewImageUrl === "string"
-                          ? videoData.previewImageUrl
-                          : null,
-                      aspectRatio:
-                        typeof videoData.aspectRatio === "string"
-                          ? videoData.aspectRatio
-                          : "16:9",
-                      durationMs:
-                        typeof videoData.durationMs === "number"
-                          ? videoData.durationMs
-                          : null,
-                      widthPx:
-                        typeof videoData.widthPx === "number"
-                          ? videoData.widthPx
-                          : null,
-                      heightPx:
-                        typeof videoData.heightPx === "number"
-                          ? videoData.heightPx
-                          : null,
-                      isReshootMode: true,
-                      reshootClips: [],
-                      // 直接把模型钉成 2.5：新节点默认会选目录里排第一的模型，
-                      // 落到别的模型上时间轨道就会当场隐藏，等于点了个寂寞。
-                      model: reshootModel.id,
-                      // 重拍走「视频编辑」：厂商本来就会从带时间码的 prompt 里认出
-                      // 这是视频编辑（见 InvalidParameter.TaskTypeConstraint），
-                      // 与其让它猜，不如直接声明，请求才会落到 /video-edit 那条路上。
-                      genMode: "videoEdit",
-                      isGenerating: false,
-                    } as unknown as Parameters<typeof addNode>[2],
-                  );
-                  addEdge(node.id, reshootNodeId);
-                  onNodesChange([
-                    { id: node.id, type: "select", selected: false },
-                    { id: reshootNodeId, type: "select", selected: true },
-                  ]);
-                  setSelectedNode(reshootNodeId);
-                };
-
                 // 智能续写：入口不建节点，只是把源节点切进「截前置视频」态 ——
                 // 底下浮出一条只能选一段的轨道，用户确认区间后才由 VideoNode 建
                 // 下游节点（区间是新节点 prompt 前缀的一部分，得先有区间）。
@@ -2193,60 +2133,33 @@ export const NodeActionToolbar = memo(
 
                 return (
                   <>
-                    {/* 片段重拍 / 智能续写都要一个能改视频的 Seedance 2.5 模型，
-                        共用一个下拉；没有视频或没有模型时两项一起置灰，原因挂在
-                        触发按钮的 title 上。 */}
-                    <DropdownMenu
-                      onOpenChange={(open) => {
-                        if (open) closeDownloadMenu();
+                    {/* 智能续写同样要一个能改视频的 Seedance 2.5 模型，没有视频或
+                        没有模型时置灰，原因挂在 title 上。片段重拍已下线（整片编辑
+                        改不到指定区间），等按「裁剪→分段编辑→拼接」重做后再挂回来，
+                        所以这里不再是下拉，退回单颗按钮。 */}
+                    <UiChipButton
+                      key="video-extend"
+                      className={`${stubButtonClass} ${
+                        !hasVideo || !reshootModel
+                          ? "opacity-50 cursor-not-allowed"
+                          : ""
+                      }`}
+                      title={
+                        !hasVideo
+                          ? t("nodeToolbar.video.requiresVideo")
+                          : !reshootModel
+                            ? t("nodeToolbar.video.extendRequiresSeedance25")
+                            : undefined
+                      }
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (!hasVideo || !reshootModel) return;
+                        handleVideoExtendPick();
                       }}
                     >
-                      <DropdownMenuTrigger asChild>
-                        <UiChipButton
-                          key="video-reshoot"
-                          className={`${stubButtonClass} ${
-                            !hasVideo || !reshootModel
-                              ? "opacity-50 cursor-not-allowed"
-                              : ""
-                          }`}
-                          title={
-                            !hasVideo
-                              ? t("nodeToolbar.video.requiresVideo")
-                              : !reshootModel
-                                ? t("nodeToolbar.video.reshootRequiresSeedance25")
-                                : undefined
-                          }
-                          onClick={(event) => event.stopPropagation()}
-                        >
-                          <Clapperboard className="h-3.5 w-3.5" />
-                          {t("nodeToolbar.video.reshoot")}
-                          <ChevronDown className="h-3 w-3" />
-                        </UiChipButton>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent
-                        align="start"
-                        sideOffset={6}
-                        className={`${TOOLBAR_MENU_CONTENT_CLASS} min-w-[160px]`}
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        <DropdownMenuItem
-                          className={TOOLBAR_MENU_ITEM_CLASS}
-                          disabled={!hasVideo || !reshootModel}
-                          onSelect={() => handleVideoReshoot()}
-                        >
-                          <Clapperboard className="h-4 w-4" />
-                          {t("nodeToolbar.video.reshoot")}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className={TOOLBAR_MENU_ITEM_CLASS}
-                          disabled={!hasVideo || !reshootModel}
-                          onSelect={() => handleVideoExtendPick()}
-                        >
-                          <ClockPlus className="h-4 w-4" />
-                          {t("nodeToolbar.video.extend")}
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                      <ClockPlus className="h-3.5 w-3.5" />
+                      {t("nodeToolbar.video.extend")}
+                    </UiChipButton>
                     <UiChipButton
                       key="video-hd"
                       className={`${stubButtonClass} ${!hasVideo ? "opacity-50 cursor-not-allowed" : ""}`}

@@ -126,16 +126,17 @@ describe("canvas video breakdown credit contract", () => {
     );
   });
 
-  it("groups reshoot and smart extend under one dropdown", () => {
-    // 两个入口依赖同一个 Seedance 2.5 模型，合进「片段重拍」下拉，不再各占一颗按钮。
-    expect(toolbarSource).not.toContain('key="video-extend"');
+  it("keeps the reshoot entry off the toolbar and leaves smart extend standalone", () => {
+    // 片段重拍下线：整片编辑改不到指定区间，等按「裁剪→分段编辑→拼接」重做。
+    // 入口一摘，下拉只剩续写一项就没必要了，续写退回单颗按钮。
+    expect(toolbarSource).not.toContain('key="video-reshoot"');
+    expect(toolbarSource).not.toContain("handleVideoReshoot");
     const entry = toolbarSource.slice(
-      toolbarSource.indexOf('key="video-reshoot"'),
+      toolbarSource.indexOf('key="video-extend"'),
       toolbarSource.indexOf('key="video-hd"'),
     );
-    expect(entry).toContain("onSelect={() => handleVideoReshoot()}");
-    expect(entry).toContain("onSelect={() => handleVideoExtendPick()}");
-    expect(entry.match(/disabled=\{!hasVideo \|\| !reshootModel\}/g)).toHaveLength(2);
+    expect(entry).toContain("handleVideoExtendPick();");
+    expect(entry).toContain("!hasVideo || !reshootModel");
   });
 
   it("clears isCropMode from both subtitle-erase entries", () => {
