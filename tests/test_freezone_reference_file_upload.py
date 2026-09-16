@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import stat
 import threading
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,10 +13,14 @@ from fastapi import HTTPException, UploadFile
 
 from novelvideo.api.routes import freezone
 from novelvideo.api.routes.freezone import _read_upload_contents
+from novelvideo.freezone import paths as freezone_paths
 
 
 def _stub_freezone_upload_context(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    safe_filename: str | None = "asset.bin",
 ) -> None:
     async def resolve_project(*_args, **_kwargs):
         return (
@@ -27,7 +32,12 @@ def _stub_freezone_upload_context(
         )
 
     monkeypatch.setattr(freezone, "_resolve_freezone_project", resolve_project)
-    monkeypatch.setattr(freezone, "safe_upload_filename", lambda _filename: "asset.bin")
+    if safe_filename is not None:
+        monkeypatch.setattr(
+            freezone,
+            "safe_upload_filename",
+            lambda _filename: safe_filename,
+        )
     monkeypatch.setattr(
         freezone,
         "make_static_url_for_context",
@@ -191,6 +201,47 @@ async def test_freezone_upload_failure_removes_partial_file(
         )
 
     assert target.read_bytes() == b"original"
+    assert stat.S_IMODE(target.stat().st_mode) == original_mode
+    assert list(upload_dir.iterdir()) == [target]
+
+
+@pytest.mark.asyncio
+async def test_freezone_upload_accepts_long_legal_filename_without_staging_overflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 9, 16, 12, 34, 56, 123456, tzinfo=tz)
+
+    _stub_freezone_upload_context(tmp_path, monkeypatch, safe_filename=None)
+    monkeypatch.setattr(freezone_paths, "datetime", FixedDatetime)
+    original_name = f"{'a' * 200}.png"
+    expected_filename = f"20260916_123456_123456_{'a' * 200}.png"
+    assert len(expected_filename.encode()) == 227
+    upload_dir = tmp_path / "freezone" / "_uploads"
+    upload_dir.mkdir(parents=True)
+    target = upload_dir / expected_filename
+    target.write_bytes(b"original")
+    target.chmod(0o640)
+    original_mode = stat.S_IMODE(target.stat().st_mode)
+
+    result = await freezone.freezone_upload(
+        project="demo",
+        file=UploadFile(filename=original_name, file=BytesIO(b"payload")),
+        user={"username": "admin"},
+    )
+
+    assert result == {
+        "ok": True,
+        "data": {
+            "url": f"/media/freezone/_uploads/{expected_filename}",
+            "filename": expected_filename,
+            "size": 7,
+        },
+    }
+    assert target.read_bytes() == b"payload"
     assert stat.S_IMODE(target.stat().st_mode) == original_mode
     assert list(upload_dir.iterdir()) == [target]
 

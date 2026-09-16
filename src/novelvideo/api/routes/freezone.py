@@ -4625,8 +4625,8 @@ def _persist_freezone_upload(target: Path, contents: bytes) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     staged_path = create_staged_upload_file(
         target.parent,
-        prefix=f".{target.name}.",
-        suffix=".upload",
+        prefix=".upload-",
+        suffix=".tmp",
         destination=target,
     )
     try:
