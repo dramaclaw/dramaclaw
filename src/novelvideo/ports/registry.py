@@ -41,6 +41,7 @@ _EE_REQUIRED_PORTS = (
     "authz",
     "egress",
     "egress_operations",
+    "video_result_delivery",
 )
 
 
