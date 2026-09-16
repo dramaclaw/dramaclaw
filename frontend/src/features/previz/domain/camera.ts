@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import type { OutputAspect, PrevizCamera } from './scene';
+import type { OutputAspect, PresetOutputAspect, PrevizCamera } from './scene';
 
 /**
  * 镜头换算全仓只此一份：属性面板、监看取景框、截图尺寸都从这里取值。
@@ -8,8 +8,9 @@ import type { OutputAspect, PrevizCamera } from './scene';
  * 越界与非有限输入在内部收敛掉，调用方不需要也不应该自己先夹一遍。之所以要这样，
  * 是因为 three 的 `PerspectiveCamera` 拿到 0 / 180 / 负数 / NaN 的 fov 不会报错，
  * 只会给出零宽或 NaN 的视锥、甚至悄悄翻转手性，症状离病因隔着好几层。
- * `sensor` / `aspect` 这两个字符串参数不在此列：查表查空了会直接 TypeError。它们由
- * `parseScene` 在入口收敛到联合类型来保证，这里不再重复校验。
+ * `sensor` 这个字符串参数不在此列：查表查空了会直接 TypeError，由 `parseScene` 在入口
+ * 收敛到联合类型来保证。`aspect` 由 `parseScene` 收敛成合法的 `W:H`，`outputPixelSize`
+ * 另外对「形状对、数值坏」兜了底。
  */
 
 /** 两种机身的成像面物理尺寸，单位毫米。s35 取 Super 35 的常见值 24.89 × 18.66。 */
@@ -23,9 +24,9 @@ export const PREVIZ_SENSOR_MM: Readonly<
 export const PREVIZ_FOCAL_MM = { min: 12, max: 200, default: 50 } as const;
 export const PREVIZ_APERTURE = { min: 1.2, max: 22, default: 2.8 } as const;
 
-/** 出片像素尺寸。边长全取偶数：编码器与多数缩放路径对奇数边不友好。 */
+/** 预设画幅的出片像素尺寸。边长全取偶数：编码器与多数缩放路径对奇数边不友好。 */
 export const OUTPUT_PIXEL_SIZE: Readonly<
-  Record<OutputAspect, Readonly<{ width: number; height: number }>>
+  Record<PresetOutputAspect, Readonly<{ width: number; height: number }>>
 > = {
   '16:9': { width: 1920, height: 1080 },
   '9:16': { width: 1080, height: 1920 },
@@ -33,8 +34,32 @@ export const OUTPUT_PIXEL_SIZE: Readonly<
   '4:3': { width: 1600, height: 1200 },
 };
 
+/** 自定义画幅按 1080p 的像素面积出片，横竖一视同仁，不会因为画幅极窄就糊成一条。 */
+const CUSTOM_OUTPUT_AREA = 1920 * 1080;
+
+function evenEdge(value: number): number {
+  return Math.max(2, Math.round(value / 2) * 2);
+}
+
+/**
+ * 画幅比 → 出片像素尺寸。预设查表；自定义按固定面积换算，两边各自取偶数。
+ * 取偶会让比例有零点几个像素的偏差，所以 `aspectRatio` 从这里的像素反算，而不是直接拿
+ * `W / H`——取景和截图必须对同一块画面。
+ */
+export function outputPixelSize(aspect: OutputAspect): Readonly<{ width: number; height: number }> {
+  if (Object.prototype.hasOwnProperty.call(OUTPUT_PIXEL_SIZE, aspect)) {
+    return OUTPUT_PIXEL_SIZE[aspect as PresetOutputAspect];
+  }
+  const [labelWidth, labelHeight] = aspect.split(':').map(Number);
+  const ratio = labelWidth / labelHeight;
+  // 形状对、数值不对（绕过了 parseScene 的场景）时退回 16:9，不让 NaN 流进视锥。
+  if (!Number.isFinite(ratio) || ratio <= 0) return OUTPUT_PIXEL_SIZE['16:9'];
+  const width = Math.sqrt(CUSTOM_OUTPUT_AREA * ratio);
+  return { width: evenEdge(width), height: evenEdge(width / ratio) };
+}
+
 export function aspectRatio(aspect: OutputAspect): number {
-  const size = OUTPUT_PIXEL_SIZE[aspect];
+  const size = outputPixelSize(aspect);
   return size.width / size.height;
 }
 

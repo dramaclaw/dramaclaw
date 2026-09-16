@@ -7769,6 +7769,11 @@
     },
     "monitor": {
       "aspect": "画幅比",
+      "customAspect": "自定义",
+      "aspectWidth": "画幅宽",
+      "aspectHeight": "画幅高",
+      "applyAspect": "应用",
+      "customAspectRange": "比例范围 1:4 ~ 4:1",
       "outline": "模型描边",
       "namePlate": "人物名牌",
       "enlarge": "放大监看",

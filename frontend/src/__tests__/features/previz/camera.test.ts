@@ -7,6 +7,7 @@ import {
   PREVIZ_SENSOR_MM,
   aspectRatio,
   clampAperture,
+  outputPixelSize,
   coverFovDeg,
   clampFocalMm,
   PREVIZ_APERTURE_STOPS,
@@ -19,7 +20,7 @@ import {
   stepStop,
   verticalFovDeg,
 } from "@/features/previz/domain/camera";
-import type { OutputAspect } from "@/features/previz/domain/scene";
+import type { OutputAspect, PresetOutputAspect } from "@/features/previz/domain/scene";
 
 describe("focal length and field of view", () => {
   it("derives the horizontal field of view from the sensor width", () => {
@@ -136,7 +137,7 @@ describe("focal length and field of view", () => {
 
 describe("output sizes", () => {
   it("maps every aspect to an even pixel size that matches its ratio", () => {
-    const aspects: OutputAspect[] = ["16:9", "9:16", "1:1", "4:3"];
+    const aspects: PresetOutputAspect[] = ["16:9", "9:16", "1:1", "4:3"];
     for (const aspect of aspects) {
       const size = OUTPUT_PIXEL_SIZE[aspect];
       // 编码器和大多数缩放路径都讨厌奇数边长；这里全是常量，钉住免得以后手滑。
@@ -151,6 +152,30 @@ describe("output sizes", () => {
     expect(OUTPUT_PIXEL_SIZE["9:16"]).toEqual({ width: 1080, height: 1920 });
     expect(OUTPUT_PIXEL_SIZE["1:1"]).toEqual({ width: 1440, height: 1440 });
     expect(OUTPUT_PIXEL_SIZE["4:3"]).toEqual({ width: 1600, height: 1200 });
+  });
+
+  it("sizes custom aspects at the 1080p pixel area with even edges", () => {
+    const aspects: OutputAspect[] = ["21:9", "2.39:1", "1:4", "4:1", "3:2"];
+    for (const aspect of aspects) {
+      const size = outputPixelSize(aspect);
+      expect(size.width % 2).toBe(0);
+      expect(size.height % 2).toBe(0);
+      const [labelWidth, labelHeight] = aspect.split(":").map(Number);
+      // 取偶最多挪一个像素，比例偏差控制在千分之几。
+      expect(size.width / size.height).toBeCloseTo(labelWidth / labelHeight, 2);
+      expect(size.width * size.height).toBeGreaterThan(1920 * 1080 * 0.99);
+      expect(size.width * size.height).toBeLessThan(1920 * 1080 * 1.01);
+      expect(aspectRatio(aspect)).toBe(size.width / size.height);
+    }
+    // 预设走表，同比例的另一种写法按面积算出来的也是同一块画面。
+    expect(outputPixelSize("16:9")).toBe(OUTPUT_PIXEL_SIZE["16:9"]);
+    expect(outputPixelSize("32:18")).toEqual({ width: 1920, height: 1080 });
+    expect(outputPixelSize("21:9")).toEqual({ width: 2200, height: 942 });
+  });
+
+  it("falls back to 16:9 for a well-shaped aspect with a degenerate ratio", () => {
+    expect(outputPixelSize("0:9")).toEqual(OUTPUT_PIXEL_SIZE["16:9"]);
+    expect(outputPixelSize("16:0")).toEqual(OUTPUT_PIXEL_SIZE["16:9"]);
   });
 
   it("keeps both sensors' physical dimensions", () => {

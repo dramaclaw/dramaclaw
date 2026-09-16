@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import type * as THREE from 'three';
 
-import { OUTPUT_PIXEL_SIZE } from '../domain/camera';
+import { outputPixelSize } from '../domain/camera';
 import type { OutputAspect } from '../domain/scene';
 
 export type ThreeModule = typeof import('three');
@@ -105,13 +105,14 @@ export function createFramePainter(
 /**
  * 把当前场景按画幅渲染成一张 PNG。
  *
- * `aspect` 是字符串联合，查表查不空——与 `domain/camera.ts` 的约定一致，这里不重复校验。
+ * `aspect` 已由 `parseScene` 收敛成合法的 `W:H`，像素尺寸统一走 `outputPixelSize`——与
+ * `domain/camera.ts` 的约定一致，这里不重复校验。
  */
 export async function renderCapture(
   deps: RenderCaptureDeps,
   aspect: OutputAspect,
 ): Promise<Blob> {
-  const { width, height } = OUTPUT_PIXEL_SIZE[aspect];
+  const { width, height } = outputPixelSize(aspect);
   const painter = createFramePainter(deps, width, height);
   try {
     painter.paint(deps.camera);

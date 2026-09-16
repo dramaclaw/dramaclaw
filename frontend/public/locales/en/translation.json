@@ -7769,6 +7769,11 @@
     },
     "monitor": {
       "aspect": "Aspect ratio",
+      "customAspect": "Custom",
+      "aspectWidth": "Aspect width",
+      "aspectHeight": "Aspect height",
+      "applyAspect": "Apply",
+      "customAspectRange": "Between 1:4 and 4:1",
       "outline": "Model outline",
       "namePlate": "Character name plates",
       "enlarge": "Enlarge monitor",

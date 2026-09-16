@@ -5,7 +5,7 @@ import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js
 
 import type { PrevizRecordMode } from '../capture/recordTarget';
 import { createDomCaptureCanvas, renderCapture } from '../capture/renderCapture';
-import { OUTPUT_PIXEL_SIZE, aspectRatio, coverFovDeg, DEG_TO_RAD } from '../domain/camera';
+import { aspectRatio, outputPixelSize, coverFovDeg, DEG_TO_RAD } from '../domain/camera';
 import type { PrevizCameraDraft } from '../domain/cameraDraft';
 import type { PrevizCharacterDraft } from '../domain/characterDraft';
 import { dropPositionY, dropRayOriginY } from '../domain/drop';
@@ -1042,7 +1042,7 @@ export class PrevizRenderer {
     this.overlays?.setSuppressed(true);
     if (cameraNode) cameraNode.visible = false;
 
-    const { width, height } = OUTPUT_PIXEL_SIZE[aspect];
+    const { width, height } = outputPixelSize(aspect);
     this.recording = true;
     // 先定 object-fit 再改尺寸：位图一改尺寸，下一次合成就按 CSS 盒子拉伸。先把 contain
     // 落下，屏幕上一帧拉伸的画面都不会出现——出片画幅与视口不同时留白，而不是变形。

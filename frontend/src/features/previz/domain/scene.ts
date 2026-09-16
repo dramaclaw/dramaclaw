@@ -88,7 +88,13 @@ export type BodyType = 'capsule' | 'slim' | 'average' | 'heavy' | 'tall';
  */
 export type HeightPolicy = 'follow' | 'ground' | 'plane';
 export type DisplayMode = 'solid' | 'translucent' | 'clay';
-export type OutputAspect = '16:9' | '9:16' | '1:1' | '4:3';
+/**
+ * 出片画幅比，恒为 `W:H`。四个常用比例之外允许用户自己填，所以这里不是枚举而是模板
+ * 字符串：任何从外面进来的值（落盘场景、输入框）都要先过 `parseOutputAspect`，
+ * 类型只保证形状，不保证数值合法。
+ */
+export type OutputAspect = `${number}:${number}`;
+export type PresetOutputAspect = '16:9' | '9:16' | '1:1' | '4:3';
 export type RigMotion = 'static' | 'orbit' | 'push' | 'pull';
 
 /**
@@ -355,12 +361,90 @@ function clampDuration(value: unknown): number {
  * 查不出「漏写」，而漏写的后果是 parseObject 把已经落盘的新值静默改回默认值。
  */
 const DISPLAY_MODES: Record<DisplayMode, true> = { solid: true, translucent: true, clay: true };
-const OUTPUT_ASPECTS: Record<OutputAspect, true> = {
-  '16:9': true,
-  '9:16': true,
-  '1:1': true,
-  '4:3': true,
-};
+
+/** 下拉里直接给出的几个画幅比，顺序即显示顺序。 */
+export const PREVIZ_OUTPUT_ASPECT_PRESETS: readonly PresetOutputAspect[] = [
+  '16:9',
+  '9:16',
+  '1:1',
+  '4:3',
+];
+
+/**
+ * 自定义画幅比（宽 / 高）允许的区间，与 `domain/view.ts` 的 `FRAMING_ASPECT` 同一对边界：
+ * 比 1:4 更竖、比 4:1 更横，取景就要退到远平面之外，画面直接全黑。
+ */
+export const PREVIZ_OUTPUT_ASPECT_RATIO = { min: 0.25, max: 4 } as const;
+/**
+ * 单边数值的上限。只是防 `1e21:1e21` 这类输入：`String()` 到这个量级会吐出科学计数法，
+ * 拼出来的字符串就不再是 `W:H`。常见写法 `2.39:1`、`1920:1080` 都远够不着。
+ */
+const OUTPUT_ASPECT_TERM_MAX = 10000;
+
+export function isPresetOutputAspect(value: string): value is PresetOutputAspect {
+  return (PREVIZ_OUTPUT_ASPECT_PRESETS as readonly string[]).includes(value);
+}
+
+/**
+ * 由宽高两个数拼出合法的画幅比；不合法返回 null。两边各保留两位小数、去掉多余的零
+ * （`16.0` → `16`），但不约分：`21:9` 是行话，约成 `7:3` 用户反而认不出来。
+ */
+export function outputAspectFrom(width: number, height: number): OutputAspect | null {
+  const w = Math.round(width * 100) / 100;
+  const h = Math.round(height * 100) / 100;
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
+  if (w > OUTPUT_ASPECT_TERM_MAX || h > OUTPUT_ASPECT_TERM_MAX) return null;
+  const ratio = w / h;
+  if (ratio < PREVIZ_OUTPUT_ASPECT_RATIO.min || ratio > PREVIZ_OUTPUT_ASPECT_RATIO.max) return null;
+  return `${w}:${h}`;
+}
+
+/**
+ * 拖监看框边缘时吸附的常用画幅。预设之外补的是片场真会说出口的那几种：宽银幕 21:9 /
+ * 2.39:1、单反原生 3:2、竖版社媒 4:5 / 3:4，以及它们的横竖翻转。
+ */
+const OUTPUT_ASPECT_SNAPS: readonly OutputAspect[] = [
+  ...PREVIZ_OUTPUT_ASPECT_PRESETS,
+  '21:9',
+  '2.39:1',
+  '2:1',
+  '3:2',
+  '5:4',
+  '3:4',
+  '2:3',
+  '4:5',
+  '1:2',
+];
+/** 吸附容差，按比值的对数距离算：约 2.5%，拖到 16:9 附近几像素就能咬住，又不至于够不着 1.85:1。 */
+const OUTPUT_ASPECT_SNAP_LOG = 0.025;
+
+/**
+ * 把一个任意宽高比（宽 / 高）变成画幅比：先夹进 1:4 ~ 4:1，靠近常用画幅就吸过去，
+ * 否则按长边写成 `1.85:1` / `1:1.85`——拖出来的比值没有「整数比」可言，写成 `37:20`
+ * 用户读不懂。非有限或非正的输入交回默认的 16:9。
+ */
+export function snapOutputAspect(ratio: number): OutputAspect {
+  if (!Number.isFinite(ratio) || ratio <= 0) return '16:9';
+  const clamped = Math.min(
+    PREVIZ_OUTPUT_ASPECT_RATIO.max,
+    Math.max(PREVIZ_OUTPUT_ASPECT_RATIO.min, ratio),
+  );
+  for (const aspect of OUTPUT_ASPECT_SNAPS) {
+    const [w, h] = aspect.split(':').map(Number);
+    if (Math.abs(Math.log(clamped / (w / h))) < OUTPUT_ASPECT_SNAP_LOG) return aspect;
+  }
+  const snapped =
+    clamped >= 1 ? outputAspectFrom(clamped, 1) : outputAspectFrom(1, 1 / clamped);
+  return snapped ?? '16:9';
+}
+
+/** 字符串形式的入口：只认 `W:H`（两边是不带符号的十进制数），其余一律 null。 */
+export function parseOutputAspect(value: unknown): OutputAspect | null {
+  if (typeof value !== 'string') return null;
+  const match = /^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/.exec(value.trim());
+  if (!match) return null;
+  return outputAspectFrom(Number(match[1]), Number(match[2]));
+}
 const OBJECT_KINDS: Record<PrevizObjectKind, true> = {
   character: true,
   camera: true,
@@ -679,9 +763,7 @@ export function parseScene(raw: unknown): PrevizScene {
       displayMode: isMember(DISPLAY_MODES, settings.displayMode)
         ? settings.displayMode
         : fallback.settings.displayMode,
-      outputAspect: isMember(OUTPUT_ASPECTS, settings.outputAspect)
-        ? settings.outputAspect
-        : fallback.settings.outputAspect,
+      outputAspect: parseOutputAspect(settings.outputAspect) ?? fallback.settings.outputAspect,
     },
     objects,
     timeline: {
