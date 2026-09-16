@@ -192,6 +192,85 @@ def test_prepared_exact_plan_normalizes_portable_generation_input_names():
     assert not any("video_" in key for key in video["data"])
 
 
+def test_prepared_exact_plan_applies_confirmed_shared_inputs_to_media_nodes():
+    plan = _exact_media_plan()
+    image_data, video_data = [node["data"] for node in plan["nodes"]]
+    for key in ("model", "aspect_ratio", "resolution", "quality", "variants"):
+        image_data.pop(key)
+    for key in (
+        "model",
+        "aspect_ratio",
+        "resolution",
+        "duration_seconds",
+        "generate_audio",
+        "generation_mode",
+        "variants",
+    ):
+        video_data.pop(key)
+    plan["inputs"] = {
+        "image_model": "LingShan-G2",
+        "image_aspect_ratio": "16:9",
+        "image_resolution": "2K",
+        "image_quality": "medium",
+        "image_variants_per_node": 1,
+        "video_model": "seedance-2.0",
+        "video_aspect_ratio": "16:9",
+        "video_resolution": "720P",
+        "video_duration_seconds": 5,
+        "video_generate_audio": False,
+        "video_generation_mode": "imageToVideo",
+        "video_variants_per_node": 1,
+    }
+
+    prepared = prepare_workflow_source({"plan": plan}, username="tester")
+
+    image, video = prepared["compiled"]["plan"]["nodes"]
+    assert {
+        key: image["data"].get(key)
+        for key in ("model", "aspectRatio", "size", "quality", "count")
+    } == {
+        "model": "LingShan-G2",
+        "aspectRatio": "16:9",
+        "size": "2K",
+        "quality": "medium",
+        "count": 1,
+    }
+    assert {
+        key: video["data"].get(key)
+        for key in (
+            "model",
+            "aspectRatio",
+            "quality",
+            "durationSec",
+            "generateAudio",
+            "genMode",
+            "count",
+        )
+    } == {
+        "model": "seedance-2.0",
+        "aspectRatio": "16:9",
+        "quality": "720P",
+        "durationSec": 5,
+        "generateAudio": False,
+        "genMode": "imageToVideo",
+        "count": 1,
+    }
+
+
+def test_prepared_exact_plan_rejects_shared_input_and_node_setting_conflict():
+    plan = _exact_media_plan()
+    plan["inputs"] = {"video_duration_seconds": 10}
+
+    with pytest.raises(
+        WorkflowOperationError,
+        match=(
+            "conflicting plan input video_duration_seconds and node setting "
+            "duration_seconds for video"
+        ),
+    ):
+        prepare_workflow_source({"plan": plan}, username="tester")
+
+
 def test_binding_preserves_planning_and_is_idempotent():
     plan = _plan()
     before = deepcopy(plan)

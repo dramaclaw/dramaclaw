@@ -328,6 +328,9 @@ def _normalize_exact_plan_settings(plan: dict) -> dict:
     """Apply the documented step-setting aliases to an exact workflow Plan."""
     normalized = deepcopy(plan)
     nodes = _node_index(normalized)
+    plan_inputs = normalized.get("inputs")
+    if not isinstance(plan_inputs, dict):
+        plan_inputs = {}
     updates = []
     aliases_by_node: dict[str, set[str]] = {}
     for node_id, node in nodes.items():
@@ -348,6 +351,16 @@ def _normalize_exact_plan_settings(plan: dict) -> dict:
                 )
             settings[key] = value
             aliases.add(alias)
+        for alias, key in _EXACT_PLAN_SETTING_ALIASES.get(node_type, {}).items():
+            if alias not in plan_inputs:
+                continue
+            value = deepcopy(plan_inputs[alias])
+            if key in settings and settings[key] != value:
+                raise WorkflowOperationError(
+                    f"conflicting plan input {alias} and node setting {key} "
+                    f"for {node_id}"
+                )
+            settings[key] = value
         if not settings:
             continue
         for key, value in settings.items():

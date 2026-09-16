@@ -121,8 +121,11 @@ or node counts. Never use them as per-node generation counts. Only
 `image_variants_per_node` / `video_variants_per_node` map to canvas node `data.count`, and their
 portable supported values are `1`, `2`, and `4`.
 
-Use only the image or video keys relevant to the selected plan. For an exact custom topology, put
-the equivalent canvas fields directly in every generated node's `data`. If a write returns
+Use only the image or video keys relevant to the selected plan. For an exact custom topology,
+shared confirmed choices may remain in `plan.inputs`; preparation applies each image/video choice
+to every matching generated node. Node `data` may instead pin the equivalent canvas or portable
+field for a step, but a value that conflicts with the shared choice is rejected rather than
+silently overriding either value. If a write returns
 `code="generation_parameters_required"`, do not retry unchanged. Call
 `freezone_request_user_clarification` once for all returned missing choices, apply the current
 request's answers to the same intent/plan, and retry the same operation. Approval behavior remains

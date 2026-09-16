@@ -4,14 +4,16 @@
 optional `run_after_create`, and optional `bindings`. It returns the persisted identity, revision,
 digest, preview and next action, not the full compiled graph. It does not execute the canvas.
 
-For an exact `plan`, generation controls may use the stable portable names under node `data`:
+For an exact `plan`, shared generation controls may use these stable portable names under
+`plan.inputs`; preparation applies them to every matching media node. The same names are also
+accepted under node `data` for step-local pins:
 `image_model`, `image_aspect_ratio`, `image_resolution`, `image_quality`,
 `image_variants_per_node`, `video_model`, `video_aspect_ratio`, `video_resolution`,
 `video_duration_seconds`, `video_generate_audio`, `video_generation_mode`, and
 `video_variants_per_node`. Preparation converts them to the canvas runtime fields before validation
-and persistence. The shorter semantic setting names used by revision are also accepted during exact
-plan preparation. Supplying two aliases for the same setting with different values is rejected; the
-server never silently chooses one.
+and persistence. The shorter semantic setting names used by revision are also accepted under node
+`data` during exact plan preparation. A shared value that conflicts with a node pin, or two aliases
+for the same setting with different values, is rejected; the server never silently chooses one.
 
 Bindings refer to existing plan node IDs:
 
