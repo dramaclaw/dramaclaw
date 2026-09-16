@@ -31,6 +31,7 @@ PLACEMENT_FREE_TASKS = {
     "freezone_edit",
     "freezone_extract",
     "freezone_gen",
+    "freezone_image_animate_gif",
     "freezone_image_reverse_prompt",
     "freezone_image_to_3gs",
     "freezone_mask_edit",
@@ -253,6 +254,72 @@ def test_home_node_bound_task_is_rejected_at_entry_on_a_foreign_node(
     assert manager.updates == []
     assert manager.completed == []
     assert manager.failed == []
+
+
+@pytest.mark.parametrize("is_home_node", [False, True])
+def test_gif_runner_converts_shared_output_without_project_state(
+    tmp_path, quiet_run_core, monkeypatch, is_home_node
+):
+    """Exercise the real runner and ffmpeg, including run_core's placement guard."""
+    import builtins
+    import io
+    import os
+    import shutil
+    import sqlite3
+    import subprocess
+    from dataclasses import replace
+
+    from PIL import Image
+    from novelvideo.task_backend.runners import freezone  # noqa: F401
+
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg unavailable")
+    ctx = _ctx(tmp_path, is_home_node=is_home_node)
+    ctx.output_dir.mkdir()
+    source = ctx.output_dir / "source.mp4"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+         "color=c=red:s=96x64:d=0.4", "-y", str(source)],
+        check=True,
+    )
+
+    # Missing state alone is insufficient: code could silently create it.
+    # Deny Python file access beneath state and all SQLite connections.
+    def guard_open(original):
+        def guarded(path, *args, **kwargs):
+            if isinstance(path, (str, bytes, os.PathLike)):
+                resolved = Path(os.fsdecode(path)).resolve()
+                assert not resolved.is_relative_to(ctx.state_dir), "GIF accessed state_dir"
+            return original(path, *args, **kwargs)
+        return guarded
+
+    for module in (builtins, io, os):
+        monkeypatch.setattr(module, "open", guard_open(module.open))
+
+    def forbidden_sqlite(*args, **kwargs):
+        raise AssertionError("GIF must not open project SQLite")
+
+    monkeypatch.setattr(sqlite3, "connect", forbidden_sqlite)
+    delivery = replace(
+        _verified_delivery(
+            task_type="freezone_image_animate_gif",
+            payload={"job_id": "video-job-gif", "video_path": str(source)},
+        ),
+        queue_kind="ffmpeg",
+        scope="video-job-gif",
+    )
+    manager = _FakeTaskManager()
+    result = quiet_run_core.run_project_task_core_sync(
+        delivery, ctx, manager, run_task_id="task_1"
+    )
+    output = ctx.output_dir / "freezone/_outputs/freezone_image_animate_gif/video-job-gif.gif"
+    with Image.open(output) as image:
+        assert image.format == "GIF"
+        assert image.size == (480, 320)
+    assert result["gif_url"].startswith("/static/projects/proj_d2/")
+    assert manager.completed[0]["result"] == result
+    assert manager.failed == []
+    assert not ctx.state_dir.exists()
 
 
 def test_home_node_bound_task_still_runs_on_its_home_node(

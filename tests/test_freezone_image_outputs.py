@@ -48,11 +48,24 @@ async def test_gif_missing_source(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_animate_uses_locked_frame_and_requests_gif(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    ("ratio_config", "expected_ratio"),
+    [
+        ({"ratioOptions": ["16:9", "4:3", "1:1", "3:4", "9:16"]}, "1:1"),
+        ({}, "1:1"),
+        ({"ratioOptions": ["9:16"]}, "9:16"),
+        ({"ratioOptions": []}, "auto"),
+        ({"ratioOptions": ["auto"]}, "auto"),
+    ],
+)
+async def test_animate_uses_locked_frame_and_requests_gif(
+    monkeypatch, tmp_path, ratio_config, expected_ratio
+):
     from novelvideo.api.schemas import FreezoneImageAnimateRequest
+    from PIL import Image
 
     source = tmp_path / "image.png"
-    source.write_bytes(b"image")
+    Image.new("RGB", (320, 320), "orange").save(source)
     ctx = SimpleNamespace(project_id="mine", requester_user_id="admin")
 
     async def project(*a, **kw):
@@ -62,16 +75,32 @@ async def test_animate_uses_locked_frame_and_requests_gif(monkeypatch, tmp_path)
         return "newapi"
 
     async def catalog(*a, **kw):
-        return (
-            {},
-            {},
+        # Default EE Seedance Fast runtime projection: ratioOptions is absent.
+        return [
             {
-                "supportedModes": ["first_last_frame"],
-                "minDuration": 1,
+                "id": "newapi_seedance-2.0-fast",
+                "apiModel": "newapi_seedance-2.0-fast",
+                "gatewayModel": "seedance-2.0-fast",
+                "catalogId": "ee-seedance-fast",
+                "request": {"endpoint": "video/generations", "parameters": []},
+                "supportedModes": [
+                    "text_to_video", "first_frame", "first_last_frame", "all_reference"
+                ],
+                "minDuration": 4,
                 "maxDuration": 15,
-                "resolutionOptions": ["720p"],
+                "resolutionOptions": ["480p", "720p"],
+                "humanReview": True,
+                **ratio_config,
             },
-        )
+        ]
+
+    from novelvideo import model_gateway_settings
+
+    def forbidden_cache():
+        pytest.fail("image animation must not read the mutable CE catalog cache")
+
+    monkeypatch.setattr(model_gateway_settings, "_effective_official_media_catalog", forbidden_cache)
+    monkeypatch.setattr(model_gateway_settings, "_official_media_catalog_cache_path", forbidden_cache)
 
     captured = {}
 
@@ -81,7 +110,7 @@ async def test_animate_uses_locked_frame_and_requests_gif(monkeypatch, tmp_path)
 
     monkeypatch.setattr(routes, "_resolve_freezone_project", project)
     monkeypatch.setattr(routes, "_resolve_catalog_video_backend", backend)
-    monkeypatch.setattr(routes, "_resolve_catalog_request", catalog)
+    monkeypatch.setattr(routes, "_scoped_media_model_catalog", catalog)
     monkeypatch.setattr(routes, "_start_or_enqueue_freezone_video_gen", enqueue)
     await routes.freezone_image_animate(
         "mine",
@@ -95,6 +124,27 @@ async def test_animate_uses_locked_frame_and_requests_gif(monkeypatch, tmp_path)
     assert captured["generate_audio"] is False
     assert captured["duration_seconds"] == 4
     assert captured["gen_mode"] == "first_last_frame"
+    assert captured["aspect_ratio"] == expected_ratio
+    from novelvideo.generators.video_generator import NewApiVideoGenerator
+    from novelvideo.media_model_request_schema import enforce_newapi_media_geometry_contract
+
+    metadata = {"resolution": "720p", "ratio": captured["aspect_ratio"]}
+    payload = {"model": "seedance-2.0-fast", "seconds": "4", "metadata": metadata}
+    NewApiVideoGenerator._canonicalize_video_payload(payload, metadata)
+    wire_payload = enforce_newapi_media_geometry_contract(payload, media_type="video")
+    assert wire_payload["metadata"]["ratio"] == expected_ratio
+    if expected_ratio == "1:1":
+        assert wire_payload["width"] == wire_payload["height"]
+
+
+@pytest.mark.parametrize(
+    "capabilities",
+    [None, {"gatewayModel": "custom-video-model"}, {"ratioOptions": None}],
+)
+def test_image_animation_does_not_invent_unknown_or_explicit_capabilities(capabilities):
+    assert routes._image_animate_ratio_options(
+        "newapi_seedance-2.0-fast", capabilities
+    ) is None
 
 
 def test_local_conversion_queue_placement():
@@ -106,7 +156,7 @@ def test_local_conversion_queue_placement():
 
     for task in ("freezone_image_animate_gif", "freezone_image_vectorize"):
         assert project_task_lane(task) == "ffmpeg"
-        assert project_task_requires_home_node(task)
+        assert project_task_requires_home_node(task) is (task == "freezone_image_vectorize")
 
 
 @pytest.mark.asyncio
@@ -162,7 +212,7 @@ async def test_conversion_timeout_kills_process_and_cleans_output(tmp_path):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("queue_fails", [False, True])
 async def test_video_completion_schedules_gif_without_losing_paid_video(
-    monkeypatch, tmp_path, queue_fails
+    monkeypatch, tmp_path, queue_fails, caplog
 ):
     from novelvideo.task_backend.runners import video
     from novelvideo.freezone import jobs
@@ -203,6 +253,9 @@ async def test_video_completion_schedules_gif_without_losing_paid_video(
     assert captured["task_type"] == "freezone_image_animate_gif"
     if queue_fails:
         assert result["gif_enqueue_error"]
+        assert "automatic GIF dispatch failed" in caplog.text
+        assert "video_job=job" in caplog.text
+        assert "project=mine" in caplog.text
     else:
         assert result["gif_job_id"] == "job-gif"
 

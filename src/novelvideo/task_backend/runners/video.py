@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,8 @@ from novelvideo.task_backend.registry import register_project_task_runner
 from novelvideo.task_backend.subprocesses import run_project_subprocess
 from novelvideo.task_identity import project_task_state_key
 from novelvideo.task_state import get_task_manager
+
+logger = logging.getLogger(__name__)
 
 
 def _log(manager, ctx: ProjectContext, envelope: dict[str, Any], message: str) -> None:
@@ -924,8 +927,14 @@ async def _run_freezone_video_gen_async(
                     "gif_queue": queued.queue,
                 }
             )
-        except Exception:
+        except Exception as exc:
             # Preserve the paid video so the canvas can retry only local conversion.
+            logger.warning(
+                "automatic GIF dispatch failed project=%s video_job=%s: %s",
+                ctx.project_id,
+                job_id,
+                exc,
+            )
             result["gif_enqueue_error"] = "GIF 转换任务未能启动，请重试转换。"
     history_record = _append_freezone_video_node_history(
         ctx=ctx,
