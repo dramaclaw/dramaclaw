@@ -188,6 +188,9 @@ const CHARACTER_CREATE_KEYS = [
   'cancel',
 ] as const;
 
+/** 入场遮罩：标题、两个阶段（`PrevizBootPhase`）、超时撤场的提示。 */
+const BOOT_KEYS = ['title', 'chunk', 'assets', 'slow'] as const;
+
 /**
  * 属性面板里两张按联合类型排的小表。逐条写死而不是从 `BodyType` / `HeightPolicy` 取：
  * 跟着被测对象一起变的期望值等于没有期望值，而少一条的表现是下拉框里那一项显示成
@@ -211,6 +214,10 @@ describe('previz P3 locale keys', () => {
     ['zh', zh],
     ['en', en],
   ] as const) {
+    it(`${name} carries every boot overlay key`, () => {
+      expect(Object.keys(bundle.previz.boot).sort()).toEqual([...BOOT_KEYS].sort());
+    });
+
     it(`${name} carries every timeline key`, () => {
       expect(Object.keys(bundle.previz.timeline).sort()).toEqual([...TIMELINE_KEYS].sort());
     });

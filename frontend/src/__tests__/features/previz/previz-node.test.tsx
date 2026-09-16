@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
@@ -18,6 +18,7 @@ import {
   createDefaultScene,
   type PrevizScene,
 } from "@/features/previz/domain/scene";
+import { PREVIZ_BOOT_TIMEOUT_MS } from "@/features/previz/ui/PrevizBootOverlay";
 import { useCanvasStore } from "@/stores/canvasStore";
 
 vi.mock("sonner", () => ({
@@ -49,11 +50,25 @@ vi.mock("react-i18next", () => ({
 // 会撞 TDZ。
 const editorStub = vi.hoisted(() => ({
   flush: null as ((scene: never) => boolean) | null,
+  ready: null as (() => void) | null,
+  openChange: null as ((open: boolean) => void) | null,
 }));
 
 vi.mock("@/features/previz/PrevizEditor", () => ({
-  PrevizEditor: ({ open, onFlush }: { open: boolean; onFlush: (scene: never) => boolean }) => {
+  PrevizEditor: ({
+    open,
+    onFlush,
+    onReady,
+    onOpenChange,
+  }: {
+    open: boolean;
+    onFlush: (scene: never) => boolean;
+    onReady?: () => void;
+    onOpenChange: (open: boolean) => void;
+  }) => {
     editorStub.flush = onFlush;
+    editorStub.ready = onReady ?? null;
+    editorStub.openChange = onOpenChange;
     return open ? <div data-testid="previz-editor-open" /> : null;
   },
 }));
@@ -188,6 +203,54 @@ describe("PrevizNode", () => {
     act(() => flush(tooLargeScene() as never));
 
     expect(toast.error).toHaveBeenCalledTimes(2);
+  });
+
+  it("covers the screen from the click until the editor reports ready", async () => {
+    const user = userEvent.setup();
+    renderNode();
+    await user.click(screen.getByRole("button", { name: "previz.node.open" }));
+
+    expect(screen.getByRole("status", { name: "previz.boot.title" })).toBeInTheDocument();
+    // 编辑器已经挂上、模型还没到齐：遮罩必须还盖着，文案换到等模型那一段。
+    expect(await screen.findByTestId("previz-editor-open")).toBeInTheDocument();
+    expect(await screen.findByText("previz.boot.assets")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+
+    act(() => editorStub.ready!());
+    expect(screen.queryByRole("status")).toBeNull();
+    // 淡出完就整个卸掉，不留一层透明的东西压在编辑器上。
+    await waitFor(() => expect(screen.queryByTestId("previz-boot-overlay")).toBeNull());
+  });
+
+  it("drops the overlay when the editor is closed while still loading", async () => {
+    const user = userEvent.setup();
+    renderNode();
+    await user.click(screen.getByRole("button", { name: "previz.node.open" }));
+    expect(await screen.findByTestId("previz-editor-open")).toBeInTheDocument();
+
+    act(() => editorStub.openChange!(false));
+    expect(screen.queryByRole("status")).toBeNull();
+
+    // 再开一次必须重新盖上，而不是沿用上一次「已就绪」的结论。
+    await user.click(screen.getByRole("button", { name: "previz.node.open" }));
+    expect(screen.getByRole("status", { name: "previz.boot.title" })).toBeInTheDocument();
+  });
+
+  it("lets the user in after the hard timeout instead of spinning forever", () => {
+    vi.useFakeTimers();
+    try {
+      renderNode();
+      fireEvent.click(screen.getByRole("button", { name: "previz.node.open" }));
+
+      act(() => vi.advanceTimersByTime(PREVIZ_BOOT_TIMEOUT_MS - 1));
+      expect(screen.getByRole("status")).toBeInTheDocument();
+
+      act(() => vi.advanceTimersByTime(1));
+      expect(screen.queryByRole("status")).toBeNull();
+      expect(toast.warning).toHaveBeenCalledExactlyOnceWith("previz.boot.slow");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

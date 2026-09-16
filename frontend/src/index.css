@@ -895,6 +895,49 @@ body.canvas-node-drag-focus [role="listbox"] {
   50% { opacity: 1; }
 }
 
+/*
+  预演台入场遮罩（PrevizBootOverlay）。淡入不加 fill-mode：填充住终值的话会压过
+  撤场时的 opacity-0，淡出的 transition 就不生效了。
+*/
+.previz-boot-overlay {
+  animation: previz-boot-in 160ms ease-out;
+}
+
+.previz-boot-scan {
+  animation: previz-boot-scan 1.8s ease-in-out infinite;
+}
+
+.previz-boot-rec {
+  animation: dc-lod-busy-pulse 1.2s ease-in-out infinite;
+}
+
+.previz-boot-bar {
+  animation: previz-boot-bar 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .previz-boot-overlay,
+  .previz-boot-scan,
+  .previz-boot-bar {
+    animation: none;
+  }
+}
+
+@keyframes previz-boot-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes previz-boot-scan {
+  0%, 100% { transform: translateY(0); opacity: 0.25; }
+  50% { transform: translateY(58px); opacity: 0.9; }
+}
+
+@keyframes previz-boot-bar {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(300%); }
+}
+
 .canvas-minimap {
   border-radius: 12px;
   overflow: hidden;

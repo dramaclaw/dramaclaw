@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { Suspense, lazy, memo, useCallback, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { Camera } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -20,11 +20,30 @@ import {
 } from "@/features/canvas/ui/nodeFrameStyles";
 import { buildNodeScenePatch, loadNodeScene } from "@/features/previz/nodeScene";
 import { createDefaultScene, type PrevizScene } from "@/features/previz/domain/scene";
+import {
+  PREVIZ_BOOT_TIMEOUT_MS,
+  PrevizBootOverlay,
+  type PrevizBootPhase,
+} from "@/features/previz/ui/PrevizBootOverlay";
 
 // three 只在真正打开预演台时才下载 —— 这是本节点在包体积上的全部要求。
 const PrevizEditor = lazy(() =>
   import("@/features/previz/PrevizEditor").then((module) => ({ default: module.PrevizEditor })),
 );
+
+/**
+ * 与编辑器同在一个 Suspense 里，同一批提交：它挂上的那一刻就是编辑器代码块到了。
+ * 入场遮罩靠它把文案从「加载引擎」换成「载入模型」。
+ *
+ * 不另写一次 `import()` 去等模块：那样多出一条与 lazy 并行的加载路径，关窗、重开、
+ * 超时撤场几种时序都得各自对一遍号。
+ */
+function EditorChunkArrived({ onArrive }: { onArrive: () => void }) {
+  useEffect(() => {
+    onArrive();
+  }, [onArrive]);
+  return null;
+}
 
 type PrevizNodeProps = NodeProps & {
   id: string;
@@ -40,6 +59,42 @@ export const PrevizNode = memo(({ id, data, selected }: PrevizNodeProps) => {
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const [isEditorOpen, setEditorOpen] = useState(false);
+  /**
+   * 入场遮罩的阶段，`null` = 不盖。从点「打开」那一刻一直盖到编辑器报就绪：中间先是
+   * 代码块下载（Suspense 这段什么都不画），再是人物模型与动画库那十几 MB。
+   */
+  const [bootPhase, setBootPhase] = useState<PrevizBootPhase | null>(null);
+  const booting = bootPhase !== null;
+
+  const openEditor = () => {
+    setEditorOpen(true);
+    setBootPhase("chunk");
+  };
+
+  // 只从 chunk 往前走：已经超时撤掉的遮罩不能被它叫回来。
+  const handleChunkArrived = useCallback(
+    () => setBootPhase((phase) => (phase === "chunk" ? "assets" : phase)),
+    [],
+  );
+
+  const handleEditorReady = useCallback(() => setBootPhase(null), []);
+
+  const handleOpenChange = useCallback((open: boolean) => {
+    setEditorOpen(open);
+    // 加载途中关掉（Esc）就一起撤；少了这一步，遮罩会盖着一个已经不存在的编辑器。
+    if (!open) setBootPhase(null);
+  }, []);
+
+  // 硬上限只看「在不在盖」，不看阶段：chunk → assets 那一下不该把计时重新开始。
+  // 也故意不依赖 `t`：切一次语言不该把 20 秒重新计起。
+  useEffect(() => {
+    if (!booting) return undefined;
+    const timer = window.setTimeout(() => {
+      setBootPhase(null);
+      toast.warning(t("previz.boot.slow"));
+    }, PREVIZ_BOOT_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [booting]);
 
   const resolvedTitle = useMemo(
     () => resolveNodeDisplayName(CANVAS_NODE_TYPES.previz, data),
@@ -127,7 +182,7 @@ export const PrevizNode = memo(({ id, data, selected }: PrevizNodeProps) => {
             disabled={!loaded.ok}
             onClick={(event) => {
               event.stopPropagation();
-              setEditorOpen(true);
+              openEditor();
             }}
             className="flex h-10 w-full items-center justify-center rounded-[12px] border border-white/15 bg-white/[0.04] px-4 text-center text-[13px] text-text-dark transition-colors hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-45"
           >
@@ -151,15 +206,20 @@ export const PrevizNode = memo(({ id, data, selected }: PrevizNodeProps) => {
 
       {isEditorOpen && (
         <Suspense fallback={null}>
+          <EditorChunkArrived onArrive={handleChunkArrived} />
           <PrevizEditor
             open={isEditorOpen}
             nodeId={id}
             initialScene={initialScene}
-            onOpenChange={setEditorOpen}
+            onOpenChange={handleOpenChange}
             onFlush={handleFlush}
+            onReady={handleEditorReady}
           />
         </Suspense>
       )}
+
+      {/* 放在 Suspense 外面：同一个实例横跨「代码块下载」与「等模型」两段，淡出才连得上。 */}
+      <PrevizBootOverlay phase={bootPhase} />
     </div>
   );
 });

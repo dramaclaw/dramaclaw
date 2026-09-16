@@ -301,6 +301,9 @@ export class PrevizSceneGraph {
   private rigToken = 0;
   /** 由 `PrevizRenderer.create()` 注入；没注入时物件一直用占位方块。 */
   private propLoader: PropLoader | null = null;
+  /** 正在路上的模型请求数，人物与物件一起算。归零那一刻叫醒 `whenModelsSettled` 的等待者。 */
+  private modelsInFlight = 0;
+  private settledWaiters: Array<() => void> = [];
 
   constructor(
     private readonly three: ThreeModule,
@@ -323,6 +326,28 @@ export class PrevizSceneGraph {
   /** 接上物件模型加载器。重绘回调与人物共用 `attachCharacterRig` 传进来的那个。 */
   attachPropLoader(loader: PropLoader): void {
     this.propLoader = loader;
+  }
+
+  /**
+   * 等在途的模型请求全部落地，成功失败都算；一个都没有就立刻兑现。入场遮罩靠它决定
+   * 什么时候撤。
+   *
+   * 不拿 `onModelReady` 数：那是每个模型一次，请求又是 sync 里逐个发的，第一个到位时
+   * 后面的可能还在路上；而失败的请求根本不触发它——靠它的话，一次网络抖动就把用户
+   * 永久关在遮罩后面。等待期间新发的请求（用户加了人物）同样计入，计数真正归零才叫醒。
+   */
+  whenModelsSettled(): Promise<void> {
+    if (this.modelsInFlight === 0) return Promise.resolve();
+    return new Promise((resolve) => this.settledWaiters.push(resolve));
+  }
+
+  private trackModelLoad(load: Promise<void>): void {
+    this.modelsInFlight += 1;
+    void load.finally(() => {
+      this.modelsInFlight -= 1;
+      if (this.modelsInFlight > 0) return;
+      for (const resolve of this.settledWaiters.splice(0)) resolve();
+    });
   }
 
   nodeFor(objectId: string): THREE.Object3D | undefined {
@@ -504,7 +529,7 @@ export class PrevizSceneGraph {
     if (node.userData.previzRigToken !== undefined) return false;
     const token = ++this.rigToken;
     node.userData.previzRigToken = token;
-    void this.swapInCharacterModel(rig, node, character, token);
+    this.trackModelLoad(this.swapInCharacterModel(rig, node, character, token));
     return false;
   }
 
@@ -597,7 +622,7 @@ export class PrevizSceneGraph {
     const assetKey = `${prop.assetFormat}:${prop.assetUrl}`;
     if (node.userData.previzPropAsset === assetKey) return;
     node.userData.previzPropAsset = assetKey;
-    void this.swapInPropModel(loader, node, prop, assetKey);
+    this.trackModelLoad(this.swapInPropModel(loader, node, prop, assetKey));
   }
 
   private async swapInPropModel(

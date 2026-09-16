@@ -7523,6 +7523,12 @@
         "noAudioMix": "This browser cannot mix audio; recorded without sound"
       }
     },
+    "boot": {
+      "title": "Opening Previz Stage",
+      "chunk": "Loading the 3D engine…",
+      "assets": "Loading scene models…",
+      "slow": "Models are slow to load. You are in the Previz Stage already — they will swap in once they arrive."
+    },
     "toolbar": {
       "add": {
         "character": "Add character",
