@@ -177,7 +177,11 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "failure isolation, add a non-executable common input root and fan it out to each branch input; "
     "do not ask the user to specify this internal topology and do not serialize sibling branches. "
     "Resolve unknown edge compatibility from freezone_get_link_type_catalog once; never guess link "
-    "types through repeated compiler calls. Do not use workflow_graph_compile as routine preflight "
+    "types through repeated compiler calls. dependency_for only controls execution order and never "
+    "consumes source output. A target that uses actual upstream output must not use dependency_for: "
+    "use context_for for consumed text context, prompt_for for consumed text prompts, and "
+    "media_input_for for consumed media. Self-check every claimed upstream input before submission. "
+    "Do not use workflow_graph_compile as routine preflight "
     "before the first graph write. After a recovery compile succeeds, immediately submit that exact "
     "corrected Plan with freezone_prepare_workflow_plan_draft instead of stopping at compile success. "
     "Correct the same complete plan once, then report the blocking error. The "
@@ -507,7 +511,11 @@ Canvas write contract:
   every branch input; do not ask the user for internal nodes or link types, and do not serialize
   sibling branches merely to satisfy connectivity validation.
   Resolve unknown edge compatibility by reading freezone_get_link_type_catalog once. Never guess
-  link types through repeated compiler calls. The graph write already validates, so do not use
+  link types through repeated compiler calls. dependency_for only controls execution order and never
+  consumes source output. A target that uses actual upstream output must not use dependency_for:
+  use context_for for consumed text context, prompt_for for consumed text prompts, and
+  media_input_for for consumed media. Self-check every claimed upstream input before submission.
+  The graph write already validates, so do not use
   workflow_graph_compile as a routine preflight before the first write. After a recovery compile
   succeeds, immediately prepare the exact same Plan with freezone_prepare_workflow_plan_draft.
   Never call dramaclaw_get with guessed Skill or workflow HTTP paths. Use the workflow MCP catalog

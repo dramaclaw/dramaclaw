@@ -133,6 +133,11 @@ async def test_standalone_workflow_mcp_exposes_portable_tools_and_resources():
         "freezone_workflow_plan.v1"
     ]
     assert plan_schema["properties"]["nodes"]["items"]["anyOf"]
+    edge_description = plan_schema["properties"]["edges"]["description"]
+    assert "dependency_for only controls execution order" in edge_description
+    assert "does not consume the source output" in edge_description
+    assert "prompt_for" in edge_description
+    assert "context_for" in edge_description
     recipe_node_schema = plan_schema["properties"]["nodes"]["items"]["anyOf"][0]
     assert recipe_node_schema["properties"]["node_type"]["enum"] == [
         "textAnnotationNode",
@@ -499,6 +504,11 @@ async def test_skill_reference_is_resolved_without_exposing_a_filesystem_path():
     assert payload["ok"] is True
     assert "filesystem" not in payload["content"]
     assert payload["reference"] == "custom-topology.md"
+    assert "dependency_for only controls execution order" in payload["content"]
+    assert "must not use dependency_for" in payload["content"]
+    assert "context_for" in payload["content"]
+    assert "prompt_for" in payload["content"]
+    assert "media_input_for" in payload["content"]
 
     resource = await workflow_mcp.read_resource(
         "dramaclaw-workflow://skills/short-drama-quick/references/custom-topology.md"

@@ -462,7 +462,10 @@ def workflow_plan_json_schema() -> dict[str, Any]:
                 "maxItems": 400,
                 "description": (
                     "Dependency edges for one connected workflow graph. Use prompt_for from "
-                    "text to generated media and media_input_for only from media nodes. A plan "
+                    "text to generated media, context_for when a text node consumes upstream "
+                    "text as context, and media_input_for only from media nodes. dependency_for "
+                    "only controls execution order and does not consume the source output; a "
+                    "target that consumes upstream output must not use dependency_for. A plan "
                     "with two or more nodes must include at least one edge; never use an empty "
                     "edge array as a diagnostic probe."
                 ),

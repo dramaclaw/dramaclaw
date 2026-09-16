@@ -7214,7 +7214,11 @@ _WORKFLOW_PLAN_OBJECT_SCHEMA = {
             "type": "array",
             "description": (
                 "Dependency edges for one connected workflow graph. Multi-node plans must not "
-                "leave any node isolated."
+                "leave any node isolated. Use context_for when text consumes upstream text as "
+                "context, prompt_for when generated media consumes text, and media_input_for "
+                "when a target consumes upstream media. dependency_for only controls execution "
+                "order and does not consume the source output; a target that consumes upstream "
+                "output must not use dependency_for."
             ),
             "maxItems": 400,
             "items": {
