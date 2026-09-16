@@ -220,6 +220,9 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, resi
         clickFeedback = createClickFeedback(nextApp.ticker);
         world.addChild(clickFeedback.marker);
         const ground = new Sprite(texture);
+        // Artwork resolution can differ from the map's navigation coordinate space.
+        ground.width = manifest.size.width;
+        ground.height = manifest.size.height;
         ground.eventMode = "static";
         ground.on("pointertap", event => {
           if (event.button !== 0 || event.pointerType !== "mouse") return;

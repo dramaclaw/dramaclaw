@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "mapId": "wind-garden-gate",
-  "revision": 2,
+  "revision": 3,
   "coordinateSpace": "map-pixels-top-left",
   "size": {
     "width": 2048,

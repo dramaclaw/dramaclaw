@@ -11,6 +11,7 @@ import { createExitGate, enabledMapExits, prepareMapTravel } from "./map-travel"
 
 const read = (map: string, file: string) => JSON.parse(readFileSync(`public/piko/world/maps/${map}/${file}`, "utf8"));
 const maps = Object.keys(MAP_EXIT_MARKERS) as PikoMapId[];
+const previewMaps: PikoMapId[] = ["whispering-meadow", "wind-garden-gate", "artisan-market", "lantern-canal-street", "starlight-dock", "whispering-forest"];
 const packages = new Map(maps.map(map => [map, PikoMapPackageSchema.parse({
   manifest: read(map, "manifest.json"), navigation: read(map, "data/navigation.json"),
   occlusion: read(map, "data/occlusion.json"), environment: read(map, "data/environment.json"),
@@ -90,28 +91,20 @@ it("arms each courtyard exit independently", () => {
   }
 });
 
-it("keeps canal water, pier basin, lighthouse, bridge rails and arch supports solid", () => {
-  const blocked = {
-    "wind-garden-gate": [{ x: 901, y: 580 }, { x: 1135, y: 590 }, { x: 385, y: 365 }],
-    "lantern-canal-street": [{ x: 1060, y: 350 }, { x: 1025, y: 800 }, { x: 1060, y: 470 }, { x: 1050, y: 600 }],
-    "starlight-dock": [{ x: 1300, y: 610 }, { x: 1350, y: 520 }, { x: 1650, y: 800 }, { x: 140, y: 595 }],
-  } as const;
-  for (const [map, points] of Object.entries(blocked)) for (const point of points) {
-    expect(canStand(point, packages.get(map as PikoMapId)!.navigation), `${map} ${JSON.stringify(point)}`).toBe(false);
-  }
-  const sights = {
-    "wind-garden-gate": [{ x: 1015, y: 560 }, { x: 770, y: 440 }],
-    "lantern-canal-street": [{ x: 730, y: 620 }, { x: 1480, y: 570 }],
-    "starlight-dock": [{ x: 1200, y: 675 }, { x: 1510, y: 595 }],
-  } as const;
-  for (const [map, points] of Object.entries(sights)) for (const point of points) {
-    const navigation = packages.get(map as PikoMapId)!.navigation;
-    expect(findClickPath(navigation.spawnPoints[0].position, point, navigation).length, `${map} sight ${JSON.stringify(point)}`).toBeGreaterThan(0);
+it("allows pure-map previews without stale collision or occlusion regions", () => {
+  for (const map of previewMaps) {
+    const { navigation, occlusion, manifest } = packages.get(map)!;
+    expect(navigation.colliders).toEqual([]);
+    expect(occlusion.occluders).toEqual([]);
+    for (const point of [{ x: 10, y: 10 }, { x: manifest.size.width - 10, y: manifest.size.height - 10 },
+      { x: manifest.size.width / 2, y: manifest.size.height / 2 }]) {
+      expect(canStand(point, navigation), map).toBe(true);
+    }
   }
 });
 
-it("preserves all fourteen non-courtyard sealed master images byte for byte", () => {
-  for (const map of maps.filter(map => map !== "welcome-courtyard")) {
+it("preserves untouched non-courtyard master images byte for byte", () => {
+  for (const map of maps.filter(map => map !== "welcome-courtyard" && !previewMaps.includes(map))) {
     expect(readFileSync(`public/piko/world/maps/${map}/base.png`).equals(
       readFileSync(`../piko-world/art/reference/piko-${map}-overview-v1.png`))).toBe(true);
   }
@@ -140,7 +133,6 @@ it("keeps water, cliffs, tree roots and sea landmarks out of the initial routes"
     "startrace-coast": [{ x: 1100, y: 750 }, { x: 1050, y: 150 }],
     "cloudtop-slope": [{ x: 100, y: 450 }, { x: 1180, y: 277 }],
     "whalesong-skyport": [{ x: 1000, y: 950 }, { x: 1040, y: 745 }],
-    "whispering-forest": [{ x: 1330, y: 680 }],
     "frostmoon-tundra": [{ x: 1100, y: 400 }],
     "boundless-sea": [{ x: 520, y: 270 }, { x: 915, y: 750 }],
     "crimson-canyon": [{ x: 500, y: 540 }],
