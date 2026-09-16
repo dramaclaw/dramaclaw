@@ -747,6 +747,16 @@
     }
   },
   "aiAssistant": {
+    "clearChat": {
+      "title": "Clear this chat?",
+      "description": "This chat history will be deleted. Your next message will start a new Agent context. The canvas, project, and other chats will stay unchanged. Running generation tasks will continue.",
+      "cancel": "Cancel",
+      "confirm": "Clear this chat",
+      "clearing": "Clearing…",
+      "busy": "This chat is still active. Stop it before clearing.",
+      "success": "Chat history and context cleared",
+      "suggestion": "Clear this chat history and Agent context"
+    },
     "formatCheck": {
       "title": "Script Format Check",
       "close": "Close",

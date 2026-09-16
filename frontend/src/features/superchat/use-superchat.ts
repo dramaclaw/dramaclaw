@@ -3023,6 +3023,31 @@ export function useSuperChat({
     }
   }, [desiredScope]);
 
+  const clearConversation = useCallback(async (): Promise<boolean> => {
+    if (busy) return false;
+    await api.post("api/v1/chat/clear", {
+      json: { scope: desiredScope },
+    }).json();
+    const activeTurn = activeTurnIdRef.current;
+    if (activeTurn) clearActiveTurn(scopeKey, activeTurn);
+    activeTurnIdRef.current = null;
+    pendingClientTurnIdRef.current = null;
+    setActiveTurnId(null);
+    setMessages([]);
+    messagesRef.current = [];
+    setStreamText("");
+    streamTextRef.current = "";
+    setApprovals([]);
+    setPinnedIds(new Set());
+    setDeletedIds(new Set());
+    saveCachedMessages(scopeKey, []);
+    safeLocalStorageSet(`superchat:pinned:${scopeKey}`, "[]");
+    safeLocalStorageSet(`superchat:deleted:${scopeKey}`, "[]");
+    setHistoryReady(false);
+    requestHistory();
+    return true;
+  }, [busy, desiredScope, requestHistory, scopeKey]);
+
   const submitSkillStudioResult = useCallback((payload: Omit<Extract<ClientFrame, { type: "skill_studio.result" }>, "type">) => {
     console.info("[superchat] send skill_studio.result", {
       turn_id: payload.turn_id,
@@ -3183,6 +3208,7 @@ export function useSuperChat({
     error,
     activeModel,
     appendNotification,
+    clearConversation,
     clearPinned,
     deleteMessage,
     deletedIds,

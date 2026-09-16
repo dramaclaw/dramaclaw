@@ -154,6 +154,77 @@ async def cancel_chat_turn(user: dict = Depends(get_api_user)) -> dict[str, Any]
     return {"ok": True, "data": {"cancelled": cancelled}}
 
 
+class ClearChatRequest(BaseModel):
+    scope: dict[str, Any]
+
+
+@router.post("/chat/clear")
+async def clear_chat_scope(
+    body: ClearChatRequest,
+    user: dict = Depends(get_api_user),
+) -> dict[str, Any]:
+    """Clear one conversation and start a fresh Codex context for that scope."""
+    try:
+        scope = ChatScope.from_payload(body.scope)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if scope.kind not in {"home", "project", "freezone"}:
+        raise HTTPException(400, "unsupported chat scope for clear")
+    if chat_service.get_chat_backend_name() != "codex":
+        raise HTTPException(409, "清空上下文当前仅支持 Codex Agent")
+
+    username = str(user["username"])
+    project_ctx = (
+        await resolve_project_context(
+            user=user, project_id=str(scope.id), required_role="editor"
+        )
+        if scope.kind in {"project", "freezone"} and scope.id
+        else None
+    )
+    project = str(scope.id or "")
+    lock_project = _chat_run_lock_project_for_scope(scope)
+    try:
+        lock_id = chat_service._acquire_chat_run_lock(username, lock_project)
+    except RuntimeError as exc:
+        raise HTTPException(
+            409, "当前对话仍在进行，请等待完成或先停止后再清空"
+        ) from exc
+
+    try:
+        project_state_dir = project_ctx.state_dir if project_ctx is not None else None
+        execution_context = (
+            AgentExecutionContext.from_project_scope(scope=scope, project=project_ctx)
+            if project_ctx is not None
+            else None
+        )
+        chat_service.reset_codex_scope_thread(
+            username,
+            project,
+            agent_profile=(
+                execution_context.agent_profile if execution_context else "main"
+            ),
+            canvas_id=execution_context.canvas_id if execution_context else None,
+            project_state_dir=project_state_dir,
+        )
+        storage_scope = _chat_store_scope_for_project_context(scope, project_ctx)
+        if project_ctx is not None and not _is_freezone_scope(scope):
+            storage_scope = replace(storage_scope, state_dir=str(project_state_dir))
+        cleared = await chat_store.clear_messages_async(username, storage_scope)
+    finally:
+        chat_service._release_chat_run_lock(username, lock_project, lock_id)
+    logger.info(
+        "chat scope cleared user=%s kind=%s project=%s surface=%s canvas=%s agent=%s messages=%d",
+        username,
+        scope.kind,
+        project or "<home>",
+        scope.surface or "-",
+        scope.canvas_id or "-",
+        scope.agent_id or "-",
+        cleared,
+    )
+    return {"ok": True, "data": {"cleared_messages": cleared}}
+
+
 class ChatScopePayload(BaseModel):
     kind: str = "home"
     id: str | None = None

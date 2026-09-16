@@ -747,6 +747,16 @@
     }
   },
   "aiAssistant": {
+    "clearChat": {
+      "title": "清空当前聊天？",
+      "description": "当前聊天记录将被删除，下一条消息会开启新的 Agent 上下文。画布、项目和其他聊天不会受影响；进行中的生成任务不会被取消。",
+      "cancel": "取消",
+      "confirm": "清空当前聊天",
+      "clearing": "正在清空…",
+      "busy": "当前对话仍在进行，请先停止后再清空",
+      "success": "当前聊天记录和上下文已清空",
+      "suggestion": "清空当前聊天记录与 Agent 上下文"
+    },
     "formatCheck": {
       "title": "剧本格式检查",
       "close": "关闭",
