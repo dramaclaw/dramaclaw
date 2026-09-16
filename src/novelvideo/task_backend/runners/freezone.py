@@ -2042,7 +2042,9 @@ register_project_task_runner(
 register_project_task_runner(
     "freezone_story_script", run_freezone_story_script, requires_home_node=False
 )
-register_project_task_runner("freezone_video_breakdown", run_freezone_video_breakdown)
+register_project_task_runner(
+    "freezone_video_breakdown", run_freezone_video_breakdown, requires_home_node=False
+)
 register_project_task_runner(
     "freezone_image_reverse_prompt",
     run_freezone_image_reverse_prompt,
