@@ -3992,6 +3992,7 @@
       },
       "render": {
         "generateNew": "Generate new",
+        "sketchRequired": "Generate or upload a sketch first",
         "switched": "Render switched",
         "switchFailed": "Switch failed",
         "forcedUse": "Force-applied this render",
