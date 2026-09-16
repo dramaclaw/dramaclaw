@@ -1182,6 +1182,7 @@ function buildCanvasCommandCatalog(canvasId: string): Record<string, unknown> {
       "Default write path is freezone_emit_canvas_command with one canvas_chat_commands.v1 commands[] batch.",
       "Use typed Freezone write tools only when the user explicitly asks for exactly one canvas operation.",
       "Use freezone_emit_canvas_command whenever the request creates several nodes, several edges, or combines create/update/link/layout/group/select/run actions.",
+      "Creating a media node does not generate its output. When the user asks for an actual media result, put add_next_node(client_id) + run_node_action(node_id=<same client_id>, action=generate_image/generate_video/generate_audio) in the same batch; do not leave a manual Generate click to the user.",
       "commands[] objects require snake_case fields. Use type and node_type; never use legacy command, nodeType, or imageGenerationParams.",
       "Use client_id on create_node/add_next_node when later commands in the same batch reference a newly created node.",
       "create_edge requires link_type; choose it from freezone_get_link_type_catalog when unsure.",

@@ -775,6 +775,75 @@ def test_external_generation_preflight_blocks_missing_downstream_parameters(
     assert result["clarification"]["allow_skip"] is False
 
 
+def test_generation_preflight_models_add_next_alias_before_running_media(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(
+        plugin,
+        "_canvas_generation_preflight_state",
+        lambda *_args: (
+            {
+                "selected-image": {
+                    "id": "selected-image",
+                    "type": "uploadNode",
+                    "data": {"imageUrl": "/static/source.png"},
+                }
+            },
+            [],
+            None,
+        ),
+    )
+    commands = [
+        {
+            "type": "add_next_node",
+            "source_node_id": "selected-image",
+            "client_id": "watercolor-result",
+            "node_type": "imageGenNode",
+            "data": {
+                "displayName": "水彩结果",
+                "aspectRatio": "1:1",
+            },
+        },
+        {
+            "type": "run_node_action",
+            "node_id": "watercolor-result",
+            "action": "generate_image",
+        },
+    ]
+
+    result = plugin._external_generation_parameter_preflight(
+        "project-a", "canvas-a", commands
+    )
+
+    assert result is not None
+    assert result["status"] == "clarification_required"
+    assert result["missing_parameters"] == [
+        {
+            "node_id": "watercolor-result",
+            "node_type": "imageGenNode",
+            "display_name": "水彩结果",
+            "fields": ["model", "size", "quality", "count"],
+        }
+    ]
+
+
+def test_add_next_recommended_model_sentinel_is_removed_before_frontend_dispatch():
+    plugin = _load_plugin_module()
+    commands = [
+        {
+            "type": "add_next_node",
+            "source_node_id": "selected-image",
+            "client_id": "watercolor-result",
+            "node_type": "imageGenNode",
+            "data": {"model": "recommended", "count": 1},
+        }
+    ]
+
+    plugin._use_frontend_default_for_recommended_models(commands)
+
+    assert "model" not in commands[0]["data"]
+    assert commands[0]["data"]["count"] == 1
+
+
 def test_external_generation_preflight_accepts_confirmed_image_and_video_parameters(
     monkeypatch,
 ):
@@ -5092,6 +5161,19 @@ def test_canvas_command_tools_expose_discriminated_minimal_schema():
     assert "direction" in by_type["run_workflow"][0]["properties"]
 
 
+def test_media_result_guidance_requires_add_next_and_run_in_one_batch():
+    plugin = _load_plugin_module()
+    schemas = {name: schema for name, schema, _handler in plugin.TOOLS}
+
+    add_next = schemas["freezone_add_next_node"]["description"]
+    emit = schemas["freezone_emit_canvas_command"]["description"]
+
+    assert "does not generate media" in add_next
+    assert "add_next_node + run_node_action" in add_next
+    assert "add_next_node + run_node_action" in emit
+    assert "do not ask the user to click generate" in emit.lower()
+
+
 def test_canvas_command_tools_and_handlers_share_one_contract():
     plugin = _load_plugin_module()
     schemas = {name: schema for name, schema, _handler in plugin.TOOLS}
@@ -5569,6 +5651,59 @@ def test_workflow_requires_browser_receipt_even_in_direct_apply_mode(monkeypatch
         require_canvas_receipt=True,
     )
     assert result == "browser"
+
+
+def test_direct_apply_resolves_add_next_client_alias_for_later_commands(monkeypatch):
+    plugin = _load_plugin_module()
+    saved = []
+
+    def request(method, _path, **kwargs):
+        if method == "GET":
+            return {
+                "ok": True,
+                "data": {
+                    "revision": 4,
+                    "nodes": [
+                        {
+                            "id": "selected-image",
+                            "type": "uploadNode",
+                            "position": {"x": 0, "y": 0},
+                            "data": {"imageUrl": "/static/source.png"},
+                        }
+                    ],
+                    "edges": [],
+                },
+            }
+        saved.append(kwargs["body"])
+        return {"ok": True, "data": {"revision": 5}}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = plugin._direct_apply_canvas_commands(
+        "project-a",
+        "canvas-a",
+        [
+            {
+                "type": "add_next_node",
+                "source_node_id": "selected-image",
+                "client_id": "watercolor-result",
+                "node_type": "imageGenNode",
+                "data": {"prompt": "水彩"},
+            },
+            {
+                "type": "update_node_data",
+                "node_id": "watercolor-result",
+                "data": {"count": 1},
+            },
+        ],
+        slim_result=False,
+    )
+
+    assert result["ok"] is True
+    assert len(saved) == 1
+    created = next(
+        node for node in saved[0]["nodes"] if node["type"] == "imageGenNode"
+    )
+    assert created["data"] == {"prompt": "水彩", "count": 1}
 
 
 @pytest.mark.parametrize(

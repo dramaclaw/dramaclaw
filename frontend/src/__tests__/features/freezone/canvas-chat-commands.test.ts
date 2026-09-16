@@ -3536,6 +3536,10 @@ describe("canvas chat commands", () => {
     const addNextAction = catalog.actions.find(
       (action) => action.action === "add_next_node",
     );
+    expect(addNextAction?.description).toContain("does not generate media");
+    expect(addNextAction?.description).toContain(
+      "add_next_node + run_node_action",
+    );
     expect(addNextAction?.parameters).toMatchObject({
       source_node_id: nodeId,
       node_type_schema: {
