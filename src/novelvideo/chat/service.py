@@ -4583,6 +4583,35 @@ def _set_codex_thread_id(
         )
 
 
+def reset_codex_scope_thread(
+    username: str,
+    project: str,
+    *,
+    agent_profile: str = "main",
+    canvas_id: str | None = None,
+    project_state_dir: str | Path | None = None,
+) -> None:
+    """Make the next turn start a fresh thread without touching other scopes."""
+    from novelvideo.utils.state_index_files import index_file_lock
+
+    scope_key = _codex_scope_key(
+        project, agent_profile=agent_profile, canvas_id=canvas_id
+    )
+    state_path = _codex_session_state_path(
+        username, project, project_state_dir=project_state_dir
+    )
+    with index_file_lock(state_path):
+        payload = _load_codex_session_state(
+            username, project, project_state_dir=project_state_dir
+        )
+        if scope_key in payload:
+            payload.pop(scope_key)
+            _save_codex_session_state(
+                username, project, payload, project_state_dir=project_state_dir
+            )
+    _set_active_codex_turn(username, scope_key, None)
+
+
 def _active_codex_turns_path(username: str) -> Path:
     return _user_state_dir(username) / "active_codex_turns.json"
 

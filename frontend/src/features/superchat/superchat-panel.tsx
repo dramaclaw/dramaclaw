@@ -12069,6 +12069,8 @@ export function SuperChatPanel({
   const [selectedQueuedMessageId, setSelectedQueuedMessageId] = useState<string | null>(null);
   const [selectedHistoryMessageIndex, setSelectedHistoryMessageIndex] = useState<number | null>(null);
   const [preparingSend, setPreparingSend] = useState(false);
+  const [clearDialogOpen, setClearDialogOpen] = useState(false);
+  const [clearingChat, setClearingChat] = useState(false);
   const [composerInputFocused, setComposerInputFocused] = useState(false);
   const [recording, setRecording] = useState(false);
   const [dragFileState, setDragFileState] = useState<"valid" | "invalid" | null>(null);
@@ -12171,6 +12173,7 @@ export function SuperChatPanel({
     [freezoneSkillCatalog],
   );
   const freezoneSkillSlashQuery = isFreezoneLayout ? getFreezoneSkillSlashQuery(draft) : null;
+  const showClearCommandSuggestion = /^\/cl(?:e(?:a(?:r)?)?)?$/iu.test(draft.trim());
   const visibleFreezoneSkillSuggestions = useMemo(
     () => {
       if (freezoneSkillSlashQuery !== null) {
@@ -14338,6 +14341,10 @@ export function SuperChatPanel({
   }, [draft]);
 
   const submit = () => {
+    if (draft.trim() === "/clear" && attachments.length === 0) {
+      setClearDialogOpen(true);
+      return;
+    }
     // 双轨附件：画布「当前选中」+ 正文 @ 提及，各自可能为 null，合并去重。
     const canvasRefAttachments = [
       selectedFreezoneNodeAttachment,
@@ -14389,7 +14396,44 @@ export function SuperChatPanel({
     });
   };
 
+  const confirmClearConversation = async () => {
+    if (clearingChat) return;
+    if (chat.busy) {
+      toast.error(t("aiAssistant.clearChat.busy"));
+      return;
+    }
+    setClearingChat(true);
+    try {
+      const cleared = await chat.clearConversation();
+      if (!cleared) {
+        toast.error(t("aiAssistant.clearChat.busy"));
+        return;
+      }
+      setDraft("");
+      setAttachments([]);
+      setQueuedMessages([]);
+      setSelectedHistoryMessageIndex(null);
+      setPendingCanvasCommandApprovals([]);
+      setClearDialogOpen(false);
+      toast.success(t("aiAssistant.clearChat.success"));
+    } catch (error) {
+      toast.error(backendErrorToastMessage(error, t));
+    } finally {
+      setClearingChat(false);
+    }
+  };
+
   const handleDraftKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (
+      draft.trim() === "/clear"
+      && event.key === "Enter"
+      && !event.shiftKey
+      && !event.nativeEvent.isComposing
+    ) {
+      event.preventDefault();
+      setClearDialogOpen(true);
+      return;
+    }
     if (showNodeSuggestions && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
       event.preventDefault();
       const cap = Math.min(nodeSuggestionVisibleCount, filteredNodeSuggestions.length);
@@ -14430,7 +14474,7 @@ export function SuperChatPanel({
       return;
     }
     if (
-      showFreezoneSkillSuggestions
+      showFreezoneSkillSuggestions && !showClearCommandSuggestion
       && (event.key === "ArrowDown" || event.key === "ArrowUp")
     ) {
       event.preventDefault();
@@ -14444,7 +14488,7 @@ export function SuperChatPanel({
       return;
     }
     if (
-      showFreezoneSkillSuggestions
+      showFreezoneSkillSuggestions && !showClearCommandSuggestion
       && event.key === "Enter"
       && !event.shiftKey
       && visibleFreezoneSkillSuggestions[activeFreezoneSkillSuggestionIndex]
@@ -15429,7 +15473,21 @@ export function SuperChatPanel({
                 onSubmit={submitAssistantClarificationResponse}
               />
             )}
-            {!hasActiveComposerPrompt && showFreezoneSkillSuggestions && !freezoneSkillMenuExplicitOpen && (
+            {!hasActiveComposerPrompt && showClearCommandSuggestion && (
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 border-b border-white/10 bg-black/20 px-4 py-2.5 text-left text-sm text-foreground/90 transition hover:bg-white/[0.06]"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  setDraft("/clear");
+                  setClearDialogOpen(true);
+                }}
+              >
+                <span className="font-medium">/clear</span>
+                <span className="text-xs text-muted-foreground">{t("aiAssistant.clearChat.suggestion")}</span>
+              </button>
+            )}
+            {!hasActiveComposerPrompt && showFreezoneSkillSuggestions && !showClearCommandSuggestion && !freezoneSkillMenuExplicitOpen && (
               <div className="border-b border-white/10 bg-black/20 px-3 py-2.5">
                 <div className="mb-1.5 px-0.5 text-xs text-muted-foreground/85">
                   技能
@@ -16057,6 +16115,22 @@ export function SuperChatPanel({
         </div>,
         document.body,
       )}
+      <Dialog open={clearDialogOpen} onOpenChange={setClearDialogOpen}>
+        <DialogContent className="w-[calc(100vw-2rem)] border-white/10 bg-background/95 sm:max-w-md">
+          <DialogTitle>{t("aiAssistant.clearChat.title")}</DialogTitle>
+          <p className="text-sm leading-6 text-muted-foreground">
+            {t("aiAssistant.clearChat.description")}
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" disabled={clearingChat} onClick={() => setClearDialogOpen(false)}>
+              {t("aiAssistant.clearChat.cancel")}
+            </Button>
+            <Button type="button" variant="destructive" disabled={clearingChat || chat.busy} onClick={() => void confirmClearConversation()}>
+              {clearingChat ? t("aiAssistant.clearChat.clearing") : t("aiAssistant.clearChat.confirm")}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       {isFreezoneLayout && (
         <Dialog open={agentBillingOpen} onOpenChange={setAgentBillingOpen}>
           <DialogContent className="w-[calc(100vw-2rem)] border-white/10 bg-background/95 p-0 backdrop-blur-xl sm:max-w-[min(46.08rem,calc(100vw-3rem))]">

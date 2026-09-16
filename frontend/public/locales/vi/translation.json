@@ -735,6 +735,16 @@
     }
   },
   "aiAssistant": {
+    "clearChat": {
+      "title": "Xóa cuộc trò chuyện này?",
+      "description": "Lịch sử trò chuyện này sẽ bị xóa. Tin nhắn tiếp theo sẽ bắt đầu ngữ cảnh Agent mới. Canvas, dự án và các cuộc trò chuyện khác không bị ảnh hưởng. Tác vụ tạo đang chạy sẽ tiếp tục.",
+      "cancel": "Hủy",
+      "confirm": "Xóa cuộc trò chuyện này",
+      "clearing": "Đang xóa…",
+      "busy": "Cuộc trò chuyện vẫn đang chạy. Hãy dừng trước khi xóa.",
+      "success": "Đã xóa lịch sử và ngữ cảnh trò chuyện",
+      "suggestion": "Xóa lịch sử và ngữ cảnh Agent của cuộc trò chuyện này"
+    },
     "formatCheck": {
       "title": "Kiểm tra định dạng kịch bản",
       "close": "Đóng",
