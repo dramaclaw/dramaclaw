@@ -465,7 +465,9 @@ def test_freezone_profile_migrates_existing_tool_search_to_auto(
     config_file = home / "config.yaml"
     parsed = yaml.safe_load(config_file.read_text(encoding="utf-8"))
     parsed["tools"]["tool_search"]["enabled"] = "off"
-    config_file.write_text(yaml.safe_dump(parsed, allow_unicode=True), encoding="utf-8")
+    config_file.write_text(
+        yaml.safe_dump(parsed, allow_unicode=True), encoding="utf-8"
+    )
     monkeypatch.delenv("HERMES_TOOL_SEARCH_MODE", raising=False)
 
     hw.ensure_user_hermes_workspace("admin", profile="freezone")
@@ -929,25 +931,20 @@ def test_hermes_tool_call_guard_distinguishes_inputless_reads_by_title():
     # the only per-call distinguisher. Distinct reads must not trip the guard.
     guard = hermes_sdk._TurnToolCallGuard()
 
-    for index, title in enumerate(
-        [
-            "skill view (workflows)",
-            "skill view (ecommerce-ad)",
-            "skill view (workflows/references/product-video.md)",
-        ]
-    ):
-        assert (
-            guard.observe(
-                hermes_sdk.ChatBackendEvent(
-                    type="tool_started",
-                    name="skill",
-                    call_id=f"view-{index}",
-                    input=None,
-                    raw={"title": title},
-                )
+    for index, title in enumerate([
+        "skill view (workflows)",
+        "skill view (ecommerce-ad)",
+        "skill view (workflows/references/product-video.md)",
+    ]):
+        assert guard.observe(
+            hermes_sdk.ChatBackendEvent(
+                type="tool_started",
+                name="skill",
+                call_id=f"view-{index}",
+                input=None,
+                raw={"title": title},
             )
-            is None
-        )
+        ) is None
 
 
 def test_hermes_tool_call_guard_distinguishes_chunked_reads_by_content_args():
@@ -958,29 +955,26 @@ def test_hermes_tool_call_guard_distinguishes_chunked_reads_by_content_args():
     guard = hermes_sdk._TurnToolCallGuard()
 
     for index, offset in enumerate([488, 748, 1028]):
-        assert (
-            guard.observe(
-                hermes_sdk.ChatBackendEvent(
-                    type="tool_started",
-                    name="read",
-                    call_id=f"read-{index}",
-                    input=None,
-                    raw={
-                        "title": "read: /repo/plugins/freezone/json_workflow_catalog.py",
-                        "content": [
-                            {
-                                "type": "content",
-                                "content": {
-                                    "type": "text",
-                                    "text": f'{{\n  "limit": 300,\n  "offset": {offset},\n  "path": "..."\n}}',
-                                },
-                            }
-                        ],
-                    },
-                )
+        assert guard.observe(
+            hermes_sdk.ChatBackendEvent(
+                type="tool_started",
+                name="read",
+                call_id=f"read-{index}",
+                input=None,
+                raw={
+                    "title": "read: /repo/plugins/freezone/json_workflow_catalog.py",
+                    "content": [
+                        {
+                            "type": "content",
+                            "content": {
+                                "type": "text",
+                                "text": f'{{\n  "limit": 300,\n  "offset": {offset},\n  "path": "..."\n}}',
+                            },
+                        }
+                    ],
+                },
             )
-            is None
-        )
+        ) is None
 
 
 def test_hermes_tool_call_guard_still_stops_repeated_inputless_reads():
