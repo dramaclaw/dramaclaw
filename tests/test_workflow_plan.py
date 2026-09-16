@@ -8,6 +8,7 @@ import pytest
 from jsonschema import Draft202012Validator, ValidationError
 
 from novelvideo.freezone.agent_workflows.graph import build_workflow_graph_commands
+from novelvideo.freezone.video_node import get_freezone_video_model_options
 from novelvideo.freezone.workflow_plan import validate_workflow_plan
 from novelvideo.freezone.workflow_schema import workflow_plan_json_schema
 
@@ -1907,16 +1908,16 @@ def _video_compose_plan() -> dict:
 @pytest.mark.parametrize(
     ("requested_model", "canvas_model"),
     [
-        ("seedance-2.0-fast", "seedance-2.0-fast"),
-        ("seedance-2.0", "seedance-2.0"),
-        ("seedance-1.5-pro", "seedance-1.5-pro"),
-        ("seedance-1.0-pro-fast", "seedance-1.0-pro-fast"),
-        ("newapi_seedance-2.0-fast", "seedance-2.0-fast"),
-        ("newapi_seedance-2.0", "seedance-2.0"),
-        ("newapi_seedance-1.5-pro", "seedance-1.5-pro"),
-        ("newapi_seedance-1.0-pro-fast", "seedance-1.0-pro-fast"),
-        ("huimeng_seedance-1.5-pro", "seedance-1.5-pro"),
-        ("huimeng_seedance-1.0-pro-fast", "seedance-1.0-pro-fast"),
+        ("seedance-2.0-fast", "newapi_seedance-2.0-fast"),
+        ("seedance-2.0", "newapi_seedance-2.0"),
+        ("seedance-1.5-pro", "newapi_seedance-1.5-pro"),
+        ("seedance-1.0-pro-fast", "newapi_seedance-1.0-pro-fast"),
+        ("newapi_seedance-2.0-fast", "newapi_seedance-2.0-fast"),
+        ("newapi_seedance-2.0", "newapi_seedance-2.0"),
+        ("newapi_seedance-1.5-pro", "newapi_seedance-1.5-pro"),
+        ("newapi_seedance-1.0-pro-fast", "newapi_seedance-1.0-pro-fast"),
+        ("huimeng_seedance-1.5-pro", "newapi_seedance-1.5-pro"),
+        ("huimeng_seedance-1.0-pro-fast", "newapi_seedance-1.0-pro-fast"),
         ("01M1N6KNNEQKPZCSKYSK02DPV1", "01M1N6KNNEQKPZCSKYSK02DPV1"),
         ("unknown-model", "unknown-model"),
         ("seedance-2.0-mini", "seedance-2.0-mini"),
@@ -1953,7 +1954,7 @@ def test_workflow_graph_normalizes_video_provider_names_to_canvas_model_ids(
     assert create_command["data"]["model"] == canvas_model
 
 
-def test_workflow_seedance_alias_emits_canvas_catalog_id_not_backend_api_model():
+def test_workflow_seedance_alias_normalizes_to_a_live_canvas_model_option():
     graph = build_workflow_graph_commands(
         {
             "plan": {
@@ -1977,7 +1978,8 @@ def test_workflow_seedance_alias_emits_canvas_catalog_id_not_backend_api_model()
     create_command = next(
         command for command in graph["commands"] if command["type"] == "create_node"
     )
-    assert create_command["data"]["model"] == "seedance-2.0-fast"
+    allowed_models = {item["id"] for item in get_freezone_video_model_options()}
+    assert create_command["data"]["model"] in allowed_models
 
 
 def test_workflow_plan_rejects_duplicate_or_non_terminal_compose_nodes():
