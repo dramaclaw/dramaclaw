@@ -457,6 +457,18 @@ def test_freezone_plugin_registers_canvas_command_tools():
     assert draft_schema["required"] == ["draft_id", "revision"]
     prepare_draft_schema = schemas["freezone_prepare_workflow_draft"]["parameters"]
     assert prepare_draft_schema["required"] == ["operation_id"]
+    intent_inputs = prepare_draft_schema["properties"]["intent"]["properties"]["inputs"]
+    assert intent_inputs["additionalProperties"] is True
+    assert intent_inputs["properties"]["image_variants_per_node"] == {
+        "type": "integer",
+        "enum": [1, 2, 4],
+    }
+    assert intent_inputs["properties"]["video_variants_per_node"] == {
+        "type": "integer",
+        "enum": [1, 2, 4],
+    }
+    assert intent_inputs["properties"]["video_duration_seconds"]["type"] == "number"
+    assert intent_inputs["properties"]["video_generate_audio"] == {"type": "boolean"}
     patch_draft_schema = schemas["freezone_patch_workflow_draft"]["parameters"]
     assert patch_draft_schema["required"] == [
         "draft_id",

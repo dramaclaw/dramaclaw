@@ -21,6 +21,45 @@ def test_repairs_contiguous_items_and_optional_null_duration_without_mutation(na
     assert args == original
 
 
+@pytest.mark.parametrize("name", ["workflow_intent_compile", "freezone_prepare_workflow_draft"])
+def test_canonicalizes_unambiguous_generation_input_scalar_types(name):
+    args = {"intent": {"inputs": {
+        "image_variants_per_node": "1",
+        "video_variants_per_node": "4",
+        "video_duration_seconds": "5.5",
+        "video_generate_audio": "false",
+        "skill_specific_value": "1",
+    }}}
+    original = deepcopy(args)
+
+    result = normalize_workflow_tool_arguments(name, args)
+
+    assert result["intent"]["inputs"] == {
+        "image_variants_per_node": 1,
+        "video_variants_per_node": 4,
+        "video_duration_seconds": 5.5,
+        "video_generate_audio": False,
+        "skill_specific_value": "1",
+    }
+    assert args == original
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("image_variants_per_node", "1.0"),
+        ("video_variants_per_node", "-1"),
+        ("image_variants_per_node", "9" * 5000),
+        ("video_duration_seconds", "5 seconds"),
+        ("video_duration_seconds", "9" * 5000),
+        ("video_generate_audio", "False"),
+    ],
+)
+def test_does_not_guess_ambiguous_generation_input_scalar_types(key, value):
+    args = {"intent": {"inputs": {key: value}}}
+    assert normalize_workflow_tool_arguments("workflow_intent_compile", args) == args
+
+
 @pytest.mark.parametrize("intent", [
     {"items[1]": {}},
     {"items": [], "items[0]": {}},
@@ -48,6 +87,49 @@ async def test_compile_boundary_normalizes_before_validating(monkeypatch):
     }})
     assert result.structuredContent["status"] == "sentinel"
     assert "duration_seconds" not in seen[0]["items"][0]
+
+
+@pytest.mark.asyncio
+async def test_compile_boundary_canonicalizes_generation_counts_before_validation(monkeypatch):
+    seen = []
+
+    def compile_intent(intent):
+        seen.append(intent)
+        return {"ok": False, "status": "sentinel", "error": "compiler reached"}
+
+    monkeypatch.setattr(workflow_mcp, "compile_workflow_intent", compile_intent)
+    result = await workflow_mcp.call_tool("workflow_intent_compile", {"intent": {
+        "skill_id": "test",
+        "user_goal": "test",
+        "inputs": {
+            "image_variants_per_node": "1",
+            "video_variants_per_node": "2",
+        },
+    }})
+
+    assert result.structuredContent["status"] == "sentinel"
+    assert seen[0]["inputs"] == {
+        "image_variants_per_node": 1,
+        "video_variants_per_node": 2,
+    }
+
+
+@pytest.mark.asyncio
+async def test_compile_boundary_rejects_oversized_generation_count_without_crashing(
+    monkeypatch,
+):
+    def must_not_compile(_intent):
+        raise AssertionError("invalid input reached compiler")
+
+    monkeypatch.setattr(workflow_mcp, "compile_workflow_intent", must_not_compile)
+    result = await workflow_mcp.call_tool("workflow_intent_compile", {"intent": {
+        "skill_id": "test",
+        "user_goal": "test",
+        "inputs": {"image_variants_per_node": "9" * 5000},
+    }})
+
+    assert result.isError
+    assert result.structuredContent["status"] == "tool_arguments_invalid"
 
 
 @pytest.mark.asyncio

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from contextlib import contextmanager
@@ -248,6 +249,50 @@ def _is_missing_parameter_value(value: Any) -> bool:
     return value is None or value == "" or value == []
 
 
+def _canonical_parameter_value(parameter_type: str, value: Any) -> Any:
+    """Canonicalize only unambiguous scalar encodings from Agent transports."""
+    if not isinstance(value, str):
+        return value
+    if parameter_type in {"integer", "count"} and re.fullmatch(
+        r"-?(?:0|[1-9][0-9]*)", value
+    ):
+        try:
+            return int(value)
+        except (ValueError, OverflowError):
+            return value
+    if parameter_type == "number" and re.fullmatch(
+        r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?", value
+    ):
+        try:
+            number = float(value)
+        except (ValueError, OverflowError):
+            return value
+        if math.isfinite(number):
+            return int(number) if number.is_integer() else number
+        return value
+    if parameter_type == "boolean" and value in {"true", "false"}:
+        return value == "true"
+    return value
+
+
+def _parameter_type_error(parameter_type: str, value: Any) -> str | None:
+    if parameter_type in {"integer", "count"}:
+        return (
+            None
+            if isinstance(value, int) and not isinstance(value, bool)
+            else "must be an integer"
+        )
+    if parameter_type == "number":
+        return (
+            None
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+            else "must be a number"
+        )
+    if parameter_type == "boolean":
+        return None if isinstance(value, bool) else "must be a boolean"
+    return None
+
+
 def _allowed_inferred_option(parameter: dict[str, Any], value: str) -> str | None:
     return value if value in _parameter_option_values(parameter) else None
 
@@ -387,11 +432,20 @@ def _skill_input_contract(
         )
         required = bool(parameter.get("required"))
         parameter_type = _text(parameter.get("type")) or "text"
+        value = _canonical_parameter_value(parameter_type, value)
         option_values = _parameter_option_values(parameter)
         if required and _is_missing_parameter_value(value):
             missing_required.append(parameter_id)
         elif not _is_missing_parameter_value(value):
-            if parameter_type == "multi_select":
+            type_error = _parameter_type_error(parameter_type, value)
+            if type_error is not None:
+                errors.append(
+                    {
+                        "path": f"inputs.{parameter_id}",
+                        "message": type_error,
+                    }
+                )
+            elif parameter_type == "multi_select":
                 if not isinstance(value, list):
                     errors.append(
                         {

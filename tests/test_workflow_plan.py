@@ -785,6 +785,74 @@ def test_compiler_rejects_invalid_portable_generation_inputs(
     ]
 
 
+@pytest.mark.parametrize(
+    ("parameter_type", "provided", "expected"),
+    [
+        ("integer", "2", 2),
+        ("count", "4", 4),
+        ("number", "3", 3),
+        ("number", "3.5", 3.5),
+        ("boolean", "true", True),
+        ("boolean", "false", False),
+    ],
+)
+def test_skill_input_contract_canonicalizes_unambiguous_scalar_types(
+    parameter_type,
+    provided,
+    expected,
+):
+    catalog = _load_catalog_module()
+    contract = catalog._skill_input_contract(
+        {
+            "input_parameters": [
+                {
+                    "id": "value",
+                    "label": "Value",
+                    "type": parameter_type,
+                    "required": True,
+                }
+            ]
+        },
+        {"user_goal": "test", "inputs": {"value": provided}},
+    )
+
+    assert contract["errors"] == []
+    assert contract["resolved"]["value"] == expected
+
+
+@pytest.mark.parametrize(
+    ("parameter_type", "provided", "message"),
+    [
+        ("integer", "1.5", "must be an integer"),
+        ("integer", "9" * 5000, "must be an integer"),
+        ("number", "three", "must be a number"),
+        ("number", "9" * 5000, "must be a number"),
+        ("boolean", "False", "must be a boolean"),
+    ],
+)
+def test_skill_input_contract_rejects_ambiguous_scalar_types(
+    parameter_type,
+    provided,
+    message,
+):
+    catalog = _load_catalog_module()
+    contract = catalog._skill_input_contract(
+        {
+            "input_parameters": [
+                {
+                    "id": "value",
+                    "label": "Value",
+                    "type": parameter_type,
+                    "required": True,
+                }
+            ]
+        },
+        {"user_goal": "test", "inputs": {"value": provided}},
+    )
+
+    assert contract["errors"] == [{"path": "inputs.value", "message": message}]
+
+
 def test_dynamic_item_auto_connects_unique_generated_source_anchor(monkeypatch):
     catalog = _load_catalog_module()
     _install_minimal_builtin_catalog(monkeypatch, catalog)
