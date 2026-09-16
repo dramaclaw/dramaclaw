@@ -9,6 +9,7 @@ additional ``data`` properties.
 from __future__ import annotations
 
 from copy import deepcopy
+import math
 import re
 from typing import Any
 
@@ -26,8 +27,10 @@ LINK_TYPE_VALUES = WORKFLOW_LINK_TYPES
 def normalize_workflow_tool_arguments(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     """Repair only lossless intent serialization mistakes before strict validation.
 
-    Never fill missing items, merge conflicting forms, coerce values, or remove
-    arbitrary nulls: those may change the user's requested workflow.
+    Never fill missing items, merge conflicting forms, or remove arbitrary nulls:
+    those may change the user's requested workflow. Stable scalar generation inputs
+    are canonicalized when their JSON representation is unambiguous, so Agent hosts
+    do not have to infer transport-level types such as ``"1"`` versus ``1``.
     """
     if name not in {"workflow_intent_compile", "freezone_prepare_workflow_draft"}:
         return arguments
@@ -47,6 +50,32 @@ def normalize_workflow_tool_arguments(name: str, arguments: dict[str, Any]) -> d
         and sorted(indexed) == list(range(len(indexed)))
     ):
         intent["items"] = [intent.pop(indexed[i]) for i in range(len(indexed))]
+    inputs = intent.get("inputs")
+    if isinstance(inputs, dict):
+        for key in ("image_variants_per_node", "video_variants_per_node"):
+            value = inputs.get(key)
+            if isinstance(value, str) and re.fullmatch(r"(?:0|[1-9][0-9]*)", value):
+                try:
+                    inputs[key] = int(value)
+                except (ValueError, OverflowError):
+                    pass
+        duration = inputs.get("video_duration_seconds")
+        if isinstance(duration, str) and re.fullmatch(
+            r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?", duration
+        ):
+            try:
+                parsed_duration = float(duration)
+            except (ValueError, OverflowError):
+                parsed_duration = None
+            if parsed_duration is not None and math.isfinite(parsed_duration):
+                inputs["video_duration_seconds"] = (
+                    int(parsed_duration)
+                    if parsed_duration.is_integer()
+                    else parsed_duration
+                )
+        generate_audio = inputs.get("video_generate_audio")
+        if isinstance(generate_audio, str) and generate_audio in {"true", "false"}:
+            inputs["video_generate_audio"] = generate_audio == "true"
     planner = intent.get("planner")
     units = planner.get("units") if isinstance(planner, dict) else None
     for entries in (intent.get("items"), units):
@@ -530,7 +559,48 @@ def workflow_intent_json_schema() -> dict[str, Any]:
             "user_goal": {"type": "string", "minLength": 1},
             "title": {"type": "string"},
             "summary": {"type": "string"},
-            "inputs": {"type": "object"},
+            "inputs": {
+                "type": "object",
+                "description": (
+                    "Skill-specific inputs plus stable media generation controls. "
+                    "Use the declared JSON scalar types for the stable controls."
+                ),
+                "properties": {
+                    "aspect_ratio": {"type": "string", "minLength": 1},
+                    "image_aspect_ratio": {"type": "string", "minLength": 1},
+                    "image_model": {"type": "string", "minLength": 1},
+                    "image_quality": {"type": "string", "minLength": 1},
+                    "image_resolution": {"type": "string", "minLength": 1},
+                    "image_variants_per_node": {
+                        "type": "integer",
+                        "enum": [1, 2, 4],
+                    },
+                    "video_aspect_ratio": {"type": "string", "minLength": 1},
+                    "video_duration_seconds": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "maximum": 600,
+                    },
+                    "video_generate_audio": {"type": "boolean"},
+                    "video_generation_mode": {
+                        "type": "string",
+                        "enum": [
+                            "allReference",
+                            "firstLastFrame",
+                            "imageReference",
+                            "imageToVideo",
+                            "textToVideo",
+                        ],
+                    },
+                    "video_model": {"type": "string", "minLength": 1},
+                    "video_resolution": {"type": "string", "minLength": 1},
+                    "video_variants_per_node": {
+                        "type": "integer",
+                        "enum": [1, 2, 4],
+                    },
+                },
+                "additionalProperties": True,
+            },
             "planner": {
                 "type": "object",
                 "description": (
