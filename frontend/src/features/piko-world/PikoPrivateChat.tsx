@@ -133,7 +133,7 @@ export function PikoPrivateChat({ active, onOpenChange, ownNickname = "你" }: {
   useEffect(() => () => onOpenChange(false), [onOpenChange]);
   // Map transitions hide the shared tray without remounting its notifications.
   return <div aria-hidden={!active || undefined} inert={!active} style={{ display: active ? undefined : "none" }}
-    className="absolute right-4 top-[5.5rem] z-30 flex w-max max-w-[calc(100%-2rem)] flex-col items-end">
+    className="absolute right-4 top-[6.5rem] z-30 flex w-max max-w-[calc(100%-2rem)] flex-col items-end">
     <PikoPrivateConversation active={active} onOpenChange={onFirstOpen} nickname={PIKO_SIMULATED_RESIDENT.nickname} delay={5000} ownNickname={ownNickname} />
     <PikoPrivateConversation active={active} onOpenChange={onSecondOpen} nickname="喜欢散步的小禾" delay={8000} ownNickname={ownNickname} />
   </div>;

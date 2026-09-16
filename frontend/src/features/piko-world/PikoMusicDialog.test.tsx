@@ -10,7 +10,7 @@ it("toggles the current song from its row and delays rotation until the arm land
   const { rerender } = render(<PikoMusicDialog {...props} />);
   expect(screen.getByText("Piko小镇原声OST")).toBeTruthy();
   expect(screen.queryByText("跟随地图")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "播放风捎来初逢的问候" }));
+  fireEvent.click(screen.getByRole("button", { name: "播放风栖初逢之庭" }));
   expect(state.mute).toHaveBeenLastCalledWith(false);
   state.playback = { ...state.playback, playing: true };
   rerender(<PikoMusicDialog {...props} />);
@@ -18,7 +18,7 @@ it("toggles the current song from its row and delays rotation until the arm land
   expect(disc().style.animationPlayState).toBe("paused");
   act(() => vi.advanceTimersByTime(650));
   expect(disc().style.animationPlayState).toBe("running");
-  fireEvent.click(screen.getByRole("button", { name: "暂停风捎来初逢的问候" }));
+  fireEvent.click(screen.getByRole("button", { name: "暂停风栖初逢之庭" }));
   expect(state.mute).toHaveBeenLastCalledWith(true);
   state.playback = { ...state.playback, playing: false };
   rerender(<PikoMusicDialog {...props} />);

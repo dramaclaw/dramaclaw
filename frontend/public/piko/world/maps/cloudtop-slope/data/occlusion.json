@@ -1,47 +1,5 @@
 {
   "schemaVersion": 1,
   "mapId": "cloudtop-slope",
-  "occluders": [
-    {
-      "id": "telescope",
-      "src": "base.png",
-      "position": {
-        "x": 1133,
-        "y": 217
-      },
-      "depthY": 299,
-      "frame": {
-        "x": 1133,
-        "y": 217,
-        "width": 87,
-        "height": 68
-      },
-      "outline": [
-        {
-          "x": 0,
-          "y": 34
-        },
-        {
-          "x": 27,
-          "y": 0
-        },
-        {
-          "x": 74,
-          "y": 22
-        },
-        {
-          "x": 87,
-          "y": 52
-        },
-        {
-          "x": 67,
-          "y": 68
-        },
-        {
-          "x": 32,
-          "y": 61
-        }
-      ]
-    }
-  ]
+  "occluders": []
 }

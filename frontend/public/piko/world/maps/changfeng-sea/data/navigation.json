@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "mapId": "frostmoon-tundra",
+  "mapId": "changfeng-sea",
   "walkableAreas": [
     {
       "id": "map-preview-bounds",
@@ -27,40 +27,40 @@
   "colliders": [],
   "spawnPoints": [
     {
-      "id": "cloudtop-slope-arrival",
+      "id": "boundless-sea-arrival",
       "position": {
-        "x": 1000,
-        "y": 940
+        "x": 360,
+        "y": 920
       },
-      "facing": "north"
+      "facing": "east"
     }
   ],
   "exits": [
     {
-      "id": "to-cloudtop-slope",
+      "id": "to-boundless-sea",
       "trigger": {
-        "id": "to-cloudtop-slope-trigger",
+        "id": "to-boundless-sea-trigger",
         "points": [
           {
-            "x": 950,
-            "y": 1068
+            "x": 120,
+            "y": 1018
           },
           {
-            "x": 1010,
-            "y": 1068
+            "x": 180,
+            "y": 1018
           },
           {
-            "x": 1010,
-            "y": 1112
+            "x": 180,
+            "y": 1062
           },
           {
-            "x": 950,
-            "y": 1112
+            "x": 120,
+            "y": 1062
           }
         ]
       },
-      "targetMapId": "cloudtop-slope",
-      "targetSpawnId": "frostmoon-tundra-arrival"
+      "targetMapId": "boundless-sea",
+      "targetSpawnId": "changfeng-sea-arrival"
     }
   ]
 }

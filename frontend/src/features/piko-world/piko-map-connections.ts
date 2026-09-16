@@ -103,7 +103,13 @@ export const MAP_EXIT_MARKERS: Record<PikoMapId, readonly PikoExitMarkerDefiniti
     { exitId: "to-startrace-coast", targetMapId: "startrace-coast",
       position: { x: 1730, y: 970 }, direction: "south" },
   ],
+  "changfeng-sea": [
+    { exitId: "to-boundless-sea", targetMapId: "boundless-sea",
+      position: { x: 150, y: 1040 }, direction: "west" },
+  ],
   "boundless-sea": [
+    { exitId: "to-changfeng-sea", targetMapId: "changfeng-sea",
+      position: { x: 1940, y: 130 }, direction: "east" },
     { exitId: "to-startrace-coast", targetMapId: "startrace-coast",
       position: { x: 325, y: 880 }, direction: "west", action: "returnShore" },
   ],

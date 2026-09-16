@@ -16,7 +16,7 @@ function mockAudio() {
 }
 it("covers every map explicitly and keeps the supplied shared groups together", () => {
   expect(Object.keys(PIKO_MAP_MUSIC).sort()).toEqual(Object.keys(PIKO_MAP_TRANSITIONS).sort());
-  for (const ids of [["welcome-courtyard", "artisan-market"], ["lantern-canal-street", "starlight-dock"], ["wind-garden-gate", "whispering-meadow", "cloudtop-slope", "amber-wilds"], ["starfall-tidal-wetland", "startrace-coast", "boundless-sea"]] as const) {
+  for (const ids of [["welcome-courtyard", "artisan-market"], ["lantern-canal-street", "starlight-dock"], ["wind-garden-gate", "whispering-meadow"], ["cloudtop-slope", "frostmoon-tundra"], ["amber-wilds", "crimson-canyon"], ["starfall-tidal-wetland", "startrace-coast", "boundless-sea", "changfeng-sea"]] as const) {
     for (const id of ids) expect(PIKO_MAP_MUSIC[id]).toBe(PIKO_MAP_MUSIC[ids[0]]);
   }
   expect(Object.values(PIKO_MAP_MUSIC).every(tracks => tracks && tracks.length > 0)).toBe(true);
@@ -28,9 +28,9 @@ it("preserves shared playback on travel and releases the old channel on a differ
   vi.useFakeTimers(); const clips = mockAudio();
   const { rerender, unmount } = renderHook(({ id }) => useMapMusic(id), { initialProps: { id: "whispering-meadow" as keyof typeof PIKO_MAP_MUSIC } });
   await act(async () => {});
-  rerender({ id: "cloudtop-slope" }); expect(clips).toHaveLength(1);
+  rerender({ id: "wind-garden-gate" }); expect(clips).toHaveLength(1);
   rerender({ id: "crimson-canyon" }); expect(clips).toHaveLength(2);
-  expect(clips[1].src).toContain("crimson-canyon.mp3");
+  expect(clips[1].src).toContain("amber-canyon.mp3");
   await act(async () => {}); act(() => vi.advanceTimersByTime(800));
   expect(clips[0].removeAttribute).toHaveBeenCalledWith("src");
   unmount(); act(() => vi.advanceTimersByTime(800));
@@ -68,7 +68,7 @@ it("manual selection owns one channel across travel and follows the latest map o
   act(() => selectPikoMusic(null));
   await act(async () => {});
   expect(clips).toHaveLength(3);
-  expect(clips[2].src).toContain("crimson-canyon");
+  expect(clips[2].src).toContain("amber-canyon");
   act(() => selectPikoMusic(PIKO_MUSIC_PLAYLISTS.skyport));
   await act(async () => {});
   act(() => clips[3].dispatchEvent(new Event("ended")));

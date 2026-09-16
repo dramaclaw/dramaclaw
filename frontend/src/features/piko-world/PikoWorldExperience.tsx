@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuthStore } from "@/stores/auth-store";
 import { PikoWorldShell } from "./PikoWorldShell";
-import { useMapMusic } from "./piko-bgm";
+import { resetPikoMusicSession, useMapMusic } from "./piko-bgm";
 import type { PikoMapId } from "./piko-map-transitions";
 import { PikoOnboarding } from "./PikoOnboarding";
 import { usePikoProfile } from "./piko-profile";
@@ -16,6 +16,7 @@ export function PikoWorldExperience() {
 function AccountExperience({ owner }: { owner: string | null }) {
   const [player, setPlayer] = useState<PikoPlayer | null>(null);
   const [musicMap, setMusicMap] = useState<PikoMapId | null>(null);
+  useEffect(() => { resetPikoMusicSession(); }, []);
   useMapMusic(musicMap);
   const startCreationMusic = useCallback(() => setMusicMap("welcome-courtyard"), []);
   const { saveProfile } = usePikoProfile(owner);

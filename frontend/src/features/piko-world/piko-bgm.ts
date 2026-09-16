@@ -3,7 +3,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { PIKO_MAP_MUSIC, PIKO_MUSIC_PLAYLISTS } from "./piko-map-music";
 import type { PikoMapId } from "./piko-map-transitions";
 
-const MUSIC_VOLUME = 0.7;
+const MUSIC_VOLUME = 1;
 const DUCKED_VOLUME = 0.09;
 const REPEAT_PAUSE_MS = 30_000;
 
@@ -15,6 +15,13 @@ const STATUS_CHANGE = "piko-music-status";
 function reportPlayback(src: string, playing: boolean, error = false) {
   playback = { src, playing, error, currentTime: src === playback.src ? playback.currentTime : 0, duration: src === playback.src ? playback.duration : 0 };
   document.dispatchEvent(new Event(STATUS_CHANGE));
+}
+/** Start each town visit with scene music, unmuted, and no stale progress. */
+export function resetPikoMusicSession() {
+  selectedTracks = null;
+  musicMuted = false;
+  reportPlayback("", false);
+  document.dispatchEvent(new Event(MUSIC_CHANGE));
 }
 export function usePikoPlayback() {
   return useSyncExternalStore(listener => {

@@ -54,6 +54,11 @@ export const PIKO_MAP_TRANSITIONS = {
     subtitle: "潮水退去，星光仍在",
     src: `${MAP_TITLE_ROOT}/piko-world-map-title-startrace-coast-v1.png`,
   },
+  "changfeng-sea": {
+    title: "长风海境",
+    subtitle: "长风渐远，海天无声",
+    src: `${MAP_TITLE_ROOT}/piko-world-map-title-changfeng-sea-v1.png`,
+  },
   "boundless-sea": {
     title: "无垠海域",
     subtitle: "小帆驶向海天尽头",

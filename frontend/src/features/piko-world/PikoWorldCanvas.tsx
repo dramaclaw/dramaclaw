@@ -343,7 +343,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, resi
           if (portraitSpec && !portraitTexture) return;
           residentActor = createResidentActor(residentTextures.get(residentIdRef.current)!, nextApp.ticker,
             () => mayorActiveRef.current && !blockedRef.current && !welcomeOpenRef.current && !socialBusyRef.current && !debugEditingRef.current,
-            {host, navigation, position: spawn?.position, facing: spawn?.facing, footsteps: mapId !== "boundless-sea",
+            {host, navigation, position: spawn?.position, facing: spawn?.facing, footsteps: mapId !== "boundless-sea" && mapId !== "changfeng-sea",
               portrait: portraitSpec && portraitTexture ? { texture: portraitTexture, ...portraitSpec } : undefined});
           activateTransportRef.current = exitId => {
             const definition = exitDefinitions.find(marker => marker.exitId === exitId);

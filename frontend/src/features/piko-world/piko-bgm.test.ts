@@ -10,13 +10,13 @@ it("retries denied playback, fades in and releases on exit", async () => {
  document.dispatchEvent(new Event("pointerdown"));
  await Promise.resolve();
  vi.advanceTimersByTime(2000);
- expect(audio.volume).toBe(0.7);
+ expect(audio.volume).toBe(1);
  expect(audio.loop).toBe(false);
  document.dispatchEvent(new Event("piko-notification-sound"));
  vi.advanceTimersByTime(150);
  expect(audio.volume).toBeCloseTo(0.09);
  vi.advanceTimersByTime(1800);
- expect(audio.volume).toBe(0.7);
+ expect(audio.volume).toBe(1);
  stop();
  vi.advanceTimersByTime(800);
  expect(audio.volume).toBe(0);
@@ -39,7 +39,7 @@ it("continues pending playback without restarting when tab visibility changes", 
  resolvers[0](); await Promise.resolve();
  expect(audio.pause).toHaveBeenCalledTimes(pauses);
  vi.advanceTimersByTime(2000);
- expect(audio.volume).toBe(0.7);
+ expect(audio.volume).toBe(1);
  stop(); vi.advanceTimersByTime(800);
  visibility.mockRestore();
 });
