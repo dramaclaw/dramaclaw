@@ -602,6 +602,36 @@ def test_db_snapshot_stage_logs_count_and_stops_on_failure(
     )
 
 
+def test_db_snapshot_stage_skips_deprecated_cognee_stores(monkeypatch, tmp_path):
+    state_dir = tmp_path / "state"
+    for rel in (
+        "u/p/data.db.snapshot",
+        "u/p/cognee_system/databases/cognee_db.snapshot",
+        "_orgs/o/u/p/chat.db.snapshot",
+        "_orgs/o/u/p/cognee_system/databases/cognee_db.snapshot",
+    ):
+        path = state_dir / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("s", encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(files_sync_module, "_run", lambda cmd, env: calls.append(cmd) or 0)
+
+    assert (
+        files_sync_module.sync_db_snapshots(
+            state_dir,
+            "oss:bucket/state",
+            "oss:bucket/history/state",
+            {},
+        )
+        == 0
+    )
+
+    assert sorted(cmd[3] for cmd in calls) == [
+        "oss:bucket/state/_orgs/o/u/p/chat.db",
+        "oss:bucket/state/u/p/data.db",
+    ]
+
+
 def test_build_rclone_env(monkeypatch):
     monkeypatch.setenv("BACKUP_OSS_AK", "ak1")
     monkeypatch.setenv("BACKUP_OSS_SK", "sk1")

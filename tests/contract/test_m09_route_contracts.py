@@ -289,8 +289,12 @@ def m09_client_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         runtime_dir=str(runtime_dir),
     )
 
-    async def resolve_project_scope(project: str, user: dict, *, required_role: str = "viewer"):
+    async def resolve_project_scope(
+        project: str, user: dict, *, required_role: str = "viewer", media_read: bool = False
+    ):
         assert project == _PROJECT
+        if media_read:
+            assert required_role == "viewer"
         return resolution
 
     async def resolve_generation_project(project: str, user: dict, required_role: str = "viewer"):

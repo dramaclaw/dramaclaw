@@ -17,6 +17,16 @@ import { ScrollArea } from "@/components/ui/scroll-area";
  *
  * 中英各一套：解析器两种格式都认（utils/screenplay_scene_parser.py），但样例是
  * 「照着抄」的模板，中文界面给中文制片格式、英文界面给 Fountain 格式，混着给等于没给。
+ *
+ * NOTE FOR TRANSLATORS — this applies to the `ingest.novelFormat.rule*`,
+ * `ingest.sceneHeaders.*` and `aiAssistant.formatCheck.recommended` strings too:
+ * the parser matches these keywords *literally*. It accepts the Chinese
+ * production formats and Fountain / Final Draft, and nothing else. Translate the
+ * explanation around them; never translate `第N集` / `EPISODE N`, `人物：` /
+ * `Characters:`, `内` / `外` / `INT.` / `EXT.`, or the time values
+ * (`深夜` / `NIGHT` / `DAY` / …). A localized guide whose keywords were
+ * translated reads fine and then fails every import made by someone who
+ * followed it.
  */
 // i18n-exempt-start —— 样例本身就是解析器认的制片格式，翻译过去就不是那个格式了
 const DRAMA_FORMAT_SPEC = [
@@ -128,7 +138,11 @@ const DRAMA_FORMAT_EXAMPLE_EN = [
 ].join("\n");
 // i18n-exempt-end
 
-/** 样例按界面语言取，不按剧本语言：这是「照着抄」的模板，跟着读的人走。 */
+/**
+ * 样例按界面语言取，不按剧本语言：这是「照着抄」的模板，跟着读的人走。
+ * Locales without their own sample set get the Fountain one, which is what the
+ * parser accepts for non-Chinese scripts — so this branch stays binary on purpose.
+ */
 const FORMAT_SAMPLES = {
   zh: {
     spec: DRAMA_FORMAT_SPEC,

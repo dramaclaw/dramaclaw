@@ -74,7 +74,9 @@ describe("release notification query", () => {
     expect(seenLocale).toBe("zh");
   });
 
-  it("defaults missing and unknown locales to zh", async () => {
+  // Release notes exist in zh and en only. A locale we don't publish notes for
+  // gets English, not Chinese — `vi` used to land on Chinese release notes here.
+  it("defaults missing and unknown locales to en", async () => {
     const seenLocales: string[] = [];
     server.use(
       http.get("http://localhost:3000/api/v1/release-notifications", ({ request }) => {
@@ -85,8 +87,9 @@ describe("release notification query", () => {
 
     await fetchReleaseNotifications(undefined);
     await fetchReleaseNotifications("fr-FR");
+    await fetchReleaseNotifications("vi-VN");
 
-    expect(seenLocales.length).toBeGreaterThanOrEqual(2);
-    expect(seenLocales.every((locale) => locale === "zh")).toBe(true);
+    expect(seenLocales.length).toBeGreaterThanOrEqual(3);
+    expect(seenLocales.every((locale) => locale === "en")).toBe(true);
   });
 });

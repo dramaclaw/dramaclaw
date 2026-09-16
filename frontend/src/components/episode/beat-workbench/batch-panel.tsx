@@ -671,7 +671,7 @@ export function BatchPanel({
         toast.error(res.error || t("episode.workbench.batch.dispatchFailed"));
         return;
       }
-      audioTask.start({ scope: res.scope });
+      audioTask.start({ scope: res.scope, taskId: res.task_id });
       toast.success(t("episode.workbench.batch.audioDispatched", { count }));
       onClearSelection();
     } catch (error) {

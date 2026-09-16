@@ -7,8 +7,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+import anyio
 from fastapi import APIRouter, Depends, Query, Request
-from sse_starlette.sse import EventSourceResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 
@@ -16,6 +16,10 @@ from novelvideo.api.auth import (
     get_api_user,
     get_api_user_or_query,
     verify_credential_for_request,
+)
+from novelvideo.api.sse_shutdown import (
+    shutdown_aware_sse_response,
+    wait_interval_or_shutdown,
 )
 from novelvideo.i18n_message import has_localizable_log, log_lines_text
 from novelvideo.ports import get_project_access, get_task_backend
@@ -451,7 +455,7 @@ async def stream_project_tasks(
         user=user, project_id=project, required_role="viewer"
     )
 
-    async def event_generator():
+    async def event_generator(shutdown: anyio.Event):
         mgr = get_task_manager()
         last: dict[str, tuple[str, float, str]] = {}
         last_heartbeat = asyncio.get_event_loop().time()
@@ -517,9 +521,10 @@ async def stream_project_tasks(
                 }
                 last_heartbeat = now
 
-            await asyncio.sleep(interval)
+            if await wait_interval_or_shutdown(shutdown, interval):
+                return
 
-    return EventSourceResponse(event_generator())
+    return shutdown_aware_sse_response(event_generator)
 
 
 @router.get("/projects/{project}/tasks/{task_type}/{episode}/stream")
@@ -538,7 +543,7 @@ async def stream_project_task(
         user=user, project_id=project, required_role="viewer"
     )
 
-    async def event_generator():
+    async def event_generator(shutdown: anyio.Event):
         last_progress = -1.0
         last_task = ""
         last_auth_check = asyncio.get_event_loop().time()
@@ -575,7 +580,8 @@ async def stream_project_task(
                 if not_found_deadline is None:
                     not_found_deadline = now + _TASK_NOT_FOUND_GRACE_S
                 if now < not_found_deadline:
-                    await asyncio.sleep(interval)
+                    if await wait_interval_or_shutdown(shutdown, interval):
+                        return
                     continue
                 yield {
                     "event": "error",
@@ -614,9 +620,10 @@ async def stream_project_task(
             if is_terminal:
                 return
 
-            await asyncio.sleep(interval)
+            if await wait_interval_or_shutdown(shutdown, interval):
+                return
 
-    return EventSourceResponse(event_generator())
+    return shutdown_aware_sse_response(event_generator)
 
 
 @router.delete("/projects/{project}/tasks/{task_type}/{episode}")

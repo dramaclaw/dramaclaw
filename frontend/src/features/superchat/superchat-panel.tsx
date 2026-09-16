@@ -12034,8 +12034,8 @@ export function SuperChatPanel({
   const { t } = useTranslation();
   const params = useParams({ strict: false }) as { project?: string };
   const queryClient = useQueryClient();
-  const username = useAuthStore((s) => s.username);
   const isFreezoneLayout = variant === "freezone";
+  const displayName = useAuthStore((s) => s.displayName);
   const [draft, setDraft] = useState("");
   const [selectedHtmlReference, setSelectedHtmlReference] = useState<HtmlArtifactReference | null>(null);
   useEffect(() => {
@@ -12123,7 +12123,7 @@ export function SuperChatPanel({
   const selectedCanvasNodeId = useCanvasStore((state) => state.selectedNodeId);
   const chat = useSuperChat({
     project: params.project,
-    displayName: username || "SuperTale",
+    displayName: displayName || "SuperTale",
     surface: variant === "freezone" ? "freezone" : undefined,
     freezoneCanvasId: variant === "freezone" ? freezoneCanvasId ?? canvasId : null,
     freezoneAgentId: variant === "freezone" ? freezoneAgentId : null,

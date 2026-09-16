@@ -2,14 +2,19 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import pytest
 
 
-def test_runtime_config_includes_stable_instance_id(monkeypatch) -> None:
+@pytest.mark.parametrize("edition", [None, "", "ce"])
+def test_runtime_config_includes_stable_instance_id(monkeypatch, edition) -> None:
     from novelvideo.api.routes import config
     from novelvideo.shared import runtime_env
 
     monkeypatch.setattr(runtime_env, "load_project_dotenv", lambda override=False: None)
-    monkeypatch.setenv("ST_EDITION", "ce")
+    if edition is None:
+        monkeypatch.delenv("ST_EDITION", raising=False)
+    else:
+        monkeypatch.setenv("ST_EDITION", edition)
     monkeypatch.delenv("ST_CONTROL_PLANE_DSN", raising=False)
 
     app = FastAPI()

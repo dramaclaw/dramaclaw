@@ -56,7 +56,8 @@ URL_FIELD_NAMES = {
 }
 
 
-def _is_url_field_name(key: str | None) -> bool:
+def is_url_field_name(key: str | None) -> bool:
+    """字段名看起来是不是装 URL 的（画布节点数据没有字段白名单可依）。"""
     if not key:
         return False
     return (
@@ -196,7 +197,7 @@ def migrate_canvas_static_urls_in_memory(
             }
         if isinstance(value, list):
             return [visit(item, key=key) for item in value]
-        if isinstance(value, str) and _is_url_field_name(key):
+        if isinstance(value, str) and is_url_field_name(key):
             canonical = _rewrite_local_project_path_url(
                 value,
                 project_id=project_id,
