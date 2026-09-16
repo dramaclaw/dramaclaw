@@ -854,7 +854,22 @@
     "scrollToBottom": "Về cuối",
     "taskCompleteNotice": "✅ {{label}} đã xong. Bảo mình xem kết quả, hoặc đi tiếp bước sau.",
     "taskFailedNotice": "{{label}} thất bại: {{reason}}\nXử lý đúng chỗ báo lỗi rồi hãy làm tiếp.",
-    "taskFailedUnknownReason": "không có lý do cụ thể nào được trả về"
+    "taskFailedUnknownReason": "không có lý do cụ thể nào được trả về",
+    "freezonePlaceholder": "Cho Xia Draw biết bạn muốn tạo gì hoặc chỉnh sửa ở đâu",
+    "freezoneWaitingResponse": "Đang chờ Xia Draw",
+    "freezoneWaitingResponses": [
+      "Xia Draw đang đọc canvas",
+      "Xia Draw đang tìm hiểu các node",
+      "Xia Draw đang sắp xếp ngữ cảnh canvas",
+      "Xia Draw đang chọn bước tiếp theo",
+      "Xia Draw đang chuẩn bị thao tác trên canvas",
+      "Xia Draw đang soạn câu trả lời",
+      "Xia Draw đang đưa ý tưởng lên canvas"
+    ],
+    "waitingStageElapsed": "{{label}} · {{seconds}} giây",
+    "waitingStageVeryLong": "Vẫn đang xử lý: {{label}} · {{seconds}} giây",
+    "reconnectingAgent": "Đang kết nối lại với Xia Director",
+    "canvasReferenceOnlyPrompt": "Hãy tiếp tục từ node đã chọn trên canvas."
   },
   "freezone": {
     "chat": {
@@ -862,7 +877,56 @@
       "description": "Mở Xia Director bên cạnh canvas Freezone.",
       "toggle": "Mở Xia Director trong Freezone",
       "close": "Thu gọn Xia Director trong Freezone",
-      "resize": "Kéo để đổi kích thước Xia Director trong Freezone"
+      "resize": "Kéo để đổi kích thước Xia Director trong Freezone",
+      "audioApproval": {
+        "chooseVoiceTitle": "Chọn giọng thuyết minh",
+        "chooseVoiceDescription": "Chọn một giọng tuỳ chỉnh. Nếu chưa chọn bây giờ, bước tạo thuyết minh sẽ được bỏ qua.",
+        "music": "Nhạc",
+        "narration": "Thuyết minh",
+        "changeVoice": "Đổi giọng tuỳ chỉnh",
+        "chooseVoice": "Chọn giọng tuỳ chỉnh",
+        "selectedVoice": "Đã chọn: {{voice}}",
+        "customVoice": "Giọng tuỳ chỉnh",
+        "noVoiceSkip": "Chưa chọn; sẽ bỏ qua bước tạo thuyết minh",
+        "musicSummary": "{{seconds}} giây · {{mode}}",
+        "instrumental": "Nhạc không lời",
+        "vocalsAllowed": "Cho phép có giọng hát",
+        "continue": "Tiếp tục với giọng đã chọn"
+      },
+      "canvasExecuting": "Đang thực hiện...",
+      "canvasConfirmedExecuting": "Đã xác nhận tham số. Đang thực hiện, không cần xác nhận thêm.",
+      "canvasConfirmExecution": "Xác nhận thực hiện",
+      "canvasTimeoutCancelled": "Thao tác trên canvas đã hết thời gian chờ và bị huỷ, chưa áp dụng thay đổi.",
+      "canvasManuallyCancelled": "Thao tác trên canvas đã bị huỷ thủ công, chưa áp dụng thay đổi.",
+      "canvasRetryPrompt": "Kiểm tra lại và tiếp tục thao tác chưa hoàn tất trên canvas. Giữ các kết quả đã hoàn thành, kiểm tra các node hiện có và trạng thái chạy, sau đó bổ sung đầy đủ tham số tạo trước khi yêu cầu phê duyệt lại.",
+      "canvasRetryDisplay": "Kiểm tra lại và tiếp tục thao tác chưa hoàn tất trên canvas",
+      "generationParams": {
+        "autoRatio": "Tỷ lệ tự động",
+        "imageQuality": "Chất lượng ảnh",
+        "quality": {
+          "low": "Chất lượng thấp",
+          "medium": "Chất lượng tiêu chuẩn",
+          "high": "Chất lượng cao"
+        },
+        "imageCount": "{{count}} ảnh",
+        "imageCount_other": "{{count}} ảnh",
+        "videoCount": "{{count}} video",
+        "videoCount_other": "{{count}} video",
+        "durationSeconds": "{{count}} giây",
+        "durationSeconds_other": "{{count}} giây",
+        "generateAudio": "Tạo âm thanh",
+        "muteAudio": "Không tạo âm thanh",
+        "audioOn": "Có âm thanh",
+        "audioOff": "Tắt tiếng"
+      },
+      "clarification": {
+        "skipped": "Đã bỏ qua",
+        "submitted": "Đã gửi",
+        "skippedQuestions": "Các câu hỏi đã bỏ qua",
+        "submittedAnswers": "Câu trả lời đã gửi · {{count}}",
+        "noAnswersSkipped": "Đã bỏ qua các câu hỏi này.",
+        "noAnswersSubmitted": "Chưa gửi lựa chọn cụ thể nào."
+      }
     },
     "canvases": {
       "defaultSection": "Canvas mặc định",
@@ -963,7 +1027,8 @@
         "audio": "Âm thanh",
         "script": "Kịch bản",
         "world": "3D / Panorama",
-        "skill": "Kỹ năng"
+        "skill": "Kỹ năng",
+        "webpage": "Trang web"
       }
     },
     "projections": {
@@ -1347,6 +1412,11 @@
       "metaFetchFailed": "Đọc metadata của đạo diễn thất bại: {{status}}",
       "metaInvalid": "Metadata của đạo diễn sai định dạng",
       "missingTargetPath": "Ảnh ghép đạo diễn đã được ghi nhưng không có đường dẫn đích"
+    },
+    "workflowRecovery": {
+      "safetyReviewFailed": "Một số node không vượt qua kiểm duyệt an toàn",
+      "editPrompt": "Sửa câu lệnh",
+      "skipNode": "Bỏ qua node"
     }
   },
   "theme": {
@@ -2245,7 +2315,8 @@
       "deleted": "Đã chuyển \"{{name}}\" vào Thùng rác",
       "restored": "Đã khôi phục \"{{name}}\"",
       "purged": "Đã xoá vĩnh viễn \"{{name}}\"",
-      "undo": "Hoàn tác"
+      "undo": "Hoàn tác",
+      "purgeFailed": "Không thể xoá vĩnh viễn \"{{name}}\"; dữ liệu dự án vẫn được giữ lại"
     },
     "title": "Dự án",
     "newProject": "Dự án mới",
@@ -2527,7 +2598,8 @@
     "projectQueueKinds": {
       "video": "video",
       "world": "world",
-      "ffmpeg": "dựng phim"
+      "ffmpeg": "dựng phim",
+      "image": "ảnh"
     },
     "generationChannelPolicyBlocked": "Yêu cầu này bị chặn bởi chính sách kênh của model (không phải giới hạn tốc độ thật) — các yêu cầu tạo lại phác thảo chất lượng thấp thường bị bỏ qua. Hãy thử lại sau, hoặc nâng chất lượng tạo rồi thử lại.",
     "generationRateLimited": "Dịch vụ model đang tạm bị giới hạn tốc độ (HTTP 429). Vui lòng thử lại sau ít phút.",
@@ -2575,7 +2647,10 @@
     "pause": "Tạm dừng",
     "retry": "Thử lại",
     "requestId": "Request ID",
-    "listSeparator": ", "
+    "listSeparator": ", ",
+    "generationInputContentPolicyBlocked": "Loại lỗi: không vượt qua kiểm duyệt an toàn nội dung (ảnh đầu vào). Nếu ảnh có người thật đã cho phép sử dụng hình ảnh, hãy bật Kiểm duyệt người thật rồi thử lại; nếu không, hãy thay đầu vào.",
+    "generationOutputContentPolicyBlocked": "Loại lỗi: không vượt qua kiểm duyệt an toàn nội dung (video hoặc ảnh đầu ra). Mô hình đã từ chối kết quả này. Hãy điều chỉnh các mô tả liên quan đến bạo lực, gây hại, quyền riêng tư hoặc nội dung nhạy cảm khác rồi thử lại.",
+    "generationContentPolicyBlocked": "Loại lỗi: không vượt qua kiểm duyệt an toàn nội dung. Mô hình đã từ chối yêu cầu tạo này. Hãy điều chỉnh câu lệnh hoặc thay đầu vào rồi thử lại."
   },
   "ingest": {
     "title": "Nguồn truyện",
@@ -2924,7 +2999,14 @@
       "freezone_script_to_video_plan": "Kịch bản sang kế hoạch video",
       "freezone_audio_speech": "Tạo giọng đọc",
       "freezone_audio_eleven_music": "Tạo nhạc",
-      "freezone_image_to_3gs": "Ảnh sang thế giới 3D"
+      "freezone_image_to_3gs": "Ảnh sang thế giới 3D",
+      "system_voice_setup": "Thiết lập giọng hệ thống",
+      "freezone_agent_workflow_result": "Tạo quy trình",
+      "freezone_agent_recipe_result": "Tạo Recipe",
+      "freezone_workflow_confirm": "Xác nhận quy trình",
+      "freezone_image_vectorize": "Tạo ảnh vector",
+      "freezone_image_animate_gif": "Chuyển đổi ảnh GIF động",
+      "freezone_skill_import": "Chuyển đổi Skill bên ngoài"
     },
     "cancelRunning": {
       "title": "Dừng tác vụ",
@@ -3161,6 +3243,69 @@
       "failed": "{{label}} thất bại: {{error}}",
       "canceled": "Đã huỷ {{label}}",
       "copied": "Đã sao chép Task ID"
+    },
+    "cancel": {
+      "title": "Huỷ tác vụ tạo",
+      "description": "Huỷ “{{name}}”? Các tác vụ đang chạy thường không được hoàn phí sau khi huỷ.",
+      "confirm": "Xác nhận huỷ",
+      "keep": "Tiếp tục tạo",
+      "submitted": "Đã gửi yêu cầu huỷ",
+      "failed": "Huỷ tác vụ thất bại: {{error}}",
+      "short": "Huỷ tác vụ"
+    },
+    "cancelAll": {
+      "title": "Huỷ tất cả tác vụ tạo",
+      "description": "Huỷ {{count}} tác vụ trong danh sách hiện tại? Các tác vụ đang chạy thường không được hoàn phí; kết quả của các tác vụ đã hoàn tất vẫn được giữ lại.",
+      "confirm": "Huỷ tất cả",
+      "partialFailure": "Không thể huỷ {{count}} tác vụ. Xem chi tiết trong Trung tâm tác vụ.",
+      "submitted": "Đã gửi tất cả yêu cầu huỷ",
+      "short": "Huỷ tất cả"
+    },
+    "chatStatus": {
+      "running": "{{count}} đang tạo",
+      "waiting": "{{count}} trong hàng đợi",
+      "completed": "{{count}} đã hoàn tất",
+      "failed": "{{count}} thất bại",
+      "locateNode": "Tìm node trên canvas",
+      "workflowProgress": "Quy trình đang chạy · {{completed}}/{{total}}",
+      "workflowCompleted": "Quy trình đã hoàn tất",
+      "workflowFailed": "Quy trình thất bại",
+      "workflowShort": "Quy trình · {{completed}}/{{total}} đã xong",
+      "workflowCompletedShort": "Quy trình đã xong · {{completed}}/{{total}}",
+      "inProgressShort": "{{count}} đang chạy",
+      "waitingShort": "{{count}} đang chờ",
+      "failedShort": "{{count}} thất bại",
+      "interruptedShort": "Tạm dừng",
+      "stoppedShort": "Đã dừng",
+      "resume": "Tiếp tục",
+      "continueDownstream": "Tiếp tục các bước sau",
+      "resuming": "Đang tiếp tục",
+      "resumeSucceeded": "Đã tiếp tục quy trình",
+      "resumeFailed": "Không thể tiếp tục quy trình: {{message}}",
+      "resumeFailedFallback": "Khôi phục quy trình thất bại",
+      "workflowActivity": {
+        "preparing": "Đang chuẩn bị: {{name}}",
+        "compiling_recipe": "Đang chuẩn bị: {{name}}",
+        "submitting": "Đang gửi: {{name}}",
+        "generating": "Đang tạo: {{name}}",
+        "syncing_result": "Đang đồng bộ: {{name}}",
+        "retrying": "Đang thử lại: {{name}}"
+      },
+      "workflowPhase": {
+        "waiting_dependencies": "Đang chờ kết quả từ các bước trước",
+        "waiting_slot": "Đang chờ lượt thực hiện",
+        "waiting_capacity": "Đang chờ tài nguyên tạo nội dung",
+        "preparing": "Đang chuẩn bị node",
+        "compiling_recipe": "Đang biên dịch Recipe",
+        "submitting": "Đang gửi tác vụ tạo",
+        "generating": "Đang tạo",
+        "syncing_result": "Đang đồng bộ kết quả đã tạo",
+        "retrying": "Đang thử lại",
+        "completed": "Hoàn tất",
+        "failed": "Thất bại",
+        "blocked": "Bị chặn do bước trước thất bại",
+        "skipped": "Đã bỏ qua"
+      }
     }
   },
   "pikoMiniGame": {
@@ -3308,6 +3453,15 @@
       },
       "chargeHint": "Giữ để tích lực · thả ra để nhảy",
       "result": "Bạn được {{score}} điểm"
+    },
+    "rollingBall": {
+      "title": "Bóng lăn",
+      "canvasLabel": "Bảng trò chơi Bóng lăn",
+      "hint": "Di chuyển sang trái và phải để đáp xuống các bệ đang trượt",
+      "start": "Bắt đầu chơi",
+      "ready": "Tiếp tục lăn xuống",
+      "lost": "Bóng đã trượt mất",
+      "score": "Số lần đáp {{score}}"
     }
   },
   "literalScript": {
@@ -5303,6 +5457,39 @@
     },
     "assetDrop": {
       "fallbackNodeLabel": "Node"
+    },
+    "derivedMedia": {
+      "vector": "Ảnh vector",
+      "animated": "Ảnh động",
+      "vectorTitle": "Ảnh vector · SVG",
+      "animatedTitle": "Ảnh động · GIF",
+      "processing": "Đang xử lý",
+      "convertSvg": "Đang chuyển sang SVG",
+      "convertGif": "Đang chuyển sang GIF",
+      "generateVideo": "Đang tạo video",
+      "missingGifTask": "Đã tạo video nhưng chưa bắt đầu chuyển sang GIF. Hãy thử chuyển đổi lại.",
+      "missingOutput": "Không có tệp đầu ra",
+      "failed": "Tạo thất bại. Hãy thử lại.",
+      "failedSelect": "Tạo thất bại. Chọn node để thử lại.",
+      "selectConvert": "Chọn node để bắt đầu chuyển đổi",
+      "preview": "Xem trước",
+      "downloadFailed": "Tải về thất bại. Hãy thử lại.",
+      "download": "Tải {{format}} về",
+      "retryFree": "Thử chuyển đổi lại · Miễn phí",
+      "startFree": "Bắt đầu chuyển đổi · Miễn phí",
+      "regenerateVideo": "Tạo lại video",
+      "regenerateDescription": "Tạo lại video và chuyển sang GIF",
+      "videoBilling": "Cố định khung hình đầu · 4 giây · 720P · Không âm thanh. Video được tính phí theo giá báo; chuyển đổi GIF miễn phí.",
+      "quoteUnavailable": "Chưa thể ước tính điểm sử dụng. Vui lòng thử lại sau.",
+      "confirm": "Xác nhận tạo",
+      "svgDescription": "Chuyển sang SVG trên thiết bị. Ảnh phức tạp có thể mất chi tiết.",
+      "videoUnavailable": "Mô hình video không khả dụng",
+      "billingMissing": "Chưa cấu hình quy tắc tính phí. Hãy liên hệ quản trị viên.",
+      "quoteLoading": "Đang tải ước tính điểm sử dụng…",
+      "videoSettings": "Cố định khung hình đầu · 4 giây · 720P · Không âm thanh",
+      "close": "Đóng",
+      "free": "Miễn phí",
+      "generate": "Tạo"
     }
   },
   "tool": {
@@ -5379,7 +5566,8 @@
         "close": "Đóng",
         "submit": "Tạo",
         "cost": "Chi phí tính toán"
-      }
+      },
+      "sceneSettingSheet": "Bảng thiết kế bối cảnh"
     },
     "video": {
       "clip": "Cắt đoạn",
@@ -5625,7 +5813,8 @@
       "placeholderAudio": "Âm thanh",
       "placeholderScript": "Kịch bản",
       "betaTag": "Beta",
-      "videoCompose": "Dựng video"
+      "videoCompose": "Dựng video",
+      "htmlArtifact": "Trang web"
     },
     "imageNode": {
       "title": "Node ảnh",
@@ -6114,7 +6303,9 @@
         "grokImageLimit": "Grok Video Channel hỗ trợ tối đa 1 khung đầu và 7 ảnh tham chiếu",
         "maxImages": "Model này hỗ trợ tối đa {{count}} asset ảnh",
         "maxVideos": "Model này hỗ trợ tối đa {{count}} asset video",
-        "maxAudios": "Model này hỗ trợ tối đa {{count}} asset âm thanh"
+        "maxAudios": "Model này hỗ trợ tối đa {{count}} asset âm thanh",
+        "imageUnsupported": "Mô hình này không hỗ trợ ảnh đầu vào. Hãy xoá ảnh hoặc chọn mô hình có hỗ trợ.",
+        "modeUnsupported": "Mô hình này không hỗ trợ chế độ tạo đã chọn. Hãy chọn chế độ được hỗ trợ cho node này."
       }
     },
     "scriptNode": {
@@ -6207,7 +6398,8 @@
       "copied": "Đã sao chép",
       "copyFailed": "Sao chép thất bại",
       "copyVoiceRef": "Sao chép tham chiếu giọng",
-      "switchVoice": "Đổi giọng"
+      "switchVoice": "Đổi giọng",
+      "generateWithoutVoice": "Tạo (bỏ qua nếu chưa chọn giọng tuỳ chỉnh)"
     },
     "voiceRef": {
       "projectNarrator": "Người dẫn truyện của dự án",
@@ -6302,7 +6494,8 @@
       "pano360ViewerNode": "Trình xem toàn cảnh 360°",
       "threeDWorldNode": "Thế giới 3D",
       "skillNode": "Kỹ năng",
-      "styleNode": "Phong cách"
+      "styleNode": "Phong cách",
+      "htmlArtifactNode": "Trang web"
     },
     "exportResult": {
       "generic": "Ảnh kết quả",
@@ -6883,7 +7076,9 @@
     "secretSavedPlaceholder": "Đã lưu · {{preview}} (nhập giá trị mới để thay thế)",
     "pages": {
       "models": "Model & Kênh",
-      "storage": "Lưu trữ media"
+      "storage": "Lưu trữ media",
+      "freezoneSkills": "Skill Freezone",
+      "freezoneRecipes": "Recipe Freezone"
     },
     "modelConfig": {
       "title": "Cấu hình model",
@@ -7118,7 +7313,8 @@
           "EPISODE_SCENE_RECONCILE": "Đối chiếu và bổ sung asset bối cảnh gốc",
           "NARRATED_SCENE_ASSET": "Lên kế hoạch asset bối cảnh cho phim có lời dẫn",
           "STAGING_PROP": "Lên kế hoạch đạo cụ tạm thời trong Director World",
-          "COGNEE": "① Hiểu nội dung & trích xuất tri thức (LLM)"
+          "COGNEE": "① Hiểu nội dung & trích xuất tri thức (LLM)",
+          "FREEZONE_RECIPE_COMPILER": "Biên dịch và thực thi Recipe Freezone"
         }
       },
       "embeddingModel": {
@@ -7203,6 +7399,17 @@
           "video": "Video",
           "audio": "Âm thanh"
         }
+      },
+      "brainclaw": {
+        "tab": "RelayClaw BrainClaw (Khuyến nghị)",
+        "advancedTab": "Tuỳ chỉnh nâng cao",
+        "title": "BrainClaw của RelayClaw (Khuyến nghị)",
+        "description": "BrainClaw xử lý việc hiểu và tạo văn bản, xuất dữ liệu có cấu trúc, gọi công cụ và các tác vụ thị giác mà không cần ánh xạ riêng cho từng tính năng. Theo mặc định, BrainClaw kết nối với RelayClaw; môi trường phát triển có thể trỏ tới một điểm cuối tương thích NewAPI có cung cấp BrainClaw. Ảnh, video, âm thanh và Embedding vẫn sử dụng cài đặt Local NewAPI bên dưới.",
+        "model": "Model cố định",
+        "save": "Lưu và sử dụng BrainClaw",
+        "enabled": "Đã chọn BrainClaw; lựa chọn này có hiệu lực khi chế độ Tuỳ chỉnh đang bật.",
+        "missingEndpoint": "Nhập URL NewAPI của BrainClaw.",
+        "advancedEnabled": "Đã bật LLM tuỳ chỉnh nâng cao."
       }
     },
     "mediaStorage": {
@@ -7352,7 +7559,230 @@
     "checkingUpdate": "Đang kiểm tra cập nhật...",
     "checkUpdateHasUpdate": "Đã phát hiện phiên bản mới.",
     "checkUpdateUpToDate": "Bạn đang dùng phiên bản mới nhất.",
-    "checkUpdateFailed": "Kiểm tra cập nhật thất bại. Vui lòng thử lại sau."
+    "checkUpdateFailed": "Kiểm tra cập nhật thất bại. Vui lòng thử lại sau.",
+    "freezoneCatalog": {
+      "skills": {
+        "description": "Quản lý các Skill mà tác nhân có thể sử dụng trực tiếp."
+      },
+      "recipes": {
+        "description": "Quản lý các Recipe nền tảng mà Skill có thể gọi, thường dùng để gỡ lỗi hoặc quản lý các khả năng tích hợp sẵn."
+      },
+      "searchSkills": "Tìm Skill (ID, mô tả, đầu vào/đầu ra)",
+      "searchRecipes": "Tìm Recipe (ID, tên, loại)",
+      "emptySkills": "Chưa có Skill Freezone",
+      "emptyRecipes": "Chưa có Recipe Freezone",
+      "emptyDescription": "Chưa có mục cấu hình nào. Bạn có thể tạo, nhập và quản lý cấu hình Freezone tại đây.",
+      "loadFailed": "Không tải được cấu hình Freezone",
+      "loading": "Đang tải…",
+      "retry": "Thử lại",
+      "saved": "Đã lưu cấu hình Freezone",
+      "saveFailed": "Lưu thất bại. Hãy kiểm tra nội dung cấu hình.",
+      "deleted": "Đã xoá cấu hình Freezone",
+      "deleteFailed": "Xoá thất bại. Vui lòng thử lại.",
+      "deleteSelected": "Xoá mục đã chọn",
+      "exported": "Đã xuất cấu hình Freezone",
+      "imported": "Đã nhập cấu hình Freezone",
+      "importFailed": "Nhập thất bại. Hãy chọn một tệp JSON hợp lệ.",
+      "toggleEnabled": "Bật hoặc tắt {{id}}",
+      "editItem": "Chỉnh sửa {{id}}",
+      "deleteItem": "Xoá {{id}}",
+      "refresh": "Làm mới",
+      "advancedManagement": "Nâng cao",
+      "backToSkills": "Quay lại Skill",
+      "import": "Nhập",
+      "export": "Xuất",
+      "importBundle": "Nhập Skill",
+      "exportBundle": "Xuất Skill",
+      "bundleImported": "Đã nhập Skill: {{skill}}, kèm {{recipeCount}} Recipe",
+      "bundleImportFailed": "Nhập Skill thất bại",
+      "bundleExported": "Đã xuất Skill",
+      "bundleExportFailed": "Xuất Skill thất bại",
+      "bundleExportSelectOne": "Chọn một Skill để xuất",
+      "bundleExportOnlyOne": "Mỗi lần chỉ có thể xuất một Skill",
+      "bundleInvalidShape": "Đây không phải là tệp Skill hợp lệ",
+      "community": {
+        "open": "Skill cộng đồng",
+        "title": "Skill",
+        "featured": "Nổi bật",
+        "searchPlaceholder": "Tìm Skill",
+        "filters": {
+          "all": "Tất cả",
+          "recommended": "Đề xuất",
+          "video": "Video",
+          "image": "Ảnh",
+          "workflow": "Quy trình",
+          "general": "Chung"
+        },
+        "loading": "Đang tải…",
+        "loadFailed": "Không thể truy cập cộng đồng",
+        "loadFailedHint": "Hãy thử lại sau hoặc nhập tệp Skill theo cách thủ công.",
+        "empty": "Chưa có Skill cộng đồng",
+        "emptyDescription": "Chưa có Skill nào được công bố để cài đặt.",
+        "install": "Cài đặt",
+        "installing": "Đang cài đặt…",
+        "installedState": "Đã cài đặt",
+        "installed": "Đã cài đặt Skill: {{skill}}, kèm {{recipeCount}} Recipe",
+        "installFailed": "Không cài đặt được Skill cộng đồng",
+        "close": "Đóng"
+      },
+      "new": "Tạo mới",
+      "selectAll": "Chọn tất cả",
+      "backToTop": "Về đầu trang",
+      "readOnly": "Chỉ đọc",
+      "builtIn": "Tích hợp sẵn",
+      "customized": "Đã tuỳ chỉnh",
+      "skillsCount": "{{count}} mục",
+      "recipesCount": "{{count}} mục",
+      "selectionCount": "Đã chọn {{selectedCount}} / {{count}}",
+      "deleteSkillDialog": {
+        "title": "Xoá Skill",
+        "description": "Xoá \"{{id}}\"?",
+        "recipeHint": "Skill này sử dụng {{count}} mô-đun: {{exclusiveCount}} chỉ được dùng tại đây, {{sharedCount}} cũng được các Skill khác sử dụng.",
+        "noRecipeHint": "Không thể hoàn tác thao tác này.",
+        "exclusiveRecipes": "Có thể xoá cùng Skill này",
+        "sharedRecipes": "Các mô-đun dùng chung sẽ được giữ lại",
+        "cancel": "Huỷ",
+        "deleteSkillOnly": "Chỉ xoá Skill",
+        "deleteWithRecipes": "Xoá Skill và các mô-đun dùng riêng"
+      },
+      "recipesPendingTitle": "Đã dành sẵn mục cài đặt Recipe",
+      "recipesPendingDescription": "Máy chủ chưa cung cấp danh mục Recipe Freezone nên mục quản lý này được chuẩn bị sẵn. Sau khi kết nối, bạn có thể liệt kê, tìm kiếm, chỉnh sửa, nhập và xuất Recipe tại đây.",
+      "newSkill": {
+        "title": "Tạo Skill mới",
+        "editTitle": "Chỉnh sửa Skill",
+        "close": "Đóng cửa sổ tạo Skill",
+        "cancel": "Huỷ",
+        "save": "Lưu",
+        "id": "ID",
+        "idHint": "Chỉ cho phép a-z, 0-9, - và _",
+        "name": "Tên",
+        "namePlaceholder": "Ví dụ: Skill tạo video thương hiệu",
+        "category": "Danh mục",
+        "description": "Trường hợp sử dụng",
+        "descriptionPlaceholder": "Mô tả trường hợp sử dụng",
+        "triggerTitle": "Điều kiện kích hoạt",
+        "triggerDescription": "Xác định từ khoá hoặc loại nút kích hoạt Skill này",
+        "keywords": "Từ khoá kích hoạt",
+        "keywordsPlaceholder": "Nhập từ khoá; dùng keyword:2 để đặt trọng số",
+        "keywordsHint": "Hỗ trợ cú pháp trọng số keyword:2 (trọng số mặc định là 1)",
+        "nodeScopes": "Phạm vi nút",
+        "nodeScopesPlaceholder": "textGeneration / imageGeneration / videoGeneration / audioGeneration",
+        "workflow2Title": "Cài đặt quy trình",
+        "workflow2Description": "Cấu hình các Recipe mà Skill này có thể sử dụng và các tuỳ chọn cần xác nhận trước khi bắt đầu",
+        "schemaVersion": "Phiên bản lược đồ",
+        "version": "Phiên bản",
+        "allowedRecipeIds": "Recipe được liên kết",
+        "allowedRecipeIdsPlaceholder": "Nhập ID Recipe rồi nhấn Enter hoặc dấu phẩy",
+        "allowedRecipeIdsHint": "Tác nhân sẽ ưu tiên các Recipe này khi tạo quy trình",
+        "inputParameters": "Tuỳ chọn khởi chạy",
+        "inputParametersHint": "Các tuỳ chọn này được xác nhận trước khi tác nhân chạy Skill. Bạn có thể mở rộng các tuỳ chọn chọn một hoặc chọn nhiều để xác định các lựa chọn.",
+        "inputParametersEmpty": "Skill này không có tuỳ chọn cần xác nhận trước khi bắt đầu",
+        "inputParameterRequired": "Bắt buộc",
+        "inputParameterDefault": "Mặc định",
+        "inputParameterOptions": "{{count}} lựa chọn",
+        "inputParameterOptionList": "Các lựa chọn",
+        "addInputParameter": "Thêm tuỳ chọn",
+        "deleteInputParameter": "Xoá tuỳ chọn",
+        "addInputParameterOption": "Thêm mục",
+        "deleteInputParameterOption": "Xoá mục",
+        "expandInputParameter": "Mở rộng tuỳ chọn",
+        "collapseInputParameter": "Thu gọn tuỳ chọn",
+        "inputParameterOptionValue": "Giá trị lựa chọn",
+        "inputParameterOptionValuePlaceholder": "Nhập giá trị lựa chọn",
+        "inputParameterId": "ID tham số",
+        "inputParameterIdPlaceholder": "Ví dụ: total_duration",
+        "inputParameterLabel": "Tên hiển thị",
+        "inputParameterLabelPlaceholder": "Ví dụ: Thời lượng",
+        "inputParameterType": "Loại",
+        "inputParameterDefaultPlaceholder": "Ví dụ: 15s",
+        "inputParameterOptionsPlaceholder": "Mỗi dòng một lựa chọn",
+        "inputParameterTypes": {
+          "single_select": "Chọn một",
+          "multi_select": "Chọn nhiều",
+          "text": "Văn bản",
+          "number": "Số",
+          "boolean": "Bật/tắt"
+        },
+        "inputParametersPlaceholder": "[\n  {\n    \"id\": \"total_duration\",\n    \"label\": \"Thời lượng\",\n    \"type\": \"single_select\",\n    \"required\": true\n  }\n]",
+        "planningTitle": "Cấu hình quy tắc",
+        "planningDescription": "Điều chỉnh các quy tắc chuyên môn, chiến lược lập kế hoạch và phong cách câu lệnh của tác nhân",
+        "planningNotes": "Hướng dẫn lập kế hoạch",
+        "planningNotesPlaceholder": "Bối cảnh chuyên môn cho bộ lập kế hoạch để tác nhân hiểu lĩnh vực này...",
+        "promptGuide": "Phong cách câu lệnh",
+        "promptGuidePlaceholder": "Quy ước viết câu lệnh, chẳng hạn như phong cách ngôn ngữ và cấu trúc...",
+        "conductRules": "Quy tắc hành vi",
+        "conductRulesPlaceholder": "Nhập một quy tắc rồi nhấn Enter; mỗi mục là một quy tắc",
+        "evaluationTitle": "Quy tắc đánh giá",
+        "evaluationDescription": "Xác định các tiêu chí chất lượng và tiêu chuẩn chấm điểm",
+        "qualityThreshold": "Điểm đạt yêu cầu",
+        "qualityThresholdPlaceholder": "Ví dụ: 7",
+        "domainConstraints": "Quy tắc chuyên môn",
+        "domainConstraintsPlaceholder": "Nhập một quy tắc rồi nhấn Enter",
+        "ratingBands": "Các mức đánh giá",
+        "visualReviewItems": "Tiêu chí đánh giá hình ảnh",
+        "textReviewItems": "Tiêu chí đánh giá văn bản",
+        "add": "Thêm",
+        "addRatingBand": "Thêm mốc đánh giá",
+        "addDimension": "Thêm tiêu chí",
+        "dimensionNamePlaceholder": "Tên tiêu chí",
+        "dimensionDescriptionPlaceholder": "Mô tả tiêu chí",
+        "dimensionWeight": "Trọng số",
+        "dimensionWeightPlaceholder": "1",
+        "dimensionWeightHint": "Tổng trọng số nên bằng 1.0",
+        "removeDimension": "Xoá tiêu chí đánh giá",
+        "ratingBandScorePlaceholder": "0",
+        "ratingBandDescriptionPlaceholder": "Mô tả cho mức điểm này",
+        "removeRatingBand": "Xoá mức đánh giá",
+        "rawJson": "Xem / chỉnh sửa JSON gốc (nâng cao)",
+        "collapseRawJson": "Thu gọn JSON gốc",
+        "rawJsonAria": "JSON gốc",
+        "rawJsonSyncHint": "JSON được tạo từ các trường biểu mẫu ở trên",
+        "copyRawJson": "Sao chép JSON",
+        "rawJsonCopied": "Đã sao chép JSON của Skill",
+        "rawJsonCopyFailed": "Sao chép thất bại; hãy sao chép thủ công"
+      },
+      "newRecipe": {
+        "title": "Tạo Recipe mới",
+        "close": "Đóng cửa sổ tạo Recipe",
+        "cancel": "Huỷ",
+        "save": "Lưu",
+        "id": "ID",
+        "idHint": "Chỉ cho phép a-z, 0-9, - và _",
+        "name": "Tên",
+        "namePlaceholder": "Ví dụ: cải thiện quảng cáo thương mại điện tử",
+        "outputKind": "Loại đầu ra",
+        "outputKinds": {
+          "image": "Ảnh",
+          "video": "Video",
+          "audio": "Âm thanh",
+          "text": "Văn bản",
+          "html": "Trang web HTML"
+        },
+        "actionKeys": "Khoá thao tác",
+        "actionKeysPlaceholder": "Nhấn Enter hoặc dấu phẩy để xác nhận",
+        "actionKeysHint": "Mã định danh loại thao tác mà tác nhân dùng khi lập kế hoạch để chọn Recipe phù hợp",
+        "system_prompt": "Câu lệnh hệ thống",
+        "system_promptPlaceholder": "Hướng dẫn hệ thống dùng để cải thiện câu lệnh tạo nội dung...",
+        "mustHaveItems": "Thành phần bắt buộc",
+        "mustHaveItemsPlaceholder": "Nhấn Enter hoặc dấu phẩy để xác nhận",
+        "mustHaveItemsHint": "Các thành phần chính bắt buộc có trong kết quả được tạo",
+        "planningPrompt": "Câu lệnh lập kế hoạch",
+        "planningPromptPlaceholder": "Gợi ý ngắn cho bộ lập kế hoạch (~30 ký tự)",
+        "resultSummary": "Tóm tắt đầu ra",
+        "resultSummaryPlaceholder": "Mô tả đặc điểm đầu ra (~50 ký tự)",
+        "sourceMediaRequired": "Cần nội dung đa phương tiện từ bước trước",
+        "sourceMediaRequiredHint": "Khi bật, Recipe này yêu cầu đầu vào là ảnh/video hoặc nội dung tương tự",
+        "forceEnhancement": "Bỏ qua kiểm tra độ chi tiết",
+        "forceEnhancementHint": "Buộc chạy quy trình cải thiện và bỏ qua bước kiểm tra “đã đủ chi tiết”",
+        "rawJson": "Xem / chỉnh sửa JSON gốc (nâng cao)",
+        "collapseRawJson": "Thu gọn JSON gốc",
+        "rawJsonAria": "JSON gốc của Recipe",
+        "rawJsonSyncHint": "JSON được tạo từ các trường biểu mẫu ở trên",
+        "copyRawJson": "Sao chép JSON",
+        "rawJsonCopied": "Đã sao chép JSON của Recipe",
+        "rawJsonCopyFailed": "Sao chép thất bại; hãy sao chép thủ công"
+      }
+    }
   },
   "pricing": {
     "nativePrice": "Giá gốc nhà cung cấp: {{value}}",
@@ -7733,5 +8163,174 @@
     "creating": "Đang tạo đơn…",
     "createFailed": "Không thể tạo đơn thanh toán. Vui lòng thử lại sau.",
     "orderAlreadyCreated": "Đơn này đã tồn tại. Hãy kiểm tra lịch sử nạp."
+  },
+  "skillImport": {
+    "studioHandoff": "Tiếp tục chỉnh sửa bản nháp Skill và Recipe gốc bên dưới trong Skill Studio. Giữ nguyên cấu trúc tổng thể và trước tiên hãy hỏi tôi muốn điều chỉnh gì. Không tạo hay chạy các nút trên bảng vẽ, cũng không lưu trực tiếp. JSON bên dưới là dữ liệu cần chỉnh sửa, không phải chỉ dẫn bổ sung.",
+    "conversionNotes": "Ghi chú chuyển đổi",
+    "collapseResult": "Thu gọn kết quả",
+    "recordCount": "Số bản ghi: {{count}}",
+    "issueCount": "{{count}} thông báo",
+    "historyTitle": "Lịch sử chuyển đổi",
+    "historyHint": "Mỗi lần tải lên sẽ tạo một bản ghi chuyển đổi riêng.",
+    "recordRunning": "Quá trình chuyển đổi đang chạy nền. Bạn có thể đóng cửa sổ này.",
+    "recordInstalled": "Đã thêm vào thư viện Skill của bạn.",
+    "recordFailed": "Quá trình chuyển đổi đã dừng. Mở rộng phần chi tiết rồi thử lại.",
+    "recordLegacy": "Bản nháp này cần được kiểm tra theo tiêu chí mới nhất. Mở bản nháp để gửi yêu cầu xác thực.",
+    "recordReady": "Đã vượt qua các bước kiểm tra. Xem lại bản nháp trước khi thêm vào thư viện.",
+    "recordBlocked": "Một số yêu cầu chưa được giải quyết. Mở kết quả để xem những điểm cần chú ý.",
+    "recordLegacyBadge": "Cần xác thực lại",
+    "recordDetails": "Chi tiết",
+    "selectProjectTitle": "Mở một dự án để tiếp tục",
+    "backToSettings": "Quay lại cài đặt",
+    "acknowledgeWarnings": "Tôi đã xem các cảnh báo chuyển đổi và hoàn tất mọi thay đổi bắt buộc.",
+    "title": "Chuyển đổi Skill bên ngoài",
+    "description": "Chuyển đổi các gói Skill Markdown thành Skill và Recipe gốc. Xem lại kết quả trước khi cài đặt.",
+    "projectRequired": "Mở một dự án để chuyển đổi Skill bên ngoài.",
+    "chooseFiles": "Chọn tệp Markdown hoặc ZIP",
+    "upload": "Tải lên MD / ZIP",
+    "retryFailed": "Thử lại thất bại",
+    "retry": "Thử lại",
+    "limits": "Tối đa 20 tệp; mỗi tệp 2 MB, tổng cộng 10 MB. Mỗi tệp hoặc ZIP chứa một Skill.",
+    "submitted": "Đã gửi. Quá trình chuyển đổi sẽ tiếp tục trong trung tâm tác vụ sau khi đóng cửa sổ này.",
+    "loading": "Đang tải…",
+    "empty": "Tải lên một Skill để bắt đầu. Bạn vẫn có thể nhập JSON gốc trong phần cài đặt Skill.",
+    "review": "Xem xét",
+    "candidate": "Bản nháp chuyển đổi",
+    "reviewHint": "Kiểm tra phương pháp, đầu vào, đầu ra và Recipe sau khi chuyển đổi. Chỉnh sửa và xác thực lại trước khi cài đặt.",
+    "bundleLabel": "Gói Skill gốc",
+    "install": "Cài đặt",
+    "installed": "Đã cài đặt vào thư viện Skill của bạn.",
+    "copyToChat": "Sao chép để dùng trong Skill Studio",
+    "copied": "Đã sao chép. Dán vào cuộc trò chuyện trên bảng vẽ để tiếp tục chỉnh sửa trong Skill Studio.",
+    "download": "Tải xuống JSON",
+    "results": "Kết quả chuyển đổi",
+    "status": {
+      "queued": "Đang chờ",
+      "running": "Đang chuyển đổi",
+      "ready": "Sẵn sàng xem xét",
+      "needs_review": "Cần chú ý",
+      "failed": "Thất bại",
+      "installed": "Đã cài đặt"
+    },
+    "stage": {
+      "queued": "Đang chờ",
+      "reading": "Đang đọc nguồn",
+      "analyzing": "Đang phân tích phương pháp",
+      "matching": "Đang tìm Recipe phù hợp",
+      "generating": "Đang tạo gói",
+      "validating": "Đang xác thực",
+      "done": "Hoàn tất",
+      "adapting": "Đang điều chỉnh khả năng",
+      "reviewing": "Đang đánh giá mức độ bao phủ phương pháp",
+      "planning": "Đang kiểm tra kế hoạch thực thi"
+    },
+    "validateDraft": "Xác thực bản nháp đã chỉnh sửa",
+    "validationSubmitted": "Đã gửi yêu cầu xác thực. Xem kết quả mới sau khi hoàn tất.",
+    "revalidationRequired": "Cần xác thực lại. Hãy xác thực bản nháp này trước khi cài đặt.",
+    "draftChanged": "Bản nháp đã thay đổi. Kết quả bên trên áp dụng cho phiên bản trước. Hãy xác thực các thay đổi trước khi cài đặt.",
+    "quality": {
+      "structure": "Cấu trúc",
+      "coverage": "Mức độ bao phủ phương pháp",
+      "planning": "Kiểm tra kế hoạch",
+      "blockers": "Vấn đề cản trở cài đặt",
+      "adaptations": "Ánh xạ khả năng",
+      "status": {
+        "passed": "Đạt",
+        "failed": "Không đạt",
+        "not_run": "Chưa chạy"
+      },
+      "adaptation": {
+        "direct": "Hỗ trợ trực tiếp",
+        "composed": "Kết hợp từ các khả năng hiện có",
+        "decision_required": "Cần quyết định",
+        "unsupported": "Không hỗ trợ"
+      }
+    }
+  },
+  "htmlArtifact": {
+    "actionGenerate": "Tạo trang web",
+    "actionSaveSource": "Lưu mã nguồn trang web",
+    "actionSelectVersion": "Chọn phiên bản trang web",
+    "actionRestoreVersion": "Khôi phục phiên bản trang web",
+    "actionOpen": "Mở trang web",
+    "actionExport": "Xuất trang web",
+    "actionUpload": "Tải lên HTML",
+    "upload": "Tải lên HTML",
+    "invalidFile": "Chọn một tài liệu HTML hoàn chỉnh",
+    "fileTooLarge": "Tệp HTML không được vượt quá 2 MiB",
+    "uploadRecoveryConflict": "Lần tải lên trước cho nút này đã hoàn tất với nội dung khác. Chọn lại tệp gốc để khôi phục, hoặc tạo một nút HTML mới cho tệp này.",
+    "references": "Đầu vào đã kết nối",
+    "activeCanvasRequired": "Trước tiên hãy mở bảng vẽ của dự án",
+    "readyToGenerate": "Nhập yêu cầu về trang web rồi tạo, hoặc chạy quy trình",
+    "generationPrompt": "Mô tả nội dung, bố cục và phong cách trang web",
+    "generating": "Đang tạo trang web",
+    "retry": "Thử tạo lại",
+    "retrySave": "Thử lưu lại trang web",
+    "saving": "Đã tạo mã nguồn. Đang lưu trang web…",
+    "regenerate": "Tạo lại trang web",
+    "generate": "Tạo trang web",
+    "editor": "Trình chỉnh sửa trang web",
+    "back": "Quay lại bảng vẽ",
+    "title": "Tên trang web",
+    "preview": "Xem trước",
+    "code": "Mã nguồn",
+    "save": "Lưu",
+    "export": "Xuất",
+    "desktop": "Máy tính",
+    "mobile": "Di động",
+    "select": "Chọn phần tử",
+    "ask": "Chỉnh sửa cùng đạo diễn",
+    "versions": "Lịch sử phiên bản",
+    "restore": "Khôi phục phiên bản này",
+    "useVersion": "Dùng phiên bản này",
+    "conflict": "Đã có phiên bản mới hơn. Các thay đổi chưa lưu của bạn vẫn được giữ lại. Hãy sao chép phần chỉnh sửa trước khi tải phiên bản mới nhất.",
+    "reload": "Tải lại",
+    "savedPreview": "Bản xem trước hiển thị phiên bản đã lưu. Hãy lưu để cập nhật.",
+    "loading": "Đang xử lý…",
+    "source": "Mã nguồn HTML",
+    "webpage": "Trang web",
+    "thumbnail": "Ảnh thu nhỏ trang web",
+    "empty": "Kết nối văn bản, hình ảnh hoặc video để tạo trang web",
+    "open": "Mở trang web",
+    "discard": "Bỏ các thay đổi chưa lưu?",
+    "runScripts": "Chạy mã kịch bản của trang",
+    "stopScripts": "Dừng mã kịch bản của trang",
+    "scriptNotice": "Mã kịch bản của trang bị tắt theo mặc định. Mã tương tác có thể gửi nội dung trang đến các trang web bên ngoài.",
+    "scriptUnsupported": "Trình duyệt này không thể cô lập thông tin xác thực trong chế độ tương tác. Bạn vẫn có thể xem trước, chọn phần tử và chỉnh sửa mã nguồn.",
+    "saveCommand": "Lưu trang web",
+    "mediaLoadFailed": "Không tải được nội dung đa phương tiện: {{path}}",
+    "historyRecordFailed": "Đã lưu trang web nhưng không thể ghi lại lịch sử của nút. Vui lòng thử lại sau.",
+    "textTools": "Chỉnh sửa văn bản",
+    "textContent": "Nội dung văn bản",
+    "fontFamily": "Phông chữ",
+    "fontSize": "Cỡ chữ",
+    "textColor": "Màu chữ",
+    "bold": "Đậm",
+    "regular": "Thường",
+    "alignleft": "Căn trái",
+    "aligncenter": "Căn giữa",
+    "alignright": "Căn phải",
+    "selectLeaf": "Chọn phần tử văn bản trong cùng để giữ nguyên định dạng lồng nhau."
+  },
+  "workflowDraftContinuation": {
+    "ariaLabel": "Xác nhận tạo quy trình",
+    "title": "Kế hoạch quy trình đang chờ xác nhận",
+    "summary": "{{nodes}} node · {{edges}} đường nối. Chưa áp dụng lên canvas.",
+    "changed": "Kế hoạch đã thay đổi. Hãy xem lại trước khi xác nhận.",
+    "failed": "Không gửi được xác nhận. Hãy thử lại; chưa tạo bản nháp mới.",
+    "confirmMessage": "Xác nhận tạo quy trình này",
+    "confirmRunMessage": "Xác nhận tạo và chạy quy trình này",
+    "sending": "Đang gửi xác nhận…",
+    "confirmRun": "Xác nhận và chạy",
+    "confirm": "Xác nhận tạo"
+  },
+  "cropEditor": {
+    "title": "Cắt ảnh",
+    "exit": "Thoát cắt ảnh",
+    "aspectLabel": "Tỷ lệ cắt",
+    "aspectOriginal": "Tỷ lệ gốc",
+    "confirm": "Xác nhận",
+    "saving": "Đang lưu...",
+    "resultTitle": "Kết quả cắt ảnh"
   }
 }
