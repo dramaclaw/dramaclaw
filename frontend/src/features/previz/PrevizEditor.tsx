@@ -89,6 +89,11 @@ interface PrevizEditorProps {
    * 未保存；今天唯一的拒收理由是场景撑爆了体积上限，取舍见 `flushIfDirty`。
    */
   onFlush: (scene: PrevizScene) => boolean;
+  /**
+   * 渲染器建好、首批模型全部落地（成功失败都算）之后调一次。节点靠它撤掉入场遮罩——
+   * 遮罩只能由节点画，它要盖住的第一段等待正是本组件的代码块在下载。
+   */
+  onReady?: () => void;
 }
 
 /** 按下与抬起之间超过这个像素就算在转视角，不是在点选。 */
@@ -146,6 +151,7 @@ export function PrevizEditor({
   initialScene,
   onOpenChange,
   onFlush,
+  onReady,
 }: PrevizEditorProps) {
   const { t } = useTranslation();
   // 不能用 useRef：base-ui 的 Dialog.Portal 靠 store 里的 `mounted` 决定是否渲染子树，
@@ -531,6 +537,21 @@ export function PrevizEditor({
   useEffect(() => {
     renderer?.setScene(scene);
   }, [renderer, scene]);
+
+  // 排在灌场景的 effect 之后：那一次 sync 才把首批模型请求发出去，先问的话计数还是零，
+  // 遮罩会在模型一个都没到时就撤掉。
+  const onReadyRef = useRef(onReady);
+  onReadyRef.current = onReady;
+  useEffect(() => {
+    if (!renderer) return undefined;
+    let cancelled = false;
+    void renderer.whenModelsSettled().then(() => {
+      if (!cancelled) onReadyRef.current?.();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [renderer]);
 
   useEffect(() => {
     renderer?.setViewOverlays({ outline: showOutline, namePlate: showNamePlate });

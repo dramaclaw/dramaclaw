@@ -1067,6 +1067,57 @@ describe('PrevizSceneGraph', () => {
     expect(node?.children).toHaveLength(2);
   });
 
+  it('settles model loading only once every requested model has landed', async () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+    let open: (value: void) => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const { factory } = rigFactory(three, ['Idle_Loop'], gate);
+    graph.attachCharacterRig(factory, vi.fn());
+
+    // 一个请求都没发时立刻兑现：场景里没有人物就没有信号，入场遮罩不能死等。
+    await expect(graph.whenModelsSettled()).resolves.toBeUndefined();
+
+    graph.sync(sceneWith('character', 'character'));
+    const settled = vi.fn();
+    void graph.whenModelsSettled().then(settled);
+    await flush();
+    expect(settled).not.toHaveBeenCalled();
+
+    open();
+    await flush();
+    expect(settled).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts a failed model load as settled', async () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+    const { factory, loadGltf } = rigFactory(three);
+    loadGltf.mockRejectedValue(new Error('offline'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    graph.attachCharacterRig(factory, vi.fn());
+
+    const scene = characterScene();
+    graph.sync(scene);
+    // 失败不触发 onModelReady。拿它数就等于一次网络抖动把用户永久关在遮罩后面。
+    await expect(graph.whenModelsSettled()).resolves.toBeUndefined();
+    expect(rigOf(graph, scene.objects[0]!.id)).toBeUndefined();
+    consoleError.mockRestore();
+  });
+
+  it('waits for prop models as well as characters', async () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+    graph.attachPropLoader(propLoaderWith(three).loader);
+
+    const scene = propScene();
+    graph.sync(scene);
+    await graph.whenModelsSettled();
+    expect(sharedModelOf(graph, scene.objects[0]!.id)).toBeDefined();
+  });
+
   it('rescales the loaded rig when heightCm changes, without loading a second model', async () => {
     const three = fakeThree();
     const root = new three.Group();

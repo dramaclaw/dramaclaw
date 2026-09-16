@@ -65,6 +65,8 @@ const renderQuadPreview = vi.fn();
 const renderCameraView = vi.fn();
 const setViewOverlays = vi.fn();
 const setMonitorSize = vi.fn();
+// 真实现返回 Promise，编辑器直接在返回值上 `.then`，桩成 `vi.fn()` 会当场炸。
+const whenModelsSettled = vi.fn(async () => {});
 const recordDrawFrame = vi.fn();
 const recordEnd = vi.fn();
 const startRecording = vi.fn((_mode: string, _cameraId: string | null) => ({
@@ -106,6 +108,7 @@ function fakeRenderer() {
     renderCameraView,
     setViewOverlays,
     setMonitorSize,
+    whenModelsSettled,
     startRecording,
     onTransformCommit: null as
       | ((objectId: string, transform: unknown) => void)
@@ -726,6 +729,28 @@ describe("PrevizEditor", () => {
     );
 
     await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+  });
+
+  it("reports ready only once the renderer's first models have settled", async () => {
+    let settle: (value: void) => void = () => {};
+    whenModelsSettled.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    const onReady = vi.fn();
+    await renderEditor({ onReady });
+
+    await vi.waitFor(() => expect(whenModelsSettled).toHaveBeenCalledTimes(1));
+    // 问的时机要在场景灌进去之后：先问的话计数还是零，遮罩会在模型一个没到时就撤。
+    expect(setScene.mock.invocationCallOrder[0]!).toBeLessThan(
+      whenModelsSettled.mock.invocationCallOrder[0]!,
+    );
+    expect(onReady).not.toHaveBeenCalled();
+
+    settle();
+    await vi.waitFor(() => expect(onReady).toHaveBeenCalledTimes(1));
   });
 
   it("adds an object from the toolbar and selects it", async () => {

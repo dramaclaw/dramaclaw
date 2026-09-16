@@ -1187,6 +1187,11 @@ export class PrevizRenderer {
     this.pendingFocusId = objectId;
   }
 
+  /** 等在途的模型请求全部落地（成功失败都算）。入场遮罩撤不撤看它，见场景图同名方法。 */
+  whenModelsSettled(): Promise<void> {
+    return this.graph.whenModelsSettled();
+  }
+
   /** 模型换入的回调里调。不是等的那个就放过——人物模型也走同一个回调。 */
   private resolvePendingFocus(objectId: string): void {
     if (this.pendingFocusId !== objectId) return;
