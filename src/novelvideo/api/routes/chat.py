@@ -116,8 +116,26 @@ def _user_facing_chat_error(exc: BaseException) -> str:
     return safe
 
 
+class ChatScopePayload(BaseModel):
+    kind: str = "home"
+    id: str | None = None
+    surface: str | None = None
+    canvasId: str | None = None
+    canvas_id: str | None = None
+    agentId: str | None = None
+    agent_id: str | None = None
+
+
+class CancelChatTurnRequest(BaseModel):
+    scope: ChatScopePayload | None = None
+    turn_id: str | None = None
+
+
 @router.post("/chat/cancel")
-async def cancel_chat_turn(user: dict = Depends(get_api_user)) -> dict[str, Any]:
+async def cancel_chat_turn(
+    user: dict = Depends(get_api_user),
+    payload: CancelChatTurnRequest | None = None,
+) -> dict[str, Any]:
     """Best-effort cancellation for the active agent turn.
 
     The WebSocket receive loop is blocked while a Hermes prompt is streaming,
@@ -130,13 +148,44 @@ async def cancel_chat_turn(user: dict = Depends(get_api_user)) -> dict[str, Any]
     safe_to_recover_home_lock = False
     try:
         backend_name = chat_service.get_chat_backend_name()
+    except Exception:
+        return {"ok": True, "data": {"cancelled": False}}
+    codex_target: tuple[str, str] | None = None
+    if backend_name == "codex":
+        if payload is None or payload.scope is None:
+            raise HTTPException(status_code=400, detail="scope is required")
+        business_turn_id = str(payload.turn_id or "").strip()
+        if not business_turn_id:
+            raise HTTPException(status_code=400, detail="turn_id is required")
+        try:
+            scope = _scope_from_model(payload.scope)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        _enforce_agent_chat_scope(user, scope, require_write=True)
+        if scope.kind in {"project", "freezone"}:
+            await _project_context_for_scope(user, scope)
+        agent_profile = (
+            _freezone_agent_profile(scope) if _is_freezone_scope(scope) else "main"
+        )
+        codex_target = (
+            chat_service._codex_scope_key(
+                str(scope.id or ""),
+                agent_profile=agent_profile,
+                canvas_id=scope.canvas_id,
+            ),
+            business_turn_id,
+        )
+    try:
         if backend_name == "codex":
-            cancelled = await chat_service.interrupt_active_codex_turns(username)
+            assert codex_target is not None
+            cancelled = await chat_service.interrupt_active_codex_turn(
+                username, codex_target[0], codex_target[1]
+            )
         else:
             from novelvideo.chat.hermes_pool import pool as hermes_pool
 
             cancelled = await hermes_pool.close_user(username)
-        safe_to_recover_home_lock = not bool(cancelled)
+        safe_to_recover_home_lock = backend_name == "hermes" and not bool(cancelled)
     except Exception:
         cancelled = False
         # Preserve staging's Hermes recovery behavior when close_user itself
@@ -223,16 +272,6 @@ async def clear_chat_scope(
         cleared,
     )
     return {"ok": True, "data": {"cleared_messages": cleared}}
-
-
-class ChatScopePayload(BaseModel):
-    kind: str = "home"
-    id: str | None = None
-    surface: str | None = None
-    canvasId: str | None = None
-    canvas_id: str | None = None
-    agentId: str | None = None
-    agent_id: str | None = None
 
 
 class ChatAttachmentIn(BaseModel):

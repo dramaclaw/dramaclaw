@@ -4565,6 +4565,75 @@ describe("useSuperChat websocket lifecycle", () => {
     }));
   });
 
+  it("cancels only the active business turn in the current scope", async () => {
+    apiPostMock.mockClear();
+    const sentFrames: string[] = [];
+    const closeCalls: Array<[number | undefined, string | undefined]> = [];
+    class TestWebSocket {
+      static OPEN = 1;
+      readyState = 1;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: ((event: CloseEvent) => void) | null = null;
+
+      constructor() {
+        sockets.push(this);
+      }
+
+      send(frame: string) {
+        sentFrames.push(frame);
+      }
+
+      close(code?: number, reason?: string) {
+        closeCalls.push([code, reason]);
+      }
+    }
+    const sockets: TestWebSocket[] = [];
+    Object.defineProperty(globalThis, "WebSocket", {
+      value: TestWebSocket,
+      writable: true,
+      configurable: true,
+    });
+    const scope = {
+      kind: "project" as const,
+      id: "project-a",
+      surface: "freezone" as const,
+      canvasId: "canvas-a",
+      agentId: "agent-2",
+    };
+    const hook = renderHook(() => useSuperChat({
+      project: "project-a",
+      displayName: "Tester",
+      surface: "freezone",
+      freezoneCanvasId: "canvas-a",
+      freezoneAgentId: "agent-2",
+    }));
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    await act(async () => {
+      sockets[0]?.onopen?.();
+      sockets[0]?.onmessage?.({
+        data: JSON.stringify({ type: "scope.changed", scope, history: [], busy: false }),
+      } as MessageEvent);
+    });
+    await waitFor(() => expect(hook.result.current.connected).toBe(true));
+
+    act(() => {
+      expect(hook.result.current.send("keep this scoped", [])).toBe(true);
+    });
+    const chatFrame = sentFrames
+      .map((frame) => JSON.parse(frame) as Record<string, unknown>)
+      .find((frame) => frame.type === "chat.message");
+    expect(chatFrame?.turn_id).toEqual(expect.any(String));
+
+    act(() => hook.result.current.abort());
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith("api/v1/chat/cancel", {
+      json: { scope, turn_id: chatFrame?.turn_id },
+    }));
+    expect(closeCalls).toContainEqual([4000, "client abort"]);
+  });
+
   it("defaults freezone canvas execution context to manual confirmation", () => {
     expect(freezoneCanvasCommandExecutionModeForTest()).toBe("manual_confirm");
   });
