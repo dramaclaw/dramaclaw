@@ -3316,6 +3316,19 @@ async def regenerate_beats(
     if detection_error:
         return {"ok": False, "error": detection_error}
 
+    sketch_paths = PathResolver(output_dir, episode_num)
+    missing_sketches = [
+        beat_num
+        for beat_num in body.beat_indices
+        if not sketch_paths.sketch(beat_num).is_file()
+    ]
+    if missing_sketches:
+        missing_labels = ", ".join(f"#{beat_num}" for beat_num in missing_sketches)
+        raise HTTPException(
+            422,
+            f"Render 前请先为 beat {missing_labels} 生成或上传草图。",
+        )
+
     character_map = await _build_character_map(
         store,
         selected_beats,

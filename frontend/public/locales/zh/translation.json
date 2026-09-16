@@ -3992,6 +3992,7 @@
       },
       "render": {
         "generateNew": "生成新图",
+        "sketchRequired": "请先生成或上传草图",
         "switched": "已切换渲染图",
         "switchFailed": "切换失败",
         "forcedUse": "已强制使用该渲染图",
