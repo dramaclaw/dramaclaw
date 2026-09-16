@@ -5,6 +5,7 @@
 
 import hashlib
 import json
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Union
@@ -698,7 +699,7 @@ def save_grid_and_split(
         rows=rows,
         cols=cols,
         output_format="png",
-        prefix=f"tmp_{ts}_",
+        prefix=f"tmp_{ts}_{uuid.uuid4().hex}_",
     )
 
     # 5. 预计算 beat content hash（用于 sketch stale 判断）
