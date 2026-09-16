@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "catalogVersion": "2026.09.02.1",
+  "catalogVersion": "2026.09.11.1",
   "name": "DramaClaw CE official media models",
   "mediaModels": {
     "LingShan-G2": {
@@ -11,6 +11,36 @@
       "enabled": true,
       "sortOrder": 10,
       "aliases": ["gpt-image-2", "huimeng_gpt_image2", "newapi_gpt_image2"],
+      "config": {
+        "request": {"endpoint": "images/generations", "parameters": []},
+        "ratioOptions": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "4:5", "5:4", "21:9"],
+        "qualityOptions": ["low", "medium", "high"],
+        "resolutionOptions": ["1K", "2K", "4K"]
+      }
+    },
+    "LingShan-G25-Fast": {
+      "provider": "newapi",
+      "upstreamModel": "LingShan-G25-Fast",
+      "mediaType": "image",
+      "label": "LingShan G25 Fast",
+      "enabled": true,
+      "sortOrder": 11,
+      "aliases": [],
+      "config": {
+        "request": {"endpoint": "images/generations", "parameters": []},
+        "ratioOptions": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "4:5", "5:4", "21:9"],
+        "qualityOptions": ["low", "medium", "high"],
+        "resolutionOptions": ["1K", "2K", "4K"]
+      }
+    },
+    "LingShan-G25-Pro": {
+      "provider": "newapi",
+      "upstreamModel": "LingShan-G25-Pro",
+      "mediaType": "image",
+      "label": "LingShan G25 Pro",
+      "enabled": true,
+      "sortOrder": 12,
+      "aliases": [],
       "config": {
         "request": {"endpoint": "images/generations", "parameters": []},
         "ratioOptions": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "4:5", "5:4", "21:9"],
