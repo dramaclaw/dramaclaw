@@ -2208,7 +2208,7 @@ def test_freezone_adds_independent_workflow_mcp_without_changing_default():
         "type": "stdio",
         "command": __import__("sys").executable,
         "args": ["-m", "novelvideo.chat.workflow_mcp"],
-        "env_vars": ["DRAMACLAW_USERNAME", "NOVELVIDEO_OUTPUT_DIR"],
+        "env_vars": ["DRAMACLAW_USERNAME", "NOVELVIDEO_OUTPUT_DIR", "PYTHONPATH"],
     }
 
 

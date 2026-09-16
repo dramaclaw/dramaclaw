@@ -5333,7 +5333,7 @@ def _dramaclaw_mcp_servers(
             "type": "stdio",
             "command": sys.executable,
             "args": ["-m", "novelvideo.chat.workflow_mcp"],
-            "env_vars": ["DRAMACLAW_USERNAME", "NOVELVIDEO_OUTPUT_DIR"],
+            "env_vars": ["DRAMACLAW_USERNAME", "NOVELVIDEO_OUTPUT_DIR", "PYTHONPATH"],
         }
     return servers
 
