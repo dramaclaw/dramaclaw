@@ -4,6 +4,15 @@
 optional `run_after_create`, and optional `bindings`. It returns the persisted identity, revision,
 digest, preview and next action, not the full compiled graph. It does not execute the canvas.
 
+For an exact `plan`, generation controls may use the stable portable names under node `data`:
+`image_model`, `image_aspect_ratio`, `image_resolution`, `image_quality`,
+`image_variants_per_node`, `video_model`, `video_aspect_ratio`, `video_resolution`,
+`video_duration_seconds`, `video_generate_audio`, `video_generation_mode`, and
+`video_variants_per_node`. Preparation converts them to the canvas runtime fields before validation
+and persistence. The shorter semantic setting names used by revision are also accepted during exact
+plan preparation. Supplying two aliases for the same setting with different values is rejected; the
+server never silently chooses one.
+
 Bindings refer to existing plan node IDs:
 
 ```json
@@ -22,8 +31,9 @@ its generator rather than connected as a prompt.
 - Compact intent: only changed intent fields (`inputs` merges; optional null fields are removed).
 - Exact plan: `step_updates` and/or `bindings`. A step update contains `node_id`, optional `prompt`,
   and optional `settings`. Settings include supported model, aspect_ratio, resolution, quality,
-  duration_seconds, generate_audio, variants, or voice_ref for that node type. Existing custom voice
-  and generation-parameter rules still apply. Do not mix these changes with compact intent fields.
+  duration_seconds, generate_audio, generation_mode, variants, or voice_ref for that node type.
+  Existing custom voice and generation-parameter rules still apply. Do not mix these changes with
+  compact intent fields.
 
 All edits are revalidated before a compare-and-swap revision update. Unknown fields and invalid
 edges are rejected without modifying the stored draft. A revision conflict requires reading and

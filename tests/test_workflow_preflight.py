@@ -67,6 +67,24 @@ def test_valid_parameters_remain_unchanged():
     assert data == before
 
 
+def test_canvas_catalog_id_is_valid_when_live_entry_has_separate_backend_api_model():
+    result = _check(
+        {"model": "seedance-2.0", "durationSec": 5},
+        {
+            "id": "seedance-2.0",
+            "apiModel": "newapi_seedance-2.0",
+            "minDuration": 2,
+            "maxDuration": 10,
+        },
+    )
+
+    assert result["status"] == "ready"
+    assert result["runtime_checks"]["videoNode.models"] == {
+        "requested": ["seedance-2.0"],
+        "available": True,
+    }
+
+
 def test_live_catalog_failure_is_not_a_successful_preflight():
     result = evaluate_workflow_preflight(
         {

@@ -27,6 +27,7 @@ _SETTINGS = {
     "generate_audio": "generateAudio",
     "variants": "count",
     "voice_ref": "voiceRef",
+    "generation_mode": "genMode",
 }
 _NODE_SETTINGS = {
     "imageGenNode": {"model", "aspect_ratio", "quality", "variants", "resolution"},
@@ -38,8 +39,27 @@ _NODE_SETTINGS = {
         "generate_audio",
         "variants",
         "resolution",
+        "generation_mode",
     },
     "audioNode": {"voice_ref"},
+}
+_EXACT_PLAN_SETTING_ALIASES = {
+    "imageGenNode": {
+        "image_model": "model",
+        "image_aspect_ratio": "aspect_ratio",
+        "image_resolution": "resolution",
+        "image_quality": "quality",
+        "image_variants_per_node": "variants",
+    },
+    "videoNode": {
+        "video_model": "model",
+        "video_aspect_ratio": "aspect_ratio",
+        "video_resolution": "resolution",
+        "video_duration_seconds": "duration_seconds",
+        "video_generate_audio": "generate_audio",
+        "video_generation_mode": "generation_mode",
+        "video_variants_per_node": "variants",
+    },
 }
 _VOICE_REF_FIELDS = {
     "scope": "scope",
@@ -304,6 +324,55 @@ def update_workflow_steps(plan: dict, updates: Any) -> dict:
     return plan
 
 
+def _normalize_exact_plan_settings(plan: dict) -> dict:
+    """Apply the documented step-setting aliases to an exact workflow Plan."""
+    normalized = deepcopy(plan)
+    nodes = _node_index(normalized)
+    updates = []
+    aliases_by_node: dict[str, set[str]] = {}
+    for node_id, node in nodes.items():
+        node_type = node.get("node_type")
+        supported = _NODE_SETTINGS.get(node_type, set())
+        data = node.get("data")
+        if not isinstance(data, dict):
+            continue
+        settings = {key: deepcopy(data[key]) for key in supported if key in data}
+        aliases = set()
+        for alias, key in _EXACT_PLAN_SETTING_ALIASES.get(node_type, {}).items():
+            if alias not in data:
+                continue
+            value = deepcopy(data[alias])
+            if key in settings and settings[key] != value:
+                raise WorkflowOperationError(
+                    f"conflicting settings {key} and {alias} for {node_id}"
+                )
+            settings[key] = value
+            aliases.add(alias)
+        if not settings:
+            continue
+        for key, value in settings.items():
+            field = (
+                ("size" if node_type == "imageGenNode" else "quality")
+                if key == "resolution"
+                else _SETTINGS[key]
+            )
+            if field != key:
+                aliases.add(key)
+            if field in data and field != key and data[field] != value:
+                raise WorkflowOperationError(
+                    f"conflicting settings {key} and {field} for {node_id}"
+                )
+        updates.append({"node_id": node_id, "settings": settings})
+        aliases_by_node[node_id] = aliases
+    if updates:
+        normalized = update_workflow_steps(normalized, updates)
+        normalized_nodes = _node_index(normalized)
+        for node_id, aliases in aliases_by_node.items():
+            for key in aliases:
+                normalized_nodes[node_id]["data"].pop(key, None)
+    return normalized
+
+
 def prepare_workflow_source(body: dict, *, username: str) -> dict:
     """Accept business intent or an exact plan; return server-owned compilation."""
     if "run_after_create" in body and not isinstance(body["run_after_create"], bool):
@@ -334,6 +403,9 @@ def prepare_workflow_source(body: dict, *, username: str) -> dict:
         if "bindings" in body:
             plan = bind_workflow_inputs(plan, body["bindings"])
             intent = {"schema_version": "freezone_workflow_plan_draft.v1", "plan": plan}
+        plan = _normalize_exact_plan_settings(plan)
+        if isinstance(intent.get("plan"), dict):
+            intent = {**deepcopy(intent), "plan": deepcopy(plan)}
         validated = _require_result(validate_agent_workflow_plan(plan))
         if isinstance(compiled, dict) and compiled.get("skill_id") != validated.get(
             "skill_id"
