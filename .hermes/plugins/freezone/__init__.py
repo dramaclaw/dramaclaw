@@ -6821,6 +6821,41 @@ _SKILL_STUDIO_FRONTEND_TOOLS = {
 }
 
 
+def _canvas_application_receipt_contract(
+    *, require_complete_status: bool = False
+) -> dict[str, Any]:
+    required = ["project_id", "canvas_id", "applied", "canvas_apply_status"]
+    if require_complete_status:
+        required.extend(["cancelled", "errors", "tool_call_status"])
+    return {
+        "required": required,
+        "properties": {
+            "project_id": {"type": "string", "minLength": 1},
+            "canvas_id": {"type": "string", "minLength": 1},
+            "applied": {"const": True},
+            "cancelled": {"const": False},
+            "errors": {"type": "array", "maxItems": 0},
+            "tool_call_status": {"const": "completed"},
+        },
+        "anyOf": [
+            {
+                "required": ["bridge_key"],
+                "properties": {
+                    "bridge_key": {"type": "string", "minLength": 1},
+                    "canvas_apply_status": {"enum": ["applied", "accepted"]},
+                },
+            },
+            {
+                "required": ["revision"],
+                "properties": {
+                    "revision": {"type": "integer", "minimum": 0},
+                    "canvas_apply_status": {"const": "direct_applied"},
+                },
+            },
+        ],
+    }
+
+
 def _success_contract(name: str) -> dict[str, Any]:
     if name == "freezone_import_external_skill":
         return {"required": ["batch_id", "imports"]}
@@ -6845,33 +6880,7 @@ def _success_contract(name: str) -> dict[str, Any]:
         if name == "freezone_confirm_workflow_draft":
             # Confirmation returns the executor's receipt after the draft was
             # committed. It need not repeat the planning/run identifiers.
-            receipt = {
-                "required": ["project_id", "canvas_id", "applied", "canvas_apply_status"],
-                "properties": {
-                    "project_id": {"type": "string", "minLength": 1},
-                    "canvas_id": {"type": "string", "minLength": 1},
-                    "applied": {"const": True},
-                    "cancelled": {"const": False},
-                    "errors": {"type": "array", "maxItems": 0},
-                    "tool_call_status": {"const": "completed"},
-                },
-                "anyOf": [
-                    {
-                        "required": ["bridge_key"],
-                        "properties": {
-                            "bridge_key": {"type": "string", "minLength": 1},
-                            "canvas_apply_status": {"enum": ["applied", "accepted"]},
-                        },
-                    },
-                    {
-                        "required": ["revision"],
-                        "properties": {
-                            "revision": {"type": "integer", "minimum": 0},
-                            "canvas_apply_status": {"const": "direct_applied"},
-                        },
-                    },
-                ],
-            }
+            receipt = _canvas_application_receipt_contract()
             return {
                 "if": {"anyOf": [
                     {"required": ["bridge_key"]},
@@ -6887,6 +6896,39 @@ def _success_contract(name: str) -> dict[str, Any]:
                     {"required": ["workflow_instance_id"]},
                     {"required": ["run_id"]},
                 ]},
+            }
+        if name == "freezone_run_workflow":
+            return {
+                "anyOf": [
+                    _canvas_application_receipt_contract(require_complete_status=True),
+                    {
+                        "required": ["draft_id"],
+                        "properties": {
+                            "draft_id": {"type": "string", "minLength": 1}
+                        },
+                    },
+                    {
+                        "required": ["operation_id"],
+                        "properties": {
+                            "operation_id": {"type": "string", "minLength": 1}
+                        },
+                    },
+                    {
+                        "required": ["workflow_instance_id"],
+                        "properties": {
+                            "workflow_instance_id": {
+                                "type": "string",
+                                "minLength": 1,
+                            }
+                        },
+                    },
+                    {
+                        "required": ["run_id"],
+                        "properties": {
+                            "run_id": {"type": "string", "minLength": 1}
+                        },
+                    },
+                ]
             }
         return {
             "anyOf": [
