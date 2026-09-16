@@ -28,6 +28,35 @@ from mcp.server.stdio import stdio_server
 
 logger = logging.getLogger("novelvideo.chat.dramaclaw_mcp")
 
+_FIXED_RUNTIME_ROOT = Path("/app")
+_SOURCE_MODULE_PATH = Path("src") / "novelvideo" / "chat" / "dramaclaw_mcp.py"
+
+
+def _trusted_source_root() -> Path | None:
+    """Return the checkout root only when this module has the reviewed src layout."""
+    module_path = Path(__file__).resolve()
+    source_parts = _SOURCE_MODULE_PATH.parts
+    if tuple(module_path.parts[-len(source_parts) :]) != source_parts:
+        return None
+    return module_path.parents[len(source_parts) - 1]
+
+
+def _plugin_from_root(root: Path, relative_paths: tuple[Path, ...]) -> Path | None:
+    plugins_root = (root / ".hermes" / "plugins").resolve()
+    for relative_path in relative_paths:
+        candidate = root / relative_path
+        if not candidate.is_file():
+            continue
+        resolved = candidate.resolve()
+        try:
+            resolved.relative_to(plugins_root)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Hermes plugin path escapes the trusted plugin root: {candidate}"
+            ) from exc
+        return resolved
+    return None
+
 
 def _plugin_path(plugin_name: str) -> Path:
     """Resolve a bundled Hermes plugin without assuming a source checkout import.
@@ -44,21 +73,19 @@ def _plugin_path(plugin_name: str) -> Path:
     configured_root = os.environ.get("DRAMACLAW_ROOT", "").strip()
     if configured_root:
         root = Path(configured_root).expanduser().resolve()
-        for relative_path in relative_paths:
-            candidate = root / relative_path
-            if candidate.is_file():
-                return candidate
+        plugin_path = _plugin_from_root(root, relative_paths)
+        if plugin_path is not None:
+            return plugin_path
         expected = ", ".join(str(root / path) for path in relative_paths)
         raise RuntimeError(
             f"DRAMACLAW_ROOT does not contain the {plugin_name} plugin; expected {expected}"
         )
 
     roots: list[Path] = []
-    module_path = Path(__file__).resolve()
-    roots.extend(module_path.parents)
-    cwd = Path.cwd().resolve()
-    roots.extend((cwd, *cwd.parents))
-    roots.append(Path("/app"))
+    source_root = _trusted_source_root()
+    if source_root is not None:
+        roots.append(source_root)
+    roots.append(_FIXED_RUNTIME_ROOT)
 
     searched: list[str] = []
     seen: set[Path] = set()
@@ -66,11 +93,10 @@ def _plugin_path(plugin_name: str) -> Path:
         if root in seen:
             continue
         seen.add(root)
-        for relative_path in relative_paths:
-            candidate = root / relative_path
-            searched.append(str(candidate))
-            if candidate.is_file():
-                return candidate
+        searched.extend(str(root / relative_path) for relative_path in relative_paths)
+        plugin_path = _plugin_from_root(root, relative_paths)
+        if plugin_path is not None:
+            return plugin_path
     raise RuntimeError(
         f"cannot locate bundled Hermes plugin {plugin_name}; searched: "
         + ", ".join(searched)

@@ -41,6 +41,30 @@ def test_plugin_path_rejects_invalid_explicit_runtime_root(monkeypatch, tmp_path
         dramaclaw_mcp._plugin_path("dramaclaw")
 
 
+def test_workspace_plugin_cannot_shadow_fixed_runtime_plugin(monkeypatch, tmp_path):
+    runtime_root = tmp_path / "runtime"
+    trusted_plugin = runtime_root / ".hermes" / "plugins" / "dramaclaw" / "__init__.py"
+    trusted_plugin.parent.mkdir(parents=True)
+    trusted_plugin.write_text('ORIGIN = "trusted"\nTOOLS = []\n', encoding="utf-8")
+
+    workspace = tmp_path / "workspace"
+    workspace_plugin = workspace / ".hermes" / "plugins" / "dramaclaw" / "__init__.py"
+    workspace_plugin.parent.mkdir(parents=True)
+    workspace_plugin.write_text('ORIGIN = "workspace"\nTOOLS = []\n', encoding="utf-8")
+
+    monkeypatch.delenv("DRAMACLAW_ROOT", raising=False)
+    monkeypatch.setattr(
+        dramaclaw_mcp,
+        "__file__",
+        "/usr/local/lib/python3.12/site-packages/novelvideo/chat/dramaclaw_mcp.py",
+    )
+    monkeypatch.setattr(dramaclaw_mcp, "_FIXED_RUNTIME_ROOT", runtime_root)
+    monkeypatch.chdir(workspace)
+
+    assert dramaclaw_mcp._plugin_path("dramaclaw") == trusted_plugin
+    assert dramaclaw_mcp._load_plugin("dramaclaw").ORIGIN == "trusted"
+
+
 def _confirmed_canvas_receipt():
     return {
         "ok": True, "status": "completed", "project_id": "project-a",
