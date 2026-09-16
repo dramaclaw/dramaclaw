@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createFreezoneWorkflowRun,
+  type FreezoneWorkflowRun,
   updateFreezoneWorkflowRun,
 } from "@/api/canvas";
 import { getProjectTaskLimits } from "@/api/tasks";
@@ -7407,7 +7408,7 @@ describe("canvas chat commands", () => {
       { prompt: "持久化后执行" },
     );
     const persisted = vi.fn();
-    let resolveRun!: (run: { run_id: string; status: string; actions: never[] }) => void;
+    let resolveRun!: (run: FreezoneWorkflowRun) => void;
     vi.mocked(createFreezoneWorkflowRun).mockImplementationOnce(() =>
       new Promise((resolve) => { resolveRun = resolve; }));
     const events: Array<{ nodeId: string; action: string; requestId?: string }> = [];
@@ -7431,7 +7432,18 @@ describe("canvas chat commands", () => {
       await vi.waitFor(() => expect(createFreezoneWorkflowRun).toHaveBeenCalledTimes(1));
       expect(persisted).not.toHaveBeenCalled();
       expect(events).toHaveLength(0);
-      resolveRun({ run_id: "run-durable", status: "running", actions: [] });
+      resolveRun({
+        schema_version: "freezone_workflow_run.v1",
+        run_id: "run-durable",
+        project_id: "project-a",
+        canvas_id: "canvas-durable-acceptance",
+        status: "running",
+        resumable: false,
+        created_at: "2026-09-16T00:00:00Z",
+        started_at: "2026-09-16T00:00:00Z",
+        updated_at: "2026-09-16T00:00:00Z",
+        actions: [],
+      });
       await vi.waitFor(() => expect(events).toHaveLength(1));
       const requestId = events[0]?.requestId;
       if (!requestId) throw new Error("expected workflow request id");
