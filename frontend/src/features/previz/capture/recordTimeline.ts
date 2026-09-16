@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { OUTPUT_PIXEL_SIZE } from '../domain/camera';
+import { outputPixelSize } from '../domain/camera';
 import type { OutputAspect } from '../domain/scene';
 
 /**
@@ -134,7 +134,7 @@ export function recordFilename(now: number, mimeType: string): string {
  * 才是大家嘴里那个「1080p」。
  */
 export function recordQualityLabel(aspect: OutputAspect): string {
-  const { width, height } = OUTPUT_PIXEL_SIZE[aspect];
+  const { width, height } = outputPixelSize(aspect);
   return `${Math.min(width, height)}p ${aspect}`;
 }
 

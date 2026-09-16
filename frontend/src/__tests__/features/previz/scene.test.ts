@@ -12,7 +12,10 @@ import {
   PREVIZ_SCHEMA_VERSION,
   PrevizSceneVersionError,
   createDefaultScene,
+  outputAspectFrom,
+  parseOutputAspect,
   parseScene,
+  snapOutputAspect,
 } from "@/features/previz/domain/scene";
 import { PREVIZ_APERTURE, PREVIZ_FOCAL_MM } from "@/features/previz/domain/camera";
 import {
@@ -90,6 +93,42 @@ describe("previz scene schema", () => {
       "solid",
     );
     expect(parseScene({ settings: { outputAspect: 42 } }).settings.outputAspect).toBe("16:9");
+  });
+
+  it("keeps a valid custom outputAspect and rejects malformed or out-of-range ones", () => {
+    const aspectOf = (value: unknown) => parseScene({ settings: { outputAspect: value } }).settings.outputAspect;
+    expect(aspectOf("21:9")).toBe("21:9");
+    expect(aspectOf("2.39:1")).toBe("2.39:1");
+    // 规整写法但不约分：`21:9` 约成 `7:3` 反而认不出来。
+    expect(aspectOf(" 16.0:9.00 ")).toBe("16:9");
+    expect(aspectOf("1:4")).toBe("1:4");
+    expect(aspectOf("4:1")).toBe("4:1");
+    for (const bad of ["1:5", "5:1", "0:9", "16:0", "-16:9", "16x9", "16:", "1e3:1", "20000:10000", "NaN:1"]) {
+      expect(aspectOf(bad)).toBe("16:9");
+    }
+  });
+
+  it("snaps a dragged ratio to common aspects, otherwise writes it against the long side", () => {
+    expect(snapOutputAspect(1.77)).toBe("16:9");
+    expect(snapOutputAspect(0.57)).toBe("9:16");
+    expect(snapOutputAspect(2.4)).toBe("2.39:1");
+    expect(snapOutputAspect(1.51)).toBe("3:2");
+    // 离常用画幅都远：按长边写成 x:1 / 1:x，不硬凑整数比。
+    expect(snapOutputAspect(1.85)).toBe("1.85:1");
+    expect(snapOutputAspect(0.54)).toBe("1:1.85");
+    // 夹进 1:4 ~ 4:1，坏输入交回默认。
+    expect(snapOutputAspect(10)).toBe("4:1");
+    expect(snapOutputAspect(0.1)).toBe("1:4");
+    expect(snapOutputAspect(Number.NaN)).toBe("16:9");
+    expect(snapOutputAspect(0)).toBe("16:9");
+  });
+
+  it("builds an aspect from numbers, rounding to two decimals", () => {
+    expect(outputAspectFrom(2.391, 1)).toBe("2.39:1");
+    expect(outputAspectFrom(21, 9)).toBe("21:9");
+    expect(outputAspectFrom(Number.NaN, 9)).toBeNull();
+    expect(outputAspectFrom(0.001, 1)).toBeNull();
+    expect(parseOutputAspect(169)).toBeNull();
   });
 
   it("does not throw and falls back to empty arrays for malformed objects or timeline", () => {

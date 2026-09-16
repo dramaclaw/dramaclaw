@@ -433,6 +433,7 @@ describe("PrevizEditor", () => {
 
   it("switches the output aspect from the monitor frame", async () => {
     const user = userEvent.setup();
+    const onOpenChange = vi.fn();
     const scene = createDefaultScene();
     scene.objects.push(createPrevizObject("camera", scene.objects));
 
@@ -441,7 +442,7 @@ describe("PrevizEditor", () => {
         open
         nodeId="previz-1"
         initialScene={scene}
-        onOpenChange={vi.fn()}
+        onOpenChange={onOpenChange}
         onFlush={vi.fn(() => true)}
       />,
     );
@@ -449,20 +450,93 @@ describe("PrevizEditor", () => {
       usePrevizStore.getState().setActiveCamera(scene.objects[0]!.id);
     });
 
-    const select = screen.getByLabelText<HTMLSelectElement>("previz.monitor.aspect");
-    // 左栏那份画幅下拉撤掉之后，这里是改出片画幅的唯一入口，四个比例都得在。
-    expect([...select.options].map((option) => option.value)).toEqual([
-      "16:9",
-      "9:16",
-      "1:1",
-      "4:3",
-    ]);
+    const trigger = screen.getByTestId("previz-monitor-aspect");
+    expect(trigger).toHaveAccessibleName("previz.monitor.aspect");
+    expect(trigger).toHaveTextContent("16:9");
 
-    await user.selectOptions(select, "9:16");
+    await user.click(trigger);
+    const panel = screen.getByTestId("previz-monitor-aspect-panel");
+    // 左栏那份画幅下拉撤掉之后，这里是改出片画幅的唯一入口，四个预设都得在。
+    const presets = within(within(panel).getByRole("radiogroup")).getAllByRole("radio");
+    expect(presets.map((radio) => radio.textContent)).toEqual(["16:9", "9:16", "1:1", "4:3"]);
+    expect(within(panel).getByRole("radio", { name: "16:9" })).toHaveAttribute("aria-checked", "true");
+    // 打开即把焦点放在当前那一项上。
+    expect(within(panel).getByRole("radio", { name: "16:9" })).toHaveFocus();
+
+    await user.click(within(panel).getByRole("radio", { name: "9:16" }));
 
     // 画幅比是真出片参数，落在场景设置里；监看框只是它的入口。
     expect(usePrevizStore.getState().scene.settings.outputAspect).toBe("9:16");
-    expect(select).toHaveValue("9:16");
+    expect(trigger).toHaveTextContent("9:16");
+    expect(screen.queryByTestId("previz-monitor-aspect-panel")).toBeNull();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("sets a custom output aspect from the monitor frame", async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    const scene = createDefaultScene();
+    scene.objects.push(createPrevizObject("camera", scene.objects));
+
+    render(
+      <PrevizEditor
+        open
+        nodeId="previz-1"
+        initialScene={scene}
+        onOpenChange={onOpenChange}
+        onFlush={vi.fn(() => true)}
+      />,
+    );
+    act(() => {
+      usePrevizStore.getState().setActiveCamera(scene.objects[0]!.id);
+    });
+
+    const trigger = screen.getByTestId("previz-monitor-aspect");
+    await user.click(trigger);
+
+    const width = screen.getByLabelText<HTMLInputElement>("previz.monitor.aspectWidth");
+    const height = screen.getByLabelText<HTMLInputElement>("previz.monitor.aspectHeight");
+    expect(width).toHaveValue(16);
+    expect(height).toHaveValue(9);
+
+    await user.clear(width);
+    await user.type(width, "21");
+    // 没点应用之前场景不动：宽改完还没改高时不该先落一个半成品比例。
+    expect(usePrevizStore.getState().scene.settings.outputAspect).toBe("16:9");
+    await user.keyboard("{Enter}");
+    expect(usePrevizStore.getState().scene.settings.outputAspect).toBe("21:9");
+    expect(trigger).toHaveTextContent("21:9");
+    expect(screen.queryByTestId("previz-monitor-aspect-panel")).toBeNull();
+
+    // 再打开：自定义那一行带勾、焦点落在宽度上，预设全都不选中。
+    await user.click(trigger);
+    const panel = screen.getByTestId("previz-monitor-aspect-panel");
+    const reopenedWidth = screen.getByLabelText<HTMLInputElement>("previz.monitor.aspectWidth");
+    expect(reopenedWidth).toHaveValue(21);
+    expect(reopenedWidth).toHaveFocus();
+    for (const radio of within(panel).getAllByRole("radio")) {
+      expect(radio).toHaveAttribute("aria-checked", "false");
+    }
+
+    // 超出 1:4 ~ 4:1：输入框标红、应用按钮禁用，回车也不提交。
+    await user.clear(reopenedWidth);
+    await user.type(reopenedWidth, "90");
+    expect(reopenedWidth).toHaveAttribute("aria-invalid", "true");
+    expect(within(panel).getByRole("button", { name: "previz.monitor.applyAspect" })).toBeDisabled();
+    await user.keyboard("{Enter}");
+    expect(usePrevizStore.getState().scene.settings.outputAspect).toBe("21:9");
+
+    // Esc 只关面板、放弃草稿，不能把整个预演台带走。
+    await user.keyboard("{Escape}");
+    expect(screen.queryByTestId("previz-monitor-aspect-panel")).toBeNull();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(usePrevizStore.getState().scene.settings.outputAspect).toBe("21:9");
+
+    // 点面板外面同样收起。
+    await user.click(trigger);
+    expect(screen.getByTestId("previz-monitor-aspect-panel")).toBeInTheDocument();
+    await user.click(screen.getByTestId("previz-monitor-outline"));
+    expect(screen.queryByTestId("previz-monitor-aspect-panel")).toBeNull();
   });
 
   it("collapses and reopens the timeline panel from the rail", async () => {
