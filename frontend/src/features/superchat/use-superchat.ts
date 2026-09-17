@@ -3033,6 +3033,31 @@ export function useSuperChat({
     }
   }, [desiredScope]);
 
+  const clearConversation = useCallback(async (): Promise<boolean> => {
+    if (busy) return false;
+    await api.post("api/v1/chat/clear", {
+      json: { scope: desiredScope },
+    }).json();
+    const activeTurn = activeTurnIdRef.current;
+    if (activeTurn) clearActiveTurn(scopeKey, activeTurn);
+    activeTurnIdRef.current = null;
+    pendingClientTurnIdRef.current = null;
+    setActiveTurnId(null);
+    setMessages([]);
+    messagesRef.current = [];
+    setStreamText("");
+    streamTextRef.current = "";
+    setApprovals([]);
+    setPinnedIds(new Set());
+    setDeletedIds(new Set());
+    saveCachedMessages(scopeKey, []);
+    safeLocalStorageSet(`superchat:pinned:${scopeKey}`, "[]");
+    safeLocalStorageSet(`superchat:deleted:${scopeKey}`, "[]");
+    setHistoryReady(false);
+    requestHistory();
+    return true;
+  }, [busy, desiredScope, requestHistory, scopeKey]);
+
   const submitSkillStudioResult = useCallback((payload: Omit<Extract<ClientFrame, { type: "skill_studio.result" }>, "type">) => {
     console.info("[superchat] send skill_studio.result", {
       turn_id: payload.turn_id,
@@ -3057,9 +3082,14 @@ export function useSuperChat({
     const turnId = activeTurnIdRef.current ?? pendingClientTurnIdRef.current;
     if (turnId) {
       cancelledTurnIdsRef.current.add(turnId);
+      void api.post("api/v1/chat/cancel", {
+        json: {
+          scope: desiredScopeRef.current,
+          turn_id: turnId,
+        },
+      }).catch(() => undefined);
     }
     markTurnInactive(turnId);
-    void api.post("api/v1/chat/cancel").catch(() => undefined);
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.close(4000, "client abort");
@@ -3193,6 +3223,7 @@ export function useSuperChat({
     error,
     activeModel,
     appendNotification,
+    clearConversation,
     clearPinned,
     deleteMessage,
     deletedIds,

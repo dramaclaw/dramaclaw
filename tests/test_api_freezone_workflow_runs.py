@@ -1659,6 +1659,64 @@ def test_workflow_run_list_reconciles_completed_project_task(
     assert reconciled["actions"][0]["artifact_status"] == "valid"
 
 
+def test_workflow_run_list_reconciles_taskless_text_from_saved_canvas(
+    workflow_run_client: TestClient,
+    monkeypatch,
+) -> None:
+    from novelvideo.api.routes import freezone
+
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    created = workflow_run_client.post(
+        base,
+        json={
+            "actions": [
+                {"node_id": "text-1", "action": "generate_text"},
+            ]
+        },
+    ).json()["data"]
+    patched = workflow_run_client.patch(
+        f"{base}/{created['run_id']}",
+        json={
+            "action_updates": [
+                {
+                    "node_id": "text-1",
+                    "action": "generate_text",
+                    "status": "completed",
+                }
+            ],
+            "status": "completed",
+        },
+    ).json()["data"]
+    assert patched["status"] == "running"
+    assert patched["actions"][0]["status"] == "running"
+
+    monkeypatch.setattr(
+        freezone.canvas_store,
+        "read_canvas",
+        lambda _project_dir, _canvas_id: {
+            "nodes": [
+                {
+                    "id": "text-1",
+                    "type": "textAnnotationNode",
+                    "data": {
+                        "content": "A durable generated result",
+                        "workflowTextGenerated": True,
+                    },
+                }
+            ],
+            "edges": [],
+        },
+    )
+
+    runs = workflow_run_client.get(base).json()["data"]["runs"]
+
+    reconciled = next(item for item in runs if item["run_id"] == created["run_id"])
+    assert reconciled["status"] == "completed"
+    assert reconciled["resumable"] is False
+    assert reconciled["actions"][0]["status"] == "completed"
+    assert reconciled["actions"][0]["artifact_status"] == "valid"
+
+
 def test_recipe_result_does_not_use_media_task_id_as_model_evidence(
     workflow_run_client: TestClient,
     monkeypatch,

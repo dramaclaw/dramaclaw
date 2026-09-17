@@ -205,18 +205,22 @@ export function useProjectGrants(project: string, enabled = true) {
   });
 }
 
+export function normalizeUserSearchQuery(query: string): string {
+  return query.trim().replace(/'/g, "");
+}
+
 export function useUserSearch(project: string, query: string) {
-  const trimmed = query.trim();
+  const normalizedQuery = normalizeUserSearchQuery(query);
   return useQuery({
-    queryKey: queryKeys.userSearch(project, trimmed),
+    queryKey: queryKeys.userSearch(project, normalizedQuery),
     queryFn: ({ signal }) =>
       api
         .get("api/v1/users/search", {
-          searchParams: { project, q: trimmed },
+          searchParams: { project, q: normalizedQuery },
           signal,
         })
         .json<OkResponse<UserSearchResult[]>>(),
-    enabled: Boolean(project) && trimmed.length >= 3,
+    enabled: Boolean(project) && normalizedQuery.length >= 3,
   });
 }
 

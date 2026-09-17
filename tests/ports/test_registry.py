@@ -58,10 +58,17 @@ def test_egress_operation_accessor_uses_the_stable_registry_name() -> None:
     assert get_egress_operation_port() is implementation
 
 
-def test_ensure_bootstrap_registers_local_ports_for_explicit_ce(monkeypatch) -> None:
+@pytest.mark.parametrize("edition", [None, "", "  ", "ce"])
+def test_ensure_bootstrap_registers_local_ports_for_ce(monkeypatch, edition) -> None:
+    from novelvideo.shared import runtime_env
+
+    monkeypatch.setattr(runtime_env, "load_project_dotenv", lambda **kwargs: None)
     registry = _registry()
     monkeypatch.delenv("ST_CONTROL_PLANE_DSN", raising=False)
-    monkeypatch.setenv("ST_EDITION", "ce")
+    if edition is None:
+        monkeypatch.delenv("ST_EDITION", raising=False)
+    else:
+        monkeypatch.setenv("ST_EDITION", edition)
     monkeypatch.setenv("ST_TASK_ENVELOPE_ACTIVE_KEY_ID", "registry-test-v1")
     monkeypatch.setenv(
         "ST_TASK_ENVELOPE_KEYRING_B64_JSON",
@@ -280,14 +287,24 @@ def test_ensure_bootstrap_requires_credit_quote_for_ee(monkeypatch) -> None:
     assert "credit_quote" in str(exc.value)
 
 
-def test_ensure_bootstrap_requires_explicit_ce_without_control_plane(
+def test_ensure_bootstrap_requires_control_plane_for_explicit_ee(
     monkeypatch,
 ) -> None:
     registry = _registry()
     monkeypatch.delenv("ST_CONTROL_PLANE_DSN", raising=False)
-    monkeypatch.delenv("ST_EDITION", raising=False)
+    monkeypatch.setenv("ST_EDITION", "ee")
 
-    with pytest.raises(RuntimeError, match="ST_EDITION=ce"):
+    with pytest.raises(RuntimeError, match="ST_CONTROL_PLANE_DSN"):
+        registry.ensure_bootstrap()
+
+
+@pytest.mark.parametrize("dsn", ["", "postgresql://example"])
+def test_ensure_bootstrap_rejects_unknown_edition(monkeypatch, dsn) -> None:
+    registry = _registry()
+    monkeypatch.setenv("ST_CONTROL_PLANE_DSN", dsn)
+    monkeypatch.setenv("ST_EDITION", "cee")
+
+    with pytest.raises(RuntimeError, match="ST_EDITION"):
         registry.ensure_bootstrap()
 
 

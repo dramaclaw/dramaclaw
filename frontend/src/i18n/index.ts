@@ -5,14 +5,9 @@ import { initReactI18next } from "react-i18next";
 import HttpBackend from "i18next-http-backend";
 import { useAppStore } from "@/stores/app-store";
 import { BUILD_ID } from "@/lib/app-version";
+import { SUPPORTED, normalize, type Supported } from "./languages";
 
-const SUPPORTED = ["zh", "en"] as const;
-type Supported = (typeof SUPPORTED)[number];
-
-export function normalize(lng: string | undefined): Supported {
-  const two = (lng ?? "").slice(0, 2).toLowerCase();
-  return (SUPPORTED as readonly string[]).includes(two) ? (two as Supported) : "zh";
-}
+export { SUPPORTED, normalize, type Supported };
 
 function initialLanguage(): Supported {
   if (typeof window !== "undefined") {
@@ -31,8 +26,8 @@ i18n
     lng: initialLanguage(),
     fallbackLng: "zh",
     supportedLngs: [...SUPPORTED],
-    // `zh-CN` / `en-US` collapse to `zh` / `en`, so the
-    // backend loader only has to serve two translation files.
+    // `zh-CN` / `en-US` / `vi-VN` collapse to `zh` / `en` / `vi`, so the
+    // backend loader only has to serve one translation file per language.
     load: "languageOnly",
     defaultNS: "translation",
     backend: {

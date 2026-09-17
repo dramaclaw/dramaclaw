@@ -116,8 +116,8 @@ async def test_api_install_requires_review_and_is_idempotent(tmp_path, monkeypat
     monkeypatch.setattr(routes, 'scope', scope)
     record = module.create_record(tmp_path, 'alice', read_source('x.md', base64.b64encode(b'Method').decode()), 'b')
     record.update(status='needs_review', warnings=['Script unsupported'], bundle=_bundle_payload())
-    from novelvideo.freezone.skill_import_contracts import content_hash
-    record['quality_report'] = {'version': 3, 'validated': True, 'blockers': [],
+    from novelvideo.freezone.skill_import_contracts import CONVERSION_VERSION, content_hash
+    record['quality_report'] = {'version': CONVERSION_VERSION, 'validated': True, 'blockers': [],
         'bundle_sha256': content_hash(record['bundle']),
         **{k: {'status': 'passed'} for k in ['structure', 'coverage']}}
 
@@ -320,3 +320,23 @@ async def test_retry_after_exhausted_structure_failures_generates_fresh_candidat
     result = await module.convert_record(tmp_path, 'alice', record['id'], generate)
     assert not responses
     assert result['status'] == 'ready'
+
+
+def test_new_import_does_not_copy_entire_catalog(tmp_path, monkeypatch):
+    from novelvideo.freezone import skill_import as module
+    def no_read(*args):
+        raise AssertionError('Creating an import must not copy the full catalog')
+    monkeypatch.setattr('novelvideo.freezone.agent_config_store.list_user_agent_config_items', no_read)
+    record = module.create_record(tmp_path, 'alice', read_source('x.md', base64.b64encode(b'Method').decode()), 'batch')
+    assert 'catalog' not in record
+    assert record['candidate_catalog'] == []
+    assert 'candidate_catalog' not in module.public_record(record)
+def test_public_record_reports_live_conversion_version_not_persisted_value():
+    from novelvideo.freezone.skill_import import public_record
+    from novelvideo.freezone.skill_import_contracts import CONVERSION_VERSION
+
+    record = {'current_conversion_version': 2, 'quality_report': {'version': 3}}
+    result = public_record(record)
+    assert result['current_conversion_version'] == CONVERSION_VERSION
+    assert result['quality_report']['version'] == 3
+    assert record['current_conversion_version'] == 2

@@ -183,6 +183,7 @@ import type {
 } from "@/features/freezone/canvasChatCommands";
 import {
   applyCanvasChatCommandsAsync,
+  canvasCommandEnvelopesRequireDurableAcceptance,
   canvasCommandEnvelopesRunInBackground,
   directGenerationTargetsForPreflight,
   FREEZONE_CANVAS_COMMAND_APPROVAL_EVENT,
@@ -4055,6 +4056,7 @@ type SkillStudioQuestionOption = {
 type SkillStudioQuestion = {
   id?: string;
   title?: string;
+  question?: string;
   selection_mode?: "single" | "multiple";
   selectionMode?: "single" | "multiple";
   allow_custom?: boolean;
@@ -5816,7 +5818,7 @@ function buildSkillStudioQuestionTimelineItems(
       const hasAnswer = skillStudioSelectionHasAnswer(selections[key]);
       return {
         key,
-        title: question.title || `问题 ${index + 1}`,
+        title: question.title || question.question || `问题 ${index + 1}`,
         summary: hasAnswer ? selectedSkillStudioOptionLabel(question, index, selections) : actionSummary ?? "未选择",
         answered: hasAnswer || Boolean(actionSummary),
       };
@@ -5842,7 +5844,7 @@ function visibleAssistantClarificationTimelineItems(
     )
     .map(({ question, index }) => ({
       key: skillStudioQuestionKey(question, index),
-      title: question.title || `问题 ${index + 1}`,
+      title: question.title || question.question || `问题 ${index + 1}`,
       summary: selectedSkillStudioOptionLabel(question, index, answers),
       answered: true,
     }));
@@ -5865,7 +5867,7 @@ export function buildSkillStudioQuestionResponseForTest(
     .map((question, index) => ({ question, index }))
     .filter(({ question }) => (question.options ?? []).length > 0)
     .map(({ question, index }) =>
-      `- ${question.title || `问题 ${index + 1}`}：${selectedSkillStudioOptionLabel(question, index, selections)}`,
+      `- ${question.title || question.question || `问题 ${index + 1}`}：${selectedSkillStudioOptionLabel(question, index, selections)}`,
     );
 
   return [
@@ -5915,7 +5917,7 @@ export function buildAssistantClarificationResponseForTest(
       skillStudioSelectionHasAnswer(answers[skillStudioQuestionKey(question, index)]),
     )
     .map(({ question, index }) =>
-      `${question.title || `问题 ${index + 1}`}\n${selectedSkillStudioOptionLabel(question, index, answers)}`,
+      `${question.title || question.question || `问题 ${index + 1}`}\n${selectedSkillStudioOptionLabel(question, index, answers)}`,
     );
 
   return [
@@ -6454,7 +6456,7 @@ function SkillStudioQuestionsCard({
 	      <div className="mb-2.5 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
 	        <div className="min-w-0">
 	          <div className="line-clamp-2 break-words text-sm font-medium leading-5 text-foreground">
-	            {activeQuestion?.title || event.title || "需要你补充一点信息"}
+	            {activeQuestion?.title || activeQuestion?.question || event.title || "需要你补充一点信息"}
 	          </div>
 	          {event.description && (
 	            <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
@@ -6798,7 +6800,7 @@ function AssistantClarificationInputCard({
 	      <div className="mb-2.5 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
 	        <div className="min-w-0">
 	          <div className="line-clamp-2 break-words text-sm font-medium leading-5 text-foreground">
-	            {activeQuestion?.title || event.title || "需要你补充一点信息"}
+	            {activeQuestion?.title || activeQuestion?.question || event.title || "需要你补充一点信息"}
 	          </div>
 	          {event.description && (
 	            <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
@@ -12034,8 +12036,8 @@ export function SuperChatPanel({
   const { t } = useTranslation();
   const params = useParams({ strict: false }) as { project?: string };
   const queryClient = useQueryClient();
-  const username = useAuthStore((s) => s.username);
   const isFreezoneLayout = variant === "freezone";
+  const displayName = useAuthStore((s) => s.displayName);
   const [draft, setDraft] = useState("");
   const [selectedHtmlReference, setSelectedHtmlReference] = useState<HtmlArtifactReference | null>(null);
   useEffect(() => {
@@ -12069,6 +12071,8 @@ export function SuperChatPanel({
   const [selectedQueuedMessageId, setSelectedQueuedMessageId] = useState<string | null>(null);
   const [selectedHistoryMessageIndex, setSelectedHistoryMessageIndex] = useState<number | null>(null);
   const [preparingSend, setPreparingSend] = useState(false);
+  const [clearDialogOpen, setClearDialogOpen] = useState(false);
+  const [clearingChat, setClearingChat] = useState(false);
   const [composerInputFocused, setComposerInputFocused] = useState(false);
   const [recording, setRecording] = useState(false);
   const [dragFileState, setDragFileState] = useState<"valid" | "invalid" | null>(null);
@@ -12123,7 +12127,7 @@ export function SuperChatPanel({
   const selectedCanvasNodeId = useCanvasStore((state) => state.selectedNodeId);
   const chat = useSuperChat({
     project: params.project,
-    displayName: username || "SuperTale",
+    displayName: displayName || "SuperTale",
     surface: variant === "freezone" ? "freezone" : undefined,
     freezoneCanvasId: variant === "freezone" ? freezoneCanvasId ?? canvasId : null,
     freezoneAgentId: variant === "freezone" ? freezoneAgentId : null,
@@ -12171,6 +12175,7 @@ export function SuperChatPanel({
     [freezoneSkillCatalog],
   );
   const freezoneSkillSlashQuery = isFreezoneLayout ? getFreezoneSkillSlashQuery(draft) : null;
+  const showClearCommandSuggestion = /^\/cl(?:e(?:a(?:r)?)?)?$/iu.test(draft.trim());
   const visibleFreezoneSkillSuggestions = useMemo(
     () => {
       if (freezoneSkillSlashQuery !== null) {
@@ -13227,12 +13232,22 @@ export function SuperChatPanel({
         let result: CanvasChatCommandApplyResult;
         let backgroundAccepted = false;
         try {
+          let resolveWorkflowRunPersisted: ((runId: string) => void) | undefined;
+          const workflowRunPersisted = canvasCommandEnvelopesRequireDurableAcceptance(
+            approval.envelopes,
+          )
+            ? new Promise<string>((resolve) => { resolveWorkflowRunPersisted = resolve; })
+            : undefined;
           const execution = applyCanvasChatCommandsAsync(approval.envelopes, {
             projectId: params.project,
             canvasId: effectiveFreezoneCanvasId,
+            onWorkflowRunPersisted: resolveWorkflowRunPersisted,
           });
           if (canvasCommandEnvelopesRunInBackground(approval.envelopes)) {
-            const immediateResult = await waitForImmediateCanvasCommandResult(execution);
+            const immediateResult = await waitForImmediateCanvasCommandResult(
+              execution,
+              workflowRunPersisted,
+            );
             if (immediateResult) {
               result = immediateResult;
             } else {
@@ -14338,6 +14353,10 @@ export function SuperChatPanel({
   }, [draft]);
 
   const submit = () => {
+    if (draft.trim() === "/clear" && attachments.length === 0) {
+      setClearDialogOpen(true);
+      return;
+    }
     // 双轨附件：画布「当前选中」+ 正文 @ 提及，各自可能为 null，合并去重。
     const canvasRefAttachments = [
       selectedFreezoneNodeAttachment,
@@ -14389,7 +14408,44 @@ export function SuperChatPanel({
     });
   };
 
+  const confirmClearConversation = async () => {
+    if (clearingChat) return;
+    if (chat.busy) {
+      toast.error(t("aiAssistant.clearChat.busy"));
+      return;
+    }
+    setClearingChat(true);
+    try {
+      const cleared = await chat.clearConversation();
+      if (!cleared) {
+        toast.error(t("aiAssistant.clearChat.busy"));
+        return;
+      }
+      setDraft("");
+      setAttachments([]);
+      setQueuedMessages([]);
+      setSelectedHistoryMessageIndex(null);
+      setPendingCanvasCommandApprovals([]);
+      setClearDialogOpen(false);
+      toast.success(t("aiAssistant.clearChat.success"));
+    } catch (error) {
+      toast.error(backendErrorToastMessage(error, t));
+    } finally {
+      setClearingChat(false);
+    }
+  };
+
   const handleDraftKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (
+      draft.trim() === "/clear"
+      && event.key === "Enter"
+      && !event.shiftKey
+      && !event.nativeEvent.isComposing
+    ) {
+      event.preventDefault();
+      setClearDialogOpen(true);
+      return;
+    }
     if (showNodeSuggestions && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
       event.preventDefault();
       const cap = Math.min(nodeSuggestionVisibleCount, filteredNodeSuggestions.length);
@@ -14430,7 +14486,7 @@ export function SuperChatPanel({
       return;
     }
     if (
-      showFreezoneSkillSuggestions
+      showFreezoneSkillSuggestions && !showClearCommandSuggestion
       && (event.key === "ArrowDown" || event.key === "ArrowUp")
     ) {
       event.preventDefault();
@@ -14444,7 +14500,7 @@ export function SuperChatPanel({
       return;
     }
     if (
-      showFreezoneSkillSuggestions
+      showFreezoneSkillSuggestions && !showClearCommandSuggestion
       && event.key === "Enter"
       && !event.shiftKey
       && visibleFreezoneSkillSuggestions[activeFreezoneSkillSuggestionIndex]
@@ -15429,7 +15485,21 @@ export function SuperChatPanel({
                 onSubmit={submitAssistantClarificationResponse}
               />
             )}
-            {!hasActiveComposerPrompt && showFreezoneSkillSuggestions && !freezoneSkillMenuExplicitOpen && (
+            {!hasActiveComposerPrompt && showClearCommandSuggestion && (
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 border-b border-white/10 bg-black/20 px-4 py-2.5 text-left text-sm text-foreground/90 transition hover:bg-white/[0.06]"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  setDraft("/clear");
+                  setClearDialogOpen(true);
+                }}
+              >
+                <span className="font-medium">/clear</span>
+                <span className="text-xs text-muted-foreground">{t("aiAssistant.clearChat.suggestion")}</span>
+              </button>
+            )}
+            {!hasActiveComposerPrompt && showFreezoneSkillSuggestions && !showClearCommandSuggestion && !freezoneSkillMenuExplicitOpen && (
               <div className="border-b border-white/10 bg-black/20 px-3 py-2.5">
                 <div className="mb-1.5 px-0.5 text-xs text-muted-foreground/85">
                   技能
@@ -16057,6 +16127,22 @@ export function SuperChatPanel({
         </div>,
         document.body,
       )}
+      <Dialog open={clearDialogOpen} onOpenChange={setClearDialogOpen}>
+        <DialogContent className="w-[calc(100vw-2rem)] border-white/10 bg-background/95 sm:max-w-md">
+          <DialogTitle>{t("aiAssistant.clearChat.title")}</DialogTitle>
+          <p className="text-sm leading-6 text-muted-foreground">
+            {t("aiAssistant.clearChat.description")}
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" disabled={clearingChat} onClick={() => setClearDialogOpen(false)}>
+              {t("aiAssistant.clearChat.cancel")}
+            </Button>
+            <Button type="button" variant="destructive" disabled={clearingChat || chat.busy} onClick={() => void confirmClearConversation()}>
+              {clearingChat ? t("aiAssistant.clearChat.clearing") : t("aiAssistant.clearChat.confirm")}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       {isFreezoneLayout && (
         <Dialog open={agentBillingOpen} onOpenChange={setAgentBillingOpen}>
           <DialogContent className="w-[calc(100vw-2rem)] border-white/10 bg-background/95 p-0 backdrop-blur-xl sm:max-w-[min(46.08rem,calc(100vw-3rem))]">

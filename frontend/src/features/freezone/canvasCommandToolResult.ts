@@ -105,7 +105,18 @@ export function replayCanvasCommandToolResult(payload: CanvasCommandToolResultPa
   emitCanvasCommandToolResult(payload);
 }
 
+function workflowExecutionFailed(result: CanvasChatCommandApplyResult): boolean {
+  const workflowCommandIndexes = new Set(
+    result.commandResults
+      .filter((step) => step.type === "run_workflow")
+      .map((step) => step.commandIndex),
+  );
+  return result.commandResults.some((step) =>
+    step.status === "error" && workflowCommandIndexes.has(step.commandIndex));
+}
+
 function canvasApplyStatusFromResult(result: CanvasChatCommandApplyResult): CanvasApplyStatus {
+  if (workflowExecutionFailed(result)) return "failed";
   const successCount = result.commandResults.filter((step) => step.status === "success").length;
   const errorCount = result.commandResults.filter((step) => step.status === "error").length;
   if (successCount > 0 && errorCount > 0) return "partially_applied";
@@ -171,6 +182,7 @@ function buildCanvasCommandToolResultPayload({
   cancelled?: boolean;
   accepted?: boolean;
 }): CanvasCommandToolResultPayload {
+  const workflowFailed = result ? workflowExecutionFailed(result) : false;
   const canvasApplyStatus: CanvasApplyStatus = accepted
     ? "accepted"
     : cancelled
@@ -203,7 +215,8 @@ function buildCanvasCommandToolResultPayload({
     agent_id: agentId ?? null,
     tool_call_status: cancelled ? "cancelled" : canvasApplyStatus === "failed" ? "failed" : "completed",
     canvas_apply_status: canvasApplyStatus,
-    applied: accepted || (!cancelled && Boolean(result && (result.applied > 0 || result.openedUiActions > 0))),
+    applied: accepted || (!cancelled && !workflowFailed
+      && Boolean(result && (result.applied > 0 || result.openedUiActions > 0))),
     cancelled,
     errors: result?.errors ?? [],
     applied_count: result?.applied ?? 0,

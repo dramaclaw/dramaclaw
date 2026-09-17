@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "supertale-ce"
-version = "2.0.2"
+version = "2.0.4"
 description = "SuperTale Community Edition API and video pipeline"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
@@ -46,14 +46,14 @@ dependencies = [
     "litellm>=1.85.0.dev1",
     "nest-asyncio>=1.5.0",
     "claude-agent-sdk>=0.1.72",
-    "mcp>=1.19.0",
+    "mcp==1.28.0",
     "jsonschema>=4.20.0",
     "celery>=5.4.0",
     "pypinyin>=0.55.0",
     "oss2>=2.19.1",
     "gunicorn>=21.2.0",
     "uvicorn[standard]>=0.27.0",
-    "sse-starlette>=2.0.0",
+    "sse-starlette>=3.3.0",
     "python-ulid>=2.2.0",
     "asyncpg>=0.30.0",
     "packaging>=24.0",
@@ -62,6 +62,7 @@ dependencies = [
     "langdetect>=1.0.9,<2.0.0",
     "langid>=1.1.6,<2.0.0",
     "wordninja>=2.0.0,<3.0.0",
+    "markdown-it-py>=4.0.0,<5.0.0",
 ]
 
 [project.scripts]

@@ -168,7 +168,9 @@ _FREEZONE_CANVAS_WRITE_TOOLS = {
     "freezone_select_nodes",
     "freezone_open_mainline_projection",
     "freezone_run_node_action",
+    "freezone_run_workflow",
 }
+_FREEZONE_TERMINAL_WRITE_TOOLS = {"freezone_run_workflow"}
 FREEZONE_FAILED_WRITE_RETRY_LIMIT = 1
 
 
@@ -291,12 +293,19 @@ def _has_content_filter_signal(value: object) -> bool:
     return False
 
 
+def _canonical_tool_name(name: object) -> str:
+    normalized = str(name or "").strip()
+    if normalized.startswith("dramaclaw."):
+        return normalized.partition(".")[2]
+    return normalized
+
+
 def _is_dramaclaw_write_tool(name: object) -> bool:
-    return str(name or "").strip() in _DRAMACLAW_WRITE_TOOLS
+    return _canonical_tool_name(name) in _DRAMACLAW_WRITE_TOOLS
 
 
 def _is_freezone_tool(name: object) -> bool:
-    return str(name or "").strip().startswith("freezone_")
+    return _canonical_tool_name(name).startswith("freezone_")
 
 
 def _is_skill_loading_tool(name: object) -> bool:
@@ -523,7 +532,20 @@ def _stable_tool_failure_payload(value: object) -> object:
 
 
 def _should_stop_after_write_tool(first_write_tool: str | None, next_tool_name: object) -> bool:
-    return _is_dramaclaw_write_tool(first_write_tool) and _is_dramaclaw_write_tool(next_tool_name)
+    first_name = _canonical_tool_name(first_write_tool)
+    next_name = _canonical_tool_name(next_tool_name)
+    return (
+        _is_dramaclaw_write_tool(first_name)
+        and _is_dramaclaw_write_tool(next_name)
+    ) or (
+        first_name in _FREEZONE_TERMINAL_WRITE_TOOLS
+        and next_name == first_name
+    )
+
+
+def _should_track_terminal_write(name: object) -> bool:
+    normalized = _canonical_tool_name(name)
+    return _is_dramaclaw_write_tool(normalized) or normalized in _FREEZONE_TERMINAL_WRITE_TOOLS
 
 
 def _story_tool_receipt(value: object) -> dict[str, Any]:
@@ -690,7 +712,7 @@ class _StoryWriteContinuation:
 
 
 def _is_freezone_canvas_write_tool(name: object) -> bool:
-    return str(name or "").strip() in _FREEZONE_CANVAS_WRITE_TOOLS
+    return _canonical_tool_name(name) in _FREEZONE_CANVAS_WRITE_TOOLS
 
 
 def _can_retry_failed_canvas_write(
@@ -705,6 +727,7 @@ def _can_retry_failed_canvas_write(
         and failed_write_retry_count < FREEZONE_FAILED_WRITE_RETRY_LIMIT
         and _is_freezone_canvas_write_tool(first_write_tool)
         and _is_freezone_canvas_write_tool(next_tool_name)
+        and _canonical_tool_name(first_write_tool) not in _FREEZONE_TERMINAL_WRITE_TOOLS
     )
 
 
@@ -1560,7 +1583,7 @@ class HermesSdkThread:
                     if ev.type == "tool_started":
                         tool_name = str(ev.name or "").strip()
                         active_tool_name = tool_name
-                        if tool_name in _FREEZONE_CANVAS_WRITE_TOOLS:
+                        if _is_freezone_canvas_write_tool(tool_name):
                             idle_deadline = min(
                                 total_deadline,
                                 loop.time() + CANVAS_COMMAND_RESULT_TIMEOUT + 30.0,
@@ -1612,7 +1635,7 @@ class HermesSdkThread:
                                     text=stop_text,
                                 )
                                 return
-                        if _is_dramaclaw_write_tool(tool_name):
+                        if _should_track_terminal_write(tool_name):
                             first_write_tool = tool_name
                             first_write_failed = False
                     elif (

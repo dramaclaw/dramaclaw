@@ -17,6 +17,7 @@ from novelvideo.freezone.workflow_runs import (
     prune_workflow_runs,
     read_workflow_run,
     reconcile_workflow_runs_with_canvas_nodes,
+    reconcile_workflow_runs_with_canvas_results,
     reconcile_workflow_runs_with_tasks,
     update_workflow_run,
     workflow_runs_db_path,
@@ -819,6 +820,169 @@ def test_reconcile_can_exclude_active_runs_during_read_cleanup(tmp_path: Path) -
     )
     assert preserved is not None
     assert preserved["status"] == "running"
+
+
+def test_reconcile_completes_taskless_text_from_durable_canvas_result(
+    tmp_path: Path,
+) -> None:
+    run = create_workflow_run(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        actions=[{"node_id": "text-1", "action": "generate_text"}],
+    )
+    update_workflow_run(
+        project_dir=tmp_path,
+        canvas_id="default",
+        run_id=run["run_id"],
+        action_updates=[
+            {"node_id": "text-1", "action": "generate_text", "status": "completed"}
+        ],
+        status="completed",
+    )
+
+    changed = reconcile_workflow_runs_with_canvas_results(
+        project_dir=tmp_path,
+        canvas_id="default",
+        canvas_nodes=[
+            {
+                "id": "text-1",
+                "type": "textAnnotationNode",
+                "data": {
+                    "content": "A durable generated result",
+                    "workflowTextGenerated": True,
+                },
+            }
+        ],
+    )
+
+    assert changed == [run["run_id"]]
+    reconciled = read_workflow_run(
+        project_dir=tmp_path, canvas_id="default", run_id=run["run_id"]
+    )
+    assert reconciled is not None
+    assert reconciled["status"] == "completed"
+    assert reconciled["resumable"] is False
+    assert reconciled["actions"][0]["status"] == "completed"
+    assert reconciled["actions"][0]["artifact_status"] == "valid"
+    assert reconciled["metadata"]["last_canvas_result_reconciliation_at"]
+
+
+def test_reconcile_completes_taskless_story_script_from_durable_canvas_result(
+    tmp_path: Path,
+) -> None:
+    run = create_workflow_run(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        actions=[{"node_id": "script-1", "action": "generate_story_script"}],
+    )
+
+    changed = reconcile_workflow_runs_with_canvas_results(
+        project_dir=tmp_path,
+        canvas_id="default",
+        canvas_nodes=[
+            {
+                "id": "script-1",
+                "type": "scriptNode",
+                "data": {"scriptResult": {"rows": [{"narration": "Scene one"}]}},
+            }
+        ],
+    )
+
+    assert changed == [run["run_id"]]
+    reconciled = read_workflow_run(
+        project_dir=tmp_path, canvas_id="default", run_id=run["run_id"]
+    )
+    assert reconciled is not None
+    assert reconciled["status"] == "completed"
+    assert reconciled["actions"][0]["artifact_status"] == "valid"
+
+
+def test_reconcile_keeps_task_backed_text_authoritative(tmp_path: Path) -> None:
+    run = create_workflow_run(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        actions=[{"node_id": "text-1", "action": "generate_text"}],
+    )
+    update_workflow_run(
+        project_dir=tmp_path,
+        canvas_id="default",
+        run_id=run["run_id"],
+        action_updates=[
+            {
+                "node_id": "text-1",
+                "action": "generate_text",
+                "status": "running",
+                "task_key": "task:recipe_result:project:project-a:0:operation-1",
+            }
+        ],
+    )
+
+    changed = reconcile_workflow_runs_with_canvas_results(
+        project_dir=tmp_path,
+        canvas_id="default",
+        canvas_nodes=[
+            {
+                "id": "text-1",
+                "data": {
+                    "content": "Canvas delivery is not task authority",
+                    "workflowTextGenerated": True,
+                },
+            }
+        ],
+    )
+
+    assert changed == []
+    preserved = read_workflow_run(
+        project_dir=tmp_path, canvas_id="default", run_id=run["run_id"]
+    )
+    assert preserved is not None
+    assert preserved["status"] == "running"
+    assert preserved["actions"][0]["status"] == "running"
+    assert preserved["actions"][0].get("artifact_status") is None
+
+
+@pytest.mark.parametrize(
+    ("action", "node_data"),
+    [
+        (
+            "generate_text",
+            {"content": "User-authored text without a generation marker"},
+        ),
+        (
+            "generate_image",
+            {"imageUrl": "https://cdn.example.test/unverified.png"},
+        ),
+    ],
+)
+def test_reconcile_does_not_accept_unproven_canvas_results(
+    tmp_path: Path,
+    action: str,
+    node_data: dict,
+) -> None:
+    run = create_workflow_run(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        actions=[{"node_id": "node-1", "action": action}],
+    )
+
+    changed = reconcile_workflow_runs_with_canvas_results(
+        project_dir=tmp_path,
+        canvas_id="default",
+        canvas_nodes=[{"id": "node-1", "data": node_data}],
+    )
+
+    assert changed == []
+    preserved = read_workflow_run(
+        project_dir=tmp_path, canvas_id="default", run_id=run["run_id"]
+    )
+    assert preserved is not None
+    assert preserved["status"] == "running"
+    assert preserved["actions"][0]["status"] == "pending"
+    assert preserved["actions"][0].get("artifact_status") is None
 
 
 def test_stale_running_workflow_is_marked_interrupted(tmp_path: Path) -> None:

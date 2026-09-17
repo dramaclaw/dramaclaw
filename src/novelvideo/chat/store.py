@@ -188,6 +188,24 @@ class ChatStore:
             return legacy_db_path
         return db_path
 
+    async def clear_messages_async(self, username: str, scope: ChatScope) -> int:
+        """Clear only one chat scope, preserving its settings and other project data."""
+        db_path = self.read_db_for(username, scope)
+        if not db_path.exists():
+            return 0
+        db = await self.connect_async(username, scope, db_path=db_path)
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            cursor = await db.execute("DELETE FROM chat_messages")
+            await db.execute("DELETE FROM chat_ui_events")
+            await db.commit()
+            return max(cursor.rowcount, 0)
+        except BaseException:
+            await db.rollback()
+            raise
+        finally:
+            await db.close()
+
     def _freezone_canvas_agents_dir(
         self,
         username: str,

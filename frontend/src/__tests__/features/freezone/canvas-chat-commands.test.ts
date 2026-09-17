@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createFreezoneWorkflowRun,
+  type FreezoneWorkflowRun,
   updateFreezoneWorkflowRun,
 } from "@/api/canvas";
 import { getProjectTaskLimits } from "@/api/tasks";
@@ -14,6 +15,7 @@ import {
   applyCanvasChatCommands,
   applyCanvasChatCommandsAsync,
   workflowGenerationTargetsForPreflight,
+  cancelCanvasWorkflowExecution,
   type CanvasCommandApprovalEventDetail,
   canvasCommandEnvelopeMatchesCanvas,
   CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
@@ -22,6 +24,7 @@ import {
   FREEZONE_CANVAS_COMMAND_APPROVAL_EVENT,
   partitionCanvasChatCommandEnvelopes,
   subscribeCanvasCommandApprovals,
+  waitForImmediateCanvasCommandResult,
 } from "@/features/freezone/canvasChatCommands";
 import {
   buildCanvasChatCommandContext,
@@ -153,6 +156,31 @@ describe("canvas chat commands", () => {
         user_remaining: 1,
       },
     });
+  });
+
+  it("does not accept a workflow command before its Run is durably persisted", async () => {
+    let resolvePersistence!: () => void;
+    const persistence = new Promise<void>((resolve) => { resolvePersistence = resolve; });
+    const execution = new Promise<never>(() => undefined);
+    let settled = false;
+    const boundary = waitForImmediateCanvasCommandResult(execution, persistence);
+    void boundary.then(() => { settled = true; });
+
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(settled).toBe(false);
+
+    resolvePersistence();
+    await expect(boundary).resolves.toBeNull();
+  });
+
+  it("returns a workflow creation failure instead of waiting for durable acceptance", async () => {
+    const failure = {
+      applied: 0, openedUiActions: 0, createdNodeIds: [],
+      errors: ["无法创建持久化工作流记录，未启动节点动作"], commandResults: [],
+    };
+    const persistence = new Promise<void>(() => undefined);
+    await expect(waitForImmediateCanvasCommandResult(Promise.resolve(failure), persistence))
+      .resolves.toBe(failure);
   });
 
   it("keeps selection attachment delivery stable across geometry updates", () => {
@@ -2172,6 +2200,78 @@ describe("canvas chat commands", () => {
     expect(context).toContain(`reference_1_edge_1_id: ${edgeId}`);
   });
 
+  it("preserves one-executable-node workflow identity in selected-group routing context", () => {
+    const store = useCanvasStore.getState();
+    const briefId = store.addNode(
+      CANVAS_NODE_TYPES.textAnnotation,
+      { x: 0, y: 120 },
+      {
+        displayName: "图片说明",
+        content: "使用已经确认的图片节点参数。",
+      },
+    );
+    const imageId = store.addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 120, y: 120 },
+      {
+        displayName: "已确认图片工作流",
+        prompt: "红色陶瓷杯，蓝色背景",
+        workflowInstanceId: "workflow-one",
+        workflowPlanNodeId: "image-one",
+        workflowConfigConfirmed: true,
+      },
+    );
+    const groupId = store.groupNodes([briefId, imageId], {
+      label: "已确认图片工作流",
+    });
+    if (!groupId) throw new Error("test group was not created");
+    const nodes = useCanvasStore.getState().nodes;
+    const group = nodes.find((node) => node.id === groupId);
+    if (!group) throw new Error("test group was not created");
+
+    const attachment = buildCanvasNodeReferenceAttachment(
+      "project-a",
+      "canvas-a",
+      nodes,
+      [],
+      nodes,
+      { displayNodes: [group] },
+    );
+    if (!attachment) throw new Error("test attachment was not created");
+
+    const payload = JSON.parse(attachment.content || "{}") as {
+      nodes?: Array<{
+        node_id?: string;
+        workflow_identity?: {
+          instance_id?: string;
+          plan_node_id?: string;
+          config_confirmed?: boolean;
+        };
+      }>;
+    };
+    const context = buildCanvasNodeReferenceContext([attachment]);
+    const imageReference = payload.nodes?.find(
+      (node) => node.node_id === imageId,
+    );
+
+    expect(imageReference?.workflow_identity).toEqual({
+      instance_id: "workflow-one",
+      plan_node_id: "image-one",
+      config_confirmed: true,
+    });
+    expect(context).toContain(
+      "reference_1_group_contains_workflow_nodes: true",
+    );
+    expect(context).toContain(
+      'reference_1_workflow_instance_ids_json: ["workflow-one"]',
+    );
+    expect(context).toContain(
+      "A one-node workflow is still a workflow",
+    );
+    expect(context).toContain("freezone_run_workflow");
+    expect(context).toContain("freezone_run_node_action");
+  });
+
   it("prunes stale canvas node references after nodes are deleted", () => {
     const store = useCanvasStore.getState();
     const firstId = store.addNode(
@@ -3579,6 +3679,10 @@ describe("canvas chat commands", () => {
     const addNextAction = catalog.actions.find(
       (action) => action.action === "add_next_node",
     );
+    expect(addNextAction?.description).toContain("does not generate media");
+    expect(addNextAction?.description).toContain(
+      "add_next_node + run_node_action",
+    );
     expect(addNextAction?.parameters).toMatchObject({
       source_node_id: nodeId,
       node_type_schema: {
@@ -4665,6 +4769,9 @@ describe("canvas chat commands", () => {
       {
         displayName: "首帧",
         prompt: longPrompt,
+        workflowInstanceId: "workflow-detail",
+        workflowPlanNodeId: "image-detail",
+        workflowConfigConfirmed: true,
       },
     );
     const edgeId = store.addEdge(textId, imageId);
@@ -4693,6 +4800,11 @@ describe("canvas chat commands", () => {
         data?: {
           nodes?: Array<{
             node_id?: string;
+            workflow_identity?: {
+              instance_id?: string;
+              plan_node_id?: string;
+              config_confirmed?: boolean;
+            };
             action_catalog?: unknown;
             action_summary?: {
               downstream_spawn_types?: unknown[];
@@ -4735,6 +4847,11 @@ describe("canvas chat commands", () => {
     expect(imageDetail?.parameters?.prompt?.current_value).toBe(
       imageDetail?.text_preview,
     );
+    expect(imageDetail?.workflow_identity).toEqual({
+      instance_id: "workflow-detail",
+      plan_node_id: "image-detail",
+      config_confirmed: true,
+    });
     expect(response).not.toContain(longPrompt);
     expect(nodeDetail?.data).not.toHaveProperty("display_nodes");
   });
@@ -7515,6 +7632,69 @@ describe("canvas chat commands", () => {
     }
   });
 
+  it("signals durable workflow acceptance only after Run creation succeeds", async () => {
+    const imageNodeId = useCanvasStore.getState().addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { prompt: "持久化后执行" },
+    );
+    const persisted = vi.fn();
+    let resolveRun!: (run: FreezoneWorkflowRun) => void;
+    vi.mocked(createFreezoneWorkflowRun).mockImplementationOnce(() =>
+      new Promise((resolve) => { resolveRun = resolve; }));
+    const events: Array<{ nodeId: string; action: string; requestId?: string }> = [];
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      events.push(payload);
+    });
+    const execution = applyCanvasChatCommandsAsync(
+      extractCanvasChatCommandEnvelopes([{
+        schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+        commands: [{ type: "run_workflow", node_ids: [imageNodeId] }],
+      }]),
+      {
+        projectId: "project-a",
+        canvasId: "canvas-durable-acceptance",
+        actionTimeoutMs: 1_000,
+        onWorkflowRunPersisted: persisted,
+      },
+    );
+
+    try {
+      await vi.waitFor(() => expect(createFreezoneWorkflowRun).toHaveBeenCalledTimes(1));
+      expect(persisted).not.toHaveBeenCalled();
+      expect(events).toHaveLength(0);
+      resolveRun({
+        schema_version: "freezone_workflow_run.v1",
+        run_id: "run-durable",
+        project_id: "project-a",
+        canvas_id: "canvas-durable-acceptance",
+        status: "running",
+        resumable: false,
+        created_at: "2026-09-16T00:00:00Z",
+        started_at: "2026-09-16T00:00:00Z",
+        updated_at: "2026-09-16T00:00:00Z",
+        actions: [],
+      });
+      await vi.waitFor(() => expect(events).toHaveLength(1));
+      const requestId = events[0]?.requestId;
+      if (!requestId) throw new Error("expected workflow request id");
+      useCanvasStore.getState().updateNodeData(imageNodeId, {
+        imageUrl: "/static/project/durable.png",
+      });
+      canvasEventBus.publish("freezone/node-action-result", {
+        requestId,
+        nodeId: imageNodeId,
+        action: "generate_image",
+        status: "success",
+      });
+      await execution;
+      expect(persisted).toHaveBeenCalledOnce();
+      expect(persisted).toHaveBeenCalledWith("run-durable");
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it("serializes distinct workflow runs on the same canvas instead of discarding them", async () => {
     const firstNodeId = useCanvasStore.getState().addNode(
       CANVAS_NODE_TYPES.imageGen,
@@ -7875,6 +8055,7 @@ describe("canvas chat commands", () => {
       { prompt: "商品主图" },
     );
     const events: string[] = [];
+    const persisted = vi.fn();
     const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
       events.push(payload.nodeId);
     });
@@ -7888,13 +8069,19 @@ describe("canvas chat commands", () => {
           schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
           commands: [{ type: "run_workflow", node_ids: [imageNodeId] }],
         }]),
-        { projectId: "project-a", canvasId: "canvas-a", actionTimeoutMs: 100 },
+        {
+          projectId: "project-a",
+          canvasId: "canvas-a",
+          actionTimeoutMs: 100,
+          onWorkflowRunPersisted: persisted,
+        },
       );
 
       expect(result.errors).toEqual([
         "无法创建持久化工作流记录，未启动节点动作：database unavailable",
       ]);
       expect(events).toEqual([]);
+      expect(persisted).not.toHaveBeenCalled();
     } finally {
       unsubscribe();
     }
@@ -8039,6 +8226,110 @@ describe("canvas chat commands", () => {
         "canvas-a",
         "run-test",
         expect.objectContaining({ status: "completed" }),
+      );
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("keeps a completed artifact when cancellation races with result polling", async () => {
+    const store = useCanvasStore.getState();
+    const canvasId = "canvas-late-cancel-after-artifact";
+    const imageNodeId = store.addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { prompt: "已经完成的商品主图" },
+    );
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      if (!payload.requestId) return;
+      canvasEventBus.publish("freezone/node-action-accepted", {
+        requestId: payload.requestId,
+        nodeId: payload.nodeId,
+        action: payload.action,
+      });
+      window.setTimeout(() => {
+        store.updateNodeData(payload.nodeId, {
+          isGenerating: false,
+          imageUrl: "/static/project/completed-before-cancel.png",
+        });
+        cancelCanvasWorkflowExecution(canvasId);
+        // Deliberately omit freezone/node-action-result. The persisted artifact
+        // and cancellation token become visible in the same polling interval.
+      }, 10);
+    });
+
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_workflow", node_ids: [imageNodeId] }],
+        }]),
+        {
+          projectId: "project-a",
+          canvasId,
+          actionTimeoutMs: 300,
+        },
+      );
+
+      expect(result.errors).toEqual([]);
+      expect(result.commandResults).toContainEqual(expect.objectContaining({
+        nodeId: imageNodeId,
+        action: "generate_image",
+        status: "success",
+      }));
+      expect(updateFreezoneWorkflowRun).toHaveBeenLastCalledWith(
+        "project-a",
+        canvasId,
+        "run-test",
+        expect.objectContaining({ status: "completed" }),
+      );
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("keeps an explicit workflow cancellation when no artifact was produced", async () => {
+    const store = useCanvasStore.getState();
+    const canvasId = "canvas-cancel-without-artifact";
+    const imageNodeId = store.addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { prompt: "尚未完成的商品主图" },
+    );
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      if (!payload.requestId) return;
+      canvasEventBus.publish("freezone/node-action-accepted", {
+        requestId: payload.requestId,
+        nodeId: payload.nodeId,
+        action: payload.action,
+      });
+      window.setTimeout(() => cancelCanvasWorkflowExecution(canvasId), 10);
+    });
+
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_workflow", node_ids: [imageNodeId] }],
+        }]),
+        {
+          projectId: "project-a",
+          canvasId,
+          actionTimeoutMs: 100,
+          actionRetryDelayMs: 0,
+        },
+      );
+
+      expect(result.commandResults).not.toContainEqual(expect.objectContaining({
+        nodeId: imageNodeId,
+        action: "generate_image",
+        status: "success",
+      }));
+      expect(updateFreezoneWorkflowRun).toHaveBeenLastCalledWith(
+        "project-a",
+        canvasId,
+        "run-test",
+        expect.objectContaining({ status: "cancelled" }),
       );
     } finally {
       unsubscribe();

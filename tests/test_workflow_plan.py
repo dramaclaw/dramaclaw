@@ -784,6 +784,74 @@ def test_compiler_rejects_invalid_portable_generation_inputs(
     ]
 
 
+@pytest.mark.parametrize(
+    ("parameter_type", "provided", "expected"),
+    [
+        ("integer", "2", 2),
+        ("count", "4", 4),
+        ("number", "3", 3),
+        ("number", "3.5", 3.5),
+        ("boolean", "true", True),
+        ("boolean", "false", False),
+    ],
+)
+def test_skill_input_contract_canonicalizes_unambiguous_scalar_types(
+    parameter_type,
+    provided,
+    expected,
+):
+    catalog = _load_catalog_module()
+    contract = catalog._skill_input_contract(
+        {
+            "input_parameters": [
+                {
+                    "id": "value",
+                    "label": "Value",
+                    "type": parameter_type,
+                    "required": True,
+                }
+            ]
+        },
+        {"user_goal": "test", "inputs": {"value": provided}},
+    )
+
+    assert contract["errors"] == []
+    assert contract["resolved"]["value"] == expected
+
+
+@pytest.mark.parametrize(
+    ("parameter_type", "provided", "message"),
+    [
+        ("integer", "1.5", "must be an integer"),
+        ("integer", "9" * 5000, "must be an integer"),
+        ("number", "three", "must be a number"),
+        ("number", "9" * 5000, "must be a number"),
+        ("boolean", "False", "must be a boolean"),
+    ],
+)
+def test_skill_input_contract_rejects_ambiguous_scalar_types(
+    parameter_type,
+    provided,
+    message,
+):
+    catalog = _load_catalog_module()
+    contract = catalog._skill_input_contract(
+        {
+            "input_parameters": [
+                {
+                    "id": "value",
+                    "label": "Value",
+                    "type": parameter_type,
+                    "required": True,
+                }
+            ]
+        },
+        {"user_goal": "test", "inputs": {"value": provided}},
+    )
+
+    assert contract["errors"] == [{"path": "inputs.value", "message": message}]
+
+
 def test_dynamic_item_auto_connects_unique_generated_source_anchor(monkeypatch):
     catalog = _load_catalog_module()
     _install_minimal_builtin_catalog(monkeypatch, catalog)
@@ -1885,6 +1953,33 @@ def test_workflow_graph_normalizes_video_provider_names_to_canvas_model_ids(
     assert create_command["data"]["model"] == canvas_model
 
 
+def test_workflow_seedance_alias_emits_canvas_catalog_id_not_backend_api_model():
+    graph = build_workflow_graph_commands(
+        {
+            "plan": {
+                "schema_version": "freezone_workflow_plan.v1",
+                "workflow_type": "dynamic.video",
+                "nodes": [
+                    {
+                        "id": "clip",
+                        "node_type": "videoNode",
+                        "stage": "video",
+                        "data": {"model": "seedance-2.0-fast"},
+                    }
+                ],
+                "edges": [],
+            },
+            "run_after_create": False,
+        }
+    )
+
+    assert graph["ok"] is True
+    create_command = next(
+        command for command in graph["commands"] if command["type"] == "create_node"
+    )
+    assert create_command["data"]["model"] == "seedance-2.0-fast"
+
+
 def test_workflow_plan_rejects_duplicate_or_non_terminal_compose_nodes():
     plan = _video_compose_plan()
     plan["nodes"].append(
@@ -2717,6 +2812,11 @@ def test_japanese_anime_drama_skill_locks_language_and_continuity(monkeypatch):
     assert "故事脚本" in planning["planning_notes"]
     assert "分镜" in planning["planning_notes"]
     assert "关键元素" in planning["planning_notes"]
+    assert "dependency_for 只控制执行顺序" in planning_text
+    assert "不会消费上游产物" in planning_text
+    assert "故事脚本到分镜必须使用 context_for" in planning_text
+    assert "分镜文本到图片或视频节点必须使用 prompt_for" in planning_text
+    assert "视觉资产到视频节点必须使用 media_input_for" in planning_text
     assert "不得只创建一个笼统的“关键元素”总节点" in planning_text
     assert "每个持续出现的角色各自独立成节点" in planning_text
     assert "每个主要复用场景各自独立成节点" in planning_text

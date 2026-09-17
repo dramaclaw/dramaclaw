@@ -288,8 +288,8 @@ def test_only_placement_free_canvas_routes_opt_out_of_the_home_node_guard() -> N
         and _opts_out_of_the_guard(call)
     }
 
-    # 合并工作流能力查询、图片输出及互动故事路由后的数量。
-    assert router_decorators == 108
+    # 合并工作流、互动故事及跨项目资源复制路由后的数量。
+    assert router_decorators == 109
     assert len(canvas_routes) == 30
 
     assert set(canvas_routes) >= PLACEMENT_FREE_CANVAS_ROUTES

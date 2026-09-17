@@ -55,23 +55,106 @@ def test_ws_connect_can_prewarm_non_home_scope() -> None:
 
 
 @pytest.mark.anyio
-async def test_codex_cancel_recovers_stranded_home_lock(monkeypatch, tmp_path) -> None:
+async def test_codex_cancel_targets_exact_scope_and_business_turn(monkeypatch) -> None:
+    calls = []
+    scope = chat_route.ChatScopePayload(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvasId="canvas-a",
+        agentId="main",
+    )
+    payload = chat_route.CancelChatTurnRequest(scope=scope, turn_id="business-a")
+
+    monkeypatch.setattr(chat_route.chat_service, "get_chat_backend_name", lambda: "codex")
+
+    async def allow_project(_user, requested_scope):
+        assert requested_scope.id == "project-a"
+        return SimpleNamespace()
+
+    async def interrupt(username, scope_key, business_turn_id):
+        calls.append((username, scope_key, business_turn_id))
+        return True
+
+    monkeypatch.setattr(chat_route, "_project_context_for_scope", allow_project)
+    monkeypatch.setattr(chat_route.chat_service, "interrupt_active_codex_turn", interrupt)
+
+    result = await chat_route.cancel_chat_turn(
+        {"username": "alice"}, payload=payload
+    )
+
+    expected_scope_key = chat_route.chat_service._codex_scope_key(
+        "project-a", agent_profile="freezone:main", canvas_id="canvas-a"
+    )
+    assert result == {"ok": True, "data": {"cancelled": True}}
+    assert calls == [("alice", expected_scope_key, "business-a")]
+
+
+@pytest.mark.anyio
+async def test_codex_cancel_requires_scope_and_business_turn(monkeypatch) -> None:
+    monkeypatch.setattr(chat_route.chat_service, "get_chat_backend_name", lambda: "codex")
+
+    with pytest.raises(chat_route.HTTPException) as missing:
+        await chat_route.cancel_chat_turn({"username": "alice"}, payload=None)
+    assert missing.value.status_code == 400
+
+    payload = chat_route.CancelChatTurnRequest(
+        scope=chat_route.ChatScopePayload(kind="home"), turn_id=" "
+    )
+    with pytest.raises(chat_route.HTTPException) as blank:
+        await chat_route.cancel_chat_turn({"username": "alice"}, payload=payload)
+    assert blank.value.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_stale_codex_cancel_does_not_force_release_a_new_turn_lock(
+    monkeypatch,
+) -> None:
+    releases = []
+    async def no_interrupt(*_args):
+        return False
+
+    monkeypatch.setattr(chat_route.chat_service, "get_chat_backend_name", lambda: "codex")
+    monkeypatch.setattr(
+        chat_route.chat_service,
+        "interrupt_active_codex_turn",
+        no_interrupt,
+    )
+    monkeypatch.setattr(
+        chat_route.chat_service,
+        "force_release_chat_run_lock",
+        lambda *args: releases.append(args),
+    )
+    payload = chat_route.CancelChatTurnRequest(
+        scope=chat_route.ChatScopePayload(kind="home"), turn_id="business-old"
+    )
+
+    result = await chat_route.cancel_chat_turn(
+        {"username": "alice"}, payload=payload
+    )
+
+    assert result == {"ok": True, "data": {"cancelled": False}}
+    assert releases == []
+
+
+@pytest.mark.anyio
+async def test_codex_cancel_without_turn_identity_fails_closed_and_keeps_lock(
+    monkeypatch, tmp_path
+) -> None:
     from novelvideo.chat import service as chat_service
 
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setattr(chat_service, "get_chat_backend_name", lambda: "codex")
 
-    async def no_active_turn(_username):
-        return False
-
-    monkeypatch.setattr(chat_service, "interrupt_active_codex_turns", no_active_turn)
-    chat_service._acquire_chat_run_lock("alice", "")
-
-    result = await chat_route.cancel_chat_turn({"username": "alice"})
-
-    assert result == {"ok": True, "data": {"cancelled": False}}
-    next_lock = chat_service._acquire_chat_run_lock("alice", "")
-    chat_service._release_chat_run_lock("alice", "", next_lock)
+    original_lock = chat_service._acquire_chat_run_lock("alice", "")
+    try:
+        with pytest.raises(chat_route.HTTPException) as missing:
+            await chat_route.cancel_chat_turn({"username": "alice"})
+        assert missing.value.status_code == 400
+        with pytest.raises(RuntimeError, match="正在处理中"):
+            chat_service._acquire_chat_run_lock("alice", "")
+    finally:
+        chat_service._release_chat_run_lock("alice", "", original_lock)
 
 
 @pytest.mark.anyio
@@ -124,7 +207,7 @@ async def test_cancel_does_not_force_release_while_interrupt_is_settling(
 ) -> None:
     releases = []
 
-    async def active_turn_cancelled(_username):
+    async def active_turn_cancelled(_username, _scope_key, _business_turn_id):
         return True
 
     monkeypatch.setattr(
@@ -132,7 +215,7 @@ async def test_cancel_does_not_force_release_while_interrupt_is_settling(
     )
     monkeypatch.setattr(
         chat_route.chat_service,
-        "interrupt_active_codex_turns",
+        "interrupt_active_codex_turn",
         active_turn_cancelled,
     )
     monkeypatch.setattr(
@@ -141,7 +224,13 @@ async def test_cancel_does_not_force_release_while_interrupt_is_settling(
         lambda *args: releases.append(args),
     )
 
-    result = await chat_route.cancel_chat_turn({"username": "alice"})
+    result = await chat_route.cancel_chat_turn(
+        {"username": "alice"},
+        payload=chat_route.CancelChatTurnRequest(
+            scope=chat_route.ChatScopePayload(kind="home"),
+            turn_id="business-a",
+        ),
+    )
 
     assert result == {"ok": True, "data": {"cancelled": True}}
     assert releases == []

@@ -6,7 +6,9 @@ import json
 from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
-CONVERSION_VERSION = 3
+from novelvideo.freezone.skill_import_evidence import hydrate_segment_quotes
+
+CONVERSION_VERSION = 12
 
 
 class StrictModel(BaseModel):
@@ -30,6 +32,27 @@ def resolve_pointer(bundle: dict, pointer: str) -> Any:
     if current is None or current == '' or current == [] or current == {}:
         raise ValueError(f'Empty review evidence: {pointer}')
     return current
+
+
+def bundle_evidence_paths(bundle: dict) -> list[str]:
+    """Return the non-empty Bundle leaf pointers allowed as review evidence."""
+    paths = []
+
+    def walk(value: Any, path: str) -> None:
+        if value is None or value == '' or value == [] or value == {}:
+            return
+        if isinstance(value, dict):
+            for key, child in value.items():
+                escaped = str(key).replace('~', '~0').replace('/', '~1')
+                walk(child, path + '/' + escaped)
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                walk(child, path + '/' + str(index))
+        else:
+            paths.append(path)
+
+    walk(bundle, '')
+    return paths
 
 
 def structural_issues(bundle: dict) -> list[str]:
@@ -73,19 +96,44 @@ class BundleReview(StrictModel):
     issues: list[BundleFinding] = Field(default_factory=list, max_length=100)
 
 
-def validate_bundle_review(payload: dict, source: str, bundle: dict) -> dict:
-    review = BundleReview.model_validate(payload).model_dump()
-    for issue in review['issues']:
+class DraftBundleFinding(StrictModel):
+    category: Literal['missing_method', 'changed_method', 'invalid_recipe', 'advisory']
+    severity: Literal['blocker', 'warning']
+    source_segment_ids: list[str] = Field(default_factory=list, max_length=1)
+    evidence_paths: list[str] = Field(default_factory=list, max_length=20)
+    message: str = Field(min_length=1, max_length=3000)
+
+
+class DraftBundleReview(StrictModel):
+    summary: str = Field(min_length=1)
+    issues: list[DraftBundleFinding] = Field(default_factory=list, max_length=100)
+
+
+def validate_bundle_review(payload: dict, source_segments: list[dict], bundle: dict) -> dict:
+    draft = DraftBundleReview.model_validate(payload).model_dump()
+    allowed_evidence_paths = set(bundle_evidence_paths(bundle))
+    issues = []
+    for issue in draft['issues']:
         if issue['category'] == 'advisory':
             issue['severity'] = 'warning'
         for pointer in issue['evidence_paths']:
+            if pointer not in allowed_evidence_paths:
+                raise ValueError(f'Invalid review evidence: {pointer}')
             resolve_pointer(bundle, pointer)
         if issue['severity'] == 'blocker':
-            quote = ' '.join(issue['source_quote'].split())
-            if not quote or quote not in ' '.join(source.split()) or not issue['evidence_paths']:
-                raise ValueError('Blocking findings require an exact source quote and valid Bundle evidence paths. '
-                                 'Copy a short contiguous source phrase verbatim; do not abbreviate with ellipses or combine passages. '
-                                 f'Invalid quote: {issue["source_quote"][:400]}')
+            if not issue['source_segment_ids'] or not issue['evidence_paths']:
+                raise ValueError('Blocking findings require a source segment ID and valid Bundle evidence paths.')
+        if issue['source_segment_ids']:
+            source_quote = hydrate_segment_quotes(issue['source_segment_ids'], source_segments)[0]
+        else:
+            source_quote = ''
+        finding = {key: value for key, value in issue.items() if key != 'source_segment_ids'}
+        persisted = BundleFinding.model_validate({**finding, 'source_quote': ''}).model_dump()
+        persisted['source_quote'] = source_quote
+        issues.append(persisted)
+    review = BundleReview.model_validate({'summary': draft['summary'], 'issues': issues}).model_dump()
+    for normalized, exact in zip(review['issues'], issues, strict=True):
+        normalized['source_quote'] = exact['source_quote']
     return review
 
 

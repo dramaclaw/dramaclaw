@@ -3242,6 +3242,7 @@ def _use_frontend_default_for_recommended_models(commands: list[Any]) -> None:
             continue
         if str(command.get("type") or "").strip() not in {
             "create_node",
+            "add_next_node",
             "update_node_data",
         }:
             continue
@@ -3406,7 +3407,7 @@ def _external_generation_parameter_preflight(
         str(command.get("client_id") or "").strip()
         for command in commands
         if isinstance(command, dict)
-        and command.get("type") == "create_node"
+        and command.get("type") in {"create_node", "add_next_node"}
         and str(command.get("client_id") or "").strip()
     }
     needs_canvas_read = any(
@@ -3435,7 +3436,7 @@ def _external_generation_parameter_preflight(
         if not isinstance(raw_command, dict):
             continue
         command_type = str(raw_command.get("type") or "").strip()
-        if command_type == "create_node":
+        if command_type in {"create_node", "add_next_node"}:
             node_id = str(raw_command.get("client_id") or "").strip()
             if node_id:
                 nodes[node_id] = {
@@ -3443,6 +3444,14 @@ def _external_generation_parameter_preflight(
                     "type": str(raw_command.get("node_type") or "").strip(),
                     "data": _clone_json(raw_command.get("data") or {}),
                 }
+                if command_type == "add_next_node":
+                    source_node_id = str(
+                        raw_command.get("source_node_id") or ""
+                    ).strip()
+                    if source_node_id:
+                        edges.append(
+                            {"source": source_node_id, "target": node_id}
+                        )
         elif command_type == "update_node_data":
             node_id = str(raw_command.get("node_id") or "").strip()
             node = nodes.get(node_id)
@@ -4186,6 +4195,9 @@ def _direct_apply_canvas_commands(
                     raise ValueError(f"source node not found: {source}")
                 node_type = str(command.get("node_type") or "").strip()
                 node_id = str(uuid.uuid4())
+                client_id = str(command.get("client_id") or "").strip()
+                if client_id:
+                    id_map[client_id] = node_id
                 width, height = _node_size(node_type)
                 source_position = (
                     source_node.get("position")
@@ -6860,6 +6872,41 @@ _SKILL_STUDIO_FRONTEND_TOOLS = {
 }
 
 
+def _canvas_application_receipt_contract(
+    *, require_complete_status: bool = False
+) -> dict[str, Any]:
+    required = ["project_id", "canvas_id", "applied", "canvas_apply_status"]
+    if require_complete_status:
+        required.extend(["cancelled", "errors", "tool_call_status"])
+    return {
+        "required": required,
+        "properties": {
+            "project_id": {"type": "string", "minLength": 1},
+            "canvas_id": {"type": "string", "minLength": 1},
+            "applied": {"const": True},
+            "cancelled": {"const": False},
+            "errors": {"type": "array", "maxItems": 0},
+            "tool_call_status": {"const": "completed"},
+        },
+        "anyOf": [
+            {
+                "required": ["bridge_key"],
+                "properties": {
+                    "bridge_key": {"type": "string", "minLength": 1},
+                    "canvas_apply_status": {"enum": ["applied", "accepted"]},
+                },
+            },
+            {
+                "required": ["revision"],
+                "properties": {
+                    "revision": {"type": "integer", "minimum": 0},
+                    "canvas_apply_status": {"const": "direct_applied"},
+                },
+            },
+        ],
+    }
+
+
 def _success_contract(name: str) -> dict[str, Any]:
     if name == "freezone_import_external_skill":
         return {"required": ["batch_id", "imports"]}
@@ -6884,33 +6931,7 @@ def _success_contract(name: str) -> dict[str, Any]:
         if name == "freezone_confirm_workflow_draft":
             # Confirmation returns the executor's receipt after the draft was
             # committed. It need not repeat the planning/run identifiers.
-            receipt = {
-                "required": ["project_id", "canvas_id", "applied", "canvas_apply_status"],
-                "properties": {
-                    "project_id": {"type": "string", "minLength": 1},
-                    "canvas_id": {"type": "string", "minLength": 1},
-                    "applied": {"const": True},
-                    "cancelled": {"const": False},
-                    "errors": {"type": "array", "maxItems": 0},
-                    "tool_call_status": {"const": "completed"},
-                },
-                "anyOf": [
-                    {
-                        "required": ["bridge_key"],
-                        "properties": {
-                            "bridge_key": {"type": "string", "minLength": 1},
-                            "canvas_apply_status": {"enum": ["applied", "accepted"]},
-                        },
-                    },
-                    {
-                        "required": ["revision"],
-                        "properties": {
-                            "revision": {"type": "integer", "minimum": 0},
-                            "canvas_apply_status": {"const": "direct_applied"},
-                        },
-                    },
-                ],
-            }
+            receipt = _canvas_application_receipt_contract()
             return {
                 "if": {"anyOf": [
                     {"required": ["bridge_key"]},
@@ -6926,6 +6947,39 @@ def _success_contract(name: str) -> dict[str, Any]:
                     {"required": ["workflow_instance_id"]},
                     {"required": ["run_id"]},
                 ]},
+            }
+        if name == "freezone_run_workflow":
+            return {
+                "anyOf": [
+                    _canvas_application_receipt_contract(require_complete_status=True),
+                    {
+                        "required": ["draft_id"],
+                        "properties": {
+                            "draft_id": {"type": "string", "minLength": 1}
+                        },
+                    },
+                    {
+                        "required": ["operation_id"],
+                        "properties": {
+                            "operation_id": {"type": "string", "minLength": 1}
+                        },
+                    },
+                    {
+                        "required": ["workflow_instance_id"],
+                        "properties": {
+                            "workflow_instance_id": {
+                                "type": "string",
+                                "minLength": 1,
+                            }
+                        },
+                    },
+                    {
+                        "required": ["run_id"],
+                        "properties": {
+                            "run_id": {"type": "string", "minLength": 1}
+                        },
+                    },
+                ]
             }
         return {
             "anyOf": [
@@ -7253,7 +7307,11 @@ _WORKFLOW_PLAN_OBJECT_SCHEMA = {
             "type": "array",
             "description": (
                 "Dependency edges for one connected workflow graph. Multi-node plans must not "
-                "leave any node isolated."
+                "leave any node isolated. Use context_for when text consumes upstream text as "
+                "context, prompt_for when generated media consumes text, and media_input_for "
+                "when a target consumes upstream media. dependency_for only controls execution "
+                "order and does not consume the source output; a target that consumes upstream "
+                "output must not use dependency_for."
             ),
             "maxItems": 400,
             "items": {
@@ -9177,7 +9235,7 @@ TOOLS = (
         "freezone_emit_canvas_command",
         _schema(
             "freezone_emit_canvas_command",
-            "Default Freezone write tool for ordinary non-workflow canvas edits. Submit one complete canvas_chat_commands.v1 commands array for the user's requested canvas changes. Do not use this tool for registered or dynamic WorkflowPlans; use the appropriate persisted workflow draft tool instead. If commands[] fields are unclear, call freezone_get_canvas_command_catalog first.",
+            "Default Freezone write tool for ordinary non-workflow canvas edits. Submit one complete canvas_chat_commands.v1 commands array for the user's requested canvas changes. A request to create a downstream media node and actually generate its output is a mixed operation: use add_next_node + run_node_action in this one batch, give add_next_node a client_id, and use that same alias as run_node_action.node_id. Do not ask the user to click Generate after only creating the node. Do not use this tool for registered or dynamic WorkflowPlans; use the appropriate persisted workflow draft tool instead. If commands[] fields are unclear, call freezone_get_canvas_command_catalog first.",
             {
                 **_CANVAS_COMMAND_TOOL_SCOPE_PROPS,
                 "commands": {
@@ -9249,7 +9307,7 @@ TOOLS = (
         "freezone_add_next_node",
         _schema(
             "freezone_add_next_node",
-            "Single-operation tool only: create exactly one downstream node behind one existing source node. Use only when the user explicitly asks for one downstream node and the source node is a valid input source. For several downstream nodes, workflows, prototypes, storyboards, or create+link/layout requests, use one freezone_emit_canvas_command batch instead.",
+            "Single-operation tool only: create exactly one downstream node behind one existing source node. This tool does not generate media. Use it only when the user explicitly asks to create/configure one downstream node without producing its media output. If the user asks for an actual image/video/audio result, creation plus generation is an add_next_node + run_node_action mixed request: use one freezone_emit_canvas_command batch with a shared client_id, and do not leave a manual Generate click to the user. For several downstream nodes, workflows, prototypes, storyboards, or other mixed requests, use one freezone_emit_canvas_command batch instead.",
             {
                 **_SCOPE_PROPS,
                 "source_node_id": {
@@ -9485,7 +9543,7 @@ TOOLS = (
         "freezone_run_workflow",
         _schema(
             "freezone_run_workflow",
-            "Run, continue, retry, or locally regenerate a canvas workflow through the deterministic DAG runner. The runner expands dependencies, skips completed outputs by default, executes independent nodes in parallel, persists status, and blocks failed descendants without Agent polling. For nodes marked workflowConfigConfirmed=true, reuse the already approved model, size, duration, quality, voice, and composition fields; do not ask the user to choose them again. Ask again only when a required field is missing, the user changed it, or the provider rejects it. Use this directly for continue/resume requests instead of reading and running nodes one by one. If it reports content_policy, stop: do not infer sensitive words, rewrite prompts, or retry unless the user explicitly requests one specific prompt edit.",
+            "Run, continue, retry, or locally regenerate a canvas workflow through the deterministic DAG runner. A one-node workflow is still a workflow: when the user names the target a workflow, use this tool directly even if it contains exactly one executable node, without reading node detail or substituting a node action. The runner expands dependencies, skips completed outputs by default, executes independent nodes in parallel, persists status, and blocks failed descendants without Agent polling. For nodes marked workflowConfigConfirmed=true, reuse the already approved model, size, duration, quality, voice, and composition fields; do not ask the user to choose them again. Ask again only when a required field is missing, the user changed it, or the provider rejects it. Use this directly for continue/resume requests instead of reading and running nodes one by one. If it reports content_policy, stop: do not infer sensitive words, rewrite prompts, or retry unless the user explicitly requests one specific prompt edit.",
             {
                 **_SCOPE_PROPS,
                 "node_ids": {
@@ -9515,7 +9573,7 @@ TOOLS = (
         "freezone_run_node_action",
         _schema(
             "freezone_run_node_action",
-            "Single-operation tool only: run or open exactly one frontend node action listed by node_detail action_summary. If the node has workflowConfigConfirmed=true, reuse its persisted generation parameters and do not ask the user to choose them again unless a required field is missing or the user changed it. For non-default action parameters, inspect freezone_get_node_action_catalog with the specific action first. For multiple actions or mixed workflows, use one freezone_emit_canvas_command batch.",
+            "Single-operation tool only: run or open exactly one standalone frontend node action listed by node_detail action_summary. A one-node workflow is still a workflow: never use this tool to run, continue, or resume a target the user identifies as a workflow; use freezone_run_workflow instead. If the standalone node has workflowConfigConfirmed=true, reuse its persisted generation parameters and do not ask the user to choose them again unless a required field is missing or the user changed it. For non-default action parameters, inspect freezone_get_node_action_catalog with the specific action first. For multiple standalone actions use one freezone_emit_canvas_command batch; never use that batch as a workflow runner.",
             {
                 **_SCOPE_PROPS,
                 "node_id": {

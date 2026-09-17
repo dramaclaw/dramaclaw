@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Copy, Loader2, ShieldCheck, Trash2, UserPlus, Users } from "lucide-react";
+import { HTTPError } from "ky";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
@@ -65,6 +66,36 @@ function projectLink(project: ProjectSummary): string {
   return `${window.location.origin}/projects/${project.id}/ingest`;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function projectShareFailureMessage(
+  error: unknown,
+  t: (key: string) => string,
+): Promise<string> {
+  if (error instanceof HTTPError) {
+    let body: unknown = error.data;
+    let code: unknown;
+    try {
+      if (body === undefined) {
+        body = await error.response.clone().json();
+      }
+      code = isRecord(body) && isRecord(body.detail) ? body.detail.code : undefined;
+    } catch {
+      code = undefined;
+    }
+
+    if (error.response.status === 403 && code === "project_share_scope_mismatch") {
+      return t("project.shareDialog.toastUserOutOfScope");
+    }
+    if (error.response.status === 404) {
+      return t("project.shareDialog.toastUserNotFound");
+    }
+  }
+  return t("project.shareDialog.toastShareFailed");
+}
+
 export function ShareProjectDialog({
   project,
   open,
@@ -85,7 +116,20 @@ export function ShareProjectDialog({
   const updateGrant = useUpdateProjectGrant(projectId);
   const deleteGrant = useDeleteProjectGrant(projectId);
 
+  useEffect(() => {
+    setQuery("");
+    setSelectedUser(null);
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!open) {
+      setQuery("");
+      setSelectedUser(null);
+    }
+  }, [open]);
+
   const searchResults = users.data?.data ?? [];
+  const trimmedQuery = query.trim();
   const grantRows = grants.data?.data ?? [];
   const existingPrincipalIds = useMemo(
     () => new Set(grantRows.map((grant) => grant.principal_id)),
@@ -99,9 +143,13 @@ export function ShareProjectDialog({
   const grantsReady = !grants.isLoading && !grants.isError && grants.data !== undefined;
   const shareLimitReached = grantsReady && grantRows.length >= MAX_PROJECT_GRANTS;
   const shareLimitHint = t("project.shareDialog.limitReached", { limit: MAX_PROJECT_GRANTS });
+  const showNoShareableUser =
+    trimmedQuery.length >= 3 && users.isSuccess && searchResults.length === 0 && !selectedUser;
 
   const handleAdd = async () => {
-    // 按钮不置灰：点得到，才有地方把「为什么加不进去」说清楚。
+    const username = selectedUser?.username;
+    if (!username) return;
+    // 选中用户后，按钮不因配额置灰：点得到，才有地方把「为什么加不进去」说清楚。
     if (!grantsReady) {
       void alertDialog({
         title: t("project.shareDialog.quotaUnknownTitle"),
@@ -116,16 +164,14 @@ export function ShareProjectDialog({
       });
       return;
     }
-    const username = selectedUser?.username || query.trim();
-    if (!username || username.length < 3) return;
     try {
       await addGrant.mutateAsync({ principal_username: username, role });
       toast.success(t("project.shareDialog.toastMemberUpdated"));
       setQuery("");
       setSelectedUser(null);
       setRole("editor");
-    } catch {
-      toast.error(t("project.shareDialog.toastShareFailed"));
+    } catch (error) {
+      toast.error(await projectShareFailureMessage(error, t));
     }
   };
 
@@ -210,7 +256,7 @@ export function ShareProjectDialog({
                   placeholder={t("project.shareDialog.searchPlaceholder")}
                   className="h-9 rounded-[8px] focus-visible:ring-1"
                 />
-                {query.trim().length >= 3 && searchResults.length > 0 && !selectedUser && (
+                {trimmedQuery.length >= 3 && searchResults.length > 0 && !selectedUser && (
                   <div className="absolute left-0 right-0 top-10 z-10 rounded-[8px] border border-border bg-popover p-1 shadow-xl">
                     {searchResults.map((user) => {
                       const disabled = existingPrincipalIds.has(user.id) || user.id === project?.ownerId;
@@ -234,6 +280,11 @@ export function ShareProjectDialog({
                     })}
                   </div>
                 )}
+                {showNoShareableUser && (
+                  <div className="mt-1.5 text-xs text-muted-foreground">
+                    {t("project.shareDialog.noShareableUser")}
+                  </div>
+                )}
               </div>
               <Select value={role} onValueChange={(value) => setRole(value as GrantRole)}>
                 <SelectTrigger className="h-9 w-full rounded-[8px]">
@@ -251,7 +302,7 @@ export function ShareProjectDialog({
               </Select>
               <Button
                 onClick={handleAdd}
-                disabled={addGrant.isPending || query.trim().length < 3}
+                disabled={addGrant.isPending || !selectedUser}
               >
                 {addGrant.isPending ? <Loader2 className="size-4 animate-spin" /> : <UserPlus className="size-4" />}
                 {t("project.shareDialog.add")}

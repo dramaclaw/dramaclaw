@@ -44,6 +44,14 @@ production Skill does not turn an exact topology request into the normal draft f
    Before choosing an edge `link_type`, use the injected compatibility information or call
    `freezone_get_link_type_catalog` once when compatibility is not already explicit. Never guess a
    link type and never trial several link types through repeated compiler calls.
+   dependency_for only controls execution order and does not consume the source output. A target
+   whose task brief says it uses, follows, continues, adapts, or is based on actual upstream output
+   must not use dependency_for for that input. Use `context_for` when a text node consumes upstream
+   text as context, `prompt_for` when an image/video/audio/HTML or compatible text step consumes
+   upstream text, and `media_input_for` when a target consumes upstream image/video/audio. Before
+   submission, self-check every claimed upstream input against a consuming edge; preserve
+   dependency_for only for a genuine wait where the target remains independent of the source
+   output.
    Before submission, treat graph connectivity as an Agent-owned planning invariant rather than a
    detail the user must specify. Traverse the proposed graph as undirected and make sure every node
    belongs to one connected component. When the user's requested units are intentionally independent

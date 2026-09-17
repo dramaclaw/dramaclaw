@@ -986,7 +986,7 @@ function addChatCommandActions(node: CanvasNode, actions: CanvasNodeActionCatalo
       execution: "chat_command",
       command_type: "add_next_node",
       description:
-        "Create and connect one downstream node from this source node. Use this when the source should be consumed by the new node as input, reference, context, or media. For image modification or variants, add an imageGenNode or imageEditNode downstream from the source image so the source image is used as the visual reference. Choose node_type from this catalog's downstream_spawn_types, then request node_create_schema for that node_type before filling data. Use create_node instead for standalone nodes.",
+        "Create and connect one downstream node from this source node. This action does not generate media by itself. Use this when the source should be consumed by the new node as input, reference, context, or media. For image modification or variants that must produce an actual result, use one freezone_emit_canvas_command batch with add_next_node + run_node_action, give the new node a client_id, and run generate_image on that same alias; do not ask the user to click Generate manually. Choose node_type from this catalog's downstream_spawn_types, then request node_create_schema for that node_type before filling data. Use create_node instead for standalone nodes.",
       parameters: {
         source_node_id: node.id,
         node_type_schema: {

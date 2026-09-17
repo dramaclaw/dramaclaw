@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 export const queryKeys = {
   currentUser: () => ["auth", "me"] as const,
+  accountSecurity: () => ["account", "security"] as const,
   productSurfaces: () => ["product-surfaces", "me"] as const,
   creditSummary: () => ["credits", "summary"] as const,
   creditPromotions: () => ["credits", "promotions"] as const,
@@ -16,6 +17,12 @@ export const queryKeys = {
     featureKey?: string;
     model?: string;
   }) => ["credits", "transactions", filters] as const,
+  creditTransactionsRoot: () => ["credits", "transactions"] as const,
+  rechargePackages: () => ["payments", "packages"] as const,
+  customRecharge: () => ["payments", "custom-recharge"] as const,
+  rechargeOrders: () => ["payments", "orders"] as const,
+  rechargeOrder: (orderId: string) => ["payments", "orders", orderId] as const,
+  rechargeLinkPackages: (token: string) => ["payments", "recharge-link", token] as const,
   org: () => ["org"] as const,
   orgMe: () => ["org", "me"] as const,
   orgBranding: () => ["org", "branding"] as const,

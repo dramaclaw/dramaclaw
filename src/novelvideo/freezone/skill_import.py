@@ -125,17 +125,20 @@ def get_record(root: Path, username: str, import_id: str) -> dict:
 
 
 def public_record(record: dict) -> dict:
-    return {key: value for key, value in record.items()
-            if key not in {'source', 'catalog', 'analysis', 'username', 'checkpoints', 'capability_snapshot', 'validation_candidate', 'diagnostics', 'diagnostic_run_id', 'diagnostics_dropped'}}
+    from novelvideo.freezone.skill_import_contracts import CONVERSION_VERSION
+
+    result = {key: value for key, value in record.items()
+            if key not in {'source', 'catalog', 'analysis', 'username', 'checkpoints', 'capability_snapshot', 'validation_candidate', 'diagnostics', 'diagnostic_run_id', 'diagnostics_dropped', 'candidate_catalog', 'catalog_fingerprint', 'source_analysis', 'conversion_design'}}
+    result['current_conversion_version'] = CONVERSION_VERSION
+    return result
 
 
 def create_record(root: Path, username: str, source: dict, batch_id: str, batch_name: str = '') -> dict:
-    from novelvideo.freezone.agent_config_store import list_user_agent_config_items
     record = {'id': uuid.uuid4().hex, 'batch_id': batch_id, 'batch_name': batch_name,
               'name': source['name'], 'status': 'queued', 'stage': 'queued',
               'task_id': '', 'error': None, 'warnings': source['warnings'], 'bundle': None,
               'created_at': time.time(), 'source_sha256': source['sha256'], 'conversion_version': 1, 'source': source, 'username': username,
-              'catalog': list_user_agent_config_items(username, 'recipes')}
+              'candidate_catalog': []}
     save_record(root, username, record)
     return record
 

@@ -1,35 +1,32 @@
 ---
-version: 2.0.2
+version: 2.0.4
 attention: medium
 ---
-# v2.0.2
+# v2.0.4
 
 ## User-facing Highlights (zh)
 
-- **视频参考能力进一步扩展**: 视频节点新增文件和网页链接参考，并支持从画布选择图片或视频作为参考素材、在提示词中替换引用素材；CE 推荐模型列表新增 Seedance 2.5。
-- **英文创作流程更加完整**: 完善前后端英文文案、英文剧本场景识别和 Fountain 格式指引，并确保英文剧本生成的资产继续使用原始语言。
-- **虾画创作效率提升**: 优化画布切换、节点对齐、历史资产、资产库管理和虾导消息体验，减少切换画布时的整页加载和重复操作。
-- **视频任务更稳定透明**: 在排队前检查缺失的提示词和参考素材，保留安全的上游错误原因，并确保已提交任务在组织 Key 轮换后仍能完成。
-- **账号与项目管理更方便**: 新增用户自助修改密码入口，并将项目名称长度上限统一为 64 个字符。
+- **新增越南语界面**: DramaClaw 现已提供完整的越南语界面，并修正英文剧本格式指引和多语言回退逻辑，让更多社区用户可以直接使用熟悉的语言完成创作。
+- **支持可选手机号验证码登录**: 部署方启用对应入口后，用户可以通过手机号和验证码登录并设置密码；登录能力默认受开关控制，不影响现有部署。
+- **跨项目媒体引用更安全**: 虾画会识别来自其他项目的图片和视频引用，阻止无效引用继续写入，并为历史遗留引用提供复制到当前项目的一键修复入口。
+- **本地 CE 启动更省配置**: 本地启动现在默认使用社区版，不再要求额外声明版本；并发初始化配置时也会自动重试。
+- **画布任务计费参数更加准确**: 画布主线生成任务会携带完整的模型计费参数，减少预估与实际结算不一致的情况。
 
 ## User-facing Highlights (en)
 
-- **More flexible video references**: Video nodes now accept file and public web-link references, support picking image or video references directly from the canvas, and can replace referenced materials in prompts. Seedance 2.5 is included in the CE recommended model catalog.
-- **A more complete English workflow**: Frontend and backend English coverage, English screenplay scene parsing, and Fountain-format guidance have been improved, while generated assets preserve the screenplay's source language.
-- **Faster Canvas workflows**: Canvas switching, node alignment, generation history, asset management, and Xia Director messages have been refined to reduce full-page loading and repeated actions.
-- **More reliable and transparent video tasks**: Missing prompts and references are checked before queueing, safe upstream rejection details are retained, and accepted jobs can finish after an organization key rotation.
-- **Easier account and project management**: Users can now change their own password, and project names consistently support up to 64 characters.
+- **Vietnamese interface support**: DramaClaw now includes a complete Vietnamese interface, along with corrected English screenplay guidance and safer language fallback behavior.
+- **Optional phone OTP sign-in**: When enabled by the deployment operator, users can sign in with a phone number and verification code and set a password. The entry remains gated and does not affect existing deployments by default.
+- **Safer cross-project media references**: XiaHua detects image and video references that belong to another project, prevents new invalid references from being saved, and offers one-click repair for legacy references by copying them into the current project.
+- **Simpler local CE startup**: Local startup now defaults to the Community Edition without requiring an explicit edition setting, with automatic retries for concurrent settings initialization.
+- **More accurate canvas task billing**: Mainline canvas generation tasks now include complete model-pricing inputs, reducing differences between estimated and settled usage.
 
 ## Fixes
 
-- 修复视频任务缺少必要提示词或素材时仍进入队列的问题，并完善上游明确拒绝的错误分类 (#413, #454, #464).
-- 修复组织 Gateway Key 轮换后，已被上游接受的视频任务无法继续查询的问题 (#422).
-- 修复英文剧本场景标记识别、生成资产语言继承和任务进度翻译问题 (#441, #462, #463, #469).
-- 修复部分同步工作阻塞 API 事件循环，以及上传取消和并发锁处理问题 (#444).
+- 修正英文剧本格式指引、多语言回退和越南语手机号登录文案 (#500, #516).
+- 修复跨项目媒体引用可能导致素材无法访问或画布保存异常的问题 (#513).
+- 修复本地启动必须额外配置版本，以及并发初始化配置可能失败的问题 (#511).
+- 修复画布主线任务缺少模型计费参数的问题 (#497).
 
 ## Improvements
 
-- 增加视频文件/链接参考、画布素材选择和提示词素材替换能力 (#419, #424).
-- 优化画布切换、节点对齐、历史资产、资产库和虾导交互体验 (#409, #412, #417, #435).
-- 完善英文界面覆盖、Fountain 剧本格式说明，并增加中英文硬编码检查 (#447, #448).
-- 新增 Seedance 2.5 推荐配置、自助修改密码和项目名称长度统一限制 (#450, #453, #458).
+- 新增受部署开关控制的手机号验证码登录和密码设置能力 (#471).

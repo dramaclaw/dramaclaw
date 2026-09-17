@@ -115,7 +115,7 @@ _CODEX_GATEWAY_BASE_URL_ENV = "DRAMACLAW_CODEX_GATEWAY_BASE_URL"
 _CODEX_PER_TURN_CREDENTIAL_PLACEHOLDER = "dramaclaw-codex-per-turn-placeholder"
 _CODEX_GATEWAY_KEY_METADATA = "dramaclaw_gateway_api_key"
 _CODEX_CONTROL_CAPABILITY_METADATA = "dramaclaw_control_context_capability"
-_ACTIVE_CODEX_TURNS: dict[tuple[str, str], tuple[str, str]] = {}
+_ACTIVE_CODEX_TURNS: dict[tuple[str, str], tuple[str, str] | tuple[str, str, str]] = {}
 _ACTIVE_CODEX_TURNS_LOCK = threading.Lock()
 _CODEX_DEVELOPER_INSTRUCTIONS = (
     "You are the DramaClaw creative assistant. Use the required dramaclaw MCP "
@@ -160,6 +160,10 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "Use the high-level "
     "workflow draft/graph tools; never use freezone_emit_canvas_command for a workflow and never "
     "fall back to repeated single-node or single-edge tools after an error. "
+    "A one-node workflow is still a workflow. When the user explicitly asks to run, execute, "
+    "continue, or resume an existing workflow, call freezone_run_workflow directly even when it "
+    "contains only one executable node; do not read node detail before starting it and never "
+    "substitute freezone_run_node_action. "
     "For a normal workflow request, follow that Skill's discovery, draft, preview, and confirmation "
     "sequence. When the user explicitly specifies exact nodes and dependencies, follow the Skill's "
     "custom-topology reference and call freezone_prepare_workflow_plan_draft once instead; do not "
@@ -177,7 +181,11 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "failure isolation, add a non-executable common input root and fan it out to each branch input; "
     "do not ask the user to specify this internal topology and do not serialize sibling branches. "
     "Resolve unknown edge compatibility from freezone_get_link_type_catalog once; never guess link "
-    "types through repeated compiler calls. Do not use workflow_graph_compile as routine preflight "
+    "types through repeated compiler calls. dependency_for only controls execution order and never "
+    "consumes source output. A target that uses actual upstream output must not use dependency_for: "
+    "use context_for for consumed text context, prompt_for for consumed text prompts, and "
+    "media_input_for for consumed media. Self-check every claimed upstream input before submission. "
+    "Do not use workflow_graph_compile as routine preflight "
     "before the first graph write. After a recovery compile succeeds, immediately submit that exact "
     "corrected Plan with freezone_prepare_workflow_plan_draft instead of stopping at compile success. "
     "Correct the same complete plan once, then report the blocking error. The "
@@ -222,8 +230,9 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "instruction not to ask about model parameters, and it applies only to image and video for now. "
     "Store confirmed shared choices in workflow intent.inputs using portable image_model, "
     "image_aspect_ratio, image_resolution, image_quality, image_variants_per_node, video_model, "
-    "video_aspect_ratio, video_resolution, video_duration_seconds, video_generate_audio, and "
-    "video_variants_per_node keys. The Skill-specific image_count/video_count fields describe "
+    "video_aspect_ratio, video_resolution, video_duration_seconds, video_generate_audio, "
+    "video_generation_mode, and video_variants_per_node keys. The Skill-specific "
+    "image_count/video_count fields describe "
     "workflow deliverable or node counts and must never be copied to a node's data.count. If a "
     "canvas write returns code=generation_parameters_required, never retry unchanged. Follow the "
     "injected execution-mode contract to collect or populate the returned fields, then retry the "
@@ -525,12 +534,20 @@ Canvas write contract:
   every branch input; do not ask the user for internal nodes or link types, and do not serialize
   sibling branches merely to satisfy connectivity validation.
   Resolve unknown edge compatibility by reading freezone_get_link_type_catalog once. Never guess
-  link types through repeated compiler calls. The graph write already validates, so do not use
+  link types through repeated compiler calls. dependency_for only controls execution order and never
+  consumes source output. A target that uses actual upstream output must not use dependency_for:
+  use context_for for consumed text context, prompt_for for consumed text prompts, and
+  media_input_for for consumed media. Self-check every claimed upstream input before submission.
+  The graph write already validates, so do not use
   workflow_graph_compile as a routine preflight before the first write. After a recovery compile
   succeeds, immediately prepare the exact same Plan with freezone_prepare_workflow_plan_draft.
   Never call dramaclaw_get with guessed Skill or workflow HTTP paths. Use the workflow MCP catalog
   and its returned resource URI, or the documented freezone_get_workflow_skill fallback, exactly once.
   Do not use freezone_emit_canvas_command for a workflow.
+- A one-node workflow is still a workflow. When the user explicitly asks to run, execute, continue,
+  or resume an existing workflow, call freezone_run_workflow directly even when it contains only
+  one executable node; do not read node detail before starting it and never substitute
+  freezone_run_node_action.
 - `dramaclaw-workflows` is the Agent Skill package name, not a Workflow catalog `skill_id`. Never
   pass it to workflow_skill_get/freezone_get_workflow_skill or use it as intent.skill_id. Select the
   matching production Workflow Skill returned by the catalog, such as text-to-image-video for a
@@ -4617,6 +4634,35 @@ def _set_codex_thread_id(
         )
 
 
+def reset_codex_scope_thread(
+    username: str,
+    project: str,
+    *,
+    agent_profile: str = "main",
+    canvas_id: str | None = None,
+    project_state_dir: str | Path | None = None,
+) -> None:
+    """Make the next turn start a fresh thread without touching other scopes."""
+    from novelvideo.utils.state_index_files import index_file_lock
+
+    scope_key = _codex_scope_key(
+        project, agent_profile=agent_profile, canvas_id=canvas_id
+    )
+    state_path = _codex_session_state_path(
+        username, project, project_state_dir=project_state_dir
+    )
+    with index_file_lock(state_path):
+        payload = _load_codex_session_state(
+            username, project, project_state_dir=project_state_dir
+        )
+        if scope_key in payload:
+            payload.pop(scope_key)
+            _save_codex_session_state(
+                username, project, payload, project_state_dir=project_state_dir
+            )
+    _set_active_codex_turn(username, scope_key, None)
+
+
 def _active_codex_turns_path(username: str) -> Path:
     return _user_state_dir(username) / "active_codex_turns.json"
 
@@ -4639,7 +4685,7 @@ def _load_active_codex_turns(username: str) -> dict[str, dict[str, str]]:
 def _set_active_codex_turn(
     username: str,
     scope_key: str,
-    value: tuple[str, str] | None,
+    value: tuple[str, str] | tuple[str, str, str] | None,
 ) -> None:
     from novelvideo.utils.state_index_files import index_file_lock, write_json_atomic
 
@@ -4650,6 +4696,8 @@ def _set_active_codex_turn(
             payload.pop(scope_key, None)
         else:
             payload[scope_key] = {"thread_id": value[0], "turn_id": value[1]}
+            if len(value) >= 3 and str(value[2]).strip():
+                payload[scope_key]["business_turn_id"] = str(value[2]).strip()
         write_json_atomic(path, payload)
 
 
@@ -5350,10 +5398,12 @@ def _dramaclaw_mcp_servers(
                 "DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",
                 "DRAMACLAW_AGENT_PROFILE",
                 "DRAMACLAW_PROJECT_ID",
+                "DRAMACLAW_ROOT",
                 "DRAMACLAW_SKILLS_DIR",
                 "DRAMACLAW_TOOL_MODE",
                 "DRAMACLAW_USERNAME",
                 "NOVELVIDEO_OUTPUT_DIR",
+                "PYTHONPATH",
             ],
         }
     }
@@ -5365,7 +5415,7 @@ def _dramaclaw_mcp_servers(
             "type": "stdio",
             "command": sys.executable,
             "args": ["-m", "novelvideo.chat.workflow_mcp"],
-            "env_vars": ["DRAMACLAW_USERNAME", "NOVELVIDEO_OUTPUT_DIR"],
+            "env_vars": ["DRAMACLAW_USERNAME", "NOVELVIDEO_OUTPUT_DIR", "PYTHONPATH"],
         }
     return servers
 
@@ -5612,9 +5662,9 @@ async def interrupt_active_codex_turns(username: str) -> bool:
         return False
     with _ACTIVE_CODEX_TURNS_LOCK:
         turns = [
-            value
+            (value[0], value[1])
             for (turn_username, _project), value in _ACTIVE_CODEX_TURNS.items()
-            if turn_username == normalized
+            if turn_username == normalized and len(value) >= 2
         ]
     turns.extend(
         (entry.get("thread_id", ""), entry.get("turn_id", ""))
@@ -5635,6 +5685,47 @@ async def interrupt_active_codex_turns(username: str) -> bool:
         return_exceptions=True,
     )
     return any(result is True for result in results)
+
+
+async def interrupt_active_codex_turn(
+    username: str,
+    scope_key: str,
+    business_turn_id: str,
+) -> bool:
+    """Interrupt one active Codex turn only when its public turn identity matches."""
+
+    normalized_user = str(username or "").strip()
+    normalized_scope = str(scope_key or "").strip()
+    normalized_business_turn = str(business_turn_id or "").strip()
+    if not normalized_user or not normalized_scope or not normalized_business_turn:
+        return False
+
+    with _ACTIVE_CODEX_TURNS_LOCK:
+        local = _ACTIVE_CODEX_TURNS.get((normalized_user, normalized_scope))
+    if local is not None:
+        if len(local) < 3 or str(local[2]).strip() != normalized_business_turn:
+            return False
+        thread_id, runtime_turn_id = str(local[0]).strip(), str(local[1]).strip()
+    else:
+        persisted = _load_active_codex_turns(normalized_user).get(normalized_scope)
+        if (
+            not persisted
+            or str(persisted.get("business_turn_id") or "").strip()
+            != normalized_business_turn
+        ):
+            return False
+        thread_id = str(persisted.get("thread_id") or "").strip()
+        runtime_turn_id = str(persisted.get("turn_id") or "").strip()
+    if not thread_id or not runtime_turn_id:
+        return False
+    interrupted = await asyncio.to_thread(
+        interrupt_live_codex_turn, thread_id, runtime_turn_id
+    )
+    if interrupted:
+        return True
+    return await asyncio.to_thread(
+        _control_codex_thread, "interrupt", thread_id, runtime_turn_id
+    )
 
 
 async def stream_assistant_reply(
@@ -6809,7 +6900,7 @@ async def _stream_assistant_reply_codex(
         canvas_id=canvas_id,
     )
     active_turn_key = (username, codex_scope_key)
-    active_turn_value: tuple[str, str] | None = None
+    active_turn_value: tuple[str, str, str] | None = None
     agent_token: str | None = None
     token_file: Path | None = None
     logger.info(
@@ -6888,7 +6979,11 @@ async def _stream_assistant_reply_codex(
                         project_state_dir=project_state_dir,
                     )
                 if codex_thread_id and codex_turn_id:
-                    active_turn_value = (codex_thread_id, codex_turn_id)
+                    active_turn_value = (
+                        codex_thread_id,
+                        codex_turn_id,
+                        business_turn_id,
+                    )
                     with _ACTIVE_CODEX_TURNS_LOCK:
                         _ACTIVE_CODEX_TURNS[active_turn_key] = active_turn_value
                     _set_active_codex_turn(username, codex_scope_key, active_turn_value)

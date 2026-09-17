@@ -261,6 +261,7 @@ type ApplyCanvasChatCommandsOptions = {
   actionAcceptTimeoutMs?: number;
   actionResultFieldTimeoutMs?: number;
   actionRetryDelayMs?: number;
+  onWorkflowRunPersisted?: (runId: string) => void;
 };
 
 type PendingVideoFrameCapture = {
@@ -417,9 +418,24 @@ export function canvasCommandEnvelopesRunInBackground(
   ));
 }
 
+export function canvasCommandEnvelopesRequireDurableAcceptance(
+  envelopes: CanvasChatCommandEnvelope[],
+): boolean {
+  return envelopes.some((envelope) =>
+    envelope.commands.some((command) => command.type === "run_workflow"));
+}
+
 export async function waitForImmediateCanvasCommandResult(
   execution: Promise<CanvasChatCommandApplyResult>,
+  durableAcceptance?: Promise<unknown>,
 ): Promise<CanvasChatCommandApplyResult | null> {
+  if (durableAcceptance) {
+    const outcome = await Promise.race([
+      execution.then((result) => ({ kind: "result" as const, result })),
+      durableAcceptance.then(() => ({ kind: "accepted" as const })),
+    ]);
+    return outcome.kind === "result" ? outcome.result : null;
+  }
   return Promise.race([
     execution,
     new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 0)),
@@ -2351,7 +2367,13 @@ async function waitForChangedGeneratedResultFromNode(
     if (nodeGenerationError(nodeId)) return null;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  return null;
+  // A task completion and a user cancellation can become observable during
+  // the same polling interval. Prefer the durable result that already landed
+  // on the node before treating the remaining workflow as cancelled.
+  const finalOutput = generatedResultOutputFromNode(nodeId, action);
+  return finalOutput && JSON.stringify(finalOutput) !== initialToken
+    ? finalOutput
+    : null;
 }
 
 function workflowTaskReference(
@@ -2867,6 +2889,7 @@ async function executeQueuedNodeActions(
           workflowRunnerId,
         );
         workflowRunId = createdRun.run_id;
+        options.onWorkflowRunPersisted?.(workflowRunId);
         for (const action of createdRun.actions) {
           if (action.product_operation_id) {
             bindWorkflowProductOperation(action.node_id, {
@@ -3413,13 +3436,35 @@ async function executeQueuedNodeActions(
                   return waiting;
                 })
                 : null;
-            const actionResult = firstSignal.kind === "result"
+            let actionResult = firstSignal.kind === "result"
               ? firstSignal.actionResult
               : await Promise.race([
                   waiting,
                   ...(singleGenerationSubmission ? [singleGenerationSubmission] : []),
                   ...(changedGeneratedResult ? [changedGeneratedResult] : []),
                 ]);
+            if (actionResult.status === "error" && workflowCancelled()) {
+              const completedOutput = generatedResultOutputFromNode(
+                action.nodeId,
+                action.action,
+              );
+              actionResult = completedOutput &&
+                JSON.stringify(completedOutput) !== initialGeneratedResultToken
+                ? {
+                    requestId,
+                    nodeId: action.nodeId,
+                    action: action.action,
+                    status: "success" as const,
+                    output: completedOutput,
+                  }
+                : {
+                    requestId,
+                    nodeId: action.nodeId,
+                    action: action.action,
+                    status: "error" as const,
+                    error: WORKFLOW_STOPPED_MESSAGE,
+                  };
+            }
             actionSettled = true;
             void taskReferencePersistence;
             clearPendingNodeAction(requestId);

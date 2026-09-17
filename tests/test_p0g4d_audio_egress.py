@@ -167,8 +167,12 @@ def _install_ports(monkeypatch, credential_port, operation_port) -> None:
 
 
 @pytest.mark.asyncio
-async def test_audio_runner_propagates_same_trusted_context_to_beat_leaf(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize(
+    ("kind", "forwarded"),
+    [("organization", True), ("platform", False), ("local", False)],
+)
+async def test_audio_runner_forwards_only_organization_context_to_beat_leaf(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, kind: str, forwarded: bool
 ) -> None:
     from novelvideo.egress_context import (
         TRUSTED_EGRESS_CONTEXT_KEY,
@@ -178,7 +182,7 @@ async def test_audio_runner_propagates_same_trusted_context_to_beat_leaf(
     import novelvideo.audio.indextts2_beat_audio_task as beat_task
     import novelvideo.sqlite_store as sqlite_store
 
-    context = _context()
+    context = _context(kind)
     captured: dict = {}
 
     class Store:
@@ -232,7 +236,8 @@ async def test_audio_runner_propagates_same_trusted_context_to_beat_leaf(
 
     await audio_runner._run_indextts2_audio(envelope, ctx)
 
-    assert captured["egress_context"] is context
+    # 与 freezone 的叶子分发同理：平台与本地任务不带组织出网身份，否则 IndexTTS2 会判 ORG_EGRESS_DENIED。
+    assert captured.get("egress_context") is (context if forwarded else None)
 
 
 @pytest.mark.asyncio

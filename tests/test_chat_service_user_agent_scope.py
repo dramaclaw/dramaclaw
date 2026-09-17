@@ -1278,6 +1278,11 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "call the selected tool directly" in developer_instructions
         assert "custom-topology reference" in developer_instructions
         assert "freezone_prepare_workflow_plan_draft once" in developer_instructions
+        assert (
+            "dependency_for only controls execution order and never consumes source output"
+            in developer_instructions
+        )
+        assert "must not use dependency_for" in developer_instructions
         assert "expected_node_count" in developer_instructions
         assert "placeholder graph such as A/B" in developer_instructions
         assert "short-drama production Skill" in developer_instructions
@@ -1289,6 +1294,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "call freezone_request_user_clarification once" in developer_instructions
         assert "applies only to image and video for now" in developer_instructions
         assert "run_after_create=true" in developer_instructions
+        assert "video_generation_mode" in developer_instructions
     else:
         assert "[FREEZONE_CANVAS_ASSISTANT]" not in captured["prompt"]
         assert "scope-filtered concrete MCP tools" in (
@@ -1526,6 +1532,14 @@ def test_codex_freezone_instructions_forbid_invented_resource_uris():
     assert "the Freezone write tool creates that card" in instructions
     assert "never use the built-in request_user_input tool" in instructions
     assert "Never call create_goal for a canvas request" in instructions
+    assert "one-node workflow is still a workflow" in instructions
+    assert "do not read node detail before starting it" in instructions
+    assert "freezone_run_node_action" in instructions
+
+    canvas_instructions = chat_service._FREEZONE_CANVAS_ASSISTANT_INSTRUCTIONS
+    assert "one-node workflow is still a workflow" in canvas_instructions
+    assert "do not read node detail before starting it" in canvas_instructions
+    assert "freezone_run_node_action" in canvas_instructions
 
 
 def test_codex_freezone_write_result_error_preserves_canvas_validation_reason():
@@ -2260,10 +2274,12 @@ def test_dramaclaw_mcp_server_config_is_agent_neutral():
         "DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",
         "DRAMACLAW_AGENT_PROFILE",
         "DRAMACLAW_PROJECT_ID",
+        "DRAMACLAW_ROOT",
         "DRAMACLAW_SKILLS_DIR",
         "DRAMACLAW_TOOL_MODE",
         "DRAMACLAW_USERNAME",
         "NOVELVIDEO_OUTPUT_DIR",
+        "PYTHONPATH",
     ]
 
 
@@ -2277,7 +2293,7 @@ def test_freezone_adds_independent_workflow_mcp_without_changing_default():
         "type": "stdio",
         "command": __import__("sys").executable,
         "args": ["-m", "novelvideo.chat.workflow_mcp"],
-        "env_vars": ["DRAMACLAW_USERNAME", "NOVELVIDEO_OUTPUT_DIR"],
+        "env_vars": ["DRAMACLAW_USERNAME", "NOVELVIDEO_OUTPUT_DIR", "PYTHONPATH"],
     }
 
 
@@ -2311,8 +2327,8 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
         '"DRAMACLAW_EXTERNAL_MCP",'
         '"DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",'
         '"DRAMACLAW_AGENT_PROFILE","DRAMACLAW_PROJECT_ID",'
-        '"DRAMACLAW_SKILLS_DIR","DRAMACLAW_TOOL_MODE",'
-        '"DRAMACLAW_USERNAME","NOVELVIDEO_OUTPUT_DIR"]' in overrides
+        '"DRAMACLAW_ROOT","DRAMACLAW_SKILLS_DIR","DRAMACLAW_TOOL_MODE",'
+        '"DRAMACLAW_USERNAME","NOVELVIDEO_OUTPUT_DIR","PYTHONPATH"]' in overrides
     )
     assert "mcp_servers.dramaclaw.required=true" in overrides
     assert 'mcp_servers.dramaclaw.default_tools_approval_mode="approve"' in overrides
@@ -2862,6 +2878,109 @@ async def test_cancel_interrupts_only_the_users_active_codex_turns(monkeypatch):
     finally:
         with chat_service._ACTIVE_CODEX_TURNS_LOCK:
             chat_service._ACTIVE_CODEX_TURNS.clear()
+
+
+@pytest.mark.asyncio
+async def test_cancel_interrupts_only_the_exact_codex_scope_and_business_turn(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    scope_a = chat_service._codex_scope_key(
+        "project-a", agent_profile="freezone:main", canvas_id="canvas-a"
+    )
+    scope_b = chat_service._codex_scope_key(
+        "project-a", agent_profile="freezone:main", canvas_id="canvas-b"
+    )
+    calls = []
+    monkeypatch.setattr(
+        chat_service,
+        "interrupt_live_codex_turn",
+        lambda thread_id, turn_id: calls.append((thread_id, turn_id)) or True,
+    )
+    with chat_service._ACTIVE_CODEX_TURNS_LOCK:
+        chat_service._ACTIVE_CODEX_TURNS.clear()
+        chat_service._ACTIVE_CODEX_TURNS.update(
+            {
+                ("alice", scope_a): ("thread-a", "runtime-a", "business-a"),
+                ("alice", scope_b): ("thread-b", "runtime-b", "business-b"),
+            }
+        )
+    try:
+        assert (
+            await chat_service.interrupt_active_codex_turn(
+                "alice", scope_a, "business-a"
+            )
+            is True
+        )
+        assert calls == [("thread-a", "runtime-a")]
+    finally:
+        with chat_service._ACTIVE_CODEX_TURNS_LOCK:
+            chat_service._ACTIVE_CODEX_TURNS.clear()
+
+
+@pytest.mark.asyncio
+async def test_exact_cancel_rejects_a_stale_business_turn_without_interrupting_new_turn(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    scope = chat_service._codex_scope_key(
+        "project-a", agent_profile="freezone:main", canvas_id="canvas-a"
+    )
+    calls = []
+    monkeypatch.setattr(
+        chat_service,
+        "interrupt_live_codex_turn",
+        lambda *ids: calls.append(ids) or True,
+    )
+    with chat_service._ACTIVE_CODEX_TURNS_LOCK:
+        chat_service._ACTIVE_CODEX_TURNS.clear()
+        chat_service._ACTIVE_CODEX_TURNS[("alice", scope)] = (
+            "thread-new",
+            "runtime-new",
+            "business-new",
+        )
+    try:
+        assert (
+            await chat_service.interrupt_active_codex_turn(
+                "alice", scope, "business-old"
+            )
+            is False
+        )
+        assert calls == []
+    finally:
+        with chat_service._ACTIVE_CODEX_TURNS_LOCK:
+            chat_service._ACTIVE_CODEX_TURNS.clear()
+
+
+@pytest.mark.asyncio
+async def test_exact_cancel_reads_matching_business_turn_from_other_worker(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    scope = chat_service._codex_scope_key(
+        "project-a", agent_profile="freezone:main", canvas_id="canvas-a"
+    )
+    chat_service._set_active_codex_turn(
+        "alice", scope, ("thread-a", "runtime-a", "business-a")
+    )
+    calls = []
+    monkeypatch.setattr(chat_service, "interrupt_live_codex_turn", lambda *_: False)
+    monkeypatch.setattr(
+        chat_service,
+        "_control_codex_thread",
+        lambda operation, thread_id, turn_id=None: calls.append(
+            (operation, thread_id, turn_id)
+        )
+        or True,
+    )
+
+    assert (
+        await chat_service.interrupt_active_codex_turn(
+            "alice", scope, "business-a"
+        )
+        is True
+    )
+    assert calls == [("interrupt", "thread-a", "runtime-a")]
 
 
 @pytest.mark.asyncio

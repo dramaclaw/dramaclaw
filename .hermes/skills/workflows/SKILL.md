@@ -102,6 +102,7 @@ Plan 中的边只表示真实输入依赖，不表示时间顺序。节点 ID �
 
 用户确认动态方案后，只调用 `freezone_confirm_workflow_draft(draft_id=..., revision=...)`，一次性创建草稿中已经预览过的节点、连线、布局和分组。普通 Intent 与高级完整 Plan 都必须先生成持久化草稿；不再保留任何直接创建兼容入口。
 - 用户要求“继续/完成工作流”时直接调用 `freezone_run_workflow(regenerate=false)`，让 Runner 自动发现可执行节点并跳过已有结果；调用前不要读取画布摘要、节点详情、邻接图或逐节点动作目录，也不要逐节点执行。
+- 只有一个可执行节点的工作流仍然是工作流。用户明确称目标为工作流并要求运行、执行、继续或恢复时，仍直接调用 `freezone_run_workflow`；禁止因为节点数为 1 而降级为 `freezone_run_node_action`。
 - 用户修改某个节点后要求“从这里重跑/重做后续”时，调用 `freezone_run_workflow(node_ids=[...], direction="downstream", regenerate=true)`；Agent 不遍历或枚举下游节点。
 - 仅重试一个失败节点时使用 `direction="node"`；没有明确要求覆盖已有结果时不得设置 `regenerate=true`。
 - 禁止为动态工作流调用 `freezone_emit_canvas_command`。这个通用批量工具只用于非工作流的普通画布编辑。

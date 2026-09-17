@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import BinaryIO
 
+from novelvideo.backup.scope import DEPRECATED_COGNEE_FILTER_RULES, is_deprecated_cognee_path
 from novelvideo.freezone.canvas_lock import canvas_write_lock
 from novelvideo.freezone.paths import CANVAS_ID_RE
 
@@ -60,9 +61,11 @@ def _filter_text(*rules: str) -> str:
 RCLONE_FILTER = _filter_text(*_BASE_FILTER_RULES, "+ **")
 
 # The live-tree pass excludes hot state. Those files are copied from an immutable
-# per-run staging tree with HOT_SNAPSHOT_FILTER instead.
+# per-run staging tree with HOT_SNAPSHOT_FILTER instead. Deprecated Cognee stores are
+# skipped here only, so restore (RCLONE_FILTER) still reaches the copies in OSS.
 LIVE_SYNC_FILTER = _filter_text(
     *_BASE_FILTER_RULES,
+    *DEPRECATED_COGNEE_FILTER_RULES,
     *(f"- {pattern}" for pattern in _HOT_STATE_PATTERNS),
     "+ **",
 )
@@ -149,7 +152,9 @@ def sync_db_snapshots(
     snapshots = [
         snap
         for snap in sorted(state_dir.rglob(f"*{SNAPSHOT_SUFFIX}"))
-        if snap.is_file() and not snap.is_symlink()
+        if snap.is_file()
+        and not snap.is_symlink()
+        and not is_deprecated_cognee_path(snap.relative_to(state_dir))
     ]
     print(
         f"backup_stage_start stage=db-snapshots-sync files={len(snapshots)}",

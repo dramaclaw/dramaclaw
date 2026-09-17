@@ -2127,6 +2127,21 @@ describe("Skill Studio question response", () => {
     ]);
   });
 
+  it("shows question text when a submitted question has no title", () => {
+    const items = buildSkillStudioQuestionTimelineItemsForTest(
+      [
+        {
+          id: "video_duration_seconds",
+          question: "视频时长是多久？",
+          options: [{ id: "6", label: "6" }],
+        },
+      ],
+      { video_duration_seconds: "6" },
+    );
+
+    expect(items[0]?.title).toBe("视频时长是多久？");
+  });
+
   it("preserves submitted skip status in compact question cards", () => {
     const items = buildSkillStudioQuestionTimelineItemsForTest(
       [
@@ -2179,6 +2194,19 @@ describe("Skill Studio question response", () => {
         answered: true,
       },
     ]);
+  });
+
+  it("shows question text in submitted clarification summaries when title is missing", () => {
+    const items = visibleAssistantClarificationTimelineItemsForTest(
+      [{
+        id: "video_duration_seconds",
+        question: "视频时长是多久？",
+        options: [{ id: "6", label: "6 秒" }],
+      }],
+      { video_duration_seconds: "6" },
+    );
+
+    expect(items[0]?.title).toBe("视频时长是多久？");
   });
 
   it("keeps submitted option ids visible when dynamic labels are unavailable", () => {
@@ -2268,6 +2296,67 @@ describe("Skill Studio question response", () => {
     expect(payload.user_message).not.toContain("prompt_for");
   });
 
+  it("marks a workflow persistence failure as failed even after parameter updates applied", () => {
+    const persistenceError = "无法创建持久化工作流记录，未启动节点动作：database unavailable";
+    const payload = buildCanvasCommandToolResultPayloadForTest({
+      bridgeKey: "bridge-workflow-persistence",
+      projectId: "project-a",
+      canvasId: "canvas-a",
+      result: {
+        applied: 4,
+        openedUiActions: 0,
+        createdNodeIds: [],
+        errors: [persistenceError],
+        commandResults: [
+          { commandIndex: 0, type: "update_node_data", status: "success", label: "更新图片参数" },
+          { commandIndex: 1, type: "update_node_data", status: "success", label: "更新视频参数" },
+          { commandIndex: 2, type: "update_node_data", status: "success", label: "更新审核参数" },
+          { commandIndex: 3, type: "run_workflow", status: "success", label: "运行工作流" },
+          {
+            commandIndex: 3,
+            type: "run_node_action",
+            status: "error",
+            label: "生成图片",
+            nodeId: "image-a",
+            action: "generate_image",
+            error: persistenceError,
+          },
+        ],
+      },
+    });
+
+    expect(payload).toMatchObject({
+      tool_call_status: "failed",
+      canvas_apply_status: "failed",
+      applied: false,
+      applied_count: 4,
+      errors: [persistenceError],
+    });
+  });
+
+  it("keeps non-workflow partial command batches distinguishable from terminal workflow failure", () => {
+    const payload = buildCanvasCommandToolResultPayloadForTest({
+      bridgeKey: "bridge-partial-edit",
+      result: {
+        applied: 1,
+        openedUiActions: 0,
+        createdNodeIds: [],
+        errors: ["第二个节点不存在"],
+        commandResults: [
+          { commandIndex: 0, type: "update_node_data", status: "success", label: "更新节点" },
+          { commandIndex: 1, type: "update_node_data", status: "error", label: "更新节点", error: "第二个节点不存在" },
+        ],
+      },
+    });
+
+    expect(payload).toMatchObject({
+      tool_call_status: "completed",
+      canvas_apply_status: "partially_applied",
+      applied: true,
+      applied_count: 1,
+    });
+  });
+
   it("keeps structured multiple-choice answers in bridge payload", () => {
     const payload = buildSkillStudioQuestionToolResultForTest(
       {
@@ -2304,6 +2393,22 @@ describe("Skill Studio question response", () => {
 });
 
 describe("Assistant clarification response", () => {
+  it("uses question text in answers when the title is missing", () => {
+    const text = buildAssistantClarificationResponseForTest(
+      {
+        type: "assistant.clarification.request",
+        questions: [{
+          id: "video_duration_seconds",
+          question: "视频时长是多久？",
+          options: [{ id: "6", label: "6 秒" }],
+        }],
+      },
+      { video_duration_seconds: "6" },
+    );
+
+    expect(text).toContain("视频时长是多久？\n6 秒");
+  });
+
   it("builds a reusable clarification summary from selected answers", () => {
     const text = buildAssistantClarificationResponseForTest(
       {
@@ -4563,6 +4668,75 @@ describe("useSuperChat websocket lifecycle", () => {
         canvas_command_execution_mode: "auto_execute",
       },
     }));
+  });
+
+  it("cancels only the active business turn in the current scope", async () => {
+    apiPostMock.mockClear();
+    const sentFrames: string[] = [];
+    const closeCalls: Array<[number | undefined, string | undefined]> = [];
+    class TestWebSocket {
+      static OPEN = 1;
+      readyState = 1;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: ((event: CloseEvent) => void) | null = null;
+
+      constructor() {
+        sockets.push(this);
+      }
+
+      send(frame: string) {
+        sentFrames.push(frame);
+      }
+
+      close(code?: number, reason?: string) {
+        closeCalls.push([code, reason]);
+      }
+    }
+    const sockets: TestWebSocket[] = [];
+    Object.defineProperty(globalThis, "WebSocket", {
+      value: TestWebSocket,
+      writable: true,
+      configurable: true,
+    });
+    const scope = {
+      kind: "project" as const,
+      id: "project-a",
+      surface: "freezone" as const,
+      canvasId: "canvas-a",
+      agentId: "agent-2",
+    };
+    const hook = renderHook(() => useSuperChat({
+      project: "project-a",
+      displayName: "Tester",
+      surface: "freezone",
+      freezoneCanvasId: "canvas-a",
+      freezoneAgentId: "agent-2",
+    }));
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    await act(async () => {
+      sockets[0]?.onopen?.();
+      sockets[0]?.onmessage?.({
+        data: JSON.stringify({ type: "scope.changed", scope, history: [], busy: false }),
+      } as MessageEvent);
+    });
+    await waitFor(() => expect(hook.result.current.connected).toBe(true));
+
+    act(() => {
+      expect(hook.result.current.send("keep this scoped", [])).toBe(true);
+    });
+    const chatFrame = sentFrames
+      .map((frame) => JSON.parse(frame) as Record<string, unknown>)
+      .find((frame) => frame.type === "chat.message");
+    expect(chatFrame?.turn_id).toEqual(expect.any(String));
+
+    act(() => hook.result.current.abort());
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith("api/v1/chat/cancel", {
+      json: { scope, turn_id: chatFrame?.turn_id },
+    }));
+    expect(closeCalls).toContainEqual([4000, "client abort"]);
   });
 
   it("defaults freezone canvas execution context to manual confirmation", () => {

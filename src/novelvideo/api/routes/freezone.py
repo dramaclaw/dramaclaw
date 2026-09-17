@@ -54,6 +54,7 @@ from novelvideo.api.schemas import (
     CreateIdentityAssetRequest,
     FreezoneAnalyzeShotsRequest,
     FreezoneAnalyzeVideoStoryRequest,
+    FreezoneAssetCopyRequest,
     FreezoneAssetLibraryFolderPatchRequest,
     FreezoneAssetLibraryFolderRequest,
     FreezoneAssetLibraryItemPatchRequest,
@@ -129,6 +130,13 @@ from novelvideo.freezone.agent_config_store import (
     list_user_agent_config_items,
     save_user_agent_config_item,
 )
+from novelvideo.freezone.asset_copy import (
+    AssetCopyError,
+    allocate_target_path,
+    copy_project_file,
+    parse_project_asset_url,
+    resolve_source_file,
+)
 from novelvideo.i18n_message import log_lines_text
 from novelvideo.media_model_request_schema import (
     MediaModelSchemaError,
@@ -151,6 +159,11 @@ from novelvideo.freezone.audio_node import (
     resolve_user_audio_voice,
 )
 from novelvideo.freezone.canvas_lock import CanvasLockBusy
+from novelvideo.freezone.canvas_media_scope import (
+    CanvasMediaScopeError,
+    reject_new_foreign_media_refs,
+    scan_foreign_media_refs,
+)
 from novelvideo.freezone.canvas_static_urls import (
     migrate_canvas_static_urls_in_memory,
     sanitize_project_local_paths_in_memory,
@@ -191,6 +204,7 @@ from novelvideo.freezone.workflow_runs import (
     prune_workflow_runs,
     read_workflow_run,
     reconcile_workflow_runs_with_canvas_nodes,
+    reconcile_workflow_runs_with_canvas_results,
     reconcile_workflow_runs_with_tasks,
     update_workflow_run,
 )
@@ -361,6 +375,7 @@ from novelvideo.freezone.video_node import (
     normalize_video_resolution_for_backend,
     rename_video_character_library_item,
     resolve_freezone_video_backend,
+    supported_image_aspect_ratio,
     summarize_omni_reference_counts,
     update_video_character_folder,
     validate_omni_reference_audio_durations,
@@ -1271,6 +1286,101 @@ def _skill_background_reference_mode(parameters: dict[str, object]) -> str:
     return "material_only"
 
 
+def _mainline_image_task_billing(config: dict, *, is_sketch: bool) -> dict:
+    """Price the same selection, mode and quality that the task runner consumes."""
+    from novelvideo.config import (
+        DEFAULT_RENDER_IMAGE_SELECTION,
+        DEFAULT_SKETCH_IMAGE_SELECTION,
+        get_render_generation_config,
+        get_sketch_generation_config,
+        normalize_image_generation_selection,
+    )
+
+    selection = normalize_image_generation_selection(
+        config.get("image_generation_selection"),
+        fallback=(
+            DEFAULT_SKETCH_IMAGE_SELECTION
+            if is_sketch
+            else DEFAULT_RENDER_IMAGE_SELECTION
+        ),
+    )
+    generation_config = (
+        get_sketch_generation_config(selection_override=selection)
+        if is_sketch
+        else get_render_generation_config(selection_override=selection)
+    )
+    image_quality = str(config.get("image_quality") or "").strip().lower()
+    if image_quality in {"low", "medium", "high"}:
+        generation_config["openai_image_quality"] = image_quality
+        generation_config["huimeng_image_quality"] = image_quality
+    return _mainline_generator_billing(
+        "mainline.sketch_regen" if is_sketch else "mainline.render_regen",
+        generation_config,
+        config["mode_key"],
+        is_sketch=is_sketch,
+    )
+
+
+def _mainline_generator_billing(
+    feature_key: str, generation_config: dict, mode_key: str, *, is_sketch: bool
+) -> dict:
+    from novelvideo.api.routes.model_credits import _image_billing_params
+    from novelvideo.generators.nanobanana_grid import (
+        REGEN_MODE_CONFIGS,
+        normalize_image_size,
+    )
+
+    provider = generation_config["provider"]
+    # generate_grid takes size from mode_key, even for director conversion.
+    size = normalize_image_size(REGEN_MODE_CONFIGS[mode_key]["image_size"], provider)
+    quality_key = (
+        "huimeng_image_quality"
+        if provider == "huimeng"
+        else "openai_sketch_image_quality" if is_sketch else "openai_image_quality"
+    )
+    return {
+        "feature_key": feature_key,
+        "pricing_kind": "image",
+        "pricing_model": generation_config["model"],
+        "pricing_params": _image_billing_params(
+            model=generation_config["model"],
+            image_size=size,
+            quality=generation_config.get(
+                quality_key, "low" if is_sketch else "medium"
+            ),
+        ),
+    }
+
+
+def _director_sketch_task_billing(
+    *,
+    username: str,
+    project_name: str,
+    mode_key: str,
+    projection_payload: dict | None = None,
+) -> dict:
+    from novelvideo.director_world.control_frame_to_sketch import (
+        get_director_sketch_generation_config,
+    )
+    from novelvideo.project_config import load_project_config_file
+    from novelvideo.task_backend.projection import read_projection
+
+    projection = read_projection(projection_payload or {})
+    selection = (
+        projection.require("sketch_image_selection")
+        if projection is not None
+        else load_project_config_file(username, project_name).get(
+            "sketch_image_selection"
+        )
+    )
+    return _mainline_generator_billing(
+        "mainline.director_control_to_sketch",
+        get_director_sketch_generation_config(selection),
+        mode_key,
+        is_sketch=True,
+    )
+
+
 async def _mainline_single_beat_config(
     *,
     ctx: ProjectContext,
@@ -1535,7 +1645,7 @@ async def _start_or_enqueue_mainline_sketch_from_context_job(
                 "config": config,
                 "canvas_id": canvas_id or "",
                 "node_id": node_id or "",
-                "billing": {"feature_key": "mainline.sketch_regen"},
+                "billing": _mainline_image_task_billing(config, is_sketch=True),
                 **display_payload,
                 **projection_payload,
             },
@@ -1731,7 +1841,7 @@ async def _start_or_enqueue_mainline_frame_from_context_job(
                 "config": config,
                 "canvas_id": canvas_id or "",
                 "node_id": node_id or "",
-                "billing": {"feature_key": "mainline.render_regen"},
+                "billing": _mainline_image_task_billing(config, is_sketch=False),
                 **display_payload,
                 **projection_payload,
             },
@@ -1978,6 +2088,7 @@ async def _start_or_enqueue_standalone_frame_from_context_job(
                 "output_dir": str(project_dir),
                 "mode_key": mode_key,
                 "config": config,
+                "billing": _mainline_image_task_billing(config, is_sketch=False),
                 "canvas_id": canvas_id or "",
                 "node_id": node_id or "",
                 **display_payload,
@@ -2098,7 +2209,11 @@ async def _start_or_enqueue_mainline_director_control_sketch_job(
             "aspect_ratio": _normalize_mainline_skill_aspect_ratio(aspect_ratio),
             "canvas_id": canvas_id or "",
             "node_id": node_id or "",
-            "billing": {"feature_key": "mainline.director_control_to_sketch"},
+            "billing": _director_sketch_task_billing(
+                username=ctx.owner_username, project_name=ctx.project_name,
+                mode_key=_mainline_mode_key_for_aspect(aspect_ratio, is_sketch=True),
+                projection_payload=projection_payload,
+            ),
             "task_family": "mainline_skill",
             "task_label": "导演合成图转草图",
             "display_name": f"导演合成图转草图 · EP{episode} / Beat {beat}",
@@ -2159,7 +2274,7 @@ async def _start_or_enqueue_mainline_beat_sketch_task(
             "config": config,
             "canvas_id": canvas_id or "",
             "node_id": node_id or "",
-            "billing": {"feature_key": "mainline.sketch_regen"},
+            "billing": _mainline_image_task_billing(config, is_sketch=True),
             "task_family": "mainline_skill",
             "task_label": "生成草图",
             "display_name": f"生成草图 · EP{episode} / Beat {beat}",
@@ -5489,6 +5604,117 @@ async def freezone_reference_file_upload(
         user,
         max_bytes=REFERENCE_FILE_MAX_BYTES,
     )
+
+
+_ASSET_COPY_CONCURRENCY = 4
+
+
+@router.post("/projects/{project}/freezone/assets/copy", tags=[TAG_FREEZONE_MEDIA])
+async def freezone_copy_assets_from_project(
+    project: str,
+    body: FreezoneAssetCopyRequest,
+    user: dict = Depends(get_api_user),
+):
+    """跨项目粘贴：把源项目的素材拷进本项目的 `freezone/_uploads/`。
+
+    前端只报「这些 URL 要拷到当前项目」，字节不再经过浏览器：OSS 可用时在服务端
+    CopyObject，否则文件系统拷贝。目标项目要 editor，每个源项目要 viewer；单条失败
+    只记进 `failed`（reason 为 invalid_source / not_found / forbidden / unavailable /
+    copy_failed），不影响同批其它文件。本来就属于目标项目的 URL 原样跳过。
+    """
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
+    )
+    target_dir = uploads_dir(project_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    mapping: dict[str, str] = {}
+    failed: list[dict[str, str]] = []
+    source_projects: dict[str, ProjectContext | str] = {}
+
+    async def _source_project(project_id: str) -> ProjectContext | str:
+        cached = source_projects.get(project_id)
+        if cached is not None:
+            return cached
+        try:
+            src_ctx, *_ = await _resolve_freezone_project(project_id, user, required_role="viewer")
+            result: ProjectContext | str = src_ctx
+        except HTTPException as exc:
+            if exc.status_code == 403:
+                result = "forbidden"
+            elif exc.status_code == 404:
+                result = "not_found"
+            else:
+                result = "unavailable"
+        source_projects[project_id] = result
+        return result
+
+    # 第一遍：解析 + 授权 + 定位源文件，同一个源文件只排一次拷贝。
+    jobs: dict[Path, tuple[Path, list[str]]] = {}
+    for raw_url in dict.fromkeys(body.sources):
+        parsed = parse_project_asset_url(raw_url)
+        if parsed is None:
+            failed.append({"source": raw_url, "reason": "invalid_source"})
+            continue
+        source_project_id, rel = parsed
+        if source_project_id == ctx.project_id:
+            continue
+        source = await _source_project(source_project_id)
+        if isinstance(source, str):
+            failed.append({"source": raw_url, "reason": source})
+            continue
+        # 准备阶段（定位源文件、给目标起名）的任何异常都只算这一条失败，别拖垮整批。
+        try:
+            source_path = resolve_source_file(Path(source.output_dir), rel)
+            job = jobs.get(source_path)
+            if job is None:
+                job = jobs[source_path] = (allocate_target_path(target_dir, source_path.name), [])
+        except AssetCopyError as exc:
+            failed.append({"source": raw_url, "reason": exc.reason})
+            continue
+        except (OSError, ValueError) as exc:
+            logger.warning("cross-project asset prepare failed for %s: %s", raw_url, exc)
+            failed.append({"source": raw_url, "reason": "copy_failed"})
+            continue
+        job[1].append(raw_url)
+
+    # 第二遍：有限并发地拷，失败的把半成品清掉。
+    semaphore = asyncio.Semaphore(_ASSET_COPY_CONCURRENCY)
+
+    async def _copy_one(source_path: Path, target: Path) -> str | None:
+        async with semaphore:
+            try:
+                method = await asyncio.to_thread(copy_project_file, source_path, target)
+            except OSError as exc:
+                logger.warning(
+                    "cross-project asset copy failed %s -> %s: %s", source_path, target, exc
+                )
+                try:
+                    target.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                return None
+        logger.info(
+            "cross-project asset copied via %s: %s -> %s/%s",
+            method,
+            source_path.name,
+            ctx.project_id,
+            target.name,
+        )
+        new_rel = target.relative_to(project_dir).as_posix()
+        return make_static_url_for_context(ctx, new_rel, local_path=target)
+
+    results = await asyncio.gather(
+        *(_copy_one(source_path, target) for source_path, (target, _urls) in jobs.items())
+    )
+    for (_target, urls), new_url in zip(jobs.values(), results):
+        for raw_url in urls:
+            if new_url is None:
+                failed.append({"source": raw_url, "reason": "copy_failed"})
+            else:
+                mapping[raw_url] = new_url
+
+    return {"ok": True, "data": {"mapping": mapping, "failed": failed}}
 
 
 @router.post("/projects/{project}/freezone/three-d-viewer/screenshot", tags=[TAG_FREEZONE_MEDIA])
@@ -8873,6 +9099,39 @@ def _catalog_resolution_options(
     return normalized or None
 
 
+def _catalog_ratio_options(capabilities: dict[str, Any] | None) -> list[str] | None:
+    if not capabilities:
+        return None
+    options = capabilities.get("ratioOptions")
+    if not isinstance(options, list):
+        return None
+    normalized = [str(option).strip() for option in options if str(option).strip()]
+    return normalized or None
+
+
+def _image_animate_ratio_options(
+    model: str, capabilities: dict[str, Any] | None
+) -> list[str] | None:
+    # Only fill a missing field on an already-authorized catalog entry. Explicit
+    # restrictions (including empty/auto-only lists) remain authoritative.
+    if capabilities is None or "ratioOptions" in capabilities:
+        return _catalog_ratio_options(capabilities)
+    from novelvideo.model_gateway_settings import get_bundled_media_model_catalog
+
+    identifier = str(
+        capabilities.get("gatewayModel") or capabilities.get("gateway_model") or model
+    )
+    entry = next(
+        (
+            item
+            for item in get_bundled_media_model_catalog("video")
+            if identifier in _catalog_entry_identifiers(item)
+        ),
+        None,
+    )
+    return _catalog_ratio_options(entry)
+
+
 def _catalog_reference_limits(
     capabilities: dict[str, Any] | None,
     *,
@@ -9793,7 +10052,10 @@ async def freezone_image_animate(
             job_id=_new_job_id(),
             prompt="保持首帧的主体、构图、画风与背景稳定，仅添加自然轻微的循环动作。镜头固定，无切换，无新增元素。",
             reference_items=[{"type": "image", "path": source_paths[0], "role": "首帧"}],
-            aspect_ratio="auto",
+            aspect_ratio=supported_image_aspect_ratio(
+                source_paths[0],
+                _image_animate_ratio_options(model, capabilities),
+            ),
             resolution=normalize_video_resolution_for_backend(
                 backend, "720p", _catalog_resolution_options(capabilities)
             ),
@@ -13746,6 +14008,11 @@ async def get_canvas(project: str, canvas_id: str, user: dict = Depends(get_api_
     )
     if editing_by:
         response["editing_by"] = editing_by
+    # 历史遗留的外项目引用不拦保存,只在读取期报出来:前端据此把节点显示成
+    # 「素材属于其他项目」并给修复入口,不再只给一片裂图。同样挂在 `data` 之外。
+    foreign_media = scan_foreign_media_refs(response["data"], project_id=ctx.project_id)
+    if foreign_media:
+        response["foreign_media"] = [ref.as_dict() for ref in foreign_media]
     return response
 
 
@@ -14954,14 +15221,25 @@ async def get_canvas_workflow_runs(
         canvas_payload = await asyncio.to_thread(
             canvas_store.read_canvas, canvas_project_dir, canvas_id
         )
+        canvas_nodes = [
+            node
+            for node in (canvas_payload or {}).get("nodes") or []
+            if isinstance(node, dict)
+        ]
+        await asyncio.to_thread(
+            reconcile_workflow_runs_with_canvas_results,
+            project_dir=canvas_project_dir,
+            canvas_id=canvas_id,
+            canvas_nodes=canvas_nodes,
+        )
         await asyncio.to_thread(
             reconcile_workflow_runs_with_canvas_nodes,
             project_dir=canvas_project_dir,
             canvas_id=canvas_id,
             existing_node_ids={
                 str(node.get("id") or "")
-                for node in (canvas_payload or {}).get("nodes") or []
-                if isinstance(node, dict) and str(node.get("id") or "")
+                for node in canvas_nodes
+                if str(node.get("id") or "")
             },
             run_statuses={"failed", "interrupted"},
         )
@@ -15245,6 +15523,9 @@ async def restore_canvas_history(
             user=user,
         )
         _stamp_canvas_mainline_context_project_id(prepared, project)
+        # 回滚也是一次写入：旧版本里的外项目引用不能借着「恢复历史」重新落库(SuperTale#192)。
+        # 与 PUT 同一条判据——只拦相对当前版本新引入的，当前版本已有的照常放行。
+        reject_new_foreign_media_refs(prepared, existing=existing, project_id=ctx.project_id)
         return prepared
 
     try:
@@ -15255,6 +15536,15 @@ async def restore_canvas_history(
             base_revision=base_revision,
             build_payload=build_payload,
         )
+    except CanvasMediaScopeError as exc:
+        raise HTTPException(
+            422,
+            {
+                "code": "canvas_media_scope_mismatch",
+                "project_id": ctx.project_id,
+                "refs": [ref.as_dict() for ref in exc.refs],
+            },
+        ) from exc
     except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
         _raise_canvas_store_http(exc)
     payload = restored_canvas.payload
@@ -15454,6 +15744,11 @@ async def put_canvas(
             user=user,
         )
         _stamp_canvas_mainline_context_project_id(prepared, project)
+        # 静态资源按 URL 里的项目 id 独立鉴权:画布存下别的项目的媒体地址,源项目成员
+        # 看着一切正常,换个同样合法的本项目成员打开就是整片 403(SuperTale#192)。
+        # 只拦本次新引入的,库里已有的历史脏引用照常放行——否则一个脏节点就能把整张
+        # 老画布永久锁死,而那些画布正是本守卫要解决的问题的受害者。
+        reject_new_foreign_media_refs(prepared, existing=existing, project_id=ctx.project_id)
         return prepared
 
     try:
@@ -15472,6 +15767,16 @@ async def put_canvas(
             save_source=body.save_source,
             allow_empty_overwrite=body.allow_empty_overwrite,
         )
+    except CanvasMediaScopeError as exc:
+        # 前端据此调 assets/copy 把素材拷进本项目,改写节点后重试保存(自愈)。
+        raise HTTPException(
+            422,
+            {
+                "code": "canvas_media_scope_mismatch",
+                "project_id": ctx.project_id,
+                "refs": [ref.as_dict() for ref in exc.refs],
+            },
+        ) from exc
     except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
         _raise_canvas_store_http(exc)
     payload = saved_canvas.payload

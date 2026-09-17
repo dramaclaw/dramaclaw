@@ -28,9 +28,79 @@ from mcp.server.stdio import stdio_server
 
 logger = logging.getLogger("novelvideo.chat.dramaclaw_mcp")
 
+_FIXED_RUNTIME_ROOT = Path("/app")
+_SOURCE_MODULE_PATH = Path("src") / "novelvideo" / "chat" / "dramaclaw_mcp.py"
 
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+
+def _trusted_source_root() -> Path | None:
+    """Return the checkout root only when this module has the reviewed src layout."""
+    module_path = Path(__file__).resolve()
+    source_parts = _SOURCE_MODULE_PATH.parts
+    if tuple(module_path.parts[-len(source_parts) :]) != source_parts:
+        return None
+    return module_path.parents[len(source_parts) - 1]
+
+
+def _plugin_from_root(root: Path, relative_paths: tuple[Path, ...]) -> Path | None:
+    plugins_root = (root / ".hermes" / "plugins").resolve()
+    for relative_path in relative_paths:
+        candidate = root / relative_path
+        if not candidate.is_file():
+            continue
+        resolved = candidate.resolve()
+        try:
+            resolved.relative_to(plugins_root)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Hermes plugin path escapes the trusted plugin root: {candidate}"
+            ) from exc
+        return resolved
+    return None
+
+
+def _plugin_path(plugin_name: str) -> Path:
+    """Resolve a bundled Hermes plugin without assuming a source checkout import.
+
+    Production installs may import this module from ``site-packages`` while the
+    reviewed plugins live under ``/app/.hermes``.  In that layout deriving the
+    repository root from ``__file__`` points at the Python installation instead
+    of the application root.
+    """
+    relative_paths = (
+        Path(".hermes") / "plugins" / plugin_name / "__init__.py",
+        Path(".hermes") / "plugins" / plugin_name / "init.py",
+    )
+    configured_root = os.environ.get("DRAMACLAW_ROOT", "").strip()
+    if configured_root:
+        root = Path(configured_root).expanduser().resolve()
+        plugin_path = _plugin_from_root(root, relative_paths)
+        if plugin_path is not None:
+            return plugin_path
+        expected = ", ".join(str(root / path) for path in relative_paths)
+        raise RuntimeError(
+            f"DRAMACLAW_ROOT does not contain the {plugin_name} plugin; expected {expected}"
+        )
+
+    roots: list[Path] = []
+    source_root = _trusted_source_root()
+    if source_root is not None:
+        roots.append(source_root)
+    roots.append(_FIXED_RUNTIME_ROOT)
+
+    searched: list[str] = []
+    seen: set[Path] = set()
+    for root in roots:
+        if root in seen:
+            continue
+        seen.add(root)
+        searched.extend(str(root / relative_path) for relative_path in relative_paths)
+        plugin_path = _plugin_from_root(root, relative_paths)
+        if plugin_path is not None:
+            return plugin_path
+    raise RuntimeError(
+        f"cannot locate bundled Hermes plugin {plugin_name}; searched: "
+        + ", ".join(searched)
+    )
 
 
 def _install_hermes_registry_shim() -> None:
@@ -55,7 +125,7 @@ def _install_hermes_registry_shim() -> None:
 
 def _load_plugin(plugin_name: str) -> Any:
     _install_hermes_registry_shim()
-    plugin_path = _repo_root() / ".hermes" / "plugins" / plugin_name / "__init__.py"
+    plugin_path = _plugin_path(plugin_name)
     spec = importlib.util.spec_from_file_location(
         f"_dramaclaw_{plugin_name}_hermes_plugin_for_mcp",
         plugin_path,

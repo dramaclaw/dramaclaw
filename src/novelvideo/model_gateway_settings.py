@@ -897,6 +897,12 @@ def get_official_media_model_catalog(media_type: str) -> list[dict[str, Any]]:
     return _media_model_catalog(get_official_media_model_mappings(), media_type)
 
 
+def get_bundled_media_model_catalog(media_type: str) -> list[dict[str, Any]]:
+    """Read release-bundled capabilities without local settings or update caches."""
+    payload = _read_official_media_catalog(_official_media_catalog_bundle_path())
+    return _media_model_catalog(payload["mediaModels"], media_type)
+
+
 def get_ce_media_model_catalog(
     media_type: str,
     *,

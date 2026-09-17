@@ -26,10 +26,12 @@ export function PasswordChangeDialog({
   open,
   onOpenChange,
   onPasswordChanged,
+  passwordConfigured = true,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onPasswordChanged: () => void;
+  passwordConfigured?: boolean;
 }) {
   const { t } = useTranslation();
   const [currentPassword, setCurrentPassword] = useState("");
@@ -39,10 +41,11 @@ export function PasswordChangeDialog({
   const [error, setError] = useState<string | null>(null);
 
   const mismatch = confirmPassword.length > 0 && newPassword !== confirmPassword;
-  const unchanged = newPassword.length > 0 && newPassword === currentPassword;
+  const unchanged =
+    passwordConfigured && newPassword.length > 0 && newPassword === currentPassword;
   const submitDisabled =
     saving ||
-    currentPassword.length === 0 ||
+    (passwordConfigured && currentPassword.length === 0) ||
     newPassword.length < MIN_PASSWORD_LENGTH ||
     confirmPassword.length === 0 ||
     mismatch ||
@@ -66,9 +69,21 @@ export function PasswordChangeDialog({
     onOpenChange(false);
     resetSecrets();
     if (partial) {
-      toast.warning(t("header.account.passwordDialog.partialSuccess"));
+      toast.warning(
+        t(
+          passwordConfigured
+            ? "header.account.passwordDialog.partialSuccess"
+            : "header.account.passwordDialog.initializePartialSuccess",
+        ),
+      );
     } else {
-      toast.success(t("header.account.passwordDialog.success"));
+      toast.success(
+        t(
+          passwordConfigured
+            ? "header.account.passwordDialog.success"
+            : "header.account.passwordDialog.initializeSuccess",
+        ),
+      );
     }
     onPasswordChanged();
   };
@@ -79,27 +94,39 @@ export function PasswordChangeDialog({
     setSaving(true);
     setError(null);
     try {
-      const response = await fetch("/api/v1/account/password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          current_password: currentPassword,
-          new_password: newPassword,
-        }),
-      });
+      const response = await fetch(
+        passwordConfigured
+          ? "/api/v1/account/password"
+          : "/api/v1/account/password/initialize",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify(
+            passwordConfigured
+              ? { current_password: currentPassword, new_password: newPassword }
+              : { new_password: newPassword },
+          ),
+        },
+      );
       const body = (await response.json().catch(() => ({}))) as PasswordErrorBody;
       const detail = body.detail;
       const code = typeof detail === "object" ? detail.code : undefined;
-      if (response.status === 503 && code === "PASSWORD_CHANGED_CACHE_PARTIAL") {
+      if (
+        response.status === 503 &&
+        (code === "PASSWORD_CHANGED_CACHE_PARTIAL" ||
+          code === "PASSWORD_INITIALIZED_CACHE_PARTIAL")
+      ) {
         finishPasswordChange(true);
         return;
       }
       if (!response.ok) {
         setError(
-          response.status === 401
+          response.status === 401 && passwordConfigured
             ? t("header.account.passwordDialog.currentIncorrect")
-            : t("header.account.passwordDialog.error"),
+            : response.status === 409 && !passwordConfigured
+              ? t("header.account.passwordDialog.initializeExpired")
+              : t("header.account.passwordDialog.error"),
         );
         setSaving(false);
         return;
@@ -118,20 +145,32 @@ export function PasswordChangeDialog({
         overlayClassName="bg-black/55"
       >
         <DialogHeader className="px-5 pb-3 pt-5">
-          <DialogTitle>{t("header.account.passwordDialog.title")}</DialogTitle>
+          <DialogTitle>
+            {t(
+              passwordConfigured
+                ? "header.account.passwordDialog.title"
+                : "header.account.passwordDialog.initializeTitle",
+            )}
+          </DialogTitle>
           <DialogDescription className="text-xs leading-5">
-            {t("header.account.passwordDialog.description")}
+            {t(
+              passwordConfigured
+                ? "header.account.passwordDialog.description"
+                : "header.account.passwordDialog.initializeDescription",
+            )}
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit}>
           <div className="space-y-3 px-5 pb-5">
-            <PasswordField
-              autoComplete="current-password"
-              label={t("header.account.passwordDialog.current")}
-              value={currentPassword}
-              onChange={setCurrentPassword}
-            />
+            {passwordConfigured ? (
+              <PasswordField
+                autoComplete="current-password"
+                label={t("header.account.passwordDialog.current")}
+                value={currentPassword}
+                onChange={setCurrentPassword}
+              />
+            ) : null}
             <PasswordField
               autoComplete="new-password"
               label={t("header.account.passwordDialog.new")}
@@ -159,7 +198,11 @@ export function PasswordChangeDialog({
               </p>
             ) : (
               <p className="text-xs text-muted-foreground">
-                {t("header.account.passwordDialog.requirement")}
+                {t(
+                  passwordConfigured
+                    ? "header.account.passwordDialog.requirement"
+                    : "header.account.passwordDialog.initializeRequirement",
+                )}
               </p>
             )}
           </div>
@@ -177,7 +220,11 @@ export function PasswordChangeDialog({
               {saving ? <Loader2 className="size-4 animate-spin" /> : null}
               {saving
                 ? t("header.account.passwordDialog.saving")
-                : t("header.account.passwordDialog.submit")}
+                : t(
+                    passwordConfigured
+                      ? "header.account.passwordDialog.submit"
+                      : "header.account.passwordDialog.initializeSubmit",
+                  )}
             </Button>
           </DialogFooter>
         </form>

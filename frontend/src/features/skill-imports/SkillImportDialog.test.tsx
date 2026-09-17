@@ -7,13 +7,33 @@ vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string, opti
 vi.mock('./api', async importOriginal => ({ ...await importOriginal<typeof api>(), listSkillImports: vi.fn(), installSkillImport: vi.fn(), retrySkillImport: vi.fn(), validateSkillImport: vi.fn() }));
 const bundle = { schema_version: 'dramaclaw.skill-bundle.v1', skill: { id: 'ad' }, recipes: [] };
 const quality_report = { version: 3 as const, bundle_sha256: 'bundle-hash', capability_sha256: 'capability-hash', structure: { status: 'passed' as const, issues: [] }, coverage: { status: 'passed' as const, issues: [] }, planning: { status: 'passed' as const, issues: [] }, blockers: [], adaptations: [], validated: true };
-const item: api.SkillImportItem = { id: 'i', batch_id: 'b', name: 'ad.md', status: 'ready', stage: 'done', warnings: [], bundle, quality_report, created_at: '' };
+const item: api.SkillImportItem = { current_conversion_version: 3, id: 'i', batch_id: 'b', name: 'ad.md', status: 'ready', stage: 'done', warnings: [], bundle, quality_report, created_at: '' };
 function mount(project = 'project', taskId?: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return { ...render(<QueryClientProvider client={client}><SkillImportDialog open onOpenChange={() => {}} project={project} taskId={taskId} /></QueryClientProvider>), client };
 }
 beforeEach(() => { vi.clearAllMocks(); vi.mocked(api.listSkillImports).mockResolvedValue({ items: [item] }); });
 describe('SkillImportDialog', () => {
+  it.each([9, undefined])('blocks an outdated report or missing server version (%s)', async currentVersion => {
+    vi.mocked(api.listSkillImports).mockResolvedValue({ items: [{ ...item,
+      current_conversion_version: currentVersion, status: 'needs_review',
+    }] });
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Review' }));
+    fireEvent.click(screen.getByRole('checkbox'));
+    expect(screen.getByRole('button', { name: 'Install' })).toBeDisabled();
+  });
+  it('accepts the current server conversion version after warning acknowledgement', async () => {
+    vi.mocked(api.listSkillImports).mockResolvedValue({ items: [{ ...item,
+      status: 'needs_review', current_conversion_version: 9,
+      quality_report: { ...quality_report, version: 9 },
+    }] });
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Review' }));
+    fireEvent.click(screen.getByRole('checkbox'));
+    expect(screen.getByRole('button', { name: 'Install' })).toBeEnabled();
+    expect(screen.queryByText('Revalidation required. Validate this draft before installing.')).not.toBeInTheDocument();
+  });
   it('expands inside the selected list row and collapses without losing edits', async () => {
     vi.mocked(api.listSkillImports).mockResolvedValue({ items: [item, { ...item, id: 'second', name: 'second.md' }] });
     mount();

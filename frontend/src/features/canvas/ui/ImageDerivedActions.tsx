@@ -28,7 +28,9 @@ import {
 } from "../application/derivedMedia";
 export function useDerivedVideoCost() {
   const catalog = useFreezoneVideoModels();
-  const model = catalog.models.find((m) => m.id === "newapi_seedance-2.0-fast");
+  const model = catalog.models.find((m) =>
+    m.id === "newapi_seedance-2.0-fast" || m.apiModel === "newapi_seedance-2.0-fast",
+  );
   const cost = useGenerationCreditCost(
     "feature",
     model ? "freezone.video_generate" : null,

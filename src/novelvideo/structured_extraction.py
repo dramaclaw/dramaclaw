@@ -141,6 +141,37 @@ class MergedCharacter:
     ambiguous_with: set[str] = field(default_factory=set)
 
 
+def describe_output_failure(exc: BaseException, messages: list[Any]) -> str:
+    """One line a task log can show for a failed structured run.
+
+    PydanticAI raises ``Exceeded maximum output retries (N)`` for both "the
+    model never called the output tool" and "the arguments failed validation",
+    and keeps the reason in the retry prompts it sent and in ``__cause__``.
+    Surface both; without them the log line is undiagnosable.
+    """
+    from pydantic_ai.messages import ModelRequest, RetryPromptPart
+
+    parts = [str(exc)]
+    cause = exc.__cause__
+    if cause is not None and str(cause) and str(cause) != str(exc):
+        parts.append(f"cause: {type(cause).__name__}: {cause}")
+    retries: list[str] = []
+    for message in messages:
+        if not isinstance(message, ModelRequest):
+            continue
+        for part in message.parts:
+            if isinstance(part, RetryPromptPart):
+                text = " ".join(part.model_response().split())
+                retries.append(text[:400])
+    if retries:
+        parts.append("retry prompts: " + " | ".join(retries[-2:]))
+    return "; ".join(parts)
+
+
+class StructuredOutputFailure(RuntimeError):
+    """A structured run failed; ``str()`` carries the diagnosis."""
+
+
 def _create_character_extraction_agent(agent: Any = None):
     if agent is not None:
         return agent
@@ -151,6 +182,7 @@ def _create_character_extraction_agent(agent: Any = None):
         get_newapi_structured_output_model_settings,
         get_newapi_text_pydantic_model,
     )
+    from novelvideo.model_gateway_runtime import model_gateway_output_retries
 
     return Agent(
         get_newapi_text_pydantic_model(
@@ -161,8 +193,23 @@ def _create_character_extraction_agent(agent: Any = None):
         system_prompt=CHARACTER_EXTRACTION_SYSTEM_PROMPT,
         model_settings=get_newapi_structured_output_model_settings(),
         output_type=ChunkCharacterOutput,
+        retries={"output": model_gateway_output_retries(2)},
         name="Structured Character Extractor",
     )
+
+
+async def _run_structured(agent: Any, prompt: str) -> Any:
+    """Run ``agent`` and turn an exhausted output retry into a diagnosable error."""
+    from pydantic_ai import capture_run_messages
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+    with capture_run_messages() as messages:
+        try:
+            return (await agent.run(prompt)).output
+        except UnexpectedModelBehavior as exc:
+            raise StructuredOutputFailure(
+                describe_output_failure(exc, list(messages))
+            ) from exc
 
 
 def normalize_character_name(value: str) -> str:
@@ -355,11 +402,11 @@ async def extract_characters_from_chunks(
     runner = _create_character_extraction_agent(agent)
 
     async def analyse(chunk: SourceChunk) -> tuple[SourceChunk, ChunkCharacterOutput]:
-        result = await runner.run(
+        output = await _run_structured(
+            runner,
             f"{asset_language_instruction(language)}\n\n"
-            f"【片段 {chunk.section_label}】\n{chunk.text}"
+            f"【片段 {chunk.section_label}】\n{chunk.text}",
         )
-        output = result.output
         if on_chunk_done:
             await _maybe_await(on_chunk_done(chunk, output))
         return chunk, output
