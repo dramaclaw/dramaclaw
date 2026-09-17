@@ -4,7 +4,7 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 
@@ -1773,7 +1773,10 @@ def test_recipe_result_does_not_use_media_task_id_as_model_evidence(
     monkeypatch.setattr(
         freezone,
         "get_task_manager",
-        lambda: SimpleNamespace(list_tasks_for_project=lambda _ctx: [media_task]),
+        lambda: SimpleNamespace(
+            list_tasks_for_project=lambda _ctx: [media_task],
+            get_task_for_project=lambda *_args, **_kwargs: None,
+        ),
     )
 
     response = workflow_run_client.get(base)
@@ -1785,6 +1788,238 @@ def test_recipe_result_does_not_use_media_task_id_as_model_evidence(
     )
     assert operation["status"] == "failed"
     assert operation["model_evidence"] == {}
+
+
+def test_cancelled_workflow_reconciles_late_recipe_media_result(
+    workflow_run_client: TestClient,
+    monkeypatch,
+) -> None:
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.agent_product_operations import (
+        bind_agent_product_model_execution,
+        read_agent_product_operation,
+    )
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    created = workflow_run_client.post(
+        base,
+        json={
+            "idempotency_key": "late-image-after-cancel",
+            "actions": [{
+                "node_id": "image-1",
+                "action": "generate_image",
+                "recipe_id": "product-image",
+                "recipe_version": "1.0.0",
+                "generation_attempt_id": "attempt-a",
+            }],
+        },
+    ).json()["data"]
+    operation_id = created["actions"][0]["product_operation_id"]
+    task_key = "task:freezone_image:project:proj_demo:0:late-image-job"
+    workflow_run_client.patch(
+        f"{base}/{created['run_id']}",
+        json={"action_updates": [{
+            "node_id": "image-1",
+            "action": "generate_image",
+            "status": "running",
+            "task_key": task_key,
+            "job_id": "late-image-job",
+        }]},
+    )
+    bind_agent_product_model_execution(
+        project_dir=workflow_run_client.state_dir,
+        operation_id=operation_id,
+        model_call_id="recipe-compiler:late-image",
+        executed_at=1.0,
+        source="server_recipe_compiler",
+        compile_mode="model",
+    )
+    monkeypatch.setattr(
+        freezone,
+        "get_task_manager",
+        lambda: SimpleNamespace(
+            list_tasks_for_project=lambda _ctx: [],
+            get_task_for_project=lambda *_args, **_kwargs: None,
+        ),
+    )
+    cancelled = workflow_run_client.patch(
+        f"{base}/{created['run_id']}", json={"status": "cancelled"}
+    )
+    assert cancelled.status_code == 200
+
+    media_task = SimpleNamespace(
+        task_type="freezone_image",
+        status="completed",
+        progress=1.0,
+        current_task="completed",
+        episode=0,
+        beat_num=None,
+        scope="late-image-job",
+        result={"image_url": "https://cdn.example.test/late-image.png"},
+        error=None,
+    )
+    monkeypatch.setattr(
+        freezone,
+        "get_task_manager",
+        lambda: SimpleNamespace(
+            list_tasks_for_project=lambda _ctx: [media_task],
+            get_task_for_project=lambda *_args, **_kwargs: None,
+        ),
+    )
+    listed = workflow_run_client.get(base)
+
+    assert listed.status_code == 200
+    operation = read_agent_product_operation(
+        project_dir=workflow_run_client.state_dir,
+        operation_id=operation_id,
+    )
+    assert operation["status"] == "delivered"
+    assert operation["result_ref"]["id"] == "late-image-job"
+
+
+@pytest.mark.parametrize(
+    ("linked", "unrelated"),
+    [(True, False), (True, True), (False, True)],
+)
+def test_cancelled_workflow_recovers_completed_video_without_persisted_task_key(
+    workflow_run_client: TestClient,
+    monkeypatch,
+    linked: bool,
+    unrelated: bool,
+) -> None:
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.agent_product_operations import (
+        bind_agent_product_model_execution,
+        read_agent_product_operation,
+    )
+    from novelvideo.freezone.history import append_generation_history, build_node_history_record
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    created = workflow_run_client.post(
+        base,
+        json={
+            "idempotency_key": "video-with-missing-task-key",
+            "actions": [{
+                "node_id": "video-1",
+                "action": "generate_video",
+                "recipe_id": "product-video",
+                "recipe_version": "1.0.0",
+                "generation_attempt_id": "attempt-video",
+            }],
+        },
+    ).json()["data"]
+    operation_id = created["actions"][0]["product_operation_id"]
+    bind_agent_product_model_execution(
+        project_dir=workflow_run_client.state_dir,
+        operation_id=operation_id,
+        model_call_id="recipe-compiler:video",
+        executed_at=1.0,
+        source="server_recipe_compiler",
+        compile_mode="model",
+    )
+    from novelvideo.api.routes import freezone as freezone_routes
+
+    link_context = SimpleNamespace(
+        project_id="proj_demo", state_dir=str(workflow_run_client.state_dir)
+    )
+    assert freezone_routes._verified_workflow_media_link(
+        ctx=link_context,
+        project_dir=workflow_run_client.state_dir,
+        canvas_id="default",
+        node_id="video-1",
+        operation_id=operation_id,
+        attempt_id="attempt-video",
+    ) == {
+        "product_operation_id": operation_id,
+        "generation_attempt_id": "attempt-video",
+    }
+    with pytest.raises(HTTPException, match="does not match admitted Recipe attempt"):
+        freezone_routes._verified_workflow_media_link(
+            ctx=link_context,
+            project_dir=workflow_run_client.state_dir,
+            canvas_id="default",
+            node_id="video-1",
+            operation_id=operation_id,
+            attempt_id="unrelated-attempt",
+        )
+    task_key = "task:freezone_video_gen:project:proj_demo:0:video-job"
+    result = {"output_url": "/static/projects/proj_demo/video.mp4"}
+    monkeypatch.setattr(
+        freezone,
+        "get_task_manager",
+        lambda: SimpleNamespace(
+            list_tasks_for_project=lambda _ctx: [],
+            get_task_for_project=lambda *_args, **_kwargs: None,
+        ),
+    )
+    assert workflow_run_client.patch(
+        f"{base}/{created['run_id']}", json={"status": "cancelled"}
+    ).status_code == 200
+    if linked:
+        append_generation_history(
+            project_dir=workflow_run_client.state_dir,
+            canvas_id="default",
+            node_id="video-1",
+            record=build_node_history_record(
+                task_type="freezone_video_gen",
+                job_id="video-job",
+                task_key=task_key,
+                status="completed",
+                media_type="video",
+                result=result,
+                extra={
+                    "generation_attempt_id": "attempt-video",
+                    "product_operation_id": operation_id,
+                },
+            ),
+        )
+    if unrelated:
+        append_generation_history(
+            project_dir=workflow_run_client.state_dir,
+            canvas_id="default",
+            node_id="video-1",
+            record=build_node_history_record(
+                task_type="freezone_video_gen",
+                job_id="other-video-job",
+                task_key="task:freezone_video_gen:project:proj_demo:0:other-video-job",
+                status="completed",
+                media_type="video",
+                result=result,
+            ),
+        )
+    media_task = SimpleNamespace(
+        task_type="freezone_video_gen",
+        status="completed",
+        progress=1.0,
+        current_task="completed",
+        episode=0,
+        beat_num=None,
+        scope="video-job",
+        result=result,
+        error=None,
+    )
+    tasks = [media_task]
+    if unrelated:
+        tasks.append(SimpleNamespace(**{**vars(media_task), "scope": "other-video-job"}))
+    monkeypatch.setattr(
+        freezone,
+        "get_task_manager",
+        lambda: SimpleNamespace(
+            list_tasks_for_project=lambda _ctx: tasks,
+            get_task_for_project=lambda *_args, **_kwargs: None,
+        ),
+    )
+
+    assert workflow_run_client.get(base).status_code == 200
+    operation = read_agent_product_operation(
+        project_dir=workflow_run_client.state_dir,
+        operation_id=operation_id,
+    )
+    assert operation["status"] == ("delivered" if linked else "reserved")
+    if linked:
+        assert operation["result_ref"]["id"] == "video-job"
 
 
 def test_workflow_run_cancel_stops_linked_active_project_task(

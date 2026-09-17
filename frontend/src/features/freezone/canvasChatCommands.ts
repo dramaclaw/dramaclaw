@@ -2881,6 +2881,7 @@ async function executeQueuedNodeActions(
             bindWorkflowProductOperation(action.node_id, {
               projectId,
               operationId: action.product_operation_id,
+              generationAttemptId: action.generation_attempt_id ?? undefined,
             });
           }
         }

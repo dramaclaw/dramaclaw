@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -74,6 +75,7 @@ async def _run_freezone_agent_product_async(
 ) -> dict[str, Any]:
     """Wait for a trusted, persisted product result before EE settlement."""
     from novelvideo.freezone.agent_product_operations import (
+        AgentProductSettlementPending,
         PENDING_STATUSES,
         RECIPE_COMPILE_MESSAGES,
         is_recipe_compile_receipt,
@@ -134,6 +136,45 @@ async def _run_freezone_agent_product_async(
             )
         if status not in PENDING_STATUSES:
             raise RuntimeError(f"invalid agent product operation status: {status}")
+        if product_kind == "recipe_result":
+            metadata = operation.get("metadata") or {}
+            run_id = str(metadata.get("workflow_run_id") or "").strip()
+            canvas_id = str(operation.get("canvas_id") or "").strip()
+            if run_id and canvas_id:
+                from novelvideo.freezone.workflow_runs import read_workflow_run
+
+                run = await asyncio.to_thread(
+                    read_workflow_run,
+                    project_dir=Path(ctx.state_dir),
+                    canvas_id=canvas_id,
+                    run_id=run_id,
+                )
+                run_status = str((run or {}).get("status") or "")
+                if run_status in {"cancelled", "failed", "interrupted", "completed"}:
+                    # Keep the operation and its credit reservation available for
+                    # a late provider result, but do not occupy a worker slot for
+                    # the remainder of the generic 30-minute task timeout.
+                    raise AgentProductSettlementPending(
+                        operation_id=operation_id,
+                        status=f"workflow_{run_status}",
+                    )
+                lease_expires_at = str((run or {}).get("lease_expires_at") or "")
+                if run_status == "running" and lease_expires_at:
+                    try:
+                        expires_at = datetime.fromisoformat(
+                            lease_expires_at.replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        expires_at = None
+                    if (
+                        expires_at is not None
+                        and expires_at.tzinfo is not None
+                        and expires_at <= datetime.now(timezone.utc)
+                    ):
+                        raise AgentProductSettlementPending(
+                            operation_id=operation_id,
+                            status="workflow_lease_expired",
+                        )
         await asyncio.sleep(0.2)
 
 
@@ -472,6 +513,9 @@ def _append_node_history(
     )
 
     # Text/audio nodes carry the user text under "input"; image nodes use "prompt".
+    for key in ("generation_attempt_id", "product_operation_id"):
+        if payload.get(key):
+            extra[key] = str(payload[key])
     record = build_node_history_record(
         task_type=task_type,
         job_id=job_id,
@@ -1708,6 +1752,15 @@ async def _run_freezone_audio_speech_async(
             "episode": int(target_episode),
             "beat": int(target_beat),
         }
+    _append_node_history(
+        ctx=ctx,
+        project_dir=project_dir,
+        payload=payload,
+        task_type="freezone_audio_speech",
+        job_id=job_id,
+        media_type="audio",
+        result=response,
+    )
     return response
 
 
@@ -1748,7 +1801,7 @@ async def _run_freezone_audio_eleven_music_async(
     )
     rel = result.audio_path.relative_to(project_dir).as_posix()
     audio_url = make_static_url_for_context(ctx, rel)
-    return {
+    response = {
         "job_id": job_id,
         "url": audio_url,
         "audio_url": audio_url,
@@ -1757,6 +1810,16 @@ async def _run_freezone_audio_eleven_music_async(
         "mime_type": result.mime_type,
         "model": result.model,
     }
+    _append_node_history(
+        ctx=ctx,
+        project_dir=project_dir,
+        payload=payload,
+        task_type="freezone_audio_eleven_music",
+        job_id=job_id,
+        media_type="audio",
+        result=response,
+    )
+    return response
 
 
 def run_freezone_audio_eleven_music(
