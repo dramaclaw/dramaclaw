@@ -270,6 +270,7 @@ async def resolve_task_recipes(
     states = {t['id']: {'task_id': t['id'], 'selected_recipe_id': None, 'verdicts': [],
                         'search_status': 'no_candidate', 'new_recipe_reason': ''} for t in analysis['tasks']}
     seen = {t['id']: set() for t in analysis['tasks']}
+    task_order = {t['id']: index for index, t in enumerate(analysis['tasks'])}
     queries = {t['id']: t.get('queries', [t['title']]) for t in analysis['tasks']}
     pending = analysis['tasks']
     call_index = 0
@@ -432,7 +433,9 @@ async def resolve_task_recipes(
                 worker.cancel()
             await asyncio.gather(*workers, return_exceptions=True)
             raise
-        pending = sorted(next_pending, key=lambda task: bool(seen[task["id"]]))
+        pending = sorted(next_pending, key=lambda task: (
+            bool(seen[task['id']]), task_order[task['id']],
+        ))
     resolutions = list(states.values())
     for state in resolutions:
         if state['search_status'] == 'no_candidate':
