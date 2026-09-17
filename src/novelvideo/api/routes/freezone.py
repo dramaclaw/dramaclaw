@@ -19,6 +19,7 @@ import shutil
 import time
 import uuid
 from collections.abc import Mapping
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Awaitable, Callable, Literal, Optional
 from urllib.parse import quote, unquote, urlencode, urlsplit
@@ -195,6 +196,7 @@ from novelvideo.freezone.agent_product_operations import (
     save_agent_generation_session,
 )
 from novelvideo.freezone.workflow_runs import (
+    _validate_action_artifact,
     WorkflowRunIdempotencyConflict,
     WorkflowRunLeaseConflict,
     bind_workflow_action_product_operation,
@@ -15236,6 +15238,7 @@ async def get_canvas_workflow_runs(
         # must not make the canvas itself unavailable.
         pass
     tasks_by_key: dict[str, dict[str, Any]] = {}
+    generation_history: list[dict[str, Any]] = []
     try:
         for task in get_task_manager().list_tasks_for_project(ctx):
             task_status = str(task.status or "")
@@ -15295,15 +15298,76 @@ async def get_canvas_workflow_runs(
         canvas_id=canvas_id,
         limit=limit,
     )
+    history_by_task_node: dict[tuple[str, str], dict[str, Any]] = {}
+    history_by_node: dict[str, list[dict[str, Any]]] = {}
+    for record in generation_history:
+        if not isinstance(record, dict):
+            continue
+        task_key = str(record.get("task_key") or "").strip()
+        node_id = str(record.get("node_id") or "").strip()
+        if task_key and node_id:
+            history_by_task_node.setdefault((task_key, node_id), record)
+            history_by_node.setdefault(node_id, []).append(record)
     for run in runs:
         for action in run.get("actions") or []:
             operation_id = str(action.get("product_operation_id") or "")
             task_key = str(action.get("task_key") or "")
+            recovered_history: dict[str, Any] | None = None
+            if operation_id and not task_key:
+                # A media task can finish before the browser persists its task key.
+                # Recover only a unique, completed attempt from this run's window;
+                # node history alone is not sufficient to identify a Recipe run.
+                expected_task_types = {
+                    "generate_image": {"freezone_gen"},
+                    "generate_video": {"freezone_video_gen"},
+                    "generate_audio": {"freezone_audio_speech", "freezone_audio_eleven_music"},
+                }.get(str(action.get("action") or ""), set())
+                started_at = str(run.get("started_at") or "")
+                ended_at = str(run.get("completed_at") or "")
+                candidates = []
+                if expected_task_types and started_at and ended_at:
+                    for record in history_by_node.get(str(action.get("node_id") or ""), []):
+                        recorded_at = str(record.get("recorded_at") or "")
+                        candidate_key = str(record.get("task_key") or "")
+                        try:
+                            within_run = (
+                                datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                                <= datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))
+                                <= datetime.fromisoformat(ended_at.replace("Z", "+00:00"))
+                            )
+                        except (TypeError, ValueError):
+                            continue
+                        if (
+                            record.get("task_type") in expected_task_types
+                            and record.get("status") == "completed"
+                            and within_run
+                            and str(tasks_by_key.get(candidate_key, {}).get("status") or "")
+                            == "completed"
+                        ):
+                            candidates.append(candidate_key)
+                if len(set(candidates)) == 1:
+                    task_key = candidates[0]
+                    recovered_history = history_by_task_node.get(
+                        (task_key, str(action.get("node_id") or ""))
+                    )
             task = tasks_by_key.get(task_key)
             if not operation_id or task is None:
                 continue
             task_status = str(task.get("status") or "")
             artifact_status = str(action.get("artifact_status") or "")
+            if task_status == "completed" and artifact_status != "valid":
+                # A cancelled run is deliberately not rewritten by the workflow
+                # reconciler. Its media task can nevertheless finish late, and
+                # that durable result must settle the separate Recipe operation.
+                artifact_status, _artifact_error = await asyncio.to_thread(
+                    _validate_action_artifact,
+                    action=str(action.get("action") or ""),
+                    task_result=task.get("result") if isinstance(task.get("result"), dict) else None,
+                    history_record=history_by_task_node.get(
+                        (task_key, str(action.get("node_id") or ""))
+                    ),
+                    project_dir=canvas_project_dir,
+                )
             operation = await asyncio.to_thread(
                 read_agent_product_operation,
                 project_dir=canvas_project_dir,
@@ -15325,7 +15389,11 @@ async def get_canvas_workflow_runs(
                 outcome = "delivered"
                 result_ref = {
                     "kind": "recipe_result",
-                    "id": str(action.get("job_id") or task_key),
+                    "id": str(
+                        action.get("job_id")
+                        or (recovered_history or {}).get("job_id")
+                        or task_key
+                    ),
                     "workflow_run_id": run["run_id"],
                     "node_id": action.get("node_id"),
                     "recipe_id": action.get("recipe_id"),
