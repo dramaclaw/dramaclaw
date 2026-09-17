@@ -1298,11 +1298,25 @@ function buildNodeCreateSchema(
     const snapshot = schemaNodeType === CANVAS_NODE_TYPES.video
       ? getFreezoneVideoModelsSnapshot()
       : getFreezoneImageModelsSnapshot();
+    if (snapshot.isLoading || snapshot.isFallback) {
+      return {
+        node_type: schemaNodeType,
+        model_id: modelId,
+        model_found: null,
+        catalog_ready: false,
+        loading: snapshot.isLoading,
+        fallback: snapshot.isFallback,
+        instruction: snapshot.isLoading
+          ? "The live model catalog is still loading. Do not treat fallback model options as exact; wait and request node_create_schema again with the same model_id."
+          : "The live model catalog is unavailable. Do not treat fallback model options as exact; refresh the model catalog before choosing model-dependent parameters.",
+      };
+    }
     if (!snapshot.models.some((model) => model.id === modelId)) {
       return {
         node_type: schemaNodeType,
         model_id: modelId,
         model_found: false,
+        catalog_ready: true,
         available_model_ids: snapshot.models.map((model) => model.id),
         loading: snapshot.isLoading,
         instruction: "The selected model is not in the live catalog. Do not use generic parameter options; refresh the model list or choose an available model.",
@@ -1320,6 +1334,7 @@ function buildNodeCreateSchema(
     node_type: schemaNodeType,
     ...(modelId ? { model_id: modelId } : {}),
     ...(modelId ? { model_found: true } : {}),
+    ...(modelId ? { catalog_ready: true } : {}),
     editable_fields: catalog.editable_fields,
     create_schema: catalog.editable_schema,
     stable_create_fields: catalog.editable_fields.filter((field) =>

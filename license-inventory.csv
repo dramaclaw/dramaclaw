@@ -666,6 +666,7 @@ frontend/src/__tests__/features/freezone/director-render-commit.test.ts,Elastic-
 frontend/src/__tests__/features/freezone/external-canvas-command-dedupe.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/freezone-view-mode.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/m06-l2-contract.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/freezone/model-scoped-create-schema.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/node-context-badges.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/open-preset-projection.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/freezone/projections.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
