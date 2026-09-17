@@ -1,0 +1,15 @@
+# Episode Playbook
+
+## Steps
+
+1. Load episode data
+2. Generate soundtrack
+3. Save soundtrack to file
+
+## Step 2: Generate Soundtrack
+
+* Call `generate_soundtrack` function with episode ID as input
+* Save soundtrack to file
+* Handle errors:
+	+ If `generate_soundtrack` returns `None`, print an error message and skip the step
+	+ If `generate_soundtrack` raises an exception, print the error message and skip the step
