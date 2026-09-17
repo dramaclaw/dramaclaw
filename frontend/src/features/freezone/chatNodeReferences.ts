@@ -12,6 +12,8 @@ import {
   type CanvasOntologyContext,
 } from "@/features/canvas/ontology/canvasOntology";
 import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
+import { getFreezoneImageModelsSnapshot } from "@/features/canvas/hooks/useFreezoneImageModels";
+import { getFreezoneVideoModelsSnapshot } from "@/features/canvas/hooks/useFreezoneVideoModels";
 import {
   sortUpstreamByReferenceOrder,
   upstreamNodesInEdgeOrder,
@@ -131,7 +133,7 @@ export type CanvasContextRequest =
     }
   | { type: "action_catalog"; node_id?: string; action?: string }
   | { type: "action_catalog_by_id"; action_id?: string }
-  | { type: "node_create_schema"; node_type?: CanvasNodeType }
+  | { type: "node_create_schema"; node_type?: CanvasNodeType; model_id?: string }
   | { type: "audio_voice_options"; node_id?: string }
   | { type: "slot_candidates"; slot_kind?: string }
   | {
@@ -576,6 +578,7 @@ function parseCanvasContextRequest(
       return {
         type: "node_create_schema",
         node_type: normalizeCanvasNodeType(value.node_type),
+        model_id: typeof value.model_id === "string" ? value.model_id.trim() : undefined,
       };
     case "slot_candidates":
       return {
@@ -1283,6 +1286,7 @@ function expandSelectedCanvasNodes(
 
 function buildNodeCreateSchema(
   nodeType: CanvasNodeType | undefined,
+  modelId?: string,
 ): Record<string, unknown> | null {
   if (!nodeType) return null;
   const schemaNodeType =
@@ -1290,15 +1294,32 @@ function buildNodeCreateSchema(
       ? CANVAS_NODE_TYPES.imageGen
       : nodeType;
   if (!isAgentCreatableCanvasNodeType(schemaNodeType)) return null;
+  if (modelId && (schemaNodeType === CANVAS_NODE_TYPES.imageGen || schemaNodeType === CANVAS_NODE_TYPES.video)) {
+    const snapshot = schemaNodeType === CANVAS_NODE_TYPES.video
+      ? getFreezoneVideoModelsSnapshot()
+      : getFreezoneImageModelsSnapshot();
+    if (!snapshot.models.some((model) => model.id === modelId)) {
+      return {
+        node_type: schemaNodeType,
+        model_id: modelId,
+        model_found: false,
+        available_model_ids: snapshot.models.map((model) => model.id),
+        loading: snapshot.isLoading,
+        instruction: "The selected model is not in the live catalog. Do not use generic parameter options; refresh the model list or choose an available model.",
+      };
+    }
+  }
   const node: CanvasNode = {
     id: `__create_schema__:${schemaNodeType}`,
     type: schemaNodeType,
     position: { x: 0, y: 0 },
-    data: {} as CanvasNodeData,
+    data: (modelId ? { model: modelId } : {}) as CanvasNodeData,
   };
   const catalog = buildCanvasNodeActionCatalog(node);
   return {
     node_type: schemaNodeType,
+    ...(modelId ? { model_id: modelId } : {}),
+    ...(modelId ? { model_found: true } : {}),
     editable_fields: catalog.editable_fields,
     create_schema: catalog.editable_schema,
     stable_create_fields: catalog.editable_fields.filter((field) =>
@@ -1323,8 +1344,9 @@ function buildNodeCreateSchema(
         fallback: schema.fallback ?? false,
         description: schema.description ?? null,
       })),
-    instruction:
-      "Use only fields declared in create_schema. Enum fields must use exact options. If options are empty/loading or no suitable option exists, omit the field and let the frontend default apply.",
+    instruction: modelId
+      ? "These options belong to model_id. Use exact enum values and do not substitute generic values; omit unsupported fields with empty options."
+      : "Choose a model, then request node_create_schema again with model_id before choosing model-dependent parameters. Use only fields declared in create_schema.",
   };
 }
 
@@ -2053,7 +2075,7 @@ export async function buildCanvasContextRequestResponses(params: {
           break;
         case "node_create_schema":
           {
-            const schema = buildNodeCreateSchema(request.node_type);
+            const schema = buildNodeCreateSchema(request.node_type, request.model_id);
             response.push({
               type: "node_create_schema",
               node_type:

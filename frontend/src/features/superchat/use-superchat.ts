@@ -1791,6 +1791,8 @@ function canvasContextRequestFromToolCall(payload: ServerFrame): {
   if (requestType === "node_create_schema") {
     const nodeType = firstStringValue(records, ["node_type", "nodeType"]);
     if (nodeType) request.node_type = nodeType;
+    const modelId = firstStringValue(records, ["model_id", "modelId"]);
+    if (modelId) request.model_id = modelId;
   }
   if (requestType === "slot_candidates") {
     const slotKind = firstStringValue(records, ["slot_kind", "slotKind"]);

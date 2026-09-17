@@ -2529,10 +2529,14 @@ def _handle_node_create_schema(args: dict[str, Any], **_: Any) -> str:
                 ),
             }
         )
+    model_id = str(args.get("model_id") or "").strip()
+    request: dict[str, Any] = {"type": "node_create_schema", "node_type": node_type}
+    if model_id:
+        request["model_id"] = model_id
     return _request_canvas_context_from_frontend(
         project=project,
         canvas=canvas,
-        requests=[{"type": "node_create_schema", "node_type": node_type}],
+        requests=[request],
     )
 
 
@@ -8753,6 +8757,8 @@ TOOLS = (
         _schema(
             "freezone_get_node_create_schema",
             "Request the creation schema for one Freezone node type from the frontend. "
+            "After selecting an image or video model, call again with its exact model_id "
+            "and use only that model's returned parameter options. "
             "htmlArtifactNode creates an empty webpage node through generic create_node/add_next_node; "
             "inspect its node action catalog to generate or save source. "
             "For ordinary text, briefs, copywriting, prompts, notes, or free-form scripts, "
@@ -8761,6 +8767,10 @@ TOOLS = (
             {
                 **_SCOPE_PROPS,
                 "node_type": {"type": "string", "enum": _NODE_CREATE_SCHEMA_TYPE_VALUES},
+                "model_id": {
+                    "type": "string",
+                    "description": "Optional exact image/video model id; returns that model's supported parameters.",
+                },
             },
             ["node_type"],
         ),
@@ -8978,7 +8988,9 @@ TOOLS = (
                 "Compile a structured intent and persist its deterministic preview. "
                 "Put include_compose at intent.include_compose, not inside intent.planner. "
                 "Before choosing generation parameters, read freezone_get_node_create_schema "
-                "for imageGenNode/videoNode and use its live model ids and supported options. "
+                "for imageGenNode/videoNode to choose a live model id, then call it again with "
+                "model_id to read that model's supported options. Do not reuse generic options "
+                "or change a user's selected value based on another model's options. "
                 "Do not invent low/medium quality or a recommended model id. On preflight "
                 "failure, fix all returned blockers together using allowed_values or "
                 "available_models. Ask the user before changing an explicit requirement. "
