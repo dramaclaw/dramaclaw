@@ -90,6 +90,7 @@ from novelvideo.api.schemas import (
     PushRequest,
 )
 from novelvideo.api.task_start_errors import handle_task_start_runtime_error
+from novelvideo.api.upload_workers import run_asset_upload_operation
 from novelvideo.config import (
     IMAGE_GENERATION_SELECTIONS,
     image_generation_selection_options,
@@ -351,6 +352,7 @@ from novelvideo.utils.path_resolver import (
     canonical_scene_reverse_master_path,
 )
 from novelvideo.utils.static_urls import project_static_url
+from novelvideo.utils.upload_safety import create_staged_upload_file
 
 
 async def _resolve_freezone_project(
@@ -4649,6 +4651,23 @@ async def _read_upload_contents(
     return b"".join(chunks)
 
 
+def _persist_freezone_upload(target: Path, contents: bytes) -> None:
+    """Write one upload to a staging file and atomically publish it."""
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staged_path = create_staged_upload_file(
+        target.parent,
+        prefix=".upload-",
+        suffix=".tmp",
+        destination=target,
+    )
+    try:
+        staged_path.write_bytes(contents)
+        staged_path.replace(target)
+    finally:
+        staged_path.unlink(missing_ok=True)
+
+
 async def _save_freezone_upload(
     project: str,
     file: UploadFile,
@@ -4656,15 +4675,14 @@ async def _save_freezone_upload(
     *,
     max_bytes: int | None = None,
 ) -> dict[str, Any]:
-    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
     target_dir = uploads_dir(project_dir)
-    target_dir.mkdir(parents=True, exist_ok=True)
     filename = safe_upload_filename(file.filename)
     target = target_dir / filename
     contents = await _read_upload_contents(file, max_bytes=max_bytes)
-    target.write_bytes(contents)
+    await run_asset_upload_operation(_persist_freezone_upload, target, contents)
     rel = target.relative_to(project_dir).as_posix()
     return {
         "ok": True,
