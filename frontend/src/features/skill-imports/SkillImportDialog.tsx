@@ -4,8 +4,13 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Download, FolderOpen, FileText, ChevronRight, ChevronDown, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { CreditCostInline } from '@/components/credit-cost-inline';
+import { useCreditDisplayHidden } from '@/components/credits/credit-visual';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
+import { BillingRuleNotConfiguredError } from '@/lib/api-errors';
+import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
+import { isCeRuntime } from '@/lib/runtime-config';
 import { encodeSkillFiles, installSkillImport, listSkillImports, parseCandidateBundle, retrySkillImport, skillImportStudioPrompt, submitSkillImports, validateSkillImport, sameCandidateBundle, type SkillImportItem } from './api';
 
 const hasCurrentReport = (item: SkillImportItem | null) => typeof item?.current_conversion_version === 'number' && item.quality_report?.version === item.current_conversion_version;
@@ -24,6 +29,11 @@ export function SkillImportDialog({ open, onOpenChange, project, taskId }: { ope
   const [draft, setDraft] = useState('');
   const [resultOpen, setResultOpen] = useState(true);
   const [acknowledged, setAcknowledged] = useState(false);
+  const creditDisplayHidden = useCreditDisplayHidden();
+  const importCost = useGenerationCreditCost('feature', 'freezone.skill_import', { surface: 'canvas' });
+  const importCostDisplay = importCost.data?.data.display
+    ?? (importCost.error instanceof BillingRuleNotConfiguredError ? t('common.billingRuleNotConfiguredShort') : null);
+  const showImportCost = !isCeRuntime() && !creditDisplayHidden && Boolean(importCostDisplay);
   useEffect(() => { setAcknowledged(false); }, [selected?.id, draft, open]);
   const query = useQuery({
     queryKey: ['skill-imports', project],
@@ -103,6 +113,10 @@ export function SkillImportDialog({ open, onOpenChange, project, taskId }: { ope
           }} />
           <Button size="sm" disabled={busy} onClick={() => input.current?.click()}><Download aria-hidden="true" className="mr-1 size-3.5" />{tr('upload', 'Upload MD / ZIP')}</Button>
           <Button size="sm" variant="outline" disabled={busy || !failed.length} onClick={() => void retry(failed)}>{tr('retryFailed', 'Retry failed')}</Button>
+          {showImportCost && <span className="inline-flex items-center text-xs text-muted-foreground">
+            {tr('perFileCost', 'Per file')}
+            <CreditCostInline display={importCostDisplay} promotion={importCost.data?.data.promotion} />
+          </span>}
           <span className="mt-1 w-full text-xs leading-relaxed text-muted-foreground">{tr('limits', 'Up to 20 files; 2 MB each, 10 MB total. One skill per file or ZIP.')}</span>
         </div>
         {query.isLoading && <p role="status">{tr('loading', 'Loading…')}</p>}
