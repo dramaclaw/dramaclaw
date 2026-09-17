@@ -1,5 +1,5 @@
 // Generated from schemas/workflow/v1/stable-contract.json; do not edit.
-export const WORKFLOW_CONTRACT_SOURCE_SHA256 = "4dd0f6ffb28c41eeef4f49d0418ac8061886e16a4f64d7e559ee3cf85e965bcb";
+export const WORKFLOW_CONTRACT_SOURCE_SHA256 = "1d3add9e7fc736e3ae534db40069e84882b9f00159bcb1bdf22e04a48c5f1666";
 export const WORKFLOW_STABLE_CONTRACT = {
   "schema_version": "freezone_workflow_contract.v1",
   "workflow_plan_schema_version": "freezone_workflow_plan.v1",
@@ -55,21 +55,21 @@ export const WORKFLOW_STABLE_CONTRACT = {
       "openai/gpt-image-2": "newapi_gpt_image2"
     },
     "videoNode": {
-      "omni-flash": "newapi_seedance-2.0-fast",
-      "omni_flash": "newapi_seedance-2.0-fast",
-      "seedance_2_0_fast": "newapi_seedance-2.0-fast",
-      "seedance-2.0-fast": "newapi_seedance-2.0-fast",
-      "seedance-2.0": "newapi_seedance-2.0",
-      "seedance-1.5-pro": "newapi_seedance-1.5-pro",
-      "seedance-1.0-pro-fast": "newapi_seedance-1.0-pro-fast",
-      "huimeng_seedance-2.0-fast": "newapi_seedance-2.0-fast",
-      "huimeng_seedance-2.0": "newapi_seedance-2.0",
-      "huimeng_seedance-1.5-pro": "newapi_seedance-1.5-pro",
-      "huimeng_seedance-1.0-pro-fast": "newapi_seedance-1.0-pro-fast",
-      "newapi_seedance-2.0-fast": "newapi_seedance-2.0-fast",
-      "newapi_seedance-2.0": "newapi_seedance-2.0",
-      "newapi_seedance-1.5-pro": "newapi_seedance-1.5-pro",
-      "newapi_seedance-1.0-pro-fast": "newapi_seedance-1.0-pro-fast"
+      "omni-flash": "seedance-2.0-fast",
+      "omni_flash": "seedance-2.0-fast",
+      "seedance_2_0_fast": "seedance-2.0-fast",
+      "seedance-2.0-fast": "seedance-2.0-fast",
+      "seedance-2.0": "seedance-2.0",
+      "seedance-1.5-pro": "seedance-1.5-pro",
+      "seedance-1.0-pro-fast": "seedance-1.0-pro-fast",
+      "huimeng_seedance-2.0-fast": "seedance-2.0-fast",
+      "huimeng_seedance-2.0": "seedance-2.0",
+      "huimeng_seedance-1.5-pro": "seedance-1.5-pro",
+      "huimeng_seedance-1.0-pro-fast": "seedance-1.0-pro-fast",
+      "newapi_seedance-2.0-fast": "seedance-2.0-fast",
+      "newapi_seedance-2.0": "seedance-2.0",
+      "newapi_seedance-1.5-pro": "seedance-1.5-pro",
+      "newapi_seedance-1.0-pro-fast": "seedance-1.0-pro-fast"
     }
   },
   "recipe_envelope": {

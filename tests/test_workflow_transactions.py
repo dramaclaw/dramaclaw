@@ -31,6 +31,246 @@ def _plan():
     }
 
 
+def _exact_media_plan():
+    return {
+        "schema_version": "freezone_workflow_plan.v1",
+        "workflow_type": "dynamic.custom_items",
+        "title": "parameter contract",
+        "summary": "parameter contract",
+        "skill": {"id": "text-to-image-video", "version": 2},
+        "mode": "custom_items",
+        "nodes": [
+            {
+                "id": "image",
+                "node_type": "imageGenNode",
+                "stage": "generation",
+                "data": {
+                    "prompt": "make image",
+                    "workflowCatalog": {"recipeId": "general-image"},
+                    "model": "LingShan-G2",
+                    "aspect_ratio": "16:9",
+                    "resolution": "2K",
+                    "quality": "medium",
+                    "variants": 1,
+                },
+            },
+            {
+                "id": "video",
+                "node_type": "videoNode",
+                "stage": "generation",
+                "data": {
+                    "prompt": "make video",
+                    "workflowCatalog": {"recipeId": "general-video"},
+                    "model": "seedance-2.0",
+                    "aspect_ratio": "16:9",
+                    "resolution": "720P",
+                    "duration_seconds": 5,
+                    "generate_audio": False,
+                    "generation_mode": "imageToVideo",
+                    "variants": 1,
+                },
+            },
+        ],
+        "edges": [
+            {"source": "image", "target": "video", "link_type": "media_input_for"}
+        ],
+        "expected_node_count": 2,
+        "expected_node_counts": {"imageGenNode": 1, "videoNode": 1},
+    }
+
+
+def test_prepared_exact_plan_uses_confirmation_runtime_parameter_names():
+    prepared = prepare_workflow_source({"plan": _exact_media_plan()}, username="tester")
+
+    image, video = prepared["compiled"]["plan"]["nodes"]
+    assert image["data"] == {
+        "prompt": "make image",
+        "workflowCatalog": {"recipeId": "general-image"},
+        "model": "LingShan-G2",
+        "aspectRatio": "16:9",
+        "size": "2K",
+        "quality": "medium",
+        "count": 1,
+    }
+    assert video["data"] == {
+        "prompt": "make video",
+        "workflowCatalog": {"recipeId": "general-video"},
+        "model": "seedance-2.0",
+        "aspectRatio": "16:9",
+        "quality": "720P",
+        "durationSec": 5,
+        "generateAudio": False,
+        "genMode": "imageToVideo",
+        "count": 1,
+    }
+    assert prepared["intent"]["plan"] == prepared["compiled"]["plan"]
+
+
+def test_prepared_exact_plan_rejects_conflicting_parameter_aliases():
+    plan = _exact_media_plan()
+    plan["nodes"][0]["data"]["aspectRatio"] = "1:1"
+
+    with pytest.raises(
+        WorkflowOperationError,
+        match="conflicting settings aspect_ratio and aspectRatio for image",
+    ):
+        prepare_workflow_source({"plan": plan}, username="tester")
+
+
+def test_step_revision_uses_the_same_generation_mode_mapping_as_preparation():
+    revised = update_workflow_steps(
+        _exact_media_plan(),
+        [
+            {
+                "node_id": "video",
+                "settings": {"generation_mode": "firstLastFrame"},
+            }
+        ],
+    )
+
+    video = revised["nodes"][1]
+    assert video["data"]["genMode"] == "firstLastFrame"
+
+
+@pytest.mark.parametrize(
+    ("node_index", "field", "value", "message"),
+    [
+        (0, "variants", True, "variants must be 1, 2 or 4"),
+        (1, "duration_seconds", 0, "duration_seconds must be positive"),
+    ],
+)
+def test_prepared_exact_plan_rejects_invalid_semantic_parameters(
+    node_index, field, value, message
+):
+    plan = _exact_media_plan()
+    plan["nodes"][node_index]["data"][field] = value
+
+    with pytest.raises(WorkflowOperationError, match=message):
+        prepare_workflow_source({"plan": plan}, username="tester")
+
+
+def test_prepared_exact_plan_normalizes_portable_generation_input_names():
+    plan = _exact_media_plan()
+    image_data, video_data = [node["data"] for node in plan["nodes"]]
+    image_data.update(
+        {
+            "image_model": image_data.pop("model"),
+            "image_aspect_ratio": image_data.pop("aspect_ratio"),
+            "image_resolution": image_data.pop("resolution"),
+            "image_quality": image_data.pop("quality"),
+            "image_variants_per_node": image_data.pop("variants"),
+        }
+    )
+    video_data.update(
+        {
+            "video_model": video_data.pop("model"),
+            "video_aspect_ratio": video_data.pop("aspect_ratio"),
+            "video_resolution": video_data.pop("resolution"),
+            "video_duration_seconds": video_data.pop("duration_seconds"),
+            "video_generate_audio": video_data.pop("generate_audio"),
+            "video_generation_mode": video_data.pop("generation_mode"),
+            "video_variants_per_node": video_data.pop("variants"),
+        }
+    )
+
+    prepared = prepare_workflow_source({"plan": plan}, username="tester")
+
+    image, video = prepared["compiled"]["plan"]["nodes"]
+    assert image["data"]["model"] == "LingShan-G2"
+    assert image["data"]["aspectRatio"] == "16:9"
+    assert image["data"]["size"] == "2K"
+    assert image["data"]["quality"] == "medium"
+    assert image["data"]["count"] == 1
+    assert video["data"]["model"] == "seedance-2.0"
+    assert video["data"]["aspectRatio"] == "16:9"
+    assert video["data"]["quality"] == "720P"
+    assert video["data"]["durationSec"] == 5
+    assert video["data"]["generateAudio"] is False
+    assert video["data"]["genMode"] == "imageToVideo"
+    assert video["data"]["count"] == 1
+    assert not any("image_" in key for key in image["data"])
+    assert not any("video_" in key for key in video["data"])
+
+
+def test_prepared_exact_plan_applies_confirmed_shared_inputs_to_media_nodes():
+    plan = _exact_media_plan()
+    image_data, video_data = [node["data"] for node in plan["nodes"]]
+    for key in ("model", "aspect_ratio", "resolution", "quality", "variants"):
+        image_data.pop(key)
+    for key in (
+        "model",
+        "aspect_ratio",
+        "resolution",
+        "duration_seconds",
+        "generate_audio",
+        "generation_mode",
+        "variants",
+    ):
+        video_data.pop(key)
+    plan["inputs"] = {
+        "image_model": "LingShan-G2",
+        "image_aspect_ratio": "16:9",
+        "image_resolution": "2K",
+        "image_quality": "medium",
+        "image_variants_per_node": 1,
+        "video_model": "seedance-2.0",
+        "video_aspect_ratio": "16:9",
+        "video_resolution": "720P",
+        "video_duration_seconds": 5,
+        "video_generate_audio": False,
+        "video_generation_mode": "imageToVideo",
+        "video_variants_per_node": 1,
+    }
+
+    prepared = prepare_workflow_source({"plan": plan}, username="tester")
+
+    image, video = prepared["compiled"]["plan"]["nodes"]
+    assert {
+        key: image["data"].get(key)
+        for key in ("model", "aspectRatio", "size", "quality", "count")
+    } == {
+        "model": "LingShan-G2",
+        "aspectRatio": "16:9",
+        "size": "2K",
+        "quality": "medium",
+        "count": 1,
+    }
+    assert {
+        key: video["data"].get(key)
+        for key in (
+            "model",
+            "aspectRatio",
+            "quality",
+            "durationSec",
+            "generateAudio",
+            "genMode",
+            "count",
+        )
+    } == {
+        "model": "seedance-2.0",
+        "aspectRatio": "16:9",
+        "quality": "720P",
+        "durationSec": 5,
+        "generateAudio": False,
+        "genMode": "imageToVideo",
+        "count": 1,
+    }
+
+
+def test_prepared_exact_plan_rejects_shared_input_and_node_setting_conflict():
+    plan = _exact_media_plan()
+    plan["inputs"] = {"video_duration_seconds": 10}
+
+    with pytest.raises(
+        WorkflowOperationError,
+        match=(
+            "conflicting plan input video_duration_seconds and node setting "
+            "duration_seconds for video"
+        ),
+    ):
+        prepare_workflow_source({"plan": plan}, username="tester")
+
+
 def test_binding_preserves_planning_and_is_idempotent():
     plan = _plan()
     before = deepcopy(plan)
