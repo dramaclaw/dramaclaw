@@ -248,7 +248,17 @@ async def run_quality_pipeline(record: dict, username: str, generate, save, prog
                 append_diagnostic(record, 'model_started', **context, prompt=request, prompt_chars=len(request))
                 save()
                 try:
-                    text = await budget.generate(name, request, generate)
+                    from novelvideo.model_gateway_runtime import model_gateway_attempt_scope
+
+                    # An explicit retry is a new paid egress attempt. Its name
+                    # must remain stable if Celery redelivers this same task.
+                    attempt_key = content_hash({
+                        'import_id': record['id'], 'stage': name,
+                        'contract_attempt': contract_attempt,
+                        'transport_attempt': transport_attempt,
+                    })
+                    with model_gateway_attempt_scope(attempt_key):
+                        text = await budget.generate(name, request, generate)
                 except BaseException as exc:
                     append_diagnostic(record, 'model_failed', **context, elapsed_ms=round((time.monotonic() - started) * 1000), error_type=type(exc).__name__, error=str(exc))
                     if transport_attempt == transport_attempts or not is_transient_model_error(exc):

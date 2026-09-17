@@ -83,6 +83,39 @@ async def test_default_conversion_uses_three_calls_and_installs_without_graph_or
 
 
 @pytest.mark.asyncio
+async def test_organization_timeout_retry_claims_a_distinct_deterministic_egress_operation():
+    from novelvideo import model_gateway_runtime as runtime
+    from test_freezone_agent_bundle import _bundle_payload
+    from test_p0g4a_model_core import _organization_context
+
+    async def run_once():
+        record = record_fixture()
+        responses = [design_fixture(), _bundle_payload(), review_fixture()]
+        operation_ids = []
+
+        async def generate(_prompt):
+            # The leaf opens a request scope for each model invocation, as
+            # generate_freezone_text does in production.
+            with runtime.model_gateway_request_scope(context):
+                operation_ids.append(runtime.next_model_gateway_business_task_id(
+                    'freezone.text.generate', request_digest='a' * 64))
+            if len(operation_ids) == 1:
+                raise TimeoutError('gateway timed out after submit')
+            return json.dumps(responses.pop(0))
+
+        with runtime.model_gateway_request_scope(context):
+            await run_quality_pipeline(record, 'alice', generate, lambda: None, lambda *a: None)
+        assert record['status'] == 'ready'
+        return operation_ids[:2]
+
+    context = _organization_context()
+    first_run = await run_once()
+    assert first_run[0] != first_run[1]
+    # A redelivery of the same envelope must reproduce each attempt's key.
+    assert await run_once() == first_run
+
+
+@pytest.mark.asyncio
 async def test_concrete_content_defect_repairs_candidate():
     from test_freezone_agent_bundle import _bundle_payload
     responses = [design_fixture(), _bundle_payload(), blocker_fixture(), _bundle_payload(), review_fixture()]
