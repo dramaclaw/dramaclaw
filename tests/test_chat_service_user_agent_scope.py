@@ -1618,6 +1618,9 @@ def test_codex_clarification_requires_successful_answer(container, outcome):
         "read_only",
         "mixed",
         "wrong_scope",
+        "story_retry",
+        "story_wrong_retry",
+        "unstructured_proposal",
     ],
 )
 async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
@@ -1718,7 +1721,33 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                     structured={"ok": True, "status": "saved", "skill_id": "line-art"},
                     error=None,
                 )
-            elif tool_outcome not in {"missing", "blocked", "read_only"}:
+            elif tool_outcome in {"story_retry", "story_wrong_retry"}:
+                for call_id, story_id, payload in (
+                    (
+                        "rejected",
+                        "story-a",
+                        {"ok": False, "error": "tool_arguments_invalid", "phase": "tool_validation"},
+                    ),
+                    (
+                        "corrected",
+                        "story-a" if tool_outcome == "story_retry" else "story-b",
+                        {"ok": True, "project_id": "project-a", "canvas_id": "canvas-a",
+                         "story_id": "story-a" if tool_outcome == "story_retry" else "story-b",
+                         "revision": 4, "refresh_canvas": True},
+                    ),
+                ):
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        text="[mcp:completed] dramaclaw.dramaclaw_patch_interactive_story",
+                        name="dramaclaw.dramaclaw_patch_interactive_story",
+                        call_id=call_id,
+                        status="completed",
+                        input={"story_id": story_id, "base_revision": 3},
+                        output={"content": [{"type": "text", "text": json.dumps(payload)}]},
+                        structured=payload,
+                        error=None,
+                    )
+            elif tool_outcome not in {"missing", "blocked", "read_only", "unstructured_proposal"}:
                 result_payload = (
                     {
                         "ok": True,
@@ -1780,6 +1809,8 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 assistant_reply = "建议保持当前节点位置，先检查配置。"
             if tool_outcome == "clarification_answered":
                 assistant_reply = "参数已确认，尚未执行画布操作。"
+            if tool_outcome in {"story_retry", "story_wrong_retry"}:
+                assistant_reply = "互动故事已更新。"
             structured_reply = json.dumps(
                 {
                     "message": assistant_reply,
@@ -1792,10 +1823,14 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                     "canvas_receipts": (
                         [{"bridge_key": "bridge-call-1", "revision": None}]
                         if tool_outcome == "success"
+                        else [{"bridge_key": None, "revision": 4}]
+                        if tool_outcome in {"story_retry", "story_wrong_retry"}
                         else []
                     ),
                 },
             )
+            if tool_outcome == "unstructured_proposal":
+                structured_reply = "## 互动广告方案\n先展示口香糖，再让用户选择。"
             yield SimpleNamespace(type="assistant_delta", text=structured_reply)
             yield SimpleNamespace(
                 type="complete",
@@ -1883,6 +1918,20 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "wrong_scope":
         assert "成功画布写入回执" in result["content"]
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "story_retry":
+        assert result["content"] == "互动故事已更新。"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "story_wrong_retry":
+        assert result["content"] == "画布操作未完成：tool_arguments_invalid"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "unstructured_proposal":
+        assert result["content"].startswith("本轮未执行画布写入。")
+        assert "## 互动广告方案\n先展示口香糖，再让用户选择。" in result["content"]
+        assert chat_service._get_codex_thread_id(
+            "admin", "project-a", agent_profile="freezone:main", canvas_id="canvas-a",
+            project_state_dir=tmp_path / "state" / "admin" / "project-a",
+        ) is None
         assert assistant_deltas == [result["content"]]
     else:
         assert result["content"] == ("未能创建工作流：找不到匹配的 Workflow Skill。")

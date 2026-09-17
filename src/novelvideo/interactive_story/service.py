@@ -134,6 +134,7 @@ class InteractiveStoryService:
         )
         story = self._story_after_save(request.canvas_id, request.story.story_id)
         return InteractiveStoryMutationResult(
+            project_id=self.project_id,
             canvas_id=request.canvas_id,
             story_id=story.story_id,
             revision=_saved_revision(saved),
@@ -200,6 +201,7 @@ class InteractiveStoryService:
         )
         story = self._story_after_save(patch.canvas_id, patch.story_id)
         return InteractiveStoryMutationResult(
+            project_id=self.project_id,
             canvas_id=patch.canvas_id,
             story_id=story.story_id,
             revision=_saved_revision(saved),

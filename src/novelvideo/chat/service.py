@@ -853,11 +853,12 @@ def _codex_freezone_write_receipt(
                     payload.get("refresh_canvas") is True
                     and isinstance(payload.get("story_id"), str)
                     and payload["story_id"].strip()
+                    and project_id
                     and canvas_id
                     and type(revision) is int
                     and revision >= 0
                 ):
-                    return True
+                    return payload
                 continue
             # A transport/tool status is not proof that the canvas mutation
             # was persisted. Browser-applied results are durable only when
@@ -911,6 +912,32 @@ def _codex_freezone_write_result_error(event: Any) -> str:
     if isinstance(raw_error, str) and raw_error.strip():
         return raw_error.strip()[:1000]
     return ""
+
+
+def _codex_story_preflight_rejection(event: Any) -> tuple[str, str] | None:
+    """Identify story calls rejected by tool schema validation before execution."""
+    name = _codex_freezone_tool_name(event)
+    if name not in {
+        "dramaclaw_create_interactive_story",
+        "dramaclaw_patch_interactive_story",
+    }:
+        return None
+    rejected = any(
+        payload.get("error") == "tool_arguments_invalid"
+        and payload.get("phase") == "tool_validation"
+        for value in (getattr(event, "structured", None), getattr(event, "output", None))
+        for payload in _json_objects_from_codex_tool_value(value)
+    )
+    if not rejected:
+        return None
+    for payload in _json_objects_from_codex_tool_value(getattr(event, "input", None)):
+        story_id = payload.get("story_id")
+        if name == "dramaclaw_create_interactive_story":
+            story = payload.get("story")
+            story_id = story.get("story_id") if isinstance(story, dict) else None
+        if isinstance(story_id, str) and story_id.strip():
+            return name, story_id.strip()
+    return None
 
 
 def _codex_freezone_write_result_state(event: Any) -> str:
@@ -6862,6 +6889,7 @@ async def _stream_assistant_reply_codex(
     tool_text = ""
     structured_canvas_reply = str(tool_mode or "").strip() == "freezone_canvas"
     canvas_write_attempts: dict[str, str] = {}
+    preflight_rejections: dict[str, tuple[str, str]] = {}
     canvas_receipts: set[tuple[str, int | None]] = set()
     canvas_write_failure = ""
     ready_workflow_draft: dict[str, Any] | None = None
@@ -7070,19 +7098,36 @@ async def _stream_assistant_reply_codex(
                     call_id = call_id or f"unidentified:{len(canvas_write_attempts)}"
                     canvas_write_attempts.setdefault(call_id, "in_progress")
                     if event.type == "tool_updated":
-                        receipt = _codex_freezone_write_receipt(
-                            event, expected_project=project, expected_canvas=canvas_id
-                        )
-                        canvas_write_attempts[call_id] = (
-                            "succeeded"
-                            if receipt is not None and identifiable_call
-                            else _codex_freezone_write_result_state(event)
-                        )
-                        if receipt is not None and identifiable_call:
-                            canvas_receipts.add(receipt_reference(receipt))
-                        failure = _codex_freezone_write_result_error(event)
-                        if failure:
-                            canvas_write_failure = failure
+                        preflight_target = _codex_story_preflight_rejection(event)
+                        if preflight_target is not None:
+                            # No API write was attempted. A corrected call to
+                            # the same story may satisfy this rejected input.
+                            canvas_write_attempts.pop(call_id, None)
+                            preflight_rejections[call_id] = preflight_target
+                            canvas_write_failure = _codex_freezone_write_result_error(event)
+                        else:
+                            receipt = _codex_freezone_write_receipt(
+                                event, expected_project=project, expected_canvas=canvas_id
+                            )
+                            canvas_write_attempts[call_id] = (
+                                "succeeded"
+                                if receipt is not None and identifiable_call
+                                else _codex_freezone_write_result_state(event)
+                            )
+                            if receipt is not None and identifiable_call:
+                                canvas_receipts.add(receipt_reference(receipt))
+                                target = (
+                                    _codex_freezone_tool_name(event),
+                                    receipt.get("story_id"),
+                                )
+                                preflight_rejections = {
+                                    rejected_call: rejected_target
+                                    for rejected_call, rejected_target in preflight_rejections.items()
+                                    if rejected_target != target
+                                }
+                            failure = _codex_freezone_write_result_error(event)
+                            if failure:
+                                canvas_write_failure = failure
                 event_tool_text = str(event.text or "")
                 if event_tool_text:
                     tool_text += event_tool_text
@@ -7161,6 +7206,9 @@ async def _stream_assistant_reply_codex(
         if turn_operation is not None:
             await turn_operation.finish(turn_disposition)
 
+    for rejected_call in preflight_rejections:
+        canvas_write_attempts[rejected_call] = "failed"
+
     # A transport timeout/cancellation is not a canvas receipt failure. Keep
     # the runtime's actionable reason instead of replacing it with the
     # misleading "no canvas write" postcondition message.
@@ -7170,6 +7218,7 @@ async def _stream_assistant_reply_codex(
         # that unvalidated payload may reach presentation or persisted history.
         assistant_text = "已取消本轮请求。"
     elif structured_canvas_reply and canvas_postcondition_applies:
+        raw_assistant_text = assistant_text.strip()
         assistant_text = finalize_canvas_reply(
             assistant_text,
             attempts=canvas_write_attempts,
@@ -7177,6 +7226,23 @@ async def _stream_assistant_reply_codex(
             failure=canvas_write_failure,
             draft_ready=ready_workflow_draft is not None,
         )
+        if not canvas_write_attempts and assistant_text.startswith(
+            "回复未通过操作结果校验："
+        ):
+            # A hidden unstructured proposal must not be resumed as approval.
+            reset_codex_scope_thread(
+                username,
+                project,
+                agent_profile=agent_profile,
+                canvas_id=canvas_id,
+                project_state_dir=project_state_dir,
+            )
+            if raw_assistant_text and not raw_assistant_text.startswith(("{", "[")):
+                assistant_text = (
+                    "本轮未执行画布写入。以下是未通过格式校验的模型原文，"
+                    "供你审核；其中的完成表述不代表实际操作结果：\n\n"
+                    + raw_assistant_text[:12000]
+                )
     assistant_text = assistant_text.strip() or "已执行，但没有返回正文。"
     assistant_text = _bounded_workflow_planning_reply(
         assistant_text,

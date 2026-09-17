@@ -6553,6 +6553,7 @@
       "generation": {
         "noResult": "视频生成未返回结果",
         "failed": "视频生成失败",
+        "missingKeyframe": "缺少可用的首帧或尾帧图片，请检查视频节点的图片连线",
         "faceBlockedMessage": "素材包含真实人脸，已被内容安全策略拦截。请在下方打开「真人素材审核」开关后重试（可能增加审核时间，不保证通过）。",
         "faceBlockedTitle": "素材被拦截"
       },

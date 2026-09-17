@@ -2555,8 +2555,8 @@ def _result_field_schema(field: str) -> dict[str, Any]:
     return {"type": ["string", "null"]}
 
 _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
-    "dramaclaw_create_interactive_story": ("canvas_id", "story_id", "revision", "issues", "current_revision", "idempotent", "refresh_canvas"),
-    "dramaclaw_patch_interactive_story": ("canvas_id", "story_id", "revision", "issues", "current_revision", "idempotent", "refresh_canvas"),
+    "dramaclaw_create_interactive_story": ("project_id", "canvas_id", "story_id", "revision", "issues", "current_revision", "idempotent", "refresh_canvas"),
+    "dramaclaw_patch_interactive_story": ("project_id", "canvas_id", "story_id", "revision", "issues", "current_revision", "idempotent", "refresh_canvas"),
     "dramaclaw_get_interactive_story": ("canvas_id", "story_id", "revision", "issues", "current_revision", "story"),
     "dramaclaw_validate_interactive_story": ("canvas_id", "story_id", "revision", "issues", "current_revision", "valid"),
     "dramaclaw_control_episode_auto": (
@@ -2698,8 +2698,8 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
 # table is deliberately separate so dropping a tool's business payload cannot be
 # hidden by a generic MCP envelope.
 _RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
-    "dramaclaw_create_interactive_story": ("canvas_id", "story_id", "revision", "refresh_canvas"),
-    "dramaclaw_patch_interactive_story": ("canvas_id", "story_id", "revision", "refresh_canvas"),
+    "dramaclaw_create_interactive_story": ("project_id", "canvas_id", "story_id", "revision", "refresh_canvas"),
+    "dramaclaw_patch_interactive_story": ("project_id", "canvas_id", "story_id", "revision", "refresh_canvas"),
     "dramaclaw_get_interactive_story": ("canvas_id", "story"),
     "dramaclaw_validate_interactive_story": ("canvas_id", "story_id", "revision", "valid", "issues"),
     "dramaclaw_control_episode_auto": ("run_id", "episode"),

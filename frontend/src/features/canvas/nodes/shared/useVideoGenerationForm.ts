@@ -1298,7 +1298,7 @@ export function useVideoGenerationForm(
               typeof node.data.displayName === "string" ? node.data.displayName : null,
           });
         }
-        return resolveVideoKeyframeUrls(candidates);
+        return resolveVideoKeyframeUrls(candidates, genMode);
       };
 
       const durationClamped = clampVideoDuration(durationSec, durationBounds);
@@ -1321,6 +1321,7 @@ export function useVideoGenerationForm(
           updateNodeData(id, {
             isGenerating: false,
             generationStartedAt: null,
+            generationError: t("node.videoNode.generation.missingKeyframe"),
           });
           return {};
         }

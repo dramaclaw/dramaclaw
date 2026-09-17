@@ -6502,8 +6502,8 @@ def _result_field_schema(field: str) -> dict[str, Any]:
 
 _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     "dramaclaw_get_freezone_canvas": ("canvas_id", "nodes", "edges", "revision"),
-    "dramaclaw_create_interactive_story": ("canvas_id", "story_id", "revision", "issues", "current_revision", "idempotent", "refresh_canvas"),
-    "dramaclaw_patch_interactive_story": ("canvas_id", "story_id", "revision", "issues", "current_revision", "idempotent", "refresh_canvas"),
+    "dramaclaw_create_interactive_story": ("project_id", "canvas_id", "story_id", "revision", "issues", "current_revision", "idempotent", "refresh_canvas"),
+    "dramaclaw_patch_interactive_story": ("project_id", "canvas_id", "story_id", "revision", "issues", "current_revision", "idempotent", "refresh_canvas"),
     "dramaclaw_get_interactive_story": ("canvas_id", "story_id", "revision", "issues", "current_revision", "story"),
     "dramaclaw_validate_interactive_story": ("canvas_id", "story_id", "revision", "issues", "current_revision", "valid"),
     "freezone_observe_workflow_run": (
@@ -6776,8 +6776,8 @@ _SKILL_STUDIO_FRONTEND_REQUIRED = (
 
 _RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
     "dramaclaw_get_freezone_canvas": ("canvas_id", "nodes", "edges", "revision"),
-    "dramaclaw_create_interactive_story": ("canvas_id", "story_id", "revision", "refresh_canvas"),
-    "dramaclaw_patch_interactive_story": ("canvas_id", "story_id", "revision", "refresh_canvas"),
+    "dramaclaw_create_interactive_story": ("project_id", "canvas_id", "story_id", "revision", "refresh_canvas"),
+    "dramaclaw_patch_interactive_story": ("project_id", "canvas_id", "story_id", "revision", "refresh_canvas"),
     "dramaclaw_get_interactive_story": ("canvas_id", "story"),
     "dramaclaw_validate_interactive_story": ("canvas_id", "story_id", "revision", "valid", "issues"),
     "freezone_observe_workflow_run": (

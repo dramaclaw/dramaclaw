@@ -9,7 +9,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from novelvideo.chat.service import _codex_freezone_write_result_succeeded
+from novelvideo.chat.canvas_outcome import receipt_reference
+from novelvideo.chat.service import (
+    _codex_freezone_write_receipt,
+    _codex_freezone_write_result_succeeded,
+)
 
 
 def _event(payload, *, name="freezone_confirm_workflow_draft", status="completed", error=None):
@@ -26,12 +30,24 @@ def _event(payload, *, name="freezone_confirm_workflow_draft", status="completed
     "dramaclaw_create_interactive_story", "dramaclaw_patch_interactive_story",
 ])
 def test_story_persistence_receipt_is_a_canvas_write(name):
-    payload = {"ok": True, "canvas_id": "canvas-a", "story_id": "story-a",
+    payload = {"ok": True, "project_id": "project-a", "canvas_id": "canvas-a", "story_id": "story-a",
                "revision": 2, "refresh_canvas": True}
-    assert _codex_freezone_write_result_succeeded(_event(payload, name=f"dramaclaw.{name}"))
-    for field in ("canvas_id", "story_id", "revision", "refresh_canvas"):
+    event = _event(payload, name=f"dramaclaw.{name}")
+    assert _codex_freezone_write_result_succeeded(event)
+    assert _codex_freezone_write_receipt(
+        event, expected_project="project-a", expected_canvas="canvas-a"
+    ) == payload
+    assert receipt_reference(payload) == ("", 2)
+    for field in ("project_id", "canvas_id", "story_id", "revision", "refresh_canvas"):
         incomplete = {k: v for k, v in payload.items() if k != field}
-        assert not _codex_freezone_write_result_succeeded(_event(incomplete, name=name))
+        assert _codex_freezone_write_receipt(
+            _event(incomplete, name=name), expected_project="project-a", expected_canvas="canvas-a"
+        ) is None
+    for change in ({"project_id": "other"}, {"canvas_id": "other"}):
+        assert _codex_freezone_write_receipt(
+            _event({**payload, **change}, name=name),
+            expected_project="project-a", expected_canvas="canvas-a",
+        ) is None
     for change in ({"ok": False}, {"refresh_canvas": False}, {"revision": True}, {"revision": -1}):
         assert not _codex_freezone_write_result_succeeded(_event({**payload, **change}, name=name))
     assert not _codex_freezone_write_result_succeeded(_event(payload, name=name, error="cancelled"))

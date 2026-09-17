@@ -7,6 +7,8 @@ description: "在 DramaClaw 中规划、创建、检查或增量编辑互动影�
 
 把自然语言创意变成画布上可试玩的分支故事。使用用户的语言讨论故事、梗概、选择和结局。不要要求用户提供 JSON、Ink、节点 ID、revision 或 idempotency key。
 
+若宿主要求结构化最终回复，自然语言方案写在 `message` 字段，方案阶段使用 `mode=read_only` 和空 `canvas_receipts`；不要将 Markdown 作为顶层最终回复。此格式只约束 Agent 输出，不要求用户提供 JSON。
+
 ## 面向用户的引导
 
 默认使用普通用户能理解的创作语言：Choice 称“互动选项”，choice_loop 称“等待选择时播放的循环画面”，Segment／节点称“剧情片段”，CTA 称“行动按钮”（如“预约试驾”），placeholder 称“占位画面，尚未制作视频”。使用片段标题定位结果，不主动展示字段名、工具名、ID、revision 或原始状态码；仅在用户询问技术细节或排错需要时补充。工具参数和技术文档中的标识符保持原样。

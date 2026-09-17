@@ -345,7 +345,7 @@ def test_hermes_recovers_story_write_receipt(monkeypatch, tmp_path, tool_name):
     monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
     monkeypatch.setenv("DRAMACLAW_FREEZONE_TOOL_RESULT_DIR", str(tmp_path))
     plugin = dramaclaw_mcp._plugin("freezone")
-    receipt = {"ok": True, "story_id": "story-a", "canvas_id": "canvas-a",
+    receipt = {"ok": True, "project_id": "project-a", "story_id": "story-a", "canvas_id": "canvas-a",
                "revision": 1, "refresh_canvas": True}
     monkeypatch.setattr(plugin, "_request", lambda *a, **kw: receipt)
     handler = dramaclaw_mcp._plugin_tools("freezone")[tool_name][1]

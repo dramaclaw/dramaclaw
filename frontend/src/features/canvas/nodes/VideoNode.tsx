@@ -2193,7 +2193,7 @@ export const VideoNode = memo(
                 typeof node.data.displayName === "string" ? node.data.displayName : null,
             });
           }
-          return resolveVideoKeyframeUrls(candidates);
+          return resolveVideoKeyframeUrls(candidates, genMode);
         };
 
         const validateReferenceDurations = async (
@@ -2307,6 +2307,7 @@ export const VideoNode = memo(
             updateNodeData(id, {
               isGenerating: false,
               generationStartedAt: null,
+              generationError: t("node.videoNode.generation.missingKeyframe"),
             });
             return;
           }
@@ -2852,6 +2853,14 @@ export const VideoNode = memo(
         void handleSubmit()
           .then(() => {
             const finished = useCanvasStore.getState().nodes.find((node) => node.id === id);
+            const generationError =
+              isVideoNode(finished) && typeof finished.data.generationError === "string"
+                ? finished.data.generationError
+                : null;
+            if (generationError) {
+              publishNodeActionError(requestId, id, action, new Error(generationError));
+              return;
+            }
             const videoUrl =
               isVideoNode(finished) && typeof finished.data.videoUrl === "string"
                 ? finished.data.videoUrl

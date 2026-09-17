@@ -536,6 +536,7 @@ class InteractiveStoryIssue(StoryContractModel):
 
 class InteractiveStoryMutationResult(StoryContractModel):
     ok: Literal[True] = True
+    project_id: str
     canvas_id: CanvasId
     story_id: EntityId
     revision: int = Field(ge=1)

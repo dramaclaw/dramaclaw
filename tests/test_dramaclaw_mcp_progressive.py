@@ -1200,7 +1200,13 @@ def test_interactive_story_results_survive_strict_mcp_contract(monkeypatch, oper
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
     monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "default")
     name = f"dramaclaw_{operation}_interactive_story"
-    payload = {"ok": True, "canvas_id": "default", "issues": [], **payload}
+    payload = {
+        "ok": True,
+        "canvas_id": "default",
+        "issues": [],
+        **({"project_id": "project-a"} if operation in {"create", "patch"} else {}),
+        **payload,
+    }
     result = dramaclaw_mcp._structured_tool_result(name, json.dumps(payload))
     assert result.isError is False
     assert result.structuredContent.items() >= payload.items()

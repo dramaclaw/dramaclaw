@@ -44,6 +44,7 @@ def test_freezone_instructions_embed_schema_and_valid_greeting_example():
     assert example["mode"] == "read_only"
     assert example["canvas_receipts"] == []
     assert "not plain text or Markdown" in instructions
+    assert "interactive-story or interactive-ad proposal" in instructions
     assert "ordinary conversation" in instructions
     assert "canvas_receipts" not in service._codex_developer_instructions("default")
 

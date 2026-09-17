@@ -269,6 +269,7 @@ def test_tool_result_and_error_contracts_are_runtime_neutral() -> None:
         path="segments[0].media",
     )
     result = InteractiveStoryMutationResult(
+        project_id="project-a",
         canvas_id="default",
         story_id="fizz_choice_ad",
         revision=1,

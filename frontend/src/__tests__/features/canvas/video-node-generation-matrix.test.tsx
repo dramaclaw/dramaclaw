@@ -289,6 +289,42 @@ describe("视频节点：genMode → 提交端点的分派", () => {
     });
   });
 
+  it("旧画布把上一段的尾帧接作下一段首帧时仍提交任务", async () => {
+    useCanvasStore.getState().setCanvasData(
+      [
+        videoNode({ model: MODEL_SD1, genMode: "firstFrame" }),
+        {
+          id: "previous-tail",
+          type: CANVAS_NODE_TYPES.exportImage,
+          position: { x: 0, y: 0 },
+          data: { displayName: "视频尾帧", imageUrl: "/static/previous-tail.png" },
+        } as CanvasNode,
+      ],
+      [edge("legacy-media-input", "previous-tail", { link_type: "media_input_for" })],
+    );
+
+    await submitAndSettle();
+
+    expectOnlyEndpointCalled(submitFreezoneVideoKeyframes);
+    expect(payloadOf(submitFreezoneVideoKeyframes)).toMatchObject({
+      genMode: "firstFrame",
+      firstFrameUrl: "/static/previous-tail.png",
+      lastFrameUrl: null,
+    });
+  });
+
+  it("显式标记为尾帧的图片不冒充首帧，并提示缺少关键帧", async () => {
+    useCanvasStore.getState().setCanvasData(
+      [videoNode({ model: MODEL_SD1, genMode: "firstFrame" }), uploadImageNode("tail", "/static/tail.png")],
+      [edge("explicit-tail", "tail", { keyframeSlot: "last" })],
+    );
+
+    await submitAndSettle();
+
+    for (const endpoint of ALL_ENDPOINTS) expect(vi.mocked(endpoint)).not.toHaveBeenCalled();
+    expect(nodeData().generationError).toBe("node.videoNode.generation.missingKeyframe");
+  });
+
   it("首尾帧 → /video/keyframes，按连线上的槽位分首尾", async () => {
     useCanvasStore.getState().setCanvasData(
       [

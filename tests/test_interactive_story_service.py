@@ -284,6 +284,7 @@ def test_create_appends_story_atomically_and_get_reads_canvas_revision(
     canvas = canvas_store.read_canvas(service.project_dir, "default")
 
     assert result.revision == 1
+    assert result.project_id == service.project_id
     assert result.canvas_id == "default"
     assert result.refresh_canvas is True
     assert result.idempotent is False

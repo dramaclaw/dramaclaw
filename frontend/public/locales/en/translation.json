@@ -6553,6 +6553,7 @@
       "generation": {
         "noResult": "Video generation returned no result",
         "failed": "Video generation failed",
+        "missingKeyframe": "No usable first or last frame image was found. Check the video node's image connections.",
         "faceBlockedMessage": "The assets contain a real human face and were blocked by the content-safety policy. Turn on “Real-person asset review” below and retry (review may take longer and is not guaranteed to pass).",
         "faceBlockedTitle": "Assets blocked"
       },
