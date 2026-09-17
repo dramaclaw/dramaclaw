@@ -8220,6 +8220,7 @@
     "chooseFiles": "Choose Markdown or ZIP files",
     "upload": "Upload MD / ZIP",
     "retryFailed": "Retry failed",
+    "perFileCost": "Per file",
     "retry": "Retry",
     "limits": "Up to 20 files; 2 MB each, 10 MB total. One skill per file or ZIP.",
     "submitted": "Submitted. Conversion continues in the task center after this window closes.",
