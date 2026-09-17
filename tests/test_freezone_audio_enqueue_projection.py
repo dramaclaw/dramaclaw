@@ -213,6 +213,18 @@ async def test_speech_payload_is_unchanged_when_no_projector_is_installed(
 
 
 @pytest.mark.asyncio
+async def test_speech_payload_keeps_nonempty_canvas_context(
+    speech_harness, projector_absent
+) -> None:
+    payload = await _enqueue_speech(
+        speech_harness, canvas_id="canvas-1", node_id="audio-1"
+    )
+
+    assert payload["canvas_id"] == "canvas-1"
+    assert payload["node_id"] == "audio-1"
+
+
+@pytest.mark.asyncio
 async def test_oversized_speech_projection_raises_on_the_enqueue_side(
     speech_harness, projector_installed, monkeypatch: pytest.MonkeyPatch
 ) -> None:

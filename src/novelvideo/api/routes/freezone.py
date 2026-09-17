@@ -11133,8 +11133,8 @@ async def freezone_audio_speech(
                     "account_voice_username": account_voice_username,
                     "target_episode": body.target_episode,
                     "target_beat": body.target_beat,
-                    "canvas_id": body.canvas_id,
-                    "node_id": body.node_id,
+                    **({"canvas_id": body.canvas_id} if body.canvas_id else {}),
+                    **({"node_id": body.node_id} if body.node_id else {}),
                     **workflow_link,
                     "billing": freezone_audio_task_billing(
                         "freezone.audio_speech",
