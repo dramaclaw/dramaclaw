@@ -82,6 +82,24 @@ def _load_plugin_module():
     return module
 
 
+def test_node_create_schema_forwards_selected_model(monkeypatch):
+    plugin = _load_plugin_module()
+    requests = []
+    monkeypatch.setattr(
+        plugin,
+        "_request_canvas_context_from_frontend",
+        lambda **kwargs: requests.append(kwargs) or {"ok": True},
+    )
+
+    plugin._handle_node_create_schema(
+        {"node_type": "videoNode", "model_id": "minimax-h3"}
+    )
+
+    assert requests[0]["requests"] == [
+        {"type": "node_create_schema", "node_type": "videoNode", "model_id": "minimax-h3"}
+    ]
+
+
 @pytest.mark.parametrize("external_mcp", [False, True])
 @pytest.mark.parametrize(
     "product_kind",

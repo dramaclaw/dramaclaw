@@ -406,7 +406,7 @@ describe("canvas action catalog", () => {
     });
     expect(catalog.editable_schema.quality).toMatchObject({
       type: "enum",
-      options: expect.arrayContaining(["480P", "720P"]),
+      options: expect.arrayContaining(["480p", "720p"]),
     });
   });
 
