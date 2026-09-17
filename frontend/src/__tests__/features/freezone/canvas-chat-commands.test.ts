@@ -14,6 +14,7 @@ import { buildCanvasOntologyContext } from "@/features/canvas/ontology/canvasOnt
 import {
   applyCanvasChatCommands,
   applyCanvasChatCommandsAsync,
+  cancelCanvasWorkflowExecution,
   type CanvasCommandApprovalEventDetail,
   canvasCommandEnvelopeMatchesCanvas,
   CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
@@ -8084,6 +8085,110 @@ describe("canvas chat commands", () => {
         "canvas-a",
         "run-test",
         expect.objectContaining({ status: "completed" }),
+      );
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("keeps a completed artifact when cancellation races with result polling", async () => {
+    const store = useCanvasStore.getState();
+    const canvasId = "canvas-late-cancel-after-artifact";
+    const imageNodeId = store.addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { prompt: "已经完成的商品主图" },
+    );
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      if (!payload.requestId) return;
+      canvasEventBus.publish("freezone/node-action-accepted", {
+        requestId: payload.requestId,
+        nodeId: payload.nodeId,
+        action: payload.action,
+      });
+      window.setTimeout(() => {
+        store.updateNodeData(payload.nodeId, {
+          isGenerating: false,
+          imageUrl: "/static/project/completed-before-cancel.png",
+        });
+        cancelCanvasWorkflowExecution(canvasId);
+        // Deliberately omit freezone/node-action-result. The persisted artifact
+        // and cancellation token become visible in the same polling interval.
+      }, 10);
+    });
+
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_workflow", node_ids: [imageNodeId] }],
+        }]),
+        {
+          projectId: "project-a",
+          canvasId,
+          actionTimeoutMs: 300,
+        },
+      );
+
+      expect(result.errors).toEqual([]);
+      expect(result.commandResults).toContainEqual(expect.objectContaining({
+        nodeId: imageNodeId,
+        action: "generate_image",
+        status: "success",
+      }));
+      expect(updateFreezoneWorkflowRun).toHaveBeenLastCalledWith(
+        "project-a",
+        canvasId,
+        "run-test",
+        expect.objectContaining({ status: "completed" }),
+      );
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("keeps an explicit workflow cancellation when no artifact was produced", async () => {
+    const store = useCanvasStore.getState();
+    const canvasId = "canvas-cancel-without-artifact";
+    const imageNodeId = store.addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { prompt: "尚未完成的商品主图" },
+    );
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      if (!payload.requestId) return;
+      canvasEventBus.publish("freezone/node-action-accepted", {
+        requestId: payload.requestId,
+        nodeId: payload.nodeId,
+        action: payload.action,
+      });
+      window.setTimeout(() => cancelCanvasWorkflowExecution(canvasId), 10);
+    });
+
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_workflow", node_ids: [imageNodeId] }],
+        }]),
+        {
+          projectId: "project-a",
+          canvasId,
+          actionTimeoutMs: 100,
+          actionRetryDelayMs: 0,
+        },
+      );
+
+      expect(result.commandResults).not.toContainEqual(expect.objectContaining({
+        nodeId: imageNodeId,
+        action: "generate_image",
+        status: "success",
+      }));
+      expect(updateFreezoneWorkflowRun).toHaveBeenLastCalledWith(
+        "project-a",
+        canvasId,
+        "run-test",
+        expect.objectContaining({ status: "cancelled" }),
       );
     } finally {
       unsubscribe();
