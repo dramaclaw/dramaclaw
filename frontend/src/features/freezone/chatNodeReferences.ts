@@ -257,6 +257,15 @@ function buildAgentNodeActionCatalogResponse(
   const actions = requestedAction
     ? catalog.actions.filter((action) => action.action === requestedAction)
     : catalog.actions;
+  const selectedAction = actions[0];
+  const defaults = selectedAction?.parameters?.defaults;
+  const actionParameters =
+    defaults && typeof defaults === "object" && !Array.isArray(defaults)
+      ? { parameters: defaults }
+      : {};
+  const actionArguments = selectedAction
+    ? { node_id: catalog.node_id, action: selectedAction.action, ...actionParameters }
+    : null;
   return {
     node_id: catalog.node_id,
     node_type: catalog.node_type,
@@ -269,9 +278,22 @@ function buildAgentNodeActionCatalogResponse(
       ? {
           requested_action: requestedAction,
           action_found: actions.length > 0,
+          ...(actionArguments
+            ? {
+                invocation_examples: {
+                  single: { tool: "freezone_run_node_action", arguments: actionArguments },
+                  batch: {
+                    tool: "freezone_emit_canvas_command",
+                    arguments: {
+                      commands: [{ type: "run_node_action", ...actionArguments }],
+                    },
+                  },
+                },
+              }
+            : {}),
           instruction:
             actions.length > 0
-              ? "Use this action entry's parameters when emitting run_node_action or the listed command_type. These are action/tool parameters, not node editable data. If the action opens or creates a downstream UI/node, do not answer from the source node parameters; follow result_effect and inspect the selected/new node detail when needed."
+              ? "For one action, call freezone_run_node_action with node_id and action at the top level. For a batch, put {type: 'run_node_action', node_id, action, parameters?} in freezone_emit_canvas_command.commands. Only action-specific values go inside parameters; the action entry's parameters describe available inputs and defaults, so supply any required inputs before invoking. These are action/tool parameters, not node editable data. If the action opens or creates a downstream UI/node, follow result_effect and inspect the selected/new node detail when needed. A one-node workflow still runs through freezone_run_workflow."
               : "No action with this name exists on the node. Use freezone_get_node_detail to inspect available action names.",
         }
       : {

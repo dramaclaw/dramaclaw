@@ -18,6 +18,7 @@ import {
   type CanvasCommandApprovalEventDetail,
   canvasCommandEnvelopeMatchesCanvas,
   CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+  type CanvasChatCommandEnvelope,
   emitCanvasCommandApproval,
   extractCanvasChatCommandEnvelopes,
   FREEZONE_CANVAS_COMMAND_APPROVAL_EVENT,
@@ -40,6 +41,7 @@ import {
   shouldIncludeCanvasSummary,
 } from "@/features/freezone/chatNodeReferences";
 import { buildCanvasNodeActionCatalog } from "@/features/freezone/canvasNodeActionCatalog";
+import { validateCanvasChatCommandEnvelopes } from "@/features/freezone/context/canvasCommandValidator";
 import { openPresetProjectionInMyCanvas } from "@/features/freezone/openPresetProjection";
 import { personalCanvasIdForUsername } from "@/features/freezone/projections";
 import {
@@ -4283,6 +4285,73 @@ describe("canvas chat commands", () => {
       expect.objectContaining({ action: "run_matting_tool" }),
     ]);
     expect(nodeActionCatalog?.data?.editable_schema).toBeUndefined();
+  });
+
+  it("shows valid single and batch calls for default and parameterized node actions", async () => {
+    const imageId = useCanvasStore.getState().addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { imageUrl: "/static/project/character.png", prompt: "A portrait" },
+    );
+    const nodes = useCanvasStore.getState().nodes;
+    const envelopes = extractCanvasContextRequestEnvelopes([{
+      schema_version: "canvas_context_request.v1",
+      requests: ["generate_image", "run_upscale_tool"].map((action) => ({
+        type: "node_action_catalog" as const,
+        node_id: imageId,
+        action,
+      })),
+    }]);
+    const response = await buildCanvasContextRequestResponse({
+      project: "project-a",
+      canvasId: "canvas-a",
+      nodes,
+      edges: [],
+      ontologyContext: null,
+      selectedNodeIds: [],
+      envelopes,
+    });
+    const payload = JSON.parse(response?.split("\n")[2] ?? "{}") as {
+      responses: Array<{ data: {
+        actions: Array<{ parameters: Record<string, unknown> }>;
+        invocation_examples: {
+          single: { tool: string; arguments: Record<string, unknown> };
+          batch: { tool: string; arguments: { commands: Array<Record<string, unknown>> } };
+        };
+      } }>;
+    };
+    const examples = payload.responses.map((item) => item.data.invocation_examples);
+    expect(examples[0].single).toEqual({
+      tool: "freezone_run_node_action",
+      arguments: { node_id: imageId, action: "generate_image" },
+    });
+    expect(examples[1].single.arguments).toEqual({
+      node_id: imageId,
+      action: "run_upscale_tool",
+      parameters: { scale_factor: 2, image_size: "2K" },
+    });
+    for (const example of examples) {
+      expect(example.batch.tool).toBe("freezone_emit_canvas_command");
+      expect(example.batch.arguments.commands[0]).toEqual({
+        type: "run_node_action",
+        ...example.single.arguments,
+      });
+      expect(example.batch.arguments.commands[0]).not.toHaveProperty("command_type");
+      expect((example.batch.arguments.commands[0].parameters as Record<string, unknown> | undefined)?.node_id).toBeUndefined();
+    }
+    expect(payload.responses[1].data.actions[0].parameters).toHaveProperty("parameter_schema");
+    const batch = examples.flatMap((example) => example.batch.arguments.commands);
+    expect(validateCanvasChatCommandEnvelopes([{
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: batch,
+    } as CanvasChatCommandEnvelope], nodes, []).issues).toEqual([]);
+    expect(extractCanvasChatCommandEnvelopes([{
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: [{
+        command_type: "run_node_action",
+        parameters: { node_id: imageId, action: "generate_image" },
+      }],
+    }])).toEqual([]);
   });
 
   it("returns requested video upscale action detail without source node parameters", async () => {
