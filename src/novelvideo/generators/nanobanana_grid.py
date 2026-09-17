@@ -7783,6 +7783,7 @@ async def regenerate_selected_beats(
     generator = create_grid_generator(api_key, config=generator_config)
     results = []
     beat_offset = 0
+    regen_id = uuid.uuid4().hex
 
     for grid_idx, split_mk in enumerate(grid_splits, start=1):
         split_cfg = REGEN_MODE_CONFIGS[split_mk]
@@ -7792,7 +7793,9 @@ async def regenerate_selected_beats(
         beat_offset += grid_beat_count
 
         # 输出路径
-        output_path = str(Path(output_dir) / f"regen_{mode_key}_g{grid_idx:02d}.png")
+        output_path = str(
+            Path(output_dir) / f"regen_{mode_key}_g{grid_idx:02d}_{regen_id}.png"
+        )
 
         # 提取 beat 编号用于 location_beat_numbers
         beat_numbers = [_generation_beat_number(b, i) for i, b in enumerate(grid_beats)]

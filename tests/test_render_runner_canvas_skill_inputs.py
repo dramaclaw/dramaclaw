@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -31,6 +32,50 @@ def _project_ctx(tmp_path: Path) -> ProjectContext:
         runtime_dir=tmp_path / "runtime",
         is_home_node=True,
     )
+
+
+@pytest.mark.asyncio
+async def test_regenerate_selected_beats_isolates_concurrent_grid_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from novelvideo.generators import nanobanana_grid
+
+    output_paths: list[str] = []
+
+    class FakeGridGenerator:
+        async def generate_grid(self, **kwargs):
+            output_paths.append(kwargs["output_path"])
+            await asyncio.sleep(0)
+            return nanobanana_grid.GridGenerationResult(
+                success=True,
+                grid_image_path=kwargs["output_path"],
+                generation_time=0.0,
+            )
+
+    monkeypatch.setattr(
+        nanobanana_grid,
+        "create_grid_generator",
+        lambda *_args, **_kwargs: FakeGridGenerator(),
+    )
+    kwargs = {
+        "mode_key": "1x1_16-9",
+        "character_map": {},
+        "style": "realistic",
+        "output_dir": str(tmp_path),
+        "is_sketch": True,
+    }
+
+    await asyncio.gather(
+        nanobanana_grid.regenerate_selected_beats(
+            selected_beats=[{"beat_number": 1}], **kwargs
+        ),
+        nanobanana_grid.regenerate_selected_beats(
+            selected_beats=[{"beat_number": 2}], **kwargs
+        ),
+    )
+
+    assert len(set(output_paths)) == 2
 
 
 @pytest.mark.asyncio

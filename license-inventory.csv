@@ -2179,6 +2179,7 @@ tests/test_pano_sharp_da2_loading.py,Elastic-2.0,2026 SuperTale contributors,REU
 tests/test_path_safe_asset_names.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_pool_index_rebuild.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_pool_index_state_storage.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_pool_indexer_concurrency.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_product_surface_routes.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_project_config_narration.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_project_context.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
