@@ -19,7 +19,6 @@ import shutil
 import time
 import uuid
 from collections.abc import Mapping
-from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Awaitable, Callable, Literal, Optional
 from urllib.parse import quote, unquote, urlencode, urlsplit
@@ -468,6 +467,45 @@ def _handle_task_start_runtime_error(message: str, exc: RuntimeError) -> None:
     handle_task_start_runtime_error(logger, message, exc)
 
 
+def _verified_workflow_media_link(
+    *,
+    ctx: ProjectContext,
+    project_dir: Path,
+    canvas_id: str | None,
+    node_id: str | None,
+    operation_id: str,
+    attempt_id: str,
+) -> dict[str, str]:
+    """Bind a media submission to its admitted Recipe attempt before enqueue."""
+    if not operation_id and not attempt_id:
+        return {}
+    if not all((operation_id, attempt_id, canvas_id, node_id)):
+        raise HTTPException(400, "incomplete workflow media link")
+    operation = read_agent_product_operation(
+        project_dir=_canvas_state_project_dir(ctx, project_dir),
+        operation_id=operation_id,
+    )
+    metadata = (operation or {}).get("metadata") or {}
+    if (
+        operation is None
+        or operation.get("product_kind") != "recipe_result"
+        or operation.get("status") in {"delivered", "failed", "cancelled"}
+        or operation.get("project_id") != ctx.project_id
+        or operation.get("canvas_id") != canvas_id
+        or operation.get("artifact_id") != node_id
+        or metadata.get("generation_attempt_id") != attempt_id
+        or metadata.get("node_id") != node_id
+        or not metadata.get("workflow_run_id")
+    ):
+        raise HTTPException(
+            409, "workflow media link does not match admitted Recipe attempt"
+        )
+    return {
+        "product_operation_id": operation_id,
+        "generation_attempt_id": attempt_id,
+    }
+
+
 async def _start_or_enqueue_freezone_video_gen(
     *,
     ctx: ProjectContext | None,
@@ -489,6 +527,8 @@ async def _start_or_enqueue_freezone_video_gen(
     audio_setting: str | None = None,
     canvas_id: str | None = None,
     node_id: str | None = None,
+    product_operation_id: str = "",
+    generation_attempt_id: str = "",
     model_id: str | None = None,
     catalog_id: str | None = None,
     gen_mode: str | None = None,
@@ -502,11 +542,20 @@ async def _start_or_enqueue_freezone_video_gen(
         freezone_video_generate_task_billing,
     )
 
+    workflow_link: dict[str, str] = {}
     if ctx is not None:
         await _require_scoped_media_model(
             "video",
             catalog_id or model_id or backend,
             requester_user_id=ctx.requester_user_id,
+        )
+        workflow_link = _verified_workflow_media_link(
+            ctx=ctx,
+            project_dir=project_dir,
+            canvas_id=canvas_id,
+            node_id=node_id,
+            operation_id=product_operation_id,
+            attempt_id=generation_attempt_id,
         )
 
     # Catalog fields are optional for backward compatibility. Missing means
@@ -624,6 +673,7 @@ async def _start_or_enqueue_freezone_video_gen(
         "job_id": job_id,
         "canvas_id": canvas_id or "",
         "node_id": node_id or "",
+        **workflow_link,
         "model_id": model_id or "",
         "catalog_id": catalog_id or "",
         "gen_mode": gen_mode or "",
@@ -743,6 +793,8 @@ async def _start_or_enqueue_freezone_gen_job(
     quality: str | None,
     canvas_id: str | None = None,
     node_id: str | None = None,
+    product_operation_id: str = "",
+    generation_attempt_id: str = "",
     model_id: str | None = None,
     catalog_id: str | None = None,
     gen_mode: str | None = None,
@@ -755,6 +807,14 @@ async def _start_or_enqueue_freezone_gen_job(
             "image",
             catalog_id or model_id or model or FREEZONE_DEFAULT_IMAGE_MODEL,
             requester_user_id=ctx.requester_user_id,
+        )
+        workflow_link = _verified_workflow_media_link(
+            ctx=ctx,
+            project_dir=project_dir,
+            canvas_id=canvas_id,
+            node_id=node_id,
+            operation_id=product_operation_id,
+            attempt_id=generation_attempt_id,
         )
     reference_paths = _resolve_url_list(project_dir, reference_urls)
     for path_text in reference_paths:
@@ -809,6 +869,7 @@ async def _start_or_enqueue_freezone_gen_job(
                 "billing": billing,
                 "canvas_id": canvas_id or "",
                 "node_id": node_id or "",
+                **workflow_link,
                 "model_id": model_id or "",
                 "catalog_id": catalog_id or "",
                 "gen_mode": gen_mode or "",
@@ -5817,6 +5878,8 @@ async def freezone_gen(
         quality=body.quality,
         canvas_id=body.canvas_id or None,
         node_id=body.node_id or None,
+        product_operation_id=body.product_operation_id,
+        generation_attempt_id=body.generation_attempt_id,
         model_id=_catalog_entry_id(catalog_entry) or body.model_id or None,
         catalog_id=_catalog_entry_id(catalog_entry) or None,
         gen_mode=body.gen_mode or None,
@@ -9982,6 +10045,8 @@ async def freezone_video_gen(
             backend=backend,
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
+            product_operation_id=body.product_operation_id,
+            generation_attempt_id=body.generation_attempt_id,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
             gen_mode="text_to_video",
@@ -10069,6 +10134,8 @@ async def freezone_image_animate(
             backend=backend,
             canvas_id=body.canvas_id,
             node_id=body.node_id,
+            product_operation_id=body.product_operation_id,
+            generation_attempt_id=body.generation_attempt_id,
             model_id=model,
             catalog_id=_catalog_entry_id(capabilities) or None,
             # 当前模型目录的关键帧能力统一为 first_last_frame；仅提供首帧
@@ -10233,6 +10300,8 @@ async def freezone_video_i2v(
             backend=backend,
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
+            product_operation_id=body.product_operation_id,
+            generation_attempt_id=body.generation_attempt_id,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
             gen_mode=execution_mode,
@@ -10368,6 +10437,8 @@ async def freezone_video_keyframes(
             last_frame_path=last_path or None,
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
+            product_operation_id=body.product_operation_id,
+            generation_attempt_id=body.generation_attempt_id,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
             gen_mode=execution_mode,
@@ -10559,6 +10630,8 @@ async def freezone_video_omni_gen(
             backend=backend,
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
+            product_operation_id=body.product_operation_id,
+            generation_attempt_id=body.generation_attempt_id,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
             gen_mode="all_reference",
@@ -10703,6 +10776,8 @@ async def freezone_video_edit(
             audio_setting=body.audio_setting,
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
+            product_operation_id=body.product_operation_id,
+            generation_attempt_id=body.generation_attempt_id,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
             gen_mode="video_edit",
@@ -10952,6 +11027,14 @@ async def freezone_audio_speech(
     ctx, username, project_name, project_dir, _output_dir = (
         await _resolve_freezone_project(project, user)
     )
+    workflow_link = _verified_workflow_media_link(
+        ctx=ctx,
+        project_dir=project_dir,
+        canvas_id=body.canvas_id,
+        node_id=body.node_id,
+        operation_id=body.product_operation_id,
+        attempt_id=body.generation_attempt_id,
+    )
     account_voice_username = (
         ctx.requester_username
         if ctx is not None and ctx.requester_username
@@ -11050,6 +11133,9 @@ async def freezone_audio_speech(
                     "account_voice_username": account_voice_username,
                     "target_episode": body.target_episode,
                     "target_beat": body.target_beat,
+                    "canvas_id": body.canvas_id,
+                    "node_id": body.node_id,
+                    **workflow_link,
                     "billing": freezone_audio_task_billing(
                         "freezone.audio_speech",
                         {
@@ -11100,6 +11186,14 @@ async def freezone_audio_eleven_music(
     ctx, username, project_name, project_dir, _output_dir = (
         await _resolve_freezone_project(project, user)
     )
+    workflow_link = _verified_workflow_media_link(
+        ctx=ctx,
+        project_dir=project_dir,
+        canvas_id=body.canvas_id,
+        node_id=body.node_id,
+        operation_id=body.product_operation_id,
+        attempt_id=body.generation_attempt_id,
+    )
 
     prompt = body.input.strip()
     if not prompt:
@@ -11127,6 +11221,9 @@ async def freezone_audio_eleven_music(
                     "force_instrumental": body.force_instrumental,
                     "respect_sections_durations": body.respect_sections_durations,
                     "output_format": body.output_format,
+                    "canvas_id": body.canvas_id,
+                    "node_id": body.node_id,
+                    **workflow_link,
                     "billing": freezone_audio_task_billing(
                         "freezone.audio_music",
                         {
@@ -15299,7 +15396,7 @@ async def get_canvas_workflow_runs(
         limit=limit,
     )
     history_by_task_node: dict[tuple[str, str], dict[str, Any]] = {}
-    history_by_node: dict[str, list[dict[str, Any]]] = {}
+    history_by_operation_attempt: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for record in generation_history:
         if not isinstance(record, dict):
             continue
@@ -15307,49 +15404,44 @@ async def get_canvas_workflow_runs(
         node_id = str(record.get("node_id") or "").strip()
         if task_key and node_id:
             history_by_task_node.setdefault((task_key, node_id), record)
-            history_by_node.setdefault(node_id, []).append(record)
+            operation_id = str(record.get("product_operation_id") or "").strip()
+            attempt_id = str(record.get("generation_attempt_id") or "").strip()
+            if operation_id and attempt_id:
+                history_by_operation_attempt.setdefault(
+                    (operation_id, attempt_id, node_id), []
+                ).append(record)
     for run in runs:
         for action in run.get("actions") or []:
             operation_id = str(action.get("product_operation_id") or "")
             task_key = str(action.get("task_key") or "")
             recovered_history: dict[str, Any] | None = None
             if operation_id and not task_key:
-                # A media task can finish before the browser persists its task key.
-                # Recover only a unique, completed attempt from this run's window;
-                # node history alone is not sufficient to identify a Recipe run.
+                # The media endpoint validated this Recipe attempt before enqueue;
+                # the worker persisted that link with its completed result.
+                # Completion may follow cancellation, so no run-end bound applies.
                 expected_task_types = {
                     "generate_image": {"freezone_gen"},
                     "generate_video": {"freezone_video_gen"},
                     "generate_audio": {"freezone_audio_speech", "freezone_audio_eleven_music"},
                 }.get(str(action.get("action") or ""), set())
-                started_at = str(run.get("started_at") or "")
-                ended_at = str(run.get("completed_at") or "")
-                candidates = []
-                if expected_task_types and started_at and ended_at:
-                    for record in history_by_node.get(str(action.get("node_id") or ""), []):
-                        recorded_at = str(record.get("recorded_at") or "")
-                        candidate_key = str(record.get("task_key") or "")
-                        try:
-                            within_run = (
-                                datetime.fromisoformat(started_at.replace("Z", "+00:00"))
-                                <= datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))
-                                <= datetime.fromisoformat(ended_at.replace("Z", "+00:00"))
-                            )
-                        except (TypeError, ValueError):
-                            continue
-                        if (
-                            record.get("task_type") in expected_task_types
-                            and record.get("status") == "completed"
-                            and within_run
-                            and str(tasks_by_key.get(candidate_key, {}).get("status") or "")
-                            == "completed"
-                        ):
-                            candidates.append(candidate_key)
-                if len(set(candidates)) == 1:
-                    task_key = candidates[0]
-                    recovered_history = history_by_task_node.get(
-                        (task_key, str(action.get("node_id") or ""))
+                attempt_id = str(action.get("generation_attempt_id") or "").strip()
+                node_id = str(action.get("node_id") or "").strip()
+                candidates = [
+                    record
+                    for record in history_by_operation_attempt.get(
+                        (operation_id, attempt_id, node_id), []
                     )
+                    if record.get("task_type") in expected_task_types
+                    and record.get("status") == "completed"
+                    and str(
+                        tasks_by_key.get(
+                            str(record.get("task_key") or ""), {}
+                        ).get("status") or ""
+                    ) == "completed"
+                ]
+                if len({str(record.get("task_key") or "") for record in candidates}) == 1:
+                    recovered_history = candidates[0]
+                    task_key = str(recovered_history["task_key"])
             task = tasks_by_key.get(task_key)
             if not operation_id or task is None:
                 continue

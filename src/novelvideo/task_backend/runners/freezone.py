@@ -513,6 +513,9 @@ def _append_node_history(
     )
 
     # Text/audio nodes carry the user text under "input"; image nodes use "prompt".
+    for key in ("generation_attempt_id", "product_operation_id"):
+        if payload.get(key):
+            extra[key] = str(payload[key])
     record = build_node_history_record(
         task_type=task_type,
         job_id=job_id,
@@ -1749,6 +1752,15 @@ async def _run_freezone_audio_speech_async(
             "episode": int(target_episode),
             "beat": int(target_beat),
         }
+    _append_node_history(
+        ctx=ctx,
+        project_dir=project_dir,
+        payload=payload,
+        task_type="freezone_audio_speech",
+        job_id=job_id,
+        media_type="audio",
+        result=response,
+    )
     return response
 
 
@@ -1789,7 +1801,7 @@ async def _run_freezone_audio_eleven_music_async(
     )
     rel = result.audio_path.relative_to(project_dir).as_posix()
     audio_url = make_static_url_for_context(ctx, rel)
-    return {
+    response = {
         "job_id": job_id,
         "url": audio_url,
         "audio_url": audio_url,
@@ -1798,6 +1810,16 @@ async def _run_freezone_audio_eleven_music_async(
         "mime_type": result.mime_type,
         "model": result.model,
     }
+    _append_node_history(
+        ctx=ctx,
+        project_dir=project_dir,
+        payload=payload,
+        task_type="freezone_audio_eleven_music",
+        job_id=job_id,
+        media_type="audio",
+        result=response,
+    )
+    return response
 
 
 def run_freezone_audio_eleven_music(

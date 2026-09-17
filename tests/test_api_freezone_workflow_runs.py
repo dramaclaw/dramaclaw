@@ -4,7 +4,7 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 
@@ -1820,11 +1820,15 @@ def test_cancelled_workflow_reconciles_late_recipe_media_result(
     assert operation["result_ref"]["id"] == "late-image-job"
 
 
-@pytest.mark.parametrize("ambiguous", [False, True])
+@pytest.mark.parametrize(
+    ("linked", "unrelated"),
+    [(True, False), (True, True), (False, True)],
+)
 def test_cancelled_workflow_recovers_completed_video_without_persisted_task_key(
     workflow_run_client: TestClient,
     monkeypatch,
-    ambiguous: bool,
+    linked: bool,
+    unrelated: bool,
 ) -> None:
     from novelvideo.api.routes import freezone
     from novelvideo.freezone.agent_product_operations import (
@@ -1857,22 +1861,63 @@ def test_cancelled_workflow_recovers_completed_video_without_persisted_task_key(
         source="server_recipe_compiler",
         compile_mode="model",
     )
-    task_key = "task:freezone_video_gen:project:proj_demo:0:video-job"
-    result = {"output_url": "/static/projects/proj_demo/video.mp4"}
-    append_generation_history(
+    from novelvideo.api.routes import freezone as freezone_routes
+
+    link_context = SimpleNamespace(
+        project_id="proj_demo", state_dir=str(workflow_run_client.state_dir)
+    )
+    assert freezone_routes._verified_workflow_media_link(
+        ctx=link_context,
         project_dir=workflow_run_client.state_dir,
         canvas_id="default",
         node_id="video-1",
-        record=build_node_history_record(
-            task_type="freezone_video_gen",
-            job_id="video-job",
-            task_key=task_key,
-            status="completed",
-            media_type="video",
-            result=result,
+        operation_id=operation_id,
+        attempt_id="attempt-video",
+    ) == {
+        "product_operation_id": operation_id,
+        "generation_attempt_id": "attempt-video",
+    }
+    with pytest.raises(HTTPException, match="does not match admitted Recipe attempt"):
+        freezone_routes._verified_workflow_media_link(
+            ctx=link_context,
+            project_dir=workflow_run_client.state_dir,
+            canvas_id="default",
+            node_id="video-1",
+            operation_id=operation_id,
+            attempt_id="unrelated-attempt",
+        )
+    task_key = "task:freezone_video_gen:project:proj_demo:0:video-job"
+    result = {"output_url": "/static/projects/proj_demo/video.mp4"}
+    monkeypatch.setattr(
+        freezone,
+        "get_task_manager",
+        lambda: SimpleNamespace(
+            list_tasks_for_project=lambda _ctx: [],
+            get_task_for_project=lambda *_args, **_kwargs: None,
         ),
     )
-    if ambiguous:
+    assert workflow_run_client.patch(
+        f"{base}/{created['run_id']}", json={"status": "cancelled"}
+    ).status_code == 200
+    if linked:
+        append_generation_history(
+            project_dir=workflow_run_client.state_dir,
+            canvas_id="default",
+            node_id="video-1",
+            record=build_node_history_record(
+                task_type="freezone_video_gen",
+                job_id="video-job",
+                task_key=task_key,
+                status="completed",
+                media_type="video",
+                result=result,
+                extra={
+                    "generation_attempt_id": "attempt-video",
+                    "product_operation_id": operation_id,
+                },
+            ),
+        )
+    if unrelated:
         append_generation_history(
             project_dir=workflow_run_client.state_dir,
             canvas_id="default",
@@ -1886,17 +1931,6 @@ def test_cancelled_workflow_recovers_completed_video_without_persisted_task_key(
                 result=result,
             ),
         )
-    monkeypatch.setattr(
-        freezone,
-        "get_task_manager",
-        lambda: SimpleNamespace(
-            list_tasks_for_project=lambda _ctx: [],
-            get_task_for_project=lambda *_args, **_kwargs: None,
-        ),
-    )
-    assert workflow_run_client.patch(
-        f"{base}/{created['run_id']}", json={"status": "cancelled"}
-    ).status_code == 200
     media_task = SimpleNamespace(
         task_type="freezone_video_gen",
         status="completed",
@@ -1909,7 +1943,7 @@ def test_cancelled_workflow_recovers_completed_video_without_persisted_task_key(
         error=None,
     )
     tasks = [media_task]
-    if ambiguous:
+    if unrelated:
         tasks.append(SimpleNamespace(**{**vars(media_task), "scope": "other-video-job"}))
     monkeypatch.setattr(
         freezone,
@@ -1925,8 +1959,8 @@ def test_cancelled_workflow_recovers_completed_video_without_persisted_task_key(
         project_dir=workflow_run_client.state_dir,
         operation_id=operation_id,
     )
-    assert operation["status"] == ("reserved" if ambiguous else "delivered")
-    if not ambiguous:
+    assert operation["status"] == ("delivered" if linked else "reserved")
+    if linked:
         assert operation["result_ref"]["id"] == "video-job"
 
 

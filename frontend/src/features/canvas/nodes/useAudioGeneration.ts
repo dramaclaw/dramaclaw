@@ -223,12 +223,16 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
       }
       const ref = runtimeIsMusic
         ? await submitFreezoneAudioMusic(project, {
+            canvasId: readUrl().canvas ?? 'default',
+            nodeId,
             prompt: trimmed,
             musicLengthMs: runtimeMusicLengthMs,
             forceInstrumental: runtimeData.forceInstrumental ?? true,
             respectSectionsDurations: runtimeData.respectSectionsDurations ?? true,
           })
         : await submitFreezoneAudioSpeech(project, {
+            canvasId: readUrl().canvas ?? 'default',
+            nodeId,
             text: trimmed,
             speechMode: runtimeSpeechMode,
             emotionPrompt: (runtimeData.emotionPrompt ?? '').trim() || undefined,
