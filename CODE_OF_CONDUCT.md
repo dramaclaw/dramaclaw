@@ -9,7 +9,7 @@ channel — you agree to uphold it. Reports go to **`conduct@dramaclaw.ai`**.
 
 > English first, 简体中文在后。两份内容一致;如有歧义以 [官方英文原文](https://www.contributor-covenant.org/version/2/1/code_of_conduct/) 为准。
 
----
+--
 
 ## English
 
