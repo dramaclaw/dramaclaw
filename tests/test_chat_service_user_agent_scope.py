@@ -1210,6 +1210,11 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "call the selected tool directly" in developer_instructions
         assert "custom-topology reference" in developer_instructions
         assert "freezone_prepare_workflow_plan_draft once" in developer_instructions
+        assert (
+            "dependency_for only controls execution order and never consumes source output"
+            in developer_instructions
+        )
+        assert "must not use dependency_for" in developer_instructions
         assert "expected_node_count" in developer_instructions
         assert "placeholder graph such as A/B" in developer_instructions
         assert "short-drama production Skill" in developer_instructions

@@ -2812,6 +2812,11 @@ def test_japanese_anime_drama_skill_locks_language_and_continuity(monkeypatch):
     assert "故事脚本" in planning["planning_notes"]
     assert "分镜" in planning["planning_notes"]
     assert "关键元素" in planning["planning_notes"]
+    assert "dependency_for 只控制执行顺序" in planning_text
+    assert "不会消费上游产物" in planning_text
+    assert "故事脚本到分镜必须使用 context_for" in planning_text
+    assert "分镜文本到图片或视频节点必须使用 prompt_for" in planning_text
+    assert "视觉资产到视频节点必须使用 media_input_for" in planning_text
     assert "不得只创建一个笼统的“关键元素”总节点" in planning_text
     assert "每个持续出现的角色各自独立成节点" in planning_text
     assert "每个主要复用场景各自独立成节点" in planning_text
