@@ -155,7 +155,7 @@ export function SkillImportDialog({ open, onOpenChange, project, taskId }: { ope
                 </div>
               </div>
               <div className="flex shrink-0 items-start justify-end gap-1 sm:pt-0.5">
-                {(['failed', 'needs_review', 'ready'].includes(item.status)) && <Button size="sm" variant="ghost" disabled={busy} onClick={() => void retry([item])}><RotateCcw aria-hidden="true" className="size-3" />{tr('retry', 'Retry')}</Button>}
+                {(['failed', 'needs_review', 'ready'].includes(item.status)) && <Button size="sm" variant="ghost" disabled={busy} onClick={() => void retry([item])}><RotateCcw aria-hidden="true" className="size-3" />{tr('retry', 'Retry')}<CreditCostInline display={importCostDisplay} promotion={importCost.data?.data.promotion} /></Button>}
                 {canReview(item) && <Button size="sm" variant="outline" disabled={busy} aria-expanded={resultOpen && selected?.id === item.id} aria-controls={`skill-import-result-${item.id}`} onClick={() => { if (selected?.id === item.id) { setResultOpen(value => !value); } else { setSelected(item); setDraft(JSON.stringify(item.bundle, null, 2)); setResultOpen(true); } setError(''); }}>{resultOpen && selected?.id === item.id ? tr('collapseResult', 'Collapse result') : tr('review', 'Review')}{resultOpen && selected?.id === item.id ? <ChevronDown aria-hidden="true" className="size-3" /> : <ChevronRight aria-hidden="true" className="size-3" />}</Button>}
               </div>
                 {!active && <details className="min-w-0 pl-6 text-xs text-muted-foreground sm:col-span-2">
