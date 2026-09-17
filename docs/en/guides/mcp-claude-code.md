@@ -63,6 +63,30 @@ Verify the tools are live:
 claude mcp list        # dramaclaw → ✓ connected
 ```
 
+## Optional: add live web research
+
+DramaClaw provides the production tools. If your agent also needs current web
+search and clean page fetching, you can add Parallel Search MCP as a separate,
+optional remote server. The default endpoint requires no account or API key.
+
+For Claude Code:
+
+```bash
+claude mcp add --transport http parallel-search https://search.parallel.ai/mcp
+claude mcp list
+```
+
+For Codex:
+
+```bash
+codex mcp add parallel-search --url https://search.parallel.ai/mcp
+codex mcp list
+```
+
+After connecting, the `parallel-search` server exposes `web_search` for live
+search and `web_fetch` for extracting clean Markdown from specific URLs. This
+companion server does not change DramaClaw's own MCP server or model setup.
+
 > **Running via Docker only?** Launch the bridge inside the container instead:
 > set the `.mcp.json` command to
 > `docker compose exec -T -e DRAMACLAW_API_URL=http://localhost:8780 -e DRAMACLAW_CE_OWNER=1 api python -m novelvideo.chat.dramaclaw_mcp`.
