@@ -139,8 +139,10 @@ to replace the symbolic recommendation after a failed write.
 
 Generation clarification must use one question per missing portable field; never combine model,
 ratio, resolution, duration, sound, or count into a single recommended-settings preset. Read the
-live node create schema once for each relevant image/video node type and use its exact options. A
-`video_resolution` question must expose every resolution supported by the selected/live model,
+live node create schema for each relevant image/video node type, then query it again with the
+selected `model_id` before choosing model-dependent parameters. Use the second response's exact
+options; do not reuse defaults from the model-agnostic schema or rewrite a user's selected value.
+A `video_resolution` question must expose every resolution supported by the selected/live model,
 including `480P` whenever the schema lists it.
 
 1. Identify the single matching workflow Skill from the user's explicit goal. Use
