@@ -459,6 +459,11 @@ function cloneNodeData<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+/** Portalled modals also own keyboard/paste events from their nested dialogs. */
+function isCanvasInputSuspended(suspended: boolean): boolean {
+  return suspended || document.querySelector('[data-canvas-input-modal]') !== null;
+}
+
 function isTypingTarget(target: EventTarget | null): boolean {
   const element = target as HTMLElement | null;
   if (!element) {
@@ -1227,7 +1232,7 @@ export function Canvas({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (suspendedRef.current) {
+      if (isCanvasInputSuspended(suspendedRef.current)) {
         return;
       }
       if (!isSpacePanKey(event) || isTypingTarget(event.target) || isImmersiveViewerActive()) {
@@ -2332,7 +2337,7 @@ export function Canvas({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (suspendedRef.current) {
+      if (isCanvasInputSuspended(suspendedRef.current)) {
         return;
       }
       if (
@@ -2377,7 +2382,7 @@ export function Canvas({
   // a bare digit jumps to it, and ⌘/Ctrl+Shift+E clears them all.
   useEffect(() => {
     const handleBookmarkKeys = (event: KeyboardEvent) => {
-      if (suspendedRef.current) {
+      if (isCanvasInputSuspended(suspendedRef.current)) {
         return;
       }
       if (isTypingTarget(event.target) || isImmersiveViewerActive()) {
@@ -2422,7 +2427,7 @@ export function Canvas({
   // collides with ⌘M (minimize) or text input.
   useEffect(() => {
     const handleMinimapKey = (event: KeyboardEvent) => {
-      if (suspendedRef.current) {
+      if (isCanvasInputSuspended(suspendedRef.current)) {
         return;
       }
       if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
@@ -2447,7 +2452,7 @@ export function Canvas({
   // keyup that fires off-window (e.g. after an alt-tab) can't leave it stuck on.
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (suspendedRef.current) {
+      if (isCanvasInputSuspended(suspendedRef.current)) {
         return;
       }
       if (event.code !== 'Space' || isTypingTarget(event.target)) {
@@ -2772,7 +2777,7 @@ export function Canvas({
 
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent) => {
-      if (suspendedRef.current) {
+      if (isCanvasInputSuspended(suspendedRef.current)) {
         return;
       }
       pasteImageHandledRef.current = false;
@@ -2881,7 +2886,7 @@ export function Canvas({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (suspendedRef.current) {
+      if (isCanvasInputSuspended(suspendedRef.current)) {
         return;
       }
       if (isTypingTarget(event.target)) {

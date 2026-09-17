@@ -19,6 +19,7 @@ export { STORY_OUTCOME_FEEDBACK_MS } from '@/features/canvas/story/StoryPlayer';
 
 export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
   const { t } = useTranslation();
+  const embedded = useStoryRuntimeStore((s) => s.embedded);
   const mode = useStoryRuntimeStore((s) => s.mode);
   const playKind = useStoryRuntimeStore((s) => s.playKind);
   const phase = useStoryRuntimeStore((s) => s.phase);
@@ -42,9 +43,9 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
   const [playbackRevision, setPlaybackRevision] = useState(0);
   // 试玩模式直接恢复剧情存档；失效存档由 runtime 清理并回到起点。
   useEffect(() => {
-    if (mode !== 'play' || playKind !== 'entertainment' || !resumeAvailable) return;
+    if (embedded || mode !== 'play' || playKind !== 'entertainment' || !resumeAvailable) return;
     if (!resumeSaved()) toast(t('canvas.story.resume.invalid'));
-  }, [mode, playKind, resumeAvailable, resumeSaved, t]);
+  }, [embedded, mode, playKind, resumeAvailable, resumeSaved, t]);
   const startPlayback = useCallback((kind: 'entertainment' | 'live', entryNodeId?: string) => {
     if (!groupId) return;
     const { nodes, edges } = useCanvasStore.getState();
@@ -105,7 +106,7 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
     startPlayback(kind, kind === 'live' ? currentNodeId ?? undefined : undefined);
   }, [currentNodeId, playKind, startPlayback]);
 
-  if (mode !== 'play') return null;
+  if (embedded || mode !== 'play') return null;
 
   return createPortal(
     <div className="fixed inset-0 z-[220] flex flex-col bg-[#090909] text-[#e2e2e3]">
@@ -225,7 +226,7 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
             setStatsOpen(false);
           }}
           aria-pressed={mapOpen}
-          className={`absolute right-[6.75rem] top-5 z-40 rounded-full border border-white/15 bg-black/50 p-2 backdrop-blur transition-colors hover:text-white ${
+          className={`absolute right-16 top-5 z-40 rounded-full border border-white/15 bg-black/50 p-2 backdrop-blur transition-colors hover:text-white ${
             mapOpen ? 'text-white' : 'text-white/80'
           }`}
           aria-label={t('canvas.story.map.open')}
@@ -243,7 +244,7 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
             setMapOpen(false);
           }}
           aria-pressed={statsOpen}
-          className={`absolute right-16 top-5 z-40 rounded-full border border-white/15 bg-black/50 p-2 backdrop-blur transition-colors hover:text-white ${
+          className={`absolute right-5 top-5 z-40 rounded-full border border-white/15 bg-black/50 p-2 backdrop-blur transition-colors hover:text-white ${
             statsOpen ? 'text-white' : 'text-white/80'
           }`}
           aria-label={t('canvas.story.stats.open')}

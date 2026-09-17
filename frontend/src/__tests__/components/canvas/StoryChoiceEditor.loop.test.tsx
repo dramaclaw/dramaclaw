@@ -64,6 +64,12 @@ describe('StoryChoiceEditor 渲染不触发无限重渲染', () => {
     window.removeEventListener('dramaclaw:story', storyEvent);
   });
 
+  it('在编辑时提示越界选项区域', () => {
+    render(<StoryChoiceEditor edgeId="e1" sourceNodeId="v1" choiceText="上班通勤"
+      interaction={{ presentation: 'object-anchor', anchor: { x: .1, y: .5, width: .24, height: .14 } }} variables={[]} />);
+    expect(screen.getByRole('alert')).toHaveTextContent('storyPublication.choiceAreaOutside');
+  });
+
   it('底部呈现也保留完整视频预览', () => {
     render(<StoryChoiceEditor edgeId="e1" sourceNodeId="v1" choiceText="继续"
       interaction={{ presentation: 'overlay' }} variables={[]} />);

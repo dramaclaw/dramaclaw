@@ -139,6 +139,11 @@ async def test_purge_detaches_files_before_releasing_project_name(monkeypatch, t
         path.mkdir(parents=True)
         (path / "retained.txt").write_text("old", encoding="utf-8")
     ctx = _context(record)
+    from novelvideo.interactive_story.publication_storage import project_store
+    publication_store = project_store(record.id, Path(record.state_dir))
+    publication = publication_store.work("owner", record.id)
+    publication_path = publication_store.directory(publication["public_id"])
+    (publication_path / "clip.mp4").write_bytes(b"video")
     calls: list[str] = []
 
     class Registry:
@@ -191,6 +196,9 @@ async def test_purge_detaches_files_before_releasing_project_name(monkeypatch, t
         assert not path.exists()
         assert not list(path.parent.glob(".demo.purging-*"))
 
+    assert not publication_path.exists()
+    assert not publication_store.root.exists()
+
 
 @pytest.mark.asyncio
 async def test_purge_restores_files_when_registry_purge_fails(monkeypatch, tmp_path):
@@ -203,6 +211,11 @@ async def test_purge_restores_files_when_registry_purge_fails(monkeypatch, tmp_p
         path.mkdir(parents=True)
         (path / "retained.txt").write_text("old", encoding="utf-8")
     ctx = _context(record)
+    from novelvideo.interactive_story.publication_storage import project_store
+    publication_store = project_store(record.id, Path(record.state_dir))
+    publication = publication_store.work("owner", record.id)
+    publication_path = publication_store.directory(publication["public_id"])
+    (publication_path / "retained.mp4").write_bytes(b"video")
 
     class Registry:
         async def get_project(self, _project_id):
@@ -224,6 +237,8 @@ async def test_purge_restores_files_when_registry_purge_fails(monkeypatch, tmp_p
         path = projects.Path(raw_path)
         assert (path / "retained.txt").read_text(encoding="utf-8") == "old"
         assert not list(path.parent.glob(".demo.purging-*"))
+
+    assert (publication_path / "retained.mp4").read_bytes() == b"video"
 
 
 @pytest.mark.asyncio
@@ -715,3 +730,242 @@ def test_restore_never_deletes_a_reoccupied_original(monkeypatch, tmp_path, capl
     # 新数据保留,隔离目录也保留(留给人工处置),都没被删。
     assert (original / "new.txt").read_text(encoding="utf-8") == "fresh"
     assert (quarantine / "old.txt").read_text(encoding="utf-8") == "quarantined"
+
+
+@pytest.mark.asyncio
+async def test_project_status_updates_publication_availability(monkeypatch, tmp_path):
+    from novelvideo.api.routes import projects
+
+    _patch_roots(monkeypatch, tmp_path)
+    record = _record(tmp_path)
+    ctx = _context(record)
+    from novelvideo.interactive_story.publication_storage import project_store
+
+    Path(record.state_dir).mkdir(parents=True)
+    store = project_store(record.id, Path(record.state_dir))
+    work = store.work("owner", record.id)
+    work["listed"] = True
+    store.write(store.directory(work["public_id"]) / "work.json", work)
+
+    class Registry:
+        async def get_project(self, _):
+            return record
+
+        async def update_project_status(self, _, status):
+            return replace(record, status=status)
+
+    async def summary(*args, **kwargs):
+        return SimpleNamespace(model_dump=lambda: {})
+
+    monkeypatch.setattr(projects, "get_project_registry", lambda: Registry())
+    monkeypatch.setattr(projects, "_summary_for_record", summary)
+    await projects._set_project_status(ctx, "deleted")
+    assert "project_deleted" not in store.read(work["public_id"])
+    assert not store.read(work["public_id"])["listed"]
+    await projects._set_project_status(ctx, "active")
+    assert "project_deleted" not in store.read(work["public_id"])
+    assert not store.read(work["public_id"])["listed"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", [False, True])
+async def test_delete_publications_registry_failure_or_missing_state(
+    monkeypatch, tmp_path, missing
+):
+    from unittest.mock import AsyncMock
+    from novelvideo.interactive_story.publication_storage import (
+        delete_project_and_unlist,
+        project_store,
+    )
+
+    _patch_roots(monkeypatch, tmp_path)
+    monkeypatch.setenv("ST_PUBLICATION_DIR", str(tmp_path / "index"))
+    record = _record(tmp_path)
+    registry = SimpleNamespace(update_project_status=AsyncMock(return_value=record))
+    if missing:
+        assert (
+            await delete_project_and_unlist(record.id, record.state_dir, registry)
+            is record
+        )
+        assert not Path(record.state_dir).exists()
+        return
+    Path(record.state_dir).mkdir(parents=True)
+    store = project_store(record.id, Path(record.state_dir))
+    work = store.work("owner", record.id)
+    work["listed"] = True
+    store.write(store.directory(work["public_id"]) / "work.json", work)
+    registry.update_project_status.side_effect = OSError("registry unavailable")
+    with pytest.raises(OSError, match="registry unavailable"):
+        await delete_project_and_unlist(record.id, record.state_dir, registry)
+    assert store.read(work["public_id"])["listed"]
+    assert not (store.root / "availability.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_delete_publications_cancellation_finishes_commit(monkeypatch, tmp_path):
+    import asyncio
+    from novelvideo.interactive_story.publication_storage import (
+        delete_project_and_unlist,
+        project_store,
+    )
+
+    _patch_roots(monkeypatch, tmp_path)
+    monkeypatch.setenv("ST_PUBLICATION_DIR", str(tmp_path / "index"))
+    record = _record(tmp_path)
+    Path(record.state_dir).mkdir(parents=True)
+    store = project_store(record.id, Path(record.state_dir))
+    work = store.work("owner", record.id)
+    work["listed"] = True
+    store.write(store.directory(work["public_id"]) / "work.json", work)
+    entered, release = asyncio.Event(), asyncio.Event()
+    committed = []
+
+    async def update(*args):
+        entered.set()
+        await release.wait()
+        committed.append(True)
+        return record
+
+    task = asyncio.create_task(
+        delete_project_and_unlist(
+            record.id, record.state_dir, SimpleNamespace(update_project_status=update)
+        )
+    )
+    await asyncio.wait_for(entered.wait(), 5)
+    task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert committed == [True]
+    assert not store.read(work["public_id"])["listed"]
+
+
+@pytest.mark.asyncio
+async def test_purge_cancellation_during_detach_restores_directories(
+    monkeypatch, tmp_path
+):
+    import asyncio
+    import threading
+    from unittest.mock import AsyncMock
+    from novelvideo.api.routes import projects
+
+    _patch_roots(monkeypatch, tmp_path)
+    monkeypatch.setenv("ST_PUBLICATION_DIR", str(tmp_path / "index"))
+    record = _record(tmp_path, status="deleted")
+    for path in (record.state_dir, record.output_dir, record.runtime_dir):
+        Path(path).mkdir(parents=True)
+    registry = SimpleNamespace(
+        get_project=AsyncMock(return_value=record),
+        mark_project_purged=AsyncMock(return_value=replace(record, purged_at="now")),
+        delete_project_home=AsyncMock(),
+    )
+    monkeypatch.setattr(projects, "get_project_registry", lambda: registry)
+    monkeypatch.setattr(
+        projects, "resolve_project_context", AsyncMock(return_value=_context(record))
+    )
+    monkeypatch.setattr(
+        projects.chat_service, "delete_codex_project_threads", AsyncMock()
+    )
+    monkeypatch.setattr(projects, "emit_project_audit", AsyncMock())
+    loop = asyncio.get_running_loop()
+    entered, release = asyncio.Event(), threading.Event()
+    original = projects._quarantine_project_dirs
+
+    def detach(*args, **kwargs):
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(5)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(projects, "_quarantine_project_dirs", detach)
+    task = asyncio.create_task(projects.purge_project(record.id, {"username": "alice"}))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        task.cancel()
+    finally:
+        release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    registry.mark_project_purged.assert_not_awaited()
+    for path in (record.state_dir, record.output_dir, record.runtime_dir):
+        assert Path(path).exists()
+        assert not list(Path(path).parent.glob(".demo.purging-*"))
+
+
+@pytest.mark.asyncio
+async def test_unlisting_write_failure_leaves_registry_and_other_works_unchanged(
+    monkeypatch, tmp_path
+):
+    from unittest.mock import AsyncMock
+    from novelvideo.interactive_story.publication import PublicationStore
+    from novelvideo.interactive_story.publication_storage import (
+        delete_project_and_unlist,
+        project_store,
+    )
+
+    _patch_roots(monkeypatch, tmp_path)
+    monkeypatch.setenv("ST_PUBLICATION_DIR", str(tmp_path / "index"))
+    record = _record(tmp_path)
+    Path(record.state_dir).mkdir(parents=True)
+    store = project_store(record.id, Path(record.state_dir))
+    works = [store.work(owner, record.id) for owner in ("a", "b")]
+    for work in works:
+        work["listed"] = True
+        store.write(store.directory(work["public_id"]) / "work.json", work)
+    original = PublicationStore.write
+    writes = []
+
+    def fail_second(self, path, value):
+        writes.append(path)
+        if len(writes) == 2:
+            raise OSError("disk failure")
+        return original(self, path, value)
+
+    monkeypatch.setattr(PublicationStore, "write", fail_second)
+    registry = SimpleNamespace(update_project_status=AsyncMock())
+    with pytest.raises(OSError, match="disk failure"):
+        await delete_project_and_unlist(record.id, record.state_dir, registry)
+    registry.update_project_status.assert_not_awaited()
+    assert all(store.read(work["public_id"])["listed"] for work in works)
+
+
+@pytest.mark.asyncio
+async def test_publication_mutation_rechecks_status_after_delete_lock(
+    monkeypatch, tmp_path
+):
+    import asyncio
+    from novelvideo.interactive_story import publication_storage as storage
+    from novelvideo.interactive_story.publication import PublicationError
+
+    _patch_roots(monkeypatch, tmp_path)
+    monkeypatch.setenv("ST_PUBLICATION_DIR", str(tmp_path / "index"))
+    record = _record(tmp_path)
+    Path(record.state_dir).mkdir(parents=True)
+    store = storage.project_store(record.id, Path(record.state_dir))
+    work = store.work("owner", record.id)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def update(*args):
+        nonlocal record
+        entered.set()
+        await release.wait()
+        record = replace(record, status="deleted")
+        return record
+
+    async def get(*args):
+        return record
+
+    registry = SimpleNamespace(update_project_status=update, get_project=get)
+    monkeypatch.setattr(storage, "get_project_registry", lambda: registry)
+    deletion = asyncio.create_task(
+        storage.delete_project_and_unlist(record.id, record.state_dir, registry)
+    )
+    await asyncio.wait_for(entered.wait(), 5)
+    mutation = asyncio.create_task(
+        storage.invoke_active(
+            store, store.activate, work["public_id"], "owner", None, False
+        )
+    )
+    release.set()
+    await deletion
+    with pytest.raises(PublicationError, match="unavailable"):
+        await mutation

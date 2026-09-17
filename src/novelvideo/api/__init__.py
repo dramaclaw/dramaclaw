@@ -56,6 +56,7 @@ from novelvideo.api.routes import (  # noqa: E402
     generation,
     ingest,
     interactive_stories,
+    story_publications,
     model_gateway,
     model_credits,
     pipeline,
@@ -111,6 +112,7 @@ api_router.include_router(chat.router, tags=["chat"])
 api_router.include_router(projects.router, tags=["projects"])
 api_router.include_router(ingest.router, tags=["ingest"])
 api_router.include_router(interactive_stories.router)
+api_router.include_router(story_publications.router)
 api_router.include_router(characters.router, tags=["characters"])
 api_router.include_router(assets.router, tags=["assets"])
 api_router.include_router(scenes.router, tags=["scenes"])

@@ -22,6 +22,8 @@ export interface StoryChoiceView {
 
 interface StoryRuntimeState {
   mode: 'edit' | 'play';
+  /** Embedded players own their UI; suppress the canvas overlay. */
+  embedded: boolean;
   /** 娱乐模式从起点完整试玩；live 是创作者从任意节点开始的无存档调试。 */
   playKind: 'entertainment' | 'live';
   story: InkStory | null;
@@ -68,6 +70,7 @@ interface StoryRuntimeState {
   enterPlay: (compiled: CompiledStory, opts?: {
     /** Precompiled Ink JSON for the standalone player; uses the same runtime transitions. */
     storyJson?: string;
+    embedded?: boolean;
     saveKey?: string;
     groupId?: string;
     playKind?: 'entertainment' | 'live';
@@ -216,6 +219,7 @@ function persist(saveKey: string | null, story: InkStory): void {
 }
 
 const INITIAL_RUNTIME = {
+  embedded: false,
   playKind: 'entertainment' as const,
   story: null as InkStory | null,
   clipByNodeId: {} as Record<string, string>,
@@ -269,6 +273,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
       if (saveKey && readStorySave(saveKey) !== null) {
         set({
           mode: 'play',
+          embedded: opts?.embedded ?? false,
           playKind,
           story,
           ...tables,
@@ -292,6 +297,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
       // 无存档:照旧直接进入起点,并写入初始存档。
       set({
         mode: 'play',
+        embedded: opts?.embedded ?? false,
         playKind,
         story,
         ...tables,
@@ -314,7 +320,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
       });
       persist(saveKey, story);
     } catch (err) {
-      set({ mode: 'play', ...INITIAL_RUNTIME, phase: 'error', error: err instanceof Error ? err.message : String(err) });
+      set({ mode: 'play', ...INITIAL_RUNTIME, embedded: opts?.embedded ?? false, phase: 'error', error: err instanceof Error ? err.message : String(err) });
     }
   },
 

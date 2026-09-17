@@ -1,3 +1,5 @@
+import { createPortal } from 'react-dom';
+import { StoryPublicationPanel } from '@/features/canvas/story/StoryPublicationPanel';
 import { memo, useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Download, ListTree, MoreHorizontal, Play, Plus, ShieldCheck, SlidersHorizontal } from 'lucide-react';
@@ -27,11 +29,12 @@ export const StoryGroupToolbar = memo(function StoryGroupToolbar() {
     return candidate?.data.storyGroup === true ? candidate : null;
   });
   const mode = useStoryRuntimeStore((state) => state.mode);
-  if (!group || mode === 'play') return null;
-  return <StoryGroupActions id={group.id} data={group.data as GroupNodeData} />;
+  const [publishing, setPublishing] = useState(false);
+  if (!group || (mode === 'play' && !publishing)) return null;
+  return <><StoryGroupActions id={group.id} data={group.data as GroupNodeData} onPublish={() => setPublishing(true)} />{publishing && createPortal(<StoryPublicationPanel groupId={group.id} title={String(group.data.displayName ?? group.data.label ?? '')} onClose={() => setPublishing(false)} />, document.body)}</>;
 });
 
-function StoryGroupActions({ id, data }: { id: string; data: GroupNodeData }) {
+function StoryGroupActions({ id, data, onPublish }: { id: string; data: GroupNodeData; onPublish: () => void }) {
   const { t } = useTranslation();
   const handleStoryGroupPlay = useCallback((groupId: string) => {
     const { nodes, edges } = useCanvasStore.getState();
@@ -132,6 +135,7 @@ function StoryGroupActions({ id, data }: { id: string; data: GroupNodeData }) {
         <button type="button" className={ACTION_CLASS} onClick={() => handleStoryGroupLive(id)}>
           <ListTree className="size-4" />{t('canvas.story.playMode.live')}
         </button>
+        <button type="button" className={ACTION_CLASS} onClick={onPublish}>{t('storyPublication.publish')}</button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button type="button" className={ACTION_CLASS}><MoreHorizontal className="size-4" />{t('canvas.story.moreActions')}</button>

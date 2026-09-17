@@ -58,6 +58,12 @@ describe('StoryPlayerOverlay — 选择点四阶段接线', () => {
     act(() => useStoryRuntimeStore.getState().exitPlay());
   });
 
+  it('发布内嵌预览不挂载画布播放器', () => {
+    seedChoicePoint({ embedded: true });
+    const { container } = render(<StoryPlayerOverlay />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
   it('实时生成显示同屏故事树、模式切换和当前片段编辑入口', () => {
     seedChoicePoint({ playKind: 'live', groupId: 'story-group' });
     const { getByRole, getByText } = render(<StoryPlayerOverlay />);

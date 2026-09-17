@@ -357,6 +357,10 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
   const endAnchorDrag = (event: PointerEvent<HTMLButtonElement>) => finishAnchorDrag(event, true);
   const cancelAnchorDrag = (event: PointerEvent<HTMLButtonElement>) => finishAnchorDrag(event, false);
   const displayAnchor = anchorDraft ?? resolvedInteraction.anchor;
+  const anchorOutside = displayAnchor?.width != null && displayAnchor.height != null && (
+    displayAnchor.x - displayAnchor.width / 2 < 0 || displayAnchor.x + displayAnchor.width / 2 > 1 ||
+    displayAnchor.y - displayAnchor.height / 2 < 0 || displayAnchor.y + displayAnchor.height / 2 > 1
+  );
   const previewAnchorStyle = displayAnchor
     ? {
         left: previewRenderRect
@@ -786,6 +790,9 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
             <span>{previewAspectRatio < 1 ? t('canvas.story.portraitVideo') : t('canvas.story.landscapeVideo')}</span>
           </div>
           <div className={editorStyles.stage}>{preview}</div>
+          {anchorOutside && <p role="alert" className="px-3 py-2 text-xs text-destructive">
+            {t('storyPublication.choiceAreaOutside')}
+          </p>}
           <div className={editorStyles.previewStatus} role="status">{trialResult || t(isTrial ? 'canvas.story.testInteractionHint' : 'canvas.story.editPositionHint')}</div>
         </section><div className={editorStyles.inspector}>
 
