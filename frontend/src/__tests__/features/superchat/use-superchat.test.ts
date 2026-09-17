@@ -2127,6 +2127,21 @@ describe("Skill Studio question response", () => {
     ]);
   });
 
+  it("shows question text when a submitted question has no title", () => {
+    const items = buildSkillStudioQuestionTimelineItemsForTest(
+      [
+        {
+          id: "video_duration_seconds",
+          question: "视频时长是多久？",
+          options: [{ id: "6", label: "6" }],
+        },
+      ],
+      { video_duration_seconds: "6" },
+    );
+
+    expect(items[0]?.title).toBe("视频时长是多久？");
+  });
+
   it("preserves submitted skip status in compact question cards", () => {
     const items = buildSkillStudioQuestionTimelineItemsForTest(
       [
@@ -2179,6 +2194,19 @@ describe("Skill Studio question response", () => {
         answered: true,
       },
     ]);
+  });
+
+  it("shows question text in submitted clarification summaries when title is missing", () => {
+    const items = visibleAssistantClarificationTimelineItemsForTest(
+      [{
+        id: "video_duration_seconds",
+        question: "视频时长是多久？",
+        options: [{ id: "6", label: "6 秒" }],
+      }],
+      { video_duration_seconds: "6" },
+    );
+
+    expect(items[0]?.title).toBe("视频时长是多久？");
   });
 
   it("keeps submitted option ids visible when dynamic labels are unavailable", () => {
@@ -2365,6 +2393,22 @@ describe("Skill Studio question response", () => {
 });
 
 describe("Assistant clarification response", () => {
+  it("uses question text in answers when the title is missing", () => {
+    const text = buildAssistantClarificationResponseForTest(
+      {
+        type: "assistant.clarification.request",
+        questions: [{
+          id: "video_duration_seconds",
+          question: "视频时长是多久？",
+          options: [{ id: "6", label: "6 秒" }],
+        }],
+      },
+      { video_duration_seconds: "6" },
+    );
+
+    expect(text).toContain("视频时长是多久？\n6 秒");
+  });
+
   it("builds a reusable clarification summary from selected answers", () => {
     const text = buildAssistantClarificationResponseForTest(
       {

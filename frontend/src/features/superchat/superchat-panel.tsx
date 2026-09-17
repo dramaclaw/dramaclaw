@@ -4056,6 +4056,7 @@ type SkillStudioQuestionOption = {
 type SkillStudioQuestion = {
   id?: string;
   title?: string;
+  question?: string;
   selection_mode?: "single" | "multiple";
   selectionMode?: "single" | "multiple";
   allow_custom?: boolean;
@@ -5817,7 +5818,7 @@ function buildSkillStudioQuestionTimelineItems(
       const hasAnswer = skillStudioSelectionHasAnswer(selections[key]);
       return {
         key,
-        title: question.title || `问题 ${index + 1}`,
+        title: question.title || question.question || `问题 ${index + 1}`,
         summary: hasAnswer ? selectedSkillStudioOptionLabel(question, index, selections) : actionSummary ?? "未选择",
         answered: hasAnswer || Boolean(actionSummary),
       };
@@ -5843,7 +5844,7 @@ function visibleAssistantClarificationTimelineItems(
     )
     .map(({ question, index }) => ({
       key: skillStudioQuestionKey(question, index),
-      title: question.title || `问题 ${index + 1}`,
+      title: question.title || question.question || `问题 ${index + 1}`,
       summary: selectedSkillStudioOptionLabel(question, index, answers),
       answered: true,
     }));
@@ -5866,7 +5867,7 @@ export function buildSkillStudioQuestionResponseForTest(
     .map((question, index) => ({ question, index }))
     .filter(({ question }) => (question.options ?? []).length > 0)
     .map(({ question, index }) =>
-      `- ${question.title || `问题 ${index + 1}`}：${selectedSkillStudioOptionLabel(question, index, selections)}`,
+      `- ${question.title || question.question || `问题 ${index + 1}`}：${selectedSkillStudioOptionLabel(question, index, selections)}`,
     );
 
   return [
@@ -5916,7 +5917,7 @@ export function buildAssistantClarificationResponseForTest(
       skillStudioSelectionHasAnswer(answers[skillStudioQuestionKey(question, index)]),
     )
     .map(({ question, index }) =>
-      `${question.title || `问题 ${index + 1}`}\n${selectedSkillStudioOptionLabel(question, index, answers)}`,
+      `${question.title || question.question || `问题 ${index + 1}`}\n${selectedSkillStudioOptionLabel(question, index, answers)}`,
     );
 
   return [
@@ -6455,7 +6456,7 @@ function SkillStudioQuestionsCard({
 	      <div className="mb-2.5 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
 	        <div className="min-w-0">
 	          <div className="line-clamp-2 break-words text-sm font-medium leading-5 text-foreground">
-	            {activeQuestion?.title || event.title || "需要你补充一点信息"}
+	            {activeQuestion?.title || activeQuestion?.question || event.title || "需要你补充一点信息"}
 	          </div>
 	          {event.description && (
 	            <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
@@ -6799,7 +6800,7 @@ function AssistantClarificationInputCard({
 	      <div className="mb-2.5 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
 	        <div className="min-w-0">
 	          <div className="line-clamp-2 break-words text-sm font-medium leading-5 text-foreground">
-	            {activeQuestion?.title || event.title || "需要你补充一点信息"}
+	            {activeQuestion?.title || activeQuestion?.question || event.title || "需要你补充一点信息"}
 	          </div>
 	          {event.description && (
 	            <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
