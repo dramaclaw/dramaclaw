@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createFreezoneWorkflowRun,
+  type FreezoneWorkflowRun,
   updateFreezoneWorkflowRun,
 } from "@/api/canvas";
 import { getProjectTaskLimits } from "@/api/tasks";
@@ -21,6 +22,7 @@ import {
   FREEZONE_CANVAS_COMMAND_APPROVAL_EVENT,
   partitionCanvasChatCommandEnvelopes,
   subscribeCanvasCommandApprovals,
+  waitForImmediateCanvasCommandResult,
 } from "@/features/freezone/canvasChatCommands";
 import {
   buildCanvasChatCommandContext,
@@ -152,6 +154,31 @@ describe("canvas chat commands", () => {
         user_remaining: 1,
       },
     });
+  });
+
+  it("does not accept a workflow command before its Run is durably persisted", async () => {
+    let resolvePersistence!: () => void;
+    const persistence = new Promise<void>((resolve) => { resolvePersistence = resolve; });
+    const execution = new Promise<never>(() => undefined);
+    let settled = false;
+    const boundary = waitForImmediateCanvasCommandResult(execution, persistence);
+    void boundary.then(() => { settled = true; });
+
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(settled).toBe(false);
+
+    resolvePersistence();
+    await expect(boundary).resolves.toBeNull();
+  });
+
+  it("returns a workflow creation failure instead of waiting for durable acceptance", async () => {
+    const failure = {
+      applied: 0, openedUiActions: 0, createdNodeIds: [],
+      errors: ["无法创建持久化工作流记录，未启动节点动作"], commandResults: [],
+    };
+    const persistence = new Promise<void>(() => undefined);
+    await expect(waitForImmediateCanvasCommandResult(Promise.resolve(failure), persistence))
+      .resolves.toBe(failure);
   });
 
   it("keeps selection attachment delivery stable across geometry updates", () => {
@@ -7463,6 +7490,69 @@ describe("canvas chat commands", () => {
     }
   });
 
+  it("signals durable workflow acceptance only after Run creation succeeds", async () => {
+    const imageNodeId = useCanvasStore.getState().addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { prompt: "持久化后执行" },
+    );
+    const persisted = vi.fn();
+    let resolveRun!: (run: FreezoneWorkflowRun) => void;
+    vi.mocked(createFreezoneWorkflowRun).mockImplementationOnce(() =>
+      new Promise((resolve) => { resolveRun = resolve; }));
+    const events: Array<{ nodeId: string; action: string; requestId?: string }> = [];
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      events.push(payload);
+    });
+    const execution = applyCanvasChatCommandsAsync(
+      extractCanvasChatCommandEnvelopes([{
+        schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+        commands: [{ type: "run_workflow", node_ids: [imageNodeId] }],
+      }]),
+      {
+        projectId: "project-a",
+        canvasId: "canvas-durable-acceptance",
+        actionTimeoutMs: 1_000,
+        onWorkflowRunPersisted: persisted,
+      },
+    );
+
+    try {
+      await vi.waitFor(() => expect(createFreezoneWorkflowRun).toHaveBeenCalledTimes(1));
+      expect(persisted).not.toHaveBeenCalled();
+      expect(events).toHaveLength(0);
+      resolveRun({
+        schema_version: "freezone_workflow_run.v1",
+        run_id: "run-durable",
+        project_id: "project-a",
+        canvas_id: "canvas-durable-acceptance",
+        status: "running",
+        resumable: false,
+        created_at: "2026-09-16T00:00:00Z",
+        started_at: "2026-09-16T00:00:00Z",
+        updated_at: "2026-09-16T00:00:00Z",
+        actions: [],
+      });
+      await vi.waitFor(() => expect(events).toHaveLength(1));
+      const requestId = events[0]?.requestId;
+      if (!requestId) throw new Error("expected workflow request id");
+      useCanvasStore.getState().updateNodeData(imageNodeId, {
+        imageUrl: "/static/project/durable.png",
+      });
+      canvasEventBus.publish("freezone/node-action-result", {
+        requestId,
+        nodeId: imageNodeId,
+        action: "generate_image",
+        status: "success",
+      });
+      await execution;
+      expect(persisted).toHaveBeenCalledOnce();
+      expect(persisted).toHaveBeenCalledWith("run-durable");
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it("serializes distinct workflow runs on the same canvas instead of discarding them", async () => {
     const firstNodeId = useCanvasStore.getState().addNode(
       CANVAS_NODE_TYPES.imageGen,
@@ -7823,6 +7913,7 @@ describe("canvas chat commands", () => {
       { prompt: "商品主图" },
     );
     const events: string[] = [];
+    const persisted = vi.fn();
     const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
       events.push(payload.nodeId);
     });
@@ -7836,13 +7927,19 @@ describe("canvas chat commands", () => {
           schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
           commands: [{ type: "run_workflow", node_ids: [imageNodeId] }],
         }]),
-        { projectId: "project-a", canvasId: "canvas-a", actionTimeoutMs: 100 },
+        {
+          projectId: "project-a",
+          canvasId: "canvas-a",
+          actionTimeoutMs: 100,
+          onWorkflowRunPersisted: persisted,
+        },
       );
 
       expect(result.errors).toEqual([
         "无法创建持久化工作流记录，未启动节点动作：database unavailable",
       ]);
       expect(events).toEqual([]);
+      expect(persisted).not.toHaveBeenCalled();
     } finally {
       unsubscribe();
     }

@@ -2268,6 +2268,67 @@ describe("Skill Studio question response", () => {
     expect(payload.user_message).not.toContain("prompt_for");
   });
 
+  it("marks a workflow persistence failure as failed even after parameter updates applied", () => {
+    const persistenceError = "无法创建持久化工作流记录，未启动节点动作：database unavailable";
+    const payload = buildCanvasCommandToolResultPayloadForTest({
+      bridgeKey: "bridge-workflow-persistence",
+      projectId: "project-a",
+      canvasId: "canvas-a",
+      result: {
+        applied: 4,
+        openedUiActions: 0,
+        createdNodeIds: [],
+        errors: [persistenceError],
+        commandResults: [
+          { commandIndex: 0, type: "update_node_data", status: "success", label: "更新图片参数" },
+          { commandIndex: 1, type: "update_node_data", status: "success", label: "更新视频参数" },
+          { commandIndex: 2, type: "update_node_data", status: "success", label: "更新审核参数" },
+          { commandIndex: 3, type: "run_workflow", status: "success", label: "运行工作流" },
+          {
+            commandIndex: 3,
+            type: "run_node_action",
+            status: "error",
+            label: "生成图片",
+            nodeId: "image-a",
+            action: "generate_image",
+            error: persistenceError,
+          },
+        ],
+      },
+    });
+
+    expect(payload).toMatchObject({
+      tool_call_status: "failed",
+      canvas_apply_status: "failed",
+      applied: false,
+      applied_count: 4,
+      errors: [persistenceError],
+    });
+  });
+
+  it("keeps non-workflow partial command batches distinguishable from terminal workflow failure", () => {
+    const payload = buildCanvasCommandToolResultPayloadForTest({
+      bridgeKey: "bridge-partial-edit",
+      result: {
+        applied: 1,
+        openedUiActions: 0,
+        createdNodeIds: [],
+        errors: ["第二个节点不存在"],
+        commandResults: [
+          { commandIndex: 0, type: "update_node_data", status: "success", label: "更新节点" },
+          { commandIndex: 1, type: "update_node_data", status: "error", label: "更新节点", error: "第二个节点不存在" },
+        ],
+      },
+    });
+
+    expect(payload).toMatchObject({
+      tool_call_status: "completed",
+      canvas_apply_status: "partially_applied",
+      applied: true,
+      applied_count: 1,
+    });
+  });
+
   it("keeps structured multiple-choice answers in bridge payload", () => {
     const payload = buildSkillStudioQuestionToolResultForTest(
       {

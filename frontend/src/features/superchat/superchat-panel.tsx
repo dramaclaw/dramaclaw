@@ -183,6 +183,7 @@ import type {
 } from "@/features/freezone/canvasChatCommands";
 import {
   applyCanvasChatCommandsAsync,
+  canvasCommandEnvelopesRequireDurableAcceptance,
   canvasCommandEnvelopesRunInBackground,
   directGenerationTargetsForPreflight,
   FREEZONE_CANVAS_COMMAND_APPROVAL_EVENT,
@@ -13230,12 +13231,22 @@ export function SuperChatPanel({
         let result: CanvasChatCommandApplyResult;
         let backgroundAccepted = false;
         try {
+          let resolveWorkflowRunPersisted: ((runId: string) => void) | undefined;
+          const workflowRunPersisted = canvasCommandEnvelopesRequireDurableAcceptance(
+            approval.envelopes,
+          )
+            ? new Promise<string>((resolve) => { resolveWorkflowRunPersisted = resolve; })
+            : undefined;
           const execution = applyCanvasChatCommandsAsync(approval.envelopes, {
             projectId: params.project,
             canvasId: effectiveFreezoneCanvasId,
+            onWorkflowRunPersisted: resolveWorkflowRunPersisted,
           });
           if (canvasCommandEnvelopesRunInBackground(approval.envelopes)) {
-            const immediateResult = await waitForImmediateCanvasCommandResult(execution);
+            const immediateResult = await waitForImmediateCanvasCommandResult(
+              execution,
+              workflowRunPersisted,
+            );
             if (immediateResult) {
               result = immediateResult;
             } else {
