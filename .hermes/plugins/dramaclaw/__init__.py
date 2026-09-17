@@ -933,8 +933,22 @@ def _handle_get_freezone_canvas(args: dict[str, Any], **_: Any) -> str:
             "GET",
             f"/api/v1/projects/{project}/freezone/canvases/{quote(canvas_id, safe='')}",
         )
-        if isinstance(result, dict) and isinstance(result.get("data"), dict):
-            result["data"].setdefault("canvas_id", canvas_id)
+        if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
+            raise ValueError("canvas read returned an invalid API response")
+        if result["ok"] is True:
+            data = result.get("data")
+            revision = data.get("revision") if isinstance(data, dict) else None
+            if (
+                not isinstance(revision, int)
+                or isinstance(revision, bool)
+                or revision < 1
+            ):
+                raise ValueError(
+                    "canvas revision is unavailable or invalid; do not infer "
+                    "base_revision. Re-read the canvas or create it with "
+                    "dramaclaw_create_freezone_canvas_from_preset."
+                )
+            data.setdefault("canvas_id", canvas_id)
         return tool_result(result)
     except Exception as exc:
         return tool_error(str(exc))
@@ -975,8 +989,17 @@ def _handle_save_freezone_canvas(args: dict[str, Any], **_: Any) -> str:
             raise ValueError("payload.viewport must be an object or null")
         if payload["metadata"] is not None and not isinstance(payload["metadata"], dict):
             raise ValueError("payload.metadata must be an object or null")
-        if not isinstance(payload.get("base_revision"), int):
-            raise ValueError("payload.base_revision is required and must be an integer")
+        base_revision = payload.get("base_revision")
+        if (
+            not isinstance(base_revision, int)
+            or isinstance(base_revision, bool)
+            or base_revision < 1
+        ):
+            raise ValueError(
+                "payload.base_revision must be the positive revision returned by "
+                "dramaclaw_get_freezone_canvas; create a new canvas with "
+                "dramaclaw_create_freezone_canvas_from_preset"
+            )
         if not str(payload.get("client_save_id") or "").strip():
             raise ValueError("payload.client_save_id is required")
         payload.setdefault("canvas_id", canvas_id)
@@ -2692,7 +2715,7 @@ _RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
     "dramaclaw_run_freezone_skill": ("run_id",),
     "dramaclaw_get_freezone_skill_result": ("run_id",),
     "dramaclaw_list_freezone_canvases": ("canvases", "count"),
-    "dramaclaw_get_freezone_canvas": ("canvas_id", "nodes", "edges"),
+    "dramaclaw_get_freezone_canvas": ("canvas_id", "nodes", "edges", "revision"),
     "dramaclaw_save_freezone_canvas": ("canvas_id", "saved", "revision"),
     "dramaclaw_delete_freezone_canvas": ("canvas_id", "deleted"),
     "dramaclaw_create_freezone_canvas_from_preset": ("canvas_id",),
@@ -2806,6 +2829,8 @@ def _output_schema(name: str) -> dict[str, Any]:
         raise RuntimeError(f"missing output contract for {name}")
     properties = dict(_RESULT_COMMON_PROPERTIES)
     properties.update({field: _result_field_schema(field) for field in fields})
+    if name == "dramaclaw_get_freezone_canvas":
+        properties["revision"] = {"type": "integer", "minimum": 1}
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": f"{name}.result",
@@ -2904,7 +2929,7 @@ _CANVAS_SAVE_PAYLOAD_SCHEMA = {
         "edges": {"type": "array", "items": _CANVAS_EDGE_SCHEMA},
         "viewport": {"type": ["object", "null"]},
         "metadata": {"type": ["object", "null"]},
-        "base_revision": {"type": "integer", "minimum": 0},
+        "base_revision": {"type": "integer", "minimum": 1},
         "client_save_id": {"type": "string", "minLength": 1},
         "save_source": {
             "type": "string",
@@ -3094,7 +3119,7 @@ TOOLS = (
         "dramaclaw_get_freezone_canvas",
         _schema(
             "dramaclaw_get_freezone_canvas",
-            "Read one Freezone canvas payload, including nodes, edges, viewport, revision, and metadata.",
+            "Read one persisted Freezone canvas, including its authoritative revision. If the revision is unavailable, stop; never infer it from an empty canvas. Create a new canvas with dramaclaw_create_freezone_canvas_from_preset.",
             {
                 "project_id": {"type": "string", "description": "Defaults to DRAMACLAW_PROJECT_ID."},
                 "canvas_id": {"type": "string", "description": "Canvas id."},
@@ -3107,7 +3132,7 @@ TOOLS = (
         "dramaclaw_save_freezone_canvas",
         _schema(
             "dramaclaw_save_freezone_canvas",
-            "Save a complete Freezone canvas payload. Read the canvas first, preserve viewport/metadata, modify nodes/edges locally, then save with the current base_revision and a unique client_save_id.",
+            "Save a complete existing Freezone canvas. Read it first and use the exact positive revision returned as base_revision; never guess 0. Preserve viewport/metadata and use a unique client_save_id. Create a missing canvas with dramaclaw_create_freezone_canvas_from_preset.",
             {
                 "project_id": {"type": "string", "description": "Defaults to DRAMACLAW_PROJECT_ID."},
                 "canvas_id": {"type": "string", "description": "Canvas id."},
@@ -3135,7 +3160,7 @@ TOOLS = (
         "dramaclaw_create_freezone_canvas_from_preset",
         _schema(
             "dramaclaw_create_freezone_canvas_from_preset",
-            "Create or open a Freezone canvas from exactly one typed preset variant. Put scope-specific fields inside preset; top-level scope/episode/beat fields are rejected.",
+            "Create or open a Freezone canvas from exactly one typed preset variant. Put scope-specific fields inside preset; top-level scope/episode/beat fields are rejected. After creation, read the canvas to obtain its authoritative revision before saving.",
             {
                 "project_id": {"type": "string", "description": "Defaults to DRAMACLAW_PROJECT_ID."},
                 "preset": _PRESET_CANVAS_SCHEMA,
