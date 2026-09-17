@@ -852,6 +852,106 @@ def reconcile_workflow_runs_with_canvas_nodes(
     return cancelled
 
 
+def _has_durable_taskless_canvas_result(*, action: str, data: Any) -> bool:
+    """Recognize synchronous generation results persisted in the canvas store."""
+    if not isinstance(data, dict):
+        return False
+    if action == "generate_text":
+        return data.get("workflowTextGenerated") is True and bool(
+            str(data.get("content") or "").strip()
+        )
+    if action == "generate_story_script":
+        script_result = data.get("scriptResult")
+        return (
+            isinstance(script_result, dict)
+            and isinstance(script_result.get("rows"), list)
+            and len(script_result["rows"]) > 0
+        )
+    return False
+
+
+def reconcile_workflow_runs_with_canvas_results(
+    *,
+    project_dir: Path,
+    canvas_id: str,
+    canvas_nodes: list[dict[str, Any]],
+) -> list[str]:
+    """Reconcile taskless text actions from results durably saved on the canvas.
+
+    Media generation remains task-authoritative: a URL in browser canvas state is
+    not sufficient artifact proof.  Text and story-script generation are local,
+    synchronous actions without a task identity, so their explicit generated-result
+    markers in the durable canvas store are their completion authority.
+    """
+    _validate_scope(canvas_id)
+    node_data_by_id = {
+        str(node.get("id") or ""): node.get("data")
+        for node in canvas_nodes
+        if isinstance(node, dict) and str(node.get("id") or "")
+    }
+    timestamp = _now()
+    changed_run_ids: list[str] = []
+    with _connect(project_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        for payload in _list_runs_in_transaction(
+            conn,
+            canvas_id=canvas_id,
+            statuses={"running", "failed", "interrupted"},
+        ):
+            actions = payload.get("actions")
+            actions = actions if isinstance(actions, list) else []
+            changed = False
+            for item in actions:
+                if not isinstance(item, dict) or item.get("status") == "skipped":
+                    continue
+                if str(item.get("task_key") or "").strip():
+                    continue
+                action = str(item.get("action") or "")
+                node_id = str(item.get("node_id") or "")
+                if not _has_durable_taskless_canvas_result(
+                    action=action,
+                    data=node_data_by_id.get(node_id),
+                ):
+                    continue
+                updates = {
+                    "status": "completed",
+                    "error": None,
+                    "artifact_status": "valid",
+                }
+                if all(item.get(key) == value for key, value in updates.items()):
+                    continue
+                item.update(updates)
+                item["updated_at"] = timestamp
+                for field in (
+                    "error_category",
+                    "retryable",
+                    "error_request_id",
+                    "error_fingerprint",
+                    "user_error",
+                ):
+                    item.pop(field, None)
+                changed = True
+            if not changed:
+                continue
+            action_statuses = {
+                str(item.get("status") or "")
+                for item in actions
+                if isinstance(item, dict)
+            }
+            if action_statuses and action_statuses <= {"completed", "skipped"}:
+                payload["status"] = "completed"
+                payload["resumable"] = False
+                payload["completed_at"] = timestamp
+            payload["updated_at"] = timestamp
+            metadata = payload.get("metadata")
+            metadata = metadata if isinstance(metadata, dict) else {}
+            metadata["last_canvas_result_reconciliation_at"] = timestamp
+            payload["metadata"] = metadata
+            _write_run(conn, payload)
+            changed_run_ids.append(str(payload.get("run_id") or ""))
+    return changed_run_ids
+
+
 def interrupt_stale_workflow_runs(
     *,
     project_dir: Path,
