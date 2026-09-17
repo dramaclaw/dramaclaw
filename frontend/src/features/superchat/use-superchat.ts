@@ -3072,9 +3072,14 @@ export function useSuperChat({
     const turnId = activeTurnIdRef.current ?? pendingClientTurnIdRef.current;
     if (turnId) {
       cancelledTurnIdsRef.current.add(turnId);
+      void api.post("api/v1/chat/cancel", {
+        json: {
+          scope: desiredScopeRef.current,
+          turn_id: turnId,
+        },
+      }).catch(() => undefined);
     }
     markTurnInactive(turnId);
-    void api.post("api/v1/chat/cancel").catch(() => undefined);
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.close(4000, "client abort");

@@ -115,7 +115,7 @@ _CODEX_GATEWAY_BASE_URL_ENV = "DRAMACLAW_CODEX_GATEWAY_BASE_URL"
 _CODEX_PER_TURN_CREDENTIAL_PLACEHOLDER = "dramaclaw-codex-per-turn-placeholder"
 _CODEX_GATEWAY_KEY_METADATA = "dramaclaw_gateway_api_key"
 _CODEX_CONTROL_CAPABILITY_METADATA = "dramaclaw_control_context_capability"
-_ACTIVE_CODEX_TURNS: dict[tuple[str, str], tuple[str, str]] = {}
+_ACTIVE_CODEX_TURNS: dict[tuple[str, str], tuple[str, str] | tuple[str, str, str]] = {}
 _ACTIVE_CODEX_TURNS_LOCK = threading.Lock()
 _CODEX_DEVELOPER_INSTRUCTIONS = (
     "You are the DramaClaw creative assistant. Use the required dramaclaw MCP "
@@ -4643,7 +4643,7 @@ def _load_active_codex_turns(username: str) -> dict[str, dict[str, str]]:
 def _set_active_codex_turn(
     username: str,
     scope_key: str,
-    value: tuple[str, str] | None,
+    value: tuple[str, str] | tuple[str, str, str] | None,
 ) -> None:
     from novelvideo.utils.state_index_files import index_file_lock, write_json_atomic
 
@@ -4654,6 +4654,8 @@ def _set_active_codex_turn(
             payload.pop(scope_key, None)
         else:
             payload[scope_key] = {"thread_id": value[0], "turn_id": value[1]}
+            if len(value) >= 3 and str(value[2]).strip():
+                payload[scope_key]["business_turn_id"] = str(value[2]).strip()
         write_json_atomic(path, payload)
 
 
@@ -5618,9 +5620,9 @@ async def interrupt_active_codex_turns(username: str) -> bool:
         return False
     with _ACTIVE_CODEX_TURNS_LOCK:
         turns = [
-            value
+            (value[0], value[1])
             for (turn_username, _project), value in _ACTIVE_CODEX_TURNS.items()
-            if turn_username == normalized
+            if turn_username == normalized and len(value) >= 2
         ]
     turns.extend(
         (entry.get("thread_id", ""), entry.get("turn_id", ""))
@@ -5641,6 +5643,47 @@ async def interrupt_active_codex_turns(username: str) -> bool:
         return_exceptions=True,
     )
     return any(result is True for result in results)
+
+
+async def interrupt_active_codex_turn(
+    username: str,
+    scope_key: str,
+    business_turn_id: str,
+) -> bool:
+    """Interrupt one active Codex turn only when its public turn identity matches."""
+
+    normalized_user = str(username or "").strip()
+    normalized_scope = str(scope_key or "").strip()
+    normalized_business_turn = str(business_turn_id or "").strip()
+    if not normalized_user or not normalized_scope or not normalized_business_turn:
+        return False
+
+    with _ACTIVE_CODEX_TURNS_LOCK:
+        local = _ACTIVE_CODEX_TURNS.get((normalized_user, normalized_scope))
+    if local is not None:
+        if len(local) < 3 or str(local[2]).strip() != normalized_business_turn:
+            return False
+        thread_id, runtime_turn_id = str(local[0]).strip(), str(local[1]).strip()
+    else:
+        persisted = _load_active_codex_turns(normalized_user).get(normalized_scope)
+        if (
+            not persisted
+            or str(persisted.get("business_turn_id") or "").strip()
+            != normalized_business_turn
+        ):
+            return False
+        thread_id = str(persisted.get("thread_id") or "").strip()
+        runtime_turn_id = str(persisted.get("turn_id") or "").strip()
+    if not thread_id or not runtime_turn_id:
+        return False
+    interrupted = await asyncio.to_thread(
+        interrupt_live_codex_turn, thread_id, runtime_turn_id
+    )
+    if interrupted:
+        return True
+    return await asyncio.to_thread(
+        _control_codex_thread, "interrupt", thread_id, runtime_turn_id
+    )
 
 
 async def stream_assistant_reply(
@@ -6815,7 +6858,7 @@ async def _stream_assistant_reply_codex(
         canvas_id=canvas_id,
     )
     active_turn_key = (username, codex_scope_key)
-    active_turn_value: tuple[str, str] | None = None
+    active_turn_value: tuple[str, str, str] | None = None
     agent_token: str | None = None
     token_file: Path | None = None
     logger.info(
@@ -6894,7 +6937,11 @@ async def _stream_assistant_reply_codex(
                         project_state_dir=project_state_dir,
                     )
                 if codex_thread_id and codex_turn_id:
-                    active_turn_value = (codex_thread_id, codex_turn_id)
+                    active_turn_value = (
+                        codex_thread_id,
+                        codex_turn_id,
+                        business_turn_id,
+                    )
                     with _ACTIVE_CODEX_TURNS_LOCK:
                         _ACTIVE_CODEX_TURNS[active_turn_key] = active_turn_value
                     _set_active_codex_turn(username, codex_scope_key, active_turn_value)

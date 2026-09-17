@@ -2802,6 +2802,109 @@ async def test_cancel_interrupts_only_the_users_active_codex_turns(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_cancel_interrupts_only_the_exact_codex_scope_and_business_turn(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    scope_a = chat_service._codex_scope_key(
+        "project-a", agent_profile="freezone:main", canvas_id="canvas-a"
+    )
+    scope_b = chat_service._codex_scope_key(
+        "project-a", agent_profile="freezone:main", canvas_id="canvas-b"
+    )
+    calls = []
+    monkeypatch.setattr(
+        chat_service,
+        "interrupt_live_codex_turn",
+        lambda thread_id, turn_id: calls.append((thread_id, turn_id)) or True,
+    )
+    with chat_service._ACTIVE_CODEX_TURNS_LOCK:
+        chat_service._ACTIVE_CODEX_TURNS.clear()
+        chat_service._ACTIVE_CODEX_TURNS.update(
+            {
+                ("alice", scope_a): ("thread-a", "runtime-a", "business-a"),
+                ("alice", scope_b): ("thread-b", "runtime-b", "business-b"),
+            }
+        )
+    try:
+        assert (
+            await chat_service.interrupt_active_codex_turn(
+                "alice", scope_a, "business-a"
+            )
+            is True
+        )
+        assert calls == [("thread-a", "runtime-a")]
+    finally:
+        with chat_service._ACTIVE_CODEX_TURNS_LOCK:
+            chat_service._ACTIVE_CODEX_TURNS.clear()
+
+
+@pytest.mark.asyncio
+async def test_exact_cancel_rejects_a_stale_business_turn_without_interrupting_new_turn(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    scope = chat_service._codex_scope_key(
+        "project-a", agent_profile="freezone:main", canvas_id="canvas-a"
+    )
+    calls = []
+    monkeypatch.setattr(
+        chat_service,
+        "interrupt_live_codex_turn",
+        lambda *ids: calls.append(ids) or True,
+    )
+    with chat_service._ACTIVE_CODEX_TURNS_LOCK:
+        chat_service._ACTIVE_CODEX_TURNS.clear()
+        chat_service._ACTIVE_CODEX_TURNS[("alice", scope)] = (
+            "thread-new",
+            "runtime-new",
+            "business-new",
+        )
+    try:
+        assert (
+            await chat_service.interrupt_active_codex_turn(
+                "alice", scope, "business-old"
+            )
+            is False
+        )
+        assert calls == []
+    finally:
+        with chat_service._ACTIVE_CODEX_TURNS_LOCK:
+            chat_service._ACTIVE_CODEX_TURNS.clear()
+
+
+@pytest.mark.asyncio
+async def test_exact_cancel_reads_matching_business_turn_from_other_worker(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    scope = chat_service._codex_scope_key(
+        "project-a", agent_profile="freezone:main", canvas_id="canvas-a"
+    )
+    chat_service._set_active_codex_turn(
+        "alice", scope, ("thread-a", "runtime-a", "business-a")
+    )
+    calls = []
+    monkeypatch.setattr(chat_service, "interrupt_live_codex_turn", lambda *_: False)
+    monkeypatch.setattr(
+        chat_service,
+        "_control_codex_thread",
+        lambda operation, thread_id, turn_id=None: calls.append(
+            (operation, thread_id, turn_id)
+        )
+        or True,
+    )
+
+    assert (
+        await chat_service.interrupt_active_codex_turn(
+            "alice", scope, "business-a"
+        )
+        is True
+    )
+    assert calls == [("interrupt", "thread-a", "runtime-a")]
+
+
+@pytest.mark.asyncio
 async def test_cancel_reads_active_codex_turns_from_other_worker(monkeypatch, tmp_path):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     chat_service._set_active_codex_turn(
