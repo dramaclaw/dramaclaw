@@ -47,7 +47,12 @@ export function staleResumableWorkflowRunIds(
   return runs
     .filter((run) =>
       run.resumable &&
-      ["running", "failed", "interrupted"].includes(run.status) &&
+      // A running record is owned by its active runner. Canvas results can land
+      // before the runner's final durable action update, so treating it as stale
+      // here races successful completion and turns the whole run into cancelled.
+      // Lease expiry is reconciled to interrupted by the backend first; only
+      // terminal/resumable recovery records are safe for this UI cleanup.
+      ["failed", "interrupted"].includes(run.status) &&
       resumableWorkflowNodeIds(run).length > 0 &&
       unresolvedWorkflowActions(run, existingNodeIds).length === 0
     )

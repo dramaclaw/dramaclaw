@@ -139,6 +139,39 @@ describe("WorkflowRunRecoveryBar", () => {
     expect(staleResumableWorkflowRunIds([failedRun], new Set())).toEqual(["run-failed"]);
   });
 
+  it("never auto-cancels an actively running workflow after its canvas results arrive", () => {
+    const runningRun: FreezoneWorkflowRun = {
+      ...failedRun,
+      status: "running",
+      runner_id: "canvas-runner:active",
+    };
+    useCanvasStore.getState().setCanvasData([
+      {
+        id: "image-1",
+        type: CANVAS_NODE_TYPES.imageGen,
+        position: { x: 0, y: 0 },
+        data: { imageUrl: "/outputs/image.png" },
+      },
+      {
+        id: "video-1",
+        type: CANVAS_NODE_TYPES.video,
+        position: { x: 400, y: 0 },
+        data: { videoUrl: "/outputs/video.mp4" },
+      },
+      {
+        id: "compose-1",
+        type: CANVAS_NODE_TYPES.videoCompose,
+        position: { x: 800, y: 0 },
+        data: { resultVideoUrl: "/outputs/final.mp4" },
+      },
+    ], []);
+
+    expect(staleResumableWorkflowRunIds(
+      [runningRun],
+      new Set(["image-1", "video-1", "compose-1"]),
+    )).toEqual([]);
+  });
+
   it("cancels a stale recovery record after its nodes later produce outputs", async () => {
     useCanvasStore.getState().setCanvasData([
       {

@@ -204,6 +204,7 @@ from novelvideo.freezone.workflow_runs import (
     prune_workflow_runs,
     read_workflow_run,
     reconcile_workflow_runs_with_canvas_nodes,
+    reconcile_workflow_runs_with_canvas_results,
     reconcile_workflow_runs_with_tasks,
     update_workflow_run,
 )
@@ -15220,14 +15221,25 @@ async def get_canvas_workflow_runs(
         canvas_payload = await asyncio.to_thread(
             canvas_store.read_canvas, canvas_project_dir, canvas_id
         )
+        canvas_nodes = [
+            node
+            for node in (canvas_payload or {}).get("nodes") or []
+            if isinstance(node, dict)
+        ]
+        await asyncio.to_thread(
+            reconcile_workflow_runs_with_canvas_results,
+            project_dir=canvas_project_dir,
+            canvas_id=canvas_id,
+            canvas_nodes=canvas_nodes,
+        )
         await asyncio.to_thread(
             reconcile_workflow_runs_with_canvas_nodes,
             project_dir=canvas_project_dir,
             canvas_id=canvas_id,
             existing_node_ids={
                 str(node.get("id") or "")
-                for node in (canvas_payload or {}).get("nodes") or []
-                if isinstance(node, dict) and str(node.get("id") or "")
+                for node in canvas_nodes
+                if str(node.get("id") or "")
             },
             run_statuses={"failed", "interrupted"},
         )
