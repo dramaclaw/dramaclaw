@@ -369,6 +369,11 @@ def test_freezone_plugin_registers_canvas_command_tools():
     assert "freezone_update_node_data" in names
     assert "freezone_run_node_action" in names
     assert "freezone_run_workflow" in names
+    run_workflow_description = schemas["freezone_run_workflow"]["description"]
+    run_node_action_description = schemas["freezone_run_node_action"]["description"]
+    assert "one-node workflow is still a workflow" in run_workflow_description
+    assert "one-node workflow" in run_node_action_description
+    assert "never use this tool to run, continue, or resume" in run_node_action_description
     assert "freezone_get_mainline_projection_assets" in names
     assert "freezone_list_workflows" not in names
     assert "freezone_build_workflow_plan" not in names
