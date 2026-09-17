@@ -48,6 +48,65 @@ def _summary(kind: CatalogKind, item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _search_haystack(summary: dict[str, Any]) -> str:
+    return " ".join(
+        str(value)
+        for value in (
+            summary.get("id"),
+            summary.get("name"),
+            summary.get("description"),
+            summary.get("category"),
+            summary.get("output_kind"),
+            summary.get("output_format"),
+            summary.get("node_type"),
+            " ".join(summary.get("keywords") or []),
+            " ".join(summary.get("action_keys") or []),
+        )
+        if value
+    ).lower()
+
+
+class CatalogSearch:
+    """Search a preloaded catalog without recomputing compact result summaries."""
+
+    def __init__(self, items: list[dict[str, Any]], kind: CatalogKind) -> None:
+        self._entries: list[tuple[str, dict[str, Any], str]] = []
+        for item in items:
+            if item.get("enabled") is False or item.get("hidden") is True:
+                continue
+            summary = _summary(kind, item)
+            self._entries.append(
+                (str(summary.get("id") or ""), summary, _search_haystack(summary))
+            )
+
+    def search(self, query: str = "", limit: int = 12) -> list[dict[str, Any]]:
+        normalized = str(query or "").strip().lower()
+        tokens = _TOKEN_RE.findall(normalized)
+        ranked: list[tuple[int, str, dict[str, Any]]] = []
+        for item_id, summary, haystack in self._entries:
+            score = 1 if not tokens else sum(
+                4 if token in item_id.lower() else 1
+                for token in tokens
+                if token in haystack
+            )
+            if score:
+                ranked.append((score, item_id, summary))
+        ranked.sort(key=lambda entry: (-entry[0], entry[1]))
+        return [entry[2] for entry in ranked[: max(1, min(int(limit), 50))]]
+
+
+def search_catalog_items(
+    *,
+    items: list[dict[str, Any]],
+    kind: CatalogKind,
+    query: str = "",
+    limit: int = 12,
+) -> list[dict[str, Any]]:
+    """Search a supplied catalog snapshot using the Agent catalog result protocol."""
+
+    return CatalogSearch(items, kind).search(query, limit)
+
+
 def search_catalog(
     *,
     username: str,
@@ -57,37 +116,12 @@ def search_catalog(
 ) -> list[dict[str, Any]]:
     """Return deterministic compact results without loading Recipe prompt bodies."""
 
-    normalized = str(query or "").strip().lower()
-    tokens = _TOKEN_RE.findall(normalized)
-    ranked: list[tuple[int, str, dict[str, Any]]] = []
-    for item in list_user_agent_config_items(username, kind):
-        if item.get("enabled") is False:
-            continue
-        summary = _summary(kind, item)
-        haystack = " ".join(
-            str(value)
-            for value in (
-                summary.get("id"),
-                summary.get("name"),
-                summary.get("description"),
-                summary.get("category"),
-                summary.get("output_kind"),
-                summary.get("output_format"),
-                summary.get("node_type"),
-                " ".join(summary.get("keywords") or []),
-                " ".join(summary.get("action_keys") or []),
-            )
-            if value
-        ).lower()
-        score = 1 if not tokens else sum(
-            4 if token in str(summary.get("id") or "").lower() else 1
-            for token in tokens
-            if token in haystack
-        )
-        if score:
-            ranked.append((score, str(summary.get("id") or ""), summary))
-    ranked.sort(key=lambda entry: (-entry[0], entry[1]))
-    return [entry[2] for entry in ranked[: max(1, min(int(limit), 50))]]
+    return search_catalog_items(
+        items=list_user_agent_config_items(username, kind),
+        kind=kind,
+        query=query,
+        limit=limit,
+    )
 
 
 def get_catalog_item(
