@@ -8,6 +8,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Textarea } from '@/components/ui/textarea';
 import { encodeSkillFiles, installSkillImport, listSkillImports, parseCandidateBundle, retrySkillImport, skillImportStudioPrompt, submitSkillImports, validateSkillImport, sameCandidateBundle, type SkillImportItem } from './api';
 
+const hasCurrentReport = (item: SkillImportItem | null) => typeof item?.current_conversion_version === 'number' && item.quality_report?.version === item.current_conversion_version;
+
 const canReview = (item: SkillImportItem) => Boolean(item.bundle) && ['ready', 'needs_review', 'installed'].includes(item.status);
 
 export function SkillImportDialog({ open, onOpenChange, project, taskId }: { open: boolean; onOpenChange: (open: boolean) => void; project: string; taskId?: string }) {
@@ -33,7 +35,7 @@ export function SkillImportDialog({ open, onOpenChange, project, taskId }: { ope
   const failed = items.filter(item => item.status === 'failed');
   const report = selected?.quality_report;
   const draftChanged = Boolean(selected) && !sameCandidateBundle(draft, selected?.bundle ?? null);
-  const reportPassed = report?.version === 3 && report.validated && !report.blockers.length && [report.structure, report.coverage].every(check => check.status === 'passed');
+  const reportPassed = hasCurrentReport(selected) && report?.validated && !report.blockers.length && [report.structure, report.coverage].every(check => check.status === 'passed');
   const needsAcknowledgment = selected?.status === 'needs_review' || Boolean(selected?.warnings?.length);
   useEffect(() => { setSelected(null); setDraft(''); setError(''); setNotice(''); }, [project, open]);
   const openedTask = useRef<string | null>(null);
@@ -116,7 +118,7 @@ export function SkillImportDialog({ open, onOpenChange, project, taskId }: { ope
           {items.map(item => {
             const title = typeof item.bundle?.name === 'string' ? item.bundle.name : item.name;
             const active = ['queued', 'running'].includes(item.status);
-            const legacy = item.quality_report?.version !== 3 && Boolean(item.bundle) && !active && item.status !== 'installed';
+            const legacy = !hasCurrentReport(item) && Boolean(item.bundle) && !active && item.status !== 'installed';
             const date = new Date(typeof item.created_at === 'number' ? item.created_at * 1000 : item.created_at);
             const issues = [...new Set([...(item.quality_report?.blockers ?? []), ...(item.warnings ?? []), ...(item.error ? [item.error] : [])])];
             const summary = active ? tr('recordRunning', 'Conversion is running in the background. You can close this window.')
@@ -149,7 +151,7 @@ export function SkillImportDialog({ open, onOpenChange, project, taskId }: { ope
           {resultOpen && selected?.id === item.id && canReview(selected) && <section id={`skill-import-result-${item.id}`} className="min-w-0 space-y-3 border-l-2 border-border py-3 pl-4 sm:col-span-2">
             <p className="text-sm font-medium">{selected.name} · {tr('candidate', 'Conversion draft')}</p>
             <p className="text-xs text-muted-foreground">{tr('reviewHint', 'Schema validation does not prove production quality. Check that the original method and required capabilities are preserved.')}</p>
-            {report?.version === 3 ? <div className="space-y-3 text-sm">
+            {hasCurrentReport(selected) && report ? <div className="space-y-3 text-sm">
               <dl className="grid gap-3 sm:grid-cols-2">
                 {(['structure', 'coverage'] as const).map(key => <div key={key} className="rounded-md bg-muted p-3">
                   <dt className="font-medium">{tr(`quality.${key}`, { structure: 'Structure', coverage: 'Method coverage', planning: 'Planning check' }[key])}</dt>

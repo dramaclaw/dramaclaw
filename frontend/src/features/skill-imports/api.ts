@@ -8,7 +8,7 @@ export interface SkillImportCheck {
   issues: string[];
 }
 export interface SkillImportQualityReport {
-  version: 2 | 3;
+  version: number;
   bundle_sha256: string;
   capability_sha256?: string;
   structure: SkillImportCheck;
@@ -30,6 +30,7 @@ export interface SkillImportItem {
   warnings: string[];
   bundle: Record<string, unknown> | null;
   quality_report?: SkillImportQualityReport | null;
+  current_conversion_version?: number;
   created_at: string | number;
 }
 const root = (project: string) => `projects/${encodeURIComponent(project)}/freezone/skill-imports`;
