@@ -65,6 +65,8 @@ async def test_default_conversion_uses_three_calls_and_installs_without_graph_or
     analysis_input = json.loads(prompts[0].split('INPUT DATA:\n', 1)[1])
     assert analysis_input['source_segments'][0]['text'] == 'Check citations'
     assert 'source' not in analysis_input
+    generation_input = json.loads(prompts[1].split('INPUT DATA:\n', 1)[1])
+    assert 'task_recipe_resolutions' not in generation_input['design']
     review_input = json.loads(prompts[2].split('INPUT DATA:\n', 1)[1])
     assert review_input['source_segments'][0]['text'] == 'Check citations'
     assert 'source' not in review_input
@@ -78,6 +80,39 @@ async def test_default_conversion_uses_three_calls_and_installs_without_graph_or
         raise AssertionError('Valid checkpoints must be reused')
     await run_quality_pipeline(record, 'alice', no_call, lambda: None, lambda *a: None)
     assert record['quality_report']['validated']
+
+
+@pytest.mark.asyncio
+async def test_organization_timeout_retry_claims_a_distinct_deterministic_egress_operation():
+    from novelvideo import model_gateway_runtime as runtime
+    from test_freezone_agent_bundle import _bundle_payload
+    from test_p0g4a_model_core import _organization_context
+
+    async def run_once():
+        record = record_fixture()
+        responses = [design_fixture(), _bundle_payload(), review_fixture()]
+        operation_ids = []
+
+        async def generate(_prompt):
+            # The leaf opens a request scope for each model invocation, as
+            # generate_freezone_text does in production.
+            with runtime.model_gateway_request_scope(context):
+                operation_ids.append(runtime.next_model_gateway_business_task_id(
+                    'freezone.text.generate', request_digest='a' * 64))
+            if len(operation_ids) == 1:
+                raise TimeoutError('gateway timed out after submit')
+            return json.dumps(responses.pop(0))
+
+        with runtime.model_gateway_request_scope(context):
+            await run_quality_pipeline(record, 'alice', generate, lambda: None, lambda *a: None)
+        assert record['status'] == 'ready'
+        return operation_ids[:2]
+
+    context = _organization_context()
+    first_run = await run_once()
+    assert first_run[0] != first_run[1]
+    # A redelivery of the same envelope must reproduce each attempt's key.
+    assert await run_once() == first_run
 
 
 @pytest.mark.asyncio
@@ -374,6 +409,16 @@ async def test_catalog_is_compared_before_design_and_reused_definition_is_hydrat
     assert record['catalog'] == [original]
     assert record['quality_report']['recipe_reuse'] == {'reused_ids': [original['id']], 'new_ids': []}
     assert record['task_recipe_resolutions'][0]['selected_recipe_id'] == original['id']
+    assert record['task_recipe_resolutions'][0]['verdicts']
+    generation_input = json.loads(prompts[2].split('INPUT DATA:\n', 1)[1])
+    generation_resolution = generation_input['design']['task_recipe_resolutions'][0]
+    assert generation_resolution == {
+        'task_id': 'citations',
+        'selected_recipe_id': original['id'],
+        'search_status': 'matched',
+        'new_recipe_reason': '',
+    }
+    assert generation_input['existing_recipes'] == [original]
 
 
 def test_hydration_does_not_overwrite_modified_definitions_or_invent_missing_recipes():

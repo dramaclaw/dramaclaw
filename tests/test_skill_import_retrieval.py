@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import pytest
@@ -173,6 +174,40 @@ async def test_only_one_expansion_excludes_reviewed_and_does_not_send_catalog():
     result = await resolve_task_recipes({'tasks':[task('a','translate')],'skill_notes':'Confirm'},catalog,ask)
     assert [[r['id'] for r in c['candidate_recipes']] for c in calls] == [['translate'],['citations']]
     assert result['selected_ids'] == ['citations']
+
+
+@pytest.mark.asyncio
+async def test_expansion_checkpoint_identity_ignores_first_round_completion_order():
+    catalog = [
+        {'id': 'alpha', 'name': 'draft', 'output_kind': 'text', 'system_prompt': 'First text method'},
+        {'id': 'alpha-next', 'name': 'citations', 'output_kind': 'text', 'system_prompt': 'Second text method'},
+        {'id': 'beta', 'name': 'sketch', 'output_kind': 'image', 'system_prompt': 'First image method'},
+        {'id': 'beta-next', 'name': 'render', 'output_kind': 'image', 'system_prompt': 'Second image method'},
+    ]
+    analysis = {'tasks': [task('a', 'draft'), task('b', 'sketch', 'image')], 'skill_notes': 'Confirm'}
+
+    async def run_with_first_round_delay(delayed_task):
+        calls = {}
+
+        async def ask(name, instruction, data, validate, amount):
+            entry = data['tasks'][0]
+            task_id = entry['task']['id']
+            if name.startswith('inspecting:0:') and task_id == delayed_task:
+                await asyncio.sleep(.02)
+            calls[name] = task_id
+            return validate({'tasks': [{'task_id': task_id, 'decisions': [
+                {'recipe_id': rid, 'constraint_checks': [], 'compatible': False, 'reason': 'Wrong method'}
+                for rid in entry['candidate_ids']],
+                'search_queries': [{'a': 'citations', 'b': 'render'}[task_id]]
+                if name.startswith('inspecting:0:') else [],
+            }]})
+
+        await resolve_task_recipes(analysis, catalog, ask)
+        return {name: task_id for name, task_id in calls.items() if name.startswith('inspecting:1:')}
+
+    assert await run_with_first_round_delay('a') == await run_with_first_round_delay('b') == {
+        'inspecting:1:2': 'a', 'inspecting:1:3': 'b',
+    }
 
 
 @pytest.mark.asyncio
