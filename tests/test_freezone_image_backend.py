@@ -41,6 +41,7 @@ from novelvideo.freezone.skill_registry import (
     get_skill,
     list_skills,
 )
+from novelvideo.models import NO_CHARACTER_MARKER
 from novelvideo.project_context import ProjectContext
 from novelvideo.shared.billing_errors import (
     BillingRuleNotConfiguredError,
@@ -5054,7 +5055,12 @@ def _skill_beat_input() -> dict:
         "role": "beat_context",
         "node_id": "beat_1_8",
         "node_type": "beatContextNode",
-        "beat_context": {"episode": 1, "beat": 8, "scene_id": "兰州拉面馆"},
+        "beat_context": {
+            "episode": 1,
+            "beat": 8,
+            "scene_id": "兰州拉面馆",
+            "detected_identities": ["面馆男青年"],
+        },
     }
 
 
@@ -7291,6 +7297,142 @@ async def test_skill_run_frame_uses_sketch_aspect_ratio_and_quality(
     assert captured["payload"]["config"]["mode_key"] == "1x1_16-9"
     assert captured["payload"]["config"]["aspect_ratio"] == "16:9"
     assert captured["payload"]["config"]["image_quality"] == "high"
+
+
+def _patch_frame_enqueue_recorder(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    enqueued: list[dict] = []
+
+    async def fake_make_sqlite_store_for_context(_ctx):
+        return _FakeContextBeatStore()
+
+    async def fake_enqueue_project_task(_ctx: ProjectContext, **kwargs):
+        enqueued.append(kwargs)
+        return SimpleNamespace(
+            task_state=SimpleNamespace(task_id="task_frame_preflight"),
+            backend="celery",
+            queue="node.node_a.default",
+        )
+
+    monkeypatch.setattr(
+        freezone_routes, "make_sqlite_store_for_context", fake_make_sqlite_store_for_context
+    )
+    monkeypatch.setattr(
+        freezone_routes,
+        "get_task_backend",
+        lambda: SimpleNamespace(enqueue_project_task=fake_enqueue_project_task),
+    )
+    return enqueued
+
+
+@pytest.mark.asyncio
+async def test_skill_run_frame_rejects_beat_without_identity_detection_before_enqueue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    enqueued = _patch_frame_enqueue_recorder(monkeypatch)
+    _write_image(project_dir / "freezone" / "sketch.png", size=(800, 1200))
+    beat_input = _skill_beat_input()
+    beat_input["beat_context"].pop("detected_identities")
+
+    with pytest.raises(freezone_routes.HTTPException) as exc:
+        await freezone_routes.freezone_skill_run(
+            project="proj_freezone",
+            skill_id="freezone.frame_from_context",
+            body=SkillRunRequest(
+                skill_node_id="skill_frame",
+                canvas_id="canvas_a",
+                resolved_inputs=[
+                    beat_input,
+                    _skill_image_input("sketch", slot_kind="sketch"),
+                ],
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "render_identity_detection_required"
+    assert "AI 检测" in exc.value.detail["message"]
+    assert "#8" in exc.value.detail["message"]
+    assert enqueued == []
+
+
+@pytest.mark.asyncio
+async def test_skill_run_standalone_frame_rejects_missing_identities_with_node_hint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    _write_canvas_with_node(
+        tmp_path,
+        "canvas_a",
+        {"id": "skill_frame", "type": "skillNode", "data": {"preset_managed": True}},
+    )
+    enqueued = _patch_frame_enqueue_recorder(monkeypatch)
+    _write_image(project_dir / "freezone" / "sketch.png", size=(800, 1200))
+    beat_input = _standalone_skill_beat_input()
+    beat_input["beat_context"]["detected_identities"] = []
+
+    with pytest.raises(freezone_routes.HTTPException) as exc:
+        await freezone_routes.freezone_skill_run(
+            project="proj_freezone",
+            skill_id="freezone.frame_from_context",
+            body=SkillRunRequest(
+                skill_node_id="skill_frame",
+                canvas_id="canvas_a",
+                resolved_inputs=[
+                    beat_input,
+                    _skill_image_input("sketch", slot_kind="sketch"),
+                ],
+            ),
+            user={"username": "admin"},
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "render_identity_detection_required"
+    message = exc.value.detail["message"]
+    assert "镜头上下文" in message
+    assert "无角色出场" in message
+    assert "AI 检测" not in message
+    assert "#0" not in message
+    assert enqueued == []
+
+
+@pytest.mark.asyncio
+async def test_skill_run_standalone_frame_accepts_no_character_marker_at_beat_zero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    _write_canvas_with_node(
+        tmp_path,
+        "canvas_a",
+        {"id": "skill_frame", "type": "skillNode", "data": {"preset_managed": True}},
+    )
+    enqueued = _patch_frame_enqueue_recorder(monkeypatch)
+    _write_image(project_dir / "freezone" / "sketch.png", size=(800, 1200))
+    beat_input = _standalone_skill_beat_input()
+    beat_input["beat_context"]["visual_description"] = "雨夜便利店门口，空无一人。"
+    beat_input["beat_context"]["detected_identities"] = [NO_CHARACTER_MARKER]
+
+    await freezone_routes.freezone_skill_run(
+        project="proj_freezone",
+        skill_id="freezone.frame_from_context",
+        body=SkillRunRequest(
+            skill_node_id="skill_frame",
+            canvas_id="canvas_a",
+            resolved_inputs=[
+                beat_input,
+                _skill_image_input("sketch", slot_kind="sketch"),
+            ],
+        ),
+        user={"username": "admin"},
+    )
+
+    assert len(enqueued) == 1
+    beat = enqueued[0]["payload"]["config"]["beats"][0]
+    assert beat["beat_number"] == 0
+    assert beat["detected_identities"] == [NO_CHARACTER_MARKER]
 
 
 @pytest.mark.asyncio

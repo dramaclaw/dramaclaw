@@ -97,6 +97,7 @@ from novelvideo.config import (
 )
 from novelvideo.director_world import DirectorWorldService
 from novelvideo.director_world.staging_prop_ai import generate_ai_staging_prop
+from novelvideo.generators.render_identity_guard import render_ai_detection_error
 from novelvideo.freezone import canvas_store
 from novelvideo.freezone.asset_copy import (
     AssetCopyError,
@@ -311,7 +312,7 @@ from novelvideo.freezone.video_node import (
     MAX_OMNI_REFERENCE_AUDIO_TOTAL_SECONDS,
     MIN_OMNI_REFERENCE_AUDIO_SECONDS,
 )
-from novelvideo.models import CharacterIdentity, beat_scene_id
+from novelvideo.models import CharacterIdentity, beat_scene_id, real_detected_identities
 from novelvideo.project_config import (
     load_effective_narration_style_for_voice_from_state_dir,
     load_narrator_reference_audio_from_state_dir,
@@ -1004,10 +1005,17 @@ def _standalone_identity_prompt_parts(identity_name: str) -> tuple[str, str, str
     return identity_name, identity_name, f"{identity_name}_{identity_name}"
 
 
-def _standalone_beat_context_prompt_identity_map(beat_context: dict) -> dict[str, str]:
-    identity_names = _list_text_values(
-        beat_context.get("detected_identities") or beat_context.get("detectedIdentities")
+def _standalone_beat_context_identity_names(beat_context: dict) -> list[str]:
+    # 「无角色出场」哨兵以下划线开头，不能按「角色_身份」拆分，也不是真实角色。
+    return real_detected_identities(
+        _list_text_values(
+            beat_context.get("detected_identities") or beat_context.get("detectedIdentities")
+        )
     )
+
+
+def _standalone_beat_context_prompt_identity_map(beat_context: dict) -> dict[str, str]:
+    identity_names = _standalone_beat_context_identity_names(beat_context)
     return {
         identity_name: _standalone_identity_prompt_parts(identity_name)[2]
         for identity_name in identity_names
@@ -1030,9 +1038,7 @@ def _standalone_beat_context_prompt_visual_description(
 
 def _standalone_beat_context_character_map(beat_context: dict) -> dict[str, dict]:
     sketch_colors = _standalone_beat_context_sketch_colors(beat_context)
-    identity_names = _list_text_values(
-        beat_context.get("detected_identities") or beat_context.get("detectedIdentities")
-    )
+    identity_names = _standalone_beat_context_identity_names(beat_context)
     character_map: dict[str, dict] = {}
     for identity_name in identity_names:
         char_name, suffix, _prompt_identity_id = _standalone_identity_prompt_parts(identity_name)
@@ -1557,6 +1563,25 @@ async def _start_or_enqueue_mainline_sketch_from_context_job(
     _raise_project_context_required(task_type)
 
 
+def _raise_if_frame_identity_detection_missing(
+    beats: list[dict],
+    *,
+    standalone_beat_context: bool = False,
+) -> None:
+    """Reject before billing/enqueue what the render worker would reject anyway."""
+    detection_error = render_ai_detection_error(
+        beats,
+        standalone_beat_context=standalone_beat_context,
+    )
+    if detection_error:
+        _raise_skill_error(
+            422,
+            code="render_identity_detection_required",
+            category="validation",
+            message=detection_error,
+        )
+
+
 async def _start_or_enqueue_mainline_frame_from_context_job(
     *,
     ctx: ProjectContext,
@@ -1622,6 +1647,9 @@ async def _start_or_enqueue_mainline_frame_from_context_job(
         effective_beat["episode_number"] = int(episode)
         effective_beat["beat_number"] = int(beat)
         config["beats"] = [effective_beat]
+    _raise_if_frame_identity_detection_missing(
+        [_beat_by_number(config.get("beats") or [], int(beat))]
+    )
     config["promote_selected_regen"] = False
     config["image_quality"] = _normalize_mainline_frame_quality(quality)
     config["canvas_sketch_paths"] = {str(int(beat)): sketch_paths[0]}
@@ -1870,6 +1898,10 @@ async def _start_or_enqueue_standalone_frame_from_context_job(
         mode_key=mode_key,
         aspect_ratio=inferred_aspect_ratio,
         quality=quality,
+    )
+    _raise_if_frame_identity_detection_missing(
+        config.get("beats") or [],
+        standalone_beat_context=True,
     )
     config["canvas_sketch_paths"] = {"0": sketch_paths[0]}
     canvas_refs: list[dict] = []
@@ -12021,6 +12053,9 @@ async def build_projection_from_preset(
         project_dir=project_dir,
         body=body,
     )
+    # 前端「同步更新」把这些节点直接写进内存画布，不经过读画布的补全；
+    # beat 上下文缺 projectId 会被当成 standalone，这里和读画布保持一致。
+    _stamp_canvas_mainline_context_project_id(payload, ctx.project_id)
     metadata = payload.get("metadata")
     return {
         "ok": True,

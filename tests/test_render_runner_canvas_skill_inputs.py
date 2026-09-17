@@ -307,6 +307,7 @@ async def test_standalone_frame_skill_render_normalizes_legacy_local_panel_paylo
                             "beat_number": None,
                             "scene_ref": {"scene_id": ""},
                             "visual_description": "用户自定义分镜",
+                            "detected_identities": ["__NO_CHARACTER__"],
                         }
                     ],
                     "character_map": {},
@@ -321,6 +322,72 @@ async def test_standalone_frame_skill_render_normalizes_legacy_local_panel_paylo
 
     assert captured["beat_sketch_paths_override"] == {0: str(canvas_sketch_path)}
     assert result["updated_beats"] == [0]
+
+
+@pytest.mark.asyncio
+async def test_standalone_frame_skill_render_without_identities_fails_typed_before_scene_refs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from novelvideo.generators import nanobanana_grid
+    from novelvideo.generators.render_identity_guard import RenderIdentityDetectionRequired
+    from novelvideo.task_backend import run_core
+
+    ctx = _project_ctx(tmp_path)
+    canvas_sketch_path = tmp_path / "canvas" / "sketch.png"
+    canvas_sketch_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (160, 90), "white").save(canvas_sketch_path)
+    calls: list[str] = []
+
+    async def fake_ensure_scene_refs_for_beats(**_kwargs):
+        calls.append("scene_refs")
+        return {"requested": 0, "generated": 0, "skipped": 0, "missing": 0, "director_refs": 0}
+
+    async def fake_regenerate_selected_beats(**_kwargs):
+        calls.append("generate")
+        return []
+
+    monkeypatch.setattr(render_runner, "_ensure_scene_refs_for_beats", fake_ensure_scene_refs_for_beats)
+    monkeypatch.setattr(nanobanana_grid, "regenerate_selected_beats", fake_regenerate_selected_beats)
+
+    with pytest.raises(RenderIdentityDetectionRequired) as exc_info:
+        await render_runner._run_selected_regen_async(
+            {
+                "task_type": "mainline_frame_from_context",
+                "episode": 0,
+                "scope": "job_standalone_missing_identity",
+                "payload": {
+                    "output_dir": str(ctx.output_dir),
+                    "mode_key": "1x1_16-9",
+                    "config": {
+                        "standalone_beat_context": True,
+                        "mode_key": "1x1_16-9",
+                        "selected_panel_indices": [0],
+                        "beats": [
+                            {
+                                "episode_number": 0,
+                                "beat_number": 0,
+                                "panel_index": 0,
+                                "visual_description": "用户自定义分镜",
+                                "detected_identities": [],
+                            }
+                        ],
+                        "character_map": {},
+                        "canvas_sketch_paths": {"0": str(canvas_sketch_path)},
+                        "promote_selected_regen": False,
+                    },
+                },
+            },
+            ctx,
+            is_sketch=False,
+        )
+
+    assert calls == []
+    assert "镜头上下文" in str(exc_info.value)
+    error, payload, handled = run_core._project_task_failure_for_exception(exc_info.value)
+    assert handled is True
+    assert payload == {"error_code": "RENDER_IDENTITY_DETECTION_REQUIRED"}
+    assert error == str(exc_info.value)
 
 
 @pytest.mark.asyncio
