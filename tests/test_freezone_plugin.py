@@ -4891,6 +4891,126 @@ def test_freezone_canvas_command_slim_result_reports_background_acceptance():
     assert "Do not claim generation is complete" in summary["agent_instruction"]
 
 
+def test_freezone_run_workflow_output_schema_accepts_background_bridge_receipt():
+    plugin = _load_plugin_module()
+    result = plugin._summarize_canvas_command_result(
+        {
+            "ok": True,
+            "tool_call_status": "completed",
+            "canvas_apply_status": "accepted",
+            "applied": True,
+            "cancelled": False,
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "message": "Canvas command was submitted to the canvas.",
+            "errors": [],
+        },
+        bridge_key="bridge-workflow",
+        commands=[{"type": "run_workflow", "scope": "canvas"}],
+    )
+
+    structured = _assert_real_mcp_output(plugin, "freezone_run_workflow", result)
+    assert structured["bridge_key"] == "bridge-workflow"
+    assert structured["canvas_apply_status"] == "accepted"
+
+
+def test_freezone_run_workflow_output_schema_accepts_direct_apply_receipt():
+    plugin = _load_plugin_module()
+    structured = _assert_real_mcp_output(
+        plugin,
+        "freezone_run_workflow",
+        {
+            "ok": True,
+            "status": "completed",
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "tool_call_status": "completed",
+            "canvas_apply_status": "direct_applied",
+            "applied": True,
+            "cancelled": False,
+            "errors": [],
+            "revision": 7,
+        },
+    )
+
+    assert structured["revision"] == 7
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("applied", False),
+        ("cancelled", True),
+        ("errors", ["runner rejected the command"]),
+        ("tool_call_status", "failed"),
+        ("canvas_apply_status", "pending"),
+        ("bridge_key", ""),
+    ],
+)
+def test_freezone_run_workflow_output_schema_rejects_invalid_bridge_receipt(
+    field, value
+):
+    plugin = _load_plugin_module()
+    result = {
+        "ok": True,
+        "status": "completed",
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "tool_call_status": "completed",
+        "canvas_apply_status": "accepted",
+        "applied": True,
+        "cancelled": False,
+        "errors": [],
+        "bridge_key": "bridge-workflow",
+    }
+    result[field] = value
+
+    errors = list(
+        Draft202012Validator(
+            plugin._output_schema("freezone_run_workflow")
+        ).iter_errors(result)
+    )
+    assert errors
+
+
+@pytest.mark.parametrize(
+    ("identifier", "value"),
+    [
+        ("draft_id", "draft-a"),
+        ("operation_id", "operation-a"),
+        ("workflow_instance_id", "workflow-a"),
+        ("run_id", "run-a"),
+    ],
+)
+def test_freezone_run_workflow_output_schema_accepts_nonempty_execution_identity(
+    identifier, value
+):
+    plugin = _load_plugin_module()
+    result = {"ok": True, "status": "completed", identifier: value}
+
+    Draft202012Validator(plugin._output_schema("freezone_run_workflow")).validate(
+        result
+    )
+
+
+@pytest.mark.parametrize(
+    "identifier",
+    ["draft_id", "operation_id", "workflow_instance_id", "run_id"],
+)
+def test_freezone_run_workflow_output_schema_rejects_empty_execution_identity(
+    identifier,
+):
+    plugin = _load_plugin_module()
+    result = {"ok": True, "status": "completed", identifier: ""}
+
+    errors = list(
+        Draft202012Validator(
+            plugin._output_schema("freezone_run_workflow")
+        ).iter_errors(result)
+    )
+    assert errors
+
+
 def test_freezone_canvas_command_slim_result_reports_node_action_submission():
     plugin = _load_plugin_module()
 
