@@ -259,7 +259,12 @@ def _pool_index_payload(pool: PoolIndex) -> dict:
 
 def _save_pool_index_unlocked(pool: PoolIndex, index_path: Path) -> Path:
     write_json_atomic(index_path, _pool_index_payload(pool))
-    print(f"[PoolIndexer] 索引已保存: {index_path}")
+    try:
+        print(f"[PoolIndexer] 索引已保存: {index_path}")
+    except OSError:
+        # The atomic replace has committed. A closed log pipe must not make
+        # callers roll back files referenced by this successfully saved index.
+        pass
     return index_path
 
 
@@ -903,6 +908,76 @@ def add_cell_with_dedup(
     )
     pool.images.append(pool_image)
     return pool_image
+
+
+def persist_uploaded_grid(
+    grids_dir: Path,
+    episode_num: int,
+    grid_index: int,
+    grid_type: str,
+    mode_key: str,
+    parsed_beats: list[int],
+    filename: str,
+    content: bytes,
+) -> Path:
+    """Publish an upload and its index under one cross-process index lock.
+
+    Ordinary write failures restore the prior image. Cancellation is handled by
+    the bounded upload worker, which waits for this transaction before returning.
+    """
+    import os
+    import shutil
+    import tempfile
+
+    upload_dir = grids_dir / "custom"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    grid_path = upload_dir / filename
+    grid_rel = grid_path.relative_to(grids_dir).as_posix()
+    # Stage outside the index lock so large writes do not hold up index readers.
+    with tempfile.TemporaryDirectory(prefix=".grid-upload-", dir=upload_dir) as staging:
+        staged = Path(staging) / "image"
+        staged.write_bytes(content)
+        backup = Path(staging) / "previous"
+        with index_file_lock(_state_pool_index_path(grids_dir)):
+            index_path, pool = _load_pool_index_for_update(grids_dir)
+            pool = pool or build_pool_index(grids_dir, episode_num)
+            entry = pool.find_grid(grid_type, mode_key, parsed_beats) if parsed_beats else None
+            if entry is None:
+                entry = register_grid_entry(
+                    pool=pool,
+                    grid_type=grid_type,
+                    mode_key=mode_key,
+                    beat_nums=parsed_beats,
+                    preset="custom",
+                    grid_path=grid_rel,
+                    prompt_path="",
+                )
+            else:
+                entry.grid_path = grid_rel
+                entry.preset = "custom"
+                entry.generated_at = datetime.now()
+
+            for image in pool.images:
+                if image.type != grid_type or image.grid_index != grid_index:
+                    continue
+                if parsed_beats and image.original_beat not in parsed_beats:
+                    continue
+                image.grid_path = grid_rel
+                image.mode = mode_key
+
+            existed = grid_path.exists()
+            if existed:
+                shutil.copyfile(grid_path, backup)
+            os.replace(staged, grid_path)
+            try:
+                _save_pool_index_unlocked(pool, index_path)
+            except BaseException:
+                if existed:
+                    os.replace(backup, grid_path)
+                else:
+                    grid_path.unlink(missing_ok=True)
+                raise
+    return grid_path
 
 
 def register_grid_entry(
