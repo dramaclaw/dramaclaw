@@ -7,12 +7,58 @@ import {
   compileFreezoneRecipePrompt,
   generateFreezoneRecipeText,
   listFreezoneStyleTemplates,
+  submitFreezoneAudioSpeech,
+  submitFreezoneGen,
 } from "@/api/ops";
+import {
+  bindWorkflowProductOperation,
+  clearWorkflowProductOperation,
+} from "@/features/canvas/application/workflowExecutionActivity";
 
 vi.mock("@/api/client", () => ({
   apiCall: vi.fn(),
   apiClient: vi.fn(),
 }));
+
+describe("workflow media task association", () => {
+  beforeEach(() => {
+    vi.mocked(apiCall).mockReset();
+    clearWorkflowProductOperation("image-1");
+    clearWorkflowProductOperation("audio-1");
+  });
+
+  it("sends the admitted attempt with image and audio submissions", async () => {
+    vi.mocked(apiCall).mockResolvedValue({ task_key: "task-1", job_id: "job-1" });
+    bindWorkflowProductOperation("image-1", {
+      projectId: "project-1", operationId: "operation-image",
+      generationAttemptId: "attempt-image",
+    });
+    bindWorkflowProductOperation("audio-1", {
+      projectId: "project-1", operationId: "operation-audio",
+      generationAttemptId: "attempt-audio",
+    });
+
+    await submitFreezoneGen("project-1", {
+      prompt: "frame", referenceUrls: [], canvasId: "default", nodeId: "image-1",
+    });
+    await submitFreezoneAudioSpeech("project-1", {
+      text: "voice", canvasId: "default", nodeId: "audio-1",
+    });
+
+    expect(vi.mocked(apiCall).mock.calls[0][1]).toEqual(expect.objectContaining({
+      json: expect.objectContaining({
+        product_operation_id: "operation-image",
+        generation_attempt_id: "attempt-image",
+      }),
+    }));
+    expect(vi.mocked(apiCall).mock.calls[1][1]).toEqual(expect.objectContaining({
+      json: expect.objectContaining({
+        product_operation_id: "operation-audio",
+        generation_attempt_id: "attempt-audio",
+      }),
+    }));
+  });
+});
 
 describe("freezone style template API", () => {
   beforeEach(() => {

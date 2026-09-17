@@ -650,6 +650,87 @@ async def test_product_task_fails_when_operation_has_no_result(tmp_path):
         )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("run_status", "pending_status"),
+    [
+        ("cancelled", "workflow_cancelled"),
+        ("interrupted", "workflow_interrupted"),
+        ("failed", "workflow_failed"),
+        ("completed", "workflow_completed"),
+        ("running", "workflow_lease_expired"),
+    ],
+)
+async def test_recipe_waiter_releases_worker_after_workflow_ends(
+    tmp_path, monkeypatch, run_status, pending_status
+):
+    from novelvideo.freezone import workflow_runs
+    from novelvideo.task_backend.runners import freezone as freezone_runner
+
+    operation = create_agent_product_operation(
+        project_dir=tmp_path,
+        project_id="project-a",
+        product_kind="recipe_result",
+        idempotency_key=f"recipe-{run_status}",
+        generation_session_id="run-a",
+        canvas_id="canvas-a",
+        artifact_id="image-a",
+        metadata={"workflow_run_id": "run-a", "node_id": "image-a"},
+    )
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+    monkeypatch.setattr(
+        workflow_runs,
+        "read_workflow_run",
+        lambda **_kwargs: {
+            "status": run_status,
+            "lease_expires_at": "2000-01-01T00:00:00Z",
+        },
+    )
+    envelope = {
+        "task_type": "freezone_agent_recipe_result",
+        "__run_task_id": "task-a",
+        "payload": {
+            "operation_id": operation["operation_id"],
+            "product_kind": "recipe_result",
+        },
+    }
+
+    with pytest.raises(AgentProductSettlementPending) as exc_info:
+        await freezone_runner._run_freezone_agent_product_async(
+            envelope, SimpleNamespace(state_dir=tmp_path)
+        )
+    assert exc_info.value.status == pending_status
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation["operation_id"]
+    )["status"] == "reserved"
+
+    # A provider result can still arrive after the worker has freed its slot.
+    bind_agent_product_model_execution(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        model_call_id="recipe-compiler:late-result",
+        executed_at=1.0,
+        source="server_recipe_compiler",
+        compile_mode="model",
+    )
+    finish_agent_product_operation(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        outcome="delivered",
+        expected_task_id="task-a",
+        result_ref={"kind": "recipe_result", "id": "image-a"},
+    )
+    result = await freezone_runner._run_freezone_agent_product_async(
+        envelope, SimpleNamespace(state_dir=tmp_path)
+    )
+    assert result["delivery_status"] == "delivered"
+
+
 def test_product_task_timeout_preserves_pending_operation(tmp_path, monkeypatch):
     from novelvideo.task_backend.cancel import TaskTimedOut
     from novelvideo.task_backend.runners import freezone as freezone_runner

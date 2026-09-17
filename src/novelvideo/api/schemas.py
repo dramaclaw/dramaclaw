@@ -433,7 +433,14 @@ class FreezoneImageStyleConfig(BaseModel):
     template_id: str = Field(description="风格模板 id")
 
 
-class FreezoneGenRequest(BaseModel):
+class FreezoneWorkflowMediaLink(BaseModel):
+    canvas_id: str = Field(default="", max_length=200)
+    node_id: str = Field(default="", max_length=200)
+    product_operation_id: str = Field(default="", max_length=128)
+    generation_attempt_id: str = Field(default="", max_length=256)
+
+
+class FreezoneGenRequest(FreezoneWorkflowMediaLink):
     prompt: str
     aspect_ratio: str = "1:1"
     image_size: str = "2K"
@@ -1061,7 +1068,7 @@ class FreezoneAssetLibraryFolderPatchRequest(BaseModel):
     )
 
 
-class FreezoneVideoGenRequest(BaseModel):
+class FreezoneVideoGenRequest(FreezoneWorkflowMediaLink):
     """文生视频请求。
 
     运镜通过模板库和补充提示词控制；角色库通过 `character_ids` 引用已上传的人物参考图。
@@ -1115,7 +1122,7 @@ class FreezoneVideoGenRequest(BaseModel):
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 
-class FreezoneImageToVideoRequest(BaseModel):
+class FreezoneImageToVideoRequest(FreezoneWorkflowMediaLink):
     """图片参考视频请求。
 
     统一承接图生视频和图片参考视频：
@@ -1173,7 +1180,7 @@ class FreezoneImageToVideoRequest(BaseModel):
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 
-class FreezoneKeyframeVideoRequest(BaseModel):
+class FreezoneKeyframeVideoRequest(FreezoneWorkflowMediaLink):
     """关键帧视频请求。
 
     接受仅首帧、首帧+尾帧或仅尾帧，至少需要提供一个槽位。
@@ -1230,7 +1237,7 @@ class FreezoneKeyframeVideoRequest(BaseModel):
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 
-class FreezoneVideoEditRequest(BaseModel):
+class FreezoneVideoEditRequest(FreezoneWorkflowMediaLink):
     """视频编辑请求。
 
     输入 1 个源视频，并按媒体模型目录配置接收参考图片和独立参考音频。
@@ -1392,7 +1399,7 @@ class FreezoneImageReversePromptResponse(BaseModel):
     data: FreezoneImageReversePromptData
 
 
-class FreezoneVideoOmniGenRequest(BaseModel):
+class FreezoneVideoOmniGenRequest(FreezoneWorkflowMediaLink):
     """全能参考视频请求。
 
     支持文本、图像、视频、音频、文件和公开网页链接混合输入。
@@ -1575,7 +1582,7 @@ class FreezoneAudioVoiceRef(BaseModel):
     )
 
 
-class FreezoneAudioSpeechRequest(BaseModel):
+class FreezoneAudioSpeechRequest(FreezoneWorkflowMediaLink):
     """Freezone 音频节点：文本生成语音请求。"""
 
     speech_mode: Literal["preset", "clone"] = Field(
@@ -1624,7 +1631,7 @@ class FreezoneAudioSpeechRequest(BaseModel):
     )
 
 
-class FreezoneAudioMusicRequest(BaseModel):
+class FreezoneAudioMusicRequest(FreezoneWorkflowMediaLink):
     """Freezone 音频节点：文本生成音乐请求。"""
 
     input: str = Field(
@@ -2312,7 +2319,7 @@ class StylePreviewRequest(BaseModel):
     model: str = "nanobanana"
 
 
-class FreezoneImageAnimateRequest(BaseModel):
+class FreezoneImageAnimateRequest(FreezoneWorkflowMediaLink):
     image_url: str = Field(min_length=1)
     canvas_id: str = Field(default="", max_length=200)
     node_id: str = Field(default="", max_length=200)

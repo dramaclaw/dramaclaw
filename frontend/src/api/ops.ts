@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { apiCall, apiCallEnvelope, apiClient } from "./client";
+import { workflowProductOperation } from "@/features/canvas/application/workflowExecutionActivity";
 
 // Per-node generation history -------------------------------------------- //
 
@@ -249,6 +250,11 @@ function nodeContextBody(ctx: FreezoneNodeContext): Record<string, unknown> {
   if (ctx.canvasId) out.canvas_id = ctx.canvasId;
   if (ctx.nodeId) out.node_id = ctx.nodeId;
   if (ctx.modelParams) out.model_params = ctx.modelParams;
+  const operation = workflowProductOperation(ctx.nodeId);
+  if (operation?.generationAttemptId) {
+    out.product_operation_id = operation.operationId;
+    out.generation_attempt_id = operation.generationAttemptId;
+  }
   return out;
 }
 
@@ -2409,7 +2415,7 @@ export async function fetchFreezoneAudioReferences(
   return { available: [] };
 }
 
-export interface FreezoneAudioSpeechPayload {
+export interface FreezoneAudioSpeechPayload extends FreezoneNodeContext {
   /** 要合成的台词 / 旁白文本。 */
   text: string;
   /** preset 无需参考音频；clone 使用 voiceRef 克隆声音。 */
@@ -2443,6 +2449,7 @@ export async function submitFreezoneAudioSpeech(
     {
       method: "POST",
       json: {
+        ...nodeContextBody(payload),
         text: payload.text,
         speech_mode: payload.speechMode ?? "clone",
         preset_model: payload.presetModel ?? "edge-tts",
@@ -2463,7 +2470,7 @@ export async function submitFreezoneAudioSpeech(
  * model / response_format / output_format 不需要前端传（走后端默认 LingShan-MU-11 / mp3 /
  * mp3_44100_128），故不在此暴露。
  */
-export interface FreezoneAudioMusicPayload {
+export interface FreezoneAudioMusicPayload extends FreezoneNodeContext {
   /** 音乐描述 prompt（风格、乐器、氛围等）；映射到后端 `input`。 */
   prompt: string;
   /** 生成长度（毫秒），范围 3000–600000，留空走后端默认 30000。 */
@@ -2490,6 +2497,7 @@ export async function submitFreezoneAudioMusic(
     {
       method: "POST",
       json: {
+        ...nodeContextBody(payload),
         input: payload.prompt,
         music_length_ms: payload.musicLengthMs,
         force_instrumental: payload.forceInstrumental,

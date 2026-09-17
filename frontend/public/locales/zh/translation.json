@@ -8448,6 +8448,7 @@
     "chooseFiles": "选择 Markdown 或 ZIP 文件",
     "upload": "上传 MD / ZIP",
     "retryFailed": "重试失败项",
+    "perFileCost": "每个文件",
     "retry": "重新转换",
     "limits": "每批最多 20 个文件，每个不超过 2 MB，总计不超过 10 MB；每个文件或 ZIP 包含一个技能。",
     "submitted": "已提交。关闭窗口后仍会在后台继续，可在任务中心查看进度。",

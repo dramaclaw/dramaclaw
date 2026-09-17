@@ -39,6 +39,7 @@ export interface WorkflowRunUpdatedDetail {
 export interface WorkflowProductOperationContext {
   projectId: string;
   operationId: string;
+  generationAttemptId?: string;
 }
 
 const workflowProductOperations = new Map<string, WorkflowProductOperationContext>();

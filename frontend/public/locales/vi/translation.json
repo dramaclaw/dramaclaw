@@ -8199,6 +8199,7 @@
     "chooseFiles": "Chọn tệp Markdown hoặc ZIP",
     "upload": "Tải lên MD / ZIP",
     "retryFailed": "Thử lại thất bại",
+    "perFileCost": "Mỗi tệp",
     "retry": "Thử lại",
     "limits": "Tối đa 20 tệp; mỗi tệp 2 MB, tổng cộng 10 MB. Mỗi tệp hoặc ZIP chứa một Skill.",
     "submitted": "Đã gửi. Quá trình chuyển đổi sẽ tiếp tục trong trung tâm tác vụ sau khi đóng cửa sổ này.",
