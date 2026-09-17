@@ -4354,6 +4354,71 @@ describe("canvas chat commands", () => {
     }])).toEqual([]);
   });
 
+  it("routes non-run actions to their own commands and HTML reads to context requests", async () => {
+    const imageId = useCanvasStore.getState().addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { imageUrl: "/static/project/character.png", prompt: "A portrait" },
+    );
+    const htmlId = useCanvasStore.getState().addNode(
+      CANVAS_NODE_TYPES.htmlArtifact,
+      { x: 100, y: 0 },
+      { artifactId: "artifact-1", artifactVersion: 1 },
+    );
+    const requests = [
+      ...["add_next_node", "update_node_data", "delete_node"].map((action) => ({
+        type: "node_action_catalog" as const,
+        node_id: imageId,
+        action,
+      })),
+      { type: "node_action_catalog" as const, node_id: htmlId, action: "read_source" },
+    ];
+    const response = await buildCanvasContextRequestResponse({
+      project: "project-a",
+      canvasId: "canvas-a",
+      nodes: useCanvasStore.getState().nodes,
+      edges: [],
+      ontologyContext: null,
+      selectedNodeIds: [],
+      envelopes: extractCanvasContextRequestEnvelopes([{
+        schema_version: "canvas_context_request.v1",
+        requests,
+      }]),
+    });
+    const payload = JSON.parse(response?.split("\n")[2] ?? "{}") as {
+      responses: Array<{ data: { invocation_examples: Record<string, any> } }>;
+    };
+    const examples = payload.responses.map((item) => item.data.invocation_examples);
+    expect(examples[0].single).toEqual({
+      tool: "freezone_add_next_node",
+      arguments: expect.objectContaining({ source_node_id: imageId }),
+    });
+    expect(examples[0].batch.arguments.commands[0].type).toBe("add_next_node");
+    expect(examples[1].single).toEqual({
+      tool: "freezone_update_node_data",
+      arguments: { node_id: imageId, data: {} },
+    });
+    expect(examples[1].batch.arguments.commands[0].type).toBe("update_node_data");
+    expect(examples[2].single).toEqual({
+      tool: "freezone_delete_nodes",
+      arguments: { node_ids: [imageId] },
+    });
+    expect(examples[2].batch.arguments.commands[0].type).toBe("delete_nodes");
+    expect(examples[3]).toEqual({
+      context_request: {
+        schema_version: "canvas_context_request.v1",
+        requests: [{ type: "node_action_read", node_id: htmlId, action: "read_source" }],
+      },
+    });
+    expect(extractCanvasContextRequestEnvelopes([examples[3].context_request])).toHaveLength(1);
+    for (const example of examples.slice(0, 3)) {
+      expect(extractCanvasChatCommandEnvelopes([{
+        schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+        commands: example.batch.arguments.commands,
+      }])).toHaveLength(1);
+    }
+  });
+
   it("returns requested video upscale action detail without source node parameters", async () => {
     const videoId = useCanvasStore.getState().addNode(
       CANVAS_NODE_TYPES.video,

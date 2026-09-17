@@ -20,6 +20,7 @@ import {
   buildCanvasNodeActionCatalog,
   isAgentExecutableNodeAction,
   type CanvasNodeActionCatalog,
+  type CanvasNodeActionCatalogEntry,
 } from "@/features/freezone/canvasNodeActionCatalog";
 import {
   AGENT_CREATABLE_CANVAS_NODE_TYPES,
@@ -32,6 +33,7 @@ import {
 import { validateCanvasChatCommandEnvelopes } from "@/features/freezone/context/canvasCommandValidator";
 import {
   CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+  isCanvasChatRunNodeAction,
   normalizeCanvasChatCommandEnvelopesForValidation,
   type CanvasChatCommandEnvelope,
 } from "@/features/freezone/canvasChatCommands";
@@ -248,6 +250,56 @@ function buildAgentCanvasNodeActionCatalog(
   };
 }
 
+function nodeActionInvocationExamples(
+  action: CanvasNodeActionCatalogEntry,
+  catalog: CanvasNodeActionCatalog,
+): Record<string, unknown> | null {
+  if (action.action === "read_source" || action.action === "history") {
+    return {
+      context_request: {
+        schema_version: CANVAS_CONTEXT_REQUEST_SCHEMA_VERSION,
+        requests: [{ type: "node_action_read", node_id: catalog.node_id, action: action.action }],
+      },
+    };
+  }
+
+  let command: Record<string, unknown>;
+  let tool: string;
+  let args: Record<string, unknown>;
+  if (action.command_type === "run_node_action" && isCanvasChatRunNodeAction(action.action)) {
+    const defaults = action.parameters?.defaults;
+    const parameters = defaults && typeof defaults === "object" && !Array.isArray(defaults)
+      ? { parameters: defaults }
+      : {};
+    args = { node_id: catalog.node_id, action: action.action, ...parameters };
+    command = { type: "run_node_action", ...args };
+    tool = "freezone_run_node_action";
+  } else if (action.command_type === "add_next_node") {
+    const nodeType = catalog.downstream_spawn_types[0];
+    if (!nodeType) return null;
+    args = { source_node_id: catalog.node_id, node_type: nodeType };
+    command = { type: "add_next_node", ...args };
+    tool = "freezone_add_next_node";
+  } else if (action.command_type === "update_node_data") {
+    args = { node_id: catalog.node_id, data: {} };
+    command = { type: "update_node_data", ...args };
+    tool = "freezone_update_node_data";
+  } else if (action.command_type === "delete_nodes") {
+    args = { node_ids: [catalog.node_id] };
+    command = { type: "delete_nodes", ...args };
+    tool = "freezone_delete_nodes";
+  } else {
+    return null;
+  }
+  return {
+    single: { tool, arguments: args },
+    batch: {
+      tool: "freezone_emit_canvas_command",
+      arguments: { commands: [command] },
+    },
+  };
+}
+
 function buildAgentNodeActionCatalogResponse(
   node: CanvasNode,
   context?: { nodes?: readonly CanvasNode[]; edges?: readonly CanvasEdge[] },
@@ -258,13 +310,8 @@ function buildAgentNodeActionCatalogResponse(
     ? catalog.actions.filter((action) => action.action === requestedAction)
     : catalog.actions;
   const selectedAction = actions[0];
-  const defaults = selectedAction?.parameters?.defaults;
-  const actionParameters =
-    defaults && typeof defaults === "object" && !Array.isArray(defaults)
-      ? { parameters: defaults }
-      : {};
-  const actionArguments = selectedAction
-    ? { node_id: catalog.node_id, action: selectedAction.action, ...actionParameters }
+  const invocationExamples = selectedAction
+    ? nodeActionInvocationExamples(selectedAction, catalog)
     : null;
   return {
     node_id: catalog.node_id,
@@ -278,22 +325,10 @@ function buildAgentNodeActionCatalogResponse(
       ? {
           requested_action: requestedAction,
           action_found: actions.length > 0,
-          ...(actionArguments
-            ? {
-                invocation_examples: {
-                  single: { tool: "freezone_run_node_action", arguments: actionArguments },
-                  batch: {
-                    tool: "freezone_emit_canvas_command",
-                    arguments: {
-                      commands: [{ type: "run_node_action", ...actionArguments }],
-                    },
-                  },
-                },
-              }
-            : {}),
+          ...(invocationExamples ? { invocation_examples: invocationExamples } : {}),
           instruction:
             actions.length > 0
-              ? "For one action, call freezone_run_node_action with node_id and action at the top level. For a batch, put {type: 'run_node_action', node_id, action, parameters?} in freezone_emit_canvas_command.commands. Only action-specific values go inside parameters; the action entry's parameters describe available inputs and defaults, so supply any required inputs before invoking. These are action/tool parameters, not node editable data. If the action opens or creates a downstream UI/node, follow result_effect and inspect the selected/new node detail when needed. A one-node workflow still runs through freezone_run_workflow."
+              ? "Use the invocation example for this action's actual command type. For a batch, put its command in freezone_emit_canvas_command.commands. Only action-specific values go inside run_node_action.parameters; node_id and action stay at the command top level. The action entry's parameters describe available inputs and defaults, so supply any required inputs and replace empty editable data before invoking. These are action/tool parameters, not node editable data. If the action opens or creates a downstream UI/node, do not answer from the source node parameters; follow result_effect and inspect the selected/new node detail when needed. Read actions use node_action_read context requests, not run_node_action. A one-node workflow still runs through freezone_run_workflow."
               : "No action with this name exists on the node. Use freezone_get_node_detail to inspect available action names.",
         }
       : {

@@ -387,6 +387,10 @@ const RUN_NODE_ACTIONS = new Set([
   "open_video_subtitle_erase_box",
 ]);
 
+export function isCanvasChatRunNodeAction(action: string): boolean {
+  return RUN_NODE_ACTIONS.has(action);
+}
+
 const GENERATION_NODE_ACTIONS = new Set([
   "generate_text",
   "generate_html",
