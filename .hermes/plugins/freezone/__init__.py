@@ -3223,6 +3223,7 @@ def _use_frontend_default_for_recommended_models(commands: list[Any]) -> None:
             continue
         if str(command.get("type") or "").strip() not in {
             "create_node",
+            "add_next_node",
             "update_node_data",
         }:
             continue
@@ -3387,7 +3388,7 @@ def _external_generation_parameter_preflight(
         str(command.get("client_id") or "").strip()
         for command in commands
         if isinstance(command, dict)
-        and command.get("type") == "create_node"
+        and command.get("type") in {"create_node", "add_next_node"}
         and str(command.get("client_id") or "").strip()
     }
     needs_canvas_read = any(
@@ -3416,7 +3417,7 @@ def _external_generation_parameter_preflight(
         if not isinstance(raw_command, dict):
             continue
         command_type = str(raw_command.get("type") or "").strip()
-        if command_type == "create_node":
+        if command_type in {"create_node", "add_next_node"}:
             node_id = str(raw_command.get("client_id") or "").strip()
             if node_id:
                 nodes[node_id] = {
@@ -3424,6 +3425,14 @@ def _external_generation_parameter_preflight(
                     "type": str(raw_command.get("node_type") or "").strip(),
                     "data": _clone_json(raw_command.get("data") or {}),
                 }
+                if command_type == "add_next_node":
+                    source_node_id = str(
+                        raw_command.get("source_node_id") or ""
+                    ).strip()
+                    if source_node_id:
+                        edges.append(
+                            {"source": source_node_id, "target": node_id}
+                        )
         elif command_type == "update_node_data":
             node_id = str(raw_command.get("node_id") or "").strip()
             node = nodes.get(node_id)
@@ -4167,6 +4176,9 @@ def _direct_apply_canvas_commands(
                     raise ValueError(f"source node not found: {source}")
                 node_type = str(command.get("node_type") or "").strip()
                 node_id = str(uuid.uuid4())
+                client_id = str(command.get("client_id") or "").strip()
+                if client_id:
+                    id_map[client_id] = node_id
                 width, height = _node_size(node_type)
                 source_position = (
                     source_node.get("position")
@@ -9053,7 +9065,7 @@ TOOLS = (
         "freezone_emit_canvas_command",
         _schema(
             "freezone_emit_canvas_command",
-            "Default Freezone write tool for ordinary non-workflow canvas edits. Submit one complete canvas_chat_commands.v1 commands array for the user's requested canvas changes. Do not use this tool for registered or dynamic WorkflowPlans; use the appropriate persisted workflow draft tool instead. If commands[] fields are unclear, call freezone_get_canvas_command_catalog first.",
+            "Default Freezone write tool for ordinary non-workflow canvas edits. Submit one complete canvas_chat_commands.v1 commands array for the user's requested canvas changes. A request to create a downstream media node and actually generate its output is a mixed operation: use add_next_node + run_node_action in this one batch, give add_next_node a client_id, and use that same alias as run_node_action.node_id. Do not ask the user to click Generate after only creating the node. Do not use this tool for registered or dynamic WorkflowPlans; use the appropriate persisted workflow draft tool instead. If commands[] fields are unclear, call freezone_get_canvas_command_catalog first.",
             {
                 **_CANVAS_COMMAND_TOOL_SCOPE_PROPS,
                 "commands": {
@@ -9125,7 +9137,7 @@ TOOLS = (
         "freezone_add_next_node",
         _schema(
             "freezone_add_next_node",
-            "Single-operation tool only: create exactly one downstream node behind one existing source node. Use only when the user explicitly asks for one downstream node and the source node is a valid input source. For several downstream nodes, workflows, prototypes, storyboards, or create+link/layout requests, use one freezone_emit_canvas_command batch instead.",
+            "Single-operation tool only: create exactly one downstream node behind one existing source node. This tool does not generate media. Use it only when the user explicitly asks to create/configure one downstream node without producing its media output. If the user asks for an actual image/video/audio result, creation plus generation is an add_next_node + run_node_action mixed request: use one freezone_emit_canvas_command batch with a shared client_id, and do not leave a manual Generate click to the user. For several downstream nodes, workflows, prototypes, storyboards, or other mixed requests, use one freezone_emit_canvas_command batch instead.",
             {
                 **_SCOPE_PROPS,
                 "source_node_id": {
