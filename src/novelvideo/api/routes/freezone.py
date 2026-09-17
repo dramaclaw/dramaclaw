@@ -6633,7 +6633,11 @@ def _video_upscale_output_path(project_dir: Path, job_id: str) -> Path:
 
 
 def _audio_separate_audio_output_path(project_dir: Path, job_id: str) -> Path:
-    return outputs_dir(project_dir, "freezone_audio_separate") / f"{job_id}.m4a"
+    output_dir = outputs_dir(project_dir, "freezone_audio_separate")
+    audio_path = output_dir / f"{job_id}.mp3"
+    legacy_path = output_dir / f"{job_id}.m4a"
+    # 历史任务产出的是 .m4a，结果查询继续可用。
+    return legacy_path if not audio_path.exists() and legacy_path.exists() else audio_path
 
 
 def _audio_separate_mute_video_output_path(project_dir: Path, job_id: str) -> Path:
