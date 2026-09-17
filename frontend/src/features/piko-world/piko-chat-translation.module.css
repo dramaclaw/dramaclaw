@@ -1,0 +1,16 @@
+.message { position: relative; max-width: 100%; min-width: 0; overflow-anchor: none; }
+.actions { display: flex; align-items: center; gap: 6px; height: 24px; opacity: 0; color: #756047; font-size: 11px; transition: opacity 150ms ease; }
+.message:hover .actions, .message:focus-within .actions { opacity: 1; }
+.actions button { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; padding: 2px 4px; cursor: pointer; background: transparent; border: 0; white-space: nowrap; }
+.actions button:disabled { cursor: wait; }
+.actions button:focus-visible, .settings summary:focus-visible { outline: 1px solid #756047; outline-offset: 2px; border-radius: 3px; }
+.settings summary { list-style: none; cursor: pointer; padding: 2px 6px; }
+.settings summary::-webkit-details-marker { display: none; }
+.settings[open] { position: relative; }
+.settings label { position: absolute; z-index: 3; left: 0; top: 100%; width: max-content; display: flex; flex-direction: column; gap: 6px; padding: 8px; background: #fff5df; border: 1px solid #c69a63; border-radius: 6px; }
+.settings select { color: #493523; background: #fffaf0; padding: 4px; }
+.result { max-width: 100%; padding: 5px 10px 7px; border-left: 2px solid #c69a63; color: #493523; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.result p { margin: 3px 0 0; white-space: pre-wrap; }
+.label { font-size: 10px; color: #756047; }
+@media (hover: none) { .actions { opacity: 1; } .actions button, .settings summary { min-height: 32px; } }
+@media (prefers-reduced-motion: reduce) { .actions { transition: none; } }

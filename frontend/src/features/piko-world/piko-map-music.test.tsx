@@ -24,16 +24,28 @@ it("covers every map explicitly and keeps the supplied shared groups together", 
   expect(new Set(files).size).toBe(8);
   for (const file of files) expect(readFileSync(`public${file}`).length).toBeGreaterThan(1000);
 });
-it("preserves shared playback on travel and releases the old channel on a different region", async () => {
+it("preserves shared playback and crossfades different regions over three seconds", async () => {
   vi.useFakeTimers(); const clips = mockAudio();
   const { rerender, unmount } = renderHook(({ id }) => useMapMusic(id), { initialProps: { id: "whispering-meadow" as keyof typeof PIKO_MAP_MUSIC } });
   await act(async () => {});
+  act(() => vi.advanceTimersByTime(2000));
   rerender({ id: "wind-garden-gate" }); expect(clips).toHaveLength(1);
   rerender({ id: "crimson-canyon" }); expect(clips).toHaveLength(2);
   expect(clips[1].src).toContain("amber-canyon.mp3");
-  await act(async () => {}); act(() => vi.advanceTimersByTime(800));
+  expect(clips[0].volume).toBe(1);
+  expect(clips[1].volume).toBe(0);
+  expect(clips[0].pause).not.toHaveBeenCalled();
+  await act(async () => {}); act(() => vi.advanceTimersByTime(1500));
+  expect(clips[0].volume).toBeCloseTo(0.5);
+  expect(clips[1].volume).toBeCloseTo(0.5);
+  expect(clips[0].removeAttribute).not.toHaveBeenCalled();
+  act(() => vi.advanceTimersByTime(1500));
+  expect(clips[0].volume).toBe(0);
+  expect(clips[1].volume).toBe(1);
   expect(clips[0].removeAttribute).toHaveBeenCalledWith("src");
-  unmount(); act(() => vi.advanceTimersByTime(800));
+  unmount();
+  expect(clips[1].removeAttribute).toHaveBeenCalledWith("src");
+  expect(vi.getTimerCount()).toBe(0);
 });
 it("loops the approved courtyard track and excludes the rejected version", async () => {
   vi.useFakeTimers(); const clips = mockAudio();
@@ -91,3 +103,36 @@ it("clears playback metadata on disposal and when restarting the same source", a
   expect(next.result.current.duration).toBe(0);
   next.unmount();
 });
+
+for (const finish of ["mute", "unmount", "leave"] as const) {
+  it(`cleans overlapping fades on rapid travel and ${finish}`, async () => {
+    vi.useFakeTimers(); const clips = mockAudio();
+    const { rerender, unmount } = renderHook(({ id }) => useMapMusic(id), {
+      initialProps: { id: "whispering-meadow" as keyof typeof PIKO_MAP_MUSIC | null },
+    });
+    await act(async () => {});
+    act(() => vi.advanceTimersByTime(2000));
+    rerender({ id: "crimson-canyon" });
+    await act(async () => {});
+    act(() => vi.advanceTimersByTime(500));
+    rerender({ id: "whalesong-skyport" });
+    await act(async () => {});
+    act(() => vi.advanceTimersByTime(500));
+    expect(clips).toHaveLength(3);
+    expect(clips[0].volume).toBe(0);
+    expect(clips[0].removeAttribute).toHaveBeenCalledWith("src");
+    expect(clips[1].volume).toBeGreaterThan(0);
+    expect(clips[2].volume).toBeGreaterThan(0);
+    if (finish === "mute") act(() => setPikoMusicMuted(true));
+    else if (finish === "leave") rerender({ id: null });
+    else unmount();
+    expect(clips.every(clip => clip.volume === 0)).toBe(true);
+    expect(clips[0].removeAttribute).toHaveBeenCalledWith("src");
+    expect(clips[1].removeAttribute).toHaveBeenCalledWith("src");
+    act(() => vi.advanceTimersByTime(3000));
+    expect(clips.every(clip => clip.volume === 0)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+    if (finish !== "unmount") unmount();
+    act(() => setPikoMusicMuted(false));
+  });
+}

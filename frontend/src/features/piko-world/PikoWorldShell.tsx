@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { retainDogWorldSession } from "./runtime/dog-world-session";
+import { PikoChatTranslation } from "./PikoChatTranslation";
 import { PIKO_MAP_TRAVEL_TIMING } from "./piko-map-timing";
 import { usePikoCursors } from "./use-piko-cursors";
 import { PikoPrivateChat } from "./PikoPrivateChat";
@@ -106,6 +108,7 @@ function currentChatTime(): string {
 }
 
 export function PikoWorldShell({ playerGender, onMusicMapChange }: { playerGender?: PikoPlayerGender; onMusicMapChange?: (mapId: MapLocation["mapId"]) => void } = {}) {
+  useEffect(() => retainDogWorldSession(), []);
   usePikoCursors();
   const { t } = useTranslation();
   const username = useAuthStore(state => state.username);
@@ -583,6 +586,7 @@ export function PikoWorldShell({ playerGender, onMusicMapChange }: { playerGende
                     </span>
                     <time>{message.time}</time>
                   </div>
+                  <PikoChatTranslation text={message.body ?? t(message.bodyKey ?? "")} conversation="public:town">
                   <p
                     className={cn(
                       "whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[min(var(--radius-sm),8px)] border px-2.5 py-1.5 text-xs leading-4 text-primary-foreground/80",
@@ -593,6 +597,7 @@ export function PikoWorldShell({ playerGender, onMusicMapChange }: { playerGende
                   >
                     {message.body ?? t(message.bodyKey ?? "")}
                   </p>
+                  </PikoChatTranslation>
                 </article>
               ))
             )}

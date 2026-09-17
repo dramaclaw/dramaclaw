@@ -9,6 +9,8 @@ import styles from "./piko-private-chat.module.css";
 import popup from "./piko-popup.module.css";
 import icon from "./piko-icon-button.module.css";
 
+import { PikoChatTranslation } from "./PikoChatTranslation";
+
 const ROOT = "/piko/world/ui/private-chat-request/piko-private-chat-request-";
 function PikoPrivateConversation({ active, onOpenChange, nickname, delay, ownNickname }: {
   active: boolean; onOpenChange: (open: boolean) => void; nickname: string; delay: number; ownNickname: string;
@@ -98,7 +100,7 @@ function PikoPrivateConversation({ active, onOpenChange, nickname, delay, ownNic
         <div ref={log} role="log" aria-label={t("pikoWorld.privateMessages")} aria-live="polite" className={styles.messages}>
           {messages.map(message => <article key={message.id} className={`flex max-w-[88%] flex-col gap-1 ${message.mine ? "self-end items-end" : "self-start items-start"}`}>
             <div className="flex items-center gap-2 px-1 text-[10px] leading-4 text-amber-950/55"><span className="font-medium">{message.mine ? ownNickname : nickname}</span><time>{message.time}</time></div>
-            <p className={`m-0 whitespace-pre-wrap break-words rounded-[min(var(--radius-sm),8px)] border px-2.5 py-1.5 text-xs leading-4 text-amber-950/80 [overflow-wrap:anywhere] ${message.mine ? "border-amber-900/15 bg-amber-100/55" : "border-amber-950/10 bg-white/55"}`}>{message.body}</p>
+            <PikoChatTranslation text={message.body} conversation={`private:${nickname}`}><p className={`m-0 whitespace-pre-wrap break-words rounded-[min(var(--radius-sm),8px)] border px-2.5 py-1.5 text-xs leading-4 text-amber-950/80 [overflow-wrap:anywhere] ${message.mine ? "border-amber-900/15 bg-amber-100/55" : "border-amber-950/10 bg-white/55"}`}>{message.body}</p></PikoChatTranslation>
           </article>)}
         </div>
         <form className={styles.composer} onSubmit={event => { event.preventDefault(); send(); }}>

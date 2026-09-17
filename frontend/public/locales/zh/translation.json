@@ -2237,6 +2237,13 @@
     }
   },
   "pikoWorld": {
+    "translationAction": "翻译",
+    "translationLoading": "翻译中…",
+    "translationHide": "收起译文",
+    "translationRetry": "重试翻译",
+    "translationLanguage": "翻译为",
+    "translationLabel": "译文",
+    "translationError": "暂时无法翻译，请稍后重试。",
     "musicToggle": "音乐",
     "mapTravel": {
       "retry": "重新加载",
@@ -2338,9 +2345,8 @@
     "mapAriaLabel": "初遇庭院，可使用方向键移动",
     "talkToMayor": "与镇长交谈",
     "welcomeTitle": "镇长 · Piko",
-    "welcomePage1": "欢迎来到 Piko 小镇！我是这里的镇长。一路辛苦了，不妨先放慢脚步，听听风经过庭院的声音。",
-    "welcomePage2": "这里是工作台之外的一处小天地。你可以用居民的身份散散步，看看风景，也可以在聊天面板里留下今天的心情。更多地方，我们会慢慢一起认识。",
-    "welcomePage3": "初来小镇，就先用现在这位居民开启旅程吧。想换个模样或修改昵称，可以去右上角设置里看看。找我聊天时，直接点我就好；左上角可以返回工作台。",
+    "welcomePage1": "欢迎来到 Piko 小镇！我是这里的镇长。放慢脚步，享受庭院里的好时光吧。",
+    "welcomePage2": "你可以四处逛逛，和居民聊聊天。右上角能更换装扮和昵称，想聊天时随时来找我。",
     "welcomeNext": "继续听听",
     "welcomeDone": "去庭院逛逛",
     "mapLoading": "正在加载{{mapName}}…",

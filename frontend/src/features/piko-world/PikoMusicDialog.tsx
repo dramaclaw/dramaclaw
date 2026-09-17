@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { Play, Pause } from "lucide-react";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { PikoThreeSlicePanelSkin } from "./PikoThreeSlicePanelSkin";
 import { PIKO_MUSIC_PLAYLISTS } from "./piko-map-music";
@@ -8,25 +8,30 @@ import { selectPikoMusic, setPikoMusicMuted, usePikoPlayback, usePikoSelection }
 import styles from "./piko-music.module.css";
 import { PIKO_OST_TRACKS as tracks } from "./piko-ost-tracks";
 
+import { PikoMusicPetals } from "./PikoMusicPetals";
+
 const ROOT = "/piko/world/ui/music-player/";
 const formatTime = (value = 0) => `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, "0")}`;
 export function PikoMusicDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const playback = usePikoPlayback();
   const selection = usePikoSelection();
-  const listRef = useRef<HTMLOListElement>(null);
   const [spinning, setSpinning] = useState(false);
-  // Symmetric sequence: lower arm, wait, spin; stop disc, wait, lift arm.
+  // Lower the arm before spinning; on pause, stop the disc and retract immediately.
   useEffect(() => {
     if (!open || !playback.playing) { setSpinning(false); return; }
     const timer = window.setTimeout(() => setSpinning(true), 650);
     return () => window.clearTimeout(timer);
   }, [open, playback.playing, playback.src]);
   const current = tracks.findIndex(track => PIKO_MUSIC_PLAYLISTS[track.key][0] === playback.src);
-  useEffect(() => {
-    if (!open) return;
-    const list = listRef.current;
-    const row = list?.children[current] as HTMLElement | undefined;
-    if (list && row) list.scrollTo?.({ top: row.offsetTop - (list.firstElementChild as HTMLElement).offsetTop, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+  // Portal contents can mount after the parent effect; wait for the actual list.
+  const listRef = useCallback((list: HTMLOListElement | null) => {
+    if (!list || !open || current < 0) return;
+    const frame = requestAnimationFrame(() => {
+      const row = list.children[current] as HTMLElement | undefined;
+      const first = list.firstElementChild as HTMLElement | null;
+      if (row && first) list.scrollTo?.({ top: row.offsetTop - first.offsetTop, behavior: "instant" });
+    });
+    return () => cancelAnimationFrame(frame);
   }, [current, open]);
   const caption = `《Piko小镇原声OST》- ${tracks[current]?.title ?? "选择一首小镇旋律"}`;
   const choose = (index: number) => selectPikoMusic(PIKO_MUSIC_PLAYLISTS[tracks[(index + tracks.length) % tracks.length].key]);
@@ -42,6 +47,7 @@ export function PikoMusicDialog({ open, onOpenChange }: { open: boolean; onOpenC
             <img className={styles.cover} src={`${ROOT}album-cover-v1.png`} alt="" draggable={false} />
           </div>
           <img className={`${styles.arm} ${playback.playing ? styles.engaged : ""}`} src={`${ROOT}tonearm-v1.png`} alt="" draggable={false} />
+          {open && <PikoMusicPetals emitting={playback.playing && spinning} />}
         </div>
         <div className={styles.captionRow}>
         <div className={styles.caption} aria-label={caption} title={caption}>

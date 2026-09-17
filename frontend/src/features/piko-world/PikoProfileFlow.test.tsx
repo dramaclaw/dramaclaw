@@ -110,3 +110,5 @@ it("sends public chat to the player bubble and blocks repeated Enter without los
   expect(screen.getByTestId("map")).toHaveAttribute("data-speech", "大家好");
   expect(screen.queryByText("再说一句", { selector: "article p" })).toBeNull();
 });
+
+vi.mock("./runtime/dog-world-session", () => ({ retainDogWorldSession: () => () => {} }));

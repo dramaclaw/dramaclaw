@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Elastic-2.0
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { PIKO_MAP_MUSIC, PIKO_MUSIC_PLAYLISTS } from "./piko-map-music";
 import type { PikoMapId } from "./piko-map-transitions";
 
 const MUSIC_VOLUME = 1;
+const MUSIC_FADE_MS = 3000;
 const DUCKED_VOLUME = 0.09;
 const REPEAT_PAUSE_MS = 30_000;
 
@@ -50,8 +51,8 @@ export function usePikoMusicMuted() {
   return useSyncExternalStore(subscribeMusic, () => musicMuted, () => false);
 }
 
-/** One music channel; popup changes preserve playback, track changes release it immediately. */
-export function startPikoMusic(tracks: readonly string[]) {
+/** A music channel can retire with a fade while its replacement starts playing. */
+export function startPikoMusic(tracks: readonly string[], fadeInMs = 2000) {
   if (typeof Audio === "undefined" || tracks.length === 0) return () => {};
   let trackIndex = 0;
   reportPlayback("", false);
@@ -100,7 +101,7 @@ export function startPikoMusic(tracks: readonly string[]) {
         pending = false;
         playing = true;
         reportPlayback(tracks[trackIndex], true);
-        fade(MUSIC_VOLUME, 2000);
+        fade(MUSIC_VOLUME, fadeInMs);
       }, () => { if (attempt === generation) { pending = false; reportPlayback(tracks[trackIndex], false, true); } });
     } catch { pending = false; reportPlayback(tracks[trackIndex], false, true); }
   };
@@ -171,7 +172,20 @@ export function startPikoMusic(tracks: readonly string[]) {
   document.addEventListener(MUSIC_CHANGE, syncPreference);
   document.addEventListener("piko-notification-sound", duck);
   start();
-  return () => {
+  let released = false;
+  let onReleased: (() => void) | undefined;
+  const release = () => {
+    if (released) return;
+    released = true;
+    clearInterval(fadeTimer);
+    document.removeEventListener(MUSIC_CHANGE, muteOutgoing);
+    audio.volume = 0; audio.pause(); audio.removeAttribute("src"); audio.load();
+    onReleased?.();
+  };
+  const muteOutgoing = () => { if (musicMuted) release(); };
+  return (fadeOutMs = 0, done?: () => void) => {
+    if (disposed) { release(); return; }
+    onReleased = done;
     disposed = true;
     reportPlayback("", false);
     audio.removeEventListener("timeupdate", updateTime);
@@ -188,7 +202,10 @@ export function startPikoMusic(tracks: readonly string[]) {
     document.removeEventListener(MUSIC_CHANGE, syncPreference);
     document.removeEventListener("piko-notification-sound", duck);
     clearInterval(fadeTimer);
-    audio.volume = 0; audio.pause(); audio.removeAttribute("src"); audio.load();
+    if (fadeOutMs > 0 && playing && !musicMuted && audio.volume > 0) {
+      document.addEventListener(MUSIC_CHANGE, muteOutgoing);
+      fade(0, fadeOutMs, release);
+    } else release();
   };
 }
 
@@ -196,5 +213,28 @@ export function startPikoMusic(tracks: readonly string[]) {
 export function useMapMusic(mapId: PikoMapId | null) {
   const selected = usePikoSelection();
   const tracks = mapId ? selected ?? PIKO_MAP_MUSIC[mapId] : null;
-  useEffect(() => tracks ? startPikoMusic(tracks) : undefined, [tracks]);
+  const current = useRef<{ tracks: readonly string[]; stop: ReturnType<typeof startPikoMusic> } | null>(null);
+  const outgoing = useRef(new Set<ReturnType<typeof startPikoMusic>>());
+  useEffect(() => {
+    const previous = current.current;
+    if (previous?.tracks === tracks) return;
+    // Only the immediately preceding channel may overlap the new track.
+    outgoing.current.forEach(stop => stop());
+    outgoing.current.clear();
+    if (previous) {
+      outgoing.current.add(previous.stop);
+      previous.stop(tracks ? MUSIC_FADE_MS : 0, () => outgoing.current.delete(previous.stop));
+    }
+    current.current = tracks ? { tracks, stop: startPikoMusic(tracks, previous ? MUSIC_FADE_MS : 2000) } : null;
+    if (!tracks) {
+      outgoing.current.forEach(stop => stop());
+      outgoing.current.clear();
+    }
+  }, [tracks]);
+  useEffect(() => () => {
+    current.current?.stop();
+    current.current = null;
+    outgoing.current.forEach(stop => stop());
+    outgoing.current.clear();
+  }, []);
 }

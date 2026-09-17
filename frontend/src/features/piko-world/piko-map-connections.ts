@@ -51,7 +51,7 @@ export const MAP_EXIT_MARKERS: Record<PikoMapId, readonly PikoExitMarkerDefiniti
   ],
   "starlight-dock": [
     { exitId: "to-lantern-canal-street", targetMapId: "lantern-canal-street",
-      position: { x: 65, y: 550 }, direction: "west" },
+      position: { x: 65, y: 510 }, direction: "west" },
     { exitId: "to-starfall-tidal-wetland", targetMapId: "starfall-tidal-wetland",
       position: { x: 700, y: 1065 }, direction: "south" },
   ],
@@ -111,7 +111,7 @@ export const MAP_EXIT_MARKERS: Record<PikoMapId, readonly PikoExitMarkerDefiniti
     { exitId: "to-changfeng-sea", targetMapId: "changfeng-sea",
       position: { x: 1940, y: 130 }, direction: "east" },
     { exitId: "to-startrace-coast", targetMapId: "startrace-coast",
-      position: { x: 325, y: 880 }, direction: "west", action: "returnShore" },
+      position: { x: 185, y: 880 }, direction: "west", action: "returnShore" },
   ],
   "whalesong-skyport": [
     { exitId: "to-cloudtop-slope", targetMapId: "cloudtop-slope",

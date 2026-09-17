@@ -24,9 +24,31 @@
   transition: opacity var(--duration-fast) var(--ease-out-quint);
 }
 .anchor[data-near="true"] .name { opacity: 1; }
+.name.action {
+  color: var(--color-amber-950);
+  font-weight: 400;
+  text-shadow: none;
+  background: color-mix(in srgb, var(--color-amber-100) 65%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: none;
+  border-radius: 999px;
+  padding: 4px 12px;
+  box-shadow: none;
+}
+.name.action:hover {
+  background: color-mix(in srgb, var(--color-amber-100) 78%, transparent);
+}
+.name.action:active {
+  background: color-mix(in srgb, var(--color-amber-200) 78%, transparent);
+}
+.name.action:focus-visible {
+  outline: 2px solid var(--color-amber-50);
+  outline-offset: 4px;
+}
 .action {
   pointer-events: auto;
-  min-height: 44px;
+  min-height: 32px;
   cursor: pointer;
 }
 @media (prefers-reduced-motion: reduce) {

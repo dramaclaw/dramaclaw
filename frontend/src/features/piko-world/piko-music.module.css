@@ -6,8 +6,8 @@
 .record { position: absolute; width: 68%; left: 13.2%; top: 15.5%; aspect-ratio: 1; animation: spin 18s linear infinite; }
 .record > img:first-child { width: 100%; height: 100%; }
 .cover { position: absolute; width: 58.2%; height: 58.2%; left: 20.9%; top: 20.9%; object-fit: cover; border-radius: 50%; }
-.arm { position: absolute; width: 31%; height: auto; left: 63.35%; top: 19%; transform-origin: 53.1% 14.4%; transform: rotate(-25deg); transition: transform 650ms ease-in-out 650ms; }
-.arm.engaged { transform: rotate(8deg); transition-delay: 0ms; }
+.arm { position: absolute; width: 31%; height: auto; left: 63.35%; top: 19%; transform-origin: 53.1% 14.4%; transform: rotate(-25deg); transition: transform 420ms ease-in-out; }
+.arm.engaged { transform: rotate(8deg); transition-duration: 650ms; }
 .list { list-style: none; padding: 2px 3px; margin: 0; display: grid; gap: 6px; max-height: 166px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #b98d52 transparent; }
 .list button { width: 100%; display: flex; align-items: center; gap: 10px; text-align: left; min-height: 44px; padding: 8px 10px; border-radius: 8px; border: 1px solid transparent; background: rgb(207 167 105 / 28%); cursor: pointer; }
 .list button[aria-current=true] { border-color: #c69a63; background: rgb(232 184 94 / 52%); }
@@ -51,3 +51,6 @@
 
 .list .time { margin-left: 2px; margin-right: 2px; }
 @media (prefers-reduced-motion: reduce) { .toggle, .toggle::after { transition: none; } }
+
+.petals { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .petals { display: none; } }

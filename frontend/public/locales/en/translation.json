@@ -2237,6 +2237,13 @@
     }
   },
   "pikoWorld": {
+    "translationAction": "Translate",
+    "translationLoading": "Translating…",
+    "translationHide": "Hide translation",
+    "translationRetry": "Retry translation",
+    "translationLanguage": "Translate to",
+    "translationLabel": "Translation",
+    "translationError": "Translation is unavailable. Please try again shortly.",
     "musicToggle": "Music",
     "mapTravel": {
       "retry": "Retry",
@@ -2338,9 +2345,8 @@
     "mapAriaLabel": "Welcome Courtyard, use arrow keys to move",
     "talkToMayor": "Talk to the mayor",
     "welcomeTitle": "Mayor · Piko",
-    "welcomePage1": "Welcome to Piko Town! I'm the mayor. Take a breath after your journey and listen to the breeze passing through the courtyard.",
-    "welcomePage2": "This is a little place beyond your workbench. Take a walk as a resident, enjoy the scenery, or leave a thought in the chat panel. We'll get to know more places together in time.",
-    "welcomePage3": "Start your journey with this resident. Visit settings in the top right to change your look or nickname. Just click me whenever you want to chat. Return to the workbench from the top left.",
+    "welcomePage1": "Welcome to Piko Town! I'm the mayor. Slow down and enjoy your time in the courtyard.",
+    "welcomePage2": "Explore the town and chat with residents. Change your look and nickname in the top right, and come say hello anytime.",
     "welcomeNext": "Tell me more",
     "welcomeDone": "Explore the courtyard",
     "mapLoading": "Loading {{mapName}}…",

@@ -237,3 +237,5 @@ it.each(["ready", "error"] as const)("records skyport discovery only after a suc
     expect(save.mock.calls.some(([key]) => key === "piko-world:whalesong-skyport-discovered")).toBe(state === "ready");
   } finally { save.mockRestore(); }
 });
+
+vi.mock("./runtime/dog-world-session", () => ({ retainDogWorldSession: () => () => {} }));

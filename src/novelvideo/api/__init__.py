@@ -55,6 +55,7 @@ from novelvideo.api.routes import (  # noqa: E402
     model_gateway,
     model_credits,
     pipeline,
+    piko,
     product_surfaces,
     projects,
     props,
@@ -99,6 +100,7 @@ if not runtime_env.is_ce_effective():
 api_router.include_router(config.router, tags=["config"])
 api_router.include_router(product_surfaces.router, tags=["product-surfaces"])
 api_router.include_router(chat.router, tags=["chat"])
+api_router.include_router(piko.router, tags=["piko"])
 api_router.include_router(projects.router, tags=["projects"])
 api_router.include_router(ingest.router, tags=["ingest"])
 api_router.include_router(characters.router, tags=["characters"])

@@ -26,19 +26,19 @@ it("uses shared original sheet pixels in top-left, top-right, bottom-left, botto
   sheet.destroy(true);
 });
 
-it("shares ten sheets and a heart across nineteen depth-sorted animals and pauses all animation when hidden or reduced", async () => {
+it("shares original and directional sheets and a heart across nineteen depth-sorted animals and pauses all animation when hidden or reduced", async () => {
   let reduced = false, change = () => {};
   const remove = vi.fn();
   vi.stubGlobal("matchMedia", () => ({ get matches() { return reduced; },
     addEventListener: (_: string, listener: () => void) => { change = listener; }, removeEventListener: remove }));
   const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(false);
-  const sheets = Array.from({ length: 11 }, atlas);
+  const sheets = Array.from({ length: 14 }, atlas);
   let index = 0;
   const load = vi.spyOn(Assets, "load").mockImplementation(async () => sheets[index++] as never);
   const unload = vi.spyOn(Assets, "unload").mockResolvedValue(undefined);
   const ticker = new Ticker(); ticker.autoStart = false;
   const runtime = (await createCourtyardAnimalRuntime(options(ticker)))!;
-  expect(load).toHaveBeenCalledTimes(11);
+  expect(load).toHaveBeenCalledTimes(14);
   expect(runtime.actors).toHaveLength(19);
   expect(ticker.count).toBe(1);
   const cat = runtime.actors.find(actor => actor.placement.kind === "cat")!;
@@ -63,7 +63,8 @@ it("shares ten sheets and a heart across nineteen depth-sorted animals and pause
   runtime.actors.forEach(actor => {
     expect(actor.container.zIndex).toBe(actor.container.y);
     const { clip, frame } = actor.motion.state;
-    expect(actor.body.anchor.x).toBe(ANIMAL_SHEETS[clip].anchors[frame][0] / 1024);
+    if (actor.placement.kind !== "dog" && actor.placement.kind !== "cat")
+      expect(actor.body.anchor.x).toBe(ANIMAL_SHEETS[clip].anchors[frame][0] / 1024);
   });
   hidden.mockReturnValue(true);
   document.dispatchEvent(new Event("visibilitychange"));
@@ -83,7 +84,7 @@ it("shares ten sheets and a heart across nineteen depth-sorted animals and pause
   expect(sharedShadow.destroyed).toBe(true);
   expect(ticker.count).toBe(0);
   expect(remove).toHaveBeenCalledTimes(1);
-  await vi.waitFor(() => expect(unload).toHaveBeenCalledTimes(11));
+  await vi.waitFor(() => expect(unload).toHaveBeenCalledTimes(14));
   expect(runtime.objects.every(object => object.destroyed)).toBe(true);
   ticker.destroy();
   sheets.forEach(sheet => sheet.destroy(true));
@@ -96,10 +97,10 @@ it("releases successfully loaded sheets when another sheet fails or the map unmo
   const unload = vi.spyOn(Assets, "unload").mockResolvedValue(undefined);
   const ticker = new Ticker(); ticker.autoStart = false;
   await expect(createCourtyardAnimalRuntime(options(ticker))).rejects.toThrow("missing animal sheet");
-  await vi.waitFor(() => expect(unload).toHaveBeenCalledTimes(10));
+  await vi.waitFor(() => expect(unload).toHaveBeenCalledTimes(13));
   unload.mockClear();
   expect(await createCourtyardAnimalRuntime({ ...options(ticker), isDisposed: () => true })).toBeNull();
-  await vi.waitFor(() => expect(unload).toHaveBeenCalledTimes(11));
+  await vi.waitFor(() => expect(unload).toHaveBeenCalledTimes(14));
   expect(ticker.count).toBe(0);
   ticker.destroy(); sheet.destroy(true);
 });
@@ -110,7 +111,7 @@ it("rejects malformed layouts and releases the source assets before attaching a 
   const unload = vi.spyOn(Assets, "unload").mockResolvedValue(undefined);
   const ticker = new Ticker(); ticker.autoStart = false;
   await expect(createCourtyardAnimalRuntime(options(ticker))).rejects.toThrow("four 1024-square cells");
-  await vi.waitFor(() => expect(unload).toHaveBeenCalledTimes(11));
+  await vi.waitFor(() => expect(unload).toHaveBeenCalledTimes(14));
   expect(ticker.count).toBe(0);
   ticker.destroy(); sheet.destroy(true);
 });
@@ -125,10 +126,27 @@ it("keeps a replacement map's animal sheets alive when the old map finishes load
   const replacement = createCourtyardAnimalRuntime(options(ticker));
   expect(await old).toBeNull();
   const runtime = (await replacement)!;
-  expect(load).toHaveBeenCalledTimes(11);
+  expect(load).toHaveBeenCalledTimes(14);
   expect(unload).not.toHaveBeenCalled();
   expect(runtime.actors).toHaveLength(19);
   runtime.destroy();
-  await vi.waitFor(() => expect(unload).toHaveBeenCalledTimes(11));
+  await vi.waitFor(() => expect(unload).toHaveBeenCalledTimes(14));
   ticker.destroy(); sheet.destroy(true);
+});
+
+it('renders the shared dog only on its current map and never advances it from a map ticker', async () => {
+  vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+  const sheet=atlas();vi.spyOn(Assets,'load').mockResolvedValue(sheet as never);vi.spyOn(Assets,'unload').mockResolvedValue(undefined);
+  const { createPetMotion }=await import('./pet-motion');
+  const { COURTYARD_ANIMALS }=await import('./courtyard-animals');
+  const local=createPetMotion(COURTYARD_ANIMALS.find(p=>p.kind==='dog')!,()=>.5,()=>true);
+  const shared={mapId:'artisan-market' as const,state:local.state,error:null,transitions:[],update:vi.fn()};
+  const ticker=new Ticker();ticker.autoStart=false;
+  const runtime=(await createCourtyardAnimalRuntime({...options(ticker),mapId:'starlight-dock',worldDog:shared}))!;
+  expect(runtime.actors).toHaveLength(1);expect(runtime.actors[0].container.visible).toBe(false);
+  for(let t=100;t<1000;t+=100)ticker.update(t);
+  expect(shared.update).not.toHaveBeenCalled();
+  Object.assign(shared,{mapId:'starlight-dock'});runtime.actors[0].render();
+  expect(runtime.actors[0].container.visible).toBe(true);
+  runtime.destroy();ticker.destroy();sheet.destroy(true);
 });

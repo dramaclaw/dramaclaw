@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
+import type { createDogWorld } from "./dog-world";
+import { isPetRestVisible } from "./pet-rest-visibility";
+import petAtlases from "./pet-atlases.json";
+import { createPetMotion } from "./pet-motion";
 import { acquireSharedTexture } from "./shared-texture";
 import { createContactShadow } from "./character-shadow";
 import { createCharacterName } from "./character-presentation";
@@ -19,7 +23,7 @@ export function animalAtlasFrames(atlas: Texture) {
 
 /** Shared sheets, one ticker, and world-depth containers for all courtyard animals. */
 export async function createCourtyardAnimalRuntime({ ticker, navigation, bakedOccluders, size,
-  resolveAssetUrl, isDisposed, random = Math.random }: {
+  resolveAssetUrl, isDisposed, random = Math.random, worldDog, mapId = "welcome-courtyard" }: {
   ticker: Ticker;
   navigation: PikoNavigation;
   bakedOccluders: PikoOccluder[];
@@ -27,10 +31,19 @@ export async function createCourtyardAnimalRuntime({ ticker, navigation, bakedOc
   resolveAssetUrl: (src: string) => string;
   isDisposed: () => boolean;
   random?: () => number;
+  worldDog?: ReturnType<typeof createDogWorld>;
+  mapId?: string;
 }) {
-  const entries: { clip: AnimalClip | null; url: string }[] = (Object.keys(ANIMAL_SHEETS) as AnimalClip[])
+  const replacedClips: ReadonlySet<AnimalClip> = new Set(["dogWalk", "dogBark", "catIdle"]);
+  const entries: { clip: AnimalClip | keyof typeof petAtlases | null; url: string }[] = (Object.keys(ANIMAL_SHEETS) as AnimalClip[])
+    .filter(clip => !replacedClips.has(clip))
     .map(clip => ({ clip, url: resolveAssetUrl(ANIMAL_SHEETS[clip].src) }));
+  for (const [clip, sheet] of Object.entries(petAtlases)) entries.push({ clip: clip as keyof typeof petAtlases, url: resolveAssetUrl(sheet.src) });
   entries.push({ clip: null, url: resolveAssetUrl(CAT_HEART_SRC) });
+  if (mapId !== "welcome-courtyard") {
+    // Other maps only display the shared dog, so load only its directional atlases.
+    for (let i=entries.length-1;i>=0;i--) if (!entries[i].clip?.startsWith("dog-")) entries.splice(i,1);
+  }
   const releases: (() => void)[] = [];
   const results = await Promise.allSettled(entries.map(async ({ url }) => {
     const lease = await acquireSharedTexture(url);
@@ -44,7 +57,7 @@ export async function createCourtyardAnimalRuntime({ ticker, navigation, bakedOc
     if (failure && !isDisposed()) throw failure.reason;
     return null;
   }
-  const clips = new Map<AnimalClip, Texture[]>();
+  const clips = new Map<string, Texture[]>();
   let heartTexture: Texture | undefined;
   let shadowTexture: Texture;
   try {
@@ -53,7 +66,11 @@ export async function createCourtyardAnimalRuntime({ ticker, navigation, bakedOc
       result.value.source.scaleMode = "nearest";
       const clip = entries[index].clip;
       if (clip === null) heartTexture = result.value;
-      else clips.set(clip, animalAtlasFrames(result.value));
+      else if (clip in petAtlases) {
+        const sheet = petAtlases[clip as keyof typeof petAtlases];
+        clips.set(clip, sheet.frames.map(({ rect }) => new Texture({ source: result.value.source,
+          frame: new Rectangle(rect[0], rect[1], rect[2], rect[3]) })));
+      } else clips.set(clip, animalAtlasFrames(result.value));
     });
     shadowTexture = createContactShadow({ width: 24, height: 8 });
   } catch (error) {
@@ -61,7 +78,7 @@ export async function createCourtyardAnimalRuntime({ ticker, navigation, bakedOc
     unload();
     throw error;
   }
-  const actors = COURTYARD_ANIMALS.map(placement => {
+  const actors = COURTYARD_ANIMALS.filter(p => mapId === "welcome-courtyard" || p.kind === "dog").map(placement => {
     const container = new Container({ label: placement.id, eventMode: "none" });
     const shadow = new Sprite({ texture: shadowTexture, label: "animal-contact-shadow", eventMode: "none", roundPixels: true });
     shadow.anchor.set(0.5);
@@ -83,16 +100,29 @@ export async function createCourtyardAnimalRuntime({ ticker, navigation, bakedOc
     }
     const name = placement.name ? createCharacterName(placement.name, -placement.scale * 900 - 4) : null;
     if (name) container.addChild(name);
-    const motion = createAnimalMotion(placement, random, point => isAnimalPositionNavigable(point, navigation));
+    const externallyDriven = placement.kind === "dog" ? worldDog : undefined;
+    const motion = externallyDriven ?? (placement.kind === "dog" || placement.kind === "cat" ? createPetMotion : createAnimalMotion)(
+      placement, random, point => isAnimalPositionNavigable(point, navigation),
+      point => isPetRestVisible(point, bakedOccluders));
     let previousClip: AnimalClip | undefined, previousFrame = -1;
     const render = () => {
-      const { state } = motion;
+      const state = motion.state as typeof motion.state & Partial<Pick<ReturnType<typeof createPetMotion>["state"], "atlas" | "pose">>;
+      container.visible = !externallyDriven || worldDog!.mapId === mapId;
       container.position.set(state.position.x, state.position.y);
       container.zIndex = state.position.y;
-      if (heart) heart.visible = state.clip === "catIdle" && state.frame === CAT_HEART_FRAME;
+      if (heart) {
+        heart.visible = state.clip === "catIdle" && state.frame === CAT_HEART_FRAME;
+        heart.x = placement.scale * 190 * state.facing;
+      }
       body.y = -state.lift;
       body.scale.set(placement.scale * state.facing, placement.scale);
-      if (state.clip !== previousClip || state.frame !== previousFrame) {
+      if (state.atlas !== undefined && state.pose !== undefined) {
+        const sheet = petAtlases[state.atlas as keyof typeof petAtlases];
+        const frame = sheet.frames[state.pose];
+        body.texture = clips.get(state.atlas)![state.pose];
+        body.anchor.set(frame.anchor[0] / frame.rect[2], frame.anchor[1] / frame.rect[3]);
+        body.scale.set(placement.scale * frame.scale * state.facing, placement.scale * frame.scale);
+      } else if (state.clip !== previousClip || state.frame !== previousFrame) {
         body.texture = clips.get(state.clip)![state.frame];
         const anchor = ANIMAL_SHEETS[state.clip].anchors[state.frame];
         body.anchor.set(anchor[0] / 1024, anchor[1] / 1024);
@@ -100,16 +130,16 @@ export async function createCourtyardAnimalRuntime({ ticker, navigation, bakedOc
         previousFrame = state.frame;
       }
     };
-    motion.update(0);
+    if (!externallyDriven) motion.update(0);
     render();
     const occlusion = createBakedActorOcclusion(container, bakedOccluders, size);
-    return { container, body, heart, name, shadow, placement, motion, occlusion, render };
+    return { container, body, heart, name, shadow, placement, motion, occlusion, render, externallyDriven };
   });
   let attached = false, destroyed = false;
   const update = (clock: Ticker) => {
     const delta = Math.max(0, Math.min(clock.deltaMS, 100)) / 1000;
     actors.forEach(actor => {
-      actor.motion.update(delta);
+      if (!actor.externallyDriven) actor.motion.update(delta);
       actor.render();
       actor.occlusion.update();
     });

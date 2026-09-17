@@ -31,3 +31,32 @@ it("toggles the current song from its row and delays rotation until the arm land
   act(() => vi.advanceTimersByTime(650));
   expect(disc().style.animationPlayState).toBe("paused");
 });
+
+it("reveals a current track below the first page on opening and reopening", () => {
+  vi.useFakeTimers();
+  const scrollTo = vi.fn();
+  const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTo");
+  Object.defineProperty(HTMLElement.prototype, "scrollTo", { configurable: true, value: scrollTo });
+  const offsets = vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockImplementation(function (this: HTMLElement) {
+    return this.tagName === "LI" ? Array.from(this.parentElement!.children).indexOf(this) * 50 : 0;
+  });
+  state.playback = { src: "/piko/world/audio/bgm/whalesong-skyport.mp3", playing: true, error: false };
+  try {
+    const { rerender } = render(<PikoMusicDialog open={false} onOpenChange={vi.fn()} />);
+    rerender(<PikoMusicDialog open onOpenChange={vi.fn()} />);
+    act(() => vi.advanceTimersByTime(32));
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 350, behavior: "instant" });
+    expect(scrollTo.mock.instances[scrollTo.mock.instances.length - 1]).toBe(screen.getByRole("list", { name: "地图音乐列表" }));
+    rerender(<PikoMusicDialog open={false} onOpenChange={vi.fn()} />);
+    act(() => vi.advanceTimersByTime(1000));
+    scrollTo.mockClear();
+    rerender(<PikoMusicDialog open onOpenChange={vi.fn()} />);
+    act(() => vi.advanceTimersByTime(32));
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 350, behavior: "instant" });
+  } finally {
+    cleanup(); offsets.mockRestore();
+    if (original) Object.defineProperty(HTMLElement.prototype, "scrollTo", original);
+    else Reflect.deleteProperty(HTMLElement.prototype, "scrollTo");
+    state.playback = { src: "/piko/world/audio/bgm/welcome-courtyard-01.mp3", playing: false, error: false };
+  }
+});

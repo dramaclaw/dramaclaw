@@ -27,6 +27,8 @@ import { PIKO_MAYOR_IDLE_SRC, PIKO_MAYOR_POSITION } from "./runtime/mayor-idle";
 import { createMayorActor } from "./runtime/mayor-actor";
 import { createResidentActor, RESIDENT_WORLD_SCALE } from "./runtime/resident-actor";
 import { PikoResidentInteraction } from "./PikoResidentInteraction";
+import { DOG_MAPS } from "./runtime/dog-world-routes";
+import { getWorldDog } from "./runtime/dog-world-session";
 import { PikoWelcomeDialog } from "./PikoWelcomeDialog";
 import { addCharacterPresentation } from "./runtime/character-presentation";
 import { PIKO_DEFAULT_CURSOR } from "./piko-cursors";
@@ -315,16 +317,22 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, resi
             mayorActor.container.zIndex = PIKO_MAYOR_POSITION.y;
             mayorHoverRef.current = addCharacterPresentation(mayorActor.container);
             world.addChild(mayorActor.container);
+          }
+          if ((DOG_MAPS as readonly string[]).includes(mapId)) {
+            const worldDog = await getWorldDog();
+            if (disposed) return;
             courtyardAnimalRuntime = await createCourtyardAnimalRuntime({
+              worldDog, mapId,
               ticker: nextApp.ticker, navigation, bakedOccluders, size: manifest.size,
-              resolveAssetUrl: src => resolvePikoMapAssetUrl(mapId, src),
+              resolveAssetUrl: src => resolvePikoMapAssetUrl("welcome-courtyard", src),
               isDisposed: () => disposed,
             });
             if (!courtyardAnimalRuntime) return;
             courtyardAnimalRuntime.objects.forEach(object => world.addChild(object));
             animalAudio = createAnimalAudio(() => courtyardAnimalRuntime?.actors.map(actor => ({
               id: actor.placement.id, kind: actor.placement.kind, ...actor.motion.state,
-            })) ?? [], src => resolvePikoMapAssetUrl(mapId, src));
+              position: actor.container.visible ? actor.motion.state.position : { x: -100000, y: -100000 },
+            })) ?? [], src => resolvePikoMapAssetUrl("welcome-courtyard", src));
           }
           for (const id of Object.keys(PIKO_PLAYABLE_RESIDENTS) as PlayablePikoResidentId[]) {
             const src = PIKO_PLAYABLE_RESIDENTS[id];
