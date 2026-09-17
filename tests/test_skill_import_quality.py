@@ -65,6 +65,8 @@ async def test_default_conversion_uses_three_calls_and_installs_without_graph_or
     analysis_input = json.loads(prompts[0].split('INPUT DATA:\n', 1)[1])
     assert analysis_input['source_segments'][0]['text'] == 'Check citations'
     assert 'source' not in analysis_input
+    generation_input = json.loads(prompts[1].split('INPUT DATA:\n', 1)[1])
+    assert 'task_recipe_resolutions' not in generation_input['design']
     review_input = json.loads(prompts[2].split('INPUT DATA:\n', 1)[1])
     assert review_input['source_segments'][0]['text'] == 'Check citations'
     assert 'source' not in review_input
@@ -374,6 +376,16 @@ async def test_catalog_is_compared_before_design_and_reused_definition_is_hydrat
     assert record['catalog'] == [original]
     assert record['quality_report']['recipe_reuse'] == {'reused_ids': [original['id']], 'new_ids': []}
     assert record['task_recipe_resolutions'][0]['selected_recipe_id'] == original['id']
+    assert record['task_recipe_resolutions'][0]['verdicts']
+    generation_input = json.loads(prompts[2].split('INPUT DATA:\n', 1)[1])
+    generation_resolution = generation_input['design']['task_recipe_resolutions'][0]
+    assert generation_resolution == {
+        'task_id': 'citations',
+        'selected_recipe_id': original['id'],
+        'search_status': 'matched',
+        'new_recipe_reason': '',
+    }
+    assert generation_input['existing_recipes'] == [original]
 
 
 def test_hydration_does_not_overwrite_modified_definitions_or_invent_missing_recipes():

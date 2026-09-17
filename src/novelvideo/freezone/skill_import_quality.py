@@ -314,6 +314,17 @@ async def run_quality_pipeline(record: dict, username: str, generate, save, prog
             design = {**design, 'task_recipe_resolutions': resolution['tasks']}
         generation_catalog = [recipe for recipe in catalog if recipe['id'] in selected_ids]
         record['conversion_design'] = design
+        generation_design = design
+        if 'task_recipe_resolutions' in design:
+            generation_design = {
+                **design,
+                'task_recipe_resolutions': [
+                    {key: item[key] for key in (
+                        'task_id', 'selected_recipe_id', 'search_status', 'new_recipe_reason'
+                    )}
+                    for item in design['task_recipe_resolutions']
+                ],
+            }
         candidate = record.get('validation_candidate')
         last_issues = []
         # Revalidating an edited draft must never overwrite the user's edits.
@@ -335,7 +346,7 @@ async def run_quality_pipeline(record: dict, username: str, generate, save, prog
                     'Use the source language for all newly authored descriptive fields and prompts. '
                     'Quality thresholds must use the rating-band scale. '
                     'Fix the reported conversion issues without unrelated rewrites.',
-                    {'schemas': schemas, 'source': source, 'design': design,
+                    {'schemas': schemas, 'source': source, 'design': generation_design,
                      'existing_recipes': generation_catalog, 'previous_candidate': candidate, 'repair_issues': last_issues},
                     normalize_generated_bundle, .4)
             candidate = normalize_generated_bundle(candidate)
