@@ -2355,7 +2355,13 @@ async function waitForChangedGeneratedResultFromNode(
     if (nodeGenerationError(nodeId)) return null;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  return null;
+  // A task completion and a user cancellation can become observable during
+  // the same polling interval. Prefer the durable result that already landed
+  // on the node before treating the remaining workflow as cancelled.
+  const finalOutput = generatedResultOutputFromNode(nodeId, action);
+  return finalOutput && JSON.stringify(finalOutput) !== initialToken
+    ? finalOutput
+    : null;
 }
 
 function workflowTaskReference(
@@ -3416,13 +3422,35 @@ async function executeQueuedNodeActions(
                   return waiting;
                 })
                 : null;
-            const actionResult = firstSignal.kind === "result"
+            let actionResult = firstSignal.kind === "result"
               ? firstSignal.actionResult
               : await Promise.race([
                   waiting,
                   ...(singleGenerationSubmission ? [singleGenerationSubmission] : []),
                   ...(changedGeneratedResult ? [changedGeneratedResult] : []),
                 ]);
+            if (actionResult.status === "error" && workflowCancelled()) {
+              const completedOutput = generatedResultOutputFromNode(
+                action.nodeId,
+                action.action,
+              );
+              actionResult = completedOutput &&
+                JSON.stringify(completedOutput) !== initialGeneratedResultToken
+                ? {
+                    requestId,
+                    nodeId: action.nodeId,
+                    action: action.action,
+                    status: "success" as const,
+                    output: completedOutput,
+                  }
+                : {
+                    requestId,
+                    nodeId: action.nodeId,
+                    action: action.action,
+                    status: "error" as const,
+                    error: WORKFLOW_STOPPED_MESSAGE,
+                  };
+            }
             actionSettled = true;
             void taskReferencePersistence;
             clearPendingNodeAction(requestId);
