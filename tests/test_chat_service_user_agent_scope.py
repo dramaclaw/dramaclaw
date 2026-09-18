@@ -1550,6 +1550,9 @@ def test_codex_clarification_requires_successful_answer(container, outcome):
         "read_only",
         "mixed",
         "wrong_scope",
+        "preflight_retry",
+        "preflight_only",
+        "preflight_other_success",
     ],
 )
 async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
@@ -1650,6 +1653,77 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                     structured={"ok": True, "status": "saved", "skill_id": "line-art"},
                     error=None,
                 )
+            elif tool_outcome in {
+                "preflight_retry",
+                "preflight_only",
+                "preflight_other_success",
+            }:
+                base_commands = [
+                    {
+                        "type": "add_next_node",
+                        "source_node_id": "source-a",
+                        "client_id": "image-a",
+                        "node_type": "imageGenNode",
+                        "data": {"prompt": "水彩风格"},
+                    },
+                    {
+                        "type": "run_node_action",
+                        "node_id": "image-a",
+                        "action": "generate_image",
+                    },
+                ]
+                yield SimpleNamespace(
+                    type="tool_updated",
+                    text="[mcp:completed] dramaclaw.freezone_emit_canvas_command",
+                    name="dramaclaw.freezone_emit_canvas_command",
+                    call_id="call-preflight",
+                    status="completed",
+                    input={
+                        "project_id": "project-a",
+                        "canvas_id": "canvas-a",
+                        "commands": base_commands,
+                    },
+                    output=None,
+                    structured={
+                        "ok": False,
+                        "status": "clarification_required",
+                        "code": "generation_parameters_required",
+                        "error": "image/video generation parameters require user clarification",
+                    },
+                    error=None,
+                )
+                if tool_outcome != "preflight_only":
+                    retry_commands = [dict(command) for command in base_commands]
+                    retry_commands[0]["data"] = {
+                        "prompt": (
+                            "另一张图片"
+                            if tool_outcome == "preflight_other_success"
+                            else "水彩风格"
+                        ),
+                        "model": "image-model-a",
+                    }
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        text="[mcp:completed] dramaclaw.freezone_emit_canvas_command",
+                        name="dramaclaw.freezone_emit_canvas_command",
+                        call_id="call-retry",
+                        status="completed",
+                        input={
+                            "project_id": "project-a",
+                            "canvas_id": "canvas-a",
+                            "commands": retry_commands,
+                        },
+                        output=None,
+                        structured={
+                            "ok": True,
+                            "canvas_apply_status": "accepted",
+                            "applied": True,
+                            "bridge_key": "bridge-call-1",
+                            "project_id": "project-a",
+                            "canvas_id": "canvas-a",
+                        },
+                        error=None,
+                    )
             elif tool_outcome not in {"missing", "blocked", "read_only"}:
                 result_payload = (
                     {
@@ -1723,7 +1797,8 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                     ),
                     "canvas_receipts": (
                         [{"bridge_key": "bridge-call-1", "revision": None}]
-                        if tool_outcome == "success"
+                        if tool_outcome
+                        in {"success", "preflight_retry", "preflight_other_success"}
                         else []
                     ),
                 },
@@ -1781,9 +1856,15 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
     assistant_deltas = [
         event["text"] for event in events if event["type"] == "assistant_delta"
     ]
-    if tool_outcome == "success":
+    if tool_outcome in {"success", "preflight_retry"}:
         assert result["content"] == "好的，已创建一个图片节点。"
         assert assistant_deltas == ["好的，已创建一个图片节点。"]
+    elif tool_outcome in {"preflight_only", "preflight_other_success"}:
+        assert result["content"] == (
+            "画布操作未完成：image/video generation parameters "
+            "require user clarification"
+        )
+        assert assistant_deltas == [result["content"]]
     elif tool_outcome == "failure":
         assert result["content"] == "画布操作未完成：文本节点缺少 content 字段"
         assert assistant_deltas == [result["content"]]
