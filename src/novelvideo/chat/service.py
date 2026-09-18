@@ -930,9 +930,23 @@ def _codex_freezone_generation_retry_key(event: Any) -> str | None:
         "freezone_emit_canvas_command",
         "freezone_run_node_action",
         "freezone_run_workflow",
+        "freezone_confirm_workflow_draft",
     }:
         return None
     for payload in _json_objects_from_codex_tool_value(getattr(event, "input", None)):
+        if name == "freezone_confirm_workflow_draft":
+            draft_id = str(payload.get("draft_id") or "").strip()
+            if not draft_id:
+                continue
+            # Patching generation choices raises the revision, but confirmation
+            # still targets the same persisted draft and canvas.
+            identity = [
+                name,
+                payload.get("project_id"),
+                payload.get("canvas_id"),
+                draft_id,
+            ]
+            return json.dumps(identity, sort_keys=True, ensure_ascii=False)
         if name == "freezone_run_node_action":
             node_id = str(payload.get("node_id") or "").strip()
             action = str(payload.get("action") or "").strip()
