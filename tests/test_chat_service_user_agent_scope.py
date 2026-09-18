@@ -1551,6 +1551,8 @@ def test_codex_clarification_requires_successful_answer(container, outcome):
         "mixed",
         "wrong_scope",
         "preflight_retry",
+        "video_preflight_retry",
+        "video_preflight_other_failure",
         "preflight_only",
         "preflight_other_success",
     ],
@@ -1655,21 +1657,35 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 )
             elif tool_outcome in {
                 "preflight_retry",
+                "video_preflight_retry",
+                "video_preflight_other_failure",
                 "preflight_only",
                 "preflight_other_success",
             }:
+                is_video = tool_outcome.startswith("video_preflight")
+                node_id = "video-a" if is_video else "image-a"
+                initial_data = (
+                    {
+                        "prompt": "海边日落",
+                        "model": "video-model-a",
+                        "aspectRatio": "16:9",
+                        "quality": "720p",
+                    }
+                    if is_video
+                    else {"prompt": "水彩风格"}
+                )
                 base_commands = [
                     {
                         "type": "add_next_node",
                         "source_node_id": "source-a",
-                        "client_id": "image-a",
-                        "node_type": "imageGenNode",
-                        "data": {"prompt": "水彩风格"},
+                        "client_id": node_id,
+                        "node_type": "videoGenNode" if is_video else "imageGenNode",
+                        "data": initial_data,
                     },
                     {
                         "type": "run_node_action",
-                        "node_id": "image-a",
-                        "action": "generate_image",
+                        "node_id": node_id,
+                        "action": "generate_video" if is_video else "generate_image",
                     },
                 ]
                 yield SimpleNamespace(
@@ -1694,14 +1710,13 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 )
                 if tool_outcome != "preflight_only":
                     retry_commands = [dict(command) for command in base_commands]
-                    retry_commands[0]["data"] = {
-                        "prompt": (
-                            "另一张图片"
-                            if tool_outcome == "preflight_other_success"
-                            else "水彩风格"
-                        ),
-                        "model": "image-model-a",
-                    }
+                    retry_commands[0]["data"] = dict(initial_data)
+                    if is_video:
+                        retry_commands[0]["data"]["durationSec"] = 5
+                    else:
+                        retry_commands[0]["data"]["model"] = "image-model-a"
+                        if tool_outcome == "preflight_other_success":
+                            retry_commands[0]["data"]["prompt"] = "另一张图片"
                     yield SimpleNamespace(
                         type="tool_updated",
                         text="[mcp:completed] dramaclaw.freezone_emit_canvas_command",
@@ -1724,6 +1739,18 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                         },
                         error=None,
                     )
+                    if tool_outcome == "video_preflight_other_failure":
+                        yield SimpleNamespace(
+                            type="tool_updated",
+                            text="[mcp:completed] dramaclaw.freezone_create_node",
+                            name="dramaclaw.freezone_create_node",
+                            call_id="call-other-failure",
+                            status="completed",
+                            input={},
+                            output=None,
+                            structured={"ok": False, "error": "另一个节点未保存"},
+                            error=None,
+                        )
             elif tool_outcome not in {"missing", "blocked", "read_only"}:
                 result_payload = (
                     {
@@ -1786,6 +1813,8 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 assistant_reply = "建议保持当前节点位置，先检查配置。"
             if tool_outcome == "clarification_answered":
                 assistant_reply = "参数已确认，尚未执行画布操作。"
+            if tool_outcome.startswith("video_preflight"):
+                assistant_reply = "已提交视频生成任务。"
             structured_reply = json.dumps(
                 {
                     "message": assistant_reply,
@@ -1798,7 +1827,13 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                     "canvas_receipts": (
                         [{"bridge_key": "bridge-call-1", "revision": None}]
                         if tool_outcome
-                        in {"success", "preflight_retry", "preflight_other_success"}
+                        in {
+                            "success",
+                            "preflight_retry",
+                            "video_preflight_retry",
+                            "video_preflight_other_failure",
+                            "preflight_other_success",
+                        }
                         else []
                     ),
                 },
@@ -1859,6 +1894,12 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
     if tool_outcome in {"success", "preflight_retry"}:
         assert result["content"] == "好的，已创建一个图片节点。"
         assert assistant_deltas == ["好的，已创建一个图片节点。"]
+    elif tool_outcome == "video_preflight_retry":
+        assert result["content"] == "已提交视频生成任务。"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "video_preflight_other_failure":
+        assert result["content"] == "画布操作未完成：另一个节点未保存"
+        assert assistant_deltas == [result["content"]]
     elif tool_outcome in {"preflight_only", "preflight_other_success"}:
         assert result["content"] == (
             "画布操作未完成：image/video generation parameters "

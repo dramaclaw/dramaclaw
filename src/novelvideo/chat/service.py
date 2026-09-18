@@ -914,6 +914,7 @@ _GENERATION_RETRY_DATA_FIELDS = frozenset(
         "quality",
         "resolution",
         "duration",
+        "durationSec",
         "durationSeconds",
         "generateAudio",
         "count",
