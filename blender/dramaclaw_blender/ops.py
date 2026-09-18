@@ -1,8 +1,13 @@
 """面板上的四个按钮。
 
 这个文件里所有的复杂度都来自一条约束：**不许冻住 Blender**。用户在渲染 250 帧
-的时候界面卡死几分钟，他会以为崩了然后强杀进程。所以配对走定时器、渲染走
-`INVOKE_DEFAULT` 加回调、上传走后台线程加 modal 轮询——没有一处是同步等待。
+的时候界面卡死几分钟，他会以为崩了然后强杀进程。所以渲染走 `INVOKE_DEFAULT` 加
+回调，上传走后台线程加 modal 轮询，配对的等待走定时器——三个耗时大头都不占主线程。
+
+但要说清楚：**配对的每一次请求、以及拉项目列表，仍然是主线程里的同步调用**
+（`bpy.app.timers` 的回调也跑在主线程）。它们收发的都是几百字节，走 `core.http`
+的短超时（`CONTROL_TIMEOUT_SECONDS`），最坏情况是卡十秒而不是十分钟。把它们也挪
+进线程是另一件事，这里没做。
 """
 
 from __future__ import annotations
@@ -11,6 +16,7 @@ import datetime
 import os
 import threading
 import time
+from urllib.parse import quote
 
 import bpy
 from bpy_extras.io_utils import ImportHelper
@@ -18,7 +24,12 @@ from bpy_extras.io_utils import ImportHelper
 from . import render
 from .core import naming
 from .core.http import ApiError, get_json, post_json, post_multipart
-from .core.limits import MAX_VIDEO_BYTES, LimitError, check_frame_range
+from .core.limits import (
+    MAX_IMAGE_BYTES,
+    MAX_VIDEO_BYTES,
+    LimitError,
+    check_frame_range,
+)
 from .core.pairing import PairingSession
 from .prefs import api_url, get_prefs
 
@@ -193,25 +204,47 @@ class _DeliverBase(bpy.types.Operator):
         )
         self._render_done = False
         self._render_cancelled = False
+        self._upload_thread = None
+        self._upload_error = ""
+        self._upload_result = None
         bpy.app.handlers.render_complete.append(self._on_render_complete)
         bpy.app.handlers.render_cancel.append(self._on_render_cancel)
 
-        bpy.ops.render.render(
-            "INVOKE_DEFAULT",
-            animation=self.animation,
-            write_still=not self.animation,
-            scene=self._scene.name,
-        )
+        try:
+            bpy.ops.render.render(
+                "INVOKE_DEFAULT",
+                animation=self.animation,
+                write_still=not self.animation,
+                scene=self._scene.name,
+            )
+        except Exception as exc:
+            # 渲染压根没起来（输出目录不可写、引擎不可用……）。此刻 modal 还没挂上，
+            # `_cleanup` 永远不会被调到，handler、副本场景、临时目录都得当场收掉。
+            self._abort_before_modal()
+            _report_error(self, f"渲染没能启动：{exc}")
+            return {"CANCELLED"}
 
         self._timer = context.window_manager.event_timer_add(0.5, window=context.window)
         context.window_manager.modal_handler_add(self)
         return {"RUNNING_MODAL"}
 
-    def _on_render_complete(self, *args):
-        self._render_done = True
+    def _abort_before_modal(self) -> None:
+        """invoke 里失败时的收尾。跟 `_cleanup` 的区别是这里还没有 timer 和 modal。"""
+        self._detach_handlers()
+        render.discard_blockout_scene(self._scene)
+        self._scene = None
+        render.discard_output_dir(self._output)
+        self._output = ""
 
-    def _on_render_cancel(self, *args):
-        self._render_cancelled = True
+    def _on_render_complete(self, scene=None, *args):
+        # handler 是全局的：投递进行中用户另起一次渲染，也会打到这里来。只认自己
+        # 那个副本场景，别把别人的完成当成自己的。
+        if self._scene is not None and scene == self._scene:
+            self._render_done = True
+
+    def _on_render_cancel(self, scene=None, *args):
+        if self._scene is not None and scene == self._scene:
+            self._render_cancelled = True
 
     def _detach_handlers(self):
         for handlers, callback in (
@@ -232,26 +265,44 @@ class _DeliverBase(bpy.types.Operator):
             path = render.find_rendered_file(self._output, animation=self.animation)
             if path is None:
                 return self._cleanup(context, {"CANCELLED"}, message="没找到渲染输出")
-            self._start_upload(context, path)
+            problem = self._start_upload(context, path)
+            if problem:
+                return self._cleanup(context, {"CANCELLED"}, message=problem)
             return {"RUNNING_MODAL"}
 
         if self._upload_thread is not None and not self._upload_thread.is_alive():
             if self._upload_error:
                 return self._cleanup(context, {"CANCELLED"}, message=self._upload_error)
+            if not isinstance(self._upload_result, dict) or not self._upload_result.get("filename"):
+                # 线程跑完了、没报错、也没拿回像样的回应。硬取下标就是一个
+                # traceback 弹到用户脸上，不如说人话。
+                return self._cleanup(
+                    context, {"CANCELLED"}, message="服务端没有返回投递结果，请重试"
+                )
             self.report({"INFO"}, f"DramaClaw：已导入 {self._upload_result['filename']}")
             return self._cleanup(context, {"FINISHED"})
 
         return {"RUNNING_MODAL"}
 
-    def _start_upload(self, context, path: str):
+    def _start_upload(self, context, path: str) -> str:
+        """读出渲染结果、起上传线程。返回空串表示起成功，否则是给用户看的原因。"""
         prefs = get_prefs(context)
         scene = context.scene
         url = (
             f"{prefs.server_url.rstrip('/')}"
-            f"/api/v1/projects/{prefs.project}/blender/deliver"
+            f"/api/v1/projects/{quote(prefs.project, safe='')}/blender/deliver"
         )
         with open(path, "rb") as handle:
             payload = handle.read()
+
+        limit = MAX_VIDEO_BYTES if self.animation else MAX_IMAGE_BYTES
+        if len(payload) > limit:
+            # 本地视频那条入口一直查这个，渲染这条一直没查。渲了几分钟再吃一个
+            # 服务端 413 是最亏的结局——超了就别发。
+            return (
+                f"渲出来 {len(payload) // (1024 * 1024)} MB，"
+                f"超过 {limit // (1024 * 1024)} MB 上限，没有发送"
+            )
 
         camera_name = scene.camera.name
         stamp = _timestamp()
@@ -296,9 +347,15 @@ class _DeliverBase(bpy.types.Operator):
                 )
             except ApiError as exc:
                 self._upload_error = str(exc)
+            except Exception as exc:
+                # 线程里的异常不会传播到 modal。漏一个，`_upload_error` 就还是空、
+                # `_upload_result` 还是 None，modal 一取下标就崩。非 JSON 的 2xx
+                # 回应（nginx 错误页、强制门户）就正好长这样。
+                self._upload_error = str(exc) or type(exc).__name__
 
         self._upload_thread = threading.Thread(target=_work, daemon=True)
         self._upload_thread.start()
+        return ""
 
     def _cleanup(self, context, status, *, message: str = ""):
         self._detach_handlers()
@@ -307,6 +364,10 @@ class _DeliverBase(bpy.types.Operator):
             self._timer = None
         render.discard_blockout_scene(self._scene)
         self._scene = None
+        # 能走到这儿，渲染结果要么已经被 `_start_upload` 整个读进内存（上传线程用的
+        # 是 bytes，不再碰磁盘），要么根本没渲出来。两种情况下临时目录都没人要了。
+        render.discard_output_dir(self._output)
+        self._output = ""
         if message:
             _report_error(self, message)
         return status
@@ -369,9 +430,11 @@ class DRAMACLAW_OT_deliver_local_video(bpy.types.Operator, ImportHelper):
         filename = naming.video_filename("local", 0, 0, _timestamp())
         url = (
             f"{prefs.server_url.rstrip('/')}"
-            f"/api/v1/projects/{prefs.project}/blender/deliver"
+            f"/api/v1/projects/{quote(prefs.project, safe='')}/blender/deliver"
         )
         token = prefs.token
+        self._error = ""
+        self._result = None
 
         def _work():
             try:
@@ -386,6 +449,10 @@ class DRAMACLAW_OT_deliver_local_video(bpy.types.Operator, ImportHelper):
                 )
             except ApiError as exc:
                 self._error = str(exc)
+            except Exception as exc:
+                # 同 `_DeliverBase._work`：线程里漏掉的异常会变成 modal 里的
+                # `'NoneType' object is not subscriptable`。
+                self._error = str(exc) or type(exc).__name__
 
         self._thread = threading.Thread(target=_work, daemon=True)
         self._thread.start()
@@ -394,13 +461,19 @@ class DRAMACLAW_OT_deliver_local_video(bpy.types.Operator, ImportHelper):
         return {"RUNNING_MODAL"}
 
     def modal(self, context, event):
-        if event.type != "TIMER" or self._thread.is_alive():
-            return {"PASS_THROUGH"} if event.type != "TIMER" else {"RUNNING_MODAL"}
+        if event.type != "TIMER":
+            return {"PASS_THROUGH"}
+        if self._thread is not None and self._thread.is_alive():
+            return {"RUNNING_MODAL"}
 
-        context.window_manager.event_timer_remove(self._timer)
-        self._timer = None
+        if self._timer is not None:
+            context.window_manager.event_timer_remove(self._timer)
+            self._timer = None
         if self._error:
             _report_error(self, self._error)
+            return {"CANCELLED"}
+        if not isinstance(self._result, dict) or not self._result.get("filename"):
+            _report_error(self, "服务端没有返回投递结果，请重试")
             return {"CANCELLED"}
         self.report({"INFO"}, f"DramaClaw：已导入 {self._result['filename']}")
         return {"FINISHED"}

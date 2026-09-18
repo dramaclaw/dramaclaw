@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 
 import bpy
@@ -20,6 +21,7 @@ from .core import blockout
 from .core.limits import resolution_for
 
 _SCENE_PREFIX = "DramaClaw-Blockout"
+_TEMP_PREFIX = "dramaclaw-blockout-"
 
 
 def make_blockout_scene(
@@ -51,7 +53,7 @@ def make_blockout_scene(
     scene.render.use_overwrite = True
     scene.render.use_file_extension = True
 
-    directory = tempfile.mkdtemp(prefix="dramaclaw-blockout-")
+    directory = tempfile.mkdtemp(prefix=_TEMP_PREFIX)
     if animation:
         scene.frame_start = frame_start
         scene.frame_end = frame_end
@@ -72,6 +74,23 @@ def discard_blockout_scene(scene: bpy.types.Scene) -> None:
     """删掉副本场景。物体是共享的，删场景不会删掉用户的东西。"""
     if scene and scene.name in bpy.data.scenes:
         bpy.data.scenes.remove(scene, do_unlink=True)
+
+
+def discard_output_dir(output_path: str) -> None:
+    """删掉 `make_blockout_scene` 开的那个临时目录。
+
+    只在渲染结果已经读进内存（或压根没渲出来）之后调。不删的后果不是「多占点盘」：
+    macOS 的 /var/folders 三天才清，Windows 的 %TEMP% 永不自动清，用户投二十次就是
+    二十份完整视频躺在那儿。
+
+    只删名字对得上的目录——万一 `output_path` 被改成指向别处，这里不该跟着 rmtree。
+    """
+    if not output_path:
+        return
+    directory = os.path.dirname(output_path)
+    if not os.path.basename(directory).startswith(_TEMP_PREFIX):
+        return
+    shutil.rmtree(directory, ignore_errors=True)
 
 
 def find_rendered_file(output_path: str, *, animation: bool) -> str | None:
