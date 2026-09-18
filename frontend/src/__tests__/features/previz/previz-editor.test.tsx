@@ -55,6 +55,13 @@ const planePointAt = vi.fn(
 const setStroke = vi.fn((_points: readonly Vec3[] | null) => {});
 const setDrawing = vi.fn((_active: boolean) => {});
 const viewPose = vi.fn(() => ({ position: [6, 4, 8] as Vec3, target: [0, 1, 0] as Vec3 }));
+// 真实现交回切换前的机位；`null` = 这次没切（录制中或渲染器已拆）。默认给一份非空的，
+// 「切不成」那条用例自己用 mockReturnValueOnce(null) 覆盖。
+const applyDrawTopView = vi.fn((): { position: Vec3; target: Vec3 } | null => ({
+  position: [6, 4, 8],
+  target: [0, 1, 0],
+}));
+const applyViewPose = vi.fn((_pose: { position: Vec3; target: Vec3 }) => {});
 const propFootprints = vi.fn((): PrevizTopDownFootprint[] => []);
 const renderCameraPreview = vi.fn();
 // 真实现返回 Promise，桩也得返回一个：编辑器把它接在 void 上下文里，返回 undefined
@@ -111,6 +118,8 @@ function fakeRenderer() {
     setStroke,
     setDrawing,
     viewPose,
+    applyDrawTopView,
+    applyViewPose,
     propFootprints,
     renderCameraPreview,
     renderCharacterPreview,
@@ -1457,6 +1466,10 @@ async function renderEditor(overrides: Partial<ComponentProps<typeof PrevizEdito
       setGizmoMode,
       pickAt,
       pickPathPointAt,
+      applyDrawTopView,
+      applyViewPose,
+      applyViewDirection,
+      resetView,
     },
   };
 }
@@ -3548,5 +3561,119 @@ describe("PrevizEditor model library", () => {
     expect(screen.getByRole("dialog", { name: "previz.cameraCreate.title" })).toBeInTheDocument();
     // 库面板被顶掉时没挑任何模型，不该顺带建出一个物件。
     expect(usePrevizStore.getState().scene.objects).toHaveLength(0);
+  });
+});
+
+/*
+  画笔画不准的根子是掠射视角：镜头贴近水平时，屏幕上一个像素对应地面上很大一段距离，
+  视线与平面接近平行时落点干脆求不出来。顶视图能解决，用户也愿意切——挡路的是往返，
+  画完得自己把镜头转回原来的角度，找不回来。这一组用例钉的就是那趟往返。
+*/
+describe("PrevizEditor 画笔俯视", () => {
+  /** 选中一个人物：没选对象时笔画没有归属，画笔那条路会提前打住。 */
+  function selectCharacter() {
+    const objectId = usePrevizStore.getState().addObject("character");
+    act(() => usePrevizStore.getState().selectObject(objectId!));
+  }
+
+  /** 画一笔。松手会把工具落回移动工具，于是「离开画笔」那条路也一起跑到。 */
+  function drawStroke() {
+    const canvas = screen.getByTestId("previz-canvas");
+    fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(canvas, { clientX: 40, clientY: 10 });
+    fireEvent.pointerUp(canvas, { clientX: 40, clientY: 10 });
+  }
+
+  it("选中画笔就切到俯视", async () => {
+    const user = userEvent.setup();
+    const { renderer } = await renderEditor();
+    selectCharacter();
+
+    expect(renderer.applyDrawTopView).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
+
+    expect(renderer.applyDrawTopView).toHaveBeenCalledTimes(1);
+  });
+
+  it("收笔之后回到进画笔之前那个视角", async () => {
+    const user = userEvent.setup();
+    const { renderer } = await renderEditor();
+    selectCharacter();
+    renderer.applyDrawTopView.mockReturnValueOnce({ position: [3, 2, 9], target: [1, 0, 2] });
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
+    drawStroke();
+
+    // 还回去的必须是渲染器交出来的那一份，不是编辑器另算的。
+    expect(renderer.applyViewPose).toHaveBeenCalledWith({ position: [3, 2, 9], target: [1, 0, 2] });
+  });
+
+  // 写法照搬标记工具那条 Esc 用例（"leaves the mark tool on Escape without closing the
+  // editor"）：`fireEvent.keyDown(document.body, ...)` 走的是 base-ui 真实的 Escape 派发
+  // 路径；被编辑器拦下时 `onOpenChange` 这个 prop 根本不会被调到。
+  it("按 Esc 也还原，而且不把整个预演台带走", async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    const { renderer } = await renderEditor({ onOpenChange });
+    selectCharacter();
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
+    fireEvent.keyDown(document.body, { key: "Escape" });
+
+    expect(screen.getByRole("button", { name: "previz.toolbar.tool.draw" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(renderer.applyViewPose).toHaveBeenCalledTimes(1);
+  });
+
+  /*
+    用户自己点了视角球，就是「我要去那个视角」。这时候再把他飞回原处是跟人抢——
+    他刚亲手选的东西会当场被撤掉。
+  */
+  it("画笔期间用户自己切了视角就不还原", async () => {
+    const user = userEvent.setup();
+    const { renderer } = await renderEditor();
+    selectCharacter();
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
+    await user.click(screen.getByRole("button", { name: "previz.viewport.view.front" }));
+    drawStroke();
+
+    expect(renderer.applyViewDirection).toHaveBeenCalledWith("front");
+    expect(renderer.applyViewPose).not.toHaveBeenCalled();
+  });
+
+  /*
+    滚轮缩放、右键平移、中键环绕不算「换视角」——绘制期间只有左键被摘掉，这三样正是
+    用户在俯视里缩到合适范围的手段，把它们算成放弃还原，这个方案就没法用了。它们不经
+    编辑器的处理函数，只经 `onViewChange` 这个通知回调。
+  */
+  it("只是缩放平移，收笔照样还原", async () => {
+    const user = userEvent.setup();
+    const { renderer } = await renderEditor();
+    const instance = await vi.mocked(PrevizRenderer.create).mock.results[0]!.value;
+    selectCharacter();
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
+    act(() => instance.onViewChange?.({ position: [1, 12, 3], target: [0, 0, 0] }));
+    drawStroke();
+
+    expect(renderer.applyViewPose).toHaveBeenCalledTimes(1);
+  });
+
+  // 录制中渲染器压根不切（返回 null）；编辑器不能留一份假快照等着退出时硬写。
+  it("录制中切不成，退出时也不写回", async () => {
+    const user = userEvent.setup();
+    const { renderer } = await renderEditor();
+    selectCharacter();
+    renderer.applyDrawTopView.mockReturnValueOnce(null);
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
+    drawStroke();
+
+    expect(renderer.applyViewPose).not.toHaveBeenCalled();
   });
 });
