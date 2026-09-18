@@ -50,11 +50,18 @@ import {
   type PrevizCharacterDraft,
   type PrevizPlacedCharacterDraft,
 } from "./domain/characterDraft";
+import type { EvaluatedMotion } from "./domain/evaluate";
 import { canAddObject } from "./domain/limits";
 import type { PrevizLibraryEntry } from "./domain/modelLibrary";
 import { drawPlaneHeight } from "./domain/pathDraw";
 import { liveCameraAt } from "./domain/program";
 import { PREVIZ_PROP_MAX_MB, propSizeMb, uploadPrevizProp } from "./propAsset";
+import {
+  stageMotionImport,
+  uploadMotionImport,
+  type PrevizMotionPick,
+  type PrevizStagedMotionImport,
+} from "./motionImport";
 import { monitorCameraId, usePrevizStore } from "./store";
 import { PrevizCameraCreateDialog } from "./ui/PrevizCameraCreateDialog";
 import { PrevizCharacterCreateDialog } from "./ui/PrevizCharacterCreateDialog";
@@ -63,6 +70,7 @@ import { PrevizHeaderBar } from "./ui/PrevizHeaderBar";
 import { PrevizInspector } from "./ui/PrevizInspector";
 import { PrevizLayerPanel } from "./ui/PrevizLayerPanel";
 import { PrevizModelLibraryDialog } from "./ui/PrevizModelLibraryDialog";
+import { PrevizMotionLibraryDialog } from "./ui/PrevizMotionLibraryDialog";
 import { PrevizMonitorFrame } from "./ui/PrevizMonitorFrame";
 import { PrevizQuadPreview } from "./ui/PrevizQuadPreview";
 import { PrevizTimeline } from "./ui/PrevizTimeline";
@@ -108,6 +116,54 @@ const CLICK_SLOP_PX = 4;
  * 好几次写回，而每一次写回都是一整轮 JSON 序列化加一次整画布落盘。
  */
 export const PREVIZ_AUTOSAVE_MS = 600;
+
+/**
+ * 录制前等「模型与导入动作落地」最多等这么久，到点不管有没有到齐都照常开录。
+ *
+ * `whenModelsSettled()` 本身已经不会永远挂起（见 `PrevizRenderer.ts` 里的
+ * `PREVIZ_MOTION_FETCH_TIMEOUT_MS`），但一次录制可能排着好几条导入动作，每条
+ * 都在下载超时的上限内失败，串起来仍然可能超过用户愿意等的时长。这里再加一层
+ * 更短的上限：宁可带着没到齐的动作开录（缺的那部分退回站着不动的占位体，见
+ * `whenModelsSettled` 的文档），也好过按下录制按钮之后界面看着像没反应。
+ */
+export const PREVIZ_RECORD_MOTION_WAIT_TIMEOUT_MS = 15_000;
+
+/**
+ * 等 `renderer.whenModelsSettled()`，但最多等 `PREVIZ_RECORD_MOTION_WAIT_TIMEOUT_MS`。
+ * 用 `Promise.race` 而不是让调用方各自拼一次性 timer，是为了保证不管哪一路先赢，另一路
+ * 的 `setTimeout` 都会被清掉——不清的话每次录制都会在事件循环里留一个直到 15 秒后才
+ * 自己烧完的定时器，测试用假计时器时尤其容易绊到断言。
+ *
+ * 返回值告诉调用方到底是等到了、还是撞了上限——撞上限意味着有的角色开录那一刻还停在
+ * 默认姿势，调用方要照实告诉用户，不能装作什么事都没发生。
+ */
+async function waitForModelsSettledWithCap(
+  renderer: PrevizRenderer,
+): Promise<'settled' | 'capped'> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let capped = false;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      capped = true;
+      resolve();
+    }, PREVIZ_RECORD_MOTION_WAIT_TIMEOUT_MS);
+  });
+  try {
+    await Promise.race([renderer.whenModelsSettled(), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+  return capped ? 'capped' : 'settled';
+}
+
+/**
+ * 等模型与导入动作落地超过这么久，才弹一条「正在等待」的提示。
+ *
+ * 绝大多数录制这一步都是一晃就等到——模型早缓存好了、动作也没几条。给这类正常情况也
+ * 弹一条转瞬即逝的 toast，只会让人觉得界面在无谓地打扰。300ms 是「用户能感知到停顿」
+ * 和「快到看不出来」的大致分界。
+ */
+const PREVIZ_RECORD_WAIT_TOAST_DELAY_MS = 300;
 
 /**
  * 哪颗工具支起哪种手柄；`null` 表示这颗工具下视口里不该有手柄。
@@ -312,6 +368,14 @@ export function PrevizEditor({
   const audioClips = usePrevizStore((state) => state.scene.timeline.audio);
   const selectedClipId = usePrevizStore((state) => state.selectedClipId);
   const selectedPointId = usePrevizStore((state) => state.selectedPointId);
+  const motionDialog = usePrevizStore((state) => state.motionDialog);
+  const motionStatus = usePrevizStore((state) => state.motionStatus);
+  const addActionClip = usePrevizStore((state) => state.addActionClip);
+  const setClipMotion = usePrevizStore((state) => state.setClipMotion);
+  const closeMotionDialog = usePrevizStore((state) => state.closeMotionDialog);
+  const importMotions = usePrevizStore((state) => state.importMotions);
+  const renameMotion = usePrevizStore((state) => state.renameMotion);
+  const removeMotion = usePrevizStore((state) => state.removeMotion);
   const addDerivedUploadNode = useCanvasStore((state) => state.addDerivedUploadNode);
   const addDerivedVideoNode = useCanvasStore((state) => state.addDerivedVideoNode);
   const addEdge = useCanvasStore((state) => state.addEdge);
@@ -627,6 +691,18 @@ export function PrevizEditor({
   }, [renderer]);
 
   useEffect(() => {
+    if (!renderer) return undefined;
+    // 导入动作的加载状态只活在渲染器里(clip 是 three 对象,进不了 store),store 只存
+    // 一张状态表给时间轴与检视面板显示。接上时渲染器会立刻重放一遍当前状态。
+    renderer.setMotionStatusListener((statuses) => {
+      usePrevizStore.getState().setMotionStatus(statuses);
+    });
+    return () => {
+      renderer.setMotionStatusListener(null);
+    };
+  }, [renderer]);
+
+  useEffect(() => {
     renderer?.setFrame(timelineFrame);
   }, [renderer, timelineFrame]);
 
@@ -775,14 +851,56 @@ export function PrevizEditor({
 
   /**
    * 引用要稳：对话框把它当重画木偶那个 effect 的依赖，每渲染一次换一个新函数的话，
-   * 编辑器那边任何一次无关重渲染都会让离屏 pass 重跑一遍。
+   * 编辑器那边任何一次无关重渲染都会让离屏 pass 重跑一遍。人物对话框不传 `motion`
+   * （摆的是基础姿势），动作库传所选动作在预览时钟上的那一刻。
    */
   const handleRenderCharacterPreview = useCallback(
-    (previewCanvas: CameraPreviewCanvas, draft: PrevizCharacterDraft) => {
+    (previewCanvas: CameraPreviewCanvas, draft: PrevizCharacterDraft, motion?: EvaluatedMotion) => {
       // 返回的 Promise 故意不等：画好会自己 blit 到画布上，对话框这边没有后续动作。
-      void renderer?.renderCharacterPreview(previewCanvas, draft);
+      void renderer?.renderCharacterPreview(previewCanvas, draft, motion);
     },
     [renderer],
+  );
+
+  const handleStageMotionImport = useCallback(
+    async (file: File): Promise<PrevizStagedMotionImport> => {
+      // 渲染器还没起来就没有解析器，按解析失败报——对话框只在编辑器打开后才可能出现，这是兜底。
+      if (!renderer) return { ok: false, error: { code: "parse_failed" } };
+      return stageMotionImport(renderer, file);
+    },
+    [renderer],
+  );
+
+  const handleDiscardMotionImport = useCallback(
+    (importedIds: string[]) => {
+      for (const id of importedIds) renderer?.discardPrimedMotion(id);
+    },
+    [renderer],
+  );
+
+  const handleCommitMotionImport = useCallback(
+    async (
+      file: File,
+      staged: Extract<PrevizStagedMotionImport, { ok: true }>,
+      picks: PrevizMotionPick[],
+    ): Promise<boolean> => {
+      const project = readUrl().project;
+      if (!project) {
+        toast.error(t("previz.motion.import.noProject"));
+        return false;
+      }
+      const result = await uploadMotionImport(project, file, staged, picks);
+      if (!result.ok) {
+        toast.error(t("previz.motion.import.uploadFailed"));
+        return false;
+      }
+      const kept = new Set(picks.map((pick) => pick.id));
+      handleDiscardMotionImport(staged.clips.map((clip) => clip.id).filter((id) => !kept.has(id)));
+      // prime 早在读文件时就做了，这次写入触发的 setScene 直接把它们当就绪，不再按 URL 拉回来。
+      importMotions(result.motions);
+      return true;
+    },
+    [handleDiscardMotionImport, importMotions, t],
   );
 
   const handleImportProp = useCallback(
@@ -932,17 +1050,24 @@ export function PrevizEditor({
         }
 
         const store = usePrevizStore.getState();
-        const target = resolveRecordTarget(
+        // 先拿一次快照快速失败：完全没有机位的话，不该让用户等一轮音频解码 + 动作落地
+        // 才看到「没有机位」。真正开录用的机位在等待落地之后重新取，见下面的说明。
+        const preflightTarget = resolveRecordTarget(
           store.scene,
           mode,
           store.selectedObjectId,
           store.activeCameraId,
         );
-        if (!target) {
+        if (!preflightTarget) {
           toast.error(t("previz.editor.record.noCamera"));
           return;
         }
 
+        // 取自 preflight 那份快照，等模型与导入动作落地之后不会再重新取一遍：等待期间
+        // 音轨被剪过的话，这次录制仍然按按下录制按钮那一刻的音轨来混。场景（镜头、时长）
+        // 等到之后要害怕对不上，是因为「录进去的是谁的画面」这件事在等待期间可能因为
+        // 动作、模型换了姿势而失真；音轨没有这层「等待期间会不会走样」的问题，重取一次
+        // 的收益不足以再多一处状态来源，就没有跟着改。
         const audioClips = store.scene.timeline.audio;
         // 轨上有音频才混；混不了（没有 AudioContext / 没有带音轨的 mimeType）就退回无声，
         // 但要说一声，别让人以为音频丢了。
@@ -965,18 +1090,75 @@ export function PrevizEditor({
         // 这期间界面看着像卡死，几百毫秒的解码不该塞进这个窗口。`load()` 自己吞掉失败
         // （失败的 url 记进 failedUrls，播的时候跳过），所以这里不必接错。
         if (playback) await playback.load(audioClips);
+        // 同一个理由等模型与导入动作落地：没到的那几秒录进去的是站着不动的占位体。失败也
+        // 算落地——录一条缺了动作的片子，好过让录制按钮永远没反应。再加一个更短的上限：
+        // 见 `PREVIZ_RECORD_MOTION_WAIT_TIMEOUT_MS` 的注释。
+        // 这一步等待期间界面不能像没反应：等出了个零点几秒才提示，是不想让绝大多数
+        // 「一晃就等到」的正常情况也跳一次转瞬即逝的 toast；`finally` 里无论等到没等到
+        // 都要把这条提示收掉，不能让它赖在屏幕上跟接下来的录制流程叠在一起。
+        let waitingToastId: string | number | undefined;
+        const waitingToastTimer = setTimeout(() => {
+          waitingToastId = toast.loading(t("previz.editor.record.waitingModels"));
+        }, PREVIZ_RECORD_WAIT_TOAST_DELAY_MS);
+        let waitOutcome: "settled" | "capped";
+        try {
+          waitOutcome = await waitForModelsSettledWithCap(renderer);
+        } finally {
+          clearTimeout(waitingToastTimer);
+          if (waitingToastId !== undefined) toast.dismiss(waitingToastId);
+        }
+
+        // 等待期间编辑器可能已经关掉：`renderer` 是等待前捕获的旧引用，`dispose()`
+        // 一调用 `isDisposed` 就翻真。这不是「录制失败」，用户根本不在等这次录制了，
+        // 静默退出（连带释放 recordBusy），不弹「没有机位」这种文不对题的错误，也不用
+        // 再补一条「动作没到齐」的提示——没人在等这次录制的结果。
+        if (renderer.isDisposed) return;
+
+        // 撞了上限：有的角色开录那一刻还停在默认姿势，成片里看得出来，得照实告诉用户，
+        // 不能让这个意外显得像是从没提示过。
+        if (waitOutcome === "capped") {
+          toast.warning(t("previz.editor.record.motionsIncomplete"));
+        }
+
+        // 等待可能长达十几秒，期间时长、镜头轨都可能被编辑过：重新取一次快照、重新解算
+        // 机位，成片才对得上等到之后的状态，而不是按下录制按钮那一刻的状态。
+        const freshStore = usePrevizStore.getState();
+        let target = resolveRecordTarget(
+          freshStore.scene,
+          mode,
+          freshStore.selectedObjectId,
+          freshStore.activeCameraId,
+        );
+        // 单机位轨录制时，preflight 阶段解出来的那台机位如果原封不动还在场景里，优先
+        // 接着用它，不要让上面这次重新解算改口：等待这十几秒里用户很可能顺手点开了别的
+        // 对象看一眼（调走位是常态），`selectedObjectId` / `activeCameraId` 跟着就变了，
+        // 但这不代表用户想把「从按下录制那一刻起就没变过」的录制目标换成他刚顺手点中的
+        // 东西——`resolveRecordTarget` 优先认选中对象，重新解算一次很容易把目标换掉。
+        if (mode === "track" && preflightTarget.cameraId) {
+          const cameras = freshStore.scene.objects.filter((object) => object.kind === "camera");
+          const stillThere = cameras.findIndex(
+            (camera) => camera.id === preflightTarget.cameraId,
+          );
+          if (stillThere >= 0) {
+            target = { mode, cameraId: preflightTarget.cameraId, index: stillThere + 1 };
+          }
+        }
+        if (!target) {
+          toast.error(t("previz.editor.record.noCamera"));
+          return;
+        }
 
         const pass = renderer.startRecording(target.mode, target.cameraId);
-        // 机位在解算与开录之间被删掉了；提示一句，别把导演视角录成「轨道录制」。
+        // 机位在重新解算与开录之间又被删掉了；提示一句，别把导演视角录成「轨道录制」。
         if (!pass) {
           toast.error(t("previz.editor.record.noCamera"));
           return;
         }
 
-        const aspect = store.scene.settings.outputAspect;
-        const durationFrames = store.scene.settings.durationFrames;
+        const aspect = freshStore.scene.settings.outputAspect;
+        const durationFrames = freshStore.scene.settings.durationFrames;
         // 录制自己驱动播放头，不能让播放循环同时也在推：两边一起推的话帧号会跳着走。
-        store.setTimelinePlaying(false);
+        freshStore.setTimelinePlaying(false);
         recordStopped.current = false;
         setRecordProgress(0);
         setRecording(mode);
@@ -986,9 +1168,9 @@ export function PrevizEditor({
           // 的那一段。存的是帧号而不是画了几帧——第 0 帧落在 0 秒上，所以帧号本身就是成片
           // 的跨度（画了 0..N 共 N+1 帧，片长是 N 帧）。
           let drawn = 0;
-          // 逐帧要问「这一帧谁在播」，问的是开录那一刻的场景：录制自己在推播放头，
-          // 每帧重读 store 只会把中途的编辑读进成片。
-          const programScene = store.scene;
+          // 逐帧要问「这一帧谁在播」，问的是开录那一刻（等待落地之后重新取的那份）的
+          // 场景：录制自己在推播放头，每帧重读 store 只会把中途的编辑读进成片。
+          const programScene = freshStore.scene;
           const mixed = playback;
           // 播放头只按约 10Hz 推进：每推一次整棵编辑器都要重渲一遍，再经 timelineFrame 那个
           // effect 把这一帧重新解算一次，30fps 下这占掉了每帧预算的一大块；录制是模态的，
@@ -1622,6 +1804,21 @@ export function PrevizEditor({
                   void handleImportProp(file);
                 }}
                 onClose={() => setLibraryOpen(false)}
+              />
+              <PrevizMotionLibraryDialog
+                request={motionDialog}
+                scene={scene}
+                frame={timelineFrame}
+                motionStatus={motionStatus}
+                onRenderPreview={handleRenderCharacterPreview}
+                onAdd={addActionClip}
+                onReplace={setClipMotion}
+                onClose={closeMotionDialog}
+                onStageImport={handleStageMotionImport}
+                onCommitImport={handleCommitMotionImport}
+                onDiscardImport={handleDiscardMotionImport}
+                onRenameMotion={renameMotion}
+                onRemoveMotion={removeMotion}
               />
             </div>
           </TooltipProvider>
