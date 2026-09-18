@@ -579,6 +579,15 @@ def get_workflow_skill(args: dict[str, Any]) -> dict[str, Any]:
     from novelvideo.freezone.workflow_planning import WORKFLOW_PLANNING_INSTRUCTIONS
 
     planning_skill = _without_private_fields(skill)
+    allowed_node_types = {
+        node_type
+        for node_type, capability in _CAPABILITY_BY_NODE_TYPE.items()
+        if capability in allowed_capabilities
+    }
+    # Composition is a terminal canvas operation rather than a Recipe capability.
+    # Keep the planning package aligned with plan validation for video Skills.
+    if "videoNode" in allowed_node_types:
+        allowed_node_types.add("videoComposeNode")
     return {
         "ok": True,
         "schema_version": "freezone_workflow_skill_package.v1",
@@ -607,11 +616,7 @@ def get_workflow_skill(args: dict[str, Any]) -> dict[str, Any]:
             }
             for capability in allowed_capabilities
         ],
-        "allowed_node_types": sorted(
-            node_type
-            for node_type, capability in _CAPABILITY_BY_NODE_TYPE.items()
-            if capability in allowed_capabilities
-        ),
+        "allowed_node_types": sorted(allowed_node_types),
         "allowed_link_types": sorted(ALLOWED_LINK_TYPES),
         "input_contract": input_contract,
         "planning_contract": {

@@ -14,5 +14,8 @@ WORKFLOW_PLANNING_INSTRUCTIONS = (
     "the executable prompt. For example, a video task brief can say: generate the first "
     "shot group from the upstream storyboard using the linked character and scene "
     "anchors. Plan all required stages and independent assets, but do not pretend "
-    "their future generated content is already known."
+    "their future generated content is already known. When the final result combines "
+    "multiple video clips or video with audio, include one terminal videoComposeNode "
+    "and connect each contributing video/audio node with composition_input_for. "
+    "A single video output without composition does not need a videoComposeNode."
 )

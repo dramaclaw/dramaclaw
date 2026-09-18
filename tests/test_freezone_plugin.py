@@ -2358,6 +2358,34 @@ def test_compiled_workflow_timeline_role_passes_plan_submission_schema(monkeypat
     Draft202012Validator(schema).validate({"operation_id": "agent_product_test", "plan": plan})
 
 
+def test_plan_submission_tool_schema_accepts_terminal_video_compose():
+    plugin = _load_plugin_module()
+    schema = {name: tool_schema for name, tool_schema, _ in plugin.TOOLS}[
+        "freezone_prepare_workflow_plan_draft"
+    ]["parameters"]
+    plan = {
+        "schema_version": "freezone_workflow_plan.v1",
+        "workflow_type": "dynamic.video",
+        "skill": {"id": "lego-minifigure-animation-video", "version": "1.0.0"},
+        "nodes": [
+            {
+                "id": "clip",
+                "node_type": "videoNode",
+                "stage": "video",
+                "data": {"workflowCatalog": {"recipeId": "storyboard-shot-video"}},
+            },
+            {"id": "final", "node_type": "videoComposeNode", "stage": "compose"},
+        ],
+        "edges": [
+            {"source": "clip", "target": "final", "link_type": "composition_input_for"},
+        ],
+    }
+
+    Draft202012Validator(schema).validate(
+        {"operation_id": "agent_product_test", "plan": plan}
+    )
+
+
 def test_freezone_get_workflow_skill_accepts_native_skill_id(monkeypatch):
     plugin = _load_plugin_module_with_registry_result(lambda value: "summarized")
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
