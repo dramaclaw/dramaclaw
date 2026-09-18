@@ -10,8 +10,8 @@ from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SOURCE = Path("piko-world/art/source/player-male-west-walk-keys-v1.png")
-DEFAULT_REVIEW = Path("piko-world/art/review/player-male-motion-v1")
+DEFAULT_SOURCE = Path("piko-world/art/source/player-male-west-walk-keys-v2.png")
+DEFAULT_REVIEW = Path("piko-world/art/review/player-walk-keys")
 FRAME_SIZE = 64
 BODY_HEIGHT = 56
 FOOT_Y = 57
@@ -80,8 +80,8 @@ def main() -> None:
     cycle = Image.new("RGBA", (8 * FRAME_SIZE, FRAME_SIZE))
     for phase, key in enumerate(EIGHT_PHASE_KEYS):
         cycle.alpha_composite(frames[key], (phase * FRAME_SIZE, 0))
-    cycle.save(review / f"{args.direction}-walk-cycle-v1.png")
-    cycle.resize((8 * FRAME_SIZE * 8, FRAME_SIZE * 8), Image.Resampling.NEAREST).save(review / f"{args.direction}-walk-cycle-v1-inspection.png")
+    cycle.save(review / f"{args.direction}-walk-cycle.png")
+    cycle.resize((8 * FRAME_SIZE * 8, FRAME_SIZE * 8), Image.Resampling.NEAREST).save(review / f"{args.direction}-walk-cycle-inspection.png")
     (review / f"{args.direction}-walk-keys.json").write_text(json.dumps({
         "source": str(args.source),
         "direction": args.direction,
