@@ -3,12 +3,12 @@ import type { Texture, Ticker } from "pixi.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { createResidentActor } from "./resident-actor";
 import type { PikoNavigation } from "./map-package-schema";
-const mock=vi.hoisted(()=>({setFrame:vi.fn(),destroy:vi.fn(),step:vi.fn(),stop:vi.fn(),unlock:vi.fn(),audioDestroy:vi.fn()}));
+const mock=vi.hoisted(()=>({setFrame:vi.fn(),setStaticTexture:vi.fn(),destroy:vi.fn(),step:vi.fn(),stop:vi.fn(),unlock:vi.fn(),audioDestroy:vi.fn()}));
 vi.mock("./footstep-audio",()=>({createGrassFootsteps:()=>({step:mock.step,stop:mock.stop,unlock:mock.unlock,destroy:mock.audioDestroy})}));
 vi.mock("./character-actor",()=>({createCharacterActor:()=>({
   container:{position:{x:1190,y:485,set(x:number,y:number){this.x=x;this.y=y;}},zIndex:485},
   body:{texture:null,anchor:{set:vi.fn()},scale:{set:vi.fn()}},
-  setFrame:mock.setFrame,destroy:mock.destroy,
+  setFrame:mock.setFrame,setStaticTexture:mock.setStaticTexture,destroy:mock.destroy,
 })}));
 afterEach(()=>{document.body.innerHTML="";vi.restoreAllMocks();vi.unstubAllGlobals();vi.clearAllMocks();});
 it("moves only with map focus, stops on pause/blur, retains facing and cleans listeners",()=>{
@@ -103,11 +103,14 @@ it("walks to a click without overshoot and lets keyboard and pause cancel the ro
   let active = true;
   const actor = createResidentActor({} as Texture, ticker as unknown as Ticker, () => active, { host, navigation });
   const tick = ticker.add.mock.calls[0][0];
-  actor.walkTo({ x: 1200, y: 485 });
+  const arrived = vi.fn();
+  actor.walkTo({ x: 1200, y: 485 }, arrived);
   expect(document.activeElement).toBe(host);
   for (let i = 0; i < 20; i++) tick({ deltaMS: 16 });
   expect(actor.container.position.x).toBeCloseTo(1200);
-  actor.walkTo({ x: 1300, y: 485 });
+  expect(arrived).toHaveBeenCalledOnce();
+  const cancelled = vi.fn();
+  actor.walkTo({ x: 1300, y: 485 }, cancelled);
   window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyA" }));
   tick({ deltaMS: 16 });
   expect(actor.container.position.x).toBeLessThan(1200);
@@ -115,9 +118,28 @@ it("walks to a click without overshoot and lets keyboard and pause cancel the ro
   const stopped = actor.container.position.x;
   tick({ deltaMS: 16 });
   expect(actor.container.position.x).toBe(stopped);
+  expect(cancelled).not.toHaveBeenCalled();
   actor.walkTo({ x: 1300, y: 485 });
   active = false; tick({ deltaMS: 16 }); active = true; tick({ deltaMS: 16 });
   expect(actor.container.position.x).toBe(stopped);
+  actor.destroy();
+});
+
+it("holds the supplied sit texture and releases the seat before walking", () => {
+  const host = document.createElement("div"); host.tabIndex = 0; document.body.append(host);
+  const navigation = { walkableAreas: [{ id: "ground", points: [{x:0,y:0},{x:2000,y:0},{x:2000,y:1200},{x:0,y:1200}] }], colliders: [] } as unknown as PikoNavigation;
+  const ticker = { add: vi.fn(), remove: vi.fn() };
+  const actor = createResidentActor({} as Texture, ticker as unknown as Ticker, () => true, { host, navigation });
+  const sitTexture = {} as Texture;
+  expect(actor.sit(sitTexture, { x: 1210, y: 490 })).toBe(true);
+  expect(actor.isSeated()).toBe(true);
+  ticker.add.mock.calls[0][0]({ deltaMS: 16 });
+  expect(actor.container.zIndex).toBeGreaterThan(actor.container.position.y + 40);
+  expect(mock.setStaticTexture).toHaveBeenLastCalledWith(sitTexture, { x: 32, y: 32 });
+  actor.walkTo({ x: 1300, y: 485 });
+  expect(actor.isSeated()).toBe(false);
+  expect(actor.container.position).toMatchObject({ x: 1210, y: 490 });
+  expect(mock.setStaticTexture).toHaveBeenLastCalledWith(null);
   actor.destroy();
 });
 
@@ -135,5 +157,29 @@ it("reports the same idle clock used by raised-hand poses and resets it after wa
   tick({ deltaMS: 50 }); expect(onPose.mock.lastCall?.[2]).toBeNull();
   window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyD" }));
   tick({ deltaMS: 50 }); expect(onPose.mock.lastCall?.[2]).toBe(50);
+  actor.destroy();
+});
+
+it("animates seated idle without moving its anchor and restores standing on exit", () => {
+  const host=document.createElement('div');host.tabIndex=0;document.body.append(host);host.focus();
+  const motion={matches:false};vi.stubGlobal('matchMedia',()=>motion);
+  const navigation={walkableAreas:[{id:'ground',points:[{x:0,y:0},{x:2000,y:0},{x:2000,y:1200},{x:0,y:1200}]}],colliders:[]} as unknown as PikoNavigation;
+  const ticker={add:vi.fn(),remove:vi.fn()};let active=true;
+  const actor=createResidentActor({} as Texture,ticker as unknown as Ticker,()=>active,{host,navigation});
+  const base={label:'base'} as Texture,idle={label:'idle'} as Texture;
+  actor.sit(base,{x:1210,y:490},idle);
+  const tick=ticker.add.mock.calls[0][0],position={x:actor.container.position.x,y:actor.container.position.y};
+  for(let i=0;i<64;i++)tick({deltaMS:50});
+  expect(mock.setStaticTexture).toHaveBeenLastCalledWith(idle,{x:32,y:32});
+  expect(actor.container.position).toMatchObject(position);
+  active=false;for(let i=0;i<200;i++)tick({deltaMS:50});
+  expect(mock.setStaticTexture).toHaveBeenLastCalledWith(idle,{x:32,y:32});
+  active=true;for(let i=0;i<24;i++)tick({deltaMS:50});
+  expect(mock.setStaticTexture).toHaveBeenLastCalledWith(base,{x:32,y:32});
+  motion.matches=true;for(let i=0;i<160;i++)tick({deltaMS:50});
+  expect(mock.setStaticTexture).toHaveBeenLastCalledWith(base,{x:32,y:32});
+  window.dispatchEvent(new KeyboardEvent('keydown',{code:'KeyD'}));tick({deltaMS:16});
+  expect(actor.isSeated()).toBe(false);
+  expect(mock.setStaticTexture).toHaveBeenLastCalledWith(null);
   actor.destroy();
 });

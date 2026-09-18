@@ -1,10 +1,16 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { pointInPolygon, type PikoPoint } from "./navigation-geometry";
 
-export type RiverFish = PikoPoint & { heading: number; speed: number; target: PikoPoint; retargetIn: number; hasTarget: boolean };
+export type RiverFish = PikoPoint & { heading: number; speed: number; target: PikoPoint; retargetIn: number; restFor: number; hasTarget: boolean };
 const STARTS = [{ x: 1970, y: 610 }, { x: 2005, y: 660 }, { x: 1953, y: 705 }, { x: 2006, y: 800 }];
 const BODY_CLEARANCE = 15;
 const MIN_SEPARATION = 28;
+const MIN_SPEED = 16;
+const SPEED_RANGE = 8;
+const DOWNSTREAM_CHANCE = 0.72;
+const REST_CHANCE = 0.42;
+const MIN_REST_SECONDS = 2;
+const REST_RANGE_SECONDS = 3;
 const CLEARANCE_OFFSETS = Array.from({ length: 12 }, (_, index) => ({
   x: Math.cos(index * Math.PI / 6) * BODY_CLEARANCE,
   y: Math.sin(index * Math.PI / 6) * BODY_CLEARANCE,
@@ -24,11 +30,16 @@ export function createRiverFishMotion(regions: PikoPoint[][], random: () => numb
     return true;
   };
   const fish: RiverFish[] = STARTS.map((point, index) => ({ ...point, heading: index * 1.5,
-    speed: 20 + random() * 10, target: { ...point }, retargetIn: 0, hasTarget: false }));
+    speed: MIN_SPEED + random() * SPEED_RANGE, target: { ...point }, retargetIn: 0, restFor: 0, hasTarget: false }));
   const targetFor = (actor: RiverFish) => {
     let fallback: PikoPoint | null = null;
     for (let attempt = 0; attempt < 80; attempt++) {
-      const point = { x: 1940 + random() * 83, y: 595 + random() * 225 };
+      // The river moves toward increasing y. Most routes drift downstream, with
+      // enough upstream exploration to keep the shoal from looking scripted.
+      const downstream = random() < DOWNSTREAM_CHANCE;
+      const minY = downstream ? Math.max(595, actor.y - 10) : Math.max(595, actor.y - 100);
+      const maxY = downstream ? Math.min(820, actor.y + 105) : Math.min(820, actor.y + 25);
+      const point = { x: 1940 + random() * 83, y: minY + random() * Math.max(0, maxY - minY) };
       if (!safe(point) || Math.hypot(point.x - actor.x, point.y - actor.y) < 30) continue;
       // Avoid asking a fish to cut across a bank on its way to a distant target.
       let clearPath = true;
@@ -49,12 +60,23 @@ export function createRiverFishMotion(regions: PikoPoint[][], random: () => numb
     const dt = Number.isFinite(deltaSeconds) ? Math.min(0.05, Math.max(0, deltaSeconds)) : 0;
     if (!dt) return;
     for (const actor of fish) {
+      if (actor.restFor > 0) {
+        actor.restFor = Math.max(0, actor.restFor - dt);
+        continue;
+      }
       actor.retargetIn -= dt;
-      if (actor.retargetIn <= 0 || (actor.hasTarget && Math.hypot(actor.target.x - actor.x, actor.target.y - actor.y) < 18)) {
+      const reached = actor.hasTarget && Math.hypot(actor.target.x - actor.x, actor.target.y - actor.y) < 18;
+      if (reached && random() < REST_CHANCE) {
+        actor.hasTarget = false;
+        actor.retargetIn = 0;
+        actor.restFor = MIN_REST_SECONDS + random() * REST_RANGE_SECONDS;
+        continue;
+      }
+      if (actor.retargetIn <= 0 || reached) {
         const target = targetFor(actor);
         actor.hasTarget = target !== null;
-        actor.retargetIn = target ? 4 + random() * 5 : 0.75;
-        if (target) { actor.target = target; actor.speed = 20 + random() * 10; }
+        actor.retargetIn = target ? 5.5 + random() * 4.5 : 0.75;
+        if (target) { actor.target = target; actor.speed = MIN_SPEED + random() * SPEED_RANGE; }
       }
       if (!actor.hasTarget) continue;
       let dx = actor.target.x - actor.x, dy = actor.target.y - actor.y;
@@ -75,7 +97,7 @@ export function createRiverFishMotion(regions: PikoPoint[][], random: () => numb
         dx = actor.target.x - actor.x; dy = actor.target.y - actor.y;
       }
       const turn = angleDifference(Math.atan2(dy, dx), actor.heading);
-      actor.heading += Math.max(-2.4 * dt, Math.min(2.4 * dt, turn));
+      actor.heading += Math.max(-1.8 * dt, Math.min(1.8 * dt, turn));
       const next = { x: actor.x + Math.cos(actor.heading) * actor.speed * dt,
         y: actor.y + Math.sin(actor.heading) * actor.speed * dt };
       if (safe(next) && fish.every(other => other === actor || Math.hypot(next.x - other.x, next.y - other.y) >= MIN_SEPARATION)) {

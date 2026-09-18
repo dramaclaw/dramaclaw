@@ -6,6 +6,7 @@ import { isPetRestVisible } from './pet-rest-visibility';
 import { DOG_MAPS, DOG_MAP_STOPS, DOG_CORRIDORS, type DogMap } from './dog-world-routes';
 import type { PikoNavigation, PikoOccluder } from './map-package-schema';
 import type { PikoPoint } from './navigation-geometry';
+const GREETING = { radius: 120, leaveRadius: 180, dwellMs: 1000, cooldownMs: 90000, bubbleMs: 2500 } as const;
 export type DogWorldData = Record<DogMap, { navigation: PikoNavigation; occluders: PikoOccluder[] }>;
 const placement = COURTYARD_ANIMALS.find(p => p.kind === 'dog')!;
 
@@ -28,6 +29,7 @@ export function createDogWorld(data: DogWorldData, random: () => number = Math.r
   let failure: string | null = null;
   const transitions: { from: DogMap; to: DogMap; position: PikoPoint }[] = [];
   let retry = 0;
+  let greetingUntil = 0, cooldownUntil = 0, nearbySince: number | null = null, armed = true;
   let nextWest = random() < .5;
   let motion = createPetMotion({ ...placement, route: [placement.position] }, random, () => true);
   function chooseTrip() {
@@ -67,11 +69,24 @@ export function createDogWorld(data: DogWorldData, random: () => number = Math.r
       p=>isAnimalPositionNavigable(p,navigation),p=>isPetRestVisible(p,occluders),
       { once:true, restStops:DOG_MAP_STOPS[mapId],restSeconds:mapId==='whispering-meadow'||home?[90,140]:[60,90] });
   }
-  chooseTrip(); begin(placement.position);
+  // Complete the courtyard circuit before consuming the first cross-map destination.
+  chooseTrip(); begin(placement.position, true);
   return {
     get mapId() { return mapId; },
     get state() { return motion.state; },
     get error() { return failure; },
+    get greetingUntil() { return greetingUntil; },
+    pauseGreeting() { nearbySince = null; },
+    greetNearby(viewMap: string, player: PikoPoint, now: number, ready: () => boolean) {
+      const distance = viewMap === mapId ? Math.hypot(player.x-motion.state.position.x, player.y-motion.state.position.y) : Infinity;
+      if (distance > GREETING.leaveRadius) { armed = true; nearbySince = null; return; }
+      if (distance > GREETING.radius || !armed || now < cooldownUntil || motion.state.phase !== 'walk' || failure
+        || !isPetRestVisible(motion.state.position, data[mapId].occluders)) { nearbySince = null; return; }
+      nearbySince ??= now;
+      if (now-nearbySince < GREETING.dwellMs || !ready() || !motion.greet()) return;
+      armed = false; nearbySince = null;
+      cooldownUntil = now + GREETING.cooldownMs; greetingUntil = now + GREETING.bubbleMs;
+    },
     get transitions() { return transitions.map(t => ({...t,position:{...t.position}})); },
     update(delta: number) {
       if (failure) return;

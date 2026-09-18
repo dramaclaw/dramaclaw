@@ -14,10 +14,10 @@ const CROPS = [
 const FISH_SIZE_MULTIPLIER = 1.02;
 const WATER_VEIL_ALPHA = 0.05;
 const FISH = [
-  { species: 0, length: 26, phase: 0, alpha: 0.86 },
-  { species: 0, length: 24, phase: 0.9, alpha: 0.82 },
-  { species: 0, length: 25, phase: 1.7, alpha: 0.84 },
-  { species: 1, length: 28, phase: 2.5, alpha: 0.88 },
+  { species: 0, length: 26, phase: 0, alpha: 0.86, tailFps: 2.7 },
+  { species: 0, length: 24, phase: 0.9, alpha: 0.82, tailFps: 2.5 },
+  { species: 0, length: 25, phase: 1.7, alpha: 0.84, tailFps: 2.8 },
+  { species: 1, length: 28, phase: 2.5, alpha: 0.88, tailFps: 2.3 },
 ] as const;
 
 export async function createCourtyardFish({ ticker, surfaces, resolveAssetUrl, isDisposed }: {
@@ -47,7 +47,8 @@ export async function createCourtyardFish({ ticker, surfaces, resolveAssetUrl, i
     actors.forEach((sprite, index) => {
       const spec = FISH[index];
       const position = movement.fish[index];
-      const frame = media.matches ? 0 : Math.floor(elapsed * (index === 3 ? 2.6 : 3.2) + spec.phase) % 4;
+      // A resting fish is still while the water veil continues to pass over it.
+      const frame = media.matches || position.restFor > 0 ? 0 : Math.floor(elapsed * spec.tailFps + spec.phase) % 4;
       sprite.texture = frames[spec.species][frame];
       // Anchor by nose; frame width variation comes only from the moving tail.
       sprite.anchor.set(1, 0.5);

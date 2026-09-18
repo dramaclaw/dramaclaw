@@ -20,6 +20,7 @@ export function animalVolume(kind: VoicedKind, distance: number): number {
 export function createAnimalAudio(sources: () => AnimalAudioSource[], resolve: (src: string) => string,
   random: () => number = Math.random) {
   let listener: PikoPoint | undefined, disposed = false, unlocked = false, quiet = 0;
+  let greetingPending = false;
   const clips = sources().filter(source => source.kind in ANIMAL_AUDIO).map(source => {
     const kind = source.kind as VoicedKind;
     const audio = new Audio(resolve(`animals/${kind}-call-v1.mp3`));
@@ -42,7 +43,10 @@ export function createAnimalAudio(sources: () => AnimalAudioSource[], resolve: (
     if (disposed || !focused || document.hidden || !unlocked || !listener) return;
     quiet = Math.max(0, quiet - 0.1);
     const current = new Map(sources().map(source => [source.id, source]));
-    for (const clip of clips) {
+    // Reserve the next voice slot for a greeting accepted between timer ticks.
+    const scheduled = greetingPending ? [...clips].sort((a, b) => Number(b.kind === "dog") - Number(a.kind === "dog")) : clips;
+    greetingPending = false;
+    for (const clip of scheduled) {
       clip.waiting = Math.max(0, clip.waiting - 0.1);
       const source = current.get(clip.id);
       const target = source ? animalVolume(clip.kind,
@@ -88,6 +92,13 @@ export function createAnimalAudio(sources: () => AnimalAudioSource[], resolve: (
   document.addEventListener("visibilitychange", visibility);
   const timer = window.setInterval(tick, 100);
   return {
+    prepareDogGreeting() {
+      const dog = clips.find(clip => clip.kind === "dog");
+      if (!dog || disposed || !focused || document.hidden || !unlocked || !listener || quiet > 0
+        || dog.failed || dog.blocked || clips.some(clip => clip.active || clip.pending)) return false;
+      dog.waiting = 0; dog.eligible = false; greetingPending = true;
+      return true;
+    },
     update(point: PikoPoint) { listener = { ...point }; },
     destroy() {
       if (disposed) return;

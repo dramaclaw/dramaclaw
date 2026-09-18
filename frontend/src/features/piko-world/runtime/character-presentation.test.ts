@@ -49,3 +49,20 @@ it("updates accessory clearance without recreating the nickname or inheriting ch
   expect(name.y).toBe(originalY);
   container.destroy({ children: true });
 });
+
+it("keeps the hover highlight aligned when sitting changes the body pivot and scale", () => {
+  const container = new Container();
+  const body = new Sprite(Texture.WHITE);
+  container.addChild(new Sprite(Texture.WHITE), body);
+  const hover = addCharacterPresentation(container, "player");
+  const highlight = container.children[3] as Sprite;
+  body.anchor.set(0.5, 0.5); body.scale.set(2.1); body.position.set(0, -2);
+  hover(true);
+  highlight.onRender!({} as never);
+  expect(highlight.anchor.x).toBe(body.anchor.x);
+  expect(highlight.anchor.y).toBe(body.anchor.y);
+  expect(highlight.scale.x).toBe(body.scale.x);
+  expect(highlight.scale.y).toBe(body.scale.y);
+  expect(highlight.position.y).toBe(body.position.y);
+  container.destroy({ children: true });
+});

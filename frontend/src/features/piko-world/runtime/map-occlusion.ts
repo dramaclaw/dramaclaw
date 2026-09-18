@@ -34,14 +34,15 @@ export function createMapOccluder(source: Texture, definition: PikoOccluder) {
  * This avoids repainting the ground and Canvas2D's fractional-scale sampling seams.
  * Use a normal mask with holes, supported by both WebGL and Canvas (not an inverse mask).
  */
-export function createBakedActorOcclusion(actor: Container, definitions: PikoOccluder[], size: { width: number; height: number }) {
+export function createBakedActorOcclusion(actor: Container, definitions: PikoOccluder[], size: { width: number; height: number }, depth = () => actor.y) {
   const mask = new Graphics({ label: "baked-scenery-mask", eventMode: "none" });
   let previousY: number | undefined;
   let previous = "";
   const update = () => {
-    if (actor.y === previousY) return;
-    previousY = actor.y;
-    const active = definitions.filter(item => actor.y < item.depthY && item.outline);
+    const depthY = depth();
+    if (depthY === previousY) return;
+    previousY = depthY;
+    const active = definitions.filter(item => depthY < item.depthY && item.outline);
     const key = active.map(item => item.id).join("|");
     if (key === previous) return;
     previous = key;
@@ -71,12 +72,13 @@ export function isBakedOccluder(item: PikoOccluder, baseSource: string) {
 }
 
 /** The DOM speech bubble must not float above scenery hiding the speaker's head. */
-export function isResidentHeadOccluded(position: PikoPoint, occlusion: PikoOcclusion, scale: number) {
+export function isResidentHeadOccluded(position: PikoPoint, occlusion: PikoOcclusion, scale: number,
+  pose: { depthY: number; headOffset: number } = { depthY: position.y, headOffset: 42 }) {
   return occlusion.occluders.some(occluder => {
-    if (position.y >= occluder.depthY || !occluder.outline) return false;
+    if (pose.depthY >= occluder.depthY || !occluder.outline) return false;
     return [-8, 0, 8].some(offset => pointInPolygon({
       x: position.x + offset * scale - occluder.position.x,
-      y: position.y - 42 * scale - occluder.position.y,
+      y: position.y - pose.headOffset * scale - occluder.position.y,
     }, occluder.outline!));
   });
 }

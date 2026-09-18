@@ -1,5 +1,6 @@
 {
   "pikoWorld": {
+    "sitDown": "Ngồi xuống",
     "taskLabel": {
       "running": "Tác vụ đang chạy",
       "completed": "Tác vụ hoàn tất",

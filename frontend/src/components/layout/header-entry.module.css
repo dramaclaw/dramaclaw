@@ -37,7 +37,6 @@
   width: min(216px, calc(100vw - 24px));
   padding: 10px;
 }
-.compactPanel.compactPanel { width: min(176px, calc(100vw - 24px)); }
 .menuPanel > .menuRow + .menuRow { margin-top: 2px; }
 .menuRow.menuRow {
   display: flex;

@@ -12,6 +12,17 @@ import { RESIDENT_WORLD_SCALE } from "./resident-actor";
 const occlusion = PikoOcclusionSchema.parse(data);
 const nav = PikoNavigationSchema.parse(navigation);
 
+it("uses the seated head and ground depth together for speech visibility", () => {
+  const scene = { ...occlusion, occluders: [{ ...occlusion.occluders[0], position: { x: 0, y: 0 }, depthY: 510,
+    outline: [{x:1400,y:440},{x:1580,y:440},{x:1580,y:500},{x:1400,y:500}] }] };
+  const seated = {x:1490,y:496};
+  // Its seated head is in this silhouette, while the old standing head probe misses it.
+  expect(isResidentHeadOccluded(seated, scene, 2)).toBe(false);
+  expect(isResidentHeadOccluded(seated, scene, 2, {depthY:496,headOffset:18})).toBe(true);
+  // Feet are in front of the scenery: the bubble should remain visible with the body.
+  expect(isResidentHeadOccluded(seated, scene, 2, {depthY:540,headOffset:18})).toBe(false);
+});
+
 describe("welcome arch occlusion", () => {
   it("keeps a continuous north/south passage with the grove roots included", () => {
     expect(nav.colliders).toHaveLength(38);

@@ -20,7 +20,7 @@ export function alphaSilhouetteRuns(pixels: ArrayLike<number>, width: number, he
 }
 
 /** Local-player locator, clipped to only the scenery currently covering the body. */
-export function createResidentOcclusionSilhouette(actor: Container, body: Sprite, definitions: PikoOccluder[], dynamicIds: ReadonlySet<string> = new Set()) {
+export function createResidentOcclusionSilhouette(actor: Container, body: Sprite, definitions: PikoOccluder[], dynamicIds: ReadonlySet<string> = new Set(), depth = () => actor.y) {
   const container = new Container({ label: "local-player-occlusion-silhouette", eventMode: "none", zIndex: Infinity });
   const mask = new Graphics({ label: "local-player-occlusion-silhouette-mask", eventMode: "none" });
   const silhouette = new Graphics();
@@ -76,7 +76,7 @@ export function createResidentOcclusionSilhouette(actor: Container, body: Sprite
   const update = () => {
     const left = actor.x + body.x - body.anchor.x * body.width;
     const top = actor.y + body.y - body.anchor.y * body.height;
-    const active = [...regions, ...dynamicRegions()].filter(item => actor.y < item.depthY && item.right >= left
+    const active = [...regions, ...dynamicRegions()].filter(item => depth() < item.depthY && item.right >= left
       && item.left <= left + body.width && item.bottom >= top && item.top <= top + body.height);
     container.visible = actor.visible && active.length > 0;
     if (!container.visible) return;

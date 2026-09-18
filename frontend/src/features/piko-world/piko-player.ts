@@ -5,6 +5,10 @@ import { isValidPikoProfile, normalizePikoProfile } from "./piko-profile";
 export type PikoPlayerGender = "male" | "female";
 export const PIKO_MALE_PLAYER_MOTION_SRC = "/piko/world/characters/player-male-motion-v2.png";
 export const PIKO_FEMALE_PLAYER_MOTION_SRC = "/piko/world/characters/player-female-motion-v3.png";
+export const PIKO_PLAYER_SEATED_ART = {
+  male: { base: "/piko/world/characters/player-male-sit-front-v1.png", idle: "/piko/world/characters/player-male-sit-idle-v1.png" },
+  female: { base: "/piko/world/characters/player-female-sit-front-v1.png", idle: "/piko/world/characters/player-female-sit-idle-v1.png" },
+} as const;
 // Visual trial: shorten male front/back idle poses without changing atlas pixels or foot anchors.
 export function pikoPlayerPoseHeightScale(gender: PikoPlayerGender | undefined, facing: string, column: number): number {
   return gender === "male" && (facing === "south" || facing === "north") && column < 3 ? 53 / 56 : 1;

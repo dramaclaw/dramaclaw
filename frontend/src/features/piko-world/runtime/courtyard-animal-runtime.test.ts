@@ -140,7 +140,8 @@ it('renders the shared dog only on its current map and never advances it from a 
   const { createPetMotion }=await import('./pet-motion');
   const { COURTYARD_ANIMALS }=await import('./courtyard-animals');
   const local=createPetMotion(COURTYARD_ANIMALS.find(p=>p.kind==='dog')!,()=>.5,()=>true);
-  const shared={mapId:'artisan-market' as const,state:local.state,error:null,transitions:[],update:vi.fn()};
+  const shared={mapId:'artisan-market' as const,state:local.state,error:null,transitions:[],update:vi.fn(),
+    greetingUntil:0,pauseGreeting:vi.fn(),greetNearby:vi.fn()};
   const ticker=new Ticker();ticker.autoStart=false;
   const runtime=(await createCourtyardAnimalRuntime({...options(ticker),mapId:'starlight-dock',worldDog:shared}))!;
   expect(runtime.actors).toHaveLength(1);expect(runtime.actors[0].container.visible).toBe(false);

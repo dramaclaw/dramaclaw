@@ -18,7 +18,7 @@ export function PikoOnboarding({ initialNickname, onSave, onEnter, onMusicStart 
   usePikoCursors();
   const { t } = useTranslation();
   const [stage, setStage] = useState<Stage>("intro");
-  const [gender, setGender] = useState<PikoPlayerGender>("male");
+  const [gender, setGender] = useState<PikoPlayerGender>("female");
   const [nickname, setNickname] = useState(initialNickname);
   const [formError, setFormError] = useState("");
   const [mediaError, setMediaError] = useState(false);

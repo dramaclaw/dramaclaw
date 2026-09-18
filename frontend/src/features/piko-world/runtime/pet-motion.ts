@@ -106,7 +106,12 @@ export function createPetMotion(placement: AnimalPlacement, random: () => number
     state.clip = dog ? 'dogWalk' : 'catIdle';
     state.frame = !dog && state.phase === 'rest' && elapsed % 12 < 2 ? 0 : 2;
   }
-  return { state, update(delta: number) {
+  return { state, greet() {
+    if (!dog || state.phase !== 'walk' || atEnd) return false;
+    afterBark = 'walk'; transition('bark');
+    state.clip = 'dogBark'; state.frame = 0; state.atlas = 'dog-bark'; state.pose = 0;
+    return true;
+  }, update(delta: number) {
     // Substeps prevent crossing narrow obstacles after delayed frames.
     let left = Math.max(0, Math.min(delta, 1));
     while (left > 0) { const step = Math.min(left, 0.05); tick(step); left -= step; }

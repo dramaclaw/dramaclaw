@@ -13,8 +13,12 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { Application, Container, Sprite, type Texture } from "pixi.js";
 import { useTranslation } from "react-i18next";
 
-import { loadPikoMapEnvironment, loadPikoMapManifest, loadPikoMapNavigation, loadPikoMapOcclusion, resolvePikoMapAssetUrl } from "./runtime/map-package-loader";
+import { loadPikoMapEnvironment, loadPikoMapInteractions, loadPikoMapManifest, loadPikoMapNavigation, loadPikoMapOcclusion, resolvePikoMapAssetUrl } from "./runtime/map-package-loader";
 import { createMapOccluder, createBakedActorOcclusion, isBakedOccluder, isResidentHeadOccluded } from "./runtime/map-occlusion";
+import { pointInPolygon } from "./runtime/navigation-geometry";
+import { pikoSeatAction } from "./runtime/seat-actions";
+import { SEATED_POSE } from "./runtime/seated-pose";
+import exitMarkerStyles from "./piko-map-exit-marker.module.css";
 import { createCourtyardFish } from "./runtime/courtyard-fish";
 import { createEnvironmentEffectRuntime } from "./runtime/environment-effect-runtime";
 import { createCourtyardFoliageRuntime } from "./runtime/courtyard-foliage-runtime";
@@ -34,9 +38,9 @@ import { DOG_MAPS } from "./runtime/dog-world-routes";
 import { getWorldDog } from "./runtime/dog-world-session";
 import { PikoWelcomeDialog } from "./PikoWelcomeDialog";
 import { addCharacterPresentation } from "./runtime/character-presentation";
-import { PIKO_DEFAULT_CURSOR } from "./piko-cursors";
+import { PIKO_CHARACTER_CURSOR, PIKO_DEFAULT_CURSOR } from "./piko-cursors";
 import { createClickFeedback } from "./runtime/click-feedback";
-import { PIKO_FEMALE_PLAYER_MOTION_SRC, PIKO_MALE_PLAYER_MOTION_SRC, PIKO_PLAYER_GAIT_CYCLE_SOURCE_PIXELS, PIKO_PLAYER_IDLE_CYCLE_MS, PIKO_PLAYER_SPEED, pikoPlayerIdleFrameAt, pikoPlayerPoseHeightScale, type PikoPlayerGender } from "./piko-player";
+import { PIKO_FEMALE_PLAYER_MOTION_SRC, PIKO_MALE_PLAYER_MOTION_SRC, PIKO_PLAYER_SEATED_ART, PIKO_PLAYER_GAIT_CYCLE_SOURCE_PIXELS, PIKO_PLAYER_IDLE_CYCLE_MS, PIKO_PLAYER_SPEED, pikoPlayerIdleFrameAt, pikoPlayerPoseHeightScale, type PikoPlayerGender } from "./piko-player";
 import { PIKO_PLAYABLE_RESIDENTS, type PlayablePikoResidentId } from "./piko-residents";
 import { PLAYER_ACCESSORIES, accessoryDefinition, accessorySrc, type PlayerAccessoryId, type PlayerAccessorySelection } from "./piko-player-accessories";
 import { createPlayerAccessory } from "./runtime/player-accessory";
@@ -84,6 +88,9 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
   const activateTransportRef = useRef<(exitId: string) => void>(() => {});
   const simulatedHoverRef = useRef<(hovered: boolean) => void>(() => {});
   const [playerPosition, setPlayerPosition] = useState({ x: 1190, y: 485 });
+  const [dogGreeting, setDogGreeting] = useState<{ mapId: string; x: number; y: number; headOffset: number } | null>(null);
+  const [playerSeated, setPlayerSeated] = useState(false);
+  const [seatHovered, setSeatHovered] = useState(false);
   const [playerHeadOccluded, setPlayerHeadOccluded] = useState(false);
   const [simulatedPosition, setSimulatedPosition] = useState<{ x: number; y: number }>(PIKO_SIMULATED_RESIDENT.position);
   const onSocialBusyChange = useCallback((busy: boolean) => {
@@ -148,8 +155,17 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
     let courtyardLamp: ReturnType<typeof createCourtyardLampRuntime> | null = null;
     let courtyardAnimalRuntime: Awaited<ReturnType<typeof createCourtyardAnimalRuntime>> = null;
     let animalAudio: ReturnType<typeof createAnimalAudio> | null = null;
+    let worldDog: Awaited<ReturnType<typeof getWorldDog>> | null = null;
+    let lastDogGreeting = "";
     let courtyardFish: Awaited<ReturnType<typeof createCourtyardFish>> = null;
     let environmentAudio: ReturnType<typeof createEnvironmentAudio> | null = null;
+    let interactions: Awaited<ReturnType<typeof loadPikoMapInteractions>> | null = null;
+    let playerSitTexture: Texture | null = null;
+    let playerSitIdleTexture: Texture | null = null;
+    let playerWasSeated = false;
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    const canInteract = () => mayorActiveRef.current && !blockedRef.current && !welcomeOpenRef.current
+      && !socialBusyRef.current && !debugEditingRef.current;
     const exitMarkers: NonNullable<Awaited<ReturnType<typeof createMapExitMarker>>>[] = [];
     let disposed = false;
     let disconnectPosition = () => {};
@@ -175,6 +191,8 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
       abortController.abort();
       disconnectResizeObserver();
       disconnectPosition();
+      worldDog?.pauseGreeting();
+      setDogGreeting(null);
       animalAudio?.destroy();
       exitMarkers.forEach(marker => marker.destroy());
       courtyardAnimalRuntime?.destroy();
@@ -205,6 +223,8 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
 
     async function mountMap() {
       setLoadState("loading");
+      setPlayerSeated(false);
+      setSeatHovered(false);
       try {
         const manifest = await loadPikoMapManifest(mapId, abortController.signal);
         if (disposed) return;
@@ -246,8 +266,33 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
         ground.on("pointertap", event => {
           if (event.button !== 0 || event.pointerType !== "mouse") return;
           const target = world.toLocal(event.global);
+          const seat = interactions?.interactions.find(item => item.kind === "seat" && pointInPolygon(target, item.trigger.points));
+          const seatAction = seat ? pikoSeatAction(seat.actionId) : null;
+          if (seatAction && residentActor && playerSitTexture) {
+            const sitDown = () => {
+              if (!disposed && residentActor && playerSitTexture && residentActor.sit(playerSitTexture, seatAction.approach, playerSitIdleTexture)) {
+                residentActor.container.position.set(seatAction.seat.x, seatAction.seat.y);
+              }
+            };
+            const distance = Math.hypot(residentActor.container.x - seatAction.approach.x, residentActor.container.y - seatAction.approach.y);
+            if (distance > seatAction.radius) {
+              if (residentActor.walkTo(seatAction.approach, sitDown)) clickFeedback?.show(seatAction.approach);
+              return;
+            }
+            sitDown();
+            return;
+          }
           if (residentActor?.walkTo(target)) clickFeedback?.show(target);
         });
+        ground.on("pointermove", event => {
+          const target = world.toLocal(event.global);
+          const interactive = canInteract() && playerSitTexture && interactions?.interactions.some(item =>
+            item.kind === "seat" && pikoSeatAction(item.actionId) && pointInPolygon(target, item.trigger.points));
+          nextApp.canvas.style.cursor = interactive ? PIKO_CHARACTER_CURSOR : PIKO_DEFAULT_CURSOR;
+          ground.cursor = interactive ? PIKO_CHARACTER_CURSOR : PIKO_DEFAULT_CURSOR;
+          setSeatHovered(Boolean(interactive));
+        });
+        ground.on("pointerout", () => { setSeatHovered(false); nextApp.canvas.style.cursor = PIKO_DEFAULT_CURSOR; });
         ground.zIndex = -Infinity;
         world.addChild(ground);
         nextApp.stage.addChild(world);
@@ -330,6 +375,8 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
         {
           const navigation = await loadPikoMapNavigation(mapId, manifest.data.navigation, abortController.signal);
           if (disposed) return;
+          interactions = await loadPikoMapInteractions(mapId, manifest.data.interactions, abortController.signal);
+          if (disposed) return;
           const spawn = spawnId ? navigation.spawnPoints.find(point => point.id === spawnId)
             : mapId === "welcome-courtyard" ? undefined : navigation.spawnPoints[0];
           if (spawnId && (!spawn || !canStand(spawn.position, navigation))) throw new Error("Invalid map arrival");
@@ -345,7 +392,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
             world.addChild(mayorActor.container);
           }
           if ((DOG_MAPS as readonly string[]).includes(mapId)) {
-            const worldDog = await getWorldDog();
+            worldDog = await getWorldDog();
             if (disposed) return;
             courtyardAnimalRuntime = await createCourtyardAnimalRuntime({
               worldDog, mapId,
@@ -376,18 +423,32 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
             : playerGender === "female" ? PIKO_FEMALE_PLAYER_MOTION_SRC : null;
           const playerMotionTexture = playerMotionSrc ? await loadTexture(playerMotionSrc) : null;
           if (playerMotionSrc && !playerMotionTexture) return;
+          const seatedArt = playerGender && interactions.interactions.some(item => item.kind === "seat" && pikoSeatAction(item.actionId))
+            ? PIKO_PLAYER_SEATED_ART[playerGender] : null;
+          if (seatedArt) {
+            [playerSitTexture, playerSitIdleTexture] = await Promise.all([loadTexture(seatedArt.base), loadTexture(seatedArt.idle)]);
+            if (disposed || !playerSitTexture || !playerSitIdleTexture) return;
+          }
           residentActor = createResidentActor(playerMotionTexture ?? residentTextures.get(residentIdRef.current)!, nextApp.ticker,
-            () => mayorActiveRef.current && !blockedRef.current && !welcomeOpenRef.current && !socialBusyRef.current && !debugEditingRef.current,
+            canInteract,
             {host, navigation, position: spawn?.position, facing: spawn?.facing, footsteps: mapId !== "boundless-sea" && mapId !== "changfeng-sea",
               onPose: (facing, column, idleElapsedMs) => {
                 if (residentActor) {
-                  const scaleY = RESIDENT_WORLD_SCALE * pikoPlayerPoseHeightScale(playerGender, facing, column);
+                  const seated = residentActor.isSeated();
+                  const scaleX = RESIDENT_WORLD_SCALE * (seated ? SEATED_POSE.scale : 1);
+                  const scaleY = RESIDENT_WORLD_SCALE * (seated ? SEATED_POSE.scale : pikoPlayerPoseHeightScale(playerGender, facing, column));
+                  residentActor.body.scale.x = scaleX;
                   if (residentActor.body.scale.y !== scaleY) {
                     residentActor.body.scale.y = scaleY;
                     residentPresentationRef.current?.setNameGap(playerNameGapRef.current);
                   }
+                  if (seated !== playerWasSeated) {
+                    playerWasSeated = seated;
+                    setPlayerSeated(seated);
+                    residentPresentationRef.current?.setNameGap(playerNameGapRef.current);
+                  }
                 }
-                playerAccessory?.update(facing, column);
+                playerAccessory?.update(facing, column, residentActor?.isSeated());
                 playerAccessory?.animate(idleElapsedMs);
               },
               idleFrameAt: playerGender ? pikoPlayerIdleFrameAt : undefined,
@@ -446,7 +507,18 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
             { x: playerX, y: playerY }, occlusion, RESIDENT_WORLD_SCALE,
           ));
           let lastTreeOutline = animatedTree?.outline;
+          let lastHeadSeated = false;
+          const dogActor = courtyardAnimalRuntime?.actors.find(actor => actor.placement.kind === "dog");
           const syncPosition = () => {
+            const now = Date.now();
+            const canGreet = canInteract() && !reducedMotion?.matches && !document.hidden && document.hasFocus();
+            if (canGreet) worldDog?.greetNearby(mapId, residentActor?.container ?? { x: playerX, y: playerY }, now,
+              () => animalAudio?.prepareDogGreeting() ?? false);
+            else worldDog?.pauseGreeting();
+            const greeting = canGreet && worldDog && worldDog.mapId === mapId && now < worldDog.greetingUntil && dogActor
+              ? { mapId, ...worldDog.state.position, headOffset: dogActor.placement.scale * 900 + 8 } : null;
+            const greetingKey = greeting ? `${greeting.x}:${greeting.y}` : "";
+            if (greetingKey !== lastDogGreeting) { lastDogGreeting = greetingKey; setDogGreeting(greeting); }
             actorOcclusion.forEach(item => item.update());
             residentSilhouette?.update();
             const playerMoved = residentActor && (residentActor.container.x !== playerX || residentActor.container.y !== playerY);
@@ -456,10 +528,13 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
               environmentAudio?.update({ x: playerX, y: playerY });
               animalAudio?.update({ x: playerX, y: playerY });
             }
-            if (playerMoved || lastTreeOutline !== animatedTree?.outline) {
+            const headSeated = residentActor?.isSeated() ?? false;
+            if (playerMoved || headSeated !== lastHeadSeated || lastTreeOutline !== animatedTree?.outline) {
               lastTreeOutline = animatedTree?.outline;
+              lastHeadSeated = headSeated;
               setPlayerHeadOccluded(isResidentHeadOccluded(
-                { x: playerX, y: playerY }, occlusion, RESIDENT_WORLD_SCALE,
+                { x: playerX, y: playerY }, occlusion, RESIDENT_WORLD_SCALE * (headSeated ? SEATED_POSE.scale : 1),
+                { depthY: residentActor?.container.zIndex ?? playerY, headOffset: headSeated ? SEATED_POSE.headOffset : 42 },
               ));
             }
             const exit = checkExit({ x: playerX, y: playerY }, mayorActiveRef.current
@@ -478,12 +553,12 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
           disconnectPosition = () => nextApp.ticker.remove(syncPosition);
           for (const actor of [mayorActor, residentActor, simulatedActor]) {
             if (!actor) continue;
-            const masked = createBakedActorOcclusion(actor.container, bakedOccluders, manifest.size);
+            const masked = createBakedActorOcclusion(actor.container, bakedOccluders, manifest.size, () => actor.container.zIndex);
             actorOcclusion.push(masked);
             world.addChild(masked.mask);
           }
           residentSilhouette = createResidentOcclusionSilhouette(residentActor.container, residentActor.body, occlusion.occluders,
-            animatedTree ? new Set([animatedTree.id]) : undefined);
+            animatedTree ? new Set([animatedTree.id]) : undefined, () => residentActor!.container.zIndex);
           world.addChild(residentSilhouette.container, residentSilhouette.mask);
         }
 
@@ -538,14 +613,25 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
           onHover={hovered=>mayorHoverRef.current(hovered)}
           onInteract={showMayorHint && !movementBlocked ? ()=>interactRef.current() : undefined} />
       )}
+      {loadState === "ready" && mapId === "welcome-courtyard" && showMayorHint && !movementBlocked && !welcomeOpen && !playerSeated && worldFit.scale > 0 && (() => {
+        const seat = pikoSeatAction("welcome-east-bench")!;
+        const near = seatHovered || Math.hypot(playerPosition.x - seat.approach.x, playerPosition.y - seat.approach.y) <= 120;
+        return <div className={exitMarkerStyles.anchor} data-near={near} aria-hidden="true"
+          style={{ left: worldFit.x + seat.seat.x * worldFit.scale,
+            top: worldFit.y + seat.seat.y * worldFit.scale,
+            transform: `translate(-50%, -50%) scale(${worldFit.scale})` }}>
+          <span className={exitMarkerStyles.name} style={{ top: 56 }}>{t("pikoWorld.sitDown")}</span>
+        </div>;
+      })()}
       {loadState === "ready" && mapId === "welcome-courtyard" && showMayorHint && !movementBlocked && !welcomeOpen && (
         <PikoResidentInteraction key={PIKO_SIMULATED_RESIDENT.id} target={PIKO_SIMULATED_RESIDENT}
           position={simulatedPosition} fit={worldFit} onBusyChange={onSocialBusyChange} onHover={onSimulatedHover} />
       )}
-      {taskStatus && <PikoTaskLabel task={taskStatus} position={playerPosition} fit={worldFit} headOffset={136 + playerNameGap}
+      {taskStatus && <PikoTaskLabel task={taskStatus} position={playerPosition} fit={worldFit} headOffset={(playerSeated ? 81 : 136) + playerNameGap}
         available={loadState === "ready" && showMayorHint && !movementBlocked && !welcomeOpen && !speech}
         onInteract={() => stopPlayerRef.current()} />}
-      {loadState === "ready" && showMayorHint && speech && !playerHeadOccluded && <PikoSpeechBubble body={speech.body} position={playerPosition} fit={worldFit} headOffset={128 + playerNameGap} />}
+      {loadState === "ready" && showMayorHint && speech && !playerHeadOccluded && <PikoSpeechBubble body={speech.body} position={playerPosition} fit={worldFit} headOffset={(playerSeated ? 73 : 128) + playerNameGap} />}
+      {loadState === "ready" && showMayorHint && dogGreeting?.mapId === mapId && <PikoSpeechBubble body="🐶❤️" position={dogGreeting} fit={worldFit} headOffset={dogGreeting.headOffset} />}
       <PikoWelcomeDialog open={welcomeOpen} onOpenChange={open=>{welcomeOpenRef.current=open;setWelcomeOpen(open);}} />
       {import.meta.env.DEV && loadState === "ready" && showMayorHint && debugNavigation && worldFit.scale > 0 && !movementBlocked && (
         <Suspense fallback={null}><NavigationEditor key={mapId} navigation={debugNavigation} fit={worldFit} player={playerPosition}

@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import manifest from "../../../../public/piko/world/maps/welcome-courtyard/manifest.json";
 import navigation from "../../../../public/piko/world/maps/welcome-courtyard/data/navigation.json";
-import { loadPikoMapManifest, loadPikoMapNavigation, loadPikoMapOcclusion } from "./map-package-loader";
+import { loadPikoMapManifest, loadPikoMapNavigation, loadPikoMapOcclusion, loadPikoMapInteractions } from "./map-package-loader";
+import interactions from "../../../../public/piko/world/maps/welcome-courtyard/data/interactions.json";
 import occlusion from "../../../../public/piko/world/maps/welcome-courtyard/data/occlusion.json";
 
 function mockJsonResponse(value: unknown) {
@@ -23,6 +24,15 @@ afterEach(() => {
 });
 
 describe("Piko World map package loader", () => {
+  it("validates interaction ownership and forwards cancellation", async () => {
+    mockJsonResponse(interactions);
+    const { signal } = new AbortController();
+    expect((await loadPikoMapInteractions("welcome-courtyard", "data/interactions.json", signal)).interactions).toHaveLength(1);
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/welcome-courtyard/data/interactions.json"), { cache: "no-cache", signal });
+    await expect(loadPikoMapInteractions("artisan-market", "data/interactions.json")).rejects.toThrow("requested artisan-market");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404 }));
+    await expect(loadPikoMapInteractions("welcome-courtyard", "data/interactions.json")).rejects.toThrow("404");
+  });
   it("rejects a manifest belonging to another requested map", async () => {
     mockJsonResponse(manifest);
     await expect(loadPikoMapManifest("artisan-market")).rejects.toThrow(

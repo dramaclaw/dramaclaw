@@ -18,7 +18,12 @@ export function addCharacterPresentation(container: Container, name?: string, in
   highlight.alpha = 0.06;
   highlight.visible = false;
   highlight.eventMode = "none";
-  highlight.onRender = () => { highlight.texture = body.texture; };
+  highlight.onRender = () => {
+    highlight.texture = body.texture;
+    highlight.anchor.copyFrom(body.anchor);
+    highlight.scale.copyFrom(body.scale);
+    highlight.position.copyFrom(body.position);
+  };
   container.addChild(highlight);
   const setHovered = (hovered: boolean) => {
     highlight.visible = hovered;

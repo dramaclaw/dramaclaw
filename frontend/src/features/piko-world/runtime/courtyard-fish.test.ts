@@ -27,7 +27,8 @@ it.each([17, 42, 123, 2026])("keeps random routes safe and moving (seed %s)", (i
       motion.fish.slice(index + 1).forEach(other => expect(Math.hypot(fish.x - other.x, fish.y - other.y)).toBeGreaterThanOrEqual(27.999));
     });
   }
-  travel.forEach(distance => expect(distance / 600).toBeGreaterThan(10));
+  // Fish may rest at a target, but each one must continue to tour the river.
+  travel.forEach(distance => expect(distance / 600).toBeGreaterThan(5));
 });
 it("shares two atlases, layers water above fish, and releases resources", async () => {
   const atlas = new Texture({ source: new TextureSource({ width: 2172, height: 724 }) });
@@ -65,6 +66,23 @@ it("backs off after unsuccessful target searches instead of retrying every frame
   const positions = motion.fish.map(fish => ({ x: fish.x, y: fish.y }));
   motion.step(NaN); motion.step(Infinity); motion.step(-1);
   expect(motion.fish.map(fish => ({ x: fish.x, y: fish.y }))).toEqual(positions);
+});
+
+it("searches for its next route immediately after resting instead of waiting out the old route timer", () => {
+  const random = vi.fn(() => 0.2);
+  const motion = createRiverFishMotion(regions, random);
+  const fish = motion.fish[0];
+  fish.hasTarget = true; fish.target = { x: fish.x, y: fish.y }; fish.retargetIn = 9;
+  motion.step(0.05);
+  expect(fish.restFor).toBeGreaterThan(0);
+  const position = { x: fish.x, y: fish.y };
+  while (fish.restFor > 0) motion.step(0.05);
+  expect({ x: fish.x, y: fish.y }).toEqual(position);
+  // Isolate its search from the other actors' random choices.
+  motion.fish.slice(1).forEach(other => { other.restFor = 10; });
+  random.mockClear();
+  motion.step(0.05);
+  expect(random).toHaveBeenCalled();
 });
 
 it("detaches animation callbacks while hidden or reduced motion is enabled", async () => {

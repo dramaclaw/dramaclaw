@@ -5,7 +5,9 @@ import {
   PikoNavigationSchema,
   PikoOcclusionSchema,
   PikoEnvironmentSchema,
+  PikoInteractionsSchema,
   type PikoEnvironment,
+  type PikoInteractions,
   type PikoMapManifest,
   type PikoNavigation,
   type PikoOcclusion,
@@ -85,4 +87,14 @@ export async function loadPikoMapEnvironment(
   const environment = PikoEnvironmentSchema.parse(await response.json());
   assertRequestedMapId(mapId, environment.mapId);
   return environment;
+}
+
+export async function loadPikoMapInteractions(
+  mapId: string, relativePath: string, signal?: AbortSignal,
+): Promise<PikoInteractions> {
+  const response = await fetch(resolvePikoMapAssetUrl(mapId, relativePath), { cache: "no-cache", signal });
+  if (!response.ok) throw new Error(`Piko interactions request failed: ${response.status}`);
+  const interactions = PikoInteractionsSchema.parse(await response.json());
+  assertRequestedMapId(mapId, interactions.mapId);
+  return interactions;
 }

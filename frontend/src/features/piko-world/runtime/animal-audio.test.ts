@@ -107,6 +107,35 @@ it("rechecks the listener when play resolves before the next timer tick", async 
 });
 
 beforeEach(() => { vi.spyOn(document, "hasFocus").mockReturnValue(true); });
+it('reserves the next audio tick for an accepted dog greeting', async () => {
+ const hen: AnimalAudioSource = {id:'hen',kind:'hen',clip:'henPeck',frame:0,position:{x:1000,y:0}};
+ const dog: AnimalAudioSource = {id:'dog',kind:'dog',clip:'dogWalk',frame:0,position:{x:0,y:0}};
+ const runtime=setup([hen,dog]);
+ document.dispatchEvent(new Event('pointerdown'));
+ await vi.advanceTimersByTimeAsync(9000);
+ expect(runtime.prepareDogGreeting()).toBe(true);
+ // Both become audible before the timer runs; list order must not steal the greeting.
+ hen.position={x:0,y:0};dog.clip='dogBark';
+ await vi.advanceTimersByTimeAsync(100);
+ expect(FakeAudio.all[0].play).not.toHaveBeenCalled();
+ expect(FakeAudio.all[1].play).toHaveBeenCalledTimes(1);
+ runtime.destroy();
+});
+it('prepares a greeting only after unlock and prevents overlapping audio', async () => {
+ const dog: AnimalAudioSource = {id:'dog',kind:'dog',clip:'dogWalk',frame:0,position:{x:0,y:0}};
+ const runtime=setup([dog]);
+ expect(runtime.prepareDogGreeting()).toBe(false);
+ document.dispatchEvent(new Event('pointerdown'));
+ expect(runtime.prepareDogGreeting()).toBe(true);
+ dog.clip='dogBark'; await vi.advanceTimersByTimeAsync(100);
+ expect(FakeAudio.all[0].play).toHaveBeenCalledTimes(1);
+ expect(runtime.prepareDogGreeting()).toBe(false);
+ FakeAudio.all[0].onended!();
+ expect(runtime.prepareDogGreeting()).toBe(false);
+ window.dispatchEvent(new Event('blur'));
+ expect(runtime.prepareDogGreeting()).toBe(false);
+ runtime.destroy();
+});
 
 it("silences animal voices on window blur and resumes scheduling on focus", async () => {
   const runtime = setup([{ id: "hen", kind: "hen", clip: "henPeck", frame: 0, position: { x: 0, y: 0 } }]);

@@ -1,5 +1,20 @@
 {
   "schemaVersion": 1,
   "mapId": "welcome-courtyard",
-  "interactions": []
+  "interactions": [
+    {
+      "id": "east-bench-seat",
+      "kind": "seat",
+      "trigger": {
+        "id": "east-bench-seat-hitbox",
+        "points": [
+          { "x": 1435, "y": 500 },
+          { "x": 1536, "y": 504 },
+          { "x": 1545, "y": 545 },
+          { "x": 1444, "y": 544 }
+        ]
+      },
+      "actionId": "welcome-east-bench"
+    }
+  ]
 }

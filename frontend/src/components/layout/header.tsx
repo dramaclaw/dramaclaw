@@ -410,15 +410,16 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
               render={<Button id="piko-hub-entry" variant="ghost" size="sm" className={`${entryStyles.trigger} px-2 text-xs font-medium`} />}>
               <img src="/brand/piko-piko-wordmark.png" alt="Piko Piko" width={3240} height={520} className={entryStyles.pikoWordmark} draggable={false} />
             </DropdownMenuTrigger>
-            <HeaderMenuPanel dropdown compact>
+            <HeaderMenuPanel dropdown>
+              <HeaderMenuRow menuItem
+                icon={<Map className="size-3.5" />}
+                label={t("header.pikoHub.world")}
+                badge="Beta"
+                onClick={() => { capturePikoTaskEntry(username, window.location.href); playPikoUiSound("open"); void enterPikoWorld(() => navigate({ to: "/piko-world" })); }} />
               <HeaderMenuRow menuItem id="mybuddy-companion-entry"
                 icon={<Users className="size-3.5" />}
                 label={t("header.pikoHub.companion")}
                 onClick={() => setCompanionOpen(true)} />
-              <HeaderMenuRow menuItem
-                icon={<Map className="size-3.5" />}
-                label={t("header.pikoHub.world")}
-                onClick={() => { capturePikoTaskEntry(username, window.location.href); playPikoUiSound("open"); void enterPikoWorld(() => navigate({ to: "/piko-world" })); }} />
               <HeaderMenuRow menuItem
                 icon={<Gamepad2 className="size-3.5" />}
                 label={t("header.pikoHub.play")}
@@ -736,12 +737,11 @@ function AccountPanel({
   );
 }
 
-function HeaderMenuPanel({ children, dropdown = false, compact = false }: {
+function HeaderMenuPanel({ children, dropdown = false }: {
   children: ReactNode;
   dropdown?: boolean;
-  compact?: boolean;
 }) {
-  const className = `${entryStyles.panel} ${entryStyles.menuPanel} ${compact ? entryStyles.compactPanel : ""}`;
+  const className = `${entryStyles.panel} ${entryStyles.menuPanel}`;
   return dropdown ? (
     <DropdownMenuContent align="end" sideOffset={8} className={className}>
       {children}
@@ -755,6 +755,7 @@ function HeaderMenuRow({
   active = false,
   icon,
   label,
+  badge,
   meta,
   unread = false,
   onClick,
@@ -764,6 +765,7 @@ function HeaderMenuRow({
   active?: boolean;
   icon: ReactNode;
   label: string;
+  badge?: string;
   meta?: string;
   unread?: boolean;
   onClick?: () => void;
@@ -773,7 +775,10 @@ function HeaderMenuRow({
       <span className={`${entryStyles.menuIcon} ml-1 flex size-3.5 shrink-0 items-center justify-center`} aria-hidden="true">
         {icon}
       </span>
-      <span className={`${entryStyles.menuLabel} min-w-0 flex-1 truncate`}>{label}</span>
+      <span className={`${entryStyles.menuLabel} flex min-w-0 flex-1 items-center gap-1.5`}>
+        <span className="truncate">{label}</span>
+        {badge && <span className="shrink-0 rounded-full border border-current/20 px-1 py-px text-[10px] font-normal leading-3 text-muted-foreground">{badge}</span>}
+      </span>
       {meta ? (
         <span className="max-w-16 truncate text-[11px] text-slate-400">{meta}</span>
       ) : null}

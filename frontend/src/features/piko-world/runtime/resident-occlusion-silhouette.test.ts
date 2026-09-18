@@ -71,12 +71,20 @@ it("updates a moving canopy mask even while the player stands still", () => {
   const body = new Sprite(texture);
   const tree = { id: "tree", src: "base.png", depthY: 15, position: { x: 10, y: 10 },
     outline: [{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 5, y: 5 }, { x: 0, y: 5 }] };
-  const locator = createResidentOcclusionSilhouette(actor, body, [tree], new Set(["tree"]));
+  let depth = actor.y;
+  const locator = createResidentOcclusionSilhouette(actor, body, [tree], new Set(["tree"]), () => depth);
   expect(locator.mask.containsPoint({ x: 14, y: 11 })).toBe(true);
   tree.outline = tree.outline.map(p => ({ x: p.x - 2, y: p.y }));
   locator.update();
   expect(locator.container.visible).toBe(true);
   expect(locator.mask.containsPoint({ x: 14, y: 11 })).toBe(false);
   expect(locator.mask.containsPoint({ x: 9, y: 11 })).toBe(true);
+  // Hips can be behind the tree's depth boundary while seated feet are in front.
+  depth = 20;
+  locator.update();
+  expect(locator.container.visible).toBe(false);
+  depth = actor.y;
+  locator.update();
+  expect(locator.container.visible).toBe(true);
   locator.destroy(); body.destroy(); texture.destroy(false); actor.destroy();
 });

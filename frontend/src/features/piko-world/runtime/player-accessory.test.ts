@@ -36,7 +36,13 @@ it("skips unchanged poses and tolerates a missing optional accessory texture", (
   const move = vi.spyOn(overlay.position, "set");
   accessory.update("south", 0); accessory.update("south", 0);
   expect(move).toHaveBeenCalledTimes(1);
-  accessory.update("west", 3); expect(move).toHaveBeenCalledTimes(2);
+  const standingY = overlay.y;
+  accessory.update("south", 0, true);
+  expect(overlay.y).toBeGreaterThan(standingY);
+  accessory.update("south", 0, false);
+  expect(overlay.y).toBe(standingY);
+  move.mockClear();
+  accessory.update("west", 3); expect(move).toHaveBeenCalledTimes(1);
   selected = "red-bow"; accessory.update("west", 3); expect(overlay.visible).toBe(false);
   selected = "wizard-hat"; accessory.update("west", 3); expect(overlay.visible).toBe(true);
   accessory.destroy(); body.destroy(); texture.destroy(true);

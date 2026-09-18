@@ -2251,6 +2251,7 @@
     }
   },
   "pikoWorld": {
+    "sitDown": "Sit down",
     "taskLabel": {
       "running": "Task in progress",
       "completed": "Task completed",

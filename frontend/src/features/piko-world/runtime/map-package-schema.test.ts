@@ -38,7 +38,10 @@ describe("Piko World map package contract", () => {
       "east-willow-canopy",
       "west-hall-pine",
     ]);
-    expect(PikoInteractionsSchema.parse(interactions).interactions).toEqual([]);
+    expect(PikoInteractionsSchema.parse(interactions).interactions).toMatchObject([{
+      id: "east-bench-seat", kind: "seat", actionId: "welcome-east-bench",
+      trigger: { id: "east-bench-seat-hitbox" },
+    }]);
     expect(PikoEnvironmentSchema.parse(environment).effects.map(effect => effect.kind)).toEqual(Array(35).fill("sprite"));
     expect(
       PikoMapPackageSchema.parse({ manifest, navigation, occlusion, interactions, environment })

@@ -117,8 +117,9 @@ it("uses the existing click sound for invitation, changed gender and valid confi
   render(<PikoOnboarding initialNickname="小叶" onSave={() => true} onEnter={vi.fn()} />);
   await enterCreation();
   expect(sound).toHaveBeenCalledExactlyOnceWith("open");
-  fireEvent.click(screen.getByRole("radio", { name: "女生" }));
-  fireEvent.click(screen.getByRole("radio", { name: "女生" }));
+  expect(screen.getByRole("radio", { name: "女生" })).toBeChecked();
+  fireEvent.click(screen.getByRole("radio", { name: "男生" }));
+  fireEvent.click(screen.getByRole("radio", { name: "男生" }));
   expect(sound).toHaveBeenCalledTimes(2);
   fireEvent.click(screen.getByRole("button", { name: "开始旅程" }));
   expect(sound).toHaveBeenCalledTimes(3);

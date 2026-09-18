@@ -4,6 +4,7 @@ import { PLAYER_ACCESSORIES, accessoryPose, type PlayerAccessoryId, type PlayerA
 import { FACINGS, type Facing } from "./character-movement";
 import { PIKO_PLAYER_IDLE_CYCLE_MS, type PikoPlayerGender } from "../piko-player";
 import headAnchors from "./player-head-anchors.json";
+import { SEATED_POSE } from "./seated-pose";
 
 const SPARKLE_CYCLE_MS = PIKO_PLAYER_IDLE_CYCLE_MS;
 const SPARKLE_START_MS = 3040;
@@ -42,11 +43,13 @@ export function createPlayerAccessory(body: Sprite, sources: Map<PlayerAccessory
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   let lastId: PlayerAccessorySelection | undefined;
   let lastFrame = -1;
+  let lastSeated = false;
   return {
-    update(facing: Facing, column: number) {
+    update(facing: Facing, column: number, seated = false) {
       const id = selected();
       const frame = FACINGS.indexOf(facing) * 11 + column;
-      if (id === lastId && frame === lastFrame) return;
+      if (id === lastId && frame === lastFrame && seated === lastSeated) return;
+      lastSeated = seated;
       lastId = id;
       lastFrame = frame;
       const texture = id ? frames.get(id) : null;
@@ -55,7 +58,7 @@ export function createPlayerAccessory(body: Sprite, sources: Map<PlayerAccessory
       sprite.visible = pose.visible;
       sprite.texture = texture;
       // Crown anchors measured from each atlas frame, relative to foot (32,57).
-      const [headX, headY] = headAnchors[gender][frame];
+      const [headX, headY] = seated ? SEATED_POSE.accessory : headAnchors[gender][frame];
       sprite.position.set(headX + pose.x, headY + pose.y);
       sprite.scale.set((pose.flip ? -1 : 1) * pose.width / texture.width, pose.height / texture.height);
     },

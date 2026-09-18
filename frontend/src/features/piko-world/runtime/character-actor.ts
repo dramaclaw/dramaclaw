@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { Container, Rectangle, Sprite, Texture, type Ticker } from "pixi.js";
 import { createContactShadow, type CharacterShadowProfile } from "./character-shadow";
+import { SEATED_POSE } from "./seated-pose";
 export interface CharacterActorProfile {
   label: string;
   frameSize: number;
@@ -31,6 +32,12 @@ export function createCharacterActor(sheet: Texture, ticker: Ticker, isActive: (
   const shadow = new Sprite({ texture: shadowTexture, roundPixels: true });
   shadow.anchor.set(0.5, 0.5);
   shadow.scale.set(profile.scale);
+  const seatShadow = new Sprite({ texture: shadowTexture, roundPixels: true });
+  seatShadow.anchor.set(0.5, 0.5);
+  seatShadow.scale.set(0.65, 0.45);
+  seatShadow.alpha = 0.9;
+  seatShadow.visible = false;
+  shadow.addChild(seatShadow);
   const body = new Sprite({ texture: frames[0], roundPixels: true });
   body.anchor.set(profile.pivot.x / profile.frameSize, profile.pivot.y / profile.frameSize);
   body.scale.set(profile.scale);
@@ -39,7 +46,8 @@ export function createCharacterActor(sheet: Texture, ticker: Ticker, isActive: (
   const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
   let elapsed = 0;
   let frame = 0;
-  const reset = () => { elapsed = 0; frame = 0; body.texture = frames[0]; };
+  let staticTexture: Texture | null = null;
+  const reset = () => { elapsed = 0; frame = 0; body.texture = staticTexture ?? frames[0]; };
   const tick = (time: Ticker) => {
     if (profile.manual) return;
     if (document.hidden) return;
@@ -55,8 +63,7 @@ export function createCharacterActor(sheet: Texture, ticker: Ticker, isActive: (
     body,
     setFrame(index: number) {
       if (!Number.isInteger(index) || !frames[index]) throw new Error("Invalid character frame");
-      frame = index;
-      body.texture = frames[index];
+      frame = index; body.texture = staticTexture ?? frames[index];
     },
     setSheet(nextSheet: Texture) {
       if (nextSheet.width !== columns * profile.frameSize || nextSheet.height !== Math.ceil(profile.frameCount / columns) * profile.frameSize) {
@@ -68,8 +75,23 @@ export function createCharacterActor(sheet: Texture, ticker: Ticker, isActive: (
         source: nextSheet.source,
         frame: new Rectangle((index % columns) * profile.frameSize, Math.floor(index / columns) * profile.frameSize, profile.frameSize, profile.frameSize),
       }));
-      body.texture = frames[frame];
+      body.texture = staticTexture ?? frames[frame];
       previous.forEach(texture => texture.destroy(false));
+    },
+    setStaticTexture(texture: Texture | null, pivot?: { x: number; y: number }) {
+      staticTexture = texture;
+      if (texture) {
+        texture.source.scaleMode = "nearest";
+        body.anchor.set((pivot?.x ?? profile.pivot.x) / texture.width, (pivot?.y ?? profile.pivot.y) / texture.height);
+      } else body.anchor.set(profile.pivot.x / profile.frameSize, profile.pivot.y / profile.frameSize);
+      const sittingScale = profile.scale * SEATED_POSE.scale;
+      const footOffset = SEATED_POSE.footY - (pivot?.y ?? profile.pivot.y);
+      shadow.scale.set(texture ? sittingScale : profile.scale);
+      shadow.y = texture ? footOffset * sittingScale : 0;
+      shadow.alpha = 1;
+      seatShadow.visible = Boolean(texture);
+      seatShadow.y = -footOffset;
+      body.texture = staticTexture ?? frames[frame];
     },
     destroy() {
       ticker.remove(tick);
