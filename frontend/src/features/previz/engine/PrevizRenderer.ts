@@ -26,6 +26,7 @@ import {
   PREVIZ_VIEW_NEAR_M,
   boundsCenter,
   boundsRadius,
+  drawTopPlacement,
   framingDistance,
   orbitDepthRange,
   orthoPlacement,
@@ -1223,6 +1224,42 @@ export class PrevizRenderer {
       this.camera.aspect,
     );
     this.moveCamera(placement.position, placement.target);
+  }
+
+  /**
+   * 画笔接管视角用的一次性切换：切到俯视，并把切换前的机位交回去，由调用方留着还原。
+   *
+   * 框的是全场景而不是 [currentBounds]，且半径有兜底——理由见 `drawTopPlacement`。
+   * 视角球上那颗「顶视图」照旧走 [applyViewDirection]，框选中对象，两者不是一回事。
+   *
+   * 返回 `null` = 这次没切（已经拆了，或者正在录制）。录制期间 [moveCamera] 本来就不动
+   * 相机，这时候还交出一份快照，调用方会在退出画笔时拿它硬写一次，等于凭空跳一下机位。
+   *
+   * **不幂等**：已经在画笔俯视里再调一次，交回来的就是俯视本身，原机位会丢。调用方
+   * 只该在自己那份快照为空时才写入——`main.tsx` 开着 `StrictMode`，dev 下 effect
+   * 双跑正好会踩这一点。
+   */
+  applyDrawTopView(): PrevizViewPlacement | null {
+    if (this.disposed || this.recording) return null;
+    const previous = this.viewPose();
+    const placement = drawTopPlacement(this.sceneBounds(), EDITOR_FOV_DEG, this.camera.aspect);
+    this.moveCamera(placement.position, placement.target);
+    return previous;
+  }
+
+  /**
+   * 把一份机位快照原样写回相机。画笔退出时的还原走这条。
+   *
+   * 不直接暴露 [moveCamera]：录制拦截、`controls.update()`、`requestRender()` 那三件事都在
+   * 那条唯一的写机位路径上，绕开一次就少一样。传进来的两个数组不留引用——调用方那份
+   * 快照可能还要再用一次（用户切回画笔）。
+   *
+   * 录制中这次还原会被 [moveCamera] 静默丢掉——这里只挡 `disposed`，`recording` 交给
+   * `moveCamera` 兜。
+   */
+  applyViewPose(pose: PrevizViewPlacement): void {
+    if (this.disposed) return;
+    this.moveCamera([...pose.position], [...pose.target]);
   }
 
   /** 聚焦某个对象（F 键）。对象不存在时什么都不做，别把相机甩到原点。 */
