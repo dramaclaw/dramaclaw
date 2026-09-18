@@ -12,6 +12,10 @@ from typing import BinaryIO
 MAX_NOVEL_UPLOAD_BYTES = 512 * 1024
 MAX_NOVEL_IMPORT_BYTES = 1 * 1024 * 1024
 MAX_PROJECT_UPLOAD_BYTES = 200 * 1024 * 1024
+# 单个路径分量的字节上限，ext4/APFS 都是 255。这里留一大段余量：落地前名字还会
+# 被加工——去重后缀（`-ab12`）、暂存文件名（`upload-` + 32 个十六进制字符 + 原后缀）。
+# 贴着 255 判，撞名或暂存时照样会 ENAMETOOLONG。
+MAX_UPLOAD_FILENAME_BYTES = 200
 
 
 class UploadTooLargeError(ValueError):
@@ -66,8 +70,23 @@ def sanitize_upload_filename(raw_name: str | None, *, fallback: str = "upload.tx
 
 
 def is_safe_upload_target(upload_dir: Path, safe_name: str) -> bool:
-    """Check that *safe_name* resolves inside *upload_dir* (defence in depth)."""
-    target = (upload_dir / safe_name).resolve()
+    """Check that *safe_name* is a usable target inside *upload_dir*.
+
+    Besides path traversal, this rejects the two names the filesystem itself
+    cannot hold — instead of letting them escape a route handler as a 500:
+
+    - names containing NUL: `Path.resolve()` raises `ValueError`;
+    - names over the per-component byte budget: `open()` raises `ENAMETOOLONG`
+      (e.g. 300 Chinese characters are 900 UTF-8 bytes).
+    """
+    if "\x00" in safe_name:
+        return False
+    if len(safe_name.encode("utf-8", "surrogatepass")) > MAX_UPLOAD_FILENAME_BYTES:
+        return False
+    try:
+        target = (upload_dir / safe_name).resolve()
+    except (OSError, ValueError):
+        return False
     return target.is_relative_to(upload_dir.resolve())
 
 

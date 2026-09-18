@@ -247,3 +247,50 @@ def test_deliver_still_has_an_upper_bound():
     response = _deliver_through_real_app(MAX_PROJECT_UPLOAD_BYTES + 1)
 
     assert _is_middleware_413(response), response.text
+
+
+def test_absurdly_long_filename_is_a_client_error(client):
+    """300 个汉字 = 900 字节，超过文件系统 255 字节的分量上限。
+
+    不拦的话 `open()` 抛 ENAMETOOLONG，没人接，用户拿到 500。这是坏请求，该 400。
+    """
+    response = _deliver(
+        client,
+        files={"file": ("白" * 300 + ".png", _png_bytes(), "image/png")},
+        data={"kind": "image", "camera": "Camera", "frame": "1", "width": "16", "height": "16"},
+    )
+
+    assert response.status_code == 400, response.text
+    assert list((client.project_dir / "freezone" / "_uploads").glob("*")) == []
+
+
+def test_filename_with_a_nul_byte_is_a_client_error(client):
+    """含 NUL 的文件名会让 `Path.resolve()` 抛 ValueError，同样不该逃逸成 500。
+
+    multipart 体是手搓的：httpx 会把文件名里的 NUL 转义成 `%00`，用它发不出这个
+    请求。真实客户端（比如自己拼 multipart 的插件）没有这层好心。
+    """
+    boundary = "nulboundary"
+    body = b"".join(
+        [
+            f"--{boundary}\r\n".encode(),
+            b'Content-Disposition: form-data; name="file"; filename="sh\x00ot.png"\r\n',
+            b"Content-Type: image/png\r\n\r\n",
+            _png_bytes(),
+            f"\r\n--{boundary}\r\n".encode(),
+            b'Content-Disposition: form-data; name="kind"\r\n\r\nimage\r\n',
+            f"--{boundary}--\r\n".encode(),
+        ]
+    )
+
+    response = client.post(
+        "/api/v1/projects/demo/blender/deliver",
+        content=body,
+        headers={
+            **_auth(client.db_path),
+            "content-type": f"multipart/form-data; boundary={boundary}",
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert list((client.project_dir / "freezone" / "_uploads").glob("*")) == []

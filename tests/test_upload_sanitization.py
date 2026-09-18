@@ -52,3 +52,18 @@ def test_sanitized_name_is_safe(tmp_path: Path) -> None:
     upload_dir.mkdir()
     safe = sanitize_upload_filename("../../etc/passwd")
     assert is_safe_upload_target(upload_dir, safe)
+
+
+def test_overlong_name_blocked(tmp_path: Path) -> None:
+    # 300 个汉字 = 900 字节，远超单个路径分量 255 字节的上限；放过去的话
+    # 后面 open() 抛 ENAMETOOLONG，在路由里逃逸成 500。
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    assert not is_safe_upload_target(upload_dir, "白" * 300 + ".png")
+
+
+def test_nul_in_name_blocked_instead_of_raising(tmp_path: Path) -> None:
+    # 以前这里会抛 ValueError("embedded null character in path")，调用方接不住。
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    assert not is_safe_upload_target(upload_dir, "sh\x00ot.png")
