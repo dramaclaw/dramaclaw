@@ -59,6 +59,10 @@ def _request_body_limit(request: Request) -> int:
         and (
             request.url.path.endswith("/upload")
             or request.url.path.endswith("/reference-file-upload")
+            # Blender 插件投递白模视频，跟项目上传同一档：`routes/blender.py` 的
+            # `MAX_VIDEO_BYTES` 就是 `MAX_PROJECT_UPLOAD_BYTES` 本身。这里不放行，
+            # 一段 30 秒白模（几十 MB）会在中间件被 413，根本走不到那条限额。
+            or request.url.path.endswith("/blender/deliver")
         )
         and "multipart/form-data" in content_type
     ):

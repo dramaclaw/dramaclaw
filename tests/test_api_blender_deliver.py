@@ -10,6 +10,7 @@ from PIL import Image
 from novelvideo import blender_store
 from novelvideo.api.deps import ProjectResolution
 from novelvideo.api.routes import blender
+from novelvideo.utils.upload_safety import MAX_PROJECT_UPLOAD_BYTES
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
@@ -198,3 +199,51 @@ def test_two_deliveries_with_the_same_name_do_not_clobber_each_other(client):
     assert a.json()["filename"] != b.json()["filename"]
     uploads = client.project_dir / "freezone" / "_uploads"
     assert len(list(uploads.glob("*.png"))) == 2
+
+
+def _deliver_through_real_app(content_length: int):
+    """用真实 app（带全局中间件栈）打一次投递，只设 content-length 不造 body。
+
+    中间件只读 `content-length` 头，不读 body，所以这里不需要真的搬几百 MB 字节。
+    """
+    from novelvideo.api.app import create_app
+
+    with TestClient(create_app()) as real_client:
+        return real_client.post(
+            "/api/v1/projects/demo/blender/deliver",
+            content=b"",
+            headers={
+                "content-type": "multipart/form-data; boundary=x",
+                "content-length": str(content_length),
+            },
+        )
+
+
+def _is_middleware_413(response) -> bool:
+    if response.status_code != 413:
+        return False
+    detail = response.json().get("detail")
+    return isinstance(detail, dict) and detail.get("code") == "canvas_payload_too_large"
+
+
+def test_deliver_passes_the_global_request_body_middleware():
+    """blender 投递必须能穿过全局请求体中间件（`api/app.py` 的 `_limit_body_size`）。
+
+    这条测试存在的理由：本文件其余所有测试都用裸 `FastAPI()` + `include_router`，
+    照不到 `create_app()` 的中间件栈。中间件跑在路由和鉴权之前，默认只给 5MB；
+    面板上写的却是「视频最长 30 秒、最大 200MB」，一段 30 秒白模轻松几十 MB。
+    没有这条测试，整条投递在真实 app 里 413，而 64 条后端测试照样全绿。
+
+    断言的是「中间件没拦」，不是「投递成功」——没有插件令牌，拿到 401 正好说明
+    请求已经穿过中间件抵达鉴权层。
+    """
+    response = _deliver_through_real_app(6 * 1024 * 1024)
+
+    assert not _is_middleware_413(response), response.text
+
+
+def test_deliver_still_has_an_upper_bound():
+    """闸门抬高到 200MB，不是拆掉：超过 `MAX_PROJECT_UPLOAD_BYTES` 仍然当场 413。"""
+    response = _deliver_through_real_app(MAX_PROJECT_UPLOAD_BYTES + 1)
+
+    assert _is_middleware_413(response), response.text
