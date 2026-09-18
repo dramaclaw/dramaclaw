@@ -20,7 +20,7 @@ import { useTranslation } from 'react-i18next';
 
 import type { CloseupTarget } from '../domain/closeupClip';
 import type { PrevizClip, PrevizObjectKind, PrevizTrack } from '../domain/scene';
-import { isPathClip, uToFrame } from '../domain/timeline';
+import { isActionClip, isPathClip, uToFrame } from '../domain/timeline';
 
 /** 头列宽度。轨道行、子轨道行、标尺占位共用同一个数，三者才对得齐。 */
 export const PREVIZ_TRACK_HEADER_PX = 240;
@@ -72,11 +72,21 @@ export interface PrevizTimelineTrackProps {
   onCut?: () => void;
   /** 镜头轨此刻正播这台机位；表头亮「直播」。 */
   live?: boolean;
+  /**
+   * 人物轨道才有的「动作」行，由时间线拼好传进来。不在这里直接 import 动作行：
+   * 动作行要复用本文件的 `ClipBar`，两边互相 import 就成了环。
+   */
+  actionRow?: ReactNode;
+}
+
+/** 主行上画的片段：动作片段有自己那一行，不和路径、特写挤在一起。 */
+function laneClips(track: PrevizTrack): PrevizClip[] {
+  return track.clips.filter((clip) => !isActionClip(clip));
 }
 
 /** 播放头压着的那个片段。剃刀、插入关键帧、清空轨迹都作用在它身上。 */
-function clipUnder(track: PrevizTrack, frame: number): PrevizClip | undefined {
-  return track.clips.find((clip) => frame >= clip.startFrame && frame <= clip.endFrame);
+function clipUnder(clips: readonly PrevizClip[], frame: number): PrevizClip | undefined {
+  return clips.find((clip) => frame >= clip.startFrame && frame <= clip.endFrame);
 }
 
 /** 这条轨道上所有关键帧的帧号，升序。上一帧/下一帧按钮靠它跳。 */
@@ -112,16 +122,18 @@ export function PrevizTimelineTrack({
   onAddCloseup,
   onCut,
   live = false,
+  actionRow,
 }: PrevizTimelineTrackProps) {
   const { t } = useTranslation();
   /** 「跟谁」的选单开着没有。开在行内而不是弹一个对话框：挑的只是一个名字。 */
   const [picking, setPicking] = useState(false);
   const KindIcon = KIND_ICON[kind];
-  const current = clipUnder(track, frame);
+  const clips = laneClips(track);
+  const current = clipUnder(clips, frame);
   const keyframes = keyframeFrames(track);
   const previous = [...keyframes].reverse().find((at) => at < frame);
   const next = keyframes.find((at) => at > frame);
-  const lastEnd = track.clips.reduce((end, clip) => Math.max(end, clip.endFrame), 0);
+  const lastEnd = clips.reduce((end, clip) => Math.max(end, clip.endFrame), 0);
 
   return (
     <li aria-label={name} className="border-b border-[#1c202a]">
@@ -230,7 +242,7 @@ export function PrevizTimelineTrack({
         </div>
 
         <div className="relative shrink-0" style={{ width: laneWidthPx }}>
-          {track.clips.map((clip) => (
+          {clips.map((clip) => (
             <ClipBar
               key={clip.id}
               clip={clip}
@@ -336,16 +348,20 @@ export function PrevizTimelineTrack({
           </div>
         </div>
       )}
+
+      {/* 不随折叠收起：路径行是关键帧细节，动作是这个人在干什么，收起轨道时也该看得见。 */}
+      {actionRow}
     </li>
   );
 }
 
-/** 片段条的配色：对象轨道两种（蓝=轨迹、紫=特写），固定行两种（橙=切片、青=音频）。 */
+/** 片段条的配色：对象轨道三种（蓝=轨迹、紫=特写、绿=动作），固定行两种（橙=切片、青=音频）。 */
 const TONE_CLASS = {
   path: { idle: 'bg-[#3560ba]', selected: 'bg-[#4a7de0] ring-1 ring-[#a8c4ff]' },
   closeup: { idle: 'bg-[#6c43ae]', selected: 'bg-[#8a5cd6] ring-1 ring-[#d5bcff]' },
   cut: { idle: 'bg-[#b8801f]', selected: 'bg-[#d69a24] ring-1 ring-[#ffd27a]' },
   audio: { idle: 'bg-[#2a8c7a]', selected: 'bg-[#37b39c] ring-1 ring-[#9ff0dc]' },
+  action: { idle: 'bg-[#2f8a4a]', selected: 'bg-[#3fae5f] ring-1 ring-[#a6efbd]' },
 } as const;
 
 export type ClipBarTone = keyof typeof TONE_CLASS;
@@ -356,7 +372,7 @@ export type ClipBarTone = keyof typeof TONE_CLASS;
 */
 const CLIP_TONE: Record<PrevizClip['kind'], ClipBarTone> = {
   path: 'path',
-  action: 'path',
+  action: 'action',
   rig: 'closeup',
   cut: 'cut',
   audio: 'audio',
@@ -446,7 +462,7 @@ export function ClipBar({
         if (event.key === 'Enter' || event.key === ' ') onSelect();
       }}
       /*
-        一种片段一种颜色：路径蓝、特写紫、切片橙、音频青。同色的话，一条机位轨道上「自己走位」
+        一种片段一种颜色：路径蓝、特写紫、动作绿、切片橙、音频青。同色的话，一条机位轨道上「自己走位」
         与「跟着人走」两段看起来一模一样，而它们的改法完全不同。
       */
       className={`absolute top-1 flex h-6 items-center overflow-hidden rounded ${
