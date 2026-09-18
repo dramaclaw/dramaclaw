@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  PREVIZ_MOTION_LIMITS,
   PREVIZ_OBJECT_LIMITS,
   PREVIZ_SCENE_BYTE_LIMITS,
   canAddObject,
@@ -76,5 +77,16 @@ describe("previz limits", () => {
     // 按 String.length 估算会低估 4 字节 —— 护栏必须按字节算，否则中文场景会漏过阈值。
     expect(JSON.stringify(cjk).length).toBe(JSON.stringify(ascii).length);
     expect(estimateSceneBytes(cjk)).toBe(estimateSceneBytes(ascii) + 4);
+  });
+});
+
+describe('PREVIZ_MOTION_LIMITS', () => {
+  it('pins the numbers from the design doc', () => {
+    expect(PREVIZ_MOTION_LIMITS).toEqual({
+      imported: 30,
+      fileBytes: 50 * 1024 * 1024,
+      durationSec: 60,
+      clipsPerCharacter: 60,
+    });
   });
 });

@@ -149,6 +149,10 @@ describe("previz scene schema", () => {
     expect(parsed.objects).not.toBe(rawObjects);
     expect(parsed.timeline.tracks).not.toBe(rawTracks);
   });
+
+  it("starts with an empty imported motion list", () => {
+    expect(createDefaultScene().motions).toEqual([]);
+  });
 });
 
 describe("parseScene object validation", () => {
@@ -726,5 +730,120 @@ describe("parseScene program and audio tables", () => {
     expect(parsed.timeline.audio.map((entry) => entry.id)).toEqual(["inf-offset", "undef-offset"]);
     expect(parsed.timeline.audio[0]).toMatchObject({ offsetMs: 0 });
     expect(parsed.timeline.audio[1]).toMatchObject({ offsetMs: 0 });
+  });
+});
+
+describe("parseScene motions and action clips", () => {
+  const motion = (id: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    name: "挥手",
+    url: `/u/${id}.glb`,
+    sourceFileName: `${id}.glb`,
+    format: "glb",
+    skeleton: "mixamo",
+    clipIndex: 0,
+    durationSec: 2,
+    loop: false,
+    ...extra,
+  });
+  const hero = { id: "hero", kind: "character", name: "主角" };
+  const cam = { id: "cam", kind: "camera", name: "机位" };
+  const action = (id: string, startFrame: number, endFrame: number, motionId: string) => ({
+    id,
+    kind: "action",
+    startFrame,
+    endFrame,
+    motionId,
+  });
+
+  it("reads old scenes without motions as an empty list", () => {
+    expect(parseScene({ schemaVersion: 1, objects: [] }).motions).toEqual([]);
+  });
+
+  it("keeps valid motions, fixes soft fields and drops broken ones", () => {
+    const parsed = parseScene({
+      schemaVersion: 1,
+      motions: [
+        motion("a", { durationSec: 90, clipIndex: 1.6, loop: "yes", name: 3 }),
+        motion("a"),
+        motion("b", { format: "fbx" }),
+        motion("c", { skeleton: "bip" }),
+        motion("d", { url: "" }),
+        motion("e", { durationSec: 0 }),
+        { id: "f" },
+        null,
+      ],
+    });
+    expect(parsed.motions).toEqual([
+      {
+        id: "a",
+        name: "",
+        url: "/u/a.glb",
+        sourceFileName: "a.glb",
+        format: "glb",
+        skeleton: "mixamo",
+        clipIndex: 2,
+        durationSec: 60,
+        loop: false,
+      },
+    ]);
+  });
+
+  it("caps the imported motion list", () => {
+    const many = Array.from({ length: 35 }, (_, index) => motion(`m${index}`));
+    expect(parseScene({ schemaVersion: 1, motions: many }).motions).toHaveLength(30);
+  });
+
+  it("keeps action clips only on character tracks with a known motion", () => {
+    const parsed = parseScene({
+      schemaVersion: 1,
+      objects: [hero, cam],
+      motions: [motion("m1")],
+      timeline: {
+        tracks: [
+          {
+            id: "t1",
+            objectId: "hero",
+            clips: [
+              action("a1", 0, 30, "builtin:Idle_Loop"),
+              action("a2", 30, 60, "import:m1"),
+              action("a3", 60, 90, "import:gone"),
+              action("a4", 90, 120, "builtin:Nope"),
+              action("a5", 100, 100, "builtin:Idle_Loop"),
+              { id: "p1", kind: "path", startFrame: 0, endFrame: 60, points: [] },
+            ],
+          },
+          {
+            id: "t2",
+            objectId: "cam",
+            clips: [action("a6", 0, 30, "builtin:Idle_Loop")],
+          },
+        ],
+      },
+    });
+    const [heroTrack, camTrack] = parsed.timeline.tracks;
+    expect(heroTrack!.clips.map((clip) => clip.id)).toEqual(["p1", "a1", "a2"]);
+    expect(camTrack!.clips).toEqual([]);
+  });
+
+  it("sorts action clips and drops overlaps", () => {
+    const parsed = parseScene({
+      schemaVersion: 1,
+      objects: [hero],
+      timeline: {
+        tracks: [
+          {
+            id: "t1",
+            objectId: "hero",
+            clips: [
+              action("late", 40, 80, "builtin:Idle_Loop"),
+              action("early", 0, 50, "builtin:Idle_Loop"),
+              action("touching", 50, 60, "builtin:Idle_Loop"),
+            ],
+          },
+        ],
+      },
+    });
+    expect(parsed.timeline.tracks[0]!.clips.map((clip) => clip.id)).toEqual(["early", "touching"]);
   });
 });
