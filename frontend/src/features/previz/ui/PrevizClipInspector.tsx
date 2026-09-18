@@ -9,19 +9,23 @@ import {
   PREVIZ_RIG_ELEVATION_RANGE,
   PREVIZ_RIG_HEIGHT_RANGE,
 } from '../domain/closeup';
-import type {
-  PrevizAudioClip,
-  PrevizCutClip,
-  PrevizPathClip,
-  PrevizPathPoint,
-  PrevizRigClip,
-  RigAnchorPart,
-  RigBearing,
-  RigMotion,
-  Vec3,
+import { builtinMotionById, importedIdOf } from '../domain/motionLibrary';
+import {
+  PREVIZ_FPS,
+  type PrevizActionClip,
+  type PrevizAudioClip,
+  type PrevizCutClip,
+  type PrevizPathClip,
+  type PrevizPathPoint,
+  type PrevizRigClip,
+  type RigAnchorPart,
+  type RigBearing,
+  type RigMotion,
+  type Vec3,
 } from '../domain/scene';
-import { clipById, isPathClip, isRigClip } from '../domain/timeline';
+import { clipById, isActionClip, isPathClip, isRigClip } from '../domain/timeline';
 import { usePrevizStore } from '../store';
+import { motionErrorText, motionLabel } from './motionLabel';
 
 /*
   版式：一行一件事，左边一列定宽标签，右边把剩下的宽度让给控件。
@@ -525,6 +529,98 @@ function AudioPanel({ clip }: { clip: PrevizAudioClip }) {
 }
 
 /**
+ * 动作片段的面板。没有「裁到播放头」「插点」：动作片段的长度该跟着动作走，
+ * 常用的调整是「对齐动作时长」，其余在时间轴上拉边。
+ *
+ * 「对齐」在动作不认识时（导入动作被删、目录里没这条）按不下去：没有时长可对。
+ */
+function ActionPanel({ clip }: { clip: PrevizActionClip }) {
+  const { t } = useTranslation();
+  const motions = usePrevizStore((state) => state.scene.motions);
+  const motionStatus = usePrevizStore((state) => state.motionStatus);
+  const moveClipBy = usePrevizStore((state) => state.moveClipBy);
+  const setClipEnd = usePrevizStore((state) => state.setClipEnd);
+  const fitClipToMotion = usePrevizStore((state) => state.fitClipToMotion);
+  const openMotionDialog = usePrevizStore((state) => state.openMotionDialog);
+  const removeClipById = usePrevizStore((state) => state.removeClipById);
+
+  const builtin = builtinMotionById(clip.motionId);
+  const importedId = importedIdOf(clip.motionId);
+  const imported = importedId === null ? undefined : motions.find((motion) => motion.id === importedId);
+  const status = importedId === null ? undefined : motionStatus[importedId];
+  const frames = clip.endFrame - clip.startFrame;
+  const source = builtin
+    ? t('previz.motion.inspector.builtin')
+    : imported
+      ? t('previz.motion.inspector.imported', {
+          file: imported.sourceFileName,
+          skeleton: t(`previz.motion.skeleton.${imported.skeleton}`),
+        })
+      : null;
+
+  return (
+    <div className="flex flex-col gap-2 border-t border-white/10 p-3">
+      <Row label={t('previz.motion.inspector.motion')}>
+        <span className="min-w-0 flex-1 truncate text-[12px] text-white/90">
+          {motionLabel(t, motions, clip.motionId)}
+        </span>
+        <button
+          type="button"
+          className={ACTION}
+          onClick={() => openMotionDialog({ mode: 'replace', clipId: clip.id })}
+        >
+          {t('previz.motion.inspector.replace')}
+        </button>
+      </Row>
+      {source && (
+        <Row label={t('previz.motion.inspector.source')}>
+          <span className="min-w-0 flex-1 truncate text-[12px] text-white/60" title={source}>
+            {source}
+          </span>
+        </Row>
+      )}
+      {status?.state === 'error' && (
+        <p role="alert" className="text-[11px] leading-relaxed text-red-300/90">
+          {motionErrorText(t, status.error)}
+        </p>
+      )}
+      <NumberField
+        label={t('previz.clip.startFrame')}
+        value={clip.startFrame}
+        step={1}
+        // 同对象片段：改起点是整条平移。
+        onCommit={(next) => moveClipBy(clip.id, Math.round(next) - clip.startFrame)}
+      />
+      <NumberField
+        label={t('previz.clip.endFrame')}
+        value={clip.endFrame}
+        step={1}
+        onCommit={(next) => setClipEnd(clip.id, next)}
+      />
+      <Row label={t('previz.motion.inspector.duration')}>
+        <span className="min-w-0 flex-1 truncate text-[12px] tabular-nums text-white/80">
+          {t('previz.motion.inspector.durationValue', {
+            frames,
+            seconds: (frames / PREVIZ_FPS).toFixed(1),
+          })}
+        </span>
+      </Row>
+      <button
+        type="button"
+        className={ACTION}
+        disabled={!builtin && !imported}
+        onClick={() => fitClipToMotion(clip.id)}
+      >
+        {t('previz.motion.inspector.fit')}
+      </button>
+      <button type="button" className={DANGER} onClick={() => removeClipById(clip.id)}>
+        {t('previz.clip.remove')}
+      </button>
+    </div>
+  );
+}
+
+/**
  * 片段与轨迹点属性面板。挂在右侧属性面板下方，只在选中片段时出现。
  *
  * 所有编辑都走数值输入框与按钮，而不是在时间轴条上拖：jsdom 没有布局，拖拽的命中
@@ -558,6 +654,7 @@ export function PrevizClipInspector() {
   if (found.table === 'program') return <CutPanel clip={found.clip} />;
   if (found.table === 'audio') return <AudioPanel clip={found.clip} />;
   const clip = found.clip;
+  if (isActionClip(clip)) return <ActionPanel clip={clip} />;
 
   const point: PrevizPathPoint | undefined = isPathClip(clip)
     ? clip.points.find((entry) => entry.id === selectedPointId)
