@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import base64
 import hashlib
+import math
 import os
 import re
 import sys
@@ -767,6 +768,68 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
         ).strip("-")
         clarification_id = f"clarify_{safe_context or 'default'}_{uuid.uuid4().hex[:8]}"
     questions = _safe_list(args.get("questions"))
+    generation_media_types = args.get("generation_media_types")
+    generation_required_choices = args.get("generation_required_choices")
+    if generation_media_types is not None or generation_required_choices is not None:
+        if questions or (
+            generation_media_types is not None
+            and generation_required_choices is not None
+        ):
+            return tool_result({
+                "ok": False,
+                "status": "generation_clarification_args_invalid",
+                "error": "Pass exactly one generation mode without questions",
+            })
+        if generation_required_choices is not None:
+            if not isinstance(generation_required_choices, dict) or not generation_required_choices:
+                return tool_result({
+                    "ok": False,
+                    "status": "generation_clarification_args_invalid",
+                    "error": "generation_required_choices must be a nonempty object",
+                })
+            requested = generation_required_choices
+        elif (
+            not isinstance(generation_media_types, list)
+            or not generation_media_types
+            or any(media not in {"image", "video"} for media in generation_media_types)
+        ):
+            return tool_result({
+                "ok": False,
+                "status": "generation_clarification_args_invalid",
+                "error": "generation_media_types must contain image and/or video",
+            })
+        else:
+            requested = {media: None for media in generation_media_types}
+        generation_fields = {
+            media: tuple(
+                "resolution" if media == "video" and field == "quality"
+                else _GENERATION_PORTABLE_FIELDS[field]
+                for field in _GENERATION_PARAMETER_FIELDS[node_type]
+            )
+            for media, node_type in (("image", "imageGenNode"), ("video", "videoNode"))
+        }
+        for media, fields in requested.items():
+            if media not in generation_fields or (
+                fields is not None
+                and (
+                    not isinstance(fields, list)
+                    or not fields
+                    or any(field not in generation_fields[media] for field in fields)
+                )
+            ):
+                return tool_result({
+                    "ok": False,
+                    "status": "generation_clarification_args_invalid",
+                    "error": "Unsupported generation media type or required choice",
+                })
+            chosen_fields = fields if fields is not None else generation_fields[media]
+            questions.extend(
+                {"id": f"{media}_{'variants_per_node' if field == 'count' else field}"}
+                for field in chosen_fields
+            )
+        # A generic recommended action has no authoritative model-specific
+        # answers. Require concrete choices before writing them to a draft.
+        args = {**args, "allow_recommended": False, "allow_skip": False}
     generation_question_aliases = {
         "image_count": "image_variants_per_node",
         "video_count": "video_variants_per_node",
@@ -895,7 +958,27 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
                     ),
                 }
             )
-    return _emit_clarification_event(
+    draft_id = str(args.get("workflow_draft_id") or "").strip()
+    draft_revision = args.get("workflow_expected_revision")
+    if draft_id:
+        if generation_media_types is None and generation_required_choices is None:
+            return tool_result({
+                "ok": False,
+                "status": "generation_clarification_args_invalid",
+                "error": "workflow_draft_id requires a generation clarification mode",
+            })
+        if type(draft_revision) is not int or draft_revision < 1:
+            return tool_result({
+                "ok": False,
+                "status": "workflow_draft_revision_required",
+                "error": "workflow_expected_revision must be a positive integer",
+            })
+        draft, draft_error = _workflow_generation_draft(
+            project, canvas, draft_id, draft_revision
+        )
+        if draft_error is not None:
+            return tool_result(draft_error)
+    result = _emit_clarification_event(
         project,
         canvas,
         {
@@ -909,6 +992,28 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
             "allow_skip": bool(args.get("allow_skip", True)),
         },
     )
+    if not draft_id:
+        return result
+    response = _tool_result_payload(result)
+    if (
+        not isinstance(response, dict)
+        or response.get("ok") is not True
+        or response.get("clarification_status") != "answered"
+        or response.get("skipped")
+    ):
+        return result
+    assert draft is not None
+    return tool_result(_apply_workflow_generation_answers(
+        project=project,
+        canvas=canvas,
+        draft_id=draft_id,
+        expected_revision=draft_revision,
+        draft=draft,
+        question_ids=[str(question["id"]) for question in questions if isinstance(question, dict)],
+        answers=response.get("answers"),
+        clarification_result=response,
+        missing_only=generation_required_choices is not None,
+    ))
 
 
 def _handle_present_agent_catalog_draft(args: dict[str, Any], **_: Any) -> str:
@@ -3124,6 +3229,15 @@ _GENERATION_PARAMETER_FIELDS = {
         "count",
     ),
 }
+_GENERATION_PORTABLE_FIELDS = {
+    "model": "model",
+    "aspectRatio": "aspect_ratio",
+    "size": "resolution",
+    "quality": "quality",
+    "durationSec": "duration_seconds",
+    "generateAudio": "generate_audio",
+    "count": "count",
+}
 _RECOMMENDED_GENERATION_MODEL_VALUES = {
     "auto",
     "default",
@@ -3325,21 +3439,12 @@ def _generation_parameters_required_result(
             for item in missing
         }
     )
-    portable_fields = {
-        "model": "model",
-        "aspectRatio": "aspect_ratio",
-        "size": "resolution",
-        "quality": "quality",
-        "durationSec": "duration_seconds",
-        "generateAudio": "generate_audio",
-        "count": "count",
-    }
     required_choices: dict[str, list[str]] = {}
     for item in missing:
         media_type = "image" if item["node_type"] == "imageGenNode" else "video"
         choices = required_choices.setdefault(media_type, [])
         for field in item.get("fields") or []:
-            portable = portable_fields.get(str(field), str(field))
+            portable = _GENERATION_PORTABLE_FIELDS.get(str(field), str(field))
             # Video stores its resolution in data.quality.
             if media_type == "video" and field == "quality":
                 portable = "resolution"
@@ -3355,13 +3460,15 @@ def _generation_parameters_required_result(
         "required_choices": required_choices,
         "clarification": {
             "title": "确认图片和视频生成参数",
-            "allow_recommended": True,
+            "allow_recommended": False,
             "allow_skip": False,
         },
         "agent_instruction": (
             "Stop before every canvas write. Call freezone_request_user_clarification "
-            "exactly once for all missing image/video choices, offering a recommended "
-            "option. After the user answers, retry the same operation with the chosen "
+            "exactly once with generation_required_choices set to this result's "
+            "required_choices and pass any already confirmed model choices in answers. "
+            "The server assembles every missing question. "
+            "After the user answers, retry the same operation with the chosen "
             "values. For a WorkflowPlan, put them in each image/video node data. For a "
             "workflow draft, patch inputs with the portable image_* and video_* keys. "
             "Do not claim success and do not silently choose defaults."
@@ -4692,7 +4799,16 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
             "Freezone dynamic WorkflowPlan validation is unavailable. "
             f"Import error: {_JSON_WORKFLOW_CATALOG_IMPORT_ERROR}"
         )
-    validated = validate_agent_workflow_plan(args["plan"])
+    source_plan = args["plan"]
+    if "generation_answers" in args:
+        source_plan = _clone_json(source_plan)
+        choices, answers_error = _generation_choices_from_answers(
+            args["generation_answers"]
+        )
+        if answers_error is not None:
+            return tool_result(answers_error)
+        _apply_generation_choices_to_plan(source_plan, choices)
+    validated = validate_agent_workflow_plan(source_plan)
     if not validated.get("ok"):
         return tool_result(validated)
     project, canvas, scope_error = _workflow_draft_scope(args)
@@ -5172,6 +5288,31 @@ def _handle_workflow_operation(args: dict[str, Any], *, action: str) -> str:
                 "retryable": False,
             }
         )
+    request_args = args
+    if action == "prepare" and "generation_answers" in args:
+        choices, answers_error = _generation_choices_from_answers(
+            args["generation_answers"]
+        )
+        if answers_error is not None:
+            return tool_result(answers_error)
+        request_args = dict(args)
+        if isinstance(args.get("intent"), dict) and "plan" not in args:
+            intent = _clone_json(args["intent"])
+            current_inputs = intent.get("inputs")
+            intent["inputs"] = {
+                **(current_inputs if isinstance(current_inputs, dict) else {}),
+                **choices,
+            }
+            request_args["intent"] = intent
+        elif isinstance(args.get("plan"), dict) and "intent" not in args:
+            plan = _clone_json(args["plan"])
+            _apply_generation_choices_to_plan(plan, choices)
+            request_args["plan"] = plan
+        else:
+            return tool_result({
+                "ok": False, "status": "workflow_source_required",
+                "error": "generation_answers requires exactly one intent or plan",
+            })
     path = _workflow_draft_api_path(project_id, canvas_id, draft_id)
     try:
         if action == "get":
@@ -5182,7 +5323,7 @@ def _handle_workflow_operation(args: dict[str, Any], *, action: str) -> str:
                 if action == "prepare"
                 else ("expected_revision", "changes", "run_after_create")
             )
-            body = {key: args[key] for key in keys if key in args}
+            body = {key: request_args[key] for key in keys if key in request_args}
             body["response_view"] = "summary"
             response = _request(
                 "POST" if action == "prepare" else "PATCH", path, body=body
@@ -5315,6 +5456,18 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
                 ),
             }
         )
+    if "generation_answers" in args:
+        choices, answers_error = _generation_choices_from_answers(
+            args["generation_answers"]
+        )
+        if answers_error is not None:
+            return tool_result(answers_error)
+        intent = _clone_json(intent)
+        current_inputs = intent.get("inputs")
+        intent["inputs"] = {
+            **(current_inputs if isinstance(current_inputs, dict) else {}),
+            **choices,
+        }
     compiled = compile_workflow_intent(intent)
     if not compiled.get("ok"):
         return tool_result(compiled)
@@ -5470,6 +5623,246 @@ def _handle_patch_workflow_draft(args: dict[str, Any], **_: Any) -> str:
         "Keep using this draft_id and revision for further adjustments or confirmation."
     )
     return tool_result(result)
+
+
+_GENERATION_ANSWER_DATA_FIELDS = {
+    "image_model": ("imageGenNode", "model"),
+    "image_aspect_ratio": ("imageGenNode", "aspectRatio"),
+    "image_resolution": ("imageGenNode", "size"),
+    "image_quality": ("imageGenNode", "quality"),
+    "image_variants_per_node": ("imageGenNode", "count"),
+    "video_model": ("videoNode", "model"),
+    "video_aspect_ratio": ("videoNode", "aspectRatio"),
+    "video_resolution": ("videoNode", "quality"),
+    "video_duration_seconds": ("videoNode", "durationSec"),
+    "video_generate_audio": ("videoNode", "generateAudio"),
+    "video_variants_per_node": ("videoNode", "count"),
+}
+
+
+def _workflow_generation_draft(
+    project: str | None,
+    canvas: str | None,
+    draft_id: str,
+    expected_revision: int,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    if not project or not canvas:
+        return None, {
+            "ok": False, "status": "workflow_draft_scope_required",
+            "error": "project_id and canvas_id are required for draft writeback",
+        }
+    payload, error = _workflow_draft_response(_request(
+        "GET", _workflow_draft_api_path(project, canvas, draft_id)
+    ))
+    if payload is None:
+        return None, error
+    revision = int(payload.get("revision") or 0)
+    if revision != expected_revision:
+        return None, {
+            "ok": False, "status": "workflow_draft_revision_conflict",
+            "error": "workflow draft revision changed before clarification",
+            "current_revision": revision,
+        }
+    if payload.get("status") != "ready":
+        return None, {
+            "ok": False, "status": "workflow_draft_not_editable",
+            "error": "workflow draft is no longer ready for revision",
+        }
+    return payload, None
+
+
+def _generation_answer_value(question_id: str, selection: Any) -> Any:
+    if isinstance(selection, dict):
+        option_ids = selection.get("option_ids")
+        if option_ids is None and isinstance(selection.get("option_id"), str):
+            option_ids = [selection["option_id"]]
+        if not isinstance(option_ids, list) or len(option_ids) != 1:
+            raise ValueError(f"{question_id} requires exactly one selected option")
+        selection = option_ids[0]
+    if not isinstance(selection, str) or not selection.strip():
+        raise ValueError(f"{question_id} requires a selected option")
+    value = selection.strip()
+    if question_id.endswith("variants_per_node"):
+        if value not in {"1", "2", "4"}:
+            raise ValueError(f"{question_id} must be 1, 2, or 4")
+        return int(value)
+    if question_id == "video_duration_seconds":
+        try:
+            duration = float(value)
+        except ValueError as exc:
+            raise ValueError("video_duration_seconds must be numeric") from exc
+        if not math.isfinite(duration) or not 0 < duration <= 600:
+            raise ValueError("video_duration_seconds must be between 0 and 600")
+        return int(duration) if duration.is_integer() else duration
+    if question_id == "video_generate_audio":
+        if value.lower() not in {"true", "false"}:
+            raise ValueError("video_generate_audio must be true or false")
+        return value.lower() == "true"
+    return value
+
+
+def _generation_choices_from_answers(
+    answers: Any,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    if not isinstance(answers, dict) or not answers:
+        return {}, {
+            "ok": False, "status": "generation_answers_incomplete",
+            "error": "generation_answers must contain submitted generation choices",
+        }
+    choices: dict[str, Any] = {}
+    try:
+        for question_id, selection in answers.items():
+            if question_id not in _GENERATION_ANSWER_DATA_FIELDS:
+                raise ValueError(f"unsupported generation answer: {question_id}")
+            choices[question_id] = _generation_answer_value(question_id, selection)
+        for media, mandatory in {
+            "image": ("model", "aspect_ratio", "resolution", "variants_per_node"),
+            "video": (
+                "model", "aspect_ratio", "resolution", "duration_seconds",
+                "variants_per_node",
+            ),
+        }.items():
+            if any(key.startswith(f"{media}_") for key in choices):
+                for field in mandatory:
+                    key = f"{media}_{field}"
+                    if key not in choices:
+                        raise ValueError(f"missing generation answer: {key}")
+    except ValueError as exc:
+        return {}, {
+            "ok": False, "status": "generation_answers_incomplete",
+            "error": str(exc),
+        }
+    return choices, None
+
+
+def _apply_generation_choices_to_plan(
+    plan: dict[str, Any], choices: dict[str, Any], *, missing_only: bool = False
+) -> None:
+    for node in plan.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        node_choices = [
+            (field, value)
+            for question_id, value in choices.items()
+            for node_type, field in (_GENERATION_ANSWER_DATA_FIELDS[question_id],)
+            if node.get("node_type") == node_type
+        ]
+        if not node_choices:
+            continue
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        for field, value in node_choices:
+            if missing_only and _generation_parameter_value_present(field, data.get(field)):
+                continue
+            data[field] = value
+        node["data"] = data
+
+
+def _apply_workflow_generation_answers(
+    *,
+    project: str | None,
+    canvas: str | None,
+    draft_id: str,
+    expected_revision: int,
+    draft: dict[str, Any],
+    question_ids: list[str],
+    answers: Any,
+    clarification_result: dict[str, Any],
+    missing_only: bool,
+) -> dict[str, Any]:
+    if not isinstance(answers, dict):
+        return {
+            "ok": False, "status": "generation_answers_incomplete",
+            "error": "The clarification returned no generation answers; draft was not changed",
+        }
+    choices: dict[str, Any] = {}
+    try:
+        for question_id in question_ids:
+            if question_id not in _GENERATION_ANSWER_DATA_FIELDS:
+                raise ValueError(f"unsupported generation question: {question_id}")
+            if question_id not in answers:
+                if question_id in {"image_quality", "video_generate_audio"}:
+                    continue
+                raise ValueError(f"missing answer: {question_id}")
+            choices[question_id] = _generation_answer_value(question_id, answers[question_id])
+    except ValueError as exc:
+        return {
+            "ok": False, "status": "generation_answers_incomplete",
+            "error": str(exc), "draft_id": draft_id,
+            "current_revision": expected_revision,
+        }
+    intent = draft.get("intent") if isinstance(draft.get("intent"), dict) else {}
+    if intent.get("schema_version") == "freezone_workflow_plan_draft.v1":
+        if validate_agent_workflow_plan is None:
+            return {"ok": False, "status": "workflow_draft_unavailable",
+                    "error": "WorkflowPlan validation is unavailable"}
+        source = _clone_json(intent)
+        plan = source.get("plan") if isinstance(source.get("plan"), dict) else {}
+        _apply_generation_choices_to_plan(plan, choices, missing_only=missing_only)
+        compiled = validate_agent_workflow_plan(plan)
+        if not compiled.get("ok"):
+            return compiled
+        source["plan"] = compiled["plan"]
+        patch_body = {
+            "intent": source, "compiled": compiled,
+            "last_changes": {"generation_answers": sorted(choices)},
+        }
+    else:
+        patch_body, error = build_workflow_draft_patch(
+            payload=draft,
+            changes={"inputs": choices},
+            compile_intent=compile_workflow_intent,
+        )
+        if patch_body is None:
+            return error
+        compiled = patch_body["compiled"]
+    assert project is not None and canvas is not None
+    preflight = _workflow_runtime_preflight(compiled, project_id=project)
+    if preflight["blockers"]:
+        return {
+            "ok": False, "status": "workflow_preflight_failed",
+            "error": preflight["blockers"][0]["message"],
+            "preflight": preflight, "draft_id": draft_id,
+        }
+    compiled["preflight"] = preflight
+    if draft.get("run_after_create"):
+        verified = (compiled.get("external_inputs_verified") or {})
+        graph = build_workflow_graph_commands({
+            "plan": compiled.get("plan"),
+            "run_after_create": True,
+            "workflow_instance_id": draft_id,
+            "external_node_ids": {key: value["node_id"] for key, value in verified.items()},
+            "external_media_urls": {key: value["media_url"] for key, value in verified.items()},
+        })
+        if not graph.get("ok"):
+            return graph
+        missing = _external_generation_parameter_preflight(
+            project, canvas, graph.get("commands") or []
+        )
+        if missing is not None:
+            return {**missing, "draft_id": draft_id,
+                    "current_revision": expected_revision}
+    payload, error = _workflow_draft_response(_request(
+        "PATCH", _workflow_draft_api_path(project, canvas, draft_id),
+        body={"expected_revision": expected_revision, **patch_body},
+    ))
+    if payload is None:
+        return error
+    updated = public_workflow_draft(payload)
+    return {
+        **clarification_result,
+        "status": "clarification_frontend_result",
+        "draft_id": draft_id,
+        "revision": updated["revision"],
+        "preview": updated["preview"],
+        "plan_digest": updated["plan_digest"],
+        "run_after_create": updated["run_after_create"],
+        "draft_updated": True,
+        "message": "Generation choices were saved to the same workflow draft.",
+        "agent_instruction": (
+            "Present the updated preview and revision to the user. "
+            "Wait for confirmation before calling freezone_confirm_workflow_draft."
+        ),
+    }
 
 
 def _tool_result_payload(value: Any) -> dict[str, Any] | None:
@@ -6333,6 +6726,10 @@ _WORKFLOW_RESULT_FIELDS = (
     "plan_digest",
     "run_after_create",
     "skipped_edges",
+    "media_types",
+    "missing_parameters",
+    "required_choices",
+    "clarification",
 )
 
 _RESULT_ARRAY_FIELDS = frozenset(
@@ -6349,6 +6746,8 @@ _RESULT_ARRAY_FIELDS = frozenset(
         "errors",
         "items",
         "link_types",
+        "media_types",
+        "missing_parameters",
         "node_ids",
         "nodes",
         "questions",
@@ -6365,6 +6764,7 @@ _RESULT_BOOLEAN_FIELDS = frozenset(
         "terminal",
         "automatic_retry",
         "changed",
+        "draft_updated",
         "allow_recommended",
         "allow_skip",
         "applied",
@@ -6399,7 +6799,9 @@ _RESULT_OBJECT_FIELDS = frozenset(
         "counts",
         "answers",
         "client_debug",
+        "clarification",
         "operations",
+        "required_choices",
         "selections",
     }
 )
@@ -6544,6 +6946,18 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
         "answers",
         "skipped",
         "used_recommended",
+        "draft_id",
+        "draft_updated",
+        "revision",
+        "preview",
+        "plan_digest",
+        "run_after_create",
+        "current_revision",
+        "preflight",
+        "media_types",
+        "missing_parameters",
+        "required_choices",
+        "clarification",
         "errors",
     ),
     "freezone_begin_agent_catalog_draft": (
@@ -8294,7 +8708,7 @@ TOOLS = (
         "freezone_request_user_clarification",
         _schema(
             "freezone_request_user_clarification",
-            "Ask the user structured clarification questions in the Freezone frontend and wait for their submitted answers. Use for user choices before continuing the current chat or workflow, including Skill Studio setup questions. For image/video generation, never combine fields into a recommended-settings preset: use one canonical question id per missing field. For canonical generation ids, title and options may be omitted because the server supplies localized titles and the frontend resolves the complete live catalog. The submitted answers only mean the user completed the choices; decide the next step from the current context. This tool does not write canvas nodes or save catalog files.",
+            "Ask the user structured clarification questions in the Freezone frontend and wait for their submitted answers, including Skill Studio setup questions. For image/video generation pass generation_media_types to ask every field, or pass generation_required_choices returned by preflight to ask only missing fields; the server assembles canonical questions and the frontend resolves live options. With workflow_draft_id and workflow_expected_revision, submitted answers are validated and saved to that draft before returning its new preview. For legacy canonical generation questions, title and options may be omitted. Do not hand-build generation questions. For other clarifications, decide the next step from the current context. This tool never creates or runs canvas nodes.",
             {
                 "clarification_id": {
                     "type": "string",
@@ -8316,6 +8730,29 @@ TOOLS = (
                     "type": "array",
                     "description": "High-level user-facing questions. Ask only the questions needed for the next decision; use one focused question when the next step depends on one answer, or group closely related choices when they should be answered together. Each question should usually have 2-5 options, but generation model questions must include every exact option from the live node schema.",
                     "items": _SKILL_STUDIO_QUESTION_SCHEMA,
+                },
+                "generation_media_types": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["image", "video"]},
+                    "description": "Generate the full parameter card for the listed media types. Do not also pass questions.",
+                },
+                "generation_required_choices": {
+                    "type": "object",
+                    "description": "Pass required_choices from a generation_parameters_required result unchanged; the server asks each missing field. Do not also pass questions.",
+                    "properties": {
+                        "image": {"type": "array", "items": {"type": "string"}},
+                        "video": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "additionalProperties": False,
+                },
+                "workflow_draft_id": {
+                    "type": "string",
+                    "description": "Existing workflow draft to update with submitted generation answers.",
+                },
+                "workflow_expected_revision": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Exact draft revision shown before clarification; required with workflow_draft_id.",
                 },
                 "answers": {
                     "type": "object",
@@ -8350,7 +8787,7 @@ TOOLS = (
                 },
                 **_SCOPE_PROPS,
             },
-            ["questions"],
+            [],
         ),
         _handle_request_user_clarification,
     ),
@@ -8954,6 +9391,10 @@ TOOLS = (
                 **_SCOPE_PROPS,
                 "intent": _WORKFLOW_INTENT_OBJECT_SCHEMA,
                 "plan": _WORKFLOW_PLAN_OBJECT_SCHEMA,
+                "generation_answers": {
+                    "type": "object",
+                    "description": "Pass submitted generation answers unchanged; the server maps them into the selected intent or plan.",
+                },
                 "bindings": _WORKFLOW_BINDINGS_SCHEMA,
                 "operation_id": {"type": "string"},
                 **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
@@ -9015,6 +9456,10 @@ TOOLS = (
                     "description": "Admitted workflow_result operation from freezone_begin_agent_product_generation.",
                 },
                 "intent": _WORKFLOW_INTENT_OBJECT_SCHEMA,
+                "generation_answers": {
+                    "type": "object",
+                    "description": "Pass the generation clarification answers unchanged; the server validates and maps them into intent.inputs.",
+                },
                 **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
             },
             ["operation_id"],
@@ -9093,6 +9538,10 @@ TOOLS = (
                     "description": "Admitted workflow_result operation from freezone_begin_agent_product_generation.",
                 },
                 "plan": _WORKFLOW_PLAN_OBJECT_SCHEMA,
+                "generation_answers": {
+                    "type": "object",
+                    "description": "Pass the generation clarification answers unchanged; the server validates and applies them to image/video nodes.",
+                },
                 "run_after_create": {
                     "type": "boolean",
                     "description": (

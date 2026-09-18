@@ -4120,6 +4120,37 @@ const CLARIFICATION_SOURCE_BY_QUESTION_ID: Record<string, ClarificationOptionsSo
   video_variants_per_node: "video_variant_counts",
 };
 
+export function assistantClarificationIsGenerationCard(
+  questions: AssistantClarificationQuestion[],
+): boolean {
+  return questions.some((question) =>
+    Boolean(CLARIFICATION_SOURCE_BY_QUESTION_ID[normalizedClarificationId(question.id)]),
+  );
+}
+
+export function assistantClarificationCanSubmit(
+  questions: AssistantClarificationQuestion[],
+  answers: AssistantClarificationAnswers,
+): boolean {
+  const selectable = questions
+    .map((question, index) => ({ question, index }))
+    .filter(({ question }) => (question.options ?? []).length > 0 || skillStudioQuestionAllowsCustom(question));
+  const answered = selectable.filter(({ question, index }) =>
+    skillStudioSelectionHasAnswer(answers[skillStudioQuestionKey(question, index)]),
+  ).length;
+  if (assistantClarificationIsGenerationCard(questions)) {
+    return selectable.length > 0 && answered === selectable.length;
+  }
+  return answered > 0 || selectable.length === 0;
+}
+
+export function assistantClarificationShowsRecommended(
+  questions: AssistantClarificationQuestion[],
+  allowed: boolean | undefined,
+): boolean {
+  return Boolean(allowed) && !assistantClarificationIsGenerationCard(questions);
+}
+
 const normalizedClarificationId = (value: unknown) =>
   String(value ?? "").trim().toLowerCase().replace(/-/g, "_");
 
@@ -4315,6 +4346,15 @@ function clarificationQuestionsWithLiveModelCatalogs(
       options: clarificationOptions(values, existingOptions, labelFor),
       allow_custom: false,
     };
+  }).filter((question) => {
+    const questionId = normalizedClarificationId(question.id);
+    if (questionId === "image_quality" && selectedImageModel) {
+      return (selectedImageModel.qualityOptions?.filter(Boolean).length ?? 0) > 0;
+    }
+    if (questionId === "video_generate_audio" && selectedVideoModel) {
+      return selectedVideoModel.supportsGenerateAudio !== false;
+    }
+    return true;
   });
 }
 
@@ -6729,7 +6769,8 @@ function AssistantClarificationInputCard({
     skillStudioSelectionHasAnswer(answers[skillStudioQuestionKey(question, index)]),
   ).length;
   const allQuestionsAnswered = selectableQuestions.length > 0 && answeredCount === selectableQuestions.length;
-  const canSubmit = answeredCount > 0 || selectableQuestions.length === 0;
+  const canSubmit = assistantClarificationCanSubmit(questions, answers);
+  const isGenerationCard = assistantClarificationIsGenerationCard(questions);
   const goToQuestion = useCallback((position: number) => {
     if (selectableQuestions.length === 0) return;
     setActiveQuestionPosition(Math.max(0, Math.min(position, selectableQuestions.length - 1)));
@@ -6786,7 +6827,11 @@ function AssistantClarificationInputCard({
   const hasPrevious = activeQuestionPosition > 0;
   const hasNext = activeQuestionPosition < selectableQuestions.length - 1;
   const activeSelectedCount = activeSelection.optionIds.length + (activeSelection.customText.trim() ? 1 : 0);
-  const continueLabel = hasNext ? "下一题" : allQuestionsAnswered ? "提交选择" : "用当前选择继续";
+  const continueLabel = hasNext
+    ? "下一题"
+    : allQuestionsAnswered
+      ? "提交选择"
+      : isGenerationCard ? "请完成所有选择" : "用当前选择继续";
   const continueAction = () => {
     if (hasNext) {
       goToQuestion(activeQuestionPosition + 1);
@@ -6908,7 +6953,7 @@ function AssistantClarificationInputCard({
               跳过
             </Button>
           )}
-          {event.allow_recommended && (
+          {assistantClarificationShowsRecommended(questions, event.allow_recommended) && (
             <Button
               type="button"
               size="sm"

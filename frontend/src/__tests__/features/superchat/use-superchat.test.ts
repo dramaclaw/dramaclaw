@@ -57,6 +57,8 @@ import {
   canvasApprovalRequiresManualUiActionForTest,
   canvasApprovalRequiresHumanReviewConfirmationForTest,
   clarificationQuestionsWithLiveModelCatalogsForTest,
+  assistantClarificationCanSubmit,
+  assistantClarificationShowsRecommended,
   imageApprovalInitialParamsForTest,
   imageApprovalParamGroupsForTest,
   imageQualityOptionsForApprovalForTest,
@@ -3354,8 +3356,27 @@ describe("Canvas command approval image params", () => {
         { id: "5", label: "5 seconds" },
         { id: "6", label: "6 seconds" },
       ]);
-    expect(questions.find((question) => question.id === "video_generate_audio")?.options)
-      .toEqual([]);
+    expect(questions.find((question) => question.id === "video_generate_audio"))
+      .toBeUndefined();
+  });
+
+  it("requires every visible generation answer and hides the generic recommendation", () => {
+    const questions = [
+      { id: "image_model", title: "图片模型", options: [{ id: "image-a", label: "图片 A" }] },
+      { id: "image_resolution", title: "图片分辨率", options: [{ id: "1K", label: "1K" }] },
+    ];
+
+    expect(assistantClarificationCanSubmit(questions, {
+      image_model: { option_ids: ["image-a"] },
+    })).toBe(false);
+    expect(assistantClarificationCanSubmit(questions, {
+      image_model: { option_ids: ["image-a"] },
+      image_resolution: { option_ids: ["1K"] },
+    })).toBe(true);
+    expect(assistantClarificationShowsRecommended(questions, true)).toBe(false);
+    expect(assistantClarificationShowsRecommended([
+      { id: "creative_style", title: "风格", options: [{ id: "warm", label: "温暖" }] },
+    ], true)).toBe(true);
   });
 
   it("keeps tool-provided options when the model was already fixed outside the card", () => {
