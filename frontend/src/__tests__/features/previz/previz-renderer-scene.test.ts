@@ -679,6 +679,129 @@ describe('PrevizRenderer 的当前导演视角', () => {
   });
 });
 
+describe('PrevizRenderer 画笔俯视', () => {
+  it('切到俯视，并把切换前的机位交回去', async () => {
+    const { instance } = await createRenderer();
+    instance.setScene(createDefaultScene());
+
+    const before = instance.viewPose();
+    const previous = instance.applyDrawTopView();
+
+    // 交回去的就是切换前那一份——调用方要拿它原样还原，差一点都不行。
+    expect(previous).toEqual(before);
+
+    const top = instance.viewPose();
+    // 俯视：眼位在注视点正上方（X 对齐）。
+    expect(top.position[0]).toBeCloseTo(top.target[0], 6);
+    // 退距钉死：空场景兜底半径 6 m（PREVIZ_DRAW_TOP_MIN_RADIUS_M），
+    // framingDistance = radius / sin(fov / 2) * 1.25，fov = EDITOR_FOV_DEG = 50°，
+    // 即 6 / sin(25°) × 1.25。用 node 按同一公式算过：17.746511873643737。
+    // 期望值刻意写字面量：从被测模块 import 常量来算期望，改一处两边一起变。
+    // 字面量写到 17.7465 而不是 17.746——后者与实际值差 0.000512，超出
+    // toBeCloseTo(…, 3) 的 0.0005 阈值，会误报失败。
+    expect(top.position[1] - top.target[1]).toBeCloseTo(17.7465, 3);
+    // Z 上有一点极轴微倾（viewPlacement 为躲开球坐标退化端点留的 POLE_TILT_RATIO），
+    // 所以不比 Z。
+
+    instance.dispose();
+  });
+
+  it('框的是全场景，不是选中对象', async () => {
+    const { instance } = await createRenderer();
+    const scene = sceneWith([2, 0, 0], [-8, 0, 0]);
+    instance.setScene(scene);
+    instance.setSelection(scene.objects[1].id);
+
+    instance.applyDrawTopView();
+
+    // 两个盒子是 [1,0,-1]..[3,2,1] 与 [-9,0,-1]..[-7,2,1]，并集中心 (-3,1,0)——
+    // 与选中对象自己的中心 (-8,1,0) 不同，说明画笔俯视框的确实是全场景。
+    expect(targetOf()[0]).toBeCloseTo(-3, 6);
+    expect(targetOf()[1]).toBeCloseTo(1, 6);
+
+    instance.dispose();
+  });
+
+  it('反证：视角球顶视图框的仍是选中对象，与画笔俯视不是一回事', async () => {
+    const { instance } = await createRenderer();
+    const scene = sceneWith([2, 0, 0], [-8, 0, 0]);
+    instance.setScene(scene);
+    instance.setSelection(scene.objects[1].id);
+
+    instance.applyViewDirection('top');
+
+    // 选中对象自己的盒子是 [-9,0,-1]..[-7,2,1]，中心 (-8,1,0)——与上一条全场景的
+    // 中心 (-3,1,0) 不同，两条摆在一起才说明画笔俯视和视角球顶视图不是一回事。
+    expect(targetOf()[0]).toBeCloseTo(-8, 6);
+    expect(targetOf()[1]).toBeCloseTo(1, 6);
+
+    instance.dispose();
+  });
+
+  it('applyViewPose 把快照原样装回去', async () => {
+    const { instance } = await createRenderer();
+    instance.setScene(createDefaultScene());
+    const before = instance.viewPose();
+
+    instance.applyDrawTopView();
+    expect(instance.viewPose()).not.toEqual(before);
+
+    instance.applyViewPose(before);
+
+    expect(instance.viewPose()).toEqual(before);
+
+    instance.dispose();
+  });
+
+  it('装回去之后再改调用方那份快照，不该影响视口相机', async () => {
+    const { instance } = await createRenderer();
+    instance.setScene(createDefaultScene());
+    const before = instance.viewPose();
+
+    instance.applyViewPose(before);
+    before.position[0] = 999;
+
+    // 调用方那份快照可能还要再用一次（用户切回画笔），漏出引用的话这一改就把
+    // 视口相机也搬走了。
+    expect(instance.cameraPositionForTest()[0]).not.toBe(999);
+
+    instance.dispose();
+  });
+
+  it('录制中不切也不交快照', async () => {
+    const { instance } = await createRenderer({ width: 800, height: 450 });
+    instance.setScene(createDefaultScene());
+
+    const pass = instance.startRecording('global', null)!;
+    const before = instance.viewPose();
+
+    try {
+      const result = instance.applyDrawTopView();
+
+      // moveCamera 本来就不动相机；这时候还交出一份快照，调用方会在退出画笔时拿它
+      // 硬写一次，画面上就是凭空跳一下机位，而成片里看不出发生过什么。
+      expect(result).toBeNull();
+      expect(instance.viewPose()).toEqual(before);
+    } finally {
+      pass.end();
+      instance.dispose();
+    }
+  });
+
+  it('拆掉之后不切也不交快照', async () => {
+    const { instance } = await createRenderer();
+    instance.setScene(createDefaultScene());
+    const before = instance.viewPose();
+
+    instance.dispose();
+
+    // 用例名说了两件事：切不动，也不该顺手交出一份快照当真拿去用——原来只断了
+    // 前一半。
+    expect(instance.applyDrawTopView()).toBeNull();
+    expect(instance.viewPose()).toEqual(before);
+  });
+});
+
 describe('PrevizRenderer 接场景图', () => {
   it('把场景灌进对象树并请求一次重绘', async () => {
     const { instance } = await createRenderer();
