@@ -1760,9 +1760,13 @@ function expandWorkflowNodeIds(
   const upstreamByNodeId = new Map<string, string[]>();
   const downstreamByNodeId = new Map<string, string[]>();
   for (const edge of state.edges) {
-    const upstream = upstreamByNodeId.get(edge.target) ?? [];
-    upstream.push(edge.source);
-    upstreamByNodeId.set(edge.target, upstream);
+    // A Recipe consumes the existing image at this edge. Traversing back into
+    // its source would also reach unrelated branches that share that image.
+    if (!edge.data?.workflowExternalInputImageUrl) {
+      const upstream = upstreamByNodeId.get(edge.target) ?? [];
+      upstream.push(edge.source);
+      upstreamByNodeId.set(edge.target, upstream);
+    }
     const downstream = downstreamByNodeId.get(edge.source) ?? [];
     downstream.push(edge.target);
     downstreamByNodeId.set(edge.source, downstream);
