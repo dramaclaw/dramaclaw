@@ -43,6 +43,7 @@ except Exception:
 from novelvideo.api.routes import (  # noqa: E402
     assets,
     auth,
+    blender,
     characters,
     chat,
     config,
@@ -90,6 +91,7 @@ OPENAPI_TAGS = [
         "description": "Freezone candidate 写回 canonical asset slot 的相关接口。",
     },
     {"name": "freezone-jobs", "description": "Freezone 异步任务结果查询接口。"},
+    {"name": "blender", "description": "Blender 插件配对与白模投递接口。"},
 ]
 
 api_router.include_router(auth.router, tags=["auth"])
@@ -117,6 +119,7 @@ api_router.include_router(model_gateway.router, tags=["model-gateway"])
 api_router.include_router(model_credits.router, tags=["model-credits"])
 api_router.include_router(freezone.router)
 api_router.include_router(release_notifications.router, tags=["release-notifications"])
+api_router.include_router(blender.router, tags=["blender"])
 _verification_routes_registered = False
 
 
