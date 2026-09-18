@@ -3529,14 +3529,27 @@ class NewApiVideoGenerator(VideoGeneratorBase):
                         provider_settled = True
 
                     advertised_archive = self._archive_state(task)
-                    archive_delivery = (
-                        get_video_result_delivery()
-                        if advertised_archive is not None
-                        else None
-                    )
+                    archive_delivery = get_video_result_delivery()
                     archive_state = (
                         advertised_archive if archive_delivery is not None else None
                     )
+                    if archive_delivery is not None and archive_state is None:
+                        last_delivery_error = "VIDEO_ARCHIVE_MISSING"
+                        update_request_status(
+                            task_id, "delivery_failed", last_delivery_error
+                        )
+                        if organization_request:
+                            await self._mark_operation_unknown(
+                                operation_port,
+                                operation_claim,
+                                expected_version=operation_version,
+                            )
+                            operation_terminal = True
+                        return VideoGenResult(
+                            status=VideoGenStatus.FAILED,
+                            error=last_delivery_error,
+                            task_id=task_id,
+                        )
                     if archive_state is not None:
                         archive_status, archive_retryable = archive_state
                         if archive_status != "success":

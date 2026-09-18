@@ -66,8 +66,6 @@ import {
 } from "@/features/canvas/domain/canvasNodes";
 import {
   audioReferenceDurationRejection,
-  formatAudioDurationClips,
-  formatAudioDurationSeconds,
   MAX_AUDIO_REFERENCE_DURATION_MS,
   MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS,
   MIN_AUDIO_REFERENCE_DURATION_MS,
@@ -180,6 +178,7 @@ import {
 import { useFreezoneVideoCameraTemplates } from "@/features/canvas/hooks/useFreezoneVideoCameraTemplates";
 import { useFreezoneVideoModels } from "@/features/canvas/hooks/useFreezoneVideoModels";
 import { useCanvasStore, useIsBoxSelecting } from "@/stores/canvasStore";
+import { ReferenceValidationDialog, referenceDurationIssues, referenceIssues, matchesReference, referenceIssueName, type ReferenceIssue } from "./shared/ReferenceValidationDialog";
 import {
   fetchFreezoneJobResult,
   submitFreezoneVideoCompose,
@@ -591,6 +590,8 @@ export const VideoNode = memo(
     const { t } = useTranslation();
     const updateNodeInternals = useUpdateNodeInternals();
     const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
+    const [referenceErrors, setReferenceErrors] = useState<ReferenceIssue[]>([]);
+    const [referenceErrorsOpen, setReferenceErrorsOpen] = useState(false);
     const isBoxSelecting = useIsBoxSelecting();
     const updateNodeData = useCanvasStore((state) => state.updateNodeData);
     const addDerivedUploadNode = useCanvasStore(
@@ -2073,6 +2074,8 @@ export const VideoNode = memo(
       // 会用过期的 completedUrls 覆写新批次的 generationBatch。
       if (submittingRef.current) return;
       submittingRef.current = true;
+      setReferenceErrors([]);
+      setReferenceErrorsOpen(false);
       try {
       const projectId = readUrl().project;
       if (!projectId) {
@@ -2150,7 +2153,7 @@ export const VideoNode = memo(
 
         const validateReferenceDurations = async (
           media: "audio" | "video",
-          refs: Array<{ url: string; label: string; durationMs: number | null }>,
+          refs: Array<{ url: string; label: string; durationMs: number | null; nodeId: string }>,
         ): Promise<boolean> => {
           const configured = referenceDurationLimitsMs(selectedVideoModel, media);
           const limits = {
@@ -2185,6 +2188,9 @@ export const VideoNode = memo(
           );
           const rejection = audioReferenceDurationRejection(
             refs.map((ref, index) => ({
+              url: ref.url,
+              nodeId: ref.nodeId,
+              index: index + 1,
               label: ref.label,
               durationMs: resolvedDurations[index] ?? null,
             })),
@@ -2198,43 +2204,14 @@ export const VideoNode = memo(
           );
           if (!rejection) return true;
 
-          const clips = formatAudioDurationClips(rejection.clips, (key, vars) =>
-            t(key, vars),
-          );
-          const prefix =
-            media === "audio" ? "node.videoNode.audio" : "node.videoNode.referenceDuration";
-          const message =
-            rejection.kind === "tooShort"
-              ? t(`${prefix}.${media === "audio" ? "durationTooShort" : "videoTooShort"}`, {
-                  min: formatAudioDurationSeconds(limits.minMs ?? 0),
-                  clips,
-                })
-              : rejection.kind === "tooLong"
-                ? t(`${prefix}.${media === "audio" ? "durationTooLong" : "videoTooLong"}`, {
-                    max: formatAudioDurationSeconds(limits.maxMs ?? 0),
-                    clips,
-                  })
-                : rejection.kind === "totalTooShort"
-                  ? t(
-                      `${prefix}.${media === "audio" ? "durationTotalTooShort" : "videoTotalTooShort"}`,
-                      {
-                        min: formatAudioDurationSeconds(rejection.limitMs),
-                        total: formatAudioDurationSeconds(rejection.totalMs),
-                        clips,
-                      },
-                    )
-                  : t(
-                      `${prefix}.${media === "audio" ? "durationTotalTooLong" : "videoTotalTooLong"}`,
-                      {
-                        max: formatAudioDurationSeconds(rejection.limitMs),
-                        total: formatAudioDurationSeconds(rejection.totalMs),
-                        clips,
-                      },
-                    );
-          toast.error(message, { duration: 5_000 });
+          setReferenceErrors(referenceDurationIssues(media, rejection, limits));
+          setReferenceErrorsOpen(true);
           updateNodeData(id, {
             isGenerating: false,
             generationStartedAt: null,
+            generationError: t("referenceValidation.title"),
+            generationErrorDetails: null,
+            generationErrorRequestId: null,
           });
           return false;
         };
@@ -2353,6 +2330,7 @@ export const VideoNode = memo(
                   : "");
               return {
                 url,
+                nodeId: node.id,
                 label:
                   rawLabel ||
                   t("node.videoNode.audio.clipFallbackLabel", { index: index + 1 }),
@@ -2411,11 +2389,13 @@ export const VideoNode = memo(
             url: string;
             label: string;
             durationMs: number | null;
+            nodeId: string;
           }[] = [];
           const videoRefs: {
             url: string;
             label: string;
             durationMs: number | null;
+            nodeId: string;
           }[] = [];
           let imageCount = 0;
           let videoCount = 0;
@@ -2429,6 +2409,7 @@ export const VideoNode = memo(
                 references.push({ type: "video", url: videoRefUrl });
                 videoRefs.push({
                   url: videoRefUrl,
+                  nodeId: node.id,
                   label: t("node.videoNode.referenceDuration.videoFallbackLabel", {
                     index: videoCount + 1,
                   }),
@@ -2462,6 +2443,7 @@ export const VideoNode = memo(
                 });
                 audioRefs.push({
                   url,
+                  nodeId: node.id,
                   // 时长超限时要指名道姓是哪条，所以这里连标签一起留着；没有文件名
                   // 的（TTS 直出等）退回「音频N」。序号按音频自身 1-based 计，与后端
                   // pipeline.py 的 enumerate(audio_paths, start=1) 同口径；标签本身
@@ -2547,6 +2529,7 @@ export const VideoNode = memo(
             });
         }
 
+        const referenceSnapshot = collectUpstream();
         if (!doSubmit) {
           updateNodeData(id, { isGenerating: false, generationStartedAt: null });
           return;
@@ -2676,6 +2659,25 @@ export const VideoNode = memo(
         // 「先弹上限报错、节点却又冒出加载动画」的矛盾观感。
         if (completedUrls.length === 0 && runErrors.length > 0) {
           const firstError = runErrors[0];
+          const issues = referenceIssues(firstError);
+          if (issues.length) {
+            const upstream = referenceSnapshot;
+            setReferenceErrors(issues.map((issue) => {
+              const matching = upstream.filter((node) => {
+                const values = [submittableImageUrl(node),
+                  "audioUrl" in node.data ? node.data.audioUrl : null,
+                  "videoUrl" in node.data ? node.data.videoUrl : null];
+                return values.some((url) => typeof url === "string" && matchesReference(url, issue.reference_key));
+              });
+              const node = matching.length === 1 ? matching[0] : undefined;
+              return { ...issue, nodeId: node?.id,
+                label: referenceIssueName(issue, node?.data.sourceFileName) };
+            }));
+            setReferenceErrorsOpen(true);
+            updateNodeData(id, { generationError: t("referenceValidation.title"),
+              generationErrorDetails: null, generationErrorRequestId: null });
+            return;
+          }
           // 整批都只是「前端不等了」时走中性提示：后端仍在生成，节点保持生成中
           // 状态等待刷新续接，不该按报错呈现。真有失败混在里面则仍按失败处理。
           if (runErrors.every((error) => isTaskPollTimeoutError(error))) {
@@ -2880,6 +2882,10 @@ export const VideoNode = memo(
         onDrop={handleDrop}
         onDragOver={handleDragOver}
       >
+        <ReferenceValidationDialog issues={referenceErrors} open={referenceErrorsOpen} onClose={() => setReferenceErrorsOpen(false)} />
+        {referenceErrors.length > 0 && <button type="button" className="tap-button nodrag absolute -top-10 left-0" onClick={(event) => {
+          event.stopPropagation(); setReferenceErrorsOpen(true);
+        }}>{t("referenceValidation.title")}</button>}
         {/* 叠卡画册的卡片边：从主视频右侧探出（与图片节点同款），点卡边也能展开画册。 */}
         {hasAlbum && !albumExpanded && videoSource && (
           <>

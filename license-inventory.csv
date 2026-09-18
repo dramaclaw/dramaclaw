@@ -94,6 +94,7 @@ docs/en/guides/telemetry.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml a
 docs/en/guides/troubleshooting.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/en/license.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/en/reference/environment-variables.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+docs/reference-media-validation.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/releasing.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/superpowers/plans/2026-08-21-ee-config-ce-provisioner-isolation.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/superpowers/plans/2026-09-02-project-name-length-limit.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -459,6 +460,7 @@ frontend/src/__tests__/features/canvas/reference-mentions.test.ts,Elastic-2.0,20
 frontend/src/__tests__/features/canvas/reference-ordering.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/reference-pick.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/reference-token-replace.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/reference-validation.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/script-node-credit-contract.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/skill-connection-edges.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/skill-i18n.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -720,6 +722,7 @@ frontend/src/api/client.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml ag
 frontend/src/api/ops.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/api/projects.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/api/push.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/api/referenceMediaLimits.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/api/sceneAssets.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/api/skills.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/api/tasks.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1068,6 +1071,7 @@ frontend/src/features/canvas/nodes/shared/ReferenceDetachButton.tsx,Elastic-2.0,
 frontend/src/features/canvas/nodes/shared/ReferenceMentionButton.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/nodes/shared/ReferencePickChip.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/nodes/shared/ReferenceTextChip.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/canvas/nodes/shared/ReferenceValidationDialog.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/nodes/shared/albumPendingTotals.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/nodes/shared/anchoredMenuPlacement.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/nodes/shared/videoModelCapabilities.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1661,6 +1665,7 @@ src/novelvideo/freezone/jobs.py,Elastic-2.0,2026 SuperTale contributors,REUSE.to
 src/novelvideo/freezone/mark_node.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/paths.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/presets.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/freezone/reference_validation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/route_helpers.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/skill_registry.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/slots.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1707,6 +1712,7 @@ src/novelvideo/image_request_usage.py,Elastic-2.0,2026 SuperTale contributors,RE
 src/novelvideo/knowledge_pipeline.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/llm_instrumentation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/manual_shots.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/media_archive_copy.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/media_model_request_schema.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/model_gateway_runtime.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/model_gateway_settings.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1992,6 +1998,7 @@ tests/test_api_generation_sketches.py,Elastic-2.0,2026 SuperTale contributors,RE
 tests/test_api_grid_cut.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_grid_upload_prompt.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_gunicorn_worker.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_api_grid_upload_transaction.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_ingest_chapter_preview.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_model_credit_cost.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_narrator_voice.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2139,6 +2146,7 @@ tests/test_llm_instrumentation_logging.py,Elastic-2.0,2026 SuperTale contributor
 tests/test_m10_final_gate.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_manual_shots.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_mcp_ce_owner.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_media_archive_copy.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_media_io_probe_concurrency.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_media_model_request_schema.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_media_read_authorization.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2178,6 +2186,7 @@ tests/test_pano_sharp_da2_loading.py,Elastic-2.0,2026 SuperTale contributors,REU
 tests/test_path_safe_asset_names.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_pool_index_rebuild.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_pool_index_state_storage.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_pool_indexer_concurrency.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_product_surface_routes.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_project_config_narration.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_project_context.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2193,6 +2202,8 @@ tests/test_prompt_style_ethnicity_layering.py,Elastic-2.0,2026 SuperTale contrib
 tests/test_publish_official_media_catalog.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_queue_kind_literal_lanes.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_ref_image_hash.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_reference_media_routes.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_reference_media_validation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_release_feed.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_render_auto_repair_removed.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_render_identity_guard.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

@@ -1,32 +1,31 @@
 ---
-version: 2.0.4
-attention: medium
+version: 2.0.5
+attention: low
 ---
-# v2.0.4
+# v2.0.5
 
 ## User-facing Highlights (zh)
 
-- **新增越南语界面**: DramaClaw 现已提供完整的越南语界面，并修正英文剧本格式指引和多语言回退逻辑，让更多社区用户可以直接使用熟悉的语言完成创作。
-- **支持可选手机号验证码登录**: 部署方启用对应入口后，用户可以通过手机号和验证码登录并设置密码；登录能力默认受开关控制，不影响现有部署。
-- **跨项目媒体引用更安全**: 虾画会识别来自其他项目的图片和视频引用，阻止无效引用继续写入，并为历史遗留引用提供复制到当前项目的一键修复入口。
-- **本地 CE 启动更省配置**: 本地启动现在默认使用社区版，不再要求额外声明版本；并发初始化配置时也会自动重试。
-- **画布任务计费参数更加准确**: 画布主线生成任务会携带完整的模型计费参数，减少预估与实际结算不一致的情况。
+- **素材归档更完整**: 视频、图片和音频生成结果支持归档后的交付与访问，减少临时结果链接失效带来的影响。
+- **参考素材提前校验**: 虾画生成前会检查参考素材的时长等限制，并标出不符合要求的文件，方便及时调整。
+- **新增灵山图片模型**: 社区版新增 LingShan G25 Fast 和 LingShan G25 Pro 图片模型配置。
+- **账号与充值体验改进**: 密码账号支持首次绑定手机号，并新增积分充值和独立结账流程。
 
 ## User-facing Highlights (en)
 
-- **Vietnamese interface support**: DramaClaw now includes a complete Vietnamese interface, along with corrected English screenplay guidance and safer language fallback behavior.
-- **Optional phone OTP sign-in**: When enabled by the deployment operator, users can sign in with a phone number and verification code and set a password. The entry remains gated and does not affect existing deployments by default.
-- **Safer cross-project media references**: XiaHua detects image and video references that belong to another project, prevents new invalid references from being saved, and offers one-click repair for legacy references by copying them into the current project.
-- **Simpler local CE startup**: Local startup now defaults to the Community Edition without requiring an explicit edition setting, with automatic retries for concurrent settings initialization.
-- **More accurate canvas task billing**: Mainline canvas generation tasks now include complete model-pricing inputs, reducing differences between estimated and settled usage.
+- **More reliable archived media**: Generated videos, images, and audio can be delivered from archives, reducing reliance on expiring result links.
+- **Earlier reference validation**: XiaHua checks reference media limits before generation and identifies files that need adjustment.
+- **New LingShan image models**: Community Edition adds configurations for LingShan G25 Fast and LingShan G25 Pro.
+- **Improved accounts and checkout**: Password accounts can bind a phone number for the first time, with a new credit top-up and checkout flow.
 
 ## Fixes
 
-- 修正英文剧本格式指引、多语言回退和越南语手机号登录文案 (#500, #516).
-- 修复跨项目媒体引用可能导致素材无法访问或画布保存异常的问题 (#513).
-- 修复本地启动必须额外配置版本，以及并发初始化配置可能失败的问题 (#511).
-- 修复画布主线任务缺少模型计费参数的问题 (#497).
+- 修复并发草图重生成时输出路径冲突的问题 (#612)。
+- 修复视频编辑错误提示及参考素材校验体验问题 (#597, #625)。
+- 修复按集配音任务身份传递和完成后的刷新问题 (#551, #552)。
+- 修复每日备份包含已弃用项目数据的问题 (#531)。
 
 ## Improvements
 
-- 新增受部署开关控制的手机号验证码登录和密码设置能力 (#471).
+- 优化视频、图片和音频归档结果的交付与访问 (#574, #616)。
+- 减少上传及媒体读取对服务响应速度的影响 (#560, #566, #578)。
