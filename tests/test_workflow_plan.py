@@ -2486,6 +2486,96 @@ def test_lego_skill_keeps_style_while_recipes_are_shared_workflow_stages(monkeyp
     assert "Final_Video_Spec" not in recipe_text
 
 
+@pytest.mark.parametrize(
+    "skill_id",
+    [
+        "retro-hong-kong-kungfu-comedy-video",
+        "lego-minifigure-animation-video",
+    ],
+)
+def test_video_skill_compose_contract_reaches_plan_and_canvas(monkeypatch, skill_id):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+
+    package = catalog.get_workflow_skill({"skill_id": skill_id, "compact": True})
+    assert package["ok"] is True
+    assert "videoNode" in package["allowed_node_types"]
+    assert "videoComposeNode" in package["allowed_node_types"]
+    assert "composition_input_for" in package["allowed_link_types"]
+    assert "multiple video clips or video with audio" in package["agent_instruction"]
+
+    video_recipe = next(
+        recipe
+        for recipe in package["available_recipes"]
+        if recipe["output_kind"] == "video"
+    )
+    image_recipe = next(
+        recipe
+        for recipe in package["available_recipes"]
+        if recipe["output_kind"] == "image" and not recipe["requires_source_media"]
+    )
+    plan = {
+        "schema_version": "freezone_workflow_plan.v1",
+        "workflow_type": "dynamic.compose-contract",
+        "skill": {"id": skill_id, "version": package["skill"]["version"]},
+        "nodes": [
+            {
+                "id": "asset",
+                "node_type": "imageGenNode",
+                "stage": "image",
+                "data": {
+                    "workflowCatalog": {
+                        "skillId": skill_id,
+                        "recipeId": image_recipe["id"],
+                    }
+                },
+            }
+        ] + [
+            {
+                "id": node_id,
+                "node_type": "videoNode",
+                "stage": "video",
+                "data": {
+                    "workflowCatalog": {
+                        "skillId": skill_id,
+                        "recipeId": video_recipe["id"],
+                    }
+                },
+            }
+            for node_id in ("clip_1", "clip_2")
+        ] + [{"id": "final", "node_type": "videoComposeNode", "stage": "compose"}],
+        "edges": [
+            {"source": "asset", "target": node_id, "link_type": "media_input_for"}
+            for node_id in ("clip_1", "clip_2")
+        ] + [
+            {"source": node_id, "target": "final", "link_type": "composition_input_for"}
+            for node_id in ("clip_1", "clip_2")
+        ],
+    }
+    assert not list(Draft202012Validator(workflow_plan_json_schema()).iter_errors(plan))
+    validated = catalog.validate_agent_workflow_plan(plan)
+    assert validated["ok"] is True, validated
+    graph = build_workflow_graph_commands(
+        {"plan": validated["plan"], "run_after_create": False}
+    )
+    assert graph["ok"] is True, graph
+    assert sum(command["type"] == "create_node" for command in graph["commands"]) == 4
+    assert sum(command["type"] == "create_edge" for command in graph["commands"]) == 4
+
+
+def test_image_skill_does_not_advertise_video_compose(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+
+    package = catalog.get_workflow_skill(
+        {"skill_id": "social-content-campaign", "compact": True}
+    )
+
+    assert package["ok"] is True
+    assert "videoNode" not in package["allowed_node_types"]
+    assert "videoComposeNode" not in package["allowed_node_types"]
+
+
 def test_retro_kungfu_skill_keeps_style_while_recipes_stay_stage_focused(monkeypatch):
     catalog = _load_catalog_module()
     monkeypatch.setattr(catalog, "list_user_agent_config_items", None)
