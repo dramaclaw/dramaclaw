@@ -217,14 +217,19 @@ function fakeThree() {
       return this.max.x < this.min.x || this.max.y < this.min.y || this.max.z < this.min.z;
     }
   }
-  /** 姿势采样只要求「能建、能 play、能 setTime」，本文件不断言它，行为归 character-rig 那边。 */
+  /** 姿势采样只要求「能建、能 play、能推」，本文件不断言它，行为归 character-rig 那边。 */
   class FakeAnimationMixer {
     constructor(_root: unknown) {}
     clipAction(_clip: unknown) {
-      return { play: () => {} };
+      const action = {
+        time: 0,
+        play: () => action,
+        stop: () => action,
+        setEffectiveWeight: () => action,
+      };
+      return action;
     }
-    setTime(_time: number) {}
-    stopAllAction() {}
+    update(_delta: number) {}
   }
 
   return {
@@ -1164,7 +1169,7 @@ describe('PrevizSceneGraph', () => {
 
     // 模型是第一次 sync 时按当时的姿势定格的。之后只重新缩放的话，属性面板的
     // 「基础姿势」下拉框对已加载的人物完全失效——改成行走，人还站着。
-    expect(rig?.userData.previzPoseId).toBe('walking');
+    expect(rig?.userData.previzMotion?.primary.ref).toBe('walking');
     // 而且是重新摆姿势，不是重新下一个模型。
     expect(loadGltf).toHaveBeenCalledTimes(ACTOR_FILE_COUNT);
     expect(rigOf(graph, character.id)).toBe(rig);
@@ -1180,12 +1185,12 @@ describe('PrevizSceneGraph', () => {
     graph.sync(scene);
     await flush();
 
-    graph.applyPose(character.id, 'walking', 0.5);
+    const motion = { primary: { ref: 'walking', time: 0.5 }, weight: 1 };
+    graph.applyMotion(character.id, motion);
 
     // 求值器每帧给出姿势与姿势内时间，沿路径走位的人物靠这条真的迈腿。
     const rig = rigOf(graph, character.id);
-    expect(rig?.userData.previzPoseId).toBe('walking');
-    expect(rig?.userData.previzPoseTime).toBe(0.5);
+    expect(rig?.userData.previzMotion).toEqual(motion);
   });
 
   it('ignores a per-frame pose while the character is still a placeholder', () => {
@@ -1197,7 +1202,9 @@ describe('PrevizSceneGraph', () => {
     graph.sync(scene);
 
     // 模型还在路上：占位胶囊没有骨架可推。模型到位那一刻渲染器会把当前帧重放一遍。
-    expect(() => graph.applyPose(scene.objects[0]!.id, 'walking', 0.5)).not.toThrow();
+    expect(() =>
+      graph.applyMotion(scene.objects[0]!.id, { primary: { ref: 'walking', time: 0.5 }, weight: 1 }),
+    ).not.toThrow();
   });
 
   it('re-applies pose adjust to the loaded rig', async () => {

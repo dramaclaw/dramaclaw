@@ -153,7 +153,8 @@ function setup(options: { build?: () => FakeObject3D | null } = {}) {
   const holder = new FakeObject3D();
   const build = vi.fn(async () => (options.build ?? fakeRig)());
   const applyCharacter = vi.fn(() => true);
-  const rig = { build, applyCharacter };
+  const applyMotion = vi.fn();
+  const rig = { build, applyCharacter, applyMotion };
 
   const deps = {
     three,
@@ -177,7 +178,7 @@ function setup(options: { build?: () => FakeObject3D | null } = {}) {
 
   return {
     deps, three, renderer, camera, canvas, worldScene, holder,
-    build, applyCharacter, targets, root, mannequin, eye,
+    build, applyCharacter, applyMotion, targets, root, mannequin, eye,
   };
 }
 
@@ -241,7 +242,7 @@ describe("renderCharacterPreview 重建判据", () => {
     await renderCharacterPreview(harness.deps, draftOf({ basePoseId: "standing" }));
     await renderCharacterPreview(harness.deps, draftOf({ basePoseId: "sitting" }));
 
-    // `applyPose` 就是为「rig 建好之后还能改姿势」写的，它自己带着一层缓存。
+    // `applyMotion` 就是为「rig 建好之后还能改姿势」写的，它自己带着一层缓存。
     expect(harness.build).toHaveBeenCalledTimes(1);
   });
 
@@ -602,6 +603,64 @@ describe("renderCharacterPreview 并发", () => {
     await retry;
     expect(harness.build).toHaveBeenCalledTimes(2);
     expect(harness.mannequin()).toHaveLength(1);
+  });
+});
+
+/** 动作库对话框会传进来的一份动作:某个内置动作的第 0.5 秒。 */
+const WAVE = { primary: { ref: "builtin:wave", time: 0.5 }, weight: 1 };
+
+describe("renderCharacterPreview 动作", () => {
+  it("lays the motion over the base pose without rebuilding", async () => {
+    const harness = setup();
+    const base = draftOf({ bodyType: "average" });
+
+    await renderCharacterPreview(harness.deps, base);
+    expect(harness.applyMotion).not.toHaveBeenCalled();
+
+    await renderCharacterPreview(harness.deps, base, WAVE);
+
+    // 动作换人不换:换一个动作试看不该克隆一副骨架。
+    expect(harness.build).toHaveBeenCalledTimes(1);
+    // 先刷外观(其中摆基础姿势),再盖动作——反过来的话基础姿势会把动作盖掉。
+    expect(harness.applyMotion).toHaveBeenCalledWith(harness.mannequin()[0], WAVE);
+    expect(harness.applyMotion.mock.invocationCallOrder[0]).toBeGreaterThan(
+      harness.applyCharacter.mock.invocationCallOrder[1] ?? Infinity,
+    );
+  });
+
+  it("poses the newest motion when it was picked mid-build", async () => {
+    const pending: Array<(value: FakeObject3D) => void> = [];
+    const harness = setup();
+    harness.build.mockImplementation(
+      () => new Promise<FakeObject3D>((resolve) => pending.push(resolve)),
+    );
+    const base = draftOf({ bodyType: "average" });
+
+    // 对话框一打开就在等模型,用户这时已经点了一个动作。
+    const first = renderCharacterPreview(harness.deps, base);
+    const second = renderCharacterPreview(harness.deps, base, WAVE);
+    pending[0]?.(fakeRig());
+    await Promise.all([first, second]);
+
+    expect(harness.applyMotion).toHaveBeenLastCalledWith(harness.mannequin()[0], WAVE);
+  });
+
+  it("goes back to the base pose once the motion is dropped mid-build", async () => {
+    const pending: Array<(value: FakeObject3D) => void> = [];
+    const harness = setup();
+    harness.build.mockImplementation(
+      () => new Promise<FakeObject3D>((resolve) => pending.push(resolve)),
+    );
+    const base = draftOf({ bodyType: "average" });
+
+    const first = renderCharacterPreview(harness.deps, base, WAVE);
+    const second = renderCharacterPreview(harness.deps, base);
+    pending[0]?.(fakeRig());
+    await Promise.all([first, second]);
+
+    // 挂载时按最后那次调用收尾:它没带动作,那就只摆基础姿势。
+    expect(harness.applyMotion).not.toHaveBeenCalled();
+    expect(harness.applyCharacter).toHaveBeenCalledTimes(1);
   });
 });
 

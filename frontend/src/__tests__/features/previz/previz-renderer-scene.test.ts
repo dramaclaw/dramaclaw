@@ -24,6 +24,8 @@ import {
   PREVIZ_LIVE_FRUSTUM_COLOR,
 } from '@/features/previz/engine/cameraModel';
 import { PrevizRenderer } from '@/features/previz/engine/PrevizRenderer';
+import { CharacterRigFactory } from '@/features/previz/engine/characterRig';
+import { PrevizSceneGraph } from '@/features/previz/engine/sceneGraph';
 
 /**
  * 这份用例盯的是渲染器与场景图 / 取景数学之间的接线，不是 three 本身。真 three 在
@@ -500,6 +502,13 @@ vi.mock('three/examples/jsm/loaders/OBJLoader.js', () => ({
       loadedUrls.push(url);
       return pendingObj ? Promise.resolve(pendingObj) : new Promise(() => {});
     });
+  },
+}));
+
+// 真的 BVHLoader 继承 three 的 `Loader`，而这里的 three 是假的；这一份只测接线，不解析。
+vi.mock('three/examples/jsm/loaders/BVHLoader.js', () => ({
+  BVHLoader: class {
+    parse = vi.fn();
   },
 }));
 
@@ -1371,8 +1380,7 @@ describe('PrevizRenderer timeline', () => {
     // 走位中的人物换成走的循环，姿势内时间从片段首帧起算：60 帧就是 2 秒。
     // 位置在变而脚不动，看着是整个人被平移过去的。
     const rig = rigOf(instance, scene.objects[0]!.id);
-    expect(rig?.userData.previzPoseId).toBe('walking');
-    expect(rig?.userData.previzPoseTime).toBe(2);
+    expect(rig?.userData.previzMotion).toEqual({ primary: { ref: 'walking', time: 2 }, weight: 1 });
   });
 
   it('poses a model that arrives after the playhead moved', async () => {
@@ -1386,7 +1394,9 @@ describe('PrevizRenderer timeline', () => {
 
     // build() 摆的是静态姿势；模型到位时播放头已经在路径中间。不把当前帧重放一遍，
     // 后到的模型会一直站着滑，直到播放头下一次移动。
-    expect(rigOf(instance, scene.objects[0]!.id)?.userData.previzPoseId).toBe('walking');
+    expect(rigOf(instance, scene.objects[0]!.id)?.userData.previzMotion?.primary.ref).toBe(
+      'walking',
+    );
   });
 
   it('moves the object to where the playhead says it is', async () => {
@@ -2917,5 +2927,190 @@ describe('PrevizRenderer 的布光', () => {
     expect(catcher!.position!.y).toBeLessThan(0);
 
     instance.dispose();
+  });
+});
+
+describe('PrevizRenderer 导入动作', () => {
+  /** 一条导入动作，指向一个假 URL；拉取由各条用例 stub 的 `fetch` 决定。 */
+  function sceneWithMotion(): PrevizScene {
+    return {
+      ...createDefaultScene(),
+      motions: [
+        {
+          id: 'm1',
+          name: 'Wave',
+          url: 'https://assets.example/wave.bvh',
+          sourceFileName: 'wave.bvh',
+          format: 'bvh' as const,
+          skeleton: 'mixamo' as const,
+          clipIndex: 0,
+          durationSec: 2,
+          loop: false,
+        },
+      ],
+    };
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('replays the loading status to a listener wired after setScene', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+    const { instance } = await createRenderer();
+    instance.setScene(sceneWithMotion());
+
+    // 编辑器接监听的 effect 跑在第一次 setScene 之后；不重放的话入场那批动作永远不显示加载中。
+    const listener = vi.fn();
+    instance.setMotionStatusListener(listener);
+
+    expect(listener).toHaveBeenCalledWith({ m1: { state: 'loading' } });
+  });
+
+  it('waits for imported motions before reporting the models settled', async () => {
+    let answer: (response: Response) => void = () => {};
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>((resolve) => (answer = resolve))),
+    );
+    const { instance } = await createRenderer();
+    instance.setScene(sceneWithMotion());
+
+    let settled = false;
+    void instance.whenModelsSettled().then(() => (settled = true));
+    await flush();
+    await flush();
+    // 录制前等的就是这个：动作没到的那几秒录进去的是一个站着不动的人。
+    expect(settled).toBe(false);
+
+    answer(new Response(null, { status: 404 }));
+    await vi.waitFor(() => expect(settled).toBe(true));
+  });
+
+  it('times a stuck download out instead of hanging the queue forever', async () => {
+    // 逼进 `motionFetchAbortSignal` 的兜底分支：这个运行时如果真带 `AbortSignal.timeout`，
+    // 它是宿主自己的内部定时器，`vi.useFakeTimers` 拨不动，硬等的话这条用例要跑 60 秒
+    // 真实时间。装作「这个环境没有它」，逼渲染器退回 `AbortController` + `setTimeout`，
+    // 两者都受假计时器摆布。
+    const originalTimeout = AbortSignal.timeout;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init?: RequestInit) => {
+        // 模拟真 fetch 在 signal 中止时的行为：请求本身永远不会自己决出胜负，
+        // 只有 abort 才会让它落地。
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted.', 'AbortError'));
+          });
+        });
+      }),
+    );
+    const { instance } = await createRenderer();
+    const listener = vi.fn();
+    instance.setMotionStatusListener(listener);
+    instance.setScene(sceneWithMotion());
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      // @ts-expect-error 测试临时摘掉，finally 里照原样还回去；挪进 try 是因为这一行本身
+      // 就可能抛（比如这个环境压根没有这个属性），抛了也不该漏掉下面 `useRealTimers()`
+      // 那一步的清理。
+      delete AbortSignal.timeout;
+      let settled = false;
+      void instance.whenModelsSettled().then(() => (settled = true));
+
+      // 差一毫秒都不许超时：这条锁的是「确实等满了整段超时」。
+      await vi.advanceTimersByTimeAsync(179_999);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.waitFor(() => expect(settled).toBe(true));
+
+      // 超时和网络层失败走同一条路，最终都报 `fetch_failed`——调用方不必分辨
+      // 「断网」和「卡住不动」。
+      expect(listener).toHaveBeenLastCalledWith({
+        m1: { state: 'error', error: { code: 'fetch_failed' } },
+      });
+    } finally {
+      vi.useRealTimers();
+      AbortSignal.timeout = originalTimeout;
+    }
+  });
+
+  it('reports a failed download and re-poses the actors', async () => {
+    // 下载先不落地：要等人物底模先落地摆过一次姿势、且下载真的发起了之后，再清空 spy、
+    // 放这条下载失败。两个原因都得等：(1) 底模到位那一刻 `attachCharacterRig` 的回调
+    // 自己就会调一次 `applyEvaluatedFrame`，不等它先发生、先清 spy，摆姿势的锅就分不清
+    // 是底模到位摆的、还是下载失败摆的；(2) `PrevizMotionClips.load()` 内部在真正调用
+    // `fetch` 之前还要先过一次 `setTimeout(0)` 排队，跟底模那条纯 Promise 链谁先谁后
+    // 不是数 `flush()` 次数能保证的——用固定次数的 `flush()` 赌顺序，赌输了就是
+    // `answerMotion` 还没被这次请求的 resolver 覆盖就被调用，请求本身永远悬着，把
+    // `whenModelsSettled()` 挂到天荒地老。用 `vi.waitFor` 死等这两件事真正发生，
+    // 才是确定性的写法。
+    let answerMotion: (response: Response) => void = () => {};
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => (answerMotion = resolve)));
+    vi.stubGlobal('fetch', fetchMock);
+    const invalidate = vi.spyOn(CharacterRigFactory.prototype, 'invalidateMotions');
+    // `graph.applyMotion` 只在场上真有 character 对象、且它这一帧解算出了姿势时才会被
+    // 调用；空场景测不出「重摆」，光断言 `invalidateMotions` 只证明 rig 手里的缓存作废
+    // 了，证不出真有谁被重新摆过姿势。
+    const applyMotion = vi.spyOn(PrevizSceneGraph.prototype, 'applyMotion');
+    const { instance } = await createRenderer();
+    const listener = vi.fn();
+    instance.setMotionStatusListener(listener);
+
+    // 人物自己的底模也走 `whenModelsSettled` 那一份在途计数；不喂 `pendingGltf` 的话
+    // 假 GLTFLoader 永远不 resolve（见文件顶部定义），底模这一路自己就会把
+    // `instance.whenModelsSettled()` 挂到天荒地老，跟这条用例要测的下载超时无关。
+    pendingGltf = { scene: new THREE.Object3D(), animations: [] };
+    const scene = sceneWithMotion();
+    scene.objects = [createPrevizObject('character', scene.objects)];
+    instance.setScene(scene);
+
+    const anyInstance = instance as unknown as { graph: { modelsInFlight: number } };
+    // 死等底模落地（`modelsInFlight` 归零，`onModelReady` 那次 `applyEvaluatedFrame`
+    // 也跑完了）、且导入动作那次 `fetch` 真的被调用过（`answerMotion` 已经指向这次
+    // 请求的 resolver），这两件事都发生之后，才清空 spy、放行下载失败。
+    await vi.waitFor(() => {
+      expect(anyInstance.graph.modelsInFlight).toBe(0);
+      expect(fetchMock).toHaveBeenCalled();
+    });
+    // `setScene` 自己那次初始摆位，加上底模落地那次重摆，都不是这条用例要断言的
+    // 因果——只看下载失败之后那一次，才对得上「下载失败会不会重摆」这件事。
+    applyMotion.mockClear();
+
+    answerMotion(new Response(null, { status: 404 }));
+
+    // 404 也得算下载失败，而不是把一页错误 HTML 拿去解析、报成「解析失败」。
+    await vi.waitFor(() => {
+      expect(listener).toHaveBeenLastCalledWith({
+        m1: { state: 'error', error: { code: 'fetch_failed' } },
+      });
+    });
+    expect(invalidate).toHaveBeenCalled();
+    expect(applyMotion).toHaveBeenCalled();
+  });
+
+  it('stops reporting once disposed', async () => {
+    let answer: (response: Response) => void = () => {};
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>((resolve) => (answer = resolve))),
+    );
+    const { instance } = await createRenderer();
+    instance.setScene(sceneWithMotion());
+    const listener = vi.fn();
+    instance.setMotionStatusListener(listener);
+    listener.mockClear();
+
+    const settled = instance.whenModelsSettled();
+    instance.dispose();
+    answer(new Response(null, { status: 404 }));
+
+    // 编辑器关掉时还在等录制的那一方要被叫醒，而已经没人要听的状态不该再推给 store。
+    await settled;
+    await flush();
+    expect(listener).not.toHaveBeenCalled();
   });
 });

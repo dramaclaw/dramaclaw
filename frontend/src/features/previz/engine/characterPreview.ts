@@ -7,6 +7,7 @@ import {
   PREVIZ_CHARACTER_SPAWN_Y,
   type PrevizCharacterDraft,
 } from '../domain/characterDraft';
+import type { EvaluatedMotion } from '../domain/evaluate';
 import { PREVIZ_HEIGHT_CM_RANGE } from '../domain/objects';
 import type { PrevizCharacter } from '../domain/scene';
 import { blitCameraToCanvas, type CameraPreviewCanvas } from './cameraPreview';
@@ -138,6 +139,11 @@ const PREVIEW_BUILD_KEY = 'previzCharacterPreviewBuild';
  */
 const PREVIEW_LATEST = 'previzCharacterPreviewLatest';
 /**
+ * 最后一次调用要摆的那份动作，缺省是 `null`（摆人物自己的基础姿势）。与 `PREVIEW_LATEST`
+ * 同一个理由：在途的 build 醒来要按最后一次调用补摆，而不是按发起时那一份。
+ */
+const PREVIEW_LATEST_MOTION = 'previzCharacterPreviewLatestMotion';
+/**
  * 第几次重建占着「往容器里挂」这个位置。醒来时它不是自己那一号，说明后面还有一次重建
  * 在跑，这一具就该丢掉。
  *
@@ -188,22 +194,28 @@ export function disposeCharacterPreviewStage(stage: CharacterPreviewStage): void
  *   它现搭（尺寸与颜色烤死在几何体和材质里，改不动），相机也按它取景。少了这一步，
  *   木偶会停在**第一次**那份草稿上，直到用户再动一次任何字段；而对话框默认体型就是真
  *   模型，第一次打开必然要等模型落地，这个窗口里的每一次编辑都命中它。
+ *
+ * `motion` 给动作库对话框用：摆的是动作里的某一刻，而不是人物的基础姿势。动作换人不
+ * 换，所以它不进 `mannequinKey`，只在 `applyCharacter` 之后再推一次骨架——`applyCharacter`
+ * 先把基础姿势摆上，这一步再盖掉；不传就停在基础姿势上。
  */
 export async function renderCharacterPreview(
   deps: CharacterPreviewDeps,
   draft: PrevizCharacterDraft,
+  motion?: EvaluatedMotion,
 ): Promise<void> {
   const root = mannequinRoot(deps);
   let character = previewCharacter(draft);
   // 每次调用都记一笔，包括还没轮到自己挂木偶的那几次：在途的那次 build 醒来要按它补刷。
   root.userData[PREVIEW_LATEST] = character;
+  root.userData[PREVIEW_LATEST_MOTION] = motion ?? null;
   const key = mannequinKey(character);
 
   if (root.userData[PREVIEW_BUILD_KEY] === key) {
     const current = root.children[0];
     // 占位胶囊那一档没有可刷的东西：它的身高与颜色都在 key 里，变了就已经重建过了。
     // `current` 为空说明先发那次还在 await，上面记的那笔就是留给它的。
-    if (current?.userData.previzRig) deps.rig.applyCharacter(current, character);
+    if (current?.userData.previzRig) poseMannequin(deps, current, character, motion ?? null);
   } else {
     // 先占住位置再 await：`rig.build()` 是异步的，把体型下拉框一路拖过去时两次调用会
     // 重叠。key 不占的话两次都判成「要重建」，白克隆一副骨架；号不占的话见
@@ -233,10 +245,11 @@ export async function renderCharacterPreview(
     }
     // 按等待期间最后一份草稿收尾，见函数头那两种「安全」。
     character = root.userData[PREVIEW_LATEST] as PrevizCharacter;
+    const latestMotion = root.userData[PREVIEW_LATEST_MOTION] as EvaluatedMotion | null;
     // 占位胶囊拖到这里才建：尺寸烤在 `CapsuleGeometry` 里、辨识色烤在材质里，等待开始
     // 时那份草稿建出来的那一根改不动，只能按最新这份现搭。
     const node = built.node ?? createCharacterPlaceholder(deps.three, character);
-    if (node.userData.previzRig) deps.rig.applyCharacter(node, character);
+    if (node.userData.previzRig) poseMannequin(deps, node, character, latestMotion);
     // 模型没到手，挂上去的是兜底的胶囊：把判据抹掉，下一次编辑就等于一次重试。不抹的
     // 话这个对话框在这次会话里永远停在胶囊上，而用户什么提示都没有。
     //
@@ -277,6 +290,17 @@ export async function renderCharacterPreview(
   }
 }
 
+/** 刷外观，再按需把动作盖在基础姿势上。见 `renderCharacterPreview` 的 `motion`。 */
+function poseMannequin(
+  deps: CharacterPreviewDeps,
+  node: THREE.Object3D,
+  character: PrevizCharacter,
+  motion: EvaluatedMotion | null,
+): void {
+  deps.rig.applyCharacter(node, character);
+  if (motion) deps.rig.applyMotion(node, motion);
+}
+
 /**
  * 还没在俯视图上点过位时，木偶站在哪。
  *
@@ -295,7 +319,7 @@ const PREVIEW_DEFAULT_SPOT = [0, 0] as const;
  *
  * 其余一律不重建，因为 `CharacterRigFactory` 已经替它们各留了一条就地改的路：身高走
  * `applyBodyScale` 的一次 uniform 缩放，体型宽窄走同一处的 `BODY_WIDTH_SCALE`，基础
- * 姿势走 `applyPose`（它本来就是为「rig 建好之后还能改姿势」写的），辨识色走
+ * 姿势走 `applyMotion`（它本来就是为「rig 建好之后还能改姿势」写的），辨识色走
  * `applyTint`。为这些重建等于把那四层缓存全绕过去。
  *
  * 身高先夹进 `PREVIZ_HEIGHT_CM_RANGE` 再进 key（`previewCharacter` 里夹的）：用户在

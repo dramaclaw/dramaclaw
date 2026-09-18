@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createPrevizObject } from '@/features/previz/domain/objects';
-import { PREVIZ_POSE_CLIPS } from '@/features/previz/domain/poses';
+import { PREVIZ_POSE_CLIPS, poseSampleTime } from '@/features/previz/domain/poses';
 import type { PrevizCharacter } from '@/features/previz/domain/scene';
 import {
   CharacterRigFactory,
@@ -17,6 +17,7 @@ import {
   type CharacterRigDeps,
   type PrevizGltf,
 } from '@/features/previz/engine/characterRig';
+import type { EvaluatedMotion } from '@/features/previz/domain/evaluate';
 
 function character(overrides: Partial<PrevizCharacter> = {}): PrevizCharacter {
   return { ...createPrevizObject('character', []), ...overrides };
@@ -132,9 +133,30 @@ class FakeMesh extends FakeObject3D {
 /** 打开后所有 `setFromObject()` 都交出空盒，模拟「模型解出来一片几何体都没有」。 */
 let boxIsEmpty = false;
 
-const setTime = vi.fn();
 const play = vi.fn();
-const stopAllAction = vi.fn();
+const stop = vi.fn();
+/** 每个假 action 的现状。`update` 被调时照它们拍一张快照，见 `lastPose`。 */
+interface FakeAction {
+  clip: { name: string };
+  time: number;
+  weight: number;
+  running: boolean;
+}
+let actions: FakeAction[] = [];
+/** 每次 `mixer.update` 时正在播的 action：`[clip 名, 时刻, 权重]`。 */
+let poses: Array<Array<{ name: string; time: number; weight: number }>> = [];
+const update = vi.fn(() => {
+  poses.push(
+    actions
+      .filter((action) => action.running)
+      .map((action) => ({ name: action.clip.name, time: action.time, weight: action.weight }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  );
+});
+/** 最后一次推骨架时骨架上叠着哪几条 clip，按 clip 名排序。 */
+function lastPose() {
+  return poses[poses.length - 1];
+}
 /** 每次 `clipAction(clip)` 收到的那条 clip，用来断言挑中的是哪一条。 */
 let clipActions: Array<{ name: string }> = [];
 /** 每个 AnimationMixer 是挂在谁身上建的：必须是克隆体，不是共享的源场景。 */
@@ -170,10 +192,30 @@ function fakeThree() {
       }
       clipAction(clip: { name: string }) {
         clipActions.push(clip);
-        return { play };
+        const action = {
+          clip,
+          time: 0,
+          weight: 1,
+          running: false,
+          play() {
+            action.running = true;
+            play();
+            return action;
+          },
+          stop() {
+            action.running = false;
+            stop();
+            return action;
+          },
+          setEffectiveWeight(weight: number) {
+            action.weight = weight;
+            return action;
+          },
+        };
+        actions.push(action);
+        return action;
       }
-      setTime = setTime;
-      stopAllAction = stopAllAction;
+      update = update;
     },
   } as unknown as typeof import('three');
 }
@@ -302,10 +344,16 @@ beforeEach(() => {
   boxIsEmpty = false;
   clipActions = [];
   mixerRoots = [];
-  setTime.mockClear();
+  actions = [];
+  poses = [];
+  update.mockClear();
   play.mockClear();
-  stopAllAction.mockClear();
+  stop.mockClear();
 });
+
+function pose(ref: string, time: number): EvaluatedMotion {
+  return { primary: { ref, time }, weight: 1 };
+}
 
 describe('CharacterRigFactory', () => {
   it('points at a model that is really in public/', () => {
@@ -365,7 +413,7 @@ describe('CharacterRigFactory', () => {
     expect(clipActions.map((clip) => clip.name)).toEqual(['Walk_Loop']);
     expect(play).toHaveBeenCalledTimes(1);
     // walking 的采样时刻是 0.35：定格在起步瞬间比定格在 0 更像「在走」。
-    expect(setTime).toHaveBeenCalledWith(0.35);
+    expect(lastPose()).toEqual([{ name: 'Walk_Loop', time: 0.35, weight: 1 }]);
     // mixer 必须挂在这个人物自己的克隆体上：挂在共享的源场景上，一个人物摆姿势
     // 会把所有人物一起摆过去。
     expect(mixerRoots).toHaveLength(1);
@@ -383,7 +431,7 @@ describe('CharacterRigFactory', () => {
 
     expect(rig).not.toBeNull();
     expect(clipActions.map((clip) => clip.name)).toEqual(['Crouch_Idle_Loop']);
-    expect(setTime).toHaveBeenCalledWith(0.25);
+    expect(lastPose()).toEqual([{ name: 'Crouch_Idle_Loop', time: 0.25, weight: 1 }]);
   });
 
   it("prefers the model's own clip when the library repeats a name", async () => {
@@ -603,7 +651,7 @@ describe('CharacterRigFactory', () => {
     expect(rig).not.toBeNull();
     // 但绝不能拿模型里随便一条 clip 顶上：那会摆出一个跟属性面板完全对不上的姿势。
     expect(clipActions).toHaveLength(0);
-    expect(setTime).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
     // 身高体型照常生效——姿势没解出来不该连缩放一起放弃。
     expect(viewOf(rig).scale.y).toBeCloseTo(0.875, 6);
   });
@@ -639,14 +687,13 @@ describe('CharacterRigFactory.applyCharacter', () => {
     const factory = factoryWith(['Idle_Loop', 'Walk_Loop']);
     const rig = await factory.build(character({ basePoseId: 'standing' }));
     clipActions = [];
-    setTime.mockClear();
 
     factory.applyCharacter(rig!, character({ basePoseId: 'walking' }));
 
     // 模型是在第一次 sync 时按当时的姿势定格的。之后只重新缩放的话，属性面板的
     // 「基础姿势」下拉框对已加载的人物完全失效——改成抱臂，人还站着。
     expect(clipActions.map((clip) => clip.name)).toEqual(['Walk_Loop']);
-    expect(setTime).toHaveBeenCalledWith(0.35);
+    expect(lastPose()).toEqual([{ name: 'Walk_Loop', time: 0.35, weight: 1 }]);
   });
 
   it('re-applies the pose adjust angles and the body scale', async () => {
@@ -729,66 +776,291 @@ describe('CharacterRigFactory.applyCharacter', () => {
   });
 });
 
-describe('CharacterRigFactory.applyPose', () => {
+describe('CharacterRigFactory.applyMotion', () => {
   it('advances the walk cycle to the requested second', async () => {
     const factory = factoryWith(['Idle_Loop', 'Walk_Loop']);
     const rig = await factory.build(character({ basePoseId: 'standing' }));
     clipActions = [];
-    setTime.mockClear();
-    stopAllAction.mockClear();
+    stop.mockClear();
 
-    factory.applyPose(rig!, 'walking', 1.5);
+    factory.applyMotion(rig!, pose('walking', 1.5));
 
     // 沿路径走位时每帧推一次。不停掉上一条 action 的话，站姿和走姿两条权重都是 1，
     // 骨骼被拧到两者之和上。
-    expect(stopAllAction).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
     expect(clipActions.map((clip) => clip.name)).toEqual(['Walk_Loop']);
-    expect(setTime).toHaveBeenCalledWith(1.5);
+    expect(lastPose()).toEqual([{ name: 'Walk_Loop', time: 1.5, weight: 1 }]);
   });
 
   it('keeps one mixer per rig and only moves the clock between frames', async () => {
     const factory = factoryWith(['Idle_Loop', 'Walk_Loop']);
     const rig = await factory.build(character({ basePoseId: 'standing' }));
-    factory.applyPose(rig!, 'walking', 0.1);
+    factory.applyMotion(rig!, pose('walking', 0.1));
     mixerRoots = [];
     clipActions = [];
-    stopAllAction.mockClear();
-    setTime.mockClear();
+    stop.mockClear();
+    play.mockClear();
+    poses = [];
 
-    factory.applyPose(rig!, 'walking', 0.2);
-    factory.applyPose(rig!, 'walking', 0.3);
+    factory.applyMotion(rig!, pose('walking', 0.2));
+    factory.applyMotion(rig!, pose('walking', 0.3));
 
     // 每帧新建一个 mixer、重新 play 一次的话，clipAction 要把几十根骨骼的绑定重新解一遍，
     // 那是播放时每一帧都要付的钱。
     expect(mixerRoots).toHaveLength(0);
     expect(clipActions).toHaveLength(0);
-    expect(stopAllAction).not.toHaveBeenCalled();
-    expect(setTime.mock.calls).toEqual([[0.2], [0.3]]);
+    expect(play).not.toHaveBeenCalled();
+    expect(stop).not.toHaveBeenCalled();
+    expect(poses.map((layers) => layers.map((layer) => layer.time))).toEqual([[0.2], [0.3]]);
   });
 
-  it('does nothing when the pose and the time are both unchanged', async () => {
+  it('does nothing when the motion is unchanged', async () => {
     const factory = factoryWith(['Idle_Loop', 'Walk_Loop']);
     const rig = await factory.build(character({ basePoseId: 'standing' }));
-    factory.applyPose(rig!, 'walking', 0.5);
-    setTime.mockClear();
+    factory.applyMotion(rig!, pose('walking', 0.5));
+    update.mockClear();
 
-    factory.applyPose(rig!, 'walking', 0.5);
+    factory.applyMotion(rig!, pose('walking', 0.5));
 
     // 暂停时每次 sync 都会把同一帧重放一遍，不早退就是白推一遍骨架。
-    expect(setTime).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
   });
 
   it('keeps the current clip when the requested pose resolves to nothing', async () => {
     const factory = factoryWith(['Idle_Loop']);
     const rig = await factory.build(character({ basePoseId: 'standing' }));
     clipActions = [];
-    stopAllAction.mockClear();
+    stop.mockClear();
 
-    factory.applyPose(rig!, 'moonwalk', 1);
+    factory.applyMotion(rig!, pose('moonwalk', 1));
 
     // 对不上就保持现有姿势：绝不拿别的 clip 顶上，也不把正在播的停掉留下一副绑定姿势。
     expect(clipActions).toHaveLength(0);
-    expect(stopAllAction).not.toHaveBeenCalled();
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  it('plays a builtin motion by its clip name', async () => {
+    const factory = factoryWith(['Idle_Loop', 'Sitting_Idle_Loop']);
+    const rig = await factory.build(character({ basePoseId: 'standing' }));
+
+    factory.applyMotion(rig!, pose('builtin:Sitting_Idle_Loop', 1.2));
+
+    expect(lastPose()).toEqual([{ name: 'Sitting_Idle_Loop', time: 1.2, weight: 1 }]);
+    expect(viewOf(rig).userData.previzMotion).toEqual(pose('builtin:Sitting_Idle_Loop', 1.2));
+  });
+
+  it('cross-fades the primary and secondary samples by weight', async () => {
+    const factory = factoryWith(['Idle_Loop', 'Idle_Talking_Loop', 'Sitting_Idle_Loop']);
+    const rig = await factory.build(character({ basePoseId: 'standing' }));
+
+    factory.applyMotion(rig!, {
+      primary: { ref: 'builtin:Idle_Talking_Loop', time: 0.1 },
+      secondary: { ref: 'builtin:Sitting_Idle_Loop', time: 1.2 },
+      weight: 0.25,
+    });
+
+    // 两条各自的片段内时间分开给，权重和为 1——这就是 0.2 秒交叉淡化里的某一帧。
+    expect(lastPose()).toEqual([
+      { name: 'Idle_Talking_Loop', time: 0.1, weight: 0.25 },
+      { name: 'Sitting_Idle_Loop', time: 1.2, weight: 0.75 },
+    ]);
+  });
+
+  it('keeps only the primary when both samples share a clip', async () => {
+    const factory = factoryWith(['Idle_Loop', 'Walk_Loop']);
+    const rig = await factory.build(character({ basePoseId: 'standing' }));
+
+    factory.applyMotion(rig!, {
+      primary: { ref: 'builtin:Walk_Loop', time: 0.1 },
+      secondary: { ref: 'walking', time: 0.6 },
+      weight: 0.5,
+    });
+
+    // 同一条 clip 在 mixer 里只有一个 action，没法同时停在两个时刻。
+    expect(lastPose()).toEqual([{ name: 'Walk_Loop', time: 0.1, weight: 1 }]);
+  });
+
+  it('falls back to the base pose when a builtin clip is missing', async () => {
+    const factory = factoryWith(['Idle_Loop']);
+    const rig = await factory.build(character({ basePoseId: 'standing' }));
+    poses = [];
+
+    factory.applyMotion(rig!, pose('builtin:Sitting_Idle_Loop', 1));
+
+    // 动画库没到：片段里的人摆回基础姿势，而不是冻在上一个动作上。
+    expect(lastPose()).toEqual([
+      { name: 'Idle_Loop', time: poseSampleTime('standing'), weight: 1 },
+    ]);
+  });
+
+  it('holds the base pose until an imported motion is ready, then plays it', async () => {
+    const factory = factoryWith(['Idle_Loop']);
+    const imported = { name: 'Wave' } as unknown as import('three').AnimationClip;
+    let ready = false;
+    factory.setMotionResolver((ref) => (ready && ref === 'import:m' ? imported : null));
+    const rig = await factory.build(character({ basePoseId: 'standing' }));
+
+    factory.applyMotion(rig!, pose('import:m', 0.4));
+    expect(lastPose()).toEqual([
+      { name: 'Idle_Loop', time: poseSampleTime('standing'), weight: 1 },
+    ]);
+
+    ready = true;
+    factory.applyMotion(rig!, pose('import:m', 0.4));
+    // 输入没变，早退仍然成立——加载完成要靠 `invalidateMotions` 让指纹过期。
+    expect(lastPose()?.[0]?.name).toBe('Idle_Loop');
+
+    factory.invalidateMotions();
+    factory.applyMotion(rig!, pose('import:m', 0.4));
+    expect(lastPose()).toEqual([{ name: 'Wave', time: 0.4, weight: 1 }]);
+  });
+
+  it('does not recurse into a stack overflow when the base pose is an unresolved builtin ref', async () => {
+    const factory = factoryWith(['Idle_Loop']);
+    const rig = await factory.build(character({ basePoseId: 'standing' }));
+    clipActions = [];
+
+    // basePoseId 本身就是一个解不出的 builtin: 引用（动作被删掉后场景还没跟上，或者
+    // 干脆是脏存档）。回落那一步如果又调 resolveSample 自己，会绕回同一条解不出的
+    // 分支——同一个解不出的 basePoseId 每次都落回同一条路径，递归永远退不出去。
+    expect(() =>
+      factory.applyCharacter(rig!, character({ basePoseId: 'builtin:Missing' })),
+    ).not.toThrow();
+    // 解不出就保持现有姿势，不拿别的 clip 顶上。
+    expect(clipActions).toHaveLength(0);
+  });
+
+  it('stops the faded-out action when a two-layer cross-fade collapses to one layer', async () => {
+    const factory = factoryWith(['Idle_Loop', 'Idle_Talking_Loop', 'Sitting_Idle_Loop']);
+    const rig = await factory.build(character({ basePoseId: 'standing' }));
+    factory.applyMotion(rig!, {
+      primary: { ref: 'builtin:Idle_Talking_Loop', time: 0.1 },
+      secondary: { ref: 'builtin:Sitting_Idle_Loop', time: 1.2 },
+      weight: 0.25,
+    });
+    const sittingAction = actions.find((action) => action.clip.name === 'Sitting_Idle_Loop')!;
+    stop.mockClear();
+
+    factory.applyMotion(rig!, pose('builtin:Idle_Talking_Loop', 0.5));
+
+    // 两层交叉淡化收成一层：被淡出的那条 action 必须真的停掉，不然它还挂在 mixer 里
+    // 以上一次的权重继续叠加，骨骼被拧到两条动作之和上。
+    expect(sittingAction.running).toBe(false);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(lastPose()).toEqual([{ name: 'Idle_Talking_Loop', time: 0.5, weight: 1 }]);
+  });
+
+  it('shares the actor download with the retarget target', async () => {
+    const loadGltf = vi.fn(async (_url: string) => gltf(['Idle_Loop']));
+    const factory = new CharacterRigFactory({ three: fakeThree(), loadGltf, clone: freshClone });
+
+    const source = await factory.loadActorSource();
+    await factory.build(character());
+
+    expect(source.animations.map((clip) => clip.name)).toEqual(['Idle_Loop']);
+    expect(loadGltf).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * 真 three 的 mixer：假 mixer 只能证明「时刻和权重交出去了」，证明不了 `update(0)` 下单次
+ * 动作真的停在末帧、两条 action 真的按权重混——这两件都是 three 内部的行为。
+ */
+describe('CharacterRigFactory.applyMotion on real three', () => {
+  function realFactory() {
+    const root = new THREE.Group();
+    const bone = new THREE.Bone();
+    bone.name = 'b';
+    root.add(bone);
+    const quarter = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+    const identity = [0, 0, 0, 1];
+    const animations = [
+      new THREE.AnimationClip('Idle_Loop', 1, [
+        new THREE.QuaternionKeyframeTrack('b.quaternion', [0, 1], [...identity, ...identity]),
+      ]),
+      new THREE.AnimationClip('Sitting_Enter', 1.3, [
+        new THREE.QuaternionKeyframeTrack('b.quaternion', [0, 1.3], [...identity, ...quarter.toArray()]),
+      ]),
+      // 走位循环：1 秒内从 identity 线性转到 90 度。时长比 Sitting_Enter 短、又和它
+      // 用同一条轨道形状，方便下面的绕圈用例算期望值——0.25 秒处正是 22.5 度。
+      new THREE.AnimationClip('Walk_Loop', 1, [
+        new THREE.QuaternionKeyframeTrack('b.quaternion', [0, 1], [...identity, ...quarter.toArray()]),
+      ]),
+    ];
+    return new CharacterRigFactory({
+      three: THREE,
+      loadGltf: async () => ({ scene: root, animations }),
+      clone: (object) => object.clone(),
+    });
+  }
+
+  function yawDeg(rig: THREE.Object3D): number {
+    const bone = rig.getObjectByName('b')!;
+    return (2 * Math.acos(Math.min(1, Math.abs(bone.quaternion.w))) * 180) / Math.PI;
+  }
+
+  it('holds a one-shot motion on its last frame', async () => {
+    const factory = realFactory();
+    const rig = (await factory.build(character({ basePoseId: 'standing' })))!;
+
+    factory.applyMotion(rig, pose('builtin:Sitting_Enter', 1.3));
+
+    expect(yawDeg(rig)).toBeCloseTo(90, 3);
+  });
+
+  it('mixes two actions by weight', async () => {
+    const factory = realFactory();
+    const rig = (await factory.build(character({ basePoseId: 'standing' })))!;
+
+    factory.applyMotion(rig, {
+      primary: { ref: 'builtin:Sitting_Enter', time: 1.3 },
+      secondary: { ref: 'builtin:Idle_Loop', time: 0 },
+      weight: 0.5,
+    });
+
+    expect(yawDeg(rig)).toBeCloseTo(45, 3);
+  });
+
+  it('wraps a looping motion around instead of freezing on its last frame', async () => {
+    const factory = realFactory();
+    const rig = (await factory.build(character({ basePoseId: 'standing' })))!;
+
+    // Walk_Loop 是 1 秒的循环 clip。`mixer.update(0)` 不会替我们绕圈（three 在
+    // deltaTime === 0 时把 `action.time` 原样采样，见 `loopedTime` 的注释），沿路径走位
+    // 时喂进来的时刻又没有取模（evaluate.ts 的走位那一支就是 `(frame-start)/FPS`）——
+    // 1.25 秒不绕回去的话骨骼会一直夹在末帧（90 度），腿从此就定住了。
+    factory.applyMotion(rig, pose('walking', 1.25));
+
+    expect(yawDeg(rig)).toBeCloseTo(22.5, 1);
+  });
+
+  it('holds a builtin one-shot motion on its last frame even when the catalogued duration overshoots the real clip', async () => {
+    // 目录里 Roll 记的 durationSec 是 1.467（三位小数），真实 GLB 时长是 1.46666…7——
+    // 求值器按目录值夹时间，会给出 1.467 这个比真实时长略大的时刻。builtin:/import: 的
+    // 时刻已经由求值器处理过，引擎不该再取一次模，把这点误差绕成约 0.0003 秒、
+    // 把播完的人物摔回起始姿势。
+    const root = new THREE.Group();
+    const bone = new THREE.Bone();
+    bone.name = 'b';
+    root.add(bone);
+    const quarter = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+    const identity = [0, 0, 0, 1];
+    const realDuration = 1.4666666666666666;
+    const animations = [
+      new THREE.AnimationClip('Roll', realDuration, [
+        new THREE.QuaternionKeyframeTrack('b.quaternion', [0, realDuration], [...identity, ...quarter.toArray()]),
+      ]),
+    ];
+    const factory = new CharacterRigFactory({
+      three: THREE,
+      loadGltf: async () => ({ scene: root, animations }),
+      clone: (object) => object.clone(),
+    });
+    const rig = (await factory.build(character({ basePoseId: 'standing' })))!;
+
+    factory.applyMotion(rig, pose('builtin:Roll', 1.467));
+
+    expect(yawDeg(rig)).toBeCloseTo(90, 1);
   });
 });
 
