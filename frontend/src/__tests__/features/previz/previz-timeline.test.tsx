@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -530,5 +530,38 @@ describe('PrevizTimeline 面板高度', () => {
     expect(clampTimelineHeight(1000, 2000)).toBe(PREVIZ_TIMELINE_HEIGHT.max);
     // 下界：再矮连一条轨道加它下面那行运动路径都露不全。
     expect(clampTimelineHeight(0, 900)).toBe(PREVIZ_TIMELINE_HEIGHT.min);
+  });
+});
+
+describe('PrevizTimeline 动作行', () => {
+  beforeEach(() => {
+    usePrevizStore.getState().loadScene(createDefaultScene());
+  });
+
+  it('只给人物轨道画动作行，点「+ 添加动作」为这个人物打开动作库', async () => {
+    const user = userEvent.setup();
+    const characterId = usePrevizStore.getState().addObject('character')!;
+    usePrevizStore.getState().addObjectToTimeline(characterId);
+    const cameraId = usePrevizStore.getState().addObject('camera')!;
+    usePrevizStore.getState().addObjectToTimeline(cameraId);
+    render(<PrevizTimeline />);
+
+    expect(screen.getAllByTestId('previz-action-row')).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: 'previz.motion.add' }));
+    expect(usePrevizStore.getState().motionDialog).toEqual({ mode: 'add', objectId: characterId });
+  });
+
+  it('把片段画进动作行，点它选中', async () => {
+    const user = userEvent.setup();
+    const characterId = usePrevizStore.getState().addObject('character')!;
+    expect(usePrevizStore.getState().addActionClip(characterId, 'builtin:Wave_Loop')).toBe('unknown-motion');
+    expect(usePrevizStore.getState().addActionClip(characterId, 'builtin:Walk_Loop')).toBeNull();
+    const clipId = usePrevizStore.getState().selectedClipId!;
+    usePrevizStore.getState().selectClip(null);
+    render(<PrevizTimeline />);
+
+    const row = screen.getByTestId('previz-action-row');
+    await user.click(within(row).getByTestId(`previz-clip-${clipId}`));
+    expect(usePrevizStore.getState().selectedClipId).toBe(clipId);
   });
 });

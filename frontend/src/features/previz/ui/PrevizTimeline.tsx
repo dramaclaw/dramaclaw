@@ -22,6 +22,7 @@ import { liveCameraAt } from '../domain/program';
 import type { PrevizObjectKind } from '../domain/scene';
 import { PREVIZ_FPS } from '../domain/scene';
 import { PREVIZ_PLAYBACK_RATES, usePrevizStore } from '../store';
+import { PrevizActionRow } from './PrevizActionRow';
 import { PrevizAudioTrack } from './PrevizAudioTrack';
 import { PrevizProgramTrack } from './PrevizProgramTrack';
 import { PrevizTimeRuler } from './PrevizTimeRuler';
@@ -114,6 +115,8 @@ export function PrevizTimeline({
   const clearPath = usePrevizStore((state) => state.clearPath);
   const addObject = usePrevizStore((state) => state.addObject);
   const addCloseup = usePrevizStore((state) => state.addCloseup);
+  const motionStatus = usePrevizStore((state) => state.motionStatus);
+  const openMotionDialog = usePrevizStore((state) => state.openMotionDialog);
   const cutToCamera = useCutToCamera();
   const audioImport = useAudioImport(nodeId);
   const liveCameraId = liveCameraAt(scene, frame);
@@ -471,6 +474,23 @@ export function PrevizTimeline({
                   // 传下去的每个回调都得是真能调的，不靠下游替我们筛。
                   onCut={isCamera ? () => cutToCamera(track.objectId) : undefined}
                   live={liveCameraId === track.objectId}
+                  actionRow={
+                    kind === 'character' ? (
+                      <PrevizActionRow
+                        track={track}
+                        pxPerFrame={pxPerFrame}
+                        laneWidthPx={laneWidthPx}
+                        frame={frame}
+                        selectedClipId={selectedClipId}
+                        motions={scene.motions}
+                        motionStatus={motionStatus}
+                        onSelectClip={selectClip}
+                        onTrimClip={setClipEdge}
+                        onSplit={splitClipAtPlayhead}
+                        onAdd={() => openMotionDialog({ mode: 'add', objectId: track.objectId })}
+                      />
+                    ) : undefined
+                  }
                 />
               );
             })}
