@@ -82,7 +82,7 @@ import { PrevizViewportControls } from "./ui/PrevizViewportControls";
 import type { PrevizViewSource } from "./ui/PrevizAxisGizmo";
 import type { PrevizAxisView } from "./domain/axisGizmo";
 import type { PrevizObjectKind, PrevizScene, Vec3 } from "./domain/scene";
-import { PREVIZ_DEFAULT_VIEW, type PrevizViewDirection } from "./domain/view";
+import { PREVIZ_DEFAULT_VIEW, type PrevizViewDirection, type PrevizViewPlacement } from "./domain/view";
 
 interface PrevizEditorProps {
   open: boolean;
@@ -248,6 +248,13 @@ export function PrevizEditor({
    * 倒是不会，但重画已有轨迹时播放头一动高度就变，同一笔的前后段落在两个平面上。
    */
   const strokeHeight = useRef(0);
+  /**
+   * 画笔接管视角期间，进画笔之前那台相机停在哪。
+   *
+   * `null` = 没有要还的东西：不在画笔里、录制中没切成、或者用户自己又切了视角
+   * （那之后再飞回去就是跟人抢）。
+   */
+  const drawReturnPose = useRef<PrevizViewPlacement | null>(null);
   /**
    * 正在逐点打的那条轨迹：给哪个对象打、落进了哪条片段、点投在多高的平面上。null 表示
    * 还没打第一个点。
@@ -651,6 +658,29 @@ export function PrevizEditor({
   // 一笔没画完就切走工具，收尾那一下就不一定跑得到，左键会一直卡在摘掉的状态。
   useEffect(() => {
     renderer?.setDrawing(tool === "draw");
+  }, [renderer, tool]);
+
+  /*
+    画笔画不准的根子是掠射视角：镜头贴近水平时，屏幕上一个像素对应地面上很大一段距离。
+    顶视图能解决，挡路的是往返——画完得自己把镜头转回原来的角度，找不回来。这条 effect
+    把往返自动化。
+
+    挂在 `tool` 上而不是 pointerdown/up 里开关一次，理由同上面的 `setDrawing`：离开画笔
+    有三条路（收笔自动落回移动工具、Esc、手动点别的工具），挂在工具上，三条一起覆盖。
+  */
+  useEffect(() => {
+    if (!renderer || tool !== "draw") return undefined;
+    const previous = renderer.applyDrawTopView();
+    // 切不动就别留快照：录制期间相机本来就不许动，留一份等退出时硬写，画面上就是
+    // 凭空跳一下机位。
+    if (!previous) return undefined;
+    drawReturnPose.current = previous;
+    return () => {
+      const pose = drawReturnPose.current;
+      drawReturnPose.current = null;
+      // 清空的那条路（用户自己切了视角）把 ref 置成了 null，这里就什么都不做。
+      if (pose) renderer.applyViewPose(pose);
+    };
   }, [renderer, tool]);
 
   // 切走标记工具就是这一轮打完了；再切回来是重新起手（改播放头下的那条轨迹），不是接着
@@ -1395,6 +1425,18 @@ export function PrevizEditor({
         setCameraPose(null);
         return;
       }
+      /*
+        画笔下的 Esc 是「这一下不算」，不该把整个预演台带走。落在这里还有一层：退出画笔
+        会顺带把视角还原回去（见上面那条 effect），Esc 于是成了「不画了，把视角也还我」。
+
+        笔画还按着时不拦——中途换工具会让 `setDrawing` 把左键重新挂回轨道旋转，视口就在
+        笔下转起来了，和 W/Q/G/R/S 那五条守卫是同一个坑。
+      */
+      if (!next && details?.reason === "escape-key" && tool === "draw" && !stroke.current) {
+        details.cancel();
+        setTool(PREVIZ_DEFAULT_TOOL);
+        return;
+      }
       if (!next && details?.reason === "escape-key" && tool === "mark") {
         details.cancel();
         setTool(PREVIZ_DEFAULT_TOOL);
@@ -1467,6 +1509,8 @@ export function PrevizEditor({
           if (store.selectedObjectId) renderer.focusObject(store.selectedObjectId);
           break;
         case "h":
+          // 用户自己要去别的视角了，画笔那份快照作废——再飞回去就是跟人抢。
+          drawReturnPose.current = null;
           renderer.resetView();
           break;
         // 键位对齐 Blender：W/Q 选指针工具，G/R/S 选变换工具。五颗都在同一条互斥
@@ -1761,10 +1805,18 @@ export function PrevizEditor({
                 hasSelection={Boolean(selectedObjectId)}
                 quadView={quadView}
                 onDisplayMode={setDisplayMode}
-                onResetView={() => renderer?.resetView()}
+                onResetView={() => {
+                  // 同 H 键：显式切视角 = 放弃还原。
+                  drawReturnPose.current = null;
+                  renderer?.resetView();
+                }}
                 onPathSpacing={setPathSpacing}
                 onPathSpeed={setPathSpeed}
-                onViewDirection={(direction) => renderer?.applyViewDirection(direction)}
+                onViewDirection={(direction) => {
+                  // 同「重置视角」。视角球任一面都算显式切视角。
+                  drawReturnPose.current = null;
+                  renderer?.applyViewDirection(direction);
+                }}
                 onFocus={() => {
                   if (selectedObjectId) renderer?.focusObject(selectedObjectId);
                 }}
