@@ -284,3 +284,79 @@ def test_verify_token_records_last_seen(db, monkeypatch):
 
     # 设置页要能回答「这台还在用吗」，否则用户不知道该吊销哪一条。
     assert blender_store.list_tokens(db, user_id="alice")[0].last_seen == later
+
+
+def test_recorded_delivery_comes_back_with_its_metadata(db):
+    delivery_id = blender_store.record_delivery(
+        db,
+        user_id="alice",
+        project_id="demo",
+        url="/files/freezone/_uploads/blockout_Camera_frame_24_20260918.png",
+        kind="image",
+        filename="blockout_Camera_frame_24_20260918.png",
+        camera="Camera",
+        frame=24,
+        frame_start=None,
+        frame_end=None,
+        fps=None,
+        width=1280,
+        height=720,
+    )
+
+    items = blender_store.list_inbox(db, user_id="alice", project_id="demo")
+
+    assert [item["delivery_id"] for item in items] == [delivery_id]
+    assert items[0]["kind"] == "image"
+    assert items[0]["frame"] == 24
+    assert items[0]["width"] == 1280
+
+
+def test_inbox_is_scoped_to_user_and_project(db):
+    common = dict(
+        url="/files/x.png",
+        kind="image",
+        filename="x.png",
+        camera="Camera",
+        frame=1,
+        frame_start=None,
+        frame_end=None,
+        fps=None,
+        width=10,
+        height=10,
+    )
+    blender_store.record_delivery(db, user_id="alice", project_id="demo", **common)
+    blender_store.record_delivery(db, user_id="alice", project_id="other", **common)
+    blender_store.record_delivery(db, user_id="bob", project_id="demo", **common)
+
+    assert len(blender_store.list_inbox(db, user_id="alice", project_id="demo")) == 1
+
+
+def test_rate_limit_allows_up_to_the_cap_then_refuses(db, monkeypatch):
+    # 钉死时钟：固定窗口是按墙上时间切的，用真实时钟跑的话，这几次调用万一
+    # 骑在窗口边界上就会悄悄重置计数，测试变成偶发绿。
+    monkeypatch.setattr(blender_store, "_now", lambda: 1_800_000_000)
+
+    for _ in range(5):
+        assert blender_store.hit_rate_limit(db, "pair:1.2.3.4", limit=5, window=60) is True
+
+    assert blender_store.hit_rate_limit(db, "pair:1.2.3.4", limit=5, window=60) is False
+
+
+def test_rate_limit_buckets_are_independent(db, monkeypatch):
+    monkeypatch.setattr(blender_store, "_now", lambda: 1_800_000_000)
+    for _ in range(5):
+        blender_store.hit_rate_limit(db, "pair:1.2.3.4", limit=5, window=60)
+
+    assert blender_store.hit_rate_limit(db, "pair:5.6.7.8", limit=5, window=60) is True
+
+
+def test_rate_limit_window_rolls_over(db, monkeypatch):
+    base = 1_800_000_000
+    monkeypatch.setattr(blender_store, "_now", lambda: base)
+    for _ in range(5):
+        blender_store.hit_rate_limit(db, "pair:1.2.3.4", limit=5, window=60)
+    assert blender_store.hit_rate_limit(db, "pair:1.2.3.4", limit=5, window=60) is False
+
+    monkeypatch.setattr(blender_store, "_now", lambda: base + 61)
+
+    assert blender_store.hit_rate_limit(db, "pair:1.2.3.4", limit=5, window=60) is True

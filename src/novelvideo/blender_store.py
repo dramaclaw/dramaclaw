@@ -350,3 +350,93 @@ def revoke_token(db_path: str | Path, token_id: str, *, user_id: str) -> bool:
             (_now(), token_id, user_id),
         )
         return cur.rowcount == 1
+
+
+def record_delivery(
+    db_path: str | Path,
+    *,
+    user_id: str,
+    project_id: str,
+    url: str,
+    kind: str,
+    filename: str,
+    camera: str,
+    frame: int | None,
+    frame_start: int | None,
+    frame_end: int | None,
+    fps: float | None,
+    width: int | None,
+    height: int | None,
+) -> str:
+    """记一条待认领的投递。
+
+    文件此刻已经落在项目的 `freezone/_uploads/` 里了——这一行只是告诉前端
+    「有新东西，位置在这」。就算这行写失败，素材也不会丢，用户仍能在素材库里找到。
+    """
+    delivery_id = secrets.token_urlsafe(12)
+    with _connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO blender_inbox (delivery_id, project_id, user_id, url, kind, "
+            "filename, camera, frame, frame_start, frame_end, fps, width, height, "
+            "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                delivery_id,
+                project_id,
+                user_id,
+                url,
+                kind,
+                filename,
+                camera,
+                frame,
+                frame_start,
+                frame_end,
+                fps,
+                width,
+                height,
+                _now(),
+            ),
+        )
+    return delivery_id
+
+
+def list_inbox(db_path: str | Path, *, user_id: str, project_id: str) -> list[dict]:
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM blender_inbox WHERE user_id = ? AND project_id = ? "
+            "ORDER BY created_at",
+            (user_id, project_id),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def hit_rate_limit(db_path: str | Path, bucket: str, *, limit: int, window: int) -> bool:
+    """记一次调用，返回「还允许吗」。
+
+    固定窗口，不是滑动窗口：窗口边界上最坏能放过 2×limit 次。对「别让人在线爆破
+    40 bit 的配对码」这个目的，固定窗口足够，换来的是一行 SQL 而不是一张事件表。
+    """
+    now = _now()
+    window_start = now - (now % window)
+    with _connect(db_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT window_start, hits FROM blender_rate_limits WHERE bucket = ?",
+            (bucket,),
+        ).fetchone()
+
+        if row is None or row["window_start"] != window_start:
+            conn.execute(
+                "INSERT INTO blender_rate_limits (bucket, window_start, hits) "
+                "VALUES (?, ?, 1) "
+                "ON CONFLICT(bucket) DO UPDATE SET window_start = ?, hits = 1",
+                (bucket, window_start, window_start),
+            )
+            conn.execute("COMMIT")
+            return True
+
+        hits = row["hits"] + 1
+        conn.execute(
+            "UPDATE blender_rate_limits SET hits = ? WHERE bucket = ?", (hits, bucket)
+        )
+        conn.execute("COMMIT")
+        return hits <= limit
