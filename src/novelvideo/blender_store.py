@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Iterator
 
 from novelvideo.config import STATE_DIR
+from novelvideo.sqlite_pragmas import configure_sqlite_connection
 
 PAIRING_TTL_SECONDS = 5 * 60
 TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60
@@ -30,9 +31,14 @@ TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60
 _CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 _CODE_GROUP = 4
 
+# 只容忍这些：用户会打空格、会把分组符敲成别的。除此之外出现字母表外的字符，
+# 说明他敲错了，不要替他「纠正」成另一个合法码——那样他以为自己敲对了，
+# 而日志里永远看不出他实际敲了什么。
+_CODE_SEPARATORS = frozenset(" \t\r\n-_.")
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS blender_pairings (
-    pairing_id    TEXT PRIMARY KEY,
+    pairing_id_hash TEXT PRIMARY KEY,
     code_hash     TEXT NOT NULL UNIQUE,
     status        TEXT NOT NULL,
     created_at    INTEGER NOT NULL,
@@ -110,34 +116,45 @@ def default_db_path() -> Path:
 
 
 @contextmanager
-def _connect(db_path: Path) -> Iterator[sqlite3.Connection]:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path, isolation_level=None)
+def _connect(db_path: str | Path) -> Iterator[sqlite3.Connection]:
+    path = Path(db_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path, isolation_level=None)
     conn.row_factory = sqlite3.Row
     try:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
+        configure_sqlite_connection(conn)
+        # 建表放在这儿而不是只放在 create_pairing 里：不能假设 create_pairing
+        # 一定先被调到。state 卷被清空后，第一个到达的往往是插件的轮询，
+        # 那时该回 expired 让它重新配对，而不是抛 500 把轮询循环打死。
+        conn.executescript(_SCHEMA)
         yield conn
     finally:
         conn.close()
 
 
-def init_db(db_path: Path) -> None:
-    with _connect(db_path) as conn:
-        conn.executescript(_SCHEMA)
+def init_db(db_path: str | Path) -> None:
+    """建表。`_connect` 已经会建，这个函数留给显式初始化和测试。"""
+    with _connect(db_path):
+        pass
 
 
 def _hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def normalize_code(raw: str) -> str:
+def normalize_code(raw: str | None) -> str:
     """把用户敲进来的码收敛成库里存的那个形状。
 
     人会打小写、会多敲空格、会把连字符敲成别的——这些都不该算错码。
+    但字母表里没有的字符（`0` `O` `1` `I` `L` 这些一开始就被排除掉的易混字符）
+    出现在输入里就是笔误，整个码判非法。
     """
-    compact = "".join(ch for ch in (raw or "").upper() if ch in _CODE_ALPHABET)
+    compact = "".join(
+        ch for ch in (raw or "").upper() if ch not in _CODE_SEPARATORS
+    )
     if len(compact) != _CODE_GROUP * 2:
+        return ""
+    if any(ch not in _CODE_ALPHABET for ch in compact):
         return ""
     return f"{compact[:_CODE_GROUP]}-{compact[_CODE_GROUP:]}"
 
@@ -147,10 +164,10 @@ def _generate_code() -> str:
     return f"{body[:_CODE_GROUP]}-{body[_CODE_GROUP:]}"
 
 
-def create_pairing(db_path: Path) -> NewPairing:
+def create_pairing(db_path: str | Path) -> NewPairing:
     now = _now()
     expires_at = now + PAIRING_TTL_SECONDS
-    init_db(db_path)
+    last_error: sqlite3.IntegrityError | None = None
     with _connect(db_path) as conn:
         for _ in range(8):
             code = _generate_code()
@@ -158,21 +175,26 @@ def create_pairing(db_path: Path) -> NewPairing:
             try:
                 conn.execute(
                     "INSERT INTO blender_pairings "
-                    "(pairing_id, code_hash, status, created_at, expires_at) "
+                    "(pairing_id_hash, code_hash, status, created_at, expires_at) "
                     "VALUES (?, ?, 'pending', ?, ?)",
-                    (pairing_id, _hash(code), now, expires_at),
+                    (_hash(pairing_id), _hash(code), now, expires_at),
                 )
-            except sqlite3.IntegrityError:
-                # 码撞了（未过期的同码）。重抽，不要把别人的配对顶掉。
+            except sqlite3.IntegrityError as exc:
+                # UNIQUE 撞的是库里所有行，不分过期与否。重抽，不要把别人的配对顶掉。
+                last_error = exc
                 continue
             return NewPairing(pairing_id=pairing_id, code=code, expires_at=expires_at)
-    raise RuntimeError("生成配对码失败，请重试")
+    raise RuntimeError("生成配对码失败，请重试") from last_error
 
 
-def approve_pairing(db_path: Path, raw_code: str, *, user_id: str) -> bool:
+def approve_pairing(db_path: str | Path, raw_code: str, *, user_id: str) -> bool:
     """浏览器侧确认。已批过、过期、不存在都回 False，不区分——码是可猜的。"""
     code = normalize_code(raw_code)
     if not code:
+        return False
+    if not user_id:
+        # 路由层拿到空 user_id（未登录降级、字段名写错）时，宁可让批准失败，
+        # 也不要发出一个绑定到空用户的 30 天令牌。
         return False
     with _connect(db_path) as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -185,18 +207,19 @@ def approve_pairing(db_path: Path, raw_code: str, *, user_id: str) -> bool:
         return cur.rowcount == 1
 
 
-def consume_pairing(db_path: Path, pairing_id: str) -> PairingResult:
+def consume_pairing(db_path: str | Path, pairing_id: str) -> PairingResult:
     """插件轮询。已批则**当场**生成令牌并把配对置为 consumed。
 
     令牌到这一刻才存在，之前任何一行里都没有它——授权还没发生就先造钥匙，
     等于给自己留一个会过期但一直躺在库里的秘密。
     """
+    pairing_id_hash = _hash(pairing_id)
     with _connect(db_path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT status, expires_at, approved_user FROM blender_pairings "
-            "WHERE pairing_id = ?",
-            (pairing_id,),
+            "WHERE pairing_id_hash = ?",
+            (pairing_id_hash,),
         ).fetchone()
 
         if row is None:
@@ -215,18 +238,24 @@ def consume_pairing(db_path: Path, pairing_id: str) -> PairingResult:
         user_id = row["approved_user"]
         token = _insert_token(conn, user_id=user_id, label="Blender")
         conn.execute(
-            "UPDATE blender_pairings SET status = 'consumed' WHERE pairing_id = ?",
-            (pairing_id,),
+            "UPDATE blender_pairings SET status = 'consumed' "
+            "WHERE pairing_id_hash = ?",
+            (pairing_id_hash,),
         )
         conn.execute("COMMIT")
         return PairingResult(status="approved", token=token, user_id=user_id)
 
 
-def purge_expired(db_path: Path) -> None:
-    """清掉没人来兑的配对。过期的行留着只是垃圾，不是记录。"""
+def purge_expired(db_path: str | Path) -> None:
+    """清掉过期的配对。
+
+    不按 status 区分：过期的 approved 行同样兑不出令牌了（`consume_pairing` 的
+    过期检查排在状态检查之前），留着只是永久占着 code_hash 的 UNIQUE 名额。
+    consumed 行也不必留——令牌本身记在 blender_tokens 里。
+    """
     with _connect(db_path) as conn:
         conn.execute(
-            "DELETE FROM blender_pairings WHERE expires_at <= ? AND status != 'approved'",
+            "DELETE FROM blender_pairings WHERE expires_at <= ?",
             (_now(),),
         )
 

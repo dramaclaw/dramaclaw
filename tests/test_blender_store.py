@@ -14,6 +14,16 @@ def db(tmp_path):
     return path
 
 
+def _pairing_rows(db_path) -> int:
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    try:
+        return conn.execute("SELECT COUNT(*) FROM blender_pairings").fetchone()[0]
+    finally:
+        conn.close()
+
+
 def test_create_pairing_returns_a_readable_code_and_an_opaque_id(db):
     pairing = blender_store.create_pairing(db)
 
@@ -92,3 +102,99 @@ def test_init_db_is_idempotent(db):
     blender_store.init_db(db)
 
     assert blender_store.create_pairing(db).code
+
+
+def test_second_approval_does_not_hijack_the_first(db):
+    # 这是整个模块最重要的不变量：先到先得。原来只断言第二次返回 False，
+    # 没人守着「approved_user 还是 alice」，守卫被改掉测试也不会红。
+    pairing = blender_store.create_pairing(db)
+    assert blender_store.approve_pairing(db, pairing.code, user_id="alice") is True
+    assert blender_store.approve_pairing(db, pairing.code, user_id="bob") is False
+
+    assert blender_store.consume_pairing(db, pairing.pairing_id).user_id == "alice"
+
+
+def test_pairing_that_expires_between_approve_and_consume_is_expired(db, monkeypatch):
+    pairing = blender_store.create_pairing(db)
+    assert blender_store.approve_pairing(db, pairing.code, user_id="alice") is True
+
+    later = time.time() + blender_store.PAIRING_TTL_SECONDS + 1
+    monkeypatch.setattr(blender_store, "_now", lambda: int(later))
+
+    result = blender_store.consume_pairing(db, pairing.pairing_id)
+    assert result.status == "expired"
+    assert result.token is None
+
+
+def test_purge_removes_expired_pairings_whatever_their_status(db, monkeypatch):
+    # 批了但没兑的配对同样是垃圾：它已经兑不出令牌了，却永久占着 code_hash。
+    approved = blender_store.create_pairing(db)
+    blender_store.approve_pairing(db, approved.code, user_id="alice")
+    blender_store.create_pairing(db)
+
+    later = time.time() + blender_store.PAIRING_TTL_SECONDS + 1
+    monkeypatch.setattr(blender_store, "_now", lambda: int(later))
+    blender_store.purge_expired(db)
+
+    assert _pairing_rows(db) == 0
+
+
+def test_purge_keeps_live_pairings(db):
+    blender_store.create_pairing(db)
+    blender_store.purge_expired(db)
+
+    assert _pairing_rows(db) == 1
+
+
+def test_store_works_on_a_database_nobody_initialised(tmp_path):
+    # 容器重建把 state 卷清空后，第一个到达的往往是插件的轮询而不是建配对。
+    fresh = tmp_path / "never-touched" / "blender.db"
+
+    assert blender_store.consume_pairing(fresh, "whatever").status == "expired"
+    assert blender_store.approve_pairing(fresh, "ABCD-EFGH", user_id="alice") is False
+    blender_store.purge_expired(fresh)
+
+
+def test_approving_with_a_blank_user_fails(db):
+    pairing = blender_store.create_pairing(db)
+
+    assert blender_store.approve_pairing(db, pairing.code, user_id="") is False
+    assert blender_store.consume_pairing(db, pairing.pairing_id).status == "pending"
+
+
+def test_typos_outside_the_alphabet_are_rejected_not_corrected(db):
+    # 字母表排除 0/O/1/I/L 就是为了照顾易混字符。用户真敲了这些，说明他看错了，
+    # 应该告诉他码不对，而不是悄悄剔掉再拼出另一个合法码。
+    assert blender_store.normalize_code("ABCD-EFGH") == "ABCD-EFGH"
+    assert blender_store.normalize_code("  abcd - efgh ") == "ABCD-EFGH"
+    assert blender_store.normalize_code("0ABCD-EFGH") == ""
+    assert blender_store.normalize_code("ABCD-EFGHI") == ""
+    assert blender_store.normalize_code("ABCO-DEFG") == ""
+    assert blender_store.normalize_code("") == ""
+    assert blender_store.normalize_code(None) == ""
+
+
+def test_no_plaintext_secret_ever_lands_in_the_database(db):
+    # 这个模块的核心主张，值得有人守着而不是靠人眼。
+    pairing = blender_store.create_pairing(db)
+    blender_store.approve_pairing(db, pairing.code, user_id="alice")
+    token = blender_store.consume_pairing(db, pairing.pairing_id).token
+
+    blob = b""
+    for suffix in ("", "-wal", "-shm"):
+        candidate = db.with_name(db.name + suffix)
+        if candidate.exists():
+            blob += candidate.read_bytes()
+
+    for secret in (pairing.code, pairing.code.replace("-", ""), pairing.pairing_id, token):
+        assert secret.encode() not in blob
+
+
+def test_generated_codes_stay_well_formed_across_many_draws(db):
+    # 只抽一次查不出「有人把 secrets 换成 random」或字母表被截断这类退化。
+    codes = {blender_store.create_pairing(db).code for _ in range(200)}
+
+    assert len(codes) == 200
+    for code in codes:
+        assert len(code) == 9 and code[4] == "-"
+        assert set(code) <= set("ABCDEFGHJKLMNPQRSTUVWXYZ23456789-")
