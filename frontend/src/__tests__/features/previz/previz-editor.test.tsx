@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,7 +25,11 @@ import {
 import { buildNodeScenePatch, loadNodeScene } from "@/features/previz/nodeScene";
 import type { CanvasRecorderOptions } from "@/features/previz/capture/recordTimeline";
 import { PrevizRenderer } from "@/features/previz/engine/PrevizRenderer";
-import { PREVIZ_AUTOSAVE_MS, PrevizEditor } from "@/features/previz/PrevizEditor";
+import {
+  PREVIZ_AUTOSAVE_MS,
+  PREVIZ_RECORD_MOTION_WAIT_TIMEOUT_MS,
+  PrevizEditor,
+} from "@/features/previz/PrevizEditor";
 import { usePrevizStore } from "@/features/previz/store";
 import { readUrl } from "@/lib/url-params";
 
@@ -67,6 +71,7 @@ const setViewOverlays = vi.fn();
 const setMonitorSize = vi.fn();
 // 真实现返回 Promise，编辑器直接在返回值上 `.then`，桩成 `vi.fn()` 会当场炸。
 const whenModelsSettled = vi.fn(async () => {});
+const setMotionStatusListener = vi.fn();
 const recordDrawFrame = vi.fn();
 const recordEnd = vi.fn();
 const startRecording = vi.fn((_mode: string, _cameraId: string | null) => ({
@@ -79,8 +84,14 @@ const startRecording = vi.fn((_mode: string, _cameraId: string | null) => ({
 
 /** 每条用例一份全新的假渲染器，免得 onTransformCommit 在用例之间串。 */
 function fakeRenderer() {
-  return {
-    dispose,
+  const renderer = {
+    // 真实现里这是个只读 getter，`dispose()` 一调用就翻真；这里用一个可写字段搭一样的
+    // 效果，`dispose` 包一层同步写回，行为对编辑器来说分不出区别。
+    isDisposed: false,
+    dispose: (...args: Parameters<typeof dispose>) => {
+      renderer.isDisposed = true;
+      return dispose(...args);
+    },
     resize,
     setScene,
     setSelection,
@@ -109,6 +120,7 @@ function fakeRenderer() {
     setViewOverlays,
     setMonitorSize,
     whenModelsSettled,
+    setMotionStatusListener,
     startRecording,
     onTransformCommit: null as
       | ((objectId: string, transform: unknown) => void)
@@ -116,6 +128,7 @@ function fakeRenderer() {
     onViewChange: null as ((pose: { position: Vec3; target: Vec3 }) => void) | null,
     onTransformDrag: null as (() => void) | null,
   };
+  return renderer;
 }
 
 /**
@@ -2679,6 +2692,190 @@ describe("audio playback and mix", () => {
     await vi.waitFor(() => expect(addDerivedVideoNode).toHaveBeenCalled(), { timeout: 3000 });
     expect(startRecording).toHaveBeenCalledTimes(1);
     expect(addDerivedVideoNode).toHaveBeenCalledTimes(1);
+  });
+
+  it("mirrors the renderer's motion statuses into the store", async () => {
+    renderOneFrame();
+    await vi.waitFor(() => expect(setMotionStatusListener).toHaveBeenCalled());
+    const listener = setMotionStatusListener.mock.calls[0]![0] as (
+      statuses: Record<string, unknown>,
+    ) => void;
+
+    act(() => listener({ m1: { state: "loading" } }));
+    expect(usePrevizStore.getState().motionStatus).toEqual({ m1: { state: "loading" } });
+
+    // 编辑器关掉之后渲染器不该再往一个已经卸载的组件的 store 写东西。
+    cleanup();
+    expect(setMotionStatusListener).toHaveBeenLastCalledWith(null);
+  });
+
+  it("waits for models and imported motions before it starts recording", async () => {
+    const user = userEvent.setup();
+    renderOneFrame();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    // 入场遮罩那一次已经放过去了，这里只拦录制前那一次。
+    await vi.waitFor(() => expect(whenModelsSettled).toHaveBeenCalled());
+    let release: () => void = () => {};
+    whenModelsSettled.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (release = resolve)),
+    );
+
+    await user.click(screen.getByRole("button", { name: "previz.editor.record.open" }));
+    await user.click(
+      screen.getByRole("menuitem", { name: "previz.editor.record.mode.global" }),
+    );
+    // 动作还没到：这时开录，录进去的是站着不动的人。
+    expect(startRecording).not.toHaveBeenCalled();
+
+    await act(async () => {
+      release();
+      await Promise.resolve();
+    });
+    // 等到整趟录完再退出：录制按墙上时钟走，提前退出的话它的收尾会落进下一条用例。
+    await vi.waitFor(() => expect(addDerivedVideoNode).toHaveBeenCalled(), { timeout: 3000 });
+    expect(startRecording).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts recording after the wait cap even if whenModelsSettled never resolves", async () => {
+    const user = userEvent.setup();
+    renderOneFrame();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    await vi.waitFor(() => expect(whenModelsSettled).toHaveBeenCalled());
+    // 永远不落地：这条用例就是要验证「等不到也不能让录制按钮永远没反应」。
+    whenModelsSettled.mockImplementationOnce(() => new Promise<void>(() => {}));
+
+    // 只劫持 `waitForModelsSettledWithCap` 里那一个 15 秒上限定时器，其余 setTimeout
+    // （user-event 内部调度、自动保存防抖等）原样放行给真实现——用 `vi.useFakeTimers()`
+    // 伪造全局计时器会连累接下来的 `user.click()` 一起卡住，这个文件里别的用例也从没
+    // 在伪造 setTimeout 的同时用过 user-event。
+    const realSetTimeout = globalThis.setTimeout;
+    let capturedCallback: (() => void) | undefined;
+    const setTimeoutSpy = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockImplementation(((handler: () => void, timeout?: number, ...args: unknown[]) => {
+        if (timeout === PREVIZ_RECORD_MOTION_WAIT_TIMEOUT_MS) {
+          capturedCallback = handler;
+          // 返回值只在 `clearTimeout` 里当把手用；这条用例不需要真能取消它。
+          return 0 as unknown as ReturnType<typeof setTimeout>;
+        }
+        return realSetTimeout(handler, timeout, ...args);
+      }) as unknown as typeof setTimeout);
+
+    try {
+      await user.click(screen.getByRole("button", { name: "previz.editor.record.open" }));
+      await user.click(
+        screen.getByRole("menuitem", { name: "previz.editor.record.mode.global" }),
+      );
+
+      await vi.waitFor(() => expect(capturedCallback).toBeDefined());
+      // 上限还没到：不该提前开录。
+      expect(startRecording).not.toHaveBeenCalled();
+
+      await act(async () => {
+        capturedCallback!();
+        await Promise.resolve();
+      });
+
+      await vi.waitFor(() => expect(addDerivedVideoNode).toHaveBeenCalled(), { timeout: 3000 });
+      expect(startRecording).toHaveBeenCalledTimes(1);
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
+  it("warns that some motions are still loading once the wait is capped", async () => {
+    const user = userEvent.setup();
+    renderOneFrame();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    await vi.waitFor(() => expect(whenModelsSettled).toHaveBeenCalled());
+    // 同上一条：撞上限这件事本身已经在那条用例里锁过了，这里只加一层「撞了之后有没有
+    // 照实告诉用户」的断言，复用同一套劫持 15 秒定时器的手法。
+    whenModelsSettled.mockImplementationOnce(() => new Promise<void>(() => {}));
+
+    const realSetTimeout = globalThis.setTimeout;
+    let capturedCallback: (() => void) | undefined;
+    const setTimeoutSpy = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockImplementation(((handler: () => void, timeout?: number, ...args: unknown[]) => {
+        if (timeout === PREVIZ_RECORD_MOTION_WAIT_TIMEOUT_MS) {
+          capturedCallback = handler;
+          return 0 as unknown as ReturnType<typeof setTimeout>;
+        }
+        return realSetTimeout(handler, timeout, ...args);
+      }) as unknown as typeof setTimeout);
+
+    try {
+      await user.click(screen.getByRole("button", { name: "previz.editor.record.open" }));
+      await user.click(
+        screen.getByRole("menuitem", { name: "previz.editor.record.mode.global" }),
+      );
+
+      await vi.waitFor(() => expect(capturedCallback).toBeDefined());
+      // 上限还没到：不该提前说「动作没到齐」，那时候确实还没到齐没错，但结论下早了。
+      expect(toast.warning).not.toHaveBeenCalledWith("previz.editor.record.motionsIncomplete");
+
+      await act(async () => {
+        capturedCallback!();
+        await Promise.resolve();
+      });
+
+      // 撞了上限：有的角色开录那一刻还停在默认姿势，得照实告诉用户。
+      await vi.waitFor(() =>
+        expect(toast.warning).toHaveBeenCalledWith("previz.editor.record.motionsIncomplete"),
+      );
+      await vi.waitFor(() => expect(addDerivedVideoNode).toHaveBeenCalled(), { timeout: 3000 });
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
+  it("does not flash a loading toast when models and motions settle quickly", async () => {
+    const user = userEvent.setup();
+    renderOneFrame();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    await vi.waitFor(() => expect(whenModelsSettled).toHaveBeenCalled());
+    // 默认桩子 `whenModelsSettled = vi.fn(async () => {})` 一晃就 resolve：这是绝大多数
+    // 录制的真实情况（模型早缓存好、没几条导入动作）。这类正常情况不该跳一次转瞬即逝的
+    // toast，见 `PREVIZ_RECORD_WAIT_TOAST_DELAY_MS` 的注释——真实时钟下这次等待远早于
+    // 300ms 的门槛就已经决出胜负，所以这里不必伪造计时器。
+
+    await user.click(screen.getByRole("button", { name: "previz.editor.record.open" }));
+    await user.click(
+      screen.getByRole("menuitem", { name: "previz.editor.record.mode.global" }),
+    );
+
+    await vi.waitFor(() => expect(addDerivedVideoNode).toHaveBeenCalled(), { timeout: 3000 });
+    expect(startRecording).toHaveBeenCalledTimes(1);
+    expect(toast.loading).not.toHaveBeenCalledWith("previz.editor.record.waitingModels");
+    expect(toast.warning).not.toHaveBeenCalledWith("previz.editor.record.motionsIncomplete");
+  });
+
+  it("does not flash the no-camera toast when the editor closes during the wait", async () => {
+    const user = userEvent.setup();
+    renderOneFrame();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    await vi.waitFor(() => expect(whenModelsSettled).toHaveBeenCalled());
+    let release: () => void = () => {};
+    whenModelsSettled.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (release = resolve)),
+    );
+
+    await user.click(screen.getByRole("button", { name: "previz.editor.record.open" }));
+    await user.click(
+      screen.getByRole("menuitem", { name: "previz.editor.record.mode.global" }),
+    );
+    // 还在等落地：这时候关掉编辑器，`renderer` 是等待前捕获的旧引用，`dispose()`
+    // 一调用假渲染器的 `isDisposed` 就翻真。
+    cleanup();
+
+    await act(async () => {
+      release();
+      await Promise.resolve();
+    });
+
+    // 用户根本不在等这次录制了：既不该报「没有机位」，也不该真的开录。
+    expect(toast.error).not.toHaveBeenCalledWith("previz.editor.record.noCamera");
+    expect(startRecording).not.toHaveBeenCalled();
   });
 
   it("unlocks the recorder after an attempt that never got off the ground", async () => {

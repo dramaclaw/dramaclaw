@@ -249,6 +249,13 @@ vi.mock("three/examples/jsm/loaders/OBJLoader.js", () => ({
   },
 }));
 
+// 真的 BVHLoader 继承 three 的 `Loader`，而这里的 three 是假的；这一份只测接线，不解析。
+vi.mock("three/examples/jsm/loaders/BVHLoader.js", () => ({
+  BVHLoader: class {
+    parse = vi.fn();
+  },
+}));
+
 vi.mock("three/examples/jsm/utils/SkeletonUtils.js", () => ({
   clone: (object: unknown) => object,
 }));
