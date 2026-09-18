@@ -3,6 +3,8 @@
 import type * as THREE from 'three';
 
 import { clampToRange, DEG_TO_RAD } from '../domain/camera';
+import type { EvaluatedMotion, EvaluatedMotionSample } from '../domain/evaluate';
+import { BUILTIN_MOTION_PREFIX, builtinMotionById, importedIdOf } from '../domain/motionLibrary';
 import { PREVIZ_HEIGHT_CM_RANGE } from '../domain/objects';
 import { poseSampleTime, resolvePoseClipName } from '../domain/poses';
 import { PREVIZ_POSE_ADJUST_RANGE, type BodyType, type PrevizCharacter } from '../domain/scene';
@@ -56,19 +58,23 @@ const BODY_WIDTH_SCALE: Record<BodyType, number> = {
 const NATIVE_HEIGHT_KEY = 'previzRigNativeHeightM';
 
 /**
- * 当前摆着哪个姿势，记在 rig 上。`sync` 每次编辑都跑，没有这个标记就得每次重建一个
- * AnimationMixer 把整副骨架重推一遍——那是拖身高滑杆时每一帧都要付的钱。
+ * 当前摆着的那份动作（`EvaluatedMotion`），记在 rig 上，给测试和调试看。
  */
-const APPLIED_POSE_KEY = 'previzPoseId';
-
-/** 当前姿势推到了第几秒，记在 rig 上。沿路径走位时每帧都变；暂停时每次 sync 都是同一个值。 */
-const APPLIED_TIME_KEY = 'previzPoseTime';
+const APPLIED_MOTION_KEY = 'previzMotion';
 
 /**
- * 摆姿势时用的是第几版 clip 列表，记在 rig 上。列表会变：动画库第一次没下下来、
- * 后来某次 build 补到了，早先按残缺列表落的候选就过时了，得按新列表重摆一遍。
+ * 上一次推骨架时的输入指纹：动作序列化 + clip 列表版本 + 导入动作版本。`sync` 每次编辑
+ * 都跑、暂停时每次都是同一帧，没有这个标记就得每次把整副骨架重推一遍——那是拖身高滑杆
+ * 时每一帧都要付的钱。两个版本号任一变了都要重摆：动画库后到、导入动作刚加载完，
+ * 早先落下的回退姿势就过时了。
  */
-const APPLIED_SOURCE_KEY = 'previzPoseSourceSerial';
+const APPLIED_MOTION_STAMP_KEY = 'previzMotionStamp';
+
+/**
+ * 这个人物的基础姿势，记在 rig 上。动作还在加载或加载失败时，那一条样本回落成它——
+ * `applyMotion` 只拿到一份求值结果，不知道人物是谁。
+ */
+const BASE_POSE_KEY = 'previzBasePoseId';
 
 /**
  * 这个 rig 自己那批克隆材质与它们的明度，记在 rig 根上。见 `ownMaterials`。
@@ -125,11 +131,19 @@ export interface PrevizGltf {
   animations: THREE.AnimationClip[];
 }
 
-/** 一个 rig 自己的 mixer 和它正在播的那条 clip。 */
+/**
+ * 一个 rig 自己的 mixer、按 clip 缓存的 action，以及上一帧在播的那几条。
+ * action 自己缓存而不是每帧 `clipAction`：three 那边虽然也有缓存，但每次查都要按 clip
+ * 名和根对象走一遍表；更要紧的是「哪些在播」得自己记，才知道这一帧该停掉谁。
+ */
 interface RigMixer {
   mixer: THREE.AnimationMixer;
-  clip: THREE.AnimationClip | null;
+  actions: Map<THREE.AnimationClip, THREE.AnimationAction>;
+  playing: Set<THREE.AnimationAction>;
 }
+
+/** 导入动作的 clip 从哪来。由渲染器接上 `PrevizMotionClips`；加载中与失败都给 null。 */
+export type PrevizMotionResolver = (motionId: string) => THREE.AnimationClip | null;
 
 export interface CharacterRigDeps {
   three: ThreeModule;
@@ -172,6 +186,9 @@ export class CharacterRigFactory {
    * 每一帧都要付的钱。按 rig 弱引用，rig 被场景图丢掉之后 mixer 跟着走。
    */
   private readonly mixers = new WeakMap<THREE.Object3D, RigMixer>();
+  private motionResolver: PrevizMotionResolver | null = null;
+  /** 导入动作这一侧变过几次（接上新的解析器、某条动作加载完或失败）。见 `APPLIED_MOTION_STAMP_KEY`。 */
+  private motionSerial = 0;
 
   constructor(private readonly deps: CharacterRigDeps) {}
 
@@ -208,6 +225,28 @@ export class CharacterRigFactory {
     // 会把源模型一起还掉，之后新建的每一个人物都拿到已经 dispose 的几何体。
     rig.userData.previzSharedModel = true;
     return rig;
+  }
+
+  /**
+   * 合并好的角色模型与 clip 列表。导入动作的重定向要拿 UAL 骨架的静止姿势当目标，
+   * 与建人物共用同一份下载。失败时 reject，由调用方把那条动作记成加载失败。
+   */
+  loadActorSource(): Promise<PrevizGltf> {
+    return this.resolveSource();
+  }
+
+  /** 接上导入动作的解析器。 */
+  setMotionResolver(resolver: PrevizMotionResolver | null): void {
+    this.motionResolver = resolver;
+    this.motionSerial += 1;
+  }
+
+  /**
+   * 导入动作有一条加载完或失败了：已经摆好的 rig 上可能是它的回退姿势，下一次
+   * `applyMotion` 要重新解析。
+   */
+  invalidateMotions(): void {
+    this.motionSerial += 1;
   }
 
   /**
@@ -304,7 +343,11 @@ export class CharacterRigFactory {
    * 返回辨识色这一次有没有真的重染过：见 `applyTint`。
    */
   applyCharacter(model: THREE.Object3D, character: PrevizCharacter): boolean {
-    this.applyPose(model, character.basePoseId, poseSampleTime(character.basePoseId));
+    model.userData[BASE_POSE_KEY] = character.basePoseId;
+    this.applyMotion(model, {
+      primary: { ref: character.basePoseId, time: poseSampleTime(character.basePoseId) },
+      weight: 1,
+    });
     this.applyBodyScale(model, character);
     this.applyPoseAdjust(model, character);
     return this.applyTint(model, character);
@@ -375,54 +418,149 @@ export class CharacterRigFactory {
   }
 
   /**
-   * 用 AnimationMixer 把某个姿势的 clip 推到某一秒。静止的姿势定格在候选表挑好的那一秒
-   * （定格在 0 常常是绑定姿势或者动作的起手，看起来像没摆）；沿路径走位时渲染器每帧
-   * 都带着片段内时间来一次，时间一路往前，人物就真的在迈腿。
+   * 把求值器给的一份动作推到骨架上：`primary` 与可选的 `secondary` 各占一条 action，
+   * 按 `weight` 分权重，交叉淡化就是这样做出来的。静止的人物是基础姿势定格在候选表挑好
+   * 的那一秒；沿路径走位是走 / 跑循环；落在动作片段里换成片段的动作。
    *
-   * 姿势、时刻、clip 列表都没变就直接早退：这条路径每次 sync 与每一帧都会走到，
-   * 而推一次骨架要把整副骨骼重写一遍——暂停时每次编辑都是同一帧。
+   * 每条 action 的 `time` 直接赋值再 `mixer.update(0)`，而不是 `mixer.setTime`：后者把所有
+   * action 拨到同一个时刻，两条样本各自的片段内时间没法分开给。delta 为 0 时 three 不做
+   * 绕圈也不停用单次 action，赋的是几秒就采几秒——单次动作停在末帧靠的就是这一点。
+   *
+   * `time` 原样来自 `resolveSample`，这里不再额外处理：`builtin:` / `import:` 的时刻已经
+   * 由求值器按 `loop` 夹过或取过模（`evaluate.ts` 的 `actionSample`），这里再取一次模只会
+   * 帮倒忙——目录里的 `durationSec` 是三位小数，个别条目比真实 clip 时长略大（`Roll` 记的
+   * 是 1.467，真实是 1.46666…7），求值器按目录值夹出的 1.467 一旦在这里被当成「超过时长」
+   * 绕回去，会把播完定格的单次动作摔回首帧。唯一没被求值器处理过、真会超过时长的
+   * 姿势 id 样本（沿路径走位的走 / 跑循环）在 `resolvePoseSample` 里已经绕好了圈，见那边。
+   *
+   * 输入没变就早退：这条路径每次 sync 与每一帧都会走到，而推一次骨架要把整副骨骼重写一遍。
    */
-  applyPose(model: THREE.Object3D, poseId: string, time: number): void {
-    if (
-      model.userData[APPLIED_POSE_KEY] === poseId &&
-      model.userData[APPLIED_TIME_KEY] === time &&
-      model.userData[APPLIED_SOURCE_KEY] === this.sourceSerial
-    ) {
-      return;
-    }
+  applyMotion(model: THREE.Object3D, motion: EvaluatedMotion): void {
+    const stamp = `${JSON.stringify(motion)}|${this.sourceSerial}|${this.motionSerial}`;
+    if (model.userData[APPLIED_MOTION_STAMP_KEY] === stamp) return;
     // 模型还没解出来时无事可做。走不到这里——`resolveSource()` 先缓存 source 再摆姿势，
     // 而外部调用方手里的 rig 本来就是 `build()` 交出来的。
     const animations = this.source?.animations;
     if (!animations) return;
+    // 标记照样落下：同样的输入在同一版 clip 列表下重查一遍也是同一个结果；任一版本号
+    // 变了，指纹自然对不上。
+    model.userData[APPLIED_MOTION_KEY] = motion;
+    model.userData[APPLIED_MOTION_STAMP_KEY] = stamp;
 
-    const available = new Set(animations.map((clip) => clip.name));
-    const clipName = resolvePoseClipName(poseId, available);
-    // 对不上就保持现有姿势（新建的人物就是模型自带的绑定姿势），比整个人物消失强；
-    // 也绝不拿别的 clip 顶上，那会摆出一个跟属性面板完全对不上的姿势。
-    // 标记照样落下：同一版 clip 列表下一次 sync 重查一遍也是同一个结果；列表换了版
-    // `sourceSerial` 就对不上，标记自然失效。
-    const clip = clipName ? animations.find((entry) => entry.name === clipName) : undefined;
-    model.userData[APPLIED_POSE_KEY] = poseId;
-    model.userData[APPLIED_TIME_KEY] = time;
-    model.userData[APPLIED_SOURCE_KEY] = this.sourceSerial;
-    if (!clip) return;
+    const primary = this.resolveSample(model, motion.primary, animations);
+    let secondary = motion.secondary
+      ? this.resolveSample(model, motion.secondary, animations)
+      : null;
+    // 同一条 clip 在 mixer 里只有一个 action、只能有一个时刻：两边撞上时（相接的两段是同一个
+    // 动作，或者走路叠在走路上）只留主样本。交界处少一次淡化，比两个时刻互相覆盖强。
+    if (secondary && secondary.clip === primary?.clip) secondary = null;
+    const layers: Array<{ clip: THREE.AnimationClip; time: number; weight: number }> = [];
+    if (primary) layers.push({ ...primary, weight: secondary ? motion.weight : 1 });
+    if (secondary) layers.push({ ...secondary, weight: primary ? 1 - motion.weight : 1 });
+    // 一条都解不出来就保持现有姿势（新建的人物就是模型自带的绑定姿势），比整个人物消失
+    // 强；也绝不拿别的 clip 顶上，那会摆出一个跟属性面板完全对不上的姿势。
+    if (layers.length === 0) return;
 
     // mixer 挂在这个人物自己的 rig 上（骨骼按名字往子树里搜，隔一层 Group 照样搜得到）。
     // 挂在共享的源场景上，一个人物摆姿势会把所有人物一起摆过去。
-    let playing = this.mixers.get(model);
-    if (!playing) {
-      playing = { mixer: new this.deps.three.AnimationMixer(model), clip: null };
-      this.mixers.set(model, playing);
+    let rig = this.mixers.get(model);
+    if (!rig) {
+      rig = {
+        mixer: new this.deps.three.AnimationMixer(model),
+        actions: new Map(),
+        playing: new Set(),
+      };
+      this.mixers.set(model, rig);
     }
-    if (playing.clip !== clip) {
-      // 上一条 action 不停掉会和新的一条叠着播：两条权重都是 1，骨骼被拧到两者之和上。
-      playing.mixer.stopAllAction();
-      playing.mixer.clipAction(clip).play();
-      playing.clip = clip;
+    const wanted = new Set<THREE.AnimationAction>();
+    for (const layer of layers) {
+      let action = rig.actions.get(layer.clip);
+      if (!action) {
+        action = rig.mixer.clipAction(layer.clip);
+        rig.actions.set(layer.clip, action);
+      }
+      wanted.add(action);
+      if (!rig.playing.has(action)) action.play();
+      action.time = layer.time;
+      action.setEffectiveWeight(layer.weight);
     }
-    // setTime 先把所有 action 归零再推进到该时刻并写进变换，所以任何一帧都能直接跳到；
-    // 循环 clip 超过自身时长自动绕圈。没有播放循环，不需要每帧 update。
-    playing.mixer.setTime(time);
+    // 上一帧的 action 不停掉会和这一帧的叠着播：骨骼被拧到几条之和上。
+    for (const action of rig.playing) {
+      if (!wanted.has(action)) action.stop();
+    }
+    rig.playing = wanted;
+    rig.mixer.update(0);
+  }
+
+  /**
+   * 一条样本对应哪条 clip、推到第几秒。`ref` 三种写法：姿势 id（走 `resolvePoseClipName`
+   * 的候选表）、`builtin:` 动作（按 clip 名在合并列表里取）、`import:` 动作（问解析器）。
+   *
+   * 动作解不出来（动画库没到、导入动作还在加载或失败）时回落为这个人物的基础姿势定格：
+   * 片段里的人总得摆个样子，保持上一帧的动作会让「加载失败」看起来像动作卡住了。
+   * 姿势 id 解不出来则不回落——那是候选表对不上，回落只会摆出另一个姿势。
+   */
+  private resolveSample(
+    model: THREE.Object3D,
+    sample: EvaluatedMotionSample,
+    animations: readonly THREE.AnimationClip[],
+  ): { clip: THREE.AnimationClip; time: number } | null {
+    const byName = (name: string | undefined) =>
+      name ? (animations.find((entry) => entry.name === name) ?? null) : null;
+    const isBuiltin = sample.ref.startsWith(BUILTIN_MOTION_PREFIX);
+    const importedId = importedIdOf(sample.ref);
+    if (!isBuiltin && importedId === null) {
+      return this.resolvePoseSample(sample.ref, sample.time, animations);
+    }
+    const clip = isBuiltin
+      ? byName(builtinMotionById(sample.ref)?.clipName)
+      : (this.motionResolver?.(sample.ref) ?? null);
+    if (clip) return { clip, time: sample.time };
+    // 回落到基础姿势：`basePoseId` 本身也可能是一个解不出的 `builtin:` / `import:` 引用
+    // （动作被删掉后场景还没来得及改配置，或者干脆是脏存档）。不能再调 `resolveSample`
+    // 自己——那会绕回这一支，同一个解不出的 `basePoseId` 每次都落回同一条回落路径，
+    // 递归永远退不出去，栈溢出。直接走姿势 id 那一支的逻辑，解不出就是 null，不再继续回落。
+    const basePoseId = model.userData[BASE_POSE_KEY];
+    if (typeof basePoseId !== 'string') return null;
+    return this.resolvePoseSample(basePoseId, poseSampleTime(basePoseId), animations);
+  }
+
+  /**
+   * 按姿势 id 查候选表解一条样本，解不出就是 `null`，不做任何回落——供上面两处共用。
+   *
+   * 时刻在这里绕回 `[0, duration)`：姿势 id 是唯一没有经过求值器处理、真会超过 clip
+   * 时长的来源——沿路径走位的走 / 跑循环，时刻是 `evaluate.ts` 里的
+   * `(frame - clip.startFrame) / FPS`，没有取模，走的距离越长这个数就越大。`builtin:` /
+   * `import:` 那两支不吃这套：它们的时刻已经由求值器的 `actionSample` 按 `loop` 处理过，
+   * 原样交给 action 就好，见 `applyMotion` 顶部注释。
+   *
+   * `mixer.update(0)` 不会替我们绕圈：three 的 `AnimationAction._updateTime` 在
+   * `deltaTime === 0` 时直接把 `this.time` 原样返回，不取模——那是 `mixer.setTime` 才有的
+   * 行为，而这里为了让 primary / secondary 两条样本各自停在片段内不同的时刻，用不了
+   * `setTime`。
+   */
+  private resolvePoseSample(
+    poseId: string,
+    time: number,
+    animations: readonly THREE.AnimationClip[],
+  ): { clip: THREE.AnimationClip; time: number } | null {
+    const available = new Set(animations.map((entry) => entry.name));
+    const clipName = resolvePoseClipName(poseId, available);
+    const clip = clipName ? animations.find((entry) => entry.name === clipName) : undefined;
+    return clip ? { clip, time: this.loopedTime(clip, time) } : null;
+  }
+
+  /**
+   * 把一个可能超过片段时长的时刻绕回 `[0, duration)`。只给 `resolvePoseSample` 用——见那边
+   * 的注释，为什么只有姿势 id 样本需要这一步。
+   */
+  private loopedTime(clip: THREE.AnimationClip, time: number): number {
+    const duration = clip.duration;
+    // 假 three（单测的 fake three）给的 clip 只有 `name`，没有 `duration`——`undefined`
+    // 参与比较恒为 false，`!(duration > 0)` 才认得出「这条 clip 没有可用的时长」，
+    // 原样把时刻放行，不去趟取模那条路（否则 `NaN % NaN` 还是 `NaN`）。
+    if (!(duration > 0) || time <= duration) return time;
+    return ((time % duration) + duration) % duration;
   }
 
   /**
