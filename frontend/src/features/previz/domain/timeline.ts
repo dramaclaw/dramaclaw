@@ -3,10 +3,12 @@
 import { v4 as uuidv4 } from 'uuid';
 
 import { audioFramesAvailable, framesToMs, msToFrames } from './audioTrack';
+import { PREVIZ_MOTION_LIMITS } from './limits';
 import { samplePathPosition, samplePathRotation, sortedPathPoints } from './pathCurve';
 import {
   PREVIZ_FPS,
   PREVIZ_MIN_CLIP_FRAMES,
+  type PrevizActionClip,
   type PrevizAudioClip,
   type PrevizClip,
   type PrevizCutClip,
@@ -37,6 +39,18 @@ export function isCutClip(clip: PrevizClip): clip is PrevizCutClip {
 
 export function isAudioClip(clip: PrevizClip): clip is PrevizAudioClip {
   return clip.kind === 'audio';
+}
+
+export function isActionClip(clip: PrevizClip): clip is PrevizActionClip {
+  return clip.kind === 'action';
+}
+
+/**
+ * 轨道上的动作片段，按起点升序。轨道的 `clips` 混着路径与特写片段、顺序是建出来的先后，
+ * 动作片段的邻居（过渡找前后段、裁切夹邻居）都得在这份有序子列表里按下标找。
+ */
+export function actionClipsOf(track: PrevizTrack): PrevizActionClip[] {
+  return track.clips.filter(isActionClip).sort((left, right) => left.startFrame - right.startFrame);
 }
 
 export function trackFor(scene: PrevizScene, objectId: string): PrevizTrack | undefined {
@@ -250,8 +264,8 @@ function withClips(scene: PrevizScene, found: PrevizClipLocation, next: PrevizCl
 }
 
 /**
- * 镜头轨与音频轨里一段的可动范围：前一段的终点到后一段的起点。
- * 两张表都有序且不重叠，所以按下标取前后即可。
+ * 固定行里一段的可动范围：前一段的终点到后一段的起点。镜头轨、音频轨与人物的动作行
+ * 都有序且不重叠，所以按下标取前后即可。
  */
 function neighbourBounds(
   siblings: readonly { startFrame: number; endFrame: number }[],
@@ -263,10 +277,22 @@ function neighbourBounds(
   };
 }
 
-function siblingsOf(scene: PrevizScene, found: PrevizClipLocation): readonly PrevizClip[] | null {
-  if (found.table === 'program') return scene.timeline.program;
-  if (found.table === 'audio') return scene.timeline.audio;
-  return null;
+/**
+ * 与这一段互不重叠的那一行，以及它在行里的下标。路径与特写片段允许重叠，返回 null。
+ *
+ * 动作片段和路径片段混在同一条轨道的 `clips` 里、顺序是建出来的先后，`found.index` 是
+ * 在混合数组里的下标，拿去找邻居是错的——所以动作行单独排一份，按引用重新定位。
+ * 按引用而不是按 id：同 id 出现两次时按 id 找会落到另一条上。
+ */
+function siblingsOf(
+  scene: PrevizScene,
+  found: PrevizClipLocation,
+): { list: readonly PrevizClip[]; index: number } | null {
+  if (found.table === 'program') return { list: scene.timeline.program, index: found.index };
+  if (found.table === 'audio') return { list: scene.timeline.audio, index: found.index };
+  if (!isActionClip(found.clip)) return null;
+  const list = actionClipsOf(found.track);
+  return { list, index: list.indexOf(found.clip) };
 }
 
 /** 新建或替换一个片段；对象还没有轨道时顺手建一条。 */
@@ -296,8 +322,8 @@ export function upsertClip(
 
 /**
  * 整体平移片段。撞到 0 或时间轴末尾时**保长**——夹的是起点，不是两端各夹各的，
- * 后者会在边界上把片段压扁。镜头轨、音频轨里的段还会被卡在前后邻居之间（对象轨道的
- * 片段允许重叠，不受这条限制）。
+ * 后者会在边界上把片段压扁。镜头轨、音频轨、动作行里的段还会被卡在前后邻居之间
+ * （路径与特写片段允许重叠，不受这条限制）。
  */
 export function moveClip(
   scene: PrevizScene,
@@ -318,7 +344,7 @@ export function moveClip(
   const siblings = siblingsOf(scene, found);
   if (siblings) {
     // 固定行里的段不能压到邻居身上，卡在两边之间。
-    const { lower, upper } = neighbourBounds(siblings, found.index);
+    const { lower, upper } = neighbourBounds(siblings.list, siblings.index);
     // 表合法（有序不重叠）时 upper − span ≥ lower 恒成立；外层 max 只是防坏数据
     // 把 start 拉到 lower 之前，不代表这种情况真的会发生。
     start = Math.min(Math.max(start, lower), Math.max(lower, upper - span));
@@ -343,7 +369,7 @@ export function trimClip(
   const fps = scene.settings.fps;
   const target = Math.round(frame);
   const siblings = siblingsOf(scene, found);
-  const bounds = siblings ? neighbourBounds(siblings, found.index) : null;
+  const bounds = siblings ? neighbourBounds(siblings.list, siblings.index) : null;
 
   if (edge === 'start') {
     let start = Math.min(Math.max(0, target), clip.endFrame - PREVIZ_MIN_CLIP_FRAMES);
@@ -427,6 +453,16 @@ export function splitClip(scene: PrevizScene, clipId: string, frame: number): Pr
         // 右半段从素材更靠后的位置起播，声音才接得上。
         offsetMs: found.clip.offsetMs + framesToMs(cut - clip.startFrame, fps),
       },
+    ]);
+  }
+  if (isActionClip(clip)) {
+    // 切一刀会给动作行多出一段：满行时再切就会变成 61 段，读档时 `parseActionClips`
+    // 按 `slice(0, 60)` 截断，悄悄丢掉最后一段——不如在这里直接拒绝，行为看得见。
+    if (actionClipsOf(found.track).length >= PREVIZ_MOTION_LIMITS.clipsPerCharacter) return scene;
+    // 右半段从动作开头重新播（求值按片段首帧起算），不做起播偏移——设计文档「不做」一节。
+    return withClips(scene, found, [
+      { ...clip, id: uuidv4(), endFrame: cut },
+      { ...clip, id: uuidv4(), startFrame: cut },
     ]);
   }
   if (!isPathClip(clip)) return scene;

@@ -9,8 +9,9 @@ import { aspectRatio, outputPixelSize, coverFovDeg, DEG_TO_RAD } from '../domain
 import type { PrevizCameraDraft } from '../domain/cameraDraft';
 import type { PrevizCharacterDraft } from '../domain/characterDraft';
 import { dropPositionY, dropRayOriginY } from '../domain/drop';
-import { evaluateSceneAt } from '../domain/evaluate';
+import { evaluateSceneAt, type EvaluatedMotion } from '../domain/evaluate';
 import type { PrevizPropExtent } from '../domain/moveAssist';
+import type { PrevizMotionStatus } from '../domain/motionLibrary';
 import { PREVIZ_DEFAULT_HEIGHT_CM } from '../domain/objects';
 import type { PrevizObject, PrevizScene, PrevizTransform, Vec3 } from '../domain/scene';
 import {
@@ -50,6 +51,12 @@ import {
 } from './characterPreview';
 import { renderOrthoPreview } from './orthoPreview';
 import { CharacterRigFactory } from './characterRig';
+import {
+  PrevizMotionClips,
+  inspectMotionFile,
+  type PrevizMotionInspectDeps,
+  type PrevizMotionInspection,
+} from './motionClips';
 import { PrevizPathPreview } from './pathPreview';
 import { PrevizStrokePreview } from './strokePreview';
 import { PrevizGizmo, type GizmoMode, type TransformControlsLike } from './gizmo';
@@ -62,6 +69,35 @@ import { PrevizViewOverlays, type PrevizViewOverlayOptions } from './viewOverlay
 
 // 上限 2：3x DPR 设备按原生比例渲染是 9 倍像素，收益远小于开销。
 const MAX_PIXEL_RATIO = 2;
+
+/**
+ * 导入动作下载的超时上限。一条卡住的下载（服务端挂起、CDN 抽风）不设超时的话会一直占着
+ * `motionClips` 的串行队列，后面排队的动作永远轮不到，录制前的 `whenModelsSettled` 也就
+ * 永远等不到头。超时按现有的抛错路径走，最终报 `fetch_failed`，和网络层失败一个待遇。
+ *
+ * 这是下载全程的总上限，不是「多久没收到新字节」的空闲超时——导入动作最大允许
+ * `PREVIZ_MOTION_LIMITS.fileBytes`（50 MB），这么大的文件在弱网下载几十秒是正常速度，
+ * 不是卡死。60 秒会把这类正常慢下载也判成失败；180 秒在「防止请求真的挂死」与
+ * 「给 50 MB 文件在慢网下留足余量」之间取了个折中，同时仍然兜住真正卡死不动的请求。
+ * 要更精确地区分「慢」和「死」得上空闲超时（按收到字节的时间戳重置计时），这里先按
+ * 总上限做，保持实现简单。
+ */
+const PREVIZ_MOTION_FETCH_TIMEOUT_MS = 180_000;
+
+/**
+ * 等价于 `AbortSignal.timeout(ms)`：某些测试环境（旧 jsdom / node）还没有这个静态方法，
+ * 用 `AbortController` + `setTimeout` 兜底，行为一致。兜底分支自己起的这个定时器如果
+ * 请求正常结束（没有超时），得由调用方在拿到结果之后调 `dispose()` 清掉，不然一份成功
+ * 下载的请求也会让这个定时器空跑到 180 秒才被回收。
+ */
+function motionFetchAbortSignal(ms: number): { signal: AbortSignal; dispose: () => void } {
+  if (typeof AbortSignal.timeout === 'function') {
+    return { signal: AbortSignal.timeout(ms), dispose: () => {} };
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error('motion fetch timed out')), ms);
+  return { signal: controller.signal, dispose: () => clearTimeout(timer) };
+}
 
 /**
  * 空场景时俯视底图框的那块地，`domain/topDownMap.ts` 的默认地块（12 m 见方）换成三维
@@ -194,6 +230,14 @@ export class PrevizRenderer {
   private rafHandle = 0;
   private disposed = false;
   private needsRender = true;
+  /**
+   * 供编辑器在 `await whenModelsSettled()` 之后判断这份引用是否还有效：等待期间
+   * 用户可能关掉了编辑器，`dispose()` 一调用这里就翻真，调用方据此静默放弃，不必
+   * 再去猜「渲染器还在不在」。
+   */
+  get isDisposed(): boolean {
+    return this.disposed;
+  }
   /** 录制进行中：位图钉在出片分辨率上，rAF 循环与 resize() 都让路，见 `startRecording`。 */
   private recording = false;
   /** 懒建：从不点画布的会话不需要它。Raycaster 没有 dispose()，纯数学对象，不用还。 */
@@ -222,6 +266,12 @@ export class PrevizRenderer {
    * 视口共用一份已下好的 GLB 与动画库，开对话框不会再拉一次几 MB。
    */
   private characterRig: CharacterRigFactory | null = null;
+  /** 场景里导入动作的 clip 缓存。与 `characterRig` 一样只在 `create()` 里建。 */
+  private motionClips: PrevizMotionClips | null = null;
+  /** 导入流程本地试跑要的那几样，与 `motionClips` 共用同一组解析器。 */
+  private motionInspectDeps: PrevizMotionInspectDeps | null = null;
+  private motionStatusListener: ((statuses: Readonly<Record<string, PrevizMotionStatus>>) => void) | null =
+    null;
   /** 创建人物对话框那块木偶预览的专用场景与相机，第一次画预览时建，之后一直留着。 */
   private characterStage: CharacterPreviewStage | null = null;
   /** 右下角监看当前看的是哪个机位。null 就是不画监看。 */
@@ -274,7 +324,7 @@ export class PrevizRenderer {
   ) {}
 
   static async create(canvas: HTMLCanvasElement): Promise<PrevizRenderer> {
-    const [three, controlsModule, transformModule, gltfModule, objModule, skeletonUtils] =
+    const [three, controlsModule, transformModule, gltfModule, objModule, skeletonUtils, bvhModule] =
       await Promise.all([
         import('three'),
         import('three/examples/jsm/controls/OrbitControls.js'),
@@ -282,6 +332,7 @@ export class PrevizRenderer {
         import('three/examples/jsm/loaders/GLTFLoader.js'),
         import('three/examples/jsm/loaders/OBJLoader.js'),
         import('three/examples/jsm/utils/SkeletonUtils.js'),
+        import('three/examples/jsm/loaders/BVHLoader.js'),
       ]);
 
     const renderer = new three.WebGLRenderer({ canvas, antialias: true });
@@ -398,6 +449,44 @@ export class PrevizRenderer {
       },
     );
 
+    const bvhLoader = new bvhModule.BVHLoader();
+    const rig = instance.characterRig;
+    instance.motionInspectDeps = {
+      three,
+      clone: skeletonUtils.clone,
+      parsers: {
+        // 第二个参数是贴图的相对路径前缀；动作文件只取骨架与动画，用不上。
+        parseGltf: (data) => gltfLoader.parseAsync(data, ''),
+        parseBvh: (text) => bvhLoader.parse(text),
+      },
+      loadActorSource: () => rig.loadActorSource(),
+    };
+    instance.motionClips = new PrevizMotionClips({
+      ...instance.motionInspectDeps,
+      fetchFile: async (url) => {
+        // 超时与网络层失败走同一条路：调用方（`motionClips.ts`）把 fetchFile 抛出的任何
+        // 错误都收成 `fetch_failed`，这里不必区分「超时」与「断网」。
+        const { signal, dispose } = motionFetchAbortSignal(PREVIZ_MOTION_FETCH_TIMEOUT_MS);
+        try {
+          const response = await fetch(url, { signal });
+          // fetch 只在网络层失败时 reject；404 / 403 照样 resolve，不挡的话会把一页错误
+          // HTML 当成动作文件去解析，报出来的是「解析失败」而不是「下载失败」。
+          if (!response.ok) throw new Error(`motion fetch ${response.status}`);
+          // body 读取（网络中断、内容被截断）也可能单独失败，让它自然抛出，同样落进上面
+          // 那条 `fetch_failed` 的路。
+          return await response.arrayBuffer();
+        } finally {
+          // 兜底分支起的定时器：请求已经有结果（无论成功还是失败）就没必要再让它空跑到
+          // 超时上限，不清掉的话它会一直占着事件循环，直到 180 秒后自己触发一次没人再
+          // 关心的 abort。
+          dispose();
+        }
+      },
+      onChange: (statuses) => instance.handleMotionChange(statuses),
+    });
+    const motionClips = instance.motionClips;
+    rig.setMotionResolver((ref) => motionClips.resolve(ref));
+
     const objLoader = new objModule.OBJLoader();
     instance.graph.attachPropLoader(
       new PropLoader({
@@ -498,6 +587,9 @@ export class PrevizRenderer {
     this.currentScene = scene;
     this.trackHandPlacements(previous, scene);
     this.graph.sync(scene);
+    // 排在 `applyEvaluatedFrame` 之前：刚写进场景的动作要先登记成「加载中」，这一帧求值
+    // 出来的动作引用才有地方去查（查不到时 rig 按基础姿势摆，等 clip 到了再重摆）。
+    this.motionClips?.sync(scene.motions);
     // 节点可能是这次 sync 才建出来的（撤销删除、或 setLiveCamera 先于 setScene），也可能
     // 刚被切显示模式刷掉了颜色，直播色要重新涂上去。
     if (this.liveCameraId) {
@@ -672,8 +764,8 @@ export class PrevizRenderer {
   }
 
   /**
-   * 把当前帧的解算结果写进各个节点：位置、旋转，以及人物这一帧的姿势与姿势内时间——
-   * 沿路径走位的人物靠后者真的迈腿，而不是端着一副定格的姿势被平移过去。
+   * 把当前帧的解算结果写进各个节点：位置、旋转，以及人物这一帧的动作——沿路径走位的
+   * 人物靠后者真的迈腿，而不是端着一副定格的姿势被平移过去。
    */
   private applyEvaluatedFrame(): void {
     const scene = this.currentScene;
@@ -681,7 +773,9 @@ export class PrevizRenderer {
     const evaluated = evaluateSceneAt(scene, this.currentFrame, this.propExtents());
     for (const [objectId, state] of evaluated) {
       // 姿势不归手摆管：拖动一个正在走的人物改的是他站在哪，不是把他的腿定住。
-      if (state.poseId !== null) this.graph.applyPose(objectId, state.poseId, state.poseTime);
+      if (state.motion) {
+        this.graph.applyMotion(objectId, state.motion);
+      }
       // 刚被手摆过的对象让位给那一次摆放，等播放头再动时才交还给时间轴。
       if (this.handPlaced.has(objectId)) continue;
       const node = this.graph.nodeFor(objectId);
@@ -1187,9 +1281,55 @@ export class PrevizRenderer {
     this.pendingFocusId = objectId;
   }
 
-  /** 等在途的模型请求全部落地（成功失败都算）。入场遮罩撤不撤看它，见场景图同名方法。 */
-  whenModelsSettled(): Promise<void> {
-    return this.graph.whenModelsSettled();
+  /**
+   * 等在途的模型请求与导入动作全部落地（成功失败都算）。入场遮罩撤不撤看它，见场景图同名
+   * 方法；录制前也等它——动作没到的那几秒录进去的是一个站着不动的人。
+   */
+  async whenModelsSettled(): Promise<void> {
+    await Promise.all([this.graph.whenModelsSettled(), this.motionClips?.whenSettled()]);
+  }
+
+  /**
+   * 导入动作状态表的订阅，编辑器拿去写 store。
+   *
+   * 接上时立刻重放一遍当前状态：第一次「加载中」是在 `setScene` 里发的，而编辑器那个接线
+   * 的 effect 跑在它后面，不重放的话入场那一批动作在面板上永远不显示加载中。
+   */
+  setMotionStatusListener(
+    listener: ((statuses: Readonly<Record<string, PrevizMotionStatus>>) => void) | null,
+  ): void {
+    this.motionStatusListener = listener;
+    if (listener && this.motionClips && !this.disposed) listener(this.motionClips.statuses());
+  }
+
+  /** 导入流程的本地试跑，见 `inspectMotionFile`（`motionClips.ts`）。 */
+  async inspectMotionFile(
+    file: Pick<File, 'name' | 'size' | 'arrayBuffer'>,
+  ): Promise<PrevizMotionInspection> {
+    if (!this.motionInspectDeps) return { ok: false, error: { code: 'parse_failed' } };
+    return inspectMotionFile(this.motionInspectDeps, file);
+  }
+
+  /**
+   * 把导入流程已经重定向好的 clip 交给缓存。必须在 `importMotions` 写进场景**之前**调：
+   * 那次写入触发的 `setScene` 会直接把它当成就绪，不再按 URL 把刚上传的文件拉回来一遍。
+   */
+  primeMotion(importedId: string, clip: THREE.AnimationClip): void {
+    this.motionClips?.prime(importedId, clip);
+  }
+
+  /** 导入取消或上传失败：丢掉 `primeMotion` 交进去、最终没进场景的那条。 */
+  discardPrimedMotion(importedId: string): void {
+    this.motionClips?.discardPrimed(importedId);
+  }
+
+  /** 导入动作有一条就绪或失败了：rig 手里那份解析结果作废，当前帧重摆。 */
+  private handleMotionChange(statuses: Readonly<Record<string, PrevizMotionStatus>>): void {
+    if (this.disposed) return;
+    this.characterRig?.invalidateMotions();
+    this.motionStatusListener?.(statuses);
+    this.applyEvaluatedFrame();
+    this.requestRender();
   }
 
   /** 模型换入的回调里调。不是等的那个就放过——人物模型也走同一个回调。 */
@@ -1269,6 +1409,7 @@ export class PrevizRenderer {
   async renderCharacterPreview(
     canvas: CameraPreviewCanvas,
     draft: PrevizCharacterDraft,
+    motion?: EvaluatedMotion,
   ): Promise<void> {
     // 录制期间不画，同 `renderCameraPreview`：下面 finally 里那次「还」成可见会把手柄
     // 的 helper 送进正在录的那一帧里。
@@ -1296,6 +1437,7 @@ export class PrevizRenderer {
           alive: () => !this.disposed,
         },
         draft,
+        motion,
       );
     } finally {
       this.gizmo?.setHelperVisible(true);
@@ -1701,6 +1843,11 @@ export class PrevizRenderer {
     // 那些子节点已经跟着节点一起没了，名牌的贴图就还不回去。
     this.overlays?.dispose();
     this.graph.dispose();
+    // 叫醒还在等动作的录制方，并断开 rig 对缓存的引用：rig 在对话框的在途 build 里可能
+    // 还会被调一次，那时查到的应当是「没有」，而不是一份已经清空的缓存。
+    this.motionClips?.dispose();
+    this.characterRig?.setMotionResolver(null);
+    this.motionStatusListener = null;
     this.pathPreview?.dispose();
     this.strokePreview?.dispose();
     // 木偶待在一个游离的 `holder` 下面、不在 `this.scene` 底下，下面那次 traverse 扫不

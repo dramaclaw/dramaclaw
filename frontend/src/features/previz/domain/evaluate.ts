@@ -15,26 +15,48 @@ import {
   type PrevizPropExtent,
   type PrevizXZBox,
 } from './moveAssist';
+import { motionInfo } from './motionLibrary';
 import { samplePathPosition, samplePathRotation } from './pathCurve';
 import { locomotionPoseFor, poseSampleTime } from './poses';
 import {
   PREVIZ_FPS,
+  type PrevizActionClip,
   type PrevizCharacter,
   type PrevizObject,
   type PrevizScene,
   type Vec3,
 } from './scene';
-import { frameToU, lastEndedPathClip, pathClipAt, rigClipAt } from './timeline';
+import { actionClipsOf, frameToU, lastEndedPathClip, pathClipAt, rigClipAt } from './timeline';
 import { sceneTopDownBounds, type PrevizTopDownFootprint } from './topDownMap';
+
+/** 动作片段之间交叉淡化的时长。设计文档决策 8：固定值，不给用户调。 */
+export const PREVIZ_MOTION_BLEND_SEC = 0.2;
+
+/** 身体这一帧播哪条动画的哪一秒。 */
+export interface EvaluatedMotionSample {
+  /** 姿势 id（`PrevizPoseId`，引擎按候选表挑 clip）或 `motionId`（`builtin:` / `import:`）。 */
+  ref: string;
+  /** 秒，循环已绕圈、单次已定格，引擎直接拿去推动画。 */
+  time: number;
+}
+
+export interface EvaluatedMotion {
+  primary: EvaluatedMotionSample;
+  /** 过渡中被淡出的那一条；不在过渡里时缺省。 */
+  secondary?: EvaluatedMotionSample;
+  /** `primary` 的权重，0..1，`secondary` 拿剩下的。没有 `secondary` 时恒为 1。 */
+  weight: number;
+}
 
 /** 某一帧上单个对象的解算结果。 */
 export interface EvaluatedObject {
   position: Vec3;
   rotation: Vec3;
-  /** 人物用；其余对象恒为 null。静止时是基础姿势，沿路径走位时是走 / 跑的循环。 */
-  poseId: string | null;
-  /** 姿势内的时间，单位秒。静止时是候选表里定格的那一秒，走位时从片段首帧起算。 */
-  poseTime: number;
+  /**
+   * 人物用；其余对象恒为 null。底层是静止时的基础姿势定格、沿路径走位时的走 / 跑循环，
+   * 落在动作片段里时换成片段的动作，片段首尾各有一段交叉淡化。
+   */
+  motion: EvaluatedMotion | null;
 }
 
 export type EvaluatedFrame = Map<string, EvaluatedObject>;
@@ -49,7 +71,7 @@ export type EvaluatedFrame = Map<string, EvaluatedObject>;
  * 从看的人与被看的人**都解算完**的位置反推的。塞进同一轮里的话，跟不跟得上取决于两条
  * 轨道在数组里的先后——那种 bug 只在某几个场景里出现。
  * 姿势跟着走位一起解：静止是基础姿势定格的那一秒，沿路径走位换成走 / 跑的循环并给出
- * 片段内时间，引擎按它推动画。动作片段（P4）还没有。
+ * 片段内时间，引擎按它推动画；动作片段再盖在这层底子上（`applyActionClips`）。
  */
 export function evaluateSceneAt(
   scene: PrevizScene,
@@ -72,8 +94,13 @@ export function evaluateSceneAt(
     result.set(object.id, {
       position: [...object.transform.position],
       rotation: [...object.transform.rotation],
-      poseId: object.kind === 'character' ? object.basePoseId : null,
-      poseTime: object.kind === 'character' ? poseSampleTime(object.basePoseId) : 0,
+      motion:
+        object.kind === 'character'
+          ? {
+              primary: { ref: object.basePoseId, time: poseSampleTime(object.basePoseId) },
+              weight: 1,
+            }
+          : null,
     });
   }
 
@@ -94,14 +121,24 @@ export function evaluateSceneAt(
     target.position = samplePathPosition(clip.points, u);
     target.rotation = samplePathRotation(clip.points, u);
     // 位置在变而脚不动，看着是整个人被平移过去的：沿路径走位的人物换成走 / 跑的循环，
-    // 时间从片段首帧起算。只有人物有姿势（其余对象 poseId 恒为 null）；只有一个点的
+    // 时间从片段首帧起算。只有人物有姿势（其余对象 motion 恒为 null）；只有一个点的
     // 路径没有位移，原地迈腿是在踏步，所以保持静止姿势。
     // 停住的那几帧不进这个分支：人已经站定了，脚不该还在迈。
-    if (walking && target.poseId !== null && clip.points.length >= 2) {
-      target.poseId = locomotionPoseFor(target.poseId);
-      target.poseTime = (frame - clip.startFrame) / PREVIZ_FPS;
+    // 走到这里 motion 必然还是初始化时那份基础姿势，`primary.ref` 就是 `basePoseId`。
+    if (walking && target.motion !== null && clip.points.length >= 2) {
+      target.motion = {
+        primary: {
+          ref: locomotionPoseFor(target.motion.primary.ref),
+          time: (frame - clip.startFrame) / PREVIZ_FPS,
+        },
+        weight: 1,
+      };
     }
   }
+
+  // 必须排在走位之后：动作片段的过渡要拿「没有这段动作时身体在干什么」当底子，走 / 跑
+  // 循环正是走位那一轮给出来的。位置与朝向这一轮一概不碰（决策 3：动作管身体，路径管位置）。
+  applyActionClips(scene, frame, result);
 
   // 排在走位之后：`samplePathPosition` 转头就把曲线上的 XZ 原样写回来，推开排在它之前
   // 等于没推。排在特写与「看向」之前：那两轮都是拿人这一帧解算完的位置反推机位的，排在
@@ -115,6 +152,68 @@ export function evaluateSceneAt(
   applyCloseups(scene, frame, result, objectsById);
   applyPathAims(scene, frame, result, objectsById);
   return result;
+}
+
+/**
+ * 动作片段那一轮。区间半开 `[start, end)`，见 `PrevizActionClip`。
+ *
+ * 过渡帧数 `blend = min(0.2 秒, 片段长的一半)`——短片段首尾两段过渡各占一半，恰好不重叠，
+ * 所以下面两个分支互斥。
+ * - 进入：前 `blend` 帧从旧身体淡入。旧身体是**紧邻的前一段动作**（首尾相接），
+ *   没有就是底层（基础姿势或走 / 跑）。
+ * - 离开：后 `blend` 帧淡回底层。下一段紧挨着时不做——那一次过渡归下一段的进入，
+ *   两边各做一次等于在交界处叠两层淡化，身体会先塌回底层再被拉起来。
+ *
+ * 动作解析不出（导入动作被删了、目录改了名）时整段当没有：保留底层，而不是让人定格成
+ * 绑定姿势。
+ */
+function applyActionClips(scene: PrevizScene, frame: number, result: EvaluatedFrame): void {
+  const blendCap = Math.round(PREVIZ_MOTION_BLEND_SEC * PREVIZ_FPS);
+  for (const track of scene.timeline.tracks) {
+    const target = result.get(track.objectId);
+    // 非人物没有身体；parseScene 已经不让动作片段挂在非人物轨道上，这里兜运行时脏值。
+    if (!target?.motion) continue;
+
+    const clips = actionClipsOf(track);
+    const index = clips.findIndex((clip) => clip.startFrame <= frame && frame < clip.endFrame);
+    if (index < 0) continue;
+    const clip = clips[index]!;
+    const primary = actionSample(scene, clip, frame);
+    if (!primary) continue;
+
+    const base = target.motion.primary;
+    const blend = Math.min(blendCap, Math.floor((clip.endFrame - clip.startFrame) / 2));
+    const entered = frame - clip.startFrame;
+    const remaining = clip.endFrame - frame;
+    const previous = clips[index - 1];
+    const next = clips[index + 1];
+
+    if (entered < blend) {
+      const adjoining = previous?.endFrame === clip.startFrame ? previous : undefined;
+      const secondary = (adjoining && actionSample(scene, adjoining, frame)) || base;
+      target.motion = { primary, secondary, weight: entered / blend };
+    } else if (remaining < blend && next?.startFrame !== clip.endFrame) {
+      target.motion = { primary, secondary: base, weight: remaining / blend };
+    } else {
+      target.motion = { primary, weight: 1 };
+    }
+  }
+}
+
+/**
+ * 动作片段在某一帧上的采样。时间从片段首帧起算：循环动作绕圈，单次动作播完定格在最后
+ * 一帧直到片段结束。帧号可以在片段之外（前一段在过渡里被淡出时就是），同一套规则照算。
+ */
+function actionSample(
+  scene: PrevizScene,
+  clip: PrevizActionClip,
+  frame: number,
+): EvaluatedMotionSample | null {
+  const info = motionInfo(scene.motions, clip.motionId);
+  if (!info) return null;
+  const elapsed = Math.max(0, (frame - clip.startFrame) / PREVIZ_FPS);
+  const time = info.loop ? elapsed % info.durationSec : Math.min(elapsed, info.durationSec);
+  return { ref: clip.motionId, time };
 }
 
 /**
