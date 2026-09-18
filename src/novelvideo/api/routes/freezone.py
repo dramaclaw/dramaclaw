@@ -177,6 +177,7 @@ from novelvideo.freezone.history import (
 )
 from novelvideo.freezone.workflow_drafts import (
     bind_workflow_draft_task,
+    cancel_workflow_draft,
     claim_workflow_draft_confirmation,
     create_workflow_draft,
     finish_workflow_draft_confirmation,
@@ -14489,6 +14490,39 @@ async def get_canvas_workflow_draft(
         "ok": True,
         "data": _workflow_draft_api_data(draft, summary=view == "summary"),
     }
+
+
+@router.post(
+    "/projects/{project}/freezone/canvases/{canvas_id}/workflow-drafts/{draft_id}/cancel",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def cancel_canvas_workflow_draft(
+    project: str,
+    canvas_id: str,
+    draft_id: str,
+    body: dict = Body(...),
+    user: dict = Depends(get_api_user),
+):
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    if type(body.get("expected_revision")) is not int:
+        raise HTTPException(400, "expected_revision must be an integer")
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    try:
+        draft, error = await asyncio.to_thread(
+            cancel_workflow_draft,
+            project_dir=_canvas_state_project_dir(ctx, project_dir),
+            canvas_id=canvas_id,
+            draft_id=draft_id,
+            expected_revision=body["expected_revision"],
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if draft is None:
+        return error
+    return {"ok": True, "data": _workflow_draft_api_data(draft)}
 
 
 @router.patch(
