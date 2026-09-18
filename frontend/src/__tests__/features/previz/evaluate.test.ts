@@ -6,15 +6,18 @@ import {
   PREVIZ_RIG_ANCHOR_FRACTION,
   PREVIZ_RIG_ORBIT_DEG,
 } from '@/features/previz/domain/closeup';
-import { evaluateSceneAt } from '@/features/previz/domain/evaluate';
+import { PREVIZ_MOTION_BLEND_SEC, evaluateSceneAt } from '@/features/previz/domain/evaluate';
 import { PREVIZ_CHARACTER_RADIUS_M } from '@/features/previz/domain/moveAssist';
+import { builtinMotionById } from '@/features/previz/domain/motionLibrary';
 import { createPrevizObject } from '@/features/previz/domain/objects';
 import { PREVIZ_POSE_CLIPS, type PrevizPoseId } from '@/features/previz/domain/poses';
 import {
   PREVIZ_FPS,
   createDefaultScene,
+  type PrevizActionClip,
   type PrevizCamera,
   type PrevizCharacter,
+  type PrevizClip,
   type PrevizObject,
   type PrevizPathClip,
   type PrevizRigClip,
@@ -59,10 +62,12 @@ describe('evaluateSceneAt', () => {
     const camera = createPrevizObject('camera', scene.objects);
     scene.objects.push(camera);
     const frame = evaluateSceneAt(scene, 0);
-    expect(frame.get(character.id)?.poseId).toBe(character.basePoseId);
     // 静止的人物定格在候选表挑好的那一秒——定格在 0 常常是绑定姿势，看起来像没摆。
-    expect(frame.get(character.id)?.poseTime).toBe(stillTimeOf(character));
-    expect(frame.get(camera.id)?.poseId).toBeNull();
+    expect(frame.get(character.id)?.motion).toEqual({
+      primary: { ref: character.basePoseId, time: stillTimeOf(character) },
+      weight: 1,
+    });
+    expect(frame.get(camera.id)?.motion).toBeNull();
   });
 
   it('plays the walk cycle while a path clip carries the character', () => {
@@ -74,8 +79,8 @@ describe('evaluateSceneAt', () => {
     const state = evaluateSceneAt(scene, 60).get(character.id);
     // 位置在变而脚不动，看着是整个人被平移过去的。姿势内的时间从片段首帧起算、单位秒，
     // 引擎直接拿它推动画。
-    expect(state?.poseId).toBe('walking');
-    expect(state?.poseTime).toBeCloseTo(30 / PREVIZ_FPS, 10);
+    expect(state?.motion?.primary.ref).toBe('walking');
+    expect(state?.motion?.primary.time).toBeCloseTo(30 / PREVIZ_FPS, 10);
   });
 
   it('keeps a running character running along the path', () => {
@@ -85,7 +90,7 @@ describe('evaluateSceneAt', () => {
       ...scene.timeline,
       tracks: [{ id: 't', objectId: character.id, clips: [clipFor(0, 120)] }],
     };
-    expect(evaluateSceneAt(scene, 60).get(character.id)?.poseId).toBe('running');
+    expect(evaluateSceneAt(scene, 60).get(character.id)?.motion?.primary.ref).toBe('running');
   });
 
   it('returns to the base pose outside the clip and on a single-point path', () => {
@@ -96,10 +101,10 @@ describe('evaluateSceneAt', () => {
       ...scene.timeline,
       tracks: [{ id: 't', objectId: character.id, clips: [pinned] }],
     };
-    const still = { poseId: character.basePoseId, poseTime: stillTimeOf(character) };
+    const still = { ref: character.basePoseId, time: stillTimeOf(character) };
     // 片段之外人回到静态姿势；只有一个点的路径没有位移，原地迈腿是在踏步。
-    expect(evaluateSceneAt(scene, 10).get(character.id)).toMatchObject(still);
-    expect(evaluateSceneAt(scene, 90).get(character.id)).toMatchObject(still);
+    expect(evaluateSceneAt(scene, 10).get(character.id)?.motion?.primary).toEqual(still);
+    expect(evaluateSceneAt(scene, 90).get(character.id)?.motion?.primary).toEqual(still);
   });
 
   it('never gives a camera a pose, even on a path', () => {
@@ -110,7 +115,7 @@ describe('evaluateSceneAt', () => {
       ...scene.timeline,
       tracks: [{ id: 't', objectId: camera.id, clips: [clipFor(0, 120)] }],
     };
-    expect(evaluateSceneAt(scene, 60).get(camera.id)?.poseId).toBeNull();
+    expect(evaluateSceneAt(scene, 60).get(camera.id)?.motion).toBeNull();
   });
 
   it('lets a covering path clip override position and rotation', () => {
@@ -139,8 +144,10 @@ describe('evaluateSceneAt', () => {
     expect(held?.position[0]).toBeCloseTo(10, 10);
     expect(held?.rotation[1]).toBeCloseTo(90, 10);
     // 停下的人不该还在迈腿。
-    expect(held?.poseId).toBe(character.basePoseId);
-    expect(held?.poseTime).toBe(stillTimeOf(character));
+    expect(held?.motion?.primary).toEqual({
+      ref: character.basePoseId,
+      time: stillTimeOf(character),
+    });
   });
 
   it('holds the earlier clip through the gap before the next one starts', () => {
@@ -628,5 +635,169 @@ describe('evaluateSceneAt height policies', () => {
     // 上一条是两个场景之间的等式，两边一起退化时它也成立：把 `lookAtEulerDeg` 的俯仰
     // 钉成常数，只剩上一条的话这个用例照样绿。所以再对一次绝对量。
     expect(pitchOf(locked)).toBeGreaterThan(pitchOf(sceneWithAim('self')));
+  });
+});
+
+/** 一个静止的人物，轨道上挂着给定的动作片段（可再带路径片段）。 */
+function sceneWithActions(clips: PrevizClip[]): { scene: PrevizScene; character: PrevizCharacter } {
+  const { scene, character } = sceneWithCharacter();
+  scene.timeline = { ...scene.timeline, tracks: [{ id: 't', objectId: character.id, clips }] };
+  return { scene, character };
+}
+
+function action(id: string, startFrame: number, endFrame: number, motionId: string): PrevizActionClip {
+  return { id, kind: 'action', startFrame, endFrame, motionId };
+}
+
+const LOOP = 'builtin:Idle_Talking_Loop';
+const ONCE = 'builtin:Sitting_Enter';
+const LOOP_SEC = builtinMotionById(LOOP)!.durationSec;
+const ONCE_SEC = builtinMotionById(ONCE)!.durationSec;
+const BLEND = Math.round(PREVIZ_MOTION_BLEND_SEC * PREVIZ_FPS);
+
+describe('evaluateSceneAt action clips', () => {
+  it('pins the blend to 0.2 s', () => {
+    expect(PREVIZ_MOTION_BLEND_SEC).toBe(0.2);
+    expect(BLEND).toBe(6);
+  });
+
+  it('wraps a looping motion around its own duration', () => {
+    const { scene, character } = sceneWithActions([action('a', 0, 300, LOOP)]);
+    const frame = 30 + Math.round(LOOP_SEC * PREVIZ_FPS);
+    const motion = evaluateSceneAt(scene, frame).get(character.id)?.motion;
+    expect(motion?.primary.ref).toBe(LOOP);
+    expect(motion?.primary.time).toBeCloseTo((frame / PREVIZ_FPS) % LOOP_SEC, 10);
+    expect(motion?.weight).toBe(1);
+    expect(motion?.secondary).toBeUndefined();
+  });
+
+  it('holds a one-shot motion on its last frame until the clip ends', () => {
+    const { scene, character } = sceneWithActions([action('a', 0, 300, ONCE)]);
+    const motion = evaluateSceneAt(scene, 200).get(character.id)?.motion;
+    expect(motion?.primary).toEqual({ ref: ONCE, time: ONCE_SEC });
+  });
+
+  it('starts the motion clock at the clip start, not at frame zero', () => {
+    const { scene, character } = sceneWithActions([action('a', 60, 300, ONCE)]);
+    expect(evaluateSceneAt(scene, 75).get(character.id)?.motion?.primary.time).toBeCloseTo(
+      15 / PREVIZ_FPS,
+      10,
+    );
+  });
+
+  it('treats the clip range as half-open', () => {
+    const { scene, character } = sceneWithActions([action('a', 60, 120, LOOP)]);
+    // 片段外回到基础姿势；终点帧不算片段内——相接的下一段从这一帧开始。
+    expect(evaluateSceneAt(scene, 59).get(character.id)?.motion?.primary.ref).toBe(character.basePoseId);
+    expect(evaluateSceneAt(scene, 60).get(character.id)?.motion?.primary.ref).toBe(LOOP);
+    expect(evaluateSceneAt(scene, 120).get(character.id)?.motion?.primary.ref).toBe(character.basePoseId);
+  });
+
+  it('fades in from the base pose and back out to it linearly', () => {
+    const { scene, character } = sceneWithActions([action('a', 60, 180, LOOP)]);
+    const still = { ref: character.basePoseId, time: stillTimeOf(character) };
+    for (let entered = 0; entered < BLEND; entered += 1) {
+      const motion = evaluateSceneAt(scene, 60 + entered).get(character.id)?.motion;
+      expect(motion?.secondary).toEqual(still);
+      expect(motion?.weight).toBeCloseTo(entered / BLEND, 10);
+    }
+    // 离开时权重按「离终点还剩几帧」算，终点帧本身已在片段外、权重归零。
+    for (let remaining = 1; remaining < BLEND; remaining += 1) {
+      const motion = evaluateSceneAt(scene, 180 - remaining).get(character.id)?.motion;
+      expect(motion?.secondary).toEqual(still);
+      expect(motion?.weight).toBeCloseTo(remaining / BLEND, 10);
+    }
+    expect(evaluateSceneAt(scene, 60 + BLEND).get(character.id)?.motion?.secondary).toBeUndefined();
+    expect(evaluateSceneAt(scene, 180 - BLEND).get(character.id)?.motion?.secondary).toBeUndefined();
+  });
+
+  it('halves the blend on a clip shorter than two blends', () => {
+    const { scene, character } = sceneWithActions([action('a', 60, 66, LOOP)]);
+    // 6 帧的片段：进 3 帧、出 3 帧，中间没有满权重的一帧也不许两段重叠。
+    expect(evaluateSceneAt(scene, 61).get(character.id)?.motion?.weight).toBeCloseTo(1 / 3, 10);
+    expect(evaluateSceneAt(scene, 63).get(character.id)?.motion?.weight).toBeCloseTo(3 / 3, 10);
+    expect(evaluateSceneAt(scene, 65).get(character.id)?.motion?.weight).toBeCloseTo(1 / 3, 10);
+  });
+
+  it('skips the blend on a one-frame clip instead of dividing by zero', () => {
+    const { scene, character } = sceneWithActions([action('a', 60, 61, LOOP)]);
+    expect(evaluateSceneAt(scene, 60).get(character.id)?.motion).toEqual({
+      primary: { ref: LOOP, time: 0 },
+      weight: 1,
+    });
+  });
+
+  it('blends only once where two clips meet', () => {
+    const { scene, character } = sceneWithActions([
+      action('b', 120, 240, ONCE),
+      action('a', 0, 120, LOOP),
+    ]);
+    // 前一段的尾巴不淡回底层：交界那一次过渡归后一段。
+    expect(evaluateSceneAt(scene, 119).get(character.id)?.motion).toEqual({
+      primary: { ref: LOOP, time: (119 / PREVIZ_FPS) % LOOP_SEC },
+      weight: 1,
+    });
+    // 后一段开头从前一段接着播的那一秒淡入，而不是从基础姿势。
+    const seam = evaluateSceneAt(scene, 122).get(character.id)?.motion;
+    expect(seam?.primary).toEqual({ ref: ONCE, time: 2 / PREVIZ_FPS });
+    expect(seam?.secondary?.ref).toBe(LOOP);
+    expect(seam?.secondary?.time).toBeCloseTo((122 / PREVIZ_FPS) % LOOP_SEC, 10);
+    expect(seam?.weight).toBeCloseTo(2 / BLEND, 10);
+  });
+
+  it('fades from the base pose when the previous clip leaves a gap', () => {
+    const { scene, character } = sceneWithActions([action('a', 0, 100, LOOP), action('b', 120, 240, ONCE)]);
+    expect(evaluateSceneAt(scene, 121).get(character.id)?.motion?.secondary?.ref).toBe(character.basePoseId);
+  });
+
+  it('plays the motion on the body while the path moves the character', () => {
+    const { scene, character } = sceneWithActions([clipFor(0, 120), action('a', 30, 90, LOOP)]);
+    const state = evaluateSceneAt(scene, 60).get(character.id);
+    // 位置照走路径；身体播动作。
+    expect(state?.position[0]).toBeCloseTo(5, 10);
+    expect(state?.motion?.primary.ref).toBe(LOOP);
+    // 淡入淡出的底子是这一帧的走路循环，时间从路径片段首帧起算。
+    const entering = evaluateSceneAt(scene, 31).get(character.id)?.motion;
+    expect(entering?.secondary).toEqual({ ref: 'walking', time: 31 / PREVIZ_FPS });
+  });
+
+  it('keeps the base layer when the motion cannot be resolved', () => {
+    const { scene, character } = sceneWithActions([action('a', 0, 120, 'import:gone')]);
+    expect(evaluateSceneAt(scene, 60).get(character.id)?.motion).toEqual({
+      primary: { ref: character.basePoseId, time: stillTimeOf(character) },
+      weight: 1,
+    });
+  });
+
+  it('resolves an imported motion through scene.motions', () => {
+    const { scene, character } = sceneWithActions([action('a', 0, 120, 'import:m1')]);
+    scene.motions = [
+      {
+        id: 'm1',
+        name: 'Wave',
+        url: '/u/wave.bvh',
+        sourceFileName: 'wave.bvh',
+        format: 'bvh',
+        skeleton: 'smpl',
+        clipIndex: 0,
+        durationSec: 1,
+        loop: false,
+      },
+    ];
+    expect(evaluateSceneAt(scene, 90).get(character.id)?.motion?.primary).toEqual({
+      ref: 'import:m1',
+      time: 1,
+    });
+  });
+
+  it('never gives a camera a body, even with an action clip on its track', () => {
+    const { scene } = sceneWithCharacter();
+    const camera = createPrevizObject('camera', scene.objects);
+    scene.objects.push(camera);
+    scene.timeline = {
+      ...scene.timeline,
+      tracks: [{ id: 't', objectId: camera.id, clips: [action('a', 0, 120, LOOP)] }],
+    };
+    expect(evaluateSceneAt(scene, 60).get(camera.id)?.motion).toBeNull();
   });
 });
