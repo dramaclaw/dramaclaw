@@ -163,7 +163,8 @@ select = ["E4", "E7", "E9", "F"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+testpaths = ["tests", "blender/tests"]
+pythonpath = ["blender"]
 addopts = "-m 'not ee and not e2e'"
 norecursedirs = ["archive", "external", ".venv", "node_modules"]
 markers = [
