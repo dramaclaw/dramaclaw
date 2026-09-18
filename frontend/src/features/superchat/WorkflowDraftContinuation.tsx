@@ -56,7 +56,7 @@ export function workflowDraftIds(messages: ChatMessage[]): string[] {
   for (const message of messages) {
     for (const part of message.parts ?? []) {
       if (part.type !== "tool_status") continue;
-      const raw = (part.event as ChatMessage)?.raw as Record<string, unknown> | undefined;
+      const raw = (part.event as { raw?: Record<string, unknown> } | null)?.raw;
       const name = String(raw?.name ?? "").split(".").pop();
       if (!["freezone_prepare_workflow_draft", "freezone_prepare_workflow_plan_draft",
         "freezone_prepare_workflow", "freezone_patch_workflow_draft"].includes(name ?? "")) continue;
@@ -73,7 +73,8 @@ export function workflowDraftIds(messages: ChatMessage[]): string[] {
 }
 
 export function latestWorkflowDraftId(messages: ChatMessage[]): string | null {
-  return workflowDraftIds(messages).at(-1) ?? null;
+  const ids = workflowDraftIds(messages);
+  return ids[ids.length - 1] ?? null;
 }
 
 /** Recover the actionable continuation even when the agent stops at draft-ready. */

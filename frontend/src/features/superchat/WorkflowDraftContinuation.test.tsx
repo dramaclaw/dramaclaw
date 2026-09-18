@@ -43,7 +43,9 @@ describe("workflow draft continuation", () => {
     const previous = messages();
     const current = messages();
     current[0].id = "assistant-b";
-    current[0].parts![0].event = { ...current[0].parts![0].event,
+    const currentToolPart = current[0].parts?.find((part) => part.type === "tool_status");
+    if (!currentToolPart || currentToolPart.type !== "tool_status") throw new Error("missing tool status");
+    currentToolPart.event = { ...(currentToolPart.event as Record<string, unknown>),
       raw: { name: "dramaclaw.freezone_prepare_workflow_plan_draft", output: {
         content: [{ type: "text", text: JSON.stringify({ ok: true, draft_id: "draft-b" }) }],
       } } };
@@ -106,7 +108,9 @@ describe("workflow draft continuation", () => {
     const history = messages();
     const latest = messages();
     latest[0].id = "assistant-b";
-    latest[0].parts![0].event = { ...latest[0].parts![0].event,
+    const latestToolPart = latest[0].parts?.find((part) => part.type === "tool_status");
+    if (!latestToolPart || latestToolPart.type !== "tool_status") throw new Error("missing tool status");
+    latestToolPart.event = { ...(latestToolPart.event as Record<string, unknown>),
       raw: { name: "dramaclaw.freezone_prepare_workflow_plan_draft", output: {
         content: [{ type: "text", text: JSON.stringify({ ok: true, draft_id: "draft-b" }) }],
       } } };

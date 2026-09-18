@@ -160,6 +160,9 @@ def test_cancelled_workflow_draft_cannot_be_confirmed_or_patched(tmp_path: Path)
     )
     assert claimed is None
     assert claim_error is not None and claim_error["status"] == "workflow_draft_not_confirmable"
+    assert claim_error["message_i18n"] == {
+        "code": "workflowDraftContinuation.notConfirmable"
+    }
     patched, patch_error = patch_workflow_draft(
         project_dir=tmp_path,
         canvas_id="default",

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from novelvideo.freezone.paths import CANVAS_ID_RE
+from novelvideo.i18n_message import lmsg, message_payload
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
 
 SCHEMA_VERSION = "freezone_workflow_draft.v1"
@@ -559,11 +560,16 @@ def claim_workflow_draft_confirmation(
                 "message": "该工作流方案正在创建或已经提交，不会重复创建节点。",
             }
         if payload["status"] != "ready":
+            message = lmsg(
+                "workflowDraftContinuation.notConfirmable",
+                "该工作流方案已取消，不能再创建节点。",
+            )
             return None, {
                 **public_workflow_draft(payload),
                 "ok": False,
                 "status": "workflow_draft_not_confirmable",
-                "message": "该工作流方案已取消，不能再创建节点。",
+                "message": message.text,
+                "message_i18n": message_payload(message),
             }
         now = claim_time
         payload.update(

@@ -8,6 +8,7 @@
     "failed": "未能提交确认，请重试；没有重新创建草稿。",
     "cancelFailed": "未能取消方案，请重试。",
     "cancelled": "已取消工作流方案，画布未作修改。你可以继续告诉我想怎么调整。",
+    "notConfirmable": "该工作流方案已取消，不能再创建节点。",
     "confirmMessage": "确认创建此工作流",
     "confirmRunMessage": "确认创建并执行此工作流",
     "sending": "正在提交确认…",
