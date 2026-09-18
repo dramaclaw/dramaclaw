@@ -36,9 +36,9 @@ class DRAMACLAW_OT_connect(bpy.types.Operator):
     bl_label = "连接 DramaClaw"
     bl_description = "取一个配对码，在浏览器里确认后完成连接"
 
-    _session: PairingSession | None = None
-
     def execute(self, context):
+        prefs = get_prefs(context)
+        prefs.last_error = ""
         try:
             started = post_json(api_url(context, "/blender/pairing/start"), {})
         except ApiError as exc:
@@ -50,9 +50,6 @@ class DRAMACLAW_OT_connect(bpy.types.Operator):
             code=started["code"],
             deadline=time.time() + float(started["expires_in"]),
         )
-        DRAMACLAW_OT_connect._session = session
-
-        prefs = get_prefs(context)
         approve_url = f"{prefs.server_url.rstrip('/')}/blender-pairing"
         bpy.ops.wm.url_open(url=approve_url)
         self.report({"INFO"}, f"DramaClaw：在浏览器里输入配对码 {session.code}")
@@ -85,6 +82,11 @@ def _finish(session: PairingSession, addon_key: str) -> None:
     prefs = bpy.context.preferences.addons[addon_key].preferences
     if session.token:
         prefs.token = session.token
+        prefs.last_error = ""
+    else:
+        # 失败（过期、被用过、连着连不上）只有这一个出口。不写出去的话，面板上
+        # 一个字都不会变，用户只会反复点「连接」。
+        prefs.last_error = session.error or "配对没有完成，请重新点「连接」"
     for window in bpy.context.window_manager.windows:
         for area in window.screen.areas:
             if area.type == "VIEW_3D":

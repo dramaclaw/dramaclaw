@@ -35,8 +35,14 @@ class PairingSession:
         status = str(payload.get("status") or "")
 
         if status == "approved":
-            self.token = str(payload.get("token") or "")
+            token = str(payload.get("token") or "")
             self.finished = True
+            if token:
+                self.token = token
+            else:
+                # 服务端说批了却没给令牌。不写空串（UI 那边空串为假，等于什么都
+                # 没发生），直接报出来——用户至少知道该再点一次。
+                self.error = "服务端没有返回令牌，请重新点「连接」"
             return
         if status == "expired":
             self.finished = True

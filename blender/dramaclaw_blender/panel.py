@@ -8,7 +8,13 @@ from __future__ import annotations
 
 import bpy
 
-from .core.limits import MAX_IMAGE_BYTES, MAX_VIDEO_BYTES, MAX_VIDEO_SECONDS, resolution_for
+from .core.limits import (
+    MAX_IMAGE_BYTES,
+    MAX_VIDEO_BYTES,
+    MAX_VIDEO_SECONDS,
+    LimitError,
+    resolution_for,
+)
 from .ops import PROJECT_CACHE
 from .prefs import get_prefs
 
@@ -63,7 +69,12 @@ class DRAMACLAW_PT_panel(bpy.types.Panel):
 
         if not prefs.token:
             layout.operator("dramaclaw.connect", icon="LINKED")
-            layout.label(text="连接后才能导入", icon="INFO")
+            if prefs.last_error:
+                # 配对是在定时器里收尾的，那边没有 operator 能 report。这是失败
+                # 原因唯一能露头的地方。
+                layout.label(text=prefs.last_error, icon="ERROR")
+            else:
+                layout.label(text="连接后才能导入", icon="INFO")
             return
 
         row = layout.row(align=True)
@@ -78,12 +89,17 @@ class DRAMACLAW_PT_panel(bpy.types.Panel):
 
         box = layout.box()
         box.label(text=f"相机：{camera.name}")
-        width, height = resolution_for(
-            scene.render.resolution_x,
-            scene.render.resolution_y,
-            int(scene.dramaclaw_short_side),
-        )
-        box.label(text=f"输出：{width}×{height}")
+        try:
+            width, height = resolution_for(
+                scene.render.resolution_x,
+                scene.render.resolution_y,
+                int(scene.dramaclaw_short_side),
+            )
+        except LimitError as exc:
+            # draw() 里抛异常整个面板就没了，连「断开」都点不到。宁可少画一行。
+            box.label(text=f"输出：算不出（{exc}）", icon="ERROR")
+        else:
+            box.label(text=f"输出：{width}×{height}")
         box.label(text=f"图片 PNG · 最大 {MAX_IMAGE_BYTES // (1024 * 1024)} MB")
         box.label(
             text=(

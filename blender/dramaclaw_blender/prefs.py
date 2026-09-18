@@ -27,6 +27,14 @@ class DramaClawPreferences(bpy.types.AddonPreferences):
         name="项目",
         default="",
     )
+    last_error: bpy.props.StringProperty(
+        # 配对是在 `bpy.app.timers` 的回调里收尾的，那里没有 operator 可以
+        # `self.report()`。失败原因只能落到这里，由面板画出来——否则配对码过期时
+        # 界面上一个字都不会变，用户只会一直点「连接」。
+        name="上次错误",
+        default="",
+        options={"SKIP_SAVE"},
+    )
 
     def draw(self, context):
         layout = self.layout
