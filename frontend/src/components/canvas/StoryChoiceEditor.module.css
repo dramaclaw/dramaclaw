@@ -44,3 +44,10 @@
   .inspector { overflow: visible; flex: none; border-left: 0; }
   .choiceList { flex: none; }
 }
+
+.conditionRule { min-width: 0; padding: 12px 0; border-bottom: 1px solid var(--ui-border-soft); }
+.conditionHeader { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.conditionHeader select { max-width: calc(100% - 40px); font-size: 12px; }
+.conditionExpression { display: grid; grid-template-columns: minmax(0, 1fr) 56px 64px; align-items: center; gap: 8px; }
+.conditionExpression:has(> :nth-child(2):last-child) { grid-template-columns: minmax(0, 1fr) 96px; }
+.conditionExpression select, .conditionExpression input { width: 100%; min-width: 0; min-height: 32px; }

@@ -965,16 +965,20 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
             writeCondition(next, join);
           };
           return (
-            <div key={i} className="flex items-center gap-1.5 pl-6">
+            <div key={i} className={editorStyles.conditionRule}>
+              <div className={editorStyles.conditionHeader}>
               <select
                 value={isVisitCondition(leaf) ? 'visit' : isFlagCondition(leaf) ? 'flag' : 'var'}
                 onChange={(e) => setLeaf(e.target.value === 'visit' ? newVisitLeaf() : e.target.value === 'flag' ? newFlagLeaf() : newVarLeaf())}
-                className={SELECT_CLASS}
+                className={`${SELECT_CLASS} shrink-0`}
               >
                 <option value="flag" disabled={!hasFlags}>{t('canvas.story.condFlag')}</option>
                 <option value="var" disabled={!hasVariables}>{t('canvas.story.condVar')}</option>
                 <option value="visit" disabled={!hasMembers}>{t('canvas.story.condVisit')}</option>
               </select>
+              <button onClick={() => writeCondition(leaves.filter((_, j) => j !== i), join)} className="ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded text-text-dark/75 transition-colors hover:bg-text-dark/10 hover:text-red-400" aria-label={t('common.delete')}>✕</button>
+              </div>
+              <div className={editorStyles.conditionExpression}>
               {isVisitCondition(leaf) ? (
                 <select
                   value={leaf.visitedNodeId}
@@ -1018,11 +1022,11 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
                     type="number"
                     value={leaf.value}
                     onChange={(e) => setLeaf({ ...leaf, value: Number(e.target.value) })}
-                    className={`${FIELD_CLASS} w-12`}
+                    className={`${FIELD_CLASS} min-w-0 w-full`}
                   />
                 </>
               )}
-              <button onClick={() => writeCondition(leaves.filter((_, j) => j !== i), join)} className="rounded p-1 text-text-dark/75 transition-colors hover:bg-text-dark/10 hover:text-red-400" aria-label={t('common.delete')}>✕</button>
+              </div>
             </div>
           );
         })}
@@ -1030,7 +1034,7 @@ export const StoryChoiceEditor = memo(function StoryChoiceEditor({
           <button
             disabled={!canCondition}
             onClick={() => writeCondition([...leaves, newLeaf()], join)}
-            className="ml-6 self-start rounded-md border border-text-dark/10 bg-text-dark/[0.06] px-2.5 py-1 text-xs font-medium text-text-dark/80 transition-colors hover:bg-text-dark/[0.12] disabled:cursor-not-allowed disabled:opacity-40"
+            className="self-start rounded-md border border-text-dark/10 bg-text-dark/[0.06] px-2.5 py-1 text-xs font-medium text-text-dark/80 transition-colors hover:bg-text-dark/[0.12] disabled:cursor-not-allowed disabled:opacity-40"
           >
             + {t('canvas.story.addCondition')}
           </button>

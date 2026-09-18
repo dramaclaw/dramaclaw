@@ -631,8 +631,14 @@
   color: color-mix(in srgb, rgb(var(--text-rgb)) 72%, rgb(var(--bg-rgb)));
 }
 .published-story-main {
+  display: grid;
+  align-items: center;
   width: min(860px, calc(100% - 32px));
-  margin: 56px auto 32px;
+  min-height: 100dvh;
+  margin: 0 auto;
+  padding-top: max(32px, env(safe-area-inset-top));
+  padding-bottom: max(32px, env(safe-area-inset-bottom));
+  box-sizing: border-box;
 }
 .publication-topbar {
   position: absolute;
@@ -851,19 +857,24 @@
     height: 60dvh;
   }
   .published-story-main {
-    margin-top: 64px;
+    width: min(480px, calc(100% - 40px));
+    padding-top: max(24px, env(safe-area-inset-top));
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
   }
   .published-story-info {
-    display: block;
+    align-items: center;
+    text-align: center;
     padding-top: 16px;
   }
   .published-story-info h1 {
     font-size: 22px;
   }
   .published-story-actions {
+    width: 100%;
+    max-width: 360px;
     align-items: stretch;
     flex-direction: column;
-    margin: 14px 0;
+    margin: 0;
     padding: 0;
   }
   .published-story-actions .publication-primary,
