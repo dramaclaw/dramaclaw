@@ -3,6 +3,7 @@
     "ariaLabel": "工作流创建确认",
     "title": "待确认的工作流方案",
     "summary": "{{nodes}} 个节点 · {{edges}} 条连线。尚未写入画布。",
+    "referenceImages": "参考图片",
     "changed": "方案状态已更新，请重新查看后确认。",
     "failed": "未能提交确认，请重试；没有重新创建草稿。",
     "confirmMessage": "确认创建此工作流",

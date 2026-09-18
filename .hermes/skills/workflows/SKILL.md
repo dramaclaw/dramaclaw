@@ -25,6 +25,11 @@ compatibility: Requires Freezone/虾画 chat surface and preferably injected can
 - 修改草稿：`freezone_patch_workflow_draft`，arguments `{"draft_id": ..., "expected_revision": ..., "changes": {...}}`
 - 确认落图：`freezone_confirm_workflow_draft`，arguments `{"draft_id": ..., "revision": ...}`
 
+用户指定已有画布图片作为 Recipe 参考图时，在 intent 或 Plan 顶层声明
+`external_inputs: [{"id":"source_image","node_id":"真实画布节点 ID","media_kind":"image"}]`，
+并在目标 item 的 `reference_inputs` 或 Plan 的 `media_input_for` 边中引用 `source_image`。
+不要把已有图片写进 `nodes`、复制源节点或手填图片 URL；服务端在准备和确认时校验源图。
+
 如果用户只是咨询或分析，只展示一般性说明，不创建草稿或写画布。用户提出具体创建需求后，先读取当前已选的唯一 Skill 紧凑规划包并生成结构化 `intent`，再调用 `freezone_prepare_workflow_draft`。只有用户明确要求 Skill 蓝图无法表达的自定义拓扑时，才使用 `freezone_prepare_workflow_plan_draft(plan=...)`，并继续走同一草稿确认入口。
 
 “再创建一个 / 再来一个 / 再添加一个 / 重新建一个 / 复制一个同类型工作流”都属于创建请求。当前画布已经存在相同工作流时，不要改为查询列表、解释已有工作流、复用旧节点或等待用户重新选择，仍然创建一个新的工作流实例并走确认流程；不要复用旧 `draft_id`，也不要调用 `freezone_emit_canvas_command`。

@@ -5552,10 +5552,13 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     # delivery and must not create a task only to immediately reset its attempt.
     checked_graph = None
     if current_payload.get("status") == "ready":
+        verified_inputs = (current_payload.get("compiled") or {}).get("external_inputs_verified") or {}
         checked_graph = build_workflow_graph_commands({
             "plan": (current_payload.get("compiled") or {}).get("plan"),
             "run_after_create": bool(current_payload.get("run_after_create")),
             "workflow_instance_id": draft_id,
+            "external_node_ids": {alias: value["node_id"] for alias, value in verified_inputs.items()},
+            "external_media_urls": {alias: value["media_url"] for alias, value in verified_inputs.items()},
         })
         if not checked_graph.get("ok"):
             return tool_result(checked_graph)
@@ -5649,6 +5652,14 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             "plan": plan,
             "run_after_create": run_after_create,
             "workflow_instance_id": draft_id,
+            "external_node_ids": {
+                alias: value["node_id"]
+                for alias, value in (compiled.get("external_inputs_verified") or {}).items()
+            },
+            "external_media_urls": {
+                alias: value["media_url"]
+                for alias, value in (compiled.get("external_inputs_verified") or {}).items()
+            },
         }
     )
     if not built.get("ok"):

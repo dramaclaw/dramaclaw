@@ -11,7 +11,8 @@ type Draft = {
   status: string;
   run_after_create: boolean;
   expires_at?: number;
-  preview?: { title?: string; node_count?: number; edge_count?: number };
+  preview?: { title?: string; node_count?: number; edge_count?: number;
+    external_inputs?: Array<{id: string; node_id: string; display_name?: string}> };
 };
 
 function objects(value: unknown): Record<string, unknown>[] {
@@ -130,6 +131,10 @@ export function WorkflowDraftContinuation({ messages, projectId, canvasId, busy,
     <div className="font-medium">{t("workflowDraftContinuation.title")}</div>
     <p className="mt-2 break-words">{draft.preview?.title}</p>
     <p className="mt-2 text-muted-foreground">{t("workflowDraftContinuation.summary", { nodes: draft.preview?.node_count ?? 0, edges: draft.preview?.edge_count ?? 0 })}</p>
+    {(draft.preview?.external_inputs?.length ?? 0) > 0 &&
+      <p className="mt-2 text-muted-foreground">{t("workflowDraftContinuation.referenceImages")}: {draft.preview!.external_inputs!.map(
+        (source) => source.display_name || source.node_id,
+      ).join("、")}</p>}
     {error && <p role="alert" className="mt-2">{error}</p>}
     <div className="mt-3 flex justify-end">
       <button type="button" className="tap-button tap-button-quiet-primary" disabled={busy || sending} onClick={() => void confirm()}>

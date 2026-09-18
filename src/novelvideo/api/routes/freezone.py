@@ -14271,6 +14271,26 @@ async def _validate_workflow_draft_submission(body: dict, user: dict) -> dict:
     return validated
 
 
+async def _resolve_workflow_draft_external_inputs(
+    compiled: dict, *, state_dir: Path, canvas_id: str, project_id: str,
+    expected: dict | None = None, require_verified: bool = False,
+) -> dict:
+    from novelvideo.freezone.workflow_external_inputs import resolve_external_image_inputs
+
+    plan = compiled.get("plan") or {}
+    if not plan.get("external_inputs"):
+        return {}
+    if require_verified and not expected:
+        raise HTTPException(409, "workflow external input binding is missing")
+    canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id)
+    try:
+        return resolve_external_image_inputs(
+            plan, canvas, project_id=project_id, canvas_id=canvas_id, expected=expected,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @router.post(
     "/projects/{project}/freezone/canvases/{canvas_id}/workflow-drafts",
     tags=[TAG_FREEZONE_CANVAS],
@@ -14374,6 +14394,9 @@ async def create_canvas_workflow_draft(
         )
     prepared = await _prepare_workflow_source(body, user)
     validated = prepared["compiled"]
+    validated["external_inputs_verified"] = await _resolve_workflow_draft_external_inputs(
+        validated, state_dir=state_dir, canvas_id=canvas_id, project_id=ctx.project_id,
+    )
     validated["preflight"] = await _check_workflow_runtime(
         validated, project=project, user=user
     )
@@ -14532,6 +14555,9 @@ async def patch_canvas_workflow_draft(
     else:
         prepared = await _prepare_workflow_source(body, user)
     validated = prepared["compiled"]
+    validated["external_inputs_verified"] = await _resolve_workflow_draft_external_inputs(
+        validated, state_dir=state_dir, canvas_id=canvas_id, project_id=ctx.project_id,
+    )
     validated["preflight"] = await _check_workflow_runtime(
         validated, project=project, user=user
     )
@@ -15004,6 +15030,12 @@ async def claim_canvas_workflow_draft(
         }
     # Revalidate old drafts and catalog revocations before admitting a task.
     validated = await _validate_workflow_draft_submission(current_draft, user)
+    await _resolve_workflow_draft_external_inputs(
+        current_draft["compiled"], state_dir=state_dir, canvas_id=canvas_id,
+        project_id=ctx.project_id,
+        expected=current_draft["compiled"].get("external_inputs_verified"),
+        require_verified=True,
+    )
     await _check_workflow_runtime(validated, project=project, user=user)
     try:
         draft, error = await asyncio.to_thread(

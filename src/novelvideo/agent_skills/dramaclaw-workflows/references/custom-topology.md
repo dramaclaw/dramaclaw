@@ -39,8 +39,12 @@ production Skill does not turn an exact topology request into the normal draft f
 
    Do not use ad-hoc top-level fields such as `audioKind`, `musicLengthMs`, `forceInstrumental`,
    or `respectSectionsDurations`; if supported by the live node schema, put them under `data`.
-4. Put all nodes and semantic edges in the same plan. Use logical plan IDs only; the compiler turns
-   them into same-batch `client_id` values.
+4. Put all new nodes and semantic edges in the same plan. To consume an existing canvas image,
+   declare `external_inputs: [{"id":"source_image","node_id":"<existing canvas node id>","media_kind":"image"}]`
+   and use `source_image` as the source of a `media_input_for` edge. The server verifies the real
+   node and its media at prepare and confirmation. Do not copy the source into `nodes`, put its URL
+   in the target data, or include it in `run_workflow` selection. Other references use logical plan
+   IDs; the compiler turns new nodes into same-batch `client_id` values.
    Before choosing an edge `link_type`, use the injected compatibility information or call
    `freezone_get_link_type_catalog` once when compatibility is not already explicit. Never guess a
    link type and never trial several link types through repeated compiler calls.
@@ -65,9 +69,8 @@ production Skill does not turn an exact topology request into the normal draft f
 6. Requests that explicitly enumerate Beats, shots, nodes, or dependency order always stay on this
    full Plan path, including requests above the compact Intent planner's item limit. Do not switch to
    `workflow_intent_compile`, a smaller sample plan, or standalone node tools after a validation error.
-   Every edge endpoint must match an `id` in the same `nodes` array. Never invent a source such as
-   `source` or `input` unless that exact node is present; remove an optional edge rather than
-   leaving a dangling reference.
+   Every edge endpoint must match an `id` in `nodes` or a declared external input alias. Never
+   invent a source such as `source` or `input` without a matching declaration.
 7. Call `freezone_prepare_workflow(plan=...)` once. It strictly validates the complete Plan,
    obtains an operation-bound planning quote and server receipt, then persists an exact preview
    without writing canvas nodes. After the user reviews that preview, call

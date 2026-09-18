@@ -1,5 +1,6 @@
 import i18next from "i18next";
 import { executeWorkflowHtmlNode } from "@/features/canvas/application/workflowHtmlRuntime";
+import { extractUpstreamContent } from "@/features/canvas/application/graphContentResolver";
 import { type HtmlArtifactCommand, parseHtmlArtifactCommand, executeHtmlArtifactCommand } from '@/features/html-artifacts/commands';
 import { executeHtmlNodeWriteAction } from '@/features/html-artifacts/nodeActions';
 import {
@@ -130,6 +131,7 @@ export type CanvasChatCommand =
       source: string;
       target: string;
       link_type: CanvasEdgeSemanticKind;
+      expected_source_image_url?: string;
     }
   | {
       type: "layout_nodes";
@@ -973,6 +975,8 @@ function parseCommand(value: unknown): CanvasChatCommand | null {
           source: value.source,
           target: value.target,
           link_type: linkType,
+          expected_source_image_url: typeof value.expected_source_image_url === "string"
+            ? value.expected_source_image_url : undefined,
         };
       }
     case "layout_nodes":
@@ -1818,6 +1822,14 @@ function isWorkflowUserInputNode(node: CanvasNode | undefined): boolean {
   if (!node) return false;
   const data = node.data as Record<string, unknown>;
   if (data.workflowCatalogRole === "user_input") return true;
+  // An image node containing only an uploaded reference already supplies media to
+  // downstream nodes. It has no generated output to wait for and no prompt to run.
+  if (
+    node.type === CANVAS_NODE_TYPES.imageGen
+    && Boolean(nonEmptyString(data.referenceImageUrl))
+    && !nonEmptyString(data.imageUrl)
+    && !nonEmptyString(data.prompt)
+  ) return true;
   const catalog = data.workflowCatalog && typeof data.workflowCatalog === "object"
     && !Array.isArray(data.workflowCatalog)
     ? data.workflowCatalog as Record<string, unknown>
@@ -4171,6 +4183,13 @@ function* applyCanvasChatCommandsInternal(
           case "create_edge": {
             const source = resolveNodeId(command.source, clientIdMap);
             const target = resolveNodeId(command.target, clientIdMap);
+            if (command.expected_source_image_url) {
+              const sourceNode = useCanvasStore.getState().nodes.find((node) => node.id === source);
+              if (!sourceNode ||
+                extractUpstreamContent(sourceNode).imageUrl !== command.expected_source_image_url) {
+                throw new Error(`workflow source image changed: ${source}`);
+              }
+            }
             const invalidReason = invalidConnectionReason(source, target);
             if (invalidReason) {
               if (isMissingOrFatalConnectionReason(invalidReason)) throw new Error(invalidReason);

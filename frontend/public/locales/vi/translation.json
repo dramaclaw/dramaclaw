@@ -8327,6 +8327,7 @@
     "ariaLabel": "Xác nhận tạo quy trình",
     "title": "Kế hoạch quy trình đang chờ xác nhận",
     "summary": "{{nodes}} node · {{edges}} đường nối. Chưa áp dụng lên canvas.",
+    "referenceImages": "Ảnh tham chiếu",
     "changed": "Kế hoạch đã thay đổi. Hãy xem lại trước khi xác nhận.",
     "failed": "Không gửi được xác nhận. Hãy thử lại; chưa tạo bản nháp mới.",
     "confirmMessage": "Xác nhận tạo quy trình này",

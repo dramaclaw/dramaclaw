@@ -6127,6 +6127,48 @@ describe("canvas chat commands", () => {
     }
   });
 
+  it("uses an uploaded image reference without regenerating its source node", async () => {
+    const store = useCanvasStore.getState();
+    const sourceId = store.addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { prompt: "", referenceImageUrl: "/static/project/source.png" },
+    );
+    const targetId = store.addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 360, y: 0 },
+      { prompt: "保留主体，改蓝色背景" },
+    );
+    store.addEdge(sourceId, targetId);
+    const events: string[] = [];
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      events.push(payload.nodeId);
+      if (!payload.requestId) return;
+      store.updateNodeData(payload.nodeId, { imageUrl: "/static/project/result.png" });
+      canvasEventBus.publish("freezone/node-action-result", {
+        requestId: payload.requestId,
+        nodeId: payload.nodeId,
+        action: payload.action,
+        status: "success",
+      });
+    });
+
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_workflow", node_ids: [targetId] }],
+        }]),
+        { canvasId: "canvas-a", actionTimeoutMs: 100 },
+      );
+      expect(events).toEqual([targetId]);
+      expect(result.errors).toEqual([]);
+      expect(store.nodes.find((node) => node.id === sourceId)?.data.imageUrl).toBeFalsy();
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it("skips downstream queued actions when an upstream generation fails", async () => {
     const store = useCanvasStore.getState();
     const imageNodeId = store.addNode(
