@@ -924,10 +924,53 @@ _GENERATION_RETRY_DATA_FIELDS = frozenset(
 
 
 def _codex_freezone_generation_retry_key(event: Any) -> str | None:
-    """Match a rejected command batch to its retry without generation choices."""
-    if _codex_freezone_tool_name(event) != "freezone_emit_canvas_command":
+    """Match a rejected generation run to a receipt-backed retry of that run."""
+    name = _codex_freezone_tool_name(event)
+    if name not in {
+        "freezone_emit_canvas_command",
+        "freezone_run_node_action",
+        "freezone_run_workflow",
+    }:
         return None
     for payload in _json_objects_from_codex_tool_value(getattr(event, "input", None)):
+        if name == "freezone_run_node_action":
+            node_id = str(payload.get("node_id") or "").strip()
+            action = str(payload.get("action") or "").strip()
+            if not node_id or action not in {"generate_image", "generate_video"}:
+                continue
+            parameters = payload.get("parameters") or payload.get("params") or {}
+            if not isinstance(parameters, dict):
+                continue
+            parameters = {
+                key: value
+                for key, value in parameters.items()
+                if key not in _GENERATION_RETRY_DATA_FIELDS
+            }
+            identity = [
+                name,
+                payload.get("project_id"),
+                payload.get("canvas_id"),
+                node_id,
+                action,
+                parameters,
+                bool(payload.get("regenerate") or payload.get("force_regenerate")),
+            ]
+            return json.dumps(identity, sort_keys=True, ensure_ascii=False)
+        if name == "freezone_run_workflow":
+            node_ids = payload.get("node_ids") or []
+            scope = str(payload.get("scope") or "").strip()
+            if not isinstance(node_ids, list) or (not node_ids and scope != "canvas"):
+                continue
+            identity = [
+                name,
+                payload.get("project_id"),
+                payload.get("canvas_id"),
+                node_ids,
+                scope,
+                str(payload.get("direction") or "connected").strip(),
+                bool(payload.get("regenerate") or payload.get("force_regenerate")),
+            ]
+            return json.dumps(identity, sort_keys=True, ensure_ascii=False)
         commands = payload.get("commands")
         if (
             not isinstance(commands, list)
