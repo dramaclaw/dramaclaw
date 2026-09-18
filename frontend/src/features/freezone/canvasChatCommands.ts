@@ -1394,13 +1394,16 @@ function chooseNextNodeType(sourceNode: CanvasNode, requestedType?: CanvasNodeTy
 function connectNodes(
   source: string,
   target: string,
-  options: { link_type?: CanvasEdgeSemanticKind } = {},
+  options: { link_type?: CanvasEdgeSemanticKind; external_input_image_url?: string } = {},
 ): string | null {
   if (source === target) throw new Error("connection requires two different nodes");
   const store = useCanvasStore.getState();
   const data: Record<string, unknown> = {};
   if (options.link_type) {
     data.link_type = options.link_type;
+  }
+  if (options.external_input_image_url) {
+    data.workflowExternalInputImageUrl = options.external_input_image_url;
   }
   if (Object.keys(data).length > 0) {
     return store.addEdgeWithData(source, target, {
@@ -1841,6 +1844,12 @@ function isWorkflowUserInputNode(node: CanvasNode | undefined): boolean {
   return ["workflow_input", "user_input", "user_requirement"].includes(stepId);
 }
 
+function workflowExternalImageSourceIds(edges: CanvasEdge[]): Set<string> {
+  return new Set(edges
+    .filter((edge) => typeof edge.data?.workflowExternalInputImageUrl === "string")
+    .map((edge) => edge.source));
+}
+
 function isRedundantLegacyComposeGenerator(
   node: CanvasNode,
   nodes: CanvasNode[],
@@ -1974,6 +1983,9 @@ function workflowNodeActions(
   const expandedNodeIds = expandWorkflowNodeIds(initialNodeIds, directions);
   const nodeByIdMap = new Map(useCanvasStore.getState().nodes.map((node) => [node.id, node] as const));
   const scopedNodeIds = new Set(expandedNodeIds);
+  const externalImageSourceIds = workflowExternalImageSourceIds(state.edges.filter(
+    (edge) => scopedNodeIds.has(edge.target),
+  ));
   const protectedUpstreamNodeIds = satisfiedVideoComposeUpstreamNodeIds(
     expandedNodeIds,
     initialNodeIds,
@@ -1987,6 +1999,7 @@ function workflowNodeActions(
   ].flatMap((nodeId) => {
     const node = nodeByIdMap.get(nodeId);
     if (!node || node.type === CANVAS_NODE_TYPES.group) return [];
+    if (externalImageSourceIds.has(nodeId)) return [];
     if (isRedundantLegacyComposeGenerator(node, state.nodes, state.edges)) return [];
     if (node.type === CANVAS_NODE_TYPES.videoCompose) {
       return [{
@@ -2025,6 +2038,7 @@ function directNodeActionQueue(
 ): PendingNodeAction[] {
   const state = useCanvasStore.getState();
   const nodeByIdMap = new Map(state.nodes.map((node) => [node.id, node] as const));
+  const externalImageSourceIds = workflowExternalImageSourceIds(state.edges);
   const includeUpstream = (
     GENERATION_NODE_ACTIONS.has(action)
     || (
@@ -2039,6 +2053,7 @@ function directNodeActionQueue(
     .flatMap((upstreamId): PendingNodeAction[] => {
       const node = nodeByIdMap.get(upstreamId);
       if (!node || node.type === CANVAS_NODE_TYPES.group) return [];
+      if (externalImageSourceIds.has(upstreamId)) return [];
       if (isRedundantLegacyComposeGenerator(node, state.nodes, state.edges)) return [];
       const upstreamAction = defaultWorkflowActionForNode(node);
       if (!upstreamAction || hasGeneratedResult(upstreamId, upstreamAction)) return [];
@@ -4203,7 +4218,10 @@ function* applyCanvasChatCommandsInternal(
               });
               break;
             }
-            const edgeId = connectNodes(source, target, { link_type: command.link_type });
+            const edgeId = connectNodes(source, target, {
+              link_type: command.link_type,
+              external_input_image_url: command.expected_source_image_url,
+            });
             if (!edgeId) throw new Error(`edge rejected: ${command.source} -> ${command.target}`);
             envelopeConnectionCount += 1;
             result.applied += 1;

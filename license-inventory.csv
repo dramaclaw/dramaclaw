@@ -2137,6 +2137,7 @@ src/novelvideo/freezone/video_node.py,Elastic-2.0,2026 SuperTale contributors,RE
 src/novelvideo/freezone/vision_gateway.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/workflow_contract_generated.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/workflow_drafts.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/freezone/workflow_external_inputs.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/workflow_observation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/workflow_plan.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/freezone/workflow_planning.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2830,6 +2831,7 @@ tests/test_video_prompt_language.py,Elastic-2.0,2026 SuperTale contributors,REUS
 tests/test_worker_stderr_drain.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_workflow_argument_recovery.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_workflow_drafts.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_workflow_external_inputs.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_workflow_mcp.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_workflow_observation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_workflow_plan.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
