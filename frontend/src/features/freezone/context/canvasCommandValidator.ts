@@ -1,4 +1,5 @@
 import {htmlArtifactCommandError} from '@/features/html-artifacts/commands';
+import { extractUpstreamContent } from "@/features/canvas/application/graphContentResolver";
 import type { CanvasEdge, CanvasNode, VideoGenMode } from "@/features/canvas/domain/canvasNodes";
 import { CANVAS_NODE_TYPES, type CanvasNodeData } from "@/features/canvas/domain/canvasNodes";
 import {
@@ -389,6 +390,12 @@ export function validateCanvasChatCommandEnvelopes(
         case "create_edge": {
           if (!isKnownNodeRef(command.source)) addIssue(issues, path, missingNodeMessage(command.source, "source"));
           if (!isKnownNodeRef(command.target)) addIssue(issues, path, missingNodeMessage(command.target, "target"));
+          if (command.expected_source_image_url &&
+            (nodeById.get(command.source)
+              ? extractUpstreamContent(nodeById.get(command.source)!).imageUrl
+              : undefined) !== command.expected_source_image_url) {
+            addIssue(issues, path, `workflow source image changed: ${command.source}`);
+          }
           const linkType = normalizeCanvasEdgeSemanticKind(command.link_type);
           if (!linkType) {
             addIssue(

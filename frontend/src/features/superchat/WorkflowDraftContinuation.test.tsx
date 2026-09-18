@@ -28,6 +28,13 @@ beforeEach(() => { api.mockReset(); api.mockResolvedValue(draft); });
 afterEach(cleanup);
 
 describe("workflow draft continuation", () => {
+  it("shows the existing source image before confirmation", async () => {
+    api.mockResolvedValue({...draft, preview: {...draft.preview, external_inputs: [
+      {id: "cup", node_id: "red-cup-source", display_name: "红杯原图"},
+    ]}});
+    render(<WorkflowDraftContinuation {...props()} />);
+    expect(await screen.findByText("参考图片: 红杯原图")).toBeInTheDocument();
+  });
   it("recovers a qualified MCP draft result but ignores failures and unrelated tools", () => {
     expect(latestWorkflowDraftId(messages())).toBe("draft-a");
     expect(latestWorkflowDraftId(messages("freezone_prepare_workflow_draft"))).toBe("draft-a");

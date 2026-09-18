@@ -219,6 +219,16 @@ def _plan_preview(compiled: dict[str, Any]) -> dict[str, Any]:
         "phases": [str(item).strip() for item in phases if str(item).strip()],
         "nodes": preview_nodes,
         "recipe_pipelines": recipe_pipelines,
+        "external_inputs": [
+            {
+                "id": source["id"], "node_id": source["node_id"],
+                "display_name": (
+                    (compiled.get("external_inputs_verified") or {})
+                    .get(source["id"], {}).get("display_name") or source["node_id"]
+                ),
+            }
+            for source in plan.get("external_inputs") or []
+        ],
         "node_count": len(preview_nodes),
         "edge_count": int(compiled.get("edge_count") or 0),
     }

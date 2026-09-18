@@ -3,6 +3,7 @@
     "ariaLabel": "Confirm workflow creation",
     "title": "Workflow plan awaiting confirmation",
     "summary": "{{nodes}} nodes · {{edges}} connections. Not yet applied to the canvas.",
+    "referenceImages": "Reference images",
     "changed": "The plan has changed. Review it again before confirming.",
     "failed": "Confirmation could not be submitted. Retry; no new draft was created.",
     "confirmMessage": "Confirm creation of this workflow",

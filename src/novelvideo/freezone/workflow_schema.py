@@ -401,6 +401,19 @@ def workflow_plan_json_schema() -> dict[str, Any]:
             "plan; pass run_after_create beside plan in the tool arguments."
         ),
         "properties": {
+            "external_inputs": {
+                "type": "array", "maxItems": 24,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string", "minLength": 1},
+                        "node_id": {"type": "string", "minLength": 1},
+                        "media_kind": {"const": "image"},
+                    },
+                    "required": ["id", "node_id", "media_kind"],
+                    "additionalProperties": False,
+                },
+            },
             "schema_version": {
                 "type": "string",
                 "enum": [WORKFLOW_PLAN_SCHEMA_VERSION],
@@ -554,6 +567,19 @@ def workflow_intent_json_schema() -> dict[str, Any]:
             "Put composition policy at intent.include_compose, never inside intent.planner."
         ),
         "properties": {
+            "external_inputs": {
+                "type": "array", "maxItems": 24,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string", "minLength": 1},
+                        "node_id": {"type": "string", "minLength": 1},
+                        "media_kind": {"const": "image"},
+                    },
+                    "required": ["id", "node_id", "media_kind"],
+                    "additionalProperties": False,
+                },
+            },
             "schema_version": {
                 "type": "string",
                 "enum": [WORKFLOW_INTENT_SCHEMA_VERSION],
