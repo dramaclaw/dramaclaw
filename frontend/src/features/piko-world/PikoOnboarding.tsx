@@ -7,7 +7,7 @@ import { PIKO_INTRO_VIDEO, PIKO_ONBOARDING_BACKGROUND, PIKO_PLAYER_ART, type Pik
 import { PikoCreationBackground } from "./PikoCreationBackground";
 import { playPikoUiSound } from "./piko-audio";
 import { startPikoMusic } from "./piko-bgm";
-import { PIKO_MUSIC_PLAYLISTS } from "./piko-map-music";
+import { PIKO_MAP_MUSIC } from "./piko-map-music";
 import styles from "./piko-onboarding.module.css";
 import { usePikoCursors } from "./use-piko-cursors";
 
@@ -125,7 +125,7 @@ export function PikoOnboarding({ initialNickname, onSave, onEnter, onMusicStart 
   useEffect(() => {
     if (!creationMusicActive || soundMuted.current) return;
     if (onMusicStart) { onMusicStart(); return; }
-    return startPikoMusic(PIKO_MUSIC_PLAYLISTS.courtyard);
+    return startPikoMusic(PIKO_MAP_MUSIC["welcome-courtyard"]!);
   }, [creationMusicActive, onMusicStart]);
 
   const finishVideo = () => {

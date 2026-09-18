@@ -2415,9 +2415,9 @@
       "description": "Choose clothes and accessories here.",
       "clothes": "Clothes",
       "base": "Current base outfit",
-      "noClothes": "No other clothes yet",
+      "unavailable": "Outfit unavailable",
+      "saveError": "Could not save. Please try again.",
       "accessories": "Accessories",
-      "noAccessories": "No interchangeable accessories yet",
       "confirm": "Confirm"
     }
   },

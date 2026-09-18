@@ -68,6 +68,8 @@ export function startPikoMusic(tracks: readonly string[], fadeInMs = 2000) {
   audio.preload = "auto";
   audio.volume = 0;
   let disposed = false;
+  let windowFocused = document.hasFocus();
+  const foreground = () => !document.hidden && windowFocused;
   let playing = false;
   let pending = false;
   let generation = 0;
@@ -87,7 +89,7 @@ export function startPikoMusic(tracks: readonly string[], fadeInMs = 2000) {
   };
   const start = (event?: Event) => {
     const gesture = event?.type === "pointerdown" || event?.type === "keydown" || event?.type === "touchend";
-    if (disposed || musicMuted || resting) return;
+    if (disposed || musicMuted || resting || !foreground()) return;
     // Browsers can pause a silent autoplay when its volume becomes audible.
     if (playing && audio.paused !== true) return;
     if (pending && !gesture) return;
@@ -95,9 +97,8 @@ export function startPikoMusic(tracks: readonly string[], fadeInMs = 2000) {
     const attempt = ++generation;
     try {
       Promise.resolve(audio.play()).then(() => {
-        if (disposed) { audio.pause(); return; }
+        if (disposed || musicMuted || !foreground()) { audio.pause(); return; }
         if (attempt !== generation) return;
-        if (disposed || musicMuted) { audio.pause(); return; }
         pending = false;
         playing = true;
         reportPlayback(tracks[trackIndex], true);
@@ -105,20 +106,24 @@ export function startPikoMusic(tracks: readonly string[], fadeInMs = 2000) {
       }, () => { if (attempt === generation) { pending = false; reportPlayback(tracks[trackIndex], false, true); } });
     } catch { pending = false; reportPlayback(tracks[trackIndex], false, true); }
   };
+  const pause = () => {
+    generation++;
+    pending = false;
+    playing = false;
+    clearInterval(fadeTimer);
+    clearTimeout(duckTimer);
+    audio.volume = 0;
+    audio.pause();
+    reportPlayback(tracks[trackIndex], false);
+  };
+  const syncForeground = () => { if (foreground()) start(); else pause(); };
+  const focus = () => { windowFocused = true; syncForeground(); };
+  const blur = () => { windowFocused = false; syncForeground(); };
   const syncPreference = (event?: Event) => {
     if (event?.type === MUSIC_CHANGE && !musicMuted && resting) {
       clearTimeout(restTimer); resting = false; advance(); return;
     }
-    if (musicMuted) {
-      generation++;
-      pending = false;
-      playing = false;
-      clearInterval(fadeTimer);
-      clearTimeout(duckTimer);
-      audio.pause();
-      reportPlayback(tracks[trackIndex], false);
-      audio.volume = 0;
-    } else start();
+    if (musicMuted) pause(); else start();
   };
   const duck = () => {
     if (!playing || disposed) return;
@@ -171,6 +176,9 @@ export function startPikoMusic(tracks: readonly string[], fadeInMs = 2000) {
   document.addEventListener("touchend", start, true);
   document.addEventListener(MUSIC_CHANGE, syncPreference);
   document.addEventListener("piko-notification-sound", duck);
+  document.addEventListener("visibilitychange", syncForeground);
+  window.addEventListener("focus", focus);
+  window.addEventListener("blur", blur);
   start();
   let released = false;
   let onReleased: (() => void) | undefined;
@@ -179,9 +187,12 @@ export function startPikoMusic(tracks: readonly string[], fadeInMs = 2000) {
     released = true;
     clearInterval(fadeTimer);
     document.removeEventListener(MUSIC_CHANGE, muteOutgoing);
+    document.removeEventListener("visibilitychange", silenceOutgoing);
+    window.removeEventListener("blur", release);
     audio.volume = 0; audio.pause(); audio.removeAttribute("src"); audio.load();
     onReleased?.();
   };
+  const silenceOutgoing = () => { if (document.hidden) release(); };
   const muteOutgoing = () => { if (musicMuted) release(); };
   return (fadeOutMs = 0, done?: () => void) => {
     if (disposed) { release(); return; }
@@ -193,6 +204,9 @@ export function startPikoMusic(tracks: readonly string[], fadeInMs = 2000) {
     audio.removeEventListener("error", failed);
     audio.removeEventListener("pause", paused);
     audio.removeEventListener("ended", nextTrack);
+    document.removeEventListener("visibilitychange", syncForeground);
+    window.removeEventListener("focus", focus);
+    window.removeEventListener("blur", blur);
     clearTimeout(restTimer);
     generation++;
     clearTimeout(duckTimer);
@@ -202,8 +216,10 @@ export function startPikoMusic(tracks: readonly string[], fadeInMs = 2000) {
     document.removeEventListener(MUSIC_CHANGE, syncPreference);
     document.removeEventListener("piko-notification-sound", duck);
     clearInterval(fadeTimer);
-    if (fadeOutMs > 0 && playing && !musicMuted && audio.volume > 0) {
+    if (fadeOutMs > 0 && playing && !musicMuted && foreground() && audio.volume > 0) {
       document.addEventListener(MUSIC_CHANGE, muteOutgoing);
+      document.addEventListener("visibilitychange", silenceOutgoing);
+      window.addEventListener("blur", release);
       fade(0, fadeOutMs, release);
     } else release();
   };

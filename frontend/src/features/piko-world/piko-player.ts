@@ -3,6 +3,26 @@ import { safeLocalStorageSet } from "@/lib/localStorageQuota";
 import { isValidPikoProfile, normalizePikoProfile } from "./piko-profile";
 
 export type PikoPlayerGender = "male" | "female";
+export const PIKO_MALE_PLAYER_MOTION_SRC = "/piko/world/characters/player-male-motion-v2.png";
+export const PIKO_FEMALE_PLAYER_MOTION_SRC = "/piko/world/characters/player-female-motion-v3.png";
+export const PIKO_PLAYER_SPEED = 135;
+export const PIKO_PLAYER_GAIT_CYCLE_SOURCE_PIXELS = 48;
+export const PIKO_PLAYER_IDLE_CYCLE_MS = 8000;
+const PLAYER_IDLE_TIMELINE = [
+  { frame: 0, durationMs: 2200 },
+  { frame: 1, durationMs: 350 },
+  { frame: 0, durationMs: 3500 },
+  { frame: 1, durationMs: 350 },
+  { frame: 0, durationMs: 1600 },
+] as const;
+export function pikoPlayerIdleFrameAt(elapsedMs: number): number {
+  let remaining = Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) % PIKO_PLAYER_IDLE_CYCLE_MS : 0;
+  for (const step of PLAYER_IDLE_TIMELINE) {
+    if (remaining < step.durationMs) return step.frame;
+    remaining -= step.durationMs;
+  }
+  return 0;
+}
 export const PIKO_PLAYER_ART = {
   male: { src: "/piko/world/onboarding/player-male-v2.png", baseline: 1367, top: 99, height: 1476 },
   female: { src: "/piko/world/onboarding/player-female-v2.png", baseline: 1270, top: 0, height: 1270 },

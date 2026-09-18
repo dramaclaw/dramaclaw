@@ -25,7 +25,10 @@ it("plays courtyard music only during creation and stops before entering the map
   render(<PikoOnboarding initialNickname="小叶" onSave={() => true} onEnter={onEnter} />);
   await ready(); expect(music.start).not.toHaveBeenCalled();
   await enterCreation();
-  expect(music.start).toHaveBeenCalledExactlyOnceWith(["/piko/world/audio/bgm/welcome-courtyard-01.mp3"]);
+  expect(music.start).toHaveBeenCalledExactlyOnceWith([
+    "/piko/world/audio/bgm/welcome-courtyard-01.mp3",
+    "/piko/world/audio/bgm/welcome-courtyard-warm.mp3",
+  ]);
   fireEvent.click(screen.getByRole("radio", { name: "女生" }));
   expect(music.start).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole("button", { name: "开始旅程" }));

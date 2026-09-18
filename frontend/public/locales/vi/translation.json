@@ -49,9 +49,9 @@
       "description": "Chọn quần áo và phụ kiện tại đây.",
       "clothes": "Quần áo",
       "base": "Trang phục cơ bản",
-      "noClothes": "Chưa có quần áo khác",
+      "unavailable": "Trang phục chưa khả dụng",
+      "saveError": "Không lưu được. Vui lòng thử lại.",
       "accessories": "Phụ kiện",
-      "noAccessories": "Chưa có phụ kiện thay thế",
       "confirm": "Xác nhận"
     },
     "loadingScenes": {

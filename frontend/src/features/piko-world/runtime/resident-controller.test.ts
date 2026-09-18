@@ -66,6 +66,35 @@ it("drives a simulated resident independently of the player's keyboard and pause
   expect(ticker.remove).toHaveBeenCalledWith(tick);
 });
 
+it("uses the player's slower travel speed and distance-based gait without changing residents", () => {
+  const host = document.createElement("div"); host.tabIndex = 0; document.body.append(host); host.focus();
+  const navigation = { walkableAreas: [{ id: "ground", points: [{x:0,y:0},{x:2000,y:0},{x:2000,y:1200},{x:0,y:1200}] }], colliders: [] } as unknown as PikoNavigation;
+  const ticker = { add: vi.fn(), remove: vi.fn() };
+  const actor = createResidentActor({} as Texture, ticker as unknown as Ticker, () => true,
+    { host, navigation, speed: 135, gaitCycleSourcePixels: 48 });
+  window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyD" }));
+  const tick = ticker.add.mock.calls[0][0];
+  for (let i = 0; i < 30; i++) tick({ deltaMS: 16 });
+  expect(actor.container.position.x - 1190).toBeCloseTo(64.8);
+  expect(mock.setFrame).toHaveBeenLastCalledWith(30);
+  expect(mock.step).toHaveBeenCalledTimes(2);
+  actor.destroy();
+});
+
+it("lets the player idle cycle run past the resident's 4800 ms loop", () => {
+  const host = document.createElement("div"); host.tabIndex = 0; document.body.append(host); host.focus();
+  const navigation = { walkableAreas: [{ id: "ground", points: [{x:0,y:0},{x:2000,y:0},{x:2000,y:1200},{x:0,y:1200}] }], colliders: [] } as unknown as PikoNavigation;
+  const ticker = { add: vi.fn(), remove: vi.fn() };
+  const idleFrameAt = vi.fn((elapsed: number) => elapsed >= 4800 ? 1 : 0);
+  const actor = createResidentActor({} as Texture, ticker as unknown as Ticker, () => true,
+    { host, navigation, idleFrameAt, idleCycleMs: 8000 });
+  const tick = ticker.add.mock.calls[0][0];
+  for (let i = 0; i < 100; i++) tick({ deltaMS: 50 });
+  expect(idleFrameAt).toHaveBeenLastCalledWith(5000);
+  expect(mock.setFrame).toHaveBeenLastCalledWith(1);
+  actor.destroy();
+});
+
 
 it("walks to a click without overshoot and lets keyboard and pause cancel the route", () => {
   const host = document.createElement("div"); host.tabIndex = 0; document.body.append(host);
@@ -89,21 +118,5 @@ it("walks to a click without overshoot and lets keyboard and pause cancel the ro
   actor.walkTo({ x: 1300, y: 485 });
   active = false; tick({ deltaMS: 16 }); active = true; tick({ deltaMS: 16 });
   expect(actor.container.position.x).toBe(stopped);
-  actor.destroy();
-});
-
-it("keeps new player portrait visible while movement advances without pretending it is a directional sheet", () => {
-  const host = document.createElement("div"); host.tabIndex = 0; document.body.append(host); host.focus();
-  const navigation = { walkableAreas: [{ id: "ground", points: [{x:0,y:0},{x:2000,y:0},{x:2000,y:1200},{x:0,y:1200}] }], colliders: [] } as unknown as PikoNavigation;
-  const ticker = { add: vi.fn(), remove: vi.fn() };
-  const portrait = { height: 1476 } as Texture;
-  const actor = createResidentActor({} as Texture, ticker as unknown as Ticker, () => true, {
-    host, navigation, portrait: { texture: portrait, baseline: 1400, top: 130 },
-  });
-  window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyD" }));
-  ticker.add.mock.calls[0][0]({ deltaMS: 16 });
-  expect(actor.container.position.x).toBeGreaterThan(1190);
-  expect(actor.body.texture).toBe(portrait);
-  expect(mock.setFrame).not.toHaveBeenCalled();
   actor.destroy();
 });

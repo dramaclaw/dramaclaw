@@ -1,10 +1,11 @@
 import { renderHook, act } from "@testing-library/react";
 import { readFileSync } from "node:fs";
-import { afterEach, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { PIKO_MAP_MUSIC, PIKO_MUSIC_PLAYLISTS } from "./piko-map-music";
 import { PIKO_MAP_TRANSITIONS } from "./piko-map-transitions";
 import { startPikoMusic, useMapMusic, selectPikoMusic, usePikoPlayback, setPikoMusicMuted } from "./piko-bgm";
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+beforeEach(() => { vi.spyOn(document, "hasFocus").mockReturnValue(true); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 function mockAudio() {
   const clips: (EventTarget & { src: string; volume: number; loop: boolean; paused: boolean; play: ReturnType<typeof vi.fn>; pause: ReturnType<typeof vi.fn>; load: ReturnType<typeof vi.fn>; removeAttribute: ReturnType<typeof vi.fn> })[] = [];
   vi.stubGlobal("Audio", class extends EventTarget {
@@ -21,7 +22,10 @@ it("covers every map explicitly and keeps the supplied shared groups together", 
   }
   expect(Object.values(PIKO_MAP_MUSIC).every(tracks => tracks && tracks.length > 0)).toBe(true);
   const files = Object.values(PIKO_MUSIC_PLAYLISTS).flat();
-  expect(new Set(files).size).toBe(8);
+  expect(new Set(files).size).toBe(9);
+  expect(PIKO_MAP_MUSIC["welcome-courtyard"]).toEqual([
+    PIKO_MUSIC_PLAYLISTS.courtyard[0], PIKO_MUSIC_PLAYLISTS.courtyardWarm[0],
+  ]);
   for (const file of files) expect(readFileSync(`public${file}`).length).toBeGreaterThan(1000);
 });
 it("preserves shared playback and crossfades different regions over three seconds", async () => {
@@ -47,13 +51,15 @@ it("preserves shared playback and crossfades different regions over three second
   expect(clips[1].removeAttribute).toHaveBeenCalledWith("src");
   expect(vi.getTimerCount()).toBe(0);
 });
-it("loops the approved courtyard track and excludes the rejected version", async () => {
+it("plays the new courtyard track first and includes the warm version next", async () => {
   vi.useFakeTimers(); const clips = mockAudio();
   const stop = startPikoMusic(PIKO_MAP_MUSIC["welcome-courtyard"]!);
   await Promise.resolve();
   expect(clips[0].loop).toBe(false);
   expect(clips[0].src).toBe("/piko/world/audio/bgm/welcome-courtyard-01.mp3");
-  expect(Object.values(PIKO_MUSIC_PLAYLISTS).flat().some(src => src.includes("courtyard-02"))).toBe(false);
+  clips[0].dispatchEvent(new Event("ended"));
+  await Promise.resolve();
+  expect(clips[0].src).toBe("/piko/world/audio/bgm/welcome-courtyard-warm.mp3");
   stop(); vi.advanceTimersByTime(800);
 });
 

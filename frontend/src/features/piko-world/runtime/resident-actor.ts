@@ -30,28 +30,26 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
     label?: string; position?: Point; facing?: Facing;
     simulatedInput?: () => Point;
     footsteps?: boolean;
-    portrait?: { texture: Texture; baseline: number; top: number };
+    idleFrameAt?: (elapsedMs: number) => number;
+    idleCycleMs?: number;
+    onPose?: (facing: Facing, column: number) => void;
+    speed?: number;
+    gaitCycleSourcePixels?: number;
   }) {
+  const idleCycleMs = controls.idleCycleMs ?? 4800;
   const actor = createCharacterActor(sheet, ticker, isActive, {
     label: controls.label ?? "piko-player", frameSize: 64, frameCount: 44, columns: 11, manual: true, pivot: { x: 32, y: 57 },
     position: controls.position ?? { x: 1190, y: 485 }, scale: RESIDENT_WORLD_SCALE,
-    shadow: { width: 24, height: 8 }, durationMs: 4800, frameAt: residentFrameAt,
+    shadow: { width: 24, height: 8 }, durationMs: idleCycleMs, frameAt: residentFrameAt,
   });
-  // Front portrait is an explicit interim display, not a fabricated motion atlas.
-  // Shared movement/pathfinding remains active until real directional art is available.
-  if (controls.portrait) {
-    const { texture, baseline, top } = controls.portrait;
-    actor.body.texture = texture;
-    actor.body.anchor.set(0.5, baseline / texture.height);
-    actor.body.scale.set(56 * RESIDENT_WORLD_SCALE / (baseline - top));
-  }
   const keyboardControlled = !controls.simulatedInput;
   let facing: Facing = controls.facing ?? "south";
-  if (!controls.portrait) actor.setFrame(FACINGS.indexOf(facing) * 11);
+  actor.setFrame(FACINGS.indexOf(facing) * 11);
   const footsteps = keyboardControlled && controls.footsteps !== false ? createGrassFootsteps() : { unlock() {}, step() {}, stop() {}, destroy() {} };
   let elapsed = 0, wasMoving = false;
   let gaitDistance = 0;
-  const cycleDistance = 40 * RESIDENT_WORLD_SCALE;
+  const cycleDistance = (controls.gaitCycleSourcePixels ?? 40) * RESIDENT_WORLD_SCALE;
+  const speed = controls.speed ?? CHARACTER_SPEED;
   const keys = new Set<string>();
   let path: Point[] = [];
   const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
@@ -75,11 +73,11 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
     if (destination && canMove && !input.x && !input.y) {
       input.x = destination.x - actor.container.position.x;
       input.y = destination.y - actor.container.position.y;
-      deltaMs = Math.min(deltaMs, Math.hypot(input.x, input.y) / CHARACTER_SPEED * 1000);
+      deltaMs = Math.min(deltaMs, Math.hypot(input.x, input.y) / speed * 1000);
     }
     if(input.x||input.y) facing = facingFor(input);
     const before = actor.container.position;
-    const next = moveCharacter(before,input,deltaMs,controls.navigation);
+    const next = moveCharacter(before,input,deltaMs,controls.navigation,speed);
     const travelled = Math.hypot(next.x-before.x,next.y-before.y);
     const moving = travelled>0.01;
     actor.container.position.set(next.x,next.y);
@@ -93,9 +91,10 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
     if (!moving && wasMoving) footsteps.stop();
     wasMoving=moving;
     gaitDistance = moving ? advanceGait(gaitDistance, travelled, cycleDistance) : 0;
-    if(!document.hidden && isActive()) elapsed=(elapsed+Math.min(time.deltaMS,50))%4800;
-    const column = motion?.matches ? 0 : moving ? gaitColumn(gaitDistance, cycleDistance) : residentFrameAt(elapsed);
-    if (!controls.portrait) actor.setFrame(FACINGS.indexOf(facing)*11+column);
+    if(!document.hidden && isActive()) elapsed=(elapsed+Math.min(time.deltaMS,50))%idleCycleMs;
+    const column = motion?.matches ? 0 : moving ? gaitColumn(gaitDistance, cycleDistance) : (controls.idleFrameAt ?? residentFrameAt)(elapsed);
+    actor.setFrame(FACINGS.indexOf(facing)*11+column);
+    controls.onPose?.(facing, column);
   };
   if (keyboardControlled) {
   window.addEventListener("keydown",keyDown);

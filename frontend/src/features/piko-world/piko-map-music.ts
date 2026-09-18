@@ -3,6 +3,7 @@ import type { PikoMapId } from "./piko-map-transitions";
 const ROOT = "/piko/world/audio/bgm";
 export const PIKO_MUSIC_PLAYLISTS = {
   courtyard: [`${ROOT}/welcome-courtyard-01.mp3`],
+  courtyardWarm: [`${ROOT}/welcome-courtyard-warm.mp3`],
   lanternWaterfront: [`${ROOT}/lantern-waterfront.mp3`],
   tidalSeas: [`${ROOT}/tidal-seas.mp3`],
   meadowGate: [`${ROOT}/meadow-gate.mp3`],
@@ -12,10 +13,11 @@ export const PIKO_MUSIC_PLAYLISTS = {
   skyport: [`${ROOT}/whalesong-skyport.mp3`],
 } as const;
 const p = PIKO_MUSIC_PLAYLISTS;
+const courtyardMapTracks = [...p.courtyard, ...p.courtyardWarm];
 // Every association follows the supplied filenames or explicit user confirmation.
 export const PIKO_MAP_MUSIC: Record<PikoMapId, readonly string[] | null> = {
-  "welcome-courtyard": p.courtyard,
-  "artisan-market": p.courtyard,
+  "welcome-courtyard": courtyardMapTracks,
+  "artisan-market": courtyardMapTracks,
   "wind-garden-gate": p.meadowGate,
   "lantern-canal-street": p.lanternWaterfront,
   "starlight-dock": p.lanternWaterfront,

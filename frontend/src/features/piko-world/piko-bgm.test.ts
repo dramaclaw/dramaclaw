@@ -1,6 +1,7 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { startPikoMusic, setPikoMusicMuted } from "./piko-bgm";
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+beforeEach(() => { vi.spyOn(document, "hasFocus").mockReturnValue(true); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 it("retries denied playback, fades in and releases on exit", async () => {
  vi.useFakeTimers();
  const audio = Object.assign(new EventTarget(), { volume: 1, loop: false, play: vi.fn().mockRejectedValueOnce(new Error("blocked")).mockResolvedValue(undefined), pause: vi.fn(), removeAttribute: vi.fn(), load: vi.fn() });
@@ -24,7 +25,7 @@ it("retries denied playback, fades in and releases on exit", async () => {
  document.dispatchEvent(new Event("pointerdown"));
  expect(audio.play).toHaveBeenCalledTimes(2);
 });
-it("continues pending playback without restarting when tab visibility changes", async () => {
+it("pauses pending playback while hidden and resumes without resetting time", async () => {
  vi.useFakeTimers();
  let hidden = false;
  const visibility = vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
@@ -33,11 +34,12 @@ it("continues pending playback without restarting when tab visibility changes", 
  vi.stubGlobal("Audio", class { constructor() { return audio; } });
  const stop = startPikoMusic(["/piko/world/audio/bgm/welcome-courtyard-01.mp3"]);
  hidden = true; document.dispatchEvent(new Event("visibilitychange"));
- hidden = false; document.dispatchEvent(new Event("visibilitychange"));
  expect(audio.play).toHaveBeenCalledTimes(1);
- const pauses = 0;
+ const pauses = 2;
  resolvers[0](); await Promise.resolve();
  expect(audio.pause).toHaveBeenCalledTimes(pauses);
+ hidden = false; document.dispatchEvent(new Event("visibilitychange"));
+ resolvers[1](); await Promise.resolve();
  vi.advanceTimersByTime(2000);
  expect(audio.volume).toBe(1);
  stop(); vi.advanceTimersByTime(800);
@@ -74,7 +76,7 @@ it("waits 30 seconds between rounds, ignores gestures during the pause and cance
  expect(audio.play).toHaveBeenCalledTimes(2);
  expect(audio.removeAttribute).toHaveBeenCalledWith("src");
 });
-it("continues repeating in a hidden tab", async () => {
+it("waits until foreground before playing the next round", async () => {
  vi.useFakeTimers();
  let hidden = false;
  const visibility = vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
@@ -84,7 +86,7 @@ it("continues repeating in a hidden tab", async () => {
  try {
   await Promise.resolve(); audio.dispatchEvent(new Event("ended"));
   hidden = true; document.dispatchEvent(new Event("visibilitychange"));
-  vi.advanceTimersByTime(30000); expect(audio.play).toHaveBeenCalledTimes(2);
+  vi.advanceTimersByTime(30000); expect(audio.play).toHaveBeenCalledTimes(1);
   hidden = false; document.dispatchEvent(new Event("visibilitychange"));
   await Promise.resolve(); expect(audio.play).toHaveBeenCalledTimes(2);
  } finally { stop(); vi.advanceTimersByTime(800); visibility.mockRestore(); }
@@ -126,4 +128,47 @@ it("mutes without resetting playback and keeps new map music muted", async () =>
  const stopNext = startPikoMusic(["highlands.mp3"]);
  expect(clips[1].play).not.toHaveBeenCalled();
  stop(); stopNext(); vi.advanceTimersByTime(800); setPikoMusicMuted(false);
+});
+
+
+it("pauses on window blur, resumes the same position and respects manual mute and disposal", async () => {
+ vi.useFakeTimers();
+ const audio = Object.assign(new EventTarget(), {volume:0,currentTime:42,play:vi.fn().mockResolvedValue(undefined),pause:vi.fn(),removeAttribute:vi.fn(),load:vi.fn()});
+ vi.stubGlobal("Audio", class { constructor(){return audio;} });
+ const stop = startPikoMusic(["courtyard.mp3"]);
+ await Promise.resolve(); vi.advanceTimersByTime(2000);
+ window.dispatchEvent(new Event("blur"));
+ expect(audio.pause).toHaveBeenCalledOnce(); expect(audio.volume).toBe(0);
+ document.dispatchEvent(new Event("pointerdown")); expect(audio.play).toHaveBeenCalledTimes(1);
+ window.dispatchEvent(new Event("focus")); await Promise.resolve();
+ expect(audio.play).toHaveBeenCalledTimes(2); expect(audio.currentTime).toBe(42);
+ setPikoMusicMuted(true);
+ window.dispatchEvent(new Event("blur")); window.dispatchEvent(new Event("focus"));
+ expect(audio.play).toHaveBeenCalledTimes(2);
+ stop(); setPikoMusicMuted(false);
+ window.dispatchEvent(new Event("focus")); expect(audio.play).toHaveBeenCalledTimes(2);
+});
+
+it("silences an outgoing fade immediately when the game loses focus", async () => {
+ vi.useFakeTimers();
+ const audio = Object.assign(new EventTarget(), {volume:0,play:vi.fn().mockResolvedValue(undefined),pause:vi.fn(),removeAttribute:vi.fn(),load:vi.fn()});
+ vi.stubGlobal("Audio", class { constructor(){return audio;} });
+ const stop = startPikoMusic(["courtyard.mp3"]);
+ await Promise.resolve(); vi.advanceTimersByTime(2000);
+ stop(3000); window.dispatchEvent(new Event("blur"));
+ expect(audio.volume).toBe(0); expect(audio.removeAttribute).toHaveBeenCalledWith("src");
+ vi.advanceTimersByTime(3000); expect(audio.play).toHaveBeenCalledTimes(1);
+});
+
+it("does not start a new channel in an unfocused game and cleans up its timers", async () => {
+ vi.useFakeTimers();
+ vi.mocked(document.hasFocus).mockReturnValue(false);
+ const audio = Object.assign(new EventTarget(), { volume:0, play:vi.fn().mockResolvedValue(undefined), pause:vi.fn(), removeAttribute:vi.fn(), load:vi.fn() });
+ vi.stubGlobal("Audio", class { constructor(){return audio;} });
+ const stop = startPikoMusic(["courtyard.mp3"]);
+ document.dispatchEvent(new Event("pointerdown"));
+ expect(audio.play).not.toHaveBeenCalled();
+ window.dispatchEvent(new Event("focus")); await Promise.resolve();
+ expect(audio.play).toHaveBeenCalledOnce();
+ stop(); expect(vi.getTimerCount()).toBe(0);
 });

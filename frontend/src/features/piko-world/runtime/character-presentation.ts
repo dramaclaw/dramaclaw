@@ -3,9 +3,10 @@ import { Container, Sprite, Text } from "pixi.js";
 import { PIKO_CHARACTER_CURSOR } from "../piko-cursors";
 
 /** Shared, non-transforming feedback keeps feet and contact shadows anchored. */
-export function addCharacterPresentation(container: Container, name?: string, interactive = true) {
+export function addCharacterPresentation(container: Container, name?: string, interactive = true, nameGap = 4) {
   const body = container.children[1] as Sprite;
-  const label = createCharacterName(name ?? "", -body.anchor.y * body.height - 4);
+  // Texture bounds keep the name stable when head accessories change child bounds.
+  const label = createCharacterName(name ?? "", -body.anchor.y * body.texture.height * Math.abs(body.scale.y) - nameGap);
   container.addChild(label);
   // Add a faint copy of the same nearest-sampled frame, without a filter
   // render target that can soften the pixel edges at fractional world scales.

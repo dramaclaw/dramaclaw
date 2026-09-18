@@ -2415,9 +2415,9 @@
       "description": "在这里搭配你喜欢的衣服和配饰。",
       "clothes": "服装",
       "base": "当前基础服饰",
-      "noClothes": "还没有其他服装",
+      "unavailable": "服饰暂未开放",
+      "saveError": "保存失败，请重试",
       "accessories": "配饰",
-      "noAccessories": "还没有可替换的配饰",
       "confirm": "确认"
     }
   },

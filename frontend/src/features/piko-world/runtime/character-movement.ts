@@ -23,11 +23,11 @@ export function canStand(p: Point, navigation: PikoNavigation, radius = 8) {
   if (!samples.every(s => navigation.walkableAreas.some(area => inside(s, area.points)))) return false;
   return !navigation.colliders.some(c => inside(p,c.points) || c.points.some((a,i) => edgeDistance(p,a,c.points[(i+1)%c.points.length]) <= radius));
 }
-export function moveCharacter(position: Point, input: Point, deltaMs: number, navigation: PikoNavigation) {
+export function moveCharacter(position: Point, input: Point, deltaMs: number, navigation: PikoNavigation, speed = CHARACTER_SPEED) {
   const length = Math.hypot(input.x,input.y);
   // Pixi ObservablePoint exposes x/y through accessors, not enumerable fields.
   if (!length || !Number.isFinite(deltaMs)) return {x:position.x,y:position.y};
-  const distance = CHARACTER_SPEED * Math.max(0,Math.min(deltaMs,50)) / 1000;
+  const distance = speed * Math.max(0,Math.min(deltaMs,50)) / 1000;
   const dx = input.x/length*distance, dy = input.y/length*distance;
   const result = {x:position.x,y:position.y};
   // Small swept steps avoid tunnelling; axis separation allows sliding along obstacles.

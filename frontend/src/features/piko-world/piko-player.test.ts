@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { beforeEach, expect, it, vi } from "vitest";
-import { readPikoPlayer, savePikoPlayer } from "./piko-player";
+import { pikoPlayerIdleFrameAt, readPikoPlayer, savePikoPlayer } from "./piko-player";
 beforeEach(() => localStorage.clear());
 it("separates accounts and does not treat legacy NPC selection as completed creation", () => {
   localStorage.setItem("dramaclaw.piko-world.resident-id.v1", "m01");
@@ -15,4 +15,8 @@ it("rejects invalid records and invalid nicknames", () => {
   expect(readPikoPlayer("alice")).toBeNull();
   const spy = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("blocked"); });
   expect(readPikoPlayer("alice")).toBeNull(); spy.mockRestore();
+});
+it("plays the player's body-action idle cycle and returns to the neutral pose", () => {
+  expect([0, 2199, 2200, 2549, 2550, 6049, 6050, 6399, 6400, 7999, 8000, NaN]
+    .map(pikoPlayerIdleFrameAt)).toEqual([0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0]);
 });

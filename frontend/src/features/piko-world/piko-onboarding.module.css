@@ -70,8 +70,8 @@
 
 .field > input:focus { outline: none; box-shadow: none; border-color: rgb(117 96 71 / .65); }
 .videoViewport { container-type: inline-size; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(100vw, calc(100dvh * var(--video-ratio))); height: min(100dvh, calc(100vw / var(--video-ratio))); }
-.invitation { position: absolute; top: calc(90% + 8px); left: calc(38% - 14px); transform: translate(-50%, -50%) rotate(4deg); width: 17.04775%; text-align: center; animation: invitation-in 600ms ease-out both; }
-.invitationButton { display: block; width: 100%; padding: 0; border: 0; background: transparent; cursor: pointer; transition: filter 150ms; }
+.invitation { position: absolute; top: 88.5%; left: 37%; transform: translate(-50%, -50%) rotate(3deg); width: 12.5%; text-align: center; animation: invitation-in 600ms ease-out both; }
+.invitationButton { display: flex; align-items: center; width: 100%; min-height: 44px; padding: 0; border: 0; background: transparent; cursor: pointer; transition: filter 150ms; }
 .invitationButton > img { display: block; width: 100%; height: auto; }
 .invitationButton:hover { filter: brightness(1.08); }
 .screen .invitationButton:focus-visible { outline: none; box-shadow: none; }

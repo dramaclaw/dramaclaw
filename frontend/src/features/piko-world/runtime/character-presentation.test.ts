@@ -15,3 +15,20 @@ it("reserves interaction hit targets and cursors for interactive characters", ()
     container.destroy({ children: true });
   }
 });
+
+it("keeps the nickname anchored to the body even when a head accessory extends its bounds", () => {
+  const positions: number[] = [];
+  for (const withAccessory of [false, true]) {
+    const container = new Container();
+    const body = new Sprite(Texture.WHITE);
+    body.anchor.set(0.5, 1); body.scale.set(2);
+    if (withAccessory) {
+      const hat = new Sprite(Texture.WHITE); hat.position.y = -100; body.addChild(hat);
+    }
+    container.addChild(new Sprite(Texture.WHITE), body);
+    addCharacterPresentation(container, "player", false, 28);
+    positions.push(container.children[2].y);
+    container.destroy({ children: true });
+  }
+  expect(positions[0]).toBe(positions[1]);
+});

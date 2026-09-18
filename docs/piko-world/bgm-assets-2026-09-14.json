@@ -30,10 +30,16 @@
     "duration": 181.603225
   },
   {
-    "source": "初遇庭院整合.mp3",
+    "source": "初遇庭院-初见.mp3",
     "file": "welcome-courtyard-01.mp3",
-    "sha256": "4decd12d317104de5c55d12360ce2151bfdf58ade5e9bcd9436824b014cbae02",
-    "duration": 329.304
+    "sha256": "ea1b9d02dcf00d391d05182e437106c9ce9fcb0072952e6fc2ea4263f656c0db",
+    "duration": 151.344
+  },
+  {
+    "source": "初遇庭院-温暖版.mp3",
+    "file": "welcome-courtyard-warm.mp3",
+    "sha256": "bed953d4c1be2dffc3cd58b46aaa2bd8ed2404a86ef5e3425cb8c68486856407",
+    "duration": 180.504
   },
   {
     "source": "鲸歌天港.mp3",

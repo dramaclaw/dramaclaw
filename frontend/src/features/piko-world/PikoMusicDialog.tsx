@@ -9,6 +9,8 @@ import styles from "./piko-music.module.css";
 import { PIKO_OST_TRACKS as tracks } from "./piko-ost-tracks";
 
 import { PikoMusicPetals } from "./PikoMusicPetals";
+import { playPikoUiSound } from "./piko-audio";
+import iconStyles from "./piko-icon-button.module.css";
 
 const ROOT = "/piko/world/ui/music-player/";
 const formatTime = (value = 0) => `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, "0")}`;
@@ -35,7 +37,10 @@ export function PikoMusicDialog({ open, onOpenChange }: { open: boolean; onOpenC
   }, [current, open]);
   const caption = `《Piko小镇原声OST》- ${tracks[current]?.title ?? "选择一首小镇旋律"}`;
   const choose = (index: number) => selectPikoMusic(PIKO_MUSIC_PLAYLISTS[tracks[(index + tracks.length) % tracks.length].key]);
-  return <Dialog open={open} onOpenChange={onOpenChange}>
+  return <Dialog open={open} onOpenChange={nextOpen => {
+    if (!nextOpen) playPikoUiSound("close");
+    onOpenChange(nextOpen);
+  }}>
     <DialogContent showCloseButton={false} overlayClassName="!bg-black/25 !backdrop-blur-none" className={styles.dialog} aria-describedby={undefined} finalFocus={() => document.getElementById("piko-world-music")}>
       <PikoThreeSlicePanelSkin blendSeams topSrc={`${ROOT}panel-top-v1.png`} middleSrc={`${ROOT}panel-middle-v1.png`} bottomSrc={`${ROOT}panel-bottom-v1.png`} />
       <div className={styles.content}><div className={styles.scroll}>
@@ -65,7 +70,7 @@ export function PikoMusicDialog({ open, onOpenChange }: { open: boolean; onOpenC
           </button></li>)}
         </ol>
       </div></div>
-      <DialogClose render={<button type="button" className={styles.close} aria-label="关闭音乐播放器" />}><img src="/piko/world/ui/piko-world-close-icon-v1.png" alt="" /></DialogClose>
+      <DialogClose render={<button type="button" className={`${styles.close} ${iconStyles.button}`} aria-label="关闭音乐播放器" />}><img src="/piko/world/ui/piko-world-close-icon-v1.png" alt="" /></DialogClose>
     </DialogContent>
   </Dialog>;
 }

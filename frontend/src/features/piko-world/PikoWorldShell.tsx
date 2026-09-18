@@ -32,6 +32,7 @@ import { PikoWorldCanvas } from "./PikoWorldCanvas";
 import { PikoMapTransition } from "./PikoMapTransition";
 import { PikoLoadingScreen } from "./PikoLoadingScreen";
 import { PikoMusicDialog } from "./PikoMusicDialog";
+import { usePlayerAccessory } from "./piko-player-accessories";
 import { PikoWardrobeDialog } from "./PikoWardrobeDialog";
 import type { PikoPlayerGender } from "./piko-player";
 import { PikoMusicMarquee } from "./PikoMusicMarquee";
@@ -113,6 +114,7 @@ export function PikoWorldShell({ playerGender, onMusicMapChange }: { playerGende
   const { t } = useTranslation();
   const username = useAuthStore(state => state.username);
   const { profile, saveProfile } = usePikoProfile(username);
+  const { accessory, saveAccessory } = usePlayerAccessory(username);
   const nickname = profile.nickname || t("pikoWorld.defaultNickname");
   const [location, setLocation] = useState<MapLocation>({ mapId: "welcome-courtyard" });
   useMapMusic(onMusicMapChange ? null : location.mapId);
@@ -365,6 +367,7 @@ export function PikoWorldShell({ playerGender, onMusicMapChange }: { playerGende
           speech={publicChat.speech}
           residentId={selectedResidentId}
           playerGender={playerGender}
+          accessory={accessory}
           showMayorHint={mapTitleComplete && entered && mapLoadState === "ready"}
           mayorHintVisible={entered && mapLoadState === "ready"}
           movementBlocked={travelPending || privateOpen || chatOpen || settingsOpen || profileOpen || residentSelectorOpen || entryFade !== "done"}
@@ -506,6 +509,9 @@ export function PikoWorldShell({ playerGender, onMusicMapChange }: { playerGende
         <PikoMusicDialog open={musicOpen} onOpenChange={setMusicOpen} />
 
         <PikoWardrobeDialog
+          key={`wardrobe:${JSON.stringify(username)}`}
+          accessory={accessory}
+          onSave={saveAccessory}
           open={residentSelectorOpen}
           onOpenChange={handleResidentSelectorOpenChange}
           gender={playerGender ?? "male"}

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PikoWorldExperience } from "./PikoWorldExperience";
 import { readPikoPlayer, savePikoPlayer } from "./piko-player";
 import { selectPikoMusic, setPikoMusicMuted, usePikoSelection, usePikoMusicMuted, usePikoPlayback } from "./piko-bgm";
@@ -10,7 +10,8 @@ const auth = vi.hoisted(() => ({ username: "alice" }));
 vi.mock("@/stores/auth-store", () => ({ useAuthStore: (select: (state: typeof auth) => unknown) => select(auth) }));
 vi.mock("./PikoWorldShell", () => ({ PikoWorldShell: ({ playerGender }: { playerGender: string }) => <div data-testid="world">{playerGender}</div> }));
 vi.mock("./PikoOnboarding", () => ({ PikoOnboarding: ({ onSave, onEnter, onMusicStart }: { onMusicStart: () => void; onSave: (gender: "female", name: string) => boolean; onEnter: () => void }) => <><button onClick={onMusicStart}>listen</button><button onClick={() => { if (onSave("female", "小花")) onEnter(); }}>create</button></> }));
-beforeEach(() => { localStorage.clear(); auth.username = "alice"; });
+beforeEach(() => { localStorage.clear(); auth.username = "alice"; vi.spyOn(document, "hasFocus").mockReturnValue(true); });
+afterEach(() => vi.restoreAllMocks());
 it("resets manual selection, pause and progress for each new town visit", async () => {
   const clips: (EventTarget & { src: string; currentTime: number; duration: number; play: ReturnType<typeof vi.fn> })[] = [];
   vi.stubGlobal("Audio", class extends EventTarget {
