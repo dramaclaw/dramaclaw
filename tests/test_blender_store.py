@@ -198,3 +198,89 @@ def test_generated_codes_stay_well_formed_across_many_draws(db):
     for code in codes:
         assert len(code) == 9 and code[4] == "-"
         assert set(code) <= set("ABCDEFGHJKLMNPQRSTUVWXYZ23456789-")
+
+
+def _issue_token(db, *, user_id="alice", label="Blender"):
+    pairing = blender_store.create_pairing(db)
+    blender_store.approve_pairing(db, pairing.code, user_id=user_id)
+    result = blender_store.consume_pairing(db, pairing.pairing_id)
+    return result.token
+
+
+def test_valid_token_resolves_to_its_owner(db):
+    token = _issue_token(db, user_id="alice")
+
+    client = blender_store.verify_token(db, token)
+
+    assert client is not None
+    assert client.user_id == "alice"
+    assert client.label == "Blender"
+
+
+def test_garbage_token_resolves_to_nothing(db):
+    assert blender_store.verify_token(db, "not-a-token") is None
+    assert blender_store.verify_token(db, "") is None
+
+
+def test_expired_token_resolves_to_nothing(db, monkeypatch):
+    token = _issue_token(db)
+    later = time.time() + blender_store.TOKEN_TTL_SECONDS + 1
+    monkeypatch.setattr(blender_store, "_now", lambda: int(later))
+
+    assert blender_store.verify_token(db, token) is None
+
+
+def test_revoked_token_resolves_to_nothing(db):
+    token = _issue_token(db)
+    token_id = blender_store.list_tokens(db, user_id="alice")[0].token_id
+
+    assert blender_store.revoke_token(db, token_id, user_id="alice") is True
+    assert blender_store.verify_token(db, token) is None
+
+
+def test_revoking_someone_elses_token_fails(db):
+    _issue_token(db, user_id="alice")
+    token_id = blender_store.list_tokens(db, user_id="alice")[0].token_id
+
+    # 吊销要带 user_id 一起做条件：拿到别人的 token_id 也动不了他的插件。
+    assert blender_store.revoke_token(db, token_id, user_id="bob") is False
+
+
+def test_revoking_twice_fails(db):
+    _issue_token(db)
+    token_id = blender_store.list_tokens(db, user_id="alice")[0].token_id
+
+    assert blender_store.revoke_token(db, token_id, user_id="alice") is True
+    assert blender_store.revoke_token(db, token_id, user_id="alice") is False
+
+
+def test_list_tokens_is_scoped_to_the_user_and_hides_the_secret(db):
+    _issue_token(db, user_id="alice")
+    _issue_token(db, user_id="bob")
+
+    alice = blender_store.list_tokens(db, user_id="alice")
+
+    assert len(alice) == 1
+    assert not hasattr(alice[0], "token")
+    assert not hasattr(alice[0], "token_hash")
+
+
+def test_list_tokens_hides_revoked_ones(db):
+    _issue_token(db, user_id="alice")
+    token_id = blender_store.list_tokens(db, user_id="alice")[0].token_id
+    blender_store.revoke_token(db, token_id, user_id="alice")
+
+    assert blender_store.list_tokens(db, user_id="alice") == []
+
+
+def test_verify_token_records_last_seen(db, monkeypatch):
+    token = _issue_token(db, user_id="alice")
+    # 用相对时间，不要写死一个 epoch 常量：写死的那个迟早会越过令牌的 30 天有效期，
+    # 到时候 verify_token 把它当过期令牌拒掉，这条测试就在测别的东西了。
+    later = int(time.time()) + 60
+    monkeypatch.setattr(blender_store, "_now", lambda: later)
+
+    blender_store.verify_token(db, token)
+
+    # 设置页要能回答「这台还在用吗」，否则用户不知道该吊销哪一条。
+    assert blender_store.list_tokens(db, user_id="alice")[0].last_seen == later

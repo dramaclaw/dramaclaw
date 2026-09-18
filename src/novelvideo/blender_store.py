@@ -107,6 +107,18 @@ class PairingResult:
     user_id: str | None = None
 
 
+@dataclass(frozen=True)
+class BlenderClient:
+    """一个已配对的插件。**不带**令牌本身——这个对象会被序列化给前端。"""
+
+    token_id: str
+    user_id: str
+    label: str
+    created_at: int
+    expires_at: int
+    last_seen: int | None
+
+
 def _now() -> int:
     return int(time.time())
 
@@ -277,3 +289,64 @@ def _insert_token(conn: sqlite3.Connection, *, user_id: str, label: str) -> str:
         ),
     )
     return token
+
+
+def verify_token(db_path: str | Path, token: str) -> BlenderClient | None:
+    """校验插件令牌。任何一种不通过都返回 None，调用方不需要区分原因。"""
+    if not token:
+        return None
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT token_id, user_id, label, created_at, expires_at, last_seen "
+            "FROM blender_tokens "
+            "WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+            (_hash(token), _now()),
+        ).fetchone()
+        if row is None:
+            return None
+        now = _now()
+        conn.execute(
+            "UPDATE blender_tokens SET last_seen = ? WHERE token_id = ?",
+            (now, row["token_id"]),
+        )
+        return BlenderClient(
+            token_id=row["token_id"],
+            user_id=row["user_id"],
+            label=row["label"],
+            created_at=row["created_at"],
+            expires_at=row["expires_at"],
+            last_seen=now,
+        )
+
+
+def list_tokens(db_path: str | Path, *, user_id: str) -> list[BlenderClient]:
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT token_id, user_id, label, created_at, expires_at, last_seen "
+            "FROM blender_tokens "
+            "WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ? "
+            "ORDER BY created_at DESC",
+            (user_id, _now()),
+        ).fetchall()
+    return [
+        BlenderClient(
+            token_id=row["token_id"],
+            user_id=row["user_id"],
+            label=row["label"],
+            created_at=row["created_at"],
+            expires_at=row["expires_at"],
+            last_seen=row["last_seen"],
+        )
+        for row in rows
+    ]
+
+
+def revoke_token(db_path: str | Path, token_id: str, *, user_id: str) -> bool:
+    """吊销。`user_id` 是 WHERE 的一部分，不是先查后判——少一次 TOCTOU。"""
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            "UPDATE blender_tokens SET revoked_at = ? "
+            "WHERE token_id = ? AND user_id = ? AND revoked_at IS NULL",
+            (_now(), token_id, user_id),
+        )
+        return cur.rowcount == 1
