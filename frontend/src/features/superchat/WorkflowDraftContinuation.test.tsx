@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { insertWorkflowDraftCancellationMessage, latestWorkflowDraftId, WorkflowDraftContinuation } from "./WorkflowDraftContinuation";
+import { insertWorkflowDraftCancellationMessages, latestWorkflowDraftId, workflowDraftIds, WorkflowDraftContinuation } from "./WorkflowDraftContinuation";
 import type { ChatMessage } from "./types";
 import translations from "../../../public/locales/zh/translation.json";
 
@@ -40,6 +40,16 @@ describe("workflow draft continuation", () => {
     expect(latestWorkflowDraftId(messages("freezone_prepare_workflow_draft"))).toBe("draft-a");
     expect(latestWorkflowDraftId(messages("freezone_prepare_workflow_plan_draft", false))).toBeNull();
     expect(latestWorkflowDraftId(messages("unrelated_tool"))).toBeNull();
+    const previous = messages();
+    const current = messages();
+    current[0].id = "assistant-b";
+    current[0].parts![0].event = { ...current[0].parts![0].event,
+      raw: { name: "dramaclaw.freezone_prepare_workflow_plan_draft", output: {
+        content: [{ type: "text", text: JSON.stringify({ ok: true, draft_id: "draft-b" }) }],
+      } } };
+    expect(workflowDraftIds([...previous, ...current])).toEqual(["draft-a", "draft-b"]);
+    expect(latestWorkflowDraftId([...previous, ...current])).toBe("draft-b");
+    expect(latestWorkflowDraftId([...previous, ...current, ...previous])).toBe("draft-a");
   });
   it("shows a real preview and confirms the exact persisted scope and revision", async () => {
     const value = props();
@@ -81,13 +91,34 @@ describe("workflow draft continuation", () => {
       { id: "before", role: "user", text: "先做一个方案", timestamp: 1000 },
       { id: "after", role: "user", text: "后续消息", timestamp: 3000 },
     ];
-    const sorted = insertWorkflowDraftCancellationMessage(
-      original, { draftId: "draft-a", updatedAt: 2 }, "已取消工作流方案",
+    const sorted = insertWorkflowDraftCancellationMessages(
+      original, [
+        { draftId: "draft-b", updatedAt: 2.5 },
+        { draftId: "draft-a", updatedAt: 2 },
+      ], "已取消工作流方案",
     );
     expect(sorted.map((message) => message.id)).toEqual([
-      "before", "workflow-draft-cancelled:draft-a", "after",
+      "before", "workflow-draft-cancelled:draft-a", "workflow-draft-cancelled:draft-b", "after",
     ]);
     expect(sorted[1]).toMatchObject({ role: "assistant", text: "已取消工作流方案" });
+  });
+  it("recovers every cancelled draft in chat history", async () => {
+    const history = messages();
+    const latest = messages();
+    latest[0].id = "assistant-b";
+    latest[0].parts![0].event = { ...latest[0].parts![0].event,
+      raw: { name: "dramaclaw.freezone_prepare_workflow_plan_draft", output: {
+        content: [{ type: "text", text: JSON.stringify({ ok: true, draft_id: "draft-b" }) }],
+      } } };
+    api.mockImplementation(async (path: string) => ({
+      ...draft, draft_id: path.endsWith("draft-b") ? "draft-b" : "draft-a",
+      status: "cancelled", updated_at: path.endsWith("draft-b") ? 3 : 2,
+    }));
+    const value = { ...props(), messages: [...history, ...latest] };
+    render(<WorkflowDraftContinuation {...value} />);
+    await waitFor(() => expect(value.onCancelled).toHaveBeenCalledTimes(2));
+    expect(value.onCancelled).toHaveBeenCalledWith({ draftId: "draft-a", updatedAt: 2 });
+    expect(value.onCancelled).toHaveBeenCalledWith({ draftId: "draft-b", updatedAt: 3 });
   });
   it("keeps the draft visible when cancellation fails", async () => {
     api.mockImplementation(async (_path: string, options?: { method?: string }) => {

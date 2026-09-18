@@ -18,19 +18,26 @@ type Draft = {
 
 export type CancelledWorkflowDraft = { draftId: string; updatedAt: number };
 
-export function insertWorkflowDraftCancellationMessage(
-  messages: ChatMessage[], cancelled: CancelledWorkflowDraft | null, text: string,
+export function insertWorkflowDraftCancellationMessages(
+  messages: ChatMessage[], cancelledDrafts: CancelledWorkflowDraft[], text: string,
 ): ChatMessage[] {
-  if (!cancelled || !Number.isFinite(cancelled.updatedAt)) return messages;
-  const feedback: ChatMessage = {
-    id: `workflow-draft-cancelled:${cancelled.draftId}`,
-    role: "assistant",
-    text,
-    timestamp: cancelled.updatedAt * 1000,
-  };
-  const position = messages.findIndex((message) => message.timestamp > feedback.timestamp);
-  if (position < 0) return [...messages, feedback];
-  return [...messages.slice(0, position), feedback, ...messages.slice(position)];
+  const drafts = [...new Map(cancelledDrafts
+    .filter((draft) => Number.isFinite(draft.updatedAt))
+    .map((draft) => [draft.draftId, draft])).values()]
+    .sort((left, right) => left.updatedAt - right.updatedAt);
+  let result = messages;
+  for (const draft of drafts) {
+    const feedback: ChatMessage = {
+      id: `workflow-draft-cancelled:${draft.draftId}`,
+      role: "assistant",
+      text,
+      timestamp: draft.updatedAt * 1000,
+    };
+    const position = result.findIndex((message) => message.timestamp > feedback.timestamp);
+    result = position < 0 ? [...result, feedback]
+      : [...result.slice(0, position), feedback, ...result.slice(position)];
+  }
+  return result;
 }
 
 function objects(value: unknown): Record<string, unknown>[] {
@@ -44,9 +51,10 @@ function objects(value: unknown): Record<string, unknown>[] {
       objects((item as { text?: unknown })?.text)) : [])];
 }
 
-export function latestWorkflowDraftId(messages: ChatMessage[]): string | null {
-  for (const message of [...messages].reverse()) {
-    for (const part of [...(message.parts ?? [])].reverse()) {
+export function workflowDraftIds(messages: ChatMessage[]): string[] {
+  const ids = new Set<string>();
+  for (const message of messages) {
+    for (const part of message.parts ?? []) {
       if (part.type !== "tool_status") continue;
       const raw = (part.event as ChatMessage)?.raw as Record<string, unknown> | undefined;
       const name = String(raw?.name ?? "").split(".").pop();
@@ -54,10 +62,18 @@ export function latestWorkflowDraftId(messages: ChatMessage[]): string | null {
         "freezone_prepare_workflow", "freezone_patch_workflow_draft"].includes(name ?? "")) continue;
       const draft = [...objects(raw?.result_json), ...objects(raw?.output)].find((item) =>
         item.ok === true && typeof item.draft_id === "string" && item.draft_id);
-      if (draft) return String(draft.draft_id);
+      if (draft) {
+        const id = String(draft.draft_id);
+        ids.delete(id);
+        ids.add(id);
+      }
     }
   }
-  return null;
+  return [...ids];
+}
+
+export function latestWorkflowDraftId(messages: ChatMessage[]): string | null {
+  return workflowDraftIds(messages).at(-1) ?? null;
 }
 
 /** Recover the actionable continuation even when the agent stops at draft-ready. */
@@ -72,6 +88,7 @@ export function WorkflowDraftContinuation({ messages, projectId, canvasId, busy,
 }) {
   const { t } = useTranslation();
   const draftId = latestWorkflowDraftId(messages);
+  const historicalDraftIdsKey = workflowDraftIds(messages).slice(0, -1).join(",");
   const [draft, setDraft] = useState<Draft | null>(null);
   const [sending, setSending] = useState<"confirm" | "cancel" | null>(null);
   const [awaitingTurn, setAwaitingTurn] = useState(false);
@@ -110,6 +127,20 @@ export function WorkflowDraftContinuation({ messages, projectId, canvasId, busy,
     const timer = window.setInterval(() => void read(), 5000);
     return () => { active = false; window.clearInterval(timer); };
   }, [projectId, canvasId, draftId]);
+  useEffect(() => {
+    if (!projectId || !canvasId || !historicalDraftIdsKey) return;
+    let active = true;
+    for (const historicalDraftId of historicalDraftIdsKey.split(",")) {
+      void apiCall<Draft>(
+        `projects/${encodeURIComponent(projectId)}/freezone/canvases/${encodeURIComponent(canvasId)}/workflow-drafts/${encodeURIComponent(historicalDraftId)}`,
+      ).then((value) => {
+        if (active && value.status === "cancelled" && value.updated_at != null) {
+          onCancelledRef.current?.({ draftId: value.draft_id, updatedAt: value.updated_at });
+        }
+      }).catch(() => undefined);
+    }
+    return () => { active = false; };
+  }, [projectId, canvasId, historicalDraftIdsKey]);
   useEffect(() => {
     if (!awaitingTurn) return;
     if (busy) sawBusy.current = true;
