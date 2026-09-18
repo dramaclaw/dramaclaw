@@ -1844,10 +1844,28 @@ function isWorkflowUserInputNode(node: CanvasNode | undefined): boolean {
   return ["workflow_input", "user_input", "user_requirement"].includes(stepId);
 }
 
-function workflowExternalImageSourceIds(edges: CanvasEdge[]): Set<string> {
-  return new Set(edges
-    .filter((edge) => typeof edge.data?.workflowExternalInputImageUrl === "string")
-    .map((edge) => edge.source));
+function workflowExternalImageSourceIds(
+  edges: CanvasEdge[],
+  scopedNodeIds: Set<string>,
+  nodes: CanvasNode[],
+): Set<string> {
+  const nodeById = new Map(nodes.map((node) => [node.id, node] as const));
+  const scopedEdges = edges.filter((edge) => scopedNodeIds.has(edge.target));
+  const externalSources = new Set<string>();
+  const ordinarySources = new Set<string>();
+  for (const edge of scopedEdges) {
+    const expectedUrl = edge.data?.workflowExternalInputImageUrl;
+    if (typeof expectedUrl !== "string" || !expectedUrl.trim()) {
+      ordinarySources.add(edge.source);
+      continue;
+    }
+    const source = nodeById.get(edge.source);
+    if (!source || extractUpstreamContent(source).imageUrl !== expectedUrl) {
+      throw new Error(`workflow source image changed: ${edge.source}`);
+    }
+    externalSources.add(edge.source);
+  }
+  return new Set([...externalSources].filter((sourceId) => !ordinarySources.has(sourceId)));
 }
 
 function isRedundantLegacyComposeGenerator(
@@ -1983,9 +2001,9 @@ function workflowNodeActions(
   const expandedNodeIds = expandWorkflowNodeIds(initialNodeIds, directions);
   const nodeByIdMap = new Map(useCanvasStore.getState().nodes.map((node) => [node.id, node] as const));
   const scopedNodeIds = new Set(expandedNodeIds);
-  const externalImageSourceIds = workflowExternalImageSourceIds(state.edges.filter(
-    (edge) => scopedNodeIds.has(edge.target),
-  ));
+  const externalImageSourceIds = workflowExternalImageSourceIds(
+    state.edges, scopedNodeIds, state.nodes,
+  );
   const protectedUpstreamNodeIds = satisfiedVideoComposeUpstreamNodeIds(
     expandedNodeIds,
     initialNodeIds,
@@ -2038,7 +2056,6 @@ function directNodeActionQueue(
 ): PendingNodeAction[] {
   const state = useCanvasStore.getState();
   const nodeByIdMap = new Map(state.nodes.map((node) => [node.id, node] as const));
-  const externalImageSourceIds = workflowExternalImageSourceIds(state.edges);
   const includeUpstream = (
     GENERATION_NODE_ACTIONS.has(action)
     || (
@@ -2046,9 +2063,13 @@ function directNodeActionQueue(
       && !hasVideoComposeMinimumInputs(nodeId)
     )
   );
-  const upstreamActions = (includeUpstream
+  const upstreamNodeIds = includeUpstream
     ? expandWorkflowNodeIds([nodeId], ["upstream"])
-    : [nodeId])
+    : [nodeId];
+  const externalImageSourceIds = workflowExternalImageSourceIds(
+    state.edges, new Set(upstreamNodeIds), state.nodes,
+  );
+  const upstreamActions = upstreamNodeIds
     .filter((upstreamId) => upstreamId !== nodeId)
     .flatMap((upstreamId): PendingNodeAction[] => {
       const node = nodeByIdMap.get(upstreamId);

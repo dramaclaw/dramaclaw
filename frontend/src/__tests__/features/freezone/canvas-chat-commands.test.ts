@@ -551,6 +551,82 @@ describe("canvas chat commands", () => {
     expect(useCanvasStore.getState().nodes[0]?.data.model).toBe(model);
   });
 
+  it("keeps an ordinary upstream action when the same source feeds an unrelated Recipe", async () => {
+    const store = useCanvasStore.getState();
+    const sourceId = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 0 }, {
+      prompt: "生成源图片",
+      referenceImageUrl: "/static/project/source.png",
+    });
+    const recipeId = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 360, y: 0 }, {
+      prompt: "Recipe A",
+    });
+    const targetId = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 360, y: 300 }, {
+      prompt: "普通目标 B",
+    });
+    store.addEdgeWithData(sourceId, recipeId, {
+      link_type: "media_input_for",
+      workflowExternalInputImageUrl: "/static/project/source.png",
+    });
+    store.addEdge(sourceId, targetId);
+    const events: string[] = [];
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      events.push(payload.nodeId);
+      if (!payload.requestId) return;
+      store.updateNodeData(payload.nodeId, { imageUrl: "/static/project/result.png" });
+      canvasEventBus.publish("freezone/node-action-result", {
+        requestId: payload.requestId,
+        nodeId: payload.nodeId,
+        action: payload.action,
+        status: "success",
+      });
+    });
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_node_action", node_id: targetId, action: "generate_image" }],
+        }]),
+        { canvasId: "canvas-a", actionTimeoutMs: 100 },
+      );
+      expect(result.errors).toEqual([]);
+      expect(events).toEqual([sourceId, targetId]);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("rejects an external input edge after its source image changes", async () => {
+    const store = useCanvasStore.getState();
+    const sourceId = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 0 }, {
+      prompt: "源图片",
+      imageUrl: "/static/project/new.png",
+    });
+    const targetId = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 360, y: 0 }, {
+      prompt: "Recipe A",
+    });
+    store.addEdgeWithData(sourceId, targetId, {
+      link_type: "media_input_for",
+      workflowExternalInputImageUrl: "/static/project/old.png",
+    });
+    const events: string[] = [];
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      events.push(payload.nodeId);
+    });
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_workflow", node_ids: [targetId] }],
+        }]),
+        { canvasId: "canvas-a", actionTimeoutMs: 100 },
+      );
+      expect(result.errors.some((error) => error.includes("workflow source image changed"))).toBe(true);
+      expect(events).toEqual([]);
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it("rejects invented image model ids before creating image nodes", () => {
     const envelopes = extractCanvasChatCommandEnvelopes([
       {
