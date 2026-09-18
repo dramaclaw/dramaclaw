@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from novelvideo import blender_store
@@ -44,6 +44,25 @@ def _enforce_rate_limit(bucket: str, limit: int) -> None:
         _db(), bucket, limit=limit, window=RATE_WINDOW_SECONDS
     ):
         raise HTTPException(status_code=429, detail="请求过于频繁，请稍后再试")
+
+
+async def get_blender_client(
+    authorization: str = Header(default=""),
+) -> blender_store.BlenderClient:
+    """插件令牌鉴权。**只给这个文件里的路由用。**
+
+    刻意不写进 `novelvideo/api/auth.py`：那里只接受浏览器会话和短时 agent bearer，
+    而插件令牌活 30 天。把它接进主链路，等于给整个 API 配一把 30 天的钥匙——
+    爆炸半径完全不同。这里窄到只能碰 `/blender/*`。
+    """
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(status_code=401, detail="缺少插件令牌")
+
+    client = blender_store.verify_token(_db(), token.strip())
+    if client is None:
+        raise HTTPException(status_code=401, detail="插件令牌无效或已过期")
+    return client
 
 
 class PairingApproveRequest(BaseModel):
