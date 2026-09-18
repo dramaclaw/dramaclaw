@@ -209,3 +209,17 @@ describe("budget sizing per task type", () => {
     expect(tasks.pollTimeoutForTaskType(null)).toBe(tasks.LONG_JOB_MAX_POLL_MS);
   });
 });
+
+it("shares submit and restore waits without stranding either caller", async () => {
+  serverReports([task("shared-key", "running")]);
+  const submit = tasks.awaitTaskCompletion("shared-key", "demo");
+  const restore = tasks.awaitTaskCompletion("shared-key", "demo");
+  expect(restore).toBe(submit);
+  serverReports([{ ...task("shared-key", "completed"), result: { video_url: "video.mp4" } }]);
+  await advance(10_000);
+  expect((await Promise.all([submit, restore])).map(result => result.status)).toEqual(["completed", "completed"]);
+  const next = tasks.awaitTaskCompletion("shared-key", "demo");
+  expect(next).not.toBe(submit);
+  await advance(10_000);
+  expect((await next).result).toEqual({ video_url: "video.mp4" });
+});

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuthStore } from "@/stores/auth-store";
+import { usePikoTaskStatus } from "./use-piko-task-status";
 import { PikoWorldShell } from "./PikoWorldShell";
 import { resetPikoMusicSession, useMapMusic } from "./piko-bgm";
 import type { PikoMapId } from "./piko-map-transitions";
@@ -14,6 +15,7 @@ export function PikoWorldExperience() {
   return <AccountExperience key={JSON.stringify(owner)} owner={owner} />;
 }
 function AccountExperience({ owner }: { owner: string | null }) {
+  const taskStatus = usePikoTaskStatus(owner);
   const [player, setPlayer] = useState<PikoPlayer | null>(null);
   const [musicMap, setMusicMap] = useState<PikoMapId | null>(null);
   useEffect(() => { resetPikoMusicSession(); }, []);
@@ -22,7 +24,7 @@ function AccountExperience({ owner }: { owner: string | null }) {
   const { saveProfile } = usePikoProfile(owner);
   const pending = useRef<PikoPlayer | null>(null);
   useEffect(() => { clearPikoPlayer(owner); }, [owner]);
-  if (player) return <PikoWorldShell playerGender={player.gender} onMusicMapChange={setMusicMap} />;
+  if (player) return <PikoWorldShell taskStatus={taskStatus} playerGender={player.gender} onMusicMapChange={setMusicMap} />;
   const save = (gender: PikoPlayerGender, nickname: string) => {
     if (!saveProfile({ nickname, bio: "" }) || !savePikoPlayer(owner, gender, nickname)) return false;
     pending.current = { version: 1, gender, nickname };

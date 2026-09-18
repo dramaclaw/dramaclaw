@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { capturePikoTaskEntry } from "@/features/piko-world/piko-task-entry";
 import { enterPikoWorld } from "@/features/piko-world/piko-entry-transition";
 import { playPikoUiSound } from "@/features/piko-world/piko-audio";
 import { Button } from "@/components/ui/button";
@@ -417,7 +418,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
               <HeaderMenuRow menuItem
                 icon={<Map className="size-3.5" />}
                 label={t("header.pikoHub.world")}
-                onClick={() => { playPikoUiSound("open"); void enterPikoWorld(() => navigate({ to: "/piko-world" })); }} />
+                onClick={() => { capturePikoTaskEntry(username, window.location.href); playPikoUiSound("open"); void enterPikoWorld(() => navigate({ to: "/piko-world" })); }} />
               <HeaderMenuRow menuItem
                 icon={<Gamepad2 className="size-3.5" />}
                 label={t("header.pikoHub.play")}

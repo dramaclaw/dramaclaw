@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Elastic-2.0
-import { afterEach, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { createEnvironmentAudio, zoneVolume } from "./environment-audio";
 const zone = { id: "water", src: "water.ogg", volume: 0.4, fadeDistance: 100,
   region: { points: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }] } };
@@ -25,11 +25,16 @@ it("unlocks on input, spaces bird recordings, pauses in background and releases 
   audio.paused = true; audio.onended!();
   await vi.advanceTimersByTimeAsync(24000); expect(audio.play).toHaveBeenCalledTimes(1);
   await vi.advanceTimersByTimeAsync(1200); expect(audio.play).toHaveBeenCalledTimes(2);
+  window.dispatchEvent(new Event("blur"));
+  expect(audio.paused).toBe(true); expect(audio.volume).toBe(0);
+  await vi.advanceTimersByTimeAsync(1000); expect(audio.play).toHaveBeenCalledTimes(2);
+  window.dispatchEvent(new Event("focus"));
+  await vi.advanceTimersByTimeAsync(100); expect(audio.play).toHaveBeenCalledTimes(3);
   hidden.mockReturnValue(true); document.dispatchEvent(new Event("visibilitychange"));
   expect(audio.volume).toBe(0); expect(audio.paused).toBe(true);
   controller.destroy();
   expect(audio.removeAttribute).toHaveBeenCalledWith("src"); expect(vi.getTimerCount()).toBe(0);
-  document.dispatchEvent(new Event("pointerdown")); expect(audio.play).toHaveBeenCalledTimes(2);
+  document.dispatchEvent(new Event("pointerdown")); expect(audio.play).toHaveBeenCalledTimes(3);
 });
 it("covers separated wind regions without adding overlapping gain", () => {
   const expanded = { ...zone, additionalRegions: [zone.region, { points: zone.region.points.map(p => ({ x: p.x + 400, y: p.y })) }] };
@@ -106,3 +111,5 @@ it("pauses a pending playback that resolves after leaving its sound region", asy
   expect(audio.paused).toBe(true);
   controller.destroy();
 });
+
+beforeEach(() => { vi.spyOn(document, "hasFocus").mockReturnValue(true); });

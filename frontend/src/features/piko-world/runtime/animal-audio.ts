@@ -37,8 +37,9 @@ export function createAnimalAudio(sources: () => AnimalAudioSource[], resolve: (
     clip.audio.onended = () => stop(clip);
     clip.audio.onerror = () => { clip.failed = true; stop(clip); };
   });
+  let focused = document.hasFocus();
   const tick = () => {
-    if (disposed || document.hidden || !unlocked || !listener) return;
+    if (disposed || !focused || document.hidden || !unlocked || !listener) return;
     quiet = Math.max(0, quiet - 0.1);
     const current = new Map(sources().map(source => [source.id, source]));
     for (const clip of clips) {
@@ -69,7 +70,7 @@ export function createAnimalAudio(sources: () => AnimalAudioSource[], resolve: (
           return;
         }
         const source = sources().find(source => source.id === clip.id);
-        if (disposed || document.hidden || !source || !listener || animalVolume(clip.kind,
+        if (disposed || !focused || document.hidden || !source || !listener || animalVolume(clip.kind,
           Math.hypot(source.position.x - listener.x, source.position.y - listener.y)) <= 0) stop(clip);
       }).catch(() => {
         if (!disposed && generation === clip.generation) { clip.blocked = true; stop(clip); }
@@ -77,7 +78,11 @@ export function createAnimalAudio(sources: () => AnimalAudioSource[], resolve: (
     }
   };
   const unlock = () => { unlocked = true; clips.forEach(clip => { clip.blocked = false; }); };
-  const visibility = () => { if (document.hidden) clips.forEach(stop); };
+  const visibility = () => { if (!focused || document.hidden) clips.forEach(stop); };
+  const blur = () => { focused = false; visibility(); };
+  const focus = () => { focused = true; visibility(); };
+  window.addEventListener("blur", blur);
+  window.addEventListener("focus", focus);
   document.addEventListener("pointerdown", unlock);
   document.addEventListener("keydown", unlock);
   document.addEventListener("visibilitychange", visibility);
@@ -87,6 +92,8 @@ export function createAnimalAudio(sources: () => AnimalAudioSource[], resolve: (
     destroy() {
       if (disposed) return;
       disposed = true; window.clearInterval(timer);
+      window.removeEventListener("blur", blur);
+      window.removeEventListener("focus", focus);
       document.removeEventListener("pointerdown", unlock);
       document.removeEventListener("keydown", unlock);
       document.removeEventListener("visibilitychange", visibility);

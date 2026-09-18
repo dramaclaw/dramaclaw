@@ -2251,6 +2251,15 @@
     }
   },
   "pikoWorld": {
+    "taskLabel": {
+      "running": "任务进行中",
+      "completed": "任务完成",
+      "failed": "任务失败",
+      "publicRunning": "作品创作中",
+      "open": "{{status}}，返回创作界面",
+      "unavailable": "原创作位置已不可用，已返回工作台",
+      "openError": "暂时无法打开创作界面，请稍后重试"
+    },
     "translationAction": "翻译",
     "translationLoading": "翻译中…",
     "translationHide": "收起译文",

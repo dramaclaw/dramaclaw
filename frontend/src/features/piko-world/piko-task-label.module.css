@@ -1,0 +1,14 @@
+/* User-supplied end caps retain their aspect ratio; only the middle stretches. */
+.label { --label-height: 26px; position: absolute; z-index: 12; display: flex; align-items: center; justify-content: center; gap: 3px; height: var(--label-height); max-width: calc(100% - 16px); padding: 0 11px; border: 0; background: none; color: #493523; font-size: 11px; line-height: 16px; font-weight: 500; white-space: nowrap; cursor: pointer; touch-action: manipulation; }
+.skin { position: absolute; inset: 0; display: flex; pointer-events: none; }
+.skin img { display: block; height: 100%; width: calc(var(--label-height) * 320 / 766); max-width: none; flex-shrink: 0; }
+.skin img.middle { width: 0; min-width: 0; flex: 1; }
+.text { position: relative; overflow: hidden; text-overflow: ellipsis; }
+.label > svg { position: relative; flex-shrink: 0; }
+.label:focus-visible { outline: 2px solid #526b40; outline-offset: 2px; }
+.label[data-phase="fade-in"] { animation: appear 250ms linear both; }
+.label[data-phase="fade-out"] { animation: disappear 250ms linear both; }
+.label[data-available="false"] { visibility: hidden; pointer-events: none; }
+@keyframes appear { from { opacity: 0; } to { opacity: 1; } }
+@keyframes disappear { from { opacity: 1; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .label { animation: none; } }

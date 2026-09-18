@@ -32,3 +32,20 @@ it("keeps the nickname anchored to the body even when a head accessory extends i
   }
   expect(positions[0]).toBe(positions[1]);
 });
+
+it("updates accessory clearance without recreating the nickname or inheriting child bounds", () => {
+  const container = new Container();
+  const body = new Sprite(Texture.WHITE);
+  body.anchor.set(0.5, 1); body.scale.set(2);
+  const hat = new Sprite(Texture.WHITE); hat.position.y = -100; body.addChild(hat);
+  container.addChild(new Sprite(Texture.WHITE), body);
+  const presentation = addCharacterPresentation(container, "player", false, 6);
+  const name = container.children[2];
+  const originalY = name.y;
+  presentation.setNameGap(24);
+  expect(container.children[2]).toBe(name);
+  expect(name.y).toBe(originalY - 18);
+  presentation.setNameGap(6);
+  expect(name.y).toBe(originalY);
+  container.destroy({ children: true });
+});

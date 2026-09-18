@@ -262,6 +262,8 @@ export function pollTimeoutForTaskType(taskType: string | null | undefined): num
   return LONG_JOB_MAX_POLL_MS;
 }
 const pendingByTaskKey = new Map<string, PendingResolver>();
+// Submit flows and restored canvases may wait for the same task concurrently.
+const completionPromises = new Map<string, Promise<TaskState>>();
 const sharedStreamsByProject = new Map<string, SseHandle>();
 const pollersByProject = new Map<string, ProjectPoller>();
 
@@ -461,6 +463,8 @@ export function awaitTaskCompletion(
   projectId: string,
   options?: { timeoutMs?: number; taskType?: string | null },
 ): Promise<TaskState> {
+  const existing = completionPromises.get(taskKey);
+  if (existing) return existing;
   const resolved = resolveTaskProjectId(projectId);
   ensureSharedStream(resolved);
   ensureProjectPoller(resolved);
@@ -481,10 +485,13 @@ export function awaitTaskCompletion(
       lastStatus: null,
     });
   });
-  return promise.finally(() => {
+  const sharedPromise = promise.finally(() => {
+    completionPromises.delete(taskKey);
     pendingByTaskKey.delete(taskKey);
     maybeStopProjectMonitoring(resolved);
   });
+  completionPromises.set(taskKey, sharedPromise);
+  return sharedPromise;
 }
 
 if (import.meta.hot) {

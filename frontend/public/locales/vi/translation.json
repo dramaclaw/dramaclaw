@@ -1,5 +1,14 @@
 {
   "pikoWorld": {
+    "taskLabel": {
+      "running": "Tác vụ đang chạy",
+      "completed": "Tác vụ hoàn tất",
+      "failed": "Tác vụ thất bại",
+      "publicRunning": "Đang sáng tạo",
+      "open": "{{status}}. Quay lại sáng tạo",
+      "unavailable": "Nơi sáng tạo ban đầu không còn khả dụng. Đã quay lại không gian làm việc.",
+      "openError": "Không mở được nơi sáng tạo. Vui lòng thử lại."
+    },
     "musicToggle": "Nhạc",
     "mapLoading": "Đang tải {{mapName}}…",
     "mapLoadError": "Không thể tải {{mapName}}",

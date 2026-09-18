@@ -161,7 +161,7 @@ describe("重绘节点：轮询脱离后的节点状态", () => {
     expect((detached.data as Record<string, unknown>).isGenerating).toBe(true);
     expect((detached.data as Record<string, unknown>).generationError ?? null).toBeNull();
 
-    // 重新加载模块 = 模拟刷新：sessionOwnedTaskKeys 是空的，扫描不再跳过它。
+    // 重新加载模块模拟刷新，确认持久化句柄仍可被恢复扫描识别。
     // 这一步是提示语「稍后刷新页面查看结果」能否兑现的判定点。
     vi.resetModules();
     const { nodeNeedsGenerationResume } = await import(

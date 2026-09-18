@@ -12,6 +12,7 @@ import type { CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
 import { CURRENT_RUNTIME_SESSION_ID } from "@/features/canvas/application/generationErrorReport";
 import {
+  generationTaskDescriptor,
   DETACHED_GENERATION_PATCH,
   TASK_MISS_CONFIRM_ATTEMPTS,
   nodeNeedsGenerationResume,
@@ -245,5 +246,38 @@ describe("恢复路径：旧会话的 generationJobId 不许抢跑", () => {
 
     expect(nodeOwnsLiveGenerationJob(node)).toBe(false);
     expect(staleGenerationJobPatch(node)).toBeNull();
+  });
+});
+
+describe("returning from Piko to a completed video", () => {
+  function videoNode(): CanvasNode {
+    return { ...resumableNode(), type: CANVAS_NODE_TYPES.video, data: {
+      isGenerating: true,
+      ...generationTaskDescriptor({ task_key: "freezone_video_gen:video-1", task_type: "freezone_video_gen", job_id: "video-1" }),
+    } } as CanvasNode;
+  }
+  it("restores a same-session submission directly onto the node", async () => {
+    const node = videoNode();
+    const completed = { task_key: node.data.generationTaskKey, status: "completed", result: { video_url: "result.mp4" } };
+    listTasks.mockResolvedValue([completed]);
+    awaitTaskCompletion.mockResolvedValue(completed);
+    expect(nodeNeedsGenerationResume(node)).toBe(true);
+    const updateNodeData = vi.fn();
+    await resumeNodeGeneration({ node, projectId: "demo", updateNodeData });
+    expect(updateNodeData).toHaveBeenCalledWith(node.id, expect.objectContaining({ videoUrl: "result.mp4", isGenerating: false, generationTaskKey: null }));
+  });
+  it.each(["deleted", "new-task", "history-selected"])("preserves %s during restore", async (change) => {
+    const node = videoNode();
+    let latest: Record<string, unknown> | null = node.data;
+    listTasks.mockResolvedValue([{ task_key: node.data.generationTaskKey, status: "running" }]);
+    awaitTaskCompletion.mockImplementation(async () => {
+      latest = change === "deleted" ? null : change === "new-task"
+        ? { ...node.data, generationTaskKey: "new-task" }
+        : { ...node.data, isGenerating: false, videoUrl: "selected.mp4" };
+      return { status: "completed", result: { video_url: "old.mp4" } };
+    });
+    const updateNodeData = vi.fn();
+    await resumeNodeGeneration({ node, projectId: "demo", updateNodeData, getNodeData: () => latest });
+    expect(updateNodeData).not.toHaveBeenCalled();
   });
 });

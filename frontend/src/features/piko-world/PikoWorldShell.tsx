@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 import { safeLocalStorageSet } from "@/lib/localStorageQuota";
 import { PIKO_MAP_TRANSITIONS, isPikoMapId } from "./piko-map-transitions";
 import { prepareMapTravel, type MapExit, type MapLocation } from "./runtime/map-travel";
+import type { PikoOwnTaskStatus } from "./use-piko-task-status";
 import { PikoWorldCanvas } from "./PikoWorldCanvas";
 import { PikoMapTransition } from "./PikoMapTransition";
 import { PikoLoadingScreen } from "./PikoLoadingScreen";
@@ -108,7 +109,7 @@ function currentChatTime(): string {
   }).format(new Date());
 }
 
-export function PikoWorldShell({ playerGender, onMusicMapChange }: { playerGender?: PikoPlayerGender; onMusicMapChange?: (mapId: MapLocation["mapId"]) => void } = {}) {
+export function PikoWorldShell({ playerGender, onMusicMapChange, taskStatus }: { playerGender?: PikoPlayerGender; onMusicMapChange?: (mapId: MapLocation["mapId"]) => void; taskStatus?: PikoOwnTaskStatus } = {}) {
   useEffect(() => retainDogWorldSession(), []);
   usePikoCursors();
   const { t } = useTranslation();
@@ -148,6 +149,7 @@ export function PikoWorldShell({ playerGender, onMusicMapChange }: { playerGende
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => [
     ...CHAT_MOCK_MESSAGES,
   ]);
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const chatButtonRef = useRef<HTMLButtonElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const wardrobeButtonRef = useRef<HTMLButtonElement>(null);
@@ -281,6 +283,10 @@ export function PikoWorldShell({ playerGender, onMusicMapChange }: { playerGende
   }, [chatOpen]);
 
   useEffect(() => {
+    if (chatOpen) chatInputRef.current?.focus();
+  }, [chatOpen]);
+
+  useEffect(() => {
     if (!chatOpen) return;
     const list = chatMessageListRef.current;
     if (!list) return;
@@ -316,7 +322,7 @@ export function PikoWorldShell({ playerGender, onMusicMapChange }: { playerGende
     submitChatDraft();
   };
 
-  const handleChatToggle = () => {
+  const handleChatToggle = useCallback(() => {
     playPikoUiSound(chatOpen ? "close" : "open");
     if (chatOpen) {
       setChatOpen(false);
@@ -332,7 +338,23 @@ export function PikoWorldShell({ playerGender, onMusicMapChange }: { playerGende
       });
       return changed ? nextMessages : messages;
     });
-  };
+  }, [chatOpen]);
+
+  useEffect(() => {
+    if (!entered || entryFade !== "done" || mapLoadState !== "ready" || travelPending
+      || privateOpen || chatOpen || settingsOpen || profileOpen || residentSelectorOpen || musicOpen) return;
+    const openChat = (event: KeyboardEvent) => {
+      if (event.key !== "Enter" || event.repeat || event.isComposing || event.defaultPrevented
+        || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
+      const target = event.target;
+      if (target instanceof Element && target.closest('input,textarea,select,button,a,[contenteditable="true"],[role="dialog"],[role="menu"]')) return;
+      if (document.querySelector('[role="dialog"], [role="menu"]')) return;
+      event.preventDefault();
+      handleChatToggle();
+    };
+    window.addEventListener("keydown", openChat);
+    return () => window.removeEventListener("keydown", openChat);
+  }, [entered, entryFade, mapLoadState, travelPending, privateOpen, chatOpen, settingsOpen, profileOpen, residentSelectorOpen, musicOpen, handleChatToggle]);
 
   const handleResidentSelectorOpenChange = (open: boolean) => {
     if (open !== residentSelectorOpen) playPikoUiSound(open ? "open" : "close");
@@ -365,6 +387,7 @@ export function PikoWorldShell({ playerGender, onMusicMapChange }: { playerGende
           onExit={handleExit}
           nickname={nickname}
           speech={publicChat.speech}
+          taskStatus={taskStatus}
           residentId={selectedResidentId}
           playerGender={playerGender}
           accessory={accessory}
@@ -611,6 +634,7 @@ export function PikoWorldShell({ playerGender, onMusicMapChange }: { playerGende
 
           <div className="relative z-10 mx-4 h-16 -translate-y-1.25 shrink-0 overflow-hidden rounded-[min(var(--radius-sm),10px)] border border-amber-950/20 bg-white/65 transition-[border-color,box-shadow] duration-[var(--duration-fast)] focus-within:border-amber-950/35 focus-within:ring-2 focus-within:ring-amber-950/10">
             <Textarea
+              ref={chatInputRef}
               rows={2}
               value={chatDraft}
               onChange={(event) => { setChatDraft(event.target.value); setChatError(null); }}

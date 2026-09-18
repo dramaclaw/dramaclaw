@@ -2251,6 +2251,15 @@
     }
   },
   "pikoWorld": {
+    "taskLabel": {
+      "running": "Task in progress",
+      "completed": "Task completed",
+      "failed": "Task failed",
+      "publicRunning": "Creating a work",
+      "open": "{{status}}. Return to creation",
+      "unavailable": "The original creation is unavailable. Returned to the workspace.",
+      "openError": "Could not open the creation. Please try again."
+    },
     "translationAction": "Translate",
     "translationLoading": "Translating…",
     "translationHide": "Hide translation",

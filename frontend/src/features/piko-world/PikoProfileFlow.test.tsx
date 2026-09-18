@@ -112,3 +112,23 @@ it("sends public chat to the player bubble and blocks repeated Enter without los
 });
 
 vi.mock("./runtime/dog-world-session", () => ({ retainDogWorldSession: () => () => {} }));
+
+it("opens and focuses public chat on Enter only when no panel is open", async () => {
+  const user = userEvent.setup();
+  render(<PikoWorldShell />);
+  fireEvent.keyDown(window, { key: "Enter" });
+  const toggle = screen.getByRole("button", { name: /打开或收起世界聊天/, hidden: true });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await user.click(screen.getByRole("button", { name: "Enter test map" }));
+  await waitFor(() => expect(screen.getByTestId("map").parentElement).not.toHaveAttribute("inert"), { timeout: 2000 });
+  fireEvent.keyDown(window, { key: "Enter", isComposing: true });
+  fireEvent.keyDown(window, { key: "Enter", repeat: true });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  fireEvent.keyDown(window, { key: "Enter" });
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByPlaceholderText("和小镇的大家说点什么吧…")).toHaveFocus();
+  fireEvent.keyDown(window, { key: "Escape" });
+  await user.click(screen.getByRole("button", { name: "角色装扮" }));
+  fireEvent.keyDown(window, { key: "Enter" });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+});

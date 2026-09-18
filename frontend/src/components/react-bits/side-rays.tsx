@@ -77,6 +77,7 @@ export default function SideRays({
   const meshRef = useRef<Mesh | null>(null);
   const cleanupFunctionRef = useRef<(() => void) | null>(null);
   const [isVisible, setIsVisible] = useState(false);
+  const [contextVersion, setContextVersion] = useState(0);
   const observerRef = useRef<IntersectionObserver | null>(null);
 
   useEffect(() => {
@@ -121,6 +122,9 @@ export default function SideRays({
       rendererRef.current = renderer;
 
       const gl = renderer.gl;
+      // Reveal only after a successful draw, never an uninitialized/lost buffer.
+      gl.canvas.style.visibility = "hidden";
+      gl.clearColor(0, 0, 0, 0);
       gl.canvas.style.width = "100%";
       gl.canvas.style.height = "100%";
 
@@ -228,32 +232,69 @@ void main() {
         uniforms.iResolution.value = [w * renderer.dpr, h * renderer.dpr];
       };
 
+      let suspended = false;
+      let resumeTimer: ReturnType<typeof setTimeout> | undefined;
+      const hide = () => {
+        suspended = true;
+        gl.canvas.style.visibility = "hidden";
+        if (animationIdRef.current !== null) cancelAnimationFrame(animationIdRef.current);
+        animationIdRef.current = null;
+      };
       const loop = (t: number) => {
-        if (!rendererRef.current || !uniformsRef.current || !meshRef.current) return;
+        animationIdRef.current = null;
+        if (cancelled || suspended || document.hidden || gl.isContextLost()
+          || !rendererRef.current || !uniformsRef.current || !meshRef.current) return;
         uniforms.iTime.value = t * 0.001;
         try {
           renderer.render({ scene: mesh });
+          gl.canvas.style.visibility = "visible";
           animationIdRef.current = requestAnimationFrame(loop);
         } catch {
-          return;
+          hide();
         }
       };
+      const resume = () => {
+        clearTimeout(resumeTimer);
+        if (cancelled || document.hidden || gl.isContextLost()) return;
+        suspended = false;
+        if (animationIdRef.current === null) animationIdRef.current = requestAnimationFrame(loop);
+      };
+      const beforeUnload = () => {
+        hide();
+        // An unrelated unsaved-changes prompt can cancel navigation.
+        clearTimeout(resumeTimer);
+        resumeTimer = setTimeout(resume, 1000);
+      };
+      const pageHide = () => { clearTimeout(resumeTimer); hide(); };
+      const visibility = () => { if (document.hidden) hide(); else resume(); };
+      const contextLost = (event: Event) => { event.preventDefault(); hide(); };
+      const contextRestored = () => setContextVersion(version => version + 1);
+      window.addEventListener("beforeunload", beforeUnload);
+      window.addEventListener("pagehide", pageHide);
+      window.addEventListener("pageshow", resume);
+      document.addEventListener("visibilitychange", visibility);
+      gl.canvas.addEventListener("webglcontextlost", contextLost);
+      gl.canvas.addEventListener("webglcontextrestored", contextRestored);
 
       window.addEventListener("resize", updateSize);
       updateSize();
-      animationIdRef.current = requestAnimationFrame(loop);
+      resume();
 
       cleanupFunctionRef.current = () => {
-        if (animationIdRef.current) {
-          cancelAnimationFrame(animationIdRef.current);
-          animationIdRef.current = null;
-        }
+        hide();
+        clearTimeout(resumeTimer);
+        window.removeEventListener("beforeunload", beforeUnload);
+        window.removeEventListener("pagehide", pageHide);
+        window.removeEventListener("pageshow", resume);
+        document.removeEventListener("visibilitychange", visibility);
+        gl.canvas.removeEventListener("webglcontextlost", contextLost);
+        gl.canvas.removeEventListener("webglcontextrestored", contextRestored);
         window.removeEventListener("resize", updateSize);
         try {
-          const loseCtx = renderer.gl.getExtension("WEBGL_lose_context");
-          if (loseCtx) loseCtx.loseContext();
           const canvas = renderer.gl.canvas;
           if (canvas?.parentNode) canvas.parentNode.removeChild(canvas);
+          const loseCtx = renderer.gl.getExtension("WEBGL_lose_context");
+          if (loseCtx) loseCtx.loseContext();
         } catch {
           /* noop */
         }
@@ -273,37 +314,8 @@ void main() {
       }
     };
   }, [
+    contextVersion,
     isVisible,
-    speed,
-    rayColor1,
-    rayColor2,
-    intensity,
-    spread,
-    origin,
-    tilt,
-    saturation,
-    blend,
-    falloff,
-    opacity,
-  ]);
-
-  useEffect(() => {
-    if (!uniformsRef.current) return;
-    const u = uniformsRef.current;
-    u.iSpeed.value = speed;
-    u.iRayColor1.value = hexToRgb(rayColor1);
-    u.iRayColor2.value = hexToRgb(rayColor2);
-    u.iIntensity.value = intensity;
-    u.iSpread.value = spread;
-    const [flipX, flipY] = originToFlip(origin);
-    u.iFlipX.value = flipX;
-    u.iFlipY.value = flipY;
-    u.iTilt.value = tilt;
-    u.iSaturation.value = saturation;
-    u.iBlend.value = blend;
-    u.iFalloff.value = falloff;
-    u.iOpacity.value = opacity;
-  }, [
     speed,
     rayColor1,
     rayColor2,

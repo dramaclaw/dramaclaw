@@ -36,7 +36,6 @@ import {
   extractRequestId,
 } from '@/features/canvas/application/generationErrorReport';
 import {
-  isStaleGenerationTask,
   shouldWriteGenerationError,
 } from '@/features/canvas/application/generationTaskArbitration';
 
@@ -57,22 +56,14 @@ export interface GenerationTaskDescriptor {
   [key: string]: unknown;
 }
 
-// Task keys whose awaitTaskCompletion promise is already owned by an in-session
-// submit flow. The resume scanner must skip these — re-calling awaitTaskCompletion
-// for the same key would overwrite the original resolver and strand that promise.
-// This set is empty on a fresh page load, so persisted-but-orphaned tasks resume.
-const sessionOwnedTaskKeys = new Set<string>();
-
 /**
  * Build the patch that records a freezone job on a node right after submit so the
  * generation can be resumed after a refresh. Spread alongside the
  * `{ isGenerating: true, generationStartedAt }` patch each flow already writes.
  *
- * Also marks the task key as session-owned so {@link nodeNeedsGenerationResume}
- * won't double-attach while the originating flow is still awaiting it.
+ * Concurrent submit/resume waits share the task API promise.
  */
 export function generationTaskDescriptor(ref: FreezoneJobRef): GenerationTaskDescriptor {
-  sessionOwnedTaskKeys.add(ref.task_key);
   return {
     generationTaskKey: ref.task_key,
     generationTaskType: ref.task_type,
@@ -394,8 +385,11 @@ export async function resumeNodeGeneration(params: {
   }
 
   const readLatestNodeData = () =>
-    getNodeData?.(node.id)
-    ?? (node.data as Record<string, unknown>);
+    getNodeData ? getNodeData(node.id) : data;
+  const stillNeedsResult = () => {
+    const latest = readLatestNodeData();
+    return latest?.isGenerating === true && latest.generationTaskKey === taskKey;
+  };
 
   // Quick pre-check: if the task no longer exists server-side (expired/cleaned),
   // avoid hanging on the full poll budget — clear the stuck 生成中 state now.
@@ -407,11 +401,7 @@ export async function resumeNodeGeneration(params: {
   // 连续 miss 才算数:确认窗口约 10 秒,相对 20~35 分钟的完整预算可以忽略,
   // 却足以盖住瞬时漏项。
   if (await confirmTaskMissing(projectId, taskKey)) {
-    const latestNodeData = readLatestNodeData();
-    if (isStaleGenerationTask({ nodeData: latestNodeData, taskKey })) {
-      return;
-    }
-
+    if (!stillNeedsResult()) return;
     updateNodeData(node.id, buildErrorPatch(kind, new Error(i18n.t('canvas.resumeGeneration.taskGone'))));
     return;
   }
@@ -419,7 +409,9 @@ export async function resumeNodeGeneration(params: {
   try {
     // 按任务类型取预算，跟提交侧同一份口径（见 pollTimeoutForTaskType）。
     const completed = await awaitTaskCompletion(taskKey, projectId, { taskType });
-    updateNodeData(node.id, await buildSuccessPatch(kind, completed, taskType, jobId, projectId));
+    if (!stillNeedsResult()) return;
+    const patch = await buildSuccessPatch(kind, completed, taskType, jobId, projectId);
+    if (stillNeedsResult()) updateNodeData(node.id, patch);
   } catch (error) {
     console.warn('[resume-generation] task resume failed', { nodeId: node.id, taskKey, error });
     // 轮询超时只说明这一轮不再等了，任务还在后端跑：保留 isGenerating 与句柄，
@@ -427,11 +419,9 @@ export async function resumeNodeGeneration(params: {
     if (isTaskPollTimeoutError(error)) {
       return;
     }
+    if (!stillNeedsResult()) return;
     if (kind === 'image' || kind === 'video') {
-      const latestNodeData = readLatestNodeData();
-      if (isStaleGenerationTask({ nodeData: latestNodeData, taskKey })) {
-        return;
-      }
+      const latestNodeData = readLatestNodeData()!;
       if (!shouldWriteGenerationError({ nodeData: latestNodeData, taskKey, error })) {
         updateNodeData(node.id, { ...CLEARED_TASK_FIELDS });
         return;
@@ -443,12 +433,12 @@ export async function resumeNodeGeneration(params: {
 }
 
 /**
- * Whether a node restored from storage needs {@link resumeNodeGeneration}. Returns
- * false for tasks already being awaited by an in-session flow (see
- * {@link sessionOwnedTaskKeys}).
+ * Whether a node restored from storage needs {@link resumeNodeGeneration}.
+ * This includes SPA navigation: a submit callback may have updated an old canvas
+ * snapshot while the persisted node still needs its completed result.
  */
 export function nodeNeedsGenerationResume(node: CanvasNode): boolean {
   const data = node.data as Record<string, unknown>;
   const taskKey = typeof data.generationTaskKey === 'string' ? data.generationTaskKey : '';
-  return data.isGenerating === true && taskKey.length > 0 && !sessionOwnedTaskKeys.has(taskKey);
+  return data.isGenerating === true && taskKey.length > 0;
 }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Elastic-2.0
-import { afterEach, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { ANIMAL_AUDIO, animalVolume, createAnimalAudio, type AnimalAudioSource } from "./animal-audio";
 
 class FakeAudio {
@@ -103,5 +103,21 @@ it("rechecks the listener when play resolves before the next timer tick", async 
   document.dispatchEvent(new Event("pointerdown")); await vi.advanceTimersByTimeAsync(9000);
   runtime.update({ x: 1000, y: 0 }); finish(); await Promise.resolve();
   expect(FakeAudio.all[0].volume).toBe(0);
+  runtime.destroy();
+});
+
+beforeEach(() => { vi.spyOn(document, "hasFocus").mockReturnValue(true); });
+
+it("silences animal voices on window blur and resumes scheduling on focus", async () => {
+  const runtime = setup([{ id: "hen", kind: "hen", clip: "henPeck", frame: 0, position: { x: 0, y: 0 } }]);
+  document.dispatchEvent(new Event("pointerdown"));
+  await vi.advanceTimersByTimeAsync(9000);
+  const audio = FakeAudio.all[0];
+  expect(audio.play).toHaveBeenCalledTimes(1);
+  window.dispatchEvent(new Event("blur"));
+  expect(audio.pause).toHaveBeenCalled(); expect(audio.volume).toBe(0);
+  await vi.advanceTimersByTimeAsync(60000); expect(audio.play).toHaveBeenCalledTimes(1);
+  window.dispatchEvent(new Event("focus"));
+  await vi.advanceTimersByTimeAsync(60000); expect(audio.play).toHaveBeenCalledTimes(2);
   runtime.destroy();
 });

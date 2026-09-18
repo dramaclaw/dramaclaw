@@ -8,6 +8,7 @@ import { PIKO_MUSIC_PLAYLISTS } from "./piko-map-music";
 import { renderHook } from "@testing-library/react";
 const auth = vi.hoisted(() => ({ username: "alice" }));
 vi.mock("@/stores/auth-store", () => ({ useAuthStore: (select: (state: typeof auth) => unknown) => select(auth) }));
+vi.mock("./use-piko-task-status", () => ({ usePikoTaskStatus: () => ({ status: null }) }));
 vi.mock("./PikoWorldShell", () => ({ PikoWorldShell: ({ playerGender }: { playerGender: string }) => <div data-testid="world">{playerGender}</div> }));
 vi.mock("./PikoOnboarding", () => ({ PikoOnboarding: ({ onSave, onEnter, onMusicStart }: { onMusicStart: () => void; onSave: (gender: "female", name: string) => boolean; onEnter: () => void }) => <><button onClick={onMusicStart}>listen</button><button onClick={() => { if (onSave("female", "小花")) onEnter(); }}>create</button></> }));
 beforeEach(() => { localStorage.clear(); auth.username = "alice"; vi.spyOn(document, "hasFocus").mockReturnValue(true); });

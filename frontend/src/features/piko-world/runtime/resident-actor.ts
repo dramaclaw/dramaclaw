@@ -32,7 +32,7 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
     footsteps?: boolean;
     idleFrameAt?: (elapsedMs: number) => number;
     idleCycleMs?: number;
-    onPose?: (facing: Facing, column: number) => void;
+    onPose?: (facing: Facing, column: number, idleElapsedMs: number | null) => void;
     speed?: number;
     gaitCycleSourcePixels?: number;
   }) {
@@ -94,7 +94,7 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
     if(!document.hidden && isActive()) elapsed=(elapsed+Math.min(time.deltaMS,50))%idleCycleMs;
     const column = motion?.matches ? 0 : moving ? gaitColumn(gaitDistance, cycleDistance) : (controls.idleFrameAt ?? residentFrameAt)(elapsed);
     actor.setFrame(FACINGS.indexOf(facing)*11+column);
-    controls.onPose?.(facing, column);
+    controls.onPose?.(facing, column, moving || !canMove ? null : elapsed);
   };
   if (keyboardControlled) {
   window.addEventListener("keydown",keyDown);

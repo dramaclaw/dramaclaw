@@ -31,6 +31,9 @@ export function addCharacterPresentation(container: Container, name?: string, in
     body.on("pointerout", () => setHovered(false));
   }
   return Object.assign(setHovered, {
+    setNameGap(gap: number) {
+      label.y = -body.anchor.y * body.texture.height * Math.abs(body.scale.y) - gap;
+    },
     setName(name: string) {
       label.text = name;
       label.visible = Boolean(name);

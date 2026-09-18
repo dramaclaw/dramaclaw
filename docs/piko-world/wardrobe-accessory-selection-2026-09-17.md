@@ -19,4 +19,4 @@
 
 锚点生成与校验：`.venv/bin/python scripts/build_piko_player_head_anchors.py`；只验证用 `--check`。
 
-最终微调统一在 `piko-player-accessories.ts`：薄暮宽 15、偏移 (-1,-1)，斗笠宽 24、偏移 (0,-5)；装扮预览与地图共用。地图昵称间距 28 世界像素，预览帽子空间 28 CSS 像素。
+最终微调统一在 `piko-player-accessories.ts`：薄暮宽 15、偏移 (-1,-1)，斗笠宽 24、偏移 (0,-5)；装扮预览与地图共用。地图昵称基础间距 6 世界像素，按配饰向上延伸高度额外让位，预览帽子空间 28 CSS 像素。

@@ -120,3 +120,20 @@ it("walks to a click without overshoot and lets keyboard and pause cancel the ro
   expect(actor.container.position.x).toBe(stopped);
   actor.destroy();
 });
+
+it("reports the same idle clock used by raised-hand poses and resets it after walking", () => {
+  const host = document.createElement("div"); host.tabIndex = 0; document.body.append(host); host.focus();
+  const navigation = { walkableAreas: [{ id: "ground", points: [{x:0,y:0},{x:2000,y:0},{x:2000,y:1200},{x:0,y:1200}] }], colliders: [] } as unknown as PikoNavigation;
+  const ticker = { add: vi.fn(), remove: vi.fn() };
+  const onPose = vi.fn();
+  const actor = createResidentActor({} as Texture, ticker as unknown as Ticker, () => true,
+    { host, navigation, idleCycleMs: 8000, onPose });
+  const tick = ticker.add.mock.calls[0][0];
+  for (let i = 0; i < 62; i++) tick({ deltaMS: 50 });
+  expect(onPose.mock.lastCall?.[2]).toBe(3100);
+  window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyD" }));
+  tick({ deltaMS: 50 }); expect(onPose.mock.lastCall?.[2]).toBeNull();
+  window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyD" }));
+  tick({ deltaMS: 50 }); expect(onPose.mock.lastCall?.[2]).toBe(50);
+  actor.destroy();
+});

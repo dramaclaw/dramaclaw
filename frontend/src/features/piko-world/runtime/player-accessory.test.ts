@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { Sprite, Texture, TextureSource } from "pixi.js";
-import { expect, it, vi } from "vitest";
+import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { createPlayerAccessory } from "./player-accessory";
 import { PLAYER_ACCESSORIES, type PlayerAccessorySelection } from "../piko-player-accessories";
 it("inherits the body transform, switches equipment without moving the actor and hides forehead items from behind", () => {
@@ -40,4 +40,33 @@ it("skips unchanged poses and tolerates a missing optional accessory texture", (
   selected = "red-bow"; accessory.update("west", 3); expect(overlay.visible).toBe(false);
   selected = "wizard-hat"; accessory.update("west", 3); expect(overlay.visible).toBe(true);
   accessory.destroy(); body.destroy(); texture.destroy(true);
+});
+
+beforeEach(() => { vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false }))); });
+afterEach(() => { vi.unstubAllGlobals(); });
+it("flashes briefly, follows the worn item and hides for unequipped or reduced motion", () => {
+  const preference = { matches: false };
+  vi.stubGlobal("matchMedia", () => preference);
+  const body = new Sprite();
+  const texture = new Texture({ source: new TextureSource({ width: 128, height: 128 }) });
+  let selected: PlayerAccessorySelection = "wizard-hat";
+  const accessory = createPlayerAccessory(body, new Map([["wizard-hat", texture]]), () => selected, "male");
+  accessory.update("south", 0);
+  const sparkle = body.children.find(child => child.label === "accessory-sparkle")!;
+  accessory.animate(1000); expect(sparkle.visible).toBe(false);
+  accessory.animate(3100); expect(sparkle.visible).toBe(true);
+  const x = sparkle.x;
+  accessory.animate(3440);
+  expect(body.children.filter(child => child.label === "accessory-sparkle" && child.visible)).toHaveLength(3);
+  accessory.animate(7100); expect(sparkle.visible).toBe(false);
+  accessory.animate(11100); expect(sparkle.visible).toBe(true);
+  accessory.update("west", 0); accessory.animate(3100); expect(sparkle.x).not.toBe(x);
+  accessory.animate(null); expect(sparkle.visible).toBe(false);
+  accessory.update("south", 1); accessory.animate(3100); expect(sparkle.visible).toBe(false);
+  accessory.update("south", 0);
+  preference.matches = true; accessory.animate(3100); expect(sparkle.visible).toBe(false);
+  preference.matches = false; selected = null; accessory.update("south", 0);
+  accessory.animate(3100); expect(sparkle.visible).toBe(false);
+  accessory.destroy(); expect(body.children).toHaveLength(0);
+  body.destroy(); texture.destroy(true);
 });

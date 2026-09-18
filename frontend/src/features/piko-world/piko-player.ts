@@ -5,6 +5,10 @@ import { isValidPikoProfile, normalizePikoProfile } from "./piko-profile";
 export type PikoPlayerGender = "male" | "female";
 export const PIKO_MALE_PLAYER_MOTION_SRC = "/piko/world/characters/player-male-motion-v2.png";
 export const PIKO_FEMALE_PLAYER_MOTION_SRC = "/piko/world/characters/player-female-motion-v3.png";
+// Visual trial: shorten male front/back idle poses without changing atlas pixels or foot anchors.
+export function pikoPlayerPoseHeightScale(gender: PikoPlayerGender | undefined, facing: string, column: number): number {
+  return gender === "male" && (facing === "south" || facing === "north") && column < 3 ? 53 / 56 : 1;
+}
 export const PIKO_PLAYER_SPEED = 135;
 export const PIKO_PLAYER_GAIT_CYCLE_SOURCE_PIXELS = 48;
 export const PIKO_PLAYER_IDLE_CYCLE_MS = 8000;
