@@ -20,6 +20,19 @@ export const PREVIZ_SCENE_BYTE_LIMITS = {
   offload: 1024 * 1024,
 } as const;
 
+/**
+ * 动作相关上限，来源见设计文档「边界与兼容 → 限制」。
+ *
+ * `durationSec` 是单条导入动作的时长上限：重定向在主线程逐帧重采样，60 秒 × 30 fps
+ * 已经是 1800 帧 × 60 根骨头，再长就是肉眼可见的卡顿。
+ */
+export const PREVIZ_MOTION_LIMITS = {
+  imported: 30,
+  fileBytes: 50 * 1024 * 1024,
+  durationSec: 60,
+  clipsPerCharacter: 60,
+} as const;
+
 export function countObjects(scene: PrevizScene, kind: PrevizObjectKind): number {
   return scene.objects.filter((object) => object.kind === kind).length;
 }

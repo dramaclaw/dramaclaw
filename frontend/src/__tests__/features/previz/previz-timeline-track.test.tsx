@@ -33,7 +33,7 @@ const action: PrevizActionClip = {
   kind: 'action',
   startFrame: 10,
   endFrame: 40,
-  poseId: 'walk',
+  motionId: 'builtin:Walk_Loop',
 };
 
 const audio: PrevizAudioClip = {
@@ -166,11 +166,11 @@ describe('ClipBar default tone and label', () => {
   });
 
   /*
-    动作与音频这两行查表没有别的用例经过：动作必须仍旧当轨迹画（这是这次改配色表
-    的兼容承诺），音频得是青的，否则音频轨那个提交会带着一条画错色的行静悄悄发出去。
+    动作与音频这两行查表没有别的用例经过：动作片段有了自己那一行，得是绿的，和同一条
+    人物轨道上的路径蓝分得开；音频得是青的，否则音频轨会带着一条画错色的行静悄悄发出去。
   */
-  it('keeps action clips on the path colours and paints audio clips teal', () => {
-    expect(renderBar({ clip: action }).className).toContain('bg-[#3560ba]');
+  it('paints action clips green and audio clips teal', () => {
+    expect(renderBar({ clip: action }).className).toContain('bg-[#2f8a4a]');
     expect(renderBar({ clip: action })).toHaveTextContent('previz.timeline.clipLabel');
     expect(renderBar({ clip: audio }).className).toContain('bg-[#2a8c7a]');
   });
@@ -228,5 +228,45 @@ describe('PrevizTimelineTrack camera header', () => {
       </ul>,
     );
     expect(screen.queryByTestId('previz-track-live')).toBeNull();
+  });
+});
+
+describe('PrevizTimelineTrack action clips', () => {
+  const walk: PrevizActionClip = { ...action, id: 'a1' };
+  const route: PrevizPathClip = { ...path, id: 'p1', startFrame: 0, endFrame: 100 };
+
+  it('leaves action clips to their own row and keeps the razor on the path clip', async () => {
+    const onSplit = vi.fn();
+    const track: PrevizTrack = { id: 't1', objectId: 'hero', clips: [walk, route] };
+    render(
+      <ul>
+        <PrevizTimelineTrack {...trackProps({ track, kind: 'character', frame: 20, onSplit })} />
+      </ul>,
+    );
+    expect(screen.queryByTestId('previz-clip-a1')).toBeNull();
+    expect(screen.getByTestId('previz-clip-p1')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'previz.timeline.razor' }));
+    expect(onSplit).toHaveBeenCalledWith('p1');
+  });
+
+  it('does not let an action clip push the append button along', () => {
+    const track: PrevizTrack = { id: 't1', objectId: 'hero', clips: [route, { ...walk, endFrame: 180 }] };
+    render(
+      <ul>
+        <PrevizTimelineTrack {...trackProps({ track, kind: 'character' })} />
+      </ul>,
+    );
+    expect(screen.getByRole('button', { name: 'previz.timeline.appendClip' })).toHaveStyle({ left: '204px' });
+  });
+
+  it('renders the action row it is given even when collapsed', () => {
+    render(
+      <ul>
+        <PrevizTimelineTrack
+          {...trackProps({ kind: 'character', expanded: false, actionRow: <div data-testid="row" /> })}
+        />
+      </ul>,
+    );
+    expect(screen.getByTestId('row')).toBeInTheDocument();
   });
 });

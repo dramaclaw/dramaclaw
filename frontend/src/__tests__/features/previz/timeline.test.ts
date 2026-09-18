@@ -83,7 +83,7 @@ describe('pathClipAt', () => {
     const track: PrevizTrack = {
       id: 't',
       objectId: 'o',
-      clips: [{ id: 'a', kind: 'action', startFrame: 0, endFrame: 60, poseId: 'walk' }],
+      clips: [{ id: 'a', kind: 'action', startFrame: 0, endFrame: 60, motionId: 'builtin:Walk_Loop' }],
     };
     expect(pathClipAt(track, 30)).toBeUndefined();
     expect(isPathClip(track.clips[0])).toBe(false);
@@ -438,7 +438,7 @@ describe('setPathAim', () => {
       {
         id: 't1',
         objectId: 'cam',
-        clips: [{ id: 'c1', kind: 'action', startFrame: 0, endFrame: 60, poseId: 'p' }],
+        clips: [{ id: 'c1', kind: 'action', startFrame: 0, endFrame: 60, motionId: 'builtin:Walk_Loop' }],
       },
     ]);
     // 特写片段有自己那套「看向」，动作片段根本没有朝向可言。

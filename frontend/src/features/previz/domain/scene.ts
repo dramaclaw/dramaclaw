@@ -7,6 +7,8 @@ import {
   PREVIZ_OBJECT_BASE_NAME,
 } from './objects';
 import { PREVIZ_DEFAULT_POSE_ID } from './poses';
+import { PREVIZ_MOTION_LIMITS } from './limits';
+import { isKnownMotionId } from './motionLibrary';
 
 /** 预演台里所有三元组的统一形状，顺序恒为 [x, y, z]，单位米 / 度。 */
 export type Vec3 = [number, number, number];
@@ -65,7 +67,7 @@ export const PREVIZ_POSE_ADJUST_RANGE: Readonly<
  * 骨架和动画库在 `CharacterRigFactory` 里缓存成共享 Promise，第 20 个人物一个字节都不多
  * 下；只有全场都是 capsule 时那两份 GLB 才一次都不拉，而那是一次性的量。每多一个人物
  * 真正省掉的是每人一份的东西：整棵蒙皮子树的克隆、一份材质副本、一个 AnimationMixer，
- * 还有沿路径走位时每帧一次的姿势解算（站着不动的人 `poseTime` 不变，`applyPose` 早退）。
+ * 还有沿路径走位时每帧一次的姿势解算（站着不动的人 `motion` 不变，`applyMotion` 早退）。
  * upstream 留这一档就是为了让人先把走位摆出来。它该在场景图那条换模型的路上分叉，
  * 不在 `BODY_WIDTH_SCALE` 里加宽减窄。
  */
@@ -215,12 +217,39 @@ export interface PrevizPathClip {
   aimObjectId?: string | null;
 }
 
+/**
+ * 人物的动作片段：这段帧区间内身体播 `motionId` 指向的动作，位置与朝向仍归路径管。
+ *
+ * 区间是**半开**的 `[startFrame, endFrame)`，与路径片段的闭区间不同：两段动作首尾相接时
+ * 交界那一帧只能属于后一段，否则过渡会在同一帧上算两次。
+ */
 export interface PrevizActionClip {
   id: string;
   kind: 'action';
   startFrame: number;
   endFrame: number;
-  poseId: string;
+  /** `builtin:<clip 名>` 或 `import:<scene.motions[].id>`，见 `domain/motionLibrary.ts`。 */
+  motionId: string;
+}
+
+export type PrevizMotionFormat = 'glb' | 'gltf' | 'bvh';
+export type PrevizSkeletonKind = 'ual' | 'mixamo' | 'smpl';
+
+/**
+ * 导入的一条动作。存的是**原始文件**的 URL，重定向在打开编辑器时于浏览器里现做
+ * （设计文档决策 5）：重定向算法将来要修，存烤好的结果就得逐个场景迁移。
+ */
+export interface PrevizImportedMotion {
+  id: string;
+  name: string;
+  url: string;
+  sourceFileName: string;
+  format: PrevizMotionFormat;
+  skeleton: PrevizSkeletonKind;
+  /** 同一文件多条动画时的下标；BVH 恒为 0。 */
+  clipIndex: number;
+  durationSec: number;
+  loop: boolean;
 }
 
 /**
@@ -303,6 +332,8 @@ export interface PrevizSceneSettings {
 export interface PrevizScene {
   schemaVersion: typeof PREVIZ_SCHEMA_VERSION;
   settings: PrevizSceneSettings;
+  /** 导入的动作，跟着这个预演台节点走（决策 4）。内置动作不进场景。 */
+  motions: PrevizImportedMotion[];
   objects: PrevizObject[];
   timeline: {
     /** 对象轨道。 */
@@ -331,6 +362,7 @@ export function createDefaultScene(): PrevizScene {
       displayMode: 'solid',
       outputAspect: '16:9',
     },
+    motions: [],
     objects: [],
     timeline: { tracks: [], program: [], audio: [] },
   };
@@ -477,6 +509,8 @@ const ASSET_FORMATS: Record<PrevizProp['assetFormat'], true> = {
   obj: true,
   primitive: true,
 };
+const MOTION_FORMATS: Record<PrevizMotionFormat, true> = { glb: true, gltf: true, bvh: true };
+const SKELETON_KINDS: Record<PrevizSkeletonKind, true> = { ual: true, mixamo: true, smpl: true };
 
 function isMember<T extends string>(table: Record<T, true>, value: unknown): value is T {
   // hasOwnProperty 而不是 `in`：`in` 会把 'constructor' 这类原型链上的键也认成合法值。
@@ -631,24 +665,93 @@ export function parseObject(raw: unknown): PrevizObject | null {
   }
 }
 
-function parseTracks(raw: unknown, objectIds: ReadonlySet<string>): PrevizTrack[] {
+function parseTracks(
+  raw: unknown,
+  objects: readonly PrevizObject[],
+  importedMotionIds: ReadonlySet<string>,
+): PrevizTrack[] {
   if (!Array.isArray(raw)) return [];
+  const kinds = new Map(objects.map((object) => [object.id, object.kind]));
   const tracks: PrevizTrack[] = [];
   for (const entry of raw) {
     if (entry === null || typeof entry !== 'object') continue;
     const source = entry as Partial<PrevizTrack>;
     if (typeof source.id !== 'string' || typeof source.objectId !== 'string') continue;
     // 悬空轨道直接丢：求值器（P3）拿到指向已删对象的轨道只会报错或静默出错。
-    if (!objectIds.has(source.objectId)) continue;
+    const kind = kinds.get(source.objectId);
+    if (!kind) continue;
+    const rawClips: unknown[] = Array.isArray(source.clips) ? source.clips : [];
+    // 非动作片段只做浅拷贝原样透传：它们的校验不在这一轮的范围里。
+    const others = rawClips.filter(
+      (clip): clip is PrevizClip =>
+        clip !== null && typeof clip === 'object' && (clip as { kind?: unknown }).kind !== 'action',
+    );
     tracks.push({
       id: source.id,
       objectId: source.objectId,
-      // clips 只做浅拷贝，片段内部原样透传：片段校验是 P3 求值器落地时的事，
-      // 现在没有任何代码读它，提前写一遍只会和那时的真实需求对不上。
-      clips: Array.isArray(source.clips) ? [...source.clips] : [],
+      clips: [...others, ...parseActionClips(rawClips, kind, importedMotionIds)],
     });
   }
   return tracks;
+}
+
+/**
+ * 动作片段逐条校验：只挂在人物轨道上、动作引用得认得出、区间合法，同一轨道内有序不重叠，
+ * 超过上限的截掉。求值器与时间线按「有序、不重叠」取邻居，脏数据得在这里收口。
+ */
+function parseActionClips(
+  rawClips: readonly unknown[],
+  kind: PrevizObjectKind,
+  importedMotionIds: ReadonlySet<string>,
+): PrevizActionClip[] {
+  if (kind !== 'character') return [];
+  const actions: PrevizActionClip[] = [];
+  for (const entry of rawClips) {
+    if (entry === null || typeof entry !== 'object') continue;
+    const source = entry as Partial<PrevizActionClip>;
+    if (source.kind !== 'action' || typeof source.id !== 'string') continue;
+    // 悬空引用丢掉：导入动作被删之后留着片段，时间线上会是一段放不出任何东西的空条。
+    if (!isKnownMotionId(source.motionId, importedMotionIds)) continue;
+    const range = parseClipRange(source);
+    if (!range) continue;
+    actions.push({ id: source.id, kind: 'action', ...range, motionId: source.motionId });
+  }
+  return withoutOverlaps(actions).slice(0, PREVIZ_MOTION_LIMITS.clipsPerCharacter);
+}
+
+function parseMotions(raw: unknown): PrevizImportedMotion[] {
+  if (!Array.isArray(raw)) return [];
+  const motions: PrevizImportedMotion[] = [];
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    if (motions.length >= PREVIZ_MOTION_LIMITS.imported) break;
+    if (entry === null || typeof entry !== 'object') continue;
+    const source = entry as Partial<PrevizImportedMotion>;
+    if (typeof source.id !== 'string' || source.id === '' || seen.has(source.id)) continue;
+    if (typeof source.url !== 'string' || source.url === '') continue;
+    if (!isMember(MOTION_FORMATS, source.format)) continue;
+    if (!isMember(SKELETON_KINDS, source.skeleton)) continue;
+    if (
+      typeof source.durationSec !== 'number' ||
+      !Number.isFinite(source.durationSec) ||
+      !(source.durationSec > 0)
+    )
+      continue;
+    seen.add(source.id);
+    motions.push({
+      id: source.id,
+      name: typeof source.name === 'string' ? source.name : '',
+      url: source.url,
+      sourceFileName: typeof source.sourceFileName === 'string' ? source.sourceFileName : '',
+      format: source.format,
+      skeleton: source.skeleton,
+      clipIndex: Math.max(0, Math.round(num(source.clipIndex, 0))),
+      // 超长的在导入时就截过了；这里再夹一次防的是手改过的存档。
+      durationSec: Math.min(source.durationSec, PREVIZ_MOTION_LIMITS.durationSec),
+      loop: source.loop === true,
+    });
+  }
+  return motions;
 }
 
 /** 起止帧都得是有限数、起点不为负、至少一帧，否则整段不要。 */
@@ -755,6 +858,10 @@ export function parseScene(raw: unknown): PrevizScene {
     objects.push(object);
   }
 
+  // 动作要先于轨道解析：动作片段的引用校验要知道哪些导入动作还在。
+  const motions = parseMotions(source.motions);
+  const importedMotionIds = new Set(motions.map((motion) => motion.id));
+
   return {
     schemaVersion: PREVIZ_SCHEMA_VERSION,
     settings: {
@@ -765,9 +872,10 @@ export function parseScene(raw: unknown): PrevizScene {
         : fallback.settings.displayMode,
       outputAspect: parseOutputAspect(settings.outputAspect) ?? fallback.settings.outputAspect,
     },
+    motions,
     objects,
     timeline: {
-      tracks: parseTracks(source.timeline?.tracks, objectIds),
+      tracks: parseTracks(source.timeline?.tracks, objects, importedMotionIds),
       program: parseProgram(source.timeline?.program, objects),
       audio: parseAudio(source.timeline?.audio),
     },
