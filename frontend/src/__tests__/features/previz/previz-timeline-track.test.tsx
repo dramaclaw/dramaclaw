@@ -270,3 +270,79 @@ describe('PrevizTimelineTrack action clips', () => {
     expect(screen.getByTestId('row')).toBeInTheDocument();
   });
 });
+
+describe('PrevizTimelineTrack motion path row', () => {
+  const closeup: PrevizRigClip = { ...rig, id: 'r1', startFrame: 0, endFrame: 100 };
+  const drawn: PrevizPathClip = {
+    ...path,
+    id: 'p1',
+    startFrame: 0,
+    endFrame: 100,
+    points: [
+      { id: 'pt1', u: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
+      { id: 'pt2', u: 1, position: [3, 0, 0], rotation: [0, 0, 0] },
+    ],
+  };
+
+  /** 表头两个按钮：插入关键帧、清空轨迹。两者都只对路径片段有意义。 */
+  function pathButtons() {
+    return {
+      insert: screen.getByRole('button', { name: 'previz.timeline.insertKeyframe' }),
+      clear: screen.getByRole('button', { name: 'previz.timeline.clearPath' }),
+    };
+  }
+
+  it('greys the buttons out when the playhead sits on a closeup and nothing else', () => {
+    const track: PrevizTrack = { id: 't1', objectId: 'cam', clips: [closeup] };
+    render(
+      <ul>
+        <PrevizTimelineTrack {...trackProps({ track, frame: 20, expanded: true })} />
+      </ul>,
+    );
+    const { insert, clear } = pathButtons();
+    expect(insert).toBeDisabled();
+    expect(clear).toBeDisabled();
+  });
+
+  it('acts on the path clip even when a closeup covers the same frame', async () => {
+    const onInsertKeyframe = vi.fn();
+    const onClearPath = vi.fn();
+    const track: PrevizTrack = { id: 't1', objectId: 'cam', clips: [closeup, drawn] };
+    render(
+      <ul>
+        <PrevizTimelineTrack
+          {...trackProps({ track, frame: 20, expanded: true, onInsertKeyframe, onClearPath })}
+        />
+      </ul>,
+    );
+    const { insert, clear } = pathButtons();
+    await userEvent.click(insert);
+    await userEvent.click(clear);
+    expect(onInsertKeyframe).toHaveBeenCalledWith('p1');
+    expect(onClearPath).toHaveBeenCalledWith('p1');
+  });
+
+  it('greys the buttons out on a path clip nobody has drawn yet', () => {
+    const track: PrevizTrack = { id: 't1', objectId: 'cam', clips: [{ ...drawn, points: [] }] };
+    render(
+      <ul>
+        <PrevizTimelineTrack {...trackProps({ track, frame: 20, expanded: true })} />
+      </ul>,
+    );
+    const { insert, clear } = pathButtons();
+    expect(insert).toBeDisabled();
+    expect(clear).toBeDisabled();
+  });
+
+  it('keeps the razor on whatever clip the playhead is over', async () => {
+    const onSplit = vi.fn();
+    const track: PrevizTrack = { id: 't1', objectId: 'cam', clips: [closeup] };
+    render(
+      <ul>
+        <PrevizTimelineTrack {...trackProps({ track, frame: 20, expanded: true, onSplit })} />
+      </ul>,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'previz.timeline.razor' }));
+    expect(onSplit).toHaveBeenCalledWith('r1');
+  });
+});

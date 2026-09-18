@@ -20,7 +20,7 @@ import { useTranslation } from 'react-i18next';
 
 import type { CloseupTarget } from '../domain/closeupClip';
 import type { PrevizClip, PrevizObjectKind, PrevizTrack } from '../domain/scene';
-import { isActionClip, isPathClip, uToFrame } from '../domain/timeline';
+import { isActionClip, isPathClip, pathClipAt, uToFrame } from '../domain/timeline';
 
 /** 头列宽度。轨道行、子轨道行、标尺占位共用同一个数，三者才对得齐。 */
 export const PREVIZ_TRACK_HEADER_PX = 240;
@@ -84,7 +84,7 @@ function laneClips(track: PrevizTrack): PrevizClip[] {
   return track.clips.filter((clip) => !isActionClip(clip));
 }
 
-/** 播放头压着的那个片段。剃刀、插入关键帧、清空轨迹都作用在它身上。 */
+/** 播放头压着的那个片段。剃刀作用在它身上，不挑种类。 */
 function clipUnder(clips: readonly PrevizClip[], frame: number): PrevizClip | undefined {
   return clips.find((clip) => frame >= clip.startFrame && frame <= clip.endFrame);
 }
@@ -130,6 +130,14 @@ export function PrevizTimelineTrack({
   const KindIcon = KIND_ICON[kind];
   const clips = laneClips(track);
   const current = clipUnder(clips, frame);
+  /**
+   * 运动路径行的两个按钮只认路径片段。跟着 `current` 走的话，机位上压着一段特写就足以
+   * 把它们点亮，而 `insertPathPointAt` / `clearPathPoints` 见到非路径片段直接原样返回——
+   * 按钮是亮的、按下去没反应。没画过点的空路径同理：曲线上采不到值，插进去的只会是原点，
+   * 域里也是直接返回，所以空片段一样按灰。
+   */
+  const currentPath = pathClipAt(track, frame);
+  const pathEditable = currentPath !== undefined && currentPath.points.length > 0;
   const keyframes = keyframeFrames(track);
   const previous = [...keyframes].reverse().find((at) => at < frame);
   const next = keyframes.find((at) => at > frame);
@@ -290,8 +298,8 @@ export function PrevizTimelineTrack({
               type="button"
               className={ICON_BUTTON}
               aria-label={t('previz.timeline.insertKeyframe')}
-              disabled={!current}
-              onClick={() => current && onInsertKeyframe(current.id)}
+              disabled={!pathEditable}
+              onClick={() => currentPath && onInsertKeyframe(currentPath.id)}
             >
               <Diamond className="h-3.5 w-3.5" />
             </button>
@@ -309,8 +317,8 @@ export function PrevizTimelineTrack({
               className={ICON_BUTTON}
               aria-label={t('previz.timeline.clearPath')}
               title={t('previz.timeline.clearPath')}
-              disabled={!current}
-              onClick={() => current && onClearPath(current.id)}
+              disabled={!pathEditable}
+              onClick={() => currentPath && onClearPath(currentPath.id)}
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
