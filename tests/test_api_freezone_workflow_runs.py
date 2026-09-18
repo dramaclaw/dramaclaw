@@ -1505,6 +1505,34 @@ def test_workflow_draft_api_lifecycle(workflow_run_client: TestClient) -> None:
     )
 
 
+def test_workflow_draft_cancel_prevents_later_canvas_creation(
+    workflow_run_client: TestClient,
+) -> None:
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-drafts"
+    created = workflow_run_client.post(
+        base,
+        json={
+            "intent": {"skill_id": "video-ad", "user_goal": "广告"},
+            "compiled": _valid_draft_compiled(),
+        },
+    ).json()["data"]
+    path = f"{base}/{created['draft_id']}"
+
+    stale = workflow_run_client.post(
+        f"{path}/cancel", json={"expected_revision": 2}
+    )
+    assert stale.json()["status"] == "workflow_draft_revision_conflict"
+    cancelled = workflow_run_client.post(
+        f"{path}/cancel", json={"expected_revision": 1}
+    )
+    assert cancelled.status_code == 200
+    assert cancelled.json()["data"]["status"] == "cancelled"
+    assert workflow_run_client.get(path).json()["data"]["status"] == "cancelled"
+    claim = workflow_run_client.post(f"{path}/claim", json={"revision": 1})
+    assert claim.json()["status"] == "workflow_draft_not_confirmable"
+    assert workflow_run_client.enqueued_tasks == []
+
+
 @pytest.mark.parametrize("method", ["post", "patch"])
 def test_workflow_draft_revalidates_untrusted_compiled_result(
     workflow_run_client, method

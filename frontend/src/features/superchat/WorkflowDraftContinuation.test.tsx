@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { latestWorkflowDraftId, WorkflowDraftContinuation } from "./WorkflowDraftContinuation";
+import { insertWorkflowDraftCancellationMessage, latestWorkflowDraftId, WorkflowDraftContinuation } from "./WorkflowDraftContinuation";
 import type { ChatMessage } from "./types";
 import translations from "../../../public/locales/zh/translation.json";
 
@@ -20,10 +20,10 @@ const messages = (name = "dramaclaw.freezone_prepare_workflow_plan_draft", ok = 
     raw: { name, output: { content: [{ type: "text", text: JSON.stringify({ ok, status: "workflow_draft_ready", draft_id: "draft-a", revision: 1 }) }] } },
   } }],
 }];
-const draft = { draft_id: "draft-a", revision: 1, status: "ready", run_after_create: false,
+const draft = { draft_id: "draft-a", revision: 1, status: "ready", run_after_create: false, updated_at: 2,
   preview: { title: "文本→图片→音频→视频→合成", node_count: 5, edge_count: 5 } };
 const props = () => ({ messages: messages(), projectId: "project-a", canvasId: "canvas-a", busy: false,
-  onConfirm: vi.fn().mockResolvedValue(true) });
+  onConfirm: vi.fn().mockResolvedValue(true), onCancelled: vi.fn() });
 beforeEach(() => { api.mockReset(); api.mockResolvedValue(draft); });
 afterEach(cleanup);
 
@@ -50,6 +50,54 @@ describe("workflow draft continuation", () => {
     expect(value.onConfirm.mock.calls[0][1]).toContain('"canvas_id":"canvas-a"');
     expect(screen.queryByRole("button")).toBeNull();
     expect(api).toHaveBeenCalledTimes(2);
+  });
+  it("cancels the persisted draft and keeps the card hidden after remount", async () => {
+    let cancelled = false;
+    api.mockImplementation(async (_path: string, options?: { method?: string }) => {
+      if (options?.method === "post") {
+        cancelled = true;
+        return { ...draft, status: "cancelled" };
+      }
+      return { ...draft, status: cancelled ? "cancelled" : "ready" };
+    });
+    const value = props();
+    const view = render(<WorkflowDraftContinuation {...value} />);
+    fireEvent.click(await screen.findByRole("button", { name: "取消方案" }));
+    await waitFor(() => expect(screen.queryByRole("button")).toBeNull());
+    expect(value.onCancelled).toHaveBeenCalledWith({ draftId: "draft-a", updatedAt: 2 });
+    expect(api).toHaveBeenCalledWith(
+      "projects/project-a/freezone/canvases/canvas-a/workflow-drafts/draft-a/cancel",
+      { method: "post", json: { expected_revision: 1 } },
+    );
+    expect(value.onConfirm).not.toHaveBeenCalled();
+    view.unmount();
+    render(<WorkflowDraftContinuation {...value} />);
+    await waitFor(() => expect(api).toHaveBeenCalledTimes(3));
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(value.onCancelled).toHaveBeenCalledTimes(2);
+  });
+  it("inserts cancellation feedback by its saved time instead of appending it", () => {
+    const original: ChatMessage[] = [
+      { id: "before", role: "user", text: "先做一个方案", timestamp: 1000 },
+      { id: "after", role: "user", text: "后续消息", timestamp: 3000 },
+    ];
+    const sorted = insertWorkflowDraftCancellationMessage(
+      original, { draftId: "draft-a", updatedAt: 2 }, "已取消工作流方案",
+    );
+    expect(sorted.map((message) => message.id)).toEqual([
+      "before", "workflow-draft-cancelled:draft-a", "after",
+    ]);
+    expect(sorted[1]).toMatchObject({ role: "assistant", text: "已取消工作流方案" });
+  });
+  it("keeps the draft visible when cancellation fails", async () => {
+    api.mockImplementation(async (_path: string, options?: { method?: string }) => {
+      if (options?.method === "post") throw new Error("network failure");
+      return draft;
+    });
+    render(<WorkflowDraftContinuation {...props()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "取消方案" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("未能取消方案");
+    expect(screen.getByRole("button", { name: "确认创建" })).toBeInTheDocument();
   });
   it.each(["confirming", "submitted", "confirmed", "failed"])("does not offer repeat creation for %s", async (status) => {
     api.mockResolvedValue({ ...draft, status });

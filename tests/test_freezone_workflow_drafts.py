@@ -7,6 +7,7 @@ import pytest
 
 from novelvideo.freezone.workflow_drafts import (
     bind_workflow_draft_task,
+    cancel_workflow_draft,
     claim_workflow_draft_confirmation,
     create_workflow_draft,
     finish_workflow_draft_confirmation,
@@ -121,6 +122,78 @@ def test_workflow_draft_rejects_stale_patch(tmp_path: Path) -> None:
     assert patched is None
     assert error is not None
     assert error["status"] == "workflow_draft_revision_conflict"
+
+
+def test_cancelled_workflow_draft_cannot_be_confirmed_or_patched(tmp_path: Path) -> None:
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        intent={"skill_id": "video-ad"},
+        compiled=_compiled(),
+    )
+    stale, error = cancel_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        expected_revision=2,
+    )
+    assert stale is None
+    assert error is not None and error["status"] == "workflow_draft_revision_conflict"
+
+    cancelled, error = cancel_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        expected_revision=1,
+    )
+    assert error is None
+    assert cancelled is not None and cancelled["status"] == "cancelled"
+    assert read_workflow_draft(
+        project_dir=tmp_path, canvas_id="default", draft_id=draft["draft_id"]
+    )[0]["status"] == "cancelled"
+    claimed, claim_error = claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        revision=1,
+    )
+    assert claimed is None
+    assert claim_error is not None and claim_error["status"] == "workflow_draft_not_confirmable"
+    patched, patch_error = patch_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        expected_revision=1,
+        intent=draft["intent"],
+        compiled=draft["compiled"],
+    )
+    assert patched is None
+    assert patch_error is not None and patch_error["status"] == "workflow_draft_not_editable"
+
+
+def test_claimed_workflow_draft_cannot_be_cancelled(tmp_path: Path) -> None:
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        intent={"skill_id": "video-ad"},
+        compiled=_compiled(),
+    )
+    claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        revision=1,
+    )
+    cancelled, error = cancel_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        expected_revision=1,
+    )
+    assert cancelled is None
+    assert error is not None and error["status"] == "workflow_draft_not_cancellable"
 
 
 def test_workflow_draft_confirmation_is_atomic(tmp_path: Path) -> None:

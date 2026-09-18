@@ -1,7 +1,7 @@
 import { RECIPE_OUTPUT_CHOICES, recipeOutputChoice, recipeOutputFields, type RecipeOutputChoice } from "@/lib/recipe-output";
 import { type HtmlArtifactReference, parseHtmlArtifactReference, appendHtmlArtifactTransportContext } from '@/features/html-artifacts/chatReference';
 import { HtmlArtifactResultCard } from '@/features/html-artifacts/HtmlArtifactResultCard';
-import { WorkflowDraftContinuation } from './WorkflowDraftContinuation';
+import { WorkflowDraftContinuation, insertWorkflowDraftCancellationMessage, latestWorkflowDraftId, type CancelledWorkflowDraft } from './WorkflowDraftContinuation';
 import { activeHtmlArtifactContext, HTML_ARTIFACT_REFERENCE_EVENT } from '@/features/html-artifacts/api';
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
@@ -12135,6 +12135,9 @@ export function SuperChatPanel({
   });
   const updateChatUiEvent = chat.updateUiEvent;
   const [pendingCanvasCommandApprovals, setPendingCanvasCommandApprovals] = useState<PendingCanvasCommandApproval[]>([]);
+  const [cancelledWorkflowDraft, setCancelledWorkflowDraft] = useState<
+    (CancelledWorkflowDraft & { scope: string }) | null
+  >(null);
   const [canvasCommandFeedbackByMessageId, setCanvasCommandFeedbackByMessageId] = useState<Record<string, CanvasCommandFeedback[]>>({});
   const [canvasContextActivitiesByMessageId, setCanvasContextActivitiesByMessageId] = useState<Record<string, CanvasContextActivity[]>>({});
   const [executingCanvasCommandApprovalIds, setExecutingCanvasCommandApprovalIds] = useState<Set<string>>(() => new Set());
@@ -13541,10 +13544,16 @@ export function SuperChatPanel({
       && !shouldHideOrphanRecoveredUiEventsMessage(message, userTurnIds)
       && !isUsageOnlyRuntimeMetadataMessage(message),
     );
+    const currentDraftId = latestWorkflowDraftId(chat.messages);
+    const cancelled = cancelledWorkflowDraft?.scope === `${params.project}:${effectiveFreezoneCanvasId}`
+      && cancelledWorkflowDraft.draftId === currentDraftId ? cancelledWorkflowDraft : null;
+    const orderedMessages = insertWorkflowDraftCancellationMessage(
+      messages, cancelled, t("workflowDraftContinuation.cancelled"),
+    );
     return searchQuery
-      ? messages.filter((message) => message.text.toLowerCase().includes(searchQuery))
-      : messages;
-  }, [activeMessages, searchQuery]);
+      ? orderedMessages.filter((message) => message.text.toLowerCase().includes(searchQuery))
+      : orderedMessages;
+  }, [activeMessages, cancelledWorkflowDraft, chat.messages, effectiveFreezoneCanvasId, params.project, searchQuery, t]);
   const activeClarificationEvent = useMemo(
     () => latestPendingAssistantClarificationEventForActiveTurn(visibleMessages, {
       busy: chat.busy,
@@ -15355,6 +15364,11 @@ export function SuperChatPanel({
                     busy={chat.busy}
                     hasApproval={pendingCanvasCommandApprovals.length > 0}
                     onConfirm={(display, transport) => chat.send(display, [], transport)}
+                    onCancelled={(cancelled) => setCancelledWorkflowDraft((current) => {
+                      const scope = `${params.project}:${effectiveFreezoneCanvasId}`;
+                      return current?.scope === scope && current.draftId === cancelled.draftId
+                        && current.updatedAt === cancelled.updatedAt ? current : { ...cancelled, scope };
+                    })}
                   />
                 )}
                 {thinkingCanvasContextActivity && !thinkingCanvasContextMessageId && (

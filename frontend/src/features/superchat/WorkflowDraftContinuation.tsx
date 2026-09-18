@@ -10,10 +10,28 @@ type Draft = {
   revision: number;
   status: string;
   run_after_create: boolean;
+  updated_at?: number;
   expires_at?: number;
   preview?: { title?: string; node_count?: number; edge_count?: number;
     external_inputs?: Array<{id: string; node_id: string; display_name?: string}> };
 };
+
+export type CancelledWorkflowDraft = { draftId: string; updatedAt: number };
+
+export function insertWorkflowDraftCancellationMessage(
+  messages: ChatMessage[], cancelled: CancelledWorkflowDraft | null, text: string,
+): ChatMessage[] {
+  if (!cancelled || !Number.isFinite(cancelled.updatedAt)) return messages;
+  const feedback: ChatMessage = {
+    id: `workflow-draft-cancelled:${cancelled.draftId}`,
+    role: "assistant",
+    text,
+    timestamp: cancelled.updatedAt * 1000,
+  };
+  const position = messages.findIndex((message) => message.timestamp > feedback.timestamp);
+  if (position < 0) return [...messages, feedback];
+  return [...messages.slice(0, position), feedback, ...messages.slice(position)];
+}
 
 function objects(value: unknown): Record<string, unknown>[] {
   if (typeof value === "string") {
@@ -43,29 +61,32 @@ export function latestWorkflowDraftId(messages: ChatMessage[]): string | null {
 }
 
 /** Recover the actionable continuation even when the agent stops at draft-ready. */
-export function WorkflowDraftContinuation({ messages, projectId, canvasId, busy, hasApproval = false, onConfirm }: {
+export function WorkflowDraftContinuation({ messages, projectId, canvasId, busy, hasApproval = false, onConfirm, onCancelled }: {
   messages: ChatMessage[];
   projectId: string;
   canvasId: string;
   busy: boolean;
   hasApproval?: boolean;
   onConfirm: (display: string, transport: string) => boolean | Promise<boolean>;
+  onCancelled?: (cancelled: CancelledWorkflowDraft) => void;
 }) {
   const { t } = useTranslation();
   const draftId = latestWorkflowDraftId(messages);
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [sending, setSending] = useState(false);
+  const [sending, setSending] = useState<"confirm" | "cancel" | null>(null);
   const [awaitingTurn, setAwaitingTurn] = useState(false);
   const sawBusy = useRef(false);
   const [error, setError] = useState("");
   const inFlight = useRef(false);
+  const onCancelledRef = useRef(onCancelled);
+  onCancelledRef.current = onCancelled;
   const scope = `${projectId}:${canvasId}:${draftId}`;
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
   useEffect(() => {
     setDraft(null);
     setError("");
-    setSending(false);
+    setSending(null);
     setAwaitingTurn(false);
     sawBusy.current = false;
     inFlight.current = false;
@@ -74,7 +95,13 @@ export function WorkflowDraftContinuation({ messages, projectId, canvasId, busy,
     const read = async () => {
       try {
         const value = await apiCall<Draft>(`projects/${encodeURIComponent(projectId)}/freezone/canvases/${encodeURIComponent(canvasId)}/workflow-drafts/${encodeURIComponent(draftId)}`);
-        if (active) { setDraft(value); setError(""); }
+        if (active) {
+          setDraft((current) => current?.status === "cancelled" ? current : value);
+          if (value.status === "cancelled" && value.updated_at != null) {
+            onCancelledRef.current?.({ draftId: value.draft_id, updatedAt: value.updated_at });
+          }
+          setError("");
+        }
       } catch {
         if (active) { setDraft(null); setError(""); }
       }
@@ -96,7 +123,7 @@ export function WorkflowDraftContinuation({ messages, projectId, canvasId, busy,
   const confirm = async () => {
     if (inFlight.current || busy) return;
     inFlight.current = true;
-    setSending(true);
+    setSending("confirm");
     setError("");
     const currentScope = scope;
     try {
@@ -124,7 +151,30 @@ export function WorkflowDraftContinuation({ messages, projectId, canvasId, busy,
         setError(t("workflowDraftContinuation.failed"));
       }
     } finally {
-      if (scopeRef.current === currentScope) { inFlight.current = false; setSending(false); }
+      if (scopeRef.current === currentScope) { inFlight.current = false; setSending(null); }
+    }
+  };
+  const cancel = async () => {
+    if (inFlight.current || busy) return;
+    inFlight.current = true;
+    setSending("cancel");
+    setError("");
+    const currentScope = scope;
+    try {
+      const cancelled = await apiCall<Draft>(
+        `projects/${encodeURIComponent(projectId)}/freezone/canvases/${encodeURIComponent(canvasId)}/workflow-drafts/${encodeURIComponent(draftId!)}/cancel`,
+        { method: "post", json: { expected_revision: draft.revision } },
+      );
+      if (scopeRef.current === currentScope) {
+        setDraft(cancelled);
+        if (cancelled.status === "cancelled" && cancelled.updated_at != null) {
+          onCancelled?.({ draftId: cancelled.draft_id, updatedAt: cancelled.updated_at });
+        }
+      }
+    } catch {
+      if (scopeRef.current === currentScope) setError(t("workflowDraftContinuation.cancelFailed"));
+    } finally {
+      if (scopeRef.current === currentScope) { inFlight.current = false; setSending(null); }
     }
   };
   return <section className="rounded-lg border border-border bg-background p-3 text-sm" aria-label={t("workflowDraftContinuation.ariaLabel")}>
@@ -136,9 +186,12 @@ export function WorkflowDraftContinuation({ messages, projectId, canvasId, busy,
         (source) => source.display_name || source.node_id,
       ).join("、")}</p>}
     {error && <p role="alert" className="mt-2">{error}</p>}
-    <div className="mt-3 flex justify-end">
-      <button type="button" className="tap-button tap-button-quiet-primary" disabled={busy || sending} onClick={() => void confirm()}>
-        {t(sending ? "workflowDraftContinuation.sending" : draft.run_after_create ? "workflowDraftContinuation.confirmRun" : "workflowDraftContinuation.confirm")}
+    <div className="mt-3 flex justify-end gap-2">
+      <button type="button" className="tap-button" disabled={busy || sending !== null} onClick={() => void cancel()}>
+        {t(sending === "cancel" ? "workflowDraftContinuation.cancelling" : "workflowDraftContinuation.cancel")}
+      </button>
+      <button type="button" className="tap-button tap-button-quiet-primary" disabled={busy || sending !== null} onClick={() => void confirm()}>
+        {t(sending === "confirm" ? "workflowDraftContinuation.sending" : draft.run_after_create ? "workflowDraftContinuation.confirmRun" : "workflowDraftContinuation.confirm")}
       </button>
     </div>
   </section>;
