@@ -60,3 +60,4 @@ docs/superpowers/
 # 风格图墙的图片改由 OSS 提供(后端配 STYLE_GALLERY_ASSET_BASE),不再随仓库
 # 发布。scripts/build_style_gallery.py 仍会把产物写到这里，属本地中间物。
 /frontend/public/style-gallery/
+blender/dist/
