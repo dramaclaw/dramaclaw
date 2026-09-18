@@ -5,7 +5,7 @@
 - 配对开始与轮询：**不需要**任何凭证。插件此刻还没有凭证，这是先有鸡还是先有蛋
   的那个蛋。保护靠的是 `pairing_id` 的随机性、5 分钟有效期、只兑一次，和频率限制。
 - 配对确认：浏览器会话（`get_api_user`）。授权只能由登录的人做出。
-- 其余：插件令牌（`get_blender_client`，见 Task 8）。这是第三类凭证，**只在这个
+- 其余：插件令牌（`get_blender_client`，见本文件下方）。这是第三类凭证，**只在这个
   文件里生效**——`novelvideo/api/auth.py` 顶上那段注释说得很清楚，长期外部密钥
   不进主鉴权链路。
 """
@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from novelvideo import blender_store
 from novelvideo.api.auth import get_api_user
+from novelvideo.api.deps import list_user_projects
 
 router = APIRouter()
 
@@ -105,3 +106,35 @@ async def poll_pairing(pairing_id: str, request: Request) -> dict:
             "expires_in": blender_store.TOKEN_TTL_SECONDS,
         }
     return {"status": result.status}
+
+
+@router.get("/blender/projects")
+async def list_projects(
+    client: blender_store.BlenderClient = Depends(get_blender_client),
+) -> dict:
+    """插件面板的项目下拉框。范围严格等于配对时那个账号的项目。"""
+    return {"projects": list_user_projects(client.user_id)}
+
+
+@router.get("/blender/clients")
+async def list_clients(user: dict = Depends(get_api_user)) -> dict:
+    clients = blender_store.list_tokens(_db(), user_id=user["username"])
+    return {
+        "clients": [
+            {
+                "token_id": item.token_id,
+                "label": item.label,
+                "created_at": item.created_at,
+                "expires_at": item.expires_at,
+                "last_seen": item.last_seen,
+            }
+            for item in clients
+        ]
+    }
+
+
+@router.delete("/blender/clients/{token_id}")
+async def revoke_client(token_id: str, user: dict = Depends(get_api_user)) -> dict:
+    if not blender_store.revoke_token(_db(), token_id, user_id=user["username"]):
+        raise HTTPException(status_code=404, detail="插件不存在或已断开")
+    return {"ok": True}
