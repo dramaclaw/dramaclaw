@@ -7906,6 +7906,7 @@ export const MessageBubble = memo(function MessageBubble({
   }
   const isHistoricalTool = isTool && isHistoricalToolMessage(message);
   const isFreezoneLayout = variant === "freezone";
+  const isWorkflowDraftCancelledNotice = message.id.startsWith("workflow-draft-cancelled:");
   const freezoneToolActivity = isTool ? freezoneToolDisplay(message) : null;
   const isErrorReply = isAssistantErrorReply(message);
   const isCompletionNotice = isAssistantCompletionNotice(message);
@@ -8267,12 +8268,15 @@ export const MessageBubble = memo(function MessageBubble({
           )}
         >
           <article
+            role={isWorkflowDraftCancelledNotice ? "status" : undefined}
             className={cn(
               "group relative text-sm leading-6 shadow-none",
               (visibleBlocks.length > 0 || assistantPrefersWideLayout) && !isTool
                 ? "w-full min-w-0 overflow-visible"
                 : "w-fit overflow-hidden",
-              presentation.surface === "tool"
+              isWorkflowDraftCancelledNotice
+                ? "max-w-full rounded-[12px] border border-amber-500/50 bg-amber-500/15 px-3 py-2.5 font-medium text-amber-800 dark:text-amber-200"
+                : presentation.surface === "tool"
                 ? "max-w-[86%] rounded-[14px] border border-amber-500/20 bg-amber-500/8 px-4 pb-3 pt-2 text-card-foreground"
                 : presentation.surface === "system"
                   ? "max-w-[86%] rounded-[12px] border border-border/70 bg-muted/25 px-3 py-2 text-muted-foreground"
