@@ -14,6 +14,8 @@ compatibility: Requires Freezone/虾画 chat surface and preferably injected can
 
 读取 Skill 规划包并收集完整输入后，必须先调用 `freezone_begin_agent_product_generation(product_kind="workflow_result", ...)` 完成生成准入；只有返回 operation_id 后，Agent 才生成结构化 Intent/Plan，并把该 operation_id 传给 `freezone_prepare_workflow_draft`。节点数据、稳定 ID、连线类型、分组、布局和成片合成由工具确定性完成。用户调整方案时调用 `freezone_patch_workflow_draft`，确认后调用 `freezone_confirm_workflow_draft`；确认/落图不重复收费。不得调用 `freezone_build_workflow_plan`，也不得用通用画布命令手写工作流。
 
+本次需要生成图片或视频、且执行模式要求先确认生成参数时，调用 `freezone_request_user_clarification(generation_media_types=[...])`，只列出本次涉及的 `image`/`video` 类型；工具负责生成完整字段问题和实时选项，不手写生成参数问题列表。首次准备草稿时，把问题卡返回的 `answers` 原样作为 `generation_answers` 传给准备工具，由工具映射到节点参数。已有草稿需要补问时，把 `draft_id`、`revision` 分别作为 `workflow_draft_id`、`workflow_expected_revision` 传给澄清工具；它校验答案并修订同一草稿，返回新的预览和 revision。若确认入口返回 `generation_parameters_required`，还应将返回的 `required_choices` 原样传入 `generation_required_choices`。修订后必须展示新预览、等待用户确认，不得跳过问题或直接填默认值。
+
 ## 工具调用方式
 
 `freezone_*` 工具不在工具列表里，统一用 `tool_call(name="<工具名>", arguments={...})` 调用；JSON 里先写 `name` 再写 `arguments`（arguments 很大时后写的 `name` 容易被漏掉，缺 `name` 会直接报错）；`arguments` 必须传 JSON 对象——不要传转义后的 JSON 字符串，大型嵌套 intent 会因转义损坏而反复失败。**不要先跑 `tool_search` 或 `tool_describe`**——`tool_call` 不依赖它们。**顺序固定：读规划包 → 生成结构化 intent → 编译草稿 → 用户确认 → 创建**。`deliverable`、Recipe、字段枚举都来自规划包，跳过它自造字段会被校验反复打回。所需参数如下：
