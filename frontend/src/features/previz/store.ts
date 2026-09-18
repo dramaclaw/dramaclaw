@@ -4,12 +4,22 @@ import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 
 import {
+  addImportedMotions,
+  fitActionToMotion,
+  insertActionClip,
+  removeImportedMotion,
+  renameImportedMotion,
+  setActionMotion,
+  type ActionInsertRejection,
+} from './domain/actionClips';
+import {
   insertAudioClip,
   type AudioInsertRejection,
   type PrevizAudioSource,
 } from './domain/audioTrack';
 import { clampToRange } from './domain/camera';
 import { canAddObject } from './domain/limits';
+import type { PrevizMotionStatus } from './domain/motionLibrary';
 import {
   createPrevizObject,
   withoutUndefined,
@@ -35,6 +45,7 @@ import {
   type DisplayMode,
   type OutputAspect,
   type PrevizObject,
+  type PrevizImportedMotion,
   type PrevizObjectKind,
   type PrevizPathClip,
   type PrevizPathPoint,
@@ -55,6 +66,7 @@ import {
   clearPathPoints,
   clipById,
   insertPathPointAt,
+  isPathClip,
   moveClip,
   pathClipAt,
   pinTrack,
@@ -139,6 +151,15 @@ function placePathClip(
   };
 }
 
+/**
+ * 动作库对话框开着没有、为谁开。「添加」给某个人物新建片段，「更换」改已有片段的动作。
+ * 放在 store 而不是组件 state：时间线的「+ 添加动作」与属性面板的「更换动作」离对话框
+ * 挂载的编辑器隔着好几层，经 props 一路传回调只为开一个窗。
+ */
+export type PrevizMotionDialog =
+  | { mode: 'add'; objectId: string }
+  | { mode: 'replace'; clipId: string };
+
 interface PrevizStoreState {
   scene: PrevizScene;
   /** 相对上次写回 node.data 是否有未落盘改动。 */
@@ -183,6 +204,24 @@ interface PrevizStoreState {
   pathSpacingM: number;
   /** 绘制轨迹时按多快的速度走，米/秒。决定一笔画出来的片段有多长。 */
   pathSpeedMps: number;
+  /** 会话态，不进场景也不进 undo 栈，同 `selectedClipId`。 */
+  motionDialog: PrevizMotionDialog | null;
+  /**
+   * 导入动作的加载状态，键是 `scene.motions[].id`。由渲染器里的加载队列写进来，是这次
+   * 打开编辑器时现拉现算的结果——存进场景的话，换台机器打开会看到上次的失败。
+   */
+  motionStatus: Readonly<Record<string, PrevizMotionStatus>>;
+  openMotionDialog: (dialog: PrevizMotionDialog) => void;
+  closeMotionDialog: () => void;
+  setMotionStatus: (status: Readonly<Record<string, PrevizMotionStatus>>) => void;
+  /** 在播放头处给人物加一段动作并选中；放不下时返回原因、不动场景。 */
+  addActionClip: (objectId: string, motionId: string) => ActionInsertRejection | null;
+  setClipMotion: (clipId: string, motionId: string) => void;
+  fitClipToMotion: (clipId: string) => void;
+  importMotions: (motions: readonly PrevizImportedMotion[]) => void;
+  renameMotion: (importedId: string, name: string) => void;
+  /** 连同引用它的片段一起删，同一步 undo。 */
+  removeMotion: (importedId: string) => void;
   setTimelineFrame: (frame: number) => void;
   setTimelinePlaying: (playing: boolean) => void;
   /** 停止：回到第 0 帧。参照实现的「停止」按钮就是这个语义，不是暂停。 */
@@ -282,6 +321,8 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   selectedPointId: null,
   pathSpacingM: PREVIZ_PATH_SPACING_M.default,
   pathSpeedMps: PREVIZ_PATH_SPEED_MPS.default,
+  motionDialog: null,
+  motionStatus: {},
 
   loadScene: (scene) =>
     set({
@@ -299,6 +340,8 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
       timelineZoom: PREVIZ_TIMELINE_ZOOM.default,
       selectedClipId: null,
       selectedPointId: null,
+      motionDialog: null,
+      motionStatus: {},
     }),
 
   applyScene: (next) => {
@@ -598,8 +641,9 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   appendClip: (objectId) => {
     const { scene, applyScene } = get();
     const track = trackFor(scene, objectId);
+    // 只看路径片段：动作片段在自己那一行，铺到末尾的动作不该挡住路径行追加。
     const end = track
-      ? track.clips.reduce((last, clip) => Math.max(last, clip.endFrame), 0)
+      ? track.clips.filter(isPathClip).reduce((last, clip) => Math.max(last, clip.endFrame), 0)
       : 0;
     // 已经铺到末尾就不追加：追出来的是个 0 长片段，点不中也画不了。
     if (end >= scene.settings.durationFrames) return;
@@ -639,6 +683,62 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
     const { scene, applyScene } = get();
     applyScene(removeTrack(scene, objectId));
     set({ selectedClipId: null, selectedPointId: null });
+  },
+
+  openMotionDialog: (dialog) => set({ motionDialog: dialog }),
+
+  closeMotionDialog: () => set({ motionDialog: null }),
+
+  setMotionStatus: (status) => set({ motionStatus: status }),
+
+  addActionClip: (objectId, motionId) => {
+    const { scene, applyScene, timelineFrame } = get();
+    const result = insertActionClip(scene, objectId, motionId, timelineFrame);
+    if (!result.ok) return result.reason;
+    applyScene(result.scene);
+    set({ selectedClipId: result.clipId, selectedPointId: null });
+    return null;
+  },
+
+  setClipMotion: (clipId, motionId) => {
+    const { scene, applyScene } = get();
+    const next = setActionMotion(scene, clipId, motionId);
+    if (next !== scene) applyScene(next);
+  },
+
+  fitClipToMotion: (clipId) => {
+    const { scene, applyScene } = get();
+    const next = fitActionToMotion(scene, clipId);
+    if (next !== scene) applyScene(next);
+  },
+
+  importMotions: (motions) => {
+    const { scene, applyScene } = get();
+    const next = addImportedMotions(scene, motions);
+    if (next !== scene) applyScene(next);
+  },
+
+  renameMotion: (importedId, name) => {
+    const { scene, applyScene } = get();
+    const next = renameImportedMotion(scene, importedId, name);
+    if (next !== scene) applyScene(next);
+  },
+
+  removeMotion: (importedId) => {
+    const { scene, applyScene, selectedClipId, motionDialog } = get();
+    const next = removeImportedMotion(scene, importedId);
+    if (next === scene) return;
+    applyScene(next);
+    const clipGone = (clipId: string) => !clipById(next, clipId);
+    set({
+      // 选中的片段可能正是被级联删掉的那条，属性面板不该对着一个不存在的片段。
+      ...(selectedClipId && clipGone(selectedClipId)
+        ? { selectedClipId: null, selectedPointId: null }
+        : {}),
+      // replace 对话框可能正盯着被级联删掉的那条片段：不清掉的话撤销把片段带回来时，
+      // 对话框会跟着自己弹出来。
+      ...(motionDialog?.mode === 'replace' && clipGone(motionDialog.clipId) ? { motionDialog: null } : {}),
+    });
   },
 
   cutToCamera: (cameraId) => {
