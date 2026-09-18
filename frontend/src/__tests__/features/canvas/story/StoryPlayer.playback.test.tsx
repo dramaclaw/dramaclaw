@@ -3,6 +3,7 @@ import { StrictMode } from 'react';
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { StoryPlayer } from '@/features/canvas/story/StoryPlayer';
 import { useStoryRuntimeStore as store } from '@/stores/storyRuntimeStore';
+import { CHOICE_STAGE_TIMING } from '@/components/canvas/useChoicePointMachine';
 
 function enter(ink: string, clips: Record<string, string>, loops: Record<string, string> = {}, placeholders: Record<string, { text: string; label?: string }> = {}) {
   store.getState().enterPlay({
@@ -21,6 +22,93 @@ beforeEach(() => {
 afterEach(() => { cleanup(); store.getState().exitPlay(); vi.restoreAllMocks(); });
 
 describe('shared player playback visits', () => {
+  it('holds the outgoing frame through slow buffering, then fades after the next frame can paint', () => {
+    vi.useFakeTimers();
+    try {
+      const drawImage = vi.fn();
+      vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage } as unknown as CanvasRenderingContext2D);
+      enter(chain, { a: '/a.mp4', b: '/b.mp4', c: '/c.mp4' });
+      const previous = document.querySelector('video')!;
+      Object.defineProperties(previous, {
+        readyState: { value: 2 }, videoWidth: { value: 1920 }, videoHeight: { value: 1080 },
+      });
+      fireEvent.ended(previous);
+      act(() => vi.advanceTimersByTime(1));
+      const next = document.querySelector('video')!;
+      const frame = document.querySelector('[data-story-transition-frame]') as HTMLCanvasElement;
+      expect(next.getAttribute('src')).toBe('/b.mp4');
+      expect(drawImage).toHaveBeenCalledWith(previous, 0, 0);
+      expect(frame.width / frame.height).toBeCloseTo(16 / 9);
+      expect(frame.style.opacity).toBe('1');
+      act(() => vi.advanceTimersByTime(3000));
+      expect(frame.style.opacity).toBe('1');
+      fireEvent.canPlay(next);
+      expect(frame.style.opacity).toBe('1');
+      act(() => vi.advanceTimersByTime(40));
+      expect(frame.style.opacity).toBe('0');
+      expect(frame.style.transition).toBe('');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not reveal controls from choice pointer or keyboard focus events', () => {
+    vi.useFakeTimers();
+    try {
+      const view = enter('-> a\n=== a ===\nclip # clip:a\n+ [继续] -> b\n=== b ===\nclip # clip:b\n-> END', { a: '/a.mp4', b: '/b.mp4' });
+      fireEvent.ended(document.querySelector('video')!);
+      const choice = view.getByRole('button', { name: '继续' });
+      fireEvent.pointerDown(choice);
+      fireEvent.focus(choice);
+      fireEvent.keyDown(choice, { key: 'Enter' });
+      fireEvent.click(choice);
+      expect(document.querySelector('[data-story-player-controls]')).toBeNull();
+      act(() => vi.advanceTimersByTime(CHOICE_STAGE_TIMING.confirmMs));
+      const controls = document.querySelector('[data-story-player-controls]')!;
+      expect(document.querySelector('video')?.getAttribute('src')).toBe('/b.mp4');
+      expect(controls).toHaveClass('opacity-0');
+      fireEvent.canPlay(document.querySelector('video')!);
+      act(() => vi.advanceTimersByTime(40));
+      expect(controls).toHaveClass('opacity-0');
+      fireEvent.pointerDown(document.querySelector('[data-story-player]')!);
+      expect(controls).toHaveClass('opacity-100');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores a stale decoded-frame callback after another clip replaces it', () => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D);
+      enter(chain, { a: '/a.mp4', b: '/b.mp4', c: '/c.mp4' });
+      const first = document.querySelector('video')!;
+      fireEvent.ended(first);
+      act(() => vi.advanceTimersByTime(1));
+      const second = document.querySelector('video')!;
+      let decoded: VideoFrameRequestCallback | undefined;
+      const cancel = vi.fn();
+      Object.defineProperties(second, {
+        readyState: { value: 2 }, videoWidth: { value: 1280 }, videoHeight: { value: 720 },
+        paused: { value: false },
+        requestVideoFrameCallback: { value: (callback: VideoFrameRequestCallback) => { decoded = callback; return 7; } },
+        cancelVideoFrameCallback: { value: cancel },
+      });
+      fireEvent.canPlay(second);
+      fireEvent.ended(second);
+      act(() => vi.advanceTimersByTime(1));
+      expect(cancel).toHaveBeenCalledWith(7);
+      const frame = document.querySelector('[data-story-transition-frame]') as HTMLCanvasElement;
+      expect(frame.style.opacity).toBe('1');
+      act(() => decoded?.(0, {} as VideoFrameCallbackMetadata));
+      expect(frame.style.opacity).toBe('1');
+      fireEvent.error(document.querySelector('video')!);
+      expect(frame.style.opacity).toBe('0');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps controls hidden until interaction and auto-hides only while playing', () => {
     vi.useFakeTimers();
     try {

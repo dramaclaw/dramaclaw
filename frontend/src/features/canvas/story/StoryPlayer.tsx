@@ -7,6 +7,7 @@ import { objectContainRenderRect, mediaAnchorToContainPoint, type MediaRenderRec
 import './storyPlayer.css';
 import { StoryGestureButton } from './StoryGestureButton';
 import { emitStoryEvent, safeCtaUrl } from './storyEvents';
+import { useStoryFrameTransition } from './useStoryFrameTransition';
 
 /** 选择确认后给玩家阅读剧情反馈的停留时间；不会改变当前或后续视频资源。 */
 export const STORY_OUTCOME_FEEDBACK_MS = 1500;
@@ -71,7 +72,7 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
   const choose = useStoryRuntimeStore((s) => s.choose);
   const advanceAutomatic = useStoryRuntimeStore((s) => s.advanceAutomatic);
   const restart = useStoryRuntimeStore((s) => s.restart);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const { videoRef, canvasRef, hasFrameRef, attachVideo, revealFrame, clearFrame } = useStoryFrameTransition();
   const controlsHideTimerRef = useRef<number | null>(null);
   const keyboardFocusWithinRef = useRef(false);
   const [mediaAspectRatio, setMediaAspectRatio] = useState(16 / 9);
@@ -261,16 +262,16 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
     };
   }, [activeVideoUrl, measureVideoFrame, playbackRevision, revision, visitRevision, mediaAspectRatio, fitToMedia, previewRect?.width, previewRect?.height]);
 
-  // 黑场过渡:有片段 → 先盖黑(遮缓冲),新视频 onCanPlay 或超时兜底再淡入;无片段(结局)直接清。
-  useEffect(() => {
-    if (!resolvedUrl || branchTransition === 'cut') {
+  // Hold the outgoing frame (or a solid loading cover) until a new frame is ready.
+  // No timeout: slow media must never expose an empty replacement video.
+  useLayoutEffect(() => {
+    if (!activeVideoUrl || branchTransition === 'cut' || phase === 'error') {
+      clearFrame();
       setCoverOpacity(0);
       return;
     }
-    setCoverOpacity(1);
-    const id = window.setTimeout(() => setCoverOpacity(0), branchTransition === 'flash' ? 260 : 600);
-    return () => window.clearTimeout(id);
-  }, [branchTransition, resolvedUrl]);
+    setCoverOpacity(branchTransition === 'flash' || !hasFrameRef.current ? 1 : 0);
+  }, [activeVideoUrl, playbackKey, branchTransition, phase, clearFrame, hasFrameRef]);
 
   // 针对性下一跳预取:选择点出现时只预取「玩家马上要二选一的后继分支」,而非全量预加载。
   // 全量预取在大故事里会让几十上百个 <video preload> 抢占并发/带宽,反拖慢当前片段;
@@ -345,17 +346,18 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
   }, [cancelControlsHide]);
 
   const handlePointerActivity = useCallback(() => {
+    if (showChoices || outcomeFeedback) return;
     keyboardFocusWithinRef.current = false;
     if (videoPaused || seeking) pinControls();
     else revealControls();
-  }, [pinControls, revealControls, seeking, videoPaused]);
+  }, [pinControls, revealControls, seeking, videoPaused, showChoices, outcomeFeedback]);
 
   useEffect(() => {
     cancelControlsHide();
     keyboardFocusWithinRef.current = false;
     setControlsVisible(false);
     setSeeking(false);
-  }, [cancelControlsHide, playbackKey]);
+  }, [cancelControlsHide, playbackKey, showChoices]);
 
   useEffect(() => () => cancelControlsHide(), [cancelControlsHide]);
 
@@ -403,10 +405,12 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
       className="story-player relative min-h-0 min-w-0 overflow-hidden bg-black text-white"
       onPointerDown={handlePointerActivity}
       onKeyDown={() => {
+        if (showChoices || outcomeFeedback) return;
         keyboardFocusWithinRef.current = true;
         pinControls();
       }}
       onFocusCapture={(event) => {
+        if (showChoices || outcomeFeedback) return;
         const keyboardFocused = event.target instanceof HTMLElement
           && event.target.matches(':focus-visible');
         keyboardFocusWithinRef.current = keyboardFocused;
@@ -414,6 +418,7 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
         else revealControls();
       }}
       onBlurCapture={(event) => {
+        if (showChoices || outcomeFeedback) return;
         if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
         keyboardFocusWithinRef.current = false;
         if (!videoPaused) revealControls();
@@ -436,7 +441,7 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
 
       {phase !== 'error' && activeVideoUrl && (
         <video
-          ref={videoRef}
+          ref={attachVideo}
           key={`${currentNodeId}:${playbackRevision}:${revision}:${visitRevision}:${activeVideoUrl}`}
           src={activeVideoUrl}
           autoPlay={shouldAutoPlay}
@@ -462,13 +467,14 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
           onCanPlay={(event) => {
             measureVideoFrame(event.currentTarget);
             if (activeVideoUrl === resolvedChoiceLoopUrl) setChoiceLoopReady(true);
-            setCoverOpacity(0);
             if (!shouldAutoPlay || (showChoices && !choiceLoopActive)) {
               event.currentTarget.pause();
               setVideoPaused(!showChoices);
             } else requestPlayback(event.currentTarget);
+            revealFrame(event.currentTarget, () => setCoverOpacity(0));
           }}
           onError={() => {
+            clearFrame();
             setCoverOpacity(0);
             if (choiceLoopActive) {
               setChoiceLoopFailed(true);
@@ -495,6 +501,8 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
           }}
         />
       )}
+
+      <canvas ref={canvasRef} aria-hidden data-story-transition-frame className="story-transition-frame" />
 
       {phase !== 'error' && activeVideoUrl && !mediaError && !showChoices && (
         <div
@@ -579,7 +587,7 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
       {/* 黑场过渡覆盖层(遮换片/缓冲);pointer-events-none 不挡选项。 */}
       <div
         aria-hidden
-        className={`pointer-events-none absolute inset-0 z-[5] transition-opacity duration-300 ease-out motion-reduce:transition-none ${
+        className={`pointer-events-none absolute inset-0 z-[5] transition-opacity ${coverOpacity ? 'duration-0' : 'duration-300'} ease-out motion-reduce:transition-none ${
           branchTransition === 'flash' ? 'bg-white' : 'bg-black'
         }`}
         style={{ opacity: coverOpacity }}
