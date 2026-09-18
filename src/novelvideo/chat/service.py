@@ -905,6 +905,131 @@ def _codex_freezone_write_result_state(event: Any) -> str:
     return "failed"
 
 
+_GENERATION_RETRY_DATA_FIELDS = frozenset(
+    {
+        "model",
+        "modelId",
+        "aspectRatio",
+        "size",
+        "quality",
+        "resolution",
+        "duration",
+        "durationSec",
+        "durationSeconds",
+        "generateAudio",
+        "count",
+        "variantsPerNode",
+    }
+)
+
+
+def _codex_freezone_generation_retry_key(event: Any) -> str | None:
+    """Match a rejected generation run to a receipt-backed retry of that run."""
+    name = _codex_freezone_tool_name(event)
+    if name not in {
+        "freezone_emit_canvas_command",
+        "freezone_run_node_action",
+        "freezone_run_workflow",
+        "freezone_confirm_workflow_draft",
+    }:
+        return None
+    for payload in _json_objects_from_codex_tool_value(getattr(event, "input", None)):
+        if name == "freezone_confirm_workflow_draft":
+            draft_id = str(payload.get("draft_id") or "").strip()
+            if not draft_id:
+                continue
+            # Patching generation choices raises the revision, but confirmation
+            # still targets the same persisted draft and canvas.
+            identity = [
+                name,
+                payload.get("project_id"),
+                payload.get("canvas_id"),
+                draft_id,
+            ]
+            return json.dumps(identity, sort_keys=True, ensure_ascii=False)
+        if name == "freezone_run_node_action":
+            node_id = str(payload.get("node_id") or "").strip()
+            action = str(payload.get("action") or "").strip()
+            if not node_id or action not in {"generate_image", "generate_video"}:
+                continue
+            parameters = payload.get("parameters") or payload.get("params") or {}
+            if not isinstance(parameters, dict):
+                continue
+            parameters = {
+                key: value
+                for key, value in parameters.items()
+                if key not in _GENERATION_RETRY_DATA_FIELDS
+            }
+            identity = [
+                name,
+                payload.get("project_id"),
+                payload.get("canvas_id"),
+                node_id,
+                action,
+                parameters,
+                bool(payload.get("regenerate") or payload.get("force_regenerate")),
+            ]
+            return json.dumps(identity, sort_keys=True, ensure_ascii=False)
+        if name == "freezone_run_workflow":
+            node_ids = payload.get("node_ids") or []
+            scope = str(payload.get("scope") or "").strip()
+            if not isinstance(node_ids, list) or (not node_ids and scope != "canvas"):
+                continue
+            identity = [
+                name,
+                payload.get("project_id"),
+                payload.get("canvas_id"),
+                node_ids,
+                scope,
+                str(payload.get("direction") or "connected").strip(),
+                bool(payload.get("regenerate") or payload.get("force_regenerate")),
+            ]
+            return json.dumps(identity, sort_keys=True, ensure_ascii=False)
+        commands = payload.get("commands")
+        if (
+            not isinstance(commands, list)
+            or not commands
+            or not all(isinstance(command, dict) for command in commands)
+        ):
+            continue
+        normalized = []
+        for command in commands:
+            item = dict(command)
+            data = item.get("data")
+            if isinstance(data, dict):
+                item["data"] = {
+                    key: value
+                    for key, value in data.items()
+                    if key not in _GENERATION_RETRY_DATA_FIELDS
+                }
+            elif data is None:
+                item["data"] = {}
+            normalized.append(item)
+        return json.dumps(
+            [payload.get("project_id"), payload.get("canvas_id"), normalized],
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+    return None
+
+
+def _codex_freezone_is_generation_preflight_rejection(event: Any) -> bool:
+    """Only this explicit, side-effect-free rejection may be superseded."""
+    if getattr(event, "error", None) or str(
+        getattr(event, "status", "") or ""
+    ).lower() not in {"completed", "success", "succeeded"}:
+        return False
+    for value in (getattr(event, "structured", None), getattr(event, "output", None)):
+        for payload in _json_objects_from_codex_tool_value(value):
+            if (
+                payload.get("ok") is False
+                and payload.get("status") == "clarification_required"
+                and payload.get("code") == "generation_parameters_required"
+            ):
+                return True
+    return False
+
+
 def _codex_freezone_clarification_answered(event: Any) -> bool:
     """Recognize a successful answer, not merely a submitted or failed tool call."""
     if _codex_freezone_tool_name(event) != "freezone_request_user_clarification":
@@ -6829,7 +6954,8 @@ async def _stream_assistant_reply_codex(
     structured_canvas_reply = str(tool_mode or "").strip() == "freezone_canvas"
     canvas_write_attempts: dict[str, str] = {}
     canvas_receipts: set[tuple[str, int | None]] = set()
-    canvas_write_failure = ""
+    canvas_write_failures: dict[str, str] = {}
+    canvas_generation_preflights: dict[str, str] = {}
     ready_workflow_draft: dict[str, Any] | None = None
     authorization = await authorize_hermes_launch(
         egress_context=egress_context,
@@ -7039,6 +7165,7 @@ async def _stream_assistant_reply_codex(
                         receipt = _codex_freezone_write_receipt(
                             event, expected_project=project, expected_canvas=canvas_id
                         )
+                        retry_key = _codex_freezone_generation_retry_key(event)
                         canvas_write_attempts[call_id] = (
                             "succeeded"
                             if receipt is not None and identifiable_call
@@ -7046,9 +7173,28 @@ async def _stream_assistant_reply_codex(
                         )
                         if receipt is not None and identifiable_call:
                             canvas_receipts.add(receipt_reference(receipt))
+                            if retry_key is not None:
+                                for rejected_call, rejected_key in list(
+                                    canvas_generation_preflights.items()
+                                ):
+                                    if (
+                                        rejected_key == retry_key
+                                        and rejected_call != call_id
+                                    ):
+                                        canvas_write_attempts.pop(rejected_call, None)
+                                        canvas_write_failures.pop(rejected_call, None)
+                                        canvas_generation_preflights.pop(
+                                            rejected_call, None
+                                        )
+                        elif (
+                            canvas_write_attempts[call_id] == "failed"
+                            and retry_key is not None
+                            and _codex_freezone_is_generation_preflight_rejection(event)
+                        ):
+                            canvas_generation_preflights[call_id] = retry_key
                         failure = _codex_freezone_write_result_error(event)
                         if failure:
-                            canvas_write_failure = failure
+                            canvas_write_failures[call_id] = failure
                 event_tool_text = str(event.text or "")
                 if event_tool_text:
                     tool_text += event_tool_text
@@ -7140,7 +7286,14 @@ async def _stream_assistant_reply_codex(
             assistant_text,
             attempts=canvas_write_attempts,
             receipts=canvas_receipts,
-            failure=canvas_write_failure,
+            failure=next(
+                (
+                    canvas_write_failures.get(call_id, "")
+                    for call_id, state in canvas_write_attempts.items()
+                    if state == "failed" and canvas_write_failures.get(call_id)
+                ),
+                "",
+            ),
             draft_ready=ready_workflow_draft is not None,
         )
     assistant_text = assistant_text.strip() or "已执行，但没有返回正文。"
