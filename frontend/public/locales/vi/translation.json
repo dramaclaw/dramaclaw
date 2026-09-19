@@ -1093,7 +1093,11 @@
           "label": "Thế giới tuỳ chỉnh",
           "title": "Thế giới đạo diễn 3D (tuỳ chỉnh)"
         }
-      }
+      },
+      "pickTitle": "Chọn tài nguyên để thay bằng “{{label}}”",
+      "pickHint": "Nhấp vào một tài nguyên cùng loại để thay thế, hoặc nhấn Esc để hủy",
+      "pickUnavailable": "Dự án này không có tài nguyên mainline để thay thế",
+      "pickEmpty": "Không có tài nguyên cùng loại trong danh mục này để thay thế"
     },
     "nodeContext": {
       "mainlineAsset": "Asset luồng chính",
@@ -4438,7 +4442,8 @@
       "addNode": "Thêm node",
       "undo": "Hoàn tác",
       "redo": "Làm lại",
-      "paste": "Dán"
+      "paste": "Dán",
+      "replaceAsset": "Thay tài nguyên…"
     },
     "assetLibrary": {
       "title": "Thư viện asset",
@@ -5136,7 +5141,7 @@
     "assetReplace": {
       "dropToReplace": "Thả để thay asset này",
       "dragHint": "Kéo vào một asset cùng loại bên trái để thay thế",
-      "handleHint": "Giữ và kéo vào thư viện asset để thay một asset cùng loại",
+      "handleHint": "Nhấp, hoặc kéo sang thư viện tài nguyên, để thay thế tài nguyên cùng loại",
       "handleLabel": "Thay asset"
     },
     "reference": {

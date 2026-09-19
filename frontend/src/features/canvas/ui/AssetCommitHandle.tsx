@@ -16,10 +16,17 @@ import {
   NodeSideActionRail,
 } from '@/features/canvas/ui/NodeSideActionRail';
 
+/** 按下后位移不超过这个像素数,判定为「点击」而不是「拖拽」。 */
+const CLICK_SLOP_PX = 4;
+
 /**
- * 节点左侧的「拖到素材库替换」抓手。从抓手上按住拖拽时,
- * 节点本身不会在画布上移动 —— 我们用原生 pointer 事件自行驱动,
- * 并在松手命中左侧同类型素材时触发替换。
+ * 节点左侧的「替换素材」入口。两种用法:
+ *
+ * - **拖**:从抓手上按住拖到左侧素材库的同类型素材上松手,直接替换。节点本身
+ *   不会在画布上移动 —— 我们用原生 pointer 事件自行驱动。
+ * - **点**:它长得就是个按钮,而且素材库默认是收起的(拖出去没有任何落点),
+ *   所以单击不能是空操作。点一下进入「挑选态」,由宿主展开素材库,再点一条
+ *   同类型素材完成替换。
  */
 export function AssetCommitHandle({ node }: { node: CanvasNode }) {
   const { t } = useTranslation();
@@ -42,12 +49,20 @@ export function AssetCommitHandle({ node }: { node: CanvasNode }) {
         directorControlBundle: dropInfo.directorControlBundle,
       });
 
+      const start = { x: event.clientX, y: event.clientY };
+      let moved = false;
+
       const prevUserSelect = document.body.style.userSelect;
       const prevCursor = document.body.style.cursor;
       document.body.style.userSelect = 'none';
       document.body.style.cursor = 'grabbing';
 
       const onMove = (e: PointerEvent) => {
+        if (!moved
+          && (Math.abs(e.clientX - start.x) > CLICK_SLOP_PX
+            || Math.abs(e.clientY - start.y) > CLICK_SLOP_PX)) {
+          moved = true;
+        }
         const drag = useAssetDropStore.getState().activeDrag;
         const elements = document.elementsFromPoint(e.clientX, e.clientY);
         let hoverId: string | null = null;
@@ -70,8 +85,24 @@ export function AssetCommitHandle({ node }: { node: CanvasNode }) {
         window.removeEventListener('pointerup', onUp);
         document.body.style.userSelect = prevUserSelect;
         document.body.style.cursor = prevCursor;
+        const store = useAssetDropStore.getState();
+        const hitAsset = Boolean(store.hoverAssetId);
+        // 没移动过、也没命中素材 —— 这是一次点击,不是失败的拖拽。转入挑选态,
+        // 否则用户看到的就是「点了个按钮什么都没发生」。
+        if (!moved && !hitAsset) {
+          store.endDrag(false);
+          store.beginPick({
+            nodeId: node.id,
+            mediaType: dropInfo.mediaType,
+            sourceUrl,
+            thumbUrl: dropInfo.thumbUrl,
+            label: dropInfo.label,
+            directorControlBundle: dropInfo.directorControlBundle,
+          });
+          return;
+        }
         // 命中有效素材则生成替换请求,由侧栏消费。
-        useAssetDropStore.getState().endDrag(true);
+        store.endDrag(true);
       };
 
       window.addEventListener('pointermove', onMove);

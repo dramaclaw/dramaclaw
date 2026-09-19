@@ -21,7 +21,7 @@ reason = "Machine-readable scope for this workstream."
 [[claims]]
 path = "frontend/src/features/canvas/Canvas.tsx"
 mode = "shared"
-shared_with = ["liblib-canvas-parity"]
+shared_with = ["asset-replacement-picker", "liblib-canvas-parity"]
 reason = "LOD mounting and downstream-node focus both integrate at the canvas root."
 
 [[claims]]
@@ -145,8 +145,9 @@ reason = "Lazy tool UI."
 
 [[claims]]
 path = "frontend/src/features/canvas/ui/AssetCommitHandle.tsx"
-mode = "exclusive"
-reason = "Low-zoom asset commit behavior."
+mode = "shared"
+shared_with = ["asset-replacement-picker"]
+reason = "Low-zoom asset behavior shares the click-versus-drag replacement entry."
 
 [[claims]]
 path = "frontend/src/features/canvas/ui/CanvasHistoryAssetsModal.tsx"
@@ -178,11 +179,6 @@ path = "frontend/src/__tests__/features/canvas/video-frame-capture-poster.test.t
 mode = "shared"
 shared_with = ["liblib-canvas-parity"]
 reason = "Poster extraction coverage includes imported LibTV sources."
-
-[[claims]]
-path = "frontend/src/__tests__/features/canvas/asset-replace-pick.test.tsx"
-mode = "exclusive"
-reason = "Asset replacement coverage."
 
 [[claims]]
 path = "frontend/src/__tests__/features/canvas/canvas-manual-connect.test.tsx"

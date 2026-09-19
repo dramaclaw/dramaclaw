@@ -1093,7 +1093,11 @@
           "label": "Custom world",
           "title": "3D director world (custom)"
         }
-      }
+      },
+      "pickTitle": "Pick the asset to replace with “{{label}}”",
+      "pickHint": "Click a same-type asset to replace it, or press Esc to cancel",
+      "pickUnavailable": "This project has no mainline assets to replace",
+      "pickEmpty": "No same-type asset in this category to replace"
     },
     "nodeContext": {
       "mainlineAsset": "Mainline asset",
@@ -4438,7 +4442,8 @@
       "addNode": "Add Node",
       "undo": "Undo",
       "redo": "Redo",
-      "paste": "Paste"
+      "paste": "Paste",
+      "replaceAsset": "Replace asset…"
     },
     "assetLibrary": {
       "title": "Asset Library",
@@ -5136,7 +5141,7 @@
     "assetReplace": {
       "dropToReplace": "Release to replace this asset",
       "dragHint": "Drag onto a same-type asset on the left to replace it",
-      "handleHint": "Hold and drag onto the asset library to replace a same-type asset",
+      "handleHint": "Click, or drag to the asset library, to replace a same-type asset",
       "handleLabel": "Replace asset"
     },
     "reference": {

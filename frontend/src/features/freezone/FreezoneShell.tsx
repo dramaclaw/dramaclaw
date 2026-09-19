@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { Canvas } from "@/features/canvas/Canvas";
 import { NodeReplaceDragPreview } from "@/features/canvas/ui/NodeReplaceDragPreview";
+import { useAssetDropStore } from "@/stores/assetDropStore";
 import { useFreezoneCanvases } from "@/lib/queries/freezone";
 import type { SupertaleProjectSummary } from "@/api/projects";
 import {
@@ -431,6 +432,12 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
   const [toast, setToast] = useState<string | null>(null);
   const [assetLibraryReloadToken, setAssetLibraryReloadToken] = useState(0);
   const [assetPanelCollapsed, setAssetPanelCollapsed] = useState(true);
+  // 「替换素材」的挑选态一旦开始,素材库就是唯一的落点 —— 面板默认收起,不展开
+  // 的话用户点完什么都看不到。只负责展开,不负责收回(替换完让用户自己决定)。
+  const assetReplacePick = useAssetDropStore((state) => state.pendingPick);
+  useEffect(() => {
+    if (assetReplacePick) setAssetPanelCollapsed(false);
+  }, [assetReplacePick]);
   const [debugPanelOpen, setDebugPanelOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const productSurfaces = useProductSurfaces();

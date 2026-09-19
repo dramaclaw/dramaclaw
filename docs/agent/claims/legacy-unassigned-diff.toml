@@ -50,12 +50,6 @@ mode = "exclusive"
 reason = "Historical dirty settings file with no reliable workstream attribution."
 
 [[claims]]
-path = "frontend/src/features/freezone/AssetLibraryPanel.tsx"
-mode = "shared"
-shared_with = ["liblib-canvas-parity"]
-reason = "Historical asset-library work shares LibTV save/reload callback plumbing."
-
-[[claims]]
 path = "frontend/src/features/freezone/CanvasOutlineList.tsx"
 mode = "shared"
 shared_with = ["liblib-canvas-parity"]
@@ -66,12 +60,6 @@ path = "frontend/src/features/freezone/CanvasesTab.tsx"
 mode = "shared"
 shared_with = ["liblib-canvas-parity"]
 reason = "Historical canvas-selector work shares the LibTV import entry."
-
-[[claims]]
-path = "frontend/src/features/freezone/FreezoneShell.tsx"
-mode = "shared"
-shared_with = ["liblib-canvas-parity"]
-reason = "Historical shell work shares the LibTV localization control."
 
 [[claims]]
 path = "frontend/src/features/freezone/projections.ts"
@@ -94,11 +82,6 @@ reason = "Historical project-card work shares the LibTV import dialog."
 path = "frontend/src/routes/_app/projects.$project/freezone.lazy.tsx"
 mode = "exclusive"
 reason = "Historical dirty route with no reliable workstream attribution."
-
-[[claims]]
-path = "frontend/src/stores/assetDropStore.ts"
-mode = "exclusive"
-reason = "Historical dirty store with no reliable workstream attribution."
 
 [[claims]]
 path = "tests/test_freezone_canvas_route_home_node_guard.py"

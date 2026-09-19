@@ -1,0 +1,71 @@
+version = 1
+slug = "asset-replacement-picker"
+ledger = "docs/agent/tasks/asset-replacement-picker.md"
+baseline = "b56918bd"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Register workstream lifecycle."
+
+[[claims]]
+path = "docs/agent/tasks/asset-replacement-picker.md"
+mode = "coordination"
+reason = "Workstream plan and handoff ledger."
+
+[[claims]]
+path = "docs/agent/claims/asset-replacement-picker.toml"
+mode = "coordination"
+reason = "Machine-readable workstream scope."
+
+[[claims]]
+path = "frontend/src/features/canvas/Canvas.tsx"
+mode = "shared"
+shared_with = ["canvas-lod-perf", "liblib-canvas-parity"]
+reason = "Node context-menu replacement entry shares the canvas root."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/AssetCommitHandle.tsx"
+mode = "shared"
+shared_with = ["canvas-lod-perf"]
+reason = "Click-versus-drag replacement entry shares low-zoom asset behavior."
+
+[[claims]]
+path = "frontend/src/features/freezone/AssetLibraryPanel.tsx"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Replacement target picker shares imported asset library behavior."
+
+[[claims]]
+path = "frontend/src/features/freezone/FreezoneShell.tsx"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Picker expands the shared asset-library shell."
+
+[[claims]]
+path = "frontend/src/stores/assetDropStore.ts"
+mode = "exclusive"
+reason = "Replacement picker state machine."
+
+[[claims]]
+path = "frontend/public/locales/zh/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Chinese replacement-picker messages."
+
+[[claims]]
+path = "frontend/public/locales/en/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "English replacement-picker messages."
+
+[[claims]]
+path = "frontend/public/locales/vi/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Vietnamese replacement-picker messages."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/asset-replace-pick.test.tsx"
+mode = "exclusive"
+reason = "Replacement picker regression coverage."

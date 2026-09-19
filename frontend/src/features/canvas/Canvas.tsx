@@ -39,6 +39,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { CreditDisplayHiddenProvider } from '@/components/credits/credit-visual';
 import { isCeRuntime } from '@/lib/runtime-config';
 import { resolveAbsolutePosition, useCanvasStore } from '@/stores/canvasStore';
+import { deriveNodeDropInfo, useAssetDropStore } from '@/stores/assetDropStore';
 import { useAppStore } from '@/stores/app-store';
 import { getSkillRegistry } from '@/api/skills';
 import { SKILL_SCHEMA_VERSION, type SkillDefinition } from '@/features/freezone/context/skillRoles';
@@ -851,6 +852,13 @@ export function Canvas({
     canUndo: boolean;
     canRedo: boolean;
     canPaste: boolean;
+  } | null>(null);
+  // 右键单个节点的菜单。与上面的画布空白处菜单分开：两者的条目集完全不同，
+  // 合在一起只会让每一条都要先判断「这次是点在节点上还是空白处」。
+  const [nodeContextMenu, setNodeContextMenu] = useState<{
+    x: number;
+    y: number;
+    nodeId: string;
   } | null>(null);
   const [previewConnectionVisual, setPreviewConnectionVisual] =
     useState<PreviewConnectionVisual | null>(null);
@@ -2624,6 +2632,33 @@ export function Canvas({
     };
 
     const handleContextMenu = (event: MouseEvent) => {
+      const target = event.target as Element | null;
+      // 节点里的输入框和控件保留浏览器原生菜单：文本节点里右键就是为了复制/粘贴，
+      // 操作面板里的按钮/下拉右键弹出我们的节点菜单也只会挡住用户要点的东西。
+      const onNodeControl = Boolean(
+        target?.closest?.(
+          'input, textarea, select, button, a, [contenteditable="true"], [role="menu"], [role="dialog"], [role="listbox"]',
+        ),
+      );
+      const nodeElement = onNodeControl
+        ? null
+        : (target?.closest?.('.react-flow__node') as HTMLElement | null);
+      const nodeId = nodeElement?.dataset.id;
+      if (nodeId) {
+        if (pendingNodePlacement) {
+          event.preventDefault();
+          return;
+        }
+        event.preventDefault();
+        const nodeRect = wrapperElement.getBoundingClientRect();
+        setContextMenu(null);
+        setNodeContextMenu({
+          x: event.clientX - nodeRect.left,
+          y: event.clientY - nodeRect.top,
+          nodeId,
+        });
+        return;
+      }
       if (!isCanvasPaneTarget(event.target, wrapperElement)) {
         return;
       }
@@ -2631,6 +2666,7 @@ export function Canvas({
         event.preventDefault();
         return;
       }
+      setNodeContextMenu(null);
       // Right-click on the empty canvas opens the canvas context menu (undo/redo/paste).
       event.preventDefault();
       const containerRect = wrapperElement.getBoundingClientRect();
@@ -5090,6 +5126,41 @@ export function Canvas({
           ]}
         />
       )}
+
+      {nodeContextMenu && (() => {
+        const node = nodes.find((item) => item.id === nodeContextMenu.nodeId);
+        const dropInfo = node ? deriveNodeDropInfo(node) : null;
+        // 素材还没生成/上传完的节点没有可提交的地址，条目置灰而不是藏掉——
+        // 藏掉会让菜单在同类节点上时有时无。
+        const canReplace = Boolean(dropInfo?.sourceUrl);
+        return (
+          <CanvasContextMenu
+            position={{ x: nodeContextMenu.x, y: nodeContextMenu.y }}
+            onClose={() => setNodeContextMenu(null)}
+            sections={[
+              [
+                {
+                  key: 'replace-asset',
+                  label: t('canvas.contextMenu.replaceAsset'),
+                  disabled: !canReplace,
+                  onSelect: () => {
+                    if (!node || !dropInfo?.sourceUrl) return;
+                    setSelectedNode(node.id);
+                    useAssetDropStore.getState().beginPick({
+                      nodeId: node.id,
+                      mediaType: dropInfo.mediaType,
+                      sourceUrl: dropInfo.sourceUrl,
+                      thumbUrl: dropInfo.thumbUrl,
+                      label: dropInfo.label,
+                      directorControlBundle: dropInfo.directorControlBundle,
+                    });
+                  },
+                },
+              ],
+            ]}
+          />
+        );
+      })()}
 
       {nodes.length === 0 && emptyHint}
 

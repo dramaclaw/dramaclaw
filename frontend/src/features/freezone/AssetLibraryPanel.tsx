@@ -123,12 +123,16 @@ export function directorControlBundleFromAssetSource(
   };
 }
 
-/** 拖拽替换的协调上下文,供深层 AssetCard 消费(避免逐层透传)。 */
+/** 拖拽/点选替换的协调上下文,供深层 AssetCard 消费(避免逐层透传)。 */
 interface AssetReplaceContextValue {
   confirmingAssetId: string | null;
   busyAssetId: string | null;
   onConfirm: (asset: LibraryAsset) => void;
   onCancel: () => void;
+  /** 挑选态下等待被替换的节点媒体类型;非挑选态为 null。 */
+  pickMediaType: DropMediaType | null;
+  /** 挑选态下点中一条素材。 */
+  onPick: (assetId: string) => void;
 }
 const AssetReplaceContext = createContext<AssetReplaceContextValue | null>(null);
 
@@ -667,9 +671,12 @@ export function AssetLibraryPanel({
     });
   }, [assets, query, tab]);
 
-  // —— 拖拽节点替换素材 ——
+  // —— 拖拽 / 点选替换素材 ——
   const pendingReplace = useAssetDropStore((s) => s.pendingReplace);
   const clearPendingReplace = useAssetDropStore((s) => s.clearPendingReplace);
+  const pendingPick = useAssetDropStore((s) => s.pendingPick);
+  const cancelPick = useAssetDropStore((s) => s.cancelPick);
+  const commitPick = useAssetDropStore((s) => s.commitPick);
   const [replaceBusyId, setReplaceBusyId] = useState<string | null>(null);
   const confirmingAssetId = pendingReplace?.assetId ?? null;
 
@@ -745,9 +752,41 @@ export function AssetLibraryPanel({
       busyAssetId: replaceBusyId,
       onConfirm: handleConfirmReplace,
       onCancel: handleCancelReplace,
+      pickMediaType: pendingPick?.mediaType ?? null,
+      onPick: commitPick,
     }),
-    [confirmingAssetId, replaceBusyId, handleConfirmReplace, handleCancelReplace],
+    [
+      confirmingAssetId,
+      replaceBusyId,
+      handleConfirmReplace,
+      handleCancelReplace,
+      pendingPick,
+      commitPick,
+    ],
   );
+
+  // 挑选态开始时,面板可能停在「项目画布」tab —— 那里一张可替换的素材卡都没有。
+  // 宿主只负责把面板展开,落到哪个 tab 必须由这里决定,否则用户点完替换只会看到
+  // 一个大纲列表。主线被关掉时压根没有可替换的素材,直接作废并说明原因。
+  useEffect(() => {
+    if (!pendingPick) return;
+    if (mainlineAvailable) {
+      setPanelTab("library");
+      return;
+    }
+    cancelPick();
+    onReplaced?.(null, t(`${A}.pickUnavailable`));
+  }, [pendingPick, mainlineAvailable, cancelPick, onReplaced, t]);
+
+  // Esc 退出挑选态 —— 挑选态会改变整列卡片的点击含义,必须有一个不用找按钮的出口。
+  useEffect(() => {
+    if (!pendingPick) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") cancelPick();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [pendingPick, cancelPick]);
 
   const tabCounts = useMemo(
     () => tabs.map((t) => ({ ...t, count: countAssetsForTab(assets, t.id) })),
@@ -843,6 +882,25 @@ export function AssetLibraryPanel({
 
           {panelTab === "library" && mainlineAvailable ? (
             <>
+              {pendingPick ? (
+                <div className="mx-3 mt-2 flex items-center gap-2 rounded-lg border border-[rgba(21,215,232,0.35)] bg-[rgba(21,215,232,0.08)] px-2.5 py-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[11px] font-medium text-white/85">
+                      {t(`${A}.pickTitle`, { label: pendingPick.label })}
+                    </div>
+                    <div className="mt-0.5 text-[10px] leading-snug text-white/50">
+                      {t(`${A}.pickHint`)}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={cancelPick}
+                    className="shrink-0 rounded-md px-1.5 py-1 text-[11px] text-white/45 transition-colors hover:text-white/80"
+                  >
+                    {t(`${A}.cancel`)}
+                  </button>
+                </div>
+              ) : null}
               {/* ── 分类标签 + 搜索（固定头部） ── */}
               <div className="sticky top-0 z-10">
                 <div className="ui-scrollbar-hidden flex items-center gap-4 overflow-x-auto px-2 pt-2.5 pb-2">
@@ -891,7 +949,9 @@ export function AssetLibraryPanel({
                 />
               ) : filtered.length === 0 ? (
                 <div className="flex flex-1 items-center justify-center px-6 py-12 text-center text-xs text-white/25">
-                  {t(`${A}.empty.category`)}
+                  {/* 挑选态下空列表格外容易被当成「功能坏了」——说清楚是这个分类
+                      没有同类型素材，而不是替换本身没生效。 */}
+                  {pendingPick ? t(`${A}.pickEmpty`) : t(`${A}.empty.category`)}
                 </div>
               ) : (
                 <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-1.5">
@@ -1075,15 +1135,22 @@ function AssetCard({
   const disabled = !isThreeD && (asset.mediaType === "text" || asset.mediaType === "file");
   const dropMediaType = assetDropMediaType(asset);
   const activeDrag = useAssetDropStore((s) => s.activeDrag);
+  const replaceCtx = useContext(AssetReplaceContext);
+  const pickMediaType = replaceCtx?.pickMediaType ?? null;
   const target = assetToPushTarget(asset.source);
+  // 导演渲染位只接图。来源可能是拖拽中的节点,也可能是挑选态里待替换的节点。
+  const incomingMediaType = activeDrag?.mediaType ?? pickMediaType;
   const replaceable =
     asset.source.pushable !== false &&
     Boolean(dropMediaType) &&
     target !== null &&
-    (target.kind !== "director_render" || activeDrag?.mediaType === "image");
+    (target.kind !== "director_render" || incomingMediaType === "image");
   const hoverAssetId = useAssetDropStore((s) => s.hoverAssetId);
   const isDropHover = replaceable && hoverAssetId === asset.id;
-  const replaceCtx = useContext(AssetReplaceContext);
+  // 挑选态:同类型且可替换的卡片变成「替换目标」,点它就是替换;其余卡片这一刻
+  // 没有意义,压暗并停掉点击 —— 否则一不留神点成了「添加到画布」。
+  const isPickTarget = Boolean(pickMediaType) && replaceable && dropMediaType === pickMediaType;
+  const isPickMuted = Boolean(pickMediaType) && !isPickTarget;
   const isConfirming = replaceCtx?.confirmingAssetId === asset.id;
   const isReplacing = replaceCtx?.busyAssetId === asset.id;
   const dragPayload = disabled ? null : assetToDragPayload(asset);
@@ -1106,10 +1173,25 @@ function AssetCard({
       data-asset-media-type={replaceable ? dropMediaType ?? undefined : undefined}
       draggable={Boolean(dragPayload)}
       onDragStart={handleDragStart}
-      className={`group relative flex items-center gap-3 rounded-[8px] border border-transparent px-1.5 py-2 cursor-pointer transition-all duration-200 hover:border-white/[0.08] hover:bg-white/[0.04] ${
-        dragPayload ? "active:cursor-grabbing" : ""
-      } ${isDropHover ? "opacity-70" : ""}`}
-      onClick={onAdd}
+      className={`group relative flex items-center gap-3 rounded-[8px] border px-1.5 py-2 transition-all duration-200 ${
+        isPickTarget
+          ? "cursor-copy border-[rgba(21,215,232,0.45)] bg-[rgba(21,215,232,0.06)] hover:border-[rgba(21,215,232,0.8)] hover:bg-[rgba(21,215,232,0.12)]"
+          : isPickMuted
+            ? "pointer-events-none cursor-default border-transparent opacity-30"
+            : "cursor-pointer border-transparent hover:border-white/[0.08] hover:bg-white/[0.04]"
+      } ${dragPayload && !pickMediaType ? "active:cursor-grabbing" : ""} ${
+        isDropHover ? "opacity-70" : ""
+      }`}
+      onClick={
+        isPickTarget
+          ? (event) => {
+              event.stopPropagation();
+              replaceCtx?.onPick(asset.id);
+            }
+          : isPickMuted
+            ? undefined
+            : onAdd
+      }
     >
       <div
         data-drag-thumb

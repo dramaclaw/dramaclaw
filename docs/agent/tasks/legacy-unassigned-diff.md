@@ -56,6 +56,17 @@
 
 ## 进展记录
 
+### 2026-09-19 · 素材替换状态机迁入独立工作线
+
+做了什么：将 `AssetLibraryPanel`、`FreezoneShell`、`assetDropStore` 及对应点选回归测试迁入
+`asset-replacement-picker`；同时把 Canvas / AssetCommitHandle 与 LOD、LibTV 的交集声明为互认共享。
+
+为什么这么做：这组 hunk 已形成完整的“点击入口 → 展开侧栏 → 选择同类型素材 → 既有确认请求”
+闭环，属于可独立回退的用户功能，继续隔离会让正确的提交被历史 scope 拦住。
+
+怎么验证的：`agent_guard check` 在新工作线创建后通过（9 条工作线、226 个路径声明）；功能测试待
+资产替换工作线的干净索引快照执行。
+
 ### 2026-09-19 · LOD 来源审计后迁出节点注册与媒体变体测试
 
 做了什么：将 `canvas-manual-connect`、`canvas-minimap-pan-mount`、`freezone-viewer-contract`

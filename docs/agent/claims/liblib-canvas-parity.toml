@@ -32,7 +32,7 @@ reason = "Evidence and long-form design for LibTV parity."
 [[claims]]
 path = "frontend/src/features/canvas/Canvas.tsx"
 mode = "shared"
-shared_with = ["canvas-lod-perf"]
+shared_with = ["asset-replacement-picker", "canvas-lod-perf"]
 reason = "Focus newly derived nodes without replacing LOD mounting logic."
 
 [[claims]]
@@ -204,7 +204,7 @@ reason = "Import into an existing project while preserving unrelated canvas-sele
 [[claims]]
 path = "frontend/src/features/freezone/AssetLibraryPanel.tsx"
 mode = "shared"
-shared_with = ["legacy-unassigned-diff"]
+shared_with = ["asset-replacement-picker"]
 reason = "Pass save/reload callbacks to the LibTV import form without absorbing asset-replace work."
 
 [[claims]]
@@ -216,7 +216,7 @@ reason = "Display and filter imported fallback media nodes."
 [[claims]]
 path = "frontend/src/features/freezone/FreezoneShell.tsx"
 mode = "shared"
-shared_with = ["legacy-unassigned-diff"]
+shared_with = ["asset-replacement-picker"]
 reason = "Mount the explicit asset-localization control."
 
 [[claims]]

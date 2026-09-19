@@ -1093,7 +1093,11 @@
           "label": "自定义世界",
           "title": "3D 导演世界（自定义）"
         }
-      }
+      },
+      "pickTitle": "选择要被「{{label}}」替换的素材",
+      "pickHint": "点一条同类型素材完成替换，按 Esc 取消",
+      "pickUnavailable": "当前项目没有可替换的主线资产",
+      "pickEmpty": "这个分类下没有可替换的同类型素材"
     },
     "nodeContext": {
       "mainlineAsset": "主线资产",
@@ -4438,7 +4442,8 @@
       "addNode": "添加节点",
       "undo": "撤销",
       "redo": "重做",
-      "paste": "粘贴"
+      "paste": "粘贴",
+      "replaceAsset": "替换素材…"
     },
     "assetLibrary": {
       "title": "资产库",
@@ -5136,7 +5141,7 @@
     "assetReplace": {
       "dropToReplace": "松开替换该素材",
       "dragHint": "拖到左侧同类型素材上替换",
-      "handleHint": "按住拖到左侧素材库,替换同类型素材",
+      "handleHint": "点击或拖到左侧素材库，替换同类型素材",
       "handleLabel": "替换素材"
     },
     "reference": {
