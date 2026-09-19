@@ -55,6 +55,8 @@ docs/superpowers/
 
 # git worktree 统一目录(主目录永远 main)
 /.worktrees/
+# 多模型协作的本机原子锁，只防并发写入，不承载项目状态。
+/.agent-locks/
 /frontend/bun.lock
 
 # 风格图墙的图片改由 OSS 提供(后端配 STYLE_GALLERY_ASSET_BASE),不再随仓库

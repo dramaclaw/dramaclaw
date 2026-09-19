@@ -1,0 +1,86 @@
+version = 1
+slug = "local-stack"
+ledger = "docs/agent/tasks/local-stack.md"
+baseline = "38484897"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Update lifecycle and conflict radar."
+
+[[claims]]
+path = "docs/agent/tasks/local-stack.md"
+mode = "coordination"
+reason = "Workstream plan and handoff ledger."
+
+[[claims]]
+path = "docs/agent/claims/local-stack.toml"
+mode = "coordination"
+reason = "Machine-readable scope for this workstream."
+
+[[claims]]
+path = "src/novelvideo/local_gateway.py"
+mode = "exclusive"
+reason = "Local provider routing gateway."
+
+[[claims]]
+path = "scripts/start-local-stack.sh"
+mode = "exclusive"
+reason = "Portable local-stack launcher."
+
+[[claims]]
+path = "config/local/**"
+mode = "exclusive"
+reason = "Reviewed public ComfyUI workflow templates only."
+
+[[claims]]
+path = "src/novelvideo/config.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Global runtime settings; add only local-stack options."
+
+[[claims]]
+path = "src/novelvideo/generators/nanobanana_grid.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Generator shared with upstream fixes; port only loopback proxy handling."
+
+[[claims]]
+path = "scripts/start-ce.sh"
+mode = "shared"
+shared_with = ["*"]
+reason = "Shared CE launcher."
+
+[[claims]]
+path = "frontend/vite.config.ts"
+mode = "shared"
+shared_with = ["*"]
+reason = "Shared development proxy configuration."
+
+[[claims]]
+path = "tests/test_local_gateway.py"
+mode = "exclusive"
+reason = "Local gateway regression tests."
+
+[[claims]]
+path = "tests/test_freezone_image_backend.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Shared image backend behavior."
+
+[[claims]]
+path = "tests/test_newapi_image_gateway.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Shared NewAPI image gateway behavior."
+
+[[claims]]
+path = "tests/test_image_generation_selection.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Shared model selection behavior."
+
+[[claims]]
+path = "启动说明.md"
+mode = "exclusive"
+reason = "Portable setup guide; remove machine-specific paths."

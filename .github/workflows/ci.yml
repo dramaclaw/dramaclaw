@@ -16,6 +16,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # 纯 stdlib，先于依赖安装执行。防止 STATE / 台账 / scope 漂移或非法重叠进入主线。
+      - name: Check multi-agent workstream contract
+        run: python3 scripts/agent_guard.py check
       - name: Install uv (with cache)
         uses: astral-sh/setup-uv@v8.2.0
         with:

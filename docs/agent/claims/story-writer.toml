@@ -1,0 +1,89 @@
+version = 1
+slug = "story-writer"
+ledger = "docs/agent/tasks/story-writer.md"
+baseline = "38484897"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Update lifecycle and conflict radar."
+
+[[claims]]
+path = "docs/agent/tasks/story-writer.md"
+mode = "coordination"
+reason = "Workstream plan and handoff ledger."
+
+[[claims]]
+path = "docs/agent/claims/story-writer.toml"
+mode = "coordination"
+reason = "Machine-readable scope for this workstream."
+
+[[claims]]
+path = "src/novelvideo/agents/story_writer.py"
+mode = "exclusive"
+reason = "Story-writing agent and structured screenplay rendering."
+
+[[claims]]
+path = "src/novelvideo/api/routes/story.py"
+mode = "exclusive"
+reason = "Generic story document API."
+
+[[claims]]
+path = "src/novelvideo/api/__init__.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "API router registration; merge imports and mounts rather than replacing the file."
+
+[[claims]]
+path = "frontend/src/features/story/**"
+mode = "exclusive"
+reason = "Story workspace UI."
+
+[[claims]]
+path = "frontend/src/api/story.ts"
+mode = "exclusive"
+reason = "Story document API client."
+
+[[claims]]
+path = "frontend/src/lib/queries/story.ts"
+mode = "exclusive"
+reason = "Story document query layer."
+
+[[claims]]
+path = "frontend/src/routes/_app/projects.$project/story.lazy.tsx"
+mode = "exclusive"
+reason = "Story route source."
+
+[[claims]]
+path = "frontend/src/routeTree.gen.ts"
+mode = "shared"
+shared_with = ["*"]
+reason = "Generated route tree; regenerate from merged route sources."
+
+[[claims]]
+path = "frontend/src/components/layout/project-navigation-routes.ts"
+mode = "shared"
+shared_with = ["*"]
+reason = "Project navigation registry."
+
+[[claims]]
+path = "frontend/src/components/layout/project-header-navigation.tsx"
+mode = "shared"
+shared_with = ["*"]
+reason = "Project header navigation."
+
+[[claims]]
+path = "frontend/src/stores/assistant-draft-store.ts"
+mode = "exclusive"
+reason = "Story assistant draft state."
+
+[[claims]]
+path = "frontend/src/features/superchat/superchat-panel.tsx"
+mode = "shared"
+shared_with = ["*"]
+reason = "Shared assistant surface; only story-specific integration blocks belong here."
+
+[[claims]]
+path = "曹操.md"
+mode = "read-only"
+reason = "Untracked real sample to sanitize before turning into a fixture."

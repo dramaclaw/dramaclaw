@@ -1,0 +1,67 @@
+version = 1
+slug = "depth-motion-da3"
+ledger = "docs/agent/tasks/depth-motion-da3.md"
+baseline = "38484897"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Update lifecycle and conflict radar."
+
+[[claims]]
+path = "docs/agent/tasks/depth-motion-da3.md"
+mode = "coordination"
+reason = "Workstream plan and handoff ledger."
+
+[[claims]]
+path = "docs/agent/claims/depth-motion-da3.toml"
+mode = "coordination"
+reason = "Machine-readable scope for this workstream."
+
+[[claims]]
+path = "docs/guides/depth-motion-da3.md"
+mode = "exclusive"
+reason = "DA3 evidence and model boundary."
+
+[[claims]]
+path = "src/novelvideo/freezone/depth_motion.py"
+mode = "exclusive"
+reason = "Isolated DA3 subprocess orchestration."
+
+[[claims]]
+path = "src/novelvideo/freezone/depth_motion_worker.py"
+mode = "exclusive"
+reason = "Model inference and deterministic depth-video export."
+
+[[claims]]
+path = "src/novelvideo/api/routes/freezone.py"
+mode = "shared"
+shared_with = ["shot-breakdown"]
+reason = "Depth and breakdown endpoints share the freezone adapter."
+
+[[claims]]
+path = "src/novelvideo/task_backend/runners/freezone.py"
+mode = "shared"
+shared_with = ["shot-breakdown"]
+reason = "Depth and breakdown leaf classification share the runner."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/VideoNode.tsx"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Depth-motion action and video recreation actions share one node."
+
+[[claims]]
+path = "tests/test_depth_motion_limits.py"
+mode = "exclusive"
+reason = "Resource-limit regression tests."
+
+[[claims]]
+path = "tests/test_freezone_depth_motion.py"
+mode = "exclusive"
+reason = "Depth task API and runner tests."
+
+[[claims]]
+path = "frontend/src/__tests__/api/freezone-depth-motion.test.ts"
+mode = "exclusive"
+reason = "Frontend depth API contract tests."

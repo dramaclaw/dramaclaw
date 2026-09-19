@@ -1,0 +1,189 @@
+version = 1
+slug = "liblib-canvas-parity"
+ledger = "docs/agent/tasks/liblib-canvas-parity.md"
+baseline = "38484897"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Update lifecycle and conflict radar."
+
+[[claims]]
+path = "docs/agent/tasks/liblib-canvas-parity.md"
+mode = "coordination"
+reason = "Workstream plan and handoff ledger."
+
+[[claims]]
+path = "docs/agent/claims/liblib-canvas-parity.toml"
+mode = "coordination"
+reason = "Machine-readable scope for this workstream."
+
+[[claims]]
+path = "docs/guides/liblib-canvas-parity.md"
+mode = "exclusive"
+reason = "Evidence and long-form design for LibTV parity."
+
+[[claims]]
+path = "frontend/src/features/canvas/Canvas.tsx"
+mode = "shared"
+shared_with = ["canvas-lod-perf"]
+reason = "Focus newly derived nodes without replacing LOD mounting logic."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/videoRangePrompt.ts"
+mode = "exclusive"
+reason = "Centisecond range validation and prompt construction."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/VideoRemakePanel.tsx"
+mode = "exclusive"
+reason = "Segment remake UI."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/VideoContinuationPanel.tsx"
+mode = "exclusive"
+reason = "Video continuation UI."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/LiblibMediaNode.tsx"
+mode = "exclusive"
+reason = "Fallback imported media node."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/liblibMediaNode.css"
+mode = "exclusive"
+reason = "Fallback imported media node styles."
+
+[[claims]]
+path = "frontend/src/features/canvas/domain/liblibMediaUrl.ts"
+mode = "exclusive"
+reason = "LibTV remote URL classification."
+
+[[claims]]
+path = "frontend/src/features/canvas/domain/canvasRemoteMedia.ts"
+mode = "exclusive"
+reason = "Remote-media localization policy."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/RemoteMediaBadge.tsx"
+mode = "exclusive"
+reason = "Remote-media status UI."
+
+[[claims]]
+path = "frontend/src/features/freezone/liblibCanvasImport.ts"
+mode = "exclusive"
+reason = "LibTV canvas import."
+
+[[claims]]
+path = "frontend/src/features/freezone/createProjectLiblibImport.ts"
+mode = "exclusive"
+reason = "Project creation import entry."
+
+[[claims]]
+path = "frontend/src/features/freezone/CanvasLocalizeAssetsButton.tsx"
+mode = "exclusive"
+reason = "Explicit remote asset localization."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/lazyNodeComponents.tsx"
+mode = "exclusive"
+reason = "Lazy registration for imported node fallbacks."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/VideoNode.tsx"
+mode = "shared"
+shared_with = ["depth-motion-da3"]
+reason = "Video remake/continuation and depth-motion entry share the video node."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/NodeActionToolbar.tsx"
+mode = "exclusive"
+reason = "Measured LibTV-compatible video actions."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/nodeToolbarConfig.ts"
+mode = "exclusive"
+reason = "Toolbar action configuration."
+
+[[claims]]
+path = "frontend/src/features/canvas/domain/canvasNodes.ts"
+mode = "exclusive"
+reason = "Fields for imported and derived nodes."
+
+[[claims]]
+path = "frontend/src/features/canvas/domain/nodeRegistry.ts"
+mode = "exclusive"
+reason = "Imported node registration."
+
+[[claims]]
+path = "frontend/src/features/canvas/domain/nodeDisplay.ts"
+mode = "exclusive"
+reason = "Display labels for imported and derived nodes."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/index.ts"
+mode = "exclusive"
+reason = "Node exports for this feature."
+
+[[claims]]
+path = "frontend/src/lib/media-url.ts"
+mode = "exclusive"
+reason = "Remote media URL handling."
+
+[[claims]]
+path = "frontend/public/locales/zh/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Chinese user-facing strings; merge by key."
+
+[[claims]]
+path = "frontend/public/locales/en/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "English user-facing strings; merge by key."
+
+[[claims]]
+path = "frontend/public/locales/vi/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Vietnamese user-facing strings; merge by key."
+
+[[claims]]
+path = "src/novelvideo/freezone/liblib_import.py"
+mode = "exclusive"
+reason = "Share-link and canvas payload parsing."
+
+[[claims]]
+path = "src/novelvideo/freezone/liblib_assets.py"
+mode = "exclusive"
+reason = "Remote asset localization."
+
+[[claims]]
+path = "src/novelvideo/freezone/history.py"
+mode = "exclusive"
+reason = "Persist imported canvas semantics."
+
+[[claims]]
+path = "tests/test_liblib_assets.py"
+mode = "exclusive"
+reason = "Asset localization regression tests."
+
+[[claims]]
+path = "tests/test_liblib_canvas_import.py"
+mode = "exclusive"
+reason = "Canvas import regression tests."
+
+[[claims]]
+path = "frontend/src/__tests__/liblib-canvas-import.test.ts"
+mode = "exclusive"
+reason = "Frontend import regression tests."
+
+[[claims]]
+path = "frontend/src/__tests__/canvas-remote-media-localize.test.ts"
+mode = "exclusive"
+reason = "Remote localization regression tests."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/video-range-prompt.test.ts"
+mode = "exclusive"
+reason = "Range prompt regression tests."

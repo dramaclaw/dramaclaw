@@ -1,0 +1,165 @@
+version = 1
+slug = "canvas-lod-perf"
+ledger = "docs/agent/tasks/canvas-lod-perf.md"
+baseline = "38484897"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Update lifecycle and conflict radar."
+
+[[claims]]
+path = "docs/agent/tasks/canvas-lod-perf.md"
+mode = "coordination"
+reason = "Workstream plan and handoff ledger."
+
+[[claims]]
+path = "docs/agent/claims/canvas-lod-perf.toml"
+mode = "coordination"
+reason = "Machine-readable scope for this workstream."
+
+[[claims]]
+path = "frontend/src/features/canvas/Canvas.tsx"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "LOD mounting and downstream-node focus both integrate at the canvas root."
+
+[[claims]]
+path = "frontend/src/index.css"
+mode = "exclusive"
+reason = "LOD presentation styles; remote branch overlap still requires source audit."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/canvasLod.ts"
+mode = "exclusive"
+reason = "LOD policy."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/imageData.ts"
+mode = "exclusive"
+reason = "LOD image projection."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/graphImageResolver.ts"
+mode = "exclusive"
+reason = "LOD-safe graph image resolution."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/graphContentResolver.ts"
+mode = "exclusive"
+reason = "LOD-safe graph content resolution."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/videoFrameCapture.ts"
+mode = "exclusive"
+reason = "Video poster extraction used by lightweight nodes."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/videoTranscode.ts"
+mode = "exclusive"
+reason = "Video normalization used by poster extraction."
+
+[[claims]]
+path = "frontend/src/features/freezone/useCanvasSync.ts"
+mode = "exclusive"
+reason = "Persist LOD-compatible canvas projections."
+
+[[claims]]
+path = "frontend/src/features/viewer-kit/three-d/ThreeDDirectorDialogLazy.tsx"
+mode = "exclusive"
+reason = "Lazy-load heavy 3D UI outside low-zoom rendering."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/GroupNode.tsx"
+mode = "exclusive"
+reason = "LOD node body."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/ImageGenNode.tsx"
+mode = "exclusive"
+reason = "LOD node body."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/LodShellNode.tsx"
+mode = "exclusive"
+reason = "Lightweight node shell."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/SkillNode.tsx"
+mode = "exclusive"
+reason = "LOD node body."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/ThreeDWorldNode.tsx"
+mode = "exclusive"
+reason = "LOD node body."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/UploadNode.tsx"
+mode = "exclusive"
+reason = "LOD node body."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/CanvasNodeImage.tsx"
+mode = "exclusive"
+reason = "Lightweight media rendering."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/nodeFrameStyles.ts"
+mode = "exclusive"
+reason = "Shared frame styles within the LOD implementation."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/NodeHeader.tsx"
+mode = "exclusive"
+reason = "Lightweight header rendering."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/NodeGenerationOverlay.tsx"
+mode = "exclusive"
+reason = "Low-zoom generation state."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/NodeToolDialog.tsx"
+mode = "exclusive"
+reason = "Lazy tool UI."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/AssetCommitHandle.tsx"
+mode = "exclusive"
+reason = "Low-zoom asset commit behavior."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/CanvasHistoryAssetsModal.tsx"
+mode = "exclusive"
+reason = "Lazy history asset UI."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/canvas-lod.test.ts"
+mode = "exclusive"
+reason = "LOD regression coverage."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/lod-audio-playback.test.tsx"
+mode = "exclusive"
+reason = "Low-zoom audio regression coverage."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/external-file-handoff-low-zoom.test.tsx"
+mode = "exclusive"
+reason = "Low-zoom file handoff coverage."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/node-body-image-variant.test.ts"
+mode = "exclusive"
+reason = "Image variant coverage."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/video-frame-capture-poster.test.ts"
+mode = "exclusive"
+reason = "Poster extraction coverage."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/asset-replace-pick.test.tsx"
+mode = "exclusive"
+reason = "Asset replacement coverage."

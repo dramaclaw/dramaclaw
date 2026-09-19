@@ -1,0 +1,139 @@
+version = 1
+slug = "legacy-unassigned-diff"
+ledger = "docs/agent/tasks/legacy-unassigned-diff.md"
+baseline = "38484897"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Update quarantine status and migrations."
+
+[[claims]]
+path = "docs/agent/tasks/legacy-unassigned-diff.md"
+mode = "coordination"
+reason = "Quarantine evidence and migration ledger."
+
+[[claims]]
+path = "docs/agent/claims/legacy-unassigned-diff.toml"
+mode = "coordination"
+reason = "Machine-readable quarantine list."
+
+[[claims]]
+path = ".playwright-cli/**"
+mode = "read-only"
+reason = "Unknown local browser artifact; do not delete or commit before audit."
+
+[[claims]]
+path = "_to_delete/**"
+mode = "read-only"
+reason = "Directory name is not authorization to delete unknown user data."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/canvas-manual-connect.test.tsx"
+mode = "exclusive"
+reason = "Historical dirty test with no reliable workstream attribution."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/canvas-minimap-pan-mount.test.tsx"
+mode = "exclusive"
+reason = "Historical dirty test with no reliable workstream attribution."
+
+[[claims]]
+path = "frontend/src/__tests__/features/viewer-kit/freezone-viewer-contract.test.ts"
+mode = "exclusive"
+reason = "Historical dirty test with no reliable workstream attribution."
+
+[[claims]]
+path = "frontend/src/__tests__/lib/freezone-url.test.ts"
+mode = "exclusive"
+reason = "Historical dirty test with no reliable workstream attribution."
+
+[[claims]]
+path = "frontend/src/__tests__/lib/media-url.test.ts"
+mode = "exclusive"
+reason = "Historical dirty test with no reliable workstream attribution."
+
+[[claims]]
+path = "frontend/src/__tests__/session-expiry-streams.test.tsx"
+mode = "exclusive"
+reason = "Historical dirty test with no reliable workstream attribution."
+
+[[claims]]
+path = "frontend/src/api/canvas.ts"
+mode = "exclusive"
+reason = "Historical dirty API client with no reliable workstream attribution."
+
+[[claims]]
+path = "frontend/src/components/layout/header.tsx"
+mode = "exclusive"
+reason = "Historical dirty layout file with no reliable workstream attribution."
+
+[[claims]]
+path = "frontend/src/components/settings/settings-dialog.tsx"
+mode = "exclusive"
+reason = "Historical dirty settings file with no reliable workstream attribution."
+
+[[claims]]
+path = "frontend/src/features/freezone/AssetLibraryPanel.tsx"
+mode = "exclusive"
+reason = "Historical dirty freezone file with no reliable workstream attribution."
+
+[[claims]]
+path = "frontend/src/features/freezone/CanvasOutlineList.tsx"
+mode = "exclusive"
+reason = "Historical dirty freezone file with no reliable workstream attribution."
+
+[[claims]]
+path = "frontend/src/features/freezone/CanvasesTab.tsx"
+mode = "exclusive"
+reason = "Historical dirty freezone file with no reliable workstream attribution."
+
+[[claims]]
+path = "frontend/src/features/freezone/FreezoneShell.tsx"
+mode = "exclusive"
+reason = "Historical dirty freezone file with no reliable workstream attribution."
+
+[[claims]]
+path = "frontend/src/features/freezone/projections.ts"
+mode = "exclusive"
+reason = "Historical dirty freezone projection with no reliable workstream attribution."
+
+[[claims]]
+path = "frontend/src/lib/freezone-url.ts"
+mode = "exclusive"
+reason = "Historical dirty URL helper with no reliable workstream attribution."
+
+[[claims]]
+path = "frontend/src/routes/_app/index.tsx"
+mode = "exclusive"
+reason = "Historical dirty route with no reliable workstream attribution."
+
+[[claims]]
+path = "frontend/src/routes/_app/projects.$project/freezone.lazy.tsx"
+mode = "exclusive"
+reason = "Historical dirty route with no reliable workstream attribution."
+
+[[claims]]
+path = "frontend/src/stores/assetDropStore.ts"
+mode = "exclusive"
+reason = "Historical dirty store with no reliable workstream attribution."
+
+[[claims]]
+path = "src/novelvideo/freezone/video_node.py"
+mode = "exclusive"
+reason = "Historical dirty backend module with no reliable workstream attribution."
+
+[[claims]]
+path = "tests/test_freezone_canvas_route_home_node_guard.py"
+mode = "exclusive"
+reason = "Historical dirty backend test with no reliable workstream attribution."
+
+[[claims]]
+path = "tests/test_p0g4i_freezone_leaf_classification.py"
+mode = "exclusive"
+reason = "Historical dirty backend test with no reliable workstream attribution."
+
+[[claims]]
+path = "tests/test_task_runner_home_node_placement.py"
+mode = "exclusive"
+reason = "Historical dirty backend test with no reliable workstream attribution."

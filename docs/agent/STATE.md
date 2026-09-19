@@ -1,0 +1,95 @@
+# STATE · 当前进度索引
+
+> **新会话的第一件事是读这份文件。** 它只回答三个问题：现在有哪几条线在做、各自卡在哪、
+> 下一步做什么。取证与方案不在这里——在 `docs/guides/`；每条线的逐步记录在 `docs/agent/tasks/`。
+>
+> 最后更新：2026-09-18 · 更新方式见 `AGENTS.md` 的「多模型协作协议」与
+> [`docs/agent/README.md`](README.md)
+
+## 一、仓库当前形态（接手前必须核对）
+
+- 分支 `main`，最新提交 `38484897`（2026-09-11，`fix(backup): …跳过已弃用的项目 Cognee 数据 #531`）。
+- **工作区有 136 个未提交状态条目**（截至 2026-09-18：83 tracked + 53 untracked），
+  包含六条业务线、协作治理和历史未归属隔离区，没有任何一条有独立本地分支 / 提交承载。
+  数字包含本轮 `AGENTS.md`、`docs/agent/`、guard、hooks 与测试；会话开始时 hook 注入的摘要是实时值，
+  不能用条目总数反推某条业务线又新增了多少文件。
+- 这是当前最大的风险：一次整树 restore / 自动 stash / 强制切分支，就能抹掉三周的工作。
+  **接手后第一条命令是 `git status --short --branch`，先和下表对账。**
+- 当前 `main` 比 `origin/main` 落后 13 个提交，且至少 7 个本地脏文件也被上游修改。
+  在完成逐线来源审计和拆提交前，不得直接 pull/rebase，也不要为了建 worktree 自动 stash。
+
+## 二、在途工作线
+
+| 台账 | 主题 | 状态 | 卡在哪 / 下一步 |
+|---|---|---|---|
+| [agent-collaboration-protocol](tasks/agent-collaboration-protocol.md) | 多模型协作、方案门与冲突治理 | 待验收 | 文档、scope、guard、锁、测试、hooks 与 CI 已闭环 |
+| [legacy-unassigned-diff](tasks/legacy-unassigned-diff.md) | 历史未归属改动隔离区 | 已阻塞 | 只读审计来源；未归属前禁止覆盖或删除 |
+| [liblib-canvas-parity](tasks/liblib-canvas-parity.md) | LibTV 画布对齐：片段重拍 / 智能续写 / 导入器 / 工具条 | 待验收 | 缺 OSS relay；与远端重拍分支大面积重复，先审计 |
+| [shot-breakdown](tasks/shot-breakdown.md) | 逐帧拉片三维度：分镜 / 动态 / 音乐 | 待验收 | 音乐依赖 demucs；与 depth、远端重拍分支共享后端热点 |
+| [depth-motion-da3](tasks/depth-motion-da3.md) | 拉片动态维度：Depth Anything 3 深度视频 | 待验收 | 需本机模型 / 解释器；与 shot-breakdown 共享后端热点 |
+| [story-writer](tasks/story-writer.md) | 创作阶段（虾本）：写手 agent + 通用文档存储 + 前端路由 | 执行中 | 零测试；路由生成文件同时被 `origin/main` 修改 |
+| [local-stack](tasks/local-stack.md) | 命令行 CE 本地栈：local_gateway + ComfyUI Qwen/Krea | 执行中 | 机器路径未拔除；生成器文件同时被 `origin/main` 修改 |
+| [canvas-lod-perf](tasks/canvas-lod-perf.md) | 画布 LOD 剔除、低缩放交互、视频抽帧封面 | 待验收 | 与远端 LOD 分支 4 文件重叠，先审计来源 |
+
+已完成或放弃的线移到 `docs/agent/archive/`，不要在上表里留尸体。状态只用
+`提案中 / 方案就绪 / 执行中 / 待验收 / 已阻塞 / 已完成 / 已归档`。
+
+## 三、冲突雷达（动热点文件前必须看）
+
+| 路径 / 区域 | 本地工作线 | 外部重叠 | 当前处理规则 |
+|---|---|---|---|
+| `Canvas.tsx`、`index.css`、`imageData.ts`、`useCanvasSync.ts` | LOD + LibTV 画布 | `origin/perf/canvas-pan-lod-culling` | LOD 来源审计完成前不再写这 4 个文件 |
+| `VideoNode.tsx`、`canvasNodes.ts`、`nodeRegistry.ts`、`NodeActionToolbar.tsx` 等 | LibTV + depth / 拉片接入 | `origin/feat/canvas-video-reshoot-breakdown` | 先做行为与测试的三方差异，不按文件新旧直接取舍 |
+| `freezone.py`、`tasks.py`、`schemas.py`、`jobs.py`、`runners/freezone.py` | shot + depth + LibTV | 远端重拍分支；部分还在 `origin/main` | 按 API schema → job → runner 串行集成，禁止并行写 |
+| 三语 `translation.json` | LibTV 与其他前端改动 | `origin/main` + 远端重拍分支 | 合并键，不整文件覆盖；三语同时验证 |
+| `routeTree.gen.ts` | story-writer | `origin/main` | 先合并路由源文件，最后重新生成，不手工择一覆盖 |
+| `nanobanana_grid.py` | local-stack | `origin/main` | 对比上游生成器修复后再移植回环代理逻辑 |
+
+已确认的重叠数字（基于当前本地远端引用）：LOD 分支 4 个文件全部与本地脏文件重叠；
+视频重拍 / 拉片分支至少 24 个文件与本地脏文件重叠；`origin/main` 有 7 个文件与本地脏文件重叠。
+远端引用更新后数字可能变化，决定合并前需 fetch 后复核。
+
+## 四、恢复顺序（不是功能优先级）
+
+1. 完成交接协议，把 `AGENTS.md`、`docs/agent/`、guard 与必要 hooks 单独形成可审计提交。
+2. 只读分类 `legacy-unassigned-diff`，任何未确认归属的文件继续保持隔离。
+3. 审计 `canvas-lod-perf` 与远端 LOD 分支，先消掉最小的 4 文件重复面。
+4. 审计 `liblib-canvas-parity` / `shot-breakdown` / `depth-motion-da3` 与远端重拍分支；
+   先定共享契约，再拆新增纯模块，最后处理共享适配层。
+5. 单独拆 `story-writer` 与 `local-stack`，处理各自与 `origin/main` 的热点。
+6. 所有线有独立提交 / 分支、工作区可恢复后，再同步 `origin/main` 并转为一线一 worktree。
+
+这是保护现场的技术顺序，不是产品优先级。若用户改变优先级，先更新方案，但仍不能跳过冲突审计。
+
+## 五、全局阻塞（不是代码问题，改代码解决不了）
+
+1. **`OSS_RELAY_AK` / `OSS_RELAY_SK` 未配置** → 任务能建、能派发，调到视频生成器报
+   `OSS media relay config missing`。凡是「视频生成跑不通」，先查这个，别去 debug 业务代码。
+2. **ComfyUI 要单独起**，不随 `start-local-stack.sh` 启动；命令见 `启动说明.md`。
+3. **demucs 未装** → 拉片的音乐维度降级成整轨提取（`mode` 字段会如实上报，不是静默降级）。
+
+## 六、环境速查
+
+```bash
+# 后端（云端/标准 CE）
+uv sync --group dev && uv run novelvideo api --port 8780
+# 本地命令行栈（本机 ComfyUI + 硅基流动），会一并起 local_gateway
+DRAMACLAW_LOCAL_CONFIG_DIR="$PWD/.dramaclaw-local" DRAMACLAW_LOCAL_DATA_DIR="$PWD" \
+  bash scripts/start-local-stack.sh
+# 前端
+cd frontend && pnpm install --frozen-lockfile && pnpm dev
+```
+
+项目数据在 `state/local/<project>/`（gitignore）；产物在 `output/`（gitignore）。
+当前有内容的项目：`chuan_yue_song_chao`、`liblib_canvas_import_review`、`Wawa_qiao`、`test`。
+
+## 七、易丢的本地资产（不在 git 里）
+
+| 路径 | 是什么 | 丢了会怎样 |
+|---|---|---|
+| `output/local/liblib_canvas_import_review/liblib-shot-breakdown-teardown.md` | 拉片实测拆解 | 拉片那条线的取证归零，要重新对着 LibTV 量一遍 |
+| `.dramaclaw-local/` | 本地路由配置与密钥 | 本地栈起不来 |
+| `config/local/*.json` | ComfyUI 工作流（Qwen / Krea2） | 本地图像生成不可用 |
+| `曹操.md` | 创作阶段的真实样例产物 | story 线没有可回归的样例 |
+
+这几样值得单独备份一次，再谈别的。

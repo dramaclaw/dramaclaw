@@ -1,0 +1,96 @@
+version = 1
+slug = "shot-breakdown"
+ledger = "docs/agent/tasks/shot-breakdown.md"
+baseline = "38484897"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Update lifecycle and conflict radar."
+
+[[claims]]
+path = "docs/agent/tasks/shot-breakdown.md"
+mode = "coordination"
+reason = "Workstream plan and handoff ledger."
+
+[[claims]]
+path = "docs/agent/claims/shot-breakdown.toml"
+mode = "coordination"
+reason = "Machine-readable scope for this workstream."
+
+[[claims]]
+path = "output/local/liblib_canvas_import_review/liblib-shot-breakdown-teardown.md"
+mode = "read-only"
+reason = "Untracked evidence source to migrate into a tracked guide."
+
+[[claims]]
+path = "docs/guides/shot-breakdown.md"
+mode = "exclusive"
+reason = "Tracked destination for teardown evidence."
+
+[[claims]]
+path = "src/novelvideo/freezone/shot_breakdown.py"
+mode = "exclusive"
+reason = "Deterministic shot-language aggregation."
+
+[[claims]]
+path = "src/novelvideo/freezone/bgm_separate.py"
+mode = "exclusive"
+reason = "BGM separation and explicit degradation mode."
+
+[[claims]]
+path = "src/novelvideo/freezone/jobs.py"
+mode = "exclusive"
+reason = "Breakdown task definitions."
+
+[[claims]]
+path = "src/novelvideo/api/routes/freezone.py"
+mode = "shared"
+shared_with = ["depth-motion-da3"]
+reason = "Breakdown and depth endpoints share the freezone adapter."
+
+[[claims]]
+path = "src/novelvideo/task_backend/runners/freezone.py"
+mode = "shared"
+shared_with = ["depth-motion-da3"]
+reason = "Breakdown and depth leaf classification share the runner."
+
+[[claims]]
+path = "src/novelvideo/api/routes/tasks.py"
+mode = "exclusive"
+reason = "Expose breakdown task lifecycle."
+
+[[claims]]
+path = "src/novelvideo/api/schemas.py"
+mode = "exclusive"
+reason = "Breakdown request and result schemas."
+
+[[claims]]
+path = "frontend/src/api/ops.ts"
+mode = "exclusive"
+reason = "Breakdown operation endpoint client."
+
+[[claims]]
+path = "frontend/src/api/tasks.ts"
+mode = "exclusive"
+reason = "Breakdown task projections."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/shotBreakdownNodes.ts"
+mode = "exclusive"
+reason = "Project breakdown outputs into canvas nodes."
+
+[[claims]]
+path = "tests/test_shot_breakdown.py"
+mode = "exclusive"
+reason = "Shot aggregation regression tests."
+
+[[claims]]
+path = "tests/test_bgm_separate.py"
+mode = "exclusive"
+reason = "BGM normal and degraded path tests."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/shot-breakdown-nodes.test.ts"
+mode = "exclusive"
+reason = "Canvas output projection tests."
