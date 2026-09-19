@@ -8,7 +8,8 @@
 
 ## 一、仓库当前形态（接手前必须核对）
 
-- 分支 `main`，最新功能提交 `880d47e2`（2026-09-19，`fix(canvas): retry image result publication`）。
+- 分支 `main`，当前 HEAD `0e55d252`（2026-09-19，`docs(agent): record protected residual artifacts`）；
+  最近画布功能提交仍可从各工作线台账追溯。
 - **工作区只剩 3 类未跟踪的受保护本地资料**：`.playwright-cli/` 浏览器运行日志、`_to_delete/`
   旧原型、`曹操.md` 原始故事样例。此前 49 条在途的 LOD、素材替换、入口恢复、本地路由与 Depth
   差异均已按工作线独立提交；这三类不因名称或“提交全部”的口头命令自动删除或公开。
@@ -28,7 +29,7 @@
 | [legacy-unassigned-diff](tasks/legacy-unassigned-diff.md) | 历史未归属改动隔离区 | 已阻塞 | 只读审计来源；未归属前禁止覆盖或删除 |
 | [asset-replacement-picker](tasks/asset-replacement-picker.md) | 画布素材替换：拖拽与点选双入口 | 待验收 | 独立实现与 5 项聚焦测试已通过；待真实画布手工走一遍点选替换 |
 | [freezone-entry-recovery](tasks/freezone-entry-recovery.md) | 项目画布入口恢复 | 待验收 | 30 项聚焦测试和生产构建通过；待跨项目、无效深链、首次个人画布浏览器验收 |
-| [liblib-canvas-parity](tasks/liblib-canvas-parity.md) | LibTV 画布对齐：片段重拍 / 智能续写 / 导入器 / 工具条 | 待验收 | 四层提交与干净快照已通过；配置 OSS relay 后真实出片并补跑续写端到端 |
+| [liblib-canvas-parity](tasks/liblib-canvas-parity.md) | 画布架构与 LibTV 能力对齐 | 待验收 | 真实 UI、线上 chunk、我方架构与分阶段路线已固化；待产品确认 P0 顺序及 relay 真实出片验收 |
 | [shot-breakdown](tasks/shot-breakdown.md) | 逐帧拉片三维度：分镜 / 动态 / 音乐 | 待验收 | 三层提交与干净快照通过；待真实视觉模型及有/无 demucs 两种音乐路径 |
 | [depth-motion-da3](tasks/depth-motion-da3.md) | 拉片动态维度：Depth Anything 3 深度视频 | 待验收 | 任务中心名称与 20 项聚焦回归已补齐；待 CUDA 真机 720p 硬切样片验收 |
 | [story-writer](tasks/story-writer.md) | 创作阶段（虾本）：写手 agent + 通用文档存储 + 前端路由 | 待验收 | 14 项后端契约测试与前端 build 已通过；待真实模型四阶段流程和导入链路验收 |
