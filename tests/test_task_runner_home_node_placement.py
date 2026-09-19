@@ -24,6 +24,7 @@ from novelvideo.task_backend.projection import PROJECTION_REQUIREMENTS
 
 
 PLACEMENT_FREE_TASKS = {
+    "freezone_depth_motion",
     "freezone_analyze",
     "freezone_audio_eleven_music",
     "freezone_audio_separate",

@@ -813,6 +813,13 @@ class FreezoneExtractFramesRequest(BaseModel):
     scene_threshold: float = 0.3
 
 
+class FreezoneDepthMotionCaptureRequest(BaseModel):
+    """Derive a near-white/far-black depth video from a project-local video."""
+
+    source_url: str = Field(description="当前项目的视频静态地址")
+    resolution: Literal["480p", "720p"] = "720p"
+
+
 class FreezoneAnalyzeShotsRequest(BaseModel):
     frame_urls: list[str]
     provider: Optional[str] = None

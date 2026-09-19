@@ -50,6 +50,7 @@ from novelvideo.api.schemas import (
     FreezoneAudioSpeechRequest,
     FreezoneCharacterMultiViewRequest,
     FreezoneEditRequest,
+    FreezoneDepthMotionCaptureRequest,
     FreezoneExtractFramesRequest,
     FreezoneFrameFromContextRequest,
     FreezoneGenRequest,
@@ -6034,6 +6035,38 @@ async def freezone_redraw(
 # ============================================================
 
 
+@router.post(
+    "/projects/{project}/freezone/video/depth-motion",
+    response_model=FreezoneJobAcceptedResponse,
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_depth_motion_capture(
+    project: str,
+    body: FreezoneDepthMotionCaptureRequest,
+    user: dict = Depends(get_api_user),
+):
+    """Queue project-local DA3 depth capture on the GPU/world lane."""
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
+    )
+    try:
+        source_path = resolve_static_url_to_path(body.source_url, project_dir)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not source_path.is_file():
+        raise HTTPException(404, "video source not found")
+    if ctx is None:
+        _raise_project_context_required("freezone_depth_motion")
+    return await _enqueue_freezone_background_job(
+        ctx=ctx,
+        project_dir=project_dir,
+        task_type="freezone_depth_motion",
+        job_id=_new_job_id(),
+        payload={"source_path": source_path.as_posix(), "resolution": body.resolution},
+        queue_kind="world",
+    )
+
+
 @router.post("/projects/{project}/freezone/extract-frames", tags=[TAG_FREEZONE_VIDEO])
 async def freezone_extract_frames(
     project: str,
@@ -10058,6 +10091,7 @@ async def freezone_job_result(
         "freezone_mask_edit",
         "freezone_video_erase",
         "freezone_video_upscale",
+        "freezone_depth_motion",
         "freezone_audio_separate",
         "freezone_audio_speech",
         "freezone_audio_eleven_music",
@@ -10167,6 +10201,26 @@ async def freezone_job_result(
                 },
             }
         return {"ok": False, "info": "job result not yet on disk", "status": "unknown"}
+
+    if task_type == "freezone_depth_motion":
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", job_id):
+            raise HTTPException(400, "invalid job id")
+        if task is not None and task.status == "failed":
+            return {"ok": False, "error": task.error or "job failed", "status": "failed"}
+        if task is not None and task.status != "completed":
+            return {"ok": False, "info": "job result not yet available", "status": task.status}
+        output = outputs_dir(project_dir, task_type) / f"{job_id}.mp4"
+        metadata = output.with_suffix(".json")
+        if not output.is_file() or not metadata.is_file():
+            return {"ok": False, "info": "job result not yet on disk", "status": "unknown"}
+        relative = output.relative_to(project_dir).as_posix()
+        metadata_relative = metadata.relative_to(project_dir).as_posix()
+        return {"ok": True, "data": {
+            "url": make_static_url_for_context(ctx, relative),
+            "size": output.stat().st_size,
+            "manifest_url": make_static_url_for_context(ctx, metadata_relative),
+            "meta": json.loads(metadata.read_text(encoding="utf-8")),
+        }}
 
     out = output_path_for_job(project_dir, task_type, job_id)
     if task_type == "freezone_image_reverse_prompt":

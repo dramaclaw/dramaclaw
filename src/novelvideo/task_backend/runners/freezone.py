@@ -84,6 +84,9 @@ FREEZONE_LEAF_EGRESS: dict[str, LeafEgressRule] = {
     "run_freezone_video_upscale": LeafEgressRule(
         "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
     ),
+    "run_freezone_depth_motion_capture": LeafEgressRule(
+        "novelvideo.freezone.depth_motion", LeafEgress.LOCAL, "EG-20a"
+    ),
     "run_freezone_video_compose": LeafEgressRule(
         "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
     ),
@@ -862,6 +865,42 @@ async def _run_freezone_video_upscale_async(
     }
 
 
+async def _run_freezone_depth_motion_async(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
+    from novelvideo.api.deps import make_static_url_for_context
+    from novelvideo.freezone.depth_motion import run_freezone_depth_motion_capture
+
+    payload = envelope.get("payload") or {}
+    job_id = str(payload["job_id"])
+    project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
+    _update(ctx, "freezone_depth_motion", job_id, 0.1, "Depth Anything 3 逐帧推理中...")
+    output_path, meta = await _call_freezone_leaf(
+        envelope,
+        run_freezone_depth_motion_capture,
+        "run_freezone_depth_motion_capture",
+        project_dir=project_dir,
+        job_id=job_id,
+        source_path=str(payload["source_path"]),
+        resolution=str(payload.get("resolution") or "720p"),
+    )
+    rel = output_path.relative_to(project_dir).as_posix()
+    return {
+        "job_id": job_id,
+        "url": make_static_url_for_context(ctx, rel),
+        "manifest_url": make_static_url_for_context(
+            ctx, output_path.with_suffix(".json").relative_to(project_dir).as_posix()
+        ),
+        "meta": meta,
+    }
+
+
+def run_freezone_depth_motion(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
+    return _run_cancellable(envelope, _run_freezone_depth_motion_async(envelope, ctx))
+
+
 async def _run_freezone_audio_separate_async(
     envelope: dict[str, Any],
     ctx: ProjectContext,
@@ -1441,6 +1480,9 @@ register_project_task_runner(
 )
 register_project_task_runner(
     "freezone_video_upscale", run_freezone_video_upscale, requires_home_node=False
+)
+register_project_task_runner(
+    "freezone_depth_motion", run_freezone_depth_motion, requires_home_node=False
 )
 register_project_task_runner(
     "freezone_audio_separate", run_freezone_audio_separate, requires_home_node=False

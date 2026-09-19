@@ -51,6 +51,7 @@ AUDITED_LOCAL_LEAVES = frozenset(
         "run_freezone_video_upscale",
     }
 )
+DA3_LOCAL_LEAVES = frozenset({"run_freezone_depth_motion_capture"})
 
 
 def _organization_context(task_type: str = "freezone_extract") -> TrustedEgressContext:
@@ -352,10 +353,10 @@ async def test_analyze_shots_leaf_receives_the_organization_egress_context(
     assert seen[0] is not None and seen[0].is_organization
 
 
-def test_local_table_is_exactly_the_five_audited_leaves() -> None:
-    """本地表严格 5 个，不得凭「看起来像本地」扩表（护栏 b）。
+def test_local_table_is_audited_leaves_plus_explicit_local_da3_worker() -> None:
+    """本地表严格限于原 5 条和新增的本地 DA3 子进程（护栏 b）。
 
-    每一条都对到 EG-20a，且与 EE 计费豁免集 `feature_billing.py:389-399` 同源。
+    原 5 条与 EE 计费豁免集同源；DA3 不下载权重、仅加载本地路径。
     """
 
     from novelvideo.task_backend.runners.freezone import (
@@ -369,9 +370,10 @@ def test_local_table_is_exactly_the_five_audited_leaves() -> None:
         if rule.egress is LeafEgress.LOCAL
     }
 
-    assert local == AUDITED_LOCAL_LEAVES
+    assert local == AUDITED_LOCAL_LEAVES | DA3_LOCAL_LEAVES
     assert all(
-        FREEZONE_LEAF_EGRESS[name].eg_id == "EG-20a" for name in AUDITED_LOCAL_LEAVES
+        FREEZONE_LEAF_EGRESS[name].eg_id == "EG-20a"
+        for name in AUDITED_LOCAL_LEAVES | DA3_LOCAL_LEAVES
     )
 
     # DENIED 桶同样锁死：它不是「待办清单」，往里塞新名字等于悄悄扩大拒绝面。
@@ -441,7 +443,7 @@ def test_classification_matches_the_real_leaf_signatures() -> None:
 
 
 def test_every_dispatch_site_names_a_classified_leaf() -> None:
-    """20 个调用点逐个对到表里；新增未分类的调用点即红。
+    """21 个调用点逐个对到表里；新增未分类的调用点即红。
 
     `leaf_name` 是必填位置参数，不是可选项——漏传是 `TypeError`，不是静默放行。
     """
@@ -469,7 +471,7 @@ def test_every_dispatch_site_names_a_classified_leaf() -> None:
 
     # 19 → 20：`origin/staging` 的 f33ac189（#279）带进来的
     # `generate_freezone_text`，正是上一条用例点名预言的那个形状。
-    assert len(named) == 20
+    assert len(named) == 21  # DA3 local worker adds one explicitly classified call.
     assert set(named) <= set(FREEZONE_LEAF_EGRESS)
 
 

@@ -542,6 +542,15 @@ def build_freezone_omni_video_prompt(
         "优先保持主体身份、场景连续性、风格一致性和动作自然性。"
     )
     counts = summarize_omni_reference_counts(reference_items or [])
+    if any(
+        item.get("type") == "video" and item.get("role") == "depth_motion"
+        for item in (reference_items or [])
+    ):
+        parts.append(
+            "深度动作参考视频是近白远黑的相对 z-depth 灰度结构图："
+            "仅参考主体动作、前后层次和镜头运动，不把灰度纹理或黑边当成成片画风；"
+            "深度并非骨骼数据，不要求逐像素复现。"
+        )
     single_video_reference_instruction = "这是视频参考生成新的视频，不是视频编辑。"
     if (
         counts["video_count"] == 1

@@ -2,7 +2,7 @@
 
 **状态**：执行中
 **最后更新**：2026-09-18
-**基线**：`246ad1634162`；本地未提交；共享适配层与 shot-breakdown、远端重拍分支重叠
+**基线**：`43d416f165db`；DA3 worker 已独立提交；共享适配层与 shot-breakdown、远端重拍分支重叠
 **相关文档**：`docs/guides/depth-motion-da3.md`（模型边界、执行链路、API、参数依据）
 **相关分支 / PR**：无，工作区未提交
 
@@ -56,6 +56,18 @@
 - 独占模块可按本线提交撤销；共享路由与 runner 不得整文件回退。
 
 ## 进展记录
+
+### 2026-09-18 · 后端共享层按 hunk 集成并用索引快照验证
+
+做了什么：只暂存 Depth 请求 schema、项目同源 URL 校验 / 入队端点、world runner、结果 manifest 读取、
+全能视频深度参考语义和两份全局 runner 护栏；相邻的拉片 endpoint / leaf / metadata hunk 全部留在工作树。
+
+为什么这么做：直接在脏工作树跑全局护栏会读到未暂存拉片 runner，造成 4 个“额外 leaf / task”失败；
+这不能证明 Depth 提交坏了。把 Git 索引导出到 `/tmp` 干净快照，才能验证将要提交的真实文件集合。
+
+怎么验证的：索引快照中运行 Depth 两份测试、leaf 分类和 home-node placement 共 38 passed；
+当前工作树同组测试为 34 passed / 4 failed，失败项全部来自未暂存的 shot-breakdown leaf / task，已明确隔离。
+ruff 对后端集成文件通过，Depth 暂存 diff 中没有 `shot_breakdown` / `bgm_separate` / `liblib` 标识。
 
 ### 2026-09-18 · Depth 全契约通过，先拆纯模块提交
 
