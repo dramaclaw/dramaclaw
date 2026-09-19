@@ -20,9 +20,12 @@ import {
   isNodeMediaActive,
   setCanvasGestureActive,
   setNodeMediaActive,
+  updateLowDetailFromZoom,
 } from '@/features/canvas/application/canvasLod';
 
-// ---- @xyflow/react：只需要 useStore 能读到 transform[2]，Handle 渲染成空节点 ----
+// ---- @xyflow/react：低细节档的换壳决策现在由模块级 subscribeLowDetail 驱动（见
+// 下方用例用 updateLowDetailFromZoom 切档）；但 shell 内部的 useNodeBodyVariant 仍
+// 用 useStore 读 transform[2] 挑变体，所以 useStore 仍需保留。 ----
 let currentZoom = 1;
 vi.mock('@xyflow/react', () => ({
   Handle: () => null,
@@ -134,11 +137,13 @@ describe('AudioWaveformPlayer 播放态外抛', () => {
 describe('播放中的音频节点跨低缩放档不换壳', () => {
   beforeEach(() => {
     currentZoom = 1;
+    updateLowDetailFromZoom(1); // 复位到非低细节档
     setCanvasGestureActive(false);
     setNodeMediaActive(NODE_ID, false);
   });
 
   afterEach(() => {
+    updateLowDetailFromZoom(1);
     setNodeMediaActive(NODE_ID, false);
     vi.restoreAllMocks();
   });
@@ -147,8 +152,9 @@ describe('播放中的音频节点跨低缩放档不换壳', () => {
     const { queryByTestId, rerender } = renderAudioNode();
     expect(queryByTestId('full-audio-node')).not.toBeNull();
 
-    currentZoom = 0.2;
     act(() => {
+      currentZoom = 0.2;
+      updateLowDetailFromZoom(0.2);
       rerender(
         <WrappedAudioNode
           id={NODE_ID}
@@ -174,8 +180,9 @@ describe('播放中的音频节点跨低缩放档不换壳', () => {
     setNodeMediaActive(NODE_ID, true);
     expect(isNodeMediaActive(NODE_ID)).toBe(true);
 
-    currentZoom = 0.2;
     act(() => {
+      currentZoom = 0.2;
+      updateLowDetailFromZoom(0.2);
       rerender(
         <WrappedAudioNode
           id={NODE_ID}

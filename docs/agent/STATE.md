@@ -8,13 +8,13 @@
 
 ## 一、仓库当前形态（接手前必须核对）
 
-- 分支 `main`，最新提交 `0e2d6977`（2026-09-18，`chore(agent): add traceable multi-model workflow`）。
+- 分支 `main`，最新提交 `8fa08d14`（2026-09-18，`fix(agent): allow handoff after owner commit`）。
 - **工作区有 129 个未提交状态条目**（截至 2026-09-18，按 `git status --short` 计），
   包含六条业务线和历史未归属隔离区；协作治理已形成独立提交，其余工作线仍没有独立提交承载。
   会话开始时 hook 注入的摘要是实时值，不能用条目总数反推某条业务线又新增了多少文件。
 - 这是当前最大的风险：一次整树 restore / 自动 stash / 强制切分支，就能抹掉三周的工作。
   **接手后第一条命令是 `git status --short --branch`，先和下表对账。**
-- 当前 `main` 比 `origin/main` 落后 13 个提交，且至少 7 个本地脏文件也被上游修改。
+- 刷新远端后，当前 `main` 相对 `origin/main` 为本地 2 个治理提交、上游 27 个提交，且多处本地脏文件也被上游修改。
   在完成逐线来源审计和拆提交前，不得直接 pull/rebase，也不要为了建 worktree 自动 stash。
 
 ## 二、在途工作线
@@ -28,7 +28,7 @@
 | [depth-motion-da3](tasks/depth-motion-da3.md) | 拉片动态维度：Depth Anything 3 深度视频 | 待验收 | 需本机模型 / 解释器；与 shot-breakdown 共享后端热点 |
 | [story-writer](tasks/story-writer.md) | 创作阶段（虾本）：写手 agent + 通用文档存储 + 前端路由 | 执行中 | 零测试；路由生成文件同时被 `origin/main` 修改 |
 | [local-stack](tasks/local-stack.md) | 命令行 CE 本地栈：local_gateway + ComfyUI Qwen/Krea | 执行中 | 机器路径未拔除；生成器文件同时被 `origin/main` 修改 |
-| [canvas-lod-perf](tasks/canvas-lod-perf.md) | 画布 LOD 剔除、低缩放交互、视频抽帧封面 | 待验收 | 与远端 LOD 分支 4 文件重叠，先审计来源 |
+| [canvas-lod-perf](tasks/canvas-lod-perf.md) | 画布 LOD 剔除、低缩放交互、视频抽帧封面 | 执行中 | 远端来源审计完成；按 hunk 拆 LOD 核心，混合增量留给对应工作线 |
 
 已完成或放弃的线移到 `docs/agent/archive/`，不要在上表里留尸体。状态只用
 `提案中 / 方案就绪 / 执行中 / 待验收 / 已阻塞 / 已完成 / 已归档`。

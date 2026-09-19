@@ -9,6 +9,7 @@ import {
   LOW_DETAIL_ZOOM_THRESHOLD,
   isCanvasGestureActive,
   isCanvasMeasurementDeferred,
+  isLowDetailActive,
   isLowDetailZoom,
   isNodeMediaActive,
   onCanvasMeasurementResume,
@@ -16,6 +17,8 @@ import {
   setCanvasGestureActive,
   setCanvasLowDetail,
   setNodeMediaActive,
+  subscribeLowDetail,
+  updateLowDetailFromZoom,
 } from '@/features/canvas/application/canvasLod';
 
 describe('isLowDetailZoom', () => {
@@ -34,6 +37,66 @@ describe('isLowDetailZoom', () => {
     expect(isLowDetailZoom(Number.NaN)).toBe(false);
     expect(isLowDetailZoom(Number.POSITIVE_INFINITY)).toBe(false);
     expect(isLowDetailZoom(Number.NEGATIVE_INFINITY)).toBe(false);
+  });
+});
+
+describe('低缩放档单一真值源（带滞回）', () => {
+  beforeEach(() => {
+    // 模块级状态跨用例存活：喂一个明确的高缩放值复位为「非低细节」。
+    updateLowDetailFromZoom(1);
+  });
+
+  it('进入用 0.35、退出用 0.38：带内不翻转', () => {
+    // 序列 0.40 → 0.34 → 0.36 → 0.37 → 0.39
+    // 期望 false → true → true → true → false（0.36/0.37 在滞回带内不翻转）。
+    const states: boolean[] = [];
+    for (const zoom of [0.4, 0.34, 0.36, 0.37, 0.39]) {
+      updateLowDetailFromZoom(zoom);
+      states.push(isLowDetailActive());
+    }
+    expect(states).toEqual([false, true, true, true, false]);
+  });
+
+  it('进入阈值等于历史阈值：语义未变', () => {
+    updateLowDetailFromZoom(LOW_DETAIL_ZOOM_THRESHOLD - 0.001);
+    expect(isLowDetailActive()).toBe(true);
+    // 从低细节档退出得越过更高的线，恰好在旧阈值上不退出。
+    updateLowDetailFromZoom(LOW_DETAIL_ZOOM_THRESHOLD);
+    expect(isLowDetailActive()).toBe(true);
+  });
+
+  it('只有跨档才通知订阅者，带内变化不触发', () => {
+    const listener = vi.fn();
+    const unsubscribe = subscribeLowDetail(listener);
+
+    updateLowDetailFromZoom(0.4); // 已是 false，不通知
+    expect(listener).toHaveBeenCalledTimes(0);
+
+    updateLowDetailFromZoom(0.34); // false → true，通知
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    updateLowDetailFromZoom(0.36); // 带内，不通知
+    updateLowDetailFromZoom(0.37); // 带内，不通知
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    updateLowDetailFromZoom(0.39); // true → false，通知
+    expect(listener).toHaveBeenCalledTimes(2);
+
+    unsubscribe();
+    updateLowDetailFromZoom(0.1); // 退订后不再收到
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it('非有限值被忽略，不改变真值也不通知', () => {
+    updateLowDetailFromZoom(0.1);
+    expect(isLowDetailActive()).toBe(true);
+    const listener = vi.fn();
+    const unsubscribe = subscribeLowDetail(listener);
+    updateLowDetailFromZoom(Number.NaN);
+    updateLowDetailFromZoom(Number.POSITIVE_INFINITY);
+    expect(isLowDetailActive()).toBe(true);
+    expect(listener).not.toHaveBeenCalled();
+    unsubscribe();
   });
 });
 

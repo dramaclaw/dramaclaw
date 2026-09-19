@@ -14,7 +14,9 @@
 import { render, act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// ---- @xyflow/react：只需要 useStore 能读到 transform[2]，Handle 渲染成空节点 ----
+// ---- @xyflow/react：换壳决策现在由模块级 subscribeLowDetail 驱动（用例用
+// updateLowDetailFromZoom 切档）；shell 内部的 useNodeBodyVariant 仍用 useStore 读
+// transform[2] 挑变体，所以 useStore 仍需保留。 ----
 let currentZoom = 1;
 vi.mock('@xyflow/react', () => ({
   Handle: () => null,
@@ -41,7 +43,7 @@ const {
   takeExternalFile,
   resetPendingExternalFilesForTest,
 } = await import('@/features/canvas/application/pendingExternalFiles');
-const { setCanvasGestureActive } = await import(
+const { setCanvasGestureActive, updateLowDetailFromZoom } = await import(
   '@/features/canvas/application/canvasLod'
 );
 
@@ -99,6 +101,7 @@ describe('低缩放档拖入文件的投递', () => {
   beforeEach(() => {
     received.length = 0;
     currentZoom = 1;
+    updateLowDetailFromZoom(1); // 复位到非低细节档
     setCanvasGestureActive(false);
     resetPendingExternalFilesForTest();
   });
@@ -121,6 +124,7 @@ describe('低缩放档拖入文件的投递', () => {
 
   it('shell 期间投递的 File 不丢：完整组件挂上来时补投', async () => {
     currentZoom = 0.2;
+    updateLowDetailFromZoom(0.2);
     const { queryByTestId, rerender } = renderNode();
     // 前提：低缩放档下确实是 shell，完整组件没挂 —— 也就没有订阅者。
     expect(queryByTestId('full-upload-node')).toBeNull();
@@ -134,6 +138,7 @@ describe('低缩放档拖入文件的投递', () => {
 
     // 放大跨过阈值：shell 经升级队列换成完整组件。
     currentZoom = 1;
+    updateLowDetailFromZoom(1);
     await act(async () => {
       rerender(
         <WrappedUploadNode
@@ -174,12 +179,14 @@ describe('低缩放档拖入文件的投递', () => {
 
   it('多文件拖入：每个新节点各拿到自己的 File', async () => {
     currentZoom = 0.2;
+    updateLowDetailFromZoom(0.2);
     const files = ['d1.png', 'd2.png', 'd3.png'];
     files.forEach((name, index) => {
       dropFile(`upload-multi-${index}`, name);
     });
 
     currentZoom = 1;
+    updateLowDetailFromZoom(1);
     await act(async () => {
       render(
         <>
