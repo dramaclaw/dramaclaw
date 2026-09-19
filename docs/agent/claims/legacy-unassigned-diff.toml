@@ -29,30 +29,9 @@ mode = "read-only"
 reason = "Directory name is not authorization to delete unknown user data."
 
 [[claims]]
-path = "frontend/src/__tests__/features/canvas/canvas-manual-connect.test.tsx"
-mode = "exclusive"
-reason = "Historical dirty test with no reliable workstream attribution."
-
-[[claims]]
-path = "frontend/src/__tests__/features/canvas/canvas-minimap-pan-mount.test.tsx"
-mode = "exclusive"
-reason = "Historical dirty test with no reliable workstream attribution."
-
-[[claims]]
-path = "frontend/src/__tests__/features/viewer-kit/freezone-viewer-contract.test.ts"
-mode = "exclusive"
-reason = "Historical dirty test with no reliable workstream attribution."
-
-[[claims]]
 path = "frontend/src/__tests__/lib/freezone-url.test.ts"
 mode = "exclusive"
 reason = "Historical dirty test with no reliable workstream attribution."
-
-[[claims]]
-path = "frontend/src/__tests__/lib/media-url.test.ts"
-mode = "shared"
-shared_with = ["liblib-canvas-parity"]
-reason = "Historical media test now shares the LibTV remote-variant assertions."
 
 [[claims]]
 path = "frontend/src/api/canvas.ts"

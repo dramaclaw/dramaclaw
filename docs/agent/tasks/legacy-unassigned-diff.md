@@ -56,6 +56,18 @@
 
 ## 进展记录
 
+### 2026-09-19 · LOD 来源审计后迁出节点注册与媒体变体测试
+
+做了什么：将 `canvas-manual-connect`、`canvas-minimap-pan-mount`、`freezone-viewer-contract`
+与 `media-url` 测试从隔离 scope 迁入 `canvas-lod-perf`；相应的机器声明改为和 LibTV 互认的
+共享路径，未改动任何测试业务逻辑。
+
+为什么这么做：这四个 diff 分别模拟 LOD 的惰性节点注册、按需 viewer chunk 与远端媒体变体，
+调用链和本轮 LOD 提交已可复现，继续标为“历史未知”会阻止正确的互斥检查。
+
+怎么验证的：从 LOD 暂存索引导出的干净快照中，相关聚焦集合通过 144 项测试；
+`python3 scripts/agent_guard.py check` 通过 8 条工作线、218 个路径声明。
+
 ### 2026-09-18 · 会话流测试归入 shot-breakdown
 
 做了什么：将 `frontend/src/__tests__/session-expiry-streams.test.tsx` 从隔离区 claim 迁入

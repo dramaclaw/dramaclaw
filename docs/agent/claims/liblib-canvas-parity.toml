@@ -116,8 +116,9 @@ reason = "Explicit remote asset localization."
 
 [[claims]]
 path = "frontend/src/features/canvas/nodes/lazyNodeComponents.tsx"
-mode = "exclusive"
-reason = "Lazy registration for imported node fallbacks."
+mode = "shared"
+shared_with = ["canvas-lod-perf"]
+reason = "Imported-node fallbacks share the lazy registry with LOD heavy component loaders."
 
 [[claims]]
 path = "frontend/src/features/canvas/nodes/VideoNode.tsx"
@@ -178,13 +179,15 @@ reason = "Display labels for imported and derived nodes."
 
 [[claims]]
 path = "frontend/src/features/canvas/nodes/index.ts"
-mode = "exclusive"
-reason = "Node exports for this feature."
+mode = "shared"
+shared_with = ["canvas-lod-perf"]
+reason = "Node exports share the registry with LOD lazy component loading."
 
 [[claims]]
 path = "frontend/src/lib/media-url.ts"
-mode = "exclusive"
-reason = "Remote media URL handling."
+mode = "shared"
+shared_with = ["canvas-lod-perf"]
+reason = "Remote media URL handling shares the canvas variant ladder with LOD."
 
 [[claims]]
 path = "frontend/src/lib/freezone-url.ts"
@@ -252,8 +255,9 @@ reason = "Remote asset localization."
 
 [[claims]]
 path = "src/novelvideo/freezone/history.py"
-mode = "exclusive"
-reason = "Persist imported canvas semantics."
+mode = "shared"
+shared_with = ["canvas-lod-perf"]
+reason = "Persist imported canvas semantics and prewarm the LOD image ladder."
 
 [[claims]]
 path = "src/novelvideo/api/routes/freezone.py"
@@ -301,5 +305,5 @@ reason = "Remote LibTV poster selection regression tests."
 [[claims]]
 path = "frontend/src/__tests__/lib/media-url.test.ts"
 mode = "shared"
-shared_with = ["legacy-unassigned-diff"]
+shared_with = ["canvas-lod-perf"]
 reason = "Remote image variant regression tests."

@@ -106,13 +106,15 @@ reason = "LOD node body."
 
 [[claims]]
 path = "frontend/src/features/canvas/nodes/index.ts"
-mode = "exclusive"
-reason = "Stable node registry with lazy heavy components."
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Stable node registry combines lazy heavy components with imported-media registration."
 
 [[claims]]
 path = "frontend/src/features/canvas/nodes/lazyNodeComponents.tsx"
-mode = "exclusive"
-reason = "Lazy 3D and panorama node component loaders."
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Lazy 3D/panorama loaders share the registry with imported node fallbacks."
 
 [[claims]]
 path = "frontend/src/features/canvas/ui/CanvasNodeImage.tsx"
@@ -217,5 +219,6 @@ reason = "Prewarm all image variants used by canvas nodes."
 
 [[claims]]
 path = "frontend/vite.config.ts"
-mode = "exclusive"
-reason = "Canvas heavy dependency chunking."
+mode = "shared"
+shared_with = ["local-stack"]
+reason = "Canvas heavy dependency chunking shares the frontend build boundary with local-stack."
