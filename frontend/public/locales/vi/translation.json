@@ -2808,6 +2808,7 @@
       "freezone_video_erase": "Xoá vật thể khỏi video",
       "freezone_video_upscale": "Upscale video",
       "freezone_audio_separate": "Tách âm thanh",
+      "freezone_audio_transform": "Cắt / đổi tốc độ âm thanh",
       "freezone_video_compose": "Dựng video",
       "freezone_text_translate": "Dịch phụ đề",
       "freezone_text_generate": "AI tạo văn bản",
@@ -2898,6 +2899,10 @@
       "props": {
         "perEpisode": "Đạo cụ được tạo theo từng tập"
       },
+      "audioTransform": {
+        "start": "Đang xử lý âm thanh",
+        "complete": "Xử lý âm thanh hoàn tất"
+      },
       "started": "Tác vụ đã bắt đầu",
       "cancelled": "Tác vụ đã huỷ"
     },
@@ -2913,6 +2918,9 @@
       "source": {
         "loading": "Đang nạp văn bản gốc từ file...",
         "loaded": "Đã nạp văn bản gốc: {{charCount}} ký tự"
+      },
+      "audioTransform": {
+        "failed": "Lỗi: {{error}}"
       },
       "pipeline": {
         "legacyRecall": "Kiểm tra đối chứng theo luật tìm được {{sceneCount}} khối cảnh: {{sceneNames}}"
@@ -5321,6 +5329,23 @@
     },
     "audio": {
       "requiresAudio": "Chưa có âm thanh nào để tải về",
+      "trim": "Cắt âm thanh",
+      "speed": "Đổi tốc độ",
+      "derivedHint": "Âm thanh nguồn được giữ nguyên. Xác nhận sẽ tạo một nút âm thanh ở phía sau.",
+      "startTime": "Thời gian bắt đầu (giây)",
+      "endTime": "Thời gian kết thúc (giây)",
+      "speedValue": "Tốc độ phát",
+      "createDerived": "Tạo âm thanh",
+      "remoteMediaBlocked": "Hãy nội địa hoá âm thanh từ xa trước khi xử lý",
+      "busy": "Âm thanh này đang được xử lý",
+      "durationRequired": "Cần đọc thời lượng âm thanh trước khi xử lý",
+      "transformFailed": "Xử lý âm thanh thất bại",
+      "validation": {
+        "duration-unknown": "Chưa có thời lượng âm thanh",
+        "invalid-range": "Hãy nhập thời gian bắt đầu và kết thúc hợp lệ",
+        "range-too-short": "Đoạn đã chọn phải dài ít nhất 0,1 giây",
+        "invalid-speed": "Tốc độ phải nằm trong khoảng 0,5× đến 2×"
+      },
       "downloadAs": "Tải về dạng {{format}}",
       "m4aSourceOnlyHint": "chỉ khi nguồn là m4a",
       "m4aSourceOnly": "Nguồn không phải m4a nên không chuyển sang m4a được",

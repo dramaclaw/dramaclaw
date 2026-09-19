@@ -13,6 +13,7 @@ from novelvideo.egress_context import (
     TrustedEgressContext,
     TrustedRunnerEnvelope,
 )
+from novelvideo.i18n_message import MessageLike, lmsg
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.cancel import (
     await_envelope_with_cancel_watch,
@@ -105,6 +106,9 @@ FREEZONE_LEAF_EGRESS: dict[str, LeafEgressRule] = {
     "run_freezone_audio_separate": LeafEgressRule(
         "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
     ),
+    "run_freezone_audio_transform": LeafEgressRule(
+        "novelvideo.freezone.audio_transform", LeafEgress.LOCAL, "EG-20a"
+    ),
     # EG-18b `freezone.image.generate`（:52，`gateway-routed`）
     "run_freezone_gen": LeafEgressRule(
         "novelvideo.freezone.jobs", LeafEgress.NETWORK, "EG-18b"
@@ -184,7 +188,7 @@ def _update(
     task_type: str,
     scope: str,
     progress: float,
-    current_task: str,
+    current_task: MessageLike,
     *,
     episode: int = 0,
     metadata: dict[str, Any] | None = None,
@@ -1273,6 +1277,48 @@ async def _run_freezone_video_compose_async(
     }
 
 
+async def _run_freezone_audio_transform_async(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    from novelvideo.api.deps import make_static_url_for_context
+    from novelvideo.freezone.audio_transform import run_freezone_audio_transform
+    from novelvideo.freezone.jobs import ensure_freezone_dirs
+
+    payload = envelope.get("payload") or {}
+    job_id = str(payload["job_id"])
+    project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
+    ensure_freezone_dirs(project_dir)
+    _update(
+        ctx,
+        "freezone_audio_transform",
+        job_id,
+        0.1,
+        lmsg("tasks.progress.audioTransform.start", "开始处理音频"),
+    )
+    output_path = await _call_freezone_leaf(
+        envelope,
+        run_freezone_audio_transform,
+        "run_freezone_audio_transform",
+        project_dir=project_dir,
+        job_id=job_id,
+        source_path=str(payload["source_path"]),
+        start_sec=float(payload["start_sec"]),
+        end_sec=float(payload["end_sec"]),
+        speed=float(payload.get("speed") or 1.0),
+    )
+    relative = output_path.relative_to(project_dir).as_posix()
+    return {
+        "job_id": job_id,
+        "output_format": "m4a",
+        "output_path": str(output_path),
+        "output_url": make_static_url_for_context(ctx, relative),
+        "duration_sec": (
+            float(payload["end_sec"]) - float(payload["start_sec"])
+        ) / float(payload.get("speed") or 1.0),
+    }
+
+
 def run_freezone_video_erase(
     envelope: dict[str, Any], ctx: ProjectContext
 ) -> dict[str, Any]:
@@ -1295,6 +1341,12 @@ def run_freezone_video_compose(
     envelope: dict[str, Any], ctx: ProjectContext
 ) -> dict[str, Any]:
     return _run_cancellable(envelope, _run_freezone_video_compose_async(envelope, ctx))
+
+
+def run_freezone_audio_transform(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
+    return _run_cancellable(envelope, _run_freezone_audio_transform_async(envelope, ctx))
 
 
 async def _run_freezone_text_translate_async(
@@ -1778,6 +1830,9 @@ register_project_task_runner(
 )
 register_project_task_runner(
     "freezone_video_compose", run_freezone_video_compose, requires_home_node=False
+)
+register_project_task_runner(
+    "freezone_audio_transform", run_freezone_audio_transform, requires_home_node=False
 )
 register_project_task_runner(
     "freezone_text_translate", run_freezone_text_translate, requires_home_node=False

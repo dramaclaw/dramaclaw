@@ -94,7 +94,7 @@ reason = "Localized local-router status copy; merge by key only."
 [[claims]]
 path = "src/novelvideo/api/routes/freezone.py"
 mode = "shared"
-shared_with = ["depth-motion-da3", "shot-breakdown", "liblib-canvas-parity"]
+shared_with = ["canvas-audio-actions", "depth-motion-da3", "shot-breakdown", "liblib-canvas-parity"]
 reason = "Local media catalog ordering is independent of neighboring Freezone endpoints."
 
 [[claims]]

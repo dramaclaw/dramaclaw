@@ -528,6 +528,16 @@ export interface AudioVoiceRef {
   voiceId?: string;
 }
 
+/** 音频截取/变速节点回指源节点的持久化契约。 */
+export interface AudioTransformBinding {
+  version: 1;
+  sourceNodeId: string;
+  sourceAudioUrl: string;
+  startMs: number;
+  endMs: number;
+  speed: number;
+}
+
 export interface AudioNodeData extends NodeDisplayData {
   audioUrl: string | null;
   sourceFileName?: string | null;
@@ -570,6 +580,8 @@ export interface AudioNodeData extends NodeDisplayData {
    * 卸载/重挂后仍能展示错误 + 重试，不会因组件重建而丢失。成功/开始时清空。
    */
   generationError?: string | null;
+  /** 本节点由哪条音频、哪个区间和速度派生；源被替换时仍可识别旧绑定。 */
+  audioTransform?: AudioTransformBinding | null;
   /** Transient: which format the download menu is currently transcoding to. */
   convertingAudioFormat?: 'mp3' | 'm4a' | 'wav' | null;
   [key: string]: unknown;

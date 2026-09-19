@@ -48,6 +48,7 @@ from novelvideo.api.schemas import (
     FreezoneAssetLibraryItemPatchRequest,
     FreezoneAudioMusicRequest,
     FreezoneAudioSeparateRequest,
+    FreezoneAudioTransformRequest,
     FreezoneAudioSpeechRequest,
     FreezoneCharacterMultiViewRequest,
     FreezoneEditRequest,
@@ -134,6 +135,7 @@ from novelvideo.freezone.audio_node import (
     resolve_speech_voice,
     resolve_user_audio_voice,
 )
+from novelvideo.freezone.audio_transform import audio_transform_output_path
 from novelvideo.freezone.canvas_lock import CanvasLockBusy
 from novelvideo.freezone.canvas_media_scope import (
     CanvasMediaScopeError,
@@ -2734,6 +2736,7 @@ async def _enqueue_or_start_freezone_media_job(
         "freezone_video_erase",
         "freezone_video_upscale",
         "freezone_audio_separate",
+        "freezone_audio_transform",
         "freezone_video_compose",
         "freezone_audio_eleven_music",
     ],
@@ -7017,6 +7020,78 @@ def _start_freezone_audio_separate_task(
     asyncio.create_task(_runner())
 
 
+def _start_freezone_audio_transform_task(
+    *,
+    username: str,
+    project: str,
+    project_dir: Path,
+    job_id: str,
+    source_path: Path,
+    body: FreezoneAudioTransformRequest,
+) -> None:
+    task_type = "freezone_audio_transform"
+    task_manager = get_task_manager()
+    task_manager.create_task(
+        task_type, username, project, episode=0, scope=job_id, status="starting"
+    )
+
+    async def _runner() -> None:
+        try:
+            task_manager.update_progress(
+                task_type,
+                username,
+                project,
+                episode=0,
+                scope=job_id,
+                progress=0.05,
+                current_task="transforming_audio",
+                logs=[lmsg("tasks.progress.audioTransform.start", "开始处理音频")],
+            )
+            from novelvideo.freezone.audio_transform import run_freezone_audio_transform
+
+            output_path = await run_freezone_audio_transform(
+                project_dir=project_dir,
+                job_id=job_id,
+                source_path=source_path.as_posix(),
+                start_sec=body.start_sec,
+                end_sec=body.end_sec,
+                speed=body.speed,
+            )
+            task_manager.complete_task(
+                task_type,
+                username,
+                project,
+                episode=0,
+                scope=job_id,
+                result={
+                    "job_id": job_id,
+                    "output_path": output_path.as_posix(),
+                    "duration_sec": (body.end_sec - body.start_sec) / body.speed,
+                },
+                current_task="completed",
+                logs=[lmsg("tasks.progress.audioTransform.complete", "音频处理完成")],
+            )
+        except Exception as exc:
+            task_manager.fail_task(
+                task_type,
+                username,
+                project,
+                episode=0,
+                scope=job_id,
+                error=str(exc),
+                current_task="failed",
+                logs=[
+                    lmsg(
+                        "tasks.log.audioTransform.failed",
+                        f"错误: {exc}",
+                        error=str(exc),
+                    )
+                ],
+            )
+
+    asyncio.create_task(_runner())
+
+
 def _start_freezone_audio_speech_task(
     *,
     username: str,
@@ -9794,6 +9869,68 @@ async def freezone_audio_separate(
 
 
 @router.post(
+    "/projects/{project}/freezone/audio/transform",
+    response_model=FreezoneJobAcceptedResponse,
+    tags=[TAG_FREEZONE_AUDIO],
+)
+async def freezone_audio_transform(
+    project: str,
+    body: FreezoneAudioTransformRequest,
+    user: dict = Depends(get_api_user),
+):
+    """Create a derived M4A clip without mutating the source audio."""
+    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
+    )
+    if body.end_sec <= body.start_sec:
+        raise HTTPException(400, "end_sec must be greater than start_sec")
+    if body.end_sec - body.start_sec < 0.1:
+        raise HTTPException(400, "audio transform range must be at least 0.1 seconds")
+    try:
+        source_path = resolve_static_url_to_path(body.source_url, project_dir)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not source_path.is_file():
+        raise HTTPException(404, f"audio source not found: {source_path}")
+
+    try:
+        job_id = _new_job_id()
+        if ctx is not None:
+            return await _enqueue_or_start_freezone_media_job(
+                ctx=ctx,
+                username=username,
+                project=project_name,
+                project_dir=project_dir,
+                task_type="freezone_audio_transform",
+                job_id=job_id,
+                payload={
+                    "source_path": source_path.as_posix(),
+                    "start_sec": body.start_sec,
+                    "end_sec": body.end_sec,
+                    "speed": body.speed,
+                },
+            )
+        _start_freezone_audio_transform_task(
+            username=username,
+            project=project_name,
+            project_dir=project_dir,
+            job_id=job_id,
+            source_path=source_path,
+            body=body,
+        )
+    except RuntimeError as exc:
+        _handle_task_start_runtime_error("failed to start freezone audio transform task", exc)
+        raise HTTPException(503, f"failed to start freezone audio transform task: {exc}") from exc
+
+    return _accepted_job_response(
+        task_type="freezone_audio_transform",
+        username=username,
+        project=project_name,
+        job_id=job_id,
+    )
+
+
+@router.post(
     "/projects/{project}/freezone/audio/speech",
     response_model=FreezoneJobAcceptedResponse,
     tags=[TAG_FREEZONE_AUDIO],
@@ -10159,6 +10296,7 @@ async def freezone_job_result(
         "freezone_video_upscale",
         "freezone_depth_motion",
         "freezone_audio_separate",
+        "freezone_audio_transform",
         "freezone_audio_speech",
         "freezone_audio_eleven_music",
         "freezone_video_compose",
@@ -10338,6 +10476,8 @@ async def freezone_job_result(
         out = freezone_audio_speech_output_path(project_dir, job_id)
     if task_type == "freezone_audio_eleven_music":
         out = freezone_audio_eleven_music_output_path(project_dir, job_id)
+    if task_type == "freezone_audio_transform":
+        out = audio_transform_output_path(project_dir, job_id)
     if task_type == "freezone_video_compose":
         out = _video_compose_output_path(project_dir, job_id)
     if task_type == "freezone_text_translate":

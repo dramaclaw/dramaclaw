@@ -36,25 +36,25 @@ reason = "Model inference and deterministic depth-video export."
 [[claims]]
 path = "src/novelvideo/api/routes/freezone.py"
 mode = "shared"
-shared_with = ["shot-breakdown", "liblib-canvas-parity", "local-stack"]
+shared_with = ["canvas-audio-actions", "shot-breakdown", "liblib-canvas-parity", "local-stack"]
 reason = "Depth, breakdown, and LibTV endpoints share the freezone adapter."
 
 [[claims]]
 path = "src/novelvideo/api/routes/tasks.py"
 mode = "shared"
-shared_with = ["shot-breakdown"]
+shared_with = ["canvas-audio-actions", "shot-breakdown"]
 reason = "Task-center labels for both analysis task types share one mapping."
 
 [[claims]]
 path = "src/novelvideo/api/schemas.py"
 mode = "shared"
-shared_with = ["shot-breakdown"]
+shared_with = ["canvas-audio-actions", "shot-breakdown"]
 reason = "Depth and breakdown request contracts live in the shared API schema module."
 
 [[claims]]
 path = "src/novelvideo/task_backend/runners/freezone.py"
 mode = "shared"
-shared_with = ["shot-breakdown"]
+shared_with = ["canvas-audio-actions", "shot-breakdown"]
 reason = "Depth and breakdown leaf classification share the runner."
 
 [[claims]]
@@ -66,13 +66,13 @@ reason = "Depth-motion action and video recreation actions share one node."
 [[claims]]
 path = "frontend/src/features/canvas/domain/canvasNodes.ts"
 mode = "shared"
-shared_with = ["shot-breakdown", "liblib-canvas-parity"]
+shared_with = ["canvas-audio-actions", "shot-breakdown", "liblib-canvas-parity"]
 reason = "Depth job persistence fields share the canvas node contract."
 
 [[claims]]
 path = "frontend/src/api/ops.ts"
 mode = "shared"
-shared_with = ["shot-breakdown"]
+shared_with = ["canvas-audio-actions", "shot-breakdown"]
 reason = "Depth and breakdown API clients share the operations module."
 
 [[claims]]
@@ -83,7 +83,7 @@ reason = "Depth reference semantics feed the shared omni-video prompt."
 [[claims]]
 path = "tests/test_p0g4i_freezone_leaf_classification.py"
 mode = "shared"
-shared_with = ["shot-breakdown"]
+shared_with = ["canvas-audio-actions", "shot-breakdown"]
 reason = "DA3 and breakdown local leaves extend the global audited table."
 
 [[claims]]

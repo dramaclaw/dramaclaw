@@ -2808,6 +2808,7 @@
       "freezone_video_erase": "视频擦除",
       "freezone_video_upscale": "视频放大",
       "freezone_audio_separate": "音频分离",
+      "freezone_audio_transform": "音频截取与变速",
       "freezone_video_compose": "视频合成",
       "freezone_text_translate": "字幕翻译",
       "freezone_text_generate": "AI 文本生成",
@@ -2898,6 +2899,10 @@
       "props": {
         "perEpisode": "道具按分集生成"
       },
+      "audioTransform": {
+        "start": "开始处理音频",
+        "complete": "音频处理完成"
+      },
       "started": "任务已开始",
       "cancelled": "任务已取消"
     },
@@ -2913,6 +2918,9 @@
       "source": {
         "loading": "从文件加载原文...",
         "loaded": "原文加载完成: {{charCount}} 字符"
+      },
+      "audioTransform": {
+        "failed": "错误: {{error}}"
       },
       "pipeline": {
         "legacyRecall": "程序召回 sanity check 得到 {{sceneCount}} 个场景块: {{sceneNames}}"
@@ -5321,6 +5329,23 @@
     },
     "audio": {
       "requiresAudio": "请先准备音频",
+      "trim": "音频截取",
+      "speed": "音频变速",
+      "derivedHint": "源音频保持不变，确认后会创建一个下游音频节点。",
+      "startTime": "开始时间（秒）",
+      "endTime": "结束时间（秒）",
+      "speedValue": "播放速度",
+      "createDerived": "创建新音频",
+      "remoteMediaBlocked": "远端音频需先本地化后才能处理",
+      "busy": "该音频正在处理中",
+      "durationRequired": "需要先读取到音频时长",
+      "transformFailed": "音频处理失败",
+      "validation": {
+        "duration-unknown": "尚未读取到音频时长",
+        "invalid-range": "请填写有效的起止时间",
+        "range-too-short": "所选区间不能短于 0.1 秒",
+        "invalid-speed": "速度必须在 0.5× 到 2× 之间"
+      },
       "downloadAs": "下载为 {{format}}",
       "m4aSourceOnlyHint": "仅 m4a 源",
       "m4aSourceOnly": "源文件不是 m4a，无法转换为 m4a 格式",

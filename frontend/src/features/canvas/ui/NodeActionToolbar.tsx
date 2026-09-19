@@ -113,8 +113,10 @@ import { resolveImageDisplayUrl } from "@/features/canvas/application/imageData"
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useCanvasStore } from "@/stores/canvasStore";
 import {
+  fetchFreezoneJobResult,
   fetchFreezoneAudioSeparateResult,
   submitFreezoneAnalyzeVideoStory,
+  submitFreezoneAudioTransform,
   submitFreezoneShotBreakdown,
   submitFreezoneAudioSeparate,
   uploadFreezoneImage,
@@ -127,6 +129,16 @@ import {
   readStreamedGroups,
 } from "@/features/canvas/application/shotBreakdownNodes";
 import { notifyTaskStillRunning } from "@/features/canvas/application/errorDialog";
+import { generationTaskDescriptor } from "@/features/canvas/application/resumeGeneration";
+import {
+  buildAudioTransformNodeData,
+  type AudioTransformDraft,
+} from "@/features/canvas/application/audioTransform";
+import {
+  CANVAS_ACTION_IDS,
+  getCanvasActionDescriptor,
+  resolveCanvasActionAvailability,
+} from "@/features/canvas/application/canvasActionRegistry";
 import { isRemakeSourceDurationSupported } from "@/features/canvas/application/videoRangePrompt";
 import { normalizeVideoStoryRows } from "@/features/canvas/application/videoStoryNormalizer";
 import { readUrl } from "@/lib/url-params";
@@ -145,6 +157,7 @@ import type {
   GridActionKey,
   GridActionRequest,
 } from "./GridActionConfirmOverlay";
+import { AudioTransformMenu } from "./AudioTransformMenu";
 
 interface NodeActionToolbarProps {
   node: CanvasNode;
@@ -2495,6 +2508,51 @@ export const NodeActionToolbar = memo(
                     ? (audioData.convertingAudioFormat as AudioDownloadFormat)
                     : null;
                 const isConverting = Boolean(convertingFormat);
+                const isAudioBusy = Boolean(audioData.isGenerating);
+                const durationMs =
+                  typeof audioData.durationMs === "number" &&
+                  Number.isFinite(audioData.durationMs) &&
+                  audioData.durationMs > 0
+                    ? audioData.durationMs
+                    : null;
+                const mediaIsLocal = Boolean(audioUrl?.startsWith("/"));
+                const actionContext = {
+                  nodeType: CANVAS_NODE_TYPES.audio,
+                  hasMedia: hasAudio,
+                  mediaIsLocal,
+                  busy: isAudioBusy,
+                } as const;
+                const trimDescriptor = getCanvasActionDescriptor(
+                  CANVAS_ACTION_IDS.audioTrim,
+                );
+                const speedDescriptor = getCanvasActionDescriptor(
+                  CANVAS_ACTION_IDS.audioSpeed,
+                );
+                const trimAvailability = trimDescriptor
+                  ? resolveCanvasActionAvailability(trimDescriptor, actionContext)
+                  : { available: false as const, reason: "wrong-node-type" as const };
+                const speedAvailability = speedDescriptor
+                  ? resolveCanvasActionAvailability(speedDescriptor, actionContext)
+                  : { available: false as const, reason: "wrong-node-type" as const };
+
+                const disabledReasonFor = (
+                  availability: typeof trimAvailability,
+                ): string | undefined => {
+                  if (availability.available && durationMs) return undefined;
+                  const reason = availability.available
+                    ? "duration-unknown"
+                    : availability.reason;
+                  switch (reason) {
+                    case "remote-media":
+                      return t("nodeToolbar.audio.remoteMediaBlocked");
+                    case "busy":
+                      return t("nodeToolbar.audio.busy");
+                    case "duration-unknown":
+                      return t("nodeToolbar.audio.durationRequired");
+                    default:
+                      return t("nodeToolbar.audio.requiresAudio");
+                  }
+                };
 
                 // The separated-audio node stores `sourceFileName` WITHOUT an
                 // extension (e.g. `xxx_背景音`), which previously produced an
@@ -2563,71 +2621,175 @@ export const NodeActionToolbar = memo(
                   }
                 };
 
+                const handleAudioTransform = async (
+                  mode: "trim" | "speed",
+                  draft: AudioTransformDraft,
+                ) => {
+                  if (!audioUrl || !durationMs || isAudioBusy) return;
+                  const projectId = readUrl().project;
+                  if (!projectId) {
+                    toast.error(t("nodeToolbar.audio.transformFailed"));
+                    return;
+                  }
+
+                  let derivedNodeId: string | null = null;
+                  try {
+                    const ref = await submitFreezoneAudioTransform(projectId, {
+                      sourceUrl: audioUrl,
+                      startSec: draft.startMs / 1000,
+                      endSec: draft.endMs / 1000,
+                      speed: draft.speed,
+                    });
+                    const suffix =
+                      mode === "speed"
+                        ? `${t("nodeToolbar.audio.speed")}_${draft.speed}x`
+                        : t("nodeToolbar.audio.trim");
+                    const displayName = `${baseFileName}_${suffix}`;
+                    derivedNodeId = addNode(
+                      CANVAS_NODE_TYPES.audio,
+                      findNodePosition(node.id, 480, 210),
+                      {
+                        ...buildAudioTransformNodeData({
+                          sourceNodeId: node.id,
+                          sourceAudioUrl: audioUrl,
+                          sourceData: audioData,
+                          draft,
+                          displayName,
+                        }),
+                        ...generationTaskDescriptor(ref),
+                      },
+                    );
+                    addEdge(node.id, derivedNodeId);
+                    setSelectedNode(derivedNodeId);
+                    requestFocusNode(derivedNodeId);
+
+                    await awaitTaskCompletion(ref.task_key, projectId, {
+                      taskType: ref.task_type,
+                    });
+                    const result = await fetchFreezoneJobResult(
+                      projectId,
+                      "freezone_audio_transform",
+                      ref.job_id,
+                    );
+                    updateNodeData(derivedNodeId, {
+                      audioUrl: result.url,
+                      isGenerating: false,
+                      generationStartedAt: null,
+                      generationError: null,
+                      generationTaskKey: null,
+                      generationTaskType: null,
+                      generationTaskJobId: null,
+                    });
+                  } catch (error) {
+                    if (isTaskPollTimeoutError(error)) {
+                      notifyTaskStillRunning(t);
+                      return;
+                    }
+                    console.error("[audio-transform] failed", error);
+                    const message =
+                      error instanceof Error && error.message.trim()
+                        ? error.message
+                        : t("nodeToolbar.audio.transformFailed");
+                    if (derivedNodeId) {
+                      updateNodeData(derivedNodeId, {
+                        isGenerating: false,
+                        generationStartedAt: null,
+                        generationError: message,
+                        generationTaskKey: null,
+                        generationTaskType: null,
+                        generationTaskJobId: null,
+                      });
+                    } else {
+                      toast.error(t("nodeToolbar.audio.transformFailed"));
+                    }
+                  }
+                };
+
                 return (
-                  <DropdownMenu
-                    onOpenChange={(open) => {
-                      if (open) closeDownloadMenu();
-                    }}
-                  >
-                    <DropdownMenuTrigger asChild>
-                      <UiChipButton
-                        key="audio-download"
-                        className={`${audioButtonClass} ${
-                          !hasAudio ? "opacity-50 cursor-not-allowed" : ""
-                        }`}
-                        title={
-                          !hasAudio
-                            ? t("nodeToolbar.audio.requiresAudio")
-                            : t("nodeToolbar.download")
-                        }
+                  <>
+                    <AudioTransformMenu
+                      mode="trim"
+                      durationMs={durationMs}
+                      disabled={!trimAvailability.available || !durationMs}
+                      disabledReason={disabledReasonFor(trimAvailability)}
+                      busy={isAudioBusy}
+                      buttonClassName={audioButtonClass}
+                      onSubmit={(draft) => handleAudioTransform("trim", draft)}
+                    />
+                    <AudioTransformMenu
+                      mode="speed"
+                      durationMs={durationMs}
+                      disabled={!speedAvailability.available || !durationMs}
+                      disabledReason={disabledReasonFor(speedAvailability)}
+                      busy={isAudioBusy}
+                      buttonClassName={audioButtonClass}
+                      onSubmit={(draft) => handleAudioTransform("speed", draft)}
+                    />
+                    <DropdownMenu
+                      onOpenChange={(open) => {
+                        if (open) closeDownloadMenu();
+                      }}
+                    >
+                      <DropdownMenuTrigger asChild>
+                        <UiChipButton
+                          key="audio-download"
+                          className={`${audioButtonClass} ${
+                            !hasAudio ? "opacity-50 cursor-not-allowed" : ""
+                          }`}
+                          title={
+                            !hasAudio
+                              ? t("nodeToolbar.audio.requiresAudio")
+                              : t("nodeToolbar.download")
+                          }
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          {isConverting ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Download className="h-3.5 w-3.5" />
+                          )}
+                          {t("nodeToolbar.download")}
+                          <ChevronDown className="h-3 w-3" />
+                        </UiChipButton>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        align="start"
+                        sideOffset={6}
+                        className={`${TOOLBAR_MENU_CONTENT_CLASS} min-w-[170px]`}
                         onClick={(event) => event.stopPropagation()}
                       >
-                        {isConverting ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Download className="h-3.5 w-3.5" />
-                        )}
-                        {t("nodeToolbar.download")}
-                        <ChevronDown className="h-3 w-3" />
-                      </UiChipButton>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent
-                      align="start"
-                      sideOffset={6}
-                      className={`${TOOLBAR_MENU_CONTENT_CLASS} min-w-[170px]`}
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      {AUDIO_DOWNLOAD_FORMATS.map((format) => {
-                        const available = canProduceFormat(format, sourceExt);
-                        return (
-                          <DropdownMenuItem
-                            key={format}
-                            disabled={!hasAudio || !available || isConverting}
-                            className={TOOLBAR_MENU_ITEM_CLASS}
-                            onSelect={() => {
-                              void handleAudioDownload(format);
-                            }}
-                          >
-                            {convertingFormat === format ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Download className="h-4 w-4" />
-                            )}
-                            <span className="flex-1">
-                              {t("nodeToolbar.audio.downloadAs", {
-                                format: format.toUpperCase(),
-                              })}
-                            </span>
-                            {!available ? (
-                              <span className="text-[10px] opacity-60">
-                                {t("nodeToolbar.audio.m4aSourceOnlyHint")}
+                        {AUDIO_DOWNLOAD_FORMATS.map((format) => {
+                          const available = canProduceFormat(format, sourceExt);
+                          return (
+                            <DropdownMenuItem
+                              key={format}
+                              disabled={!hasAudio || !available || isConverting}
+                              className={TOOLBAR_MENU_ITEM_CLASS}
+                              onSelect={() => {
+                                void handleAudioDownload(format);
+                              }}
+                            >
+                              {convertingFormat === format ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Download className="h-4 w-4" />
+                              )}
+                              <span className="flex-1">
+                                {t("nodeToolbar.audio.downloadAs", {
+                                  format: format.toUpperCase(),
+                                })}
                               </span>
-                            ) : null}
-                          </DropdownMenuItem>
-                        );
-                      })}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                              {!available ? (
+                                <span className="text-[10px] opacity-60">
+                                  {t("nodeToolbar.audio.m4aSourceOnlyHint")}
+                                </span>
+                              ) : null}
+                            </DropdownMenuItem>
+                          );
+                        })}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </>
                 );
               })()}
             {!isImageEdit && isAdjustableGroup && (() => {

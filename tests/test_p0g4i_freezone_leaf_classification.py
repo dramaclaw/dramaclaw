@@ -6,7 +6,8 @@
 
 - **误拦**：5 个纯本地 ffmpeg leaf（`run_freezone_extract_frames` /
   `run_freezone_video_upscale` / `run_freezone_video_compose` /
-  `run_freezone_video_erase` / `run_freezone_audio_separate`，均为
+  `run_freezone_video_erase` / `run_freezone_audio_separate` /
+  `run_freezone_audio_transform`，均为
   `egress-inventory.md:54` 的 EG-20a `service/local`，不出网、不取凭证）没有
   该形参，组织成员一律撞 `invalid task envelope`——用户报的「上传视频接脚本
   生成器、任务停在 ffmpeg 抽取关键帧」就是这条。
@@ -45,6 +46,7 @@ from novelvideo.task_backend.envelope import InvalidTaskEnvelope
 AUDITED_LOCAL_LEAVES = frozenset(
     {
         "run_freezone_audio_separate",
+        "run_freezone_audio_transform",
         "run_freezone_extract_frames",
         "run_freezone_video_compose",
         "run_freezone_video_erase",
@@ -452,7 +454,7 @@ def test_classification_matches_the_real_leaf_signatures() -> None:
 
 
 def test_every_dispatch_site_names_a_classified_leaf() -> None:
-    """26 个调用点逐个对到表里；新增未分类的调用点即红。
+    """27 个调用点逐个对到表里；新增未分类的调用点即红。
 
     `leaf_name` 是必填位置参数，不是可选项——漏传是 `TypeError`，不是静默放行。
     """
@@ -480,8 +482,9 @@ def test_every_dispatch_site_names_a_classified_leaf() -> None:
 
     # 19 → 20：`origin/staging` 的 f33ac189（#279）带进来的
     # `generate_freezone_text`，正是上一条用例点名预言的那个形状。
-    # DA3 增加 1 个；拉片增加 scene detect、两次素材提取、视觉分析和 BGM 共 5 个。
-    assert len(named) == 26
+    # DA3 增加 1 个；拉片增加 scene detect、两次素材提取、视觉分析和 BGM 共 5 个；
+    # 音频非破坏性截取 / 变速增加 1 个本地 ffmpeg leaf。
+    assert len(named) == 27
     assert set(named) <= set(FREEZONE_LEAF_EGRESS)
 
 

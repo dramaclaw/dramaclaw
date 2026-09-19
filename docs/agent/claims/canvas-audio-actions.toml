@@ -1,0 +1,145 @@
+version = 1
+slug = "canvas-audio-actions"
+ledger = "docs/agent/tasks/canvas-audio-actions.md"
+baseline = "3238af61"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Register lifecycle and conflict radar."
+
+[[claims]]
+path = "docs/agent/tasks/canvas-audio-actions.md"
+mode = "coordination"
+reason = "Workstream plan and handoff ledger."
+
+[[claims]]
+path = "docs/agent/claims/canvas-audio-actions.toml"
+mode = "coordination"
+reason = "Machine-readable scope for this workstream."
+
+[[claims]]
+path = "docs/agent/claims/shot-breakdown.toml"
+mode = "coordination"
+reason = "Add reciprocal shared-path declarations."
+
+[[claims]]
+path = "docs/agent/claims/depth-motion-da3.toml"
+mode = "coordination"
+reason = "Add reciprocal shared-path declarations."
+
+[[claims]]
+path = "docs/agent/claims/liblib-canvas-parity.toml"
+mode = "coordination"
+reason = "Add reciprocal shared-path declarations."
+
+[[claims]]
+path = "docs/agent/claims/local-stack.toml"
+mode = "coordination"
+reason = "Add reciprocal shared-path declarations."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/canvasActionRegistry.ts"
+mode = "exclusive"
+reason = "Canvas action metadata and availability contract."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/audioTransform.ts"
+mode = "exclusive"
+reason = "Audio transform validation and result projection."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/AudioTransformMenu.tsx"
+mode = "exclusive"
+reason = "Audio trim and speed input UI."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/NodeActionToolbar.tsx"
+mode = "shared"
+shared_with = ["liblib-canvas-parity", "shot-breakdown"]
+reason = "Mount audio actions without replacing existing video actions."
+
+[[claims]]
+path = "frontend/src/features/canvas/domain/canvasNodes.ts"
+mode = "shared"
+shared_with = ["depth-motion-da3", "liblib-canvas-parity", "shot-breakdown"]
+reason = "Persist typed audio derivation metadata."
+
+[[claims]]
+path = "frontend/src/api/ops.ts"
+mode = "shared"
+shared_with = ["depth-motion-da3", "shot-breakdown"]
+reason = "Add the audio transform API client and result task type."
+
+[[claims]]
+path = "frontend/public/locales/zh/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Chinese audio action strings; merge by key."
+
+[[claims]]
+path = "frontend/public/locales/en/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "English audio action strings; merge by key."
+
+[[claims]]
+path = "frontend/public/locales/vi/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Vietnamese audio action strings; merge by key."
+
+[[claims]]
+path = "src/novelvideo/freezone/audio_transform.py"
+mode = "exclusive"
+reason = "Local ffmpeg audio trim and pitch-preserving speed transform."
+
+[[claims]]
+path = "src/novelvideo/api/schemas.py"
+mode = "shared"
+shared_with = ["depth-motion-da3", "shot-breakdown"]
+reason = "Add the audio transform request schema."
+
+[[claims]]
+path = "src/novelvideo/api/routes/freezone.py"
+mode = "shared"
+shared_with = ["depth-motion-da3", "liblib-canvas-parity", "local-stack", "shot-breakdown"]
+reason = "Validate, enqueue, and expose audio transform results."
+
+[[claims]]
+path = "src/novelvideo/task_backend/runners/freezone.py"
+mode = "shared"
+shared_with = ["depth-motion-da3", "shot-breakdown"]
+reason = "Register the local audio transform leaf and runner."
+
+[[claims]]
+path = "src/novelvideo/api/routes/tasks.py"
+mode = "shared"
+shared_with = ["depth-motion-da3", "shot-breakdown"]
+reason = "Expose a readable task-center label."
+
+[[claims]]
+path = "tests/test_freezone_audio_transform.py"
+mode = "exclusive"
+reason = "Audio transform ffmpeg contract tests."
+
+[[claims]]
+path = "tests/test_freezone_audio_transform_backend.py"
+mode = "exclusive"
+reason = "Audio transform API and queue tests."
+
+[[claims]]
+path = "tests/test_p0g4i_freezone_leaf_classification.py"
+mode = "shared"
+shared_with = ["depth-motion-da3", "shot-breakdown"]
+reason = "Declare the local-only ffmpeg audio transform leaf in the audited egress table."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/canvas-action-registry.test.ts"
+mode = "exclusive"
+reason = "Action descriptor contract tests."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/audio-transform.test.ts"
+mode = "exclusive"
+reason = "Audio transform validation and projection tests."

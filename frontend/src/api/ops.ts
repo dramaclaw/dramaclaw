@@ -167,6 +167,7 @@ export interface FreezoneJobRef {
     | "freezone_video_compose"
     | "freezone_video_upscale"
     | "freezone_depth_motion"
+    | "freezone_audio_transform"
     | "freezone_audio_separate"
     | "freezone_audio_speech"
     | "freezone_audio_eleven_music"
@@ -798,6 +799,37 @@ export async function fetchFreezoneAudioSeparateResult(
 ): Promise<Record<string, unknown>> {
   return await apiCall<Record<string, unknown>>(
     `projects/${encodeURIComponent(project)}/freezone/jobs/freezone_audio_separate/${encodeURIComponent(jobId)}/result`,
+  );
+}
+
+// /freezone/audio/transform ---------------------------------------------- //
+
+export interface FreezoneAudioTransformPayload {
+  sourceUrl: string;
+  startSec: number;
+  endSec: number;
+  speed: number;
+}
+
+/**
+ * Create a derived audio asset without mutating the source node. The backend
+ * keeps pitch stable while applying speed through ffmpeg's `atempo` filter.
+ */
+export async function submitFreezoneAudioTransform(
+  project: string,
+  payload: FreezoneAudioTransformPayload,
+): Promise<FreezoneJobRef> {
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/audio/transform`,
+    {
+      method: "POST",
+      json: {
+        source_url: payload.sourceUrl,
+        start_sec: payload.startSec,
+        end_sec: payload.endSec,
+        speed: payload.speed,
+      },
+    },
   );
 }
 
@@ -2003,6 +2035,7 @@ export async function fetchFreezoneJobResult(
     | "freezone_video_compose"
     | "freezone_video_upscale"
     | "freezone_depth_motion"
+    | "freezone_audio_transform"
     | "freezone_audio_separate"
     | "freezone_audio_speech"
     | "freezone_audio_eleven_music"

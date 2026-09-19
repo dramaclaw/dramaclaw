@@ -79,6 +79,7 @@ _TASK_TYPE_LABELS = {
     "freezone_video_erase": "视频擦除",
     "freezone_video_upscale": "视频放大",
     "freezone_audio_separate": "音频分离",
+    "freezone_audio_transform": "音频截取与变速",
     "freezone_video_compose": "视频合成",
     "freezone_text_translate": "字幕翻译",
     "freezone_text_generate": "AI 文本生成",

@@ -2808,6 +2808,7 @@
       "freezone_video_erase": "Erase from video",
       "freezone_video_upscale": "Upscale video",
       "freezone_audio_separate": "Separate audio",
+      "freezone_audio_transform": "Trim / change audio speed",
       "freezone_video_compose": "Compose video",
       "freezone_text_translate": "Translate subtitles",
       "freezone_text_generate": "AI text generation",
@@ -2898,6 +2899,10 @@
       "props": {
         "perEpisode": "Props are generated per episode"
       },
+      "audioTransform": {
+        "start": "Processing audio",
+        "complete": "Audio processing complete"
+      },
       "started": "Task started",
       "cancelled": "Task cancelled"
     },
@@ -2913,6 +2918,9 @@
       "source": {
         "loading": "Loading source text from file...",
         "loaded": "Source text loaded: {{charCount}} characters"
+      },
+      "audioTransform": {
+        "failed": "Error: {{error}}"
       },
       "pipeline": {
         "legacyRecall": "Rule-based recall sanity check found {{sceneCount}} scene blocks: {{sceneNames}}"
@@ -5321,6 +5329,23 @@
     },
     "audio": {
       "requiresAudio": "No audio to download yet",
+      "trim": "Trim audio",
+      "speed": "Change speed",
+      "derivedHint": "The source stays unchanged. Confirming creates a downstream audio node.",
+      "startTime": "Start time (sec)",
+      "endTime": "End time (sec)",
+      "speedValue": "Playback speed",
+      "createDerived": "Create audio",
+      "remoteMediaBlocked": "Localize this remote audio before processing it",
+      "busy": "This audio is already being processed",
+      "durationRequired": "Load the audio duration before processing",
+      "transformFailed": "Audio processing failed",
+      "validation": {
+        "duration-unknown": "Audio duration is not available yet",
+        "invalid-range": "Enter a valid start and end time",
+        "range-too-short": "The selected range must be at least 0.1 seconds",
+        "invalid-speed": "Speed must be between 0.5× and 2×"
+      },
       "downloadAs": "Download as {{format}}",
       "m4aSourceOnlyHint": "m4a source only",
       "m4aSourceOnly": "Source isn't m4a, so it can't be converted to m4a",

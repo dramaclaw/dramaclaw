@@ -1549,6 +1549,15 @@ class FreezoneAudioSeparateRequest(BaseModel):
     )
 
 
+class FreezoneAudioTransformRequest(BaseModel):
+    """画布音频节点的非破坏性截取 / 变速请求。"""
+
+    source_url: str = Field(description="项目内待处理音频静态地址")
+    start_sec: float = Field(default=0.0, ge=0.0, description="源音频截取起点（秒）")
+    end_sec: float = Field(gt=0.0, description="源音频截取终点（秒）")
+    speed: float = Field(default=1.0, ge=0.5, le=2.0, description="播放速度；处理时保持音高")
+
+
 class FreezoneAudioVoiceRef(BaseModel):
     """Freezone 音频节点声线引用。
 
