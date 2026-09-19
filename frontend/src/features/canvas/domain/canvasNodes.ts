@@ -204,6 +204,44 @@ export interface VideoNodeData extends NodeDisplayData {
   upscaleResolution?: '1080p' | '2k' | '4k';
   /** 降噪强度。 */
   upscaleDenoise?: 'none' | '1x' | '2x';
+  // 片段重拍（libtv-style 片段重拍）------------------------------------------
+  // 重拍节点是「视频编辑」的一种专用形态：源视频从上游连线来，节点自己额外记着
+  // 用户在源视频时间轴上圈出的若干段，提交时把这些段展开成提示词。生成仍走
+  // videoEdit 那条路，不新增端点。
+  /** 标记此视频节点是「片段重拍」节点：额外展示区间选择条。 */
+  isRemakeNode?: boolean;
+  /** 待重拍的上游视频静态地址。结果回填前，胶片条靠它渲染。 */
+  remakeSourceUrl?: string;
+  /** 源视频时长（秒）。区间的每一条规则都以它为界，取不到就不该进重拍模式。 */
+  remakeSourceDurationSec?: number;
+  /** 圈出的重拍区间；空数组表示整段重拍。 */
+  remakeRanges?: {
+    id: string;
+    startSec: number;
+    endSec: number;
+    intent?: string;
+  }[];
+  // 智能续写（libtv-style 智能续写）----------------------------------------
+  // 续写和重拍不同：模型要的是一段**真的裁出来**的前置视频，不是一个时间区间。
+  // 所以源节点上先选区间、走剪辑管线裁出片段节点，再由片段节点连到续写节点。
+  /** 源视频节点正处于「选续写前置片段」状态。 */
+  continuationMode?: boolean;
+  /** 选区（秒）。模型接受 4–30 秒。 */
+  continuationRange?: { startSec: number; endSec: number };
+  /** 标记此节点是「智能续写」节点。 */
+  isContinuationNode?: boolean;
+  /**
+   * 续写绑定：这条续写续的是谁的哪一段。
+   *
+   * 存 id 不存快照——前置片段节点被删、连线被断、片段被换成别的视频之后，这份
+   * 绑定必须失效并要求重选，否则会拿着一个已经不存在的前提去生成。
+   */
+  continuationBinding?: {
+    sourceNodeId: string;
+    sourceEdgeId: string;
+    range: { startSec: number; endSec: number };
+    sourceVideoUrl: string;
+  };
   [key: string]: unknown;
 }
 
