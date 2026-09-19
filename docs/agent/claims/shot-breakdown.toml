@@ -1,7 +1,7 @@
 version = 1
 slug = "shot-breakdown"
 ledger = "docs/agent/tasks/shot-breakdown.md"
-baseline = "c4d81e167a45"
+baseline = "38c1f057bca1"
 
 [[claims]]
 path = "docs/agent/STATE.md"
