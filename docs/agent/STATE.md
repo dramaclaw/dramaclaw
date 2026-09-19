@@ -33,7 +33,7 @@
 | [depth-motion-da3](tasks/depth-motion-da3.md) | 拉片动态维度：Depth Anything 3 深度视频 | 待验收 | 任务中心名称与 20 项聚焦回归已补齐；待 CUDA 真机 720p 硬切样片验收 |
 | [story-writer](tasks/story-writer.md) | 创作阶段（虾本）：写手 agent + 通用文档存储 + 前端路由 | 待验收 | 14 项后端契约测试与前端 build 已通过；待真实模型四阶段流程和导入链路验收 |
 | [local-stack](tasks/local-stack.md) | 命令行 CE 本地栈：local_gateway + ComfyUI Qwen/Krea | 待验收 | 可移植配置、本地路由设置页与目录排序已回归；待第二台完整 ComfyUI 环境真实启动 |
-| [canvas-lod-perf](tasks/canvas-lod-perf.md) | 画布 LOD 剔除、低缩放交互、视频抽帧封面 | 待验收 | LOD、远端封面与重组件懒加载已独立提交并通过 144 项聚焦测试；待大画布量化帧率 |
+| [canvas-lod-perf](tasks/canvas-lod-perf.md) | 画布 LOD 剔除、低缩放交互、视频抽帧封面 | 待验收 | ImageGenNode 懒加载接点和发布容错已回归；待大画布量化帧率 |
 
 已完成或放弃的线移到 `docs/agent/archive/`，不要在上表里留尸体。状态只用
 `提案中 / 方案就绪 / 执行中 / 待验收 / 已阻塞 / 已完成 / 已归档`。

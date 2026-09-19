@@ -1,7 +1,7 @@
 version = 1
 slug = "canvas-lod-perf"
 ledger = "docs/agent/tasks/canvas-lod-perf.md"
-baseline = "8fa08d14d96f8c98170e85983cc937752b073f97"
+baseline = "a5695267"
 
 [[claims]]
 path = "docs/agent/STATE.md"

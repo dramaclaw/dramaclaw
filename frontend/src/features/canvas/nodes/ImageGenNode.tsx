@@ -115,7 +115,7 @@ import { BackgroundCropperDialog } from '@/features/canvas/ui/BackgroundCropperD
 import {
   ThreeDDirectorDialog,
   type ThreeDDirectorCaptureMeta,
-} from '@/features/viewer-kit/three-d/ThreeDDirectorDialog';
+} from '@/features/viewer-kit/three-d/ThreeDDirectorDialogLazy';
 import type { DirectorStageManifest } from '@/features/viewer-kit/three-d/directorManifest';
 import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
 import { notifyTaskStillRunning } from '@/features/canvas/application/errorDialog';
@@ -226,6 +226,35 @@ import {
 import { hasImageGenPromptOverride } from '@/features/canvas/nodes/imageGenPrompt';
 import { orderedReferenceUrlsWithOwnFirst } from '@/features/canvas/nodes/referenceOrdering';
 import { useReferenceMentionSync } from '@/features/canvas/nodes/useReferenceMentionSync';
+
+const IMAGE_RESULT_RETRY_DELAYS_MS = [0, 250, 750, 1500] as const;
+
+/**
+ * Completion is signalled before the final static URL is always observable on
+ * disk. Give the result endpoint a short settling window so a successful task
+ * cannot leave the node in its last progress frame just because the artifact
+ * publication lagged behind the task event.
+ */
+async function fetchImageResultWithRetry(
+  projectId: string,
+  taskType: Parameters<typeof fetchFreezoneJobResult>[1],
+  jobId: string,
+): Promise<string | null> {
+  for (const delayMs of IMAGE_RESULT_RETRY_DELAYS_MS) {
+    if (delayMs > 0) {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, delayMs));
+    }
+    try {
+      const result = await fetchFreezoneJobResult(projectId, taskType, jobId);
+      if (typeof result.url === 'string' && result.url.length > 0) {
+        return result.url;
+      }
+    } catch {
+      // The next attempt covers the short task-result publication race.
+    }
+  }
+  return null;
+}
 
 type ImageGenNodeProps = NodeProps & {
   id: string;
@@ -1259,12 +1288,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         const completed = await awaitTaskCompletion(ref.task_key, projectId, { taskType: ref.task_type });
         let url = resolveOutputUrl(completed.result as Record<string, unknown> | null);
         if (!url) {
-          try {
-            const fallback = await fetchFreezoneJobResult(projectId, ref.task_type, ref.job_id);
-            url = fallback.url;
-          } catch (error) {
-            console.warn('[image-gen] fallback fetch failed', error);
-          }
+          url = await fetchImageResultWithRetry(projectId, ref.task_type, ref.job_id);
         }
         if (url) {
           if (!isCurrentGenerationAttempt()) return;
