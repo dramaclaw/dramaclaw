@@ -71,18 +71,18 @@ LibTV 画布导入不再丢节点语义，视频节点工具条按实测规格�
 
 ## 进展记录
 
-### 2026-09-18 · 本轮提交已就绪，远端推送被主机网络阻塞
+### 2026-09-19 · 本轮提交已推送并完成远端核对
 
-改了什么：完成四层功能提交和交接提交后，按仓库约定释放工作锁；推送目标仍是
-`zhonggwv/main`，没有改写只作上游对照的 `origin`。
+改了什么：四层功能提交与交接记录已推送到 `zhonggwv/main`；没有改写只作上游对照的
+`origin`。GitHub CLI 已重新授权为 `ZhongGWV`，并把 Git 的全局 HTTP/HTTPS 代理设为
+`http://127.0.0.1:7890`，后续 Git 推送不再依赖临时环境变量。
 
-为什么这么改：`git push zhonggwv main` 在连接 `github.com:443` 时超时，SSH 又没有可用公钥；
-随后 GitHub CLI 设备登录也在申请设备码前网络超时。这是主机网络/凭据环境问题，重复提交、
-换远端或强推都不能解决，反而会破坏可追溯性。
+为什么这么改：此前发布失败是主机未使用本地代理和旧 CLI 凭据失效，不是代码或远端分支冲突。
+代理和官方设备授权恢复后，按常规 fast-forward 推送；没有使用 force push。
 
-怎么验证的：`curl -I --connect-timeout 10 https://github.com` 同样连接超时；本地提交与工作树
-仍完整。恢复 GitHub 连通性后先运行 `gh auth login -h github.com -p https --web`，再执行
-`git push zhonggwv main` 并核对远端 HEAD。
+怎么验证的：代理下 `github.com` 返回 HTTP 200；`gh auth status` 显示活动账号 `ZhongGWV`
+且具备 `repo` / `workflow` 权限；`git push zhonggwv main` 将远端从 `2ca34419` 快进到
+`92f07de3`，`git ls-remote --heads zhonggwv main` 返回相同哈希。
 
 ### 2026-09-18 · 四层提交与干净快照收口
 
@@ -221,8 +221,6 @@ shot / depth 已收口后的 `2ca34419`，补齐本线真实会触碰的集成�
 **环境，非代码**：`OSS_RELAY_AK` / `OSS_RELAY_SK` 未配置。任务能建、能派发，
 调到视频生成器报 `OSS media relay config missing`。
 
-**发布环境，非代码**：当前主机无法连接 `github.com:443`，现有 GitHub CLI 凭据也不可用；
-本轮提交尚未同步到 `zhonggwv/main`。恢复网络后按上面的两条命令完成认证和推送，禁止 force push。
 
 ## 验收标准
 
