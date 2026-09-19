@@ -140,6 +140,7 @@ def test_newapi_sketch_config_defaults_to_dc_image2_low_quality(monkeypatch):
     class FakeAsyncClient:
         def __init__(self, *args, **kwargs):
             posted["timeout"] = kwargs.get("timeout")
+            posted["trust_env"] = kwargs.get("trust_env")
 
         async def __aenter__(self):
             return self
@@ -184,12 +185,21 @@ def test_newapi_sketch_config_defaults_to_dc_image2_low_quality(monkeypatch):
     assert image_bytes == b"sketch"
     assert error == ""
     assert posted["timeout"] == nanobanana_grid.NEWAPI_IMAGE_HTTP_TIMEOUT_SECONDS == 1800.0
+    assert posted["trust_env"] is True
     assert posted["json"]["model"] == "LingShan-G2"
     assert posted["json"]["quality"] == "low"
     assert (posted["json"]["width"], posted["json"]["height"]) == (688, 1024)
     assert posted["json"]["metadata"] == {"ratio": "2:3", "resolution": "1k"}
     assert "extra_fields" not in posted["json"]
     assert trace == {"request_id": "req-sketch", "response_id": "resp-sketch"}
+
+
+def test_newapi_local_router_urls_bypass_desktop_proxies() -> None:
+    from novelvideo.generators import nanobanana_grid
+
+    assert nanobanana_grid._is_loopback_http_url("http://127.0.0.1:3001/v1")
+    assert nanobanana_grid._is_loopback_http_url("http://localhost:3001/v1")
+    assert not nanobanana_grid._is_loopback_http_url("https://api.siliconflow.cn/v1")
 
 
 def test_newapi_sketch_config_can_use_dc_banana2_without_quality(monkeypatch):
@@ -736,6 +746,155 @@ def test_newapi_image_call_omits_quality_for_nanobanana2(monkeypatch):
     assert (posted["json"]["width"], posted["json"]["height"]) == (768, 1024)
     assert posted["json"]["metadata"] == {"ratio": "3:4", "resolution": "1k"}
     assert "extra_fields" not in posted["json"]
+
+
+def test_local_qwen_image_edit_uploads_references_without_oss_relay(monkeypatch):
+    import httpx
+    from novelvideo.generators import nanobanana_grid
+
+    posted = {}
+
+    class FakeEditResponse:
+        headers = {}
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"url": "http://127.0.0.1:3001/v1/local-media?test=1"}]}
+
+    class FakeImageResponse:
+        status_code = 200
+        content = b"edited-image"
+
+        def raise_for_status(self):
+            return None
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            posted.setdefault("client_options", []).append(kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, *, headers, data, files):
+            posted.update({"url": url, "headers": headers, "data": data, "files": files})
+            return FakeEditResponse()
+
+        async def get(self, url):
+            posted["download_url"] = url
+            return FakeImageResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(
+        nanobanana_grid,
+        "upload_image_bytes",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("OSS relay used")),
+    )
+
+    image_bytes, _text, error = run_async(
+        nanobanana_grid._call_newapi_image_api(
+            api_key="local-router-token",
+            model="Qwen-Image-local",
+            prompt="edit this image",
+            reference_images=[
+                (b"first-reference", "/tmp/first.jpg"),
+                ("second.png", b"second-reference", "image/png"),
+            ],
+            image_config={"aspect_ratio": "16:9", "image_size": "1K"},
+            base_url="http://127.0.0.1:3001/v1",
+        )
+    )
+
+    assert image_bytes == b"edited-image"
+    assert error == ""
+    assert posted["url"] == "http://127.0.0.1:3001/v1/images/edits"
+    assert posted["headers"] == {"Authorization": "Bearer local-router-token"}
+    assert posted["data"] == {"model": "Qwen-Image-local", "prompt": "edit this image"}
+    assert posted["files"] == [
+        ("image", ("first.jpg", b"first-reference", "image/jpeg")),
+        ("image", ("second.png", b"second-reference", "image/png")),
+    ]
+    assert posted["client_options"][0]["trust_env"] is False
+    assert posted["client_options"][1]["trust_env"] is False
+
+
+def test_local_krea_image_edit_uploads_references_without_oss_relay(monkeypatch):
+    import httpx
+    from novelvideo.generators import nanobanana_grid
+
+    posted = {}
+
+    class FakeEditResponse:
+        headers = {}
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"url": "http://127.0.0.1:3001/v1/local-media?test=1"}]}
+
+    class FakeImageResponse:
+        status_code = 200
+        content = b"krea-edited-image"
+
+        def raise_for_status(self):
+            return None
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            posted.setdefault("client_options", []).append(kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, *, headers, data, files):
+            posted.update({"url": url, "headers": headers, "data": data, "files": files})
+            return FakeEditResponse()
+
+        async def get(self, url):
+            posted["download_url"] = url
+            return FakeImageResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(
+        nanobanana_grid,
+        "upload_image_bytes",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("OSS relay used")),
+    )
+
+    image_bytes, _text, error = run_async(
+        nanobanana_grid._call_newapi_image_api(
+            api_key="local-router-token",
+            model="Krea-2-Turbo-local",
+            prompt="keep the character identity and change the background",
+            reference_images=[("reference.jpg", b"reference", "image/jpeg")],
+            image_config={"aspect_ratio": "16:9", "image_size": "1K"},
+            base_url="http://127.0.0.1:3001/v1",
+        )
+    )
+
+    assert image_bytes == b"krea-edited-image"
+    assert error == ""
+    assert posted["url"] == "http://127.0.0.1:3001/v1/images/edits"
+    assert posted["headers"] == {"Authorization": "Bearer local-router-token"}
+    assert posted["data"] == {
+        "model": "Krea-2-Turbo-local",
+        "prompt": "keep the character identity and change the background",
+        "width": "1088",
+        "height": "608",
+    }
+    assert posted["files"] == [
+        ("image", ("reference.jpg", b"reference", "image/jpeg")),
+    ]
+    assert posted["client_options"][0]["trust_env"] is False
+    assert posted["client_options"][1]["trust_env"] is False
 
 
 def test_newapi_image_call_relays_reference_images(monkeypatch):

@@ -1,9 +1,9 @@
 # 命令行 CE 本地栈：local_gateway + 本地 ComfyUI 图像
 
-**状态**：执行中
+**状态**：待验收
 **最后更新**：2026-09-18
-**基线**：`38484897`；本地未提交；`nanobanana_grid.py` 同时被 `origin/main` 修改
-**相关文档**：`启动说明.md`（仓库根目录，机器专属）
+**基线**：`f4db7d2e39ed`；本地未提交；`nanobanana_grid.py` 同时被 `origin/main` 修改
+**相关文档**：`启动说明.md`（仓库根目录，可移植安装说明）
 **相关分支 / PR**：无，工作区未提交
 
 ## 目标
@@ -23,29 +23,30 @@
 |---|---|---|
 | `src/novelvideo/local_gateway.py` | 新增 | 本地 OpenAI 兼容路由，自己决定 provider |
 | `scripts/start-local-stack.sh` | 新增 | 一键起栈，含 ComfyUI 拉起与等待 |
-| `config/local/*.json` | 新增 | ComfyUI 工作流（qwen_image_t2i / krea2_turbo_t2i / krea2_turbo_edit / community 两份） |
+| `config/local/*.json` | 新增 | 四份已审查的 Qwen / Krea 文生图与图片编辑 API 工作流 |
+| `config/local/local.env.example` | 新增 | 无密钥、无机器路径的本机配置模板 |
 | `src/novelvideo/config.py` | 修改 | 加 `LOCAL_QWEN_IMAGE_MODEL` / `LOCAL_KREA_IMAGE_MODEL` 两个选择项，`DRAMACLAW_LOCAL_MODELS_ONLY=1` 时只露本地两项 |
-| `src/novelvideo/generators/nanobanana_grid.py` | 修改 | 回环地址（127.0.0.1/::1/localhost）绕开桌面代理设置 |
-| `scripts/start-ce.sh`、`frontend/vite.config.ts` | 修改 | |
+| `src/novelvideo/generators/nanobanana_grid.py` | 修改 | 回环地址绕开桌面代理；本地图片编辑改用 multipart，跳过 OSS relay |
+| `scripts/start-ce.sh` | 修改 | 保留 wrapper 指定的 API 地址并关闭旧 provisioner |
 | `tests/test_local_gateway.py` | 新增 | |
 | `tests/test_freezone_image_backend.py`、`test_newapi_image_gateway.py`、`test_image_generation_selection.py` | 修改 | |
 
 `local_gateway.py`、`start-local-stack.sh`、本地工作流模板与 `test_local_gateway.py` 可视为本线独占；
-`config.py`、`nanobanana_grid.py`、`start-ce.sh`、`vite.config.ts` 是共享基础设施文件。
+`config.py`、`nanobanana_grid.py`、`start-ce.sh` 是共享基础设施文件。
+`frontend/vite.config.ts` 的当前脏改动实际属于 LOD 分包优化，本线只保留保护性 shared claim，禁止随本线提交。
 
 ## 协调与冲突
 
 - `src/novelvideo/generators/nanobanana_grid.py` 同时被 `origin/main` 修改。必须先看上游修复语义，
   再把“回环地址绕代理”移植到新基线，不能提交旧文件整段。
-- `config/local/` 当前整个目录未跟踪，需逐项确认哪些是可公开、可复现的模板，哪些含机器参数或运行态。
-- `启动说明.md` 与脚本都含机器专属绝对路径；替换时要用本地变量文件示例，不得把真实路径搬进台账。
+- `config/local/community/` 是本机下载的原始参考工作流，不参与运行，已按精确路径忽略；只提交四份最小 API 模板。
+- `启动说明.md` 与脚本已不含作者绝对路径；机器值只放 `.dramaclaw-local/local.env`。
 
 ## 实施方案（后续）
 
-1. 清点 `config/local/`，分离可提交模板与本机私有配置，做一次敏感信息扫描。
-2. 将 ComfyUI / 仓库绝对路径改为环境变量或 `.dramaclaw-local/` 本地配置，并写无机器路径的启动步骤。
-3. 在 `origin/main` 新版 `nanobanana_grid.py` 上重放最小的回环代理改动，跑相关三份测试。
-4. 用一台无作者路径假设的环境按说明启动，记录健康检查结果。
+1. 用一台无作者路径假设的环境按说明启动，记录 ComfyUI、gateway、API 与前端健康检查结果。
+2. 记录 Krea 2 Turbo Int8 的机器配置、耗时与质量结论；它仍是实验选项。
+3. 后续同步 `origin/main` 时，在新版生成器上同时保留归档直拷与本地 multipart / 绕代理语义。
 
 ## 风险与回退
 
@@ -53,6 +54,34 @@
 - 回退按网关、启动脚本、生成器适配三个独立提交进行；本机私有目录不纳入 Git 回退。
 
 ## 进展记录
+
+### 2026-09-18 · 完成可移植启动配置与回归门禁
+
+做了什么：移除脚本和说明中的作者绝对路径，启动器改为读取被忽略的
+`.dramaclaw-local/local.env`；加入无密钥示例和四份最小 API workflow，首次启动自动复制本机副本；
+标准 CE 恢复只显示官方模型，本地模式只显示 Qwen / Krea；退出时回收本轮启动的应用进程。
+`config/local/community/` 原始参考导出按精确路径忽略，不作为运行依赖提交。
+
+为什么这么做：可迁移配置必须将“代码默认值”和“作者机器事实”分开；同时不能为了本地模式改变标准 CE
+的产品列表。把四份运行时 workflow 固化成最小模板后，干净机器不再依赖作者目录里的手工副本。
+
+怎么验证的：四个相关测试文件共 334 passed；ruff 通过；`bash -n` 通过；四份 workflow 均通过 JSON 解析；
+脚本、环境示例和说明的 `/Users` / `/home` 扫描零命中；分别在默认环境和
+`DRAMACLAW_LOCAL_MODELS_ONLY=1` 子进程断言两组模型列表。尚未在第二台带完整 ComfyUI 模型的机器做真实启动，
+因此状态为“待验收”。
+
+### 2026-09-18 · 重审上游重叠与本机配置边界
+
+做了什么：以 `f4db7d2e` 为新基线重审本线全部文件；确认 `origin/main` 对生成器新增的是归档结果直拷、
+并发输出隔离等语义，本地新增的是回环绕代理和本地编辑 multipart，功能不同但落在同一函数；检查
+`config/local/` 与 `.dramaclaw-local/`，确认密钥只存在被忽略的 secrets 目录，公开模板没有作者绝对路径。
+
+为什么这么做：Story 提交后旧基线失效，守卫按设计阻止继续写；生成器若按整文件取舍，会在本地路由能力和
+上游归档修复之间二选一，必须记录成未来同步时的双向保留项。
+
+怎么验证的：相关 332 项测试运行到 331 passed / 1 failed；唯一失败是标准 CE 被错误暴露本地 Qwen 选项，
+已定位为 `VISIBLE_IMAGE_GENERATION_SELECTION_KEYS` 的默认分支。ruff 另发现一处新测试未使用导入；
+`bash -n` 与三份运行时 workflow JSON 解析通过。机器路径扫描只命中启动脚本和旧说明，正是本轮要拔除的内容。
 
 ### 2026-09-18 · 补齐基础设施边界与机器 scope
 
@@ -76,27 +105,23 @@
 
 ## 待办
 
-- [ ] **把机器专属路径从 `启动说明.md` 里拔出来**。当前写死了作者本机的 ComfyUI 安装目录
-      与仓库检出目录的绝对路径，换台机器整份说明作废。
-      改成 `.dramaclaw-local/` 下的本地变量文件 + 一份通用说明。
-      （`scripts/start-local-stack.sh` 里的 `COMFYUI_DIR` 默认值同样写死了绝对路径，一并处理。）
-- [ ] `启动说明.md` 现在是一段裸命令，没说前置条件（要先装什么、硅基流动 key 放哪、
-      怎么确认起来了）。补成能照着做的步骤。
+- [x] 机器专属路径已移到 `.dramaclaw-local/local.env`，tracked 文件不再包含作者路径
+- [x] 启动说明已补齐依赖、密钥放置、启动 / 停止、健康检查、数据目录与排错步骤
 - [ ] Krea 2 Turbo Int8 标着「Mac 实验」，实验结论没记录——能不能用、慢多少、质量如何
 
 ## 阻塞
 
-无（ComfyUI 需手动单独起，见 `启动说明.md`，这是设计如此，不算阻塞）。
+代码无阻塞；最终验收需要另一台装好对应模型 / 节点的 ComfyUI 机器。
 
 ## 验收标准
 
-- 在一台干净的机器上照 `启动说明.md` 能起起来（当前做不到，见待办第一条）。
+- 在一台干净的机器上照 `启动说明.md` 能起起来（待外部环境验收）。
 - `uv run pytest tests/test_local_gateway.py` 全绿。
 - `DRAMACLAW_LOCAL_MODELS_ONLY=1` 时设置面板里只出现本地两个图像选项。
 
 ## 交接摘要
 
-- **最后完成到**：作者机器能跑真实内容，但安装说明和脚本不可移植。
-- **下一步唯一动作**：先审计 `config/local/` 是否含私有值，再设计本地变量文件格式。
+- **最后完成到**：可移植配置、四份运行模板与 334 项回归测试已完成；标准 CE 模型列表未被污染。
+- **下一步唯一动作**：在第二台装好 ComfyUI 模型 / 节点的机器按说明真实启动并记录四个健康检查。
 - **先读这些文件**：`local_gateway.py`、`start-local-stack.sh`、`启动说明.md`、上游生成器 diff。
 - **不要动这些文件 / 决策**：不要把路由泛化；不要整文件覆盖 `nanobanana_grid.py`。

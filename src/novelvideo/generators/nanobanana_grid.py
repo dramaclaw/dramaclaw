@@ -18,6 +18,7 @@ import io
 import json
 import logging
 import math
+import mimetypes
 import os
 import re
 import time
@@ -26,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
 
@@ -285,6 +287,15 @@ def _newapi_request_id_from_headers(headers: Any) -> str:
 
 
 NEWAPI_IMAGE_HTTP_TIMEOUT_SECONDS = 1800.0
+
+
+def _is_loopback_http_url(url: str) -> bool:
+    """Whether an Images API URL must never use desktop proxy settings."""
+    try:
+        hostname = urlparse(url).hostname
+    except ValueError:
+        return False
+    return hostname in {"127.0.0.1", "::1", "localhost"}
 
 
 def _newapi_safe_header_summary(headers: Any) -> dict[str, str]:
@@ -3668,38 +3679,55 @@ async def _call_newapi_image_api(
     if input_fidelity and reference_images:
         payload["input_fidelity"] = input_fidelity
 
+    if base_url:
+        endpoint = base_url.rstrip("/")
+    else:
+        from novelvideo.config import get_effective_newapi_gateway_config
+
+        endpoint = get_effective_newapi_gateway_config().base_url.rstrip("/")
+
+    # Local image routers accept images as multipart form data and send them
+    # straight to ComfyUI. Unlike hosted NewAPI channels, no OSS relay or
+    # public reference URL is required (or desirable) for local files.
+    local_edit_files: list[tuple[str, tuple[str, bytes, str]]] | None = None
+    local_edit_data: dict[str, str] | None = None
+
     if reference_images:
-        try:
-            relay_helper = _relay_reference_images_for_newapi
-            if relay_helper is _ORIGINAL_RELAY_REFERENCE_IMAGES_FOR_NEWAPI:
-                payload["image"] = await relay_helper(
-                    reference_images,
-                    egress_context=context,
-                )
-            else:
-                payload["image"] = await relay_helper(reference_images)
-        except Exception as exc:
-            if context is not None and context.is_organization:
-                # The organization path hides `exc` because an arbitrary
-                # exception may carry a signed URL or a key. The relay's own
-                # three failures are secret-free by construction, though, and
-                # they need three different fixes — a port registration, a
-                # retry, an object-storage policy — so name which one fired
-                # (OI-45). Anything else stays opaque.
-                code = getattr(type(exc), "code", None)
-                reason = getattr(exc, "reason", None)
-                if not isinstance(code, str):
-                    return None, "", "media relay upload failed"
-                logger.warning(
-                    "organization media relay failed: code=%s reason=%s "
-                    "envelope=%s project=%s",
-                    code,
-                    reason or "-",
-                    context.envelope_id,
-                    context.project_id,
-                )
-                return None, "", f"media relay upload failed ({code})"
-            return None, "", f"media relay upload failed: {exc}"
+        if _is_local_image_router(model, endpoint):
+            local_edit_files = _local_edit_files(reference_images)
+            local_edit_data = {"model": model, "prompt": prompt}
+        else:
+            try:
+                relay_helper = _relay_reference_images_for_newapi
+                if relay_helper is _ORIGINAL_RELAY_REFERENCE_IMAGES_FOR_NEWAPI:
+                    payload["image"] = await relay_helper(
+                        reference_images,
+                        egress_context=context,
+                    )
+                else:
+                    payload["image"] = await relay_helper(reference_images)
+            except Exception as exc:
+                if context is not None and context.is_organization:
+                    # The organization path hides `exc` because an arbitrary
+                    # exception may carry a signed URL or a key. The relay's own
+                    # three failures are secret-free by construction, though, and
+                    # they need three different fixes — a port registration, a
+                    # retry, an object-storage policy — so name which one fired
+                    # (OI-45). Anything else stays opaque.
+                    code = getattr(type(exc), "code", None)
+                    reason = getattr(exc, "reason", None)
+                    if not isinstance(code, str):
+                        return None, "", "media relay upload failed"
+                    logger.warning(
+                        "organization media relay failed: code=%s reason=%s "
+                        "envelope=%s project=%s",
+                        code,
+                        reason or "-",
+                        context.envelope_id,
+                        context.project_id,
+                    )
+                    return None, "", f"media relay upload failed ({code})"
+                return None, "", f"media relay upload failed: {exc}"
         request_path = "/images/edits"
     else:
         request_path = "/images/generations"
@@ -3715,13 +3743,14 @@ async def _call_newapi_image_api(
         image_config.get("model_params") or {},
     )
     payload = enforce_newapi_media_geometry_contract(payload, media_type="image")
+    from novelvideo.config import LOCAL_KREA_IMAGE_MODEL
 
-    if base_url:
-        endpoint = base_url.rstrip("/")
-    else:
-        from novelvideo.config import get_effective_newapi_gateway_config
+    if local_edit_data is not None and model == LOCAL_KREA_IMAGE_MODEL:
+        for key in ("width", "height"):
+            value = payload.get(key)
+            if value is not None:
+                local_edit_data[key] = str(value)
 
-        endpoint = get_effective_newapi_gateway_config().base_url.rstrip("/")
     request_context = _newapi_safe_request_context(
         endpoint=endpoint,
         request_path=request_path,
@@ -3730,10 +3759,9 @@ async def _call_newapi_image_api(
         prompt=prompt,
     )
     logger.info("DramaClawAPI image request: %s", request_context)
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    headers = {"Authorization": f"Bearer {api_key}"}
+    if local_edit_files is None:
+        headers["Content-Type"] = "application/json"
 
     async def _reserve(source: str) -> str:
         return await get_usage_meter().reserve_current_model_call_credit(
@@ -3814,16 +3842,29 @@ async def _call_newapi_image_api(
             request_payload=payload,
         )
 
+        # A desktop environment can have HTTP(S)_PROXY set for external
+        # services. The local image router lives on loopback; proxying it is
+        # both unnecessary and can yield an opaque 502 before the request ever
+        # reaches the router.
         async with httpx.AsyncClient(
             timeout=NEWAPI_IMAGE_HTTP_TIMEOUT_SECONDS,
             follow_redirects=True,
+            trust_env=not _is_loopback_http_url(endpoint),
         ) as client:
             logger.info("DramaClawAPI image POST start: %s", request_context.get("endpoint"))
-            response = await client.post(
-                f"{endpoint}{request_path}",
-                headers=headers,
-                json=payload,
-            )
+            if local_edit_files is not None:
+                response = await client.post(
+                    f"{endpoint}{request_path}",
+                    headers=headers,
+                    data=local_edit_data,
+                    files=local_edit_files,
+                )
+            else:
+                response = await client.post(
+                    f"{endpoint}{request_path}",
+                    headers=headers,
+                    json=payload,
+                )
             logger.info(
                 "DramaClawAPI image POST response: status=%s bytes=%s",
                 getattr(response, "status_code", "?"),
@@ -3889,7 +3930,11 @@ async def _call_newapi_image_api(
                 # (60s),避免落入外层 client 的 600s global timeout 拖很久。
                 # 加 phase log 让 hang 时能定位卡在哪。
                 logger.info("DramaClawAPI image GET url start: %s", image_url[:120])
-                async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as fetch:
+                async with httpx.AsyncClient(
+                    timeout=60.0,
+                    follow_redirects=True,
+                    trust_env=not _is_loopback_http_url(image_url),
+                ) as fetch:
                     image_response = await fetch.get(image_url)
                 logger.info(
                     "DramaClawAPI image GET url done: status=%d bytes=%d",
@@ -3993,6 +4038,50 @@ def _reference_image_bytes(
             return bytes(image_ref[0])
         return bytes(image_ref[0])
     return bytes(image_ref)
+
+
+def _is_local_image_router(model: str, endpoint: str) -> bool:
+    """Identify dedicated loopback image routes without affecting hosted APIs."""
+    from novelvideo.config import LOCAL_KREA_IMAGE_MODEL, LOCAL_QWEN_IMAGE_MODEL
+
+    return model in {LOCAL_QWEN_IMAGE_MODEL, LOCAL_KREA_IMAGE_MODEL} and _is_loopback_http_url(
+        endpoint
+    )
+
+
+def _is_local_qwen_router(model: str, endpoint: str) -> bool:
+    """Keep the narrow Qwen predicate for model-specific callers."""
+    from novelvideo.config import LOCAL_QWEN_IMAGE_MODEL
+
+    return model == LOCAL_QWEN_IMAGE_MODEL and _is_loopback_http_url(endpoint)
+
+
+def _local_edit_files(
+    reference_images: list[bytes | tuple[bytes, str] | tuple[str, bytes, str]],
+) -> list[tuple[str, tuple[str, bytes, str]]]:
+    """Build OpenAI-style repeated ``image`` multipart fields for local models."""
+    files: list[tuple[str, tuple[str, bytes, str]]] = []
+    for index, image_ref in enumerate(reference_images, start=1):
+        filename = f"reference-{index}.png"
+        content_type = "image/png"
+        if isinstance(image_ref, tuple):
+            if len(image_ref) == 3:
+                filename = Path(str(image_ref[0] or filename)).name or filename
+                candidate = str(image_ref[2] or "")
+                if candidate.startswith("image/"):
+                    content_type = candidate
+            elif len(image_ref) == 2:
+                hint = str(image_ref[1] or "")
+                if hint.startswith("image/"):
+                    content_type = hint
+                else:
+                    filename = Path(hint).name or filename
+        if content_type == "image/png":
+            guessed_type = mimetypes.guess_type(filename)[0]
+            if guessed_type and guessed_type.startswith("image/"):
+                content_type = guessed_type
+        files.append(("image", (filename, _reference_image_bytes(image_ref), content_type)))
+    return files
 
 
 async def _call_newapi_image_api_with_egress(

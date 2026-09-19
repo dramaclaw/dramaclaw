@@ -8,13 +8,13 @@
 
 ## 一、仓库当前形态（接手前必须核对）
 
-- 分支 `main`，最新提交 `10275ec8`（2026-09-18，`feat(canvas): stabilize low-zoom LOD state`）。
-- **工作区有 125 个未提交状态条目**（截至 2026-09-18，按 `git status --short` 计），
+- 分支 `main`，最新提交 `f4db7d2e`（2026-09-18，`feat(story): add traceable story workspace`）。
+- **工作区有 115 个未提交状态条目**（截至 2026-09-18，按 `git status --short` 计），
   包含六条业务线和历史未归属隔离区；协作治理已形成独立提交，其余工作线仍没有独立提交承载。
   会话开始时 hook 注入的摘要是实时值，不能用条目总数反推某条业务线又新增了多少文件。
 - 这是当前最大的风险：一次整树 restore / 自动 stash / 强制切分支，就能抹掉三周的工作。
   **接手后第一条命令是 `git status --short --branch`，先和下表对账。**
-- 刷新远端后，当前 `main` 相对 `origin/main` 为本地 2 个治理提交、上游 27 个提交，且多处本地脏文件也被上游修改。
+- 刷新远端后，当前 `main` 相对 `origin/main` 为本地 4 个独立提交、上游 27 个提交，且多处本地脏文件也被上游修改。
   在完成逐线来源审计和拆提交前，不得直接 pull/rebase，也不要为了建 worktree 自动 stash。
 
 ## 二、在途工作线
@@ -27,7 +27,7 @@
 | [shot-breakdown](tasks/shot-breakdown.md) | 逐帧拉片三维度：分镜 / 动态 / 音乐 | 待验收 | 音乐依赖 demucs；与 depth、远端重拍分支共享后端热点 |
 | [depth-motion-da3](tasks/depth-motion-da3.md) | 拉片动态维度：Depth Anything 3 深度视频 | 待验收 | 需本机模型 / 解释器；与 shot-breakdown 共享后端热点 |
 | [story-writer](tasks/story-writer.md) | 创作阶段（虾本）：写手 agent + 通用文档存储 + 前端路由 | 待验收 | 14 项后端契约测试与前端 build 已通过；待真实模型四阶段流程和导入链路验收 |
-| [local-stack](tasks/local-stack.md) | 命令行 CE 本地栈：local_gateway + ComfyUI Qwen/Krea | 执行中 | 机器路径未拔除；生成器文件同时被 `origin/main` 修改 |
+| [local-stack](tasks/local-stack.md) | 命令行 CE 本地栈：local_gateway + ComfyUI Qwen/Krea | 待验收 | 可移植配置与 334 项测试已通过；待第二台完整 ComfyUI 环境真实启动 |
 | [canvas-lod-perf](tasks/canvas-lod-perf.md) | 画布 LOD 剔除、低缩放交互、视频抽帧封面 | 执行中 | 远端来源审计完成；按 hunk 拆 LOD 核心，混合增量留给对应工作线 |
 
 已完成或放弃的线移到 `docs/agent/archive/`，不要在上表里留尸体。状态只用
@@ -42,7 +42,7 @@
 | `freezone.py`、`tasks.py`、`schemas.py`、`jobs.py`、`runners/freezone.py` | shot + depth + LibTV | 远端重拍分支；部分还在 `origin/main` | 按 API schema → job → runner 串行集成，禁止并行写 |
 | 三语 `translation.json` | LibTV 与其他前端改动 | `origin/main` + 远端重拍分支 | 合并键，不整文件覆盖；三语同时验证 |
 | `routeTree.gen.ts` | story-writer | `origin/main` | 先合并路由源文件，最后重新生成，不手工择一覆盖 |
-| `nanobanana_grid.py` | local-stack | `origin/main` | 对比上游生成器修复后再移植回环代理逻辑 |
+| `nanobanana_grid.py` | local-stack | `origin/main` | 已确认语义互补；同步时同时保留上游归档直拷与本地 multipart / 绕代理 |
 
 已确认的重叠数字（基于当前本地远端引用）：LOD 分支 4 个文件全部与本地脏文件重叠；
 视频重拍 / 拉片分支至少 24 个文件与本地脏文件重叠；`origin/main` 有 7 个文件与本地脏文件重叠。
@@ -50,12 +50,12 @@
 
 ## 四、恢复顺序（不是功能优先级）
 
-1. 交接协议已形成提交 `0e2d6977`；提交后 handoff 回归修复已通过 7 个聚焦测试，待随本轮推送。
+1. 交接协议与 handoff 回归修复已独立提交并推送。
 2. 只读分类 `legacy-unassigned-diff`，任何未确认归属的文件继续保持隔离。
-3. 审计 `canvas-lod-perf` 与远端 LOD 分支，先消掉最小的 4 文件重复面。
+3. `canvas-lod-perf` 的核心状态层已独立提交；混合 UI 增量继续留给对应工作线。
 4. 审计 `liblib-canvas-parity` / `shot-breakdown` / `depth-motion-da3` 与远端重拍分支；
    先定共享契约，再拆新增纯模块，最后处理共享适配层。
-5. 单独拆 `story-writer` 与 `local-stack`，处理各自与 `origin/main` 的热点。
+5. `story-writer` 已独立提交；`local-stack` 可移植性和测试已收口，待第二台机器验收后归档。
 6. 所有线有独立提交 / 分支、工作区可恢复后，再同步 `origin/main` 并转为一线一 worktree。
 
 这是保护现场的技术顺序，不是产品优先级。若用户改变优先级，先更新方案，但仍不能跳过冲突审计。
@@ -64,7 +64,7 @@
 
 1. **`OSS_RELAY_AK` / `OSS_RELAY_SK` 未配置** → 任务能建、能派发，调到视频生成器报
    `OSS media relay config missing`。凡是「视频生成跑不通」，先查这个，别去 debug 业务代码。
-2. **ComfyUI 要单独起**，不随 `start-local-stack.sh` 启动；命令见 `启动说明.md`。
+2. **ComfyUI 模型 / 节点需单独安装**；`start-local-stack.sh` 默认负责启动和等待，也可配置为复用现有进程。
 3. **demucs 未装** → 拉片的音乐维度降级成整轨提取（`mode` 字段会如实上报，不是静默降级）。
 
 ## 六、环境速查
@@ -73,8 +73,8 @@
 # 后端（云端/标准 CE）
 uv sync --group dev && uv run novelvideo api --port 8780
 # 本地命令行栈（本机 ComfyUI + 硅基流动），会一并起 local_gateway
-DRAMACLAW_LOCAL_CONFIG_DIR="$PWD/.dramaclaw-local" DRAMACLAW_LOCAL_DATA_DIR="$PWD" \
-  bash scripts/start-local-stack.sh
+cp config/local/local.env.example .dramaclaw-local/local.env  # 首次配置
+bash scripts/start-local-stack.sh
 # 前端
 cd frontend && pnpm install --frozen-lockfile && pnpm dev
 ```
@@ -88,7 +88,7 @@ cd frontend && pnpm install --frozen-lockfile && pnpm dev
 |---|---|---|
 | `output/local/liblib_canvas_import_review/liblib-shot-breakdown-teardown.md` | 拉片实测拆解 | 拉片那条线的取证归零，要重新对着 LibTV 量一遍 |
 | `.dramaclaw-local/` | 本地路由配置与密钥 | 本地栈起不来 |
-| `config/local/*.json` | ComfyUI 工作流（Qwen / Krea2） | 本地图像生成不可用 |
+| `.dramaclaw-local/workflows/*.json` | 用户修改过的 ComfyUI 工作流副本 | 会回退到仓库内受审查模板，个性化调整丢失 |
 | `曹操.md` | 创作阶段的真实样例产物 | story 线没有可回归的样例 |
 
 这几样值得单独备份一次，再谈别的。

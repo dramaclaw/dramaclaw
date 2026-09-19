@@ -1,7 +1,13 @@
 version = 1
 slug = "local-stack"
 ledger = "docs/agent/tasks/local-stack.md"
-baseline = "38484897"
+baseline = "f4db7d2e39ed"
+
+[[claims]]
+path = ".gitignore"
+mode = "shared"
+shared_with = ["*"]
+reason = "Ignore local secrets and non-runtime workflow source exports by exact path."
 
 [[claims]]
 path = "docs/agent/STATE.md"
@@ -43,7 +49,7 @@ reason = "Global runtime settings; add only local-stack options."
 path = "src/novelvideo/generators/nanobanana_grid.py"
 mode = "shared"
 shared_with = ["*"]
-reason = "Generator shared with upstream fixes; port only loopback proxy handling."
+reason = "Generator shared with upstream fixes; port only loopback proxy and local multipart handling."
 
 [[claims]]
 path = "scripts/start-ce.sh"
@@ -55,7 +61,7 @@ reason = "Shared CE launcher."
 path = "frontend/vite.config.ts"
 mode = "shared"
 shared_with = ["*"]
-reason = "Shared development proxy configuration."
+reason = "Protect existing LOD bundle-splitting diff; explicitly excluded from local-stack commits."
 
 [[claims]]
 path = "tests/test_local_gateway.py"

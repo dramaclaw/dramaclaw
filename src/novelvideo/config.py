@@ -909,6 +909,12 @@ DEFAULT_RENDER_IMAGE_SELECTION = os.environ.get(
 CHARACTER_IMAGE_SELECTION = os.environ.get(
     "CHARACTER_IMAGE_SELECTION"
 ) or os.environ.get("DEFAULT_CHARACTER_IMAGE_SELECTION")
+LOCAL_QWEN_IMAGE_MODEL = os.environ.get(
+    "LOCAL_QWEN_IMAGE_MODEL", "Qwen-Image-local"
+)
+LOCAL_KREA_IMAGE_MODEL = os.environ.get(
+    "LOCAL_KREA_IMAGE_MODEL", "Krea-2-Turbo-local"
+)
 
 IMAGE_GENERATION_SELECTIONS: dict[str, dict[str, str]] = {
     "huimeng_gpt_image2": {
@@ -951,11 +957,26 @@ IMAGE_GENERATION_SELECTIONS: dict[str, dict[str, str]] = {
         "provider": "newapi",
         "model": NEWAPI_NANOBANANA2_MODEL,
     },
+    "newapi_qwen_image_local": {
+        "label": "Qwen Image（本地 ComfyUI）",
+        "provider": "newapi",
+        "model": LOCAL_QWEN_IMAGE_MODEL,
+    },
+    "newapi_krea2_local": {
+        "label": "Krea 2 Turbo（本地 Int8，Mac 实验）",
+        "provider": "newapi",
+        "model": LOCAL_KREA_IMAGE_MODEL,
+    },
 }
 
+_LOCAL_MODELS_ONLY = os.environ.get("DRAMACLAW_LOCAL_MODELS_ONLY", "").strip().lower()
 VISIBLE_IMAGE_GENERATION_SELECTION_KEYS = (
-    "newapi_gpt_image2",
-    "newapi_nanobanana2",
+    ("newapi_qwen_image_local", "newapi_krea2_local")
+    if _LOCAL_MODELS_ONLY in {"1", "true", "yes", "on"}
+    else (
+        "newapi_gpt_image2",
+        "newapi_nanobanana2",
+    )
 )
 
 LEGACY_IMAGE_GENERATION_SELECTION_ALIASES = {
