@@ -1,7 +1,7 @@
 version = 1
 slug = "local-stack"
 ledger = "docs/agent/tasks/local-stack.md"
-baseline = "f4db7d2e39ed"
+baseline = "508c9b21"
 
 [[claims]]
 path = ".gitignore"
@@ -62,6 +62,40 @@ path = "frontend/vite.config.ts"
 mode = "shared"
 shared_with = ["*"]
 reason = "Protect existing LOD bundle-splitting diff; explicitly excluded from local-stack commits."
+
+[[claims]]
+path = "frontend/src/components/layout/header.tsx"
+mode = "exclusive"
+reason = "Suppress the irrelevant media-relay warning for the documented local router."
+
+[[claims]]
+path = "frontend/src/components/settings/settings-dialog.tsx"
+mode = "exclusive"
+reason = "Present the local-router configuration without NewAPI setup controls."
+
+[[claims]]
+path = "frontend/public/locales/zh/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Localized local-router status copy; merge by key only."
+
+[[claims]]
+path = "frontend/public/locales/en/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Localized local-router status copy; merge by key only."
+
+[[claims]]
+path = "frontend/public/locales/vi/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Localized local-router status copy; merge by key only."
+
+[[claims]]
+path = "src/novelvideo/api/routes/freezone.py"
+mode = "shared"
+shared_with = ["depth-motion-da3", "shot-breakdown", "liblib-canvas-parity"]
+reason = "Local media catalog ordering is independent of neighboring Freezone endpoints."
 
 [[claims]]
 path = "tests/test_local_gateway.py"

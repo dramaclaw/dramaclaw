@@ -107,17 +107,26 @@ const SHOW_CODEX_BRIDGE = false;
 const MODEL_CONFIGURATION_GUIDE_URL =
   "https://github.com/dramaclaw/dramaclaw/blob/main/docs/en/getting-started/configuring-models.md";
 const COMFY_WORKFLOW_MANAGED_CONFIG_KEY = "_dcManagedByWorkflow";
+const LOCAL_ROUTER_TOKEN_NAME = "dramaclaw-local-router";
+
+function isLocalRouterConfig(config: ModelGatewayConfig | undefined): boolean {
+  return config?.custom?.tokenName === LOCAL_ROUTER_TOKEN_NAME;
+}
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const { t } = useTranslation();
   const [page, setPage] = useState<"models" | "storage">("models");
   const [modelConfigApplying, setModelConfigApplying] = useState(false);
-  const statusQuery = useModelGatewayConfig(open);
+  // The header warning is visible before the dialog opens, so it must not
+  // defer its status request until the user clicks Settings.  Otherwise a
+  // healthy local-router profile is briefly rendered as "unconfigured".
+  const statusQuery = useModelGatewayConfig(true);
   const settingsStatus = statusQuery.data?.data;
   const modelConfigured = Boolean(settingsStatus?.effective.configured);
+  const localRouterActive = isLocalRouterConfig(settingsStatus);
   const mediaStorageConfigured = Boolean(
     settingsStatus?.mediaRelay?.configured,
-  );
+  ) || localRouterActive;
 
   const pageStatus = (configured: boolean, label: string) => {
     if (statusQuery.isLoading) {
@@ -337,6 +346,7 @@ function ModelConfigSection({
   const enableCustomMode = useEnableCustom();
   const enableHybridMode = useEnableHybrid();
   const modelGatewayMissing = config ? !config.effective.configured : false;
+  const localRouterActive = isLocalRouterConfig(config);
 
   const [mode, setMode] = useState<GatewayMode>("official");
   const modeChosenByUser = useRef(false);
@@ -517,13 +527,17 @@ function ModelConfigSection({
         {/* 功能模型映射仅在自定义渠道展示；官方渠道不需要。 */}
         {mode === "custom" || mode === "hybrid" ? (
           <>
-            <CustomGatewayPanel
-              config={config}
-              loading={loading}
-              baseUrl={customBaseUrl}
-              activateHybrid={mode === "hybrid"}
-            />
-            {mode === "custom" ? (
+            {localRouterActive ? (
+              <LocalRouterPanel config={config} />
+            ) : (
+              <CustomGatewayPanel
+                config={config}
+                loading={loading}
+                baseUrl={customBaseUrl}
+                activateHybrid={mode === "hybrid"}
+              />
+            )}
+            {mode === "custom" && !localRouterActive ? (
               <QuickLocalNewApiSetup
                 config={config}
                 loading={loading}
@@ -562,7 +576,7 @@ function ModelConfigSection({
                 </div>
               </details>
             ) : null}
-            {mode === "custom" ? (
+            {mode === "custom" && !localRouterActive ? (
               <details className="mt-5 rounded-md border border-border/70">
                 <summary className="cursor-pointer px-3 py-3 text-xs font-medium text-foreground">
                   {t("settings.modelConfig.quick.advanced")}
@@ -596,6 +610,70 @@ function ModelConfigSection({
         ) : null}
       </fieldset>
     </section>
+  );
+}
+
+function LocalRouterPanel({
+  config,
+}: {
+  config: ModelGatewayConfig | undefined;
+}) {
+  const { t } = useTranslation();
+  const localImage = Object.entries(
+    config?.provisioner?.mediaModels ?? {},
+  ).find(([, item]) => item.mediaType === "image");
+  const imageLabel = localImage?.[1].label || localImage?.[0] || "Qwen Image";
+
+  return (
+    <div className="mt-4 rounded-md border border-emerald-500/35 bg-emerald-500/5 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h4 className="text-sm font-medium text-foreground">
+            {t("settings.modelConfig.localRouter.title")}
+          </h4>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+            {t("settings.modelConfig.localRouter.description")}
+          </p>
+        </div>
+        <span className="shrink-0 text-xs font-medium text-emerald-400">
+          {t("settings.modelConfig.localRouter.running")}
+        </span>
+      </div>
+
+      <dl className="mt-4 grid gap-2 text-xs sm:grid-cols-2">
+        <div className="rounded border border-border/60 bg-black/20 px-3 py-2">
+          <dt className="text-muted-foreground">{t("settings.modelConfig.localRouter.image")}</dt>
+          <dd className="mt-1 font-medium text-foreground">{imageLabel}</dd>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            {t("settings.modelConfig.localRouter.imageDescription")}
+          </p>
+        </div>
+        <div className="rounded border border-border/60 bg-black/20 px-3 py-2">
+          <dt className="text-muted-foreground">{t("settings.modelConfig.localRouter.text")}</dt>
+          <dd className="mt-1 font-medium text-foreground">
+            {t("settings.modelConfig.localRouter.textDescription")}
+          </dd>
+        </div>
+        <div className="rounded border border-border/60 bg-black/20 px-3 py-2">
+          <dt className="text-muted-foreground">{t("settings.modelConfig.localRouter.embedding")}</dt>
+          <dd className="mt-1 font-medium text-foreground">
+            {t("settings.modelConfig.localRouter.embeddingDescription")}
+          </dd>
+        </div>
+        <div className="rounded border border-border/60 bg-black/20 px-3 py-2">
+          <dt className="text-muted-foreground">{t("settings.modelConfig.localRouter.voice")}</dt>
+          <dd className="mt-1 font-medium text-foreground">
+            {t("settings.modelConfig.localRouter.voiceDescription")}
+          </dd>
+        </div>
+      </dl>
+
+      <p className="mt-3 text-[11px] text-muted-foreground">
+        {t("settings.modelConfig.localRouter.address", {
+          address: config?.effective.baseUrl || t("settings.modelConfig.localRouter.disconnected"),
+        })}
+      </p>
+    </div>
   );
 }
 

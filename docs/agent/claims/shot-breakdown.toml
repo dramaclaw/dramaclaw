@@ -46,7 +46,7 @@ reason = "Breakdown task definitions."
 [[claims]]
 path = "src/novelvideo/api/routes/freezone.py"
 mode = "shared"
-shared_with = ["depth-motion-da3", "liblib-canvas-parity"]
+shared_with = ["depth-motion-da3", "liblib-canvas-parity", "local-stack"]
 reason = "Breakdown, depth, and LibTV endpoints share the freezone adapter."
 
 [[claims]]

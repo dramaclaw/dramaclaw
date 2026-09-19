@@ -8002,7 +8002,20 @@ def _merge_media_model_catalog_defaults(
         for index, item in enumerate(configured)
         if index not in consumed and item.get("enabled") is not False
     )
-    return merged
+
+    # The UI resolves a newly created node to the first live catalog entry.
+    # Keep the documented ``sortOrder`` meaningful after the CE defaults and
+    # local mappings have been merged, so a local model with sortOrder=1 is
+    # both shown and selected before bundled remote catalog suggestions.
+    def sort_key(index_and_entry: tuple[int, dict[str, Any]]) -> tuple[int, int]:
+        index, entry = index_and_entry
+        try:
+            sort_order = int(entry.get("sortOrder", 100))
+        except (TypeError, ValueError):
+            sort_order = 100
+        return sort_order, index
+
+    return [entry for _index, entry in sorted(enumerate(merged), key=sort_key)]
 
 
 def _catalog_entry_identifiers(entry: dict[str, Any]) -> set[str]:

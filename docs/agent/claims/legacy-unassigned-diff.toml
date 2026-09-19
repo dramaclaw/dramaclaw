@@ -29,25 +29,10 @@ mode = "read-only"
 reason = "Directory name is not authorization to delete unknown user data."
 
 [[claims]]
-path = "frontend/src/__tests__/lib/freezone-url.test.ts"
-mode = "exclusive"
-reason = "Historical dirty test with no reliable workstream attribution."
-
-[[claims]]
 path = "frontend/src/api/canvas.ts"
 mode = "shared"
 shared_with = ["liblib-canvas-parity"]
 reason = "Historical API client now shares explicit LibTV import endpoints."
-
-[[claims]]
-path = "frontend/src/components/layout/header.tsx"
-mode = "exclusive"
-reason = "Historical dirty layout file with no reliable workstream attribution."
-
-[[claims]]
-path = "frontend/src/components/settings/settings-dialog.tsx"
-mode = "exclusive"
-reason = "Historical dirty settings file with no reliable workstream attribution."
 
 [[claims]]
 path = "frontend/src/features/freezone/CanvasOutlineList.tsx"
@@ -62,11 +47,6 @@ shared_with = ["liblib-canvas-parity"]
 reason = "Historical canvas-selector work shares the LibTV import entry."
 
 [[claims]]
-path = "frontend/src/features/freezone/projections.ts"
-mode = "exclusive"
-reason = "Historical dirty freezone projection with no reliable workstream attribution."
-
-[[claims]]
 path = "frontend/src/lib/freezone-url.ts"
 mode = "shared"
 shared_with = ["liblib-canvas-parity"]
@@ -77,11 +57,6 @@ path = "frontend/src/routes/_app/index.tsx"
 mode = "shared"
 shared_with = ["liblib-canvas-parity"]
 reason = "Historical project-card work shares the LibTV import dialog."
-
-[[claims]]
-path = "frontend/src/routes/_app/projects.$project/freezone.lazy.tsx"
-mode = "exclusive"
-reason = "Historical dirty route with no reliable workstream attribution."
 
 [[claims]]
 path = "tests/test_freezone_canvas_route_home_node_guard.py"

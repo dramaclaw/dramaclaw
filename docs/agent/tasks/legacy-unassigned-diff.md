@@ -56,6 +56,16 @@
 
 ## 进展记录
 
+### 2026-09-19 · 本地路由设置页差异迁回 local-stack
+
+做了什么：将 `header.tsx` 与 `settings-dialog.tsx` 从隔离清单迁移给 `local-stack`；其差异读取
+`dramaclaw-local-router` 的健康配置、隐藏无关的 NewAPI 初始化入口，属于已提交本机路由的产品表面。
+
+为什么这么做：代码与本地栈的 token 和运行模型目录直接对应，继续把它们当未知历史文件会阻止独立验证和提交。
+
+怎么验证的：已逐 hunk 对照 `local_gateway.py` 的 token 名和 `test_freezone_image_backend.py` 的本地目录排序契约；
+全局 claim guard 在 local-stack 双方 claim 更新后运行。
+
 ### 2026-09-19 · 素材替换状态机迁入独立工作线
 
 做了什么：将 `AssetLibraryPanel`、`FreezoneShell`、`assetDropStore` 及对应点选回归测试迁入

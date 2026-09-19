@@ -6877,6 +6877,21 @@
       "statusActive": "当前生效",
       "gatewayWarningIconLabel": "模型网关未配置",
       "gatewayNotConfiguredImpact": "当前生效的模型网关未配置。文本、图片、视频、音频等模型调用会失败；请配置官方渠道或初始化本地 NewAPI 后再生成内容。",
+      "localRouter": {
+        "title": "本地模型路由已启用",
+        "description": "此配置不需要本地 NewAPI 数据库。密钥和工作流保存在源码目录之外，更新项目不会覆盖它们。",
+        "running": "运行中",
+        "image": "图片",
+        "imageDescription": "本地 ComfyUI · 文生图、图生图",
+        "text": "文本",
+        "textDescription": "硅基流动 · DeepSeek-V4-Flash",
+        "embedding": "Embedding",
+        "embeddingDescription": "硅基流动 · BAAI/bge-m3",
+        "voice": "语音合成",
+        "voiceDescription": "硅基流动 · CosyVoice2-0.5B",
+        "address": "路由地址：{{address}}",
+        "disconnected": "未连接"
+      },
       "modes": {
         "official": "官方",
         "custom": "自定义",

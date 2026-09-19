@@ -262,7 +262,7 @@ reason = "Persist imported canvas semantics and prewarm the LOD image ladder."
 [[claims]]
 path = "src/novelvideo/api/routes/freezone.py"
 mode = "shared"
-shared_with = ["depth-motion-da3", "shot-breakdown"]
+shared_with = ["depth-motion-da3", "shot-breakdown", "local-stack"]
 reason = "Expose LibTV detail/localization endpoints; stage only owned hunks."
 
 [[claims]]

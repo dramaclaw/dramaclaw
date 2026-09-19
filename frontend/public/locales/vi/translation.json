@@ -6877,6 +6877,21 @@
       "statusActive": "Đang dùng",
       "gatewayWarningIconLabel": "Chưa cấu hình model gateway",
       "gatewayNotConfiguredImpact": "Model gateway đang dùng chưa được cấu hình. Mọi lệnh gọi model văn bản, ảnh, video và âm thanh đều sẽ thất bại; hãy cấu hình kênh chính thức hoặc khởi tạo Local NewAPI trước khi tạo nội dung.",
+      "localRouter": {
+        "title": "Đã bật bộ định tuyến model cục bộ",
+        "description": "Cấu hình này không cần cơ sở dữ liệu NewAPI cục bộ. Khóa và workflow nằm ngoài mã nguồn nên cập nhật dự án không ghi đè chúng.",
+        "running": "Đang chạy",
+        "image": "Hình ảnh",
+        "imageDescription": "ComfyUI cục bộ · văn bản sang ảnh, ảnh sang ảnh",
+        "text": "Văn bản",
+        "textDescription": "SiliconFlow · DeepSeek-V4-Flash",
+        "embedding": "Embedding",
+        "embeddingDescription": "SiliconFlow · BAAI/bge-m3",
+        "voice": "Tổng hợp giọng nói",
+        "voiceDescription": "SiliconFlow · CosyVoice2-0.5B",
+        "address": "Địa chỉ bộ định tuyến: {{address}}",
+        "disconnected": "Chưa kết nối"
+      },
       "modes": {
         "official": "Chính thức",
         "custom": "Tuỳ chỉnh",

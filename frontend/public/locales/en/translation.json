@@ -6877,6 +6877,21 @@
       "statusActive": "Active",
       "gatewayWarningIconLabel": "Model gateway is not configured",
       "gatewayNotConfiguredImpact": "The active model gateway is not configured. Text, image, video, and audio model calls will fail; configure the official channel or initialize Local NewAPI before generating content.",
+      "localRouter": {
+        "title": "Local model router is enabled",
+        "description": "This setup does not need a local NewAPI database. Keys and workflows live outside the source tree, so project updates do not replace them.",
+        "running": "Running",
+        "image": "Images",
+        "imageDescription": "Local ComfyUI · text to image, image to image",
+        "text": "Text",
+        "textDescription": "SiliconFlow · DeepSeek-V4-Flash",
+        "embedding": "Embedding",
+        "embeddingDescription": "SiliconFlow · BAAI/bge-m3",
+        "voice": "Speech synthesis",
+        "voiceDescription": "SiliconFlow · CosyVoice2-0.5B",
+        "address": "Router address: {{address}}",
+        "disconnected": "Not connected"
+      },
       "modes": {
         "official": "Official",
         "custom": "Custom",

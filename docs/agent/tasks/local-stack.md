@@ -1,8 +1,8 @@
 # 命令行 CE 本地栈：local_gateway + 本地 ComfyUI 图像
 
 **状态**：待验收
-**最后更新**：2026-09-18
-**基线**：`f4db7d2e39ed`；本地未提交；`nanobanana_grid.py` 同时被 `origin/main` 修改
+**最后更新**：2026-09-19
+**基线**：`508c9b21`；本地未提交；`nanobanana_grid.py` 同时被 `origin/main` 修改
 **相关文档**：`启动说明.md`（仓库根目录，可移植安装说明）
 **相关分支 / PR**：无，工作区未提交
 
@@ -30,6 +30,9 @@
 | `scripts/start-ce.sh` | 修改 | 保留 wrapper 指定的 API 地址并关闭旧 provisioner |
 | `tests/test_local_gateway.py` | 新增 | |
 | `tests/test_freezone_image_backend.py`、`test_newapi_image_gateway.py`、`test_image_generation_selection.py` | 修改 | |
+| `frontend/src/components/layout/header.tsx`、`components/settings/settings-dialog.tsx` | 修改 | 本地路由健康状态及设置页说明，不再误导用户初始化 NewAPI |
+| `frontend/public/locales/{zh,en,vi}/translation.json` | 共享 | 本地路由设置页三语文案，仅按 key 合并 |
+| `src/novelvideo/api/routes/freezone.py` | 修改 | 合并本地模型目录后按已声明的 `sortOrder` 排序 |
 
 `local_gateway.py`、`start-local-stack.sh`、本地工作流模板与 `test_local_gateway.py` 可视为本线独占；
 `config.py`、`nanobanana_grid.py`、`start-ce.sh` 是共享基础设施文件。
@@ -54,6 +57,27 @@
 - 回退按网关、启动脚本、生成器适配三个独立提交进行；本机私有目录不纳入 Git 回退。
 
 ## 进展记录
+
+### 2026-09-19 · 补齐本地路由的目录排序与设置页表面
+
+做了什么：`freezone.py` 在合并本地与默认媒体目录后按 `sortOrder` 保持稳定排序；设置对
+`dramaclaw-local-router` 识别为已配置，页头不再显示 OSS relay 警告，设置页改为本地路由摘要并补齐三语。
+
+为什么这么做：本地栈无需 NewAPI 数据库和 OSS relay；此前正确运行时仍提示未配置，且节点会优先落到
+远端建议模型，违背本地模式的明确选择。
+
+怎么验证的：claim preflight 通过；`uv run pytest tests/test_freezone_image_backend.py -q` 为 278 passed；
+前端 i18n 棘轮为 0 命中，`pnpm exec tsc -b && pnpm build` 通过。真实第二台 ComfyUI 验收仍未完成。
+
+### 2026-09-19 · 重审基线与共享路由边界
+
+做了什么：将基线推进到 `508c9b21`，重审本轮只涉及本地目录排序与设置页；`freezone.py` 的相邻
+Depth、拉片和 LibTV endpoint 均未写入。
+
+为什么这么做：先前本线已待验收，继续提交新增用户可见 hunk 前必须重审最新画布与素材替换提交后的边界。
+
+怎么验证的：按 hunk 检查 `freezone.py` 只有 `_merge_media_model_catalog_defaults` 的稳定排序，且 claims 与三个
+共享工作线互认；待 guard preflight 继续验证。
 
 ### 2026-09-18 · 完成可移植启动配置与回归门禁
 
