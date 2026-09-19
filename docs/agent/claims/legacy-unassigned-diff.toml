@@ -119,21 +119,6 @@ mode = "exclusive"
 reason = "Historical dirty store with no reliable workstream attribution."
 
 [[claims]]
-path = "src/novelvideo/freezone/video_node.py"
-mode = "exclusive"
-reason = "Historical dirty backend module with no reliable workstream attribution."
-
-[[claims]]
 path = "tests/test_freezone_canvas_route_home_node_guard.py"
-mode = "exclusive"
-reason = "Historical dirty backend test with no reliable workstream attribution."
-
-[[claims]]
-path = "tests/test_p0g4i_freezone_leaf_classification.py"
-mode = "exclusive"
-reason = "Historical dirty backend test with no reliable workstream attribution."
-
-[[claims]]
-path = "tests/test_task_runner_home_node_placement.py"
 mode = "exclusive"
 reason = "Historical dirty backend test with no reliable workstream attribution."

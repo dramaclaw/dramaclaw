@@ -92,7 +92,7 @@ reason = "Lazy registration for imported node fallbacks."
 [[claims]]
 path = "frontend/src/features/canvas/nodes/VideoNode.tsx"
 mode = "shared"
-shared_with = ["depth-motion-da3"]
+shared_with = ["depth-motion-da3", "shot-breakdown"]
 reason = "Video remake/continuation and depth-motion entry share the video node."
 
 [[claims]]
@@ -107,7 +107,8 @@ reason = "Toolbar action configuration."
 
 [[claims]]
 path = "frontend/src/features/canvas/domain/canvasNodes.ts"
-mode = "exclusive"
+mode = "shared"
+shared_with = ["depth-motion-da3", "shot-breakdown"]
 reason = "Fields for imported and derived nodes."
 
 [[claims]]

@@ -1,8 +1,8 @@
 # 画布深度动作参考：Depth Anything 3
 
-**状态**：待验收
+**状态**：执行中
 **最后更新**：2026-09-18
-**基线**：`38484897`；本地未提交；共享适配层与 shot-breakdown、远端重拍分支重叠
+**基线**：`246ad1634162`；本地未提交；共享适配层与 shot-breakdown、远端重拍分支重叠
 **相关文档**：`docs/guides/depth-motion-da3.md`（模型边界、执行链路、API、参数依据）
 **相关分支 / PR**：无，工作区未提交
 
@@ -24,13 +24,17 @@
 | `src/novelvideo/freezone/depth_motion.py` | 新增 | 隔离启动子进程与取消 |
 | `src/novelvideo/freezone/depth_motion_worker.py` | 新增 | 模型加载、场景分段、量化、导出 |
 | `src/novelvideo/api/routes/freezone.py` | 修改 | 项目权限与产物 URL |
+| `src/novelvideo/api/schemas.py`、`api/routes/tasks.py` | 修改 | 请求 schema 与任务中心名称 |
 | `src/novelvideo/task_backend/runners/freezone.py` | 修改 | 本地 leaf 分类 |
 | `frontend/src/features/canvas/nodes/VideoNode.tsx` | 修改 | 画布交互与任务恢复 |
+| `frontend/src/features/canvas/domain/canvasNodes.ts`、`frontend/src/api/ops.ts` | 修改 | 节点持久字段与 API 客户端 |
+| `src/novelvideo/freezone/video_node.py` | 修改 | 深度参考进入全能视频时的结构语义 |
+| `frontend/public/locales/{zh,en,vi}/translation.json` | 共享 | Depth UI 三语词条，只按 key 合并 |
 | `tests/test_depth_motion_limits.py`、`tests/test_freezone_depth_motion.py` | 新增 | |
 | `frontend/src/__tests__/api/freezone-depth-motion.test.ts` | 新增 | |
 
-新增的 `depth_motion*.py` 与两份后端测试是本线独占。`freezone.py`、`runners/freezone.py`、
-`VideoNode.tsx` 是共享文件，只能与 shot-breakdown / LibTV 线串行集成。
+新增的 `depth_motion*.py` 与三份聚焦测试是本线独占。API schema / route / runner、节点契约、
+`VideoNode.tsx`、API client 与三语 locale 是共享文件，只能按 Depth hunk 与 shot-breakdown / LibTV 线串行集成。
 
 ## 协调与冲突
 
@@ -52,6 +56,33 @@
 - 独占模块可按本线提交撤销；共享路由与 runner 不得整文件回退。
 
 ## 进展记录
+
+### 2026-09-18 · Depth 全契约通过，先拆纯模块提交
+
+做了什么：运行 DA3 的纯函数、真实 FFmpeg 三帧 fixture、路由 / runner 合同和前端 API 合同；同时把
+早期误标为单线独占的 `schemas.py`、`ops.ts`、`canvasNodes.ts` 改成 Depth / 拉片 / LibTV 互认共享，
+并把 `video_node.py` 与两份全局 runner 护栏测试从历史未归属区转回 Depth。
+
+为什么这么做：17 项契约虽然全绿，但共享文件混有三条线的相邻 hunk；先提交 DA3 子进程、worker、
+技术方案和纯资源上限测试，能获得可恢复基点，再在下一提交逐 hunk 集成 API / UI，避免夹带拉片与 LibTV。
+
+怎么验证的：`uv run pytest tests/test_depth_motion_limits.py tests/test_freezone_depth_motion.py -q`
+通过（15 passed）；`pnpm exec vitest run src/__tests__/api/freezone-depth-motion.test.ts` 通过（2 passed）；
+ruff 通过。第一笔提交只以 `tests/test_depth_motion_limits.py` 作为纯模块门禁；其余集成测试留给下一笔共享层提交。
+
+### 2026-09-18 · 确认浏览器 DA2 与服务端 DA3 是互补能力
+
+做了什么：重审 `origin/feat/canvas-video-reshoot-breakdown` 的 depthCapture 目录、worker、节点体与测试，
+并与本线 DA3 子进程链路逐项对比。远端能力在浏览器 Web Worker 中跑 Depth Anything V2 Small，结果作为
+Blob 上传；本线在受控 CUDA worker 上跑 DA3-SMALL，输出 MP4 + manifest 和镜头级一致性处理。
+
+为什么这么做：两者虽然都叫“深度动作”，但执行位置、模型、产物协议和适用场景不同。结论是保留两个入口：
+浏览器 DA2 用于短片即时、无服务端模型环境；服务端 DA3 用于受控环境的较高质量、可追溯产物。不能互相覆盖，
+共享 UI 需用清晰的能力名和环境可用性区分。
+
+怎么验证的：用 `git ls-tree` / `git grep` 只读审计远端分支的 5 个 depthCapture 模块、3 份测试、
+`DepthCaptureBody.tsx` 与 `VideoNode.tsx` 接入；确认远端没有服务端 DA3 worker / manifest 协议，
+本线也没有浏览器 WebGPU / WASM worker。尚未修改共享适配层。
 
 ### 2026-09-18 · 补齐共享边界与机器 scope
 

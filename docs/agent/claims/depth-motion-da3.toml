@@ -1,7 +1,7 @@
 version = 1
 slug = "depth-motion-da3"
 ledger = "docs/agent/tasks/depth-motion-da3.md"
-baseline = "38484897"
+baseline = "246ad1634162"
 
 [[claims]]
 path = "docs/agent/STATE.md"
@@ -40,6 +40,18 @@ shared_with = ["shot-breakdown"]
 reason = "Depth and breakdown endpoints share the freezone adapter."
 
 [[claims]]
+path = "src/novelvideo/api/routes/tasks.py"
+mode = "shared"
+shared_with = ["shot-breakdown"]
+reason = "Task-center labels for both analysis task types share one mapping."
+
+[[claims]]
+path = "src/novelvideo/api/schemas.py"
+mode = "shared"
+shared_with = ["shot-breakdown"]
+reason = "Depth and breakdown request contracts live in the shared API schema module."
+
+[[claims]]
 path = "src/novelvideo/task_backend/runners/freezone.py"
 mode = "shared"
 shared_with = ["shot-breakdown"]
@@ -48,8 +60,53 @@ reason = "Depth and breakdown leaf classification share the runner."
 [[claims]]
 path = "frontend/src/features/canvas/nodes/VideoNode.tsx"
 mode = "shared"
-shared_with = ["liblib-canvas-parity"]
+shared_with = ["liblib-canvas-parity", "shot-breakdown"]
 reason = "Depth-motion action and video recreation actions share one node."
+
+[[claims]]
+path = "frontend/src/features/canvas/domain/canvasNodes.ts"
+mode = "shared"
+shared_with = ["shot-breakdown", "liblib-canvas-parity"]
+reason = "Depth job persistence fields share the canvas node contract."
+
+[[claims]]
+path = "frontend/src/api/ops.ts"
+mode = "shared"
+shared_with = ["shot-breakdown"]
+reason = "Depth and breakdown API clients share the operations module."
+
+[[claims]]
+path = "src/novelvideo/freezone/video_node.py"
+mode = "exclusive"
+reason = "Depth reference semantics feed the shared omni-video prompt."
+
+[[claims]]
+path = "tests/test_p0g4i_freezone_leaf_classification.py"
+mode = "exclusive"
+reason = "DA3 local-leaf classification extends the global audited table."
+
+[[claims]]
+path = "tests/test_task_runner_home_node_placement.py"
+mode = "exclusive"
+reason = "Depth tasks extend the placement-free task contract."
+
+[[claims]]
+path = "frontend/public/locales/zh/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Depth UI strings; merge by key only."
+
+[[claims]]
+path = "frontend/public/locales/en/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Depth UI strings; merge by key only."
+
+[[claims]]
+path = "frontend/public/locales/vi/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Depth UI strings; merge by key only."
 
 [[claims]]
 path = "tests/test_depth_motion_limits.py"

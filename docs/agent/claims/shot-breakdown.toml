@@ -57,18 +57,33 @@ reason = "Breakdown and depth leaf classification share the runner."
 
 [[claims]]
 path = "src/novelvideo/api/routes/tasks.py"
-mode = "exclusive"
+mode = "shared"
+shared_with = ["depth-motion-da3"]
 reason = "Expose breakdown task lifecycle."
 
 [[claims]]
 path = "src/novelvideo/api/schemas.py"
-mode = "exclusive"
+mode = "shared"
+shared_with = ["depth-motion-da3"]
 reason = "Breakdown request and result schemas."
 
 [[claims]]
 path = "frontend/src/api/ops.ts"
-mode = "exclusive"
+mode = "shared"
+shared_with = ["depth-motion-da3"]
 reason = "Breakdown operation endpoint client."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/VideoNode.tsx"
+mode = "shared"
+shared_with = ["depth-motion-da3", "liblib-canvas-parity"]
+reason = "Breakdown, depth, and video recreation actions share one node."
+
+[[claims]]
+path = "frontend/src/features/canvas/domain/canvasNodes.ts"
+mode = "shared"
+shared_with = ["depth-motion-da3", "liblib-canvas-parity"]
+reason = "Breakdown flags share the canvas node contract with depth and imports."
 
 [[claims]]
 path = "frontend/src/api/tasks.ts"

@@ -8,13 +8,13 @@
 
 ## 一、仓库当前形态（接手前必须核对）
 
-- 分支 `main`，最新提交 `f4db7d2e`（2026-09-18，`feat(story): add traceable story workspace`）。
-- **工作区有 115 个未提交状态条目**（截至 2026-09-18，按 `git status --short` 计），
+- 分支 `main`，最新提交 `246ad163`（2026-09-18，`feat(local): add portable ComfyUI stack`）。
+- **工作区有 108 个未提交状态条目**（截至 2026-09-18，按 `git status --short` 计），
   包含六条业务线和历史未归属隔离区；协作治理已形成独立提交，其余工作线仍没有独立提交承载。
   会话开始时 hook 注入的摘要是实时值，不能用条目总数反推某条业务线又新增了多少文件。
 - 这是当前最大的风险：一次整树 restore / 自动 stash / 强制切分支，就能抹掉三周的工作。
   **接手后第一条命令是 `git status --short --branch`，先和下表对账。**
-- 刷新远端后，当前 `main` 相对 `origin/main` 为本地 4 个独立提交、上游 27 个提交，且多处本地脏文件也被上游修改。
+- 刷新远端后，当前 `main` 相对 `origin/main` 为本地 5 个独立提交、上游 27 个提交，且多处本地脏文件也被上游修改。
   在完成逐线来源审计和拆提交前，不得直接 pull/rebase，也不要为了建 worktree 自动 stash。
 
 ## 二、在途工作线
@@ -25,7 +25,7 @@
 | [legacy-unassigned-diff](tasks/legacy-unassigned-diff.md) | 历史未归属改动隔离区 | 已阻塞 | 只读审计来源；未归属前禁止覆盖或删除 |
 | [liblib-canvas-parity](tasks/liblib-canvas-parity.md) | LibTV 画布对齐：片段重拍 / 智能续写 / 导入器 / 工具条 | 待验收 | 缺 OSS relay；与远端重拍分支大面积重复，先审计 |
 | [shot-breakdown](tasks/shot-breakdown.md) | 逐帧拉片三维度：分镜 / 动态 / 音乐 | 待验收 | 音乐依赖 demucs；与 depth、远端重拍分支共享后端热点 |
-| [depth-motion-da3](tasks/depth-motion-da3.md) | 拉片动态维度：Depth Anything 3 深度视频 | 待验收 | 需本机模型 / 解释器；与 shot-breakdown 共享后端热点 |
+| [depth-motion-da3](tasks/depth-motion-da3.md) | 拉片动态维度：Depth Anything 3 深度视频 | 执行中 | 浏览器 DA2 与服务端 DA3 确认互补；先拆纯模块，再串行审计共享适配层 |
 | [story-writer](tasks/story-writer.md) | 创作阶段（虾本）：写手 agent + 通用文档存储 + 前端路由 | 待验收 | 14 项后端契约测试与前端 build 已通过；待真实模型四阶段流程和导入链路验收 |
 | [local-stack](tasks/local-stack.md) | 命令行 CE 本地栈：local_gateway + ComfyUI Qwen/Krea | 待验收 | 可移植配置与 334 项测试已通过；待第二台完整 ComfyUI 环境真实启动 |
 | [canvas-lod-perf](tasks/canvas-lod-perf.md) | 画布 LOD 剔除、低缩放交互、视频抽帧封面 | 执行中 | 远端来源审计完成；按 hunk 拆 LOD 核心，混合增量留给对应工作线 |
