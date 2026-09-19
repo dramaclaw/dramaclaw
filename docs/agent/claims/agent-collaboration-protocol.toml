@@ -1,7 +1,7 @@
 version = 1
 slug = "agent-collaboration-protocol"
 ledger = "docs/agent/tasks/agent-collaboration-protocol.md"
-baseline = "38484897"
+baseline = "0e2d69770c8cff13e0efcf7ea21ff01498920373"
 
 [[claims]]
 path = "AGENTS.md"

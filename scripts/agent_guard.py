@@ -129,6 +129,22 @@ def _run_git(root: Path, *args: str) -> str:
     return process.stdout.strip()
 
 
+def git_is_ancestor(root: Path, ancestor: str, descendant: str) -> bool:
+    """Distinguish an owner's normal commit from a rewritten checkout history."""
+    process = subprocess.run(
+        ["git", "-C", str(root), "merge-base", "--is-ancestor", ancestor, descendant],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if process.returncode == 0:
+        return True
+    if process.returncode == 1:
+        return False
+    detail = process.stderr.strip() or process.stdout.strip()
+    raise GuardError(f"git merge-base --is-ancestor failed: {detail}")
+
+
 def repository_root(value: str | None) -> Path:
     candidate = Path(value).resolve() if value else Path(__file__).resolve().parents[1]
     root = _run_git(candidate, "rev-parse", "--show-toplevel")
@@ -525,8 +541,14 @@ def require_lock(model: RepositoryModel, slug: str, owner: str) -> dict[str, obj
     data = _read_lock(path)
     if data.get("owner") != owner:
         raise GuardError(f"{slug} lock belongs to {data.get('owner')}, not {owner}")
-    if data.get("head") != model.head:
-        raise GuardError(f"{slug} lock was acquired at another HEAD; release and re-audit")
+    locked_head = data.get("head")
+    if not isinstance(locked_head, str):
+        raise GuardError(f"{slug} lock has no valid HEAD; verify the owner, then force-release")
+    if locked_head != model.head and not git_is_ancestor(model.root, locked_head, model.head):
+        raise GuardError(
+            f"{slug} history no longer fast-forwards from the lock HEAD; "
+            "release and re-audit"
+        )
     return data
 
 

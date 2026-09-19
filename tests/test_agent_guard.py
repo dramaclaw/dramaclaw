@@ -62,8 +62,9 @@ def _make_repository(tmp_path: Path):
     root = tmp_path / "repo"
     root.mkdir()
     _git(root, "init")
+    _write(root / ".gitignore", ".agent-locks/\n")
     _write(root / "src" / "owned.py", "VALUE = 1\n")
-    _git(root, "add", "src/owned.py")
+    _git(root, "add", ".gitignore", "src/owned.py")
     _git(
         root,
         "-c",
@@ -203,6 +204,34 @@ def test_lock_preflight_handoff_and_release(tmp_path: Path) -> None:
     assert "src/owned.py" in claimed_dirty
 
     agent_guard.release(model, slug, owner, force=False)
+    assert not (root / ".agent-locks" / slug).exists()
+
+
+def test_handoff_accepts_owner_commit_that_fast_forwards_head(tmp_path: Path) -> None:
+    agent_guard, root, slug, ledger_path, model = _make_repository(tmp_path)
+    owner = "test-agent/commit-session"
+
+    agent_guard.acquire(model, slug, owner)
+    _write(root / "src" / "owned.py", "VALUE = 3\n")
+    with ledger_path.open("a", encoding="utf-8") as handle:
+        handle.write("\n本会话记录：提交 owned.py 并完成验证。\n")
+    _git(root, "add", "src/owned.py", str(ledger_path.relative_to(root)))
+    _git(
+        root,
+        "-c",
+        "user.name=Agent Guard Test",
+        "-c",
+        "user.email=agent-guard@example.invalid",
+        "commit",
+        "-m",
+        "record owned change",
+    )
+
+    advanced_model = agent_guard.load_repository(root, require_current_baseline=False)
+    claimed_dirty = agent_guard.handoff(advanced_model, slug, owner)
+    assert "src/owned.py" not in claimed_dirty
+
+    agent_guard.release(advanced_model, slug, owner, force=False)
     assert not (root / ".agent-locks" / slug).exists()
 
 

@@ -1,8 +1,8 @@
 # 多模型协作与可追溯改动协议
 
-**状态**：待验收
+**状态**：已完成
 **最后更新**：2026-09-18
-**基线**：`38484897`；工作区 81 个已修改条目 + 51 个未跟踪条目；`main` 落后 `origin/main` 13 个提交
+**基线**：`0e2d69770c8cff13e0efcf7ea21ff01498920373`；治理底座已形成独立提交，业务工作区仍待逐线拆分
 **相关文档**：`docs/agent/README.md`（协议说明）
 **相关分支 / PR**：无；只改交接体系，不触碰业务代码
 
@@ -81,6 +81,21 @@
 
 ## 进展记录
 
+### 2026-09-18 · 修复提交后无法正常交接的闭环缺陷
+
+做了什么：治理提交 `0e2d6977` 完成后，真实执行 handoff 发现 guard 把同一持锁会话产生的
+快进提交也误判为“换了 HEAD”。本轮将仅允许锁内 HEAD 沿原提交快进；reset、rebase 或切到分叉历史
+仍然拒绝，并补提交后 handoff 的回归测试与运行手册说明。
+
+为什么这么做：正常流程必须允许“acquire → 修改并记台账 → commit → handoff → release”。直接 force-release
+会让规则在最关键的提交边界失效，也无法区分正常提交与外部改写历史。
+
+怎么验证的：修复前真实命令返回
+`BLOCKED: agent-collaboration-protocol lock was acquired at another HEAD; release and re-audit`；
+实现后 `uv run pytest tests/test_agent_guard.py -q` → `7 passed`，ruff、guard 与 diff check 全绿；
+最终提交后再用真实 handoff / release 验证快进路径。首次失效锁已在确认无其他写会话后人工 force-release，
+并立即由同一 owner 重新取得。
+
 ### 2026-09-18 · fail-closed 护栏闭环完成
 
 做了什么：guard 增加单检出目录单写者、稳定 owner 格式、scope 版本校验、全量脏文件覆盖、
@@ -156,7 +171,7 @@ CI YAML 可解析；两个 shell hook 通过 `bash -n` 和真实 payload 冒烟�
 
 ## 阻塞
 
-无。本轮只动文档，不需要处理业务线的环境密钥或远端合并。
+无。真实提交暴露的 handoff 误拒绝已经补回归并修复；业务线的环境密钥或远端合并不属于本线。
 
 ## 验收标准
 
@@ -168,7 +183,7 @@ CI YAML 可解析；两个 shell hook 通过 `bash -n` 和真实 payload 冒烟�
 
 ## 交接摘要
 
-- **最后完成到**：文档协议已完成；机器 scope、guard、锁与测试正在补齐。
-- **下一步唯一动作**：让 `python3 scripts/agent_guard.py check` 在真实工作区全绿。
+- **最后完成到**：文档、scope、guard、锁、hooks、CI 和提交后 handoff 回归均已闭环。
+- **下一步唯一动作**：按 STATE 恢复顺序审计并拆分遗留业务工作线。
 - **先读这些文件**：`AGENTS.md`、`docs/agent/README.md`、本台账、`scripts/agent_guard.py`。
 - **不要动这些文件 / 决策**：不修改业务代码，不把未知脏文件强行归给相邻工作线。

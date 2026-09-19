@@ -8,11 +8,10 @@
 
 ## 一、仓库当前形态（接手前必须核对）
 
-- 分支 `main`，最新提交 `38484897`（2026-09-11，`fix(backup): …跳过已弃用的项目 Cognee 数据 #531`）。
-- **工作区有 136 个未提交状态条目**（截至 2026-09-18：83 tracked + 53 untracked），
-  包含六条业务线、协作治理和历史未归属隔离区，没有任何一条有独立本地分支 / 提交承载。
-  数字包含本轮 `AGENTS.md`、`docs/agent/`、guard、hooks 与测试；会话开始时 hook 注入的摘要是实时值，
-  不能用条目总数反推某条业务线又新增了多少文件。
+- 分支 `main`，最新提交 `0e2d6977`（2026-09-18，`chore(agent): add traceable multi-model workflow`）。
+- **工作区有 129 个未提交状态条目**（截至 2026-09-18，按 `git status --short` 计），
+  包含六条业务线和历史未归属隔离区；协作治理已形成独立提交，其余工作线仍没有独立提交承载。
+  会话开始时 hook 注入的摘要是实时值，不能用条目总数反推某条业务线又新增了多少文件。
 - 这是当前最大的风险：一次整树 restore / 自动 stash / 强制切分支，就能抹掉三周的工作。
   **接手后第一条命令是 `git status --short --branch`，先和下表对账。**
 - 当前 `main` 比 `origin/main` 落后 13 个提交，且至少 7 个本地脏文件也被上游修改。
@@ -22,7 +21,7 @@
 
 | 台账 | 主题 | 状态 | 卡在哪 / 下一步 |
 |---|---|---|---|
-| [agent-collaboration-protocol](tasks/agent-collaboration-protocol.md) | 多模型协作、方案门与冲突治理 | 待验收 | 文档、scope、guard、锁、测试、hooks 与 CI 已闭环 |
+| [agent-collaboration-protocol](tasks/agent-collaboration-protocol.md) | 多模型协作、方案门与冲突治理 | 已完成 | 独立提交、测试与真实交接闭环已完成；后续变更另开工作线 |
 | [legacy-unassigned-diff](tasks/legacy-unassigned-diff.md) | 历史未归属改动隔离区 | 已阻塞 | 只读审计来源；未归属前禁止覆盖或删除 |
 | [liblib-canvas-parity](tasks/liblib-canvas-parity.md) | LibTV 画布对齐：片段重拍 / 智能续写 / 导入器 / 工具条 | 待验收 | 缺 OSS relay；与远端重拍分支大面积重复，先审计 |
 | [shot-breakdown](tasks/shot-breakdown.md) | 逐帧拉片三维度：分镜 / 动态 / 音乐 | 待验收 | 音乐依赖 demucs；与 depth、远端重拍分支共享后端热点 |
@@ -51,7 +50,7 @@
 
 ## 四、恢复顺序（不是功能优先级）
 
-1. 完成交接协议，把 `AGENTS.md`、`docs/agent/`、guard 与必要 hooks 单独形成可审计提交。
+1. 交接协议已形成提交 `0e2d6977`；提交后 handoff 回归修复已通过 7 个聚焦测试，待随本轮推送。
 2. 只读分类 `legacy-unassigned-diff`，任何未确认归属的文件继续保持隔离。
 3. 审计 `canvas-lod-perf` 与远端 LOD 分支，先消掉最小的 4 文件重复面。
 4. 审计 `liblib-canvas-parity` / `shot-breakdown` / `depth-motion-da3` 与远端重拍分支；

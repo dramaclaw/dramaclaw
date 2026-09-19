@@ -119,6 +119,10 @@ guard 会 fail closed：STATE / 台账状态不一致、必填章节缺失、基
 
 acquire 会记录台账和已认领脏文件的 SHA-256 快照。handoff 比较当前快照；本会话改过认领文件却没改变台账内容时失败。
 release 会再次执行 handoff，所以不能跳过交接直接解锁。锁目录不承载项目事实，`--force` 仅用于确认原会话已经结束后的恢复。
+锁内完成最终提交后，handoff / release 允许 `HEAD` 从取得锁时的提交**单向快进**，因此正常流程可以是
+`acquire → 修改并记台账 → commit → handoff → release`。如果发生 reset、rebase、切到分叉历史或锁内
+提交了代码却没更新台账，仍然 fail closed。提交后若还要继续写业务文件，应先 release，更新该线基线并重新 acquire；
+不能利用“快进可交接”绕过下一批写入的基线审计。
 
 ## 五、一次标准会话
 
