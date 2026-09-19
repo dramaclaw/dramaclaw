@@ -3,15 +3,15 @@
 > **新会话的第一件事是读这份文件。** 它只回答三个问题：现在有哪几条线在做、各自卡在哪、
 > 下一步做什么。取证与方案不在这里——在 `docs/guides/`；每条线的逐步记录在 `docs/agent/tasks/`。
 >
-> 最后更新：2026-09-18 · 更新方式见 `AGENTS.md` 的「多模型协作协议」与
+> 最后更新：2026-09-19 · 更新方式见 `AGENTS.md` 的「多模型协作协议」与
 > [`docs/agent/README.md`](README.md)
 
 ## 一、仓库当前形态（接手前必须核对）
 
-- 分支 `main`，最新功能提交 `09e2703a`（2026-09-18，`feat(liblib): add video remake and continuation`）。
-- **工作区有 49 个未提交状态条目**（截至 LibTV 四层提交完成后，按 `git status --short` 计），
-  包含 LOD、素材替换等在途线和历史未归属隔离区；LibTV、shot、depth、story、local-stack
-  已有独立提交承载，仍不能把剩余条目当作可以清理的垃圾。
+- 分支 `main`，最新功能提交 `880d47e2`（2026-09-19，`fix(canvas): retry image result publication`）。
+- **工作区只剩 3 类未跟踪的受保护本地资料**：`.playwright-cli/` 浏览器运行日志、`_to_delete/`
+  旧原型、`曹操.md` 原始故事样例。此前 49 条在途的 LOD、素材替换、入口恢复、本地路由与 Depth
+  差异均已按工作线独立提交；这三类不因名称或“提交全部”的口头命令自动删除或公开。
   会话开始时 hook 注入的摘要是实时值，不能用条目总数反推某条业务线又新增了多少文件。
 - 这是当前最大的风险：一次整树 restore / 自动 stash / 强制切分支，就能抹掉三周的工作。
   **接手后第一条命令是 `git status --short --branch`，先和下表对账。**

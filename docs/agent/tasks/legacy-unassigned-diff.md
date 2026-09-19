@@ -56,6 +56,17 @@
 
 ## 进展记录
 
+### 2026-09-19 · 可归属差异已全部拆出，保留三类需用户决定的本地资料
+
+做了什么：LOD、素材替换、本地路由、项目入口恢复、Depth 标签和图片结果容错均已迁至具名台账并独立提交；
+隔离区只保留 `.playwright-cli/` 运行日志、`_to_delete/` 旧原型和 `曹操.md` 原始故事稿。
+
+为什么这么做：运行日志应由忽略规则处理，旧原型需确认是否仍有价值，原始故事稿按 story-writer 决策须先去标识化
+为 fixture；三者均不应被“提交剩余文件”隐式公开。
+
+怎么验证的：`git status --short --branch` 仅显示上述三类未跟踪路径；`agent_guard check` 为
+`OK: 10 workstreams, 234 claims`。等待用户分别授权忽略、归档或去标识化。
+
 ### 2026-09-19 · 本地路由设置页差异迁回 local-stack
 
 做了什么：将 `header.tsx` 与 `settings-dialog.tsx` 从隔离清单迁移给 `local-stack`；其差异读取
