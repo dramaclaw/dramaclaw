@@ -725,11 +725,13 @@ interface PendingNodePlacement {
 interface CanvasProps {
   onBlankPaneClick?: () => void;
   controlsPlacement?: 'bottom-right' | 'top-right';
+  liblibImported?: boolean;
 }
 
 export function Canvas({
   onBlankPaneClick,
   controlsPlacement = 'bottom-right',
+  liblibImported = false,
 }: CanvasProps = {}) {
   const { t } = useTranslation();
   const reactFlowInstance = useReactFlow();
@@ -4842,7 +4844,7 @@ export function Canvas({
       ref={wrapperRef}
       data-canvas-tool={handToolActive ? 'hand' : 'move'}
       data-node-drag-focus={isNodeDragFocusActive ? 'true' : undefined}
-      className="dc-canvas relative h-full w-full bg-background"
+      className={`dc-canvas relative h-full w-full ${liblibImported ? 'bg-surface-dark' : 'bg-background'}`}
       onDragEnter={handleCanvasDragEnter}
       onDragOver={handleCanvasDragOver}
       onDragLeave={handleCanvasDragLeave}
@@ -4900,9 +4902,9 @@ export function Canvas({
         onlyRenderVisibleElements={!lowDetailActive}
         zoomOnDoubleClick={false}
         proOptions={REACT_FLOW_PRO_OPTIONS}
-        className="bg-background"
+        className={liblibImported ? 'bg-surface-dark' : 'bg-background'}
       >
-        <Background variant={BackgroundVariant.Dots} gap={20} size={2} color="#4a4a4a" />
+        {!liblibImported && <Background variant={BackgroundVariant.Dots} gap={20} size={2} color="#4a4a4a" />}
         {minimapVisible && (
           <MiniMap
             position={controlsPlacement === 'top-right' ? 'top-right' : 'bottom-right'}

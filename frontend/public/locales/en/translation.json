@@ -892,9 +892,16 @@
       "createTitle": "Create project canvas",
       "createBusy": "Creating",
       "createPlaceholder": "New canvas name",
+      "importTitle": "Import LibTV share canvas",
+      "import": "Import",
+      "importBusy": "Importing",
+      "importPlaceholder": "Paste a LibTV share canvas link",
+      "importCookieHint": "Login is read from {{file}} in the repository root and is not saved in the canvas",
       "createNameRequired": "Enter a canvas name.",
       "createDuplicate": "A canvas named \"{{name}}\" already exists.",
       "createFailed": "Failed to create canvas: {{message}}",
+      "currentSaveFailed": "The current canvas could not be saved. Try again shortly.",
+      "notFound": "Canvas not found.",
       "createLimitTitle": "Canvas limit reached",
       "createLimitReached": "You can create up to {{limit}} canvases per project. Delete one to make room.",
       "createQuotaUnknownTitle": "Canvas count not available yet",
@@ -963,7 +970,8 @@
         "audio": "Audio",
         "script": "Script",
         "world": "3D / Pano",
-        "skill": "Skill"
+        "skill": "Skill",
+        "liblib": "LibTV media"
       }
     },
     "projections": {
@@ -1977,6 +1985,41 @@
     "name": "Project Name",
     "namePlaceholder": "Enter your project name",
     "clearName": "Clear project name",
+    "createDescription": "Create an empty project, or paste a LibTV shared-canvas link to import editable nodes",
+    "liblibLink": "LibTV shared-canvas link (optional)",
+    "liblibLinkRequired": "LibTV shared-canvas link",
+    "liblibLinkPlaceholder": "https://www.liblib.tv/canvas/share?...",
+    "liblibLinkHint": "The import downloads images, videos, and audio locally and preserves prompts and references.",
+    "liblibLinkInvalid": "Enter a valid LibTV shared-canvas link",
+    "liblibErrors": {
+      "invalid_share_url": "Enter a valid LibTV shared-canvas link.",
+      "response_mismatch": "The LibTV response does not match the shared canvas.",
+      "response_missing_graph": "The LibTV canvas is missing node or connection data.",
+      "empty_graph": "The LibTV canvas has no importable nodes.",
+      "canvas_conflict": "Canvas {{canvasId}} already exists and was not imported from LibTV.",
+      "invalid_liblib_share_url": "Enter a valid LibTV shared-canvas link.",
+      "liblib_cookie_missing": "Add the local LibTV login file before importing.",
+      "liblib_cookie_invalid": "The local LibTV login file is invalid.",
+      "liblib_unavailable": "LibTV could not be reached. Try again shortly.",
+      "liblib_detail_too_large": "This LibTV canvas exceeds the import size limit.",
+      "liblib_invalid_response": "LibTV returned canvas data that could not be read.",
+      "liblib_unauthorized": "The local LibTV login has expired. Update it and retry.",
+      "liblib_remote_error": "LibTV could not read this shared canvas.",
+      "liblib_project_mismatch": "The LibTV response does not match the shared canvas.",
+      "liblib_not_copyable": "This LibTV canvas does not allow copying.",
+      "invalid_localize_request": "No remote assets were supplied for localization.",
+      "liblib_media_too_large": "A LibTV asset exceeds the local import limit.",
+      "liblib_media_empty": "LibTV returned an empty asset.",
+      "liblib_media_type_invalid": "A LibTV asset is not a supported image, video, or audio file.",
+      "liblib_media_unavailable": "A LibTV asset could not be downloaded. Try again shortly.",
+      "unexpected": "The LibTV canvas could not be imported. Check the link and local login, then retry."
+    },
+    "liblibImporting": "Creating and importing media…",
+    "liblibReimportTitle": "Import or update a LibTV canvas",
+    "liblibReimportDescription": "Import a shared canvas into “{{name}}”. The same link updates its existing canvas; a new link creates another canvas.",
+    "liblibReimportHint": "Media is downloaded into this project. Locally edited prompts, model choices, and generated results are preserved.",
+    "liblibReimportSubmit": "Import and open",
+    "missingCreatedProjectId": "The server did not return the new project ID",
     "nameNoChinese": "Project name cannot contain Chinese characters.",
     "nameTooLong": "Project name must be at most 64 characters long.",
     "nameInvalid": "Project name can only contain letters, numbers, and underscores.",
@@ -2050,6 +2093,8 @@
     "actions": {
       "open": "Open",
       "openFreezone": "Open in Freezone",
+      "importLiblib": "Import or update LibTV",
+      "importLiblibShort": "Update LibTV",
       "share": "Share",
       "archive": "Archive…",
       "unarchive": "Unarchive",
@@ -2075,12 +2120,15 @@
     },
     "toasts": {
       "createFailed": "Failed to create project. Check the name or try again later.",
+      "liblibImportSucceeded": "Imported the LibTV canvas into “{{name}}”",
+      "liblibImportFailed": "The project was created, but the LibTV canvas import failed: {{message}}. You can retry from the canvas menu inside the project.",
       "archived": "Archived \"{{name}}\"",
       "unarchived": "Unarchived \"{{name}}\"",
       "deleted": "Moved \"{{name}}\" to Trash",
       "restored": "Restored \"{{name}}\"",
       "purged": "Permanently deleted \"{{name}}\"",
-      "undo": "Undo"
+      "undo": "Undo",
+      "liblibImportSkippedMedia": "{{count}} asset(s) could not be saved locally and still load from LibTV; they break if LibTV removes them."
     },
     "title": "Projects",
     "newProject": "New Project",
@@ -2150,7 +2198,11 @@
       "editor": "Editor",
       "admin": "Admin",
       "owner": "Owner"
-    }
+    },
+    "liblibImportRecoveryTitle": "Project \"{{name}}\" was created, but the canvas import failed:",
+    "liblibImportRecoveryHint": "No need to create another project — retry into this one, or open it and continue manually.",
+    "liblibImportRecoveryRetry": "Retry import",
+    "liblibImportRecoveryOpen": "Open project"
   },
   "assets": {
     "common": {
@@ -5132,6 +5184,39 @@
     },
     "assetDrop": {
       "fallbackNodeLabel": "Node"
+    },
+    "notFound": "Canvas not found",
+    "notFoundDescriptionPrefix": "This project has no canvas",
+    "notFoundDescriptionSuffix": ". It may belong to another project, or it was deleted.",
+    "backToProjectCanvas": "Go to this project's canvas",
+    "remoteMedia": {
+      "badge": "Remote asset",
+      "title": "{{count}} asset(s) not saved locally, still loaded from LibTV:",
+      "consequence": "Remote assets cannot be fed to local models or used as reference images, and break if LibTV removes them.",
+      "reason": {
+        "internalHost": "The asset URL points to an internal address; not downloaded for safety.",
+        "notHttps": "The asset URL is not HTTPS; not downloaded.",
+        "hasCredentials": "The asset URL carries credentials; not downloaded.",
+        "badUrl": "The asset URL is malformed.",
+        "unsupportedFileType": "This file type cannot be saved locally yet.",
+        "tooManyAssets": "The canvas exceeds the local asset count limit.",
+        "totalSizeLimit": "The canvas exceeds the total local asset size limit.",
+        "mediaTooLarge": "A single asset exceeds the local size limit.",
+        "mediaEmpty": "The origin returned an empty file.",
+        "mediaTypeInvalid": "The origin did not return an image/video/audio file.",
+        "mediaUnavailable": "Download from the origin failed (timeout, rate limit, or removed).",
+        "unknown": "Could not be saved locally (reason unknown)."
+      },
+      "localize": {
+        "label": "Localize assets",
+        "pending": "{{count}} assets not localized",
+        "running": "Localizing…",
+        "done": "Localized {{count}} assets",
+        "partial": "Localized {{done}}, {{failed}} still could not be saved",
+        "none": "No assets need localizing",
+        "failed": "Localizing failed: {{message}}",
+        "hint": "Download assets still served from LibTV so they can feed local models or act as references."
+      }
     }
   },
   "tool": {
@@ -5223,7 +5308,11 @@
       "notImplementedYet": "Coming soon",
       "requiresVideo": "Upload a video first",
       "shotBreakdown": "Shot Breakdown",
-      "breakdownEmpty": "The breakdown produced no usable assets"
+      "breakdownEmpty": "The breakdown produced no usable assets",
+      "segmentRemake": "Segment remake",
+      "continuation": "Continue video",
+      "recreate": "Recreate",
+      "remoteMediaBlocked": "This asset still lives on LibTV — localize it first"
     },
     "audio": {
       "requiresAudio": "No audio to download yet",
@@ -5842,7 +5931,8 @@
         "failed": "Clip failed: {{detail}}"
       },
       "videoEdit": {
-        "imageLimit": "Video editing supports at most {{limit}} reference images; the first {{limit}} were used ({{ignored}} ignored)"
+        "imageLimit": "Video editing supports at most {{limit}} reference images; the first {{limit}} were used ({{ignored}} ignored)",
+        "sourceFallbackLabel": "source video"
       },
       "allReference": {
         "happyHorseUnsupported": "HappyHorse doesn’t support omni reference. Switch to text-to-video or image-to-video.",
@@ -6143,7 +6233,8 @@
       "pano360ViewerNode": "360° panorama viewer",
       "threeDWorldNode": "3D world",
       "skillNode": "Skill",
-      "styleNode": "Style"
+      "styleNode": "Style",
+      "liblibMediaNode": "LibTV media"
     },
     "exportResult": {
       "generic": "Result image",

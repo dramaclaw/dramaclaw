@@ -892,9 +892,16 @@
       "createTitle": "新建项目画布",
       "createBusy": "新建中",
       "createPlaceholder": "新画布名称",
+      "importTitle": "导入 LibTV 分享画布",
+      "import": "导入",
+      "importBusy": "导入中",
+      "importPlaceholder": "粘贴 LibTV 分享画布链接",
+      "importCookieHint": "登录信息从仓库根目录的 {{file}} 读取，不会保存在画布中",
       "createNameRequired": "请输入画布名称",
       "createDuplicate": "已存在名为「{{name}}」的画布",
       "createFailed": "新建画布失败：{{message}}",
+      "currentSaveFailed": "当前画布未能保存，请稍后再试",
+      "notFound": "画布不存在",
       "createLimitTitle": "画布已达上限",
       "createLimitReached": "每人在一个项目里最多创建 {{limit}} 张画布，删掉一些再新建",
       "createQuotaUnknownTitle": "还确认不了画布数量",
@@ -963,7 +970,8 @@
         "audio": "音频",
         "script": "脚本",
         "world": "3D / 全景",
-        "skill": "技能"
+        "skill": "技能",
+        "liblib": "LibTV 素材"
       }
     },
     "projections": {
@@ -1977,6 +1985,41 @@
     "name": "项目名称",
     "namePlaceholder": "请输入你的项目名称",
     "clearName": "清空项目名称",
+    "createDescription": "创建空项目，或粘贴 LibTV 分享画布链接并导入为可编辑节点",
+    "liblibLink": "LibTV 分享画布链接（可选）",
+    "liblibLinkRequired": "LibTV 分享画布链接",
+    "liblibLinkPlaceholder": "https://www.liblib.tv/canvas/share?...",
+    "liblibLinkHint": "导入时会把图片、视频和音频下载到本地，并保留提示词与引用关系。",
+    "liblibLinkInvalid": "请输入有效的 LibTV 分享画布链接",
+    "liblibErrors": {
+      "invalid_share_url": "请输入有效的 LibTV 分享画布链接。",
+      "response_mismatch": "LibTV 返回的画布与分享链接不一致。",
+      "response_missing_graph": "LibTV 画布缺少节点或连线数据。",
+      "empty_graph": "LibTV 画布没有可导入的节点。",
+      "canvas_conflict": "画布 {{canvasId}} 已存在且不是 LibTV 导入画布。",
+      "invalid_liblib_share_url": "请输入有效的 LibTV 分享画布链接。",
+      "liblib_cookie_missing": "请先配置本地 LibTV 登录文件再导入。",
+      "liblib_cookie_invalid": "本地 LibTV 登录文件无效。",
+      "liblib_unavailable": "暂时无法连接 LibTV，请稍后重试。",
+      "liblib_detail_too_large": "这张 LibTV 画布超过导入大小上限。",
+      "liblib_invalid_response": "LibTV 返回了无法读取的画布数据。",
+      "liblib_unauthorized": "本地 LibTV 登录已失效，请更新后重试。",
+      "liblib_remote_error": "LibTV 未能读取这张分享画布。",
+      "liblib_project_mismatch": "LibTV 返回的画布与分享链接不一致。",
+      "liblib_not_copyable": "这张 LibTV 画布未开放复制。",
+      "invalid_localize_request": "没有提供需要本地化的远端素材。",
+      "liblib_media_too_large": "某个 LibTV 素材超过本地导入上限。",
+      "liblib_media_empty": "LibTV 返回了空素材。",
+      "liblib_media_type_invalid": "某个 LibTV 素材不是支持的图片、视频或音频。",
+      "liblib_media_unavailable": "无法下载某个 LibTV 素材，请稍后重试。",
+      "unexpected": "LibTV 画布导入失败，请检查链接和本地登录后重试。"
+    },
+    "liblibImporting": "正在创建并导入素材…",
+    "liblibReimportTitle": "导入或更新 LibTV 画布",
+    "liblibReimportDescription": "把分享画布导入「{{name}}」。同一链接会更新已有画布，新的链接会创建另一张画布。",
+    "liblibReimportHint": "素材会下载到当前项目；已在本地修改过的提示词、模型和生成结果会保留。",
+    "liblibReimportSubmit": "导入并打开",
+    "missingCreatedProjectId": "服务器未返回新项目 ID",
     "nameNoChinese": "项目名称不能包含中文字符",
     "nameTooLong": "项目名称最多 64 个字符",
     "nameInvalid": "项目名称只能包含英文字母、数字和下划线",
@@ -2050,6 +2093,8 @@
     "actions": {
       "open": "打开",
       "openFreezone": "打开虾画",
+      "importLiblib": "导入或更新 LibTV",
+      "importLiblibShort": "更新 LibTV",
       "share": "共享",
       "archive": "归档…",
       "unarchive": "取消归档",
@@ -2075,12 +2120,15 @@
     },
     "toasts": {
       "createFailed": "创建项目失败，请检查项目名称或稍后重试",
+      "liblibImportSucceeded": "已将 LibTV 画布导入「{{name}}」",
+      "liblibImportFailed": "项目已创建，但 LibTV 画布导入失败：{{message}}。可进入项目后从画布菜单重试。",
       "archived": "已归档「{{name}}」",
       "unarchived": "已取消归档「{{name}}」",
       "deleted": "已将「{{name}}」移至回收站",
       "restored": "已恢复「{{name}}」",
       "purged": "已永久删除「{{name}}」",
-      "undo": "撤销"
+      "undo": "撤销",
+      "liblibImportSkippedMedia": "{{count}} 个素材未能本地保存，仍从 LibTV 加载；对方撤下后会失效。"
     },
     "title": "项目管理",
     "newProject": "新建项目",
@@ -2150,7 +2198,11 @@
       "editor": "编辑者",
       "admin": "管理员",
       "owner": "所有者"
-    }
+    },
+    "liblibImportRecoveryTitle": "项目「{{name}}」已创建，但画布导入失败：",
+    "liblibImportRecoveryHint": "不用再新建项目——直接用它重试，或先进去手动处理。",
+    "liblibImportRecoveryRetry": "重试导入",
+    "liblibImportRecoveryOpen": "进入项目"
   },
   "assets": {
     "common": {
@@ -5132,6 +5184,39 @@
     },
     "assetDrop": {
       "fallbackNodeLabel": "节点"
+    },
+    "notFound": "画布不存在",
+    "notFoundDescriptionPrefix": "当前项目里找不到画布",
+    "notFoundDescriptionSuffix": "。它可能属于别的项目，或者已被删除。",
+    "backToProjectCanvas": "回到本项目的画布",
+    "remoteMedia": {
+      "badge": "网络素材",
+      "title": "{{count}} 个素材未存到本地，仍从 LibTV 加载：",
+      "consequence": "远端素材无法作为本地模型的输入或参考图，且 LibTV 撤下后会失效。",
+      "reason": {
+        "internalHost": "素材地址指向内网，出于安全未下载。",
+        "notHttps": "素材地址不是 HTTPS，未下载。",
+        "hasCredentials": "素材地址带有账号口令，未下载。",
+        "badUrl": "素材地址格式无效。",
+        "unsupportedFileType": "该文件类型暂不支持本地保存。",
+        "tooManyAssets": "画布素材数量超出本地保存上限。",
+        "totalSizeLimit": "画布素材总体积超出本地保存上限。",
+        "mediaTooLarge": "单个素材超过本地保存上限。",
+        "mediaEmpty": "源站返回了空文件。",
+        "mediaTypeInvalid": "源站返回的不是图片/视频/音频。",
+        "mediaUnavailable": "源站下载失败（超时、限流或已删除）。",
+        "unknown": "未能本地保存（原因未知）。"
+      },
+      "localize": {
+        "label": "一键本地化",
+        "pending": "{{count}} 个素材未本地化",
+        "running": "正在本地化…",
+        "done": "已本地化 {{count}} 个素材",
+        "partial": "已本地化 {{done}} 个，仍有 {{failed}} 个未能保存",
+        "none": "没有素材需要本地化",
+        "failed": "本地化失败：{{message}}",
+        "hint": "把仍从 LibTV 加载的素材下载到本地，之后才能喂给本地模型或当参考图。"
+      }
     }
   },
   "tool": {
@@ -5223,7 +5308,11 @@
       "notImplementedYet": "该功能暂未上线",
       "requiresVideo": "请先上传视频",
       "shotBreakdown": "逐帧拉片",
-      "breakdownEmpty": "拉片没有产出可用素材"
+      "breakdownEmpty": "拉片没有产出可用素材",
+      "segmentRemake": "片段重拍",
+      "continuation": "智能续写",
+      "recreate": "再创作",
+      "remoteMediaBlocked": "这条素材还在 LibTV 远端，请先「一键本地化」再使用"
     },
     "audio": {
       "requiresAudio": "请先准备音频",
@@ -5842,7 +5931,8 @@
         "failed": "剪辑失败：{{detail}}"
       },
       "videoEdit": {
-        "imageLimit": "视频编辑最多支持 {{limit}} 张参考图，已使用前 {{limit}} 张（忽略其余 {{ignored}} 张）"
+        "imageLimit": "视频编辑最多支持 {{limit}} 张参考图，已使用前 {{limit}} 张（忽略其余 {{ignored}} 张）",
+        "sourceFallbackLabel": "源视频"
       },
       "allReference": {
         "happyHorseUnsupported": "HappyHorse 不支持全能参考模式，请切换为文生视频或图生视频。",
@@ -6143,7 +6233,8 @@
       "pano360ViewerNode": "360° 全景查看器",
       "threeDWorldNode": "3D 世界",
       "skillNode": "技能",
-      "styleNode": "风格"
+      "styleNode": "风格",
+      "liblibMediaNode": "LibTV 素材"
     },
     "exportResult": {
       "generic": "结果图片",

@@ -198,6 +198,8 @@ interface AssetLibraryPanelProps {
   currentCanvasId: string;
   /** 主线 preset 画布的「同步主线视图」回调；只在 preset 画布下显示按钮。 */
   onRestoreMainlineDefault?: () => Promise<void> | void;
+  onSaveCurrentCanvas?: () => Promise<boolean>;
+  onReloadCurrentCanvas?: () => void;
   /** 外部提交成功后自增，通知素材库重拉项目资产。 */
   reloadToken?: number;
 }
@@ -529,6 +531,8 @@ export function AssetLibraryPanel({
   onReplaced,
   currentCanvasId,
   onRestoreMainlineDefault,
+  onSaveCurrentCanvas,
+  onReloadCurrentCanvas,
   reloadToken,
 }: AssetLibraryPanelProps) {
   const { t } = useTranslation();
@@ -913,6 +917,8 @@ export function AssetLibraryPanel({
               project={project}
               currentCanvasId={currentCanvasId}
               onRestoreMainlineDefault={onRestoreMainlineDefault}
+              onSaveCurrentCanvas={onSaveCurrentCanvas}
+              onReloadCurrentCanvas={onReloadCurrentCanvas}
               hasPresetLabel={hasPresetLabel}
               reloadToken={reloadToken}
               collapsed={collapsed}

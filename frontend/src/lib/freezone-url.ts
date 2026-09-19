@@ -42,6 +42,16 @@ export function buildFreezoneProjectUrl(projectId: string): string | null {
   return `/projects/${encodeURIComponent(id)}/freezone`;
 }
 
+export function buildFreezoneCanvasUrl(
+  projectId: string,
+  canvasId: string,
+): string | null {
+  const projectUrl = buildFreezoneProjectUrl(projectId);
+  const id = canvasId.trim();
+  if (!projectUrl || !id) return null;
+  return `${projectUrl}?canvas=${encodeURIComponent(id)}`;
+}
+
 /** Navigate the current tab to the embedded Freezone route. */
 export function openFreezoneProject(projectId: string): boolean {
   const url = buildFreezoneProjectUrl(projectId);

@@ -13,6 +13,7 @@ import {
   type GroupNodeData,
   type ImageEditNodeData,
   type ImageGenNodeData,
+  type LiblibMediaNodeData,
   type Pano360ViewerNodeData,
   type ScriptNodeData,
   type SkillNodeData,
@@ -643,6 +644,20 @@ const styleNodeDefinition: CanvasNodeDefinition<StyleNodeData> = {
   }),
 };
 
+const liblibMediaNodeDefinition: CanvasNodeDefinition<LiblibMediaNodeData> = {
+  type: CANVAS_NODE_TYPES.liblibMedia,
+  menuLabelKey: 'node.menu.uploadImage',
+  menuIcon: 'upload',
+  visibleInMenu: false,
+  capabilities: { toolbar: false, promptInput: false },
+  connectivity: {
+    sourceHandle: true,
+    targetHandle: true,
+    connectMenu: { fromSource: false, fromTarget: false },
+  },
+  createDefaultData: () => ({ mediaKind: 'other', sourceUrl: null }),
+};
+
 export const canvasNodeDefinitions: Record<CanvasNodeType, CanvasNodeDefinition> = {
   [CANVAS_NODE_TYPES.upload]: uploadNodeDefinition,
   [CANVAS_NODE_TYPES.imageEdit]: imageEditNodeDefinition,
@@ -662,6 +677,7 @@ export const canvasNodeDefinitions: Record<CanvasNodeType, CanvasNodeDefinition>
   [CANVAS_NODE_TYPES.threeDWorld]: threeDWorldNodeDefinition,
   [CANVAS_NODE_TYPES.skill]: skillNodeDefinition,
   [CANVAS_NODE_TYPES.style]: styleNodeDefinition,
+  [CANVAS_NODE_TYPES.liblibMedia]: liblibMediaNodeDefinition,
 };
 
 export function getNodeDefinition(type: CanvasNodeType): CanvasNodeDefinition {

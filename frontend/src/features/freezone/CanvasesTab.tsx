@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Check, ChevronDown, CornerUpLeft, Plus, RotateCcw, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, CornerUpLeft, Link2, Plus, RotateCcw, Trash2, X } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -14,9 +14,14 @@ import { CanvasOutlineList } from "./CanvasOutlineList";
 import {
   createBlankFreezoneCanvas,
   deleteFreezoneCanvas,
+  generateClientSaveId,
+  getFreezoneCanvas,
+  getLiblibShareCanvasDetail,
+  putFreezoneCanvas,
   type FreezoneCanvasSummary,
 } from "@/api/canvas";
 import { ApiError } from "@/api/client";
+import { fetchFreezoneImageModels, fetchFreezoneVideoModels } from "@/api/ops";
 import { writeUrl } from "@/lib/url-params";
 import { useTranslation } from "react-i18next";
 import { useAuthStore } from "@/stores/auth-store";
@@ -24,6 +29,8 @@ import { personalCanvasIdForUsername } from "@/features/freezone/projections";
 import { useFreezoneCanvases } from "@/lib/queries/freezone";
 import { MAX_USER_CREATED_CANVASES_PER_PROJECT } from "@/lib/limits";
 import { BackendStatusError } from "@/lib/api-errors";
+import { convertLiblibCanvasDetail, describeLiblibCanvasImportError, liblibImportAssetStats, mergeLiblibCanvasGraph, parseLiblibShareUrl } from "./liblibCanvasImport";
+import type { CanvasEdge, CanvasNode } from "@/features/canvas/domain/canvasNodes";
 
 const PERSONAL_CANVAS_DISPLAY_NAME = "__personal_canvas__";
 
@@ -36,6 +43,8 @@ interface CanvasesTabProps {
    * when the current canvas is a preset/mainline canvas (`hasPresetLabel`).
    */
   onRestoreMainlineDefault?: () => Promise<void> | void;
+  onSaveCurrentCanvas?: () => Promise<boolean>;
+  onReloadCurrentCanvas?: () => void;
   hasPresetLabel: boolean;
   reloadToken?: number;
   /**
@@ -49,6 +58,8 @@ export function CanvasesTab({
   project,
   currentCanvasId,
   onRestoreMainlineDefault,
+  onSaveCurrentCanvas,
+  onReloadCurrentCanvas,
   hasPresetLabel,
   reloadToken,
   collapsed = false,
@@ -67,7 +78,11 @@ export function CanvasesTab({
   const [newCanvasName, setNewCanvasName] = useState("");
   const [restoringMainline, setRestoringMainline] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showImportForm, setShowImportForm] = useState(false);
+  const [importUrl, setImportUrl] = useState("");
+  const [importingCanvas, setImportingCanvas] = useState(false);
   const createInputRef = useRef<HTMLInputElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const reloadKey = `${reloadToken ?? 0}`;
   const previousReloadKeyRef = useRef(reloadKey);
 
@@ -75,9 +90,19 @@ export function CanvasesTab({
     if (showCreateForm) createInputRef.current?.focus();
   }, [showCreateForm]);
 
+  useEffect(() => {
+    if (showImportForm) importInputRef.current?.focus();
+  }, [showImportForm]);
+
   const closeCreateForm = () => {
     setShowCreateForm(false);
     setNewCanvasName("");
+    setLocalError(null);
+  };
+
+  const closeImportForm = () => {
+    setShowImportForm(false);
+    setImportUrl("");
     setLocalError(null);
   };
 
@@ -148,6 +173,12 @@ export function CanvasesTab({
     setShowCreateForm(true);
   };
 
+  const handleRequestImportForm = () => {
+    setShowCreateForm(false);
+    setShowImportForm(true);
+    setLocalError(null);
+  };
+
   const sections = buildCanvasBrowserSections(
     items,
     currentCanvasId,
@@ -207,6 +238,103 @@ export function CanvasesTab({
       setLocalError(t("freezone.canvases.createFailed", { message }));
     } finally {
       setCreatingCanvas(false);
+    }
+  };
+
+  const handleImportCanvas = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    let share: ReturnType<typeof parseLiblibShareUrl>;
+    try {
+      share = parseLiblibShareUrl(importUrl);
+    } catch (err) {
+      const descriptor = describeLiblibCanvasImportError(err);
+      setLocalError(descriptor
+        ? t(`project.liblibErrors.${descriptor.code}`, {
+            ...descriptor.values,
+            defaultValue: t("project.liblibErrors.unexpected"),
+          })
+        : t("project.liblibErrors.unexpected"));
+      return;
+    }
+    const canvasId = `liblib_${share.projectId}`;
+    const existingSummary = items.find((item) => item.id === canvasId);
+    setImportingCanvas(true);
+    setLocalError(null);
+    try {
+      // The browser list can omit an imported canvas during a stale query;
+      // always check storage before deciding to create or overwrite it.
+      const stored = await getFreezoneCanvas(project, canvasId).catch((err: unknown) => {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      });
+      if (stored && !stored.metadata?.liblib_import) {
+        throw new Error(t("freezone.canvases.createDuplicate", { name: canvasId }));
+      }
+      if (!stored && !existingSummary && canvasQuota !== "available") {
+        showCanvasQuotaNotice(canvasQuota);
+        return;
+      }
+      const isCurrent = currentCanvasId === canvasId
+        || new URLSearchParams(window.location.search).get('canvas') === canvasId;
+      if (stored && isCurrent && onSaveCurrentCanvas) {
+        const saved = await onSaveCurrentCanvas();
+        if (!saved) throw new Error(t("freezone.canvases.currentSaveFailed"));
+      }
+      const [detail, imageModels, videoModels] = await Promise.all([
+        getLiblibShareCanvasDetail(project, share.shareUrl, true),
+        fetchFreezoneImageModels(project),
+        fetchFreezoneVideoModels(project),
+      ]);
+      const canvasRect = document.querySelector('.react-flow')?.getBoundingClientRect();
+      const graph = convertLiblibCanvasDetail(detail, share.shareUrl, {
+        width: canvasRect?.width ?? window.innerWidth,
+        height: canvasRect?.height ?? window.innerHeight,
+      }, {
+        imageModelId: imageModels[0]?.id,
+        videoModelId: videoModels[0]?.id,
+      });
+      const previous = stored ? await getFreezoneCanvas(project, canvasId) : null;
+      const merged = previous
+        ? mergeLiblibCanvasGraph(previous.nodes as CanvasNode[], previous.edges as CanvasEdge[], graph)
+        : graph;
+      await putFreezoneCanvas(project, canvasId, {
+        schema_version: 2,
+        canvas_id: canvasId,
+        project_id: project,
+        base_revision: previous?.revision ?? null,
+        client_save_id: generateClientSaveId(),
+        save_source: "import",
+        nodes: merged.nodes,
+        edges: merged.edges,
+        viewport: previous?.viewport ?? graph.viewport,
+        metadata: {
+          ...(previous?.metadata ?? {}),
+          canvas_origin: "user_created",
+          display_name: graph.name,
+          creator_username: username ?? null,
+          liblib_import: {
+            source_url: graph.shareUrl,
+            source_project_id: graph.projectId,
+            space_id: graph.spaceId,
+            imported_at: new Date().toISOString(),
+            ...liblibImportAssetStats(detail),
+          },
+        },
+      });
+      await canvasesQuery.refetch();
+      closeImportForm();
+      if (isCurrent) onReloadCurrentCanvas?.();
+      else writeUrl({ canvas: canvasId });
+    } catch (err) {
+      const descriptor = describeLiblibCanvasImportError(err);
+      setLocalError(descriptor
+        ? t(`project.liblibErrors.${descriptor.code}`, {
+            ...descriptor.values,
+            defaultValue: t("project.liblibErrors.unexpected"),
+          })
+        : t("project.liblibErrors.unexpected"));
+    } finally {
+      setImportingCanvas(false);
     }
   };
 
@@ -289,6 +417,47 @@ export function CanvasesTab({
         </form>
       )}
 
+      {showImportForm && (
+        <form onSubmit={handleImportCanvas} className="shrink-0 px-3 pb-2 pt-2.5">
+          <div className="flex items-center gap-1 rounded-[8px] border border-[var(--ui-border-soft)] bg-[var(--ui-surface-field)] p-1.5">
+            <Link2 aria-hidden className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+            <input
+              ref={importInputRef}
+              type="url"
+              value={importUrl}
+              onChange={(event) => {
+                setImportUrl(event.target.value);
+                if (localError) setLocalError(null);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Escape" && !importingCanvas) closeImportForm();
+              }}
+              maxLength={500}
+              placeholder={t("freezone.canvases.importPlaceholder")}
+              disabled={importingCanvas}
+              className="h-6 min-w-0 flex-1 bg-transparent px-1 text-xs text-text-dark outline-none placeholder:text-text-muted disabled:opacity-40"
+            />
+            <button
+              type="submit"
+              disabled={importingCanvas || !importUrl.trim()}
+              className="inline-flex h-6 shrink-0 items-center px-2 text-xs font-medium text-primary disabled:opacity-40"
+            >
+              {importingCanvas ? t("freezone.canvases.importBusy") : t("freezone.canvases.import")}
+            </button>
+            <button
+              type="button"
+              onClick={closeImportForm}
+              disabled={importingCanvas}
+              aria-label={t("common.cancel")}
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-muted hover:text-text-dark disabled:opacity-40"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <p className="pt-1 text-xs text-text-muted">{t("freezone.canvases.importCookieHint", { file: "liblib.cookie.local.json" })}</p>
+        </form>
+      )}
+
       {/* 画布选择器直接坐进大纲的工具栏，原来那条独立的横向 tab 整行省掉 */}
       <CanvasOutlineList
         collapsed={collapsed}
@@ -303,6 +472,7 @@ export function CanvasesTab({
             canRestoreMainline={showRestoreMainlineAction}
             onSwitch={switchTo}
             onCreate={handleRequestCreateForm}
+            onImport={handleRequestImportForm}
             onRestoreMainline={() => void handleRestoreMainline()}
             onDelete={handleDeleteCanvas}
           />
@@ -334,6 +504,7 @@ function CanvasSelect({
   canRestoreMainline,
   onSwitch,
   onCreate,
+  onImport,
   onRestoreMainline,
   onDelete,
 }: {
@@ -346,6 +517,7 @@ function CanvasSelect({
   canRestoreMainline: boolean;
   onSwitch: (id: string) => void;
   onCreate: () => void;
+  onImport: () => void;
   onRestoreMainline: () => void;
   onDelete: (item: CanvasDisplaySummary) => Promise<void> | void;
 }) {
@@ -463,6 +635,10 @@ function CanvasSelect({
           <DropdownMenuItem className={CANVAS_MENU_ITEM_CLASS} onClick={onCreate}>
             <Plus className="h-3.5 w-3.5" />
             <span>{t("freezone.canvases.createTitle")}</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem className={CANVAS_MENU_ITEM_CLASS} onClick={onImport}>
+            <Link2 className="h-3.5 w-3.5" />
+            <span>{t("freezone.canvases.importTitle")}</span>
           </DropdownMenuItem>
           {showSourceShortcut && (
             <DropdownMenuItem

@@ -72,13 +72,15 @@ reason = "Historical dirty settings file with no reliable workstream attribution
 
 [[claims]]
 path = "frontend/src/features/freezone/AssetLibraryPanel.tsx"
-mode = "exclusive"
-reason = "Historical dirty freezone file with no reliable workstream attribution."
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Historical asset-library work shares LibTV save/reload callback plumbing."
 
 [[claims]]
 path = "frontend/src/features/freezone/CanvasOutlineList.tsx"
-mode = "exclusive"
-reason = "Historical dirty freezone file with no reliable workstream attribution."
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Historical outline work shares LibTV fallback-node display and filters."
 
 [[claims]]
 path = "frontend/src/features/freezone/CanvasesTab.tsx"

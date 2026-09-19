@@ -26,6 +26,7 @@ export const CANVAS_NODE_TYPES = {
   threeDWorld: 'threeDWorldNode',
   skill: 'skillNode',
   style: 'styleNode',
+  liblibMedia: 'liblibMediaNode',
 } as const;
 
 export type CanvasNodeType = (typeof CANVAS_NODE_TYPES)[keyof typeof CANVAS_NODE_TYPES];
@@ -74,6 +75,8 @@ export interface NodeDisplayData {
    * URL 不会出现在 store 或落库数据里；填回目标项目地址后字段即摘除。
    */
   assetMigration?: 'copying' | 'failed';
+  /** Original LibTV source facts; native media fields always point at local assets. */
+  liblibImport?: LiblibImportMetadata;
   [key: string]: unknown;
 }
 
@@ -706,6 +709,84 @@ export interface StyleNodeData extends NodeDisplayData {
   styleTemplateId: string | null;
 }
 
+/** Import metadata retained beside a project-local native media node. */
+/**
+ * A LibTV node kind, keyed off `nodeList[].type` (1 text / 2 image / 3 video /
+ * 4 audio / 5 group) with `data.type` as the fallback. `other` is the forward
+ * compatible bucket for kinds LibTV adds later.
+ */
+export type LiblibNodeKind = 'image' | 'video' | 'audio' | 'text' | 'group' | 'other';
+
+export interface LiblibReference {
+  nodeId: string | null;
+  url: string | null;
+  thumbnailUrl?: string | null;
+  label: string;
+  /**
+   * `text` references carry no URL — they are upstream text nodes LibTV fed
+   * into a generation (`params.textList`). They are kept so the imported node
+   * still knows its full upstream order, which is what edge ordering reads.
+   */
+  mediaKind: 'image' | 'video' | 'audio' | 'text';
+  /** Body of a `text` reference. Unset for media references. */
+  text?: string;
+  durationSec?: number;
+}
+
+/**
+ * 一条没能本地保存、仍指向 LibTV 的素材。
+ *
+ * 这类素材在画布上**看着是正常的**（图能显示），但它喂不进本地模型、也不能当作
+ * 编辑的参考图，而且 LibTV 撤下就失效。不把它和本地素材区分开，用户只会以为是
+ * 随机故障，所以 reason 要一直带到界面上。
+ */
+export interface RemoteMediaRef {
+  url: string;
+  /** 后端给的原因码，见 canvasRemoteMedia.ts 的 REMOTE_MEDIA_REASON_KEYS。 */
+  reason: string;
+}
+
+export interface LiblibImportMetadata {
+  nodeKey: string;
+  sourceUrl: string | null;
+  importedLocalUrl: string | null;
+  importedPrompt: string;
+  originalModel: string;
+  /** Local catalog model assigned when this import was last refreshed. */
+  importedModel?: string | null;
+  references: LiblibReference[];
+  /** LibTV node kind this node was converted from. */
+  liblibKind?: LiblibNodeKind;
+  /** LibTV `data.action`, e.g. `text_generate` / `image_resource`. */
+  liblibAction?: string;
+  /** LibTV `parentKey` — the group this node belonged to, '' when top level. */
+  parentKey?: string | null;
+  /** Text body imported for a text node (`data.content`), so edits survive a refresh. */
+  importedContent?: string;
+  /** Node title imported from LibTV, so a local rename survives a refresh. */
+  importedDisplayName?: string;
+  /** 本节点里没能本地保存、仍走 LibTV 远端地址的素材。 */
+  remoteMedia?: RemoteMediaRef[];
+}
+
+export interface LiblibMediaNodeData extends NodeDisplayData {
+  mediaKind: 'image' | 'video' | 'audio' | 'other';
+  sourceUrl: string | null;
+  localUrl?: string | null;
+  imageUrl?: string | null;
+  previewImageUrl?: string | null;
+  videoUrl?: string | null;
+  posterUrl?: string | null;
+  audioUrl?: string | null;
+  prompt?: string;
+  model?: string;
+  references?: LiblibReference[];
+  liblibAction?: string;
+  liblibNodeKey?: string;
+  /** 兜底类型的节点同样要带导入元数据,否则「网络素材」标识对它们永远不亮。 */
+  liblibImport?: LiblibImportMetadata;
+}
+
 export type CanvasNodeData =
   | UploadImageNodeData
   | ExportImageNodeData
@@ -724,7 +805,8 @@ export type CanvasNodeData =
   | Pano360ViewerNodeData
   | ThreeDWorldNodeData
   | SkillNodeData
-  | StyleNodeData;
+  | StyleNodeData
+  | LiblibMediaNodeData;
 
 export type CanvasNode = Node<CanvasNodeData, CanvasNodeType>;
 export type VideoKeyframeSlot = 'first' | 'last';

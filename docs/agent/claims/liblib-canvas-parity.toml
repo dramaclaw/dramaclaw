@@ -199,6 +199,18 @@ shared_with = ["legacy-unassigned-diff"]
 reason = "Import into an existing project while preserving unrelated canvas-selector work."
 
 [[claims]]
+path = "frontend/src/features/freezone/AssetLibraryPanel.tsx"
+mode = "shared"
+shared_with = ["legacy-unassigned-diff"]
+reason = "Pass save/reload callbacks to the LibTV import form without absorbing asset-replace work."
+
+[[claims]]
+path = "frontend/src/features/freezone/CanvasOutlineList.tsx"
+mode = "shared"
+shared_with = ["legacy-unassigned-diff"]
+reason = "Display and filter imported fallback media nodes."
+
+[[claims]]
 path = "frontend/src/features/freezone/FreezoneShell.tsx"
 mode = "shared"
 shared_with = ["legacy-unassigned-diff"]

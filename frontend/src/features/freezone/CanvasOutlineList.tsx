@@ -41,6 +41,7 @@ import {
   resolveNodeSourceImageUrl,
   type CanvasNode,
   type CanvasNodeType,
+  type LiblibMediaNodeData,
 } from "@/features/canvas/domain/canvasNodes";
 import { resolveNodePrimaryAsset } from "@/features/canvas/domain/canvasAssets";
 import {
@@ -98,10 +99,20 @@ const NODE_TYPE_ICON: Record<CanvasNodeType, LucideIcon> = {
   [CANVAS_NODE_TYPES.threeDWorld]: Box,
   [CANVAS_NODE_TYPES.skill]: Sparkles,
   [CANVAS_NODE_TYPES.style]: Palette,
+  [CANVAS_NODE_TYPES.liblibMedia]: ImageIcon,
 };
 
 /** 缩略图取节点自己的画面；视频/音频这类没有静帧的走图标兜底。 */
 function outlineThumbUrl(node: CanvasNode): string | null {
+  const media = node.type === CANVAS_NODE_TYPES.liblibMedia
+    ? node.data as LiblibMediaNodeData
+    : null;
+  if (media?.mediaKind === 'image') {
+    return media.previewImageUrl ?? media.imageUrl ?? media.localUrl ?? media.sourceUrl;
+  }
+  if (media?.mediaKind === 'video') {
+    return media.posterUrl ?? null;
+  }
   const imageUrl = resolveNodeSourceImageUrl(node);
   if (imageUrl) {
     return imageUrl;
@@ -122,6 +133,10 @@ function outlineThumbUrl(node: CanvasNode): string | null {
  * 就会把海报当成片下载给用户。没有原件的节点（文本、脚本等）回落到画面本身。
  */
 function outlineMediaUrl(node: CanvasNode): string | null {
+  if (node.type === CANVAS_NODE_TYPES.liblibMedia) {
+    const media = node.data as LiblibMediaNodeData;
+    return media.localUrl ?? media.sourceUrl;
+  }
   return resolveNodePrimaryAsset(node)?.url ?? outlineThumbUrl(node);
 }
 
@@ -263,7 +278,8 @@ export type CanvasOutlineFilterKey =
   | "audio"
   | "script"
   | "world"
-  | "skill";
+  | "skill"
+  | "liblib";
 
 /**
  * 类型筛选按「用户眼里的东西」分档，不是逐个节点类型列出来——
@@ -304,6 +320,7 @@ export const CANVAS_OUTLINE_FILTERS: ReadonlyArray<{
   { key: "script", types: [CANVAS_NODE_TYPES.script] },
   { key: "world", types: [CANVAS_NODE_TYPES.pano360Viewer, CANVAS_NODE_TYPES.threeDWorld] },
   { key: "skill", types: [CANVAS_NODE_TYPES.skill] },
+  { key: "liblib", types: [CANVAS_NODE_TYPES.liblibMedia] },
 ];
 
 export function outlineFilterTypes(key: CanvasOutlineFilterKey): readonly CanvasNodeType[] {

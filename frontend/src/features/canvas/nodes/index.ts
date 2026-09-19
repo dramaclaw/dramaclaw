@@ -10,6 +10,7 @@ import { ImageEditNode } from './ImageEditNode';
 import { ImageGenNode } from './ImageGenNode';
 import { ImageNode } from './ImageNode';
 import { Pano360ViewerNode } from './Pano360ViewerNode';
+import { LiblibMediaNode } from './LiblibMediaNode';
 import { ScriptNode } from './ScriptNode';
 import { SkillNode } from './SkillNode';
 import { StoryboardGenNode } from './StoryboardGenNode';
@@ -31,6 +32,7 @@ export const nodeTypes: NodeTypes = {
   groupNode: withLodShell('groupNode', GroupNode),
   imageGenNode: withLodShell('imageGenNode', ImageGenNode),
   imageNode: withLodShell('imageNode', ImageEditNode),
+  liblibMediaNode: LiblibMediaNode,
   pano360ViewerNode: withLodShell('pano360ViewerNode', Pano360ViewerNode),
   scriptNode: withLodShell('scriptNode', ScriptNode),
   skillNode: withLodShell('skillNode', SkillNode),

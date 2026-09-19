@@ -892,9 +892,16 @@
       "createTitle": "Tạo canvas cho dự án",
       "createBusy": "Đang tạo",
       "createPlaceholder": "Tên canvas mới",
+      "importTitle": "Nhập canvas chia sẻ LibTV",
+      "import": "Nhập",
+      "importBusy": "Đang nhập",
+      "importPlaceholder": "Dán liên kết canvas chia sẻ LibTV",
+      "importCookieHint": "Thông tin đăng nhập được đọc từ {{file}} ở thư mục gốc và không lưu trong canvas",
       "createNameRequired": "Hãy nhập tên canvas.",
       "createDuplicate": "Đã có canvas tên \"{{name}}\".",
       "createFailed": "Tạo canvas thất bại: {{message}}",
+      "currentSaveFailed": "Không thể lưu canvas hiện tại. Hãy thử lại sau.",
+      "notFound": "Không tìm thấy canvas.",
       "createLimitTitle": "Đã chạm giới hạn canvas",
       "createLimitReached": "Mỗi dự án tạo được tối đa {{limit}} canvas. Xoá bớt một cái để có chỗ.",
       "createQuotaUnknownTitle": "Chưa đếm được số canvas",
@@ -963,7 +970,8 @@
         "audio": "Âm thanh",
         "script": "Kịch bản",
         "world": "3D / Panorama",
-        "skill": "Kỹ năng"
+        "skill": "Kỹ năng",
+        "liblib": "Tài nguyên LibTV"
       }
     },
     "projections": {
@@ -1977,6 +1985,41 @@
     "name": "Tên dự án",
     "namePlaceholder": "Nhập tên dự án của bạn",
     "clearName": "Xoá tên dự án",
+    "createDescription": "Tạo dự án trống hoặc dán liên kết canvas được chia sẻ từ LibTV để nhập các nút có thể chỉnh sửa",
+    "liblibLink": "Liên kết canvas LibTV được chia sẻ (không bắt buộc)",
+    "liblibLinkRequired": "Liên kết canvas LibTV được chia sẻ",
+    "liblibLinkPlaceholder": "https://www.liblib.tv/canvas/share?...",
+    "liblibLinkHint": "Quá trình nhập sẽ tải hình ảnh, video và âm thanh về máy, đồng thời giữ lại câu lệnh và quan hệ tham chiếu.",
+    "liblibLinkInvalid": "Nhập liên kết canvas LibTV được chia sẻ hợp lệ",
+    "liblibErrors": {
+      "invalid_share_url": "Nhập liên kết canvas LibTV được chia sẻ hợp lệ.",
+      "response_mismatch": "Dữ liệu LibTV không khớp với canvas được chia sẻ.",
+      "response_missing_graph": "Canvas LibTV thiếu dữ liệu nút hoặc kết nối.",
+      "empty_graph": "Canvas LibTV không có nút nào có thể nhập.",
+      "canvas_conflict": "Canvas {{canvasId}} đã tồn tại và không được nhập từ LibTV.",
+      "invalid_liblib_share_url": "Nhập liên kết canvas LibTV được chia sẻ hợp lệ.",
+      "liblib_cookie_missing": "Hãy thêm tệp đăng nhập LibTV cục bộ trước khi nhập.",
+      "liblib_cookie_invalid": "Tệp đăng nhập LibTV cục bộ không hợp lệ.",
+      "liblib_unavailable": "Không thể kết nối LibTV. Hãy thử lại sau.",
+      "liblib_detail_too_large": "Canvas LibTV này vượt quá giới hạn kích thước nhập.",
+      "liblib_invalid_response": "LibTV trả về dữ liệu canvas không thể đọc.",
+      "liblib_unauthorized": "Phiên đăng nhập LibTV cục bộ đã hết hạn. Hãy cập nhật rồi thử lại.",
+      "liblib_remote_error": "LibTV không thể đọc canvas được chia sẻ này.",
+      "liblib_project_mismatch": "Dữ liệu LibTV không khớp với canvas được chia sẻ.",
+      "liblib_not_copyable": "Canvas LibTV này không cho phép sao chép.",
+      "invalid_localize_request": "Không có tài nguyên từ xa nào để tải về máy.",
+      "liblib_media_too_large": "Một tài nguyên LibTV vượt quá giới hạn nhập cục bộ.",
+      "liblib_media_empty": "LibTV trả về một tài nguyên trống.",
+      "liblib_media_type_invalid": "Một tài nguyên LibTV không phải ảnh, video hoặc âm thanh được hỗ trợ.",
+      "liblib_media_unavailable": "Không thể tải một tài nguyên LibTV. Hãy thử lại sau.",
+      "unexpected": "Không thể nhập canvas LibTV. Hãy kiểm tra liên kết và đăng nhập cục bộ rồi thử lại."
+    },
+    "liblibImporting": "Đang tạo và nhập nội dung…",
+    "liblibReimportTitle": "Nhập hoặc cập nhật canvas LibTV",
+    "liblibReimportDescription": "Nhập canvas được chia sẻ vào “{{name}}”. Cùng một liên kết sẽ cập nhật canvas hiện có; liên kết mới sẽ tạo canvas khác.",
+    "liblibReimportHint": "Nội dung sẽ được tải vào dự án này. Câu lệnh, lựa chọn mô hình và kết quả đã chỉnh sửa cục bộ sẽ được giữ lại.",
+    "liblibReimportSubmit": "Nhập và mở",
+    "missingCreatedProjectId": "Máy chủ không trả về ID dự án mới",
     "nameNoChinese": "Tên dự án không được chứa ký tự tiếng Trung.",
     "nameTooLong": "Tên dự án dài tối đa 64 ký tự.",
     "nameInvalid": "Tên dự án chỉ được chứa chữ cái, chữ số và dấu gạch dưới.",
@@ -2050,6 +2093,8 @@
     "actions": {
       "open": "Mở",
       "openFreezone": "Mở trong Freezone",
+      "importLiblib": "Nhập hoặc cập nhật LibTV",
+      "importLiblibShort": "Cập nhật LibTV",
       "share": "Chia sẻ",
       "archive": "Lưu trữ…",
       "unarchive": "Bỏ lưu trữ",
@@ -2075,12 +2120,15 @@
     },
     "toasts": {
       "createFailed": "Tạo dự án thất bại. Kiểm tra lại tên hoặc thử lại sau.",
+      "liblibImportSucceeded": "Đã nhập canvas LibTV vào “{{name}}”",
+      "liblibImportFailed": "Dự án đã được tạo nhưng không thể nhập canvas LibTV: {{message}}. Bạn có thể thử lại từ menu canvas trong dự án.",
       "archived": "Đã lưu trữ \"{{name}}\"",
       "unarchived": "Đã bỏ lưu trữ \"{{name}}\"",
       "deleted": "Đã chuyển \"{{name}}\" vào Thùng rác",
       "restored": "Đã khôi phục \"{{name}}\"",
       "purged": "Đã xoá vĩnh viễn \"{{name}}\"",
-      "undo": "Hoàn tác"
+      "undo": "Hoàn tác",
+      "liblibImportSkippedMedia": "{{count}} tài nguyên không thể lưu cục bộ và vẫn tải từ LibTV; chúng sẽ hỏng nếu LibTV gỡ bỏ."
     },
     "title": "Dự án",
     "newProject": "Dự án mới",
@@ -2150,7 +2198,11 @@
       "editor": "Người sửa",
       "admin": "Quản trị",
       "owner": "Chủ sở hữu"
-    }
+    },
+    "liblibImportRecoveryTitle": "Dự án \"{{name}}\" đã được tạo, nhưng nhập canvas thất bại:",
+    "liblibImportRecoveryHint": "Không cần tạo dự án khác — thử lại vào dự án này, hoặc mở nó và xử lý thủ công.",
+    "liblibImportRecoveryRetry": "Thử nhập lại",
+    "liblibImportRecoveryOpen": "Mở dự án"
   },
   "assets": {
     "common": {
@@ -5132,6 +5184,39 @@
     },
     "assetDrop": {
       "fallbackNodeLabel": "Node"
+    },
+    "notFound": "Không tìm thấy canvas",
+    "notFoundDescriptionPrefix": "Dự án này không có canvas",
+    "notFoundDescriptionSuffix": ". Nó có thể thuộc về dự án khác, hoặc đã bị xóa.",
+    "backToProjectCanvas": "Về canvas của dự án này",
+    "remoteMedia": {
+      "badge": "Tài nguyên từ xa",
+      "title": "{{count}} tài nguyên chưa lưu cục bộ, vẫn tải từ LibTV:",
+      "consequence": "Tài nguyên từ xa không thể đưa vào mô hình cục bộ hay dùng làm ảnh tham chiếu, và sẽ hỏng nếu LibTV gỡ bỏ.",
+      "reason": {
+        "internalHost": "Địa chỉ tài nguyên trỏ vào mạng nội bộ; không tải vì lý do an toàn.",
+        "notHttps": "Địa chỉ tài nguyên không phải HTTPS; không tải.",
+        "hasCredentials": "Địa chỉ tài nguyên có chứa thông tin đăng nhập; không tải.",
+        "badUrl": "Địa chỉ tài nguyên không hợp lệ.",
+        "unsupportedFileType": "Loại tệp này chưa hỗ trợ lưu cục bộ.",
+        "tooManyAssets": "Canvas vượt quá giới hạn số lượng tài nguyên cục bộ.",
+        "totalSizeLimit": "Canvas vượt quá giới hạn tổng dung lượng tài nguyên cục bộ.",
+        "mediaTooLarge": "Một tài nguyên vượt quá giới hạn dung lượng cục bộ.",
+        "mediaEmpty": "Máy chủ nguồn trả về tệp rỗng.",
+        "mediaTypeInvalid": "Máy chủ nguồn không trả về ảnh/video/âm thanh.",
+        "mediaUnavailable": "Tải từ máy chủ nguồn thất bại (hết giờ, giới hạn, hoặc đã xóa).",
+        "unknown": "Không thể lưu cục bộ (không rõ lý do)."
+      },
+      "localize": {
+        "label": "Tải về máy",
+        "pending": "{{count}} tài nguyên chưa lưu cục bộ",
+        "running": "Đang tải về…",
+        "done": "Đã lưu {{count}} tài nguyên",
+        "partial": "Đã lưu {{done}}, còn {{failed}} chưa lưu được",
+        "none": "Không có tài nguyên cần tải",
+        "failed": "Tải về thất bại: {{message}}",
+        "hint": "Tải các tài nguyên còn lấy từ LibTV về máy để dùng cho mô hình cục bộ hoặc làm ảnh tham chiếu."
+      }
     }
   },
   "tool": {
@@ -5223,7 +5308,11 @@
       "notImplementedYet": "Sắp có",
       "requiresVideo": "Hãy tải video lên trước",
       "shotBreakdown": "Phân tích cảnh quay",
-      "breakdownEmpty": "Phân tích không tạo ra tài nguyên nào dùng được"
+      "breakdownEmpty": "Phân tích không tạo ra tài nguyên nào dùng được",
+      "segmentRemake": "Quay lại đoạn",
+      "continuation": "Viết tiếp video",
+      "recreate": "Tạo lại",
+      "remoteMediaBlocked": "Tư liệu này vẫn nằm trên LibTV — hãy nội địa hoá trước"
     },
     "audio": {
       "requiresAudio": "Chưa có âm thanh nào để tải về",
@@ -5842,7 +5931,8 @@
         "failed": "Cắt thất bại: {{detail}}"
       },
       "videoEdit": {
-        "imageLimit": "Sửa video hỗ trợ tối đa {{limit}} ảnh tham chiếu; đã dùng {{limit}} ảnh đầu ({{ignored}} ảnh bị bỏ qua)"
+        "imageLimit": "Sửa video hỗ trợ tối đa {{limit}} ảnh tham chiếu; đã dùng {{limit}} ảnh đầu ({{ignored}} ảnh bị bỏ qua)",
+        "sourceFallbackLabel": "video nguồn"
       },
       "allReference": {
         "happyHorseUnsupported": "HappyHorse không hỗ trợ tham chiếu đa năng. Chuyển sang chữ-sang-video hoặc ảnh-sang-video.",
@@ -6143,7 +6233,8 @@
       "pano360ViewerNode": "Trình xem toàn cảnh 360°",
       "threeDWorldNode": "Thế giới 3D",
       "skillNode": "Kỹ năng",
-      "styleNode": "Phong cách"
+      "styleNode": "Phong cách",
+      "liblibMediaNode": "Tài nguyên LibTV"
     },
     "exportResult": {
       "generic": "Ảnh kết quả",
