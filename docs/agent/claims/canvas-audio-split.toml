@@ -1,0 +1,129 @@
+version = 1
+slug = "canvas-audio-split"
+ledger = "docs/agent/tasks/canvas-audio-split.md"
+baseline = "1697323a"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Register lifecycle and conflict radar."
+
+[[claims]]
+path = "docs/agent/tasks/canvas-audio-split.md"
+mode = "coordination"
+reason = "Workstream plan and handoff ledger."
+
+[[claims]]
+path = "docs/agent/claims/canvas-audio-split.toml"
+mode = "coordination"
+reason = "Machine-readable scope for this workstream."
+
+[[claims]]
+path = "docs/agent/claims/canvas-audio-actions.toml"
+mode = "coordination"
+reason = "Add reciprocal shared-path declarations."
+
+[[claims]]
+path = "docs/agent/claims/liblib-canvas-parity.toml"
+mode = "coordination"
+reason = "Add reciprocal shared-path declarations."
+
+[[claims]]
+path = "docs/agent/claims/shot-breakdown.toml"
+mode = "coordination"
+reason = "Add reciprocal shared-path declarations."
+
+[[claims]]
+path = "docs/agent/claims/depth-motion-da3.toml"
+mode = "coordination"
+reason = "Add reciprocal shared-path declarations."
+
+[[claims]]
+path = "docs/agent/claims/local-stack.toml"
+mode = "coordination"
+reason = "Add reciprocal shared-path declarations."
+
+[[claims]]
+path = "docs/guides/liblib-canvas-parity.md"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Record the implemented split contract against the evidence snapshot."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/canvasActionRegistry.ts"
+mode = "shared"
+shared_with = ["canvas-audio-actions"]
+reason = "Register smart and custom audio split actions."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/audioSplit.ts"
+mode = "exclusive"
+reason = "Pure split preview, validation, and custom-cut parsing."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/AudioSplitMenu.tsx"
+mode = "exclusive"
+reason = "Smart and custom split preview UI."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/NodeActionToolbar.tsx"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "liblib-canvas-parity", "shot-breakdown"]
+reason = "Mount split actions and fan out existing audio transforms."
+
+[[claims]]
+path = "frontend/src/api/ops.ts"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "depth-motion-da3", "shot-breakdown"]
+reason = "Add the smart split preview API client."
+
+[[claims]]
+path = "frontend/public/locales/zh/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Chinese audio split strings; merge by key."
+
+[[claims]]
+path = "frontend/public/locales/en/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "English audio split strings; merge by key."
+
+[[claims]]
+path = "frontend/public/locales/vi/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Vietnamese audio split strings; merge by key."
+
+[[claims]]
+path = "src/novelvideo/freezone/audio_split.py"
+mode = "exclusive"
+reason = "Local ffmpeg silence analysis and stable segment projection."
+
+[[claims]]
+path = "src/novelvideo/api/schemas.py"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "depth-motion-da3", "shot-breakdown"]
+reason = "Add the smart split preview request schema."
+
+[[claims]]
+path = "src/novelvideo/api/routes/freezone.py"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "depth-motion-da3", "liblib-canvas-parity", "local-stack", "shot-breakdown"]
+reason = "Resolve local audio and expose the non-mutating split preview endpoint."
+
+[[claims]]
+path = "tests/test_freezone_audio_split.py"
+mode = "exclusive"
+reason = "Audio split algorithm, subprocess, and route contract tests."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/audio-split.test.ts"
+mode = "exclusive"
+reason = "Custom cut parsing and segment validation tests."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/canvas-action-registry.test.ts"
+mode = "shared"
+shared_with = ["canvas-audio-actions"]
+reason = "Assert the expanded audio action registry."

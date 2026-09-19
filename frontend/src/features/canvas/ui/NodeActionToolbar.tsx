@@ -115,6 +115,7 @@ import { useCanvasStore } from "@/stores/canvasStore";
 import {
   fetchFreezoneJobResult,
   fetchFreezoneAudioSeparateResult,
+  previewFreezoneAudioSplit,
   submitFreezoneAnalyzeVideoStory,
   submitFreezoneAudioTransform,
   submitFreezoneShotBreakdown,
@@ -134,6 +135,10 @@ import {
   buildAudioTransformNodeData,
   type AudioTransformDraft,
 } from "@/features/canvas/application/audioTransform";
+import {
+  analysisFromSeconds,
+  type AudioSplitSegment,
+} from "@/features/canvas/application/audioSplit";
 import {
   CANVAS_ACTION_IDS,
   getCanvasActionDescriptor,
@@ -158,6 +163,7 @@ import type {
   GridActionRequest,
 } from "./GridActionConfirmOverlay";
 import { AudioTransformMenu } from "./AudioTransformMenu";
+import { AudioSplitMenu, type SmartAudioSplitOptions } from "./AudioSplitMenu";
 
 interface NodeActionToolbarProps {
   node: CanvasNode;
@@ -2528,11 +2534,23 @@ export const NodeActionToolbar = memo(
                 const speedDescriptor = getCanvasActionDescriptor(
                   CANVAS_ACTION_IDS.audioSpeed,
                 );
+                const smartSplitDescriptor = getCanvasActionDescriptor(
+                  CANVAS_ACTION_IDS.audioSmartSplit,
+                );
+                const customSplitDescriptor = getCanvasActionDescriptor(
+                  CANVAS_ACTION_IDS.audioCustomSplit,
+                );
                 const trimAvailability = trimDescriptor
                   ? resolveCanvasActionAvailability(trimDescriptor, actionContext)
                   : { available: false as const, reason: "wrong-node-type" as const };
                 const speedAvailability = speedDescriptor
                   ? resolveCanvasActionAvailability(speedDescriptor, actionContext)
+                  : { available: false as const, reason: "wrong-node-type" as const };
+                const smartSplitAvailability = smartSplitDescriptor
+                  ? resolveCanvasActionAvailability(smartSplitDescriptor, actionContext)
+                  : { available: false as const, reason: "wrong-node-type" as const };
+                const customSplitAvailability = customSplitDescriptor
+                  ? resolveCanvasActionAvailability(customSplitDescriptor, actionContext)
                   : { available: false as const, reason: "wrong-node-type" as const };
 
                 const disabledReasonFor = (
@@ -2621,48 +2639,48 @@ export const NodeActionToolbar = memo(
                   }
                 };
 
-                const handleAudioTransform = async (
-                  mode: "trim" | "speed",
+                type SubmittedAudioTransform = {
+                  ref: Awaited<ReturnType<typeof submitFreezoneAudioTransform>>;
+                  derivedNodeId: string;
+                  projectId: string;
+                };
+
+                const submitAudioDerivedNode = async (
+                  projectId: string,
                   draft: AudioTransformDraft,
-                ) => {
-                  if (!audioUrl || !durationMs || isAudioBusy) return;
-                  const projectId = readUrl().project;
-                  if (!projectId) {
-                    toast.error(t("nodeToolbar.audio.transformFailed"));
-                    return;
-                  }
+                  displayName: string,
+                ): Promise<SubmittedAudioTransform> => {
+                  if (!audioUrl) throw new Error("audio source is unavailable");
+                  const ref = await submitFreezoneAudioTransform(projectId, {
+                    sourceUrl: audioUrl,
+                    startSec: draft.startMs / 1000,
+                    endSec: draft.endMs / 1000,
+                    speed: draft.speed,
+                  });
+                  const derivedNodeId = addNode(
+                    CANVAS_NODE_TYPES.audio,
+                    findNodePosition(node.id, 480, 210),
+                    {
+                      ...buildAudioTransformNodeData({
+                        sourceNodeId: node.id,
+                        sourceAudioUrl: audioUrl,
+                        sourceData: audioData,
+                        draft,
+                        displayName,
+                      }),
+                      ...generationTaskDescriptor(ref),
+                    },
+                  );
+                  addEdge(node.id, derivedNodeId);
+                  return { ref, derivedNodeId, projectId };
+                };
 
-                  let derivedNodeId: string | null = null;
+                const completeAudioDerivedNode = async ({
+                  ref,
+                  derivedNodeId,
+                  projectId,
+                }: SubmittedAudioTransform): Promise<boolean> => {
                   try {
-                    const ref = await submitFreezoneAudioTransform(projectId, {
-                      sourceUrl: audioUrl,
-                      startSec: draft.startMs / 1000,
-                      endSec: draft.endMs / 1000,
-                      speed: draft.speed,
-                    });
-                    const suffix =
-                      mode === "speed"
-                        ? `${t("nodeToolbar.audio.speed")}_${draft.speed}x`
-                        : t("nodeToolbar.audio.trim");
-                    const displayName = `${baseFileName}_${suffix}`;
-                    derivedNodeId = addNode(
-                      CANVAS_NODE_TYPES.audio,
-                      findNodePosition(node.id, 480, 210),
-                      {
-                        ...buildAudioTransformNodeData({
-                          sourceNodeId: node.id,
-                          sourceAudioUrl: audioUrl,
-                          sourceData: audioData,
-                          draft,
-                          displayName,
-                        }),
-                        ...generationTaskDescriptor(ref),
-                      },
-                    );
-                    addEdge(node.id, derivedNodeId);
-                    setSelectedNode(derivedNodeId);
-                    requestFocusNode(derivedNodeId);
-
                     await awaitTaskCompletion(ref.task_key, projectId, {
                       taskType: ref.task_type,
                     });
@@ -2680,28 +2698,126 @@ export const NodeActionToolbar = memo(
                       generationTaskType: null,
                       generationTaskJobId: null,
                     });
+                    return true;
                   } catch (error) {
                     if (isTaskPollTimeoutError(error)) {
                       notifyTaskStillRunning(t);
-                      return;
+                      return false;
                     }
                     console.error("[audio-transform] failed", error);
                     const message =
                       error instanceof Error && error.message.trim()
                         ? error.message
                         : t("nodeToolbar.audio.transformFailed");
-                    if (derivedNodeId) {
-                      updateNodeData(derivedNodeId, {
-                        isGenerating: false,
-                        generationStartedAt: null,
-                        generationError: message,
-                        generationTaskKey: null,
-                        generationTaskType: null,
-                        generationTaskJobId: null,
-                      });
-                    } else {
-                      toast.error(t("nodeToolbar.audio.transformFailed"));
+                    updateNodeData(derivedNodeId, {
+                      isGenerating: false,
+                      generationStartedAt: null,
+                      generationError: message,
+                      generationTaskKey: null,
+                      generationTaskType: null,
+                      generationTaskJobId: null,
+                    });
+                    return true;
+                  }
+                };
+
+                const handleAudioTransform = async (
+                  mode: "trim" | "speed",
+                  draft: AudioTransformDraft,
+                ) => {
+                  if (!audioUrl || !durationMs || isAudioBusy) return;
+                  const projectId = readUrl().project;
+                  if (!projectId) {
+                    toast.error(t("nodeToolbar.audio.transformFailed"));
+                    return;
+                  }
+                  try {
+                    const suffix =
+                      mode === "speed"
+                        ? `${t("nodeToolbar.audio.speed")}_${draft.speed}x`
+                        : t("nodeToolbar.audio.trim");
+                    const submitted = await submitAudioDerivedNode(
+                      projectId,
+                      draft,
+                      `${baseFileName}_${suffix}`,
+                    );
+                    setSelectedNode(submitted.derivedNodeId);
+                    requestFocusNode(submitted.derivedNodeId);
+                    await completeAudioDerivedNode(submitted);
+                  } catch (error) {
+                    console.error("[audio-transform] submit failed", error);
+                    toast.error(t("nodeToolbar.audio.transformFailed"));
+                  }
+                };
+
+                const analyzeAudioSplit = async (options: SmartAudioSplitOptions) => {
+                  if (!audioUrl) throw new Error("audio source is unavailable");
+                  const projectId = readUrl().project;
+                  if (!projectId) throw new Error("project is unavailable");
+                  const result = await previewFreezoneAudioSplit(projectId, {
+                    sourceUrl: audioUrl,
+                    ...options,
+                  });
+                  const analysis = analysisFromSeconds({
+                    durationSec: result.duration_sec,
+                    segments: result.segments.map((segment) => ({
+                      startSec: segment.start_sec,
+                      endSec: segment.end_sec,
+                    })),
+                    detectedSilenceCount: result.detected_silence_count,
+                    limited: result.limited,
+                  });
+                  if (!analysis) throw new Error("invalid audio split preview");
+                  return analysis;
+                };
+
+                const handleAudioSplit = async (
+                  mode: "smart" | "custom",
+                  segments: AudioSplitSegment[],
+                ) => {
+                  if (!audioUrl || !durationMs || isAudioBusy || segments.length < 2) return;
+                  const projectId = readUrl().project;
+                  if (!projectId) {
+                    toast.error(t("nodeToolbar.audio.transformFailed"));
+                    return;
+                  }
+                  let submittedCount = 0;
+                  let failedSubmissions = 0;
+                  toast.success(
+                    t("nodeToolbar.audio.splitStarted", { count: segments.length }),
+                  );
+                  for (const [index, segment] of segments.entries()) {
+                    const suffix = t(`nodeToolbar.audio.${mode}Split`);
+                    const displayName = `${baseFileName}_${suffix}_${String(index + 1).padStart(2, "0")}`;
+                    try {
+                      const submitted = await submitAudioDerivedNode(
+                        projectId,
+                        { ...segment, speed: 1 },
+                        displayName,
+                      );
+                      submittedCount += 1;
+                      if (submittedCount === 1) {
+                        setSelectedNode(submitted.derivedNodeId);
+                        requestFocusNode(submitted.derivedNodeId);
+                      }
+                      const reachedTerminalState = await completeAudioDerivedNode(submitted);
+                      if (!reachedTerminalState) {
+                        failedSubmissions += segments.length - index - 1;
+                        break;
+                      }
+                    } catch (error) {
+                      failedSubmissions += 1;
+                      console.error("[audio-split] submit failed", error);
                     }
+                  }
+                  if (submittedCount === 0) {
+                    toast.error(t("nodeToolbar.audio.splitSubmitFailed"));
+                    return;
+                  }
+                  if (failedSubmissions > 0) {
+                    toast.error(
+                      t("nodeToolbar.audio.splitPartialFailed", { count: failedSubmissions }),
+                    );
                   }
                 };
 
@@ -2724,6 +2840,24 @@ export const NodeActionToolbar = memo(
                       busy={isAudioBusy}
                       buttonClassName={audioButtonClass}
                       onSubmit={(draft) => handleAudioTransform("speed", draft)}
+                    />
+                    <AudioSplitMenu
+                      mode="smart"
+                      durationMs={durationMs}
+                      disabled={!smartSplitAvailability.available || !durationMs}
+                      disabledReason={disabledReasonFor(smartSplitAvailability)}
+                      buttonClassName={audioButtonClass}
+                      onAnalyze={analyzeAudioSplit}
+                      onSubmit={(segments) => handleAudioSplit("smart", segments)}
+                    />
+                    <AudioSplitMenu
+                      mode="custom"
+                      durationMs={durationMs}
+                      disabled={!customSplitAvailability.available || !durationMs}
+                      disabledReason={disabledReasonFor(customSplitAvailability)}
+                      buttonClassName={audioButtonClass}
+                      onAnalyze={analyzeAudioSplit}
+                      onSubmit={(segments) => handleAudioSplit("custom", segments)}
                     />
                     <DropdownMenu
                       onOpenChange={(open) => {

@@ -1558,6 +1558,39 @@ class FreezoneAudioTransformRequest(BaseModel):
     speed: float = Field(default=1.0, ge=0.5, le=2.0, description="播放速度；处理时保持音高")
 
 
+class FreezoneAudioSplitPreviewRequest(BaseModel):
+    """画布音频智能切分的只读预览参数。"""
+
+    source_url: str = Field(description="项目内待分析音频静态地址")
+    silence_threshold_db: float = Field(
+        default=-35.0, ge=-80.0, le=-10.0, description="静音阈值（dB）"
+    )
+    min_silence_sec: float = Field(
+        default=0.45, ge=0.1, le=10.0, description="形成切点所需的最短静音（秒）"
+    )
+    min_segment_sec: float = Field(
+        default=0.75, ge=0.1, le=60.0, description="建议片段的最短时长（秒）"
+    )
+    max_segments: int = Field(default=24, ge=2, le=24, description="预览最多片段数")
+
+
+class FreezoneAudioSplitSegment(BaseModel):
+    start_sec: float
+    end_sec: float
+
+
+class FreezoneAudioSplitPreviewData(BaseModel):
+    duration_sec: float
+    segments: list[FreezoneAudioSplitSegment]
+    detected_silence_count: int
+    limited: bool
+
+
+class FreezoneAudioSplitPreviewResponse(BaseModel):
+    ok: Literal[True] = True
+    data: FreezoneAudioSplitPreviewData
+
+
 class FreezoneAudioVoiceRef(BaseModel):
     """Freezone 音频节点声线引用。
 

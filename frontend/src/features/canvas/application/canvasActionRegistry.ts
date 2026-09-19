@@ -35,6 +35,8 @@ export type CanvasActionAvailability =
 export const CANVAS_ACTION_IDS = {
   audioTrim: 'audio.trim',
   audioSpeed: 'audio.speed',
+  audioSmartSplit: 'audio.split.smart',
+  audioCustomSplit: 'audio.split.custom',
 } as const;
 
 const ACTIONS: readonly CanvasActionDescriptor[] = [
@@ -51,6 +53,20 @@ const ACTIONS: readonly CanvasActionDescriptor[] = [
     effect: 'spawn',
     capability: 'local.audio.transform',
     labelKey: 'nodeToolbar.audio.speed',
+  },
+  {
+    id: CANVAS_ACTION_IDS.audioSmartSplit,
+    sourceTypes: [CANVAS_NODE_TYPES.audio],
+    effect: 'spawn',
+    capability: 'local.audio.split.silence',
+    labelKey: 'nodeToolbar.audio.smartSplit',
+  },
+  {
+    id: CANVAS_ACTION_IDS.audioCustomSplit,
+    sourceTypes: [CANVAS_NODE_TYPES.audio],
+    effect: 'spawn',
+    capability: 'local.audio.split.custom',
+    labelKey: 'nodeToolbar.audio.customSplit',
   },
 ] as const;
 

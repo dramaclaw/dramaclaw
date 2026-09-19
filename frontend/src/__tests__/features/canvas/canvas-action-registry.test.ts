@@ -11,10 +11,16 @@ import {
 import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
 
 describe('canvas action registry', () => {
-  it('declares audio trim and speed as spawn actions', () => {
+  it('declares audio transforms and splits as spawn actions', () => {
     const ids = canvasActionsForNode(CANVAS_NODE_TYPES.audio).map((action) => action.id);
-    expect(ids).toEqual([CANVAS_ACTION_IDS.audioTrim, CANVAS_ACTION_IDS.audioSpeed]);
+    expect(ids).toEqual([
+      CANVAS_ACTION_IDS.audioTrim,
+      CANVAS_ACTION_IDS.audioSpeed,
+      CANVAS_ACTION_IDS.audioSmartSplit,
+      CANVAS_ACTION_IDS.audioCustomSplit,
+    ]);
     expect(getCanvasActionDescriptor(CANVAS_ACTION_IDS.audioTrim)?.effect).toBe('spawn');
+    expect(getCanvasActionDescriptor(CANVAS_ACTION_IDS.audioSmartSplit)?.effect).toBe('spawn');
   });
 
   it('does not expose audio actions for video nodes', () => {

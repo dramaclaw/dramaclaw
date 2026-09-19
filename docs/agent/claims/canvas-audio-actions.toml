@@ -40,7 +40,8 @@ reason = "Add reciprocal shared-path declarations."
 
 [[claims]]
 path = "frontend/src/features/canvas/application/canvasActionRegistry.ts"
-mode = "exclusive"
+mode = "shared"
+shared_with = ["canvas-audio-split"]
 reason = "Canvas action metadata and availability contract."
 
 [[claims]]
@@ -56,7 +57,7 @@ reason = "Audio trim and speed input UI."
 [[claims]]
 path = "frontend/src/features/canvas/ui/NodeActionToolbar.tsx"
 mode = "shared"
-shared_with = ["liblib-canvas-parity", "shot-breakdown"]
+shared_with = ["canvas-audio-split", "liblib-canvas-parity", "shot-breakdown"]
 reason = "Mount audio actions without replacing existing video actions."
 
 [[claims]]
@@ -68,7 +69,7 @@ reason = "Persist typed audio derivation metadata."
 [[claims]]
 path = "frontend/src/api/ops.ts"
 mode = "shared"
-shared_with = ["depth-motion-da3", "shot-breakdown"]
+shared_with = ["canvas-audio-split", "depth-motion-da3", "shot-breakdown"]
 reason = "Add the audio transform API client and result task type."
 
 [[claims]]
@@ -97,13 +98,13 @@ reason = "Local ffmpeg audio trim and pitch-preserving speed transform."
 [[claims]]
 path = "src/novelvideo/api/schemas.py"
 mode = "shared"
-shared_with = ["depth-motion-da3", "shot-breakdown"]
+shared_with = ["canvas-audio-split", "depth-motion-da3", "shot-breakdown"]
 reason = "Add the audio transform request schema."
 
 [[claims]]
 path = "src/novelvideo/api/routes/freezone.py"
 mode = "shared"
-shared_with = ["depth-motion-da3", "liblib-canvas-parity", "local-stack", "shot-breakdown"]
+shared_with = ["canvas-audio-split", "depth-motion-da3", "liblib-canvas-parity", "local-stack", "shot-breakdown"]
 reason = "Validate, enqueue, and expose audio transform results."
 
 [[claims]]
@@ -136,7 +137,8 @@ reason = "Declare the local-only ffmpeg audio transform leaf in the audited egre
 
 [[claims]]
 path = "frontend/src/__tests__/features/canvas/canvas-action-registry.test.ts"
-mode = "exclusive"
+mode = "shared"
+shared_with = ["canvas-audio-split"]
 reason = "Action descriptor contract tests."
 
 [[claims]]

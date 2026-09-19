@@ -2052,6 +2052,42 @@ export async function fetchFreezoneJobResult(
   );
 }
 
+export interface FreezoneAudioSplitPreviewPayload {
+  sourceUrl: string;
+  silenceThresholdDb?: number;
+  minSilenceSec?: number;
+  minSegmentSec?: number;
+  maxSegments?: number;
+}
+
+export interface FreezoneAudioSplitPreviewResult {
+  duration_sec: number;
+  segments: Array<{ start_sec: number; end_sec: number }>;
+  detected_silence_count: number;
+  limited: boolean;
+}
+
+/** Analyze local audio without creating files or mutating the canvas graph. */
+export async function previewFreezoneAudioSplit(
+  project: string,
+  payload: FreezoneAudioSplitPreviewPayload,
+): Promise<FreezoneAudioSplitPreviewResult> {
+  return await apiCall<FreezoneAudioSplitPreviewResult>(
+    `projects/${encodeURIComponent(project)}/freezone/audio/split-preview`,
+    {
+      method: "POST",
+      timeout: 130_000,
+      json: {
+        source_url: payload.sourceUrl,
+        silence_threshold_db: payload.silenceThresholdDb ?? -35,
+        min_silence_sec: payload.minSilenceSec ?? 0.45,
+        min_segment_sec: payload.minSegmentSec ?? 0.75,
+        max_segments: payload.maxSegments ?? 24,
+      },
+    },
+  );
+}
+
 /**
  * `freezone_image_reverse_prompt` results aren't files — the dedicated job
  * result endpoint returns `{ prompt: "..." }` directly. SSE `task.result` only

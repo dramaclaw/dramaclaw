@@ -48,6 +48,8 @@ from novelvideo.api.schemas import (
     FreezoneAssetLibraryItemPatchRequest,
     FreezoneAudioMusicRequest,
     FreezoneAudioSeparateRequest,
+    FreezoneAudioSplitPreviewRequest,
+    FreezoneAudioSplitPreviewResponse,
     FreezoneAudioTransformRequest,
     FreezoneAudioSpeechRequest,
     FreezoneCharacterMultiViewRequest,
@@ -9866,6 +9868,59 @@ async def freezone_audio_separate(
         project=project_name,
         job_id=job_id,
     )
+
+
+@router.post(
+    "/projects/{project}/freezone/audio/split-preview",
+    response_model=FreezoneAudioSplitPreviewResponse,
+    tags=[TAG_FREEZONE_AUDIO],
+)
+async def freezone_audio_split_preview(
+    project: str,
+    body: FreezoneAudioSplitPreviewRequest,
+    user: dict = Depends(get_api_user),
+):
+    """Analyze silence and return a reviewable split plan without writing media."""
+    _ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    try:
+        source_path = resolve_static_url_to_path(body.source_url, project_dir)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not source_path.is_file():
+        raise HTTPException(404, f"audio source not found: {source_path}")
+
+    from novelvideo.freezone.audio_split import analyze_audio_split
+
+    try:
+        preview = await analyze_audio_split(
+            source_path=source_path.as_posix(),
+            silence_threshold_db=body.silence_threshold_db,
+            min_silence_sec=body.min_silence_sec,
+            min_segment_sec=body.min_segment_sec,
+            max_segments=body.max_segments,
+        )
+    except TimeoutError as exc:
+        raise HTTPException(504, "audio split analysis timed out") from exc
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        logger.warning("audio split analysis failed: %s", exc)
+        raise HTTPException(503, str(exc)) from exc
+
+    return {
+        "ok": True,
+        "data": {
+            "duration_sec": preview.duration_sec,
+            "segments": [
+                {"start_sec": segment.start_sec, "end_sec": segment.end_sec}
+                for segment in preview.segments
+            ],
+            "detected_silence_count": preview.detected_silence_count,
+            "limited": preview.limited,
+        },
+    }
 
 
 @router.post(

@@ -26,7 +26,8 @@ reason = "Machine-readable scope for this workstream."
 
 [[claims]]
 path = "docs/guides/liblib-canvas-parity.md"
-mode = "exclusive"
+mode = "shared"
+shared_with = ["canvas-audio-split"]
 reason = "Evidence and long-form design for LibTV parity."
 
 [[claims]]
@@ -158,7 +159,7 @@ reason = "Measured LibTV node and toolbar surface tokens."
 [[claims]]
 path = "frontend/src/features/canvas/ui/NodeActionToolbar.tsx"
 mode = "shared"
-shared_with = ["canvas-audio-actions", "shot-breakdown"]
+shared_with = ["canvas-audio-actions", "canvas-audio-split", "shot-breakdown"]
 reason = "Measured LibTV-compatible video actions share the toolbar with breakdown."
 
 [[claims]]
@@ -267,7 +268,7 @@ reason = "Persist imported canvas semantics and prewarm the LOD image ladder."
 [[claims]]
 path = "src/novelvideo/api/routes/freezone.py"
 mode = "shared"
-shared_with = ["canvas-audio-actions", "depth-motion-da3", "shot-breakdown", "local-stack"]
+shared_with = ["canvas-audio-actions", "canvas-audio-split", "depth-motion-da3", "shot-breakdown", "local-stack"]
 reason = "Expose LibTV detail/localization endpoints; stage only owned hunks."
 
 [[claims]]

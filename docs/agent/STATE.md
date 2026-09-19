@@ -10,7 +10,7 @@
 
 - 分支 `main`；画布架构/LibTV 基线 `3238af61` 和动作注册表 + 音频截取/变速 `0f20e8ac`
   已作为两个独立提交推送，当前与 `zhonggwv/main` 同步；来源、决策和验证可从对应台账追溯。
-- **工作区只剩 3 类未跟踪的受保护本地资料**：`.playwright-cli/` 浏览器运行日志、`_to_delete/`
+- **工作区除已完成、待独立提交的 `canvas-audio-split` 精确 claim 范围外，只剩 3 类未跟踪的受保护本地资料**：`.playwright-cli/` 浏览器运行日志、`_to_delete/`
   旧原型、`曹操.md` 原始故事样例。此前 49 条在途的 LOD、素材替换、入口恢复、本地路由与 Depth
   差异均已按工作线独立提交；这三类不因名称或“提交全部”的口头命令自动删除或公开。
   会话开始时 hook 注入的摘要是实时值，不能用条目总数反推某条业务线又新增了多少文件。
@@ -31,6 +31,7 @@
 | [freezone-entry-recovery](tasks/freezone-entry-recovery.md) | 项目画布入口恢复 | 待验收 | 30 项聚焦测试和生产构建通过；待跨项目、无效深链、首次个人画布浏览器验收 |
 | [liblib-canvas-parity](tasks/liblib-canvas-parity.md) | 画布架构与 LibTV 能力对齐 | 待验收 | 真实 UI、线上 chunk、我方架构与分阶段路线已固化；待产品确认 P0 顺序及 relay 真实出片验收 |
 | [canvas-audio-actions](tasks/canvas-audio-actions.md) | 动作注册表 + 音频截取/变速 | 已完成 | 本地 ffmpeg 端到端、23+7 项聚焦测试、生产构建与真实画布截取/2×/刷新验收均通过 |
+| [canvas-audio-split](tasks/canvas-audio-split.md) | 音频智能切分 / 自定义切分 | 已完成 | 17+10 项聚焦测试、构建、三语及真实画布智能/自定义/播放/刷新验收通过；待独立 DCO 提交并推送 |
 | [shot-breakdown](tasks/shot-breakdown.md) | 逐帧拉片三维度：分镜 / 动态 / 音乐 | 待验收 | 三层提交与干净快照通过；待真实视觉模型及有/无 demucs 两种音乐路径 |
 | [depth-motion-da3](tasks/depth-motion-da3.md) | 拉片动态维度：Depth Anything 3 深度视频 | 待验收 | 任务中心名称与 20 项聚焦回归已补齐；待 CUDA 真机 720p 硬切样片验收 |
 | [story-writer](tasks/story-writer.md) | 创作阶段（虾本）：写手 agent + 通用文档存储 + 前端路由 | 待验收 | 14 项后端契约测试与前端 build 已通过；待真实模型四阶段流程和导入链路验收 |
@@ -47,7 +48,7 @@
 | `Canvas.tsx`、`index.css`、`imageData.ts`、`useCanvasSync.ts` | LOD + LibTV 画布 | `origin/perf/canvas-pan-lod-culling` | LOD 来源审计完成前不再写这 4 个文件 |
 | `VideoNode.tsx`、`canvasNodes.ts`、`nodeRegistry.ts`、`NodeActionToolbar.tsx` 等 | LibTV + depth / 拉片接入 | `origin/feat/canvas-video-reshoot-breakdown` | 先做行为与测试的三方差异，不按文件新旧直接取舍 |
 | `freezone.py`、`tasks.py`、`schemas.py`、`jobs.py`、`runners/freezone.py` | shot + depth + LibTV | 远端重拍分支；部分还在 `origin/main` | 按 API schema → job → runner 串行集成，禁止并行写 |
-| 音频工具条、`canvasNodes.ts`、Freezone task 适配层 | canvas-audio-actions + 上述画布线 | 无音频重复实现；共享文件已有已提交功能 | 当前由 canvas-audio-actions 串行追加小块，禁止整文件覆盖 |
+| 音频工具条、动作注册表、Freezone 音频适配层 | canvas-audio-actions + canvas-audio-split + 上述画布线 | 无同类远端分支；共享文件已有已提交功能 | audio actions 提供单段任务合同，audio split 串行追加预览与扇出，禁止整文件覆盖 |
 | 三语 `translation.json` | LibTV 与其他前端改动 | `origin/main` + 远端重拍分支 | 合并键，不整文件覆盖；三语同时验证 |
 | `routeTree.gen.ts` | story-writer | `origin/main` | 先合并路由源文件，最后重新生成，不手工择一覆盖 |
 | `nanobanana_grid.py` | local-stack | `origin/main` | 已确认语义互补；同步时同时保留上游归档直拷与本地 multipart / 绕代理 |
