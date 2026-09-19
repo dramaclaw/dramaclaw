@@ -296,6 +296,29 @@ export async function submitFreezoneVideoUpscale(
   );
 }
 
+/** 逐帧拉片：把参考视频反编译成可复用的素材（首尾帧 / 镜头片段 / 参考音轨）。 */
+export async function submitFreezoneShotBreakdown(
+  project: string,
+  payload: {
+    videoUrl: string;
+    durationSec?: number;
+    /** 留空表示三个维度全做。 */
+    dimensions?: ("storyboard" | "cameraMoves" | "musicRef")[];
+  },
+): Promise<FreezoneJobRef> {
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/shot-breakdown`,
+    {
+      method: "POST",
+      json: {
+        video_url: payload.videoUrl,
+        ...(payload.durationSec ? { duration_sec: payload.durationSec } : {}),
+        ...(payload.dimensions ? { dimensions: payload.dimensions } : {}),
+      },
+    },
+  );
+}
+
 /** Depth Anything 3 project-local capture; model/runtime configuration is server-side. */
 export async function submitFreezoneDepthMotion(
   project: string,

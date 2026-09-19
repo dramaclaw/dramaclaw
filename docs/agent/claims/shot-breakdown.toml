@@ -97,6 +97,11 @@ mode = "exclusive"
 reason = "Breakdown task projections."
 
 [[claims]]
+path = "frontend/src/__tests__/session-expiry-streams.test.tsx"
+mode = "exclusive"
+reason = "Snapshot replay and non-terminal metadata delivery for streamed breakdown."
+
+[[claims]]
 path = "frontend/src/stores/canvasStore.ts"
 mode = "exclusive"
 reason = "Reset unrecoverable breakdown activity during canvas hydration."
@@ -155,3 +160,8 @@ reason = "Breakdown extends the audited placement-free task contract."
 path = "frontend/src/__tests__/features/canvas/shot-breakdown-nodes.test.ts"
 mode = "exclusive"
 reason = "Canvas output projection tests."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/shot-breakdown-lifecycle.test.ts"
+mode = "exclusive"
+reason = "Hydration reset and billing UI lifecycle contract tests."

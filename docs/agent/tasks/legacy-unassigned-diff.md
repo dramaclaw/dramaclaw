@@ -56,6 +56,17 @@
 
 ## 进展记录
 
+### 2026-09-18 · 会话流测试归入 shot-breakdown
+
+做了什么：将 `frontend/src/__tests__/session-expiry-streams.test.tsx` 从隔离区 claim 迁入
+`shot-breakdown`，没有移动或覆盖其他未归属文件。
+
+为什么这么改：该文件的未提交差异只验证拉片所需的 `snapshot=true` 回放；继续实现的
+`onProgress` 测试也直接覆盖同一任务监听契约，来源和调用链已经明确。
+
+怎么验证的：shot 前端暂存快照中该文件与相关测试合计 28 passed；`agent_guard check`
+在移交 claim 后重新执行。
+
 ### 2026-09-18 · 对未归属脏文件建立 fail-closed 隔离
 
 做了什么：把六条业务台账无法可靠解释的脏文件列入独立机器 scope，并将工作线状态设为「已阻塞」。

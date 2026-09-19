@@ -5221,7 +5221,9 @@
       "subtitleRemovalBox": "Box-select erase",
       "fullscreen": "Fullscreen",
       "notImplementedYet": "Coming soon",
-      "requiresVideo": "Upload a video first"
+      "requiresVideo": "Upload a video first",
+      "shotBreakdown": "Shot Breakdown",
+      "breakdownEmpty": "The breakdown produced no usable assets"
     },
     "audio": {
       "requiresAudio": "No audio to download yet",

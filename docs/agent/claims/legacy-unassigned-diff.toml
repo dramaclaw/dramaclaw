@@ -54,11 +54,6 @@ mode = "exclusive"
 reason = "Historical dirty test with no reliable workstream attribution."
 
 [[claims]]
-path = "frontend/src/__tests__/session-expiry-streams.test.tsx"
-mode = "exclusive"
-reason = "Historical dirty test with no reliable workstream attribution."
-
-[[claims]]
 path = "frontend/src/api/canvas.ts"
 mode = "exclusive"
 reason = "Historical dirty API client with no reliable workstream attribution."

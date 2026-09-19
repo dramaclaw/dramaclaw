@@ -5221,7 +5221,9 @@
       "subtitleRemovalBox": "Xoá theo vùng chọn",
       "fullscreen": "Toàn màn hình",
       "notImplementedYet": "Sắp có",
-      "requiresVideo": "Hãy tải video lên trước"
+      "requiresVideo": "Hãy tải video lên trước",
+      "shotBreakdown": "Phân tích cảnh quay",
+      "breakdownEmpty": "Phân tích không tạo ra tài nguyên nào dùng được"
     },
     "audio": {
       "requiresAudio": "Chưa có âm thanh nào để tải về",

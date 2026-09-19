@@ -115,11 +115,17 @@ import { useCanvasStore } from "@/stores/canvasStore";
 import {
   fetchFreezoneAudioSeparateResult,
   submitFreezoneAnalyzeVideoStory,
+  submitFreezoneShotBreakdown,
   submitFreezoneAudioSeparate,
   uploadFreezoneImage,
 } from "@/api/ops";
 import { openPresetProjectionInMyCanvas } from "@/features/freezone/openPresetProjection";
 import { awaitTaskCompletion, isTaskPollTimeoutError } from "@/api/tasks";
+import {
+  createShotBreakdownSink,
+  normalizeShotBreakdownGroups,
+  readStreamedGroups,
+} from "@/features/canvas/application/shotBreakdownNodes";
 import { notifyTaskStillRunning } from "@/features/canvas/application/errorDialog";
 import { normalizeVideoStoryRows } from "@/features/canvas/application/videoStoryNormalizer";
 import { readUrl } from "@/lib/url-params";
@@ -486,6 +492,21 @@ export const NodeActionToolbar = memo(
       (videoAnalyzeBillingRuleMissing
         ? t("common.billingRuleNotConfiguredShort")
         : null);
+    const shotBreakdownCreditCost = useGenerationCreditCost(
+      "feature",
+      isVideoNode(node) ? "freezone.video_analyze" : null,
+      {
+        surface: "canvas",
+        params: { operation: "video_breakdown" },
+      },
+    );
+    const shotBreakdownBillingRuleMissing =
+      shotBreakdownCreditCost.error instanceof BillingRuleNotConfiguredError;
+    const shotBreakdownCreditCostDisplay =
+      shotBreakdownCreditCost.data?.data.display ??
+      (shotBreakdownBillingRuleMissing
+        ? t("common.billingRuleNotConfiguredShort")
+        : null);
     const isImageEdit = isImageEditNode(node);
     // Plain (non-protected) group → eligible for ungroup. Captured up here as a
     // boolean + a plain id while `node` still has its full type: over-broad node
@@ -512,6 +533,7 @@ export const NodeActionToolbar = memo(
     const onNodesChange = useCanvasStore((state) => state.onNodesChange);
     const requestFocusNode = useCanvasStore((state) => state.requestFocusNode);
     const ungroupNode = useCanvasStore((state) => state.ungroupNode);
+    const groupNodes = useCanvasStore((state) => state.groupNodes);
     const arrangeGroupChildren = useCanvasStore(
       (state) => state.arrangeGroupChildren,
     );
@@ -1697,6 +1719,114 @@ export const NodeActionToolbar = memo(
                   }
                 };
 
+                const isBreakingDown = Boolean(videoData.isBreakingDown);
+
+                /**
+                 * 逐帧拉片：把这段视频反编译成可以直接再用的素材。
+                 *
+                 * 产物落成普通的图片/视频/音频节点（首尾帧、镜头片段、参考音轨），
+                 * 按维度编成三个组，从本节点各连一条边。不新增节点类型，所以下游
+                 * 任何生成节点都能直接连过去。
+                 */
+                const handleShotBreakdown = async () => {
+                  if (!hasVideo || !videoUrl || isBreakingDown) return;
+                  const projectId = readUrl().project;
+                  if (!projectId) {
+                    console.error("[shot-breakdown] no project in URL");
+                    return;
+                  }
+                  updateNodeData(node.id, {
+                    isBreakingDown: true,
+                    breakdownError: null,
+                  });
+                  try {
+                    const durationSec =
+                      typeof videoData.durationMs === "number" && videoData.durationMs > 0
+                        ? videoData.durationMs / 1000
+                        : undefined;
+                    const ref = await submitFreezoneShotBreakdown(projectId, {
+                      videoUrl,
+                      durationSec,
+                    });
+
+                    // 落位以**提交后第一次用到时**的 store 为准，不用闭包里的旧
+                    // 快照——拉片要跑一两分钟，用户很可能已经把节点拖走了。
+                    let sink: ReturnType<typeof createShotBreakdownSink> | null = null;
+                    const ensureSink = () => {
+                      if (sink) return sink;
+                      const latest = useCanvasStore
+                        .getState()
+                        .nodes.find((candidate) => candidate.id === node.id);
+                      sink = createShotBreakdownSink(
+                        {
+                          id: node.id,
+                          position: latest?.position ?? node.position,
+                          width: latest?.width ?? undefined,
+                        },
+                        {
+                          addNode,
+                          addEdge,
+                          groupNodes,
+                          targetExists: (targetId) =>
+                            useCanvasStore
+                              .getState()
+                              .nodes.some((candidate) => candidate.id === targetId),
+                        },
+                      );
+                      return sink;
+                    };
+
+                    const completed = await awaitTaskCompletion(
+                      ref.task_key,
+                      projectId,
+                      {
+                        taskType: ref.task_type,
+                        // 三个维度各自跑完各自落：分镜先到，动态其次，音乐最后。
+                        onProgress: (task) => {
+                          const partial = readStreamedGroups(task);
+                          if (partial.length > 0) ensureSink().accept(partial);
+                        },
+                      },
+                    );
+                    const groups = normalizeShotBreakdownGroups(completed.result);
+                    // 用户可能在几分钟的任务期间删掉源节点。这是明确的取消关注，
+                    // 不是“零产出”；不落孤儿素材，也不弹错误。
+                    if (
+                      !useCanvasStore
+                        .getState()
+                        .nodes.some((candidate) => candidate.id === node.id)
+                    ) {
+                      return;
+                    }
+                    // 补齐：流式没收到的（SSE 掉事件、或任务太快没来得及推）在这里落。
+                    // sink 按 key 去重，已经落过的不会再落一遍。
+                    const spawned = ensureSink().accept(groups);
+                    if (groups.length === 0 && spawned.nodeIds.length === 0) {
+                      throw new Error(t("nodeToolbar.video.breakdownEmpty"));
+                    }
+                    updateNodeData(node.id, {
+                      isBreakingDown: false,
+                      breakdownError: null,
+                    });
+                  } catch (error) {
+                    if (
+                      !useCanvasStore
+                        .getState()
+                        .nodes.some((candidate) => candidate.id === node.id)
+                    ) {
+                      return;
+                    }
+                    const message =
+                      error instanceof Error ? error.message : String(error);
+                    console.error("[shot-breakdown] failed", error);
+                    toast.error(message);
+                    updateNodeData(node.id, {
+                      isBreakingDown: false,
+                      breakdownError: message,
+                    });
+                  }
+                };
+
                 const handleVideoDownload = async () => {
                   if (!hasVideo || !videoUrl) {
                     return;
@@ -2077,6 +2207,43 @@ export const NodeActionToolbar = memo(
                         display={videoAnalyzeCreditCostDisplay}
                         promotion={videoAnalyzeCreditCost.data?.data.promotion}
                         disabled={!hasVideo || isAnalyzing || videoAnalyzeBillingRuleMissing}
+                      />
+                    </UiChipButton>
+                    <UiChipButton
+                      key="video-shot-breakdown"
+                      className={`${stubButtonClass} ${
+                        !hasVideo || isBreakingDown || shotBreakdownBillingRuleMissing
+                          ? "opacity-50 cursor-not-allowed"
+                          : ""
+                      }`}
+                      disabled={
+                        !hasVideo || isBreakingDown || shotBreakdownBillingRuleMissing
+                      }
+                      title={
+                        !hasVideo
+                          ? t("nodeToolbar.video.requiresVideo")
+                          : shotBreakdownBillingRuleMissing
+                            ? t("common.billingRuleNotConfiguredShort")
+                            : undefined
+                      }
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (!hasVideo || shotBreakdownBillingRuleMissing) return;
+                        void handleShotBreakdown();
+                      }}
+                    >
+                      {isBreakingDown ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Scissors className="h-3.5 w-3.5" />
+                      )}
+                      {t("nodeToolbar.video.shotBreakdown")}
+                      <CreditCostPill
+                        display={shotBreakdownCreditCostDisplay}
+                        promotion={shotBreakdownCreditCost.data?.data.promotion}
+                        disabled={
+                          !hasVideo || isBreakingDown || shotBreakdownBillingRuleMissing
+                        }
                       />
                     </UiChipButton>
                     <DropdownMenu

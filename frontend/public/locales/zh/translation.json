@@ -5221,7 +5221,9 @@
       "subtitleRemovalBox": "框选擦除",
       "fullscreen": "全屏播放",
       "notImplementedYet": "该功能暂未上线",
-      "requiresVideo": "请先上传视频"
+      "requiresVideo": "请先上传视频",
+      "shotBreakdown": "逐帧拉片",
+      "breakdownEmpty": "拉片没有产出可用素材"
     },
     "audio": {
       "requiresAudio": "请先准备音频",

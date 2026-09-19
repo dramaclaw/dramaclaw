@@ -131,6 +131,9 @@ export interface VideoNodeData extends NodeDisplayData {
   analysisResult?: string | null;
   analysisError?: string | null;
   isSeparatingAv?: boolean;
+  /** 逐帧拉片进行中。和 isAnalyzing 分开：两件事可以各跑各的。 */
+  isBreakingDown?: boolean;
+  breakdownError?: string | null;
   /** DA3-derived grayscale depth reference video; not an RGB generation result. */
   depthMotionRole?: 'depth_motion';
   depthManifestUrl?: string | null;
