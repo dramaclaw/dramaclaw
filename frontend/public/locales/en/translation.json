@@ -6368,6 +6368,45 @@
       "directorCaptureSizeFailed": "Could not read the director world capture dimensions",
       "directorElement": "Director element",
       "directorExportLabel": "Director world export"
+    },
+    "videoRemake": {
+      "nodeTitle": "Segment remake",
+      "title": "Segment remake",
+      "exit": "Exit remake",
+      "rangeCount": "{{selected}}/{{max}} selected",
+      "intentPlaceholder": "Describe how this segment should change",
+      "wholeHint": "Click the timeline to mark a segment to remake. With none marked the whole video is remade — leave the prompt empty to simply run it again.",
+      "selectHint": "Pick a segment to describe it, or click an empty stretch to mark another",
+      "remove": "Remove this segment",
+      "dragStart": "Drag to move the start",
+      "dragEnd": "Drag to move the end",
+      "framesLoading": "Extracting frames…",
+      "framesFailed": "Frame extraction failed (likely CORS); you can still mark segments",
+      "durationLimit": "Segment remake needs a source video of at least 4 seconds",
+      "submitBlocked": "These segments cannot be submitted yet — fix what the panel flags first",
+      "sourceToken": "this video",
+      "error": {
+        "sourceTooShort": "The source video is under {{min}}s, too short to remake",
+        "tooManyRanges": "At most {{max}} segments",
+        "outOfBounds": "A segment falls outside the video",
+        "rangeTooShort": "A segment cannot be shorter than {{min}}s",
+        "rangeTooLong": "A segment cannot be longer than {{max}}s",
+        "overlap": "Segments cannot overlap",
+        "gapTooShort": "What is left between segments is under {{min}}s and cannot stand on its own"
+      },
+      "modelUnsupported": "None of the available models support video editing, so remake and continuation are unavailable",
+      "clearAll": "Clear selected segments"
+    },
+    "videoContinuation": {
+      "nodeTitle": "Continuation",
+      "clipDisplayName": "Continuation prefix",
+      "selectSegment": "Pick the segment to continue from",
+      "selectedDuration": "{{seconds}}s",
+      "exit": "Exit continuation",
+      "confirm": "Confirm",
+      "hint": "Confirming cuts this segment as the premise, then generates what follows it",
+      "durationHint": "The segment must be between {{min}} and {{max}} seconds",
+      "bindingBroken": "The prefix clip changed or was deleted — pick the segment again"
     }
   },
   "viewer": {

@@ -6368,6 +6368,45 @@
       "directorCaptureSizeFailed": "无法解析导演世界截图尺寸",
       "directorElement": "导演元素",
       "directorExportLabel": "导演世界导出"
+    },
+    "videoRemake": {
+      "nodeTitle": "片段重拍",
+      "title": "片段重拍",
+      "exit": "退出重拍",
+      "rangeCount": "已选 {{selected}}/{{max}} 段",
+      "intentPlaceholder": "描述这段视频要如何修改",
+      "wholeHint": "在时间轴上点一下截取要重拍的片段；不选则整段重拍，提示词留空即原样重跑一次",
+      "selectHint": "点选一段写它要怎么改，或在空白处再截一段",
+      "remove": "删除这一段",
+      "dragStart": "拖动调整起点",
+      "dragEnd": "拖动调整终点",
+      "framesLoading": "正在抽帧…",
+      "framesFailed": "抽帧失败（可能是跨域限制），仍可正常框选",
+      "durationLimit": "当前仅支持时长不少于 4 秒的视频进行片段重拍",
+      "submitBlocked": "所选片段还不能提交，请先按面板里的提示调整",
+      "sourceToken": "这段视频",
+      "error": {
+        "sourceTooShort": "源视频不足 {{min}} 秒，无法片段重拍",
+        "tooManyRanges": "最多只能选 {{max}} 段",
+        "outOfBounds": "有片段超出了视频范围",
+        "rangeTooShort": "每段不能短于 {{min}} 秒",
+        "rangeTooLong": "每段不能长于 {{max}} 秒",
+        "overlap": "片段之间不能重叠",
+        "gapTooShort": "片段之间剩下的部分不足 {{min}} 秒，接不回去"
+      },
+      "modelUnsupported": "当前可用的模型都不支持「视频编辑」，无法进行片段重拍或智能续写",
+      "clearAll": "清空所选片段"
+    },
+    "videoContinuation": {
+      "nodeTitle": "智能续写",
+      "clipDisplayName": "续写前置片段",
+      "selectSegment": "请截取续写前置视频",
+      "selectedDuration": "{{seconds}} 秒",
+      "exit": "退出续写模式",
+      "confirm": "确认续写",
+      "hint": "确认后会先裁出这段作为前提，再生成它之后的内容",
+      "durationHint": "所选片段需在 {{min}}–{{max}} 秒之间",
+      "bindingBroken": "续写的前置片段已变更或被删除，请重新选择片段"
     }
   },
   "viewer": {

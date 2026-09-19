@@ -96,6 +96,17 @@ import {
   snapToAllowedAspectRatio,
 } from "@/features/canvas/application/imageData";
 import {
+  buildContinuationPrompt,
+  buildRemakePrompt,
+  initialContinuationRange,
+  isContinuationBindingValid,
+  isContinuationRangeSupported,
+  prepareRemakeRangesForSubmission,
+  validateRemakeRanges,
+  type ContinuationSelection,
+  type TimeRange,
+} from "@/features/canvas/application/videoRangePrompt";
+import {
   captureVideoFrameBlob,
   getLodStill,
   requestLodStill,
@@ -172,6 +183,8 @@ import {
   NodeSideActionRail,
 } from "@/features/canvas/ui/NodeSideActionRail";
 import { VideoClipPanel } from "@/features/canvas/nodes/VideoClipPanel";
+import { VideoContinuationPanel } from "@/features/canvas/nodes/VideoContinuationPanel";
+import { VideoRemakePanel } from "@/features/canvas/nodes/VideoRemakePanel";
 import {
   CAMERA_MOVEMENT_PRESETS,
   findCameraMovementPreset,
@@ -1081,6 +1094,30 @@ export const VideoNode = memo(
       typeof data.clipStartMs === "number" ? data.clipStartMs : null;
     const clipEndMs =
       typeof data.clipEndMs === "number" ? data.clipEndMs : null;
+
+    // 片段重拍：源视频与区间都存在节点数据里，重载画布后还在。
+    const isRemakeNode = Boolean(data.isRemakeNode);
+    const remakeSourceUrl =
+      typeof data.remakeSourceUrl === "string" ? data.remakeSourceUrl : "";
+    const remakeSourceDurationSec =
+      typeof data.remakeSourceDurationSec === "number" &&
+      Number.isFinite(data.remakeSourceDurationSec)
+        ? data.remakeSourceDurationSec
+        : 0;
+    const remakeRanges: TimeRange[] = Array.isArray(data.remakeRanges)
+      ? (data.remakeRanges as TimeRange[])
+      : [];
+
+    // 智能续写：源节点侧是「选前置片段」的状态，续写节点侧是那份绑定。
+    const continuationMode = Boolean(data.continuationMode);
+    const continuationRange: ContinuationSelection | null =
+      data.continuationRange &&
+      typeof data.continuationRange.startSec === "number" &&
+      typeof data.continuationRange.endSec === "number"
+        ? data.continuationRange
+        : null;
+    const isContinuationNode = Boolean(data.isContinuationNode);
+    const continuationBinding = data.continuationBinding ?? null;
     const durationMs =
       typeof data.durationMs === "number" ? data.durationMs : null;
 
@@ -1626,6 +1663,68 @@ export const VideoNode = memo(
       videoModelsLoading,
     ]);
 
+    /**
+     * 片段重拍 / 智能续写只能走「视频编辑」。
+     *
+     * 这两种节点的语义就是「拿这段视频再生成一条」，创建时也确实是 videoEdit。
+     * 但只要选中的模型没在目录里声明 video_edit，下面那条「上游有视频 → 全能参考」
+     * 的兜底就会把模式顶走，于是提交时走的是普通生成分支，用户圈的区间被**静默忽略**
+     * ——拿回一条看着像重新生成的视频，还付了一次钱。实测就是这么丢的。
+     *
+     * 所以这里替用户把模型也换成支持视频编辑的那一个（与 videoReferenceAutoSwitch
+     * 同一类救场逻辑）；一个都换不到就什么都不改，由提交前的守卫给出可读的拒绝理由，
+     * 而不是假装能重拍。
+     */
+    useEffect(() => {
+      if (!isRemakeNode && !isContinuationNode) return;
+      if (videoModelsLoading) return;
+      if (genMode === "videoEdit" && supportsVideoEdit) return;
+      // 光"支持视频编辑"还不够：各模型对**参考视频时长**的上限不一样（实测 Wan 3.0
+      // 是 15s，源片 15.093s 就被后端 400 拒了，而 seedance-2.5 收到 30s）。挑模型时
+      // 一并看时长，否则换了个能进 videoEdit、却装不下这条片子的模型，等于没救成。
+      const sourceSec = isRemakeNode
+        ? remakeSourceDurationSec
+        : continuationBinding
+          ? continuationBinding.range.endSec - continuationBinding.range.startSec
+          : 0;
+      const fitsSource = (model: typeof selectedVideoModel): boolean => {
+        if (!sourceSec) return true;
+        const limits = referenceDurationLimitsMs(model, "video");
+        const ms = sourceSec * 1000;
+        if (limits.maxMs != null && ms > limits.maxMs + 1) return false;
+        if (limits.minMs != null && ms < limits.minMs - 1) return false;
+        return true;
+      };
+      if (supportsVideoEdit && fitsSource(selectedVideoModel)) {
+        updateNodeData(id, { genMode: "videoEdit" });
+        return;
+      }
+      const usable = availableVideoModels.filter((model) =>
+        isVideoModeSupportedByModel("videoEdit", model),
+      );
+      // 优先挑**明确声明了参考视频上限、且这条片子放得下**的模型：没声明上限的模型
+      // 只是"我们不知道它收不收"，不该排在"我们知道它收得下"的前面。
+      const declaresFit = usable.find((model) => {
+        const limits = referenceDurationLimitsMs(model, "video");
+        return limits.maxMs != null && fitsSource(model);
+      });
+      const capable = declaresFit ?? usable.find(fitsSource) ?? usable[0];
+      if (!capable) return;
+      updateNodeData(id, { model: capable.id, genMode: "videoEdit" });
+    }, [
+      availableVideoModels,
+      continuationBinding,
+      genMode,
+      id,
+      isContinuationNode,
+      isRemakeNode,
+      remakeSourceDurationSec,
+      selectedVideoModel,
+      supportsVideoEdit,
+      updateNodeData,
+      videoModelsLoading,
+    ]);
+
     // 上游接入视频素材时，「全能参考」和目录声明的「视频编辑」都能消费；其它模式
     // 会把视频丢弃。已经处于合法 videoEdit 时不要再强制改成 allReference。
     // 与音频的「0→≥1 transition」不同，这里每次都纠正，确保视频在场期间无法切走。
@@ -1919,6 +2018,111 @@ export const VideoNode = memo(
       ],
     );
 
+    /**
+     * 确认续写前置片段。
+     *
+     * 续写要的是一段真的裁出来的视频，所以这里复用剪辑那条管线把选区裁成一个
+     * 独立的视频节点，再从它连出一个续写节点。裁出来的片段**留在画布上可见**，
+     * 而不是藏进续写节点的字段里：续写效果不对时，第一件要检查的就是「前提这段
+     * 裁对了没有」，藏起来就查不了。
+     */
+    const handleContinuationConfirm = useCallback(
+      async (selection: ContinuationSelection) => {
+        if (isComposingClip) return;
+        const sourceUrl = data.videoUrl;
+        if (!sourceUrl) return;
+        if (!isContinuationRangeSupported(selection)) return;
+        const projectId = readUrl().project;
+        if (!projectId) {
+          console.error("[video-node] continuation: no project in URL");
+          return;
+        }
+        const composeResolution = quality.toLowerCase() === "1080p" ? "1080p" : "720p";
+        setIsComposingClip(true);
+        setClipError(null);
+        try {
+          const ref = await submitFreezoneVideoCompose(projectId, {
+            resolution: composeResolution,
+            tracks: [
+              {
+                trackId: `track_${id}_continuation`,
+                kind: "video",
+                items: [
+                  {
+                    itemId: `item_${id}_${Date.now()}`,
+                    sourceUrl,
+                    timelineStart: 0,
+                    sourceStart: selection.startSec,
+                    sourceEnd: selection.endSec,
+                  },
+                ],
+              },
+            ],
+          });
+          await awaitTaskCompletion(ref.task_key, projectId, {
+            taskType: ref.task_type,
+          });
+          const result = await fetchFreezoneJobResult(
+            projectId,
+            "freezone_video_compose",
+            ref.job_id,
+          );
+          if (!result.url) {
+            console.warn("[video-node] continuation compose without url", result);
+            setClipError(t("node.videoNode.clip.noUrl"));
+            return;
+          }
+          const state = useCanvasStore.getState();
+          const clipNodeId = addNode(
+            CANVAS_NODE_TYPES.video,
+            state.findNodePosition(id, DEFAULT_WIDTH, DEFAULT_HEIGHT),
+            {
+              videoUrl: result.url,
+              durationMs: Math.round((selection.endSec - selection.startSec) * 1000),
+              displayName: t("node.videoContinuation.clipDisplayName"),
+            },
+          );
+          addEdge(id, clipNodeId);
+
+          const continuationNodeId = addNode(
+            CANVAS_NODE_TYPES.video,
+            useCanvasStore
+              .getState()
+              .findNodePosition(clipNodeId, DEFAULT_WIDTH, DEFAULT_HEIGHT),
+            {
+              videoUrl: null,
+              genMode: "videoEdit",
+              displayName: t("node.videoContinuation.nodeTitle"),
+              isContinuationNode: true,
+              isGenerating: false,
+            } as unknown as Parameters<typeof addNode>[2],
+          );
+          const bindingEdgeId = addEdge(clipNodeId, continuationNodeId);
+          // 绑定认的是**那条边**：边还在、片段还是这条地址，续写才成立。
+          // 拿不到边 id 就不写绑定——写一个认不出来的绑定比不写更糟。
+          if (bindingEdgeId) {
+            updateNodeData(continuationNodeId, {
+              continuationBinding: {
+                sourceNodeId: clipNodeId,
+                sourceEdgeId: bindingEdgeId,
+                range: selection,
+                sourceVideoUrl: result.url,
+              },
+            });
+          }
+          updateNodeData(id, { continuationMode: false, continuationRange: null });
+          // 同上：裁出来的片段和续写节点都可能落在视口外，镜头得跟过去。
+          useCanvasStore.getState().requestFocusNode(continuationNodeId);
+        } catch (error) {
+          console.error("[video-node] continuation compose failed", error);
+          setClipError(error instanceof Error ? error.message : String(error));
+        } finally {
+          setIsComposingClip(false);
+        }
+      },
+      [addEdge, addNode, data.videoUrl, id, isComposingClip, quality, t, updateNodeData],
+    );
+
     const handleEraseSubmit = useCallback(async () => {
       if (isErasing) return;
       if (!data.videoUrl) return;
@@ -2139,6 +2343,15 @@ export const VideoNode = memo(
 
     const handleSubmit = useCallback(async () => {
       if (submitDisabled) return;
+      // 重拍/续写节点落到非 videoEdit 模式，说明没有模型支持视频编辑。继续提交等于
+      // 把区间和续写前提都丢掉，宁可在这里停住并说清楚。
+      if ((isRemakeNode || isContinuationNode) && genMode !== "videoEdit") {
+        void showErrorDialog(
+          t("node.videoRemake.modelUnsupported"),
+          t("common.error"),
+        );
+        return;
+      }
       // 在途守卫（与 ImageGenNode 一致）：第 1 条完成就会清 isGenerating，
       // submitDisabled 拦不住「旧批次 N-1 个任务还在跑时重新提交」——旧闭包
       // 会用过期的 completedUrls 覆写新批次的 generationBatch。
@@ -2436,12 +2649,104 @@ export const VideoNode = memo(
             .filter((item) => item.url.length > 0)
             .slice(0, audioLimit);
           if (!(await validateReferenceDurations("audio", audioRefs))) return;
+          // 源视频也要过一遍时长校验。之前只校验音频，源片超出模型的参考视频上限时，
+          // 用户看到的是后端那句 `video reference duration must be <= 15s`——既不知道
+          // 是哪条素材，也不知道该怎么办。
+          const sourceVideoNode = upstream.find(
+            (candidate) => (referenceVideoUrl(candidate) ?? "") === videoUrl,
+          );
+          if (
+            !(await validateReferenceDurations("video", [
+              {
+                url: videoUrl,
+                label:
+                  (typeof sourceVideoNode?.data.displayName === "string"
+                    ? sourceVideoNode.data.displayName
+                    : "") || t("node.videoNode.videoEdit.sourceFallbackLabel"),
+                durationMs:
+                  sourceVideoNode && typeof sourceVideoNode.data.durationMs === "number"
+                    ? sourceVideoNode.data.durationMs
+                    : null,
+              },
+            ]))
+          ) {
+            return;
+          }
+          // 片段重拍：把圈出的区间展开成模型读得懂的一段话，排在用户自己写的提示词
+          // 前面。区间不合法就**不提交**——生成要花钱，拿回一个没按预期改的视频比
+          // 直接说「这几段不行」糟糕得多。
+          let remakePrompt: string | null = null;
+          if (isRemakeNode && remakeRanges.length > 0) {
+            const rangeInput = {
+              ranges: remakeRanges,
+              sourceDurationSec: remakeSourceDurationSec,
+            };
+            const prepared = prepareRemakeRangesForSubmission(rangeInput);
+            if (
+              !validateRemakeRanges(rangeInput).ok ||
+              prepared.failedRangeIds.length > 0
+            ) {
+              void showErrorDialog(
+                t("node.videoRemake.submitBlocked"),
+                t("common.error"),
+              );
+              updateNodeData(id, {
+                isGenerating: false,
+                generationStartedAt: null,
+              });
+              return;
+            }
+            const expanded = buildRemakePrompt({
+              ranges: prepared.ranges,
+              mediaToken: t("node.videoRemake.sourceToken"),
+            });
+            remakePrompt = [expanded, composedPrompt]
+              .filter((part) => part.trim().length > 0)
+              .join("\n");
+          }
+          // 智能续写：绑定必须还成立才提交。前置片段被删、连线被断、那段被换成
+          // 别的视频之后，"续写"的前提就不在了，这时候提交只会得到一个和续写无关
+          // 的结果，用户还要为它付一次钱。
+          let continuationPrompt: string | null = null;
+          if (isContinuationNode) {
+            const state = useCanvasStore.getState();
+            const sourceNode = continuationBinding
+              ? state.nodes.find((item) => item.id === continuationBinding.sourceNodeId)
+              : undefined;
+            const sourceVideoUrl =
+              sourceNode && typeof sourceNode.data.videoUrl === "string"
+                ? sourceNode.data.videoUrl
+                : null;
+            const bindingOk =
+              continuationBinding != null &&
+              isContinuationBindingValid({
+                binding: continuationBinding,
+                targetNodeId: id,
+                edges: state.edges,
+                currentSourceVideoUrl: sourceVideoUrl,
+              });
+            if (!bindingOk) {
+              void showErrorDialog(
+                t("node.videoContinuation.bindingBroken"),
+                t("common.error"),
+              );
+              updateNodeData(id, {
+                isGenerating: false,
+                generationStartedAt: null,
+              });
+              return;
+            }
+            continuationPrompt = buildContinuationPrompt({
+              mediaToken: t("node.videoRemake.sourceToken"),
+              intent: composedPrompt,
+            });
+          }
           doSubmit = (targetId) =>
             submitFreezoneVideoEdit(projectId, {
               videoUrl,
               imageUrls,
               audioUrls: audioRefs.map((item) => item.url),
-              prompt: composedPrompt,
+              prompt: remakePrompt ?? continuationPrompt ?? composedPrompt,
               cameraTemplateId,
               resolution: qualityToResolution(quality),
               audioSetting: "auto",
@@ -2858,6 +3163,7 @@ export const VideoNode = memo(
       !isBoxSelecting &&
       !albumExpanded &&
       !isClipMode &&
+      !continuationMode &&
       !subtitleEraseMode &&
       !showDepthPanel &&
       !data.referenceOnly &&
@@ -3486,6 +3792,70 @@ export const VideoNode = memo(
             )}
           </div>
         )}
+
+        {continuationMode &&
+          selected &&
+          videoSource &&
+          !isClipMode &&
+          !subtitleEraseMode &&
+          (durationMs ?? 0) > 0 && (
+            // 放节点**下方**，和剪辑面板同一个槽位。曾经放在上方，结果和节点工具条
+            // 抢同一条带——工具条是 React Flow 的独立浮层，永远压在上面，选区条点不到。
+            <div
+              className="absolute left-0 right-0 z-[60] flex flex-col gap-1"
+              style={{ top: `calc(100% + ${OPERATIONS_PANEL_GAP}px)` }}
+            >
+              <VideoContinuationPanel
+                sourceUrl={videoSource}
+                sourceDurationSec={(durationMs ?? 0) / 1000}
+                range={
+                  continuationRange ??
+                  initialContinuationRange((durationMs ?? 0) / 1000) ?? {
+                    startSec: 0,
+                    endSec: 0,
+                  }
+                }
+                isSubmitting={isComposingClip}
+                onChange={(next) => updateNodeData(id, { continuationRange: next })}
+                onExit={() =>
+                  updateNodeData(id, {
+                    continuationMode: false,
+                    continuationRange: null,
+                  })
+                }
+                onConfirm={(next) => {
+                  void handleContinuationConfirm(next);
+                }}
+              />
+              {clipError && (
+                <div className="rounded-md bg-red-500/15 px-3 py-1.5 text-[11px] text-red-300 break-words [overflow-wrap:anywhere]">
+                  {t("node.videoNode.clip.failed", { detail: clipError })}
+                </div>
+              )}
+            </div>
+          )}
+
+        {isRemakeNode &&
+          selected &&
+          !isClipMode &&
+          !subtitleEraseMode &&
+          remakeSourceUrl.length > 0 &&
+          remakeSourceDurationSec > 0 && (
+            // 直接铺在节点本体上。重拍节点自己没有视频，本体本来就是一块空占位，
+            // 把源视频的胶片条放进去，节点一眼就能看出"这条是在重拍哪段"。
+            // 上方是 React Flow 的节点工具条（独立浮层，压在一切之上），下方是生成
+            // 面板，两边都放不下——中间这块空地才是它该在的位置。
+            <div className="absolute inset-0 z-[60]">
+              <VideoRemakePanel
+                sourceUrl={remakeSourceUrl}
+                sourceDurationSec={remakeSourceDurationSec}
+                ranges={remakeRanges}
+                isSubmitting={isGenerating}
+                onChange={(next) => updateNodeData(id, { remakeRanges: next })}
+                onClear={() => updateNodeData(id, { remakeRanges: [] })}
+              />
+            </div>
+          )}
 
         {showVideoOpsPanel && (
           <VideoOperationsPanel

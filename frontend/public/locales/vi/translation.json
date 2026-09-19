@@ -6368,6 +6368,45 @@
       "directorCaptureSizeFailed": "Không đọc được kích thước ảnh chụp thế giới đạo diễn",
       "directorElement": "Phần tử đạo diễn",
       "directorExportLabel": "Xuất thế giới đạo diễn"
+    },
+    "videoRemake": {
+      "nodeTitle": "Quay lại đoạn",
+      "title": "Quay lại đoạn",
+      "exit": "Thoát chế độ quay lại",
+      "rangeCount": "Đã chọn {{selected}}/{{max}} đoạn",
+      "intentPlaceholder": "Mô tả đoạn này cần thay đổi thế nào",
+      "wholeHint": "Nhấp vào dòng thời gian để chọn đoạn cần quay lại. Không chọn đoạn nào nghĩa là quay lại toàn bộ — để trống lời nhắc là chạy lại nguyên trạng.",
+      "selectHint": "Chọn một đoạn để mô tả, hoặc nhấp vào khoảng trống để thêm đoạn nữa",
+      "remove": "Xoá đoạn này",
+      "dragStart": "Kéo để chỉnh điểm đầu",
+      "dragEnd": "Kéo để chỉnh điểm cuối",
+      "framesLoading": "Đang trích khung hình…",
+      "framesFailed": "Trích khung hình thất bại (có thể do CORS); bạn vẫn chọn đoạn được",
+      "durationLimit": "Chỉ hỗ trợ video dài từ 4 giây trở lên",
+      "submitBlocked": "Các đoạn này chưa gửi được — hãy sửa theo cảnh báo trong bảng",
+      "sourceToken": "video này",
+      "error": {
+        "sourceTooShort": "Video nguồn ngắn hơn {{min}} giây, không quay lại được",
+        "tooManyRanges": "Tối đa {{max}} đoạn",
+        "outOfBounds": "Có đoạn nằm ngoài phạm vi video",
+        "rangeTooShort": "Mỗi đoạn không được ngắn hơn {{min}} giây",
+        "rangeTooLong": "Mỗi đoạn không được dài hơn {{max}} giây",
+        "overlap": "Các đoạn không được chồng nhau",
+        "gapTooShort": "Phần còn lại giữa các đoạn dưới {{min}} giây, không nối lại được"
+      },
+      "modelUnsupported": "Không mô hình khả dụng nào hỗ trợ chỉnh sửa video, nên không thể quay lại đoạn hoặc viết tiếp",
+      "clearAll": "Xoá các đoạn đã chọn"
+    },
+    "videoContinuation": {
+      "nodeTitle": "Viết tiếp",
+      "clipDisplayName": "Đoạn mở đầu",
+      "selectSegment": "Chọn đoạn để viết tiếp",
+      "selectedDuration": "{{seconds}} giây",
+      "exit": "Thoát chế độ viết tiếp",
+      "confirm": "Xác nhận",
+      "hint": "Xác nhận sẽ cắt đoạn này làm tiền đề, rồi tạo phần tiếp theo",
+      "durationHint": "Đoạn đã chọn phải từ {{min}} đến {{max}} giây",
+      "bindingBroken": "Đoạn mở đầu đã thay đổi hoặc bị xoá — hãy chọn lại"
     }
   },
   "viewer": {

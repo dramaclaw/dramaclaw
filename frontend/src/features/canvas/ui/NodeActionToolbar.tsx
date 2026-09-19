@@ -127,6 +127,7 @@ import {
   readStreamedGroups,
 } from "@/features/canvas/application/shotBreakdownNodes";
 import { notifyTaskStillRunning } from "@/features/canvas/application/errorDialog";
+import { isRemakeSourceDurationSupported } from "@/features/canvas/application/videoRangePrompt";
 import { normalizeVideoStoryRows } from "@/features/canvas/application/videoStoryNormalizer";
 import { readUrl } from "@/lib/url-params";
 import { sanitizeStoryboardText } from "@/features/canvas/application/storyboardText";
@@ -164,12 +165,13 @@ const toolIconMap: Record<ToolIconKey, typeof Crop> = {
   split: Scissors,
 };
 
-const TOOLBAR_BUTTON_RADIUS_CLASS = "rounded-[12px]";
+// 8px 圆角、32px 高、13px 字：全部取自 LibTV 视频节点工具条的实测计算样式。
+const TOOLBAR_BUTTON_RADIUS_CLASS = "!rounded-[8px]";
 // 扁平菜单项：去掉独立边框与胶囊背景，融入工具栏整条；仅靠 hover 高亮区分。
 const TOOLBAR_NEUTRAL_BUTTON_CLASS =
   "!border-transparent !bg-transparent text-text-dark hover:!bg-[rgba(255,255,255,0.075)] focus:!border-transparent focus:!bg-transparent focus:!shadow-none focus-visible:!outline-none focus-visible:!ring-0 data-[state=open]:!border-transparent data-[state=open]:!shadow-none";
 const TOOLBAR_TEXT_BUTTON_CLASS =
-  `h-9 ${TOOLBAR_BUTTON_RADIUS_CLASS} px-3 text-sm ${TOOLBAR_NEUTRAL_BUTTON_CLASS}`;
+  `!h-8 ${TOOLBAR_BUTTON_RADIUS_CLASS} px-3 text-[13px] font-normal ${TOOLBAR_NEUTRAL_BUTTON_CLASS}`;
 const TOOLBAR_MENU_CONTENT_CLASS =
   "z-[120] border-white/10 bg-[#242426]/50 text-text-dark shadow-none backdrop-blur-3xl";
 const TOOLBAR_MENU_ITEM_CLASS =
@@ -1127,7 +1129,7 @@ export const NodeActionToolbar = memo(
           <ZoomScaledToolbar origin="bottom center" mode="counter" counterMax={1}>
           {/* 节点激活时，顶部菜单从节点上沿淡入+轻微上滑浮现（而非生硬地直接出现），
               与下方操作区的入场动画呼应。motion-reduce 下退化为无动画。 */}
-          <UiPanel className="flex animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2 items-center gap-1.5 rounded-[18px] !border-white/10 !bg-[#242426]/95 px-2 py-1.5 text-sm shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-2xl duration-200 ease-out motion-reduce:animate-none [&_svg]:h-4 [&_svg]:w-4">
+          <UiPanel className="flex max-w-[calc(100vw-32px)] flex-nowrap overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0 [&_button]:whitespace-nowrap animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2 items-center gap-1 !rounded-[12px] !border-[0.5px] !border-[#363636] !bg-[#262626] p-1 text-[13px] shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-[16px] duration-200 ease-out motion-reduce:animate-none [&_svg]:h-4 [&_svg]:w-4">
             {/* Mainline lock indicator — shown as a leading pill when the
                 node is preset-managed (or canvas-level fallback applies).
                 The chips below remain visible for spawn-style edits; the
@@ -1897,6 +1899,93 @@ export const NodeActionToolbar = memo(
                   setSelectedNode(upscaleNodeId);
                 };
 
+                /**
+                 * 这条素材还挂在 LibTV 远端吗？
+                 *
+                 * 后端的视频端点只接受**同源静态路径**（`/static/...`），LibTV 导入
+                 * 但没本地化的节点 videoUrl 还是 `https://libtv-res...` 的绝对地址，
+                 * 任何服务端操作都会被 400 掉（`url must be a same-origin path`）。
+                 * 之前的表现是：点了像没反应，只在角落闪一条看不懂的报错。所以把它
+                 * 提到入口来——按钮置灰，并直接说要先「一键本地化」。
+                 */
+                const videoIsRemote = hasVideo && !videoUrl!.startsWith("/");
+                const remoteBlockedTitle = videoIsRemote
+                  ? t("nodeToolbar.video.remoteMediaBlocked")
+                  : null;
+                const serverOpBlocked = !hasVideo || videoIsRemote;
+                const serverOpTitle = (base?: string) =>
+                  !hasVideo
+                    ? t("nodeToolbar.video.requiresVideo")
+                    : (remoteBlockedTitle ?? base);
+
+                const remakeSourceDurationSec =
+                  typeof videoData.durationMs === "number" && videoData.durationMs > 0
+                    ? videoData.durationMs / 1000
+                    : 0;
+                const canSegmentRemake =
+                  !serverOpBlocked && isRemakeSourceDurationSupported(remakeSourceDurationSec);
+
+                /**
+                 * 片段重拍：在下游派生一个「重拍」节点，源视频靠连线带过去。
+                 *
+                 * 不在源节点上就地改：重拍产出的是一条新视频，覆盖掉用户手里这条
+                 * 没道理，而且派生出来之后两条可以并排比。生成本身仍走视频编辑
+                 * （videoEdit）那条路，这里只负责把节点摆好、连好。
+                 */
+                const handleSegmentRemake = () => {
+                  if (!canSegmentRemake || !videoUrl) return;
+                  const position = findNodePosition(node.id, 580, 380);
+                  const remakeNodeId = addNode(
+                    CANVAS_NODE_TYPES.video,
+                    position,
+                    {
+                      displayName: t("node.videoRemake.nodeTitle"),
+                      videoUrl: null,
+                      previewImageUrl:
+                        typeof videoData.previewImageUrl === "string"
+                          ? videoData.previewImageUrl
+                          : null,
+                      aspectRatio:
+                        typeof videoData.aspectRatio === "string"
+                          ? videoData.aspectRatio
+                          : "16:9",
+                      genMode: "videoEdit",
+                      isRemakeNode: true,
+                      remakeSourceUrl: videoUrl,
+                      remakeSourceDurationSec,
+                      remakeRanges: [],
+                      isGenerating: false,
+                    } as unknown as Parameters<typeof addNode>[2],
+                  );
+                  addEdge(node.id, remakeNodeId);
+                  onNodesChange([
+                    { id: node.id, type: "select", selected: false },
+                    { id: remakeNodeId, type: "select", selected: true },
+                  ]);
+                  setSelectedNode(remakeNodeId);
+                  // 落位是找空地，找到的空地可能在视口外好几百像素——不把镜头带过去，
+                  // 用户看到的就是「点了没反应」。实测新节点落到了源节点左边 658px。
+                  useCanvasStore.getState().requestFocusNode(remakeNodeId);
+                };
+
+                /**
+                 * 智能续写：在源节点上开「选前置片段」模式。
+                 *
+                 * 入口只负责开模式，裁片和建节点都在 VideoNode 里做——裁片要等任务
+                 * 跑完，工具栏不是待在那儿等结果的地方。门槛与重拍同源（≥4 秒），
+                 * 续写模型本身还会限定选区 4–30 秒。
+                 */
+                const handleVideoContinuation = () => {
+                  if (!canSegmentRemake) return;
+                  updateNodeData(node.id, {
+                    continuationMode: true,
+                    continuationRange: null,
+                    isClipMode: false,
+                    subtitleEraseMode: null,
+                  });
+                  setSelectedNode(node.id);
+                };
+
                 const isSeparatingAv = Boolean(videoData.isSeparatingAv);
 
                 const handleAudioSeparate = async () => {
@@ -2142,35 +2231,20 @@ export const NodeActionToolbar = memo(
 
                 return (
                   <>
-                    <UiChipButton
-                      key="video-clip"
-                      className={`${stubButtonClass} ${!hasVideo ? "opacity-50 cursor-not-allowed" : ""}`}
-                      title={
-                        !hasVideo
-                          ? t("nodeToolbar.video.requiresVideo")
-                          : undefined
-                      }
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        if (!hasVideo) return;
-                        updateNodeData(node.id, {
-                          isClipMode: !videoData.isClipMode,
-                        });
-                      }}
-                    >
-                      <Scissors className="h-3.5 w-3.5" />
-                      {t("nodeToolbar.video.clip")}
-                    </UiChipButton>
+                    {/*
+                      顺序照 LibTV 的视频节点工具条实测：高清 | 片段重拍 | 逐帧拉片 |
+                      智能去字幕 | 音视频分离（他们还有主体消除、创意片头，我们没有）。
+                      片段重拍在他们那儿是**平铺的第二个按钮**，不是藏在下拉里，所以这里
+                      也平铺；智能续写他们放在生成流程里而非工具条，我们暂时挨着重拍放，
+                      免得再多一层菜单。剪辑 / 解析 / 下载 / 全屏是我们多出来的，排在后面。
+                    */}
                     <UiChipButton
                       key="video-hd"
-                      className={`${stubButtonClass} ${!hasVideo ? "opacity-50 cursor-not-allowed" : ""}`}
-                      title={
-                        !hasVideo
-                          ? t("nodeToolbar.video.requiresVideo")
-                          : undefined
-                      }
+                      className={`${stubButtonClass} ${serverOpBlocked ? "opacity-50 cursor-not-allowed" : ""}`}
+                      title={serverOpTitle()}
                       onClick={(event) => {
                         event.stopPropagation();
+                        if (serverOpBlocked) return;
                         handleVideoUpscale();
                       }}
                     >
@@ -2178,57 +2252,55 @@ export const NodeActionToolbar = memo(
                       {t("nodeToolbar.video.hd")}
                     </UiChipButton>
                     <UiChipButton
-                      key="video-analyze"
+                      key="video-segment-remake"
                       className={`${stubButtonClass} ${
-                        !hasVideo || videoAnalyzeBillingRuleMissing
-                          ? "opacity-50 cursor-not-allowed"
-                          : ""
+                        !canSegmentRemake ? "opacity-50 cursor-not-allowed" : ""
                       }`}
-                      title={
-                        !hasVideo
-                          ? t("nodeToolbar.video.requiresVideo")
-                          : videoAnalyzeBillingRuleMissing
-                            ? t("common.billingRuleNotConfiguredShort")
-                          : undefined
-                      }
+                      title={serverOpTitle(
+                        !canSegmentRemake ? t("node.videoRemake.durationLimit") : undefined,
+                      )}
                       onClick={(event) => {
                         event.stopPropagation();
-                        if (videoAnalyzeBillingRuleMissing) return;
-                        void handleVideoAnalyze();
+                        handleSegmentRemake();
                       }}
                     >
-                      {isAnalyzing ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Wand2 className="h-3.5 w-3.5" />
+                      <Film className="h-3.5 w-3.5" />
+                      {t("nodeToolbar.video.segmentRemake")}
+                    </UiChipButton>
+                    <UiChipButton
+                      key="video-continuation"
+                      className={`${stubButtonClass} ${
+                        !canSegmentRemake ? "opacity-50 cursor-not-allowed" : ""
+                      }`}
+                      title={serverOpTitle(
+                        !canSegmentRemake ? t("node.videoRemake.durationLimit") : undefined,
                       )}
-                      {t("nodeToolbar.video.analyze")}
-                      <CreditCostPill
-                        display={videoAnalyzeCreditCostDisplay}
-                        promotion={videoAnalyzeCreditCost.data?.data.promotion}
-                        disabled={!hasVideo || isAnalyzing || videoAnalyzeBillingRuleMissing}
-                      />
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleVideoContinuation();
+                      }}
+                    >
+                      <FastForward className="h-3.5 w-3.5" />
+                      {t("nodeToolbar.video.continuation")}
                     </UiChipButton>
                     <UiChipButton
                       key="video-shot-breakdown"
                       className={`${stubButtonClass} ${
-                        !hasVideo || isBreakingDown || shotBreakdownBillingRuleMissing
+                        serverOpBlocked || isBreakingDown || shotBreakdownBillingRuleMissing
                           ? "opacity-50 cursor-not-allowed"
                           : ""
                       }`}
                       disabled={
-                        !hasVideo || isBreakingDown || shotBreakdownBillingRuleMissing
+                        serverOpBlocked || isBreakingDown || shotBreakdownBillingRuleMissing
                       }
-                      title={
-                        !hasVideo
-                          ? t("nodeToolbar.video.requiresVideo")
-                          : shotBreakdownBillingRuleMissing
-                            ? t("common.billingRuleNotConfiguredShort")
-                            : undefined
-                      }
+                      title={serverOpTitle(
+                        shotBreakdownBillingRuleMissing
+                          ? t("common.billingRuleNotConfiguredShort")
+                          : undefined,
+                      )}
                       onClick={(event) => {
                         event.stopPropagation();
-                        if (!hasVideo || shotBreakdownBillingRuleMissing) return;
+                        if (serverOpBlocked || shotBreakdownBillingRuleMissing) return;
                         void handleShotBreakdown();
                       }}
                     >
@@ -2242,7 +2314,7 @@ export const NodeActionToolbar = memo(
                         display={shotBreakdownCreditCostDisplay}
                         promotion={shotBreakdownCreditCost.data?.data.promotion}
                         disabled={
-                          !hasVideo || isBreakingDown || shotBreakdownBillingRuleMissing
+                          serverOpBlocked || isBreakingDown || shotBreakdownBillingRuleMissing
                         }
                       />
                     </UiChipButton>
@@ -2254,8 +2326,10 @@ export const NodeActionToolbar = memo(
                       <DropdownMenuTrigger asChild>
                         <UiChipButton
                           key="video-subtitle-removal"
-                          className={stubButtonClass}
-                          title={t("nodeToolbar.video.subtitleRemovalTip")}
+                          className={`${stubButtonClass} ${
+                            serverOpBlocked ? "opacity-50 cursor-not-allowed" : ""
+                          }`}
+                          title={serverOpTitle(t("nodeToolbar.video.subtitleRemovalTip"))}
                           onClick={(event) => event.stopPropagation()}
                         >
                           <Eraser className="h-3.5 w-3.5" />
@@ -2272,7 +2346,7 @@ export const NodeActionToolbar = memo(
                         <DropdownMenuItem
                           className={TOOLBAR_MENU_ITEM_CLASS}
                           onSelect={() => {
-                            if (!hasVideo) {
+                            if (serverOpBlocked) {
                               handleVideoStub("subtitle-smart-erase");
                               return;
                             }
@@ -2290,7 +2364,7 @@ export const NodeActionToolbar = memo(
                         <DropdownMenuItem
                           className={TOOLBAR_MENU_ITEM_CLASS}
                           onSelect={() => {
-                            if (!hasVideo) {
+                            if (serverOpBlocked) {
                               handleVideoStub("subtitle-box-erase");
                               return;
                             }
@@ -2310,17 +2384,14 @@ export const NodeActionToolbar = memo(
                     <UiChipButton
                       key="video-separate-av"
                       className={`${stubButtonClass} ${
-                        !hasVideo || isSeparatingAv
+                        serverOpBlocked || isSeparatingAv
                           ? "opacity-50 cursor-not-allowed"
                           : ""
                       }`}
-                      title={
-                        !hasVideo
-                          ? t("nodeToolbar.video.requiresVideo")
-                          : undefined
-                      }
+                      title={serverOpTitle()}
                       onClick={(event) => {
                         event.stopPropagation();
+                        if (serverOpBlocked) return;
                         void handleAudioSeparate();
                       }}
                     >
@@ -2330,6 +2401,51 @@ export const NodeActionToolbar = memo(
                         <VideoIcon className="h-3.5 w-3.5" />
                       )}
                       {t("nodeToolbar.video.separateAudioVideo")}
+                    </UiChipButton>
+                    <UiChipButton
+                      key="video-clip"
+                      className={`${stubButtonClass} ${serverOpBlocked ? "opacity-50 cursor-not-allowed" : ""}`}
+                      title={serverOpTitle()}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (serverOpBlocked) return;
+                        updateNodeData(node.id, {
+                          isClipMode: !videoData.isClipMode,
+                        });
+                      }}
+                    >
+                      <Scissors className="h-3.5 w-3.5" />
+                      {t("nodeToolbar.video.clip")}
+                    </UiChipButton>
+                    <UiChipButton
+                      key="video-analyze"
+                      className={`${stubButtonClass} ${
+                        serverOpBlocked || videoAnalyzeBillingRuleMissing
+                          ? "opacity-50 cursor-not-allowed"
+                          : ""
+                      }`}
+                      title={serverOpTitle(
+                        videoAnalyzeBillingRuleMissing
+                          ? t("common.billingRuleNotConfiguredShort")
+                          : undefined,
+                      )}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (serverOpBlocked || videoAnalyzeBillingRuleMissing) return;
+                        void handleVideoAnalyze();
+                      }}
+                    >
+                      {isAnalyzing ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Wand2 className="h-3.5 w-3.5" />
+                      )}
+                      {t("nodeToolbar.video.analyze")}
+                      <CreditCostPill
+                        display={videoAnalyzeCreditCostDisplay}
+                        promotion={videoAnalyzeCreditCost.data?.data.promotion}
+                        disabled={!hasVideo || isAnalyzing || videoAnalyzeBillingRuleMissing}
+                      />
                     </UiChipButton>
                     <UiChipButton
                       key="video-download"
