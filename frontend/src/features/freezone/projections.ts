@@ -18,16 +18,49 @@ export function personalCanvasIdForUsername(username: string): string {
   return `user_${slug}_${hash}`.slice(0, 64).replace(/_+$/g, "");
 }
 
+/** 进入项目时用来挑落点的画布摘要（[[FreezoneCanvasSummary]] 的子集）。 */
+export interface FreezoneEntryCanvas {
+  id: string;
+  modified_at?: string | null;
+}
+
+/**
+ * 进入 Freezone 时落在哪张画布。
+ *
+ * 个人画布 id 只由**用户名**推出，跨项目完全相同（见 personalCanvasIdForUsername）。
+ * 在一个从没创建过个人画布的项目里，它指向一张不存在的画布 —— 而后端对不存在的
+ * 画布返回 200 + 空图而不是 404，于是界面渲染出一张合法的空白画布，用户看到的是
+ * 「我导入的东西没了」。所以这里拿到本项目画布列表时，要按列表挑一个真实存在的
+ * 落点；`availableCanvases` 不传则维持旧行为（调用方还没拿到列表）。
+ */
 export function canvasIdForFreezoneEntry({
   explicitCanvasId,
   username,
+  availableCanvases,
 }: {
   explicitCanvasId: string | null | undefined;
   username: string | null | undefined;
+  availableCanvases?: readonly FreezoneEntryCanvas[] | null;
 }): string {
+  // URL 里显式带的 canvas 是深链意图，照旧尊重，不按列表改写。
   const explicit = explicitCanvasId?.trim();
   if (explicit) return explicit;
-  return personalCanvasIdForUsername(username?.trim() || "user");
+
+  const personal = personalCanvasIdForUsername(username?.trim() || "user");
+  if (!availableCanvases) return personal;
+
+  // 个人画布在本项目里确实存在 → 还是回它，保持「每人一张自己的画布」的习惯。
+  if (availableCanvases.some((canvas) => canvas.id === personal)) return personal;
+
+  // 否则挑本项目里最近改过的那张（跳过 `default`：它是自动建的空壳，落在上面
+  // 与落在不存在的画布上一样让人以为数据丢了）。
+  const recent = [...availableCanvases]
+    .filter((canvas) => canvas.id && canvas.id !== "default")
+    .sort((left, right) =>
+      String(right.modified_at ?? "").localeCompare(String(left.modified_at ?? "")),
+    )[0];
+  // 一张都没有：仍然回个人画布 id，由后端按需创建（全新项目的既有行为）。
+  return recent?.id ?? personal;
 }
 
 export function projectionKeyForPresetRequest(

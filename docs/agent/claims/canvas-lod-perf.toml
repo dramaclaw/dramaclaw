@@ -63,11 +63,6 @@ mode = "exclusive"
 reason = "Video normalization used by poster extraction."
 
 [[claims]]
-path = "frontend/src/features/freezone/useCanvasSync.ts"
-mode = "exclusive"
-reason = "Persist LOD-compatible canvas projections."
-
-[[claims]]
 path = "frontend/src/features/viewer-kit/three-d/ThreeDDirectorDialogLazy.tsx"
 mode = "exclusive"
 reason = "Lazy-load heavy 3D UI outside low-zoom rendering."
