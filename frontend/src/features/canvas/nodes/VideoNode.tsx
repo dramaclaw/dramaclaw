@@ -183,6 +183,7 @@ import { useCanvasStore, useIsBoxSelecting } from "@/stores/canvasStore";
 import {
   fetchFreezoneJobResult,
   submitFreezoneVideoCompose,
+  submitFreezoneDepthMotion,
   submitFreezoneVideoErase,
   submitFreezoneVideoEdit,
   submitFreezoneVideoGen,
@@ -630,6 +631,10 @@ export const VideoNode = memo(
     const [isCapturingFrame, setIsCapturingFrame] = useState(false);
     const [isComposingClip, setIsComposingClip] = useState(false);
     const [clipError, setClipError] = useState<string | null>(null);
+    const [showDepthPanel, setShowDepthPanel] = useState(false);
+    const [depthResolution, setDepthResolution] = useState<"480p" | "720p">("720p");
+    const [isCapturingDepth, setIsCapturingDepth] = useState(false);
+    const [depthError, setDepthError] = useState<string | null>(null);
 
     // 每节点生成历史：仅在节点被选中时拉取，避免画布上每个视频节点都各发一次
     // 请求。生成完成后调用 refreshHistory 把新记录拉进来。
@@ -1961,6 +1966,72 @@ export const VideoNode = memo(
       updateNodeData,
     ]);
 
+    const handleDepthCapture = useCallback(async () => {
+      if (isCapturingDepth || data.depthPending || !data.videoUrl || data.depthMotionRole) return;
+      const projectId = readUrl().project;
+      if (!projectId) return;
+      setIsCapturingDepth(true);
+      setDepthError(null);
+      try {
+        const ref = await submitFreezoneDepthMotion(projectId, {
+          sourceUrl: data.videoUrl,
+          resolution: depthResolution,
+        });
+        updateNodeData(id, { depthPending: {
+          jobId: ref.job_id, taskKey: ref.task_key, taskType: "freezone_depth_motion",
+        } });
+      } catch (error) {
+        setDepthError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setIsCapturingDepth(false);
+      }
+    }, [data.depthMotionRole, data.depthPending, data.videoUrl, depthResolution,
+        id, isCapturingDepth, updateNodeData]);
+
+    const depthJobId = data.depthPending?.jobId;
+    const depthTaskKey = data.depthPending?.taskKey;
+    useEffect(() => {
+      if (!depthJobId || !depthTaskKey) return;
+      const projectId = readUrl().project;
+      if (!projectId) return;
+      let active = true;
+      setIsCapturingDepth(true);
+      const finish = async () => {
+        try {
+          await awaitTaskCompletion(depthTaskKey, projectId, {
+            taskType: "freezone_depth_motion",
+          });
+          const result = await fetchFreezoneJobResult(projectId, "freezone_depth_motion", depthJobId);
+          if (!active) return;
+          if (!result.url) throw new Error(t("node.videoNode.depth.noUrl"));
+          const position = useCanvasStore.getState().findNodePosition(id, DEFAULT_WIDTH, DEFAULT_HEIGHT);
+          const newId = addNode(CANVAS_NODE_TYPES.video, position, {
+            videoUrl: result.url,
+            displayName: t("node.videoNode.depth.resultName"),
+            referenceOnly: true,
+            depthMotionRole: "depth_motion",
+            depthManifestUrl: result.manifest_url ?? null,
+            depthSourceNodeId: id,
+            durationMs: data.durationMs,
+            widthPx: result.meta?.width,
+            heightPx: result.meta?.height,
+          });
+          addEdge(id, newId);
+          updateNodeData(id, { depthPending: null });
+          setShowDepthPanel(false);
+        } catch (error) {
+          if (!active) return;
+          setDepthError(error instanceof Error ? error.message : String(error));
+          if (!isTaskPollTimeoutError(error)) updateNodeData(id, { depthPending: null });
+        } finally {
+          if (active) setIsCapturingDepth(false);
+        }
+      };
+      void finish();
+      return () => { active = false; };
+    }, [addEdge, addNode, data.durationMs, depthJobId, depthTaskKey, id, t,
+        updateNodeData]);
+
     // 提交可用性按模式区分（对齐后端各端点校验），提示词与素材两条**分别**判定：
     // - 提示词：文生 / 全能参考 后端强校验 prompt，必须有（自写或上游 text）；首帧 /
     //   图生视频 / 图片参考 / 首尾帧 / 视频编辑允许空提示词 —— 这修掉「删掉默认提示词后
@@ -2426,7 +2497,12 @@ export const VideoNode = memo(
             if (videoRefUrl) {
               // 视频节点或携带 videoUrl 的 upload 节点（资产库视频）统一收集。
               if (videoCount < caps.video) {
-                references.push({ type: "video", url: videoRefUrl });
+                references.push({
+                  type: "video", url: videoRefUrl,
+                  ...(node.data.depthMotionRole === "depth_motion"
+                    ? { role: "depth_motion", label: t("node.videoNode.depth.resultName") }
+                    : {}),
+                });
                 videoRefs.push({
                   url: videoRefUrl,
                   label: t("node.videoNode.referenceDuration.videoFallbackLabel", {
@@ -2783,6 +2859,7 @@ export const VideoNode = memo(
       !albumExpanded &&
       !isClipMode &&
       !subtitleEraseMode &&
+      !showDepthPanel &&
       !data.referenceOnly &&
       // 视频高清节点用自己的 VideoUpscaleEditorOverlay 配置面板，不走常规生成面板。
       !data.isUpscaleNode;
@@ -3197,6 +3274,20 @@ export const VideoNode = memo(
             </div>
           )}
 
+          {videoSource && data.depthMotionRole === "depth_motion" && (
+            <span className="pointer-events-none absolute left-2 top-2 z-10 rounded-md border border-accent/35 bg-bg-dark/75 px-2 py-1 text-[11px] font-medium text-accent backdrop-blur-sm">
+              {t("node.videoNode.depth.badge")}
+            </span>
+          )}
+
+          {videoSource && selected && !albumExpanded && !isClipMode && !subtitleEraseMode && !data.depthMotionRole && !data.isUpscaleNode && (
+            <button type="button" title={t("node.videoNode.depth.open")}
+              onClick={(event) => { event.stopPropagation(); setShowDepthPanel((value) => !value); }}
+              className="nodrag absolute right-2 top-2 z-20 flex items-center gap-1 rounded-md border border-white/15 bg-bg-dark/80 px-2 py-1 text-[11px] font-medium text-text transition-colors hover:border-accent/50">
+              <Layers className="h-3.5 w-3.5" />{t("node.videoNode.depth.open")}
+            </button>
+          )}
+
           {videoSource && !hasMetadata && !isUploading && !isGenerating && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-bg-dark/40">
               <Loader2 className="h-6 w-6 animate-spin text-text-muted/70" />
@@ -3441,10 +3532,41 @@ export const VideoNode = memo(
           />
         )}
 
+        {selected && showDepthPanel && videoSource && !data.depthMotionRole && (
+          <div className={`nodrag nowheel absolute left-0 right-0 z-[300] rounded-[var(--node-radius)] ${CANVAS_NODE_OPS_PANEL_CLASS} p-4 text-text shadow-xl`}
+            style={{ top: `calc(100% + ${OPERATIONS_PANEL_GAP}px)` }}
+            onClick={(event) => event.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between text-[14px] font-semibold">
+              <span>{t("node.videoNode.depth.title")}</span>
+              <button type="button" title={t("common.close")}
+                onClick={() => { if (!isCapturingDepth) setShowDepthPanel(false); }}
+                className="rounded-md p-1 text-text-muted hover:text-text"><XIcon className="h-4 w-4" /></button>
+            </div>
+            <p className="mb-3 text-[12px] text-text-muted">{t("node.videoNode.depth.description")}</p>
+            <div className="mb-3 flex gap-2">
+              {(["480p", "720p"] as const).map((resolution) => (
+                <button key={resolution} type="button" disabled={isCapturingDepth || Boolean(data.depthPending)}
+                  onClick={() => setDepthResolution(resolution)}
+                  className={`flex-1 rounded-xl border px-3 py-2 text-[12px] transition-colors ${depthResolution === resolution ? "border-accent bg-accent/10 text-accent" : "border-border text-text-muted hover:border-accent/50"}`}>
+                  {resolution.toUpperCase()}
+                </button>
+              ))}
+            </div>
+            {depthError && <p role="alert" className="mb-2 break-words text-[12px] text-red-300">{depthError}</p>}
+            <button type="button" disabled={isCapturingDepth || Boolean(data.depthPending)}
+              onClick={() => void handleDepthCapture()}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-3 py-2 text-[12px] font-semibold text-bg-dark disabled:opacity-50">
+              {(isCapturingDepth || data.depthPending) && <Loader2 className="h-4 w-4 animate-spin" />}
+              {t((isCapturingDepth || data.depthPending) ? "node.videoNode.depth.busy" : "node.videoNode.depth.submit")}
+            </button>
+          </div>
+        )}
+
         {selected &&
           !isBoxSelecting &&
           !albumExpanded &&
           !isClipMode &&
+          !showDepthPanel &&
           !subtitleEraseMode &&
           !data.referenceOnly &&
           hasCompletedHistoryRecords(historyRecords) && (

@@ -1,8 +1,8 @@
 # 画布深度动作参考：Depth Anything 3
 
-**状态**：执行中
+**状态**：待验收
 **最后更新**：2026-09-18
-**基线**：`43d416f165db`；DA3 worker 已独立提交；共享适配层与 shot-breakdown、远端重拍分支重叠
+**基线**：`850bcbf3b7eb`；DA3 worker 与后端项目任务已独立提交；前端共享层与 LibTV / 拉片重叠
 **相关文档**：`docs/guides/depth-motion-da3.md`（模型边界、执行链路、API、参数依据）
 **相关分支 / PR**：无，工作区未提交
 
@@ -56,6 +56,18 @@
 - 独占模块可按本线提交撤销；共享路由与 runner 不得整文件回退。
 
 ## 进展记录
+
+### 2026-09-18 · 前端 Depth 入口在干净索引快照通过构建
+
+做了什么：按 hunk 接入 Depth API client、节点持久字段、VideoNode 提交 / 刷新恢复 / 派生参考节点 / 面板，
+以及中文、英文、越南文同名词条；重拍、续写、LibTV 和 LOD hunk 均未暂存。
+
+为什么这么做：直接提交整个 `VideoNode.tsx`、`canvasNodes.ts` 或 locale 会把四条线捆成一个不可回退的提交；
+索引快照能证明 Depth 前端在没有这些未提交邻居时仍能独立编译。
+
+怎么验证的：从 Git 索引导出干净前端树，聚焦 vitest 2 passed；`tsc -b && vite build` 通过
+（5403 modules transformed）；前端 i18n 棘轮为 0 命中。构建仅有既存动态 / 静态导入和 chunk 大小警告。
+代码链路已收口，剩余是 CUDA 真机模型验收，因此状态改回“待验收”。
 
 ### 2026-09-18 · 后端共享层按 hunk 集成并用索引快照验证
 
@@ -136,7 +148,7 @@ Blob 上传；本线在受控 CUDA worker 上跑 DA3-SMALL，输出 MP4 + manife
 
 ## 交接摘要
 
-- **最后完成到**：一期服务端 DA3 链路和单测已在本地，真机与远端同类能力未审计。
-- **下一步唯一动作**：比较远端 depth capture 与本地 DA3 的契约和入口，形成保留关系。
+- **最后完成到**：DA3 worker、后端项目任务、前端入口与三语文案已拆成独立提交，并在干净索引快照验证。
+- **下一步唯一动作**：在配置 `ST_DA3_MODEL_DIR` / `ST_DA3_PYTHON` 的 CUDA 机器跑 720p 硬切样片。
 - **先读这些文件**：`docs/guides/depth-motion-da3.md`、两个 `depth_motion*.py`、远端 depthCapture 目录。
 - **不要动这些文件 / 决策**：不要改 z-depth 方向、许可证模型选择和子进程隔离决定。

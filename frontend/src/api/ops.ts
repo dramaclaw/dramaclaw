@@ -166,6 +166,7 @@ export interface FreezoneJobRef {
     | "freezone_video_erase"
     | "freezone_video_compose"
     | "freezone_video_upscale"
+    | "freezone_depth_motion"
     | "freezone_audio_separate"
     | "freezone_audio_speech"
     | "freezone_audio_eleven_music"
@@ -292,6 +293,20 @@ export async function submitFreezoneVideoUpscale(
         ...nodeContextBody(payload),
       },
     },
+  );
+}
+
+/** Depth Anything 3 project-local capture; model/runtime configuration is server-side. */
+export async function submitFreezoneDepthMotion(
+  project: string,
+  payload: { sourceUrl: string; resolution: "480p" | "720p" },
+): Promise<FreezoneJobRef> {
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/video/depth-motion`,
+    { method: "POST", json: {
+      source_url: payload.sourceUrl,
+      resolution: payload.resolution,
+    } },
   );
 }
 
@@ -1933,6 +1948,15 @@ export async function submitFreezoneTemplateEdit(
 export interface FreezoneJobResult {
   url: string;
   size: number;
+  manifest_url?: string;
+  meta?: {
+    model?: string;
+    frame_count?: number;
+    fps?: string;
+    width?: number;
+    height?: number;
+    [key: string]: unknown;
+  };
 }
 
 export async function fetchFreezoneJobResult(
@@ -1955,6 +1979,7 @@ export async function fetchFreezoneJobResult(
     | "freezone_video_erase"
     | "freezone_video_compose"
     | "freezone_video_upscale"
+    | "freezone_depth_motion"
     | "freezone_audio_separate"
     | "freezone_audio_speech"
     | "freezone_audio_eleven_music"

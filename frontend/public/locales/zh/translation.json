@@ -5705,6 +5705,16 @@
       }
     },
     "videoNode": {
+      "depth": {
+        "open": "逐帧拉片",
+        "title": "深度动作捕捉 · Depth Anything 3",
+        "description": "从原视频提取近白远黑的相对深度视频，保留原帧率；结果生成独立的画布参考节点。需要服务器预先配置 DA3-Small 模型。",
+        "submit": "确认提取",
+        "busy": "逐帧捕捉中…",
+        "badge": "深度参考 · DA3",
+        "resultName": "深度动作参考",
+        "noUrl": "深度捕捉完成但未返回视频地址"
+      },
       "uploading": "上传中...",
       "generating": "生成中...",
       "noVideo": "暂无视频",

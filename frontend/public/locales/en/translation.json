@@ -5705,6 +5705,16 @@
       }
     },
     "videoNode": {
+      "depth": {
+        "open": "Frame analysis",
+        "title": "Depth motion capture · Depth Anything 3",
+        "description": "Derive a near-white/far-black relative depth video at the source frame rate. Creates a separate canvas reference node. The server needs a configured DA3-Small model.",
+        "submit": "Extract depth",
+        "busy": "Capturing frame depth…",
+        "badge": "Depth reference · DA3",
+        "resultName": "Depth motion reference",
+        "noUrl": "Depth capture completed without a video URL"
+      },
       "uploading": "Uploading...",
       "generating": "Generating...",
       "noVideo": "No video",

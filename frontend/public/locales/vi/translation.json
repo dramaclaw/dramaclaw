@@ -5705,6 +5705,16 @@
       }
     },
     "videoNode": {
+      "depth": {
+        "open": "Phân tích khung hình",
+        "title": "Trích xuất chuyển động sâu · Depth Anything 3",
+        "description": "Tạo video độ sâu tương đối gần trắng/xa đen với tốc độ khung hình gốc; tạo nút tham chiếu riêng. Máy chủ cần cấu hình mô hình DA3-Small.",
+        "submit": "Trích xuất độ sâu",
+        "busy": "Đang trích xuất độ sâu…",
+        "badge": "Tham chiếu độ sâu · DA3",
+        "resultName": "Tham chiếu chuyển động sâu",
+        "noUrl": "Trích xuất xong nhưng không có URL video"
+      },
       "uploading": "Đang tải lên...",
       "generating": "Đang tạo...",
       "noVideo": "Chưa có video",

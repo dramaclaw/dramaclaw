@@ -131,6 +131,12 @@ export interface VideoNodeData extends NodeDisplayData {
   analysisResult?: string | null;
   analysisError?: string | null;
   isSeparatingAv?: boolean;
+  /** DA3-derived grayscale depth reference video; not an RGB generation result. */
+  depthMotionRole?: 'depth_motion';
+  depthManifestUrl?: string | null;
+  depthSourceNodeId?: string | null;
+  /** Persisted job pointer so an in-flight capture can resume after canvas reload. */
+  depthPending?: { jobId: string; taskKey: string; taskType: 'freezone_depth_motion' } | null;
   // clip editor (libtv-style) ------------------------------------------------
   isClipMode?: boolean;
   clipStartMs?: number | null;
