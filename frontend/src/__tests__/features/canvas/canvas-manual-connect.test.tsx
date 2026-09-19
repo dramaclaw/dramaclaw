@@ -153,6 +153,7 @@ vi.mock("@/api/skills", () => ({
 
 vi.mock("@/features/canvas/nodes", () => ({
   nodeTypes: {},
+  preloadCanvasNodeComponents: () => {},
 }));
 
 vi.mock("@/features/canvas/edges", () => ({

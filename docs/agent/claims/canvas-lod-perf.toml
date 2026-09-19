@@ -105,6 +105,16 @@ mode = "exclusive"
 reason = "LOD node body."
 
 [[claims]]
+path = "frontend/src/features/canvas/nodes/index.ts"
+mode = "exclusive"
+reason = "Stable node registry with lazy heavy components."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/lazyNodeComponents.tsx"
+mode = "exclusive"
+reason = "Lazy 3D and panorama node component loaders."
+
+[[claims]]
 path = "frontend/src/features/canvas/ui/CanvasNodeImage.tsx"
 mode = "exclusive"
 reason = "Lightweight media rendering."
@@ -171,3 +181,41 @@ reason = "Poster extraction coverage includes imported LibTV sources."
 path = "frontend/src/__tests__/features/canvas/asset-replace-pick.test.tsx"
 mode = "exclusive"
 reason = "Asset replacement coverage."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/canvas-manual-connect.test.tsx"
+mode = "exclusive"
+reason = "Canvas registry preload mock."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/canvas-minimap-pan-mount.test.tsx"
+mode = "exclusive"
+reason = "Canvas registry preload mock."
+
+[[claims]]
+path = "frontend/src/__tests__/features/viewer-kit/freezone-viewer-contract.test.ts"
+mode = "exclusive"
+reason = "Lazy viewer-node registry contract."
+
+[[claims]]
+path = "frontend/src/__tests__/lib/media-url.test.ts"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Remote image scaling ladder coverage."
+
+[[claims]]
+path = "frontend/src/lib/media-url.ts"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Local and remote media variant selection."
+
+[[claims]]
+path = "src/novelvideo/freezone/history.py"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Prewarm all image variants used by canvas nodes."
+
+[[claims]]
+path = "frontend/vite.config.ts"
+mode = "exclusive"
+reason = "Canvas heavy dependency chunking."

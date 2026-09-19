@@ -403,15 +403,16 @@ export const GroupNode = memo(({ id, data, selected }: GroupNodeProps) => {
 
   return (
     <div
-      className={`group relative h-full w-full overflow-visible rounded-[18px] border ${canvasNodeFrameClass({ selected })} ${projectionFrameClass}`}
+      className={`group relative h-full w-full overflow-visible rounded-[var(--group-node-radius)] border ${canvasNodeFrameClass({ selected })} ${projectionFrameClass}`}
       style={{
         backgroundColor:
           (!isStoryboard && groupColorBackground(data.backgroundColor)) ||
           'var(--group-node-bg)',
-        // 选中时让选中高亮边框生效，未选中时用组配色描边。
+        // 选中时让选中高亮边框生效，未选中时用组配色描边；没选配色则回到
+        // liblib 的组描边(与底色同值的 10% 白)，而不是媒体卡那档更亮的描边。
         borderColor:
           !isStoryboard && !selected
-            ? groupColorBorder(data.backgroundColor)
+            ? groupColorBorder(data.backgroundColor) || 'var(--group-node-border)'
             : undefined,
       }}
     >

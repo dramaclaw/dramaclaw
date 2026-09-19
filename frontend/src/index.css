@@ -87,6 +87,9 @@
   --ui-radius-pill: 999px;
   --node-radius: 12px;
   --node-inner-radius: var(--node-radius);
+  --group-node-bg: rgba(15, 23, 42, 0.06);
+  --group-node-border: rgba(15, 23, 42, 0.1);
+  --group-node-radius: 20px;
 
   /* Shadows — soft, diffuse for light mode */
   --shadow-2xs: 0px 2px 10px 0px hsl(0 0% 0% / 0.05);
@@ -159,8 +162,14 @@
   --ui-radius-xl: 16px;
   --ui-radius-2xl: 20px;
   --ui-radius-pill: 999px;
-  --node-radius: 14px;
+  /* 卡片圆角对齐 liblib.tv 实测的 12px（浅色主题本来就是 12px，这里把深色拉齐）。 */
+  --node-radius: 12px;
   --node-inner-radius: var(--node-radius);
+  /* 组底色/圆角照搬 liblib：rgba(255,255,255,.10) 填充 + 20px 圆角。
+     这个变量以前只在 GroupNode 里被 var() 引用、从未定义，所以组框一直是全透明的。 */
+  --group-node-bg: rgba(255, 255, 255, 0.1);
+  --group-node-border: rgba(255, 255, 255, 0.1);
+  --group-node-radius: 20px;
 
   /* Shadows — deeper, higher opacity for dark mode */
   --shadow-2xs: 0px 4px 12px 0px hsl(0 0% 0% / 0.20);
@@ -857,8 +866,11 @@ body.canvas-node-drag-focus [role="listbox"] {
 .dc-lod-shell {
   position: relative;
   overflow: hidden;
-  border-radius: 12px;
-  background: rgba(64, 64, 68, 0.55);
+  /* 外壳直接套用卡片的圆角/卡面/描边：它替身的就是那张卡，颜色对不上时
+     跨缩放档的那一次切换会「闪一下颜色」，低缩放整屏也比 liblib 亮一截。 */
+  border-radius: var(--node-radius);
+  background: #171717;
+  border: 1px solid rgba(255, 255, 255, 0.13);
 }
 
 .dc-lod-shell--selected {
@@ -869,6 +881,22 @@ body.canvas-node-drag-focus [role="listbox"] {
   width: 100%;
   height: 100%;
   object-fit: contain;
+  pointer-events: none;
+}
+
+/* 文本外壳：低缩放下文本节点若只画一个灰块，用户分不清「哪张是脚本」——参照组
+ * liblib.tv 在 10% 档同样把正文画出来。文本没有解码成本、不建合成层，代价只是
+ * 一个额外元素，所以这里破例渲染正文（仍不解析 Markdown，纯文本裁切）。 */
+.dc-lod-shell__text {
+  width: 100%;
+  height: 100%;
+  padding: 10px 12px;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.45;
+  color: rgb(var(--text-muted-rgb) / 0.95);
   pointer-events: none;
 }
 

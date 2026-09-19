@@ -46,7 +46,7 @@ import {
   buildStandaloneWorldManifest,
   type DirectorStageManifest,
 } from '@/features/viewer-kit/three-d/directorManifest';
-import { ThreeDDirectorDialog } from '@/features/viewer-kit/three-d/ThreeDDirectorDialog';
+import { ThreeDDirectorDialog } from '@/features/viewer-kit/three-d/ThreeDDirectorDialogLazy';
 
 import { ImageViewerModal } from './ImageViewerModal';
 import { VideoViewerModal } from './VideoViewerModal';

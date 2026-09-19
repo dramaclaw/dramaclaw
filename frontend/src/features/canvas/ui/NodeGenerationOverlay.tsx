@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useMemo, useState } from 'react';
+import { Loader2 } from 'lucide-react';
 
 type NodeGenerationOverlayProps = {
   /** 生成开始时间戳,用于模拟进度。为空时从挂载时刻开始计时。 */
@@ -65,16 +66,21 @@ export function NodeGenerationOverlay({
       PROGRESS_CEILING * (1 - Math.exp((-PROGRESS_CURVE * elapsed) / duration));
     return Math.min(99, Math.floor(progress * 100));
   }, [durationMs, mountedAt, now, startedAt]);
-
   return (
     <div
       className={`pointer-events-none absolute inset-0 z-10 flex items-center justify-center overflow-hidden ${rounded}`}
       role="progressbar"
+      aria-busy="true"
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={percent}
+      aria-valuetext={`${percent}%`}
     >
       <div className="relative flex flex-col items-center text-center">
+        <Loader2
+          aria-hidden="true"
+          className="mb-3 h-5 w-5 animate-spin text-white/75"
+        />
         <div className="flex items-baseline leading-none text-white">
           <span className="text-[34px] font-semibold tabular-nums tracking-tight">
             {percent}

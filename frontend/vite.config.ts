@@ -106,6 +106,16 @@ export default defineConfig(({ mode }) => {
         output: {
           manualChunks(id) {
             if (!id.includes("node_modules")) return;
+            // 重型引擎各自独立成块，且**声明式**地钉住。此前 Rollup 靠共享模块
+            // 启发式顺手把 playcanvas / photo-sphere-viewer 切了出去，但那不是我们
+            // 要求的 —— 引用关系一变就可能塌回画布路由那个 chunk 里。它们对应的是
+            // 3D 世界节点、360 查看器、标注工具、视频转码、AI 去背，都是低频可选
+            // 功能，绝不该跟着画布一起加载（对应 nodes/lazyNodeComponents 的按需加载）。
+            if (id.includes("playcanvas")) return "engine-3d";
+            if (id.includes("@photo-sphere-viewer")) return "engine-pano";
+            if (id.includes("konva")) return "engine-annotate";
+            if (id.includes("mediabunny")) return "engine-video-transcode";
+            if (id.includes("@huggingface/transformers") || id.includes("onnxruntime")) return "engine-matte";
             if (id.includes("@tanstack")) return "tanstack";
             if (id.includes("@base-ui")) return "baseui";
             if (id.includes("react-hook-form") || id.includes("@hookform") || id.includes("/zod/")) return "forms";
@@ -119,6 +129,22 @@ export default defineConfig(({ mode }) => {
       format: "es",
     },
     optimizeDeps: {
+      // 显式白名单：dev 首次遇到未预打包的依赖会触发 re-optimize，并让页面整体
+      // 重载一次 —— 表现就是「打开很慢，而且自己刷新了一下」。把重依赖钉在这里，
+      // 启动时一次预打包到位，之后不再因为路由走到新页面而抖动。
+      include: [
+        "react",
+        "react-dom",
+        "react-dom/client",
+        "@xyflow/react",
+        "@tanstack/react-router",
+        "@tanstack/react-query",
+        "i18next",
+        "react-i18next",
+        "zustand",
+        "lucide-react",
+        "react-markdown",
+      ],
       // @ffmpeg/ffmpeg 内部用 `new Worker(new URL("./worker.js", import.meta.url))`
       // 起 worker；被 esbuild 预打包后 import.meta.url 指向合并产物，worker.js
       // 404，load() 永远挂起（仅 dev 受影响，prod 走 Rollup 正常）。排除预打包。

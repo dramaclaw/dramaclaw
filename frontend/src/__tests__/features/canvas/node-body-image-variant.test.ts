@@ -204,13 +204,18 @@ describe("按显示尺寸 x zoom x DPR 挑档", () => {
     expect(nodeBodyRequiredEdge({ width: 580, height: 326 }, Number.NaN, 0)).toBe(580);
   });
 
-  it("pickMediaVariant 只保留 thumb，超过 320px 就回原图", () => {
+  // 阶梯和后端 thumbnails.py 的 VARIANTS 一一对应：320 / 640 / 1280。
+  // 这里一度只有 thumb 一档，于是 630、1160 这些最常见的预算全部回落原图
+  // ——画布上一张 3840x2160 被解码进 169x95 的框，降采样等于没生效。
+  it("pickMediaVariant 取第一个够用的档位", () => {
     expect(pickMediaVariant(315)).toBe("thumb");
     expect(pickMediaVariant(320)).toBe("thumb");
-    expect(pickMediaVariant(321)).toBeNull();
-    expect(pickMediaVariant(630)).toBeNull();
-    expect(pickMediaVariant(1160)).toBeNull();
-    expect(pickMediaVariant(1280)).toBeNull();
+    expect(pickMediaVariant(321)).toBe("thumb2x");
+    expect(pickMediaVariant(630)).toBe("thumb2x");
+    expect(pickMediaVariant(640)).toBe("thumb2x");
+    expect(pickMediaVariant(641)).toBe("card");
+    expect(pickMediaVariant(1160)).toBe("card");
+    expect(pickMediaVariant(1280)).toBe("card");
   });
 
   // 放大糊是唯一不能接受的结果：宁可付原图的解码，也不给一张要放大 2.5 倍的副本。
@@ -230,15 +235,20 @@ describe("按显示尺寸 x zoom x DPR 挑档", () => {
     });
   });
 
-  it("默认尺寸的节点在 Retina 上直接使用原图", () => {
+  // 这条以前断言的是「回原图」，那正是要修的 bug：580 CSS px 的节点在 2x 屏上
+  // 要 1160 设备像素，card(1280) 正好盖得住，没有任何理由去解码原图。
+  it("默认尺寸的节点在 Retina 上拿 card 副本", () => {
     const required = nodeBodyRequiredEdge({ width: 580, height: 326 }, 1, 2);
-    expect(nodeBodyImageSrc(URL, BIG, { requiredEdge: required }).src).toBe(URL);
+    const picked = nodeBodyImageSrc(URL, BIG, { requiredEdge: required });
+    expect(picked.downscaled).toBe(true);
+    expect(picked.maxEdge).toBe(1280);
+    expect(picked.original).toBe(URL);
   });
 
-  it("LOD 外壳只有 1x 尺寸落在 thumb 预算内", () => {
+  it("LOD 外壳：1x 落在 thumb，2x 升一档到 thumb2x 而不是回原图", () => {
     const shell = { width: 900, height: 900 };
     expect(pickMediaVariant(nodeBodyRequiredEdge(shell, 0.35, 1))).toBe("thumb");
-    expect(pickMediaVariant(nodeBodyRequiredEdge(shell, 0.35, 2))).toBeNull();
+    expect(pickMediaVariant(nodeBodyRequiredEdge(shell, 0.35, 2))).toBe("thumb2x");
   });
 
   it("挑到的那一档不比源图小时仍然回原图", () => {

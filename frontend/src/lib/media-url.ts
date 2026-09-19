@@ -31,16 +31,24 @@ export function resolveMediaUrl(
   return withMediaVariant(resolved, options.variant);
 }
 
-// The single downscaled copy the frontend may request.
-// The frontend intentionally requests only the variant prewarmed by the
-// production history write path. Larger display budgets use the original.
-export type MediaVariant = "thumb";
+// 阶梯必须和后端 `novelvideo/utils/thumbnails.py` 的 VARIANTS 一致。
+//
+// 这里一度只有 `thumb` 一档,理由是「只请求生成历史写入路径预热过的那一档」。
+// 代价比预期大得多:一个 480 CSS px 宽的节点在 2x 屏上要 960 设备像素,320 档喂不饱,
+// `pickMediaVariant` 返回 null 就回落原图——于是画布上一张 3840x2160 被解码进
+// 169x95 的框里,约 33MB 位图。降采样这套机制在节点主体上等于从没生效过。
+//
+// 现在三档齐全,预热侧也跟着补齐(history.py 与 liblib_assets.py 都改为预热全档位)。
+export type MediaVariant = "thumb" | "thumb2x" | "card";
 
 export const MEDIA_VARIANT_MAX_EDGE: Record<MediaVariant, number> = {
   thumb: 320,
+  thumb2x: 640,
+  card: 1280,
 };
 
-const MEDIA_VARIANT_LADDER: MediaVariant[] = ["thumb"];
+// 由小到大:`pickMediaVariant` 取第一个够用的,也就是最省的那一档。
+const MEDIA_VARIANT_LADDER: MediaVariant[] = ["thumb", "thumb2x", "card"];
 
 /**
  * Return ``thumb`` when its 320px edge can fill the requested device pixels,
@@ -70,6 +78,38 @@ const MEDIA_VARIANT_PARAM = "st_thumb";
 // Mirrors the formats the backend will downscale; anything else is passed
 // through untouched so the URL does not gain a parameter that does nothing.
 const THUMBNAILABLE_EXTENSION_RE = /\.(png|jpe?g|webp|bmp|tiff?)$/i;
+
+/**
+ * 远端对象存储图片的降采样地址。不适用时原样返回。
+ *
+ * 为什么需要:本地素材有 `st_thumb` 阶梯,远端素材什么都没有,只能吃原图。导入进来的
+ * 画布在本地化成功之前(或者本地化失败时)全是远端地址,一张 3840x2160 被解码进
+ * 169x95 的框里约 33MB 位图,拖动直接卡死。LibTV 自己的画布就是这么解的——实测它给
+ * 同一张图挂的是 `w_200/w_400/w_800` 三档 srcset。
+ *
+ * `ignore-error,1` 是关键:转换失败时 OSS 回落原图而不是报错,所以这个参数对不支持
+ * 转换的地址天然安全。`format,webp` 顺带把 PNG 压下来。
+ *
+ * **只在没有任何查询参数时才加**。预签名地址的签名覆盖 query,多加一个参数会让签名
+ * 失效、图直接裂掉;而预签名地址必然带 query,这条规则正好把它们排除干净。
+ * 已经带 `x-oss-process` 的地址是例外——它自己就证明了服务端认这个语法,直接换宽度。
+ */
+export function withRemoteImageVariant(url: string, maxEdge: number): string {
+  if (!Number.isFinite(maxEdge) || maxEdge <= 0) return url;
+  if (!/^https?:\/\//i.test(url)) return url;
+  const process = `image/resize,w_${Math.round(maxEdge)},m_lfit/format,webp/ignore-error,1`;
+  const queryAt = url.indexOf('?');
+  if (queryAt === -1) {
+    if (!THUMBNAILABLE_EXTENSION_RE.test(url)) return url;
+    return `${url}?x-oss-process=${encodeURIComponent(process)}`;
+  }
+  const params = new URLSearchParams(url.slice(queryAt + 1));
+  const existing = params.get('x-oss-process');
+  // 视频抽帧(video/snapshot,...)不是图片缩放,别拿图片参数覆盖掉它。
+  if (!existing || !existing.startsWith('image/resize')) return url;
+  params.set('x-oss-process', process);
+  return `${url.slice(0, queryAt)}?${params.toString()}`;
+}
 
 // Exported for callers that have already resolved a URL through some other
 // path (canvas nodes go through resolveImageDisplayUrl + withImageCacheBust)

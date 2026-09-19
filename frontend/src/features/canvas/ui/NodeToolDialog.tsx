@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useMemo, useState, useEffect, useCallback } from 'react';
+import { Suspense, lazy, useMemo, useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { X } from 'lucide-react';
@@ -26,8 +26,17 @@ import { UiButton, UiModal } from '@/components/ui';
 import { UI_DIALOG_TRANSITION_MS } from '@/components/ui/motion';
 import { FormToolEditor } from './tool-editors/FormToolEditor';
 import { CropToolEditor } from './tool-editors/CropToolEditor';
-import { AnnotateToolEditor } from './tool-editors/AnnotateToolEditor';
+// 标注编辑器拖着 react-konva（预打包 1.05MB），而它只在用户点开「标注」工具时
+// 才会出现 —— 静态 import 会让它跟着本弹窗进入画布路由的模块图。打开工具时再拉。
+const AnnotateToolEditor = lazy(() =>
+  import('./tool-editors/AnnotateToolEditor').then((m) => ({ default: m.AnnotateToolEditor })),
+);
 import { SplitStoryboardToolEditor } from './tool-editors/SplitStoryboardToolEditor';
+
+/** 工具编辑器 chunk 在途时的占位：与编辑器同区域，避免弹窗内容区塌成 0 高。 */
+function ToolEditorLoading() {
+  return <div className="flex min-h-[320px] flex-1 items-center justify-center text-sm text-text-muted/70" />;
+}
 
 const VISUAL_TOOL_MODAL_CLASS =
   'relative flex flex-col overflow-hidden rounded-[10px] border border-white/[0.12] bg-[#15161b]/96 shadow-[0_18px_48px_rgba(0,0,0,0.45)] backdrop-blur-md';
@@ -342,12 +351,14 @@ export function NodeToolDialog() {
 
     if (activePlugin.editor === 'annotate' && sourceImageUrl) {
       return (
-        <AnnotateToolEditor
-          plugin={activePlugin}
-          sourceImageUrl={sourceImageUrl}
-          options={options}
-          onOptionsChange={setOptions}
-        />
+        <Suspense fallback={<ToolEditorLoading />}>
+          <AnnotateToolEditor
+            plugin={activePlugin}
+            sourceImageUrl={sourceImageUrl}
+            options={options}
+            onOptionsChange={setOptions}
+          />
+        </Suspense>
       );
     }
 

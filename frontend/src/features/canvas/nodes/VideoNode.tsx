@@ -15,13 +15,13 @@ import {
 import {
   Handle,
   Position,
-  useStore,
   useUpdateNodeInternals,
   type NodeProps,
 } from "@xyflow/react";
 import {
-  isLowDetailZoom,
+  isLowDetailActive,
   setNodeMediaActive,
+  subscribeLowDetail,
 } from "@/features/canvas/application/canvasLod";
 import {
   AlertTriangle,
@@ -108,8 +108,10 @@ import {
 } from "@/features/canvas/application/videoRangePrompt";
 import {
   captureVideoFrameBlob,
+  derivedVideoPoster,
   getLodStill,
   requestLodStill,
+  shouldSelfCaptureLodStill,
   subscribeLodStills,
 } from "@/features/canvas/application/videoFrameCapture";
 import {
@@ -629,9 +631,9 @@ export const VideoNode = memo(
       setVideoEl(el);
     }, []);
 
-    // 低缩放档：选择器返回 boolean，只在跨过阈值那一次触发重渲染；平移中
-    // transform[0]/[1] 每帧都变，但这里的返回值不变，所以不会每帧重渲染。
-    const lowDetailZoom = useStore((state) => isLowDetailZoom(state.transform[2]));
+    // 低缩放档：订阅模块级单一真值（带滞回），只在跨档时翻转、带内抖动不通知，
+    // 所以平移中不会每帧重渲染。
+    const lowDetailZoom = useSyncExternalStore(subscribeLowDetail, isLowDetailActive);
     // 正在播放时不降级——用户主动播了就说明他在看，缩放小也别把播放器抽走。
     const isVideoPlayingRef = useRef(false);
     // 卸载时清掉模块级播放标记：视口裁剪把播放中的节点卸掉时 <video> 不会派发
@@ -1865,19 +1867,40 @@ export const VideoNode = memo(
       return videoSource.includes("#t=") ? videoSource : `${videoSource}#t=0.1`;
     }, [videoSource]);
 
-    // 低缩放档要用的静态缩略图，走离屏 <video> + CORS 抓帧（见 videoFrameCapture）。
+    // 低缩放档要用的静态缩略图。封面优先：导入/生成时落库的封面（previewImageUrl，
+    // 如 liblib 的 liblibVideoPosterUrl）是现成小图，零本地解码；没有它、也不是远端
+    // 服务端抽帧能覆盖的，才走离屏 <video> + CORS 自截（见 videoFrameCapture）。
     // 在节点挂载时就排队，而不是等缩放缩下去才开始：低缩放档下画布上根本不挂
     // <video>，那时才抓的话用户会先盯着一屏占位块；而且首屏视口若恢复在低缩放档，
     // 展示用的 <video> 一次都不会挂载，永远等不到抓帧时机。
+    const liblibSourceUrl = data.liblibImport?.sourceUrl ?? null;
     useEffect(() => {
+      if (
+        !shouldSelfCaptureLodStill({
+          previewImageUrl: data.previewImageUrl,
+          liblibSourceUrl,
+          videoSource,
+        })
+      ) {
+        return;
+      }
       requestLodStill(videoSource);
-    }, [videoSource]);
+    }, [data.previewImageUrl, liblibSourceUrl, videoSource]);
 
     // 订阅模块级缓存：节点被 onlyRenderVisibleElements 反复 mount/unmount 后缩略图
     // 仍然在，重挂即用。快照是原始值，抓帧完成前后各渲染一次，不会每帧重渲染。
     const lodStill = useSyncExternalStore(subscribeLodStills, () =>
       getLodStill(videoSource)
     );
+    // 低缩放档展示的封面：落库封面 / liblib 源现算 / 远端服务端抽帧优先，都没有
+    // 才回落离屏自截结果。
+    const posterCandidate = derivedVideoPoster({
+      previewImageUrl: data.previewImageUrl,
+      liblibSourceUrl,
+      videoSource,
+    });
+    const lodPoster =
+      (posterCandidate ? resolveImageDisplayUrl(posterCandidate) : null) ?? lodStill;
 
     useEffect(() => {
       updateNodeInternals(id);
@@ -3381,9 +3404,9 @@ export const VideoNode = memo(
           videoSource &&
           lowDetailZoom &&
           !isVideoPlayingRef.current ? (
-            lodStill ? (
+            lodPoster ? (
               <img
-                src={lodStill}
+                src={lodPoster}
                 alt=""
                 className="h-full w-full object-contain"
                 draggable={false}

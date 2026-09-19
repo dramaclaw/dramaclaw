@@ -1,6 +1,6 @@
 # 画布 LOD 剔除与低缩放交互
 
-**状态**：执行中
+**状态**：待验收
 **最后更新**：2026-09-18
 **基线**：`8fa08d14d96f8c98170e85983cc937752b073f97`；治理提交已落地，本线开始按补丁来源拆分
 **相关文档**：无（前端视觉改动须先读 `DESIGN.md`）
@@ -24,10 +24,12 @@
 | `features/canvas/nodes/LodShellNode.tsx` | 修改 | 简化外壳节点 |
 | `features/canvas/Canvas.tsx` | 修改 | |
 | `features/canvas/application/videoFrameCapture.ts` | 修改 | 视频抽帧封面 |
-| `features/canvas/application/imageData.ts`、`graphImageResolver.ts`、`graphContentResolver.ts`、`videoTranscode.ts` | 修改 | |
+| `features/canvas/application/imageData.ts`、`graphImageResolver.ts`、`graphContentResolver.ts`、`videoTranscode.ts`、`videoFrameCapture.ts` | 修改 | 变体阶梯、远端封面与按需转码 |
 | `features/canvas/ui/CanvasNodeImage.tsx`、`nodeFrameStyles.ts`、`NodeHeader.tsx`、`NodeGenerationOverlay.tsx`、`NodeToolDialog.tsx`、`AssetCommitHandle.tsx`、`CanvasHistoryAssetsModal.tsx` | 修改 | |
 | `features/canvas/nodes/{GroupNode,ImageGenNode,SkillNode,ThreeDWorldNode,UploadNode}.tsx` | 修改 | |
 | `features/viewer-kit/three-d/ThreeDDirectorDialogLazy.tsx` | 新增 | 三维对话框懒加载 |
+| `features/canvas/nodes/lazyNodeComponents.tsx` | 新增 | 3D / 全景节点按需加载与预热 |
+| `lib/media-url.ts`、`freezone/history.py`、`vite.config.ts` | 修改 | 全档位预热、远端缩放与 bundle 分包 |
 | `__tests__/features/canvas/{canvas-lod,lod-audio-playback,external-file-handoff-low-zoom,node-body-image-variant,video-frame-capture-poster,asset-replace-pick}.test.*` | 修改/新增 | |
 
 上述路径以 `frontend/src/` 为根。新增的 LOD 模块与测试可视为本线独占；`Canvas.tsx`、`index.css`、
@@ -54,6 +56,21 @@
 - 回退只能按本线的独立提交撤销；在拆提交前禁止对共享文件执行 restore。
 
 ## 进展记录
+
+### 2026-09-19 · LOD、远端封面与重组件按需加载收口
+
+改了什么：低缩放状态改为带滞回的模块级单一真值，避免平移时所有节点随 React Flow transform
+重渲染；视频封面优先使用已落库封面或 OSS 服务端抽帧，才回退离屏解码；图片从单一 320px
+缩略图扩展为 320/640/1280 三档，历史写入预热全部档位。3D、全景、标注和转码依赖改为
+按需加载，节点类型存在时才预热对应 chunk；低缩放文本与远端素材卡继续保留可辨识内容。
+
+为什么这么改：原实现会让 Retina 节点频繁回落原图、导入远端视频为每个节点各起一个离屏解码、
+且罕用的数 MB 引擎跟画布首屏一起解析。这些不是单次视觉优化，而是会随节点数量线性放大的
+交互阻塞；混在同一工作树的素材替换和业务入口 hunk 本次未纳入。
+
+怎么验证的：从 Git index 导出干净快照，9 个 LOD / 节点注册 / 媒体变体聚焦文件通过 144 项；
+前端 i18n 棘轮为 0，`tsc -b` 与 Vite production build 通过。量化帧率仍需有代表性的大画布
+和浏览器性能录制，因此保持“待验收”。
 
 ### 2026-09-18 · 完成远端来源审计并开始拆分可恢复提交
 
@@ -90,7 +107,7 @@
 
 ## 待办
 
-- [ ] **先核对和 `origin/perf/canvas-pan-lod-culling` 的关系**：是同一批改动的两个副本，
+- [x] **已核对和 `origin/perf/canvas-pan-lod-culling` 的关系**：是同一批改动的两个副本，
       还是工作区这份更新？搞错会白干或覆盖。
 - [ ] 补一组量化数据：N 个节点时的帧率 / 首屏时间，LOD 开与关各一次。
       现在只有「应该更快」，没有「快多少」，无法判断这条线能不能收。

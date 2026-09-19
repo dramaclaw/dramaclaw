@@ -3,13 +3,18 @@
 import type { NodeTypes } from '@xyflow/react';
 
 import { withLodShell } from './LodShellNode';
+// 3D 世界 / 360 查看器各自拖着一个几 MB 的引擎，改为按需加载；引用身份仍然稳定，
+// 见 lazyNodeComponents 顶部注释。
+import {
+  Pano360ViewerNodeLazy,
+  ThreeDWorldNodeLazy,
+} from './lazyNodeComponents';
 import { AudioNode } from './AudioNode';
 import { BeatContextNode } from './BeatContextNode';
 import { GroupNode } from './GroupNode';
 import { ImageEditNode } from './ImageEditNode';
 import { ImageGenNode } from './ImageGenNode';
 import { ImageNode } from './ImageNode';
-import { Pano360ViewerNode } from './Pano360ViewerNode';
 import { LiblibMediaNode } from './LiblibMediaNode';
 import { ScriptNode } from './ScriptNode';
 import { SkillNode } from './SkillNode';
@@ -17,7 +22,6 @@ import { StoryboardGenNode } from './StoryboardGenNode';
 import { StoryboardNode } from './StoryboardNode';
 import { StyleNode } from './StyleNode';
 import { TextAnnotationNode } from './TextAnnotationNode';
-import { ThreeDWorldNode } from './ThreeDWorldNode';
 import { UploadNode } from './UploadNode';
 import { VideoComposeNode } from './VideoComposeNode';
 import { VideoNode } from './VideoNode';
@@ -32,19 +36,22 @@ export const nodeTypes: NodeTypes = {
   groupNode: withLodShell('groupNode', GroupNode),
   imageGenNode: withLodShell('imageGenNode', ImageGenNode),
   imageNode: withLodShell('imageNode', ImageEditNode),
-  liblibMediaNode: LiblibMediaNode,
-  pano360ViewerNode: withLodShell('pano360ViewerNode', Pano360ViewerNode),
+  liblibMediaNode: withLodShell('liblibMediaNode', LiblibMediaNode),
+  pano360ViewerNode: withLodShell('pano360ViewerNode', Pano360ViewerNodeLazy),
   scriptNode: withLodShell('scriptNode', ScriptNode),
   skillNode: withLodShell('skillNode', SkillNode),
   storyboardGenNode: withLodShell('storyboardGenNode', StoryboardGenNode),
   storyboardNode: withLodShell('storyboardNode', StoryboardNode),
   styleNode: withLodShell('styleNode', StyleNode),
   textAnnotationNode: withLodShell('textAnnotationNode', TextAnnotationNode),
-  threeDWorldNode: withLodShell('threeDWorldNode', ThreeDWorldNode),
+  threeDWorldNode: withLodShell('threeDWorldNode', ThreeDWorldNodeLazy),
   uploadNode: withLodShell('uploadNode', UploadNode),
   videoComposeNode: withLodShell('videoComposeNode', VideoComposeNode),
   videoNode: withLodShell('videoNode', VideoNode),
   videoStoryNode: withLodShell('videoStoryNode', VideoStoryNode),
 };
 
-export { AudioNode, BeatContextNode, GroupNode, ImageEditNode, ImageGenNode, ImageNode, Pano360ViewerNode, ScriptNode, SkillNode, StoryboardGenNode, StoryboardNode, StyleNode, TextAnnotationNode, ThreeDWorldNode, UploadNode, VideoComposeNode, VideoNode, VideoStoryNode };
+// Pano360ViewerNode / ThreeDWorldNode 刻意不在这里转出：转出即静态 import，
+// 上面的按需加载会被一笔勾销。需要它们的地方直接从各自模块 import。
+export { preloadCanvasNodeComponents } from './lazyNodeComponents';
+export { AudioNode, BeatContextNode, GroupNode, ImageEditNode, ImageGenNode, ImageNode, ScriptNode, SkillNode, StoryboardGenNode, StoryboardNode, StyleNode, TextAnnotationNode, UploadNode, VideoComposeNode, VideoNode, VideoStoryNode };

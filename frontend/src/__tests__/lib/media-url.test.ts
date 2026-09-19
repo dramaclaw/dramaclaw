@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { describe, it, expect } from "vitest";
-import { resolveMediaUrl, withMediaVariant } from "@/lib/media-url";
+import {
+  resolveMediaUrl,
+  withMediaVariant,
+  withRemoteImageVariant,
+} from "@/lib/media-url";
 
 describe("resolveMediaUrl", () => {
   it("returns null for null input", () => {
@@ -214,5 +218,39 @@ describe("withMediaVariant", () => {
     ]) {
       expect(withMediaVariant(url, "thumb")).toBe(url);
     }
+  });
+});
+
+describe("withRemoteImageVariant", () => {
+  const CDN = "https://libtv-res.liblib.art/sd-gen/a/898013514_28d8.png";
+
+  it("无 query 的远端图片地址挂上服务端缩放", () => {
+    const out = withRemoteImageVariant(CDN, 1280);
+    const process = decodeURIComponent(new URL(out).searchParams.get("x-oss-process")!);
+    expect(process).toBe("image/resize,w_1280,m_lfit/format,webp/ignore-error,1");
+  });
+
+  it("已有 image/resize 的地址换掉宽度，而不是再挂一个", () => {
+    const out = withRemoteImageVariant(`${CDN}?x-oss-process=image%2Fresize%2Cw_320`, 640);
+    const params = new URL(out).searchParams;
+    expect([...params.keys()]).toEqual(["x-oss-process"]);
+    expect(params.get("x-oss-process")).toContain("w_640");
+  });
+
+  // 预签名地址的签名覆盖 query，多加一个参数会让签名失效、图直接裂掉。
+  // 预签名地址必然带 query，所以「有 query 就不动」正好把它们排除干净。
+  it("带其它查询参数的地址一律不碰", () => {
+    const signed = `${CDN}?Expires=123&Signature=abc`;
+    expect(withRemoteImageVariant(signed, 1280)).toBe(signed);
+  });
+
+  it("视频抽帧参数不会被图片缩放覆盖掉", () => {
+    const snap = `${CDN}?x-oss-process=video%2Fsnapshot%2Ct_0%2Cf_jpg%2Cw_200`;
+    expect(withRemoteImageVariant(snap, 1280)).toBe(snap);
+  });
+
+  it("本地路径与非图片后缀原样返回", () => {
+    expect(withRemoteImageVariant("/static/projects/p/a.png", 640)).toBe("/static/projects/p/a.png");
+    expect(withRemoteImageVariant("https://cdn.example/clip.mp4", 640)).toBe("https://cdn.example/clip.mp4");
   });
 });
