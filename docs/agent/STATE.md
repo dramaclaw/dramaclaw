@@ -8,8 +8,8 @@
 
 ## 一、仓库当前形态（接手前必须核对）
 
-- 分支 `main`，最新提交 `8fa08d14`（2026-09-18，`fix(agent): allow handoff after owner commit`）。
-- **工作区有 129 个未提交状态条目**（截至 2026-09-18，按 `git status --short` 计），
+- 分支 `main`，最新提交 `10275ec8`（2026-09-18，`feat(canvas): stabilize low-zoom LOD state`）。
+- **工作区有 125 个未提交状态条目**（截至 2026-09-18，按 `git status --short` 计），
   包含六条业务线和历史未归属隔离区；协作治理已形成独立提交，其余工作线仍没有独立提交承载。
   会话开始时 hook 注入的摘要是实时值，不能用条目总数反推某条业务线又新增了多少文件。
 - 这是当前最大的风险：一次整树 restore / 自动 stash / 强制切分支，就能抹掉三周的工作。
@@ -26,7 +26,7 @@
 | [liblib-canvas-parity](tasks/liblib-canvas-parity.md) | LibTV 画布对齐：片段重拍 / 智能续写 / 导入器 / 工具条 | 待验收 | 缺 OSS relay；与远端重拍分支大面积重复，先审计 |
 | [shot-breakdown](tasks/shot-breakdown.md) | 逐帧拉片三维度：分镜 / 动态 / 音乐 | 待验收 | 音乐依赖 demucs；与 depth、远端重拍分支共享后端热点 |
 | [depth-motion-da3](tasks/depth-motion-da3.md) | 拉片动态维度：Depth Anything 3 深度视频 | 待验收 | 需本机模型 / 解释器；与 shot-breakdown 共享后端热点 |
-| [story-writer](tasks/story-writer.md) | 创作阶段（虾本）：写手 agent + 通用文档存储 + 前端路由 | 执行中 | 零测试；路由生成文件同时被 `origin/main` 修改 |
+| [story-writer](tasks/story-writer.md) | 创作阶段（虾本）：写手 agent + 通用文档存储 + 前端路由 | 待验收 | 14 项后端契约测试与前端 build 已通过；待真实模型四阶段流程和导入链路验收 |
 | [local-stack](tasks/local-stack.md) | 命令行 CE 本地栈：local_gateway + ComfyUI Qwen/Krea | 执行中 | 机器路径未拔除；生成器文件同时被 `origin/main` 修改 |
 | [canvas-lod-perf](tasks/canvas-lod-perf.md) | 画布 LOD 剔除、低缩放交互、视频抽帧封面 | 执行中 | 远端来源审计完成；按 hunk 拆 LOD 核心，混合增量留给对应工作线 |
 

@@ -1479,7 +1479,8 @@
     "tasks": "虾条",
     "taskCenter": "任务中心",
     "aiAssistant": "虾导",
-    "freezone": "虾画"
+    "freezone": "虾画",
+    "story": "虾本"
   },
   "characters": {
     "title": "角色",
@@ -7465,5 +7466,121 @@
     "reload": "重新加载",
     "statusUnknown": "暂时无法确认功能开放状态，请稍后重试。",
     "unavailableTitle": "功能未开放"
+  },
+  "story": {
+    "save": "保存",
+    "saved": "已保存",
+    "unsaved": "未保存",
+    "errors": {
+      "invalidDocId": "文档标识不合法",
+      "missingContent": "缺少文档内容",
+      "docTooLarge": "文档超出大小上限",
+      "docConflict": "文档已被其它地方修改，请刷新后重试",
+      "missingPrompt": "缺少提示词",
+      "promptTooLong": "提示词超出上限",
+      "writeFailedDetail": "模型生成失败：{{detail}}"
+    },
+    "step": {
+      "bible": {
+        "title": "故事圣经",
+        "hint": "通篇约束。这里定下的规则，后面每一步生成都会带上。"
+      },
+      "plan": {
+        "title": "创作方案",
+        "hint": "剧名、三幕结构、节奏曲线、付费卡点、爽点分布。",
+        "placeholder": "三幕结构、节奏曲线、付费卡点规划…"
+      },
+      "characters": {
+        "title": "角色体系",
+        "hint": "主要角色档案、关系、弧线与四层反派。角色锁里已填的会被优先遵守。",
+        "placeholder": "角色档案、关系图、角色弧线、反派体系…"
+      },
+      "outline": {
+        "title": "分集目录",
+        "hint": "每集一行。结构锁里已填的阶段会被优先遵守。",
+        "placeholder": "第1集：标题 —— 核心冲突一句话"
+      },
+      "episodes": {
+        "title": "分集剧本",
+        "hint": "按交接格式写正文，每集实时校验，不必等到导入才发现问题。"
+      },
+      "compile": {
+        "title": "编译交接",
+        "hint": "拼成可导入的全文并校验格式，通过后进入虾料导入。"
+      }
+    },
+    "bible": {
+      "locks": {
+        "title": "全局锁",
+        "hint": "每一次生成都会注入。写通篇原则，不写具体剧情。",
+        "positioning": "核心定位，例：霸业永远第一，情爱只是转瞬软肋",
+        "era": "时代与质感，例：纯正东汉末年，服饰建筑称谓全程贴合",
+        "dialogueStyle": "台词风格，例：汉末古风、沉稳霸气，无现代口语",
+        "toneRules": "基调铁律，一行一条"
+      },
+      "blacklist": {
+        "title": "禁止清单",
+        "hint": "一行一条。既会注入生成，也用于成稿自检。",
+        "placeholder": "绝不恋爱脑\n绝不古偶套路\n不得错乱朝代服饰称谓"
+      },
+      "cast": {
+        "title": "角色锁",
+        "hint": "填了就按锁生成，不填才由 AI 自由发挥。",
+        "name": "角色名",
+        "bind": "绑定阶段",
+        "arc": "人物弧线一句话",
+        "mustHave": "必须出现的名场面，顿号分隔",
+        "add": "添加角色锁"
+      },
+      "structure": {
+        "title": "结构锁",
+        "hint": "决定分集目录怎么排。填了就按这个时间线走。",
+        "stage": "阶段名",
+        "plot": "主线事件",
+        "bind": "绑定角色",
+        "tone": "情感基调",
+        "add": "添加结构锁",
+        "notes": "本阶段额外要求（跟着阶段走，重排分集也不会丢）"
+      }
+    },
+    "episodes": {
+      "item": "第 {{number}} 集",
+      "add": "新增一集",
+      "title": "本集标题",
+      "empty": "还没有分集草稿，先新增一集",
+      "bodyPlaceholder": "1-1  洛阳·司空府正堂  夜  内\n人物：曹操、荀彧\n曹操负手立于舆图前。\n曹操：「文若，你说这仗打不打得？」",
+      "noStage": "未绑定阶段"
+    },
+    "compile": {
+      "status": {
+        "standard": "格式达标，可以导入",
+        "repairable": "格式可修复，导入时会降级处理",
+        "missing": "缺少场次头，导入会被拒绝"
+      },
+      "summary": "共 {{episodes}} 集 · {{standard}}/{{total}} 个场次达标",
+      "sceneCount": "{{standard}}/{{total}} 个场次达标",
+      "issue": {
+        "missingTimeOfDay": "缺时间（日/夜）",
+        "missingInteriorExterior": "缺内外景（内/外）",
+        "missingLocation": "缺地点",
+        "missingCharacterLine": "缺「人物：」行"
+      },
+      "issueLine": "第 {{line}} 行：{{reason}}",
+      "moreIssues": "另有 {{count}} 处未列出",
+      "preview": "预览全文",
+      "hidePreview": "收起预览",
+      "copy": "复制全文",
+      "copied": "已复制到剪贴板",
+      "copyFailed": "复制失败",
+      "emptyPreview": "还没有可编译的内容",
+      "import": "导入主线",
+      "imported": "已提交导入，正在建索引",
+      "importFailed": "导入失败",
+      "importHint": "导入后会写入本项目原文并启动建索引；也可以复制全文自行到「虾料」导入。"
+    },
+    "askAssistant": "找虾导打磨",
+    "write": "AI 生成",
+    "written": "已生成，记得保存",
+    "writeFailed": "生成失败"
   }
 }

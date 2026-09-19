@@ -1,7 +1,7 @@
 version = 1
 slug = "story-writer"
 ledger = "docs/agent/tasks/story-writer.md"
-baseline = "38484897"
+baseline = "10275ec8bea13620e5b6f266ececc1f9fb26c52c"
 
 [[claims]]
 path = "docs/agent/STATE.md"
@@ -27,6 +27,11 @@ reason = "Story-writing agent and structured screenplay rendering."
 path = "src/novelvideo/api/routes/story.py"
 mode = "exclusive"
 reason = "Generic story document API."
+
+[[claims]]
+path = "tests/test_story_writer.py"
+mode = "exclusive"
+reason = "Story document safety and structured screenplay regression tests."
 
 [[claims]]
 path = "src/novelvideo/api/__init__.py"
@@ -82,6 +87,24 @@ path = "frontend/src/features/superchat/superchat-panel.tsx"
 mode = "shared"
 shared_with = ["*"]
 reason = "Shared assistant surface; only story-specific integration blocks belong here."
+
+[[claims]]
+path = "frontend/public/locales/zh/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Chinese story UI and backend error keys; merge by key."
+
+[[claims]]
+path = "frontend/public/locales/en/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "English story UI and backend error keys; merge by key."
+
+[[claims]]
+path = "frontend/public/locales/vi/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Vietnamese story UI and backend error keys; merge by key."
 
 [[claims]]
 path = "曹操.md"

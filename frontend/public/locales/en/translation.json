@@ -1479,7 +1479,8 @@
     "tasks": "Task Center",
     "taskCenter": "Task Center",
     "aiAssistant": "Xia Director",
-    "freezone": "Freezone"
+    "freezone": "Freezone",
+    "story": "Story"
   },
   "characters": {
     "title": "Characters",
@@ -7465,5 +7466,121 @@
     "reload": "Reload",
     "statusUnknown": "Can't confirm feature availability right now. Please try again later.",
     "unavailableTitle": "Feature unavailable"
+  },
+  "story": {
+    "save": "Save",
+    "saved": "Saved",
+    "unsaved": "Unsaved",
+    "errors": {
+      "invalidDocId": "The document ID is invalid.",
+      "missingContent": "Document content is required.",
+      "docTooLarge": "The document exceeds the size limit.",
+      "docConflict": "This document changed elsewhere. Refresh and try again.",
+      "missingPrompt": "A prompt is required.",
+      "promptTooLong": "The prompt exceeds the length limit.",
+      "writeFailedDetail": "Model generation failed: {{detail}}"
+    },
+    "step": {
+      "bible": {
+        "title": "Story Bible",
+        "hint": "Series-wide constraints. Everything set here is injected into every later step."
+      },
+      "plan": {
+        "title": "Creative Plan",
+        "hint": "Title, three-act structure, rhythm curve, paywall beats, satisfaction spread.",
+        "placeholder": "Three-act structure, rhythm curve, paywall planning…"
+      },
+      "characters": {
+        "title": "Characters",
+        "hint": "Profiles, relationships, arcs and the four-tier villain system. Cast locks take priority.",
+        "placeholder": "Character profiles, relationship map, arcs, villain tiers…"
+      },
+      "outline": {
+        "title": "Episode Outline",
+        "hint": "One line per episode. Structure locks take priority.",
+        "placeholder": "Ep 1: Title — core conflict in one line"
+      },
+      "episodes": {
+        "title": "Episode Drafts",
+        "hint": "Write in the hand-off format; each episode is validated as you go."
+      },
+      "compile": {
+        "title": "Compile",
+        "hint": "Assemble the importable screenplay and validate its format."
+      }
+    },
+    "bible": {
+      "locks": {
+        "title": "Global Locks",
+        "hint": "Injected into every generation. Principles, not plot.",
+        "positioning": "Core positioning",
+        "era": "Era and texture",
+        "dialogueStyle": "Dialogue style",
+        "toneRules": "Tone rules, one per line"
+      },
+      "blacklist": {
+        "title": "Blacklist",
+        "hint": "One per line. Injected into generation and used for self-checks.",
+        "placeholder": "No lovesick protagonist\nNo idol-drama tropes"
+      },
+      "cast": {
+        "title": "Cast Locks",
+        "hint": "When filled, generation follows these instead of inventing.",
+        "name": "Name",
+        "bind": "Bound stage",
+        "arc": "Arc in one line",
+        "mustHave": "Required signature scenes",
+        "add": "Add cast lock"
+      },
+      "structure": {
+        "title": "Structure Locks",
+        "hint": "Drives how the outline is ordered.",
+        "stage": "Stage",
+        "plot": "Main event",
+        "bind": "Bound character",
+        "tone": "Emotional tone",
+        "add": "Add structure lock",
+        "notes": "Extra requirements for this stage (follows the stage, survives re-ordering)"
+      }
+    },
+    "episodes": {
+      "item": "Episode {{number}}",
+      "add": "Add episode",
+      "title": "Episode title",
+      "empty": "No drafts yet — add an episode",
+      "bodyPlaceholder": "1-1  Location  NIGHT  INT\nCharacters: …",
+      "noStage": "No stage"
+    },
+    "compile": {
+      "status": {
+        "standard": "Format valid — ready to import",
+        "repairable": "Repairable — import will downgrade",
+        "missing": "No scene headers — import will be rejected"
+      },
+      "summary": "{{episodes}} episodes · {{standard}}/{{total}} scenes valid",
+      "sceneCount": "{{standard}}/{{total}} scenes valid",
+      "issue": {
+        "missingTimeOfDay": "missing time of day",
+        "missingInteriorExterior": "missing INT/EXT",
+        "missingLocation": "missing location",
+        "missingCharacterLine": "missing character line"
+      },
+      "issueLine": "Line {{line}}: {{reason}}",
+      "moreIssues": "{{count}} more not shown",
+      "preview": "Preview",
+      "hidePreview": "Hide preview",
+      "copy": "Copy screenplay",
+      "copied": "Copied",
+      "copyFailed": "Copy failed",
+      "emptyPreview": "Nothing to compile yet",
+      "import": "Import to pipeline",
+      "imported": "Import started",
+      "importFailed": "Import failed",
+      "importHint": "Importing writes the project source text and starts indexing. You can also copy and import it from Ingest."
+    },
+    "askAssistant": "Polish with AI",
+    "write": "Generate",
+    "written": "Generated — remember to save",
+    "writeFailed": "Generation failed"
   }
 }
