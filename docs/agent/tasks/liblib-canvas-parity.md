@@ -71,6 +71,19 @@ LibTV 画布导入不再丢节点语义，视频节点工具条按实测规格�
 
 ## 进展记录
 
+### 2026-09-18 · 本轮提交已就绪，远端推送被主机网络阻塞
+
+改了什么：完成四层功能提交和交接提交后，按仓库约定释放工作锁；推送目标仍是
+`zhonggwv/main`，没有改写只作上游对照的 `origin`。
+
+为什么这么改：`git push zhonggwv main` 在连接 `github.com:443` 时超时，SSH 又没有可用公钥；
+随后 GitHub CLI 设备登录也在申请设备码前网络超时。这是主机网络/凭据环境问题，重复提交、
+换远端或强推都不能解决，反而会破坏可追溯性。
+
+怎么验证的：`curl -I --connect-timeout 10 https://github.com` 同样连接超时；本地提交与工作树
+仍完整。恢复 GitHub 连通性后先运行 `gh auth login -h github.com -p https --web`，再执行
+`git push zhonggwv main` 并核对远端 HEAD。
+
 ### 2026-09-18 · 四层提交与干净快照收口
 
 改了什么：将混在长期脏工作树里的 LibTV 功能拆成后端安全边界、前端可编辑导入器、视频
@@ -207,6 +220,9 @@ shot / depth 已收口后的 `2ca34419`，补齐本线真实会触碰的集成�
 
 **环境，非代码**：`OSS_RELAY_AK` / `OSS_RELAY_SK` 未配置。任务能建、能派发，
 调到视频生成器报 `OSS media relay config missing`。
+
+**发布环境，非代码**：当前主机无法连接 `github.com:443`，现有 GitHub CLI 凭据也不可用；
+本轮提交尚未同步到 `zhonggwv/main`。恢复网络后按上面的两条命令完成认证和推送，禁止 force push。
 
 ## 验收标准
 

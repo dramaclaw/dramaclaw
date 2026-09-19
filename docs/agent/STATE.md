@@ -18,6 +18,8 @@
 - 本次交接提交完成后，当前 `main` 相对 `origin/main` 为本地 17 个独立提交、上游 27 个提交；
   `main` 跟踪并推送到 `zhonggwv/main`，`origin` 只作为上游对照，且多处本地脏文件也被上游修改。
   在完成逐线来源审计和拆提交前，不得直接 pull/rebase，也不要为了建 worktree 自动 stash。
+- 本轮 LibTV 提交目前只在本地：主机连接 `github.com:443` 超时，且 GitHub CLI 现有凭据不可用。
+  网络恢复后先 `gh auth login -h github.com -p https --web`，再 `git push zhonggwv main`；禁止强推。
 
 ## 二、在途工作线
 
@@ -68,6 +70,7 @@
    `OSS media relay config missing`。凡是「视频生成跑不通」，先查这个，别去 debug 业务代码。
 2. **ComfyUI 模型 / 节点需单独安装**；`start-local-stack.sh` 默认负责启动和等待，也可配置为复用现有进程。
 3. **demucs 未装** → 拉片的音乐维度降级成整轨提取（`mode` 字段会如实上报，不是静默降级）。
+4. **GitHub 发布链路不可用** → `github.com:443` 连接超时，SSH 无可用公钥；本轮本地提交尚未推送。
 
 ## 六、环境速查
 
