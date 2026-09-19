@@ -1,7 +1,7 @@
 version = 1
 slug = "depth-motion-da3"
 ledger = "docs/agent/tasks/depth-motion-da3.md"
-baseline = "850bcbf3b7eb"
+baseline = "1e43f2b2"
 
 [[claims]]
 path = "docs/agent/STATE.md"

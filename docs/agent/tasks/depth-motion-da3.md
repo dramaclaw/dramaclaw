@@ -1,8 +1,8 @@
 # 画布深度动作参考：Depth Anything 3
 
 **状态**：待验收
-**最后更新**：2026-09-18
-**基线**：`850bcbf3b7eb`；DA3 worker 与后端项目任务已独立提交；前端共享层与 LibTV / 拉片重叠
+**最后更新**：2026-09-19
+**基线**：`1e43f2b2`；DA3 worker 与后端项目任务已独立提交；补齐任务中心标签
 **相关文档**：`docs/guides/depth-motion-da3.md`（模型边界、执行链路、API、参数依据）
 **相关分支 / PR**：无，工作区未提交
 
@@ -56,6 +56,15 @@
 - 独占模块可按本线提交撤销；共享路由与 runner 不得整文件回退。
 
 ## 进展记录
+
+### 2026-09-19 · 补齐 Depth 任务中心标签
+
+做了什么：在 `api/routes/tasks.py` 的任务类型映射加入 `freezone_depth_motion` 的用户可见名称。
+
+为什么这么做：DA3 路由已创建该任务类型；没有映射时任务中心退回内部标识，破坏已交付功能的可理解性。
+
+怎么验证的：`uv run pytest tests/test_freezone_depth_motion.py tests/test_tasks_stream_list.py -q` 为 20 passed；
+不触碰与拉片共享的其他任务类型，CUDA 真机验收仍未完成。
 
 ### 2026-09-18 · 前端 Depth 入口在干净索引快照通过构建
 
