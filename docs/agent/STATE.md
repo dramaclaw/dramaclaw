@@ -8,13 +8,13 @@
 
 ## 一、仓库当前形态（接手前必须核对）
 
-- 分支 `main`，最新提交 `850bcbf3`（2026-09-18，`feat(depth): integrate DA3 project jobs`）。
-- **工作区有 97 个未提交状态条目**（截至 2026-09-18，按 `git status --short` 计），
+- 分支 `main`，最新提交 `c4d81e16`（2026-09-18，`feat(depth): add DA3 canvas workflow`）。
+- **工作区有 94 个未提交状态条目**（截至 2026-09-18 开始处理 shot-breakdown 前，按 `git status --short` 计），
   包含六条业务线和历史未归属隔离区；协作治理已形成独立提交，其余工作线仍没有独立提交承载。
   会话开始时 hook 注入的摘要是实时值，不能用条目总数反推某条业务线又新增了多少文件。
 - 这是当前最大的风险：一次整树 restore / 自动 stash / 强制切分支，就能抹掉三周的工作。
   **接手后第一条命令是 `git status --short --branch`，先和下表对账。**
-- 刷新远端后，当前 `main` 相对 `origin/main` 为本地 7 个独立提交、上游 27 个提交，且多处本地脏文件也被上游修改。
+- 刷新远端后，当前 `main` 相对 `origin/main` 为本地 8 个独立提交、上游 27 个提交，且多处本地脏文件也被上游修改。
   在完成逐线来源审计和拆提交前，不得直接 pull/rebase，也不要为了建 worktree 自动 stash。
 
 ## 二、在途工作线
@@ -24,7 +24,7 @@
 | [agent-collaboration-protocol](tasks/agent-collaboration-protocol.md) | 多模型协作、方案门与冲突治理 | 已完成 | 独立提交、测试与真实交接闭环已完成；后续变更另开工作线 |
 | [legacy-unassigned-diff](tasks/legacy-unassigned-diff.md) | 历史未归属改动隔离区 | 已阻塞 | 只读审计来源；未归属前禁止覆盖或删除 |
 | [liblib-canvas-parity](tasks/liblib-canvas-parity.md) | LibTV 画布对齐：片段重拍 / 智能续写 / 导入器 / 工具条 | 待验收 | 缺 OSS relay；与远端重拍分支大面积重复，先审计 |
-| [shot-breakdown](tasks/shot-breakdown.md) | 逐帧拉片三维度：分镜 / 动态 / 音乐 | 待验收 | 音乐依赖 demucs；与 depth、远端重拍分支共享后端热点 |
+| [shot-breakdown](tasks/shot-breakdown.md) | 逐帧拉片三维度：分镜 / 动态 / 音乐 | 执行中 | 远端契约审计完成；按纯模块 → 后端共享层 → 前端共享层拆提交 |
 | [depth-motion-da3](tasks/depth-motion-da3.md) | 拉片动态维度：Depth Anything 3 深度视频 | 待验收 | 三层独立提交与干净快照构建通过；待 CUDA 真机 720p 硬切样片验收 |
 | [story-writer](tasks/story-writer.md) | 创作阶段（虾本）：写手 agent + 通用文档存储 + 前端路由 | 待验收 | 14 项后端契约测试与前端 build 已通过；待真实模型四阶段流程和导入链路验收 |
 | [local-stack](tasks/local-stack.md) | 命令行 CE 本地栈：local_gateway + ComfyUI Qwen/Krea | 待验收 | 可移植配置与 334 项测试已通过；待第二台完整 ComfyUI 环境真实启动 |
@@ -86,7 +86,7 @@ cd frontend && pnpm install --frozen-lockfile && pnpm dev
 
 | 路径 | 是什么 | 丢了会怎样 |
 |---|---|---|
-| `output/local/liblib_canvas_import_review/liblib-shot-breakdown-teardown.md` | 拉片实测拆解 | 拉片那条线的取证归零，要重新对着 LibTV 量一遍 |
+| `output/local/liblib_canvas_import_review/liblib-shot-breakdown-teardown.md` | 拉片实测原始笔记；证据已整理进 tracked guide | 原始笔记丢失不再导致需求证据归零 |
 | `.dramaclaw-local/` | 本地路由配置与密钥 | 本地栈起不来 |
 | `.dramaclaw-local/workflows/*.json` | 用户修改过的 ComfyUI 工作流副本 | 会回退到仓库内受审查模板，个性化调整丢失 |
 | `曹操.md` | 创作阶段的真实样例产物 | story 线没有可回归的样例 |

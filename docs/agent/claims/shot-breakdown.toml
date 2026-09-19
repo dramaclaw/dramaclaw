@@ -1,7 +1,7 @@
 version = 1
 slug = "shot-breakdown"
 ledger = "docs/agent/tasks/shot-breakdown.md"
-baseline = "38484897"
+baseline = "c4d81e167a45"
 
 [[claims]]
 path = "docs/agent/STATE.md"
@@ -80,6 +80,12 @@ shared_with = ["depth-motion-da3", "liblib-canvas-parity"]
 reason = "Breakdown, depth, and video recreation actions share one node."
 
 [[claims]]
+path = "frontend/src/features/canvas/ui/NodeActionToolbar.tsx"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Breakdown entry and LibTV-compatible video actions share the toolbar."
+
+[[claims]]
 path = "frontend/src/features/canvas/domain/canvasNodes.ts"
 mode = "shared"
 shared_with = ["depth-motion-da3", "liblib-canvas-parity"]
@@ -89,6 +95,29 @@ reason = "Breakdown flags share the canvas node contract with depth and imports.
 path = "frontend/src/api/tasks.ts"
 mode = "exclusive"
 reason = "Breakdown task projections."
+
+[[claims]]
+path = "frontend/src/stores/canvasStore.ts"
+mode = "exclusive"
+reason = "Reset unrecoverable breakdown activity during canvas hydration."
+
+[[claims]]
+path = "frontend/public/locales/zh/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Shot-breakdown UI strings; merge by key only."
+
+[[claims]]
+path = "frontend/public/locales/en/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Shot-breakdown UI strings; merge by key only."
+
+[[claims]]
+path = "frontend/public/locales/vi/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Shot-breakdown UI strings; merge by key only."
 
 [[claims]]
 path = "frontend/src/features/canvas/application/shotBreakdownNodes.ts"

@@ -97,8 +97,9 @@ reason = "Video remake/continuation and depth-motion entry share the video node.
 
 [[claims]]
 path = "frontend/src/features/canvas/ui/NodeActionToolbar.tsx"
-mode = "exclusive"
-reason = "Measured LibTV-compatible video actions."
+mode = "shared"
+shared_with = ["shot-breakdown"]
+reason = "Measured LibTV-compatible video actions share the toolbar with breakdown."
 
 [[claims]]
 path = "frontend/src/features/canvas/ui/nodeToolbarConfig.ts"
