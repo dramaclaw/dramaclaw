@@ -1780,3 +1780,173 @@ def _aspect_to_dims(aspect_ratio: str, image_size: str) -> tuple[int, int]:
     if w_ratio >= h_ratio:
         return base, max(64, round(base * h_ratio / w_ratio))
     return max(64, round(base * w_ratio / h_ratio)), base
+
+
+# ============================================================
+# Shot breakdown (M1c) — 按镜头切分、取首尾帧、剪片段
+#
+# 和上面的 `run_freezone_extract_frames` 的区别：那个只回答「抽哪几帧」，
+# 这里要回答「片子由哪几个镜头组成、每个镜头从第几秒到第几秒」。有了时间轴
+# 才谈得上按镜头取首帧/尾帧（图生视频的输入对）和按镜头剪出片段。
+# 两者并存：老的抽帧调用点一个都不动。
+# ============================================================
+
+
+_SCENE_PTS_RE = re.compile(r"pts_time:([0-9]+(?:\.[0-9]+)?)")
+
+
+async def run_freezone_detect_shot_spans(
+    *,
+    project_dir: Path,
+    job_id: str,
+    video_path: Path,
+    # 0.2 而不是抽帧那边的 0.3：在真实短剧素材上实测，0.3 会漏掉真实剪辑点
+    # （漏一个就意味着某个「镜头」的首帧和尾帧分属两场戏，而这对首尾帧正是
+    # 要拿去当图生视频输入的）。0.2 / 0.15 / 0.1 三档给出完全相同的切点，
+    # 说明分数分布是双峰的，0.2 落在谷底，再低只会开始收噪声。
+    scene_threshold: float = 0.2,
+    min_shot_sec: float = 0.8,
+) -> list[dict[str, float]]:
+    """ffmpeg 场景检测 → 镜头时间区间列表。
+
+    用 `metadata=print` 而不是 `-frame_pts true` 的文件名：后者写进文件名的是
+    time_base 单位的 PTS，换算回秒要再去问一次流信息，容易错；`metadata=print`
+    直接给 `pts_time:` 秒。这里只读时间，不落图。
+    """
+    from novelvideo.freezone.shot_breakdown import spans_from_cut_times
+
+    if not shutil.which("ffmpeg"):
+        raise RuntimeError("ffmpeg not found on PATH; install via brew/apt")
+    if not video_path.exists():
+        raise FileNotFoundError(f"video not found: {video_path}")
+
+    duration = await _probe_video_duration(str(video_path))
+    proc = await asyncio.to_thread(
+        subprocess.run,
+        [
+            "ffmpeg",
+            "-i",
+            str(video_path),
+            "-filter:v",
+            f"select='gt(scene,{scene_threshold})',metadata=print:file=-",
+            "-an",
+            "-f",
+            "null",
+            "-",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=900,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg scene detect failed: {(proc.stderr or '')[-500:]}")
+
+    # metadata=print 写 stdout，但不同 ffmpeg 版本有把它并进 stderr 的，两边都扫。
+    cut_times = [
+        float(match)
+        for stream in (proc.stdout or "", proc.stderr or "")
+        for match in _SCENE_PTS_RE.findall(stream)
+    ]
+    return spans_from_cut_times(
+        cut_times, duration_sec=duration, min_shot_sec=min_shot_sec
+    )
+
+
+async def run_freezone_extract_shot_assets(
+    *,
+    project_dir: Path,
+    job_id: str,
+    video_path: Path,
+    spans: list[dict[str, float]],
+    want_frames: bool = True,
+    want_clips: bool = True,
+) -> dict[str, list[dict[str, Any]]]:
+    """按镜头取首尾帧、剪出片段。
+
+    片段重新编码而不是 `-c copy`：`-c copy` 只能从关键帧切起，几秒的短片
+    往往整段偏移，切出来的运镜参考对不上原片。重编码慢一点，但是准的。
+    """
+    from novelvideo.freezone.shot_breakdown import sample_points_for_span
+
+    if not shutil.which("ffmpeg"):
+        raise RuntimeError("ffmpeg not found on PATH; install via brew/apt")
+
+    out_dir = outputs_dir(project_dir, "freezone_shot_breakdown") / job_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    frames: list[dict[str, Any]] = []
+    clips: list[dict[str, Any]] = []
+
+    for span in spans:
+        index = int(span.get("index", 0))
+        first_at, last_at = sample_points_for_span(span)
+        if want_frames:
+            for position, at in (("first", first_at), ("last", last_at)):
+                target = out_dir / f"shot{index:02d}_{position}.jpg"
+                await _run_cmd(
+                    [
+                        "ffmpeg",
+                        "-y",
+                        "-ss",
+                        f"{at:.3f}",
+                        "-i",
+                        str(video_path),
+                        "-frames:v",
+                        "1",
+                        "-q:v",
+                        "2",
+                        str(target),
+                    ]
+                )
+                if target.exists():
+                    frames.append(
+                        {
+                            "shot_index": index,
+                            "position": position,
+                            "at_sec": round(at, 3),
+                            "path": target,
+                        }
+                    )
+        if want_clips:
+            start, end = sample_points_for_span(span)
+            if end - start < 0.4:
+                # 太短的镜头剪出来没有参考价值，跳过；首尾帧仍然保留。
+                continue
+            target = out_dir / f"shot{index:02d}_clip.mp4"
+            await _run_cmd(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-ss",
+                    f"{start:.3f}",
+                    "-i",
+                    str(video_path),
+                    # 用 -t（时长）而不是 -to（终点）：-ss 放在 -i 之前时，
+                    # -to 在不同 ffmpeg 版本里参照的基准不一样，剪出来会长短不一。
+                    "-t",
+                    f"{end - start:.3f}",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "veryfast",
+                    "-crf",
+                    "23",
+                    "-c:a",
+                    "aac",
+                    "-movflags",
+                    "+faststart",
+                    str(target),
+                ]
+            )
+            if target.exists():
+                clips.append(
+                    {
+                        "shot_index": index,
+                        "start_sec": round(start, 3),
+                        "end_sec": round(end, 3),
+                        "duration_sec": round(end - start, 3),
+                        "path": target,
+                    }
+                )
+
+    return {"frames": frames, "clips": clips}

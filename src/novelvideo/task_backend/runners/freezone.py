@@ -81,6 +81,15 @@ FREEZONE_LEAF_EGRESS: dict[str, LeafEgressRule] = {
     "run_freezone_extract_frames": LeafEgressRule(
         "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
     ),
+    "run_freezone_detect_shot_spans": LeafEgressRule(
+        "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
+    ),
+    "run_freezone_extract_shot_assets": LeafEgressRule(
+        "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
+    ),
+    "run_freezone_bgm_separate": LeafEgressRule(
+        "novelvideo.freezone.bgm_separate", LeafEgress.LOCAL, "EG-20a"
+    ),
     "run_freezone_video_upscale": LeafEgressRule(
         "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
     ),
@@ -178,7 +187,13 @@ def _update(
     current_task: str,
     *,
     episode: int = 0,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
+    """进度更新；`metadata` 用来在任务**跑完之前**把已经产好的东西推给前端。
+
+    task_state 那边 metadata 是浅合并、并挂到 `result.task_metadata` 下，所以
+    同一个 key 每次推累计值即可：幂等，SSE 掉一两个事件也能自愈。
+    """
     get_task_manager().update_progress_for_project(
         ctx,
         task_type,
@@ -187,6 +202,7 @@ def _update(
         progress=progress,
         current_task=current_task,
         logs=[current_task],
+        metadata=metadata,
     )
 
 
@@ -552,6 +568,276 @@ async def _run_freezone_video_story_async(
         "analyses": result.get("analyses"),
         "video_story": result.get("video_story"),
     }
+
+
+async def _run_freezone_shot_breakdown_async(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    """逐帧拉片：把参考视频反编译成可以直接再用的素材。
+
+    实测 LibTV 的同名功能之后重写过一次。它和「出一份分析摘要」的差别是：
+    产物必须是**素材件**——按镜头切出来的首尾帧（正好是图生视频的输入对）、
+    按镜头剪好的片段、分离出的音轨。这些东西不需要下游「理解」就能用。
+
+    三个维度各自独立产出、各自可关，因为它们耗时差很多（音乐维度最慢），
+    没必要让用户等最慢的那个。抽帧/分析/剪切都走 leaf，出网分类照旧。
+    """
+    from novelvideo.api.deps import make_static_url_for_context
+    from novelvideo.freezone.jobs import (
+        ensure_freezone_dirs,
+        run_freezone_analyze_shots,
+        run_freezone_detect_shot_spans,
+        run_freezone_extract_shot_assets,
+    )
+    from novelvideo.freezone.bgm_separate import (
+        MODE_BGM_ONLY,
+        run_freezone_bgm_separate,
+    )
+    from novelvideo.freezone.shot_breakdown import (
+        ALL_DIMENSIONS,
+        STREAMED_GROUPS_KEY,
+        DIMENSION_CAMERA_MOVES,
+        DIMENSION_MUSIC_REF,
+        DIMENSION_STORYBOARD,
+        build_breakdown_groups,
+        build_lens_material,
+        cap_shot_spans,
+        format_audio_node_name,
+        format_clip_node_name,
+        format_frame_node_name,
+    )
+
+    payload = envelope.get("payload") or {}
+    job_id = str(payload["job_id"])
+    project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
+    video_path = Path(str(payload["video_path"]))
+    ensure_freezone_dirs(project_dir)
+
+    requested = payload.get("dimensions")
+    dimensions = [
+        name for name in ALL_DIMENSIONS if not requested or name in set(requested)
+    ]
+    want_frames = DIMENSION_STORYBOARD in dimensions
+    want_clips = DIMENSION_CAMERA_MOVES in dimensions
+    want_music = DIMENSION_MUSIC_REF in dimensions
+
+    def _url(path: Path) -> str:
+        return make_static_url_for_context(ctx, path.relative_to(project_dir).as_posix())
+
+    # 已经产好的分组，每产出一个就随进度推一次。三个维度耗时差很多（音乐维度
+    # 要跑人声分离，最慢），让用户等最慢的那个才看到第一张图是没道理的。
+    streamed: list[dict[str, Any]] = []
+
+    def _publish(progress: float, message: str) -> None:
+        _update(
+            ctx,
+            "freezone_shot_breakdown",
+            job_id,
+            progress,
+            message,
+            metadata={STREAMED_GROUPS_KEY: streamed},
+        )
+
+    _publish(0.08, "ffmpeg 切分镜头...")
+    spans = await _call_freezone_leaf(
+        envelope,
+        run_freezone_detect_shot_spans,
+        "run_freezone_detect_shot_spans",
+        project_dir=project_dir,
+        job_id=job_id,
+        video_path=video_path,
+        scene_threshold=float(payload.get("scene_threshold") or 0.2),
+    )
+    spans = cap_shot_spans(
+        spans,
+        max_shots=int(payload.get("max_frames") or 20),
+    )
+
+    _publish(0.2, f"提取 {len(spans)} 个镜头的首尾帧...")
+    frame_assets = (
+        (
+            await _call_freezone_leaf(
+                envelope,
+                run_freezone_extract_shot_assets,
+                "run_freezone_extract_shot_assets",
+                project_dir=project_dir,
+                job_id=job_id,
+                video_path=video_path,
+                spans=spans,
+                want_frames=True,
+                want_clips=False,
+            )
+        ).get("frames")
+        or []
+        if want_frames
+        else []
+    )
+
+    # 送去分析的是每个镜头的首帧：一镜一帧，和镜头序号严格对齐。
+    # 尾帧不重复送——同一个镜头的镜头语言不会在两端不一样，多送一张只是多花钱。
+    analysis_frames = [item for item in frame_assets if item.get("position") == "first"]
+    analyses: list[dict[str, Any]] = []
+    model_name = None
+    if analysis_frames:
+        _publish(0.4, f"解析 {len(analysis_frames)} 个镜头的镜头语言...")
+        result = await _call_freezone_leaf(
+            envelope,
+            run_freezone_analyze_shots,
+            "run_freezone_analyze_shots",
+            project_dir=project_dir,
+            job_id=job_id,
+            frame_paths=[str(item["path"]) for item in analysis_frames],
+            provider=payload.get("provider"),
+            model=payload.get("model"),
+            analysis_mode="shots",
+            duration_sec=payload.get("duration_sec"),
+        )
+        analyses = result.get("analyses") or []
+        model_name = result.get("model")
+
+    by_shot: dict[int, dict[str, Any]] = {}
+    for position, item in enumerate(analysis_frames):
+        if position < len(analyses) and isinstance(analyses[position], dict):
+            by_shot[int(item["shot_index"])] = analyses[position]
+
+    # 镜头语言写进节点名字，结构化的那份留在 lens_material 里给程序消费——
+    # 两边各自擅长的场景不一样，只留一边都会有人吃亏。
+    frame_items: list[dict[str, Any]] = []
+    for order, item in enumerate(frame_assets, start=1):
+        analysis = by_shot.get(int(item["shot_index"]))
+        frame_items.append(
+            {
+                "kind": "image",
+                "name": format_frame_node_name(order, analysis),
+                "url": _url(item["path"]),
+                "shot_index": item["shot_index"],
+                "position": item["position"],
+                "at_sec": item["at_sec"],
+                "subject_action": (analysis or {}).get("subject_action"),
+            }
+        )
+    streamed.extend(build_breakdown_groups(frames=frame_items))
+    if frame_items:
+        _publish(0.5, f"分镜已就绪（{len(frame_items)} 张关键帧）")
+
+    clip_items: list[dict[str, Any]] = []
+    if want_clips:
+        _publish(0.55, "剪出镜头片段...")
+        clip_assets = (
+            await _call_freezone_leaf(
+                envelope,
+                run_freezone_extract_shot_assets,
+                "run_freezone_extract_shot_assets",
+                project_dir=project_dir,
+                job_id=job_id,
+                video_path=video_path,
+                spans=spans,
+                want_frames=False,
+                want_clips=True,
+            )
+        ).get("clips") or []
+        for order, item in enumerate(clip_assets, start=1):
+            analysis = by_shot.get(int(item["shot_index"]))
+            clip_items.append(
+                {
+                    "kind": "video",
+                    "name": format_clip_node_name(
+                        order,
+                        duration_sec=float(item["duration_sec"]),
+                        analysis=analysis,
+                    ),
+                    "url": _url(item["path"]),
+                    "shot_index": item["shot_index"],
+                    "start_sec": item["start_sec"],
+                    "end_sec": item["end_sec"],
+                    "duration_sec": item["duration_sec"],
+                    "subject_action": (analysis or {}).get("subject_action"),
+                }
+            )
+        streamed.extend(build_breakdown_groups(clips=clip_items))
+        if clip_items:
+            _publish(0.8, f"动态已就绪（{len(clip_items)} 段片段）")
+
+    audio_item: dict[str, Any] | None = None
+    if want_music:
+        _publish(0.85, "分离配乐参考...")
+        separated = await _call_freezone_leaf(
+            envelope,
+            run_freezone_bgm_separate,
+            "run_freezone_bgm_separate",
+            project_dir=project_dir,
+            job_id=job_id,
+            source_path=str(video_path),
+        )
+        audio_path = separated.get("audio_path")
+        audio_mode = str(separated.get("mode") or "")
+        if audio_path is not None:
+            moods = [
+                str((by_shot.get(index) or {}).get("mood") or "")
+                for index in sorted(by_shot)
+            ]
+            mood = next((value for value in moods if value), "")
+            audio_item = {
+                "kind": "audio",
+                "name": format_audio_node_name(
+                    duration_sec=payload.get("duration_sec"),
+                    mood=mood,
+                    bgm_only=audio_mode == MODE_BGM_ONLY,
+                ),
+                "url": _url(Path(str(audio_path))),
+                "duration_sec": payload.get("duration_sec"),
+                # 降级如实透出：用户要一眼看得出手里这条是伴奏还是原声。
+                "audio_mode": audio_mode,
+            }
+            # 人声轨是同一次分离的副产物，白拿的：一起落成节点，配音参考、
+            # 对白重录都要用它。分离没跑成（降级成整轨）时它不存在，自然跳过。
+            vocals_path = separated.get("vocals_path")
+            vocals_item = (
+                {
+                    "kind": "audio",
+                    "name": format_audio_node_name(
+                        duration_sec=payload.get("duration_sec"),
+                        mood=mood,
+                        track="vocals",
+                    ),
+                    "url": _url(Path(str(vocals_path))),
+                    "duration_sec": payload.get("duration_sec"),
+                    "audio_mode": audio_mode,
+                }
+                if vocals_path is not None
+                else None
+            )
+            streamed.extend(
+                build_breakdown_groups(audio=audio_item, vocals=vocals_item)
+            )
+            _publish(0.95, "音乐已就绪")
+
+    material = build_lens_material(
+        analyses=analyses,
+        frame_urls=[item["url"] for item in frame_items if item["position"] == "first"],
+        source_url=payload.get("source_url"),
+        duration_sec=payload.get("duration_sec"),
+    )
+    # 最终结果里给的就是流式推过的那份，两边不会出现两套坐标或两套命名。
+    # 前端按 key 去重：流式收到过的组不会再落一遍。
+    groups = streamed
+    return {
+        "job_id": job_id,
+        "model": model_name,
+        "dimensions": dimensions,
+        "shots": spans,
+        "frame_count": len(frame_items),
+        "frame_urls": [item["url"] for item in frame_items],
+        "groups": groups,
+        "lens_material": material,
+    }
+
+
+def run_freezone_shot_breakdown(
+    envelope: dict[str, Any], ctx: ProjectContext
+) -> dict[str, Any]:
+    return _run_cancellable(envelope, _run_freezone_shot_breakdown_async(envelope, ctx))
 
 
 def run_freezone_gen(envelope: dict[str, Any], ctx: ProjectContext) -> dict[str, Any]:
@@ -1471,6 +1757,9 @@ register_project_task_runner(
 )
 register_project_task_runner(
     "freezone_analyze", run_freezone_analyze, requires_home_node=False
+)
+register_project_task_runner(
+    "freezone_shot_breakdown", run_freezone_shot_breakdown, requires_home_node=False
 )
 register_project_task_runner(
     "freezone_video_story", run_freezone_video_story, requires_home_node=False

@@ -135,6 +135,23 @@ mode = "exclusive"
 reason = "BGM normal and degraded path tests."
 
 [[claims]]
+path = "tests/test_freezone_shot_breakdown_backend.py"
+mode = "exclusive"
+reason = "Shot-breakdown route, billing, and queue contract tests."
+
+[[claims]]
+path = "tests/test_p0g4i_freezone_leaf_classification.py"
+mode = "shared"
+shared_with = ["depth-motion-da3"]
+reason = "Breakdown local leaves extend the global audited egress table."
+
+[[claims]]
+path = "tests/test_task_runner_home_node_placement.py"
+mode = "shared"
+shared_with = ["depth-motion-da3"]
+reason = "Breakdown extends the audited placement-free task contract."
+
+[[claims]]
 path = "frontend/src/__tests__/features/canvas/shot-breakdown-nodes.test.ts"
 mode = "exclusive"
 reason = "Canvas output projection tests."

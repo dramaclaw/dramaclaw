@@ -82,13 +82,15 @@ reason = "Depth reference semantics feed the shared omni-video prompt."
 
 [[claims]]
 path = "tests/test_p0g4i_freezone_leaf_classification.py"
-mode = "exclusive"
-reason = "DA3 local-leaf classification extends the global audited table."
+mode = "shared"
+shared_with = ["shot-breakdown"]
+reason = "DA3 and breakdown local leaves extend the global audited table."
 
 [[claims]]
 path = "tests/test_task_runner_home_node_placement.py"
-mode = "exclusive"
-reason = "Depth tasks extend the placement-free task contract."
+mode = "shared"
+shared_with = ["shot-breakdown"]
+reason = "Depth and breakdown tasks extend the placement-free task contract."
 
 [[claims]]
 path = "frontend/public/locales/zh/translation.json"

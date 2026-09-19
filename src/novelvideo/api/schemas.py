@@ -820,6 +820,28 @@ class FreezoneDepthMotionCaptureRequest(BaseModel):
     resolution: Literal["480p", "720p"] = "720p"
 
 
+class FreezoneShotBreakdownRequest(BaseModel):
+    """逐帧拉片：把参考视频反编译成可复用的运镜素材。"""
+
+    video_url: str = Field(description="当前项目的视频静态地址")
+    max_frames: int = Field(default=20, ge=2, le=60, description="最多切分多少个镜头")
+    scene_threshold: float = Field(
+        # 0.2 是实测出来的默认值：0.3 会漏掉真实剪辑点，导致一个「镜头」的首帧
+        # 和尾帧分属两场戏，而这对首尾帧正是要拿去当图生视频输入的。
+        default=0.2,
+        ge=0.05,
+        le=0.95,
+        description="镜头切分灵敏度，越小切得越碎",
+    )
+    dimensions: Optional[list[Literal["storyboard", "cameraMoves", "musicRef"]]] = Field(
+        default=None,
+        description="拆解维度；留空表示全做。分镜=首尾帧，动态=镜头片段，音乐=参考音轨",
+    )
+    duration_sec: Optional[float] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+
+
 class FreezoneAnalyzeShotsRequest(BaseModel):
     frame_urls: list[str]
     provider: Optional[str] = None

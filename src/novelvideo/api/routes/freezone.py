@@ -40,6 +40,7 @@ from novelvideo.api.schemas import (
     CanvasPayload,
     CreateIdentityAssetRequest,
     FreezoneAnalyzeShotsRequest,
+    FreezoneShotBreakdownRequest,
     FreezoneAnalyzeVideoStoryRequest,
     FreezoneAssetCopyRequest,
     FreezoneAssetLibraryFolderPatchRequest,
@@ -2671,21 +2672,24 @@ async def _enqueue_or_start_freezone_video_analysis(
     project: str,
     project_dir: Path,
     output_dir: str,
-    task_type: Literal["freezone_extract", "freezone_analyze", "freezone_video_story"],
+    task_type: Literal[
+        "freezone_extract",
+        "freezone_analyze",
+        "freezone_video_story",
+        "freezone_shot_breakdown",
+    ],
     job_id: str,
     payload: dict,
 ) -> dict:
     if ctx is not None:
+        billing_operation = {
+            "freezone_analyze": "shots",
+            "freezone_video_story": "video_story",
+            "freezone_shot_breakdown": "video_breakdown",
+        }.get(task_type)
         billing = (
-            {
-                "feature_key": "freezone.video_analyze",
-                "operation": (
-                    "video_story"
-                    if task_type == "freezone_video_story"
-                    else "shots"
-                ),
-            }
-            if task_type in {"freezone_analyze", "freezone_video_story"}
+            {"feature_key": "freezone.video_analyze", "operation": billing_operation}
+            if billing_operation
             else {}
         )
         queued = await get_task_backend().enqueue_project_task(
@@ -6064,6 +6068,49 @@ async def freezone_depth_motion_capture(
         job_id=_new_job_id(),
         payload={"source_path": source_path.as_posix(), "resolution": body.resolution},
         queue_kind="world",
+    )
+
+
+@router.post("/projects/{project}/freezone/shot-breakdown", tags=[TAG_FREEZONE_VIDEO])
+async def freezone_shot_breakdown(
+    project: str,
+    body: FreezoneShotBreakdownRequest,
+    user: dict = Depends(get_api_user),
+):
+    """逐帧拉片：切分镜头 → 解析镜头语言 → 产出可复用的运镜素材。
+
+    复用现成的抽帧与逐帧分析，本身只多了一层归纳，所以走普通队列而不是 world 队列
+    （不需要 GPU）。
+    """
+    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
+        project, user
+    )
+    try:
+        video_path = resolve_static_url_to_path(body.video_url, project_dir)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not video_path.is_file():
+        raise HTTPException(404, "video source not found")
+    if ctx is None:
+        _raise_project_context_required("freezone_shot_breakdown")
+    return await _enqueue_or_start_freezone_video_analysis(
+        ctx=ctx,
+        username=username,
+        project=project_name,
+        project_dir=project_dir,
+        output_dir=output_dir,
+        task_type="freezone_shot_breakdown",
+        job_id=_new_job_id(),
+        payload={
+            "video_path": video_path.as_posix(),
+            "source_url": body.video_url,
+            "max_frames": body.max_frames,
+            "scene_threshold": body.scene_threshold,
+            "duration_sec": body.duration_sec,
+            "provider": body.provider,
+            "model": body.model,
+            "dimensions": body.dimensions,
+        },
     )
 
 

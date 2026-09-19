@@ -72,6 +72,7 @@ _TASK_TYPE_LABELS = {
     "freezone_edit": "虾画编辑",
     "freezone_mask_edit": "局部编辑",
     "freezone_extract": "视频抽帧",
+    "freezone_shot_breakdown": "逐帧拉片",
     "freezone_analyze": "视频分析",
     "freezone_video_story": "视频解读",
     "freezone_video_erase": "视频擦除",

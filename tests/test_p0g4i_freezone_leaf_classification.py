@@ -52,6 +52,13 @@ AUDITED_LOCAL_LEAVES = frozenset(
     }
 )
 DA3_LOCAL_LEAVES = frozenset({"run_freezone_depth_motion_capture"})
+SHOT_BREAKDOWN_LOCAL_LEAVES = frozenset(
+    {
+        "run_freezone_detect_shot_spans",
+        "run_freezone_extract_shot_assets",
+        "run_freezone_bgm_separate",
+    }
+)
 
 
 def _organization_context(task_type: str = "freezone_extract") -> TrustedEgressContext:
@@ -353,10 +360,11 @@ async def test_analyze_shots_leaf_receives_the_organization_egress_context(
     assert seen[0] is not None and seen[0].is_organization
 
 
-def test_local_table_is_audited_leaves_plus_explicit_local_da3_worker() -> None:
-    """本地表严格限于原 5 条和新增的本地 DA3 子进程（护栏 b）。
+def test_local_table_is_audited_leaves_plus_explicit_local_workers() -> None:
+    """本地表严格限于原 5 条、DA3 和拉片的本地处理进程（护栏 b）。
 
-    原 5 条与 EE 计费豁免集同源；DA3 不下载权重、仅加载本地路径。
+    原 5 条与 EE 计费豁免集同源；DA3 不下载权重、仅加载本地路径；拉片三条
+    分别只跑 ffmpeg 或显式配置的本地 demucs 解释器。
     """
 
     from novelvideo.task_backend.runners.freezone import (
@@ -370,10 +378,11 @@ def test_local_table_is_audited_leaves_plus_explicit_local_da3_worker() -> None:
         if rule.egress is LeafEgress.LOCAL
     }
 
-    assert local == AUDITED_LOCAL_LEAVES | DA3_LOCAL_LEAVES
+    audited = AUDITED_LOCAL_LEAVES | DA3_LOCAL_LEAVES | SHOT_BREAKDOWN_LOCAL_LEAVES
+    assert local == audited
     assert all(
         FREEZONE_LEAF_EGRESS[name].eg_id == "EG-20a"
-        for name in AUDITED_LOCAL_LEAVES | DA3_LOCAL_LEAVES
+        for name in audited
     )
 
     # DENIED 桶同样锁死：它不是「待办清单」，往里塞新名字等于悄悄扩大拒绝面。
@@ -443,7 +452,7 @@ def test_classification_matches_the_real_leaf_signatures() -> None:
 
 
 def test_every_dispatch_site_names_a_classified_leaf() -> None:
-    """21 个调用点逐个对到表里；新增未分类的调用点即红。
+    """26 个调用点逐个对到表里；新增未分类的调用点即红。
 
     `leaf_name` 是必填位置参数，不是可选项——漏传是 `TypeError`，不是静默放行。
     """
@@ -471,14 +480,22 @@ def test_every_dispatch_site_names_a_classified_leaf() -> None:
 
     # 19 → 20：`origin/staging` 的 f33ac189（#279）带进来的
     # `generate_freezone_text`，正是上一条用例点名预言的那个形状。
-    assert len(named) == 21  # DA3 local worker adds one explicitly classified call.
+    # DA3 增加 1 个；拉片增加 scene detect、两次素材提取、视觉分析和 BGM 共 5 个。
+    assert len(named) == 26
     assert set(named) <= set(FREEZONE_LEAF_EGRESS)
 
 
 # `novelvideo.freezone.jobs` / `.text_node` 里唯二被 runner 直接调用的非 leaf：
 # `ensure_freezone_dirs`（`jobs.py:358-378`，只 mkdir）与 `bind_story_script_assets`
 # （`text_node.py:606-`，只回填 URL 字符串）。两个都不出网、不取凭证，逐个核过。
-NON_LEAF_HELPERS = frozenset({"ensure_freezone_dirs", "bind_story_script_assets"})
+NON_LEAF_HELPERS = frozenset(
+    {
+        "ensure_freezone_dirs",
+        "bind_story_script_assets",
+        # 只参与节点命名分支，不执行 IO，也不读取凭据。
+        "MODE_BGM_ONLY",
+    }
+)
 
 
 def test_no_leaf_module_import_reaches_the_network_around_the_dispatcher() -> None:
