@@ -8,13 +8,15 @@
 
 ## 一、仓库当前形态（接手前必须核对）
 
-- 分支 `main`，最新提交 `2ca34419`（2026-09-18，`docs(agent): hand off shot breakdown`）。
-- **工作区有 82 个未提交状态条目**（截至 shot-breakdown 三层提交完成后，按 `git status --short` 计），
-  包含六条业务线和历史未归属隔离区；协作治理已形成独立提交，其余工作线仍没有独立提交承载。
+- 分支 `main`，最新功能提交 `09e2703a`（2026-09-18，`feat(liblib): add video remake and continuation`）。
+- **工作区有 49 个未提交状态条目**（截至 LibTV 四层提交完成后，按 `git status --short` 计），
+  包含 LOD、素材替换等在途线和历史未归属隔离区；LibTV、shot、depth、story、local-stack
+  已有独立提交承载，仍不能把剩余条目当作可以清理的垃圾。
   会话开始时 hook 注入的摘要是实时值，不能用条目总数反推某条业务线又新增了多少文件。
 - 这是当前最大的风险：一次整树 restore / 自动 stash / 强制切分支，就能抹掉三周的工作。
   **接手后第一条命令是 `git status --short --branch`，先和下表对账。**
-- 本次交接提交完成后，当前 `main` 相对 `origin/main` 为本地 12 个独立提交、上游 27 个提交，且多处本地脏文件也被上游修改。
+- 本次交接提交完成后，当前 `main` 相对 `origin/main` 为本地 17 个独立提交、上游 27 个提交；
+  `main` 跟踪并推送到 `zhonggwv/main`，`origin` 只作为上游对照，且多处本地脏文件也被上游修改。
   在完成逐线来源审计和拆提交前，不得直接 pull/rebase，也不要为了建 worktree 自动 stash。
 
 ## 二、在途工作线
@@ -23,7 +25,7 @@
 |---|---|---|---|
 | [agent-collaboration-protocol](tasks/agent-collaboration-protocol.md) | 多模型协作、方案门与冲突治理 | 已完成 | 独立提交、测试与真实交接闭环已完成；后续变更另开工作线 |
 | [legacy-unassigned-diff](tasks/legacy-unassigned-diff.md) | 历史未归属改动隔离区 | 已阻塞 | 只读审计来源；未归属前禁止覆盖或删除 |
-| [liblib-canvas-parity](tasks/liblib-canvas-parity.md) | LibTV 画布对齐：片段重拍 / 智能续写 / 导入器 / 工具条 | 执行中 | 远端差异表已定；按导入器 → 重拍 → 续写 → 工具条拆提交，最终出片仍缺 OSS relay |
+| [liblib-canvas-parity](tasks/liblib-canvas-parity.md) | LibTV 画布对齐：片段重拍 / 智能续写 / 导入器 / 工具条 | 待验收 | 四层提交与干净快照已通过；配置 OSS relay 后真实出片并补跑续写端到端 |
 | [shot-breakdown](tasks/shot-breakdown.md) | 逐帧拉片三维度：分镜 / 动态 / 音乐 | 待验收 | 三层提交与干净快照通过；待真实视觉模型及有/无 demucs 两种音乐路径 |
 | [depth-motion-da3](tasks/depth-motion-da3.md) | 拉片动态维度：Depth Anything 3 深度视频 | 待验收 | 三层独立提交与干净快照构建通过；待 CUDA 真机 720p 硬切样片验收 |
 | [story-writer](tasks/story-writer.md) | 创作阶段（虾本）：写手 agent + 通用文档存储 + 前端路由 | 待验收 | 14 项后端契约测试与前端 build 已通过；待真实模型四阶段流程和导入链路验收 |
@@ -53,8 +55,8 @@
 1. 交接协议与 handoff 回归修复已独立提交并推送。
 2. 只读分类 `legacy-unassigned-diff`，任何未确认归属的文件继续保持隔离。
 3. `canvas-lod-perf` 的核心状态层已独立提交；混合 UI 增量继续留给对应工作线。
-4. `shot-breakdown` 与 `depth-motion-da3` 已按契约拆提交；继续审计并拆分
-   `liblib-canvas-parity`，不要把其工作树差异并回已收口的两条线。
+4. `shot-breakdown`、`depth-motion-da3` 与 `liblib-canvas-parity` 已按契约拆提交；LibTV 剩余
+   工作仅是带 relay 的真实出片验收，不要把工作树里的 LOD / 素材替换差异倒灌回已收口提交。
 5. `story-writer` 已独立提交；`local-stack` 可移植性和测试已收口，待第二台机器验收后归档。
 6. 所有线有独立提交 / 分支、工作区可恢复后，再同步 `origin/main` 并转为一线一 worktree。
 

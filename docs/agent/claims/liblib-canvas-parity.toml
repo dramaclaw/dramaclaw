@@ -1,7 +1,7 @@
 version = 1
 slug = "liblib-canvas-parity"
 ledger = "docs/agent/tasks/liblib-canvas-parity.md"
-baseline = "2ca34419"
+baseline = "09e2703a"
 
 [[claims]]
 path = ".gitignore"
