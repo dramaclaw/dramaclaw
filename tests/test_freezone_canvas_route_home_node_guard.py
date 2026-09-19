@@ -125,15 +125,19 @@ async def test_canvas_read_route_passes_the_home_node_guard(
 
     _patch_remote_project(monkeypatch, tmp_path)
 
-    try:
+    with pytest.raises(HTTPException) as excinfo:
         await freezone_routes.get_canvas(
             project="proj_freezone",
             canvas_id="never_written",
             user=USER,
         )
-    except HTTPException as exc:  # pragma: no cover - 只在回潮时走到
-        _assert_not_a_home_node_rejection(exc)
-        raise
+    _assert_not_a_home_node_rejection(excinfo.value)
+    assert excinfo.value.status_code == 404
+    assert excinfo.value.detail == {
+        "code": "canvas_not_found",
+        "message": "画布不存在",
+        "message_code": "freezone.canvases.notFound",
+    }
 
 
 async def test_canvas_write_route_passes_the_home_node_guard(
@@ -213,10 +217,10 @@ def _opts_out_of_the_guard(call: ast.Call) -> bool:
 
 
 def test_only_canvas_routes_opt_out_of_the_home_node_guard() -> None:
-    """双向棘轮：opt-out 只许出现在画布路由里，且 14 条必须全部 opt-out。
+    """双向棘轮：opt-out 只许出现在画布路由里，且 15 条必须全部 opt-out。
 
     这条防的是「以后有人顺手多传一个 `require_home_node=False`」——
-    `TCP-P60` 的整个论证建立在「撤除面恰好是那 14 条」上。
+    `TCP-P60` 的整个论证建立在「撤除面恰好是画布路由」上。
 
     2026-08-27 由 13 → 14：新增 `DELETE .../nodes/{node_id}/generation-history`。
     它带 `tags=[TAG_FREEZONE_CANVAS]`、只改画布自己的历史 JSONL，落在撤除面内。
@@ -259,12 +263,11 @@ def test_only_canvas_routes_opt_out_of_the_home_node_guard() -> None:
         and _opts_out_of_the_guard(call)
     }
 
-    # 取证口径（`TCP-P60`）：freezone 79 条路由全过同一个解析器，画布只占 14 条；
-    # 之后新增的跨项目素材拷贝路由（assets/copy）也走守卫，计 80。
-    assert router_decorators == 80
-    assert len(canvas_routes) == 14
+    # 原 80 条再加 depth、shot 与两个 LibTV 导入/本地化端点。
+    assert router_decorators == 84
+    assert len(canvas_routes) == 16
 
-    # 正向：14 条画布路由必须全部、且每一处调用都 opt-out。
+    # 正向：画布路由必须全部、且每一处调用都 opt-out。
     missing = {
         name: [call.lineno for call in calls if not _opts_out_of_the_guard(call)]
         for name, calls in canvas_routes.items()

@@ -1,7 +1,13 @@
 version = 1
 slug = "liblib-canvas-parity"
 ledger = "docs/agent/tasks/liblib-canvas-parity.md"
-baseline = "38484897"
+baseline = "2ca34419"
+
+[[claims]]
+path = ".gitignore"
+mode = "shared"
+shared_with = ["*"]
+reason = "Keep the local LibTV cookie file out of the public repository."
 
 [[claims]]
 path = "docs/agent/STATE.md"
@@ -28,6 +34,30 @@ path = "frontend/src/features/canvas/Canvas.tsx"
 mode = "shared"
 shared_with = ["canvas-lod-perf"]
 reason = "Focus newly derived nodes without replacing LOD mounting logic."
+
+[[claims]]
+path = "frontend/src/api/canvas.ts"
+mode = "shared"
+shared_with = ["legacy-unassigned-diff"]
+reason = "LibTV detail and asset-localization API clients."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/graphContentResolver.ts"
+mode = "shared"
+shared_with = ["canvas-lod-perf"]
+reason = "Resolve imported text and media content without losing native edits."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/graphImageResolver.ts"
+mode = "shared"
+shared_with = ["canvas-lod-perf"]
+reason = "Resolve imported remote and localized image references."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/videoFrameCapture.ts"
+mode = "shared"
+shared_with = ["canvas-lod-perf"]
+reason = "Use LibTV poster transforms before decoding a remote source video."
 
 [[claims]]
 path = "frontend/src/features/canvas/application/videoRangePrompt.ts"
@@ -96,6 +126,30 @@ shared_with = ["depth-motion-da3", "shot-breakdown"]
 reason = "Video remake/continuation and depth-motion entry share the video node."
 
 [[claims]]
+path = "frontend/src/features/canvas/nodes/GroupNode.tsx"
+mode = "shared"
+shared_with = ["canvas-lod-perf"]
+reason = "Expose remote imported media status for group contents."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/LodShellNode.tsx"
+mode = "shared"
+shared_with = ["canvas-lod-perf"]
+reason = "Render imported fallback nodes through the established LOD shell."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/NodeHeader.tsx"
+mode = "shared"
+shared_with = ["canvas-lod-perf"]
+reason = "Show remote-media status on imported native nodes."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/nodeFrameStyles.ts"
+mode = "shared"
+shared_with = ["canvas-lod-perf"]
+reason = "Measured LibTV node and toolbar surface tokens."
+
+[[claims]]
 path = "frontend/src/features/canvas/ui/NodeActionToolbar.tsx"
 mode = "shared"
 shared_with = ["shot-breakdown"]
@@ -133,6 +187,30 @@ mode = "exclusive"
 reason = "Remote media URL handling."
 
 [[claims]]
+path = "frontend/src/lib/freezone-url.ts"
+mode = "shared"
+shared_with = ["legacy-unassigned-diff"]
+reason = "Navigate directly to a newly imported canvas."
+
+[[claims]]
+path = "frontend/src/features/freezone/CanvasesTab.tsx"
+mode = "shared"
+shared_with = ["legacy-unassigned-diff"]
+reason = "Import into an existing project while preserving unrelated canvas-selector work."
+
+[[claims]]
+path = "frontend/src/features/freezone/FreezoneShell.tsx"
+mode = "shared"
+shared_with = ["legacy-unassigned-diff"]
+reason = "Mount the explicit asset-localization control."
+
+[[claims]]
+path = "frontend/src/routes/_app/index.tsx"
+mode = "shared"
+shared_with = ["legacy-unassigned-diff"]
+reason = "Create or re-import a project from a LibTV share URL without absorbing unrelated project-card edits."
+
+[[claims]]
 path = "frontend/public/locales/zh/translation.json"
 mode = "shared"
 shared_with = ["*"]
@@ -166,6 +244,12 @@ mode = "exclusive"
 reason = "Persist imported canvas semantics."
 
 [[claims]]
+path = "src/novelvideo/api/routes/freezone.py"
+mode = "shared"
+shared_with = ["depth-motion-da3", "shot-breakdown"]
+reason = "Expose LibTV detail/localization endpoints; stage only owned hunks."
+
+[[claims]]
 path = "tests/test_liblib_assets.py"
 mode = "exclusive"
 reason = "Asset localization regression tests."
@@ -174,6 +258,12 @@ reason = "Asset localization regression tests."
 path = "tests/test_liblib_canvas_import.py"
 mode = "exclusive"
 reason = "Canvas import regression tests."
+
+[[claims]]
+path = "tests/test_freezone_canvas_route_home_node_guard.py"
+mode = "shared"
+shared_with = ["legacy-unassigned-diff"]
+reason = "Route-count and missing-canvas contracts updated for LibTV endpoints."
 
 [[claims]]
 path = "frontend/src/__tests__/liblib-canvas-import.test.ts"
@@ -189,3 +279,15 @@ reason = "Remote localization regression tests."
 path = "frontend/src/__tests__/features/canvas/video-range-prompt.test.ts"
 mode = "exclusive"
 reason = "Range prompt regression tests."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/video-frame-capture-poster.test.ts"
+mode = "shared"
+shared_with = ["canvas-lod-perf"]
+reason = "Remote LibTV poster selection regression tests."
+
+[[claims]]
+path = "frontend/src/__tests__/lib/media-url.test.ts"
+mode = "shared"
+shared_with = ["legacy-unassigned-diff"]
+reason = "Remote image variant regression tests."

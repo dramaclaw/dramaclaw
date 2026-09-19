@@ -100,6 +100,12 @@ from novelvideo.config import (
 from novelvideo.director_world import DirectorWorldService
 from novelvideo.director_world.staging_prop_ai import generate_ai_staging_prop
 from novelvideo.freezone import canvas_store
+from novelvideo.freezone.liblib_import import (
+    LiblibImportError,
+    fetch_liblib_canvas_detail,
+    parse_liblib_share_url,
+)
+from novelvideo.freezone.liblib_assets import localize_media_urls, mirror_liblib_canvas_assets
 from novelvideo.freezone.asset_copy import (
     AssetCopyError,
     allocate_target_path,
@@ -107,7 +113,7 @@ from novelvideo.freezone.asset_copy import (
     parse_project_asset_url,
     resolve_source_file,
 )
-from novelvideo.i18n_message import log_lines_text
+from novelvideo.i18n_message import lmsg, log_lines_text
 from novelvideo.media_model_request_schema import (
     MediaModelSchemaError,
     media_request_schema_for_mode,
@@ -12566,6 +12572,89 @@ async def list_canvases(project: str, user: dict = Depends(get_api_user)):
         _raise_canvas_store_http(exc)
 
 
+def _liblib_error_detail(code: str, fallback: str) -> dict[str, str]:
+    """Preserve the legacy message while exposing the frontend translation key."""
+    message = lmsg(f"project.liblibErrors.{code}", fallback)
+    return {"code": code, "message": message.text, "message_code": message.code}
+
+
+@router.post("/projects/{project}/freezone/liblib:detail", tags=[TAG_FREEZONE_CANVAS])
+async def get_liblib_share_canvas_detail(
+    project: str,
+    body: dict = Body(...),
+    user: dict = Depends(get_api_user),
+):
+    # The host cookie is only used to read links whose LibTV access policy
+    # explicitly allows copying. Require local edit access before returning a graph.
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project,
+        user,
+        required_role="editor",
+        require_home_node=False,
+    )
+    share_url = body.get("share_url")
+    if not isinstance(share_url, str):
+        raise HTTPException(
+            400,
+            _liblib_error_detail("invalid_liblib_share_url", "缺少 LibTV 分享链接"),
+        )
+    try:
+        share = parse_liblib_share_url(share_url)
+        detail = await fetch_liblib_canvas_detail(share)
+        if body.get("download_assets") is True:
+            asset_map, skipped_media = await mirror_liblib_canvas_assets(
+                detail, share, project_dir, ctx.project_id
+            )
+            detail["assetMap"] = asset_map
+            # 未能本地保存的素材(陌生域名、源站取不到、超限…)。画布照常导入,这些
+            # 素材走远端地址显示;把清单交给前端提示用户,而不是整张画布导入失败。
+            if skipped_media:
+                detail["skippedMedia"] = skipped_media
+    except LiblibImportError as exc:
+        raise HTTPException(exc.status_code, _liblib_error_detail(exc.code, str(exc))) from exc
+    return {"ok": True, "data": detail}
+
+
+@router.post("/projects/{project}/freezone/liblib:localize", tags=[TAG_FREEZONE_CANVAS])
+async def localize_liblib_canvas_assets(
+    project: str,
+    body: dict = Body(...),
+    user: dict = Depends(get_api_user),
+):
+    """把画布上仍指向远端的素材补下载到本地(画布右上角「一键本地化」)。
+
+    导入当时没能存下来的素材,原因往往是环境性的(代理 fake-IP 把 CDN 域名解析进私有段、
+    源站限流、单文件超限…)。环境修好之后不该逼用户重新导入整张画布——那会丢掉他在画布上
+    已经做的一切改动。这里只按地址补下载,落盘目录和导入时完全一致。
+    """
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project,
+        user,
+        required_role="editor",
+        require_home_node=False,
+    )
+    raw_urls = body.get("urls")
+    if not isinstance(raw_urls, list):
+        raise HTTPException(
+            400,
+            _liblib_error_detail("invalid_localize_request", "缺少待本地化的素材地址"),
+        )
+    source_project_id = body.get("source_project_id")
+    if not isinstance(source_project_id, str) or not re.fullmatch(r"[0-9a-zA-Z_-]{1,128}", source_project_id):
+        # 没有来源画布 id(非 LibTV 导入的画布)也要能用,落到一个固定目录即可。
+        source_project_id = "localized"
+    try:
+        asset_map, skipped_media = await localize_media_urls(
+            [value for value in raw_urls if isinstance(value, str)],
+            project_dir,
+            ctx.project_id,
+            source_project_id,
+        )
+    except LiblibImportError as exc:
+        raise HTTPException(exc.status_code, _liblib_error_detail(exc.code, str(exc))) from exc
+    return {"ok": True, "data": {"assetMap": asset_map, "skippedMedia": skipped_media}}
+
+
 @router.get("/projects/{project}/freezone/canvases/{canvas_id}", tags=[TAG_FREEZONE_CANVAS])
 async def get_canvas(project: str, canvas_id: str, user: dict = Depends(get_api_user)):
     if not CANVAS_ID_RE.match(canvas_id):
@@ -12588,10 +12677,16 @@ async def get_canvas(project: str, canvas_id: str, user: dict = Depends(get_api_
     except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
         _raise_canvas_store_http(exc)
     if payload is None:
-        return {
-            "ok": True,
-            "data": {"nodes": [], "edges": [], "viewport": None},
-        }
+        # 画布不存在就说不存在。此前这里返回 200 + 空图,调用方无从区分「一张空画布」
+        # 和「这个项目里没有这张画布」——进项目时若落到一个跨项目的个人画布 id,
+        # 用户看到的是一张合法白板,像是导入的数据丢了。
+        # `default` 在上面已经 ensure 过,不会走到这里;个人画布按需创建的行为也不变:
+        # 前端 hydrate 把 404 当作「一张还没落盘的新画布」,首次保存时再建文件。
+        message = lmsg("freezone.canvases.notFound", "画布不存在")
+        raise HTTPException(
+            404,
+            {"code": "canvas_not_found", "message": message.text, "message_code": message.code},
+        )
     refreshed_payload = await _refresh_preset_canvas_payload_on_read(
         ctx=ctx,
         username=username,

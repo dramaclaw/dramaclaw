@@ -8,7 +8,7 @@
 
 ## 一、仓库当前形态（接手前必须核对）
 
-- 分支 `main`，最新业务提交 `38c1f057`（2026-09-18，`feat(shot): stream breakdown assets to canvas`）。
+- 分支 `main`，最新提交 `2ca34419`（2026-09-18，`docs(agent): hand off shot breakdown`）。
 - **工作区有 82 个未提交状态条目**（截至 shot-breakdown 三层提交完成后，按 `git status --short` 计），
   包含六条业务线和历史未归属隔离区；协作治理已形成独立提交，其余工作线仍没有独立提交承载。
   会话开始时 hook 注入的摘要是实时值，不能用条目总数反推某条业务线又新增了多少文件。
@@ -23,7 +23,7 @@
 |---|---|---|---|
 | [agent-collaboration-protocol](tasks/agent-collaboration-protocol.md) | 多模型协作、方案门与冲突治理 | 已完成 | 独立提交、测试与真实交接闭环已完成；后续变更另开工作线 |
 | [legacy-unassigned-diff](tasks/legacy-unassigned-diff.md) | 历史未归属改动隔离区 | 已阻塞 | 只读审计来源；未归属前禁止覆盖或删除 |
-| [liblib-canvas-parity](tasks/liblib-canvas-parity.md) | LibTV 画布对齐：片段重拍 / 智能续写 / 导入器 / 工具条 | 待验收 | 缺 OSS relay；与远端重拍分支大面积重复，先审计 |
+| [liblib-canvas-parity](tasks/liblib-canvas-parity.md) | LibTV 画布对齐：片段重拍 / 智能续写 / 导入器 / 工具条 | 执行中 | 远端差异表已定；按导入器 → 重拍 → 续写 → 工具条拆提交，最终出片仍缺 OSS relay |
 | [shot-breakdown](tasks/shot-breakdown.md) | 逐帧拉片三维度：分镜 / 动态 / 音乐 | 待验收 | 三层提交与干净快照通过；待真实视觉模型及有/无 demucs 两种音乐路径 |
 | [depth-motion-da3](tasks/depth-motion-da3.md) | 拉片动态维度：Depth Anything 3 深度视频 | 待验收 | 三层独立提交与干净快照构建通过；待 CUDA 真机 720p 硬切样片验收 |
 | [story-writer](tasks/story-writer.md) | 创作阶段（虾本）：写手 agent + 通用文档存储 + 前端路由 | 待验收 | 14 项后端契约测试与前端 build 已通过；待真实模型四阶段流程和导入链路验收 |

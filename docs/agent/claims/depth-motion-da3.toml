@@ -36,8 +36,8 @@ reason = "Model inference and deterministic depth-video export."
 [[claims]]
 path = "src/novelvideo/api/routes/freezone.py"
 mode = "shared"
-shared_with = ["shot-breakdown"]
-reason = "Depth and breakdown endpoints share the freezone adapter."
+shared_with = ["shot-breakdown", "liblib-canvas-parity"]
+reason = "Depth, breakdown, and LibTV endpoints share the freezone adapter."
 
 [[claims]]
 path = "src/novelvideo/api/routes/tasks.py"

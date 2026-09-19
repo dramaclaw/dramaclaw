@@ -49,6 +49,7 @@ node_modules/
 /.pnpm-store/
 /docs/issues
 scripts/incident_drills/.drill.local.env
+liblib.cookie.local.json
 .obsidian/
 
 # 验收日志（证据归档在本地/CI 工件，不进 git）

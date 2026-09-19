@@ -41,18 +41,21 @@ reason = "LOD image projection."
 
 [[claims]]
 path = "frontend/src/features/canvas/application/graphImageResolver.ts"
-mode = "exclusive"
-reason = "LOD-safe graph image resolution."
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "LOD-safe graph image resolution also preserves imported LibTV media."
 
 [[claims]]
 path = "frontend/src/features/canvas/application/graphContentResolver.ts"
-mode = "exclusive"
-reason = "LOD-safe graph content resolution."
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "LOD-safe graph content resolution also preserves imported LibTV text."
 
 [[claims]]
 path = "frontend/src/features/canvas/application/videoFrameCapture.ts"
-mode = "exclusive"
-reason = "Video poster extraction used by lightweight nodes."
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Video poster extraction also consumes trusted LibTV poster transforms."
 
 [[claims]]
 path = "frontend/src/features/canvas/application/videoTranscode.ts"
@@ -71,8 +74,9 @@ reason = "Lazy-load heavy 3D UI outside low-zoom rendering."
 
 [[claims]]
 path = "frontend/src/features/canvas/nodes/GroupNode.tsx"
-mode = "exclusive"
-reason = "LOD node body."
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "LOD node body also exposes imported remote-media state."
 
 [[claims]]
 path = "frontend/src/features/canvas/nodes/ImageGenNode.tsx"
@@ -81,8 +85,9 @@ reason = "LOD node body."
 
 [[claims]]
 path = "frontend/src/features/canvas/nodes/LodShellNode.tsx"
-mode = "exclusive"
-reason = "Lightweight node shell."
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Lightweight node shell also wraps imported LibTV fallback nodes."
 
 [[claims]]
 path = "frontend/src/features/canvas/nodes/SkillNode.tsx"
@@ -106,13 +111,15 @@ reason = "Lightweight media rendering."
 
 [[claims]]
 path = "frontend/src/features/canvas/ui/nodeFrameStyles.ts"
-mode = "exclusive"
-reason = "Shared frame styles within the LOD implementation."
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Shared frame styles also carry measured LibTV parity values."
 
 [[claims]]
 path = "frontend/src/features/canvas/ui/NodeHeader.tsx"
-mode = "exclusive"
-reason = "Lightweight header rendering."
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Lightweight header rendering also exposes imported remote-media state."
 
 [[claims]]
 path = "frontend/src/features/canvas/ui/NodeGenerationOverlay.tsx"
@@ -156,8 +163,9 @@ reason = "Image variant coverage."
 
 [[claims]]
 path = "frontend/src/__tests__/features/canvas/video-frame-capture-poster.test.ts"
-mode = "exclusive"
-reason = "Poster extraction coverage."
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Poster extraction coverage includes imported LibTV sources."
 
 [[claims]]
 path = "frontend/src/__tests__/features/canvas/asset-replace-pick.test.tsx"

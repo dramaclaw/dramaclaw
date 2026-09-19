@@ -50,13 +50,15 @@ reason = "Historical dirty test with no reliable workstream attribution."
 
 [[claims]]
 path = "frontend/src/__tests__/lib/media-url.test.ts"
-mode = "exclusive"
-reason = "Historical dirty test with no reliable workstream attribution."
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Historical media test now shares the LibTV remote-variant assertions."
 
 [[claims]]
 path = "frontend/src/api/canvas.ts"
-mode = "exclusive"
-reason = "Historical dirty API client with no reliable workstream attribution."
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Historical API client now shares explicit LibTV import endpoints."
 
 [[claims]]
 path = "frontend/src/components/layout/header.tsx"
@@ -80,13 +82,15 @@ reason = "Historical dirty freezone file with no reliable workstream attribution
 
 [[claims]]
 path = "frontend/src/features/freezone/CanvasesTab.tsx"
-mode = "exclusive"
-reason = "Historical dirty freezone file with no reliable workstream attribution."
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Historical canvas-selector work shares the LibTV import entry."
 
 [[claims]]
 path = "frontend/src/features/freezone/FreezoneShell.tsx"
-mode = "exclusive"
-reason = "Historical dirty freezone file with no reliable workstream attribution."
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Historical shell work shares the LibTV localization control."
 
 [[claims]]
 path = "frontend/src/features/freezone/projections.ts"
@@ -95,13 +99,15 @@ reason = "Historical dirty freezone projection with no reliable workstream attri
 
 [[claims]]
 path = "frontend/src/lib/freezone-url.ts"
-mode = "exclusive"
-reason = "Historical dirty URL helper with no reliable workstream attribution."
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Historical URL helper shares direct navigation to imported canvases."
 
 [[claims]]
 path = "frontend/src/routes/_app/index.tsx"
-mode = "exclusive"
-reason = "Historical dirty route with no reliable workstream attribution."
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Historical project-card work shares the LibTV import dialog."
 
 [[claims]]
 path = "frontend/src/routes/_app/projects.$project/freezone.lazy.tsx"
@@ -115,5 +121,6 @@ reason = "Historical dirty store with no reliable workstream attribution."
 
 [[claims]]
 path = "tests/test_freezone_canvas_route_home_node_guard.py"
-mode = "exclusive"
-reason = "Historical dirty backend test with no reliable workstream attribution."
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Historical route guard now shares the LibTV endpoint and missing-canvas contract."
