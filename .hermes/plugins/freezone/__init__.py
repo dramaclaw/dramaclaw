@@ -3395,7 +3395,10 @@ def _resolve_canvas_generation_recommendations(
     project: str, canvas: str, commands: list[Any]
 ) -> dict[str, Any] | None:
     """Resolve media create and update commands before preflight or dispatch."""
-    from novelvideo.freezone.workflow_preflight import resolve_generation_recommendations
+    from novelvideo.freezone.workflow_preflight import (
+        evaluate_workflow_preflight,
+        resolve_generation_recommendations,
+    )
 
     def has_symbolic_value(data: dict[str, Any]) -> bool:
         return any(
@@ -3405,7 +3408,9 @@ def _resolve_canvas_generation_recommendations(
         )
 
     nodes: list[dict[str, Any]] = []
-    update_nodes: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] = []
+    update_nodes: list[
+        tuple[dict[str, Any], dict[str, Any], dict[str, Any], set[str]]
+    ] = []
     known_nodes: dict[str, dict[str, Any]] = {}
     canvas_nodes: dict[str, dict[str, Any]] | None = None
     symbolic_update_ids = {
@@ -3454,10 +3459,25 @@ def _resolve_canvas_generation_recommendations(
         node_type = str(target.get("type") or target.get("node_type") or "")
         previous = target.get("data") if isinstance(target.get("data"), dict) else {}
         merged = {**_clone_json(previous), **_clone_json(data)}
+        refreshed_fields: set[str] = set()
+        if (
+            node_type in _GENERATION_PARAMETER_FIELDS
+            and isinstance(data.get("model"), str)
+            and data["model"].strip().casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
+        ):
+            model_fields = (
+                ("aspectRatio", "size", "quality")
+                if node_type == "imageGenNode"
+                else ("aspectRatio", "quality", "durationSec", "generateAudio")
+            )
+            for field in model_fields:
+                if field not in data:
+                    merged.pop(field, None)
+                    refreshed_fields.add(field)
         known_nodes[node_id] = {"type": node_type, "data": merged}
         if node_type in _GENERATION_PARAMETER_FIELDS and has_symbolic_value(data):
             nodes.append({"id": node_id, "node_type": node_type, "data": merged})
-            update_nodes.append((data, merged, previous))
+            update_nodes.append((data, merged, previous, refreshed_fields))
     if not nodes:
         return None
     responses = {
@@ -3479,7 +3499,17 @@ def _resolve_canvas_generation_recommendations(
             "ok": False, "status": "generation_recommendation_unavailable",
             "error": blockers[0]["message"], "blockers": blockers,
         }
-    for command_data, resolved, previous in update_nodes:
+    validation = evaluate_workflow_preflight(
+        {"plan": {"nodes": nodes}}, model_responses=responses,
+        limits={"ok": False},
+    )
+    if validation["blockers"]:
+        return {
+            "ok": False, "status": "generation_recommendation_unavailable",
+            "error": validation["blockers"][0]["message"],
+            "blockers": validation["blockers"],
+        }
+    for command_data, resolved, previous, refreshed_fields in update_nodes:
         for field in ("model", "aspectRatio", "size", "quality"):
             if field in command_data and has_symbolic_value({field: command_data[field]}):
                 if field not in resolved or has_symbolic_value({field: resolved[field]}):
@@ -3487,6 +3517,11 @@ def _resolve_canvas_generation_recommendations(
                         "ok": False, "status": "generation_recommendation_unavailable",
                         "error": f"No concrete recommendation is available for {field}",
                     }
+        for field in refreshed_fields:
+            command_data[field] = (
+                False if field == "generateAudio" and field not in resolved
+                else resolved.get(field)
+            )
         for field, value in resolved.items():
             if field in command_data or field not in previous:
                 command_data[field] = value

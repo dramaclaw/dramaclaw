@@ -1167,7 +1167,7 @@ def test_existing_media_node_update_resolves_recommendations_before_dispatch(mon
     update = captured["commands"][0]["data"]
     assert update["model"] == "LingShan-G2"
     assert update["size"] == "3K"
-    assert "aspectRatio" not in update
+    assert update["aspectRatio"] == "21:9"
     assert update["quality"] == "high"
 
 
@@ -1227,6 +1227,124 @@ def test_recommended_update_uses_earlier_model_change_in_same_batch(monkeypatch)
     assert error is None
     assert commands[1]["data"]["size"] == "3K"
     assert "model" not in commands[1]["data"]
+
+
+def test_recommended_model_switch_replaces_stale_options_before_generation(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    existing = {
+        "id": "existing-image", "type": "imageGenNode",
+        "data": {
+            "model": "old-model", "prompt": "portrait", "aspectRatio": "21:9",
+            "size": "4K", "quality": "ultra", "count": 1,
+        },
+    }
+    catalog = {
+        "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+        "ratioOptions": ["9:16"], "resolutionOptions": ["1K"],
+        "qualityOptions": ["medium"],
+    }
+    captured = {}
+    monkeypatch.setattr(
+        plugin, "_resolve_canvas_scope_for_write",
+        lambda project, canvas: (project, canvas, None),
+    )
+    monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_args: None)
+    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: False)
+
+    def request(_method, path, **_kwargs):
+        if "/canvases/" in path:
+            return {"ok": True, "data": {"nodes": [existing], "edges": []}}
+        return {"ok": True, "data": [catalog]}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    monkeypatch.setattr(
+        plugin, "_dispatch_mcp_approved_frontend_commands",
+        lambda **kwargs: captured.update(kwargs) or "dispatched",
+    )
+    commands = [
+        {"type": "update_node_data", "node_id": "existing-image",
+         "data": {"model": "recommended"}},
+        {"type": "run_node_action", "node_id": "existing-image",
+         "action": "generate_image"},
+    ]
+
+    result = plugin._emit_canvas_commands(
+        "project-a", "canvas-a", commands, allow_dynamic_workflow_batch=True,
+    )
+
+    assert result == "dispatched"
+    assert captured["commands"][0]["data"] == {
+        "model": "LingShan-G2", "aspectRatio": "9:16",
+        "size": "1K", "quality": "medium",
+    }
+
+
+def test_recommended_model_switch_rejects_incompatible_explicit_ratio(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(
+        plugin, "_canvas_generation_preflight_state",
+        lambda *_args: ({"existing-image": {
+            "id": "existing-image", "type": "imageGenNode",
+            "data": {"model": "old-model", "aspectRatio": "21:9", "size": "4K"},
+        }}, [], None),
+    )
+    monkeypatch.setattr(
+        plugin, "_request",
+        lambda *_args, **_kwargs: {"ok": True, "data": [{
+            "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+            "ratioOptions": ["9:16"], "resolutionOptions": ["1K"],
+        }]},
+    )
+    commands = [{
+        "type": "update_node_data", "node_id": "existing-image",
+        "data": {"model": "recommended", "aspectRatio": "21:9"},
+    }]
+
+    error = plugin._resolve_canvas_generation_recommendations(
+        "project-a", "canvas-a", commands,
+    )
+
+    assert error["status"] == "generation_recommendation_unavailable"
+    assert error["blockers"][0]["code"] == "model_capability_unsupported"
+
+
+def test_recommended_video_switch_clears_unsupported_inherited_audio(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(
+        plugin, "_canvas_generation_preflight_state",
+        lambda *_args: ({"existing-video": {
+            "id": "existing-video", "type": "videoNode",
+            "data": {
+                "model": "old-model", "aspectRatio": "21:9", "quality": "4K",
+                "durationSec": 60, "generateAudio": True,
+            },
+        }}, [], None),
+    )
+    monkeypatch.setattr(
+        plugin, "_request",
+        lambda *_args, **_kwargs: {"ok": True, "data": [{
+            "id": "seedance-2.0-fast", "aliases": ["newapi_seedance-2.0-fast"],
+            "ratioOptions": ["9:16"], "resolutionOptions": ["720P"],
+            "minDuration": 4, "maxDuration": 15,
+            "supportsGenerateAudio": False,
+        }]},
+    )
+    commands = [{
+        "type": "update_node_data", "node_id": "existing-video",
+        "data": {"model": "recommended"},
+    }]
+
+    error = plugin._resolve_canvas_generation_recommendations(
+        "project-a", "canvas-a", commands,
+    )
+
+    assert error is None
+    assert commands[0]["data"] == {
+        "model": "seedance-2.0-fast", "aspectRatio": "9:16",
+        "quality": "720P", "durationSec": 5, "generateAudio": False,
+        "count": 1,
+    }
 
 
 def test_hermes_canvas_write_resolves_recommended_model(monkeypatch):
