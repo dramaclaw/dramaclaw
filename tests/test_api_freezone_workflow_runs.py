@@ -1006,6 +1006,7 @@ async def test_late_agent_product_delivery_confirms_reserved_credit(
         ctx=SimpleNamespace(project_id="proj_demo"),
         operation={
             "operation_id": "agent_product_a",
+            "project_id": "proj_demo",
             "task_id": "product-task-a",
             "task_type": "freezone_agent_recipe_result",
             "product_kind": "recipe_result",
@@ -1018,6 +1019,84 @@ async def test_late_agent_product_delivery_confirms_reserved_credit(
     assert settlements == [("reservation-a", "confirm")]
     assert completions[0]["metadata"]["settlement_status"] == "reconciled"
     assert observed_metrics == ["agent_product_reconciled"]
+
+
+@pytest.mark.asyncio
+async def test_late_agent_product_delivery_does_not_claim_failed_task_reconciled(
+    monkeypatch,
+) -> None:
+    from novelvideo.api.routes import freezone
+
+    settlements: list[str] = []
+    observed_metrics: list[str] = []
+    task = SimpleNamespace(
+        task_id="product-task-a",
+        status="failed",
+        metadata={
+            "feature_credit_reservation_id": "reservation-a",
+            "error_code": "AGENT_PRODUCT_SETTLEMENT_PENDING",
+        },
+    )
+
+    class UsageMeter:
+        async def settle_feature_credit_reservation(self, reservation_id, *, action, metadata):
+            settlements.append(reservation_id)
+
+    class Manager:
+        def get_task_for_project(self, *_args, **_kwargs):
+            return task
+
+        def complete_task_for_project(self, *_args, **_kwargs):
+            return False
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: UsageMeter())
+    monkeypatch.setattr(freezone, "get_task_manager", lambda: Manager())
+    monkeypatch.setattr(freezone.evidence_metrics, "observe", observed_metrics.append)
+
+    with pytest.raises(RuntimeError, match="did not reconcile"):
+        await freezone._settle_delivered_agent_product_task(
+            ctx=SimpleNamespace(project_id="proj_demo"),
+            operation={
+                "operation_id": "agent_product_a",
+                "project_id": "proj_demo",
+                "task_id": "product-task-a",
+                "task_type": "freezone_agent_recipe_result",
+                "product_kind": "recipe_result",
+                "status": "delivered",
+                "model_evidence": {"model_call_id": "provider-job-a"},
+                "result_ref": {"kind": "recipe_result", "id": "asset-a"},
+            },
+        )
+    assert settlements == ["reservation-a"]
+    assert observed_metrics == []
+
+
+@pytest.mark.asyncio
+async def test_late_agent_product_delivery_rejects_cross_project_receipt(monkeypatch) -> None:
+    from novelvideo.api.routes import freezone
+
+    class UsageMeter:
+        async def settle_feature_credit_reservation(self, *_args, **_kwargs):
+            pytest.fail("cross-project operation must not settle a reservation")
+
+    class Manager:
+        def get_task_for_project(self, *_args, **_kwargs):
+            pytest.fail("cross-project operation must not read another task")
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: UsageMeter())
+    monkeypatch.setattr(freezone, "get_task_manager", lambda: Manager())
+
+    await freezone._settle_delivered_agent_product_task(
+        ctx=SimpleNamespace(project_id="proj_demo"),
+        operation={
+            "operation_id": "agent_product_a",
+            "project_id": "another-project",
+            "task_id": "product-task-a",
+            "task_type": "freezone_agent_recipe_result",
+            "product_kind": "recipe_result",
+            "status": "delivered",
+        },
+    )
 
 
 @pytest.mark.asyncio

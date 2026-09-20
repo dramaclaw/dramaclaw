@@ -186,6 +186,7 @@ from novelvideo.freezone.workflow_drafts import (
     read_workflow_draft,
 )
 from novelvideo.freezone.agent_product_operations import (
+    PRODUCT_TASK_TYPES,
     bind_agent_product_model_execution,
     bind_agent_product_task,
     create_agent_product_operation,
@@ -14738,6 +14739,13 @@ async def _settle_delivered_agent_product_task(
     task_type = str(operation.get("task_type") or "")
     operation_id = str(operation.get("operation_id") or "")
     expected_task_id = str(operation.get("task_id") or "")
+    if (
+        operation.get("project_id") != ctx.project_id
+        or PRODUCT_TASK_TYPES.get(operation.get("product_kind")) != task_type
+        or not operation_id
+        or not expected_task_id
+    ):
+        return
     manager = get_task_manager()
     task = manager.get_task_for_project(ctx, task_type, 0, scope=operation_id)
     if task is None or task.task_id != expected_task_id:
@@ -14762,7 +14770,7 @@ async def _settle_delivered_agent_product_task(
         task.status == "failed"
         and metadata.get("error_code") == "AGENT_PRODUCT_SETTLEMENT_PENDING"
     ):
-        manager.complete_task_for_project(
+        completed = manager.complete_task_for_project(
             ctx,
             task_type,
             0,
@@ -14776,9 +14784,13 @@ async def _settle_delivered_agent_product_task(
                 "result_ref": operation.get("result_ref") or {},
             },
             current_task="完成（晚到结果已对账）",
-            metadata={"settlement_status": "reconciled"},
+            metadata={"settlement_status": "reconciled", "error_code": None},
             expected_task_id=expected_task_id,
         )
+        if not completed:
+            current = manager.get_task_for_project(ctx, task_type, 0, scope=operation_id)
+            if current is None or current.task_id != expected_task_id or current.status != "completed":
+                raise RuntimeError("delivered agent product task did not reconcile")
         evidence_metrics.observe("agent_product_reconciled")
 
 
