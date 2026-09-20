@@ -3944,52 +3944,27 @@ def _agent_session_state_path(username: str) -> Path:
 
 
 def _load_agent_session_state(username: str) -> dict[str, str]:
-    path = _agent_session_state_path(username)
-    if not path.exists():
-        return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    return {
-        str(key): str(value).strip()
-        for key, value in payload.items()
-        if str(value or "").strip()
-    }
+    return session_registry.load_agent_session_state(_agent_session_state_path(username))
 
 
 def _save_agent_session_state(username: str, payload: dict[str, str]) -> None:
-    path = _agent_session_state_path(username)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(".tmp")
-    tmp_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    tmp_path.replace(path)
+    session_registry.save_agent_session_state(_agent_session_state_path(username), payload)
 
 
 def _get_active_agent_session_id(username: str, backend: str) -> str | None:
-    payload = _load_agent_session_state(username)
-    active_backend = str(payload.get("backend", "") or "").strip()
-    if active_backend != backend:
-        return None
-    return str(payload.get("thread_id", "") or "").strip() or None
+    return session_registry.get_active_agent_session_id(
+        _agent_session_state_path(username), backend
+    )
 
 
 def _set_active_agent_session_id(username: str, backend: str, thread_id: str) -> None:
-    normalized = str(thread_id or "").strip()
-    if not normalized:
+    if not str(thread_id or "").strip():
         return
-    _save_agent_session_state(
-        username,
-        {
-            "backend": backend,
-            "thread_id": normalized,
-            "updated_at": _now_iso(),
-        },
+    session_registry.set_active_agent_session_id(
+        _agent_session_state_path(username),
+        backend,
+        thread_id,
+        updated_at=_now_iso(),
     )
 
 
@@ -4023,30 +3998,13 @@ def _codex_scope_key(
     agent_profile: str = "main",
     canvas_id: str | None = None,
 ) -> str:
-    normalized_project = str(project or "").strip()
-    profile = str(agent_profile or "main").strip() or "main"
-    if profile == "main":
-        # Tool definitions are retained by a resumed App Server thread. Include
-        # the discovery protocol so a deployment cannot resume a thread whose
-        # catalog still contains the incompatible concrete/special tools.
-        scope = (
-            profile,
-            "project" if normalized_project else "home",
-            normalized_project or None,
-            _CODEX_THREAD_PROTOCOL_VERSION,
-        )
-        return json.dumps(scope, ensure_ascii=False, separators=(",", ":"))
-    scoped_canvas = str(canvas_id or "").strip() or None
-    if not profile.startswith("freezone"):
-        scoped_canvas = None
-    scope = (
-        profile,
-        "project" if normalized_project else "home",
-        normalized_project or None,
-        scoped_canvas,
-        _CODEX_FREEZONE_THREAD_PROTOCOL_VERSION,
+    return session_registry.codex_scope_key(
+        project,
+        agent_profile=agent_profile,
+        canvas_id=canvas_id,
+        main_protocol=_CODEX_THREAD_PROTOCOL_VERSION,
+        freezone_protocol=_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION,
     )
-    return json.dumps(scope, ensure_ascii=False, separators=(",", ":"))
 
 
 def _load_codex_session_state(
@@ -4055,22 +4013,11 @@ def _load_codex_session_state(
     *,
     project_state_dir: str | Path | None = None,
 ) -> dict[str, str]:
-    path = _codex_session_state_path(
-        username, project, project_state_dir=project_state_dir
+    return session_registry.load_codex_session_state(
+        _codex_session_state_path(
+            username, project, project_state_dir=project_state_dir
+        )
     )
-    if not path.exists():
-        return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    return {
-        str(key): str(value).strip()
-        for key, value in payload.items()
-        if str(key).strip() and str(value or "").strip()
-    }
 
 
 def _save_codex_session_state(
@@ -4082,10 +4029,13 @@ def _save_codex_session_state(
 ) -> None:
     from novelvideo.utils.state_index_files import write_json_atomic
 
-    path = _codex_session_state_path(
-        username, project, project_state_dir=project_state_dir
+    session_registry.save_codex_session_state(
+        _codex_session_state_path(
+            username, project, project_state_dir=project_state_dir
+        ),
+        payload,
+        write_json_atomic=write_json_atomic,
     )
-    write_json_atomic(path, payload)
 
 
 def _get_codex_thread_id(
@@ -4096,14 +4046,15 @@ def _get_codex_thread_id(
     canvas_id: str | None = None,
     project_state_dir: str | Path | None = None,
 ) -> str | None:
-    return _load_codex_session_state(
-        username, project, project_state_dir=project_state_dir
-    ).get(
+    return session_registry.get_codex_thread_id(
+        _codex_session_state_path(
+            username, project, project_state_dir=project_state_dir
+        ),
         _codex_scope_key(
             project,
             agent_profile=agent_profile,
             canvas_id=canvas_id,
-        )
+        ),
     )
 
 
@@ -4116,31 +4067,23 @@ def _set_codex_thread_id(
     canvas_id: str | None = None,
     project_state_dir: str | Path | None = None,
 ) -> None:
-    normalized = str(thread_id or "").strip()
-    if not normalized:
+    if not str(thread_id or "").strip():
         return
-    from novelvideo.utils.state_index_files import index_file_lock
+    from novelvideo.utils.state_index_files import index_file_lock, write_json_atomic
 
-    state_path = _codex_session_state_path(
-        username, project, project_state_dir=project_state_dir
-    )
-    with index_file_lock(state_path):
-        payload = _load_codex_session_state(
+    session_registry.set_codex_thread_id(
+        _codex_session_state_path(
             username, project, project_state_dir=project_state_dir
-        )
-        payload[
-            _codex_scope_key(
-                project,
-                agent_profile=agent_profile,
-                canvas_id=canvas_id,
-            )
-        ] = normalized
-        _save_codex_session_state(
-            username,
+        ),
+        _codex_scope_key(
             project,
-            payload,
-            project_state_dir=project_state_dir,
-        )
+            agent_profile=agent_profile,
+            canvas_id=canvas_id,
+        ),
+        thread_id,
+        index_file_lock=index_file_lock,
+        write_json_atomic=write_json_atomic,
+    )
 
 
 def reset_codex_scope_thread(
@@ -4152,23 +4095,19 @@ def reset_codex_scope_thread(
     project_state_dir: str | Path | None = None,
 ) -> None:
     """Make the next turn start a fresh thread without touching other scopes."""
-    from novelvideo.utils.state_index_files import index_file_lock
+    from novelvideo.utils.state_index_files import index_file_lock, write_json_atomic
 
     scope_key = _codex_scope_key(
         project, agent_profile=agent_profile, canvas_id=canvas_id
     )
-    state_path = _codex_session_state_path(
-        username, project, project_state_dir=project_state_dir
-    )
-    with index_file_lock(state_path):
-        payload = _load_codex_session_state(
+    session_registry.reset_codex_scope_thread(
+        _codex_session_state_path(
             username, project, project_state_dir=project_state_dir
-        )
-        if scope_key in payload:
-            payload.pop(scope_key)
-            _save_codex_session_state(
-                username, project, payload, project_state_dir=project_state_dir
-            )
+        ),
+        scope_key,
+        index_file_lock=index_file_lock,
+        write_json_atomic=write_json_atomic,
+    )
     _set_active_codex_turn(username, scope_key, None)
 
 
@@ -4177,18 +4116,9 @@ def _active_codex_turns_path(username: str) -> Path:
 
 
 def _load_active_codex_turns(username: str) -> dict[str, dict[str, str]]:
-    path = _active_codex_turns_path(username)
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    return {
-        str(key): {str(k): str(v) for k, v in value.items()}
-        for key, value in payload.items()
-        if isinstance(value, dict)
-    }
+    return session_registry.load_active_codex_turns(
+        _active_codex_turns_path(username)
+    )
 
 
 def _set_active_codex_turn(
@@ -4198,16 +4128,13 @@ def _set_active_codex_turn(
 ) -> None:
     from novelvideo.utils.state_index_files import index_file_lock, write_json_atomic
 
-    path = _active_codex_turns_path(username)
-    with index_file_lock(path):
-        payload = _load_active_codex_turns(username)
-        if value is None:
-            payload.pop(scope_key, None)
-        else:
-            payload[scope_key] = {"thread_id": value[0], "turn_id": value[1]}
-            if len(value) >= 3 and str(value[2]).strip():
-                payload[scope_key]["business_turn_id"] = str(value[2]).strip()
-        write_json_atomic(path, payload)
+    session_registry.set_active_codex_turn(
+        _active_codex_turns_path(username),
+        scope_key,
+        value,
+        index_file_lock=index_file_lock,
+        write_json_atomic=write_json_atomic,
+    )
 
 
 def _write_codex_turn_token(

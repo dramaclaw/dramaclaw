@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Callable
-from typing import Any
+from typing import Any, ContextManager
 
 _CHAT_RUN_LOCK_KEY = "active_chat_run"
 _CHAT_RUN_LOCK_TTL_SECONDS = 2 * 60
@@ -254,3 +254,175 @@ def chat_run_lock_is_active(
         return True
     remove_chat_run_lock_file(path)
     return False
+
+
+def codex_scope_key(
+    project: str,
+    *,
+    agent_profile: str = "main",
+    canvas_id: str | None = None,
+    main_protocol: str,
+    freezone_protocol: str,
+) -> str:
+    """Keep thread identity tied to its tool protocol and conversation scope."""
+    normalized_project = str(project or "").strip()
+    profile = str(agent_profile or "main").strip() or "main"
+    if profile == "main":
+        scope = (
+            profile,
+            "project" if normalized_project else "home",
+            normalized_project or None,
+            main_protocol,
+        )
+        return json.dumps(scope, ensure_ascii=False, separators=(",", ":"))
+    scoped_canvas = str(canvas_id or "").strip() or None
+    if not profile.startswith("freezone"):
+        scoped_canvas = None
+    scope = (
+        profile,
+        "project" if normalized_project else "home",
+        normalized_project or None,
+        scoped_canvas,
+        freezone_protocol,
+    )
+    return json.dumps(scope, ensure_ascii=False, separators=(",", ":"))
+
+
+def load_agent_session_state(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        str(key): str(value).strip()
+        for key, value in payload.items()
+        if str(value or "").strip()
+    }
+
+
+def save_agent_session_state(path: Path, payload: dict[str, str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(".tmp")
+    tmp_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    tmp_path.replace(path)
+
+
+def get_active_agent_session_id(path: Path, backend: str) -> str | None:
+    payload = load_agent_session_state(path)
+    active_backend = str(payload.get("backend", "") or "").strip()
+    if active_backend != backend:
+        return None
+    return str(payload.get("thread_id", "") or "").strip() or None
+
+
+def set_active_agent_session_id(
+    path: Path, backend: str, thread_id: str, *, updated_at: str
+) -> None:
+    normalized = str(thread_id or "").strip()
+    if not normalized:
+        return
+    save_agent_session_state(
+        path,
+        {"backend": backend, "thread_id": normalized, "updated_at": updated_at},
+    )
+
+
+def load_codex_session_state(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        str(key): str(value).strip()
+        for key, value in payload.items()
+        if str(key).strip() and str(value or "").strip()
+    }
+
+
+def save_codex_session_state(
+    path: Path,
+    payload: dict[str, str],
+    *,
+    write_json_atomic: Callable[[Path, dict[str, str]], None],
+) -> None:
+    write_json_atomic(path, payload)
+
+
+def get_codex_thread_id(path: Path, scope_key: str) -> str | None:
+    return load_codex_session_state(path).get(scope_key)
+
+
+def set_codex_thread_id(
+    path: Path,
+    scope_key: str,
+    thread_id: str,
+    *,
+    index_file_lock: Callable[[Path], ContextManager[Any]],
+    write_json_atomic: Callable[[Path, dict[str, str]], None],
+) -> None:
+    normalized = str(thread_id or "").strip()
+    if not normalized:
+        return
+    with index_file_lock(path):
+        payload = load_codex_session_state(path)
+        payload[scope_key] = normalized
+        save_codex_session_state(path, payload, write_json_atomic=write_json_atomic)
+
+
+def reset_codex_scope_thread(
+    path: Path,
+    scope_key: str,
+    *,
+    index_file_lock: Callable[[Path], ContextManager[Any]],
+    write_json_atomic: Callable[[Path, dict[str, str]], None],
+) -> None:
+    with index_file_lock(path):
+        payload = load_codex_session_state(path)
+        if scope_key in payload:
+            payload.pop(scope_key)
+            save_codex_session_state(path, payload, write_json_atomic=write_json_atomic)
+
+
+def load_active_codex_turns(path: Path) -> dict[str, dict[str, str]]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        str(key): {str(k): str(v) for k, v in value.items()}
+        for key, value in payload.items()
+        if isinstance(value, dict)
+    }
+
+
+def set_active_codex_turn(
+    path: Path,
+    scope_key: str,
+    value: tuple[str, str] | tuple[str, str, str] | None,
+    *,
+    load_state: Callable[[Path], dict[str, dict[str, str]]] = load_active_codex_turns,
+    index_file_lock: Callable[[Path], ContextManager[Any]],
+    write_json_atomic: Callable[[Path, dict[str, dict[str, str]]], None],
+) -> None:
+    with index_file_lock(path):
+        payload = load_state(path)
+        if value is None:
+            payload.pop(scope_key, None)
+        else:
+            payload[scope_key] = {"thread_id": value[0], "turn_id": value[1]}
+            if len(value) >= 3 and str(value[2]).strip():
+                payload[scope_key]["business_turn_id"] = str(value[2]).strip()
+        write_json_atomic(path, payload)
