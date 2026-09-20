@@ -202,11 +202,14 @@ from novelvideo.freezone.workflow_runs import (
     WorkflowRunIdempotencyConflict,
     WorkflowRunLeaseConflict,
     bind_workflow_action_product_operation,
+    bind_workflow_media_task,
+    claim_workflow_media_action,
     create_workflow_run,
     interrupt_stale_workflow_runs,
     list_workflow_runs,
     prune_workflow_runs,
     read_workflow_run,
+    renew_workflow_media_claim,
     reconcile_workflow_runs_with_canvas_nodes,
     reconcile_workflow_runs_with_canvas_results,
     reconcile_workflow_runs_with_tasks,
@@ -493,7 +496,7 @@ def _verified_workflow_media_link(
     if (
         operation is None
         or operation.get("product_kind") != "recipe_result"
-        or operation.get("status") in {"delivered", "failed", "cancelled"}
+        or operation.get("status") in {"failed", "cancelled"}
         or operation.get("project_id") != ctx.project_id
         or operation.get("canvas_id") != canvas_id
         or operation.get("artifact_id") != node_id
@@ -508,6 +511,144 @@ def _verified_workflow_media_link(
         "product_operation_id": operation_id,
         "generation_attempt_id": attempt_id,
     }
+
+
+async def _enqueue_claimed_workflow_media(
+    *,
+    ctx: ProjectContext,
+    project_dir: Path,
+    task_type: str,
+    queue_kind: str,
+    payload: dict[str, Any],
+    job_id: str,
+) -> dict:
+    """Use the durable workflow claim and task scope for one media submission."""
+    operation_id = str(payload.get("product_operation_id") or "")
+    if operation_id:
+        identity = {
+            key: value
+            for key, value in payload.items()
+            if key
+            not in {
+                "job_id",
+                "project_dir",
+                "billing",
+                "task_family",
+                "task_label",
+                "display_name",
+                "task_summary",
+            }
+        }
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                {"task_type": task_type, "payload": identity},
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest()
+        try:
+            claim = await asyncio.to_thread(
+                claim_workflow_media_action,
+                project_dir=_canvas_state_project_dir(ctx, project_dir),
+                project_id=ctx.project_id,
+                canvas_id=str(payload.get("canvas_id") or ""),
+                node_id=str(payload.get("node_id") or ""),
+                operation_id=operation_id,
+                attempt_id=str(payload.get("generation_attempt_id") or ""),
+                task_type=task_type,
+                fingerprint=fingerprint,
+            )
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        job_id = str(claim["job_id"])
+        payload["job_id"] = job_id
+        task_key = project_task_state_key(task_type, ctx.project_id, 0, scope=job_id)
+        existing = await asyncio.to_thread(
+            get_task_manager().get_task_for_project, ctx, task_type, 0, scope=job_id
+        )
+        if existing is None and not claim["created"]:
+            deadline = time.monotonic() + 1.0
+            while existing is None and time.monotonic() < deadline:
+                await asyncio.sleep(0.05)
+                existing = await asyncio.to_thread(
+                    get_task_manager().get_task_for_project,
+                    ctx, task_type, 0, scope=job_id,
+                )
+        if existing is not None:
+            return _project_job_response(
+                task_type=task_type,
+                ctx=ctx,
+                job_id=job_id,
+                backend=str((existing.metadata or {}).get("backend") or "celery"),
+                queue=(existing.metadata or {}).get("queue_kind"),
+                task_id=existing.task_id,
+            )
+        run = await asyncio.to_thread(
+            read_workflow_run,
+            project_dir=_canvas_state_project_dir(ctx, project_dir),
+            canvas_id=str(payload.get("canvas_id") or ""),
+            run_id=claim["run_id"],
+        )
+        if run is None or run.get("status") != "running":
+            raise HTTPException(409, "workflow run is no longer active")
+        if not claim["created"]:
+            age = time.time() - float(claim["claimed_at"] or 0)
+            if age < 10:
+                raise HTTPException(503, "workflow media submission is still starting")
+            if age > 600:
+                raise HTTPException(409, "workflow media claim needs recovery")
+            renewed = await asyncio.to_thread(
+                renew_workflow_media_claim,
+                project_dir=_canvas_state_project_dir(ctx, project_dir),
+                run_id=claim["run_id"],
+                node_id=str(payload.get("node_id") or ""),
+                operation_id=operation_id,
+                job_id=job_id,
+                claimed_at=float(claim["claimed_at"]),
+            )
+            if not renewed:
+                raise HTTPException(503, "workflow media submission is being recovered")
+    queued = await get_task_backend().enqueue_project_task(
+        ctx,
+        product_surface="freezone",
+        task_type=task_type,
+        queue_kind=queue_kind,
+        episode=0,
+        scope=job_id,
+        payload=payload,
+    )
+    if operation_id:
+        await asyncio.to_thread(
+            bind_workflow_media_task,
+            project_dir=_canvas_state_project_dir(ctx, project_dir),
+            run_id=claim["run_id"],
+            node_id=str(payload.get("node_id") or ""),
+            operation_id=operation_id,
+            job_id=job_id,
+            task_type=task_type,
+            task_key=task_key,
+        )
+        run = await asyncio.to_thread(
+            read_workflow_run,
+            project_dir=_canvas_state_project_dir(ctx, project_dir),
+            canvas_id=str(payload.get("canvas_id") or ""),
+            run_id=claim["run_id"],
+        )
+        if run is not None and run.get("status") == "cancelled":
+            try:
+                await get_task_backend().cancel_project_task(ctx, queued.task_state)
+            except Exception:
+                logger.exception("failed to cancel media task after workflow cancellation")
+    return _project_job_response(
+        task_type=task_type,
+        ctx=ctx,
+        job_id=job_id,
+        backend=queued.backend,
+        queue=queued.queue,
+        task_id=queued.task_state.task_id,
+    )
 
 
 async def _start_or_enqueue_freezone_video_gen(
@@ -702,28 +843,14 @@ async def _start_or_enqueue_freezone_video_gen(
         "image_animate_gif": image_animate_gif,
     }
     if ctx is not None:
-        queued = await get_task_backend().enqueue_project_task(
-            ctx,
-            product_surface="freezone",
+        return await _enqueue_claimed_workflow_media(
+            ctx=ctx,
+            project_dir=project_dir,
             task_type="freezone_video_gen",
             queue_kind="video",
-            episode=0,
-            scope=job_id,
             payload=payload,
+            job_id=job_id,
         )
-        return {
-            "ok": True,
-            "data": {
-                "task_type": "freezone_video_gen",
-                "job_id": job_id,
-                "task_id": queued.task_state.task_id,
-                "task_key": project_task_state_key(
-                    "freezone_video_gen", ctx.project_id, 0, scope=job_id
-                ),
-                "backend": queued.backend,
-                "queue": queued.queue,
-            },
-        }
 
     _raise_project_context_required("freezone_video_gen")
 
@@ -853,13 +980,12 @@ async def _start_or_enqueue_freezone_gen_job(
         **(task_display or {}),
     }
     if ctx is not None:
-        queued = await get_task_backend().enqueue_project_task(
-            ctx,
-            product_surface="freezone",
+        return await _enqueue_claimed_workflow_media(
+            ctx=ctx,
+            project_dir=project_dir,
             task_type="freezone_gen",
             queue_kind="default",
-            episode=0,
-            scope=job_id,
+            job_id=job_id,
             payload={
                 "job_id": job_id,
                 "project_dir": str(project_dir),
@@ -882,19 +1008,6 @@ async def _start_or_enqueue_freezone_gen_job(
                 **display_payload,
             },
         )
-        return {
-            "ok": True,
-            "data": {
-                "task_type": "freezone_gen",
-                "job_id": job_id,
-                "task_id": queued.task_state.task_id,
-                "task_key": project_task_state_key(
-                    "freezone_gen", ctx.project_id, 0, scope=job_id
-                ),
-                "backend": queued.backend,
-                "queue": queued.queue,
-            },
-        }
 
     _raise_project_context_required("freezone_gen")
 
@@ -2943,22 +3056,13 @@ async def _enqueue_freezone_background_job(
     payload: dict,
     queue_kind: str = "default",
 ) -> dict:
-    queued = await get_task_backend().enqueue_project_task(
-        ctx,
-        product_surface="freezone",
+    return await _enqueue_claimed_workflow_media(
+        ctx=ctx,
+        project_dir=project_dir,
         task_type=task_type,
         queue_kind=queue_kind,
-        episode=0,
-        scope=job_id,
-        payload={"job_id": job_id, "project_dir": str(project_dir), **payload},
-    )
-    return _project_job_response(
-        task_type=task_type,
-        ctx=ctx,
         job_id=job_id,
-        backend=queued.backend,
-        queue=queued.queue,
-        task_id=queued.task_state.task_id,
+        payload={"job_id": job_id, "project_dir": str(project_dir), **payload},
     )
 
 
@@ -15517,6 +15621,7 @@ async def get_canvas_workflow_runs(
                 expected_task_types = {
                     "generate_image": {"freezone_gen"},
                     "generate_video": {"freezone_video_gen"},
+                    "generate_text_video": {"freezone_video_gen"},
                     "generate_audio": {"freezone_audio_speech", "freezone_audio_eleven_music"},
                 }.get(str(action.get("action") or ""), set())
                 attempt_id = str(action.get("generation_attempt_id") or "").strip()
