@@ -34,7 +34,7 @@
 | [canvas-audio-actions](tasks/canvas-audio-actions.md) | 动作注册表 + 音频截取/变速 | 已完成 | 本地 ffmpeg 端到端、23+7 项聚焦测试、生产构建与真实画布截取/2×/刷新验收均通过 |
 | [canvas-audio-split](tasks/canvas-audio-split.md) | 音频智能切分 / 自定义切分 | 已完成 | `4b578509` 已推送；17+10 项聚焦测试、构建、三语及真实画布智能/自定义/播放/刷新验收通过 |
 | [creative-intro-discovery](tasks/creative-intro-discovery.md) | LibTV 创意片头专项取证 | 已完成 | `bb0bf189` 已推送；可另开实现线，最终供应商画质与扣费仍需真实任务验收 |
-| [creative-intro-implementation](tasks/creative-intro-implementation.md) | 创意片头显式节点工作流 | 执行中 | 功能与真实画布验收已完成；正在收口文档、门禁与独立提交 |
+| [creative-intro-implementation](tasks/creative-intro-implementation.md) | 创意片头显式节点工作流 | 已完成 | `385139cc` 已推送；基础链完成，原片 5 秒融合与真实供应商生成另开增强线 |
 | [shot-breakdown](tasks/shot-breakdown.md) | 逐帧拉片三维度：分镜 / 动态 / 音乐 | 待验收 | 三层提交与干净快照通过；待真实视觉模型及有/无 demucs 两种音乐路径 |
 | [depth-motion-da3](tasks/depth-motion-da3.md) | 拉片动态维度：Depth Anything 3 深度视频 | 待验收 | 任务中心名称与 20 项聚焦回归已补齐；待 CUDA 真机 720p 硬切样片验收 |
 | [story-writer](tasks/story-writer.md) | 创作阶段（虾本）：写手 agent + 通用文档存储 + 前端路由 | 待验收 | 14 项后端契约测试与前端 build 已通过；待真实模型四阶段流程和导入链路验收 |
