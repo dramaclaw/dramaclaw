@@ -328,13 +328,10 @@ def _request(
             text = resp.read().decode("utf-8", errors="replace")
             return _decode_response(resp.status, text)
     except HTTPError as exc:
-        text = exc.read().decode("utf-8", errors="replace")
-        return {
-            "ok": False,
-            "status_code": exc.code,
-            "error": _response_error_text(text) or exc.reason,
-            "data": _maybe_json(text),
-        }
+        # A validation failure can carry an object in FastAPI's `detail`.
+        # Never forward the raw response: it may contain server-only fields.
+        text = exc.read(65537).decode("utf-8", errors="replace")
+        return _http_error_result(exc.code, text, str(exc.reason))
     except URLError as exc:
         return {"ok": False, "error": f"network_error: {exc.reason}"}
 
@@ -356,16 +353,75 @@ def _maybe_json(text: str) -> Any:
         return stripped
 
 
-def _response_error_text(text: str) -> str:
+def _safe_error_string(value: Any, limit: int) -> str:
+    if not isinstance(value, str):
+        return ""
+    cleaned = " ".join(value.split())[:limit]
+    if re.search(r"traceback|authorization|bearer\s|api[_-]?key|secret|password", cleaned, re.I):
+        return ""
+    return cleaned
+
+
+def _http_error_result(status_code: int, text: str, reason: str) -> dict[str, Any]:
+    """Expose only bounded validation diagnostics from the project API."""
+    result: dict[str, Any] = {
+        "ok": False,
+        "status": "failed",
+        "status_code": status_code,
+        "error": _safe_error_string(reason, 300) or "HTTP request failed",
+    }
+    if len(text) > 65536:
+        return result
     data = _maybe_json(text)
-    if isinstance(data, dict):
-        for key in ("error", "message", "detail"):
-            value = data.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-    if isinstance(data, str):
-        return data[:500]
-    return ""
+    if 500 <= status_code < 600:
+        if isinstance(data, dict):
+            for field in ("error", "message", "detail"):
+                value = _safe_error_string(data.get(field), 300)
+                if value:
+                    result["error"] = value
+                    break
+        elif isinstance(data, str) and not data.lstrip().startswith("<"):
+            result["error"] = _safe_error_string(data, 300) or result["error"]
+        return result
+    if not 400 <= status_code < 500:
+        return result
+    if not isinstance(data, dict):
+        return result
+    detail = data.get("detail")
+    source = detail if isinstance(detail, dict) else data
+    for field in ("status", "code", "next_action"):
+        value = _safe_error_string(source.get(field), 80)
+        if value and re.fullmatch(r"[A-Za-z0-9_.-]+", value):
+            result[field] = value
+    for field in ("error", "message"):
+        value = _safe_error_string(source.get(field), 300)
+        if value:
+            result[field] = value
+    if isinstance(detail, str):
+        result["error"] = _safe_error_string(detail, 300) or result["error"]
+    if isinstance(source.get("retryable"), bool):
+        result["retryable"] = source["retryable"]
+    errors = source.get("errors")
+    if isinstance(errors, list):
+        safe_errors = []
+        for item in errors[:5]:
+            if not isinstance(item, dict):
+                continue
+            path = _safe_error_string(item.get("path"), 160)
+            if not path and type(item.get("index")) is int and 0 <= item["index"] <= 9999:
+                path = f"edges[{item['index']}]"
+            message = _safe_error_string(item.get("message") or item.get("reason"), 240)
+            if not path or not re.fullmatch(r"[A-Za-z0-9_.\[\]-]+", path):
+                continue
+            safe_errors.append({"path": path, **({"message": message} if message else {})})
+        if safe_errors:
+            result["errors"] = safe_errors
+    while (
+        len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > 4096
+        and result.get("errors")
+    ):
+        result["errors"].pop()
+    return result
 
 
 def _scope_meta(project: str, canvas: str | None = None) -> dict[str, Any]:
@@ -5033,6 +5089,12 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
         )
     )
     if payload is None:
+        if error.get("errors"):
+            error.setdefault(
+                "agent_instruction",
+                "Correct the reported plan fields before retrying. Stop if the same "
+                "validation error recurs without new information.",
+            )
         return tool_result(error)
     result = public_workflow_draft(payload)
     result["agent_instruction"] = (
@@ -5521,13 +5583,6 @@ def _handle_workflow_operation(args: dict[str, Any], *, action: str) -> str:
         )
     payload, error = _workflow_draft_response(response)
     if error:
-        detail = (
-            (error.get("data") or {}).get("detail")
-            if isinstance(error.get("data"), dict)
-            else None
-        )
-        if isinstance(detail, dict):
-            error = {**error, **detail, "ok": False}
         if action in {"revise", "get"}:
             error.setdefault("draft_id", draft_id)
         error.setdefault("retryable", False)
