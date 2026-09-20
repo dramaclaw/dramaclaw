@@ -914,7 +914,8 @@
         "catalog": {
           "loading": "Đang tải danh mục mô hình. Vui lòng chọn thông số sau khi tải xong.",
           "fallback": "Không thể tải danh mục mô hình. Vui lòng thử lại sau.",
-          "empty": "Chưa có mô hình tạo nội dung nào được cấu hình. Vui lòng liên hệ quản trị viên."
+          "empty": "Chưa có mô hình tạo nội dung nào được cấu hình. Vui lòng liên hệ quản trị viên.",
+          "model_unavailable": "Mô hình đã chọn trước đó không còn khả dụng. Vui lòng chọn lại mô hình trước khi chọn thông số."
         },
         "autoRatio": "Tỷ lệ tự động",
         "imageQuality": "Chất lượng ảnh",

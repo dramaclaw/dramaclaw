@@ -3427,6 +3427,73 @@ describe("Canvas command approval image params", () => {
     })).toBe("empty");
   });
 
+  it.each([
+    ["loading", { models: [], isLoading: true, isFallback: false }],
+    ["fallback", { models: [{ id: "fallback-model" }], isLoading: false, isFallback: true }],
+    ["empty", { models: [], isLoading: false, isFallback: false }],
+  ] as const)("explains %s catalogs on missing-field cards", (issue, catalog) => {
+    for (const media of ["image", "video"] as const) {
+      const dependentId = media === "image" ? "image_resolution" : "video_duration_seconds";
+      const dependentSource = media === "image"
+        ? "selected_image_model_resolutions" as const
+        : "selected_video_model_durations" as const;
+      const countId = media === "image" ? "image_variants_per_node" : "video_variants_per_node";
+      const modelId = media === "image" ? "image_model" : "video_model";
+      const rawQuestions = [
+        { id: dependentId, title: "缺少的参数", options_source: dependentSource,
+          options: [{ id: "stale-option", label: "旧选项" }] },
+        { id: countId, title: "生成数量", options: [{ id: "1", label: "1" }] },
+      ];
+      const answers = {
+        [modelId]: { option_ids: ["previous-model"] },
+        [dependentId]: { custom_text: "unsupported" },
+        [countId]: { option_ids: ["1"] },
+      };
+      const questions = clarificationQuestionsWithLiveModelCatalogsForTest(
+        rawQuestions, [], [], answers,
+      );
+      const healthy = { models: [{ id: "other-model" }], isLoading: false, isFallback: false };
+      expect(assistantClarificationGenerationCatalogIssue(
+        rawQuestions, media === "image" ? catalog : healthy,
+        media === "video" ? catalog : healthy, answers,
+      )).toBe(issue);
+      expect(questions[0]).toMatchObject({ options: [], allow_custom: false });
+      expect(assistantClarificationCanSubmit(questions, answers)).toBe(false);
+    }
+  });
+
+  it("explains a missing preselected model on missing-field cards", () => {
+    const imageCatalog = {
+      models: [{ id: "current-image", resolutionOptions: ["2K"] }],
+      isLoading: false, isFallback: false,
+    };
+    const videoCatalog = {
+      models: [{ id: "current-video", minDuration: 4, maxDuration: 6 }],
+      isLoading: false, isFallback: false,
+    };
+    for (const [questions, answers] of [
+      [[
+        { id: "image_resolution", title: "分辨率", options_source: "selected_image_model_resolutions" as const,
+          options: [{ id: "1K", label: "1K" }] },
+        { id: "image_variants_per_node", title: "数量", options: [{ id: "1", label: "1" }] },
+      ], { image_model: { option_ids: ["retired-image"] } }],
+      [[
+        { id: "video_duration_seconds", title: "时长", options_source: "selected_video_model_durations" as const,
+          options: [{ id: "5", label: "5" }] },
+        { id: "video_variants_per_node", title: "数量", options: [{ id: "1", label: "1" }] },
+      ], { video_model: { option_ids: ["retired-video"] } }],
+    ] as const) {
+      expect(assistantClarificationGenerationCatalogIssue(
+        [...questions], imageCatalog, videoCatalog, answers,
+      )).toBe("model_unavailable");
+      const resolved = clarificationQuestionsWithLiveModelCatalogsForTest(
+        [...questions], imageCatalog.models, videoCatalog.models, answers,
+      );
+      expect(resolved[0]).toMatchObject({ options: [], allow_custom: false });
+      expect(assistantClarificationCanSubmit(resolved, answers)).toBe(false);
+    }
+  });
+
   it("keeps tool-provided options when the model was already fixed outside the card", () => {
     const questions = clarificationQuestionsWithLiveModelCatalogsForTest(
       [{

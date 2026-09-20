@@ -4164,20 +4164,35 @@ export function assistantClarificationGenerationCatalogIssue(
   questions: AssistantClarificationQuestion[],
   imageCatalog: GenerationCatalogState,
   videoCatalog: GenerationCatalogState,
-): "loading" | "fallback" | "empty" | null {
+  answers: AssistantClarificationAnswers = {},
+): "loading" | "fallback" | "empty" | "model_unavailable" | null {
   const requestedCatalogs = [
-    ["image_models", imageCatalog],
-    ["video_models", videoCatalog],
+    ["image_models", "selected_image_model_", "image_model", imageCatalog],
+    ["video_models", "selected_video_model_", "video_model", videoCatalog],
   ] as const;
   const needed = requestedCatalogs
-    .filter(([source]) => questions.some((question) =>
+    .filter(([modelSource, dependentPrefix]) => questions.some((question) => {
+      const source = question.options_source ?? CLARIFICATION_SOURCE_BY_QUESTION_ID[
+        normalizedClarificationId(question.id)
+      ];
+      return source === modelSource || source?.startsWith(dependentPrefix);
+    }));
+  if (needed.some(([, , , catalog]) => catalog.isLoading)) return "loading";
+  if (needed.some(([, , , catalog]) => catalog.isFallback)) return "fallback";
+  if (needed.some(([, , , catalog]) => catalog.models.length === 0)) return "empty";
+  for (const [, dependentPrefix, modelQuestionId, catalog] of needed) {
+    const hasDependentQuestion = questions.some((question) =>
       (question.options_source ?? CLARIFICATION_SOURCE_BY_QUESTION_ID[
         normalizedClarificationId(question.id)
-      ]) === source))
-    .map(([, catalog]) => catalog);
-  if (needed.some((catalog) => catalog.isLoading)) return "loading";
-  if (needed.some((catalog) => catalog.isFallback)) return "fallback";
-  if (needed.some((catalog) => catalog.models.length === 0)) return "empty";
+      ])?.startsWith(dependentPrefix));
+    const hasModelQuestion = questions.some((question) =>
+      normalizedClarificationId(question.id) === modelQuestionId);
+    const selectedValue = clarificationSelectedValue(questions, answers, modelQuestionId);
+    if (hasDependentQuestion && !hasModelQuestion && selectedValue
+      && !clarificationSelectedModel(questions, answers, modelQuestionId, catalog.models)) {
+      return "model_unavailable";
+    }
+  }
   return null;
 }
 
@@ -4304,12 +4319,14 @@ function clarificationQuestionsWithLiveModelCatalogs(
     let values: readonly (string | number | boolean)[] | null = null;
     let labelFor: (value: string | number | boolean) => string = String;
     if (source?.startsWith("selected_image_model_") && !selectedImageModel) {
-      return hasImageModelQuestion
+      return hasImageModelQuestion || imageModels.length === 0
+        || Boolean(clarificationSelectedValue(questions, answers, "image_model"))
         ? { ...question, options_source: source, options: [], allow_custom: false }
         : question;
     }
     if (source?.startsWith("selected_video_model_") && !selectedVideoModel) {
-      return hasVideoModelQuestion
+      return hasVideoModelQuestion || videoModels.length === 0
+        || Boolean(clarificationSelectedValue(questions, answers, "video_model"))
         ? { ...question, options_source: source, options: [], allow_custom: false }
         : question;
     }
@@ -6765,12 +6782,12 @@ function AssistantClarificationInputCard({
   const imageModelCatalog = useFreezoneImageModels(params.project);
   const videoModelCatalog = useFreezoneVideoModels(params.project);
   const eventQuestions = Array.isArray(event.questions) ? event.questions : [];
-  const generationCatalogIssue = assistantClarificationGenerationCatalogIssue(
-    eventQuestions, imageModelCatalog, videoModelCatalog,
-  );
   const eventIdentity = assistantClarificationEventIdentity(event);
   const [answers, setAnswers] = useState<AssistantClarificationAnswers>(() =>
     event.answers && typeof event.answers === "object" ? event.answers : {},
+  );
+  const generationCatalogIssue = assistantClarificationGenerationCatalogIssue(
+    eventQuestions, imageModelCatalog, videoModelCatalog, answers,
   );
   const [activeQuestionPosition, setActiveQuestionPosition] = useState(0);
   useEffect(() => {
