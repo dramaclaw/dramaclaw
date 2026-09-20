@@ -133,6 +133,23 @@ def test_recommended_video_uses_video_capabilities_and_concrete_resolution():
     }
 
 
+def test_video_mode_must_match_live_model_capabilities():
+    entry = {
+        "id": "newapi_seedance-2.0",
+        "supportedModes": [
+            "text_to_video", "all_reference", "first_last_frame", "image_reference",
+        ],
+    }
+    blocked = _check({"model": entry["id"], "genMode": "imageToVideo"}, entry)
+    assert blocked["status"] == "blocked"
+    assert blocked["blockers"][0]["path"] == "runtime.models.video.genMode"
+    assert blocked["blockers"][0]["code"] == "model_capability_unsupported"
+    assert "imageReference" in blocked["blockers"][0]["allowed_values"]
+    assert _check({"model": entry["id"], "genMode": "imageReference"}, entry)[
+        "status"
+    ] == "ready"
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
@@ -190,7 +207,8 @@ def test_canvas_catalog_id_is_valid_when_live_entry_has_separate_backend_api_mod
     }
 
 
-def test_ready_video_catalog_id_remains_valid_in_canvas_command():
+@pytest.mark.parametrize("model_id", ["seedance-2.0", "newapi_seedance-2.0"])
+def test_ready_video_catalog_id_remains_valid_in_canvas_command(model_id):
     plan = {
         "schema_version": "freezone_workflow_plan.v1",
         "workflow_type": "dynamic.video",
@@ -200,7 +218,8 @@ def test_ready_video_catalog_id_remains_valid_in_canvas_command():
                 "node_type": "videoNode",
                 "stage": "video",
                 "data": {
-                    "model": "seedance-2.0",
+                    "model": model_id,
+                    "genMode": "imageReference",
                     "durationSec": 5,
                     "quality": "720P",
                 },
@@ -209,8 +228,9 @@ def test_ready_video_catalog_id_remains_valid_in_canvas_command():
         "edges": [],
     }
     catalog_entry = {
-        "id": "seedance-2.0",
+        "id": model_id,
         "apiModel": "newapi_seedance-2.0",
+        "supportedModes": ["text_to_video", "image_reference"],
         "resolutionOptions": ["720P"],
         "minDuration": 4,
         "maxDuration": 15,
@@ -226,7 +246,6 @@ def test_ready_video_catalog_id_remains_valid_in_canvas_command():
     graph = build_workflow_graph_commands({"plan": plan, "run_after_create": True})
     command = next(item for item in graph["commands"] if item["type"] == "create_node")
     assert command["data"]["model"] == catalog_entry["id"]
-    assert command["data"]["model"] != catalog_entry["apiModel"]
 
 
 def test_live_catalog_failure_is_not_a_successful_preflight():

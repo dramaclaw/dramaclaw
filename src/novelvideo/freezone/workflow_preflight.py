@@ -30,6 +30,15 @@ _RECOMMENDED_OPTIONS = {
     "imageQuality": ("medium", "low", "high"),
     "videoResolution": ("720p", "480p", "1080p", "2K"),
 }
+_VIDEO_CATALOG_MODES = {
+    "textToVideo": "text_to_video",
+    "firstFrame": "first_frame",
+    "imageToVideo": "image_to_video",
+    "firstLastFrame": "first_last_frame",
+    "imageReference": "image_reference",
+    "allReference": "all_reference",
+    "videoEdit": "video_edit",
+}
 
 
 def _preferred_option(entry: dict[str, Any], key: str, preferences: tuple[str, ...]) -> str | None:
@@ -278,6 +287,30 @@ def _workflow_node_capability_blockers(
         )
     type_blockers = workflow_parameter_type_blockers(node)
     blockers.extend(type_blockers)
+    if node_type == "videoNode":
+        supported_modes = catalog_entry.get("supportedModes")
+        selected_mode = data.get("genMode") or "textToVideo"
+        catalog_mode = (
+            _VIDEO_CATALOG_MODES.get(selected_mode)
+            if isinstance(selected_mode, str) else None
+        )
+        if isinstance(supported_modes, list) and supported_modes and (
+            catalog_mode not in supported_modes
+        ):
+            allowed = [
+                mode for mode, catalog_mode in _VIDEO_CATALOG_MODES.items()
+                if catalog_mode in supported_modes
+            ]
+            blockers.append({
+                "path": f"runtime.models.{node_id}.genMode",
+                "message": (
+                    f"genMode value {selected_mode!r} is not supported by model "
+                    f"{model_id}; supported values: {allowed!r}"
+                ),
+                "code": "model_capability_unsupported",
+                "allowed_values": allowed,
+                "recovery": "choose_supported_value",
+            })
     duration_value = data.get("durationSec")
     invalid_duration = any(
         item["path"].endswith(".durationSec") for item in type_blockers

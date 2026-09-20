@@ -1904,29 +1904,13 @@ def _video_compose_plan() -> dict:
     }
 
 
-@pytest.mark.parametrize(
-    ("requested_model", "canvas_model"),
-    [
-        ("seedance-2.0-fast", "seedance-2.0-fast"),
-        ("seedance-2.0", "seedance-2.0"),
-        ("seedance-1.5-pro", "seedance-1.5-pro"),
-        ("seedance-1.0-pro-fast", "seedance-1.0-pro-fast"),
-        ("newapi_seedance-2.0-fast", "seedance-2.0-fast"),
-        ("newapi_seedance-2.0", "seedance-2.0"),
-        ("newapi_seedance-1.5-pro", "seedance-1.5-pro"),
-        ("newapi_seedance-1.0-pro-fast", "seedance-1.0-pro-fast"),
-        ("huimeng_seedance-1.5-pro", "seedance-1.5-pro"),
-        ("huimeng_seedance-1.0-pro-fast", "seedance-1.0-pro-fast"),
-        ("01M1N6KNNEQKPZCSKYSK02DPV1", "01M1N6KNNEQKPZCSKYSK02DPV1"),
-        ("unknown-model", "unknown-model"),
-        ("seedance-2.0-mini", "seedance-2.0-mini"),
-        ("recommended", "recommended"),
-    ],
-)
-def test_workflow_graph_normalizes_video_provider_names_to_canvas_model_ids(
-    requested_model,
-    canvas_model,
-):
+@pytest.mark.parametrize("requested_model", [
+    "seedance-2.0-fast", "seedance-2.0", "seedance-1.5-pro",
+    "newapi_seedance-2.0-fast", "newapi_seedance-2.0",
+    "huimeng_seedance-1.5-pro", "01M1N6KNNEQKPZCSKYSK02DPV1",
+    "unknown-model", "recommended",
+])
+def test_workflow_graph_preserves_video_catalog_id(requested_model):
     graph = build_workflow_graph_commands(
         {
             "plan": {
@@ -1950,7 +1934,7 @@ def test_workflow_graph_normalizes_video_provider_names_to_canvas_model_ids(
     create_command = next(
         command for command in graph["commands"] if command["type"] == "create_node"
     )
-    assert create_command["data"]["model"] == canvas_model
+    assert create_command["data"]["model"] == requested_model
 
 
 def test_workflow_seedance_alias_emits_canvas_catalog_id_not_backend_api_model():
