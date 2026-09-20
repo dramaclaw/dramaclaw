@@ -68,9 +68,21 @@
 - [x] 定位相关线上 chunk、动作常量和请求形状；不能验证的项明确标未知。
 - [x] 不创建收费任务，不泄露凭据或签名 URL。
 - [x] 对标文档形成可执行的我方最小实现建议、冲突边界和验收标准。
-- [ ] `agent_guard check/handoff`、`git diff --check`、pre-commit 通过并独立提交推送。
+- [x] `agent_guard check/handoff`、`git diff --check`、pre-commit 通过并独立提交推送。
 
 ## 进展记录
+
+### 2026-09-19 · 取证提交已推送
+
+做了什么：将创意片头证据、实现方案门、安全登录态复用规则和本线协调文件提交为
+`bb0bf189`，推送到 `zhonggwv/main`；Cookie 状态文件和浏览器原始证据仍留在忽略区。
+
+为什么这么改（尤其是与原方案分叉的地方）：功能证据与本地凭据必须分层保存；公开仓库只接收
+脱敏结论和复用规则，不能为了下次免登录把账户 Cookie 一起提交。
+
+怎么验证的（命令 / 界面路径 / 结果）：`agent_guard check` 返回 13 条工作线、292 项 claims；
+handoff、`git diff --check` 和三项 pre-commit 门禁通过；`git push zhonggwv main` 显示
+`ea019785..bb0bf189 main -> main`；`git check-ignore` 命中 Cookie 文件且权限为 `600`。
 
 ### 2026-09-19 · 完成创意片头 UI、网络、JS 与我方架构取证
 
