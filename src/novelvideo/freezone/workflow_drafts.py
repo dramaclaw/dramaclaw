@@ -15,12 +15,13 @@ from pathlib import Path
 from typing import Any
 
 from novelvideo.freezone.paths import CANVAS_ID_RE
+from novelvideo.i18n_message import lmsg, message_payload
 from novelvideo.sqlite_pragmas import configure_sqlite_connection
 
 SCHEMA_VERSION = "freezone_workflow_draft.v1"
 DEFAULT_TTL_SECONDS = 24 * 60 * 60
 DRAFT_ID_RE = re.compile(r"^workflow_draft_[a-zA-Z0-9_-]{1,80}$")
-DRAFT_STATUSES = {"ready", "confirming", "submitted", "confirmed"}
+DRAFT_STATUSES = {"ready", "confirming", "submitted", "confirmed", "cancelled"}
 CONFIRMATION_OUTCOMES = {"ready", "submitted", "confirmed"}
 
 WORKFLOW_DRAFT_SCHEMA_SQL = """
@@ -478,6 +479,43 @@ def patch_workflow_draft(
         return deepcopy(payload), None
 
 
+def cancel_workflow_draft(
+    *,
+    project_dir: Path,
+    canvas_id: str,
+    draft_id: str,
+    expected_revision: int,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Cancel an unconfirmed draft atomically so a stale confirmation cannot claim it."""
+    _validate_scope(canvas_id, draft_id)
+    with _connect(project_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        payload = _read_draft(conn, canvas_id=canvas_id, draft_id=draft_id)
+        if payload is None:
+            return None, _unavailable("workflow draft not found")
+        if payload["status"] == "cancelled":
+            return deepcopy(payload), None
+        if payload["status"] != "ready":
+            return None, {
+                "ok": False,
+                "status": "workflow_draft_not_cancellable",
+                "error": f"workflow draft cannot be cancelled while status is {payload['status']}",
+            }
+        if float(payload.get("expires_at") or 0) < time.time():
+            return None, _unavailable("workflow draft expired")
+        if payload["revision"] != expected_revision:
+            return None, {
+                "ok": False,
+                "status": "workflow_draft_revision_conflict",
+                "error": "workflow draft revision changed",
+                "current_revision": payload["revision"],
+            }
+        payload["status"] = "cancelled"
+        payload["updated_at"] = time.time()
+        _write_draft(conn, payload)
+        return deepcopy(payload), None
+
+
 def claim_workflow_draft_confirmation(
     *,
     project_dir: Path,
@@ -520,6 +558,18 @@ def claim_workflow_draft_confirmation(
                 "ok": False,
                 "status": "workflow_draft_confirmation_in_progress",
                 "message": "该工作流方案正在创建或已经提交，不会重复创建节点。",
+            }
+        if payload["status"] != "ready":
+            message = lmsg(
+                "workflowDraftContinuation.notConfirmable",
+                "该工作流方案已取消，不能再创建节点。",
+            )
+            return None, {
+                **public_workflow_draft(payload),
+                "ok": False,
+                "status": "workflow_draft_not_confirmable",
+                "message": message.text,
+                "message_i18n": message_payload(message),
             }
         now = claim_time
         payload.update(
