@@ -36,8 +36,9 @@
    helper 导出供现有调用方使用。`chat/runtime_event_mapper.py` 已统一三条运行时
    流的生命周期、进度和 SDK 工具事件对外载荷，以及 Hermes 原始工具更新的
    生命周期判定；事件发送时机仍由 Application 管理。Runtime Adapter 仍需收拢
-   provider-native 历史与其他原始事件解析，
-   使 Application 只消费标准化事件及交付证据。
+   其他原始事件解析，使 Application 只消费标准化事件及交付证据。
+   `chat/runtime_history.py` 已承接 Codex 原生历史条目到聊天记录的纯解析；
+   历史读取、时间戳、媒体补全及缓存写入仍由 `service.py` 负责。
 2. 继续迁出正文归一化、工具结果展示映射和显示工具 fallback；其中 API
    查询留在独立应用服务，不能为了减少行数搬进纯展示模块。
 3. Session Registry / Delivery Evidence 独立，沿用 #555 / #558 的运行身份

@@ -27,9 +27,6 @@ from novelvideo.chat import presentation, runtime_event_mapper, session_registry
 from novelvideo.chat.backend_sdk import (
     ClaudeSdkClient,
     CodexClient,
-    _codex_item_completed_trace,
-    _codex_item_started_trace,
-    _codex_unwrap_item,
     control_codex_runtime,
     interrupt_live_claude_client,
     interrupt_live_codex_turn,
@@ -53,6 +50,12 @@ from novelvideo.chat.presentation import (
 from novelvideo.chat.runtime_event_mapper import (
     _is_anonymous_hermes_tool_call_update,
     _is_hermes_lifecycle_tool_update,
+)
+from novelvideo.chat.runtime_history import (
+    _extract_codex_history_trace as _extract_codex_history_trace,
+    _extract_codex_user_message_text as _extract_codex_user_message_text,
+    _split_trace_contents,
+    parse_codex_history_item,
 )
 from novelvideo.chat.runtime_port import AgentRuntimeThreadPort
 from novelvideo.chat.session_registry import (
@@ -1992,22 +1995,6 @@ def _append_message(
     }
 
 
-def _split_trace_contents(content: str) -> list[str]:
-    raw_lines = str(content or "").rstrip().splitlines()
-    blocks: list[list[str]] = []
-    current: list[str] = []
-    for line in raw_lines:
-        if not line.strip():
-            if current:
-                blocks.append(current)
-                current = []
-            continue
-        current.append(line)
-    if current:
-        blocks.append(current)
-    return ["\n".join(block) for block in blocks if block]
-
-
 def _is_hidden_chat_tool_event(name: object, text: object) -> bool:
     """Internal Hermes bookkeeping tools should not become user-visible cards."""
     haystack = f"{name or ''}\n{text or ''}".lower()
@@ -3735,50 +3722,6 @@ def _replace_trace_messages(
     conn.commit()
 
 
-def _extract_codex_user_message_text(item: Any) -> str:
-    thread_item = _codex_unwrap_item(item)
-    parts: list[str] = []
-    for content in getattr(thread_item, "content", []) or []:
-        item_type = str(getattr(content, "type", "") or "")
-        if item_type == "text":
-            text = str(getattr(content, "text", "") or "").strip()
-            if text:
-                parts.append(text)
-        elif item_type == "skill":
-            name = str(getattr(content, "name", "") or "").strip()
-            if name:
-                parts.append(f"[skill] {name}")
-        elif item_type == "mention":
-            name = str(getattr(content, "name", "") or "").strip()
-            path = str(getattr(content, "path", "") or "").strip()
-            parts.append(f"[mention] {name or path}".strip())
-        elif item_type == "image":
-            url = str(getattr(content, "url", "") or "").strip()
-            if url:
-                parts.append(f"[image] {url}")
-        elif item_type == "localImage":
-            path = str(getattr(content, "path", "") or "").strip()
-            if path:
-                parts.append(f"[image] {path}")
-    return "\n".join(part for part in parts if part).strip()
-
-
-def _extract_codex_history_trace(item: Any) -> str:
-    from openai_codex.generated.v2_all import CommandExecutionThreadItem
-
-    thread_item = _codex_unwrap_item(item)
-    started = _codex_item_started_trace(thread_item) or ""
-    completed = _codex_item_completed_trace(thread_item) or ""
-    body = ""
-    if isinstance(thread_item, CommandExecutionThreadItem):
-        aggregated = str(thread_item.aggregated_output or "")
-        if aggregated:
-            body = aggregated
-            if not body.endswith("\n"):
-                body += "\n"
-    return (started + body + completed).strip()
-
-
 def _load_codex_thread_history(
     username: str,
     project: str,
@@ -3786,10 +3729,6 @@ def _load_codex_thread_history(
     project_state_dir: str | Path | None = None,
 ) -> list[dict[str, Any]]:
     from openai_codex import CodexConfig
-    from openai_codex.generated.v2_all import (
-        AgentMessageThreadItem,
-        UserMessageThreadItem,
-    )
     from novelvideo.chat.codex_app_server import shared_codex
 
     thread_id = _get_codex_thread_id(
@@ -3831,51 +3770,24 @@ def _load_codex_thread_history(
     history: list[dict[str, Any]] = []
     for turn_index, turn in enumerate(turns):
         for item_index, item in enumerate(getattr(turn, "items", []) or []):
-            thread_item = _codex_unwrap_item(item)
             created_at = _now_iso()
-            if isinstance(thread_item, UserMessageThreadItem):
-                content = _extract_codex_user_message_text(thread_item)
-                if content:
-                    history.append(
-                        {
-                            "id": turn_index * 1000 + item_index,
-                            "role": "user",
-                            "content": content,
-                            "media": _filter_markdown_duplicate_images(
-                                content,
-                                _extract_media(content, username, project),
-                            ),
-                            "created_at": created_at,
-                        }
+            for parsed in parse_codex_history_item(item, turn_index, item_index):
+                content = parsed["content"]
+                role = parsed["role"]
+                media = (
+                    _filter_markdown_duplicate_images(
+                        content, _extract_media(content, username, project)
                     )
-                continue
-            if isinstance(thread_item, AgentMessageThreadItem):
-                content = str(thread_item.text or "").strip()
-                if content:
-                    media = _extract_media(content, username, project)
-                    history.append(
-                        {
-                            "id": turn_index * 1000 + item_index,
-                            "role": "assistant",
-                            "content": content,
-                            "media": _filter_markdown_duplicate_images(content, media),
-                            "created_at": created_at,
-                        }
-                    )
-                continue
-
-            trace = _extract_codex_history_trace(thread_item)
-            if trace:
-                for block_index, block in enumerate(_split_trace_contents(trace)):
-                    history.append(
-                        {
-                            "id": turn_index * 10000 + item_index * 10 + block_index,
-                            "role": "trace",
-                            "content": block,
-                            "media": [],
-                            "created_at": created_at,
-                        }
-                    )
+                    if role != "trace"
+                    else []
+                )
+                history.append(
+                    {
+                        **parsed,
+                        "media": media,
+                        "created_at": created_at,
+                    }
+                )
 
     return history
 
