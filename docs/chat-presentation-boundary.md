@@ -39,6 +39,8 @@
    查询留在独立应用服务，不能为了减少行数搬进纯展示模块。
 3. Session Registry / Delivery Evidence 独立，沿用 #555 / #558 的运行身份
    和 durable bridge 约束，并与 #575 执行证据契约协调。
+   `chat/session_registry.py` 已先承接锁范围、锁记录解析和过期规则；
+   文件抢占、心跳及释放仍在 `service.py`，需在保留并发语义的下一阶段迁出。
 4. Freezone 路由按 Canvas、Catalog、Workflow、ProductOperation、Asset
    逐域提取；每个域先固化兼容测试，再保留旧路由薄委托。
 5. 前端巨型编排模块继续拆分；稳定 Workflow 契约继续使用 #572 的生成源，
