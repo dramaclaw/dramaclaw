@@ -100,6 +100,11 @@ def _task_ports(monkeypatch):
     monkeypatch.setattr(registry, "_PORTS", dict(registry._PORTS))
     monkeypatch.setattr(registry, "_BOOTSTRAPPED", registry._BOOTSTRAPPED)
     registry.register_port("cancellation_store", InMemoryCancellationStore())
+    class ActiveProjectRegistry:
+        async def get_project(self, _project_id):
+            return None
+
+    registry.register_port("project_registry", ActiveProjectRegistry())
 
 
 @pytest.mark.asyncio
