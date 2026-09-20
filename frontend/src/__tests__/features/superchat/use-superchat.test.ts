@@ -58,6 +58,7 @@ import {
   canvasApprovalRequiresHumanReviewConfirmationForTest,
   clarificationQuestionsWithLiveModelCatalogsForTest,
   assistantClarificationCanSubmit,
+  assistantClarificationGenerationCatalogIssue,
   assistantClarificationShowsRecommended,
   imageApprovalInitialParamsForTest,
   imageApprovalParamGroupsForTest,
@@ -3377,6 +3378,53 @@ describe("Canvas command approval image params", () => {
     expect(assistantClarificationShowsRecommended([
       { id: "creative_style", title: "风格", options: [{ id: "warm", label: "温暖" }] },
     ], true)).toBe(true);
+  });
+
+  it.each([
+    ["loading", { models: [], isLoading: true, isFallback: false }],
+    ["fallback", { models: [{ id: "fallback-model" }], isLoading: false, isFallback: true }],
+    ["empty", { models: [], isLoading: false, isFallback: false }],
+  ] as const)("blocks generation answers when the model catalog is %s", (issue, catalog) => {
+    const rawQuestions = [
+      { id: "image_model", title: "图片模型", options: [{ id: "stale-model", label: "旧模型" }] },
+      { id: "image_resolution", title: "图片分辨率", options: [{ id: "1K", label: "1K" }] },
+      { id: "image_variants_per_node", title: "生成数量", options: [{ id: "1", label: "1" }] },
+    ];
+    const questions = clarificationQuestionsWithLiveModelCatalogsForTest(
+      rawQuestions, [], [], {
+        image_model: { custom_text: "unlisted-model" },
+        image_variants_per_node: { option_ids: ["1"] },
+      },
+    );
+    expect(assistantClarificationGenerationCatalogIssue(rawQuestions, catalog, {
+      models: [], isLoading: false, isFallback: false,
+    })).toBe(issue);
+    expect(questions[0]).toMatchObject({ options: [], allow_custom: false });
+    expect(questions[1]).toMatchObject({ options: [], allow_custom: false });
+    expect(assistantClarificationCanSubmit(questions, {
+      image_model: { custom_text: "unlisted-model" },
+      image_variants_per_node: { option_ids: ["1"] },
+    })).toBe(false);
+  });
+
+  it("requires a live option for every remaining generation question", () => {
+    const questions = [
+      { id: "image_model", title: "图片模型", options: [{ id: "image-a", label: "图片 A" }] },
+      { id: "image_resolution", title: "图片分辨率", options: [] },
+      { id: "image_variants_per_node", title: "生成数量", options: [{ id: "1", label: "1" }] },
+    ];
+    expect(assistantClarificationCanSubmit(questions, {
+      image_model: { option_ids: ["image-a"] },
+      image_variants_per_node: { option_ids: ["1"] },
+    })).toBe(false);
+    expect(assistantClarificationCanSubmit([
+      { ...questions[0], options: [{ id: "image-b", label: "图片 B" }] },
+    ], { image_model: { option_ids: ["image-a"] } })).toBe(false);
+    expect(assistantClarificationGenerationCatalogIssue([
+      { id: "preferred_model", title: "视频模型", options_source: "video_models", options: [] },
+    ], { models: [], isLoading: false, isFallback: false }, {
+      models: [], isLoading: false, isFallback: false,
+    })).toBe("empty");
   });
 
   it("keeps tool-provided options when the model was already fixed outside the card", () => {

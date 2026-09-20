@@ -911,6 +911,11 @@
       "canvasRetryPrompt": "Kiểm tra lại và tiếp tục thao tác chưa hoàn tất trên canvas. Giữ các kết quả đã hoàn thành, kiểm tra các node hiện có và trạng thái chạy, sau đó bổ sung đầy đủ tham số tạo trước khi yêu cầu phê duyệt lại.",
       "canvasRetryDisplay": "Kiểm tra lại và tiếp tục thao tác chưa hoàn tất trên canvas",
       "generationParams": {
+        "catalog": {
+          "loading": "Đang tải danh mục mô hình. Vui lòng chọn thông số sau khi tải xong.",
+          "fallback": "Không thể tải danh mục mô hình. Vui lòng thử lại sau.",
+          "empty": "Chưa có mô hình tạo nội dung nào được cấu hình. Vui lòng liên hệ quản trị viên."
+        },
         "autoRatio": "Tỷ lệ tự động",
         "imageQuality": "Chất lượng ảnh",
         "quality": {

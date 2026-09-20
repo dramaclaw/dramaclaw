@@ -4124,7 +4124,8 @@ export function assistantClarificationIsGenerationCard(
   questions: AssistantClarificationQuestion[],
 ): boolean {
   return questions.some((question) =>
-    Boolean(CLARIFICATION_SOURCE_BY_QUESTION_ID[normalizedClarificationId(question.id)]),
+    Boolean(CLARIFICATION_SOURCE_BY_QUESTION_ID[normalizedClarificationId(question.id)]
+      || question.options_source),
   );
 }
 
@@ -4132,16 +4133,52 @@ export function assistantClarificationCanSubmit(
   questions: AssistantClarificationQuestion[],
   answers: AssistantClarificationAnswers,
 ): boolean {
+  if (assistantClarificationIsGenerationCard(questions)) {
+    return questions.length > 0 && questions.every((question, index) => {
+      const options = question.options ?? [];
+      if (options.length === 0) return false;
+      const selection = normalizedSkillStudioQuestionSelection(
+        answers[skillStudioQuestionKey(question, index)],
+      );
+      return selection.optionIds.length > 0
+        && selection.optionIds.every((id) => options.some((option, optionIndex) =>
+          skillStudioOptionKey(option, optionIndex) === id));
+    });
+  }
   const selectable = questions
     .map((question, index) => ({ question, index }))
     .filter(({ question }) => (question.options ?? []).length > 0 || skillStudioQuestionAllowsCustom(question));
   const answered = selectable.filter(({ question, index }) =>
     skillStudioSelectionHasAnswer(answers[skillStudioQuestionKey(question, index)]),
   ).length;
-  if (assistantClarificationIsGenerationCard(questions)) {
-    return selectable.length > 0 && answered === selectable.length;
-  }
   return answered > 0 || selectable.length === 0;
+}
+
+type GenerationCatalogState = {
+  models: readonly ClarificationCatalogModel[];
+  isLoading: boolean;
+  isFallback: boolean;
+};
+
+export function assistantClarificationGenerationCatalogIssue(
+  questions: AssistantClarificationQuestion[],
+  imageCatalog: GenerationCatalogState,
+  videoCatalog: GenerationCatalogState,
+): "loading" | "fallback" | "empty" | null {
+  const requestedCatalogs = [
+    ["image_models", imageCatalog],
+    ["video_models", videoCatalog],
+  ] as const;
+  const needed = requestedCatalogs
+    .filter(([source]) => questions.some((question) =>
+      (question.options_source ?? CLARIFICATION_SOURCE_BY_QUESTION_ID[
+        normalizedClarificationId(question.id)
+      ]) === source))
+    .map(([, catalog]) => catalog);
+  if (needed.some((catalog) => catalog.isLoading)) return "loading";
+  if (needed.some((catalog) => catalog.isFallback)) return "fallback";
+  if (needed.some((catalog) => catalog.models.length === 0)) return "empty";
+  return null;
 }
 
 export function assistantClarificationShowsRecommended(
@@ -4243,10 +4280,10 @@ function clarificationQuestionsWithLiveModelCatalogs(
     const normalized = (value: unknown) => String(value ?? "").trim().toLowerCase();
     if (source === "image_models" || source === "video_models") {
       const models = source === "image_models" ? imageModels : videoModels;
-      if (!models.length) return question;
       return {
         ...question,
         options_source: source,
+        allow_custom: false,
         options: models.map((model) => {
           const identifiers = [model.id, model.apiModel, model.catalogId, model.label]
             .map(normalized)
@@ -6728,6 +6765,9 @@ function AssistantClarificationInputCard({
   const imageModelCatalog = useFreezoneImageModels(params.project);
   const videoModelCatalog = useFreezoneVideoModels(params.project);
   const eventQuestions = Array.isArray(event.questions) ? event.questions : [];
+  const generationCatalogIssue = assistantClarificationGenerationCatalogIssue(
+    eventQuestions, imageModelCatalog, videoModelCatalog,
+  );
   const eventIdentity = assistantClarificationEventIdentity(event);
   const [answers, setAnswers] = useState<AssistantClarificationAnswers>(() =>
     event.answers && typeof event.answers === "object" ? event.answers : {},
@@ -6933,6 +6973,11 @@ function AssistantClarificationInputCard({
       ) : (
         <div className="rounded-2xl border border-white/[0.08] bg-white/[0.025] px-3 py-6 text-center text-xs text-muted-foreground">
           暂无可选择的问题
+        </div>
+      )}
+      {generationCatalogIssue && (
+        <div role="alert" className="mt-2 text-xs text-amber-300/90">
+          {t(`freezone.chat.generationParams.catalog.${generationCatalogIssue}`)}
         </div>
       )}
       <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">

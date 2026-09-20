@@ -923,6 +923,11 @@
       "canvasRetryPrompt": "请重新检查并继续刚才未完成的画布操作。先核对已有节点和运行状态，保留已完成结果；补齐生成参数后再提交新的审批。",
       "canvasRetryDisplay": "重新检查并继续未完成的画布操作",
       "generationParams": {
+        "catalog": {
+          "loading": "正在加载模型目录，请稍后选择参数。",
+          "fallback": "暂时无法获取模型目录，请稍后重试。",
+          "empty": "管理员尚未配置可用的生成模型，暂时无法提交参数。"
+        },
         "autoRatio": "自动比例",
         "imageQuality": "图片画质",
         "quality": {
