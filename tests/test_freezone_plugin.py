@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import io
 import json
 import sys
 import threading
 import types
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 from jsonschema import Draft202012Validator
@@ -6593,10 +6595,9 @@ def test_workflow_adapter_preserves_structured_validation_error(monkeypatch):
     monkeypatch.setattr(
         plugin,
         "_request",
-        lambda *_a, **_kw: {
-            "ok": False,
-            "status_code": 400,
-            "data": {
+        lambda *_a, **_kw: plugin._http_error_result(
+            400,
+            json.dumps({
                 "detail": {
                     "status": "invalid_workflow_change",
                     "error": "invalid edge",
@@ -6604,8 +6605,9 @@ def test_workflow_adapter_preserves_structured_validation_error(monkeypatch):
                     "errors": [{"path": "edges[0]"}],
                     "next_action": "correct_reported_fields",
                 }
-            },
-        },
+            }),
+            "Bad Request",
+        ),
     )
     result = json.loads(
         plugin._handle_revise_workflow(
@@ -6615,6 +6617,139 @@ def test_workflow_adapter_preserves_structured_validation_error(monkeypatch):
     assert result["retryable"] is False
     assert result["next_action"] == "correct_reported_fields"
     assert result["errors"][0]["path"] == "edges[0]"
+
+
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        (
+            {"detail": {
+                "status": "invalid_dynamic_workflow_plan",
+                "code": "invalid_workflow_commands",
+                "errors": [{"path": "edges[1].link_type", "message": "invalid link type"}],
+            }},
+            {
+                "status": "invalid_dynamic_workflow_plan",
+                "code": "invalid_workflow_commands",
+                "path": "edges[1].link_type",
+            },
+        ),
+        (
+            {"detail": {
+                "code": "invalid_workflow_commands",
+                "errors": [{"index": 1, "reason": "invalid link type"}],
+            }},
+            {"code": "invalid_workflow_commands", "path": "edges[1]"},
+        ),
+        ({"detail": "invalid plan"}, {"error": "invalid plan"}),
+        ({"error": "invalid edge", "message": "fix edge"}, {"error": "invalid edge"}),
+    ],
+)
+def test_workflow_http_error_preserves_safe_diagnostics(monkeypatch, body, expected):
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_API_URL", "http://localhost:8780")
+    monkeypatch.setattr(plugin, "_request_headers", lambda _agent: {})
+
+    def reject(request, timeout):
+        raise HTTPError(
+            request.full_url, 400, "Bad Request", None,
+            io.BytesIO(json.dumps(body).encode()),
+        )
+
+    monkeypatch.setattr(plugin, "urlopen", reject)
+    result = plugin._request("POST", "/projects/p/freezone/canvases/c/workflow-drafts")
+    assert result["ok"] is False
+    assert "data" not in result
+    for key, value in expected.items():
+        if key == "path":
+            assert result["errors"][0]["path"] == value
+        else:
+            assert result[key] == value
+    structured = _assert_real_mcp_output(plugin, "freezone_prepare_workflow_plan_draft", result)
+    assert structured.get("code") == expected.get("code")
+
+
+@pytest.mark.parametrize("body", [b"<html>upstream failure</html>", b""])
+def test_workflow_http_error_handles_non_json_and_empty_body(monkeypatch, body):
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_API_URL", "http://localhost:8780")
+    monkeypatch.setattr(plugin, "_request_headers", lambda _agent: {})
+
+    def reject(request, timeout):
+        raise HTTPError(request.full_url, 400, "Bad Request", None, io.BytesIO(body))
+
+    monkeypatch.setattr(plugin, "urlopen", reject)
+    result = plugin._request("POST", "/projects/p/freezone/canvases/c/workflow-drafts")
+    assert result["ok"] is False
+    assert result["status"] == "failed"
+    assert "data" not in result
+    assert len(result["error"]) <= 300
+
+
+def test_workflow_http_error_limits_nested_diagnostics(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_API_URL", "http://localhost:8780")
+    monkeypatch.setattr(plugin, "_request_headers", lambda _agent: {})
+    body = {"detail": {
+        "status": "invalid_dynamic_workflow_plan",
+        "errors": [
+            {
+                "path": "edges[1].link_type",
+                "message": "bad value" + "x" * 2000,
+                "secret": "private",
+            }
+            for _ in range(20)
+        ],
+        "traceback": "private",
+        "prompt": "private",
+    }}
+
+    def reject(request, timeout):
+        raise HTTPError(
+            request.full_url, 400, "Bad Request", None,
+            io.BytesIO(json.dumps(body).encode()),
+        )
+
+    monkeypatch.setattr(plugin, "urlopen", reject)
+    result = plugin._request("POST", "/projects/p/freezone/canvases/c/workflow-drafts")
+    assert len(result["errors"]) <= 5
+    assert result["errors"][0]["path"] == "edges[1].link_type"
+    assert len(json.dumps(result).encode()) <= 4096
+    assert "private" not in json.dumps(result)
+
+
+def test_plan_draft_tool_returns_api_validation_path_without_side_effects(monkeypatch):
+    plugin = _load_plugin_module()
+    plan = {"schema_version": "freezone_workflow_plan.v1"}
+    validated = {"ok": True, "skill_id": "video-ad", "plan": plan}
+    monkeypatch.setattr(plugin, "validate_agent_workflow_plan", lambda _plan: validated)
+    monkeypatch.setattr(
+        plugin, "_workflow_draft_scope", lambda _args: ("project-a", "canvas-a", None)
+    )
+    monkeypatch.setattr(
+        plugin, "_workflow_runtime_preflight", lambda *_args, **_kwargs: {"blockers": []}
+    )
+    monkeypatch.setattr(plugin, "_available", lambda: True)
+    monkeypatch.setattr(
+        plugin, "_request",
+        lambda *_args, **_kwargs: plugin._http_error_result(
+            400,
+            json.dumps({"detail": {
+                "code": "invalid_workflow_commands",
+                "errors": [{"path": "edges[1].link_type", "message": "invalid link type"}],
+            }}),
+            "Bad Request",
+        ),
+    )
+    monkeypatch.setattr(
+        plugin, "_emit_canvas_commands", lambda *_args, **_kwargs: pytest.fail("canvas write")
+    )
+
+    result = plugin._handle_prepare_workflow_plan_draft({"plan": plan, "operation_id": "op-1"})
+    structured = _assert_real_mcp_output(plugin, "freezone_prepare_workflow_plan_draft", result)
+    assert structured["code"] == "invalid_workflow_commands"
+    assert structured["errors"][0]["path"] == "edges[1].link_type"
+    assert "Stop if the same" in structured["agent_instruction"]
 
 
 def test_workflow_timeout_requires_query_instead_of_blind_retry(monkeypatch):
