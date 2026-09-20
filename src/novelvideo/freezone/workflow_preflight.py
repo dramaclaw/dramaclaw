@@ -85,13 +85,10 @@ def resolve_generation_recommendations(
                 )
             }), None)
         else:
-            entry = next((item for item in catalog if requested.casefold() in {
-                str(value).strip().casefold()
-                for value in (
-                    item.get("id"), item.get("apiModel"), item.get("api_model"),
-                    item.get("catalogId"), *(item.get("aliases") or []),
-                )
-            }), None)
+            entry = next(
+                (item for item in catalog if requested == str(item.get("id") or "")),
+                None,
+            )
         if entry is None:
             if symbolic or symbolic_fields:
                 blockers.append({
