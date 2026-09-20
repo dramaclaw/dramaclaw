@@ -5,7 +5,6 @@ import logging
 import shutil
 import sqlite3
 import time
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -38,13 +37,10 @@ from novelvideo.embedding_models import (
 )
 from novelvideo.knowledge_pipeline import KNOWLEDGE_PIPELINE_KEY, KNOWLEDGE_PIPELINE_STRUCTURED
 from novelvideo.novel_source import has_imported_novel
-from novelvideo.ports import get_project_access, get_project_registry
+from novelvideo.ports import get_project_access, get_project_output_purger, get_project_registry
 from novelvideo.scene_prerequisites import scene_build_applies
 from novelvideo.ports.project import ProjectRecord, require_role_value
-from novelvideo.security import (
-    ProjectStorageOwnershipError,
-    assert_owned_project_storage,
-)
+from novelvideo.security import ProjectStorageOwnershipError, assert_owned_project_storage
 from novelvideo.project_config import (
     default_aspect_ratio_for_spine_template,
     load_effective_narration_style_for_voice_from_state_dir,
@@ -78,6 +74,7 @@ from novelvideo.seedance2_i2v.voice_clone import (
     resolve_narrator_source,
 )
 from novelvideo.utils.async_ops import metadata_io_limiter, run_sync_bounded
+from novelvideo.task_state import get_task_manager
 
 logger = logging.getLogger("novelvideo.api.projects")
 
@@ -238,85 +235,12 @@ def _validated_owned_dirs(record: ProjectRecord) -> list[Path]:
     return unique
 
 
-def _cleanup_uncommitted_project_dirs(record: ProjectRecord) -> None:
-    for path in _validated_owned_dirs(record):
+async def _cleanup_uncommitted_project_dirs(record: ProjectRecord) -> None:
+    _, state_dir, runtime_dir = _validated_owned_dirs(record)
+    await get_project_output_purger().purge(record)
+    for path in (state_dir, runtime_dir):
         if path.exists():
-            shutil.rmtree(path)
-
-
-def _restore_quarantined_project_dirs(quarantined: list[tuple[Path, Path]]) -> None:
-    for original, quarantine in reversed(quarantined):
-        if not quarantine.exists():
-            continue
-        if original.exists():
-            # 恢复隔离目录时,若原位置已被并发创建/重建占用,绝不递归删除它 ——
-            # 那可能是另一个操作合法写入的新数据。保留双方并报警,交由人工处置。
-            logger.error(
-                "cannot restore isolated dir %s: original path already exists; "
-                "leaving quarantine %s in place for manual recovery",
-                original,
-                quarantine,
-            )
-            continue
-        quarantine.replace(original)
-
-
-def _quarantine_project_dirs(
-    record: ProjectRecord,
-    *,
-    project_id: str,
-    reason: str,
-) -> list[tuple[Path, Path]]:
-    """Atomically detach project directories before releasing their registry name.
-
-    仅在 ``record`` 的三类目录全部通过归属校验后才移动;任一目录不属于
-    ``record.owner_username`` 时抛出,不移动任何目录。
-    """
-    recorded_dirs = (
-        Path(record.output_dir),
-        Path(record.state_dir),
-        Path(record.runtime_dir),
-    )
-    # Some migrated registry rows retain paths from a retired storage root
-    # after all three project directories have already been removed. There is
-    # no filesystem tree to move in that case, so allow the caller to purge the
-    # stale registry row. Use lstat rather than exists so broken symlinks still
-    # count as filesystem entries and continue through strict ownership checks.
-    all_missing = True
-    for recorded_dir in recorded_dirs:
-        try:
-            recorded_dir.lstat()
-        except FileNotFoundError:
-            continue
-        all_missing = False
-        break
-    if all_missing:
-        return []
-
-    quarantined: list[tuple[Path, Path]] = []
-    token = uuid.uuid4().hex
-    try:
-        for original in _validated_owned_dirs(record):
-            if not original.exists():
-                continue
-            quarantine = original.with_name(
-                f".{original.name}.{reason}-{project_id}-{token}"
-            )
-            original.replace(quarantine)
-            quarantined.append((original, quarantine))
-    except Exception:
-        _restore_quarantined_project_dirs(quarantined)
-        raise
-    return quarantined
-
-
-def _delete_quarantined_project_dirs(quarantined: list[tuple[Path, Path]]) -> None:
-    for _, quarantine in quarantined:
-        try:
-            if quarantine.exists():
-                shutil.rmtree(quarantine)
-        except OSError:
-            logger.warning("failed to remove quarantined project directory: %s", quarantine)
+            await anyio.to_thread.run_sync(shutil.rmtree, path)
 
 
 def _narrator_identity_detail(resolution) -> str:
@@ -731,22 +655,16 @@ async def create_project(
             ) from exc
         raise
     try:
-        orphaned_dirs = _quarantine_project_dirs(
-            record,
-            project_id=record.id,
-            reason="orphaned",
-        )
-    except Exception as exc:
-        try:
-            await registry.delete_uncommitted_project(record.id)
-        except Exception:
-            logger.warning("failed to compensate uncommitted project registry row", exc_info=True)
-        detail = (
-            "Existing project data failed ownership validation; nothing was touched."
-            if isinstance(exc, ProjectStorageOwnershipError)
-            else "Existing project data could not be isolated. Project was not created."
-        )
-        raise HTTPException(status_code=500, detail=detail) from exc
+        _, state_dir, runtime_dir = _validated_owned_dirs(record)
+        if (
+            await get_project_output_purger().has_current_data(record)
+            or state_dir.exists()
+            or runtime_dir.exists()
+        ):
+            raise HTTPException(status_code=409, detail="Project storage already contains data")
+    except Exception:
+        await registry.delete_uncommitted_project(record.id)
+        raise
     try:
         ensure_project_dirs_at_paths(
             output_dir=record.output_dir,
@@ -767,19 +685,19 @@ async def create_project(
         )
     except Exception:
         try:
-            _cleanup_uncommitted_project_dirs(record)
+            await registry.update_project_status(record.id, "deleted")
+            if await registry.begin_project_purge(record.id) is None:
+                raise RuntimeError("failed to reserve uncommitted project for cleanup")
+        except Exception:
+            logger.warning("failed to reserve failed project for cleanup retry", exc_info=True)
+            raise
+        try:
+            await _cleanup_uncommitted_project_dirs(record)
         except Exception:
             logger.warning("failed to cleanup uncommitted project directories", exc_info=True)
-        try:
-            _restore_quarantined_project_dirs(orphaned_dirs)
-        except Exception:
-            logger.error("failed to restore isolated project directories", exc_info=True)
-        try:
-            await registry.delete_uncommitted_project(record.id)
-        except Exception:
-            logger.warning("failed to compensate uncommitted project registry row", exc_info=True)
+            raise
+        await registry.delete_uncommitted_project(record.id)
         raise
-    _delete_quarantined_project_dirs(orphaned_dirs)
     return {"ok": True, "data": {"id": record.id, "project_id": record.id, "name": body.name}}
 
 
@@ -1046,6 +964,8 @@ async def _set_project_status(
     existing = await registry.get_project(ctx.project_id)
     if existing is not None and existing.purged_at:
         raise HTTPException(status_code=400, detail="Purged projects cannot change status.")
+    if existing is not None and existing.purge_started_at and status != "deleted":
+        raise HTTPException(status_code=409, detail="Project purge has started; restore is unavailable.")
     updates = {}
     if archived_at is not None:
         updates["archived_at"] = archived_at
@@ -1060,6 +980,8 @@ async def _set_project_status(
         if existing is not None and existing.purged_at:
             raise HTTPException(status_code=400, detail="Purged projects cannot change status.")
         raise HTTPException(status_code=404, detail="Project not found.")
+    if record.status != status or (record.purge_started_at and status != "deleted"):
+        raise HTTPException(status_code=409, detail="Project purge has started; status is unchanged.")
     if updates:
         save_project_config_in_state_dir(ctx.state_dir, config=updates)
     summary = await _summary_for_record(record, effective_role=ctx.effective_role)
@@ -1116,10 +1038,14 @@ async def restore_project(
     project: str,
     user: dict = Depends(require_scope("projects:lifecycle")),
 ):
-    ctx = await resolve_project_context(user=user, project_id=project, required_role="owner")
+    ctx = await resolve_project_context(
+        user=user, project_id=project, required_role="owner", allow_purging=True
+    )
     record = await get_project_registry().get_project(ctx.project_id)
     if record is not None and record.purged_at:
         raise HTTPException(status_code=400, detail="Purged projects cannot be restored.")
+    if record is not None and record.purge_started_at:
+        raise HTTPException(status_code=409, detail="Project purge has started; restore is unavailable.")
     return await _set_project_status(ctx, "active", audit_action="project.restore")
 
 
@@ -1129,65 +1055,56 @@ async def purge_project(
     user: dict = Depends(require_scope("projects:purge")),
 ):
     """永久删除项目目录；只允许对已进入回收站的项目执行。"""
-    ctx = await resolve_project_context(user=user, project_id=project, required_role="owner")
+    ctx = await resolve_project_context(
+        user=user, project_id=project, required_role="owner", allow_purging=True
+    )
     require_project_home_node(ctx, operation="purge project files")
 
     registry = get_project_registry()
-    record = await registry.get_project(ctx.project_id)
-    if record is None or record.status != "deleted":
-        raise HTTPException(
-            status_code=400,
-            detail="Only deleted projects can be purged. Soft-delete first.",
+    async with registry.purge_lock(ctx.project_id) as acquired:
+        if not acquired:
+            raise HTTPException(status_code=409, detail="Project purge is already in progress")
+        record = await registry.get_project(ctx.project_id)
+        if record is None or record.status != "deleted":
+            raise HTTPException(
+                status_code=400,
+                detail="Only deleted projects can be purged. Soft-delete first.",
+            )
+        if record.purged_at:
+            raise HTTPException(status_code=400, detail="Project has already been purged.")
+        active_tasks = await anyio.to_thread.run_sync(
+            get_task_manager().count_active_tasks_for_project, ctx
         )
-    if record.purged_at:
-        raise HTTPException(status_code=400, detail="Project has already been purged.")
-    try:
-        quarantined_dirs = _quarantine_project_dirs(
-            record,
-            project_id=ctx.project_id,
-            reason="purging",
-        )
-    except Exception as exc:
-        detail = (
-            "Project files failed ownership validation; nothing was permanently deleted."
-            if isinstance(exc, ProjectStorageOwnershipError)
-            else "Project files could not be isolated. Nothing was permanently deleted."
-        )
-        raise HTTPException(status_code=500, detail=detail) from exc
-    # Codex rollouts live under the home-node CODEX_HOME, outside the project
-    # directories quarantined above. Validation and isolation must complete first:
-    # an invalid project path must never delete a valid Codex session.
-    original_state_dir = Path(record.state_dir).resolve(strict=False)
-    codex_state_dir = next(
-        (
-            quarantine
-            for original, quarantine in quarantined_dirs
-            if original == original_state_dir
-        ),
-        original_state_dir,
-    )
-    try:
+        if active_tasks:
+            raise HTTPException(status_code=409, detail="Project still has active tasks")
+        try:
+            _, state_dir, runtime_dir = _validated_owned_dirs(record)
+        except ProjectStorageOwnershipError as exc:
+            raise HTTPException(status_code=500, detail="Project storage ownership validation failed") from exc
+        record = await registry.begin_project_purge(ctx.project_id)
+        if record is None:
+            raise HTTPException(status_code=409, detail="Project status changed before purge began")
+        # Codex rollouts live outside the three project directories. Validate all
+        # paths before touching either storage or their project-scoped threads.
         await chat_service.delete_codex_project_threads(
             str(user["username"]),
             ctx.project_name,
-            project_state_dir=codex_state_dir,
+            project_state_dir=state_dir,
         )
-    except Exception:
-        _restore_quarantined_project_dirs(quarantined_dirs)
-        raise
-    try:
-        record = await registry.mark_project_purged(ctx.project_id)
-    except Exception:
-        _restore_quarantined_project_dirs(quarantined_dirs)
-        raise
-    if record is None:
-        _restore_quarantined_project_dirs(quarantined_dirs)
-        raise HTTPException(status_code=400, detail="Project could not be marked purged.")
-    try:
+        await get_project_output_purger().purge(record)
+        for path in (state_dir, runtime_dir):
+            if path.exists():
+                await anyio.to_thread.run_sync(shutil.rmtree, path)
+            if path.exists() or path.is_symlink():
+                raise OSError(f"project storage still exists: {path}")
+        if await get_project_output_purger().has_current_data(record):
+            raise OSError("project output reappeared during purge")
+        if any(path.exists() or path.is_symlink() for path in (state_dir, runtime_dir)):
+            raise OSError("project local storage reappeared during purge")
         await registry.delete_project_home(ctx.project_id)
-    except Exception:
-        logger.warning("failed to delete purged project home", exc_info=True)
-    _delete_quarantined_project_dirs(quarantined_dirs)
+        record = await registry.mark_project_purged(ctx.project_id)
+        if record is None:
+            raise HTTPException(status_code=400, detail="Project could not be marked purged.")
     await emit_project_audit(action="project.purge", ctx=ctx, metadata={"status": "deleted"})
     return {
         "ok": True,

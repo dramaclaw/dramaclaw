@@ -1,6 +1,6 @@
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -14,6 +14,11 @@ def _patch_roots(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(config, "OUTPUT_DIR", tmp_path / "output")
     monkeypatch.setattr(config, "STATE_DIR", tmp_path / "state")
     monkeypatch.setattr(config, "RUNTIME_DIR", tmp_path / "runtime")
+
+
+@asynccontextmanager
+async def _lock(_project_id):
+    yield True
 
 
 def _record(
@@ -64,218 +69,148 @@ def _context(record: ProjectRecord) -> ProjectContext:
     )
 
 
+@pytest.fixture(autouse=True)
+def _local_output_purger(monkeypatch):
+    from novelvideo.api.routes import projects
+    from novelvideo.ports.local.project_output import LocalProjectOutputPurger
+
+    monkeypatch.setattr(projects, "get_project_output_purger", lambda: LocalProjectOutputPurger())
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("storage_org", [None, ("org_01HXYZ", "acme")])
-async def test_create_project_does_not_reuse_orphaned_same_name_data(
-    monkeypatch, tmp_path, storage_org
-):
+async def test_create_rejects_existing_same_name_data(monkeypatch, tmp_path, storage_org):
     from novelvideo.api.routes import projects
 
     _patch_roots(monkeypatch, tmp_path)
-    storage_org_id, storage_org_name = storage_org or (None, None)
-    record = _record(
-        tmp_path,
-        storage_org_id=storage_org_id,
-        storage_org_name=storage_org_name,
-    )
-    old_canvas = Path(record.state_dir) / "freezone" / "canvases"
-    old_canvas.mkdir(parents=True)
-    (old_canvas / "default.json").write_text('{"old": true}', encoding="utf-8")
-    (Path(record.state_dir) / "data.db").write_bytes(b"old workflow db")
-    Path(record.output_dir).mkdir(parents=True)
-    Path(record.runtime_dir).mkdir(parents=True)
+    org_id, org_name = storage_org or (None, None)
+    record = _record(tmp_path, storage_org_id=org_id, storage_org_name=org_name)
+    old = Path(record.state_dir) / "data.db"
+    old.parent.mkdir(parents=True)
+    old.write_bytes(b"old workflow db")
+    compensated = []
 
     class Registry:
+        purge_lock = staticmethod(_lock)
         async def create_project(self, **_kwargs):
             return record
 
-        async def delete_uncommitted_project(self, _project_id):
-            raise AssertionError("successful creation must not be compensated")
+        async def delete_uncommitted_project(self, project_id):
+            compensated.append(project_id)
 
     async def fake_user_id(_user):
         return "local"
 
-    def ensure_dirs(*, output_dir, state_dir, runtime_dir):
-        for path in (output_dir, state_dir, runtime_dir):
-            projects.Path(path).mkdir(parents=True, exist_ok=True)
-
-    def save_config(state_dir, *, config):
-        projects.Path(state_dir, "project_config.json").write_text(
-            str(config),
-            encoding="utf-8",
-        )
-
     monkeypatch.setattr(projects, "validate_project_name", lambda _name: None)
     monkeypatch.setattr(projects, "user_id_from_api_user", fake_user_id)
     monkeypatch.setattr(projects, "get_project_registry", lambda: Registry())
-    monkeypatch.setattr(projects, "ensure_project_dirs_at_paths", ensure_dirs)
-    monkeypatch.setattr(projects, "save_project_config_in_state_dir", save_config)
-    monkeypatch.setattr(
-        projects,
-        "embedding_model_binding_for_new_project",
-        lambda: SimpleNamespace(internal_model="embed", dimensions=1024),
-    )
 
-    result = await projects.create_project(
-        projects.ProjectCreate(name="demo"),
-        user={"id": "local", "username": "alice"},
-    )
-
-    assert result["ok"] is True
-    assert not projects.Path(record.state_dir, "freezone").exists()
-    assert not projects.Path(record.state_dir, "data.db").exists()
-    assert projects.Path(record.state_dir, "project_config.json").exists()
-    assert not list(projects.Path(record.state_dir).parent.glob(".demo.orphaned-*"))
+    with pytest.raises(projects.HTTPException) as exc:
+        await projects.create_project(
+            projects.ProjectCreate(name="demo"),
+            user={"id": "local", "username": "alice"},
+        )
+    assert exc.value.status_code == 409
+    assert compensated == [record.id]
+    assert old.read_bytes() == b"old workflow db"
 
 
 @pytest.mark.asyncio
-async def test_purge_detaches_files_before_releasing_project_name(monkeypatch, tmp_path):
+async def test_purge_removes_files_before_releasing_project_name(monkeypatch, tmp_path):
     from novelvideo.api.routes import projects
 
     _patch_roots(monkeypatch, tmp_path)
     record = _record(tmp_path, status="deleted")
-    for raw_path in (record.output_dir, record.state_dir, record.runtime_dir):
-        path = projects.Path(raw_path)
+    for raw in (record.output_dir, record.state_dir, record.runtime_dir):
+        path = Path(raw)
         path.mkdir(parents=True)
-        (path / "retained.txt").write_text("old", encoding="utf-8")
-    ctx = _context(record)
-    calls: list[str] = []
+        (path / "retained.txt").write_text("old")
+    calls = []
 
     class Registry:
+        purge_lock = staticmethod(_lock)
         async def get_project(self, _project_id):
             return record
 
-        async def mark_project_purged(self, _project_id):
-            assert all(
-                not projects.Path(path).exists()
-                for path in (record.output_dir, record.state_dir, record.runtime_dir)
-            )
-            calls.append("purged")
-            return replace(record, purged_at="2026-07-31T00:00:00+00:00")
+        async def begin_project_purge(self, _project_id):
+            return replace(record, purge_started_at="now")
 
         async def delete_project_home(self, _project_id):
             calls.append("home")
 
+        async def mark_project_purged(self, _project_id):
+            assert all(not Path(p).exists() for p in (
+                record.output_dir, record.state_dir, record.runtime_dir
+            ))
+            calls.append("purged")
+            return replace(record, purged_at="2026-09-20T00:00:00+00:00")
+
     async def resolve_context(**_kwargs):
-        return ctx
+        return _context(record)
 
-    async def emit_audit(**_kwargs):
-        calls.append("audit")
-
-    async def delete_codex_threads(*_args, **kwargs):
-        assert all(
-            not projects.Path(path).exists()
-            for path in (record.output_dir, record.state_dir, record.runtime_dir)
-        )
-        isolated_state = projects.Path(kwargs["project_state_dir"])
-        assert isolated_state.exists()
-        assert isolated_state.name.startswith(".demo.purging-")
+    async def delete_codex(*_args, **kwargs):
+        assert Path(kwargs["project_state_dir"]) == Path(record.state_dir)
+        assert Path(record.state_dir).exists()
         calls.append("codex")
-        return 1
+
+    async def audit(**_kwargs):
+        calls.append("audit")
 
     monkeypatch.setattr(projects, "resolve_project_context", resolve_context)
     monkeypatch.setattr(projects, "get_project_registry", lambda: Registry())
-    monkeypatch.setattr(projects, "emit_project_audit", emit_audit)
-    monkeypatch.setattr(
-        projects.chat_service,
-        "delete_codex_project_threads",
-        delete_codex_threads,
-    )
+    monkeypatch.setattr(projects.chat_service, "delete_codex_project_threads", delete_codex)
+    monkeypatch.setattr(projects, "emit_project_audit", audit)
 
-    result = await projects.purge_project("01PROJECT", user={"username": "alice"})
-
-    assert result["ok"] is True
-    assert calls == ["codex", "purged", "home", "audit"]
-    for raw_path in (record.output_dir, record.state_dir, record.runtime_dir):
-        path = projects.Path(raw_path)
-        assert not path.exists()
-        assert not list(path.parent.glob(".demo.purging-*"))
+    result = await projects.purge_project(record.id, user={"username": "alice"})
+    assert result["ok"]
+    assert calls == ["codex", "home", "purged", "audit"]
 
 
 @pytest.mark.asyncio
-async def test_purge_restores_files_when_registry_purge_fails(monkeypatch, tmp_path):
+async def test_purge_failure_retains_registry_for_retry(monkeypatch, tmp_path):
     from novelvideo.api.routes import projects
 
     _patch_roots(monkeypatch, tmp_path)
     record = _record(tmp_path, status="deleted")
-    for raw_path in (record.output_dir, record.state_dir, record.runtime_dir):
-        path = projects.Path(raw_path)
-        path.mkdir(parents=True)
-        (path / "retained.txt").write_text("old", encoding="utf-8")
-    ctx = _context(record)
+    output = Path(record.output_dir)
+    output.mkdir(parents=True)
+    (output / "keep.txt").write_text("old")
+    marked = []
 
     class Registry:
+        purge_lock = staticmethod(_lock)
         async def get_project(self, _project_id):
             return record
 
+        async def begin_project_purge(self, _project_id):
+            return replace(record, purge_started_at="now")
+
+        async def delete_project_home(self, _project_id):
+            return None
+
         async def mark_project_purged(self, _project_id):
-            raise RuntimeError("registry unavailable")
+            marked.append(True)
+            return replace(record, purged_at="now")
+
+    class FailingPurger:
+        async def purge(self, _record):
+            raise OSError("storage unavailable")
 
     async def resolve_context(**_kwargs):
-        return ctx
+        return _context(record)
+
+    async def delete_codex(*_args, **_kwargs):
+        return None
 
     monkeypatch.setattr(projects, "resolve_project_context", resolve_context)
     monkeypatch.setattr(projects, "get_project_registry", lambda: Registry())
+    monkeypatch.setattr(projects.chat_service, "delete_codex_project_threads", delete_codex)
+    monkeypatch.setattr(projects, "get_project_output_purger", lambda: FailingPurger())
 
-    with pytest.raises(RuntimeError, match="registry unavailable"):
-        await projects.purge_project("01PROJECT", user={"username": "alice"})
-
-    for raw_path in (record.output_dir, record.state_dir, record.runtime_dir):
-        path = projects.Path(raw_path)
-        assert (path / "retained.txt").read_text(encoding="utf-8") == "old"
-        assert not list(path.parent.glob(".demo.purging-*"))
-
-
-@pytest.mark.asyncio
-async def test_organization_purge_restores_files_when_codex_cleanup_fails(
-    monkeypatch, tmp_path
-):
-    from novelvideo.api.routes import projects
-
-    _patch_roots(monkeypatch, tmp_path)
-    record = _record(
-        tmp_path,
-        status="deleted",
-        storage_org_id="org_01HXYZ",
-        storage_org_name="acme",
-    )
-    for raw_path in (record.output_dir, record.state_dir, record.runtime_dir):
-        path = projects.Path(raw_path)
-        path.mkdir(parents=True)
-        (path / "retained.txt").write_text("old", encoding="utf-8")
-    ctx = _context(record)
-
-    class Registry:
-        async def get_project(self, _project_id):
-            return record
-
-        async def mark_project_purged(self, _project_id):
-            raise AssertionError("registry purge must not run after Codex cleanup fails")
-
-    async def resolve_context(**_kwargs):
-        return ctx
-
-    async def delete_codex_threads(*_args, **kwargs):
-        isolated_state = projects.Path(kwargs["project_state_dir"])
-        assert isolated_state.exists()
-        assert isolated_state.name.startswith(".demo.purging-")
-        raise RuntimeError("Codex unavailable")
-
-    monkeypatch.setattr(projects, "resolve_project_context", resolve_context)
-    monkeypatch.setattr(projects, "get_project_registry", lambda: Registry())
-    monkeypatch.setattr(
-        projects.chat_service,
-        "delete_codex_project_threads",
-        delete_codex_threads,
-    )
-
-    with pytest.raises(RuntimeError, match="Codex unavailable"):
-        await projects.purge_project("01PROJECT", user={"username": "alice"})
-
-    for raw_path in (record.output_dir, record.state_dir, record.runtime_dir):
-        path = projects.Path(raw_path)
-        assert (path / "retained.txt").read_text(encoding="utf-8") == "old"
-        assert not list(path.parent.glob(".demo.purging-*"))
+    with pytest.raises(OSError, match="storage unavailable"):
+        await projects.purge_project(record.id, user={"username": "alice"})
+    assert not marked
+    assert (output / "keep.txt").read_text() == "old"
 
 
 # --------------------------------------------------------------------------- #
@@ -583,56 +518,24 @@ def test_validator_rejects_symlinked_project_dir(monkeypatch, tmp_path):
         assert_owned_project_storage(**args)
 
 
-def test_quarantine_rejects_nonexistent_path_outside_owner_roots(monkeypatch, tmp_path):
+def test_validator_rejects_nonexistent_path_outside_owner_roots(monkeypatch, tmp_path):
     from novelvideo.api.routes import projects
     from novelvideo.security import ProjectStorageOwnershipError
 
     _patch_roots(monkeypatch, tmp_path)
-    record = replace(
-        _record(tmp_path),
-        state_dir=str(tmp_path / "outside" / "alice" / "demo"),
-    )
-    # Any remaining project tree keeps strict validation enabled for every
-    # registered path, including missing paths outside the configured roots.
-    projects.Path(record.output_dir).mkdir(parents=True)
-    assert not projects.Path(record.state_dir).exists()
-
+    record = replace(_record(tmp_path), state_dir=str(tmp_path / "outside" / "alice" / "demo"))
     with pytest.raises(ProjectStorageOwnershipError):
-        projects._quarantine_project_dirs(
-            record,
-            project_id=record.id,
-            reason="orphaned",
-        )
-
-    assert not projects.Path(record.state_dir).exists()
+        projects._validated_owned_dirs(record)
 
 
-def test_quarantine_allows_registry_only_purge_when_all_legacy_dirs_are_missing(
-    monkeypatch,
-    tmp_path,
-):
+def test_validator_rejects_missing_legacy_paths_outside_current_roots(monkeypatch, tmp_path):
     from novelvideo.api.routes import projects
+    from novelvideo.security import ProjectStorageOwnershipError
 
     _patch_roots(monkeypatch, tmp_path / "current")
-    legacy_root = tmp_path / "retired-root"
-    record = ProjectRecord(
-        id="01LEGACY",
-        owner_type="user",
-        owner_id="local",
-        owner_username="alice",
-        name="demo",
-        home_node_id="local",
-        output_dir=str(legacy_root / "output" / "alice" / "demo"),
-        state_dir=str(legacy_root / "state" / "alice" / "demo"),
-        runtime_dir=str(legacy_root / "runtime" / "alice" / "demo"),
-        status="deleted",
-    )
-
-    assert projects._quarantine_project_dirs(
-        record,
-        project_id=record.id,
-        reason="purging",
-    ) == []
+    record = replace(_record(tmp_path), state_dir=str(tmp_path / "retired" / "alice" / "demo"))
+    with pytest.raises(ProjectStorageOwnershipError):
+        projects._validated_owned_dirs(record)
 
 
 def test_validator_rejects_nested_dirs(monkeypatch, tmp_path):
@@ -666,8 +569,12 @@ async def test_purge_refuses_when_record_points_at_other_user(monkeypatch, tmp_p
     ctx = _context(record)
 
     class Registry:
+        purge_lock = staticmethod(_lock)
         async def get_project(self, _project_id):
             return record
+
+        async def begin_project_purge(self, _project_id):
+            return replace(record, purge_started_at="now")
 
         async def mark_project_purged(self, _project_id):
             raise AssertionError("must not reach purge after validation failure")
@@ -695,23 +602,3 @@ async def test_purge_refuses_when_record_points_at_other_user(monkeypatch, tmp_p
     assert not list(bob_state.parent.glob(".demo.purging-*"))
     for raw_path in (record.output_dir, record.runtime_dir):
         assert projects.Path(raw_path).exists()
-
-
-def test_restore_never_deletes_a_reoccupied_original(monkeypatch, tmp_path, caplog):
-    """恢复隔离目录时,若原位置已被并发重建占用,绝不递归删除新数据。"""
-    from novelvideo.api.routes import projects
-
-    _patch_roots(monkeypatch, tmp_path)
-    original = tmp_path / "state" / "alice" / "demo"
-    quarantine = original.with_name(".demo.purging-x")
-    quarantine.mkdir(parents=True)
-    (quarantine / "old.txt").write_text("quarantined", encoding="utf-8")
-    # 原位置在隔离之后被重新创建,写入了新数据。
-    original.mkdir(parents=True)
-    (original / "new.txt").write_text("fresh", encoding="utf-8")
-
-    projects._restore_quarantined_project_dirs([(original, quarantine)])
-
-    # 新数据保留,隔离目录也保留(留给人工处置),都没被删。
-    assert (original / "new.txt").read_text(encoding="utf-8") == "fresh"
-    assert (quarantine / "old.txt").read_text(encoding="utf-8") == "quarantined"

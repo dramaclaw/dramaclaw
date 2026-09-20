@@ -2332,7 +2332,7 @@
       "restored": "Đã khôi phục \"{{name}}\"",
       "purged": "Đã xoá vĩnh viễn \"{{name}}\"",
       "undo": "Hoàn tác",
-      "purgeFailed": "Không thể xoá vĩnh viễn \"{{name}}\"; dữ liệu dự án vẫn được giữ lại"
+      "purgeFailed": "Chưa thể xoá xong \"{{name}}\". Dự án vẫn ở Thùng rác; hãy thử lại."
     },
     "title": "Dự án",
     "newProject": "Dự án mới",

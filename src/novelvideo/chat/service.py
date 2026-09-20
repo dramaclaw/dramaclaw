@@ -4926,10 +4926,25 @@ async def delete_codex_project_threads(
         username, project, project_state_dir=project_state_dir
     )
     threads = sorted(set(state.values()))
+    state_path = _codex_session_state_path(
+        username, project, project_state_dir=project_state_dir
+    )
+    from novelvideo.utils.state_index_files import index_file_lock
+
     for thread_id in threads:
         deleted = await asyncio.to_thread(_control_codex_thread, "delete", thread_id)
         if not deleted:
             raise RuntimeError(f"Codex thread could not be deleted: {thread_id}")
+        # Persist progress before the next deletion. A later thread or S3
+        # failure must be retryable without deleting this thread again.
+        with index_file_lock(state_path):
+            latest = _load_codex_session_state(
+                username, project, project_state_dir=project_state_dir
+            )
+            remaining = {key: value for key, value in latest.items() if value != thread_id}
+            _save_codex_session_state(
+                username, project, remaining, project_state_dir=project_state_dir
+            )
     return len(threads)
 
 
