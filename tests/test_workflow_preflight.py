@@ -29,6 +29,86 @@ def _check(data, entry=None):
     )
 
 
+def test_recommended_model_materializes_one_scoped_catalog_configuration():
+    plan = {"nodes": [{
+        "id": "image", "node_type": "imageGenNode",
+        "data": {"model": "recommended", "aspectRatio": "9:16"},
+    }]}
+    catalog = [
+        {"id": "first-but-not-default", "ratioOptions": ["9:16"],
+         "resolutionOptions": ["1K"], "qualityOptions": ["medium"]},
+        {"id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+         "ratioOptions": ["9:16"], "resolutionOptions": ["2K", "1K"],
+         "qualityOptions": ["high", "medium"]},
+    ]
+    result = evaluate_workflow_preflight(
+        {"plan": plan},
+        model_responses={"imageGenNode": {"ok": True, "data": catalog}},
+        limits={"ok": True, "data": {"default": {"limit": 2, "remaining": 1}}},
+    )
+    assert result["status"] == "ready"
+    assert plan["nodes"][0]["data"] == {
+        "model": "LingShan-G2", "aspectRatio": "9:16", "size": "1K",
+        "quality": "medium", "count": 1,
+    }
+
+
+def test_recommended_model_rejects_incompatible_explicit_ratio():
+    plan = {"nodes": [{
+        "id": "image", "node_type": "imageGenNode",
+        "data": {"model": "recommended", "aspectRatio": "21:9"},
+    }]}
+    result = evaluate_workflow_preflight(
+        {"plan": plan},
+        model_responses={"imageGenNode": {"ok": True, "data": [{
+            "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+            "ratioOptions": ["9:16"], "resolutionOptions": ["1K"],
+        }]}},
+        limits={"ok": True, "data": {"default": {"limit": 2, "remaining": 1}}},
+    )
+    assert result["status"] == "blocked"
+    assert any(blocker["code"] == "model_capability_unsupported" for blocker in result["blockers"])
+
+
+def test_recommended_model_does_not_fall_back_to_first_visible_model():
+    plan = {"nodes": [{
+        "id": "image", "node_type": "imageGenNode", "data": {"model": "recommended"},
+    }]}
+    result = evaluate_workflow_preflight(
+        {"plan": plan},
+        model_responses={"imageGenNode": {"ok": True, "data": [{
+            "id": "some-other-model", "ratioOptions": ["9:16"],
+            "resolutionOptions": ["1K"],
+        }]}},
+        limits={"ok": True, "data": {"default": {"limit": 2, "remaining": 1}}},
+    )
+    assert result["status"] == "blocked"
+    assert result["blockers"][0]["code"] == "recommended_model_unavailable"
+    assert plan["nodes"][0]["data"]["model"] == "recommended"
+
+
+def test_recommended_video_uses_video_capabilities_and_concrete_resolution():
+    plan = {"nodes": [{
+        "id": "video", "node_type": "videoNode",
+        "data": {"model": "recommended", "quality": "recommended"},
+    }]}
+    result = evaluate_workflow_preflight(
+        {"plan": plan},
+        model_responses={"videoNode": {"ok": True, "data": [{
+            "id": "seedance-2.0-fast", "aliases": ["newapi_seedance-2.0-fast"],
+            "ratioOptions": ["16:9", "9:16"], "resolutionOptions": ["480P", "720P"],
+            "minDuration": 4, "maxDuration": 15,
+            "supportsGenerateAudio": False,
+        }]}},
+        limits={"ok": True, "data": {"video": {"limit": 2, "remaining": 1}}},
+    )
+    assert result["status"] == "ready"
+    assert plan["nodes"][0]["data"] == {
+        "model": "seedance-2.0-fast", "aspectRatio": "9:16",
+        "quality": "720P", "durationSec": 5, "count": 1,
+    }
+
+
 @pytest.mark.parametrize(
     "field,value",
     [

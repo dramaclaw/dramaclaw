@@ -41,10 +41,11 @@ use the portable `intent.inputs` keys documented in the main Skill; exact custom
 equivalent fields directly in each media node's `data`. This rule does not apply to empty-node
 creation, layout, grouping, connections, text, or standalone audio settings.
 
-The portable model value `"recommended"` represents an explicit request to use the host's current
-recommended/default model; it is not a provider model id. The authorized adapter must resolve or
-remove this sentinel immediately before commit so the local canvas applies its live default. Agents
-must not invent a concrete model id or regenerate a complete graph only to replace this sentinel.
+The portable model value `"recommended"` is a preference, never a provider model id. Runtime
+preflight resolves it against the current user's scoped Catalog, writes the concrete id and
+compatible parameters into the draft, and blocks when the configured default is unavailable.
+Agents must not invent a concrete model id, submit symbolic size or quality values, or regenerate
+a complete graph merely to replace this sentinel.
 
 The authenticated adapter delegates deterministic preparation and revision to the backend using the
 request identity. Compilation rules are not duplicated in the host Skill. Capability contract

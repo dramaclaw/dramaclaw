@@ -3361,7 +3361,7 @@ describe("Canvas command approval image params", () => {
       .toBeUndefined();
   });
 
-  it("requires every visible generation answer and hides the generic recommendation", () => {
+  it("requires concrete generation answers before showing recommendation", () => {
     const questions = [
       { id: "image_model", title: "图片模型", options: [{ id: "image-a", label: "图片 A" }] },
       { id: "image_resolution", title: "图片分辨率", options: [{ id: "1K", label: "1K" }] },
@@ -3375,6 +3375,26 @@ describe("Canvas command approval image params", () => {
       image_resolution: { option_ids: ["1K"] },
     })).toBe(true);
     expect(assistantClarificationShowsRecommended(questions, true)).toBe(false);
+    expect(assistantClarificationShowsRecommended(questions, true, {
+      image_model: { option_ids: ["image-a"] },
+      image_resolution: { option_ids: ["1K"] },
+    })).toBe(true);
+    expect(assistantClarificationShowsRecommended(questions, true, {
+      image_model: { option_ids: ["stale-model"] },
+      image_resolution: { option_ids: ["1K"] },
+    })).toBe(false);
+    const payload = buildAssistantClarificationToolResultForTest(
+      { type: "assistant.clarification.request", questions },
+      {
+        __action: "recommended",
+        image_model: { option_ids: ["image-a"] },
+        image_resolution: { option_ids: ["1K"] },
+      },
+    );
+    expect(payload.answers).toEqual({
+      image_model: { option_ids: ["image-a"] },
+      image_resolution: { option_ids: ["1K"] },
+    });
     expect(assistantClarificationShowsRecommended([
       { id: "creative_style", title: "风格", options: [{ id: "warm", label: "温暖" }] },
     ], true)).toBe(true);

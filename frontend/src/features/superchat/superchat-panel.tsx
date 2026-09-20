@@ -4199,8 +4199,10 @@ export function assistantClarificationGenerationCatalogIssue(
 export function assistantClarificationShowsRecommended(
   questions: AssistantClarificationQuestion[],
   allowed: boolean | undefined,
+  recommendedAnswers?: AssistantClarificationAnswers,
 ): boolean {
-  return Boolean(allowed) && !assistantClarificationIsGenerationCard(questions);
+  return Boolean(allowed) && (!assistantClarificationIsGenerationCard(questions)
+    || Boolean(recommendedAnswers && assistantClarificationCanSubmit(questions, recommendedAnswers)));
 }
 
 const normalizedClarificationId = (value: unknown) =>
@@ -4427,6 +4429,7 @@ type AssistantClarificationUiEvent = {
   description?: string;
   questions?: AssistantClarificationQuestion[];
   allow_recommended?: boolean;
+  recommended_answers?: AssistantClarificationAnswers;
   allow_skip?: boolean;
   submitted?: boolean;
   action?: string;
@@ -6818,6 +6821,16 @@ function AssistantClarificationInputCard({
       t,
     ],
   );
+  const recommendedAnswers = event.recommended_answers;
+  const recommendedQuestions = useMemo(() => clarificationQuestionsWithLiveModelCatalogs(
+    eventQuestions,
+    !imageModelCatalog.isLoading && !imageModelCatalog.isFallback ? imageModelCatalog.models : [],
+    !videoModelCatalog.isLoading && !videoModelCatalog.isFallback ? videoModelCatalog.models : [],
+    recommendedAnswers ?? {},
+    t,
+  ), [eventQuestions, imageModelCatalog.isLoading, imageModelCatalog.isFallback,
+    imageModelCatalog.models, videoModelCatalog.isLoading, videoModelCatalog.isFallback,
+    videoModelCatalog.models, recommendedAnswers, t]);
   const selectableQuestions = questions
     .map((question, index) => ({ question, index }))
     .filter(({ question }) => (question.options ?? []).length > 0 || skillStudioQuestionAllowsCustom(question));
@@ -7015,14 +7028,16 @@ function AssistantClarificationInputCard({
               跳过
             </Button>
           )}
-          {assistantClarificationShowsRecommended(questions, event.allow_recommended) && (
+          {!generationCatalogIssue && assistantClarificationShowsRecommended(
+            recommendedQuestions, event.allow_recommended, recommendedAnswers,
+          ) && (
             <Button
               type="button"
               size="sm"
               variant="outline"
               className="h-8 rounded-full border-white/[0.12] bg-white/[0.04] px-3 text-xs hover:bg-white/[0.08]"
               onClick={() => {
-                void onSubmit?.(event, { __action: "recommended" });
+                void onSubmit?.(event, { ...recommendedAnswers, __action: "recommended" });
               }}
             >
               使用推荐配置

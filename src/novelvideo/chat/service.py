@@ -250,7 +250,9 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "same plan. A "
     "recommended/default model choice is symbolic: serialize "
     'it as model="recommended" (or the matching portable intent input), not as an invented model '
-    "id. The authorized adapter resolves it through the live frontend default. If a complete graph "
+    "id. Scoped runtime preflight resolves the preference and compatible parameters from one "
+    "live Catalog snapshot before draft persistence. Never use recommended as size or quality. "
+    "If a complete graph "
     "write fails, do not regenerate or truncate the whole plan merely to replace that sentinel. "
     "For a "
     "standalone canvas mutation, your first assistant action must be the matching "

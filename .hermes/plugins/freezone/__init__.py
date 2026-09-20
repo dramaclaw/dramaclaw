@@ -827,9 +827,7 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
                 {"id": f"{media}_{'variants_per_node' if field == 'count' else field}"}
                 for field in chosen_fields
             )
-        # A generic recommended action has no authoritative model-specific
-        # answers. Require concrete choices before writing them to a draft.
-        args = {**args, "allow_recommended": False, "allow_skip": False}
+        args = {**args, "allow_skip": False}
     generation_question_aliases = {
         "image_count": "image_variants_per_node",
         "video_count": "video_variants_per_node",
@@ -978,6 +976,10 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
         )
         if draft_error is not None:
             return tool_result(draft_error)
+    recommended_answers: dict[str, Any] = {}
+    if generation_media_types is not None or generation_required_choices is not None:
+        recommended_answers = _generation_clarification_recommendations(project, questions)
+        args = {**args, "allow_recommended": bool(recommended_answers)}
     result = _emit_clarification_event(
         project,
         canvas,
@@ -989,6 +991,7 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
             "questions": questions,
             "answers": answers,
             "allow_recommended": bool(args.get("allow_recommended", False)),
+            **({"recommended_answers": recommended_answers} if recommended_answers else {}),
             "allow_skip": bool(args.get("allow_skip", True)),
         },
     )
@@ -998,7 +1001,7 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     if (
         not isinstance(response, dict)
         or response.get("ok") is not True
-        or response.get("clarification_status") != "answered"
+        or response.get("clarification_status") not in {"answered", "recommended"}
         or response.get("skipped")
     ):
         return result
@@ -3250,6 +3253,65 @@ _RECOMMENDED_GENERATION_MODEL_VALUES = {
 }
 
 
+def _generation_clarification_recommendations(
+    project: str | None, questions: list[Any]
+) -> dict[str, Any]:
+    """Return concrete option ids for one current scoped Catalog snapshot."""
+    from novelvideo.freezone.workflow_preflight import resolve_generation_recommendations
+
+    if not project:
+        return {}
+    question_ids = {
+        str(question.get("id") or "") for question in questions if isinstance(question, dict)
+    }
+    media = [name for name in ("image", "video") if any(
+        question_id.startswith(f"{name}_") for question_id in question_ids
+    )]
+    if any(f"{name}_model" not in question_ids for name in media):
+        return {}  # Partial questions may refer to a different confirmed model.
+    nodes = [{
+        "node_type": "imageGenNode" if name == "image" else "videoNode",
+        "data": {"model": "recommended"},
+    } for name in media]
+    responses = {}
+    try:
+        for name, node in zip(media, nodes):
+            response = _request(
+                "GET", f"/projects/{quote(project, safe='')}/freezone/{name}/models"
+            )
+            if response.get("ok") is False or not isinstance(response.get("data"), list):
+                return {}
+            responses[node["node_type"]] = response
+    except Exception:  # noqa: BLE001 - recommendation is optional on catalog failure
+        return {}
+    if resolve_generation_recommendations(nodes, responses):
+        return {}
+    data_by_media = {name: node["data"] for name, node in zip(media, nodes)}
+    field_by_question = {
+        "model": "model", "aspect_ratio": "aspectRatio", "resolution": "size",
+        "quality": "quality", "variants_per_node": "count",
+        "duration_seconds": "durationSec", "generate_audio": "generateAudio",
+    }
+    answers = {}
+    for question_id in question_ids:
+        name, _, suffix = question_id.partition("_")
+        data = data_by_media.get(name)
+        if data is None:
+            continue
+        field = field_by_question.get(suffix)
+        if name == "video" and suffix == "resolution":
+            field = "quality"
+        if field is None:
+            return {}
+        value = data.get(field)
+        if value is None:
+            if question_id in {"image_quality", "video_generate_audio"}:
+                continue
+            return {}
+        answers[question_id] = {"option_ids": [str(value).lower() if isinstance(value, bool) else str(value)]}
+    return answers
+
+
 def _generation_parameter_value_present(field: str, value: Any) -> bool:
     if field == "generateAudio":
         return isinstance(value, bool)
@@ -3329,28 +3391,46 @@ def _generation_parameter_fields_for_model(
     return tuple(field for field in fields if field not in conditional_fields)
 
 
-def _use_frontend_default_for_recommended_models(commands: list[Any]) -> None:
-    """Resolve a symbolic recommendation through the frontend's live default.
+def _resolve_canvas_generation_recommendations(
+    project: str, commands: list[Any]
+) -> dict[str, Any] | None:
+    """Resolve media creation commands before preflight or frontend dispatch."""
+    from novelvideo.freezone.workflow_preflight import resolve_generation_recommendations
 
-    The sentinel stays present through parameter preflight to record that the
-    user answered. It is removed only immediately before dispatch because it is
-    a preference, not a model catalog id.
-    """
-    for command in commands:
-        if not isinstance(command, dict):
-            continue
-        if str(command.get("type") or "").strip() not in {
-            "create_node",
-            "add_next_node",
-            "update_node_data",
-        }:
-            continue
-        data = command.get("data")
-        if not isinstance(data, dict):
-            continue
-        model = str(data.get("model") or "").strip().lower()
-        if model in _RECOMMENDED_GENERATION_MODEL_VALUES:
-            data.pop("model", None)
+    nodes = [
+        {"id": str(index), "node_type": command.get("node_type"), "data": command.setdefault("data", {})}
+        for index, command in enumerate(commands)
+        if isinstance(command, dict)
+        and command.get("type") in {"create_node", "add_next_node"}
+        and command.get("node_type") in _GENERATION_PARAMETER_FIELDS
+        and any(
+            isinstance(value, str) and value.strip().casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
+            for key, value in (command.get("data") or {}).items()
+            if key in {"model", "aspectRatio", "size", "quality"}
+        )
+    ]
+    if not nodes:
+        return None
+    responses = {
+        node_type: _request(
+            "GET", f"/projects/{quote(project, safe='')}/freezone/{media}/models"
+        )
+        for node_type, media in (("imageGenNode", "image"), ("videoNode", "video"))
+        if any(node["node_type"] == node_type for node in nodes)
+    }
+    if any(response.get("ok") is False or not isinstance(response.get("data"), list)
+           for response in responses.values()):
+        return {
+            "ok": False, "status": "model_catalog_unavailable",
+            "error": "The live media model catalog is unavailable",
+        }
+    blockers = resolve_generation_recommendations(nodes, responses)
+    if blockers:
+        return {
+            "ok": False, "status": "generation_recommendation_unavailable",
+            "error": blockers[0]["message"], "blockers": blockers,
+        }
+    return None
 
 
 def _canvas_generation_preflight_state(
@@ -4592,6 +4672,9 @@ def _emit_canvas_commands(
     )
     if shape_error:
         return shape_error
+    recommendation_error = _resolve_canvas_generation_recommendations(project, commands)
+    if recommendation_error is not None:
+        return tool_result(recommendation_error)
     generation_preflight = _external_generation_parameter_preflight(
         project,
         canvas,
@@ -4599,8 +4682,6 @@ def _emit_canvas_commands(
     )
     if generation_preflight is not None:
         return tool_result(generation_preflight)
-    if _external_mcp_agent_enabled():
-        _use_frontend_default_for_recommended_models(commands)
     if _mcp_direct_canvas_apply_enabled() and not require_canvas_receipt:
         needs_approval, approval_reasons = _approval_required_for_commands(commands)
         if _mcp_canvas_approval_enabled() and needs_approval:

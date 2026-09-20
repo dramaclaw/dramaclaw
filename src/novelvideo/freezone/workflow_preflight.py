@@ -4,6 +4,9 @@ from copy import deepcopy
 from typing import Any
 import math
 
+from novelvideo.api.schemas import FREEZONE_DEFAULT_IMAGE_MODEL
+from novelvideo.freezone.video_node import FREEZONE_DEFAULT_VIDEO_BACKEND
+
 _RECOMMENDED_GENERATION_MODEL_VALUES = {
     "auto",
     "default",
@@ -14,6 +17,130 @@ _RECOMMENDED_GENERATION_MODEL_VALUES = {
     "默认",
     "自动",
 }
+
+# Product defaults are preferences, never catalog ids. Resolve them only against
+# the caller's visible catalog. The order of entries in that catalog is irrelevant.
+_RECOMMENDED_MODEL_ALIASES = {
+    "imageGenNode": FREEZONE_DEFAULT_IMAGE_MODEL,
+    "videoNode": FREEZONE_DEFAULT_VIDEO_BACKEND,
+}
+_RECOMMENDED_OPTIONS = {
+    "aspectRatio": ("9:16", "16:9", "1:1"),
+    "imageSize": ("1K", "2K", "4K"),
+    "imageQuality": ("medium", "low", "high"),
+    "videoResolution": ("720p", "480p", "1080p", "2K"),
+}
+
+
+def _preferred_option(entry: dict[str, Any], key: str, preferences: tuple[str, ...]) -> str | None:
+    options = _catalog_string_options(entry, key)
+    return next(
+        (option for preferred in preferences for option in options
+         if option.casefold() == preferred.casefold()),
+        None,
+    )
+
+
+def resolve_generation_recommendations(
+    nodes: list[Any], model_responses: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Materialize concrete choices from one scoped catalog snapshot per media type.
+
+    Mutates only valid choices. A missing default or capability leaves a blocker;
+    callers must not persist or dispatch any node when blockers are returned.
+    """
+    blockers: list[dict[str, Any]] = []
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("node_type") not in _RECOMMENDED_MODEL_ALIASES:
+            continue
+        kind = node["node_type"]
+        data = node.get("data")
+        if not isinstance(data, dict):
+            data = {}
+            node["data"] = data
+        response = model_responses.get(kind) or {}
+        raw_catalog = response.get("data") if response.get("ok") is not False else None
+        if not isinstance(raw_catalog, list):
+            continue  # Existing runtime preflight reports unavailable catalogs.
+        catalog = [entry for entry in raw_catalog if isinstance(entry, dict)]
+        requested = str(data.get("model") or "").strip()
+        symbolic = requested.casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
+        if not requested or (not symbolic and not any(
+            isinstance(value, str) and value.casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
+            for key, value in data.items() if key in {"aspectRatio", "size", "quality"}
+        )):
+            continue
+        if symbolic:
+            preferred = _RECOMMENDED_MODEL_ALIASES[kind].casefold()
+            entry = next((item for item in catalog if preferred in {
+                str(value).strip().casefold()
+                for value in (
+                    item.get("id"), item.get("apiModel"), item.get("api_model"),
+                    item.get("catalogId"), *(item.get("aliases") or []),
+                )
+            }), None)
+        else:
+            entry = next((item for item in catalog if requested == str(item.get("id") or "")), None)
+        if entry is None:
+            if symbolic:
+                blockers.append({
+                    "path": f"runtime.models.{node.get('id') or kind}.model",
+                    "code": "recommended_model_unavailable",
+                    "message": "The configured recommended model is unavailable in the current catalog",
+                })
+            continue  # Explicit unknown ids are rejected by the normal preflight.
+        model_id = str(entry.get("id") or "").strip()
+        if not model_id:
+            blockers.append({
+                "path": f"runtime.models.{node.get('id') or kind}.model",
+                "code": "recommended_model_unavailable",
+                "message": "The recommended catalog entry has no model id",
+            })
+            continue
+        candidates = {
+            "aspectRatio": _preferred_option(entry, "ratioOptions", _RECOMMENDED_OPTIONS["aspectRatio"]),
+            ("size" if kind == "imageGenNode" else "quality"): _preferred_option(
+                entry, "resolutionOptions", _RECOMMENDED_OPTIONS[
+                    "imageSize" if kind == "imageGenNode" else "videoResolution"
+                ],
+            ),
+        }
+        if kind == "imageGenNode" and _catalog_string_options(entry, "qualityOptions"):
+            candidates["quality"] = _preferred_option(
+                entry, "qualityOptions", _RECOMMENDED_OPTIONS["imageQuality"]
+            )
+        if any(value is None for value in candidates.values()):
+            blockers.append({
+                "path": f"runtime.models.{node.get('id') or kind}",
+                "code": "recommended_parameters_unavailable",
+                "message": "The selected catalog model has no compatible recommended parameters",
+            })
+            continue
+        if symbolic:
+            data["model"] = model_id
+        for field, value in candidates.items():
+            current = data.get(field)
+            if not current or (isinstance(current, str)
+                               and current.casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES):
+                data[field] = value
+        if kind == "imageGenNode" and not _catalog_string_options(entry, "qualityOptions"):
+            if str(data.get("quality") or "").casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES:
+                data.pop("quality", None)
+        data.setdefault("count", 1)
+        if kind == "videoNode":
+            minimum = entry.get("minDuration")
+            maximum = entry.get("maxDuration")
+            duration = data.get("durationSec")
+            if duration is None:
+                duration = 5
+                if isinstance(minimum, (int, float)) and minimum > duration:
+                    duration = int(math.ceil(minimum))
+                if isinstance(maximum, (int, float)) and maximum < duration:
+                    duration = int(math.floor(maximum))
+                data["durationSec"] = duration
+            if entry.get("supportsGenerateAudio") is not False:
+                data.setdefault("generateAudio", False)
+    return blockers
 
 
 def _catalog_string_options(entry: dict[str, Any], key: str) -> list[str]:
@@ -194,6 +321,8 @@ def evaluate_workflow_preflight(
     checks: dict[str, Any] = {}
     plan = compiled.get("plan") if isinstance(compiled.get("plan"), dict) else {}
     nodes = plan.get("nodes") if isinstance(plan.get("nodes"), list) else []
+    if runtime_available:
+        blockers.extend(resolve_generation_recommendations(nodes, model_responses))
     for node in nodes:
         if (
             isinstance(node, dict)
