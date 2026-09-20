@@ -11,18 +11,28 @@ from novelvideo.chat.session_registry import (
     _chat_run_lock_is_stale,
     _chat_run_lock_key,
     _chat_run_lock_project_for_turn,
+    acquire_chat_run_lock,
+    heartbeat_chat_run_lock,
+    release_chat_run_lock,
 )
 
 
 def test_session_registry_has_no_application_or_storage_imports() -> None:
-    source = Path(__file__).resolve().parents[1] / "src/novelvideo/chat/session_registry.py"
+    source = (
+        Path(__file__).resolve().parents[1] / "src/novelvideo/chat/session_registry.py"
+    )
     tree = ast.parse(source.read_text(encoding="utf-8"))
-    imports = [node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))]
+    imports = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+    ]
     assert all(
         not name.startswith(("novelvideo", "sqlite3", "openai_codex"))
         for node in imports
         for name in (
-            [node.module or ""] if isinstance(node, ast.ImportFrom)
+            [node.module or ""]
+            if isinstance(node, ast.ImportFrom)
             else [alias.name for alias in node.names]
         )
     )
@@ -30,11 +40,13 @@ def test_session_registry_has_no_application_or_storage_imports() -> None:
 
 def test_canvas_agent_lock_scope_and_two_expiry_limits() -> None:
     first = _chat_run_lock_project_for_turn(
-        "project-a", tool_mode="freezone_canvas",
+        "project-a",
+        tool_mode="freezone_canvas",
         store_scope=SimpleNamespace(canvas_id="canvas-a", agent_id="agent-a"),
     )
     second = _chat_run_lock_project_for_turn(
-        "project-a", tool_mode="freezone_canvas",
+        "project-a",
+        tool_mode="freezone_canvas",
         store_scope=SimpleNamespace(canvas_id="canvas-a", agent_id="agent-b"),
     )
     assert _chat_run_lock_key(first) != _chat_run_lock_key(second)
@@ -47,3 +59,14 @@ def test_canvas_agent_lock_scope_and_two_expiry_limits() -> None:
     assert _chat_run_lock_is_stale(
         now - timedelta(seconds=_CHAT_RUN_LOCK_MAX_SECONDS + 1), now
     )
+
+
+def test_lock_file_rejects_foreign_heartbeat_and_release(tmp_path: Path) -> None:
+    path = tmp_path / "chat.lock"
+    lock_id = acquire_chat_run_lock(path, owner_is_active=lambda *_: True)
+    assert path.exists()
+    assert not heartbeat_chat_run_lock(path, "another-turn")
+    release_chat_run_lock(path, "another-turn")
+    assert path.exists()
+    release_chat_run_lock(path, lock_id)
+    assert not path.exists()

@@ -11,7 +11,7 @@ import logging
 import os
 import re
 import shutil
-import socket
+import socket as socket
 import sqlite3
 import stat
 import sys
@@ -23,7 +23,7 @@ from typing import Any, Literal
 from urllib.parse import quote, unquote, urlparse
 from urllib.request import Request, urlopen
 
-from novelvideo.chat import presentation
+from novelvideo.chat import presentation, session_registry
 from novelvideo.chat.backend_sdk import (
     ClaudeSdkClient,
     CodexClient,
@@ -52,6 +52,8 @@ from novelvideo.chat.presentation import (
 )
 from novelvideo.chat.runtime_port import AgentRuntimeThreadPort
 from novelvideo.chat.session_registry import (
+    atomic_write_chat_run_lock_file as _atomic_write_chat_run_lock_file,
+    remove_chat_run_lock_file as _remove_chat_run_lock_file,
     _CHAT_RUN_LOCK_BIRTH_GRACE_SECONDS as _CHAT_RUN_LOCK_BIRTH_GRACE_SECONDS,
     _CHAT_RUN_LOCK_HEARTBEAT_SECONDS as _CHAT_RUN_LOCK_HEARTBEAT_SECONDS,
     _CHAT_RUN_LOCK_KEY as _CHAT_RUN_LOCK_KEY,
@@ -93,6 +95,9 @@ from novelvideo.utils.error_redaction import redact_secrets
 from novelvideo.utils.static_urls import project_static_url
 
 logger = logging.getLogger("novelvideo.chat.service")
+
+# Legacy import path used by route and lock compatibility tests.
+_read_chat_run_lock_file = session_registry.read_chat_run_lock_file
 
 # Compatibility exports for callers migrating to the presentation boundary.
 _ui_spec_json = presentation.ui_spec_json
@@ -1830,63 +1835,17 @@ def _pid_is_alive(pid: int | None) -> bool:
 
 
 def _chat_run_lock_path(username: str, project: str) -> Path:
-    lock_key = _chat_run_lock_key(project)
-    digest = hashlib.sha256(lock_key.encode("utf-8")).hexdigest()
-    return _user_chat_agent_locks_dir(username) / f"{digest}.lock"
-
-
-def _read_chat_run_lock_file(
-    path: Path,
-) -> tuple[str | None, str | None, int | None, datetime | None, datetime | None]:
-    try:
-        value = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return None, None, None, None, None
-    except OSError:
-        return None, None, None, None, None
-    return _parse_chat_run_lock(value)
-
-
-def _remove_chat_run_lock_file(path: Path) -> None:
-    try:
-        path.unlink()
-    except FileNotFoundError:
-        pass
-
-
-def _atomic_write_chat_run_lock_file(path: Path, payload: str) -> None:
-    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-    try:
-        tmp_path.write_text(payload, encoding="utf-8")
-        tmp_path.replace(path)
-    finally:
-        tmp_path.unlink(missing_ok=True)
-
-
-def _chat_run_lock_payload(lock_id: str, *, started_at: str | None = None) -> str:
-    now = _now_iso()
-    return json.dumps(
-        {
-            "lock_id": lock_id,
-            "owner_id": f"{socket.gethostname()}:{os.getpid()}",
-            "owner_pid": os.getpid(),
-            "started_at": started_at or now,
-            "updated_at": now,
-        },
-        ensure_ascii=False,
+    return session_registry.chat_run_lock_path(
+        _user_chat_agent_locks_dir(username), project
     )
 
 
+def _chat_run_lock_payload(lock_id: str, *, started_at: str | None = None) -> str:
+    return session_registry.chat_run_lock_payload(lock_id, started_at=started_at)
+
+
 def _chat_run_lock_file_is_new(path: Path) -> bool:
-    try:
-        mtime = path.stat().st_mtime
-    except FileNotFoundError:
-        return False
-    except OSError:
-        return True
-    return (
-        datetime.now(timezone.utc).timestamp() - mtime
-    ) < _CHAT_RUN_LOCK_BIRTH_GRACE_SECONDS
+    return session_registry.chat_run_lock_file_is_new(path)
 
 
 def _chat_run_lock_owner_is_active(
@@ -1895,88 +1854,37 @@ def _chat_run_lock_owner_is_active(
     started_at: datetime | None,
     updated_at: datetime | None,
 ) -> bool:
-    if started_at is None and updated_at is None:
-        return False
-    if _chat_run_lock_is_stale(started_at, updated_at):
-        return False
-    owner_host, separator, _owner_process = (owner_id or "").rpartition(":")
-    if separator and owner_host == socket.gethostname():
-        return _pid_is_alive(owner_pid)
-    return True
+    return session_registry.chat_run_lock_owner_is_active(
+        owner_id, owner_pid, started_at, updated_at, pid_is_alive=_pid_is_alive
+    )
 
 
 def _acquire_chat_run_lock(username: str, project: str) -> str:
-    lock_path = _chat_run_lock_path(username, project)
-    lock_id = uuid.uuid4().hex
-    lock_payload = _chat_run_lock_payload(lock_id)
-    payload_bytes = lock_payload.encode("utf-8")
-    for _attempt in range(3):
-        try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError:
-            existing_lock_id, owner_id, owner_pid, started_at, updated_at = (
-                _read_chat_run_lock_file(lock_path)
-            )
-            if not existing_lock_id and _chat_run_lock_file_is_new(lock_path):
-                raise RuntimeError("当前用户已有 AI 对话正在处理中，请稍后再试。")
-            if existing_lock_id and _chat_run_lock_owner_is_active(
-                owner_id, owner_pid, started_at, updated_at
-            ):
-                raise RuntimeError("当前用户已有 AI 对话正在处理中，请稍后再试。")
-            _remove_chat_run_lock_file(lock_path)
-            continue
-        try:
-            with os.fdopen(fd, "wb") as file:
-                file.write(payload_bytes)
-            return lock_id
-        except Exception:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-            _remove_chat_run_lock_file(lock_path)
-            raise
-    raise RuntimeError("当前用户已有 AI 对话正在处理中，请稍后再试。")
+    return session_registry.acquire_chat_run_lock(
+        _chat_run_lock_path(username, project),
+        owner_is_active=_chat_run_lock_owner_is_active,
+    )
 
 
 def _release_chat_run_lock(username: str, project: str, lock_id: str) -> None:
-    lock_path = _chat_run_lock_path(username, project)
-    current_lock_id, _owner_id, _owner_pid, _started_at, _updated_at = (
-        _read_chat_run_lock_file(lock_path)
+    session_registry.release_chat_run_lock(
+        _chat_run_lock_path(username, project), lock_id
     )
-    if current_lock_id == lock_id:
-        _remove_chat_run_lock_file(lock_path)
 
 
 def _heartbeat_chat_run_lock(username: str, project: str, lock_id: str) -> bool:
-    lock_path = _chat_run_lock_path(username, project)
-    current_lock_id, _owner_id, _owner_pid, started_at, _updated_at = (
-        _read_chat_run_lock_file(lock_path)
-    )
-    if current_lock_id != lock_id:
-        return False
-    payload = _chat_run_lock_payload(
+    return session_registry.heartbeat_chat_run_lock(
+        _chat_run_lock_path(username, project),
         lock_id,
-        started_at=started_at.isoformat() if started_at else None,
+        atomic_write=_atomic_write_chat_run_lock_file,
     )
-    try:
-        _atomic_write_chat_run_lock_file(lock_path, payload)
-    except OSError:
-        return False
-    return True
 
 
 def chat_run_lock_is_active(username: str, project: str = "") -> bool:
-    lock_path = _chat_run_lock_path(username, project)
-    existing_lock_id, owner_id, owner_pid, started_at, updated_at = (
-        _read_chat_run_lock_file(lock_path)
+    return session_registry.chat_run_lock_is_active(
+        _chat_run_lock_path(username, project),
+        owner_is_active=_chat_run_lock_owner_is_active,
     )
-    if existing_lock_id and _chat_run_lock_owner_is_active(
-        owner_id, owner_pid, started_at, updated_at
-    ):
-        return True
-    _remove_chat_run_lock_file(lock_path)
-    return False
 
 
 def force_release_chat_run_lock(username: str, project: str) -> None:
