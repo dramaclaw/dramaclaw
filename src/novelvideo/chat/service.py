@@ -23,7 +23,7 @@ from typing import Any, Literal
 from urllib.parse import quote, unquote, urlparse
 from urllib.request import Request, urlopen
 
-from novelvideo.chat import presentation, session_registry
+from novelvideo.chat import presentation, runtime_event_mapper, session_registry
 from novelvideo.chat.backend_sdk import (
     ClaudeSdkClient,
     CodexClient,
@@ -49,6 +49,10 @@ from novelvideo.chat.presentation import (
     json_loads_with_trailing_repair as _json_loads_with_trailing_repair,
     ui_spec_block as _ui_spec_block,
     wrap_ui_spec_bundle as _wrap_ui_spec_bundle,
+)
+from novelvideo.chat.runtime_event_mapper import (
+    _is_anonymous_hermes_tool_call_update,
+    _is_hermes_lifecycle_tool_update,
 )
 from novelvideo.chat.runtime_port import AgentRuntimeThreadPort
 from novelvideo.chat.session_registry import (
@@ -2008,35 +2012,6 @@ def _is_hidden_chat_tool_event(name: object, text: object) -> bool:
     """Internal Hermes bookkeeping tools should not become user-visible cards."""
     haystack = f"{name or ''}\n{text or ''}".lower()
     return any(marker in haystack for marker in _HIDDEN_TOOL_MARKERS)
-
-
-def _is_anonymous_hermes_tool_call_update(event: Any) -> bool:
-    raw = getattr(event, "raw", None)
-    if getattr(event, "name", None) is not None or not isinstance(raw, dict):
-        return False
-    return raw.get("sessionUpdate") == "tool_call_update" and bool(
-        str(raw.get("toolCallId") or "").strip()
-    )
-
-
-def _is_hermes_lifecycle_tool_update(event: Any) -> bool:
-    raw = getattr(event, "raw", None)
-    if not isinstance(raw, dict):
-        return False
-    kind = raw.get("sessionUpdate")
-    if kind == "tool_call":
-        return True
-    if kind != "tool_call_update":
-        return False
-    has_result_payload = any(
-        raw.get(key) not in (None, "", [], {})
-        for key in ("content", "result", "data", "output", "message", "error")
-    )
-    if has_result_payload:
-        return False
-    text = str(getattr(event, "text", "") or "").strip().lower()
-    status = str(raw.get("status") or "").strip().lower()
-    return bool(status) and text in {status, f"{status}."}
 
 
 def _completion_text_or_existing(event_text: object, existing: str) -> str:
@@ -6034,21 +6009,12 @@ async def _stream_assistant_reply_hermes(
             if event.type == "thread_started":
                 await _emit_chat_event_best_effort(
                     on_event,
-                    {
-                        "type": "thread_started",
-                        "thread_id": str(event.thread_id or "").strip() or None,
-                        "turn_id": str(event.turn_id or "").strip() or None,
-                    },
+                    runtime_event_mapper.lifecycle_event(event),
                 )
                 continue
             if event.type == "turn_started":
                 await on_event(
-                    {
-                        "type": "turn_started",
-                        "thread_id": str(event.thread_id or "").strip() or None,
-                        "turn_id": str(event.turn_id or "").strip() or None,
-                        "status": event.status or "in_progress",
-                    }
+                    runtime_event_mapper.lifecycle_event(event)
                 )
                 continue
             if event.type == "turn_completed":
@@ -6056,14 +6022,7 @@ async def _stream_assistant_reply_hermes(
                     event.disposition or event.status or turn_disposition
                 )
                 await on_event(
-                    {
-                        "type": "turn_completed",
-                        "thread_id": str(event.thread_id or "").strip() or None,
-                        "turn_id": str(event.turn_id or "").strip() or None,
-                        "status": event.status or "completed",
-                        "error": event.error,
-                        "disposition": event.disposition,
-                    }
+                    runtime_event_mapper.lifecycle_event(event)
                 )
                 continue
             if event.type == "assistant_delta":
@@ -6091,19 +6050,19 @@ async def _stream_assistant_reply_hermes(
             if event.type == "thought_delta":
                 await _emit_chat_event_best_effort(
                     on_event,
-                    {"type": "thought_delta", "text": str(event.text or "")},
+                    runtime_event_mapper.progress_event(event, include_details=False),
                 )
                 continue
             if event.type == "plan_update":
                 await _emit_chat_event_best_effort(
                     on_event,
-                    {"type": "plan_update", "entries": event.entries or []},
+                    runtime_event_mapper.progress_event(event, include_details=False),
                 )
                 continue
             if event.type == "usage_update":
                 await _emit_chat_event_best_effort(
                     on_event,
-                    {"type": "usage_update", "usage": event.usage or {}},
+                    runtime_event_mapper.progress_event(event, include_details=False),
                 )
                 continue
             if event.type == "permission_requested":
@@ -6357,11 +6316,7 @@ async def _stream_assistant_reply_claude(
                 if thread_id:
                     _set_claude_session_id(username, project, thread_id)
                 await on_event(
-                    {
-                        "type": "thread_started",
-                        "thread_id": thread_id,
-                        "turn_id": str(event.turn_id or "").strip() or None,
-                    }
+                    runtime_event_mapper.lifecycle_event(event)
                 )
                 continue
             if event.type == "assistant_delta":
@@ -6376,41 +6331,23 @@ async def _stream_assistant_reply_claude(
                 continue
             if event.type == "thought_delta":
                 await on_event(
-                    {
-                        "type": "thought_delta",
-                        "text": str(event.text or ""),
-                        "source": event.name,
-                    }
+                    runtime_event_mapper.progress_event(event)
                 )
                 continue
             if event.type == "plan_update":
                 await on_event(
-                    {
-                        "type": "plan_update",
-                        "text": str(event.text or ""),
-                        "entries": event.entries or [],
-                    }
+                    runtime_event_mapper.progress_event(event)
                 )
                 continue
             if event.type == "usage_update":
-                await on_event({"type": "usage_update", "usage": event.usage or {}})
+                await on_event(runtime_event_mapper.progress_event(event))
                 continue
             if event.type in {"tool_started", "tool_updated"}:
                 event_tool_text = str(event.text or "")
                 if event_tool_text:
                     tool_text += event_tool_text
                 await on_event(
-                    {
-                        "type": event.type,
-                        "text": event_tool_text.strip(),
-                        "name": event.name,
-                        "call_id": event.call_id,
-                        "status": event.status,
-                        "input": event.input,
-                        "output": event.output,
-                        "error": event.error,
-                        "result_json": event.structured,
-                    }
+                    runtime_event_mapper.sdk_tool_event(event, text=event_tool_text)
                 )
                 continue
             if event.type == "tool_update":
@@ -6611,21 +6548,12 @@ async def _stream_assistant_reply_codex(
                         _ACTIVE_CODEX_TURNS[active_turn_key] = active_turn_value
                     _set_active_codex_turn(username, codex_scope_key, active_turn_value)
                 await on_event(
-                    {
-                        "type": "thread_started",
-                        "thread_id": codex_thread_id,
-                        "turn_id": codex_turn_id,
-                    }
+                    runtime_event_mapper.lifecycle_event(event)
                 )
                 continue
             if event.type == "turn_started":
                 await on_event(
-                    {
-                        "type": "turn_started",
-                        "thread_id": str(event.thread_id or "").strip() or None,
-                        "turn_id": str(event.turn_id or "").strip() or None,
-                        "status": event.status or "in_progress",
-                    }
+                    runtime_event_mapper.lifecycle_event(event)
                 )
                 continue
             if event.type == "turn_completed":
@@ -6633,14 +6561,7 @@ async def _stream_assistant_reply_codex(
                     event.disposition or event.status or turn_disposition
                 )
                 await on_event(
-                    {
-                        "type": "turn_completed",
-                        "thread_id": str(event.thread_id or "").strip() or None,
-                        "turn_id": str(event.turn_id or "").strip() or None,
-                        "status": event.status or "completed",
-                        "error": event.error,
-                        "disposition": event.disposition,
-                    }
+                    runtime_event_mapper.lifecycle_event(event)
                 )
                 continue
             if event.type == "assistant_delta":
@@ -6656,24 +6577,16 @@ async def _stream_assistant_reply_codex(
                 continue
             if event.type == "thought_delta":
                 await on_event(
-                    {
-                        "type": "thought_delta",
-                        "text": str(event.text or ""),
-                        "source": event.name,
-                    }
+                    runtime_event_mapper.progress_event(event)
                 )
                 continue
             if event.type == "plan_update":
                 await on_event(
-                    {
-                        "type": "plan_update",
-                        "text": str(event.text or ""),
-                        "entries": event.entries or [],
-                    }
+                    runtime_event_mapper.progress_event(event)
                 )
                 continue
             if event.type == "usage_update":
-                await on_event({"type": "usage_update", "usage": event.usage or {}})
+                await on_event(runtime_event_mapper.progress_event(event))
                 continue
             if event.type in {"tool_started", "tool_updated"}:
                 await _bind_server_observed_agent_product_execution(
@@ -6730,17 +6643,7 @@ async def _stream_assistant_reply_codex(
                 if event_tool_text:
                     tool_text += event_tool_text
                 await on_event(
-                    {
-                        "type": event.type,
-                        "text": event_tool_text.strip(),
-                        "name": event.name,
-                        "call_id": event.call_id,
-                        "status": event.status,
-                        "input": event.input,
-                        "output": event.output,
-                        "error": event.error,
-                        "result_json": event.structured,
-                    }
+                    runtime_event_mapper.sdk_tool_event(event, text=event_tool_text)
                 )
                 continue
             if event.type == "tool_update":
