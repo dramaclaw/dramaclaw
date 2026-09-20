@@ -164,7 +164,6 @@ Flag 条件：
 
 ```json
 {
-  "schema_version":"story_patch.v2",
   "story_id":"midnight_station",
   "base_revision":3,
   "idempotency_key":"patch-midnight-r3-ending",
@@ -195,17 +194,80 @@ Flag 条件：
 }
 ```
 
-支持的操作：
+每次调用必须包含 `story_id`、`base_revision`、`idempotency_key` 和非空 `operations` 数组。不能只发送故事 ID、版本和幂等键。以下示例可直接作为 MCP 工具参数；`schema_version` 属于领域模型，不是 MCP Patch 工具的顶层参数。
 
-- `update_story_metadata`：`changes {title?, synopsis?}`
-- `set_story_start`：`segment_id`
-- `add_segment` / `update_segment` / `remove_segment`
-- `add_choice` / `update_choice` / `remove_choice`
-- `upsert_variable` / `remove_variable`
-- `upsert_flag` / `remove_flag`
-- `upsert_character` / `remove_character`
+每项操作必须带 `op`，其余字段按下表传入：
 
-增加分支时，在同一个 Patch 中同时增加目标 Segment 和对应 Choice。不要把 Get 返回的完整 Story 作为 Patch 发送。每项操作使用精确的 `{"op":"...", ...}` envelope：新增操作把值放入 `segment` 或 `choice`，更新操作把变更字段放入 `changes`。
+| op | 必填载荷字段 | 语义 |
+| --- | --- | --- |
+| `update_story_metadata` | `changes` | 局部更新 title、synopsis |
+| `set_story_start` | `segment_id` | 设置起点 |
+| `add_segment` | `segment` | 新增完整片段 |
+| `update_segment` | `segment_id`、`changes` | 局部更新片段 |
+| `remove_segment` | `segment_id` | 删除片段 |
+| `add_choice` | `choice` | 新增完整选项 |
+| `update_choice` | `choice_id`、`changes` | 局部更新选项 |
+| `remove_choice` | `choice_id` | 删除选项 |
+| `upsert_character` | `character` | 新增或整体替换角色 |
+| `remove_character` | `character_id` | 删除角色 |
+| `upsert_variable` | `variable` | 新增或整体替换变量 |
+| `remove_variable` | `variable_name` | 删除变量 |
+| `upsert_flag` | `flag` | 新增或整体替换 Flag |
+| `remove_flag` | `flag_name` | 删除 Flag |
+
+**只有 `update_*` 使用 `changes`。`upsert_*` 必须使用 `character`、`variable` 或 `flag`，不能套用 `changes`。** 更新既有实体时，先从 Get 结果保留其余字段，再传完整实体，避免整体替换时丢失设定。
+
+增加分支时，在同一个 Patch 中同时增加目标 Segment 和对应 Choice。不要把 Get 返回的完整 Story 作为 Patch 发送。
+
+### 示例：新增角色并在已有路径中插入片段
+
+假设 Get 已确认故事 `stealth_offtime` 的版本为 214，既有选项 `stairs_auto_end` 从 `stairs` 指向 `ending_ontime`，且角色 `hero` 已存在。一次 Patch 加入小美、插入相遇片段、重定向原有选项并连接回原结局。ID 和版本须替换为当前 Get 的真实结果，不得直接重放示例。
+
+```json
+{
+  "story_id":"stealth_offtime",
+  "base_revision":214,
+  "idempotency_key":"insert-meimei-scene-r214",
+  "operations":[
+    {
+      "op":"upsert_character",
+      "character":{
+        "id":"meimei",
+        "name":"同事小美",
+        "description":"机灵的同事，撞见主角悄悄下班。",
+        "visual_description":"扎马尾，穿浅色针织开衫。"
+      }
+    },
+    {
+      "op":"add_segment",
+      "segment":{
+        "id":"meet_meimei",
+        "title":"楼梯间偶遇小美",
+        "script":"主角下楼时撞见小美，两人会心一笑。",
+        "kind":"scene",
+        "character_ids":["hero","meimei"]
+      }
+    },
+    {
+      "op":"update_choice",
+      "choice_id":"stairs_auto_end",
+      "changes":{"target_segment_id":"meet_meimei"}
+    },
+    {
+      "op":"add_choice",
+      "choice":{
+        "id":"meimei_leave",
+        "source_segment_id":"meet_meimei",
+        "target_segment_id":"ending_ontime",
+        "mode":"visible",
+        "text":"和小美一起离开",
+        "order":0,
+        "is_default":false
+      }
+    }
+  ]
+}
+```
 
 ### 省略、空值和 null
 

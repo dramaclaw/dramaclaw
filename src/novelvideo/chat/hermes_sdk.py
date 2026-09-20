@@ -629,6 +629,7 @@ class _StoryWriteContinuation:
                 event.status in {"completed", "failed"}
                 and payload.get("ok") is False
                 and payload.get("code") == "revision_conflict"
+                and payload.get("story_id") == self._story_id(self.write)
                 and type(revision) is int and revision >= 0
             ):
                 self.conflict_revision = revision
@@ -677,7 +678,17 @@ class _StoryWriteContinuation:
                 self.read_revision = revision
 
     def consume(self, event: ChatBackendEvent) -> bool:
-        if self.write is None or self.read_revision is None or self.outcome is None:
+        if self.write is None or self.outcome is None:
+            return False
+        # The 409 receipt already carries the canvas store's current revision.
+        # A conflict retry may use it directly; later stages and validation
+        # corrections still need a fresh read of the story.
+        base_revision = (
+            self.read_revision
+            if self.read_revision is not None
+            else self.conflict_revision if self.outcome == "conflict" else None
+        )
+        if base_revision is None:
             return False
         if self.outcome != "success" and self.used:
             return False
@@ -691,7 +702,7 @@ class _StoryWriteContinuation:
             or not self._scope(self.write)[0]
             or self._scope(event) != self._scope(self.write)
             or type(after.get("base_revision")) is not int
-            or after["base_revision"] != self.read_revision
+            or after["base_revision"] != base_revision
             or (self.outcome == "conflict" and after["base_revision"] == before.get("base_revision"))
             or not isinstance(key, str) or not key.strip()
             or key == before.get("idempotency_key")

@@ -568,8 +568,15 @@ def _story_patch_operations_schema() -> dict[str, Any]:
         properties: dict[str, Any],
         required: list[str],
     ) -> dict[str, Any]:
+        description = f"{op}: required payload fields: {', '.join(required)}."
+        if op.startswith("upsert_"):
+            description += (
+                f" Put the complete entity in '{required[0]}', never in 'changes'."
+                " When replacing an existing entity, preserve its other fields from Get."
+            )
         return {
             "type": "object",
+            "description": description,
             "additionalProperties": False,
             "properties": {"op": {"const": op}, **properties},
             "required": ["op", *required],
@@ -791,7 +798,12 @@ def build_tools(
             "dramaclaw_patch_interactive_story",
             schema(
                 "dramaclaw_patch_interactive_story",
-                "Apply one atomic StoryPatchV2 to an existing branching story. Merge all changes for the current user intent into this one call.",
+                "Apply one atomic StoryPatchV2 to an existing branching story. "
+                "Always supply a non-empty operations array along with story_id, base_revision and idempotency_key. "
+                "Merge all changes for the current user intent into this one call. "
+                "Only update_* operations use changes. upsert_character uses character, "
+                "upsert_variable uses variable, and upsert_flag uses flag (complete entities). "
+                "add_segment uses segment; add_choice uses choice.",
                 {
                     "project_id": {
                         "type": "string",
@@ -810,6 +822,12 @@ def build_tools(
                     },
                     "operations": {
                         "type": "array",
+                        "description": (
+                            "Required non-empty list of {op, ...payload} operations. "
+                            "Do not send a metadata-only Patch. Example: "
+                            '{"op":"upsert_character","character":{"id":"meimei","name":"小美"}}. '
+                            "Use each op's exact payload field; changes is only for update_* operations."
+                        ),
                         "minItems": 1,
                         "maxItems": 200,
                         "items": _story_patch_operations_schema(),

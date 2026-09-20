@@ -51,6 +51,57 @@ export interface VideoCaptureFrameResult {
   nodeId: string | null;
   /** 失败原因；成功时为 null。 */
   error: string | null;
+  reused?: boolean;
+}
+
+const pendingCaptures = new Map<string, Promise<VideoCaptureFrameResult>>();
+
+/** Reuse persisted captures across branches; failed captures are always retryable. */
+export async function getOrCaptureVideoFrame(
+  sourceNodeId: string,
+  mode: 'first' | 'last',
+  projectId?: string | null,
+  displayName = mode === 'last' ? '上一镜尾帧' : '视频首帧',
+): Promise<VideoCaptureFrameResult> {
+  const source = useCanvasStore.getState().nodes.find((node) => node.id === sourceNodeId);
+  const data = source?.data as Record<string, unknown> | undefined;
+  const videoUrl = data?.videoUrl;
+  if (typeof videoUrl !== 'string' || !videoUrl) {
+    return { nodeId: null, error: '上一镜头尚无视频，请先完成上一镜头。' };
+  }
+  const storyMedia = data?.storyMedia as { version?: unknown } | undefined;
+  const provenance = {
+    sourceVideoNodeId: sourceNodeId,
+    sourceVideoUrl: videoUrl,
+    sourceMediaVersion: storyMedia?.version ?? null,
+    sourceTaskJobId: data?.generationTaskJobId ?? null,
+    captureMode: mode,
+    seekSec: resolveCaptureSeekSec(mode, {
+      fallbackDurationSec: typeof data?.durationMs === 'number' ? data.durationMs / 1000 : null,
+    }),
+  };
+  const existing = useCanvasStore.getState().nodes.find((node) => {
+    const frame = node.data.videoFrameSource as Record<string, unknown> | undefined;
+    return node.data.imageUrl && frame && Object.entries(provenance).every(([key, value]) => frame[key] === value);
+  });
+  if (existing) return { nodeId: existing.id, error: null, reused: true };
+  const key = JSON.stringify([projectId || readUrl().project, readUrl().canvas, provenance]);
+  const pending = pendingCaptures.get(key);
+  if (pending) return pending;
+  const work = (async () => {
+    const result = await captureVideoFrameToNode(sourceNodeId, {
+      videoUrl, seekSec: provenance.seekSec, projectId, displayName,
+      requireUnchangedSource: true,
+    });
+    if (result.nodeId) {
+      useCanvasStore.getState().updateNodeData(result.nodeId, {
+        videoFrameSource: { ...provenance, capturedAt: new Date().toISOString() },
+      });
+    }
+    return result;
+  })();
+  pendingCaptures.set(key, work);
+  try { return await work; } finally { pendingCaptures.delete(key); }
 }
 
 /**
@@ -72,6 +123,8 @@ export async function captureVideoFrameToNode(
     videoUrl: string;
     seekSec: number;
     projectId?: string | null;
+    /** FMV reuse must not attach a frame after its source or canvas changed. */
+    requireUnchangedSource?: boolean;
     /** 结果节点标题（首帧/尾帧/当前帧，文案由调用方按各自 i18n 决定）。 */
     displayName: string;
   },
@@ -86,6 +139,7 @@ export async function captureVideoFrameToNode(
   const node = store.nodes.find((candidate) => candidate.id === sourceNodeId);
   if (!node) return { nodeId: null, error: null };
   const data = node.data as Record<string, unknown>;
+  const canvasAtStart = opts.requireUnchangedSource ? readUrl().canvas : null;
 
   try {
     const blob = await captureVideoFrameBlob(
@@ -104,6 +158,14 @@ export async function captureVideoFrameToNode(
         : (typeof data.aspectRatio === 'string' && data.aspectRatio) || '16:9';
 
     const done = useCanvasStore.getState();
+    if (opts.requireUnchangedSource) {
+      const current = done.nodes.find((candidate) => candidate.id === sourceNodeId);
+      if (readUrl().canvas !== canvasAtStart || !current ||
+          current.data.videoUrl !== data.videoUrl ||
+          current.data.generationTaskJobId !== data.generationTaskJobId) {
+        return { nodeId: null, error: '画布或来源视频已变化，请重新截帧。' };
+      }
+    }
     // exportImage（非 upload）：upload 节点没有 target handle（nodeRegistry.ts），
     // 下面的 addEdge 连不上、静默失效。exportImage 有 target handle 且不在上游
     // 白名单里，是抠图/旋转等派生图片流的统一落点。aspectRatioStrategy 取

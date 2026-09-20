@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.deps import resolve_project_scope
+from novelvideo.freezone.canvas_events import append_canvas_event, canvas_event_actor
 from novelvideo.interactive_story.models import (
     CreateInteractiveStoryRequest,
     GetInteractiveStoryRequest,
@@ -14,12 +17,15 @@ from novelvideo.interactive_story.models import (
     ValidateInteractiveStoryRequest,
 )
 from novelvideo.interactive_story.service import (
+    AGENT_CREATE_SAVE_SOURCE,
+    AGENT_PATCH_SAVE_SOURCE,
     InteractiveStoryService,
     InteractiveStoryServiceError,
 )
 from novelvideo.utils.async_ops import call_blocking
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _actor_id(user: dict) -> str:
@@ -68,6 +74,29 @@ def _require_story_id(path_story_id: str, body_story_id: str) -> None:
         )
 
 
+async def _record_story_save(service, body, result, user: dict, save_source: str) -> None:
+    if result.idempotent:
+        return
+    try:
+        await call_blocking(
+            append_canvas_event,
+            project_dir=service.project_dir,
+            project_id=service.project_id,
+            canvas_id=body.canvas_id,
+            event_type="canvas.saved",
+            actor=canvas_event_actor(user),
+            payload={
+                "revision": result.revision,
+                "base_revision": body.base_revision,
+                "client_save_id": body.idempotency_key,
+                "save_source": save_source,
+                "story_id": result.story_id,
+            },
+        )
+    except OSError:
+        logger.warning("story saved but canvas event append failed", exc_info=True)
+
+
 @router.post("/projects/{project}/interactive-stories", tags=["interactive-story"])
 async def create_interactive_story(
     project: str,
@@ -76,7 +105,9 @@ async def create_interactive_story(
 ):
     service = await _service(project, user, required_role="editor")
     try:
-        return await call_blocking(service.create, body)
+        result = await call_blocking(service.create, body)
+        await _record_story_save(service, body, result, user, AGENT_CREATE_SAVE_SOURCE)
+        return result
     except InteractiveStoryServiceError as exc:
         return _error_response(exc)
 
@@ -112,7 +143,9 @@ async def patch_interactive_story(
     _require_story_id(story_id, body.story_id)
     service = await _service(project, user, required_role="editor")
     try:
-        return await call_blocking(service.patch, body)
+        result = await call_blocking(service.patch, body)
+        await _record_story_save(service, body, result, user, AGENT_PATCH_SAVE_SOURCE)
+        return result
     except InteractiveStoryServiceError as exc:
         return _error_response(exc)
 

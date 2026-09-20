@@ -815,6 +815,14 @@ function editableSchemaForNode(node: CanvasNode): Record<string, CanvasEditableF
         displayName: { type: "string", label: "显示名称" },
         ...(storyClip
           ? {
+              continuityMode: {
+                type: 'enum' as const, label: '镜头承接', options: ['auto', 'independent'],
+                description: '用户要求连续镜头自动承接时，批量将相应视频节点设为 auto。生成时自动截取或复用上游当前视频尾帧并绑定，无需另行截图和连线；分支共用同一尾帧。换场或跳时间设 independent。不会自动切换已选模型或生成模式。',
+              },
+              continuitySourceNodeId: {
+                type: 'string' as const, label: '承接来源',
+                description: '多个上游汇合时指定要承接的视频节点 ID；唯一上游时留空。',
+              },
               narration: {
                 type: "string" as const,
                 label: "剧情内容",

@@ -73,7 +73,7 @@ export interface NodeDisplayData {
   workflowActionRunning?: boolean;
   workflowActionStartedAt?: number | null;
   /** 关键元素分类：用户把该节点标记为关键元素并归类（见 domain/keyElements）。
-   *  纯展示元数据、画布级持久化、工作流侧不读——未标记为 undefined/null。 */
+   *  影游自动承接会用已连入图片的分类说明参考用途；普通工作流不读。 */
   keyElementCategory?: KeyElementCategory | null;
   /** 未命名节点的自动序号：新建时写入，默认名后拼上它（「文本1」「文本2」…），
    *  避免同类型节点重名。用户改了 displayName 后这个序号就不再露出。
@@ -244,6 +244,10 @@ export interface VideoNodeData extends NodeDisplayData {
   storyCharacterIds?: string[];
   /** 供视频生产阶段使用的镜头、连续性等备注。 */
   storyProductionNotes?: string;
+  /** 连续性模式：auto 在生成时自动从选定上游推导开场参考；independent 为独立开场。 */
+  continuityMode?: 'auto' | 'independent';
+  /** 连续镜头有多个上游剧情分支时，手动指定的承接来源节点 ID。 */
+  continuitySourceNodeId?: string;
   /** 素材来源、任务状态和版本；播放器仍读取 videoUrl。 */
   storyMedia?: StoryMediaMetadata;
   /**

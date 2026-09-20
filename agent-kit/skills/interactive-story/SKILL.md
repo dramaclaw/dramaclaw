@@ -69,7 +69,7 @@ Create 成功后若校验发现的修复仍属于已批准大纲，先 Get 再 P
 1. 确认 story ID。未知时读取画布，查找 `data.storyGroup` 为 `true` 的分组，按 `data.label` 或 `data.displayName` 匹配，并使用 `data.interactiveStoryId`。不得把分组节点的 `id` 当作 `story_id`；多个分组匹配时请用户指定。
 2. 调用 `dramaclaw_get_interactive_story`，把返回的故事和 revision 视为权威状态。
 3. 目标和范围清楚时直接应用用户要求；只有意图含糊或操作会对请求范围外产生实质影响时才询问。优先使用明确指定或当前选中的片段；“丰富一点／润色”默认在现有片段内改写，不新增片段、连线、选择或改变时长预算。目标无法唯一确定时只询问要改哪个片段。结构扩写需先提出差异并取得确认；用户明确要求增删分支时按该范围执行。
-4. 同一用户意图的全部操作合并到一次 `dramaclaw_patch_interactive_story` 调用。
+4. 同一用户意图的全部操作合并到一次 `dramaclaw_patch_interactive_story` 调用。 提交前核对非空 `operations`，并按契约表检查每项载荷：只有 `update_*` 使用 `changes`；`upsert_character` / `upsert_variable` / `upsert_flag` 分别使用完整的 `character` / `variable` / `flag`。
 5. 成功后 Validate，并用面向故事的名称解释结果。
 
 既有故事编辑使用 Patch，不用 Create 重建。写入前对照本次目标检查操作集合，省略不需改动的字段；仅改提示词时只更新目标片段的 `video_prompt`，保留剧情、选项、媒体和制作参数。

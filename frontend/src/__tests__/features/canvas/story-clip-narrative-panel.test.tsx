@@ -16,6 +16,11 @@ const translations: Record<string, string> = {
   'canvas.story.mediaState.missing': '待制作视频',
   'canvas.story.mediaState.ready': '视频已就绪',
   'canvas.story.reviewRequired': '需检查',
+  'canvas.story.waitingBehavior': '等待选择时',
+  'canvas.story.continuity.label': '镜头承接',
+  'canvas.story.continuity.independent': '独立开场',
+  'canvas.story.continuity.auto': '自动承接',
+  'canvas.story.continuity.source': '承接来源',
   'canvas.story.choiceLoop.label': '选择循环',
   'canvas.story.choiceLoop.freezeTail': '停在尾帧',
   'canvas.story.choiceLoop.hint': '等待选择时循环播放',
@@ -31,6 +36,47 @@ vi.mock('react-i18next', () => ({
 }));
 
 describe('StoryClipNarrativePanel', () => {
+  it('allows independent and automatic openings without changing loop playback', () => {
+    const previous = useCanvasStore.getState();
+    const clip = { id: 'clip', type: CANVAS_NODE_TYPES.video, position: { x: 400, y: 0 },
+      data: { continuityMode: 'auto', choiceLoopVideoUrl: '/loop.mp4' } } as CanvasNode;
+    const source = { id: 'source', type: CANVAS_NODE_TYPES.video, position: { x: 0, y: 0 },
+      data: { displayName: '上一镜头', videoUrl: '/previous.mp4' } } as CanvasNode;
+    useCanvasStore.setState({ nodes: [clip, source], edges: [
+      { id: 'incoming', source: 'source', target: 'clip', type: 'storyChoiceEdge' },
+    ] });
+    const onChange = vi.fn();
+    try {
+      render(<StoryClipNarrativePanel nodeId="clip" mediaState="ready" onChange={onChange} />);
+      expect(screen.getByRole('button', { name: '自动承接' })).toHaveAttribute('aria-pressed', 'true');
+      fireEvent.click(screen.getByRole('button', { name: '独立开场' }));
+      expect(onChange).toHaveBeenLastCalledWith({ continuityMode: 'independent', continuitySourceNodeId: '' });
+      fireEvent.click(screen.getByRole('button', { name: '自动承接' }));
+      expect(onChange).toHaveBeenLastCalledWith({ continuityMode: 'auto', continuitySourceNodeId: 'source' });
+    } finally { useCanvasStore.setState({ nodes: previous.nodes, edges: previous.edges }); }
+  });
+
+  it('requires a source selection at a merge and disables continuity at the story start', () => {
+    const previous = useCanvasStore.getState();
+    const nodes = ['clip', 'a', 'b'].map((id) => ({ id, type: CANVAS_NODE_TYPES.video,
+      position: { x: 0, y: 0 }, data: { displayName: id, continuityMode: 'auto' } } as CanvasNode));
+    useCanvasStore.setState({ nodes, edges: ['a', 'b'].map((source) => ({
+      id: source, source, target: 'clip', type: 'storyChoiceEdge',
+    })) });
+    const onChange = vi.fn();
+    try {
+      const { unmount } = render(<StoryClipNarrativePanel nodeId="clip" mediaState="ready" onChange={onChange} />);
+      expect(screen.getByLabelText('承接来源')).toHaveValue('');
+      fireEvent.change(screen.getByLabelText('承接来源'), { target: { value: 'b' } });
+      expect(onChange).toHaveBeenLastCalledWith({ continuitySourceNodeId: 'b' });
+      unmount();
+      useCanvasStore.setState({ nodes: [{ ...nodes[0]!, data: { storyRole: 'start' } }], edges: [] });
+      render(<StoryClipNarrativePanel nodeId="clip" mediaState="ready" onChange={onChange} />);
+      expect(screen.getByRole('button', { name: '自动承接' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: '独立开场' })).toHaveAttribute('aria-pressed', 'true');
+    } finally { useCanvasStore.setState({ nodes: previous.nodes, edges: previous.edges }); }
+  });
+
   it('CTA edits preserve the destination and reject invalid URLs', () => {
     const previous = useCanvasStore.getState();
     useCanvasStore.setState({ nodes: [{
@@ -134,6 +180,7 @@ describe('StoryClipNarrativePanel', () => {
     const onChange = vi.fn();
     try {
       render(<StoryClipNarrativePanel nodeId="clip" mediaState="ready" onChange={onChange} />);
+      expect(screen.getByRole('group', { name: '等待选择时' })).toBeInTheDocument();
       expect(screen.queryByLabelText('选择循环')).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: 'canvas.story.loopVideo' }));
       expect(onChange).not.toHaveBeenCalled();

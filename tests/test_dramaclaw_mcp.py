@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 import json
+from pathlib import Path
+import re
 
 import pytest
 from jsonschema import Draft202012Validator
@@ -19,6 +21,7 @@ from novelvideo.interactive_story.models import (
     StoryDraftV2,
     StoryFlag,
     StoryMediaRef,
+    StoryPatchV2,
     StorySegment,
     StorySegmentChanges,
     StoryVariable,
@@ -85,6 +88,51 @@ def test_patch_schema_describes_strict_operation_envelopes(monkeypatch):
         "target_segment_id",
         "order",
     ]
+
+
+def test_documented_patch_examples_validate_and_insert_a_connected_scene(monkeypatch):
+    from novelvideo.interactive_story.service import apply_story_patch
+
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    monkeypatch.setenv("DRAMACLAW_CHAT_SURFACE", "freezone")
+    root = Path(__file__).resolve().parents[1]
+    relative = Path("interactive-story/references/story-contract.md")
+    contract = (root / "agent-kit/skills" / relative).read_text()
+    assert contract == (root / "src/novelvideo/agent_skills" / relative).read_text()
+    examples = [json.loads(block) for block in re.findall(r"```json\n(.*?)\n```", contract, re.S)]
+    patches = [example for example in examples if "operations" in example]
+    assert len(patches) >= 2
+    validator = Draft202012Validator(_story_tool_schemas()["dramaclaw_patch_interactive_story"])
+    for patch in patches:
+        validator.validate(patch)
+
+    example = next(patch for patch in patches if any(
+        operation["op"] == "upsert_character" for operation in patch["operations"]
+    ))
+    story = StoryDraftV2.model_validate({
+        "story_id": "stealth_offtime", "revision": 214, "title": "偷偷下班",
+        "start_segment_id": "stairs", "characters": [{"id": "hero", "name": "主角"}],
+        "segments": [
+            {"id": "stairs", "title": "走楼梯", "script": "主角下楼。", "kind": "scene"},
+            {"id": "ending_ontime", "title": "准时下班", "script": "离开大楼。", "kind": "ending", "ending_label": "准时下班"},
+        ],
+        "choices": [{"id": "stairs_auto_end", "source_segment_id": "stairs",
+                     "target_segment_id": "ending_ontime", "mode": "automatic", "order": 0}],
+    })
+    result = apply_story_patch(story, StoryPatchV2.model_validate({**example, "canvas_id": "canvas-a"}))
+    assert {character.id for character in result.characters} == {"hero", "meimei"}
+    assert {choice.source_segment_id: choice.target_segment_id for choice in result.choices} == {
+        "stairs": "meet_meimei", "meet_meimei": "ending_ontime",
+    }
+    missing_operations = {key: value for key, value in example.items() if key != "operations"}
+    with pytest.raises(ValidationError):
+        validator.validate(missing_operations)
+    wrong_envelope = deepcopy(example)
+    character = wrong_envelope["operations"][0].pop("character")
+    wrong_envelope["operations"][0]["changes"] = character
+    with pytest.raises(ValidationError):
+        validator.validate(wrong_envelope)
 
 
 def test_create_schema_exposes_complete_story_contract(monkeypatch):

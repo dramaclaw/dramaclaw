@@ -39,3 +39,36 @@
     linear-gradient(135deg, transparent 45%, rgb(var(--text-rgb) / .7) 45%, rgb(var(--text-rgb) / .7) 65%, transparent 65%) right 3px bottom 3px / 4px 4px no-repeat;
   border: 0;
 }
+
+.modeButton {
+  border: 1px solid var(--ui-border-soft);
+  border-radius: var(--ui-radius-pill);
+  padding: 4px 11px;
+  background: rgb(var(--text-rgb) / .035);
+  color: rgb(var(--text-rgb));
+  font-size: 12px;
+  line-height: 1.5;
+  transition: background var(--duration-fast), border-color var(--duration-fast);
+}
+
+.modeButton:hover:not(:disabled) { background: rgb(var(--text-rgb) / .08); }
+.modeButton[aria-pressed='true'] {
+  border-color: rgb(var(--accent-rgb) / .5);
+  background: rgb(var(--accent-rgb) / .15);
+}
+.modeButton:disabled { opacity: .4; cursor: not-allowed; }
+.modeButton:focus-visible, .sourceSelect:focus-visible {
+  outline: 2px solid rgb(var(--accent-rgb));
+  outline-offset: 2px;
+}
+.sourceSelect {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--ui-border-soft);
+  border-radius: var(--ui-radius-lg);
+  background: rgb(var(--surface-rgb));
+  color: rgb(var(--text-rgb));
+  font-size: 12px;
+}

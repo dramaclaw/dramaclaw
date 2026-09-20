@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { useVideoContinuityMode } from "@/features/canvas/nodes/shared/useVideoContinuityMode";
+import { ensureVideoContinuity, videoContinuitySources } from "@/features/canvas/application/videoContinuity";
 import { selectVideoModel } from "@/features/canvas/domain/catalogVideoModels";
 import { compileWorkflowNodePrompt } from "@/features/canvas/application/workflowRecipeRuntime";
 import {
@@ -702,6 +704,9 @@ export const VideoNode = memo(
       () => selectVideoModel(availableVideoModels, data.model),
       [availableVideoModels, data.model],
     );
+    const isFmvNode = useVideoContinuityMode(id, data, selectedVideoModel, updateNodeData);
+    const usesFmvContinuity = isFmvNode && (data.continuityMode === "auto" || data.continuityMode === "independent");
+    const fmvAutoContinuity = isFmvNode && data.continuityMode === "auto" && data.storyRole !== "start";
     const modelId = selectedVideoModel?.id ?? "";
     const selectedVideoModelId = selectedVideoModel?.apiModel ?? selectedVideoModel?.id ?? modelId;
     const isHappyHorseModel = isHappyHorseVideoModel(selectedVideoModelId);
@@ -1535,6 +1540,7 @@ export const VideoNode = memo(
     // 静默截断 / 触发上游互斥报错）。
     useEffect(() => {
       if (!isHappyHorseModel) return;
+      if (fmvAutoContinuity) return;
       const { images, videos } = upstreamTypeCounts;
       let target: VideoGenMode;
       if (videos > 0) {
@@ -1558,6 +1564,7 @@ export const VideoNode = memo(
         updateNodeData(id, { genMode: target });
       }
     }, [
+      fmvAutoContinuity,
       genMode,
       id,
       isHappyHorseModel,
@@ -1758,10 +1765,11 @@ export const VideoNode = memo(
     // 看到素材还在便不再改写。
     useEffect(() => {
       if (isHappyHorseModel) return;
-      const target = videoNoUpstreamResetMode(genMode, upstreamTypeCounts);
+      const target = videoNoUpstreamResetMode(genMode, upstreamTypeCounts, fmvAutoContinuity);
       if (!target) return;
       updateNodeData(id, { genMode: target }, { recordHistory: false });
     }, [
+      fmvAutoContinuity,
       genMode,
       isHappyHorseModel,
       upstreamTypeCounts,
@@ -2002,6 +2010,10 @@ export const VideoNode = memo(
     // 全能参考是唯一两条都要的模式，所以这里不能写成「要提示词的就只看提示词」。
     const hasPromptText =
       prompt.trim().length > 0 || upstreamTextJoined.length > 0;
+    const canPrepareContinuity = useCanvasStore((state) => {
+      const sources = videoContinuitySources(id, state.nodes, state.edges);
+      return sources.length === 1 && Boolean(sources[0]?.data.videoUrl) && !sources[0]?.data.isGenerating;
+    });
     const hasRequiredMediaForMode =
       genMode === "videoEdit"
         ? upstreamCounts.videos > 0
@@ -2096,7 +2108,7 @@ export const VideoNode = memo(
       // prompt，omni 端点又没素材可发）。写成三元的时候，全能参考只看提示词，素材撤空后
       // 按钮仍是可点态，点下去被 handleSubmit 的 references.length === 0 静默拦掉。
       (videoModeRequiresPrompt(genMode) && !hasPromptText) ||
-      (videoModeRequiresMedia(genMode) && !hasRequiredMediaForMode);
+      (videoModeRequiresMedia(genMode) && !hasRequiredMediaForMode && !canPrepareContinuity);
 
     const handleSubmit = useCallback(async () => {
       if (submitDisabled) return;
@@ -2124,7 +2136,7 @@ export const VideoNode = memo(
       // 运镜 fragment 拼接到最终 prompt 的开头；上游 text 在前、用户自己写
       // 的 prompt 在后，两段以 \n\n 隔开（与 ImageGenNode/ImageEditNode 一致）。
       const fragment = cameraMovementPreset?.promptFragment;
-      const trimmedPrompt = prompt.trim();
+      let trimmedPrompt = prompt.trim();
       const userPrompt = [upstreamTextJoined, trimmedPrompt]
         .filter((s) => s.length > 0)
         .join("\n\n");
@@ -2134,6 +2146,24 @@ export const VideoNode = memo(
           : fragment
         : userPrompt;
       try {
+        let submitFallbackPrompt = fallbackPrompt;
+        if (usesFmvContinuity) {
+          await ensureVideoContinuity(id, projectId);
+          const liveState = useCanvasStore.getState();
+          const liveReferences = videoReferenceNodesInEdgeOrder(liveState.nodes, liveState.edges, id);
+          const liveCounts = { images: 0, videos: 0, audios: 0 };
+          for (const node of liveReferences) {
+            if (referenceVideoUrl(node)) liveCounts.videos += 1;
+            else if (isAudioNode(node) && node.data.audioUrl) liveCounts.audios += 1;
+            else if (referenceImageUrl(node)) liveCounts.images += 1;
+          }
+          const liveReferenceError = selectedVideoModelReferenceDisabledReason(selectedVideoModel, liveCounts, genMode, t);
+          const liveMediaError = videoSubmitMediaRejectionReason(genMode, selectedVideoModel, liveCounts);
+          if (liveReferenceError || liveMediaError) throw new Error(liveReferenceError || t(liveMediaError!));
+          trimmedPrompt = String(useCanvasStore.getState().nodes.find((node) => node.id === id)?.data.prompt ?? prompt).trim();
+          const continuityFallback = [upstreamTextJoined, trimmedPrompt].filter(Boolean).join("\n\n");
+          if (continuityFallback) submitFallbackPrompt = fragment ? `${fragment}，${continuityFallback}` : continuityFallback;
+        }
         const composedPrompt = await compileWorkflowNodePrompt({
           nodeId: id,
           nodeData: data,
@@ -2141,7 +2171,7 @@ export const VideoNode = memo(
           nodePrompt: trimmedPrompt,
           upstreamText: upstreamTextJoined,
           upstreamContents,
-          fallbackPrompt,
+          fallbackPrompt: submitFallbackPrompt,
           onCompileMetadata: ({ mode, prompt: compiledPrompt, recipeIds }) => updateNodeData(id, {
             workflowRecipeCompileMode: mode,
             workflowRecipeCompiledAt: new Date().toISOString(),
@@ -2770,7 +2800,13 @@ export const VideoNode = memo(
         void refreshHistory();
       } catch (error) {
         console.error("[video-node] video gen failed", error);
-        updateNodeData(id, { isGenerating: false, generationStartedAt: null });
+        if (usesFmvContinuity) {
+          const message = error instanceof Error ? error.message : String(error);
+          updateNodeData(id, { isGenerating: false, generationStartedAt: null, generationError: message });
+          toast.error(message);
+        } else {
+          updateNodeData(id, { isGenerating: false, generationStartedAt: null });
+        }
         setAlbumPendingTotal(id, 0);
       }
       } finally {
@@ -2793,6 +2829,7 @@ export const VideoNode = memo(
       genMode,
       humanReview,
       id,
+      usesFmvContinuity,
       isSeedance20Model,
       supportsAllReference,
       supportsHumanReview,

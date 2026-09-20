@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { memo, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
-import { Clapperboard, FileText, Film, MousePointerClick, Repeat2 } from 'lucide-react';
+import { Clapperboard, FileText, Film, Link2, MousePointerClick, Repeat2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-import type { VideoNodeData } from '@/features/canvas/domain/canvasNodes';
+import { CANVAS_NODE_TYPES, type VideoNodeData } from '@/features/canvas/domain/canvasNodes';
 import { STORY_CLIP_DETAILS_WIDTH_PERCENT } from '@/features/canvas/story/storyClipLayout';
 import { STORY_CHOICE_EDGE_TYPE } from '@/features/canvas/story/storyTypes';
 import {
@@ -53,10 +53,23 @@ export const StoryClipNarrativePanel = memo(function StoryClipNarrativePanel({
   const [notesDraft, setNotesDraft] = useState(productionNotes);
   const [loopPickerOpen, setLoopPickerOpen] = useState(false);
   const nodes = useCanvasStore((state) => state.nodes);
+  const edges = useCanvasStore((state) => state.edges);
   const hasOutgoingChoices = useCanvasStore((state) =>
     state.edges.some((edge) => edge.type === STORY_CHOICE_EDGE_TYPE && edge.source === nodeId),
   );
   const nodeData = nodes.find((node) => node.id === nodeId)?.data as VideoNodeData | undefined;
+  const continuityCandidates = useMemo(() => {
+    if (nodeData?.storyRole === 'start') return [];
+    const sourceIds = new Set(edges.filter((edge) => edge.target === nodeId && edge.source !== nodeId &&
+      (edge.type === STORY_CHOICE_EDGE_TYPE || edge.data?.link_type === 'dependency_for'))
+      .map((edge) => edge.source));
+    return nodes.filter((node) => sourceIds.has(node.id) && node.type === CANVAS_NODE_TYPES.video);
+  }, [nodes, edges, nodeId, nodeData?.storyRole]);
+  const autoContinuity = nodeData?.storyRole !== 'start' && (nodeData?.continuityMode === 'auto' ||
+    (nodeData?.continuityMode !== 'independent' && continuityCandidates.some((node) =>
+      edges.some((edge) => edge.source === node.id && edge.target === nodeId && edge.data?.link_type === 'dependency_for'))));
+  const continuitySource = continuityCandidates.find((node) => node.id === nodeData?.continuitySourceNodeId)
+    ?? (continuityCandidates.length === 1 ? continuityCandidates[0] : undefined);
   const [ctaUrlDraft, setCtaUrlDraft] = useState(nodeData?.storyCta?.url ?? '');
   useEffect(() => setCtaUrlDraft(nodeData?.storyCta?.url ?? ''), [nodeData?.storyCta?.url, nodeId]);
   const loopCandidates = useMemo(
@@ -152,6 +165,45 @@ export const StoryClipNarrativePanel = memo(function StoryClipNarrativePanel({
           />
           </div>
         </label>
+
+        <fieldset className="flex min-w-0 shrink-0 flex-col gap-1.5">
+          <legend className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-text-muted">
+            <Link2 className="h-3.5 w-3.5" aria-hidden="true" />
+            {t('canvas.story.continuity.label')}
+          </legend>
+          <div className="flex flex-wrap gap-1">
+            <button type="button" className={styles.modeButton} aria-pressed={!autoContinuity}
+              onClick={() => onChange({ continuityMode: 'independent', continuitySourceNodeId: '' })}>
+              {t('canvas.story.continuity.independent')}
+            </button>
+            <button type="button" className={styles.modeButton} aria-pressed={autoContinuity}
+              disabled={continuityCandidates.length === 0}
+              onClick={() => onChange({ continuityMode: 'auto', continuitySourceNodeId: continuitySource?.id ?? '' })}>
+              {t('canvas.story.continuity.auto')}
+            </button>
+          </div>
+          {autoContinuity && continuityCandidates.length > 1 && (
+            <label className="flex min-w-0 flex-col gap-1.5 text-xs text-text-dark/75">
+              {t('canvas.story.continuity.source')}
+              <select className={styles.sourceSelect} value={continuitySource?.id ?? ''}
+                onChange={(event) => onChange({ continuitySourceNodeId: event.target.value })}>
+                <option value="">{t('canvas.story.continuity.chooseSource')}</option>
+                {continuityCandidates.map((node) => <option key={node.id} value={node.id}>
+                  {String(node.data.displayName || t('canvas.story.continuity.untitled'))}
+                </option>)}
+              </select>
+            </label>
+          )}
+          <span className="text-xs leading-5 text-text-dark/75">
+            {continuityCandidates.length === 0
+              ? t('canvas.story.continuity.noSource')
+              : autoContinuity
+                ? continuitySource
+                  ? t('canvas.story.continuity.sourceHint', { name: continuitySource.data.displayName || t('canvas.story.continuity.untitled') })
+                  : t('canvas.story.continuity.chooseSource')
+                : t('canvas.story.continuity.independentHint')}
+          </span>
+        </fieldset>
 
         {!hasOutgoingChoices && <fieldset className="min-w-0 shrink-0 text-xs text-text-dark">
           <legend className="mb-3 flex items-center gap-1.5 text-xs font-medium text-text-muted">

@@ -73,6 +73,7 @@ import {
   captureVideoFrameToNode,
   resolveCaptureSeekSec,
 } from "@/features/canvas/application/videoCaptureFrame";
+import { ensureVideoContinuity, isFmvVideoNode, videoContinuitySources } from "@/features/canvas/application/videoContinuity";
 import { dedupeGenerationErrors } from "@/features/canvas/application/generationErrorReport";
 
 export const CANVAS_CHAT_COMMANDS_SCHEMA_VERSION = "canvas_chat_commands.v1";
@@ -2650,8 +2651,8 @@ function orderedNodeActionsByCanvasEdges(actions: PendingNodeAction[]): {
   const dependenciesByNodeId = new Map<string, Set<string>>();
   const graph = new Map<string, string[]>();
   for (const edge of state.edges) {
-    // Playback choices (including replay) do not impose generation dependencies.
-    if (edge.type === STORY_CHOICE_EDGE_TYPE) continue;
+    // Only explicitly continuous story shots impose generation dependencies.
+    if (edge.type === STORY_CHOICE_EDGE_TYPE && !videoContinuitySources(edge.target, state.nodes, state.edges).some((node) => node.id === edge.source)) continue;
     const targets = graph.get(edge.source) ?? [];
     targets.push(edge.target);
     graph.set(edge.source, targets);
@@ -3287,7 +3288,19 @@ async function executeQueuedNodeActions(
               }
             }
 
-            await ensureVideoContinuityTailFrames(action, projectId);
+            try {
+              if (action.action === "generate_video") {
+                const target = nodeById(action.nodeId);
+                if (target && isFmvVideoNode(target, useCanvasStore.getState().edges) &&
+                    (target.data.continuityMode === "auto" || target.data.continuityMode === "independent")) {
+                  await ensureVideoContinuity(action.nodeId, projectId);
+                } else {
+                  await ensureVideoContinuityTailFrames(action, projectId);
+                }
+              }
+            } catch (error) {
+              return { action, failed: errorMessage(error), retryCount };
+            }
 
             if (action.action === "generate_audio" && !hydrateWorkflowAudioInput(action.nodeId)) {
               return {

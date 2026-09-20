@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { useVideoContinuityMode } from "@/features/canvas/nodes/shared/useVideoContinuityMode";
+import { ensureVideoContinuity, videoContinuitySources } from "@/features/canvas/application/videoContinuity";
 import { selectVideoModel } from "@/features/canvas/domain/catalogVideoModels";
+import type { TFunction } from "i18next";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -159,23 +162,24 @@ function selectedVideoModelReferenceDisabledReason(
   model: ModelOption | null | undefined,
   counts: { images: number; videos: number; audios: number },
   mode: VideoGenMode,
+  t: TFunction,
 ): string | null {
   const capabilityReason = videoModelReferenceDisabledReason(model, counts);
-  if (capabilityReason) return capabilityReason;
+  if (capabilityReason) return t(capabilityReason);
   const caps = referenceCapsForMode(model, mode);
   if (!caps) return null;
   if (counts.images > caps.image) {
-    return `该模型最多支持 ${caps.image} 张图片素材`;
+    return t("node.videoModel.reason.maxImages", { count: caps.image });
   }
   if (counts.videos > caps.video) {
     return caps.video === 0
-      ? "该模型不支持视频素材"
-      : `该模型最多支持 ${caps.video} 个视频素材`;
+      ? t("node.videoModel.reason.videoUnsupported")
+      : t("node.videoModel.reason.maxVideos", { count: caps.video });
   }
   if (counts.audios > caps.audio) {
     return caps.audio === 0
-      ? "该模型不支持音频素材"
-      : `该模型最多支持 ${caps.audio} 个音频素材`;
+      ? t("node.videoModel.reason.audioUnsupported")
+      : t("node.videoModel.reason.maxAudios", { count: caps.audio });
   }
   return null;
 }
@@ -468,6 +472,9 @@ export function useVideoGenerationForm(
     () => selectVideoModel(availableVideoModels, data.model),
     [availableVideoModels, data.model],
   );
+  const isFmvNode = useVideoContinuityMode(id, data, selectedVideoModel, updateNodeData);
+  const usesFmvContinuity = isFmvNode && (data.continuityMode === "auto" || data.continuityMode === "independent");
+  const fmvAutoContinuity = isFmvNode && data.continuityMode === "auto" && data.storyRole !== "start";
   const modelId = selectedVideoModel?.id ?? "";
   const selectedVideoModelId = selectedVideoModel?.apiModel ?? selectedVideoModel?.id ?? modelId;
   const isHappyHorseModel = isHappyHorseVideoModel(selectedVideoModelId);
@@ -1008,6 +1015,7 @@ export function useVideoGenerationForm(
   // 静默截断 / 触发上游互斥报错）。
   useEffect(() => {
     if (!isHappyHorseModel) return;
+    if (fmvAutoContinuity) return;
     const { images, videos } = upstreamTypeCounts;
     let target: VideoGenMode;
     if (videos > 0) {
@@ -1026,6 +1034,7 @@ export function useVideoGenerationForm(
       updateNodeData(id, { genMode: target });
     }
   }, [
+    fmvAutoContinuity,
     genMode,
     id,
     isHappyHorseModel,
@@ -1154,6 +1163,10 @@ export function useVideoGenerationForm(
   }, [genMode, isHappyHorseModel, upstreamCounts.images, id, updateNodeData]);
 
   const hasPromptText = prompt.trim().length > 0 || upstreamTextJoined.length > 0;
+  const canPrepareContinuity = useCanvasStore((state) => {
+    const sources = videoContinuitySources(id, state.nodes, state.edges);
+    return sources.length === 1 && Boolean(sources[0]?.data.videoUrl) && !sources[0]?.data.isGenerating;
+  });
   const hasRequiredMediaForMode =
     genMode === "videoEdit"
       ? upstreamCounts.videos > 0
@@ -1169,6 +1182,7 @@ export function useVideoGenerationForm(
     selectedVideoModel,
     upstreamCounts,
     genMode,
+    t,
   );
   const submitDisabled =
     isGenerating ||
@@ -1178,7 +1192,7 @@ export function useVideoGenerationForm(
     mediaRejectionReason != null ||
     (videoModeRequiresPrompt(genMode)
       ? !hasPromptText
-      : !hasRequiredMediaForMode);
+      : !hasRequiredMediaForMode && !canPrepareContinuity);
 
   const handleSubmit = useCallback(async (): Promise<{ videoUrl?: string }> => {
     if (billingRuleMissingSubmitMessage) {
@@ -1216,7 +1230,7 @@ export function useVideoGenerationForm(
     // 运镜 fragment 拼接到最终 prompt 的开头；上游 text 在前、用户自己写
     // 的 prompt 在后，两段以 \n\n 隔开（与 ImageGenNode/ImageEditNode 一致）。
     const fragment = cameraMovementPreset?.promptFragment;
-    const trimmedPrompt = prompt.trim();
+    let trimmedPrompt = prompt.trim();
     const userPrompt = [upstreamTextJoined, trimmedPrompt]
       .filter((s) => s.length > 0)
       .join("\n\n");
@@ -1227,6 +1241,24 @@ export function useVideoGenerationForm(
       : userPrompt;
     try {
       // 工作流配方节点用配方编译出的最终 prompt；非配方节点回落上面这段拼接。
+      let submitFallbackPrompt = fallbackPrompt;
+      if (usesFmvContinuity) {
+        await ensureVideoContinuity(id, projectId);
+        const liveState = useCanvasStore.getState();
+        const liveReferences = videoReferenceNodesInEdgeOrder(liveState.nodes, liveState.edges, id);
+        const liveCounts = { images: 0, videos: 0, audios: 0 };
+        for (const node of liveReferences) {
+          if (referenceVideoUrl(node)) liveCounts.videos += 1;
+          else if (isAudioNode(node) && node.data.audioUrl) liveCounts.audios += 1;
+          else if (referenceImageUrl(node)) liveCounts.images += 1;
+        }
+        const liveReferenceError = selectedVideoModelReferenceDisabledReason(selectedVideoModel, liveCounts, genMode, t);
+        const liveMediaError = videoSubmitMediaRejectionReason(genMode, selectedVideoModel, liveCounts);
+        if (liveReferenceError || liveMediaError) throw new Error(liveReferenceError || t(liveMediaError!));
+        trimmedPrompt = String(useCanvasStore.getState().nodes.find((node) => node.id === id)?.data.prompt ?? prompt).trim();
+        const continuityFallback = [upstreamTextJoined, trimmedPrompt].filter(Boolean).join("\n\n");
+        if (continuityFallback) submitFallbackPrompt = fragment ? `${fragment}，${continuityFallback}` : continuityFallback;
+      }
       const composedPrompt = await compileWorkflowNodePrompt({
         nodeId: id,
         nodeData: data,
@@ -1234,7 +1266,7 @@ export function useVideoGenerationForm(
         nodePrompt: trimmedPrompt,
         upstreamText: upstreamTextJoined,
         upstreamContents,
-        fallbackPrompt,
+        fallbackPrompt: submitFallbackPrompt,
         referenceMedia: referenceMediaCapInfo.map((entry) => ({
           kind: entry.item.kind,
           label: formatReferenceMediaCompilerLabel(entry),
@@ -1812,7 +1844,9 @@ export function useVideoGenerationForm(
       return completedUrls[0] ? { videoUrl: completedUrls[0] } : {};
     } catch (error) {
       console.error("[video-node] video gen failed", error);
-      updateNodeData(id, CLEARED_GENERATION_TASK_FIELDS);
+      updateNodeData(id, usesFmvContinuity
+        ? { ...CLEARED_GENERATION_TASK_FIELDS, generationError: error instanceof Error ? error.message : String(error) }
+        : CLEARED_GENERATION_TASK_FIELDS);
       setAlbumPendingTotal(id, 0);
     }
     } finally {
@@ -1834,6 +1868,7 @@ export function useVideoGenerationForm(
     genMode,
     humanReview,
     id,
+    usesFmvContinuity,
     isSeedance20Model,
     supportsHumanReview,
     modelId,
@@ -1845,6 +1880,7 @@ export function useVideoGenerationForm(
     sceneOptimize,
     billingRuleMissingSubmitMessage,
     submitDisabled,
+    t,
     updateNodeData,
     upstreamTextJoined,
   ]);

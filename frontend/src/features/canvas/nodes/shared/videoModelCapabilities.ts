@@ -293,7 +293,10 @@ export function videoModeRequiresMedia(mode: VideoGenMode): boolean {
 export function videoNoUpstreamResetMode(
   mode: VideoGenMode,
   counts: { images: number; videos: number; audios: number },
+  pendingContinuityFrame = false,
 ): VideoGenMode | null {
+  // Automatic continuity attaches its image only when generation starts.
+  if (pendingContinuityFrame) return null;
   if (counts.images > 0 || counts.videos > 0 || counts.audios > 0) return null;
   return mode === "textToVideo" ? null : "textToVideo";
 }

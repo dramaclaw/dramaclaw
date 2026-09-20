@@ -41,7 +41,7 @@ def recovery(write=PATCH):
         read["revision"] = 2
     return [
         start(write, "write-1", args),
-        finish("write-1", {"ok": False, "code": "revision_conflict", "current_revision": 2}),
+        finish("write-1", {"ok": False, "code": "revision_conflict", "story_id": "story-a", "current_revision": 2}),
         start(GET if write == PATCH else CANVAS, "read-1", {"story_id": "story-a"} if write == PATCH else {}),
         finish("read-1", read),
         start(write, "write-2", {**args, "base_revision": 2, "idempotency_key": "story-rebased-02"}),
@@ -85,13 +85,20 @@ async def test_allows_one_confirmed_story_conflict_recovery(monkeypatch, write, 
     close.assert_not_called()
 
 
+@pytest.mark.parametrize("write", [CREATE, PATCH])
+async def test_conflict_receipt_allows_direct_rebased_retry_without_get(monkeypatch, write):
+    updates = recovery(write)
+    del updates[2:4]
+    events, close = await run_stream(monkeypatch, updates)
+    assert any(e.type == "tool_started" and e.call_id == "write-2" for e in events)
+    close.assert_not_called()
+
+
 @pytest.mark.parametrize("case", [
     "success", "unknown", "idempotency_conflict", "invalid_story", "cancelled",
-    "no_read", "read_before_conflict", "read_failed", "wrong_read_call",
-    "wrong_conflict_call", "wrong_story", "wrong_canvas", "wrong_project",
-    "stale_revision", "same_key", "other_write", "read_not_completed",
-    "wrong_read_story", "wrong_read_canvas", "read_older_than_conflict",
-    "boolean_revision", "mainline_write", "cached_conflict", "cached_read",
+    "wrong_conflict_call", "wrong_conflict_story", "missing_conflict_revision",
+    "wrong_story", "wrong_project", "stale_revision", "same_key", "other_write",
+    "boolean_revision", "mainline_write", "cached_conflict",
 ])
 async def test_keeps_unsafe_or_unrelated_retries_blocked(monkeypatch, case):
     updates = recovery()
@@ -103,20 +110,16 @@ async def test_keeps_unsafe_or_unrelated_retries_blocked(monkeypatch, case):
         updates[1]["rawOutput"]["code"] = case
     elif case == "cancelled":
         updates[1]["status"] = "cancelled"
-    elif case == "no_read":
-        del updates[2:4]
-    elif case == "read_before_conflict":
-        updates = updates[2:4] + updates[:2] + updates[4:]
-    elif case == "read_failed":
-        updates[3]["rawOutput"]["ok"] = False
-    elif case == "wrong_read_call":
-        updates[3]["toolCallId"] = "unrelated"
     elif case == "wrong_conflict_call":
         updates[1]["toolCallId"] = "unrelated"
+    elif case == "wrong_conflict_story":
+        updates[1]["rawOutput"]["story_id"] = "story-b"
+        del updates[2:4]
+    elif case == "missing_conflict_revision":
+        del updates[1]["rawOutput"]["current_revision"]
+        del updates[2:4]
     elif case == "wrong_story":
         updates[-1]["rawInput"]["story_id"] = "story-b"
-    elif case == "wrong_canvas":
-        updates[2]["rawInput"]["canvas_id"] = "other"
     elif case == "wrong_project":
         updates[-1]["rawInput"]["project_id"] = "other"
     elif case == "stale_revision":
@@ -125,22 +128,13 @@ async def test_keeps_unsafe_or_unrelated_retries_blocked(monkeypatch, case):
         updates[-1]["rawInput"]["idempotency_key"] = "story-original-01"
     elif case == "other_write":
         updates[-1]["title"] = "dramaclaw_start_single_video"
-    elif case == "read_not_completed":
-        updates[3]["status"] = "in_progress"
-    elif case == "wrong_read_story":
-        updates[3]["rawOutput"]["story"]["story_id"] = "story-b"
-    elif case == "wrong_read_canvas":
-        updates[3]["rawOutput"]["canvas_id"] = "canvas-b"
-    elif case == "read_older_than_conflict":
-        updates[3]["rawOutput"]["story"]["revision"] = 1
     elif case == "boolean_revision":
         updates[-1]["rawInput"]["base_revision"] = True
     elif case == "mainline_write":
         updates[0]["title"] = "dramaclaw_generate_script"
         updates[-1]["title"] = "dramaclaw_start_single_video"
-    elif case in {"cached_conflict", "cached_read"}:
-        index = 1 if case == "cached_conflict" else 3
-        cached = updates[index].pop("rawOutput")
+    elif case == "cached_conflict":
+        cached = updates[1].pop("rawOutput")
         monkeypatch.setattr(
             hermes_sdk,
             "_load_recent_freezone_tool_result",
@@ -163,7 +157,7 @@ async def test_incomplete_create_receipt_does_not_allow_production_patch(monkeyp
 
 async def test_conflict_retry_budget_is_one_per_turn(monkeypatch):
     updates = recovery()
-    updates += [finish("write-2", {"ok": False, "code": "revision_conflict", "current_revision": 3})]
+    updates += [finish("write-2", {"ok": False, "code": "revision_conflict", "story_id": "story-a", "current_revision": 3})]
     next_read = copy.deepcopy(updates[2:4])
     for item in next_read:
         item["toolCallId"] = "read-2"

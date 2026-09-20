@@ -4842,6 +4842,17 @@
       "editPositionHint": "在画面中拖动选项调整位置；实际画面按视频比例完整显示。",
       "appearanceAndMotion": "外观与动效",
       "holdSeconds": "长按时长（秒）",
+      "continuity": {
+        "label": "镜头承接",
+        "independent": "独立开场",
+        "auto": "自动承接",
+        "source": "承接来源",
+        "chooseSource": "请选择要承接的上一镜头",
+        "untitled": "未命名片段",
+        "noSource": "没有可承接的上一镜头，使用独立开场。",
+        "sourceHint": "生成时自动复用「{{name}}」的尾帧，分支共用。",
+        "independentHint": "使用本镜头自己的开场，不自动接入上一镜尾帧。"
+      },
       "waitingBehavior": "等待选择时",
       "freezeFrame": "停在尾帧",
       "loopVideo": "循环视频",

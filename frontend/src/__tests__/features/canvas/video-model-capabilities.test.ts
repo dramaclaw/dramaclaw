@@ -1264,7 +1264,7 @@ describe("VideoNode 接线：素材撤空 → 文生视频", () => {
     // upstreamCounts（已解析 URL）会把空态 CTA 刚铺好、还没出图的图片节点算成 0 张，
     // 用它当场就会把三个 CTA 顶回文生视频。
     expect(source).toContain(
-      "videoNoUpstreamResetMode(genMode, upstreamTypeCounts)",
+      "videoNoUpstreamResetMode(genMode, upstreamTypeCounts,",
     );
   });
 
@@ -1278,7 +1278,7 @@ describe("VideoNode 接线：素材撤空 → 文生视频", () => {
 
   it("提交闸门把提示词与素材拆成两条并列判定", () => {
     expect(source).toContain(
-      "(videoModeRequiresPrompt(genMode) && !hasPromptText) ||\n      (videoModeRequiresMedia(genMode) && !hasRequiredMediaForMode);",
+      "(videoModeRequiresPrompt(genMode) && !hasPromptText) ||\n      (videoModeRequiresMedia(genMode) && !hasRequiredMediaForMode && !canPrepareContinuity);",
     );
     // 旧的三元写法：要提示词的模式就不再看素材 —— 全能参考因此漏网。
     expect(source).not.toContain(

@@ -4842,6 +4842,17 @@
       "editPositionHint": "Drag choices to position them. The complete video frame keeps its original aspect ratio.",
       "appearanceAndMotion": "Appearance and motion",
       "holdSeconds": "Hold duration (seconds)",
+      "continuity": {
+        "label": "Shot continuity",
+        "independent": "Independent opening",
+        "auto": "Continue previous shot",
+        "source": "Continue from",
+        "chooseSource": "Choose the preceding shot",
+        "untitled": "Untitled clip",
+        "noSource": "No preceding shot. This clip opens independently.",
+        "sourceHint": "Reuse the last frame of “{{name}}” when generating. Branches share the same frame.",
+        "independentHint": "Use this shot’s own opening without automatically adding a preceding frame."
+      },
       "waitingBehavior": "While waiting for a choice",
       "freezeFrame": "Freeze last frame",
       "loopVideo": "Loop video",

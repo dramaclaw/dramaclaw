@@ -1,3 +1,5 @@
+import { ensureVideoContinuity } from "@/features/canvas/application/videoContinuity";
+import { getOrCaptureVideoFrame } from "@/features/canvas/application/videoCaptureFrame";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -6916,6 +6918,162 @@ describe("canvas chat commands", () => {
     expect(createFreezoneWorkflowRun).not.toHaveBeenCalled();
   });
 
+  it("orders enabled continuous story shots before their branches", async () => {
+    const store = useCanvasStore.getState();
+    const source = store.addNode(CANVAS_NODE_TYPES.video, { x: 0, y: 0 }, { prompt: "开场" });
+    const target = store.addNode(CANVAS_NODE_TYPES.video, { x: 400, y: 0 }, {
+      prompt: "继续", continuityMode: "auto", genMode: "allReference",
+    });
+    useCanvasStore.setState({ edges: [{ id: "choice", source, target, type: "storyChoiceEdge" }] });
+    const order: string[] = [];
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (event) => {
+      order.push(event.nodeId);
+      useCanvasStore.getState().updateNodeData(event.nodeId, { videoUrl: `/static/project/${event.nodeId}.mp4` });
+      canvasEventBus.publish("freezone/node-action-result", {
+        requestId: event.requestId!, nodeId: event.nodeId, action: event.action, status: "success",
+      });
+    });
+    try {
+      const result = await applyCanvasChatCommandsAsync([{
+        schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+        commands: [target, source].map((node_id) => ({ type: "run_node_action", node_id, action: "generate_video" })),
+      }], { projectId: "project-a" });
+      expect(result.errors).toEqual([]);
+      expect(order).toEqual([source, target]);
+      expect(captureVideoFrameBlob).toHaveBeenCalledTimes(1);
+    } finally { unsubscribe(); }
+  });
+
+  it("shares one continuity tail across concurrent story branches and refreshes changed media", async () => {
+    const store = useCanvasStore.getState();
+    const source = store.addNode(CANVAS_NODE_TYPES.video, { x: 0, y: 0 }, {
+      videoUrl: "/static/project/one.mp4", durationMs: 8000,
+    });
+    const targets = [0, 1].map((i) => store.addNode(CANVAS_NODE_TYPES.video, { x: 400, y: i * 300 }, {
+      continuityMode: "auto", genMode: "allReference", prompt: "继续动作",
+    }));
+    useCanvasStore.setState({ edges: targets.map((target, i) => ({
+      id: `choice-${i}`, source, target, type: "storyChoiceEdge",
+    })) });
+    await Promise.all(targets.map((id) => ensureVideoContinuity(id, "project-a")));
+    expect(captureVideoFrameBlob).toHaveBeenCalledTimes(1);
+    expect(useCanvasStore.getState().nodes.find((node) => node.id === targets[0])?.data.prompt)
+      .toContain("[FMV自动承接]");
+    await ensureVideoContinuity(targets[0]!, "project-a");
+    expect((String(useCanvasStore.getState().nodes.find((node) => node.id === targets[0])?.data.prompt)
+      .match(/\[FMV自动承接\]/g) ?? [])).toHaveLength(1);
+    const frame = useCanvasStore.getState().nodes.find((node) => node.data.videoFrameSource)!;
+    for (const id of targets) {
+      expect(useCanvasStore.getState().edges).toContainEqual(expect.objectContaining({
+        source: frame.id, target: id, data: expect.objectContaining({ keyframeSlot: "first" }),
+      }));
+    }
+    await getOrCaptureVideoFrame(source, "last", "project-a");
+    expect(captureVideoFrameBlob).toHaveBeenCalledTimes(1);
+    store.updateNodeData(source, { videoUrl: "/static/project/two.mp4" });
+    await ensureVideoContinuity(targets[0]!, "project-a");
+    expect(captureVideoFrameBlob).toHaveBeenCalledTimes(2);
+    expect(useCanvasStore.getState().edges.some((edge) => edge.source === frame.id && edge.target === targets[0])).toBe(false);
+    expect(useCanvasStore.getState().edges.some((edge) => edge.source === frame.id && edge.target === targets[1])).toBe(true);
+    await ensureVideoContinuity(targets[1]!, "project-a");
+    expect(captureVideoFrameBlob).toHaveBeenCalledTimes(2);
+    store.updateNodeData(targets[0]!, { continuityMode: "independent" });
+    await ensureVideoContinuity(targets[0]!, "project-a");
+    expect(useCanvasStore.getState().edges.some((edge) => edge.target === targets[0] && edge.data?.edgeKind === "workflow_continuity_tail_frame")).toBe(false);
+    expect(useCanvasStore.getState().nodes.find((node) => node.id === targets[0])?.data.prompt).toBe("继续动作");
+  });
+
+  it("does not infer continuity from playback alone and rejects ambiguous or unfinished predecessors", async () => {
+    const store = useCanvasStore.getState();
+    const a = store.addNode(CANVAS_NODE_TYPES.video, { x: 0, y: 0 }, {});
+    const b = store.addNode(CANVAS_NODE_TYPES.video, { x: 0, y: 300 }, {});
+    const target = store.addNode(CANVAS_NODE_TYPES.video, { x: 400, y: 0 }, { genMode: "firstFrame" });
+    useCanvasStore.setState({ edges: [a, b].map((source) => ({ id: source, source, target, type: "storyChoiceEdge" })) });
+    await ensureVideoContinuity(target, "project-a");
+    expect(captureVideoFrameBlob).not.toHaveBeenCalled();
+    store.updateNodeData(target, { continuityMode: "auto" });
+    await expect(ensureVideoContinuity(target, "project-a")).rejects.toThrow("多个上游");
+    store.updateNodeData(target, { continuitySourceNodeId: a });
+    await expect(ensureVideoContinuity(target, "project-a")).rejects.toThrow("尚未完成");
+    store.updateNodeData(target, { continuityMode: "independent" });
+    await ensureVideoContinuity(target, "project-a");
+    expect(captureVideoFrameBlob).not.toHaveBeenCalled();
+  });
+
+  it("retries failed continuity captures without caching failure", async () => {
+    const store = useCanvasStore.getState();
+    const source = store.addNode(CANVAS_NODE_TYPES.video, { x: 0, y: 0 }, { videoUrl: "/static/project/one.mp4" });
+    captureVideoFrameBlob.mockRejectedValueOnce(new Error("temporary capture failure"));
+    expect((await getOrCaptureVideoFrame(source, "last", "project-a")).nodeId).toBeNull();
+    expect((await getOrCaptureVideoFrame(source, "last", "project-a")).nodeId).toBeTruthy();
+    expect(captureVideoFrameBlob).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses FMV continuity for story clips with dependency edges", async () => {
+    const store = useCanvasStore.getState();
+    const source = store.addNode(CANVAS_NODE_TYPES.video, { x: 0, y: 0 }, {
+      videoUrl: "/static/project/shot-1.mp4",
+    });
+    const target = store.addNode(CANVAS_NODE_TYPES.video, { x: 360, y: 0 }, {
+      storySegmentId: "segment-2", continuityMode: "auto", genMode: "allReference", prompt: "镜头 2",
+    });
+    store.addEdgeWithData(source, target, { link_type: "dependency_for" });
+
+    await ensureVideoContinuity(target, "project-a");
+
+    const prompt = useCanvasStore.getState().nodes.find((node) => node.id === target)?.data.prompt;
+    expect(prompt).toContain("[FMV自动承接]");
+    expect(prompt).not.toContain("请以它作为本镜头开场");
+  });
+
+  it("puts the captured tail first in the FMV prompt and binds connected character and object images by their submitted order", async () => {
+    const store = useCanvasStore.getState();
+    const source = store.addNode(CANVAS_NODE_TYPES.video, { x: 0, y: 0 }, {
+      videoUrl: "/static/project/shot-1.mp4",
+    });
+    const target = store.addNode(CANVAS_NODE_TYPES.video, { x: 360, y: 0 }, {
+      storySegmentId: "segment-2", continuityMode: "auto", genMode: "allReference",
+      prompt: "人物按剧情走进办公室。",
+    });
+    const character = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 400 }, {
+      displayName: "主角小林", referenceImageUrl: "/static/project/character.png", keyElementCategory: "character",
+    });
+    const object = store.addNode(CANVAS_NODE_TYPES.upload, { x: 0, y: 600 }, {
+      displayName: "手表", imageUrl: "/static/project/watch.png", keyElementCategory: "object",
+    });
+    store.addEdgeWithData(source, target, { link_type: "dependency_for" });
+    store.addEdge(character, target);
+    store.addEdge(object, target);
+    store.updateNodeData(target, { referenceOrder: [object, character] });
+
+    await ensureVideoContinuity(target, "project-a");
+
+    const prompt = String(useCanvasStore.getState().nodes.find((node) => node.id === target)?.data.prompt);
+    expect(prompt).toMatch(/^\[FMV自动承接\]本镜头的首帧必须从 @图片3/);
+    expect(prompt).toContain("@图片1（手表） 是物品外观参考");
+    expect(prompt).toContain("@图片2（主角小林） 是人物身份参考");
+    expect(prompt).toMatch(/\[\/FMV自动承接\]\n\n人物按剧情走进办公室。$/);
+    await ensureVideoContinuity(target, "project-a");
+    expect(String(useCanvasStore.getState().nodes.find((node) => node.id === target)?.data.prompt)
+      .match(/\[FMV自动承接\]/g)).toHaveLength(1);
+  });
+
+  it("leaves legacy story clips without an explicit continuity mode on their old path", async () => {
+    const store = useCanvasStore.getState();
+    const source = store.addNode(CANVAS_NODE_TYPES.video, { x: 0, y: 0 }, {
+      videoUrl: "/static/project/shot-1.mp4",
+    });
+    const target = store.addNode(CANVAS_NODE_TYPES.video, { x: 360, y: 0 }, {
+      storySegmentId: "segment-old", genMode: "allReference", prompt: "原片段",
+    });
+    store.addEdgeWithData(source, target, { link_type: "dependency_for" });
+
+    await ensureVideoContinuity(target, "project-a");
+
+    expect(captureVideoFrameBlob).not.toHaveBeenCalled();
+    expect(useCanvasStore.getState().nodes.find((node) => node.id === target)?.data.prompt).toBe("原片段");
+  });
+
   it("captures the upstream video tail frame before running a dependent video", async () => {
     const store = useCanvasStore.getState();
     const firstVideoId = store.addNode(
@@ -6931,6 +7089,7 @@ describe("canvas chat commands", () => {
       { x: 360, y: 0 },
       {
         prompt: "镜头 2",
+        storySegmentId: "legacy-segment",
       },
     );
     store.addEdgeWithData(firstVideoId, secondVideoId, {
@@ -6977,7 +7136,9 @@ describe("canvas chat commands", () => {
           expect(
             (state.nodes.find((node) => node.id === secondVideoId)?.data as Record<string, unknown>)
               .prompt,
-          ).toContain("上一镜尾帧已作为图片参考接入");
+          ).toContain("上一镜尾帧已作为图片参考接入，请以它作为本镜头开场的动作、构图和角色状态连续依据。");
+          expect(state.nodes.find((node) => node.id === secondVideoId)?.data.prompt)
+            .not.toContain("[FMV自动承接]");
           useCanvasStore.getState().updateNodeData(secondVideoId, {
             videoUrl: "/static/project/shot-2.mp4",
           });

@@ -128,24 +128,34 @@ def test_interactive_story_api_create_get_patch_validate_round_trip(
     assert read.json()["story"]["title"] == "这一口，听你的"
     assert read.json()["story"]["revision"] == 1
 
-    patch = client.patch(
-        "/api/v1/projects/proj_demo/interactive-stories/fizz_choice_ad",
-        json={
-            "canvas_id": "default",
-            "story_id": "fizz_choice_ad",
-            "base_revision": 1,
-            "idempotency_key": "api-patch-0001",
-            "operations": [
-                {
-                    "op": "update_story_metadata",
-                    "changes": {"title": "这一口，听你的：互动版"},
-                }
-            ],
-        },
-    )
+    patch_payload = {
+        "canvas_id": "default",
+        "story_id": "fizz_choice_ad",
+        "base_revision": 1,
+        "idempotency_key": "api-patch-0001",
+        "operations": [
+            {
+                "op": "update_story_metadata",
+                "changes": {"title": "这一口，听你的：互动版"},
+            }
+        ],
+    }
+    patch_path = "/api/v1/projects/proj_demo/interactive-stories/fizz_choice_ad"
+    patch = client.patch(patch_path, json=patch_payload)
     assert patch.status_code == 200, patch.text
     assert patch.json()["revision"] == 2
     assert patch.json()["refresh_canvas"] is True
+    repeated = client.patch(patch_path, json=patch_payload)
+    assert repeated.status_code == 200
+    assert repeated.json()["idempotent"] is True
+
+    events_path = state_dir / "freezone" / "_canvas_events" / "default.jsonl"
+    events = [json.loads(line) for line in events_path.read_text().splitlines()]
+    assert [(event["event_type"], event["payload"]["revision"],
+             event["payload"]["save_source"]) for event in events] == [
+        ("canvas.saved", 1, "agent_create"),
+        ("canvas.saved", 2, "agent_patch"),
+    ]
 
     validate = client.post(
         "/api/v1/projects/proj_demo/interactive-stories/fizz_choice_ad/validate",
@@ -154,7 +164,7 @@ def test_interactive_story_api_create_get_patch_validate_round_trip(
     assert validate.status_code == 200, validate.text
     assert validate.json()["valid"] is True
     assert {issue["code"] for issue in validate.json()["issues"]} == {"missing_video"}
-    assert roles == ["editor", "viewer", "editor", "viewer"]
+    assert roles == ["editor", "viewer", "editor", "editor", "viewer"]
     assert (state_dir / "freezone" / "canvases" / "default.json").exists()
 
 
@@ -196,6 +206,28 @@ def test_interactive_story_api_returns_structured_revision_conflict(
         "current_revision": 1,
         "issues": [],
     }
+
+
+def test_story_event_failure_does_not_hide_saved_result(
+    interactive_story_client, monkeypatch,
+) -> None:
+    from novelvideo.api.routes import interactive_stories
+    from novelvideo.freezone import canvas_store
+
+    client, state_dir, _roles = interactive_story_client
+
+    def fail_event(**_kwargs):
+        raise OSError("event log unavailable")
+
+    monkeypatch.setattr(interactive_stories, "append_canvas_event", fail_event)
+    response = client.post(
+        "/api/v1/projects/proj_demo/interactive-stories",
+        json={"canvas_id": "default", "base_revision": 0,
+              "idempotency_key": "api-create-event-failure", "story": _story_payload()},
+    )
+    assert response.status_code == 200
+    assert response.json()["revision"] == 1
+    assert canvas_store.read_canvas(state_dir, "default")["revision"] == 1
 
 
 def test_interactive_story_api_rejects_path_body_story_id_mismatch(
@@ -241,6 +273,10 @@ async def test_interactive_story_route_moves_blocking_service_work_off_event_loo
         return BlockingService()
 
     monkeypatch.setattr(interactive_stories, "_service", fake_service)
+    async def fake_record_story_save(*_args):
+        return None
+
+    monkeypatch.setattr(interactive_stories, "_record_story_save", fake_record_story_save)
     body = CreateInteractiveStoryRequest.model_validate(
         {
             "canvas_id": "default",

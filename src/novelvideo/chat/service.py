@@ -940,6 +940,57 @@ def _codex_story_preflight_rejection(event: Any) -> tuple[str, str] | None:
     return None
 
 
+def _codex_story_write_intent(
+    event: Any, *, project: str, canvas_id: str
+) -> tuple[str, str, int, str] | None:
+    """Identify the exact story, revision and key used by a story write."""
+    name = _codex_freezone_tool_name(event)
+    if name not in {
+        "dramaclaw_create_interactive_story", "dramaclaw_patch_interactive_story",
+    }:
+        return None
+    for args in _json_objects_from_codex_tool_value(getattr(event, "input", None)):
+        story = args.get("story")
+        story_id = (
+            story.get("story_id") if name == "dramaclaw_create_interactive_story"
+            and isinstance(story, dict) else args.get("story_id")
+        )
+        base = args.get("base_revision")
+        key = args.get("idempotency_key")
+        if (
+            isinstance(story_id, str) and story_id.strip()
+            and type(base) is int and base >= 0
+            and isinstance(key, str) and key.strip()
+            and args.get("project_id", project) == project
+            and args.get("canvas_id", canvas_id) == canvas_id
+        ):
+            return name, story_id.strip(), base, key.strip()
+    return None
+
+
+def _codex_story_revision_conflict(
+    event: Any, *, project: str, canvas_id: str
+) -> tuple[str, str, int, str] | None:
+    """Only a structured server conflict may be superseded by a saved retry."""
+    intent = _codex_story_write_intent(event, project=project, canvas_id=canvas_id)
+    if intent is None or str(getattr(event, "status", "")).lower() not in {
+        "completed", "failed",
+    }:
+        return None
+    for value in (getattr(event, "structured", None), getattr(event, "output", None)):
+        for payload in _json_objects_from_codex_tool_value(value):
+            revision = payload.get("current_revision")
+            if (
+                payload.get("ok") is False
+                and payload.get("code") == "revision_conflict"
+                and payload.get("story_id") == intent[1]
+                and type(revision) is int and revision >= 0
+                and revision != intent[2]
+            ):
+                return intent[0], intent[1], revision, intent[3]
+    return None
+
+
 def _codex_freezone_write_result_state(event: Any) -> str:
     """Keep cancellation, timeout, and pending approval separate from failure."""
     for value in (
@@ -6890,6 +6941,7 @@ async def _stream_assistant_reply_codex(
     structured_canvas_reply = str(tool_mode or "").strip() == "freezone_canvas"
     canvas_write_attempts: dict[str, str] = {}
     preflight_rejections: dict[str, tuple[str, str]] = {}
+    story_conflicts: dict[str, tuple[str, str, int, str]] = {}
     canvas_receipts: set[tuple[str, int | None]] = set()
     canvas_write_failure = ""
     ready_workflow_draft: dict[str, Any] | None = None
@@ -7109,6 +7161,28 @@ async def _stream_assistant_reply_codex(
                             receipt = _codex_freezone_write_receipt(
                                 event, expected_project=project, expected_canvas=canvas_id
                             )
+                            if receipt is not None and identifiable_call:
+                                intent = _codex_story_write_intent(
+                                    event, project=project, canvas_id=canvas_id or "default"
+                                )
+                                if intent is not None and receipt.get("story_id") == intent[1]:
+                                    # A server 409 rejected this exact story write
+                                    # before saving. Only its verified rebased
+                                    # successor can settle that failed attempt.
+                                    for rejected_call, conflict in list(story_conflicts.items()):
+                                        if (
+                                            intent[:2] == conflict[:2]
+                                            and intent[2] == conflict[2]
+                                            and intent[3] != conflict[3]
+                                        ):
+                                            canvas_write_attempts.pop(rejected_call, None)
+                                            del story_conflicts[rejected_call]
+                            else:
+                                conflict = _codex_story_revision_conflict(
+                                    event, project=project, canvas_id=canvas_id or "default"
+                                )
+                                if conflict is not None:
+                                    story_conflicts[call_id] = conflict
                             canvas_write_attempts[call_id] = (
                                 "succeeded"
                                 if receipt is not None and identifiable_call

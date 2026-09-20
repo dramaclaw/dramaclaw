@@ -431,7 +431,7 @@ describe("canvas action catalog", () => {
     const regularCatalog = buildCanvasNodeActionCatalog(regularVideo);
 
     expect(storyCatalog.editable_fields).toEqual(
-      expect.arrayContaining(["narration", "storyProductionNotes", "prompt"]),
+      expect.arrayContaining(["narration", "storyProductionNotes", "prompt", "continuityMode", "continuitySourceNodeId"]),
     );
     expect(storyCatalog.editable_schema.narration).toMatchObject({
       type: "string",
@@ -449,6 +449,8 @@ describe("canvas action catalog", () => {
     ).toContain("narration");
     expect(regularCatalog.editable_fields).not.toContain("narration");
     expect(regularCatalog.editable_fields).not.toContain("storyProductionNotes");
+    expect(regularCatalog.editable_fields).not.toContain("continuityMode");
+    expect(regularCatalog.editable_fields).not.toContain("continuitySourceNodeId");
   });
 
   it("explains generator prompt fields are combined with upstream prompt text and reference mentions", () => {
