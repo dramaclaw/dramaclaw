@@ -31,6 +31,7 @@ def _extract_codex_user_message_text(item: Any) -> str:
     thread_item = _codex_unwrap_item(item)
     parts: list[str] = []
     for content in getattr(thread_item, "content", []) or []:
+        content = _codex_unwrap_item(content)
         item_type = str(getattr(content, "type", "") or "")
         if item_type == "text":
             text = str(getattr(content, "text", "") or "").strip()

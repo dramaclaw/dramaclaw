@@ -39,6 +39,8 @@
    其他原始事件解析，使 Application 只消费标准化事件及交付证据。
    `chat/runtime_history.py` 已承接 Codex 原生历史条目到聊天记录的纯解析；
    历史读取、时间戳、媒体补全及缓存写入仍由 `service.py` 负责。
+   随后的独立修复补上 SDK `UserInput.root` 展开，避免读取原生线程历史时
+   漏掉用户消息；该修复不改当前轮消息写入路径。
 2. 继续迁出正文归一化、工具结果展示映射和显示工具 fallback；其中 API
    查询留在独立应用服务，不能为了减少行数搬进纯展示模块。
 3. Session Registry / Delivery Evidence 独立，沿用 #555 / #558 的运行身份

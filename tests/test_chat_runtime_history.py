@@ -39,6 +39,33 @@ def test_user_history_preserves_text_and_attachment_markers() -> None:
     ]
 
 
+def test_user_history_unwraps_native_sdk_input_variants() -> None:
+    item = UserMessageThreadItem.model_validate(
+        {
+            "id": "user-2",
+            "type": "userMessage",
+            "content": [
+                {"type": "text", "text": "hello"},
+                {"type": "skill", "name": "builder", "path": "/skills/builder"},
+                {"type": "mention", "name": "doc", "path": "/docs/doc"},
+                {"type": "image", "url": "https://example.test/image.png"},
+                {"type": "localImage", "path": "/tmp/image.png"},
+            ],
+        }
+    )
+
+    assert parse_codex_history_item(item, 2, 4) == [
+        {
+            "id": 2004,
+            "role": "user",
+            "content": (
+                "hello\n[skill] builder\n[mention] doc\n"
+                "[image] https://example.test/image.png\n[image] /tmp/image.png"
+            ),
+        }
+    ]
+
+
 def test_assistant_history_trims_text_and_skips_empty_message() -> None:
     item = AgentMessageThreadItem.model_validate(
         {"id": "assistant-1", "type": "agentMessage", "text": "  finished  "}
