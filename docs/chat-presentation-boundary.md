@@ -11,6 +11,16 @@
 - UI-spec JSON / block / bundle 封装和正文、卡片分离；
 - 媒体卡片按既有类别合并、冲突键重命名及去重。
 
+Chat 展示路径的其余转换也已拆出：
+
+- `chat/presentation_text.py` 处理历史回放去重、流式文本合并、路径遮盖和正文清理；
+- `chat/presentation_mapping.py` 处理 UI-spec 规范化、工具结果展示/错误映射及提示词筛选；
+- `chat/media_presentation.py` 处理消息媒体链接提取、规范化和去重；
+- `chat/display_fallback.py` 读取权威媒体详情并组装展示卡片。
+
+`service.py` 保留旧函数入口、项目目录解析、错误日志写入、API 读取注入和事件
+发送顺序。展示模块不持有会话、数据库或画布写入状态。
+
 依赖方向为 `chat/service.py -> chat/presentation.py -> Python 标准库`。
 展示模块不能导入 Application、Runtime Adapter、Session Registry、数据库、
 模型 SDK 或 API 客户端。`tests/test_chat_presentation.py` 用依赖约束测试守住边界。
@@ -41,8 +51,8 @@
    历史读取、时间戳、媒体补全及缓存写入仍由 `service.py` 负责。
    随后的独立修复补上 SDK `UserInput.root` 展开，避免读取原生线程历史时
    漏掉用户消息；该修复不改当前轮消息写入路径。
-2. 继续迁出正文归一化、工具结果展示映射和显示工具 fallback；其中 API
-   查询留在独立应用服务，不能为了减少行数搬进纯展示模块。
+2. Chat 展示转换和显示工具 fallback 已迁出；后续调整展示行为时继续以
+   `presentation.py` 的 canonical UI-spec 边界和权威媒体 API 为准。
 3. Session Registry / Delivery Evidence 独立，沿用 #555 / #558 的运行身份
    和 durable bridge 约束，并与 #575 执行证据契约协调。
    `chat/session_registry.py` 已承接锁范围、记录解析、过期判断、文件抢占、

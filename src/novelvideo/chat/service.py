@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import hashlib
 import importlib.util
 import json
@@ -20,10 +19,10 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import quote, unquote, urlparse
-from urllib.request import Request, urlopen
+from urllib.parse import urlparse
+from urllib.request import urlopen
 
-from novelvideo.chat import message_repository, presentation, runtime_event_mapper, session_registry
+from novelvideo.chat import display_fallback, media_presentation, message_repository, presentation, presentation_mapping, runtime_event_mapper, session_registry
 from novelvideo.chat.backend_sdk import (
     ClaudeSdkClient,
     CodexClient,
@@ -37,15 +36,34 @@ from novelvideo.chat.canvas_outcome import (
     finalize_canvas_reply,
     receipt_reference,
 )
+from novelvideo.chat.display_fallback import (
+    _limit_display_items as _limit_display_items,
+    _requested_display_beats as _requested_display_beats,
+    _requested_display_names as _requested_display_names,
+    _requested_display_queries as _requested_display_queries,
+    _requested_display_scene_names as _requested_display_scene_names,
+    _requested_display_scene_indices as _requested_display_scene_indices,
+    _matches_any_display_scene_name as _matches_any_display_scene_name,
+    _flatten_display_text_fields as _flatten_display_text_fields,
+    _matches_any_display_text as _matches_any_display_text,
+    _media_ui_spec as _media_ui_spec,
+    _project_static_url_from_path as _project_static_url_from_path,
+    _api_response_items as _api_response_items,
+    _decode_tool_args as _decode_tool_args,
+    _extract_display_tool_call as _extract_display_tool_call,
+    _display_tool_call_key as _display_tool_call_key,
+    _infer_display_tool_call_from_text as _infer_display_tool_call_from_text,
+    _DISPLAY_TOOL_NAMES as _DISPLAY_TOOL_NAMES,
+)
 from novelvideo.chat.execution_context import AgentExecutionContext
 from novelvideo.chat.presentation import (
-    UI_SPEC_BLOCK_RE as _UI_SPEC_BLOCK_RE,
-    UI_SPEC_FENCE_RE as _UI_SPEC_FENCE_RE,
-    canonicalize_ui_spec as _canonicalize_ui_spec,
+    UI_SPEC_BLOCK_RE as _UI_SPEC_BLOCK_RE,  # noqa: F401 - compatibility export
+    UI_SPEC_FENCE_RE as _UI_SPEC_FENCE_RE,  # noqa: F401 - compatibility export
+    canonicalize_ui_spec as _canonicalize_ui_spec,  # noqa: F401 - compatibility export
     dedupe_tool_ui_specs as _dedupe_tool_ui_specs,
-    json_loads_with_trailing_repair as _json_loads_with_trailing_repair,
-    ui_spec_block as _ui_spec_block,
-    wrap_ui_spec_bundle as _wrap_ui_spec_bundle,
+    json_loads_with_trailing_repair as _json_loads_with_trailing_repair,  # noqa: F401
+    ui_spec_block as _ui_spec_block,  # noqa: F401 - compatibility export
+    wrap_ui_spec_bundle as _wrap_ui_spec_bundle,  # noqa: F401 - compatibility export
 )
 from novelvideo.chat.runtime_event_mapper import (
     _is_anonymous_hermes_tool_call_update,
@@ -56,6 +74,54 @@ from novelvideo.chat.runtime_history import (
     _extract_codex_user_message_text as _extract_codex_user_message_text,
     _split_trace_contents,
     parse_codex_history_item,
+)
+from novelvideo.chat.presentation_text import (
+    _completion_text_or_existing as _completion_text_or_existing,
+    _is_completion_notice as _is_completion_notice,
+    _merge_stream_text as _merge_stream_text,
+    _assistant_prefix_candidates as _assistant_prefix_candidates,
+    _bounded_replay_history as _bounded_replay_history,
+    _is_truncated_assistant_replay as _is_truncated_assistant_replay,
+    _strip_replayed_assistant_prefix as _strip_replayed_assistant_prefix,
+    _compact_chat_text as _compact_chat_text,
+    _strip_leading_assistant_label as _strip_leading_assistant_label,
+    _looks_like_labeled_transcript_replay as _looks_like_labeled_transcript_replay,
+    _strip_replayed_turn_transcript as _strip_replayed_turn_transcript,
+    _strip_replayed_chat_response as _strip_replayed_chat_response,
+    _redact_local_filesystem_paths as _redact_local_filesystem_paths,
+    _strip_media_rendering_leaks as _strip_media_rendering_leaks,
+    _USER_TURN_LABEL_RE as _USER_TURN_LABEL_RE,
+    _ASSISTANT_TURN_LABEL_RE as _ASSISTANT_TURN_LABEL_RE,
+    _LOCAL_FILESYSTEM_PATH_RE as _LOCAL_FILESYSTEM_PATH_RE,
+    _HERMES_REPLAY_HISTORY_MESSAGES as _HERMES_REPLAY_HISTORY_MESSAGES,
+    _HERMES_REPLAY_HISTORY_MAX_CHARS as _HERMES_REPLAY_HISTORY_MAX_CHARS,
+)
+from novelvideo.chat.presentation_mapping import (
+    _HIDDEN_TOOL_MARKERS as _HIDDEN_TOOL_MARKERS,
+    _is_hidden_chat_tool_event as _is_hidden_chat_tool_event,
+    _wrap_embedded_ui_spec_json as _wrap_embedded_ui_spec_json,
+    _strip_embedded_ui_spec_json_text as _strip_embedded_ui_spec_json_text,
+    _decode_tool_jsonish as _decode_tool_jsonish,
+    _contains_freezone_canvas_bridge_result as _contains_freezone_canvas_bridge_result,
+    _suppress_freezone_tool_lifecycle_error as _suppress_freezone_tool_lifecycle_error,
+    _strip_freezone_tool_lifecycle_failure_text as _strip_freezone_tool_lifecycle_failure_text,
+    _visible_tool_chat_error_for_mode as _visible_tool_chat_error_for_mode,
+    _prompt_wants_sketch_only as _prompt_wants_sketch_only,
+    _is_frame_image_element as _is_frame_image_element,
+    _filter_tool_ui_specs_for_prompt as _filter_tool_ui_specs_for_prompt,
+    _prompt_continues_video_generation_without_display as _prompt_continues_video_generation_without_display,
+    _is_beat_video_ui_spec as _is_beat_video_ui_spec,
+)
+from novelvideo.chat.media_presentation import (
+    _media_path_from_static_url as _media_path_from_static_url,
+    _canonical_project_static_media_url as _canonical_project_static_media_url,
+    _collect_markdown_image_refs as _collect_markdown_image_refs,
+    _merge_media_items as _merge_media_items,
+    _filter_markdown_duplicate_images as _filter_markdown_duplicate_images,
+    _MEDIA_EXTENSIONS as _MEDIA_EXTENSIONS,
+    _URL_RE as _URL_RE,
+    _REL_PATH_RE as _REL_PATH_RE,
+    _MARKDOWN_IMAGE_RE as _MARKDOWN_IMAGE_RE,
 )
 from novelvideo.chat.runtime_port import AgentRuntimeThreadPort
 from novelvideo.chat.session_registry import (
@@ -98,7 +164,6 @@ from novelvideo.freezone.workflow_plan import MAX_WORKFLOW_PLANNING_TEXT_CHARS
 from novelvideo.ports import get_auth_session_port
 from novelvideo.utils.document_parsers import count_billable_text_chars
 from novelvideo.utils.error_redaction import redact_secrets
-from novelvideo.utils.static_urls import project_static_url
 
 logger = logging.getLogger("novelvideo.chat.service")
 
@@ -112,33 +177,6 @@ _can_merge_ui_specs = presentation.can_merge_ui_specs
 _merge_ui_specs = presentation.merge_ui_specs
 _MERGEABLE_MEDIA_SPEC_TYPES = presentation.MERGEABLE_MEDIA_SPEC_TYPES
 
-_MEDIA_EXTENSIONS = {
-    ".png": "image",
-    ".jpg": "image",
-    ".jpeg": "image",
-    ".webp": "image",
-    ".gif": "image",
-    ".mp4": "video",
-    ".mov": "video",
-    ".webm": "video",
-    ".wav": "audio",
-    ".mp3": "audio",
-    ".m4a": "audio",
-}
-_URL_RE = re.compile(r"(https?://[^\s)>\"]+|/static/[^\s)>\"]+)")
-_REL_PATH_RE = re.compile(
-    r"(?P<path>(?:assets|videos|audio|images|frames|sketches|grids|uploads|scripts)/[^\s)>\"]+\.(?:png|jpg|jpeg|webp|gif|mp4|mov|webm|wav|mp3|m4a))"
-)
-_MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
-_USER_TURN_LABEL_RE = re.compile(r"(?im)^\s*(?:user|human|用户|我)\s*[:：]\s*")
-_ASSISTANT_TURN_LABEL_RE = re.compile(
-    r"(?i)^\s*(?:assistant|ai|助手|助理|模型)\s*[:：]\s*"
-)
-_LOCAL_FILESYSTEM_PATH_RE = re.compile(
-    r"(?<![\w./-])(?:~|/Users/[^\s`'\"<>)]+)(?:/[^\s`'\"<>)]+)+"
-)
-_HERMES_REPLAY_HISTORY_MESSAGES = 1
-_HERMES_REPLAY_HISTORY_MAX_CHARS = 64_000
 _CODEX_MODEL_PROVIDER = "dramaclaw_gateway"
 _DEFAULT_CODEX_MODEL = "DC-codex-agent-LLM"
 _DEFAULT_CODEX_REASONING_EFFORT = "medium"
@@ -389,15 +427,6 @@ _DRAMACLAW_SCRIPT_UPLOAD_MODEL_REPLY_INSTRUCTIONS = """[DRAMACLAW_SCRIPT_UPLOAD_
 - 只回复 1-2 句，不要列步骤，不要输出 markdown 标题。
 [/DRAMACLAW_SCRIPT_UPLOAD_GUIDANCE]
 """
-_HIDDEN_TOOL_MARKERS = (
-    "skill_view",
-    "skills_list",
-    "skill view",
-    "skills list",
-    "loading skill",
-    "→ skill view",
-    "→ skills list",
-)
 _JSON_RENDER_CHAT_INSTRUCTIONS = """[RENDERING_CONTRACT]
 这是硬性输出合同，优先级高于普通叙述习惯。违反时必须自我修正后再回复。
 
@@ -440,32 +469,6 @@ _JSON_RENDER_CHAT_INSTRUCTIONS = """[RENDERING_CONTRACT]
 3. 如果不展示图片/视频/音频，是否使用 markdown？
 4. 如果任一答案是否，先修正再回复。
 [/RENDERING_CONTRACT]"""
-
-
-def _media_path_from_static_url(url: str) -> str | None:
-    parsed = urlparse(url)
-    path = parsed.path if parsed.scheme in {"http", "https"} else url.split("?", 1)[0]
-    if not path.startswith("/static/"):
-        return None
-    rel = path[len("/static/") :]
-    parts = rel.split("/", 2)
-    if len(parts) == 3:
-        return unquote(parts[2])
-    return unquote(rel)
-
-
-def _canonical_project_static_media_url(
-    project_id: str,
-    project_dir: Path,
-    url_or_path: str,
-) -> tuple[str, str] | None:
-    media_path = _media_path_from_static_url(url_or_path)
-    if media_path is None:
-        media_path = url_or_path.strip().split("?", 1)[0].lstrip("./")
-    if not media_path:
-        return None
-    local_path = project_dir / media_path
-    return project_static_url(project_id, media_path, local_path=local_path), media_path
 
 
 def _media_project_dir(
@@ -780,7 +783,6 @@ def _freezone_canvas_write_requested(prompt: str | None) -> bool:
         or has_node_reference
         or standalone_clear
     )
-
 
 
 _AGENT_PRODUCT_RESULT_TOOLS = {
@@ -1904,24 +1906,6 @@ def _append_message(
     )
 
 
-def _is_hidden_chat_tool_event(name: object, text: object) -> bool:
-    """Internal Hermes bookkeeping tools should not become user-visible cards."""
-    haystack = f"{name or ''}\n{text or ''}".lower()
-    return any(marker in haystack for marker in _HIDDEN_TOOL_MARKERS)
-
-
-def _completion_text_or_existing(event_text: object, existing: str) -> str:
-    """ACP may finish with metadata like ``stop=end_turn`` after text deltas."""
-    final_text = str(event_text or "").strip()
-    if not final_text or final_text.startswith("stop="):
-        return existing
-    if final_text.lower() == "(hermes timed out)" and existing.strip():
-        return existing
-    if existing.strip() and _is_completion_notice(final_text):
-        if final_text in existing:
-            return existing
-        return f"{existing.rstrip()}\n\n{final_text}"
-    return final_text
 
 
 def _bounded_workflow_planning_reply(text: str, *, draft_ready: bool) -> str:
@@ -1937,23 +1921,6 @@ def _bounded_workflow_planning_reply(text: str, *, draft_ready: bool) -> str:
     )
 
 
-def _is_completion_notice(text: str) -> bool:
-    return text in {
-        "当前任务已开始处理。请稍后让我查看当前任务进度，或在任务完成后再继续下一步。",
-        "刚才这一步没有成功启动任务。请先根据返回的错误补齐前置条件；如果是配音缺少声线，可以到「虾塘」上传或录制缺失声线后再继续。",
-    }
-
-
-def _merge_stream_text(existing: str, incoming: object) -> str:
-    """Support providers that emit either cumulative text or delta chunks."""
-    chunk = str(incoming or "")
-    if not chunk:
-        return existing
-    if chunk.startswith(existing):
-        return chunk
-    return existing + chunk
-
-
 async def _emit_chat_event_best_effort(on_event, event: dict[str, Any]) -> bool:
     """Emit to the connected client without making persistence depend on it."""
     try:
@@ -1961,178 +1928,6 @@ async def _emit_chat_event_best_effort(on_event, event: dict[str, Any]) -> bool:
         return True
     except Exception:
         return False
-
-
-def _assistant_prefix_candidates(previous_assistant: object) -> list[str]:
-    if isinstance(previous_assistant, (list, tuple)):
-        items = [
-            str(item or "").strip()
-            for item in previous_assistant
-            if str(item or "").strip()
-        ]
-        candidates = []
-        for index in range(len(items)):
-            suffix = items[index:]
-            candidates.append("".join(suffix))
-            candidates.append("\n".join(suffix))
-            candidates.append("\n\n".join(suffix))
-        candidates.extend(items)
-        return sorted(set(candidates), key=len, reverse=True)
-    prefix = str(previous_assistant or "").strip()
-    return [prefix] if prefix else []
-
-
-def _bounded_replay_history(contents: list[str]) -> list[str]:
-    """Keep only a small display-dedup window; this history never becomes agent context."""
-
-    bounded = [
-        str(content or "") for content in contents[-_HERMES_REPLAY_HISTORY_MESSAGES:]
-    ]
-    return [
-        content[:_HERMES_REPLAY_HISTORY_MAX_CHARS] for content in bounded if content
-    ]
-
-
-def _is_truncated_assistant_replay(content: str, candidates: list[str]) -> bool:
-    """Detect a sufficiently long strict prefix of previously emitted assistant text."""
-    compact_content = "".join(str(content or "").split())
-    if len(compact_content) < 16:
-        return False
-
-    compact_candidates = {"".join(candidate.split()) for candidate in candidates}
-    if compact_content in compact_candidates:
-        return False
-    return any(
-        candidate.startswith(compact_content) for candidate in compact_candidates
-    )
-
-
-def _strip_replayed_assistant_prefix(
-    content: str,
-    previous_assistant: object,
-    *,
-    suppress_partial_replay: bool = False,
-    candidates: list[str] | None = None,
-) -> str:
-    """Hermes ACP can replay prior assistant text at the start of a new turn."""
-    text = str(content or "")
-    original_text = text
-    prefixes = (
-        candidates
-        if candidates is not None
-        else _assistant_prefix_candidates(previous_assistant)
-    )
-    if _is_truncated_assistant_replay(text, prefixes):
-        return ""
-    while text and prefixes:
-        original = text
-        for prefix in prefixes:
-            if text.startswith(prefix):
-                text = text[len(prefix) :].lstrip()
-                break
-            compact_prefix = "".join(prefix.split())
-            if not compact_prefix:
-                continue
-            matched = 0
-            end_index = 0
-            for index, char in enumerate(text):
-                if char.isspace():
-                    continue
-                if matched >= len(compact_prefix) or char != compact_prefix[matched]:
-                    break
-                matched += 1
-                end_index = index + 1
-                if matched == len(compact_prefix):
-                    text = text[end_index:].lstrip()
-                    break
-            if text != original:
-                break
-        if text == original:
-            break
-    if suppress_partial_replay and not text.strip() and str(content or "").strip():
-        return ""
-    if not suppress_partial_replay and not text.strip() and original_text.strip():
-        return original_text
-    return text
-
-
-def _compact_chat_text(content: object) -> str:
-    return "".join(str(content or "").split())
-
-
-def _strip_leading_assistant_label(content: str) -> str:
-    return _ASSISTANT_TURN_LABEL_RE.sub("", str(content or ""), count=1).lstrip()
-
-
-def _looks_like_labeled_transcript_replay(content: str) -> bool:
-    text = str(content or "").lstrip()
-    if not text:
-        return False
-    if _USER_TURN_LABEL_RE.match(text):
-        return True
-    return bool(
-        _USER_TURN_LABEL_RE.search(text) and _ASSISTANT_TURN_LABEL_RE.search(text)
-    )
-
-
-def _strip_replayed_turn_transcript(
-    content: str,
-    current_prompt: object,
-    *,
-    suppress_partial_replay: bool = False,
-) -> str:
-    """Remove a replayed labeled transcript while keeping normal short replies intact."""
-    text = str(content or "")
-    prompt = str(current_prompt or "").strip()
-    if not text or not prompt:
-        return text
-
-    compact_prompt = _compact_chat_text(prompt)
-    best_end = -1
-    for match in _USER_TURN_LABEL_RE.finditer(text):
-        start = match.end()
-        line_end = text.find("\n", start)
-        if line_end < 0:
-            line_end = len(text)
-        line = text[start:line_end]
-
-        prompt_index = line.rfind(prompt)
-        if prompt_index >= 0:
-            best_end = max(best_end, start + prompt_index + len(prompt))
-            continue
-
-        if len(compact_prompt) >= 4 and compact_prompt in _compact_chat_text(line):
-            best_end = max(best_end, line_end)
-
-    if best_end < 0:
-        if suppress_partial_replay and _looks_like_labeled_transcript_replay(text):
-            return ""
-        return text
-    remainder = _strip_leading_assistant_label(text[best_end:])
-    if suppress_partial_replay and not remainder.strip():
-        return ""
-    return remainder
-
-
-def _strip_replayed_chat_response(
-    content: str,
-    previous_assistant: object,
-    current_prompt: object,
-    *,
-    suppress_partial_replay: bool = False,
-    assistant_prefix_candidates: list[str] | None = None,
-) -> str:
-    text = _strip_replayed_turn_transcript(
-        content,
-        current_prompt,
-        suppress_partial_replay=suppress_partial_replay,
-    )
-    return _strip_replayed_assistant_prefix(
-        text,
-        previous_assistant,
-        suppress_partial_replay=suppress_partial_replay,
-        candidates=assistant_prefix_candidates,
-    )
 
 
 def _log_json_render_error(error: ValueError, body: str) -> None:
@@ -2152,402 +1947,33 @@ def _log_json_render_error(error: ValueError, body: str) -> None:
 
 
 def _normalize_single_ui_spec_block(body: str) -> str:
-    nested_start = body.lower().rfind("<ui-spec")
-    if nested_start >= 0:
-        close_index = body.lower().find("</ui-spec>", nested_start)
-        if close_index >= 0:
-            nested_block = body[nested_start : close_index + len("</ui-spec>")]
-            return _normalize_json_render_reply(nested_block)
-
-    try:
-        value = _json_loads_with_trailing_repair(body)
-        if isinstance(value, list):
-            specs = [_canonicalize_ui_spec(item) for item in value]
-            return _wrap_ui_spec_bundle(specs)
-        spec = _canonicalize_ui_spec(value)
-    except ValueError as exc:
-        _log_json_render_error(exc, body)
-        return "（json-render 格式校验失败：模型返回的 ui-spec 不是合法 canonical JSON，已阻止展示。请重新生成。）"
-
-    spec_type = spec.get("type") if isinstance(spec.get("type"), str) else "ui_spec"
-    json_text = json.dumps(spec, ensure_ascii=False, indent=2)
-    return f'<ui-spec type="{spec_type}">\n{json_text}\n</ui-spec>'
+    return presentation_mapping._normalize_single_ui_spec_block(
+        body, log_error=_log_json_render_error
+    )
 
 
 def _normalize_json_render_reply(content: str) -> str:
-    text = str(content or "")
-    text = _wrap_embedded_ui_spec_json(text)
-    if "<ui-spec" not in text.lower():
-        return text
-    text = _UI_SPEC_FENCE_RE.sub(lambda match: match.group(1).strip(), text)
-    return _UI_SPEC_BLOCK_RE.sub(
-        lambda match: _normalize_single_ui_spec_block(match.group(1)),
-        text,
+    return presentation_mapping._normalize_json_render_reply(
+        content, log_error=_log_json_render_error
     )
-
-
-def _wrap_embedded_ui_spec_json(content: str) -> str:
-    text = str(content or "")
-    if "<ui-spec" in text.lower():
-        return text
-    if '"elements"' not in text or '"root"' not in text:
-        return text
-
-    decoder = json.JSONDecoder()
-    index = 0
-    parts: list[str] = []
-    changed = False
-    while index < len(text):
-        start = text.find("{", index)
-        if start < 0:
-            parts.append(text[index:])
-            break
-        parts.append(text[index:start])
-        try:
-            value, end = decoder.raw_decode(text[start:])
-        except json.JSONDecodeError:
-            parts.append(text[start : start + 1])
-            index = start + 1
-            continue
-        if isinstance(value, dict):
-            try:
-                spec = _canonicalize_ui_spec(value)
-            except ValueError:
-                spec = None
-            if spec is not None:
-                parts.append(_ui_spec_block(spec))
-                index = start + end
-                changed = True
-                continue
-        parts.append(text[start : start + end])
-        index = start + end
-
-    if not changed:
-        return text
-    return re.sub(r"\n{3,}", "\n\n", "".join(parts)).strip()
-
-
-def _redact_local_filesystem_paths(content: str) -> str:
-    """Hide local developer paths before text is shown or persisted in chat."""
-    text = str(content or "")
-    if not text:
-        return ""
-    return _LOCAL_FILESYSTEM_PATH_RE.sub("[本地路径]", text)
-
-
-def _strip_media_rendering_leaks(content: str) -> str:
-    """Remove internal rendering/tool chatter that models sometimes echo."""
-    lines: list[str] = []
-    for line in str(content or "").splitlines():
-        stripped = line.strip()
-        lower = stripped.lower()
-        if not stripped:
-            lines.append(line)
-            continue
-        if "<ui-spec" in lower or "ui-spec" in lower or "ui_spec" in lower:
-            continue
-        if (
-            "json-render" in lower
-            or "automatically rendered" in lower
-            or "backend" in lower
-        ):
-            continue
-        if "dramaclaw_" in lower:
-            continue
-        if "按规范渲染" in stripped or "UI画廊" in stripped:
-            continue
-        lines.append(line)
-    text = _redact_local_filesystem_paths("\n".join(lines).strip())
-    return re.sub(r"\n{3,}", "\n\n", text)
-
-
-def _strip_embedded_ui_spec_json_text(content: str) -> str:
-    """Remove model-written media JSON from prose before appending tool specs."""
-    text = str(content or "")
-    pattern = re.compile(
-        r'\{\s*"type"\s*:\s*"(?:character_showcase|sketch_gallery|keyframe_video|audio_list|media_bundle)"'
-    )
-    index = 0
-    parts: list[str] = []
-    decoder = json.JSONDecoder()
-    changed = False
-
-    while True:
-        match = pattern.search(text, index)
-        if not match:
-            parts.append(text[index:])
-            break
-        start = match.start()
-        parts.append(text[index:start])
-        try:
-            value, end = decoder.raw_decode(text[start:])
-        except json.JSONDecodeError:
-            next_paragraph = text.find("\n\n", start)
-            index = len(text) if next_paragraph < 0 else next_paragraph
-            changed = True
-            continue
-        if isinstance(value, dict):
-            try:
-                _canonicalize_ui_spec(value)
-                index = start + end
-                changed = True
-                continue
-            except ValueError:
-                pass
-        parts.append(text[start : start + end])
-        index = start + end
-
-    if not changed:
-        return text.strip()
-    return re.sub(r"\n{3,}", "\n\n", "".join(parts)).strip()
 
 
 def _extract_tool_ui_specs(value: Any) -> list[dict[str, Any]]:
-    specs: list[dict[str, Any]] = []
-
-    def append_spec(node: Any) -> None:
-        try:
-            specs.append(_canonicalize_ui_spec(node))
-        except ValueError as exc:
-            _log_json_render_error(
-                exc, json.dumps(node, ensure_ascii=False, default=str)
-            )
-
-    def visit(node: Any) -> None:
-        if isinstance(node, dict):
-            ui_spec = node.get("ui_spec")
-            if isinstance(ui_spec, dict):
-                append_spec(ui_spec)
-            elif {"type", "root", "elements"}.issubset(node):
-                append_spec(node)
-            for child in node.values():
-                visit(child)
-        elif isinstance(node, list):
-            for child in node:
-                visit(child)
-        elif isinstance(node, str):
-            text = node.strip()
-            if not text or len(text) > 1_000_000:
-                return
-            if "<ui-spec" in text.casefold():
-                _, embedded_specs = _split_ui_specs_from_text(text)
-                specs.extend(embedded_specs)
-                return
-            if "ui_spec" not in text and not {"type", "root", "elements"}.issubset(
-                set(re.findall(r'"([^"]+)"\s*:', text))
-            ):
-                return
-            try:
-                decoded = json.loads(text)
-            except json.JSONDecodeError:
-                return
-            visit(decoded)
-
-    visit(value)
-    deduped: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for spec in specs:
-        key = json.dumps(spec, ensure_ascii=False, sort_keys=True)
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(spec)
-    return deduped
+    return presentation_mapping._extract_tool_ui_specs(
+        value, log_error=_log_json_render_error
+    )
 
 
 def _extract_tool_chat_error(value: Any) -> str | None:
-    def normalize_error_text(text: object) -> str:
-        raw = redact_secrets(str(text or "")).strip()
-        raw = re.sub(r"\s+", " ", raw)
-        raw = re.sub(
-            r"provider_response_id[\"']?\s*[:=]\s*[\"']?[^\"'\s,;}]+",
-            "provider_response_id=[redacted]",
-            raw,
-            flags=re.IGNORECASE,
-        )
-        raw = re.sub(
-            r"response_id[\"']?\s*[:=]\s*[\"']?[^\"'\s,;}]+",
-            "response_id=[redacted]",
-            raw,
-            flags=re.IGNORECASE,
-        )
-        if len(raw) > 1200:
-            raw = raw[:1200].rstrip() + "..."
-        return raw
-
-    def business_chat_error_from_text(text: object) -> str | None:
-        raw = normalize_error_text(text)
-        if not raw:
-            return None
-        if "Render 模式需要草图" in raw or "未生成可用图片" in raw:
-            return (
-                "Render 任务没有生成可用图片：当前缺少必要草图前置。"
-                "请先在「虾塘」生成或确认对应 Beat 的草图后，再重新生成 Render。"
-                f"\n\n错误原因：{raw[:1200]}"
-            )
-        return None
-
-    def generic_chat_error_from_text(text: object) -> str | None:
-        raw = normalize_error_text(text)
-        if not raw:
-            return None
-        lowered = raw.casefold()
-        if "provider_response_id" in lowered and "content_filter" in lowered:
-            return None
-        return f"任务执行失败：{raw}"
-
-    def parse_jsonish(text: str) -> Any | None:
-        raw = str(text or "").strip()
-        if not raw:
-            return None
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            pass
-        try:
-            return _json_loads_with_trailing_repair(raw)
-        except ValueError:
-            return None
-
-    def visit(node: Any) -> str | None:
-        if isinstance(node, str):
-            decoded = parse_jsonish(node)
-            if decoded is not None:
-                return visit(decoded)
-            return None
-        if isinstance(node, list):
-            for child in node:
-                found = visit(child)
-                if found:
-                    return found
-            return None
-        if not isinstance(node, dict):
-            return None
-
-        chat_error = node.get("chat_error")
-        if isinstance(chat_error, str) and chat_error.strip():
-            return chat_error.strip()
-
-        for key in ("error", "detail", "message"):
-            mapped = business_chat_error_from_text(node.get(key))
-            if mapped:
-                return mapped
-
-        status = str(node.get("status") or "").strip().lower()
-        failed_status = status in {"failed", "error", "cancelled", "canceled"}
-        ok_false = node.get("ok") is False
-        if failed_status or ok_false:
-            for key in ("error", "detail", "message"):
-                generic = generic_chat_error_from_text(node.get(key))
-                if generic:
-                    return generic
-            if failed_status:
-                return f"任务执行失败：当前状态为 {status}。"
-            return "任务执行失败：接口返回 ok=false，但没有提供具体错误原因。"
-
-        for key in ("result", "message", "content", "data", "output"):
-            found = visit(node.get(key))
-            if found:
-                return found
-        for child in node.values():
-            found = visit(child)
-            if found:
-                return found
-        return None
-
-    return visit(value)
-
-
-def _decode_tool_jsonish(text: str) -> Any | None:
-    raw = str(text or "").strip()
-    if not raw:
-        return None
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-    try:
-        return _json_loads_with_trailing_repair(raw)
-    except ValueError:
-        return None
-
-
-def _contains_freezone_canvas_bridge_result(value: Any) -> bool:
-    """Return true when a Hermes tool update contains a Freezone bridge result."""
-    if isinstance(value, str):
-        decoded = _decode_tool_jsonish(value)
-        if decoded is None:
-            return False
-        return _contains_freezone_canvas_bridge_result(decoded)
-    if isinstance(value, list):
-        return any(_contains_freezone_canvas_bridge_result(item) for item in value)
-    if not isinstance(value, dict):
-        return False
-
-    has_bridge_status = "tool_call_status" in value or "canvas_apply_status" in value
-    has_bridge_body = (
-        "command_results" in value
-        or "applied_count" in value
-        or "opened_ui_actions" in value
-        or "created_node_ids" in value
-        or "user_message" in value
-        or "agent_instruction" in value
-    )
-    if has_bridge_status and has_bridge_body:
-        return True
-
-    return any(
-        _contains_freezone_canvas_bridge_result(child) for child in value.values()
+    return presentation_mapping._extract_tool_chat_error(
+        value, redact=redact_secrets
     )
 
 
-def _suppress_freezone_tool_lifecycle_error(value: Any, *, tool_mode: str) -> bool:
-    """Ignore Hermes lifecycle-only failures for Freezone canvas bridge tools.
-
-    Freezone canvas commands are resolved by the frontend bridge result.  A
-    bare Hermes ``tool_call_update.status=failed`` can be transient lifecycle
-    noise and must not be surfaced as the canvas command result.
-    """
-    if tool_mode != "freezone_canvas" or not isinstance(value, dict):
-        return False
-    if value.get("sessionUpdate") != "tool_call_update":
-        return False
-    status = str(value.get("status") or "").strip().lower()
-    if status not in {"failed", "error", "cancelled", "canceled"}:
-        return False
-    business_payload_keys = {
-        "chat_error",
-        "error",
-        "detail",
-        "message",
-        "result",
-        "content",
-        "data",
-        "output",
-    }
-    if not any(key in value for key in business_payload_keys):
-        return True
-    return _contains_freezone_canvas_bridge_result(value)
-
-
-def _strip_freezone_tool_lifecycle_failure_text(text: str, *, tool_mode: str) -> str:
-    if tool_mode != "freezone_canvas":
-        return text
-    return re.sub(
-        r"\A\s*任务执行失败：当前状态为\s+(?:failed|error|cancelled|canceled)。\s*",
-        "",
-        text,
-        flags=re.IGNORECASE,
-    ).lstrip()
-
-
-def _visible_tool_chat_error_for_mode(
-    text: str | None, *, tool_mode: str
-) -> str | None:
-    if not text:
-        return None
-    visible = _strip_freezone_tool_lifecycle_failure_text(text, tool_mode=tool_mode)
-    return visible or None
+def _append_tool_ui_specs(content: str, specs: list[dict[str, Any]]) -> str:
+    return presentation_mapping._append_tool_ui_specs(
+        content, specs, log_error=_log_json_render_error
+    )
 
 
 def _merge_tool_ui_specs_by_type(specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -2556,548 +1982,14 @@ def _merge_tool_ui_specs_by_type(specs: list[dict[str, Any]]) -> list[dict[str, 
     )
 
 
-def _append_tool_ui_specs(content: str, specs: list[dict[str, Any]]) -> str:
-    raw_text = str(content or "").strip()
-    if specs and _UI_SPEC_BLOCK_RE.search(raw_text):
-        return raw_text
-    text = _strip_media_rendering_leaks(raw_text)
-    if not specs:
-        return text
-    text = _strip_embedded_ui_spec_json_text(text)
-    specs = _merge_tool_ui_specs_by_type(specs)
-    blocks: list[str] = []
-    for spec in specs:
-        try:
-            blocks.append(_ui_spec_block(spec))
-        except ValueError as exc:
-            _log_json_render_error(exc, json.dumps(spec, ensure_ascii=False))
-    if not blocks:
-        return text
-    prefix = text or "已为你展示相关媒体。"
-    return f"{prefix}\n\n" + "\n\n".join(blocks)
-
-
 def _split_ui_specs_from_text(content: str) -> tuple[str, list[dict[str, Any]]]:
     return presentation.split_ui_specs_from_text(
         content, log_error=_log_json_render_error
     )
 
 
-def _prompt_wants_sketch_only(prompt: str) -> bool:
-    text = str(prompt or "")
-    if "草图" not in text and "sketch" not in text.casefold():
-        return False
-    frame_terms = (
-        "首帧",
-        "第一帧",
-        "关键帧",
-        "first frame",
-        "first-frame",
-        "keyframe",
-        "frame",
-    )
-    return not any(term in text.casefold() for term in frame_terms)
-
-
-def _is_frame_image_element(element: Any) -> bool:
-    if not isinstance(element, dict):
-        return False
-    props = element.get("props")
-    if not isinstance(props, dict):
-        return False
-    fields = [
-        props.get("src"),
-        props.get("poster"),
-        props.get("title"),
-        props.get("alt"),
-        props.get("description"),
-        props.get("overlayTitle"),
-        props.get("overlayDescription"),
-    ]
-    text = "\n".join(str(value or "") for value in fields).casefold()
-    return (
-        "首帧" in text
-        or "/frames/" in text
-        or "first frame" in text
-        or "first-frame" in text
-    )
-
-
-def _filter_tool_ui_specs_for_prompt(
-    prompt: str, specs: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    if not specs:
-        return specs
-
-    if _prompt_continues_video_generation_without_display(prompt):
-        specs = [spec for spec in specs if not _is_beat_video_ui_spec(spec)]
-
-    if not specs or not _prompt_wants_sketch_only(prompt):
-        return specs
-
-    filtered_specs: list[dict[str, Any]] = []
-    for spec in specs:
-        if not isinstance(spec, dict) or spec.get("type") != "sketch_gallery":
-            filtered_specs.append(spec)
-            continue
-        elements = spec.get("elements")
-        root_key = spec.get("root")
-        if not isinstance(elements, dict) or not isinstance(root_key, str):
-            filtered_specs.append(spec)
-            continue
-        root = elements.get(root_key)
-        if not isinstance(root, dict):
-            filtered_specs.append(spec)
-            continue
-        children = root.get("children")
-        if not isinstance(children, list):
-            filtered_specs.append(spec)
-            continue
-
-        kept_children: list[str] = []
-        kept_elements: dict[str, Any] = {}
-        for key, element in elements.items():
-            if key == root_key:
-                continue
-            if key in children and _is_frame_image_element(element):
-                continue
-            kept_elements[key] = element
-            if key in children:
-                kept_children.append(key)
-
-        if not kept_children:
-            continue
-        new_root = copy.deepcopy(root)
-        new_root["children"] = kept_children
-        filtered_specs.append(
-            {
-                **spec,
-                "elements": {
-                    root_key: new_root,
-                    **{key: kept_elements[key] for key in kept_elements},
-                },
-            }
-        )
-    return filtered_specs
-
-
-def _prompt_continues_video_generation_without_display(prompt: str) -> bool:
-    text = str(prompt or "").strip()
-    lower = text.casefold()
-    continue_terms = ("继续", "恢复", "接着", "下一步", "继续跑", "继续做")
-    video_terms = ("视频", "beat", "镜头", "成片", "生成")
-    display_terms = (
-        "展示",
-        "显示",
-        "查看",
-        "看看",
-        "看一下",
-        "播放",
-        "预览",
-        "给我看",
-        "show",
-        "display",
-        "view",
-        "preview",
-        "play",
-    )
-    return (
-        any(term in lower for term in continue_terms)
-        and any(term in lower for term in video_terms)
-        and not any(term in lower for term in display_terms)
-    )
-
-
-def _is_beat_video_ui_spec(spec: dict[str, Any]) -> bool:
-    if not isinstance(spec, dict) or spec.get("type") != "keyframe_video":
-        return False
-    elements = spec.get("elements")
-    if not isinstance(elements, dict):
-        return False
-    for element in elements.values():
-        if not isinstance(element, dict) or element.get("type") != "Video":
-            continue
-        props = element.get("props")
-        if not isinstance(props, dict):
-            continue
-        title = str(props.get("title") or "")
-        src = str(props.get("src") or "")
-        if re.search(r"\bbeat\s*\d+\b", title, re.IGNORECASE) or "/beats/" in src:
-            return True
-    return False
-
-
-_DISPLAY_TOOL_NAMES = {
-    "dramaclaw_get_sketches",
-    "dramaclaw_get_sketch_candidates",
-    "dramaclaw_get_first_frames",
-    "dramaclaw_get_scene_images",
-    "dramaclaw_get_character_media",
-    "dramaclaw_get_episode_media",
-    "dramaclaw_get_final_video",
-}
-
-
-def _limit_display_items(
-    items: list[dict[str, Any]], args: dict[str, Any], default: int
-) -> list[dict[str, Any]]:
-    try:
-        limit = int(args.get("limit")) if args.get("limit") is not None else default
-    except (TypeError, ValueError):
-        limit = default
-    try:
-        offset = int(args.get("offset") or 0)
-    except (TypeError, ValueError):
-        offset = 0
-    offset = max(0, offset)
-    limit = max(1, min(limit, default))
-    return items[offset : offset + limit]
-
-
-def _requested_display_beats(args: dict[str, Any]) -> set[int] | None:
-    raw = args.get("beat_indices") or args.get("beats")
-    values: list[Any] = []
-    if isinstance(raw, list):
-        values.extend(raw)
-    elif raw is not None:
-        values.append(raw)
-    for key in ("beat", "beat_num", "beat_number", "index"):
-        if args.get(key) is not None:
-            values.append(args[key])
-    beats: set[int] = set()
-    for value in values:
-        try:
-            beat = int(value)
-        except (TypeError, ValueError):
-            continue
-        if beat > 0:
-            beats.add(beat)
-    return beats or None
-
-
-def _requested_display_names(args: dict[str, Any]) -> set[str] | None:
-    raw = args.get("names")
-    values: list[Any] = []
-    if isinstance(raw, list):
-        values.extend(raw)
-    elif raw is not None:
-        values.append(raw)
-    for key in ("name", "character"):
-        if args.get(key) is not None:
-            values.append(args[key])
-    names = {str(value).strip() for value in values if str(value or "").strip()}
-    return names or None
-
-
-def _requested_display_queries(args: dict[str, Any]) -> set[str] | None:
-    raw = args.get("queries") or args.get("keywords")
-    values: list[Any] = []
-    if isinstance(raw, list):
-        values.extend(raw)
-    elif raw is not None:
-        values.append(raw)
-    for key in ("query", "search", "keyword", "text", "identity_name"):
-        if args.get(key) is not None:
-            values.append(args[key])
-    queries = {str(value).strip() for value in values if str(value or "").strip()}
-    return queries or None
-
-
-def _requested_display_scene_names(args: dict[str, Any]) -> set[str] | None:
-    raw = args.get("names") or args.get("scene_names")
-    values: list[Any] = []
-    if isinstance(raw, list):
-        values.extend(raw)
-    elif raw is not None:
-        values.append(raw)
-    for key in ("name", "scene_name"):
-        if args.get(key) is not None:
-            values.append(args[key])
-    names = {str(value).strip() for value in values if str(value or "").strip()}
-    return names or None
-
-
-def _requested_display_scene_indices(args: dict[str, Any]) -> set[int] | None:
-    raw = args.get("scene_indices") or args.get("indices")
-    values: list[Any] = []
-    if isinstance(raw, list):
-        values.extend(raw)
-    elif raw is not None:
-        values.append(raw)
-    if args.get("index") is not None:
-        values.append(args["index"])
-    indices: set[int] = set()
-    for value in values:
-        try:
-            index = int(value)
-        except (TypeError, ValueError):
-            continue
-        if index > 0:
-            indices.add(index)
-    return indices or None
-
-
-def _matches_any_display_scene_name(
-    scene_name: str, requested_names: set[str] | None
-) -> bool:
-    if requested_names is None:
-        return True
-    haystack = str(scene_name or "").casefold()
-    return any(needle.casefold() in haystack for needle in requested_names if needle)
-
-
-def _flatten_display_text_fields(fields: list[Any]) -> list[str]:
-    values: list[str] = []
-    for field in fields:
-        if isinstance(field, dict):
-            values.extend(_flatten_display_text_fields(list(field.values())))
-        elif isinstance(field, list):
-            values.extend(_flatten_display_text_fields(field))
-        elif field is not None:
-            text = str(field).strip()
-            if text:
-                values.append(text)
-    return values
-
-
-def _matches_any_display_text(fields: list[Any], queries: set[str] | None) -> bool:
-    if queries is None:
-        return True
-    haystack = "\n".join(_flatten_display_text_fields(fields)).casefold()
-    return any(query.casefold() in haystack for query in queries if query)
-
-
-def _media_ui_spec(
-    spec_type: str, component_type: str, items: list[dict[str, Any]]
-) -> dict[str, Any]:
-    elements: dict[str, Any] = {
-        "root": {
-            "type": "Stack",
-            "props": {
-                "direction": "row",
-                "wrap": "wrap",
-                "spacing": 16,
-                "alignItems": "flex-start",
-                "width": "100%",
-            },
-            "children": [],
-        }
-    }
-    for index, item in enumerate(items, start=1):
-        src = str(item.get("src") or item.get("url") or "").strip()
-        if not src:
-            continue
-        key = f"media_{index}"
-        title = str(item.get("title") or item.get("label") or f"媒体 {index}").strip()
-        description = str(item.get("description") or "").strip()
-        props: dict[str, Any] = {"src": src, "alt": title, "title": title}
-        if description:
-            props["description"] = description
-        if component_type == "Image":
-            props.update(
-                {
-                    "fit": item.get("fit") or "cover",
-                    "aspectRatio": item.get("aspectRatio") or "3/4",
-                    "overlayTitle": title,
-                }
-            )
-            if description:
-                props["overlayDescription"] = description
-        elif component_type == "Video":
-            poster = str(item.get("poster") or item.get("thumbnail") or "").strip()
-            if poster:
-                props["poster"] = poster
-            props["controls"] = True
-        elif component_type == "Audio":
-            props["controls"] = True
-
-        elements[key] = {"type": component_type, "props": props, "children": []}
-        elements["root"]["children"].append(key)
-    return {"type": spec_type, "root": "root", "elements": elements}
-
-
-def _project_static_url_from_path(
-    project_id: str, rel_path: str, local_path: Path | None = None
-) -> str:
-    return project_static_url(project_id, rel_path, local_path=local_path)
-
-
-def _api_response_items(resp: Any, *keys: str) -> list[Any]:
-    if not isinstance(resp, dict):
-        return []
-    for key in keys:
-        value = resp.get(key)
-        if isinstance(value, list):
-            return value
-    data = resp.get("data")
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
-        for key in keys:
-            value = data.get(key)
-            if isinstance(value, list):
-                return value
-    return []
-
-
-def _decode_tool_args(value: Any) -> dict[str, Any]:
-    if isinstance(value, dict):
-        return value
-    if isinstance(value, str) and value.strip():
-        try:
-            decoded = json.loads(value)
-        except json.JSONDecodeError:
-            return {}
-        return decoded if isinstance(decoded, dict) else {}
-    return {}
-
-
-def _extract_display_tool_call(raw: Any) -> tuple[str, dict[str, Any]] | None:
-    if not isinstance(raw, dict):
-        return None
-    title = str(
-        raw.get("title")
-        or raw.get("kind")
-        or raw.get("name")
-        or raw.get("tool_name")
-        or ""
-    ).strip()
-    tool_name = title.partition(":")[0].split()[0].strip()
-    if tool_name not in _DISPLAY_TOOL_NAMES:
-        for key in ("name", "tool", "toolName", "tool_name"):
-            candidate = str(raw.get(key) or "").strip()
-            if candidate in _DISPLAY_TOOL_NAMES:
-                tool_name = candidate
-                break
-    if tool_name not in _DISPLAY_TOOL_NAMES:
-        function = raw.get("function")
-        if isinstance(function, dict):
-            candidate = str(function.get("name") or "").strip()
-            if candidate in _DISPLAY_TOOL_NAMES:
-                tool_name = candidate
-    if tool_name not in _DISPLAY_TOOL_NAMES:
-        return None
-    for key in ("arguments", "args", "input", "params"):
-        args = _decode_tool_args(raw.get(key))
-        if args:
-            return tool_name, args
-    content = raw.get("content")
-    if isinstance(content, list):
-        for item in content:
-            if not isinstance(item, dict):
-                continue
-            nested = item.get("content")
-            if isinstance(nested, dict):
-                args = _decode_tool_args(nested.get("text"))
-                if args:
-                    return tool_name, args
-    return tool_name, {}
-
-
-def _display_tool_call_key(tool_name: str, args: dict[str, Any]) -> str:
-    try:
-        encoded_args = json.dumps(args, ensure_ascii=False, sort_keys=True, default=str)
-    except TypeError:
-        encoded_args = repr(args)
-    return f"{tool_name}:{encoded_args}"
-
-
-def _infer_display_tool_call_from_text(
-    prompt: str,
-    assistant_text: str,
-    previous_assistant: list[str],
-) -> tuple[str, dict[str, Any]] | None:
-    """Recover from display promises where the model forgot to call a display tool."""
-    prompt_text = str(prompt or "")
-    prompt_lower = prompt_text.casefold()
-    recent_context = "\n".join(previous_assistant[-2:] if previous_assistant else [])
-    context_text = "\n".join([prompt_text, str(assistant_text or ""), recent_context])
-    context_lower = context_text.casefold()
-    progress_terms = ("进度", "状态", "任务", "做到哪", "做到哪儿", "当前情况")
-    if any(term in prompt_text for term in progress_terms):
-        return None
-    display_terms = (
-        "展示",
-        "显示",
-        "查看",
-        "看",
-        "全部显示",
-        "show",
-        "display",
-        "view",
-    )
-    if not any(term in prompt_lower for term in display_terms):
-        return None
-    prompt_mentions_sketch = "草图" in prompt_text or "sketch" in prompt_lower
-    context_mentions_sketch = "草图" in context_text or "sketch" in context_lower
-    short_followup = len(prompt_text.strip()) <= 20 and any(
-        term in prompt_text for term in ("全部", "继续", "下一页", "更多")
-    )
-    if not prompt_mentions_sketch and not (short_followup and context_mentions_sketch):
-        return None
-
-    episode = 1
-    episode_match = re.search(
-        r"(?:第\s*(\d+)\s*集|ep(?:isode)?\s*\.?\s*(\d+))",
-        context_text,
-        re.IGNORECASE,
-    )
-    if episode_match:
-        raw_episode = episode_match.group(1) or episode_match.group(2)
-        try:
-            episode = max(1, int(raw_episode))
-        except (TypeError, ValueError):
-            episode = 1
-    wants_sketch_candidates = any(
-        term in context_text for term in ("草图候选", "候选草图", "图池", "备选草图")
-    )
-    if wants_sketch_candidates:
-        beat_match = re.search(
-            r"(?:beat|Beat|BEAT)\s*\.?\s*(\d+)|第\s*(\d+)\s*(?:个|张)?\s*beat|Beat\s*(\d+)",
-            context_text,
-            re.IGNORECASE,
-        )
-        raw_beat = None
-        if beat_match:
-            raw_beat = next((group for group in beat_match.groups() if group), None)
-        if raw_beat:
-            try:
-                beat = max(1, int(raw_beat))
-            except (TypeError, ValueError):
-                beat = 0
-            if beat > 0:
-                return "dramaclaw_get_sketch_candidates", {
-                    "episode": episode,
-                    "beat": beat,
-                }
-        return None
-    return "dramaclaw_get_sketches", {"episode": episode}
-
-
 def _backend_api_get(path: str, token: str) -> dict[str, Any]:
-    base_url = (
-        os.environ.get("DRAMACLAW_API_URL")
-        or os.environ.get("NOVELVIDEO_API_URL")
-        or f"http://127.0.0.1:{os.environ.get('NOVELVIDEO_API_PORT', '19080')}"
-        or os.environ.get("SUPERTALE_API_URL")
-    ).strip()
-    url = f"{base_url.rstrip('/')}{path}"
-    req = Request(
-        url,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
-            "User-Agent": "dramaclaw-chat-fallback/0.1.0",
-        },
-        method="GET",
-    )
-    with urlopen(req, timeout=30) as resp:
-        text = resp.read().decode("utf-8", errors="replace")
-    try:
-        value = json.loads(text)
-    except json.JSONDecodeError:
-        return {"ok": False, "error": text[:500]}
-    return value if isinstance(value, dict) else {"ok": True, "data": value}
+    return display_fallback._backend_api_get(path, token, open_url=urlopen)
 
 
 async def _fallback_display_tool_ui_specs(
@@ -3109,435 +2001,15 @@ async def _fallback_display_tool_ui_specs(
     token: str,
     project_dir: str | Path | None = None,
 ) -> list[dict[str, Any]]:
-    if not project or tool_name not in _DISPLAY_TOOL_NAMES:
-        return []
-
-    def build() -> list[dict[str, Any]]:
-        api_project = str(
-            args.get("project_id") or args.get("project") or project
-        ).strip()
-        project_q = quote(api_project, safe="")
-        if tool_name == "dramaclaw_get_final_video":
-            raw_episode_indices = args.get("episode_indices")
-            episode_indices: list[int] = []
-            if args.get("episode") is not None and not raw_episode_indices:
-                episode_indices = [int(args["episode"])]
-            elif isinstance(raw_episode_indices, list):
-                for value in raw_episode_indices:
-                    try:
-                        episode = int(value)
-                    except (TypeError, ValueError):
-                        continue
-                    if episode > 0 and episode not in episode_indices:
-                        episode_indices.append(episode)
-            if not episode_indices:
-                episodes_resp = _backend_api_get(
-                    f"/api/v1/projects/{project_q}/episodes",
-                    token,
-                )
-                for item in _api_response_items(episodes_resp, "episodes", "items"):
-                    if not isinstance(item, dict):
-                        continue
-                    try:
-                        episode = int(item.get("number") or 0)
-                    except (TypeError, ValueError):
-                        continue
-                    if episode > 0 and episode not in episode_indices:
-                        episode_indices.append(episode)
-
-            media_items: list[dict[str, Any]] = []
-            for episode in sorted(episode_indices):
-                resp = _backend_api_get(
-                    f"/api/v1/projects/{project_q}/episodes/{episode}/final",
-                    token,
-                )
-                data = resp.get("data") if isinstance(resp, dict) else None
-                video_url = (
-                    str(data.get("video_url") or "").strip()
-                    if isinstance(data, dict) and data.get("exists")
-                    else ""
-                )
-                if video_url:
-                    media_items.append(
-                        {
-                            "src": video_url,
-                            "title": f"第 {episode} 集成片",
-                            "description": "最终合成视频",
-                        }
-                    )
-            if not media_items:
-                return []
-            page_items = _limit_display_items(media_items, args, 6)
-            return [
-                _media_ui_spec(
-                    "keyframe_video",
-                    "Video",
-                    page_items,
-                )
-            ]
-        if tool_name in {"dramaclaw_get_sketches", "dramaclaw_get_first_frames"}:
-            episode = int(args.get("episode") or 1)
-            media_kind = (
-                "frame" if tool_name == "dramaclaw_get_first_frames" else "sketch"
-            )
-            resp = _backend_api_get(
-                f"/api/v1/projects/{project_q}/episodes/{episode}/beats",
-                token,
-            )
-            media_items: list[dict[str, Any]] = []
-            requested_beats = _requested_display_beats(args)
-            for beat in _api_response_items(resp, "beats", "items"):
-                if not isinstance(beat, dict):
-                    continue
-                beat_number = beat.get("beat_number")
-                try:
-                    beat_int = int(beat_number)
-                except (TypeError, ValueError):
-                    beat_int = None
-                if requested_beats is not None and beat_int not in requested_beats:
-                    continue
-                sketch_url = str(beat.get("sketch_url") or "").strip()
-                frame_url = str(beat.get("frame_url") or "").strip()
-                if sketch_url and media_kind == "sketch":
-                    media_items.append(
-                        {
-                            "src": sketch_url,
-                            "title": f"Beat {beat_number} 草图",
-                            "description": "草图",
-                            "aspectRatio": "3/4",
-                        }
-                    )
-                if frame_url and media_kind == "frame":
-                    media_items.append(
-                        {
-                            "src": frame_url,
-                            "title": f"Beat {beat_number} 首帧",
-                            "description": "首帧",
-                            "aspectRatio": "3/4",
-                        }
-                    )
-            limited = _limit_display_items(media_items, args, 12)
-            return (
-                [_media_ui_spec("sketch_gallery", "Image", limited)] if limited else []
-            )
-
-        if tool_name == "dramaclaw_get_sketch_candidates":
-            episode = int(args.get("episode") or 1)
-            try:
-                beat = int(
-                    args.get("beat")
-                    or args.get("beat_num")
-                    or args.get("beat_number")
-                    or 0
-                )
-            except (TypeError, ValueError):
-                beat = 0
-            if beat <= 0:
-                return []
-            resp = _backend_api_get(
-                f"/api/v1/projects/{project_q}/episodes/{episode}/beats/{beat}/sketch-candidates",
-                token,
-            )
-            data = resp.get("data") if isinstance(resp, dict) else None
-            candidates = data.get("candidates") if isinstance(data, dict) else []
-            media_items = []
-            for candidate in candidates if isinstance(candidates, list) else []:
-                if not isinstance(candidate, dict):
-                    continue
-                src = str(candidate.get("url") or "").strip()
-                if not src:
-                    continue
-                media_items.append(
-                    {
-                        "src": src,
-                        "title": f"Beat {beat} 草图候选",
-                        "description": (
-                            "过期候选" if candidate.get("stale") else "草图候选"
-                        ),
-                        "aspectRatio": "3/4",
-                    }
-                )
-            limited = _limit_display_items(media_items, args, 12)
-            return (
-                [_media_ui_spec("sketch_gallery", "Image", limited)] if limited else []
-            )
-
-        if tool_name == "dramaclaw_get_scene_images":
-            resp = _backend_api_get(
-                f"/api/v1/projects/{project_q}/scenes?summary=false", token
-            )
-            media_items = []
-            include_reverse = bool(args.get("include_reverse", True))
-            include_pano = bool(args.get("include_pano", False))
-            include_custom = bool(args.get("include_custom", False))
-            requested_names = _requested_display_scene_names(args)
-            requested_indices = _requested_display_scene_indices(args)
-            requested_type = str(args.get("scene_type") or "").strip()
-            for scene_index, scene in enumerate(
-                _api_response_items(resp, "scenes", "items"), start=1
-            ):
-                if not isinstance(scene, dict):
-                    continue
-                scene_name = str(scene.get("name") or "").strip()
-                scene_type = str(scene.get("scene_type") or "").strip()
-                if (
-                    requested_indices is not None
-                    and scene_index not in requested_indices
-                ):
-                    continue
-                if not _matches_any_display_scene_name(scene_name, requested_names):
-                    continue
-                if requested_type and scene_type != requested_type:
-                    continue
-                for kind, field, enabled in (
-                    ("master", "master_url", True),
-                    ("reverse_master", "reverse_master_url", include_reverse),
-                    ("pano", "pano_url", include_pano),
-                    ("custom_scene", "custom_scene_url", include_custom),
-                ):
-                    src = str(scene.get(field) or "").strip()
-                    if enabled and src:
-                        media_items.append(
-                            {
-                                "src": src,
-                                "title": f"{scene_name or '场景'} · {kind}",
-                                "description": scene.get("description")
-                                or scene.get("environment_prompt")
-                                or "",
-                                "aspectRatio": "16/9" if kind == "pano" else "3/4",
-                            }
-                        )
-            limited = _limit_display_items(media_items, args, 12)
-            return (
-                [_media_ui_spec("sketch_gallery", "Image", limited)] if limited else []
-            )
-
-        if tool_name == "dramaclaw_get_character_media":
-            resp = _backend_api_get(
-                f"/api/v1/projects/{project_q}/characters?summary=false", token
-            )
-            media_kind = (
-                str(args.get("media_kind") or args.get("kind") or "all").strip().lower()
-            )
-            if media_kind not in {"all", "portrait", "identity"}:
-                media_kind = "all"
-            include_identities = (
-                bool(args.get("include_identities", True)) and media_kind != "portrait"
-            )
-            media_items = []
-            requested_names = _requested_display_names(args)
-            requested_queries = _requested_display_queries(args)
-            for character in _api_response_items(resp, "characters", "items"):
-                if not isinstance(character, dict):
-                    continue
-                name = str(character.get("name") or "").strip()
-                role = str(
-                    character.get("role") or character.get("description") or ""
-                ).strip()
-                character_name_match = _matches_any_display_text(
-                    [name, character.get("aliases")],
-                    requested_names,
-                )
-                character_query_match = _matches_any_display_text(
-                    [
-                        name,
-                        role,
-                        character.get("description"),
-                        character.get("appearance"),
-                        character.get("profile"),
-                        character.get("aliases"),
-                    ],
-                    requested_queries,
-                )
-                character_match = character_name_match and character_query_match
-                portrait_url = str(character.get("portrait_url") or "").strip()
-                if portrait_url and character_match:
-                    if media_kind in {"all", "portrait"}:
-                        media_items.append(
-                            {
-                                "src": portrait_url,
-                                "title": name or "角色肖像",
-                                "description": role,
-                                "aspectRatio": "3/4",
-                            }
-                        )
-                identities = (
-                    character.get("identities")
-                    or character.get("identity_images")
-                    or []
-                )
-                if include_identities:
-                    try:
-                        identities_resp = _backend_api_get(
-                            f"/api/v1/projects/{project_q}/characters/{quote(name, safe='')}/identities",
-                            token,
-                        )
-                        for key in ("data", "identities", "items"):
-                            value = (
-                                identities_resp.get(key)
-                                if isinstance(identities_resp, dict)
-                                else None
-                            )
-                            if isinstance(value, list):
-                                identities = value
-                                break
-                        data = (
-                            identities_resp.get("data")
-                            if isinstance(identities_resp, dict)
-                            else None
-                        )
-                        if isinstance(data, dict):
-                            value = data.get("identities")
-                            if isinstance(value, list):
-                                identities = value
-                    except Exception:
-                        pass
-                if include_identities and isinstance(identities, list):
-                    for identity in identities:
-                        if not isinstance(identity, dict):
-                            continue
-                        src = str(
-                            identity.get("image_url")
-                            or identity.get("portrait_image_url")
-                            or identity.get("costume_image_url")
-                            or ""
-                        ).strip()
-                        if src:
-                            title = str(
-                                identity.get("identity_name")
-                                or identity.get("name")
-                                or identity.get("identity_id")
-                                or name
-                                or "身份图"
-                            )
-                            identity_name_match = _matches_any_display_text(
-                                [
-                                    name,
-                                    character.get("aliases"),
-                                    title,
-                                    identity.get("identity_name"),
-                                    identity.get("name"),
-                                    identity.get("identity_id"),
-                                ],
-                                requested_names,
-                            )
-                            identity_query_match = _matches_any_display_text(
-                                [
-                                    title,
-                                    identity.get("identity_name"),
-                                    identity.get("name"),
-                                    identity.get("identity_id"),
-                                    identity.get("description"),
-                                    identity.get("appearance_details"),
-                                    identity.get("prompt"),
-                                    identity.get("role"),
-                                    name,
-                                    role,
-                                ],
-                                requested_queries,
-                            )
-                            identity_match = (
-                                identity_name_match and identity_query_match
-                            )
-                            if not identity_match:
-                                continue
-                            media_items.append(
-                                {
-                                    "src": src,
-                                    "title": f"{name} · {title}" if name else title,
-                                    "description": role,
-                                    "aspectRatio": "3/4",
-                                }
-                            )
-            limited = _limit_display_items(media_items, args, 12)
-            return (
-                [_media_ui_spec("character_showcase", "Image", limited)]
-                if limited
-                else []
-            )
-
-        if tool_name == "dramaclaw_get_episode_media":
-            episode = int(args.get("episode") or 1)
-            media_type = str(args.get("media_type") or "video").strip().lower()
-            resp = _backend_api_get(
-                f"/api/v1/projects/{project_q}/episodes/{episode}/beats",
-                token,
-            )
-            video_items: list[dict[str, Any]] = []
-            audio_items: list[dict[str, Any]] = []
-            requested_beats = _requested_display_beats(args)
-            requested_queries = _requested_display_queries(args)
-            for beat in _api_response_items(resp, "beats", "items"):
-                if not isinstance(beat, dict):
-                    continue
-                beat_number = beat.get("beat_number")
-                try:
-                    beat_int = int(beat_number)
-                except (TypeError, ValueError):
-                    beat_int = None
-                if requested_beats is not None and beat_int not in requested_beats:
-                    continue
-                if not _matches_any_display_text(
-                    [
-                        beat.get("title"),
-                        beat.get("summary"),
-                        beat.get("description"),
-                        beat.get("visual_description"),
-                        beat.get("image_prompt"),
-                        beat.get("video_prompt"),
-                        beat.get("narration"),
-                        beat.get("voiceover"),
-                        beat.get("dialogue"),
-                        beat.get("audio_text"),
-                        beat.get("speaker"),
-                        beat.get("character_names"),
-                        beat.get("characters"),
-                        beat.get("scene_name"),
-                        beat.get("location"),
-                    ],
-                    requested_queries,
-                ):
-                    continue
-                video_url = str(beat.get("video_url") or "").strip()
-                audio_url = str(beat.get("audio_url") or "").strip()
-                frame_url = str(
-                    beat.get("frame_url") or beat.get("sketch_url") or ""
-                ).strip()
-                if video_url:
-                    video_items.append(
-                        {
-                            "src": video_url,
-                            "poster": frame_url,
-                            "title": f"Beat {beat_number} 视频",
-                        }
-                    )
-                if audio_url:
-                    audio_items.append(
-                        {"src": audio_url, "title": f"Beat {beat_number} 音频"}
-                    )
-            if media_type == "audio":
-                limited = _limit_display_items(audio_items, args, 20)
-                return (
-                    [_media_ui_spec("audio_list", "Audio", limited)] if limited else []
-                )
-            limited = _limit_display_items(video_items, args, 6)
-            return (
-                [_media_ui_spec("keyframe_video", "Video", limited)] if limited else []
-            )
-
-        return []
-
-    try:
-        return await asyncio.to_thread(build)
-    except Exception as exc:
-        logger.info(
-            "display fallback failed project=%s tool=%s args=%s error=%s",
-            project,
-            tool_name,
-            json.dumps(args, ensure_ascii=False, sort_keys=True, default=str)[:1000],
-            exc,
-        )
-        return []
+    return await display_fallback._fallback_display_tool_ui_specs(
+        username,
+        project,
+        tool_name,
+        args,
+        token=token,
+        _backend_api_get=_backend_api_get,
+        project_dir=project_dir,
+    )
 
 
 def _assistant_history_contents(
@@ -4457,92 +2929,9 @@ def _extract_media(
     *,
     project_dir: str | Path | None = None,
 ) -> list[dict[str, str]]:
-    media_project_dir = _media_project_dir(username, project, project_dir)
-    items: list[dict[str, str]] = []
-    seen: set[str] = set()
-    markdown_images = _collect_markdown_image_refs(content)
-
-    def add_item(raw_url: str, path: str | None = None) -> None:
-        candidate = raw_url.strip(".,;)]}")
-        parsed = urlparse(candidate)
-        if parsed.scheme in {"http", "https"} and parsed.path.startswith("/static/"):
-            candidate = parsed.path
-        if candidate.startswith("/static/"):
-            canonical = _canonical_project_static_media_url(
-                project, media_project_dir, candidate
-            )
-            if canonical is None:
-                return
-            candidate, path = canonical
-        ext = Path(urlparse(candidate).path).suffix.lower()
-        kind = _MEDIA_EXTENSIONS.get(ext)
-        if not kind:
-            return
-        if kind == "image" and (
-            candidate in markdown_images
-            or (path and path in markdown_images)
-            or (path and path.lstrip("./") in markdown_images)
-        ):
-            return
-        effective_path = path or ""
-        if not effective_path:
-            effective_path = _media_path_from_static_url(candidate) or ""
-        key = f"{kind}:{effective_path or candidate}"
-        if key in seen:
-            return
-        seen.add(key)
-        items.append(
-            {
-                "kind": kind,
-                "url": candidate,
-                "path": effective_path,
-                "label": Path(effective_path or candidate).name,
-            }
-        )
-
-    for match in _URL_RE.finditer(content):
-        url = match.group(1)
-        if url.startswith("/static/"):
-            add_item(url)
-        else:
-            add_item(url)
-
-    for match in _REL_PATH_RE.finditer(content):
-        rel_path = match.group("path")
-        full_path = media_project_dir / rel_path
-        if full_path.exists():
-            static_url = project_static_url(project, rel_path, local_path=full_path)
-            add_item(static_url, rel_path)
-
-    return items
-
-
-def _collect_markdown_image_refs(content: str) -> set[str]:
-    refs: set[str] = set()
-
-    for match in _MARKDOWN_IMAGE_RE.finditer(content):
-        raw = (match.group(1) or "").strip().strip("<>").strip(".,;)]}")
-        if not raw:
-            continue
-        refs.add(raw)
-        parsed = urlparse(raw)
-        path = (
-            parsed.path if parsed.scheme in {"http", "https"} else raw.split("?", 1)[0]
-        )
-        if path:
-            refs.add(path)
-        static_path = _media_path_from_static_url(raw)
-        if static_path:
-            refs.add(static_path)
-            refs.add(static_path.lstrip("./"))
-        elif parsed.scheme in {"http", "https"} and parsed.path.startswith("/static/"):
-            refs.add(parsed.path)
-        elif raw.startswith("/static/"):
-            refs.add(raw.split("?", 1)[0])
-        else:
-            refs.add(path.lstrip("./") if path else raw.lstrip("./"))
-
-    return refs
+    return media_presentation._extract_media(
+        content, project, _media_project_dir(username, project, project_dir)
+    )
 
 
 def _normalize_media_items(
@@ -4552,115 +2941,9 @@ def _normalize_media_items(
     *,
     project_dir: str | Path | None = None,
 ) -> list[dict[str, str]]:
-    normalized: list[dict[str, str]] = []
-    seen: set[str] = set()
-    media_project_dir = _media_project_dir(username, project, project_dir)
-
-    for item in media:
-        if not isinstance(item, dict):
-            continue
-
-        candidate = str(item.get("url", "") or "").strip()
-        path = str(item.get("path", "") or "").strip()
-        if not candidate and not path:
-            continue
-
-        if not candidate and path:
-            canonical = _canonical_project_static_media_url(
-                project, media_project_dir, path
-            )
-            if canonical is None:
-                continue
-            candidate, path = canonical
-
-        parsed = urlparse(candidate)
-        if parsed.scheme in {"http", "https"} and parsed.path.startswith("/static/"):
-            candidate = parsed.path
-        if candidate.startswith("/static/"):
-            canonical = _canonical_project_static_media_url(
-                project, media_project_dir, candidate
-            )
-            if canonical is None:
-                continue
-            candidate, path = canonical
-
-        ext = Path(urlparse(candidate).path).suffix.lower()
-        kind = _MEDIA_EXTENSIONS.get(ext)
-        if not kind:
-            continue
-
-        if not path:
-            path = _media_path_from_static_url(candidate) or ""
-
-        key = f"{kind}:{path or candidate}"
-        if key in seen:
-            continue
-        seen.add(key)
-
-        normalized.append(
-            {
-                "kind": kind,
-                "url": candidate,
-                "path": path,
-                "label": str(item.get("label", "") or Path(path or candidate).name),
-            }
-        )
-
-    return normalized
-
-
-def _merge_media_items(*groups: list[dict[str, str]]) -> list[dict[str, str]]:
-    merged: list[dict[str, str]] = []
-    seen: set[str] = set()
-
-    for group in groups:
-        for item in group:
-            kind = str(item.get("kind", "") or "").strip()
-            url = str(item.get("url", "") or "").strip()
-            path = str(item.get("path", "") or "").strip()
-            if not kind or not url:
-                continue
-            key = f"{kind}:{path or url}"
-            if key in seen:
-                continue
-            seen.add(key)
-            merged.append(
-                {
-                    "kind": kind,
-                    "url": url,
-                    "path": path,
-                    "label": str(item.get("label", "") or Path(path or url).name),
-                }
-            )
-
-    return merged
-
-
-def _filter_markdown_duplicate_images(
-    content: str, media: list[dict[str, str]]
-) -> list[dict[str, str]]:
-    markdown_images = _collect_markdown_image_refs(content)
-    if not markdown_images:
-        return media
-
-    filtered: list[dict[str, str]] = []
-    for item in media:
-        kind = str(item.get("kind", "") or "").strip()
-        if kind != "image":
-            filtered.append(item)
-            continue
-
-        url = str(item.get("url", "") or "").strip()
-        path = str(item.get("path", "") or "").strip()
-        if (
-            url in markdown_images
-            or (path and path in markdown_images)
-            or (path and path.lstrip("./") in markdown_images)
-        ):
-            continue
-        filtered.append(item)
-
-    return filtered
+    return media_presentation._normalize_media_items(
+        media, project, _media_project_dir(username, project, project_dir)
+    )
 
 
 def _build_claude_thread(
