@@ -370,9 +370,21 @@ def _http_error_result(status_code: int, text: str, reason: str) -> dict[str, An
         "status_code": status_code,
         "error": _safe_error_string(reason, 300) or "HTTP request failed",
     }
-    if not 400 <= status_code < 500 or len(text) > 65536:
+    if len(text) > 65536:
         return result
     data = _maybe_json(text)
+    if 500 <= status_code < 600:
+        if isinstance(data, dict):
+            for field in ("error", "message", "detail"):
+                value = _safe_error_string(data.get(field), 300)
+                if value:
+                    result["error"] = value
+                    break
+        elif isinstance(data, str) and not data.lstrip().startswith("<"):
+            result["error"] = _safe_error_string(data, 300) or result["error"]
+        return result
+    if not 400 <= status_code < 500:
+        return result
     if not isinstance(data, dict):
         return result
     detail = data.get("detail")

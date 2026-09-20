@@ -6686,6 +6686,37 @@ def test_workflow_http_error_handles_non_json_and_empty_body(monkeypatch, body):
     assert len(result["error"]) <= 300
 
 
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        (
+            {"detail": "媒体模型目录暂不可用，请稍后重试"},
+            "媒体模型目录暂不可用，请稍后重试",
+        ),
+        ({"error": "model catalog unavailable"}, "model catalog unavailable"),
+        ({"detail": "Bearer private-token"}, "Service Unavailable"),
+    ],
+)
+def test_workflow_http_5xx_preserves_only_safe_string_guidance(
+    monkeypatch, body, expected
+):
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_API_URL", "http://localhost:8780")
+    monkeypatch.setattr(plugin, "_request_headers", lambda _agent: {})
+
+    def reject(request, timeout):
+        raise HTTPError(
+            request.full_url, 503, "Service Unavailable", None,
+            io.BytesIO(json.dumps(body).encode()),
+        )
+
+    monkeypatch.setattr(plugin, "urlopen", reject)
+    result = plugin._request("GET", "/projects/p/freezone/image/models")
+    assert result["error"] == expected
+    assert result["status"] == "failed"
+    assert "data" not in result
+
+
 def test_workflow_http_error_limits_nested_diagnostics(monkeypatch):
     plugin = _load_plugin_module()
     monkeypatch.setenv("DRAMACLAW_API_URL", "http://localhost:8780")
