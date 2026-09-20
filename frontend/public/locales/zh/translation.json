@@ -2355,6 +2355,7 @@
       "deleted": "已将「{{name}}」移至回收站",
       "restored": "已恢复「{{name}}」",
       "purged": "已永久删除「{{name}}」",
+      "purgeFailed": "未能完成删除「{{name}}」，项目仍在回收站，可重试",
       "undo": "撤销"
     },
     "title": "项目管理",
