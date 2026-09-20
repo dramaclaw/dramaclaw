@@ -131,11 +131,13 @@ silently overriding either value. If a write returns
 request's answers to the same intent/plan, and retry the same operation. Approval behavior remains
 controlled by the execution mode.
 
-If the user selects a recommended/default image or video model, use the symbolic value
-`"recommended"` in the portable intent input or the media node's `data.model`. It is a user
-preference, not a catalog model id; the authorized adapter resolves it through the frontend's live
-default immediately before commit. Never invent a model id, and never rebuild a complete graph just
-to replace the symbolic recommendation after a failed write.
+When the user does not specify internal media settings, use `"recommended"` only for the media
+model preference in the portable intent or Plan. The authorized preflight resolves it to a concrete
+model id and compatible parameters from one scoped live Catalog snapshot before saving the draft.
+The final draft preview must contain concrete values. If the configured preferred model is absent
+or its capabilities do not support the requested values, stop on the returned blocker and ask the
+user to choose a product-level alternative. Never submit `"recommended"` as size, quality, or
+resolution, and never select the first Catalog model by position.
 
 Generation clarification must use one question per missing portable field; never combine model,
 ratio, resolution, duration, sound, or count into a single recommended-settings preset. Read the

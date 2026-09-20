@@ -19,6 +19,7 @@ import shutil
 import time
 import uuid
 from collections.abc import Mapping
+from copy import deepcopy
 from pathlib import Path
 from typing import Annotated, Any, Awaitable, Callable, Literal, Optional
 from urllib.parse import quote, unquote, urlencode, urlsplit
@@ -14402,6 +14403,8 @@ async def create_canvas_workflow_draft(
     validated["preflight"] = await _check_workflow_runtime(
         validated, project=project, user=user
     )
+    if isinstance(prepared["intent"].get("plan"), dict):
+        prepared["intent"]["plan"] = deepcopy(validated["plan"])
     if operation is not None and validated.get("skill_id") != compiled_skill_id:
         raise HTTPException(
             400, "workflow result operation does not match compiled Skill"
@@ -14596,6 +14599,8 @@ async def patch_canvas_workflow_draft(
     validated["preflight"] = await _check_workflow_runtime(
         validated, project=project, user=user
     )
+    if isinstance(prepared["intent"].get("plan"), dict):
+        prepared["intent"]["plan"] = deepcopy(validated["plan"])
     try:
         draft, error = await asyncio.to_thread(
             patch_workflow_draft,

@@ -849,24 +849,6 @@ def test_generation_preflight_models_add_next_alias_before_running_media(monkeyp
     ]
 
 
-def test_add_next_recommended_model_sentinel_is_removed_before_frontend_dispatch():
-    plugin = _load_plugin_module()
-    commands = [
-        {
-            "type": "add_next_node",
-            "source_node_id": "selected-image",
-            "client_id": "watercolor-result",
-            "node_type": "imageGenNode",
-            "data": {"model": "recommended", "count": 1},
-        }
-    ]
-
-    plugin._use_frontend_default_for_recommended_models(commands)
-
-    assert "model" not in commands[0]["data"]
-    assert commands[0]["data"]["count"] == 1
-
-
 def test_external_generation_preflight_accepts_confirmed_image_and_video_parameters(
     monkeypatch,
 ):
@@ -1080,7 +1062,7 @@ def test_handwritten_workflow_batch_cannot_bypass_dynamic_plan():
     assert result["status"] == "wrong_tool_dynamic_workflow"
 
 
-def test_external_canvas_write_uses_frontend_default_for_recommended_model(
+def test_external_canvas_write_resolves_recommended_model_from_live_catalog(
     monkeypatch,
 ):
     plugin = _load_plugin_module()
@@ -1092,7 +1074,7 @@ def test_external_canvas_write_uses_frontend_default_for_recommended_model(
             "data": {
                 "model": "recommended",
                 "aspectRatio": "9:16",
-                "size": "high",
+                "size": "recommended",
                 "quality": "high",
                 "count": 1,
             },
@@ -1112,6 +1094,13 @@ def test_external_canvas_write_uses_frontend_default_for_recommended_model(
         lambda *_args: None,
     )
     monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: False)
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: {
+        "ok": True, "data": [{
+            "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+            "ratioOptions": ["9:16"], "resolutionOptions": ["1K", "2K"],
+            "qualityOptions": ["high"],
+        }],
+    })
 
     def fake_dispatch(**kwargs):
         captured.update(kwargs)
@@ -1131,10 +1120,234 @@ def test_external_canvas_write_uses_frontend_default_for_recommended_model(
     )
 
     assert result == "dispatched"
-    assert "model" not in captured["commands"][0]["data"]
+    assert captured["commands"][0]["data"]["model"] == "LingShan-G2"
+    assert captured["commands"][0]["data"]["size"] == "1K"
 
 
-def test_hermes_canvas_write_preserves_recommended_model(monkeypatch):
+def test_existing_media_node_update_resolves_recommendations_before_dispatch(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    commands = [{
+        "type": "update_node_data", "node_id": "existing-image",
+        "data": {"model": "recommended", "size": "recommended"},
+    }]
+    captured = {}
+    monkeypatch.setattr(
+        plugin, "_resolve_canvas_scope_for_write",
+        lambda project, canvas: (project, canvas, None),
+    )
+    monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_args: None)
+    monkeypatch.setattr(
+        plugin, "_canvas_generation_preflight_state",
+        lambda *_args: ({"existing-image": {
+            "id": "existing-image", "type": "imageGenNode",
+            "data": {"prompt": "portrait", "aspectRatio": "21:9"},
+        }}, [], None),
+    )
+    monkeypatch.setattr(
+        plugin, "_request",
+        lambda *_args, **_kwargs: {"ok": True, "data": [{
+            "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+            "ratioOptions": ["21:9"], "resolutionOptions": ["3K"],
+            "qualityOptions": ["high"],
+        }]},
+    )
+    monkeypatch.setattr(plugin, "_external_generation_parameter_preflight", lambda *_args: None)
+    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: False)
+    monkeypatch.setattr(
+        plugin, "_dispatch_mcp_approved_frontend_commands",
+        lambda **kwargs: captured.update(kwargs) or "dispatched",
+    )
+
+    result = plugin._emit_canvas_commands(
+        "project-a", "canvas-a", commands, allow_dynamic_workflow_batch=True,
+    )
+
+    assert result == "dispatched"
+    update = captured["commands"][0]["data"]
+    assert update["model"] == "LingShan-G2"
+    assert update["size"] == "3K"
+    assert update["aspectRatio"] == "21:9"
+    assert update["quality"] == "high"
+
+
+def test_existing_media_node_update_rejects_unknown_recommended_target(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(
+        plugin, "_resolve_canvas_scope_for_write",
+        lambda project, canvas: (project, canvas, None),
+    )
+    monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_args: None)
+    monkeypatch.setattr(
+        plugin, "_canvas_generation_preflight_state", lambda *_args: ({}, [], None),
+    )
+    monkeypatch.setattr(
+        plugin, "_dispatch_frontend_canvas_commands",
+        lambda *_args, **_kwargs: pytest.fail("unresolved command was dispatched"),
+    )
+
+    result = plugin._emit_canvas_commands(
+        "project-a", "canvas-a", [{
+            "type": "update_node_data", "node_id": "missing-image",
+            "data": {"model": "recommended"},
+        }], allow_dynamic_workflow_batch=True,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "generation_recommendation_unavailable"
+
+
+def test_recommended_update_uses_earlier_model_change_in_same_batch(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(
+        plugin, "_canvas_generation_preflight_state",
+        lambda *_args: ({"existing-image": {
+            "id": "existing-image", "type": "imageGenNode",
+            "data": {"model": "old-model", "aspectRatio": "21:9"},
+        }}, [], None),
+    )
+    monkeypatch.setattr(
+        plugin, "_request",
+        lambda *_args, **_kwargs: {"ok": True, "data": [{
+            "id": "LingShan-G2", "ratioOptions": ["21:9"],
+            "resolutionOptions": ["3K"],
+        }]},
+    )
+    commands = [
+        {"type": "update_node_data", "node_id": "existing-image",
+         "data": {"model": "LingShan-G2"}},
+        {"type": "update_node_data", "node_id": "existing-image",
+         "data": {"size": "recommended"}},
+    ]
+
+    error = plugin._resolve_canvas_generation_recommendations(
+        "project-a", "canvas-a", commands,
+    )
+
+    assert error is None
+    assert commands[1]["data"]["size"] == "3K"
+    assert "model" not in commands[1]["data"]
+
+
+def test_recommended_model_switch_replaces_stale_options_before_generation(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    existing = {
+        "id": "existing-image", "type": "imageGenNode",
+        "data": {
+            "model": "old-model", "prompt": "portrait", "aspectRatio": "21:9",
+            "size": "4K", "quality": "ultra", "count": 1,
+        },
+    }
+    catalog = {
+        "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+        "ratioOptions": ["9:16"], "resolutionOptions": ["1K"],
+        "qualityOptions": ["medium"],
+    }
+    captured = {}
+    monkeypatch.setattr(
+        plugin, "_resolve_canvas_scope_for_write",
+        lambda project, canvas: (project, canvas, None),
+    )
+    monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_args: None)
+    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: False)
+
+    def request(_method, path, **_kwargs):
+        if "/canvases/" in path:
+            return {"ok": True, "data": {"nodes": [existing], "edges": []}}
+        return {"ok": True, "data": [catalog]}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    monkeypatch.setattr(
+        plugin, "_dispatch_mcp_approved_frontend_commands",
+        lambda **kwargs: captured.update(kwargs) or "dispatched",
+    )
+    commands = [
+        {"type": "update_node_data", "node_id": "existing-image",
+         "data": {"model": "recommended"}},
+        {"type": "run_node_action", "node_id": "existing-image",
+         "action": "generate_image"},
+    ]
+
+    result = plugin._emit_canvas_commands(
+        "project-a", "canvas-a", commands, allow_dynamic_workflow_batch=True,
+    )
+
+    assert result == "dispatched"
+    assert captured["commands"][0]["data"] == {
+        "model": "LingShan-G2", "aspectRatio": "9:16",
+        "size": "1K", "quality": "medium",
+    }
+
+
+def test_recommended_model_switch_rejects_incompatible_explicit_ratio(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(
+        plugin, "_canvas_generation_preflight_state",
+        lambda *_args: ({"existing-image": {
+            "id": "existing-image", "type": "imageGenNode",
+            "data": {"model": "old-model", "aspectRatio": "21:9", "size": "4K"},
+        }}, [], None),
+    )
+    monkeypatch.setattr(
+        plugin, "_request",
+        lambda *_args, **_kwargs: {"ok": True, "data": [{
+            "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+            "ratioOptions": ["9:16"], "resolutionOptions": ["1K"],
+        }]},
+    )
+    commands = [{
+        "type": "update_node_data", "node_id": "existing-image",
+        "data": {"model": "recommended", "aspectRatio": "21:9"},
+    }]
+
+    error = plugin._resolve_canvas_generation_recommendations(
+        "project-a", "canvas-a", commands,
+    )
+
+    assert error["status"] == "generation_recommendation_unavailable"
+    assert error["blockers"][0]["code"] == "model_capability_unsupported"
+
+
+def test_recommended_video_switch_clears_unsupported_inherited_audio(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(
+        plugin, "_canvas_generation_preflight_state",
+        lambda *_args: ({"existing-video": {
+            "id": "existing-video", "type": "videoNode",
+            "data": {
+                "model": "old-model", "aspectRatio": "21:9", "quality": "4K",
+                "durationSec": 60, "generateAudio": True,
+            },
+        }}, [], None),
+    )
+    monkeypatch.setattr(
+        plugin, "_request",
+        lambda *_args, **_kwargs: {"ok": True, "data": [{
+            "id": "seedance-2.0-fast", "aliases": ["newapi_seedance-2.0-fast"],
+            "ratioOptions": ["9:16"], "resolutionOptions": ["720P"],
+            "minDuration": 4, "maxDuration": 15,
+            "supportsGenerateAudio": False,
+        }]},
+    )
+    commands = [{
+        "type": "update_node_data", "node_id": "existing-video",
+        "data": {"model": "recommended"},
+    }]
+
+    error = plugin._resolve_canvas_generation_recommendations(
+        "project-a", "canvas-a", commands,
+    )
+
+    assert error is None
+    assert commands[0]["data"] == {
+        "model": "seedance-2.0-fast", "aspectRatio": "9:16",
+        "quality": "720P", "durationSec": 5, "generateAudio": False,
+        "count": 1,
+    }
+
+
+def test_hermes_canvas_write_resolves_recommended_model(monkeypatch):
     plugin = _load_plugin_module()
     monkeypatch.delenv("DRAMACLAW_EXTERNAL_MCP", raising=False)
     commands = [
@@ -1158,6 +1371,13 @@ def test_hermes_canvas_write_preserves_recommended_model(monkeypatch):
         lambda *_args: None,
     )
     monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: False)
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: {
+        "ok": True, "data": [{
+            "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+            "ratioOptions": ["9:16"], "resolutionOptions": ["1K"],
+            "qualityOptions": ["medium"],
+        }],
+    })
 
     def fake_dispatch(**kwargs):
         captured.update(kwargs)
@@ -1173,7 +1393,8 @@ def test_hermes_canvas_write_preserves_recommended_model(monkeypatch):
     )
 
     assert result == "dispatched"
-    assert captured["commands"][0]["data"]["model"] == "recommended"
+    assert captured["commands"][0]["data"]["model"] == "LingShan-G2"
+    assert captured["commands"][0]["data"]["quality"] == "medium"
 
 
 def test_dynamic_workflow_plan_uses_draft_before_canvas_bridge(monkeypatch, tmp_path):
@@ -1931,9 +2152,8 @@ def test_workflow_runtime_preflight_recommended_returns_live_choices(monkeypatch
         "id": "image", "node_type": "imageGenNode", "data": {"model": "recommended"},
     }]}}, project_id="project-a")
     blocker = result["blockers"][0]
-    assert blocker["code"] == "model_selection_required"
-    assert blocker["available_models"] == [entry]
-    assert "cheapest" in blocker["message"]
+    assert blocker["code"] == "recommended_model_unavailable"
+    assert result["status"] == "blocked"
 
 
 def test_workflow_capability_errors_explain_all_supported_values_and_omission():
@@ -2884,6 +3104,34 @@ def test_generation_clarification_builds_complete_media_questions(monkeypatch):
     assert "questions" not in schemas["freezone_request_user_clarification"]["parameters"]["required"]
 
 
+def test_generation_clarification_recommendation_has_concrete_answers(monkeypatch):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    captured = []
+    monkeypatch.setattr(plugin, "_emit_clarification_event",
+                        lambda _project, _canvas, event: captured.append(event) or "shown")
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: {
+        "ok": True, "data": [{
+            "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+            "ratioOptions": ["9:16"], "resolutionOptions": ["2K", "1K"],
+            "qualityOptions": ["medium"],
+        }],
+    })
+    result = handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a", "generation_media_types": ["image"],
+    })
+    assert result == "shown"
+    event = captured[0]
+    assert event["allow_recommended"] is True
+    assert event["recommended_answers"] == {
+        "image_model": {"option_ids": ["LingShan-G2"]},
+        "image_aspect_ratio": {"option_ids": ["9:16"]},
+        "image_resolution": {"option_ids": ["1K"]},
+        "image_quality": {"option_ids": ["medium"]},
+        "image_variants_per_node": {"option_ids": ["1"]},
+    }
+
+
 def test_generation_clarification_builds_exact_preflight_questions(monkeypatch):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
@@ -2923,7 +3171,10 @@ def test_workflow_confirmation_result_schema_preserves_generation_requirements()
     assert schema["properties"]["required_choices"]["type"] == "object"
 
 
-def test_generation_clarification_writes_answers_to_same_draft(monkeypatch, tmp_path):
+@pytest.mark.parametrize("clarification_status", ["answered", "recommended"])
+def test_generation_clarification_writes_answers_to_same_draft(
+    monkeypatch, tmp_path, clarification_status,
+):
     plugin = _load_plugin_module()
     _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
@@ -2948,7 +3199,7 @@ def test_generation_clarification_writes_answers_to_same_draft(monkeypatch, tmp_
     monkeypatch.setattr(
         plugin, "_emit_clarification_event", lambda *_args: {
             "ok": True, "status": "clarification_frontend_result",
-            "clarification_status": "answered", "tool_call_status": "completed",
+            "clarification_status": clarification_status, "tool_call_status": "completed",
             "bridge_key": "clarification-1", "answers": {
                 "image_resolution": {"option_ids": ["2048x2048"]},
                 "image_variants_per_node": {"option_ids": ["2"]},
@@ -6205,9 +6456,6 @@ def test_workflow_requires_browser_receipt_even_in_direct_apply_mode(monkeypatch
     )
     monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: True)
     monkeypatch.setattr(plugin, "_external_mcp_agent_enabled", lambda: True)
-    monkeypatch.setattr(
-        plugin, "_use_frontend_default_for_recommended_models", lambda *_: None
-    )
     monkeypatch.setattr(
         plugin, "_dispatch_mcp_approved_frontend_commands", lambda **_: "browser"
     )
