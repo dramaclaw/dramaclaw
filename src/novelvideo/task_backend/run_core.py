@@ -553,12 +553,16 @@ def _project_task_failure_for_exception(
     exc: BaseException,
 ) -> tuple[str, dict[str, Any], bool]:
     from novelvideo.freezone.audio_node import VoicePrerequisiteError
+    from novelvideo.generators.render_identity_guard import RenderIdentityDetectionRequired
     from novelvideo.identity_prerequisites import IdentityPlanningPrerequisiteError
     from novelvideo.novel_source import NovelImportRequiredError
     from novelvideo.scene_prerequisites import ScenePlanningPrerequisiteError
     from novelvideo.video_prompt_prerequisite import VideoPromptPrerequisiteError
 
     if isinstance(exc, VoicePrerequisiteError):
+        return str(exc), {"error_code": exc.error_code}, True
+
+    if isinstance(exc, RenderIdentityDetectionRequired):
         return str(exc), {"error_code": exc.error_code}, True
 
     if isinstance(exc, IdentityPlanningPrerequisiteError):

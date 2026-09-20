@@ -1,4 +1,18 @@
 {
+  "referenceValidation": {
+    "firstFrame": "Khung hình đầu", "lastFrame": "Khung hình cuối",
+    "title": "Tư liệu tham chiếu không đáp ứng yêu cầu của mô hình", "hint": "Vui lòng sửa các tư liệu bên dưới trước khi tạo. Định vị để chọn nút tương ứng trên canvas.", "locate": "Định vị tư liệu",
+    "image": "Ảnh tham chiếu", "audio": "Âm thanh tham chiếu", "video": "Video tham chiếu",
+    "format": "Định dạng thực tế: {{actual}}; hỗ trợ: {{expected}}.",
+    "unreadable": "Không thể đọc hoặc nhận dạng tư liệu. Vui lòng tải lên tệp hợp lệ.",
+    "maxMB": "Dung lượng thực tế: {{actual}} MB; tối đa: {{expected}} MB.",
+    "minWidth": "Chiều rộng: {{actual}} px; tối thiểu: {{expected}} px.", "maxWidth": "Chiều rộng: {{actual}} px; tối đa: {{expected}} px.",
+    "minHeight": "Chiều cao: {{actual}} px; tối thiểu: {{expected}} px.", "maxHeight": "Chiều cao: {{actual}} px; tối đa: {{expected}} px.",
+    "minAspectRatio": "Tỷ lệ rộng/cao: {{actual}}; tối thiểu: {{expected}}.", "maxAspectRatio": "Tỷ lệ rộng/cao: {{actual}}; tối đa: {{expected}}.",
+    "minFPS": "Tốc độ khung hình: {{actual}} fps; tối thiểu: {{expected}} fps.", "maxFPS": "Tốc độ khung hình: {{actual}} fps; tối đa: {{expected}} fps.",
+    "minDuration": "Thời lượng: {{actual}} giây; mỗi đoạn tối thiểu {{expected}} giây.", "maxDuration": "Thời lượng: {{actual}} giây; mỗi đoạn tối đa {{expected}} giây.",
+    "totalMinDuration": "Tổng thời lượng tham chiếu: {{actual}} giây; tối thiểu {{expected}} giây.", "totalMaxDuration": "Tổng thời lượng tham chiếu: {{actual}} giây; tối đa {{expected}} giây."
+  },
   "app": {
     "title": "SuperTale",
     "subtitle": "Bàn làm việc tạo và commit asset của SuperTale",
@@ -3896,6 +3910,7 @@
       },
       "render": {
         "generateNew": "Tạo mới",
+        "sketchRequired": "Hãy tạo hoặc tải lên bản phác thảo trước",
         "switched": "Đã đổi bản render",
         "switchFailed": "Đổi thất bại",
         "forcedUse": "Đã ép dùng bản render này",

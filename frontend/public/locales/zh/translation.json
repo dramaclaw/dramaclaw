@@ -1,4 +1,18 @@
 {
+  "referenceValidation": {
+    "firstFrame": "首帧", "lastFrame": "尾帧",
+    "title": "参考素材不符合模型要求", "hint": "请修正以下素材后重新生成。可定位到对应画布节点。", "locate": "定位素材",
+    "image": "参考图", "audio": "参考音频", "video": "参考视频",
+    "format": "实际格式：{{actual}}；支持格式：{{expected}}。",
+    "unreadable": "无法读取或识别该素材，请重新上传有效文件。",
+    "maxMB": "实际体积 {{actual}} MB；最多 {{expected}} MB。",
+    "minWidth": "实际宽度 {{actual}} px；至少 {{expected}} px。", "maxWidth": "实际宽度 {{actual}} px；最多 {{expected}} px。",
+    "minHeight": "实际高度 {{actual}} px；至少 {{expected}} px。", "maxHeight": "实际高度 {{actual}} px；最多 {{expected}} px。",
+    "minAspectRatio": "实际宽高比 {{actual}}；至少 {{expected}}。", "maxAspectRatio": "实际宽高比 {{actual}}；最多 {{expected}}。",
+    "minFPS": "实际帧率 {{actual}} fps；至少 {{expected}} fps。", "maxFPS": "实际帧率 {{actual}} fps；最多 {{expected}} fps。",
+    "minDuration": "实际时长 {{actual}} 秒；单条至少 {{expected}} 秒。", "maxDuration": "实际时长 {{actual}} 秒；单条最多 {{expected}} 秒。",
+    "totalMinDuration": "参考素材总时长 {{actual}} 秒；至少 {{expected}} 秒。", "totalMaxDuration": "参考素材总时长 {{actual}} 秒；最多 {{expected}} 秒。"
+  },
   "app": {
     "title": "SuperTale",
     "subtitle": "SuperTale 候选图生成与资产提交工作台",
@@ -3992,6 +4006,7 @@
       },
       "render": {
         "generateNew": "生成新图",
+        "sketchRequired": "请先生成或上传草图",
         "switched": "已切换渲染图",
         "switchFailed": "切换失败",
         "forcedUse": "已强制使用该渲染图",

@@ -439,18 +439,28 @@ export function audioReferenceTotalDurationLimitMs(
  * TS 无法靠 `kind !== "tooLong"` 把整个分支从联合里剔掉，调用点的三元链就取不到
  * totalTooLong 独有的 totalMs / limitMs。
  */
+export interface ReferenceDurationClip {
+  label: string;
+  durationMs: number | null;
+  nodeId?: string;
+  url?: string;
+  index?: number;
+}
+
+type MeasuredReferenceDurationClip = ReferenceDurationClip & { durationMs: number };
+
 export type AudioDurationRejection =
-  | { kind: "tooShort"; clips: { label: string; durationMs: number }[] }
-  | { kind: "tooLong"; clips: { label: string; durationMs: number }[] }
+  | { kind: "tooShort"; clips: MeasuredReferenceDurationClip[] }
+  | { kind: "tooLong"; clips: MeasuredReferenceDurationClip[] }
   | {
       kind: "totalTooShort";
-      clips: { label: string; durationMs: number }[];
+      clips: MeasuredReferenceDurationClip[];
       totalMs: number;
       limitMs: number;
     }
   | {
       kind: "totalTooLong";
-      clips: { label: string; durationMs: number }[];
+      clips: MeasuredReferenceDurationClip[];
       totalMs: number;
       limitMs: number;
     };
@@ -474,7 +484,7 @@ export type AudioDurationRejection =
  * 混在一起列用户不知道先动哪个。
  */
 export function audioReferenceDurationRejection(
-  clips: readonly { label: string; durationMs: number | null }[],
+  clips: readonly ReferenceDurationClip[],
   options: {
     totalLimitMs?: number | null;
     totalMinMs?: number;
@@ -491,7 +501,7 @@ export function audioReferenceDurationRejection(
     perClipLimits = true,
   } = options;
   const measured = clips.filter(
-    (clip): clip is { label: string; durationMs: number } =>
+    (clip): clip is MeasuredReferenceDurationClip =>
       typeof clip.durationMs === "number" && clip.durationMs > 0,
   );
   if (perClipLimits) {
