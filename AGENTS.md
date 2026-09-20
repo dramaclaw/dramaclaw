@@ -180,6 +180,12 @@ UI / API 契约改动附截图或样例输出。迁移、配置、模型供应�
 `MODEL_API_KEY` 等环境变量配置。改动配置、provisioning、备份、网关相关代码前跑一遍
 gitleaks pre-commit 钩子。
 
+LibTV 浏览器取证统一复用项目根目录的 `liblib.cookie.local.json`。该文件已被 `.gitignore`
+排除，内容是用户提供的 Playwright storage state，属于账户凭据：不得打印、提交、复制进台账或
+截图。进入 LibTV 前先执行 `playwright-cli state-load liblib.cookie.local.json`，再导航到目标 URL；
+登录态更新后只用 `state-save liblib.cookie.local.json` 覆盖本机文件。文件缺失或失效时再请用户登录，
+不要把 Cookie 值写进 `AGENTS.md`、`docs/`、脚本或命令历史。
+
 这是公开仓库：内部过程文档（`docs/changes/`、`docs/adr/`、`docs/compliance/`、
 `docs/superpowers/`）已被 `.gitignore` 排除。`docs/agent/` 是**例外，它进仓库**——
 因为交接台账必须跟着代码走。所以往台账里写东西时，默认它会被外部看到。

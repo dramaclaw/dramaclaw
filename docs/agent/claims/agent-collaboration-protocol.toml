@@ -5,7 +5,8 @@ baseline = "0e2d69770c8cff13e0efcf7ea21ff01498920373"
 
 [[claims]]
 path = "AGENTS.md"
-mode = "exclusive"
+mode = "shared"
+shared_with = ["creative-intro-discovery"]
 reason = "Stable repository-wide agent contract."
 
 [[claims]]

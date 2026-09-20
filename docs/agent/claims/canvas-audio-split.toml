@@ -46,7 +46,7 @@ reason = "Add reciprocal shared-path declarations."
 [[claims]]
 path = "docs/guides/liblib-canvas-parity.md"
 mode = "shared"
-shared_with = ["liblib-canvas-parity"]
+shared_with = ["liblib-canvas-parity", "creative-intro-discovery"]
 reason = "Record the implemented split contract against the evidence snapshot."
 
 [[claims]]
