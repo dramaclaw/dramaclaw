@@ -2400,6 +2400,55 @@ def test_backend_rejects_model_parameters_without_plugin_preflight(
     assert response.json()["detail"]["status"] == "workflow_preflight_failed"
 
 
+@pytest.mark.parametrize("via_patch", [False, True])
+def test_exact_plan_recommendation_can_be_confirmed(
+    workflow_run_client, runtime_workflow_source, monkeypatch, via_patch
+):
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.workflow_transactions import prepare_workflow_source
+
+    async def recommended_models(project, user):
+        return {"ok": True, "data": [{
+            "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+            "ratioOptions": ["1:1", "9:16"],
+            "resolutionOptions": ["1K"], "qualityOptions": ["medium"],
+        }]}
+
+    monkeypatch.setattr(freezone, "freezone_image_models", recommended_models)
+    plan = prepare_workflow_source(runtime_workflow_source, username="alice")["compiled"]["plan"]
+    plan["inputs"] = {}
+    image = next(node for node in plan["nodes"] if node["node_type"] == "imageGenNode")
+    image["data"]["model"] = "recommended"
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-drafts"
+    if via_patch:
+        original = deepcopy(plan)
+        next(node for node in original["nodes"] if node["node_type"] == "imageGenNode")[
+            "data"
+        ]["model"] = "LingShan-G2"
+        created = workflow_run_client.post(base, json={"plan": original})
+        assert created.status_code == 200, created.text
+        target = f"{base}/{created.json()['data']['draft_id']}"
+        response = workflow_run_client.patch(
+            target, json={"expected_revision": 1, "plan": plan}
+        )
+    else:
+        response = workflow_run_client.post(base, json={"plan": plan})
+    assert response.status_code == 200, response.text
+    draft = response.json()["data"]
+    assert draft["intent"]["plan"] == draft["compiled"]["plan"]
+    resolved = next(
+        node for node in draft["compiled"]["plan"]["nodes"]
+        if node["node_type"] == "imageGenNode"
+    )["data"]
+    assert resolved["model"] == "LingShan-G2"
+    assert resolved["size"] == "1K"
+    claim = workflow_run_client.post(
+        f"{base}/{draft['draft_id']}/claim", json={"revision": draft["revision"]}
+    )
+    assert claim.status_code == 200, claim.text
+    assert claim.json()["data"]["status"] == "confirming"
+
+
 def test_confirmation_rechecks_live_models(
     workflow_run_client, runtime_workflow_source, monkeypatch
 ):
