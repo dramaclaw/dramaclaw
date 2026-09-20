@@ -47,8 +47,10 @@
    和 durable bridge 约束，并与 #575 执行证据契约协调。
    `chat/session_registry.py` 已承接锁范围、记录解析、过期判断、文件抢占、
    心跳及释放，以及 Agent/Codex 会话状态与活动轮次的文件格式、读写和作用域键。
-   `service.py` 保留路径选择、协议版本、原子写入与文件锁注入，以及现有入口；
-   聊天消息持久化仍待迁出。
+   `service.py` 保留路径选择、协议版本、原子写入与文件锁注入，以及现有入口。
+   旧项目聊天库的迁移、建表、消息与设置项读写、轨迹替换，以及输入历史文件
+   已迁至 `chat/message_repository.py`；路径选择、消息媒体补全和展示仍留在
+   Application。新作用域聊天存储仍由 `chat/store.py` 负责。
 4. Freezone 路由按 Canvas、Catalog、Workflow、ProductOperation、Asset
    逐域提取；每个域先固化兼容测试，再保留旧路由薄委托。
 5. 前端巨型编排模块继续拆分；稳定 Workflow 契约继续使用 #572 的生成源，

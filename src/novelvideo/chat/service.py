@@ -23,7 +23,7 @@ from typing import Any, Literal
 from urllib.parse import quote, unquote, urlparse
 from urllib.request import Request, urlopen
 
-from novelvideo.chat import presentation, runtime_event_mapper, session_registry
+from novelvideo.chat import message_repository, presentation, runtime_event_mapper, session_registry
 from novelvideo.chat.backend_sdk import (
     ClaudeSdkClient,
     CodexClient,
@@ -96,7 +96,6 @@ from novelvideo.chat.tool_policy import (
 )
 from novelvideo.freezone.workflow_plan import MAX_WORKFLOW_PLANNING_TEXT_CHARS
 from novelvideo.ports import get_auth_session_port
-from novelvideo.sqlite_pragmas import configure_sqlite_connection
 from novelvideo.utils.document_parsers import count_billable_text_chars
 from novelvideo.utils.error_redaction import redact_secrets
 from novelvideo.utils.static_urls import project_static_url
@@ -1691,29 +1690,11 @@ def _migrate_legacy_chat_db(
     *,
     create_parent: bool = True,
 ) -> None:
-    legacy_db_path = _legacy_chat_db_path(username, project, project_dir)
-    if new_db_path.exists() or not legacy_db_path.exists():
-        return
-    if not create_parent and not new_db_path.parent.exists():
-        return
-
-    if create_parent:
-        new_db_path.parent.mkdir(parents=True, exist_ok=True)
-    for suffix in ("", "-wal", "-shm"):
-        src = Path(f"{legacy_db_path}{suffix}")
-        if not src.exists():
-            continue
-        dst = Path(f"{new_db_path}{suffix}")
-        if dst.exists():
-            continue
-        shutil.move(str(src), str(dst))
-
-    legacy_dir = legacy_db_path.parent
-    try:
-        if legacy_dir.exists() and not any(legacy_dir.iterdir()):
-            legacy_dir.rmdir()
-    except OSError:
-        pass
+    message_repository.migrate_legacy_chat_db(
+        _legacy_chat_db_path(username, project, project_dir),
+        new_db_path,
+        create_parent=create_parent,
+    )
 
 
 def _chat_db_path(
@@ -1742,48 +1723,15 @@ def _chat_input_history_path(username: str, project: str) -> Path:
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    configure_sqlite_connection(conn)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS chat_settings (
-          key TEXT PRIMARY KEY,
-          value TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        )
-        """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS chat_messages (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          role TEXT NOT NULL,
-          content TEXT NOT NULL,
-          media_json TEXT NOT NULL DEFAULT '[]',
-          created_at TEXT NOT NULL
-        )
-        """)
-    conn.commit()
-    return conn
+    return message_repository.connect(db_path)
 
 
 def load_chat_input_history(username: str, project: str) -> list[str]:
     if not username or not project:
         return []
-    path = _chat_input_history_path(username, project)
-    if not path.exists():
-        return []
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    if not isinstance(payload, list):
-        return []
-    history: list[str] = []
-    for item in payload:
-        text = str(item or "").strip()
-        if text:
-            history.append(text)
-    return history
+    return message_repository.load_chat_input_history(
+        _chat_input_history_path(username, project)
+    )
 
 
 def save_chat_input_history(
@@ -1791,42 +1739,17 @@ def save_chat_input_history(
 ) -> None:
     if not username or not project:
         return
-    cleaned: list[str] = []
-    for item in history:
-        text = str(item or "").strip()
-        if text:
-            cleaned.append(text)
-    if limit > 0:
-        cleaned = cleaned[-limit:]
-    path = _chat_input_history_path(username, project)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(".tmp")
-    tmp_path.write_text(
-        json.dumps(cleaned, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    message_repository.save_chat_input_history(
+        _chat_input_history_path(username, project), history, limit=limit
     )
-    tmp_path.replace(path)
 
 
 def _get_setting(conn: sqlite3.Connection, key: str) -> str | None:
-    row = conn.execute(
-        "SELECT value FROM chat_settings WHERE key = ?", (key,)
-    ).fetchone()
-    return str(row["value"]) if row else None
+    return message_repository.get_setting(conn, key)
 
 
 def _set_setting(conn: sqlite3.Connection, key: str, value: str) -> None:
-    conn.execute(
-        """
-        INSERT INTO chat_settings(key, value, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(key) DO UPDATE SET
-          value = excluded.value,
-          updated_at = excluded.updated_at
-        """,
-        (key, value, _now_iso()),
-    )
-    conn.commit()
+    message_repository.set_setting(conn, key, value, now_iso=_now_iso)
 
 
 def _pid_is_alive(pid: int | None) -> bool:
@@ -1976,23 +1899,9 @@ def _append_message(
     content: str,
     media: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    media = media or []
-    created_at_iso = _now_iso()
-    cursor = conn.execute(
-        """
-        INSERT INTO chat_messages(role, content, media_json, created_at)
-        VALUES (?, ?, ?, ?)
-        """,
-        (role, content, json.dumps(media, ensure_ascii=False), created_at_iso),
+    return message_repository.append_message(
+        conn, role, content, media, now_iso=_now_iso
     )
-    conn.commit()
-    return {
-        "id": int(cursor.lastrowid),
-        "role": role,
-        "content": content,
-        "media": media,
-        "created_at": created_at_iso,
-    }
 
 
 def _is_hidden_chat_tool_event(name: object, text: object) -> bool:
@@ -3640,21 +3549,12 @@ def _assistant_history_contents(
 ) -> list[str]:
     conn = _connect(_chat_db_path(username, project, project_dir, project_state_dir))
     try:
-        rows = conn.execute(
-            """
-            SELECT content
-              FROM chat_messages
-             WHERE role = 'assistant'
-             ORDER BY id DESC
-             LIMIT ?
-            """,
-            (_HERMES_REPLAY_HISTORY_MESSAGES,),
-        ).fetchall()
+        contents = message_repository.history_contents(
+            conn, "assistant", limit=_HERMES_REPLAY_HISTORY_MESSAGES
+        )
     finally:
         conn.close()
-    return _bounded_replay_history(
-        [str(row["content"] or "") for row in reversed(rows)]
-    )
+    return _bounded_replay_history(contents)
 
 
 def _trace_history_contents(
@@ -3666,21 +3566,12 @@ def _trace_history_contents(
 ) -> list[str]:
     conn = _connect(_chat_db_path(username, project, project_dir, project_state_dir))
     try:
-        rows = conn.execute(
-            """
-            SELECT content
-              FROM chat_messages
-             WHERE role = 'trace'
-             ORDER BY id DESC
-             LIMIT ?
-            """,
-            (_HERMES_REPLAY_HISTORY_MESSAGES,),
-        ).fetchall()
+        contents = message_repository.history_contents(
+            conn, "trace", limit=_HERMES_REPLAY_HISTORY_MESSAGES
+        )
     finally:
         conn.close()
-    return _bounded_replay_history(
-        [str(row["content"] or "") for row in reversed(rows)]
-    )
+    return _bounded_replay_history(contents)
 
 
 async def _store_history_contents_async(
@@ -3705,21 +3596,7 @@ async def _store_history_contents_async(
 def _replace_trace_messages(
     conn: sqlite3.Connection, messages: list[dict[str, Any]]
 ) -> None:
-    conn.execute("DELETE FROM chat_messages WHERE role = 'trace'")
-    for message in messages:
-        conn.execute(
-            """
-            INSERT INTO chat_messages(role, content, media_json, created_at)
-            VALUES (?, ?, ?, ?)
-            """,
-            (
-                str(message.get("role") or "assistant"),
-                str(message.get("content") or ""),
-                json.dumps(message.get("media") or [], ensure_ascii=False),
-                str(message.get("created_at") or _now_iso()),
-            ),
-        )
-    conn.commit()
+    message_repository.replace_trace_messages(conn, messages, now_iso=_now_iso)
 
 
 def _load_codex_thread_history(
@@ -3824,20 +3701,7 @@ def list_messages(
 ) -> list[dict[str, Any]]:
     conn = _connect(_chat_db_path(username, project, project_dir, project_state_dir))
     try:
-        rows = conn.execute(
-            """
-            SELECT id, role, content, media_json, created_at
-              FROM (
-                    SELECT id, role, content, media_json, created_at
-                      FROM chat_messages
-                     WHERE role <> 'trace'
-                     ORDER BY id DESC
-                     LIMIT ?
-                   )
-             ORDER BY id ASC
-            """,
-            (max(1, int(limit)),),
-        ).fetchall()
+        rows = message_repository.recent_messages(conn, limit=limit)
         messages: list[dict[str, Any]] = []
         previous_assistants: list[str] = []
         for row in rows:
