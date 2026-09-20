@@ -33,6 +33,7 @@ export type CanvasActionAvailability =
   | { available: false; reason: 'wrong-node-type' | 'missing-media' | 'remote-media' | 'busy' };
 
 export const CANVAS_ACTION_IDS = {
+  videoCreativeIntro: 'video.creativeIntro',
   audioTrim: 'audio.trim',
   audioSpeed: 'audio.speed',
   audioSmartSplit: 'audio.split.smart',
@@ -40,6 +41,13 @@ export const CANVAS_ACTION_IDS = {
 } as const;
 
 const ACTIONS: readonly CanvasActionDescriptor[] = [
+  {
+    id: CANVAS_ACTION_IDS.videoCreativeIntro,
+    sourceTypes: [CANVAS_NODE_TYPES.video],
+    effect: 'spawn',
+    capability: 'canvas.video.creative-intro',
+    labelKey: 'nodeToolbar.video.creativeIntro',
+  },
   {
     id: CANVAS_ACTION_IDS.audioTrim,
     sourceTypes: [CANVAS_NODE_TYPES.audio],

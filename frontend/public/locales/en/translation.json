@@ -4972,6 +4972,37 @@
       "arrangeVertical": "Vertical",
       "commitHint": "Write this node's content back to the mainline asset"
     },
+    "creativeIntro": {
+      "title": "Creative intro",
+      "description": "Pick a frame and title style. Confirming creates an inspectable workflow without spending compute.",
+      "frame": "Opening frame",
+      "frameTime": "{{current}}s / {{duration}}s",
+      "workTitle": "Title",
+      "titlePlaceholder": "Enter the exact title that should appear on screen",
+      "designStyle": "Title design",
+      "motionStyle": "Text motion",
+      "noChargeHint": "This creates downstream keyframe, title-design, and five-second motion nodes. Generate the title image first, then explicitly submit the motion node.",
+      "createWorkflow": "Create intro workflow",
+      "created": "Intro workflow created; no generation has started",
+      "createFailed": "Could not create the intro workflow",
+      "keyframeNode": "Intro keyframe",
+      "designNode": "Title design",
+      "motionNode": "Opening motion · 5s",
+      "styles": {
+        "minimal": "Minimal premium",
+        "chineseCalligraphy": "Chinese calligraphy",
+        "literaryHandwriting": "Literary handwriting",
+        "anime": "High-energy anime",
+        "cyberpunk": "Cyber sci-fi",
+        "gothicFantasy": "Gothic fantasy",
+        "blurFade": "Blur fade-in",
+        "particles": "Dynamic particles",
+        "glitch": "Glitch reveal",
+        "handwriting": "Written strokes",
+        "assemble": "Animated assembly",
+        "impact": "Impact entrance"
+      }
+    },
     "style": {
       "chip": "Style",
       "chipLoading": "Style · loading",
@@ -5325,6 +5356,8 @@
       "segmentRemake": "Segment remake",
       "continuation": "Continue video",
       "recreate": "Recreate",
+      "creativeIntro": "Creative intro",
+      "creativeIntroHint": "Pick a keyframe and create title-design and five-second motion nodes",
       "remoteMediaBlocked": "This asset still lives on LibTV — localize it first"
     },
     "audio": {

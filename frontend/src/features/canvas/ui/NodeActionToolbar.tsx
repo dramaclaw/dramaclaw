@@ -164,6 +164,7 @@ import type {
 } from "./GridActionConfirmOverlay";
 import { AudioTransformMenu } from "./AudioTransformMenu";
 import { AudioSplitMenu, type SmartAudioSplitOptions } from "./AudioSplitMenu";
+import { CreativeIntroDialog } from "./CreativeIntroDialog";
 
 interface NodeActionToolbarProps {
   node: CanvasNode;
@@ -596,6 +597,7 @@ export const NodeActionToolbar = memo(
       return null;
     }, [node.data]);
     const [openingWorkbench, setOpeningWorkbench] = useState(false);
+    const [creativeIntroOpen, setCreativeIntroOpen] = useState(false);
     // 用统一 helper 解析节点当前图片源，避免每种图片节点各写一套判断。
     const imageSource = useMemo(() => resolveNodeSourceImageUrl(node), [node]);
     const canHandleImage = Boolean(imageSource);
@@ -2422,6 +2424,19 @@ export const NodeActionToolbar = memo(
                       {t("nodeToolbar.video.separateAudioVideo")}
                     </UiChipButton>
                     <UiChipButton
+                      key="video-creative-intro"
+                      className={`${stubButtonClass} ${serverOpBlocked ? "opacity-50 cursor-not-allowed" : ""}`}
+                      title={serverOpTitle(t("nodeToolbar.video.creativeIntroHint"))}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (serverOpBlocked) return;
+                        setCreativeIntroOpen(true);
+                      }}
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />
+                      {t("nodeToolbar.video.creativeIntro")}
+                    </UiChipButton>
+                    <UiChipButton
                       key="video-clip"
                       className={`${stubButtonClass} ${serverOpBlocked ? "opacity-50 cursor-not-allowed" : ""}`}
                       title={serverOpTitle()}
@@ -3111,6 +3126,11 @@ export const NodeActionToolbar = memo(
           </UiPanel>
           </ZoomScaledToolbar>
         </ReactFlowNodeToolbar>
+        <CreativeIntroDialog
+          open={creativeIntroOpen}
+          onOpenChange={setCreativeIntroOpen}
+          sourceNode={isVideoNode(node) ? node : null}
+        />
       </>
     );
   },

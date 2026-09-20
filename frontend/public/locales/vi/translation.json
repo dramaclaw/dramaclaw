@@ -4972,6 +4972,37 @@
       "arrangeVertical": "Dọc",
       "commitHint": "Ghi nội dung của node này về asset trong luồng chính"
     },
+    "creativeIntro": {
+      "title": "Mở đầu sáng tạo",
+      "description": "Chọn một khung hình và phong cách tiêu đề. Xác nhận chỉ tạo workflow để kiểm tra, chưa tiêu tốn tài nguyên tạo nội dung.",
+      "frame": "Khung hình mở đầu",
+      "frameTime": "{{current}}s / {{duration}}s",
+      "workTitle": "Tiêu đề",
+      "titlePlaceholder": "Nhập chính xác tiêu đề cần xuất hiện trên màn hình",
+      "designStyle": "Thiết kế tiêu đề",
+      "motionStyle": "Chuyển động chữ",
+      "noChargeHint": "Thao tác này tạo các node khung hình, thiết kế tiêu đề và chuyển động 5 giây ở phía sau. Hãy tạo ảnh tiêu đề trước, rồi gửi node chuyển động một cách rõ ràng.",
+      "createWorkflow": "Tạo workflow mở đầu",
+      "created": "Đã tạo workflow mở đầu; chưa bắt đầu tạo nội dung",
+      "createFailed": "Không thể tạo workflow mở đầu",
+      "keyframeNode": "Khung hình mở đầu",
+      "designNode": "Thiết kế tiêu đề",
+      "motionNode": "Chuyển động mở đầu · 5 giây",
+      "styles": {
+        "minimal": "Tối giản cao cấp",
+        "chineseCalligraphy": "Thư pháp Trung Hoa",
+        "literaryHandwriting": "Chữ viết tay văn học",
+        "anime": "Anime nhiệt huyết",
+        "cyberpunk": "Khoa học viễn tưởng cyber",
+        "gothicFantasy": "Kỳ ảo Gothic",
+        "blurFade": "Rõ dần từ mờ",
+        "particles": "Hạt chuyển động",
+        "glitch": "Hiện qua nhiễu",
+        "handwriting": "Nét chữ viết tay",
+        "assemble": "Lắp ghép chuyển động",
+        "impact": "Xuất hiện mạnh"
+      }
+    },
     "style": {
       "chip": "Phong cách",
       "chipLoading": "Phong cách · đang tải",
@@ -5325,6 +5356,8 @@
       "segmentRemake": "Quay lại đoạn",
       "continuation": "Viết tiếp video",
       "recreate": "Tạo lại",
+      "creativeIntro": "Mở đầu sáng tạo",
+      "creativeIntroHint": "Chọn khung hình và tạo node thiết kế tiêu đề cùng chuyển động 5 giây",
       "remoteMediaBlocked": "Tư liệu này vẫn nằm trên LibTV — hãy nội địa hoá trước"
     },
     "audio": {

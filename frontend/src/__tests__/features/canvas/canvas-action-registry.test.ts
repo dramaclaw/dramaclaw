@@ -23,8 +23,14 @@ describe('canvas action registry', () => {
     expect(getCanvasActionDescriptor(CANVAS_ACTION_IDS.audioSmartSplit)?.effect).toBe('spawn');
   });
 
-  it('does not expose audio actions for video nodes', () => {
-    expect(canvasActionsForNode(CANVAS_NODE_TYPES.video)).toEqual([]);
+  it('exposes only the creative-intro action for video nodes', () => {
+    expect(canvasActionsForNode(CANVAS_NODE_TYPES.video).map((action) => action.id)).toEqual([
+      CANVAS_ACTION_IDS.videoCreativeIntro,
+    ]);
+    expect(getCanvasActionDescriptor(CANVAS_ACTION_IDS.videoCreativeIntro)).toMatchObject({
+      effect: 'spawn',
+      capability: 'canvas.video.creative-intro',
+    });
   });
 
   it('reports stable disabled reasons before execution', () => {

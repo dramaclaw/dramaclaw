@@ -46,13 +46,13 @@ reason = "Add reciprocal shared-path declarations."
 [[claims]]
 path = "docs/guides/liblib-canvas-parity.md"
 mode = "shared"
-shared_with = ["liblib-canvas-parity", "creative-intro-discovery"]
+shared_with = ["liblib-canvas-parity", "creative-intro-discovery", "creative-intro-implementation"]
 reason = "Record the implemented split contract against the evidence snapshot."
 
 [[claims]]
 path = "frontend/src/features/canvas/application/canvasActionRegistry.ts"
 mode = "shared"
-shared_with = ["canvas-audio-actions"]
+shared_with = ["canvas-audio-actions", "creative-intro-implementation"]
 reason = "Register smart and custom audio split actions."
 
 [[claims]]
@@ -68,7 +68,7 @@ reason = "Smart and custom split preview UI."
 [[claims]]
 path = "frontend/src/features/canvas/ui/NodeActionToolbar.tsx"
 mode = "shared"
-shared_with = ["canvas-audio-actions", "liblib-canvas-parity", "shot-breakdown"]
+shared_with = ["canvas-audio-actions", "creative-intro-implementation", "liblib-canvas-parity", "shot-breakdown"]
 reason = "Mount split actions and fan out existing audio transforms."
 
 [[claims]]
@@ -125,5 +125,5 @@ reason = "Custom cut parsing and segment validation tests."
 [[claims]]
 path = "frontend/src/__tests__/features/canvas/canvas-action-registry.test.ts"
 mode = "shared"
-shared_with = ["canvas-audio-actions"]
+shared_with = ["canvas-audio-actions", "creative-intro-implementation"]
 reason = "Assert the expanded audio action registry."

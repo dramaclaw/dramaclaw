@@ -4972,6 +4972,37 @@
       "arrangeVertical": "纵向排列",
       "commitHint": "把当前节点的内容写回主流程资产"
     },
+    "creativeIntro": {
+      "title": "创意片头",
+      "description": "选择一帧并配置片名样式。确认只会创建可检查的工作流，不会立即消耗算力。",
+      "frame": "片头画面",
+      "frameTime": "{{current}}s / {{duration}}s",
+      "workTitle": "片名",
+      "titlePlaceholder": "输入要出现在画面中的准确片名",
+      "designStyle": "片名设计",
+      "motionStyle": "文字动效",
+      "noChargeHint": "将创建关键帧、片名设计图和 5 秒片头动效三个下游节点。请先在片名设计节点生成图片，再在动效节点显式提交视频生成。",
+      "createWorkflow": "创建片头工作流",
+      "created": "片头工作流已创建，尚未发起生成",
+      "createFailed": "片头工作流创建失败",
+      "keyframeNode": "片头关键帧",
+      "designNode": "片名设计",
+      "motionNode": "片头动效 · 5秒",
+      "styles": {
+        "minimal": "简约高级",
+        "chineseCalligraphy": "中式书法",
+        "literaryHandwriting": "文艺手写",
+        "anime": "热血动漫",
+        "cyberpunk": "赛博科幻",
+        "gothicFantasy": "哥特玄幻",
+        "blurFade": "模糊渐入",
+        "particles": "动态粒子",
+        "glitch": "故障闪现",
+        "handwriting": "手写笔画",
+        "assemble": "动画拼合",
+        "impact": "震击入场"
+      }
+    },
     "style": {
       "chip": "风格",
       "chipLoading": "风格 · 加载中",
@@ -5325,6 +5356,8 @@
       "segmentRemake": "片段重拍",
       "continuation": "智能续写",
       "recreate": "再创作",
+      "creativeIntro": "创意片头",
+      "creativeIntroHint": "选择关键帧并创建片名设计与 5 秒动效工作流",
       "remoteMediaBlocked": "这条素材还在 LibTV 远端，请先「一键本地化」再使用"
     },
     "audio": {

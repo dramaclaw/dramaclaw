@@ -82,7 +82,7 @@ reason = "Breakdown, depth, and video recreation actions share one node."
 [[claims]]
 path = "frontend/src/features/canvas/ui/NodeActionToolbar.tsx"
 mode = "shared"
-shared_with = ["canvas-audio-actions", "canvas-audio-split", "liblib-canvas-parity"]
+shared_with = ["canvas-audio-actions", "canvas-audio-split", "creative-intro-implementation", "liblib-canvas-parity"]
 reason = "Breakdown entry and LibTV-compatible video actions share the toolbar."
 
 [[claims]]

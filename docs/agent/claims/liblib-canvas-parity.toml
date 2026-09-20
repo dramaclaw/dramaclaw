@@ -27,7 +27,7 @@ reason = "Machine-readable scope for this workstream."
 [[claims]]
 path = "docs/guides/liblib-canvas-parity.md"
 mode = "shared"
-shared_with = ["canvas-audio-split", "creative-intro-discovery"]
+shared_with = ["canvas-audio-split", "creative-intro-discovery", "creative-intro-implementation"]
 reason = "Evidence and long-form design for LibTV parity."
 
 [[claims]]
@@ -159,7 +159,7 @@ reason = "Measured LibTV node and toolbar surface tokens."
 [[claims]]
 path = "frontend/src/features/canvas/ui/NodeActionToolbar.tsx"
 mode = "shared"
-shared_with = ["canvas-audio-actions", "canvas-audio-split", "shot-breakdown"]
+shared_with = ["canvas-audio-actions", "canvas-audio-split", "creative-intro-implementation", "shot-breakdown"]
 reason = "Measured LibTV-compatible video actions share the toolbar with breakdown."
 
 [[claims]]
