@@ -929,6 +929,12 @@
       "canvasRetryPrompt": "Recheck and continue the unfinished canvas operation. Preserve completed results, verify existing nodes and run state, then complete generation parameters before requesting approval again.",
       "canvasRetryDisplay": "Recheck and continue the unfinished canvas operation",
       "generationParams": {
+        "catalog": {
+          "loading": "Loading the model catalog. Choose parameters when it is ready.",
+          "fallback": "The model catalog is unavailable. Please try again later.",
+          "empty": "No generation models are configured. Ask an administrator to configure one.",
+          "model_unavailable": "The previously selected model is unavailable. Select a model again before choosing parameters."
+        },
         "autoRatio": "Auto ratio",
         "imageQuality": "Image quality",
         "quality": {

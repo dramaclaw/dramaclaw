@@ -4120,6 +4120,89 @@ const CLARIFICATION_SOURCE_BY_QUESTION_ID: Record<string, ClarificationOptionsSo
   video_variants_per_node: "video_variant_counts",
 };
 
+export function assistantClarificationIsGenerationCard(
+  questions: AssistantClarificationQuestion[],
+): boolean {
+  return questions.some((question) =>
+    Boolean(CLARIFICATION_SOURCE_BY_QUESTION_ID[normalizedClarificationId(question.id)]
+      || question.options_source),
+  );
+}
+
+export function assistantClarificationCanSubmit(
+  questions: AssistantClarificationQuestion[],
+  answers: AssistantClarificationAnswers,
+): boolean {
+  if (assistantClarificationIsGenerationCard(questions)) {
+    return questions.length > 0 && questions.every((question, index) => {
+      const options = question.options ?? [];
+      if (options.length === 0) return false;
+      const selection = normalizedSkillStudioQuestionSelection(
+        answers[skillStudioQuestionKey(question, index)],
+      );
+      return selection.optionIds.length > 0
+        && selection.optionIds.every((id) => options.some((option, optionIndex) =>
+          skillStudioOptionKey(option, optionIndex) === id));
+    });
+  }
+  const selectable = questions
+    .map((question, index) => ({ question, index }))
+    .filter(({ question }) => (question.options ?? []).length > 0 || skillStudioQuestionAllowsCustom(question));
+  const answered = selectable.filter(({ question, index }) =>
+    skillStudioSelectionHasAnswer(answers[skillStudioQuestionKey(question, index)]),
+  ).length;
+  return answered > 0 || selectable.length === 0;
+}
+
+type GenerationCatalogState = {
+  models: readonly ClarificationCatalogModel[];
+  isLoading: boolean;
+  isFallback: boolean;
+};
+
+export function assistantClarificationGenerationCatalogIssue(
+  questions: AssistantClarificationQuestion[],
+  imageCatalog: GenerationCatalogState,
+  videoCatalog: GenerationCatalogState,
+  answers: AssistantClarificationAnswers = {},
+): "loading" | "fallback" | "empty" | "model_unavailable" | null {
+  const requestedCatalogs = [
+    ["image_models", "selected_image_model_", "image_model", imageCatalog],
+    ["video_models", "selected_video_model_", "video_model", videoCatalog],
+  ] as const;
+  const needed = requestedCatalogs
+    .filter(([modelSource, dependentPrefix]) => questions.some((question) => {
+      const source = question.options_source ?? CLARIFICATION_SOURCE_BY_QUESTION_ID[
+        normalizedClarificationId(question.id)
+      ];
+      return source === modelSource || source?.startsWith(dependentPrefix);
+    }));
+  if (needed.some(([, , , catalog]) => catalog.isLoading)) return "loading";
+  if (needed.some(([, , , catalog]) => catalog.isFallback)) return "fallback";
+  if (needed.some(([, , , catalog]) => catalog.models.length === 0)) return "empty";
+  for (const [, dependentPrefix, modelQuestionId, catalog] of needed) {
+    const hasDependentQuestion = questions.some((question) =>
+      (question.options_source ?? CLARIFICATION_SOURCE_BY_QUESTION_ID[
+        normalizedClarificationId(question.id)
+      ])?.startsWith(dependentPrefix));
+    const hasModelQuestion = questions.some((question) =>
+      normalizedClarificationId(question.id) === modelQuestionId);
+    const selectedValue = clarificationSelectedValue(questions, answers, modelQuestionId);
+    if (hasDependentQuestion && !hasModelQuestion && selectedValue
+      && !clarificationSelectedModel(questions, answers, modelQuestionId, catalog.models)) {
+      return "model_unavailable";
+    }
+  }
+  return null;
+}
+
+export function assistantClarificationShowsRecommended(
+  questions: AssistantClarificationQuestion[],
+  allowed: boolean | undefined,
+): boolean {
+  return Boolean(allowed) && !assistantClarificationIsGenerationCard(questions);
+}
+
 const normalizedClarificationId = (value: unknown) =>
   String(value ?? "").trim().toLowerCase().replace(/-/g, "_");
 
@@ -4212,10 +4295,10 @@ function clarificationQuestionsWithLiveModelCatalogs(
     const normalized = (value: unknown) => String(value ?? "").trim().toLowerCase();
     if (source === "image_models" || source === "video_models") {
       const models = source === "image_models" ? imageModels : videoModels;
-      if (!models.length) return question;
       return {
         ...question,
         options_source: source,
+        allow_custom: false,
         options: models.map((model) => {
           const identifiers = [model.id, model.apiModel, model.catalogId, model.label]
             .map(normalized)
@@ -4236,12 +4319,14 @@ function clarificationQuestionsWithLiveModelCatalogs(
     let values: readonly (string | number | boolean)[] | null = null;
     let labelFor: (value: string | number | boolean) => string = String;
     if (source?.startsWith("selected_image_model_") && !selectedImageModel) {
-      return hasImageModelQuestion
+      return hasImageModelQuestion || imageModels.length === 0
+        || Boolean(clarificationSelectedValue(questions, answers, "image_model"))
         ? { ...question, options_source: source, options: [], allow_custom: false }
         : question;
     }
     if (source?.startsWith("selected_video_model_") && !selectedVideoModel) {
-      return hasVideoModelQuestion
+      return hasVideoModelQuestion || videoModels.length === 0
+        || Boolean(clarificationSelectedValue(questions, answers, "video_model"))
         ? { ...question, options_source: source, options: [], allow_custom: false }
         : question;
     }
@@ -4315,6 +4400,15 @@ function clarificationQuestionsWithLiveModelCatalogs(
       options: clarificationOptions(values, existingOptions, labelFor),
       allow_custom: false,
     };
+  }).filter((question) => {
+    const questionId = normalizedClarificationId(question.id);
+    if (questionId === "image_quality" && selectedImageModel) {
+      return (selectedImageModel.qualityOptions?.filter(Boolean).length ?? 0) > 0;
+    }
+    if (questionId === "video_generate_audio" && selectedVideoModel) {
+      return selectedVideoModel.supportsGenerateAudio !== false;
+    }
+    return true;
   });
 }
 
@@ -6692,6 +6786,9 @@ function AssistantClarificationInputCard({
   const [answers, setAnswers] = useState<AssistantClarificationAnswers>(() =>
     event.answers && typeof event.answers === "object" ? event.answers : {},
   );
+  const generationCatalogIssue = assistantClarificationGenerationCatalogIssue(
+    eventQuestions, imageModelCatalog, videoModelCatalog, answers,
+  );
   const [activeQuestionPosition, setActiveQuestionPosition] = useState(0);
   useEffect(() => {
     setAnswers(event.answers && typeof event.answers === "object" ? event.answers : {});
@@ -6729,7 +6826,8 @@ function AssistantClarificationInputCard({
     skillStudioSelectionHasAnswer(answers[skillStudioQuestionKey(question, index)]),
   ).length;
   const allQuestionsAnswered = selectableQuestions.length > 0 && answeredCount === selectableQuestions.length;
-  const canSubmit = answeredCount > 0 || selectableQuestions.length === 0;
+  const canSubmit = assistantClarificationCanSubmit(questions, answers);
+  const isGenerationCard = assistantClarificationIsGenerationCard(questions);
   const goToQuestion = useCallback((position: number) => {
     if (selectableQuestions.length === 0) return;
     setActiveQuestionPosition(Math.max(0, Math.min(position, selectableQuestions.length - 1)));
@@ -6786,7 +6884,11 @@ function AssistantClarificationInputCard({
   const hasPrevious = activeQuestionPosition > 0;
   const hasNext = activeQuestionPosition < selectableQuestions.length - 1;
   const activeSelectedCount = activeSelection.optionIds.length + (activeSelection.customText.trim() ? 1 : 0);
-  const continueLabel = hasNext ? "下一题" : allQuestionsAnswered ? "提交选择" : "用当前选择继续";
+  const continueLabel = hasNext
+    ? "下一题"
+    : allQuestionsAnswered
+      ? "提交选择"
+      : isGenerationCard ? "请完成所有选择" : "用当前选择继续";
   const continueAction = () => {
     if (hasNext) {
       goToQuestion(activeQuestionPosition + 1);
@@ -6890,6 +6992,11 @@ function AssistantClarificationInputCard({
           暂无可选择的问题
         </div>
       )}
+      {generationCatalogIssue && (
+        <div role="alert" className="mt-2 text-xs text-amber-300/90">
+          {t(`freezone.chat.generationParams.catalog.${generationCatalogIssue}`)}
+        </div>
+      )}
       <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
         <div className="text-xs text-muted-foreground/80">
           已选择 {activeSelectedCount} 项 · {answeredCount} / {selectableQuestions.length}
@@ -6908,7 +7015,7 @@ function AssistantClarificationInputCard({
               跳过
             </Button>
           )}
-          {event.allow_recommended && (
+          {assistantClarificationShowsRecommended(questions, event.allow_recommended) && (
             <Button
               type="button"
               size="sm"

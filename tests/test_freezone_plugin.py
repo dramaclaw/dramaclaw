@@ -2857,6 +2857,405 @@ def test_generation_clarification_fills_titles_live_sources_and_legacy_count_ali
     assert all(question["mode"] == "single" for question in questions)
 
 
+def test_generation_clarification_builds_complete_media_questions(monkeypatch):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    schemas = {name: schema for name, schema, _handler in plugin.TOOLS}
+    emitted = []
+    monkeypatch.setattr(
+        plugin,
+        "_emit_clarification_event",
+        lambda _project, _canvas, event: emitted.append(event) or "shown",
+    )
+
+    result = handlers["freezone_request_user_clarification"](
+        {"generation_media_types": ["image", "video"]}
+    )
+
+    assert result == "shown"
+    assert [question["id"] for question in emitted[0]["questions"]] == [
+        "image_model", "image_aspect_ratio", "image_resolution",
+        "image_quality", "image_variants_per_node", "video_model",
+        "video_aspect_ratio", "video_resolution", "video_duration_seconds",
+        "video_generate_audio", "video_variants_per_node",
+    ]
+    assert emitted[0]["allow_recommended"] is False
+    assert emitted[0]["allow_skip"] is False
+    assert "questions" not in schemas["freezone_request_user_clarification"]["parameters"]["required"]
+
+
+def test_generation_clarification_builds_exact_preflight_questions(monkeypatch):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    emitted = []
+    monkeypatch.setattr(
+        plugin,
+        "_emit_clarification_event",
+        lambda _project, _canvas, event: emitted.append(event) or "shown",
+    )
+
+    result = handlers["freezone_request_user_clarification"](
+        {"generation_required_choices": {
+            "image": ["resolution", "count"],
+            "video": ["count"],
+        }}
+    )
+
+    assert result == "shown"
+    assert [question["id"] for question in emitted[0]["questions"]] == [
+        "image_resolution", "image_variants_per_node", "video_variants_per_node",
+    ]
+
+
+def test_workflow_confirmation_result_schema_preserves_generation_requirements():
+    plugin = _load_plugin_module()
+    schema = plugin._output_schema("freezone_confirm_workflow_draft")
+    result = plugin._generation_parameters_required_result([
+        {"node_id": "image-1", "node_type": "imageGenNode", "fields": ["size", "count"]},
+        {"node_id": "video-1", "node_type": "videoNode", "fields": ["count"]},
+    ])
+
+    Draft202012Validator(schema).validate(result)
+    assert result["required_choices"] == {
+        "image": ["resolution", "count"],
+        "video": ["count"],
+    }
+    assert schema["properties"]["required_choices"]["type"] == "object"
+
+
+def test_generation_clarification_writes_answers_to_same_draft(monkeypatch, tmp_path):
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+
+    def fake_compile(intent):
+        inputs = intent.get("inputs") or {}
+        return {"ok": True, "skill_id": "video-ad", "plan": {
+            "summary": "广告", "nodes": [{
+                "id": "image-1", "node_type": "imageGenNode", "stage": "image",
+                "data": {
+                    "model": inputs.get("image_model", "image-a"),
+                    "size": inputs.get("image_resolution", "1024x1024"),
+                    "count": inputs.get("image_variants_per_node", 1),
+                },
+            }], "edges": [],
+        }}
+
+    monkeypatch.setattr(plugin, "compile_workflow_intent", fake_compile)
+    monkeypatch.setattr(
+        plugin, "_workflow_runtime_preflight", lambda *_args, **_kwargs: {"blockers": []}
+    )
+    monkeypatch.setattr(
+        plugin, "_emit_clarification_event", lambda *_args: {
+            "ok": True, "status": "clarification_frontend_result",
+            "clarification_status": "answered", "tool_call_status": "completed",
+            "bridge_key": "clarification-1", "answers": {
+                "image_resolution": {"option_ids": ["2048x2048"]},
+                "image_variants_per_node": {"option_ids": ["2"]},
+            },
+        }
+    )
+    monkeypatch.setattr(
+        plugin, "_emit_canvas_commands",
+        lambda *_args, **_kwargs: pytest.fail("clarification must not write canvas commands"),
+    )
+    prepared = plugin._handle_prepare_workflow_draft({
+        "intent": {"skill_id": "video-ad", "user_goal": "广告"},
+    })
+
+    result = handlers["freezone_request_user_clarification"]({
+        "workflow_draft_id": prepared["draft_id"],
+        "workflow_expected_revision": prepared["revision"],
+        "generation_required_choices": {"image": ["resolution", "count"]},
+    })
+
+    assert result["ok"] is True
+    assert result["draft_updated"] is True
+    assert result["revision"] == prepared["revision"] + 1
+    Draft202012Validator(
+        plugin._output_schema("freezone_request_user_clarification")
+    ).validate(result)
+    from novelvideo.freezone.workflow_drafts import read_workflow_draft
+    stored, error = read_workflow_draft(
+        project_dir=tmp_path, canvas_id="canvas-a", draft_id=prepared["draft_id"]
+    )
+    assert error is None
+    assert stored["intent"]["inputs"] == {
+        "image_resolution": "2048x2048", "image_variants_per_node": 2,
+    }
+    assert stored["status"] == "ready"
+    assert not stored["task_id"]
+
+
+def test_generation_clarification_rejects_partial_answers_without_patch(monkeypatch, tmp_path):
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    monkeypatch.setattr(plugin, "compile_workflow_intent", lambda _intent: {
+        "ok": True, "skill_id": "video-ad", "plan": {"nodes": [], "edges": []},
+    })
+    monkeypatch.setattr(
+        plugin, "_workflow_runtime_preflight", lambda *_args, **_kwargs: {"blockers": []}
+    )
+    monkeypatch.setattr(
+        plugin, "_emit_clarification_event", lambda *_args: {
+            "ok": True, "status": "clarification_frontend_result",
+            "clarification_status": "answered", "answers": {
+                "image_resolution": {"option_ids": ["2048x2048"]},
+            },
+        }
+    )
+    prepared = plugin._handle_prepare_workflow_draft({
+        "intent": {"skill_id": "video-ad", "user_goal": "广告"},
+    })
+
+    result = handlers["freezone_request_user_clarification"]({
+        "workflow_draft_id": prepared["draft_id"],
+        "workflow_expected_revision": prepared["revision"],
+        "generation_required_choices": {"image": ["resolution", "count"]},
+    })
+
+    assert result["status"] == "generation_answers_incomplete"
+    from novelvideo.freezone.workflow_drafts import read_workflow_draft
+    stored, error = read_workflow_draft(
+        project_dir=tmp_path, canvas_id="canvas-a", draft_id=prepared["draft_id"]
+    )
+    assert error is None
+    assert stored["revision"] == prepared["revision"]
+
+
+def test_prepare_workflow_maps_raw_generation_answers(monkeypatch, tmp_path):
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    received = []
+
+    def fake_compile(intent):
+        received.append(copy.deepcopy(intent))
+        return {"ok": True, "skill_id": "video-ad", "plan": {"nodes": [], "edges": []}}
+
+    monkeypatch.setattr(plugin, "compile_workflow_intent", fake_compile)
+    monkeypatch.setattr(
+        plugin, "_workflow_runtime_preflight", lambda *_args, **_kwargs: {"blockers": []}
+    )
+    result = plugin._handle_prepare_workflow_draft({
+        "intent": {"skill_id": "video-ad", "user_goal": "广告"},
+        "generation_answers": {
+            "image_model": {"option_ids": ["image-a"]},
+            "image_aspect_ratio": {"option_ids": ["9:16"]},
+            "image_resolution": {"option_ids": ["1024x1024"]},
+            "image_variants_per_node": {"option_ids": ["2"]},
+            "video_model": {"option_ids": ["video-a"]},
+            "video_aspect_ratio": {"option_ids": ["9:16"]},
+            "video_resolution": {"option_ids": ["720P"]},
+            "video_duration_seconds": {"option_ids": ["5"]},
+            "video_generate_audio": {"option_ids": ["false"]},
+            "video_variants_per_node": {"option_ids": ["1"]},
+        },
+    })
+
+    assert result["ok"] is True
+    assert received[0]["inputs"]["image_variants_per_node"] == 2
+    assert received[0]["inputs"]["video_duration_seconds"] == 5
+    assert received[0]["inputs"]["video_generate_audio"] is False
+    assert received[0]["inputs"]["video_resolution"] == "720P"
+
+
+def test_prepare_workflow_rejects_incomplete_generation_answers(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(
+        plugin, "compile_workflow_intent",
+        lambda _intent: pytest.fail("incomplete answers must stop before compilation"),
+    )
+    result = plugin._handle_prepare_workflow_draft({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "intent": {"skill_id": "video-ad", "user_goal": "广告"},
+        "generation_answers": {"image_model": {"option_ids": ["image-a"]}},
+    })
+
+    assert result["status"] == "generation_answers_incomplete"
+    assert "image_aspect_ratio" in result["error"]
+
+
+def test_prepare_exact_plan_maps_generation_answers_into_nodes(monkeypatch, tmp_path):
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    received = []
+
+    def fake_validate(plan):
+        received.append(copy.deepcopy(plan))
+        return {"ok": True, "skill_id": "video-ad", "plan": plan}
+
+    monkeypatch.setattr(plugin, "validate_agent_workflow_plan", fake_validate)
+    monkeypatch.setattr(
+        plugin, "_workflow_runtime_preflight", lambda *_args, **_kwargs: {"blockers": []}
+    )
+    result = plugin._handle_prepare_workflow_plan_draft({
+        "plan": {"schema_version": "freezone_workflow_plan.v1", "nodes": [
+            {"id": "video-1", "node_type": "videoNode", "data": {}},
+            {"id": "video-2", "node_type": "videoNode", "data": {}},
+        ], "edges": []},
+        "generation_answers": {
+            "video_model": {"option_ids": ["video-a"]},
+            "video_aspect_ratio": {"option_ids": ["9:16"]},
+            "video_resolution": {"option_ids": ["720P"]},
+            "video_duration_seconds": {"option_ids": ["5"]},
+            "video_generate_audio": {"option_ids": ["false"]},
+            "video_variants_per_node": {"option_ids": ["2"]},
+        },
+    })
+
+    assert result["ok"] is True
+    assert all(node["data"]["count"] == 2 for node in received[0]["nodes"])
+    assert all(node["data"]["quality"] == "720P" for node in received[0]["nodes"])
+    assert all(node["data"]["generateAudio"] is False for node in received[0]["nodes"])
+
+
+def test_generation_clarification_updates_exact_plan_draft(monkeypatch, tmp_path):
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    monkeypatch.setattr(
+        plugin, "validate_agent_workflow_plan",
+        lambda plan: {"ok": True, "skill_id": "video-ad", "plan": plan},
+    )
+    monkeypatch.setattr(
+        plugin, "_workflow_runtime_preflight", lambda *_args, **_kwargs: {"blockers": []}
+    )
+    monkeypatch.setattr(
+        plugin, "_emit_clarification_event", lambda *_args: {
+            "ok": True, "status": "clarification_frontend_result",
+            "clarification_status": "answered", "tool_call_status": "completed",
+            "bridge_key": "clarification-1", "answers": {
+                "video_variants_per_node": {"option_ids": ["2"]},
+            },
+        }
+    )
+    prepared = plugin._handle_prepare_workflow_plan_draft({
+        "plan": {"schema_version": "freezone_workflow_plan.v1", "nodes": [
+            {"id": "video-1", "node_type": "videoNode", "data": {"model": "video-a"}},
+        ], "edges": []},
+    })
+
+    result = handlers["freezone_request_user_clarification"]({
+        "workflow_draft_id": prepared["draft_id"],
+        "workflow_expected_revision": prepared["revision"],
+        "generation_required_choices": {"video": ["count"]},
+    })
+
+    assert result["draft_updated"] is True
+    from novelvideo.freezone.workflow_drafts import read_workflow_draft
+    stored, error = read_workflow_draft(
+        project_dir=tmp_path, canvas_id="canvas-a", draft_id=prepared["draft_id"]
+    )
+    assert error is None
+    assert stored["intent"]["plan"]["nodes"][0]["data"]["count"] == 2
+
+
+def test_generation_clarification_rejects_stale_draft_before_card(monkeypatch, tmp_path):
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    monkeypatch.setattr(plugin, "compile_workflow_intent", lambda _intent: {
+        "ok": True, "skill_id": "video-ad", "plan": {"nodes": [], "edges": []},
+    })
+    monkeypatch.setattr(
+        plugin, "_workflow_runtime_preflight", lambda *_args, **_kwargs: {"blockers": []}
+    )
+    monkeypatch.setattr(
+        plugin, "_emit_clarification_event",
+        lambda *_args: pytest.fail("stale draft must not show a card"),
+    )
+    prepared = plugin._handle_prepare_workflow_draft({
+        "intent": {"skill_id": "video-ad", "user_goal": "广告"},
+    })
+
+    result = handlers["freezone_request_user_clarification"]({
+        "workflow_draft_id": prepared["draft_id"],
+        "workflow_expected_revision": prepared["revision"] + 1,
+        "generation_required_choices": {"image": ["count"]},
+    })
+
+    assert result["status"] == "workflow_draft_revision_conflict"
+    assert result["current_revision"] == prepared["revision"]
+
+
+def test_generation_clarification_keeps_draft_when_execution_preflight_fails(
+    monkeypatch, tmp_path
+):
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    monkeypatch.setattr(plugin, "compile_workflow_intent", lambda _intent: {
+        "ok": True, "skill_id": "video-ad", "plan": {"nodes": [], "edges": []},
+    })
+    monkeypatch.setattr(
+        plugin, "_workflow_runtime_preflight", lambda *_args, **_kwargs: {"blockers": []}
+    )
+    monkeypatch.setattr(
+        plugin, "_emit_clarification_event", lambda *_args: {
+            "ok": True, "status": "clarification_frontend_result",
+            "clarification_status": "answered", "answers": {
+                "video_variants_per_node": {"option_ids": ["2"]},
+            },
+        }
+    )
+    monkeypatch.setattr(
+        plugin, "build_workflow_graph_commands",
+        lambda _args: {"ok": True, "commands": []},
+    )
+    monkeypatch.setattr(
+        plugin, "_external_generation_parameter_preflight",
+        lambda *_args: {"ok": False, "status": "clarification_required",
+                        "code": "generation_parameters_required"},
+    )
+    prepared = plugin._handle_prepare_workflow_draft({
+        "intent": {"skill_id": "video-ad", "user_goal": "广告"},
+        "run_after_create": True,
+    })
+
+    result = handlers["freezone_request_user_clarification"]({
+        "workflow_draft_id": prepared["draft_id"],
+        "workflow_expected_revision": prepared["revision"],
+        "generation_required_choices": {"video": ["count"]},
+    })
+
+    assert result["code"] == "generation_parameters_required"
+    from novelvideo.freezone.workflow_drafts import read_workflow_draft
+    stored, error = read_workflow_draft(
+        project_dir=tmp_path, canvas_id="canvas-a", draft_id=prepared["draft_id"]
+    )
+    assert error is None
+    assert stored["revision"] == prepared["revision"]
+    assert not stored["task_id"]
+
+
+def test_unified_prepare_maps_raw_generation_answers(monkeypatch):
+    plugin = _load_plugin_module()
+    captured = {}
+
+    def fake_request(method, path, *, body=None, **_kwargs):
+        assert method == "POST"
+        assert path.endswith("/workflow-drafts")
+        captured.update(body)
+        return {"ok": True, "data": {"ok": True, "status": "workflow_draft_ready"}}
+
+    monkeypatch.setattr(plugin, "_request", fake_request)
+    result = plugin._handle_prepare_workflow({
+        "project_id": "project-a", "canvas_id": "canvas-a", "operation_id": "op-a",
+        "intent": {"skill_id": "video-ad", "user_goal": "广告"},
+        "generation_answers": {
+            "image_model": {"option_ids": ["image-a"]},
+            "image_aspect_ratio": {"option_ids": ["9:16"]},
+            "image_resolution": {"option_ids": ["1024x1024"]},
+            "image_variants_per_node": {"option_ids": ["2"]},
+        },
+    })
+
+    assert result["ok"] is True
+    assert captured["intent"]["inputs"]["image_variants_per_node"] == 2
+    assert "generation_answers" not in captured
+
+
 def test_generation_clarification_preserves_confirmed_model_context(monkeypatch):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
@@ -4562,7 +4961,9 @@ def test_freezone_plugin_skill_studio_tool_schemas_expose_nested_contracts():
         not in clarification_schema["properties"]["questions"]["description"]
     )
     assert "freezone_present_skill_studio_questions" not in schemas
-    assert clarification_schema["required"] == ["questions"]
+    assert clarification_schema["required"] == []
+    assert "generation_media_types" in clarification_schema["properties"]
+    assert "generation_required_choices" in clarification_schema["properties"]
     assert (
         "Freezone will generate it automatically"
         in clarification_schema["properties"]["clarification_id"]["description"]
