@@ -1124,6 +1124,111 @@ def test_external_canvas_write_resolves_recommended_model_from_live_catalog(
     assert captured["commands"][0]["data"]["size"] == "1K"
 
 
+def test_existing_media_node_update_resolves_recommendations_before_dispatch(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    commands = [{
+        "type": "update_node_data", "node_id": "existing-image",
+        "data": {"model": "recommended", "size": "recommended"},
+    }]
+    captured = {}
+    monkeypatch.setattr(
+        plugin, "_resolve_canvas_scope_for_write",
+        lambda project, canvas: (project, canvas, None),
+    )
+    monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_args: None)
+    monkeypatch.setattr(
+        plugin, "_canvas_generation_preflight_state",
+        lambda *_args: ({"existing-image": {
+            "id": "existing-image", "type": "imageGenNode",
+            "data": {"prompt": "portrait", "aspectRatio": "21:9"},
+        }}, [], None),
+    )
+    monkeypatch.setattr(
+        plugin, "_request",
+        lambda *_args, **_kwargs: {"ok": True, "data": [{
+            "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+            "ratioOptions": ["21:9"], "resolutionOptions": ["3K"],
+            "qualityOptions": ["high"],
+        }]},
+    )
+    monkeypatch.setattr(plugin, "_external_generation_parameter_preflight", lambda *_args: None)
+    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: False)
+    monkeypatch.setattr(
+        plugin, "_dispatch_mcp_approved_frontend_commands",
+        lambda **kwargs: captured.update(kwargs) or "dispatched",
+    )
+
+    result = plugin._emit_canvas_commands(
+        "project-a", "canvas-a", commands, allow_dynamic_workflow_batch=True,
+    )
+
+    assert result == "dispatched"
+    update = captured["commands"][0]["data"]
+    assert update["model"] == "LingShan-G2"
+    assert update["size"] == "3K"
+    assert "aspectRatio" not in update
+    assert update["quality"] == "high"
+
+
+def test_existing_media_node_update_rejects_unknown_recommended_target(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(
+        plugin, "_resolve_canvas_scope_for_write",
+        lambda project, canvas: (project, canvas, None),
+    )
+    monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_args: None)
+    monkeypatch.setattr(
+        plugin, "_canvas_generation_preflight_state", lambda *_args: ({}, [], None),
+    )
+    monkeypatch.setattr(
+        plugin, "_dispatch_frontend_canvas_commands",
+        lambda *_args, **_kwargs: pytest.fail("unresolved command was dispatched"),
+    )
+
+    result = plugin._emit_canvas_commands(
+        "project-a", "canvas-a", [{
+            "type": "update_node_data", "node_id": "missing-image",
+            "data": {"model": "recommended"},
+        }], allow_dynamic_workflow_batch=True,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "generation_recommendation_unavailable"
+
+
+def test_recommended_update_uses_earlier_model_change_in_same_batch(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(
+        plugin, "_canvas_generation_preflight_state",
+        lambda *_args: ({"existing-image": {
+            "id": "existing-image", "type": "imageGenNode",
+            "data": {"model": "old-model", "aspectRatio": "21:9"},
+        }}, [], None),
+    )
+    monkeypatch.setattr(
+        plugin, "_request",
+        lambda *_args, **_kwargs: {"ok": True, "data": [{
+            "id": "LingShan-G2", "ratioOptions": ["21:9"],
+            "resolutionOptions": ["3K"],
+        }]},
+    )
+    commands = [
+        {"type": "update_node_data", "node_id": "existing-image",
+         "data": {"model": "LingShan-G2"}},
+        {"type": "update_node_data", "node_id": "existing-image",
+         "data": {"size": "recommended"}},
+    ]
+
+    error = plugin._resolve_canvas_generation_recommendations(
+        "project-a", "canvas-a", commands,
+    )
+
+    assert error is None
+    assert commands[1]["data"]["size"] == "3K"
+    assert "model" not in commands[1]["data"]
+
+
 def test_hermes_canvas_write_resolves_recommended_model(monkeypatch):
     plugin = _load_plugin_module()
     monkeypatch.delenv("DRAMACLAW_EXTERNAL_MCP", raising=False)

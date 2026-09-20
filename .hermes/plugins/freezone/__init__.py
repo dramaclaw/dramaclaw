@@ -3392,23 +3392,72 @@ def _generation_parameter_fields_for_model(
 
 
 def _resolve_canvas_generation_recommendations(
-    project: str, commands: list[Any]
+    project: str, canvas: str, commands: list[Any]
 ) -> dict[str, Any] | None:
-    """Resolve media creation commands before preflight or frontend dispatch."""
+    """Resolve media create and update commands before preflight or dispatch."""
     from novelvideo.freezone.workflow_preflight import resolve_generation_recommendations
 
-    nodes = [
-        {"id": str(index), "node_type": command.get("node_type"), "data": command.setdefault("data", {})}
-        for index, command in enumerate(commands)
-        if isinstance(command, dict)
-        and command.get("type") in {"create_node", "add_next_node"}
-        and command.get("node_type") in _GENERATION_PARAMETER_FIELDS
-        and any(
+    def has_symbolic_value(data: dict[str, Any]) -> bool:
+        return any(
             isinstance(value, str) and value.strip().casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
-            for key, value in (command.get("data") or {}).items()
+            for key, value in data.items()
             if key in {"model", "aspectRatio", "size", "quality"}
         )
-    ]
+
+    nodes: list[dict[str, Any]] = []
+    update_nodes: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] = []
+    known_nodes: dict[str, dict[str, Any]] = {}
+    canvas_nodes: dict[str, dict[str, Any]] | None = None
+    symbolic_update_ids = {
+        str(command.get("node_id") or "").strip()
+        for command in commands if isinstance(command, dict)
+        and command.get("type") == "update_node_data"
+        and isinstance(command.get("data"), dict)
+        and has_symbolic_value(command["data"])
+    }
+    for index, command in enumerate(commands):
+        if not isinstance(command, dict):
+            continue
+        command_type = command.get("type")
+        data = command.get("data")
+        data = data if isinstance(data, dict) else {}
+        if command_type in {"create_node", "add_next_node"}:
+            node_type = str(command.get("node_type") or "")
+            client_id = str(command.get("client_id") or "").strip()
+            if client_id:
+                known_nodes[client_id] = {"type": node_type, "data": _clone_json(data)}
+            if node_type in _GENERATION_PARAMETER_FIELDS and has_symbolic_value(data):
+                nodes.append({
+                    "id": client_id or str(index), "node_type": node_type,
+                    "data": command.setdefault("data", {}),
+                })
+            continue
+        if command_type != "update_node_data":
+            continue
+        node_id = str(command.get("node_id") or "").strip()
+        target = known_nodes.get(node_id)
+        if target is None and node_id in symbolic_update_ids:
+            if canvas_nodes is None:
+                canvas_nodes, _edges, read_error = _canvas_generation_preflight_state(
+                    project, canvas
+                )
+                if read_error is not None:
+                    return read_error
+            target = canvas_nodes.get(node_id)
+        if target is None:
+            if has_symbolic_value(data):
+                return {
+                    "ok": False, "status": "generation_recommendation_unavailable",
+                    "error": f"Cannot resolve recommended settings for unknown node {node_id}",
+                }
+            continue
+        node_type = str(target.get("type") or target.get("node_type") or "")
+        previous = target.get("data") if isinstance(target.get("data"), dict) else {}
+        merged = {**_clone_json(previous), **_clone_json(data)}
+        known_nodes[node_id] = {"type": node_type, "data": merged}
+        if node_type in _GENERATION_PARAMETER_FIELDS and has_symbolic_value(data):
+            nodes.append({"id": node_id, "node_type": node_type, "data": merged})
+            update_nodes.append((data, merged, previous))
     if not nodes:
         return None
     responses = {
@@ -3430,6 +3479,17 @@ def _resolve_canvas_generation_recommendations(
             "ok": False, "status": "generation_recommendation_unavailable",
             "error": blockers[0]["message"], "blockers": blockers,
         }
+    for command_data, resolved, previous in update_nodes:
+        for field in ("model", "aspectRatio", "size", "quality"):
+            if field in command_data and has_symbolic_value({field: command_data[field]}):
+                if field not in resolved or has_symbolic_value({field: resolved[field]}):
+                    return {
+                        "ok": False, "status": "generation_recommendation_unavailable",
+                        "error": f"No concrete recommendation is available for {field}",
+                    }
+        for field, value in resolved.items():
+            if field in command_data or field not in previous:
+                command_data[field] = value
     return None
 
 
@@ -4672,7 +4732,7 @@ def _emit_canvas_commands(
     )
     if shape_error:
         return shape_error
-    recommendation_error = _resolve_canvas_generation_recommendations(project, commands)
+    recommendation_error = _resolve_canvas_generation_recommendations(project, canvas, commands)
     if recommendation_error is not None:
         return tool_result(recommendation_error)
     generation_preflight = _external_generation_parameter_preflight(

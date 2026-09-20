@@ -70,6 +70,30 @@ def test_recommended_model_rejects_incompatible_explicit_ratio():
     assert any(blocker["code"] == "model_capability_unsupported" for blocker in result["blockers"])
 
 
+def test_recommended_model_keeps_explicit_catalog_supported_tenant_options():
+    plan = {"nodes": [{
+        "id": "image", "node_type": "imageGenNode",
+        "data": {
+            "model": "recommended", "aspectRatio": "21:9",
+            "size": "3K", "quality": "ultra",
+        },
+    }]}
+    result = evaluate_workflow_preflight(
+        {"plan": plan},
+        model_responses={"imageGenNode": {"ok": True, "data": [{
+            "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+            "ratioOptions": ["21:9"], "resolutionOptions": ["3K"],
+            "qualityOptions": ["ultra"],
+        }]}},
+        limits={"ok": True, "data": {"default": {"limit": 2, "remaining": 1}}},
+    )
+    assert result["status"] == "ready"
+    assert plan["nodes"][0]["data"] == {
+        "model": "LingShan-G2", "aspectRatio": "21:9",
+        "size": "3K", "quality": "ultra", "count": 1,
+    }
+
+
 def test_recommended_model_does_not_fall_back_to_first_visible_model():
     plan = {"nodes": [{
         "id": "image", "node_type": "imageGenNode", "data": {"model": "recommended"},

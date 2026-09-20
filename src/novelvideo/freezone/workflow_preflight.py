@@ -34,11 +34,12 @@ _RECOMMENDED_OPTIONS = {
 
 def _preferred_option(entry: dict[str, Any], key: str, preferences: tuple[str, ...]) -> str | None:
     options = _catalog_string_options(entry, key)
-    return next(
+    preferred = next(
         (option for preferred in preferences for option in options
          if option.casefold() == preferred.casefold()),
         None,
     )
+    return preferred or (options[0] if len(options) == 1 else None)
 
 
 def resolve_generation_recommendations(
@@ -64,11 +65,15 @@ def resolve_generation_recommendations(
             continue  # Existing runtime preflight reports unavailable catalogs.
         catalog = [entry for entry in raw_catalog if isinstance(entry, dict)]
         requested = str(data.get("model") or "").strip()
-        symbolic = requested.casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
-        if not requested or (not symbolic and not any(
-            isinstance(value, str) and value.casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
+        symbolic_fields = any(
+            isinstance(value, str)
+            and value.strip().casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
             for key, value in data.items() if key in {"aspectRatio", "size", "quality"}
-        )):
+        )
+        if not requested and not symbolic_fields:
+            continue
+        symbolic = not requested or requested.casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
+        if not symbolic and not symbolic_fields:
             continue
         if symbolic:
             preferred = _RECOMMENDED_MODEL_ALIASES[kind].casefold()
@@ -80,15 +85,21 @@ def resolve_generation_recommendations(
                 )
             }), None)
         else:
-            entry = next((item for item in catalog if requested == str(item.get("id") or "")), None)
+            entry = next((item for item in catalog if requested.casefold() in {
+                str(value).strip().casefold()
+                for value in (
+                    item.get("id"), item.get("apiModel"), item.get("api_model"),
+                    item.get("catalogId"), *(item.get("aliases") or []),
+                )
+            }), None)
         if entry is None:
-            if symbolic:
+            if symbolic or symbolic_fields:
                 blockers.append({
                     "path": f"runtime.models.{node.get('id') or kind}.model",
                     "code": "recommended_model_unavailable",
-                    "message": "The configured recommended model is unavailable in the current catalog",
+                    "message": "The selected model is unavailable for recommended parameters",
                 })
-            continue  # Explicit unknown ids are rejected by the normal preflight.
+            continue
         model_id = str(entry.get("id") or "").strip()
         if not model_id:
             blockers.append({
@@ -97,18 +108,23 @@ def resolve_generation_recommendations(
                 "message": "The recommended catalog entry has no model id",
             })
             continue
-        candidates = {
-            "aspectRatio": _preferred_option(entry, "ratioOptions", _RECOMMENDED_OPTIONS["aspectRatio"]),
-            ("size" if kind == "imageGenNode" else "quality"): _preferred_option(
-                entry, "resolutionOptions", _RECOMMENDED_OPTIONS[
-                    "imageSize" if kind == "imageGenNode" else "videoResolution"
-                ],
+        option_fields = {
+            "aspectRatio": ("ratioOptions", "aspectRatio"),
+            ("size" if kind == "imageGenNode" else "quality"): (
+                "resolutionOptions",
+                "imageSize" if kind == "imageGenNode" else "videoResolution",
             ),
         }
         if kind == "imageGenNode" and _catalog_string_options(entry, "qualityOptions"):
-            candidates["quality"] = _preferred_option(
-                entry, "qualityOptions", _RECOMMENDED_OPTIONS["imageQuality"]
+            option_fields["quality"] = ("qualityOptions", "imageQuality")
+        candidates = {
+            field: _preferred_option(entry, catalog_key, _RECOMMENDED_OPTIONS[preference_key])
+            for field, (catalog_key, preference_key) in option_fields.items()
+            if not data.get(field) or (
+                isinstance(data.get(field), str)
+                and str(data[field]).strip().casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
             )
+        }
         if any(value is None for value in candidates.values()):
             blockers.append({
                 "path": f"runtime.models.{node.get('id') or kind}",
@@ -120,11 +136,14 @@ def resolve_generation_recommendations(
             data["model"] = model_id
         for field, value in candidates.items():
             current = data.get(field)
-            if not current or (isinstance(current, str)
-                               and current.casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES):
+            if not current or (
+                isinstance(current, str)
+                and current.strip().casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
+            ):
                 data[field] = value
         if kind == "imageGenNode" and not _catalog_string_options(entry, "qualityOptions"):
-            if str(data.get("quality") or "").casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES:
+            quality = str(data.get("quality") or "").strip().casefold()
+            if quality in _RECOMMENDED_GENERATION_MODEL_VALUES:
                 data.pop("quality", None)
         data.setdefault("count", 1)
         if kind == "videoNode":
