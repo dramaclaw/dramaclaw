@@ -906,6 +906,8 @@
       "toggle": "Open Freezone Xia Director",
       "close": "Collapse Freezone Xia Director",
       "resize": "Drag to resize Freezone Xia Director",
+      "floatWindow": "Switch to floating window",
+      "dockRight": "Dock to the right",
       "audioApproval": {
         "chooseVoiceTitle": "Choose a narration voice",
         "chooseVoiceDescription": "Choose a custom voice. If you do not choose one now, narration generation will be skipped.",

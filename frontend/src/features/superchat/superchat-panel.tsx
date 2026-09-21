@@ -15255,7 +15255,11 @@ export function SuperChatPanel({
       )}
       <section className="relative z-10 flex min-w-0 flex-1 flex-col">
         {isFreezoneLayout && (
-          <div className="flex min-h-9 shrink-0 items-center gap-2 border-b border-white/[0.06] bg-black/[0.16] px-3 py-1 backdrop-blur-xl">
+          // data-freezone-chat-drag-handle：虾导切成浮窗时，宿主靠它认出「按住这里拖窗」。
+          <div
+            data-freezone-chat-drag-handle=""
+            className="flex min-h-9 shrink-0 items-center gap-2 border-b border-white/[0.06] bg-black/[0.16] px-3 py-1 backdrop-blur-xl"
+          >
             <div className="flex min-w-0 flex-1 items-center gap-3">
               <div className="truncate text-sm font-medium text-foreground">
                 {t("freezone.chat.title")}
