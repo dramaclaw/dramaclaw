@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 from novelvideo.security import SandboxSpec, wrap_command
+from novelvideo.chat import hermes_events
 from novelvideo.chat.runtime_port import ChatBackendEvent
 from novelvideo.chat.tool_policy import (
     DRAMACLAW_WRITE_TOOLS as _DRAMACLAW_WRITE_TOOLS,
@@ -1291,18 +1292,20 @@ class HermesSdkThread:
                             tool_call_guard.total,
                             ev.name or "tool",
                         )
+                        guard = {
+                            "reason": "tool_call_guard",
+                            "guard_reason": _tool_call_guard_reason(stop_text),
+                            "tool_name": str(ev.name or "").strip() or None,
+                            "had_write": first_write_tool is not None,
+                        }
                         await self.close()
                         yield ChatBackendEvent(
                             type="complete",
                             thread_id=self.id,
                             turn_id=turn_id,
                             text=stop_text,
-                            raw={
-                                "reason": "tool_call_guard",
-                                "guard_reason": _tool_call_guard_reason(stop_text),
-                                "tool_name": str(ev.name or "").strip() or None,
-                                "had_write": first_write_tool is not None,
-                            },
+                            guard=guard,
+                            raw=guard,
                         )
                         return
                     if ev.type == "tool_started":
@@ -1442,7 +1445,7 @@ class HermesSdkThread:
             text = content.get("text") if isinstance(content, dict) else None
             return ChatBackendEvent(
                 type="thought_delta", thread_id=self.id, turn_id=turn_id,
-                text=text or "", raw=update,
+                text=text or "", native_kind=kind, raw=update,
             )
         if kind == "plan":
             raw_entries = update.get("entries")
@@ -1450,7 +1453,7 @@ class HermesSdkThread:
                 if isinstance(raw_entries, list) else []
             return ChatBackendEvent(
                 type="plan_update", thread_id=self.id, turn_id=turn_id,
-                entries=entries, raw=update,
+                entries=entries, native_kind=kind, raw=update,
             )
         if kind == "tool_call":
             title = update.get("title") or update.get("kind") or "tool"
@@ -1472,6 +1475,8 @@ class HermesSdkThread:
                 call_id=call_id,
                 status=str(update.get("status") or "pending"),
                 input=tool_input,
+                native_kind=kind,
+                lifecycle_only=True,
                 raw=update,
             )
         if kind == "tool_call_update":
@@ -1505,9 +1510,10 @@ class HermesSdkThread:
                 self._env.get("DRAMACLAW_FREEZONE_TOOL_RESULT_DIR"),
                 tool_name,
             )
+            text = f"  {status}"
             return ChatBackendEvent(
                 type="tool_updated", thread_id=self.id, turn_id=turn_id,
-                text=f"  {status}",
+                text=text,
                 name=tool_name,
                 call_id=call_id,
                 status=status,
@@ -1515,12 +1521,19 @@ class HermesSdkThread:
                 output=tool_output,
                 error=tool_error,
                 structured=structured_result,
+                native_kind=kind,
+                lifecycle_only=(
+                    hermes_events.is_anonymous_tool_call_update(tool_name, update)
+                    or hermes_events.is_lifecycle_only_tool_update(text, update)
+                ),
+                transient_failure=hermes_events.is_transient_tool_failure(update),
                 raw=update,
             )
         if kind == "usage_update":
             return ChatBackendEvent(
                 type="usage_update", thread_id=self.id, turn_id=turn_id,
                 usage={key: value for key, value in update.items() if key != "sessionUpdate"},
+                native_kind=kind,
                 raw=update,
             )
         _log.debug("ignoring unsupported Hermes ACP session update: %s", kind)

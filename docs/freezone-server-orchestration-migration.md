@@ -227,6 +227,10 @@ Profile 的工具策略位于 `chat/tool_policy.py`。旧 `backend_sdk` 和 `cha
 取用同一对象，`tests/test_tool_policy_contract.py` 校验这些名字与 `.hermes/plugins` 实际发布的
 工具一致，并要求插件新增的桥接画布写工具必须显式归类。
 
+Runtime Adapter 的原始事件判定已收口：Hermes ACP 形态（`sessionUpdate`、`toolCallId` 等）只在
+`chat/hermes_events.py` 出现，adapter 据此在 `ChatBackendEvent` 上标记 `lifecycle_only`、
+`transient_failure`、`guard` 与 `native_kind`；`chat.service` 及展示/证据模块只消费这些字段。
+
 ## 可观测性与清理
 
 最低指标包括 pending commands、oldest age、delivery latency、lease steals、retry count、

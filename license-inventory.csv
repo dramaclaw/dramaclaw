@@ -1956,6 +1956,7 @@ src/novelvideo/chat/dramaclaw_mcp.py,Elastic-2.0,2026 SuperTale contributors,REU
 src/novelvideo/chat/evidence_metrics.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/execution_context.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/hermes_egress.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/chat/hermes_events.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/hermes_fork_requirement.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/hermes_operation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/hermes_pool.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2657,6 +2658,7 @@ tests/test_graph_build_progress.py,Elastic-2.0,2026 SuperTale contributors,REUSE
 tests/test_graph_preview.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_hermes_dramaclaw_plugin.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_hermes_empty_session_load.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_hermes_events.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_hermes_evidence_identity_passthrough.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_hermes_fork_pairing.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_hermes_operation_ledger.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
