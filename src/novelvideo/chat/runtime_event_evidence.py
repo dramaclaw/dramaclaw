@@ -10,25 +10,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
-_FREEZONE_CANVAS_WRITE_TOOLS = frozenset(
-    {
-        "freezone_create_node",
-        "freezone_add_next_node",
-        "freezone_emit_canvas_command",
-        "freezone_update_node_data",
-        "freezone_delete_nodes",
-        "freezone_delete_edges",
-        "freezone_create_edge",
-        "freezone_layout_nodes",
-        "freezone_group_nodes",
-        "freezone_move_nodes",
-        "freezone_select_nodes",
-        "freezone_open_mainline_projection",
-        "freezone_run_node_action",
-        "freezone_run_workflow",
-        "freezone_confirm_workflow_draft",
-        "freezone_confirm_canvas_action",
-    }
+from novelvideo.chat.tool_policy import (
+    FREEZONE_CANVAS_WRITE_TOOLS as _FREEZONE_CANVAS_WRITE_TOOLS,
+    FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS as _FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS,
 )
 
 
@@ -324,12 +308,6 @@ def _codex_freezone_clarification_answered(event: Any) -> bool:
             ):
                 return True
     return False
-
-
-_FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS = {
-    "freezone_prepare_workflow_draft",
-    "freezone_prepare_workflow_plan_draft",
-}
 
 
 def _codex_freezone_ready_workflow_draft(event: Any) -> dict[str, Any] | None:

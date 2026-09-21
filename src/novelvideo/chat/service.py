@@ -155,6 +155,8 @@ from novelvideo.chat.runtime_event_evidence import (
     _json_objects_from_codex_tool_value,
 )
 from novelvideo.chat.tool_policy import (
+    AGENT_PRODUCT_RESULT_TOOLS as _AGENT_PRODUCT_RESULT_TOOLS,
+    FREEZONE_WORKFLOW_DRAFT_TOOLS as _FREEZONE_WORKFLOW_DRAFT_TOOLS,
     allows_mainline_media_ui_specs as _allows_mainline_media_ui_specs,
     freezone_canvas_execution_mode_from_context as _freezone_canvas_execution_mode_from_context,
     freezone_canvas_id_from_context as _freezone_canvas_id_from_context,
@@ -784,14 +786,6 @@ def _freezone_canvas_write_requested(prompt: str | None) -> bool:
         or standalone_clear
     )
 
-
-_AGENT_PRODUCT_RESULT_TOOLS = {
-    "freezone_prepare_workflow",
-    "freezone_prepare_workflow_draft",
-    "freezone_prepare_workflow_plan_draft",
-    "freezone_put_agent_catalog_skill",
-    "freezone_put_agent_catalog_recipe",
-}
 
 
 async def _bind_server_observed_agent_product_execution(
@@ -3780,12 +3774,7 @@ async def _stream_assistant_reply_hermes(
                         and guard_details.get("reason") == "tool_call_guard"
                         and guard_details.get("guard_reason") == "repeated_read"
                         and guard_details.get("tool_name")
-                        not in {
-                            "freezone_prepare_workflow_draft",
-                            "freezone_prepare_workflow_plan_draft",
-                            "freezone_patch_workflow_draft",
-                            "freezone_confirm_workflow_draft",
-                        }
+                        not in _FREEZONE_WORKFLOW_DRAFT_TOOLS
                         and not guard_details.get("had_write")
                     ):
                         guard_tool_name = str(

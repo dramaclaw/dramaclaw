@@ -26,6 +26,11 @@ from typing import Any, AsyncIterator
 
 from novelvideo.security import SandboxSpec, wrap_command
 from novelvideo.chat.runtime_port import ChatBackendEvent
+from novelvideo.chat.tool_policy import (
+    DRAMACLAW_WRITE_TOOLS as _DRAMACLAW_WRITE_TOOLS,
+    FREEZONE_CANVAS_WRITE_TOOLS as _FREEZONE_CANVAS_WRITE_TOOLS,
+    FREEZONE_TERMINAL_WRITE_TOOLS as _FREEZONE_TERMINAL_WRITE_TOOLS,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -121,54 +126,7 @@ def _is_session_unavailable_error(error: Any) -> bool:
         and "not found" in normalized
     ) or "failed to recreate agent for acp session" in normalized
 
-_DRAMACLAW_WRITE_TOOLS = {
-    "dramaclaw_post",
-    "dramaclaw_patch",
-    "dramaclaw_delete",
-    "dramaclaw_build_characters",
-    "dramaclaw_plan_episodes",
-    "dramaclaw_generate_script",
-    "dramaclaw_update_character_face_prompt",
-    "dramaclaw_plan_identities",
-    "dramaclaw_plan_scenes",
-    "dramaclaw_plan_props",
-    "dramaclaw_generate_scene_master",
-    "dramaclaw_generate_scene_reverse",
-    "dramaclaw_generate_sketches",
-    "dramaclaw_detect_sketch_identities",
-    "dramaclaw_optimize_video_global",
-    "dramaclaw_generate_audio",
-    "dramaclaw_prepare_system_voices",
-    "dramaclaw_render_first_frames",
-    "dramaclaw_compose_episode",
-    "dramaclaw_generate_portrait",
-    "dramaclaw_generate_identity_image",
-    "dramaclaw_start_single_video",
-    "dramaclaw_start_video_batch",
-    "dramaclaw_run_freezone_skill",
-    "dramaclaw_save_freezone_canvas",
-    "dramaclaw_delete_freezone_canvas",
-    "dramaclaw_create_freezone_canvas_from_preset",
-}
 
-_FREEZONE_CANVAS_WRITE_TOOLS = {
-    "freezone_emit_canvas_command",
-    "freezone_confirm_workflow_draft",
-    "freezone_create_node",
-    "freezone_add_next_node",
-    "freezone_update_node_data",
-    "freezone_create_edge",
-    "freezone_delete_nodes",
-    "freezone_delete_edges",
-    "freezone_move_nodes",
-    "freezone_layout_nodes",
-    "freezone_group_nodes",
-    "freezone_select_nodes",
-    "freezone_open_mainline_projection",
-    "freezone_run_node_action",
-    "freezone_run_workflow",
-}
-_FREEZONE_TERMINAL_WRITE_TOOLS = {"freezone_run_workflow"}
 FREEZONE_FAILED_WRITE_RETRY_LIMIT = 1
 
 

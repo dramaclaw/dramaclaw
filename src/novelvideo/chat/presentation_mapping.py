@@ -9,6 +9,10 @@ from collections.abc import Callable
 from typing import Any
 
 from novelvideo.chat import presentation, presentation_text
+from novelvideo.chat.tool_policy import (
+    HIDDEN_TOOL_MARKERS as _HIDDEN_TOOL_MARKERS,  # noqa: F401 - compatibility export
+    is_hidden_chat_tool_event,
+)
 
 
 def _normalize_single_ui_spec_block(
@@ -554,18 +558,7 @@ def _is_beat_video_ui_spec(spec: dict[str, Any]) -> bool:
     return False
 
 
-_HIDDEN_TOOL_MARKERS = (
-    "skill_view",
-    "skills_list",
-    "skill view",
-    "skills list",
-    "loading skill",
-    "→ skill view",
-    "→ skills list",
-)
-
 
 def _is_hidden_chat_tool_event(name: object, text: object) -> bool:
-    """Internal Hermes bookkeeping tools should not become user-visible cards."""
-    haystack = f"{name or ''}\n{text or ''}".lower()
-    return any(marker in haystack for marker in _HIDDEN_TOOL_MARKERS)
+    """Compatibility entrypoint; the policy lives in ``chat.tool_policy``."""
+    return is_hidden_chat_tool_event(name, text)
