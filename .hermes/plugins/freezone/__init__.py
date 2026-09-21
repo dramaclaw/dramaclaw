@@ -911,6 +911,11 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     clarification_id = str(
         args.get("clarification_id") or args.get("request_id") or ""
     ).strip()
+    # The bridge directory is shared per user/profile and may hold cards from
+    # other projects; never look one up outside this session's bound scope.
+    mismatch = _bound_scope_mismatch(project, canvas)
+    if mismatch is not None:
+        return tool_result(mismatch)
     # An id the agent already holds may name a card that is still waiting (or
     # was answered late). Resolve it first so a bare resume call needs no questions.
     resumed = _resume_clarification(project, canvas, clarification_id)

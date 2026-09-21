@@ -3249,6 +3249,30 @@ def test_clarification_without_questions_and_without_card_is_still_rejected(monk
     assert result["status"] == "questions_required"
 
 
+def test_clarification_resume_outside_bound_scope_never_touches_the_bridge(monkeypatch):
+    """A resume for another project's card is rejected before any bridge lookup."""
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    monkeypatch.setattr(plugin, "find_clarification_bridge_message",
+                        lambda **_kw: pytest.fail("mismatched scope must not query the bridge"))
+    monkeypatch.setattr(plugin, "put_pending_clarification_event",
+                        lambda **_kw: pytest.fail("mismatched scope must not show a card"))
+    monkeypatch.setattr(plugin, "wait_clarification_result",
+                        lambda *_a, **_kw: pytest.fail("mismatched scope must not wait"))
+
+    result = _clarification_handler(plugin)({
+        "project_id": "project-b", "canvas_id": "canvas-a", "clarification_id": "clarify_other",
+    })
+
+    assert result["ok"] is False
+    assert result["status"] == "scope_mismatch"
+    assert result["project_id"] == "project-a"
+    Draft202012Validator(
+        plugin._output_schema("freezone_request_user_clarification")
+    ).validate(result)
+
+
 def test_clarification_without_existing_card_still_emits_a_fresh_one(monkeypatch):
     plugin = _load_plugin_module()
     monkeypatch.setattr(plugin, "find_clarification_bridge_message", lambda **_kw: None)
