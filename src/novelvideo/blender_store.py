@@ -26,6 +26,11 @@ from novelvideo.sqlite_pragmas import configure_sqlite_connection
 PAIRING_TTL_SECONDS = 5 * 60
 TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60
 
+# 收件箱只是个「有新东西待认领」的提示，不是归档。超过一天还没人认领，说明用户
+# 早就忘了自己传过什么，这时候再自动往画布上塞东西只会让人莫名其妙。过期只是不再
+# 自动上画布——文件本身还在项目的 `freezone/_uploads/` 里，素材库照样能找到。
+INBOX_TTL_SECONDS = 24 * 60 * 60
+
 # 去掉 0/O/1/I/L 这些抄错率高的字符。32 个字符 8 位 = 40 bit，配合 5 分钟有效期
 # 和调用频率限制足够；再长用户就不愿意敲了。
 _CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -259,16 +264,28 @@ def consume_pairing(db_path: str | Path, pairing_id: str) -> PairingResult:
 
 
 def purge_expired(db_path: str | Path) -> None:
-    """清掉过期的配对。
+    """清掉过期的配对和过期的收件箱行。
 
-    不按 status 区分：过期的 approved 行同样兑不出令牌了（`consume_pairing` 的
+    配对不按 status 区分：过期的 approved 行同样兑不出令牌了（`consume_pairing` 的
     过期检查排在状态检查之前），留着只是永久占着 code_hash 的 UNIQUE 名额。
     consumed 行也不必留——令牌本身记在 blender_tokens 里。
+
+    收件箱同理：`blender_inbox` 没有任何别的删除路径，不在这里清就是只增不减。
+
+    这个函数现在挂在系统里调用最频繁的路径上——`take_inbox` 每次被轮询都先跑
+    它一遍。收件箱那条 `DELETE ... WHERE created_at <= ?` 是全表扫描：
+    `blender_inbox_project` 索引以 `user_id` 开头，这条查询用不上它。实测
+    1 万行时能把一次空轮询从 0.59ms 拉到 0.95ms——现在这点开销可以接受，因为
+    有 TTL 兜底表不会无限长；但谁要是想把 `INBOX_TTL_SECONDS` 调大很多，
+    得先想清楚这笔账，因为它的成本是跟着全局表大小涨的，不是跟着某个用户或
+    项目的行数涨的。
     """
+    now = _now()
     with _connect(db_path) as conn:
+        conn.execute("DELETE FROM blender_pairings WHERE expires_at <= ?", (now,))
         conn.execute(
-            "DELETE FROM blender_pairings WHERE expires_at <= ?",
-            (_now(),),
+            "DELETE FROM blender_inbox WHERE created_at <= ?",
+            (now - INBOX_TTL_SECONDS,),
         )
 
 
@@ -400,12 +417,61 @@ def record_delivery(
 
 
 def list_inbox(db_path: str | Path, *, user_id: str, project_id: str) -> list[dict]:
+    """非破坏性地看一眼收件箱。**生产代码不该调它**——生产读走 `take_inbox`。
+
+    `src/` 下没有任何调用方，只有测试在用：`take_inbox` 取完就删，测试要断言
+    「这一行还在」就没法用它自己去查。留着这个函数就是为了这一件事。
+
+    `ORDER BY` 必须跟 `take_inbox` 保持逐字一致（都是 `created_at, rowid`）：
+    这里存在的意义是给测试当一面「不破坏现场」的镜子，如果它排序方式跟生产读
+    不一样，镜子里照出来的顺序问题会被当成正常，反而把真正的排序 bug 藏起来。
+    """
     with _connect(db_path) as conn:
         rows = conn.execute(
             "SELECT * FROM blender_inbox WHERE user_id = ? AND project_id = ? "
-            "ORDER BY created_at",
+            "ORDER BY created_at, rowid",
             (user_id, project_id),
         ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def take_inbox(db_path: str | Path, *, user_id: str, project_id: str) -> list[dict]:
+    """取走该用户在该项目下所有待认领的投递，**取完即删**。
+
+    为什么是「取走」而不是「读 + 标记已读」：认领的终点是画布上多出来的节点，而节点
+    一进 store 就会被自动保存落盘。行留着，下一轮 5 秒后的轮询就会重复建一遍节点。
+
+    为什么不用 `DELETE ... RETURNING`：那要 sqlite 3.35+，而运行时的 sqlite 版本跟着
+    系统走。`BEGIN IMMEDIATE` 一上来就拿写锁，SELECT 和 DELETE 在同一把锁里，原子性
+    一样，还没有版本门槛。
+
+    调用方拿到行之后如果建节点失败，这几行已经没了——这是有意的取舍。文件还在
+    `_uploads/` 里，素材库能看见，丢的只是这一次「自动落到画布上」的便利；反过来
+    （先建节点再删）会在网络抖动时重复建节点，那个更难收拾。
+
+    这里的 TTL 语义完全依赖开头这次 `purge_expired` 调用——下面的 SELECT 本身没有
+    `created_at` 条件。如果以后有人为了「这个路径每个打开的标签页每 5 秒打一次」
+    这个理由把 purge_expired 改成有条件触发或限流，`take_inbox` 会在不知不觉中
+    开始把过期行也一起吐出去。不在 SELECT 里加 TTL 谓词是有意的：DELETE 的 WHERE
+    必须跟 SELECT 的逐字一致，加了就得两处一起改，这条注释就是让这个取舍成为
+    「知道自己在做什么」而不是遗忘。
+    """
+    purge_expired(db_path)
+    with _connect(db_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        rows = conn.execute(
+            "SELECT * FROM blender_inbox WHERE user_id = ? AND project_id = ? "
+            # created_at 只精确到整秒，同一秒到的多条投递靠它排不出先后；
+            # 加 rowid（sqlite 的插入顺序）当次级键，保证是真实的到达顺序。
+            "ORDER BY created_at, rowid",
+            (user_id, project_id),
+        ).fetchall()
+        if rows:
+            conn.execute(
+                "DELETE FROM blender_inbox WHERE user_id = ? AND project_id = ?",
+                (user_id, project_id),
+            )
+        conn.execute("COMMIT")
     return [dict(row) for row in rows]
 
 

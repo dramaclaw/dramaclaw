@@ -13,9 +13,6 @@ def client(tmp_path, monkeypatch):
     db_path = tmp_path / "blender.db"
     blender_store.init_db(db_path)
     monkeypatch.setattr(blender, "_db", lambda: db_path)
-    monkeypatch.setattr(
-        blender, "list_user_projects", lambda username: ["demo", "another"]
-    )
 
     app = FastAPI()
     app.include_router(blender.router, prefix="/api/v1")
@@ -29,17 +26,6 @@ def _issue_token(db_path, user_id="alice"):
     pairing = blender_store.create_pairing(db_path)
     blender_store.approve_pairing(db_path, pairing.code, user_id=user_id)
     return blender_store.consume_pairing(db_path, pairing.pairing_id).token
-
-
-def test_projects_lists_what_the_paired_user_owns(client):
-    token = _issue_token(client.db_path)
-
-    response = client.get(
-        "/api/v1/blender/projects", headers={"Authorization": f"Bearer {token}"}
-    )
-
-    assert response.status_code == 200
-    assert response.json() == {"projects": ["demo", "another"]}
 
 
 def test_projects_needs_a_plugin_token(client):

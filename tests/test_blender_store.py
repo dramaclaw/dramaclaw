@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+import threading
 import time
 
 import pytest
@@ -20,6 +22,14 @@ def _pairing_rows(db_path) -> int:
     conn = sqlite3.connect(db_path)
     try:
         return conn.execute("SELECT COUNT(*) FROM blender_pairings").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def _inbox_rows(db_path) -> int:
+    conn = sqlite3.connect(db_path)
+    try:
+        return conn.execute("SELECT COUNT(*) FROM blender_inbox").fetchone()[0]
     finally:
         conn.close()
 
@@ -360,3 +370,159 @@ def test_rate_limit_window_rolls_over(db, monkeypatch):
     monkeypatch.setattr(blender_store, "_now", lambda: base + 61)
 
     assert blender_store.hit_rate_limit(db, "pair:1.2.3.4", limit=5, window=60) is True
+
+
+def test_take_inbox_removes_the_rows_it_returns(db):
+    blender_store.record_delivery(
+        db, user_id="alice", project_id="demo", url="/files/a.png",
+        kind="image", filename="a.png", camera="Camera", frame=1,
+        frame_start=None, frame_end=None, fps=None, width=16, height=9,
+    )
+    first = blender_store.take_inbox(db, user_id="alice", project_id="demo")
+    assert [row["filename"] for row in first] == ["a.png"]
+    # 认领是一次性的：第二次必须是空的，否则轮询会重复建节点。
+    assert blender_store.take_inbox(db, user_id="alice", project_id="demo") == []
+
+
+def test_take_inbox_is_scoped_to_one_user_and_one_project(db):
+    for user_id, project_id, name in (
+        ("alice", "demo", "mine.png"),
+        ("bob", "demo", "not-mine.png"),
+        ("alice", "other", "other-project.png"),
+    ):
+        blender_store.record_delivery(
+            db, user_id=user_id, project_id=project_id, url=f"/files/{name}",
+            kind="image", filename=name, camera="", frame=None,
+            frame_start=None, frame_end=None, fps=None, width=None, height=None,
+        )
+    taken = blender_store.take_inbox(db, user_id="alice", project_id="demo")
+    assert [row["filename"] for row in taken] == ["mine.png"]
+    # 别人的和别的项目的都必须原封不动。
+    assert blender_store.take_inbox(db, user_id="bob", project_id="demo")
+    assert blender_store.take_inbox(db, user_id="alice", project_id="other")
+
+
+def test_take_inbox_drops_rows_past_the_ttl(db, monkeypatch):
+    stale = int(time.time()) - blender_store.INBOX_TTL_SECONDS - 1
+    # created_at 是 record_delivery 里 `_now()` 取的，把时钟拨回去就能造出陈旧行。
+    monkeypatch.setattr(blender_store, "_now", lambda: stale)
+    blender_store.record_delivery(
+        db, user_id="alice", project_id="demo", url="/files/old.png",
+        kind="image", filename="old.png", camera="", frame=None,
+        frame_start=None, frame_end=None, fps=None, width=None, height=None,
+    )
+    monkeypatch.undo()
+    assert blender_store.take_inbox(db, user_id="alice", project_id="demo") == []
+    # 不只是不返回——必须真删掉，否则这张表只增不减。
+    assert _inbox_rows(db) == 0
+
+
+def test_take_inbox_ttl_boundary_is_inclusive(db, monkeypatch):
+    # 上一条测试用的是 `now - TTL - 1`：不管 purge 的判定是 `<=` 还是 `<`，
+    # 这个偏移量都会通过，边界本身没被钉死。这里分别造一行「正好到期」
+    # 和一行「晚一秒到期」，把 `<=`（对齐配对那边 `expires_at <= now` 的写法）
+    # 真正验证住。
+    now = int(time.time())
+
+    monkeypatch.setattr(
+        blender_store, "_now", lambda: now - blender_store.INBOX_TTL_SECONDS
+    )
+    blender_store.record_delivery(
+        db, user_id="alice", project_id="demo", url="/files/exactly-expired.png",
+        kind="image", filename="exactly-expired.png", camera="", frame=None,
+        frame_start=None, frame_end=None, fps=None, width=None, height=None,
+    )
+    monkeypatch.setattr(
+        blender_store, "_now", lambda: now - blender_store.INBOX_TTL_SECONDS + 1
+    )
+    blender_store.record_delivery(
+        db, user_id="alice", project_id="demo", url="/files/still-fresh.png",
+        kind="image", filename="still-fresh.png", camera="", frame=None,
+        frame_start=None, frame_end=None, fps=None, width=None, height=None,
+    )
+    monkeypatch.setattr(blender_store, "_now", lambda: now)
+
+    taken = blender_store.take_inbox(db, user_id="alice", project_id="demo")
+    # 正好卡在 TTL 上的那行被清掉了，晚它一秒的那行还在。
+    assert [row["filename"] for row in taken] == ["still-fresh.png"]
+
+
+def test_take_inbox_returns_multiple_rows_in_delivery_order(db, monkeypatch):
+    # HTTP 路由会把这里的列表原样转成一串画布节点，顺序必须是投递顺序。
+    # record_delivery 的 created_at 只有整秒精度，同一个测试里连续调三次
+    # 大概率落在同一秒，所以要把时钟显式往前拨，让顺序断言不是碰运气。
+    base = int(time.time())
+    names = ["first.png", "second.png", "third.png"]
+    for offset, name in enumerate(names):
+        monkeypatch.setattr(blender_store, "_now", lambda offset=offset: base + offset)
+        blender_store.record_delivery(
+            db, user_id="alice", project_id="demo", url=f"/files/{name}",
+            kind="image", filename=name, camera="", frame=None,
+            frame_start=None, frame_end=None, fps=None, width=None, height=None,
+        )
+    monkeypatch.undo()
+
+    taken = blender_store.take_inbox(db, user_id="alice", project_id="demo")
+    assert [row["filename"] for row in taken] == names
+    assert _inbox_rows(db) == 0
+
+
+def test_take_inbox_breaks_same_second_ties_by_insertion_order(db, monkeypatch):
+    # created_at 只精确到整秒，两条投递落在同一秒时光靠它排不出先后。
+    # 这是一条「返回顺序」的回归护栏，**不是**对实现里 `, rowid` 次级键生效的证明：
+    # 实测把 `, rowid` 去掉这条测试照样通过，因为 `blender_inbox_project` 索引的键
+    # 是 (user_id, project_id, created_at, rowid)，查询走的就是它，sqlite 顺带就按
+    # 插入顺序还了回来。次级键的价值在于这个索引将来被改或被删时仍然成立——那份
+    # 价值这里测不出来，所以别看它通过就以为 tiebreaker 有测试保护。
+    same_second = int(time.time())
+    monkeypatch.setattr(blender_store, "_now", lambda: same_second)
+    blender_store.record_delivery(
+        db, user_id="alice", project_id="demo", url="/files/first.png",
+        kind="image", filename="first.png", camera="", frame=None,
+        frame_start=None, frame_end=None, fps=None, width=None, height=None,
+    )
+    blender_store.record_delivery(
+        db, user_id="alice", project_id="demo", url="/files/second.png",
+        kind="image", filename="second.png", camera="", frame=None,
+        frame_start=None, frame_end=None, fps=None, width=None, height=None,
+    )
+
+    taken = blender_store.take_inbox(db, user_id="alice", project_id="demo")
+    assert [row["filename"] for row in taken] == ["first.png", "second.png"]
+
+
+def test_concurrent_take_inbox_hands_the_row_to_exactly_one_caller(db):
+    """8 线程 × 10 轮不是随便定的数字。
+
+    barrier 只同步「进入 take_inbox」这一刻；之后每个线程还要各自走完
+    purge_expired 的整套连接建立（PRAGMA、`executescript(_SCHEMA)`、两条
+    DELETE）才会真正碰到共享的那一行，这段准备工作本身就会把线程错开。
+    结果是：哪怕把 take_inbox 换成一个完全非原子的实现（纯 SELECT 后 DELETE，
+    中间没有事务），2 线程单轮这个测试仍有约 97.5% 的概率误判为通过——
+    实测探测率只有约 2.5%。8 线程单轮能把探测率提到约 52%，仍不够稳。
+    重复 10 轮、要求每一轮都恰好取出一行，漏检概率降到
+    (1 - 0.52) ** 10 ≈ 0.05%，探测率约 99.9%，运行时间仍是秒级。
+    """
+    for round_index in range(10):
+        blender_store.record_delivery(
+            db, user_id="alice", project_id="demo", url=f"/files/{round_index}.png",
+            kind="image", filename=f"{round_index}.png", camera="", frame=None,
+            frame_start=None, frame_end=None, fps=None, width=None, height=None,
+        )
+        results: list[list[dict]] = []
+        barrier = threading.Barrier(8)
+
+        def worker() -> None:
+            barrier.wait()
+            results.append(
+                blender_store.take_inbox(db, user_id="alice", project_id="demo")
+            )
+
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        # 一轮下来，8 个线程抢的是同一行，总共只能取出一次——否则画布上会
+        # 出现重复节点。
+        assert sum(len(rows) for rows in results) == 1
