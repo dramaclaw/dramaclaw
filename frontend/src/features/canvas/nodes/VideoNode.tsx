@@ -2369,6 +2369,7 @@ export const VideoNode = memo(
               model: selectedVideoModel?.catalogId ?? modelId,
               genMode,
               modelParams: data.modelParams,
+              humanReview: supportsHumanReview && humanReview,
               canvasId,
               nodeId: targetId,
             });
