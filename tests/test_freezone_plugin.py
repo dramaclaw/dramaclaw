@@ -3177,6 +3177,34 @@ def test_generation_clarification_partial_card_recommends_from_confirmed_model(m
     }
 
 
+def test_generation_clarification_partial_card_recommends_for_alias_model(monkeypatch):
+    """CORE-CANVAS-01: a confirmed catalog alias still yields concrete recommendations."""
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    captured = []
+    monkeypatch.setattr(plugin, "_emit_clarification_event",
+                        lambda _project, _canvas, event: captured.append(event) or "shown")
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: _ISSUE_637_IMAGE_CATALOG)
+
+    handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a",
+        "generation_required_choices": {
+            "image": ["aspect_ratio", "resolution", "quality", "count"],
+        },
+        "answers": {"image_model": {"option_ids": ["newapi_gpt_image2"]}},
+    })
+
+    event = captured[0]
+    assert event["allow_recommended"] is True
+    # Resolved from the LingShan-G2 entry the alias points at.
+    assert event["recommended_answers"] == {
+        "image_aspect_ratio": {"option_ids": ["9:16"]},
+        "image_resolution": {"option_ids": ["1K"]},
+        "image_quality": {"option_ids": ["medium"]},
+        "image_variants_per_node": {"option_ids": ["1"]},
+    }
+
+
 def test_generation_clarification_partial_card_without_model_hides_recommendation(monkeypatch):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}

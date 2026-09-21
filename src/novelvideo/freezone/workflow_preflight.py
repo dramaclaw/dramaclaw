@@ -42,6 +42,28 @@ def _preferred_option(entry: dict[str, Any], key: str, preferences: tuple[str, .
     return preferred or (options[0] if len(options) == 1 else None)
 
 
+def _catalog_entry_identifiers(entry: dict[str, Any]) -> set[str]:
+    """Every identifier a node may legitimately use for one catalog entry."""
+    values = (
+        entry.get("id"), entry.get("apiModel"), entry.get("api_model"),
+        entry.get("catalogId"), *(entry.get("aliases") or []),
+    )
+    return {
+        str(value).strip().casefold()
+        for value in values
+        if isinstance(value, (str, int)) and str(value).strip()
+    }
+
+
+def _catalog_entry_for_model(
+    catalog: list[dict[str, Any]], requested: str
+) -> dict[str, Any] | None:
+    wanted = requested.strip().casefold()
+    return next(
+        (item for item in catalog if wanted in _catalog_entry_identifiers(item)), None
+    )
+
+
 def resolve_generation_recommendations(
     nodes: list[Any],
     model_responses: dict[str, dict[str, Any]],
@@ -83,20 +105,12 @@ def resolve_generation_recommendations(
         symbolic = not requested or requested.casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
         if not symbolic and not symbolic_fields and not fill_missing:
             continue
-        if symbolic:
-            preferred = _RECOMMENDED_MODEL_ALIASES[kind].casefold()
-            entry = next((item for item in catalog if preferred in {
-                str(value).strip().casefold()
-                for value in (
-                    item.get("id"), item.get("apiModel"), item.get("api_model"),
-                    item.get("catalogId"), *(item.get("aliases") or []),
-                )
-            }), None)
-        else:
-            entry = next(
-                (item for item in catalog if requested == str(item.get("id") or "")),
-                None,
-            )
+        # A concrete model may be any identifier the catalog publishes for the
+        # entry (id, apiModel, catalogId or an alias such as ``newapi_gpt_image2``
+        # for ``LingShan-G2``); the symbolic default resolves the same way.
+        entry = _catalog_entry_for_model(
+            catalog, _RECOMMENDED_MODEL_ALIASES[kind] if symbolic else requested
+        )
         if entry is None:
             if symbolic or symbolic_fields:
                 blockers.append({

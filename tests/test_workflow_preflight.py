@@ -255,10 +255,17 @@ def _image_check(data, *, fill_missing):
     node = {"id": "image", "node_type": "imageGenNode", "data": data}
     blockers = resolve_generation_recommendations(
         [node],
-        {"imageGenNode": {"ok": True, "data": [{
-            "id": "Other-Wide", "ratioOptions": ["21:9", "16:9"],
-            "resolutionOptions": ["4K"], "qualityOptions": [],
-        }]}},
+        {"imageGenNode": {"ok": True, "data": [
+            {
+                "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+                "ratioOptions": ["9:16"], "resolutionOptions": ["2K", "1K"],
+                "qualityOptions": ["medium"],
+            },
+            {
+                "id": "Other-Wide", "ratioOptions": ["21:9", "16:9"],
+                "resolutionOptions": ["4K"], "qualityOptions": [],
+            },
+        ]}},
         fill_missing=fill_missing,
     )
     return blockers, node["data"]
@@ -280,3 +287,22 @@ def test_fill_missing_still_blocks_unknown_concrete_model():
     blockers, data = _image_check({"model": "Missing-Model"}, fill_missing=True)
     assert blockers == []  # unknown concrete ids are reported by the capability check
     assert data == {"model": "Missing-Model"}
+
+
+def test_fill_missing_resolves_a_catalog_alias_to_its_entry():
+    """A node keeps a legal alias (the sketch default) and still gets its fields."""
+    blockers, data = _image_check({"model": "newapi_gpt_image2"}, fill_missing=True)
+    assert blockers == []
+    assert data == {
+        "model": "newapi_gpt_image2", "aspectRatio": "9:16", "size": "1K",
+        "quality": "medium", "count": 1,
+    }
+
+
+def test_recommended_fields_on_an_alias_model_resolve_without_fill_missing():
+    blockers, data = _image_check(
+        {"model": "newapi_gpt_image2", "aspectRatio": "recommended"}, fill_missing=False,
+    )
+    assert blockers == []
+    assert data["aspectRatio"] == "9:16"
+    assert data["model"] == "newapi_gpt_image2"
