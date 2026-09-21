@@ -43,12 +43,20 @@ def _preferred_option(entry: dict[str, Any], key: str, preferences: tuple[str, .
 
 
 def resolve_generation_recommendations(
-    nodes: list[Any], model_responses: dict[str, dict[str, Any]],
+    nodes: list[Any],
+    model_responses: dict[str, dict[str, Any]],
+    *,
+    fill_missing: bool = False,
 ) -> list[dict[str, Any]]:
     """Materialize concrete choices from one scoped catalog snapshot per media type.
 
     Mutates only valid choices. A missing default or capability leaves a blocker;
     callers must not persist or dispatch any node when blockers are returned.
+
+    ``fill_missing`` also completes nodes whose model is already concrete but
+    whose other fields are absent. It exists to build a recommendation the user
+    will see and accept; plan and canvas preflight keep the default so an
+    incomplete node is reported instead of silently defaulted.
     """
     blockers: list[dict[str, Any]] = []
     for node in nodes:
@@ -73,7 +81,7 @@ def resolve_generation_recommendations(
         if not requested and not symbolic_fields:
             continue
         symbolic = not requested or requested.casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
-        if not symbolic and not symbolic_fields:
+        if not symbolic and not symbolic_fields and not fill_missing:
             continue
         if symbolic:
             preferred = _RECOMMENDED_MODEL_ALIASES[kind].casefold()

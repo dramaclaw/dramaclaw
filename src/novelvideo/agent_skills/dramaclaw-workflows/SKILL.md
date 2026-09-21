@@ -127,9 +127,13 @@ to every matching generated node. Node `data` may instead pin the equivalent can
 field for a step, but a value that conflicts with the shared choice is rejected rather than
 silently overriding either value. If a write returns
 `code="generation_parameters_required"`, do not retry unchanged. Call
-`freezone_request_user_clarification` once for all returned missing choices, apply the current
-request's answers to the same intent/plan, and retry the same operation. Approval behavior remains
-controlled by the execution mode.
+`freezone_request_user_clarification` once for all returned missing choices, passing already
+confirmed choices (at least the model) in `answers` so the recommendation comes from the same
+catalog entry. The clarification result carries `node_data.<node_type>` with the exact canvas
+fields; copy them verbatim into each matching node of the same intent/plan and retry the same
+operation. A recommended action always returns concrete values; a result with
+`status="generation_answers_incomplete"` means the choice is still missing and must be asked
+again, never defaulted. Approval behavior remains controlled by the execution mode.
 
 When the user does not specify internal media settings, use `"recommended"` only for the media
 model preference in the portable intent or Plan. The authorized preflight resolves it to a concrete

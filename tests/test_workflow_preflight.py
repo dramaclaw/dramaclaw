@@ -246,3 +246,37 @@ def test_live_catalog_failure_is_not_a_successful_preflight():
         limits={"ok": False},
     )
     assert result["blockers"][0]["code"] == "model_catalog_unavailable"
+
+
+
+def _image_check(data, *, fill_missing):
+    from novelvideo.freezone.workflow_preflight import resolve_generation_recommendations
+
+    node = {"id": "image", "node_type": "imageGenNode", "data": data}
+    blockers = resolve_generation_recommendations(
+        [node],
+        {"imageGenNode": {"ok": True, "data": [{
+            "id": "Other-Wide", "ratioOptions": ["21:9", "16:9"],
+            "resolutionOptions": ["4K"], "qualityOptions": [],
+        }]}},
+        fill_missing=fill_missing,
+    )
+    return blockers, node["data"]
+
+
+def test_concrete_model_with_missing_fields_is_not_defaulted_by_preflight():
+    blockers, data = _image_check({"model": "Other-Wide"}, fill_missing=False)
+    assert blockers == []
+    assert data == {"model": "Other-Wide"}
+
+
+def test_fill_missing_completes_concrete_model_from_its_own_catalog_entry():
+    blockers, data = _image_check({"model": "Other-Wide", "size": "4K"}, fill_missing=True)
+    assert blockers == []
+    assert data == {"model": "Other-Wide", "aspectRatio": "16:9", "size": "4K", "count": 1}
+
+
+def test_fill_missing_still_blocks_unknown_concrete_model():
+    blockers, data = _image_check({"model": "Missing-Model"}, fill_missing=True)
+    assert blockers == []  # unknown concrete ids are reported by the capability check
+    assert data == {"model": "Missing-Model"}
