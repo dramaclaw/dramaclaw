@@ -4205,6 +4205,22 @@ export function assistantClarificationShowsRecommended(
     || Boolean(recommendedAnswers && assistantClarificationCanSubmit(questions, recommendedAnswers)));
 }
 
+export function assistantClarificationCanSubmitRecommended(
+  event: AssistantClarificationUiEvent,
+  answers: AssistantClarificationAnswers,
+): boolean {
+  if (!assistantClarificationIsGenerationCard(event.questions ?? [])) return true;
+  const recommended = event.recommended_answers;
+  if (!recommended || Object.keys(recommended).length === 0) return false;
+  return Object.entries(recommended).every(([key, selection]) => {
+    const expected = normalizedSkillStudioQuestionSelection(selection).optionIds;
+    const actual = normalizedSkillStudioQuestionSelection(answers[key]).optionIds;
+    return expected.length > 0
+      && expected.length === actual.length
+      && expected.every((id, index) => id === actual[index]);
+  });
+}
+
 const normalizedClarificationId = (value: unknown) =>
   String(value ?? "").trim().toLowerCase().replace(/-/g, "_");
 
@@ -14773,6 +14789,12 @@ export function SuperChatPanel({
         : answers.__action === "skip"
           ? "skip"
           : "submit";
+      if (action === "recommended" && !assistantClarificationCanSubmitRecommended(
+        event, answers,
+      )) {
+        toast.error("推荐配置缺少有效参数，请重新选择或刷新后重试");
+        return false;
+      }
       const skillStudioRevision = activeAssistantClarificationIsSkillStudioRevision(visibleMessages, event);
 	      const payload = {
 	        ...buildAssistantClarificationToolResultForTest(event, answers, { skillStudioRevision, projectId: params.project || undefined, canvasId: effectiveFreezoneCanvasId || undefined, agentId: effectiveFreezoneAgentId || undefined }),
