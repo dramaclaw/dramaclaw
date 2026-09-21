@@ -255,6 +255,50 @@ def _default_canvas_id() -> str:
     return os.environ.get("DRAMACLAW_CANVAS_ID", "").strip()
 
 
+def _bound_scope_mismatch(project: str | None, canvas: str | None) -> dict[str, Any] | None:
+    """Reject bridge traffic for a project or canvas this session is not bound to.
+
+    The frontend only serves the bound project/canvas, so a message written under
+    any other id (typically a retyped ULID missing a character) would never be
+    delivered and would only surface as a timeout minutes later. Return an
+    immediate, schema-safe error that spells out the bound ids instead.
+    """
+    bound_project = _default_project_id()
+    bound_canvas = _default_canvas_id()
+    given_project = str(project or "").strip()
+    given_canvas = str(canvas or "").strip()
+    mismatches = []
+    if bound_project and given_project and given_project != bound_project:
+        mismatches.append(f"project_id {given_project!r} is not the bound {bound_project!r}")
+    if bound_canvas and given_canvas and given_canvas != bound_canvas:
+        mismatches.append(f"canvas_id {given_canvas!r} is not the bound {bound_canvas!r}")
+    if not mismatches:
+        return None
+    bound = ", ".join(
+        f"{field}={value!r}"
+        for field, value in (("project_id", bound_project), ("canvas_id", bound_canvas))
+        if value
+    )
+    return {
+        "ok": False,
+        "status": "scope_mismatch",
+        "code": "scope_mismatch",
+        "error": (
+            "This session is bound to " + bound + "; " + "; ".join(mismatches)
+            + ". Nothing was sent to the frontend."
+        ),
+        **({"project_id": bound_project} if bound_project else {}),
+        **({"canvas_id": bound_canvas} if bound_canvas else {}),
+        "retryable": True,
+        "next_action": "retry_with_bound_scope",
+        "agent_instruction": (
+            "Retry the same call with exactly " + bound + ", or omit project_id and "
+            "canvas_id to use the session defaults. Copy ids verbatim from this result; "
+            "never retype or shorten them."
+        ),
+    }
+
+
 def _surface() -> str:
     return (
         os.environ.get("DRAMACLAW_CHAT_SURFACE")
@@ -655,6 +699,9 @@ def _emit_skill_studio_event(
             "Skill Studio bridge is unavailable; cannot present the Freezone UI event. "
             f"Import error: {_CANVAS_COMMAND_BRIDGE_IMPORT_ERROR}"
         )
+    mismatch = _bound_scope_mismatch(project, canvas)
+    if mismatch is not None:
+        return tool_result(mismatch)
     key = skill_studio_bridge_key(project_id=project, canvas_id=canvas, event=event)
     put_pending_skill_studio_event(
         key=key,
@@ -711,6 +758,9 @@ def _emit_skill_studio_progress_event(
         debug_event = dict(debug) if isinstance(debug, dict) else {}
         debug_event["agent_instruction"] = agent_instruction
         frontend_event["debug"] = debug_event
+    mismatch = _bound_scope_mismatch(project, canvas)
+    if mismatch is not None:
+        return tool_result(mismatch)
     key = skill_studio_bridge_key(
         project_id=project, canvas_id=canvas, event=frontend_event
     )
@@ -765,6 +815,9 @@ def _emit_clarification_event(
             "Clarification bridge is unavailable; cannot present the Freezone UI event. "
             f"Import error: {_CANVAS_COMMAND_BRIDGE_IMPORT_ERROR}"
         )
+    mismatch = _bound_scope_mismatch(project, canvas)
+    if mismatch is not None:
+        return tool_result(mismatch)
     key = clarification_bridge_key(project_id=project, canvas_id=canvas, event=event)
     put_pending_clarification_event(
         key=key,
@@ -4151,6 +4204,9 @@ def _dispatch_mcp_approved_frontend_commands(
             "Canvas command bridge is unavailable; cannot dispatch frontend node action. "
             f"Import error: {_CANVAS_COMMAND_BRIDGE_IMPORT_ERROR}"
         )
+    mismatch = _bound_scope_mismatch(project, canvas)
+    if mismatch is not None:
+        return tool_result(mismatch)
     external_mcp = os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip() == "1"
     profile = os.environ.get("DRAMACLAW_AGENT_PROFILE", "").strip()
     agent_id = (
@@ -4281,6 +4337,9 @@ def _dispatch_frontend_canvas_commands(
             "Canvas command bridge is unavailable; cannot wait for frontend apply result. "
             f"Import error: {_CANVAS_COMMAND_BRIDGE_IMPORT_ERROR}"
         )
+    mismatch = _bound_scope_mismatch(project, canvas)
+    if mismatch is not None:
+        return tool_result(mismatch)
     envelope = {
         "schema_version": "canvas_chat_commands.v1",
         "project_id": project,
@@ -6991,6 +7050,9 @@ def _request_canvas_context_from_frontend(
         and put_pending_canvas_context is not None
         and wait_canvas_context_result is not None
     ):
+        mismatch = _bound_scope_mismatch(project, canvas)
+        if mismatch is not None:
+            return tool_result(mismatch)
         key = canvas_context_bridge_key(
             project_id=project, canvas_id=canvas, requests=requests
         )
