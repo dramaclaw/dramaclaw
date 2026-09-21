@@ -387,6 +387,13 @@ def reset_codex_scope_thread(
     index_file_lock: Callable[[Path], ContextManager[Any]],
     write_json_atomic: Callable[[Path, dict[str, str]], None],
 ) -> None:
+    """Drop one scope's thread binding from the session index.
+
+    This only touches the thread index. The matching active-turn record lives
+    in a separate file, and clearing it stays with the caller (the
+    ``chat.service`` wrapper does so) because the registry does not know the
+    per-user active-turn path.
+    """
     with index_file_lock(path):
         payload = load_codex_session_state(path)
         if scope_key in payload:
