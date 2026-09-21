@@ -14,6 +14,7 @@
 | `NOVELVIDEO_OUTPUT_DIR` | `$DATA_ROOT/output` | 成片与产物输出目录。Docker Compose 固定为 `/data/output`，随 `ce-data` 卷持久化。 |
 | `NOVELVIDEO_STATE_DIR` | `$DATA_ROOT/state` | 本地状态。 |
 | `NOVELVIDEO_RUNTIME_DIR` | `$DATA_ROOT/runtime` | 运行时临时目录。 |
+| `ST_PUBLICATION_DIR` | `$NOVELVIDEO_STATE_DIR/publications` | 可选的公开互动作品索引和跨项目移动锁目录；作品快照与媒体仍保存在各项目的 `state_dir/publications`。 |
 | `ST_CONTROL_PLANE_DSN` / `ST_REDIS_URL` / `ST_CELERY_BROKER_URL` / `ST_CELERY_RESULT_BACKEND` | 空(CE 强制清空) | EE/分布式才用;CE 任务进程内 inline 执行,留空。 |
 
 ## 模型网关
