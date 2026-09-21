@@ -1,4 +1,7 @@
-"""GET /blender/addon：项目管理中心「Blender 插件」按钮背后的下载端点。"""
+"""GET /blender/addon：项目管理中心「Blender 插件」按钮背后的下载端点。
+
+包从哪来：本地 dist 里有就用本地的，没有就去 OSS 取。两条路都要注入同样的配置。
+"""
 
 from __future__ import annotations
 
@@ -6,6 +9,7 @@ import io
 import json
 import zipfile
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -22,6 +26,33 @@ def dist(tmp_path, monkeypatch):
     return dist_dir
 
 
+class FakeOSS:
+    """替掉真网络。默认什么都没传（404），测试按需往 `files` 里放包。"""
+
+    def __init__(self) -> None:
+        self.files: dict[str, bytes] = {}
+        self.requested: list[str] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        self.requested.append(url)
+        if url in self.files:
+            return httpx.Response(200, content=self.files[url])
+        return httpx.Response(404, text="NoSuchKey")
+
+
+@pytest.fixture(autouse=True)
+def oss(monkeypatch):
+    fake = FakeOSS()
+    monkeypatch.delenv(blender.ADDON_URL_ENV, raising=False)
+    monkeypatch.setattr(
+        blender,
+        "_addon_http_client",
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(fake.handler)),
+    )
+    return fake
+
+
 def _app(with_user: bool = True) -> FastAPI:
     app = FastAPI()
     app.include_router(blender.router, prefix="/api/v1")
@@ -32,8 +63,14 @@ def _app(with_user: bool = True) -> FastAPI:
 
 def _make_zip(path, marker: str = "print('hi')\n") -> None:
     """造一个真 zip。端点现在要把包解开再重打，假字节过不去。"""
-    with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr("dramaclaw_blender/__init__.py", marker)
+    path.write_bytes(_zip_bytes(marker))
+
+
+def _zip_bytes(init_source: str = "print('hi')\n") -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("dramaclaw_blender/__init__.py", init_source)
+    return buffer.getvalue()
 
 
 def _entries(payload: bytes) -> dict[str, bytes]:
@@ -77,23 +114,25 @@ def test_ignores_files_that_are_not_versioned_addon_zips(dist):
     (dist / "dramaclaw_blender-9.9.9.zip").mkdir()
     with TestClient(_app()) as client:
         response = client.get("/api/v1/blender/addon")
-    assert response.status_code == 404
-    assert "build.py" in response.json()["detail"]
+    # 本地一个都不认，于是去 OSS 取；假 OSS 上没有包，就是 502。
+    assert response.status_code == 502
 
 
-def test_missing_dist_dir_is_404(tmp_path, monkeypatch):
+def test_missing_dist_dir_falls_through_to_oss(tmp_path, monkeypatch, oss):
     monkeypatch.setenv(blender.ADDON_DIST_ENV, str(tmp_path / "nowhere"))
     with TestClient(_app()) as client:
-        assert client.get("/api/v1/blender/addon").status_code == 404
+        assert client.get("/api/v1/blender/addon").status_code == 502
+    assert oss.requested == [blender.DEFAULT_ADDON_URL]
 
 
-def test_dist_path_that_is_a_file_is_404(tmp_path, monkeypatch):
-    # ADDON_DIST_ENV 配错，指到了一个文件而不是目录——不能 iterdir()，得 404。
+def test_dist_path_that_is_a_file_falls_through_to_oss(tmp_path, monkeypatch, oss):
+    # ADDON_DIST_ENV 配错，指到了一个文件而不是目录——不能 iterdir()，当作本地没有。
     not_a_dir = tmp_path / "not-a-dir"
     not_a_dir.write_bytes(b"oops")
     monkeypatch.setenv(blender.ADDON_DIST_ENV, str(not_a_dir))
     with TestClient(_app()) as client:
-        assert client.get("/api/v1/blender/addon").status_code == 404
+        assert client.get("/api/v1/blender/addon").status_code == 502
+    assert oss.requested == [blender.DEFAULT_ADDON_URL]
 
 
 def test_requires_the_browser_session_dependency(dist, tmp_path, monkeypatch):
@@ -173,7 +212,10 @@ def test_env_override_wins_over_the_forwarded_headers(dist, monkeypatch):
     with TestClient(_app()) as client:
         response = client.get(
             "/api/v1/blender/addon",
-            headers={"X-Forwarded-Proto": "https", "X-Forwarded-Host": "ignored.example.com"},
+            headers={
+                "X-Forwarded-Proto": "https",
+                "X-Forwarded-Host": "ignored.example.com",
+            },
         )
     # 末尾的斜杠要去掉。这是防御性的规范化，不是插件依赖它：插件那三处拼接
     # （prefs.py `api_url`、ops.py 的轮询、core/pairing.py `approve_page_url`）
@@ -283,3 +325,106 @@ def test_a_corrupt_zip_fails_with_a_diagnosable_500(dist):
     # 文件名够定位了，绝对路径不要进 HTTP 正文。光断言「正文里有文件名」钉不住这点：
     # 绝对路径天然包含文件名，退回 f"{target}" 这条断言照样绿（复审实测过）。
     assert str(dist) not in detail
+
+
+# ---- 本地没有包：从 OSS 取 -------------------------------------------------
+
+_VERSIONED_INIT = 'bl_info = {\n    "version": (0, 1, 3),\n}\n'
+
+
+def test_fetches_from_oss_and_injects_config_when_no_local_zip(dist, oss):
+    oss.files[blender.DEFAULT_ADDON_URL] = _zip_bytes(_VERSIONED_INIT)
+    with TestClient(_app()) as client:
+        response = client.get(
+            "/api/v1/blender/addon",
+            headers={
+                "X-Forwarded-Proto": "https",
+                "X-Forwarded-Host": "drama.example.com",
+                "Referer": "https://drama.example.com/projects",
+            },
+        )
+    assert response.status_code == 200
+    assert oss.requested == [blender.DEFAULT_ADDON_URL]
+    assert response.headers["cache-control"] == "no-store"
+    assert _config(response.content) == {
+        "server_url": "https://drama.example.com",
+        "web_url": "https://drama.example.com",
+    }
+    assert _entries(response.content)["dramaclaw_blender/__init__.py"] == (
+        _VERSIONED_INIT.encode()
+    )
+
+
+def test_oss_download_is_named_by_the_bl_info_version(dist, oss):
+    # OSS 上是 -latest.zip，下载下来得带真版本号，不然用户分不清装的是哪版。
+    oss.files[blender.DEFAULT_ADDON_URL] = _zip_bytes(_VERSIONED_INIT)
+    with TestClient(_app()) as client:
+        response = client.get("/api/v1/blender/addon")
+    assert (
+        'filename="dramaclaw_blender-0.1.3.zip"'
+        in response.headers["content-disposition"]
+    )
+
+
+def test_oss_download_without_a_readable_version_still_succeeds(dist, oss):
+    oss.files[blender.DEFAULT_ADDON_URL] = _zip_bytes("no bl_info here")
+    with TestClient(_app()) as client:
+        response = client.get("/api/v1/blender/addon")
+    assert response.status_code == 200
+    assert 'filename="dramaclaw_blender.zip"' in response.headers["content-disposition"]
+
+
+def test_env_overrides_the_oss_url(dist, oss, monkeypatch):
+    url = "https://mirror.example.com/addon/dramaclaw_blender-latest.zip"
+    monkeypatch.setenv(blender.ADDON_URL_ENV, f"  {url}  ")
+    oss.files[url] = _zip_bytes(_VERSIONED_INIT)
+    with TestClient(_app()) as client:
+        response = client.get("/api/v1/blender/addon")
+    assert response.status_code == 200
+    assert oss.requested == [url]
+
+
+def test_local_zip_wins_and_oss_is_not_touched(dist, oss):
+    # 开发机跑过 build.py，下载到的就该是刚打的包，而不是 OSS 上的旧版。
+    _make_zip(dist / "dramaclaw_blender-0.1.0.zip", marker="local")
+    oss.files[blender.DEFAULT_ADDON_URL] = _zip_bytes("remote")
+    with TestClient(_app()) as client:
+        response = client.get("/api/v1/blender/addon")
+    assert _entries(response.content)["dramaclaw_blender/__init__.py"] == b"local"
+    assert oss.requested == []
+
+
+def test_oss_missing_is_a_502_without_leaking_the_url(dist, oss):
+    with TestClient(_app()) as client:
+        response = client.get("/api/v1/blender/addon")
+    assert response.status_code == 502
+    assert "aliyuncs" not in response.json()["detail"]
+
+
+def test_oss_unreachable_is_a_502(dist, monkeypatch):
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    monkeypatch.setattr(
+        blender,
+        "_addon_http_client",
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(refuse)),
+    )
+    with TestClient(_app()) as client:
+        assert client.get("/api/v1/blender/addon").status_code == 502
+
+
+def test_oversized_oss_object_is_rejected(dist, oss, monkeypatch):
+    # URL 配错指到一个大文件时，不能整个读进内存。
+    monkeypatch.setattr(blender, "MAX_ADDON_BYTES", 1024)
+    oss.files[blender.DEFAULT_ADDON_URL] = b"x" * 2048
+    with TestClient(_app()) as client:
+        assert client.get("/api/v1/blender/addon").status_code == 502
+
+
+def test_corrupt_oss_object_is_a_diagnosable_500(dist, oss):
+    oss.files[blender.DEFAULT_ADDON_URL] = b"<html>not a zip</html>"
+    with TestClient(_app()) as client:
+        response = client.get("/api/v1/blender/addon")
+    assert response.status_code == 500
+    assert "dramaclaw_blender.zip" in response.json()["detail"]

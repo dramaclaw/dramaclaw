@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
+import httpx
 from fastapi import (
     APIRouter,
     Depends,
@@ -165,7 +166,9 @@ async def list_projects(
     registry = get_project_registry()
     access = get_project_access()
     principals = await access.resolve_requester_principals(user_id)
-    records = await registry.list_accessible_projects([(p.type, p.id) for p in principals])
+    records = await registry.list_accessible_projects(
+        [(p.type, p.id) for p in principals]
+    )
     projects = []
     for record in records:
         if record.purged_at or record.status == "deleted":
@@ -201,23 +204,89 @@ async def revoke_client(token_id: str, user: dict = Depends(get_api_user)) -> di
 
 
 ADDON_DIST_ENV = "DRAMACLAW_BLENDER_ADDON_DIST"
+ADDON_URL_ENV = "DRAMACLAW_BLENDER_ADDON_URL"
 PUBLIC_BASE_URL_ENV = "DRAMACLAW_PUBLIC_BASE_URL"
 ADDON_CONFIG_PATH = "dramaclaw_blender/config.json"
+# 发版时每个版本传一份带版本号的（不覆盖，留着回滚），再覆盖这一份 latest。
+# 与官方媒体目录同一个 bucket，见 `official_media_catalog_remote.py`。
+DEFAULT_ADDON_URL = (
+    "https://dramaclaw-dl.oss-cn-chengdu.aliyuncs.com/"
+    "blender-addon/dramaclaw_blender-latest.zip"
+)
+# 真包 30KB 上下。这个上限只防 URL 配错指到一个大文件，把整个文件读进内存。
+MAX_ADDON_BYTES = 10 * 1024 * 1024
+_ADDON_FETCH_TIMEOUT_SECONDS = 15.0
 _ADDON_ZIP_NAME = re.compile(r"dramaclaw_blender-(\d+)\.(\d+)\.(\d+)\.zip")
+# 与 `blender/build.py::read_version` 同一条正则：文件名里的版本号就是它读出来的。
+_BL_INFO_VERSION = re.compile(r'"version":\s*\((\d+),\s*(\d+),\s*(\d+)\)')
+_ADDON_INIT_PATH = "dramaclaw_blender/__init__.py"
 
 
 def _addon_dist_dir() -> Path:
-    """插件 zip 所在目录。
+    """本地插件 zip 所在目录。
 
     默认按源码树推到仓库根的 `blender/dist/`（editable 与 `src` 布局都成立）。
-    镜像里没有这个目录，端点就 404——这是当前接受的现状：zip 以后挪到 OSS，
-    前端常量改成 OSS 地址，这个端点随之删掉。环境变量
-    `DRAMACLAW_BLENDER_ADDON_DIST` 可覆盖（测试和非源码树部署用）。
+    这里有包就用这里的——跑过 `blender/build.py` 的开发机下载到的就是刚打的包；
+    镜像里没有这个目录，自然走 OSS。环境变量 `DRAMACLAW_BLENDER_ADDON_DIST`
+    可覆盖（测试和非源码树部署用）。
     """
     override = os.environ.get(ADDON_DIST_ENV, "").strip()
     if override:
         return Path(override)
     return Path(novelvideo.__file__).resolve().parents[2] / "blender" / "dist"
+
+
+def _addon_url() -> str:
+    return os.environ.get(ADDON_URL_ENV, "").strip() or DEFAULT_ADDON_URL
+
+
+def _addon_http_client() -> httpx.AsyncClient:
+    """单独一层，测试替换成 MockTransport。"""
+    return httpx.AsyncClient(
+        timeout=_ADDON_FETCH_TIMEOUT_SECONDS, follow_redirects=True
+    )
+
+
+async def _fetch_remote_addon(url: str) -> bytes:
+    """从 OSS 取原包。取不到一律 502：错在上游，不在用户，也不在本服务。
+
+    正文不带 URL 和上游状态码，这些进日志——和下面「插件包损坏」同一个理由：
+    `HTTPException` 不会被任何 handler 打日志，不在这里记，运维什么都看不到。
+    """
+    try:
+        async with _addon_http_client() as client:
+            async with client.stream("GET", url) as response:
+                response.raise_for_status()
+                chunks: list[bytes] = []
+                size = 0
+                async for chunk in response.aiter_bytes():
+                    size += len(chunk)
+                    if size > MAX_ADDON_BYTES:
+                        raise ValueError(f"超过 {MAX_ADDON_BYTES} 字节")
+                    chunks.append(chunk)
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("插件包下载失败：%s（%s）", url, exc)
+        raise HTTPException(
+            status_code=502, detail="插件包暂时下载不了，请稍后再试"
+        ) from exc
+    return b"".join(chunks)
+
+
+def _addon_filename(raw: bytes) -> str:
+    """远端包按 bl_info 的版本号命名。
+
+    OSS 上网页指向的是 `-latest.zip`，原样当文件名的话，用户下载目录里一堆 latest，
+    分不清装的是哪一版。读不出版本就退回不带版本号的名字，不为这个让下载失败。
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            source = archive.read(_ADDON_INIT_PATH).decode("utf-8")
+    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError):
+        return "dramaclaw_blender.zip"
+    match = _BL_INFO_VERSION.search(source)
+    if match is None:
+        return "dramaclaw_blender.zip"
+    return f"dramaclaw_blender-{'.'.join(match.groups())}.zip"
 
 
 def _pick_addon_zip(dist: Path) -> Path | None:
@@ -317,10 +386,10 @@ def _referer_origin(request: Request) -> str:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
-def _repack_with_config(source: Path, config: dict) -> bytes:
+def _repack_with_config(raw: bytes, config: dict) -> bytes:
     """把原包逐条抄进新包，再多塞一个 config.json。
 
-    包只有 20KB 上下，整包在内存里重打的成本可以忽略。不用「往原 zip 后面追加」
+    包只有 30KB 上下，整包在内存里重打的成本可以忽略。不用「往原 zip 后面追加」
     那种写法——那会改动 dist 里的文件，而它是所有人共享的。
 
     这里的 `ZIP_DEFLATED` 只管下面新写的那条 config.json：抄进来的条目各走各的
@@ -328,7 +397,7 @@ def _repack_with_config(source: Path, config: dict) -> bytes:
     顺手替它重压一遍。
     """
     buffer = io.BytesIO()
-    with zipfile.ZipFile(source) as original:
+    with zipfile.ZipFile(io.BytesIO(raw)) as original:
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as repacked:
             for item in original.infolist():
                 # 原包里已经有同名条目就跳过：否则写出两条重名记录（Python 只给个
@@ -355,16 +424,20 @@ async def download_addon(
     写令牌能做到「装完即已连接」，但那样这个 zip 本身就是一张通行证，谁拿到谁就能
     以下载者的身份往他的项目里传东西。理由详见设计文档第 11 节。
     """
+    # 本地有包用本地的（开发机刚打的包），没有就去 OSS 取。故意不做「OSS 取不到再
+    # 回落本地」：生产上本地本来就没有，回落只会把 OSS 的故障藏成一个莫名的 404。
     target = _pick_addon_zip(_addon_dist_dir())
-    if target is None:
-        raise HTTPException(
-            status_code=404, detail="插件包还没打好：先跑 python3 blender/build.py"
-        )
+    if target is not None:
+        raw = await run_in_threadpool(target.read_bytes)
+        filename = target.name
+    else:
+        raw = await _fetch_remote_addon(_addon_url())
+        filename = _addon_filename(raw)
     server_url = _public_base_url(request)
     try:
         payload = await run_in_threadpool(
             _repack_with_config,
-            target,
+            raw,
             {
                 "server_url": server_url,
                 "web_url": _referer_origin(request) or server_url,
@@ -380,9 +453,13 @@ async def download_addon(
         # FastAPI 不会再为它打任何日志（app.py 里的 handler 全是业务异常，没有兜底
         # 5xx 日志），不补这行的话，唯一看见「哪个包坏了」的人是点下载的那个用户，
         # 真正要查的运维反而什么都看不到——比原来那个带 traceback 的裸 500 还少。
-        logger.warning("插件包损坏，无法重新打包：%s", target, exc_info=True)
+        logger.warning(
+            "插件包损坏，无法重新打包：%s",
+            target if target is not None else _addon_url(),
+            exc_info=True,
+        )
         raise HTTPException(
-            status_code=500, detail=f"插件包损坏，无法重新打包：{target.name}"
+            status_code=500, detail=f"插件包损坏，无法重新打包：{filename}"
         ) from exc
     return Response(
         content=payload,
@@ -390,7 +467,7 @@ async def download_addon(
         headers={
             # 内容现在因人因请求而异，任何中间层都不许留副本。
             "Cache-Control": "no-store",
-            "Content-Disposition": f'attachment; filename="{target.name}"',
+            "Content-Disposition": f'attachment; filename="{filename}"',
         },
     )
 

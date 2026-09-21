@@ -51,26 +51,45 @@ Blender → 偏好设置 → 插件 → 从磁盘安装 → 选这个 zip。侧�
 
 ## 发版
 
-1. 改 `dramaclaw_blender/__init__.py` 里 `bl_info["version"]`（zip 文件名和后端选包都按它）。
-2. `python3 blender/build.py`。
-3. 把 zip 放到后端能读到的位置：
-   - 源码树部署：留在 `blender/dist/` 即可；
-   - 其他部署：设环境变量 `DRAMACLAW_BLENDER_ADDON_DIST` 指向放 zip 的目录。
+```bash
+# 1. 改版本号：dramaclaw_blender/__init__.py 里的 bl_info["version"]
+# 2. 打包
+python3 blender/build.py            # → blender/dist/dramaclaw_blender-x.y.z.zip
+# 3. 上传 OSS（ossutil 先 `ossutil config` 配好 AK/SK）
+V=x.y.z
+ossutil cp blender/dist/dramaclaw_blender-$V.zip \
+  oss://dramaclaw-dl/blender-addon/dramaclaw_blender-$V.zip        # 留档，不覆盖
+ossutil cp -f blender/dist/dramaclaw_blender-$V.zip \
+  oss://dramaclaw-dl/blender-addon/dramaclaw_blender-latest.zip \
+  --meta "Cache-Control:no-cache"                                 # 网页下载的就是这份
+```
 
-后端 `GET /api/v1/blender/addon` 取目录里版本号最大的 `dramaclaw_blender-x.y.z.zip`，
-重新打包时塞进 `dramaclaw_blender/config.json`：
+回滚：把旧版本那份再 `cp` 一遍覆盖 `-latest.zip`。后端不用重新部署。
+
+### 网页上的「下载插件」怎么拿到包
+
+浏览器请求后端 `GET /api/v1/blender/addon`，后端取原包、注入 `dramaclaw_blender/config.json`
+后返回：
 
 ```json
 {"server_url": "https://…", "web_url": "https://…"}
 ```
 
+原包的来源，按顺序：
+
+1. **本地 `blender/dist/`**（或 `DRAMACLAW_BLENDER_ADDON_DIST` 指定的目录）里有
+   `dramaclaw_blender-x.y.z.zip`，就取版本号最大的那个。开发机跑过 `build.py`，下载到的就是刚打的包。
+2. 否则从 OSS 下载：`DRAMACLAW_BLENDER_ADDON_URL`，默认是
+   `https://dramaclaw-dl.oss-cn-chengdu.aliyuncs.com/blender-addon/dramaclaw_blender-latest.zip`。
+   下载文件名按包里 `bl_info` 的版本号命名。OSS 取不到时返回 502，**不会**回落到本地。
+
+注入的两个地址：
+
 - `server_url`：优先 `DRAMACLAW_PUBLIC_BASE_URL`，否则按转发头推断。反代后面请务必配这个变量。
 - `web_url`：取自下载请求的 Referer，用来在浏览器里打开配对页。
 - **只放地址，绝不放 token。** 配对走浏览器里输配对码，凭据只存在用户本机的 Blender 偏好设置里。
+  所以 OSS 上的原包可以公开读。
 - 插件只在偏好设置为空或还是出厂值时才用随包配置，用户手改过的地址覆盖安装后不会被冲掉。
-
-> 以后 zip 可能改放 OSS。若仍想要「下载即用」，保留这个端点从 OSS 读原包再注入配置；
-> 直接给静态 OSS 链接则用户需要手填服务地址。
 
 ## Blender 版本差异
 
