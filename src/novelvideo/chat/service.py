@@ -65,7 +65,7 @@ from novelvideo.chat.presentation import (
     ui_spec_block as _ui_spec_block,  # noqa: F401 - compatibility export
     wrap_ui_spec_bundle as _wrap_ui_spec_bundle,  # noqa: F401 - compatibility export
 )
-from novelvideo.chat.runtime_event_mapper import (
+from novelvideo.chat.runtime_event_mapper import (  # noqa: F401 - compatibility exports
     _is_anonymous_hermes_tool_call_update,
     _is_hermes_lifecycle_tool_update,
 )
@@ -3763,9 +3763,8 @@ async def _stream_assistant_reply_hermes(
                         saw_complete = True
                         turn_disposition = _turn_disposition_for(stream_event)
                     guard_details = (
-                        stream_event.raw
+                        getattr(stream_event, "guard", None) or {}
                         if stream_event.type == "complete"
-                        and isinstance(stream_event.raw, dict)
                         else {}
                     )
                     if (
@@ -4061,9 +4060,10 @@ async def _stream_assistant_reply_hermes(
                 if event.raw is not None:
                     tool_chat_error = None
                     raw = event.raw
-                    suppress_lifecycle_error = _suppress_freezone_tool_lifecycle_error(
-                        raw,
-                        tool_mode=tool_mode,
+                    # Only a Freezone canvas surface hides a bridge-settled or
+                    # payload-less failure; the adapter says whether it is one.
+                    suppress_lifecycle_error = tool_mode == "freezone_canvas" and bool(
+                        getattr(event, "transient_failure", False)
                     )
                     if not suppress_lifecycle_error:
                         tool_chat_error = _extract_tool_chat_error(raw)
@@ -4108,11 +4108,7 @@ async def _stream_assistant_reply_hermes(
                                     sort_keys=True,
                                     default=str,
                                 )[:1000],
-                                (
-                                    event.raw.get("sessionUpdate")
-                                    if isinstance(event.raw, dict)
-                                    else None
-                                ),
+                                getattr(event, "native_kind", None),
                             )
                         else:
                             seen_display_calls.add(display_call_key)
@@ -4137,9 +4133,7 @@ async def _stream_assistant_reply_hermes(
                     current_tool_hidden = _is_hidden_chat_tool_event(
                         event.name, event.text
                     )
-                elif _is_anonymous_hermes_tool_call_update(event):
-                    continue
-                if _is_hermes_lifecycle_tool_update(event):
+                if getattr(event, "lifecycle_only", False):
                     continue
                 if current_tool_hidden or _is_hidden_chat_tool_event(
                     current_tool_name, event.text

@@ -46,8 +46,12 @@ Chat 展示路径的其余转换也已拆出：
    纯解析、画布写入回执校验、预校验失败和重试身份计算；`service.py` 暂保留旧
    helper 导出供现有调用方使用。`chat/runtime_event_mapper.py` 已统一三条运行时
    流的生命周期、进度和 SDK 工具事件对外载荷，以及 Hermes 原始工具更新的
-   生命周期判定；事件发送时机仍由 Application 管理。Runtime Adapter 仍需收拢
-   其他原始事件解析，使 Application 只消费标准化事件及交付证据。
+   生命周期判定；事件发送时机仍由 Application 管理。第五阶段起 Hermes ACP 形态知识
+   只在 `chat/hermes_events.py`，adapter 翻译 `session/update` 时在 `ChatBackendEvent`
+   上盖 `native_kind`、`lifecycle_only`、`transient_failure`、`guard` 四个 provider-neutral
+   字段；`service.py` 只读这些字段，不再判断 `sessionUpdate` 或 guard 原始字典。
+   `runtime_event_mapper` / `presentation_mapping` 的旧 helper 保留为委托入口。
+   `tests/test_hermes_events.py` 扫描应用模块不得出现 ACP 形态字段。
    `chat/runtime_history.py` 已承接 Codex 原生历史条目到聊天记录的纯解析；
    历史读取、时间戳、媒体补全及缓存写入仍由 `service.py` 负责。
    随后的独立修复补上 SDK `UserInput.root` 展开，避免读取原生线程历史时

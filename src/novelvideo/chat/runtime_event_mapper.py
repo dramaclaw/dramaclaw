@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from novelvideo.chat import hermes_events
+
 
 def _optional_id(value: object) -> str | None:
     return str(value or "").strip() or None
@@ -70,29 +72,14 @@ def sdk_tool_event(event: Any, *, text: str) -> dict[str, Any]:
 
 
 def _is_anonymous_hermes_tool_call_update(event: Any) -> bool:
-    raw = getattr(event, "raw", None)
-    if getattr(event, "name", None) is not None or not isinstance(raw, dict):
-        return False
-    return raw.get("sessionUpdate") == "tool_call_update" and bool(
-        str(raw.get("toolCallId") or "").strip()
+    """Compatibility entrypoint; adapters now stamp ``lifecycle_only`` instead."""
+    return hermes_events.is_anonymous_tool_call_update(
+        getattr(event, "name", None), getattr(event, "raw", None)
     )
 
 
 def _is_hermes_lifecycle_tool_update(event: Any) -> bool:
-    raw = getattr(event, "raw", None)
-    if not isinstance(raw, dict):
-        return False
-    kind = raw.get("sessionUpdate")
-    if kind == "tool_call":
-        return True
-    if kind != "tool_call_update":
-        return False
-    has_result_payload = any(
-        raw.get(key) not in (None, "", [], {})
-        for key in ("content", "result", "data", "output", "message", "error")
+    """Compatibility entrypoint; adapters now stamp ``lifecycle_only`` instead."""
+    return hermes_events.is_lifecycle_only_tool_update(
+        getattr(event, "text", ""), getattr(event, "raw", None)
     )
-    if has_result_payload:
-        return False
-    text = str(getattr(event, "text", "") or "").strip().lower()
-    status = str(raw.get("status") or "").strip().lower()
-    return bool(status) and text in {status, f"{status}."}

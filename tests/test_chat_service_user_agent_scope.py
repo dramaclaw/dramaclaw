@@ -4975,7 +4975,7 @@ async def test_freezone_hermes_recovers_once_from_repeated_read(
             yield backend_sdk.ChatBackendEvent(
                 type="complete",
                 text="本轮操作已停止：虾导重复读取同一项状态。",
-                raw={
+                guard={
                     "reason": "tool_call_guard",
                     "guard_reason": "repeated_read",
                     "tool_name": guard_tool_name,
@@ -5056,7 +5056,7 @@ async def test_freezone_hermes_does_not_replay_failed_workflow_draft_operation(
             yield backend_sdk.ChatBackendEvent(
                 type="complete",
                 text="本轮操作已停止：工作流草稿操作重复失败。",
-                raw={
+                guard={
                     "reason": "tool_call_guard",
                     "guard_reason": "repeated_read",
                     "tool_name": "freezone_prepare_workflow_draft",

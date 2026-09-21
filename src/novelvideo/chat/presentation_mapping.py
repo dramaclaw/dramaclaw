@@ -8,7 +8,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from novelvideo.chat import presentation, presentation_text
+from novelvideo.chat import hermes_events, presentation, presentation_text
 from novelvideo.chat.tool_policy import (
     HIDDEN_TOOL_MARKERS as _HIDDEN_TOOL_MARKERS,  # noqa: F401 - compatibility export
     is_hidden_chat_tool_event,
@@ -297,75 +297,22 @@ def _extract_tool_chat_error(value: Any, *, redact: Callable[[str], str]) -> str
 
 
 def _decode_tool_jsonish(text: str) -> Any | None:
-    raw = str(text or "").strip()
-    if not raw:
-        return None
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-    try:
-        return presentation.json_loads_with_trailing_repair(raw)
-    except ValueError:
-        return None
+    """Compatibility entrypoint; see ``chat.hermes_events``."""
+    return hermes_events.decode_tool_jsonish(text)
 
 
 def _contains_freezone_canvas_bridge_result(value: Any) -> bool:
-    """Return true when a Hermes tool update contains a Freezone bridge result."""
-    if isinstance(value, str):
-        decoded = _decode_tool_jsonish(value)
-        if decoded is None:
-            return False
-        return _contains_freezone_canvas_bridge_result(decoded)
-    if isinstance(value, list):
-        return any(_contains_freezone_canvas_bridge_result(item) for item in value)
-    if not isinstance(value, dict):
-        return False
-
-    has_bridge_status = "tool_call_status" in value or "canvas_apply_status" in value
-    has_bridge_body = (
-        "command_results" in value
-        or "applied_count" in value
-        or "opened_ui_actions" in value
-        or "created_node_ids" in value
-        or "user_message" in value
-        or "agent_instruction" in value
-    )
-    if has_bridge_status and has_bridge_body:
-        return True
-
-    return any(
-        _contains_freezone_canvas_bridge_result(child) for child in value.values()
-    )
+    """Compatibility entrypoint; the ACP-shape check lives in ``chat.hermes_events``."""
+    return hermes_events.contains_freezone_canvas_bridge_result(value)
 
 
 def _suppress_freezone_tool_lifecycle_error(value: Any, *, tool_mode: str) -> bool:
-    """Ignore Hermes lifecycle-only failures for Freezone canvas bridge tools.
+    """Compatibility entrypoint for callers still holding a raw Hermes update.
 
-    Freezone canvas commands are resolved by the frontend bridge result.  A
-    bare Hermes ``tool_call_update.status=failed`` can be transient lifecycle
-    noise and must not be surfaced as the canvas command result.
+    The adapter now stamps ``ChatBackendEvent.transient_failure``; the surface
+    decision (only Freezone canvas hides it) stays here and in ``chat.service``.
     """
-    if tool_mode != "freezone_canvas" or not isinstance(value, dict):
-        return False
-    if value.get("sessionUpdate") != "tool_call_update":
-        return False
-    status = str(value.get("status") or "").strip().lower()
-    if status not in {"failed", "error", "cancelled", "canceled"}:
-        return False
-    business_payload_keys = {
-        "chat_error",
-        "error",
-        "detail",
-        "message",
-        "result",
-        "content",
-        "data",
-        "output",
-    }
-    if not any(key in value for key in business_payload_keys):
-        return True
-    return _contains_freezone_canvas_bridge_result(value)
+    return tool_mode == "freezone_canvas" and hermes_events.is_transient_tool_failure(value)
 
 
 def _strip_freezone_tool_lifecycle_failure_text(text: str, *, tool_mode: str) -> str:
