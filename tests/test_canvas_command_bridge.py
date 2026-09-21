@@ -453,3 +453,72 @@ def test_sqlite_bridge_expires_abandoned_pending_message(tmp_path) -> None:
         "expired": 1
     }
     assert not (bridge_dir / "abandoned.pending.json").exists()
+
+
+def test_find_clarification_bridge_message_resumes_by_clarification_id(tmp_path) -> None:
+    bridge_dir = tmp_path / "bridge"
+    event = {
+        "type": "assistant.clarification.request",
+        "clarification_id": "clarify_abc",
+        "questions": [{"id": "image_model"}],
+    }
+    canvas_command_bridge.put_pending_clarification_event(
+        key="clarify-key-1",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        event=event,
+        bridge_dir=bridge_dir,
+    )
+
+    found = canvas_command_bridge.find_clarification_bridge_message(
+        project_id="project-a", canvas_id="canvas-a",
+        clarification_id="clarify_abc", bridge_dir=bridge_dir,
+    )
+    assert found is not None
+    assert found["key"] == "clarify-key-1"
+    assert found["event"] == event
+    assert found["result"] is None
+    assert found["transport_status"] == "pending"
+
+    assert canvas_command_bridge.find_clarification_bridge_message(
+        project_id="project-a", canvas_id="canvas-a",
+        clarification_id="clarify_other", bridge_dir=bridge_dir,
+    ) is None
+    assert canvas_command_bridge.find_clarification_bridge_message(
+        project_id="project-b", canvas_id="canvas-a",
+        clarification_id="clarify_abc", bridge_dir=bridge_dir,
+    ) is None
+
+    canvas_command_bridge.resolve_clarification_result(
+        "clarify-key-1",
+        {"ok": True, "status": "clarification_frontend_result",
+         "clarification_status": "answered", "answers": {"image_model": "LingShan-G2"}},
+        bridge_dir=bridge_dir,
+    )
+    answered = canvas_command_bridge.find_clarification_bridge_message(
+        project_id="project-a", canvas_id="canvas-a",
+        clarification_id="clarify_abc", bridge_dir=bridge_dir,
+    )
+    assert answered is not None
+    assert answered["transport_status"] == "applied"
+    assert answered["result"]["answers"] == {"image_model": "LingShan-G2"}
+
+
+def test_find_clarification_bridge_message_ignores_expired_card(tmp_path) -> None:
+    bridge_dir = tmp_path / "bridge"
+    canvas_command_bridge.put_pending_clarification_event(
+        key="clarify-key-2",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        event={"type": "assistant.clarification.request", "clarification_id": "clarify_old"},
+        bridge_dir=bridge_dir,
+    )
+    with sqlite3.connect(canvas_command_bridge._bridge_db_path(bridge_dir)) as conn:
+        conn.execute(
+            "UPDATE canvas_command_messages SET status = 'expired' "
+            "WHERE bridge_key = 'clarify-key-2'"
+        )
+    assert canvas_command_bridge.find_clarification_bridge_message(
+        project_id="project-a", canvas_id="canvas-a",
+        clarification_id="clarify_old", bridge_dir=bridge_dir,
+    ) is None

@@ -3081,6 +3081,197 @@ def test_bound_scope_allows_matching_or_omitted_ids(monkeypatch):
     assert plugin._bound_scope_mismatch("project-z", "canvas-z") is None
 
 
+def _clarification_handler(plugin):
+    return {name: handler for name, _schema, handler in plugin.TOOLS}[
+        "freezone_request_user_clarification"
+    ]
+
+
+def test_clarification_timeout_result_tells_agent_how_to_resume(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "clarification_bridge_key", lambda **_kw: "clarify-key-1")
+    monkeypatch.setattr(plugin, "put_pending_clarification_event", lambda **_kw: None)
+    monkeypatch.setattr(plugin, "find_clarification_bridge_message", lambda **_kw: None)
+    monkeypatch.setattr(plugin, "wait_clarification_result", lambda _key, timeout_seconds: None)
+
+    result = _clarification_handler(plugin)({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "clarification_id": "clarify_timeout", "title": "先确认方向",
+        "questions": [{"id": "scope", "title": "主要做什么？",
+                       "options": [{"id": "workflow", "label": "工作流"}]}],
+    })
+
+    assert result["ok"] is False
+    assert result["status"] == "clarification_frontend_timeout"
+    assert result["clarification_id"] == "clarify_timeout"
+    assert result["bridge_key"] == "clarify-key-1"
+    assert "clarification_id" in result["agent_instruction"]
+    assert "do not build a new card" in result["agent_instruction"]
+    Draft202012Validator(
+        plugin._output_schema("freezone_request_user_clarification")
+    ).validate(result)
+
+
+def test_clarification_resume_collects_late_answer_without_second_card(monkeypatch):
+    """A card answered after the first call timed out is consumed on the next call."""
+    plugin = _load_plugin_module()
+    stored_event = {
+        "type": "assistant.clarification.request",
+        "clarification_id": "clarify_resume",
+        "questions": [
+            {"id": "image_model", "options_source": "image_models", "options": []},
+            {"id": "image_aspect_ratio", "options_source": "selected_image_model_ratios",
+             "options": []},
+            {"id": "image_resolution", "options_source": "selected_image_model_resolutions",
+             "options": []},
+            {"id": "image_variants_per_node", "options_source": "image_variant_counts",
+             "options": []},
+        ],
+        "recommended_answers": {
+            "image_model": {"option_ids": ["LingShan-G2"]},
+            "image_aspect_ratio": {"option_ids": ["9:16"]},
+            "image_resolution": {"option_ids": ["1K"]},
+            "image_variants_per_node": {"option_ids": ["1"]},
+        },
+        "allow_recommended": True, "allow_skip": False, "answers": {},
+    }
+    lookups = []
+    monkeypatch.setattr(plugin, "find_clarification_bridge_message", lambda **kw: (
+        lookups.append(kw) or {
+            "key": "clarify-key-old", "kind": "clarification_event",
+            "event": stored_event, "transport_status": "applied",
+            "result": {
+                "ok": True, "status": "clarification_frontend_result",
+                "tool_call_status": "completed", "clarification_status": "recommended",
+                "bridge_key": "clarify-key-old", "answers": {}, "used_recommended": True,
+            },
+        }
+    ))
+    monkeypatch.setattr(plugin, "put_pending_clarification_event",
+                        lambda **_kw: pytest.fail("resume must not show a second card"))
+    monkeypatch.setattr(plugin, "wait_clarification_result",
+                        lambda *_a, **_kw: pytest.fail("answered card must not wait again"))
+    monkeypatch.setattr(plugin, "_request",
+                        lambda *_a, **_kw: pytest.fail("resume must not re-resolve the catalog"))
+
+    result = _clarification_handler(plugin)({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "clarification_id": "clarify_resume", "generation_media_types": ["image"],
+    })
+
+    assert lookups == [{"project_id": "project-a", "canvas_id": "canvas-a",
+                        "clarification_id": "clarify_resume"}]
+    assert result["ok"] is True
+    assert result["bridge_key"] == "clarify-key-old"
+    assert result["used_recommended"] is True
+    assert result["node_data"] == {"imageGenNode": {
+        "model": "LingShan-G2", "aspectRatio": "9:16", "size": "1K", "count": 1,
+    }}
+
+
+def test_clarification_resume_keeps_waiting_on_unanswered_card(monkeypatch):
+    plugin = _load_plugin_module()
+    stored_event = {
+        "type": "assistant.clarification.request", "clarification_id": "clarify_wait",
+        "questions": [{"id": "scope", "title": "主要做什么？",
+                       "options": [{"id": "workflow", "label": "工作流"}]}],
+        "allow_recommended": False, "allow_skip": True, "answers": {},
+    }
+    monkeypatch.setattr(plugin, "find_clarification_bridge_message", lambda **_kw: {
+        "key": "clarify-key-old", "kind": "clarification_event", "event": stored_event,
+        "transport_status": "delivered", "result": None,
+    })
+    monkeypatch.setattr(plugin, "put_pending_clarification_event",
+                        lambda **_kw: pytest.fail("resume must not show a second card"))
+    waited = []
+    monkeypatch.setattr(plugin, "wait_clarification_result", lambda key, timeout_seconds: (
+        waited.append(key) or {
+            "ok": True, "status": "clarification_frontend_result",
+            "tool_call_status": "completed", "clarification_status": "answered",
+            "bridge_key": key, "answers": {"scope": {"option_ids": ["workflow"]}},
+        }
+    ))
+
+    result = _clarification_handler(plugin)({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "clarification_id": "clarify_wait", "questions": stored_event["questions"],
+    })
+
+    assert waited == ["clarify-key-old"]
+    assert result["ok"] is True
+    assert result["answers"]["scope"]["option_ids"] == ["workflow"]
+
+
+def test_clarification_resume_with_only_ids_collects_ordinary_late_answer(monkeypatch):
+    """The timeout hint tells the agent to retry with just the id; no questions are needed."""
+    plugin = _load_plugin_module()
+    stored_event = {
+        "type": "assistant.clarification.request", "clarification_id": "clarify_bare",
+        "title": "先确认方向",
+        "questions": [{"id": "scope", "title": "主要做什么？",
+                       "options": [{"id": "workflow", "label": "工作流"}]}],
+        "allow_recommended": False, "allow_skip": True, "answers": {},
+    }
+    monkeypatch.setattr(plugin, "find_clarification_bridge_message", lambda **_kw: {
+        "key": "clarify-key-bare", "kind": "clarification_event", "event": stored_event,
+        "transport_status": "applied", "result": {
+            "ok": True, "status": "clarification_frontend_result",
+            "tool_call_status": "completed", "clarification_status": "answered",
+            "bridge_key": "clarify-key-bare",
+            "answers": {"scope": {"option_ids": ["workflow"], "custom_text": "偏海报"}},
+        },
+    })
+    monkeypatch.setattr(plugin, "put_pending_clarification_event",
+                        lambda **_kw: pytest.fail("resume must not show a second card"))
+    monkeypatch.setattr(plugin, "wait_clarification_result",
+                        lambda *_a, **_kw: pytest.fail("answered card must not wait again"))
+
+    result = _clarification_handler(plugin)({
+        "project_id": "project-a", "canvas_id": "canvas-a", "clarification_id": "clarify_bare",
+    })
+
+    assert result["ok"] is True
+    assert result["status"] == "clarification_frontend_result"
+    assert result["bridge_key"] == "clarify-key-bare"
+    assert result["answers"]["scope"]["option_ids"] == ["workflow"]
+    Draft202012Validator(
+        plugin._output_schema("freezone_request_user_clarification")
+    ).validate(result)
+
+
+def test_clarification_without_questions_and_without_card_is_still_rejected(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "find_clarification_bridge_message", lambda **_kw: None)
+    result = _clarification_handler(plugin)({
+        "project_id": "project-a", "canvas_id": "canvas-a", "clarification_id": "clarify_none",
+    })
+    assert result["ok"] is False
+    assert result["status"] == "questions_required"
+
+
+def test_clarification_without_existing_card_still_emits_a_fresh_one(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "find_clarification_bridge_message", lambda **_kw: None)
+    monkeypatch.setattr(plugin, "clarification_bridge_key", lambda **_kw: "clarify-key-new")
+    emitted = []
+    monkeypatch.setattr(plugin, "put_pending_clarification_event",
+                        lambda **kw: emitted.append(kw))
+    monkeypatch.setattr(plugin, "wait_clarification_result", lambda key, timeout_seconds: {
+        "ok": True, "status": "clarification_frontend_result", "tool_call_status": "completed",
+        "clarification_status": "answered", "bridge_key": key,
+        "answers": {"scope": {"option_ids": ["workflow"]}},
+    })
+
+    result = _clarification_handler(plugin)({
+        "project_id": "project-a", "canvas_id": "canvas-a", "clarification_id": "clarify_new",
+        "questions": [{"id": "scope", "title": "主要做什么？",
+                       "options": [{"id": "workflow", "label": "工作流"}]}],
+    })
+
+    assert result["ok"] is True
+    assert [item["key"] for item in emitted] == ["clarify-key-new"]
+
+
 def test_external_generation_clarification_rejects_bundled_settings(monkeypatch):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
