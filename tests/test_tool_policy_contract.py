@@ -131,6 +131,10 @@ def test_consumers_share_the_policy_objects_instead_of_copies() -> None:
     )
     assert hermes_sdk._DRAMACLAW_WRITE_TOOLS is tool_policy.DRAMACLAW_WRITE_TOOLS
     assert (
+        hermes_sdk._FREEZONE_CANVAS_WRITE_TOOLS
+        is tool_policy.FREEZONE_CANVAS_WRITE_TOOLS
+    )
+    assert (
         hermes_sdk._FREEZONE_TERMINAL_WRITE_TOOLS
         is tool_policy.FREEZONE_TERMINAL_WRITE_TOOLS
     )
@@ -144,3 +148,19 @@ def test_hidden_tool_policy_keeps_legacy_entrypoint_behaviour() -> None:
     assert not tool_policy.is_hidden_chat_tool_event("freezone_create_node", "→ create")
     assert presentation_mapping._is_hidden_chat_tool_event("skill_view", "") is True
     assert service._is_hidden_chat_tool_event("freezone_create_node", "x") is False
+
+
+def test_hermes_adapter_treats_confirm_canvas_action_as_a_canvas_write() -> None:
+    """The adapter used to keep a 15-name copy that lacked this bridge-backed tool.
+
+    A confirm call waits on the browser bridge like any other canvas write, so the
+    adapter must extend the idle deadline for it instead of timing out early.
+    """
+    assert hermes_sdk._is_freezone_canvas_write_tool("freezone_confirm_canvas_action")
+    assert hermes_sdk._is_freezone_canvas_write_tool(
+        "dramaclaw.freezone_confirm_canvas_action"
+    )
+    assert not hermes_sdk._is_freezone_canvas_write_tool(
+        "freezone_cancel_canvas_action"
+    )
+    assert not hermes_sdk._is_freezone_canvas_write_tool("freezone_get_canvas_context")

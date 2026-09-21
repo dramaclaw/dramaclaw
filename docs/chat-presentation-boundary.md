@@ -52,9 +52,9 @@ Chat 展示路径的其余转换也已拆出：
    历史读取、时间戳、媒体补全及缓存写入仍由 `service.py` 负责。
    随后的独立修复补上 SDK `UserInput.root` 展开，避免读取原生线程历史时
    漏掉用户消息；该修复不改当前轮消息写入路径。
-   工具名策略集合仍分散：`hermes_sdk.py` 与 `runtime_event_evidence.py` 各持有一份
-   Freezone 画布写工具集合，且 adapter 侧缺少 `freezone_confirm_canvas_action`（staging
-   既有差异，本阶段未改动）；收敛到 `tool_policy.py` 时需单独决定是否对齐并补回归。
+   工具名策略集合已收敛到 `chat/tool_policy.py`（第四阶段）；Hermes adapter 的画布写
+   集合随之补齐 `freezone_confirm_canvas_action`，使确认调用与其他桥接写一样延长空闲
+   超时，`tests/test_tool_policy_contract.py` 守住与插件工具名的一致性。
 2. Chat 展示转换和显示工具 fallback 已迁出；后续调整展示行为时继续以
    `presentation.py` 的 canonical UI-spec 边界和权威媒体 API 为准。
 3. Session Registry / Delivery Evidence 独立，沿用 #555 / #558 的运行身份

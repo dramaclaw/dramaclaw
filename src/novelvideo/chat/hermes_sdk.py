@@ -28,6 +28,7 @@ from novelvideo.security import SandboxSpec, wrap_command
 from novelvideo.chat.runtime_port import ChatBackendEvent
 from novelvideo.chat.tool_policy import (
     DRAMACLAW_WRITE_TOOLS as _DRAMACLAW_WRITE_TOOLS,
+    FREEZONE_CANVAS_WRITE_TOOLS as _FREEZONE_CANVAS_WRITE_TOOLS,
     FREEZONE_TERMINAL_WRITE_TOOLS as _FREEZONE_TERMINAL_WRITE_TOOLS,
 )
 
@@ -126,23 +127,6 @@ def _is_session_unavailable_error(error: Any) -> bool:
     ) or "failed to recreate agent for acp session" in normalized
 
 
-_FREEZONE_CANVAS_WRITE_TOOLS = {
-    "freezone_emit_canvas_command",
-    "freezone_confirm_workflow_draft",
-    "freezone_create_node",
-    "freezone_add_next_node",
-    "freezone_update_node_data",
-    "freezone_create_edge",
-    "freezone_delete_nodes",
-    "freezone_delete_edges",
-    "freezone_move_nodes",
-    "freezone_layout_nodes",
-    "freezone_group_nodes",
-    "freezone_select_nodes",
-    "freezone_open_mainline_projection",
-    "freezone_run_node_action",
-    "freezone_run_workflow",
-}
 FREEZONE_FAILED_WRITE_RETRY_LIMIT = 1
 
 
