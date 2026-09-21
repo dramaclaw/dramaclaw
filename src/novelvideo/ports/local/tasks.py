@@ -98,6 +98,7 @@ class InlineTaskBackend:
         payload: dict[str, Any] | None = None,
     ) -> QueuedTask:
         require_project_home_node(ctx, operation="enqueue project task")
+        # Keep these imports local to avoid the ports/task-backend import cycle.
         from fastapi import HTTPException
         from novelvideo.ports import get_project_registry
 
