@@ -476,6 +476,24 @@ def build_freezone_image_to_video_prompt(
     return "\n".join(part for part in parts if part)
 
 
+def build_freezone_video_extend_prompt(
+    *,
+    user_prompt: str,
+    camera_template_id: str | None = None,
+) -> str:
+    """Build an explicit continuation prompt without reference/edit wording."""
+
+    parts = [str(user_prompt or "").strip()]
+    template = get_video_camera_template(camera_template_id)
+    if template:
+        parts.append(f"运镜模板：{template['name']}。{template['prompt']}")
+    parts.append(
+        "视频延长要求：从输入视频的结尾继续生成，保持主体身份、场景、光线、镜头运动、"
+        "声音与叙事连续，不要重做或编辑输入视频已有内容。"
+    )
+    return "\n".join(part for part in parts if part)
+
+
 def build_freezone_keyframe_video_prompt(
     *,
     user_prompt: str = "",

@@ -5904,7 +5904,8 @@
         "firstFrame": "Khung đầu",
         "firstLastFrame": "Khung đầu/cuối",
         "imageReference": "Ảnh tham chiếu",
-        "videoEdit": "Sửa video"
+        "videoEdit": "Sửa video",
+        "videoExtend": "Kéo dài video"
       },
       "placeholder": "Mô tả video bạn muốn tạo.",
       "referenceDocument": {
@@ -6129,7 +6130,8 @@
         "grokImageLimit": "Grok Video Channel hỗ trợ tối đa 1 khung đầu và 7 ảnh tham chiếu",
         "maxImages": "Model này hỗ trợ tối đa {{count}} asset ảnh",
         "maxVideos": "Model này hỗ trợ tối đa {{count}} asset video",
-        "maxAudios": "Model này hỗ trợ tối đa {{count}} asset âm thanh"
+        "maxAudios": "Model này hỗ trợ tối đa {{count}} asset âm thanh",
+        "videoExtendSourceOnly": "Kéo dài video chỉ nhận đúng một video nguồn, không nhận ảnh hoặc âm thanh"
       }
     },
     "scriptNode": {
@@ -6377,6 +6379,7 @@
         "imageReference": "Tham chiếu nhiều ảnh",
         "firstLastFrame": "Khung đầu & khung cuối",
         "videoEdit": "Sửa video",
+        "videoExtend": "Kéo dài video",
         "allReference": "Tham chiếu đa năng",
         "current": "chế độ hiện tại"
       },
@@ -6413,8 +6416,11 @@
         "imageReferenceMax9": "“Tham chiếu ảnh” hỗ trợ tối đa 9 ảnh",
         "needOneVideo": "Nối một node video vào (đúng 1 node)",
         "videoEditSingleVideo": "“Sửa video” chỉ nhận đúng 1 node video được nối",
+        "videoExtendSingleVideo": "“Kéo dài video” chỉ nhận đúng 1 node video nguồn",
+        "videoExtendSourceOnly": "“Kéo dài video” chỉ nhận video nguồn; hãy bỏ asset ảnh hoặc âm thanh",
         "happyHorseUnsupported": "HappyHorse không hỗ trợ chế độ này",
         "modelNoVideoEdit": "Model này không hỗ trợ “Sửa video”",
+        "modelNoVideoExtend": "Model này không hỗ trợ “Kéo dài video”",
         "videoUpstreamAllRefOrEdit": "Khi phía trên là video, chỉ dùng được “Tham chiếu đa năng” hoặc “Sửa video”",
         "videoUpstreamAllRefOnly": "Khi phía trên là video, chỉ dùng được “Tham chiếu đa năng”",
         "hasImageOrAudioRefs": "Không dùng được khi đang tham chiếu asset ảnh/âm thanh",

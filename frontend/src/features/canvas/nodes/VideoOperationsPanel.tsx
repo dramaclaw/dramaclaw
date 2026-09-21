@@ -148,6 +148,7 @@ const MODE_TABS: ReadonlyArray<{ key: VideoGenMode; labelKey: string }> = [
   { key: "firstLastFrame", labelKey: "node.videoNode.tabs.firstLastFrame" },
   { key: "imageReference", labelKey: "node.videoNode.tabs.imageReference" },
   { key: "videoEdit", labelKey: "node.videoNode.tabs.videoEdit" },
+  { key: "videoExtend", labelKey: "node.videoNode.tabs.videoExtend" },
 ];
 
 // HappyHorse 的入口顺序：文生视频 → 首帧 → 图生视频 → 图片参考 → 视频编辑。
@@ -1204,21 +1205,28 @@ export function videoModeDisabledReason(
         return t("node.videoOps.modeDisabled.happyHorseUnsupported");
     }
   }
-  // 「视频编辑」以上游视频**为输入**，不能被下面那条「有视频就只剩全能参考」连坐。
-  // 它和「全能参考」是仅有的两个消费视频素材的模式 —— 提交守卫
-  // `videoSubmitMediaRejectionReason` 早就写着 `mode !== "allReference" && mode !==
-  // "videoEdit"`，这里漏了同一条豁免。视频编辑一度是 HappyHorse 专属（见
-  // `isVideoModeSupportedByModel` 的注释），后来目录里的 seedance-2.0-mini 这类模型
-  // 也声明了 `video_edit`，tab 露出来了、却被这条旧规则一并置灰，于是「接上视频想切
-  // 视频编辑」被自己挡死。
+  // 全能参考、视频编辑和视频延长都会消费上游视频；后两种模式在进入通用素材守卫前
+  // 分别校验自己的输入数量和模型能力。
   const model = supportedModes?.length
     ? { apiModel: modelId ?? undefined, supportedModes }
     : modelId;
   const supportsVideoEdit = isVideoModeSupportedByModel("videoEdit", model);
+  const supportsVideoExtend = isVideoModeSupportedByModel("videoExtend", model);
   if (mode === "videoEdit") {
     if (!supportsVideoEdit) return t("node.videoOps.modeDisabled.modelNoVideoEdit");
     if (upstreamCounts.videos === 0) return t("node.videoOps.modeDisabled.needOneVideo");
     if (upstreamCounts.videos > 1) return t("node.videoOps.modeDisabled.videoEditSingleVideo");
+    return null;
+  }
+  if (mode === "videoExtend") {
+    if (!supportsVideoExtend) return t("node.videoOps.modeDisabled.modelNoVideoExtend");
+    if (upstreamCounts.videos === 0) return t("node.videoOps.modeDisabled.needOneVideo");
+    if (upstreamCounts.videos > 1) {
+      return t("node.videoOps.modeDisabled.videoExtendSingleVideo");
+    }
+    if (upstreamCounts.images > 0 || upstreamCounts.audios > 0) {
+      return t("node.videoOps.modeDisabled.videoExtendSourceOnly");
+    }
     return null;
   }
   if (upstreamCounts.videos > 0 && mode !== "allReference") {

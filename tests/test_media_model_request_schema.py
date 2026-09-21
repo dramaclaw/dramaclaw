@@ -183,7 +183,11 @@ def test_video_edit_forces_auto_geometry_and_duration_after_model_parameters():
     assert result == {
         "model": "video-model",
         "duration": "auto",
-        "metadata": {"ratio": "auto", "resolution": "720p"},
+        "metadata": {
+            "ratio": "auto",
+            "resolution": "720p",
+            "omni_reference_task_type": "edit",
+        },
     }
 
 
@@ -198,7 +202,39 @@ def test_non_edit_mode_rejects_model_parameter_auto_duration():
         fixed_duration=8,
     )
 
-    assert result == {"model": "video-model", "duration": 8}
+    assert result == {
+        "model": "video-model",
+        "duration": 8,
+        "metadata": {"omni_reference_task_type": "reference"},
+    }
+
+
+def test_video_extend_forces_auto_geometry_but_keeps_requested_duration():
+    from novelvideo.media_model_request_schema import (
+        enforce_newapi_video_mode_contract,
+    )
+
+    result = enforce_newapi_video_mode_contract(
+        {
+            "model": "video-model",
+            "duration": "auto",
+            "width": 1280,
+            "height": 720,
+            "metadata": {"ratio": "16:9", "resolution": "720p"},
+        },
+        mode="videoExtend",
+        fixed_duration=7,
+    )
+
+    assert result == {
+        "model": "video-model",
+        "duration": 7,
+        "metadata": {
+            "ratio": "auto",
+            "resolution": "720p",
+            "omni_reference_task_type": "extend",
+        },
+    }
 
 
 def test_applies_validated_parameters_without_mutating_original_payload():
@@ -292,6 +328,7 @@ def test_filters_mode_specific_parameters_and_defaults():
         ("imageReference", "image_reference"),
         ("allReference", "all_reference"),
         ("videoEdit", "video_edit"),
+        ("videoExtend", "video_extend"),
     ],
 )
 def test_normalizes_all_canvas_video_modes(business_mode, catalog_mode):

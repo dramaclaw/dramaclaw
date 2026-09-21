@@ -38,6 +38,7 @@ describe("视频模式有效比例", () => {
     ["firstFrame", true],
     ["firstLastFrame", true],
     ["videoEdit", true],
+    ["videoExtend", true],
     ["textToVideo", false],
     ["imageToVideo", false],
     ["imageReference", false],
@@ -187,6 +188,21 @@ describe("目录 supportedModes 是模式入口的单一事实来源", () => {
     expect(GEN_MODE_TO_CATALOG_MODE.firstFrame).toBe("first_frame");
     expect(GEN_MODE_TO_CATALOG_MODE.imageToVideo).toBe("image_to_video");
     expect(GEN_MODE_TO_CATALOG_MODE.imageReference).toBe("image_reference");
+  });
+
+  it("视频延长只在目录显式声明后开放", () => {
+    const seedance25 = {
+      apiModel: "seedance-2.5",
+      supportedModes: ["text_to_video", "all_reference", "video_edit"],
+    };
+    expect(isVideoModeSupportedByModel("videoExtend", "seedance-2.5")).toBe(false);
+    expect(isVideoModeSupportedByModel("videoExtend", seedance25)).toBe(false);
+    expect(
+      isVideoModeSupportedByModel("videoExtend", {
+        ...seedance25,
+        supportedModes: [...seedance25.supportedModes, "video_extend"],
+      }),
+    ).toBe(true);
   });
 
   it("非 Seedance 模型声明 all_reference 后可使用多图、视频和音频素材", () => {

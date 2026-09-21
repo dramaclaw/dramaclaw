@@ -184,6 +184,7 @@ import {
   submitFreezoneVideoCompose,
   submitFreezoneVideoErase,
   submitFreezoneVideoEdit,
+  submitFreezoneVideoExtend,
   submitFreezoneVideoGen,
   submitFreezoneVideoI2v,
   submitFreezoneVideoKeyframes,
@@ -280,6 +281,7 @@ const REFERENCE_CAPS_BY_MODE: Partial<
   imageToVideo: { image: 1, video: 0, audio: 0 },
   imageReference: { image: 9, video: 0, audio: 0 },
   videoEdit: { image: 5, video: 1, audio: 0 },
+  videoExtend: { image: 0, video: 1, audio: 0 },
   allReference: { image: 9, video: 3, audio: 3 },
   firstLastFrame: { image: 2, video: 0, audio: 0 },
 };
@@ -423,6 +425,7 @@ function referenceCapsForMode(
 ): { image: number; video: number; audio: number } | null {
   const defaults = REFERENCE_CAPS_BY_MODE[mode];
   if (!defaults) return null;
+  if (mode === "videoExtend") return defaults;
   return {
     image: FIXED_IMAGE_CAP_BY_MODE[mode] ?? model?.referenceImageMax ?? defaults.image,
     video: model?.referenceVideoMax ?? defaults.video,
@@ -758,6 +761,10 @@ export const VideoNode = memo(
       "videoEdit",
       selectedVideoModel,
     );
+    const supportsVideoExtend = isVideoModeSupportedByModel(
+      "videoExtend",
+      selectedVideoModel,
+    );
     const videoEditAcceptsAudio =
       supportsVideoEdit &&
       (referenceCapsForMode(selectedVideoModel, "videoEdit")?.audio ?? 0) > 0;
@@ -765,7 +772,11 @@ export const VideoNode = memo(
     const humanReview = Boolean(data.humanReview);
     const count: VideoGenCount = (data.count ?? 1) as VideoGenCount;
     const videoInputBilling = useMemo(() => {
-      if (genMode !== "allReference" && genMode !== "videoEdit") {
+      if (
+        genMode !== "allReference" &&
+        genMode !== "videoEdit" &&
+        genMode !== "videoExtend"
+      ) {
         return { present: false, ready: true, durationSeconds: 0 };
       }
       const ordered = sortUpstreamByReferenceOrder(
@@ -773,7 +784,7 @@ export const VideoNode = memo(
         data.referenceOrder,
       ).filter((node) => Boolean(referenceVideoUrl(node)));
       const limit =
-        genMode === "videoEdit"
+        genMode === "videoEdit" || genMode === "videoExtend"
           ? 1
           : (selectedVideoModel?.referenceVideoMax ?? 3);
       const videos = ordered.slice(0, Math.max(limit, 0));
@@ -1622,8 +1633,8 @@ export const VideoNode = memo(
       videoModelsLoading,
     ]);
 
-    // 上游接入视频素材时，「全能参考」和目录声明的「视频编辑」都能消费；其它模式
-    // 会把视频丢弃。已经处于合法 videoEdit 时不要再强制改成 allReference。
+    // 上游接入视频素材时，全能参考、视频编辑和视频延长都能消费；其它模式会把视频
+    // 丢弃。已经处于合法的显式视频任务时不要再强制改成 allReference。
     // 与音频的「0→≥1 transition」不同，这里每次都纠正，确保视频在场期间无法切走。
     // 是否可消费视频由媒体目录的 all_reference 能力决定；未声明该能力的模型不强推，
     // 以免顶进提交必 400 的模式。
@@ -1631,6 +1642,7 @@ export const VideoNode = memo(
       if (upstreamCounts.videos === 0) return;
       if (isHappyHorseModel) return;
       if (genMode === "videoEdit" && supportsVideoEdit) return;
+      if (genMode === "videoExtend" && supportsVideoExtend) return;
       if (!supportsAllReference) return;
       if (genMode === "allReference") return;
       updateNodeData(id, { genMode: "allReference" });
@@ -1641,6 +1653,7 @@ export const VideoNode = memo(
       isHappyHorseModel,
       supportsAllReference,
       supportsVideoEdit,
+      supportsVideoExtend,
       updateNodeData,
     ]);
 
@@ -1972,7 +1985,7 @@ export const VideoNode = memo(
     const hasPromptText =
       prompt.trim().length > 0 || upstreamTextJoined.length > 0;
     const hasRequiredMediaForMode =
-      genMode === "videoEdit"
+      genMode === "videoEdit" || genMode === "videoExtend"
         ? upstreamCounts.videos > 0
         : genMode === "allReference"
           ? upstreamCounts.images + upstreamCounts.videos + upstreamCounts.audios > 0 ||
@@ -2356,6 +2369,35 @@ export const VideoNode = memo(
               model: selectedVideoModel?.catalogId ?? modelId,
               genMode,
               modelParams: data.modelParams,
+              canvasId,
+              nodeId: targetId,
+            });
+        } else if (genMode === "videoExtend") {
+          const upstream = collectUpstream();
+          const videoUrl =
+            upstream
+              .map((node) => referenceVideoUrl(node) ?? "")
+              .find((url) => url.length > 0) ?? "";
+          if (!videoUrl) {
+            console.warn("[video-node] videoExtend submit without upstream video");
+            updateNodeData(id, {
+              isGenerating: false,
+              generationStartedAt: null,
+            });
+            return;
+          }
+          doSubmit = (targetId) =>
+            submitFreezoneVideoExtend(projectId, {
+              videoUrl,
+              prompt: composedPrompt,
+              cameraTemplateId,
+              resolution: qualityToResolution(quality),
+              durationSeconds: durationClamped,
+              generateAudio,
+              model: selectedVideoModel?.catalogId ?? modelId,
+              genMode,
+              modelParams: data.modelParams,
+              humanReview: supportsHumanReview && humanReview,
               canvasId,
               nodeId: targetId,
             });

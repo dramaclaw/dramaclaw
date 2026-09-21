@@ -6000,7 +6000,8 @@
         "firstFrame": "First Frame",
         "firstLastFrame": "First/Last Frame",
         "imageReference": "Image Reference",
-        "videoEdit": "Video Edit"
+        "videoEdit": "Video Edit",
+        "videoExtend": "Video Extend"
       },
       "placeholder": "Describe the video to generate.",
       "referenceDocument": {
@@ -6225,7 +6226,8 @@
         "grokImageLimit": "Grok Video Channel supports at most 1 first frame and 7 reference images",
         "maxImages": "This model supports at most {{count}} image assets",
         "maxVideos": "This model supports at most {{count}} video assets",
-        "maxAudios": "This model supports at most {{count}} audio assets"
+        "maxAudios": "This model supports at most {{count}} audio assets",
+        "videoExtendSourceOnly": "Video extend accepts exactly one source video and no image or audio assets"
       }
     },
     "scriptNode": {
@@ -6473,6 +6475,7 @@
         "imageReference": "Multi-image reference",
         "firstLastFrame": "First & last frame",
         "videoEdit": "Video editing",
+        "videoExtend": "Video extend",
         "allReference": "All-purpose reference",
         "current": "the current mode"
       },
@@ -6509,8 +6512,11 @@
         "imageReferenceMax9": "“Image reference” supports at most 9 images",
         "needOneVideo": "Connect a video node (exactly 1)",
         "videoEditSingleVideo": "“Video edit” supports exactly 1 connected video node",
+        "videoExtendSingleVideo": "“Video extend” supports exactly 1 source video node",
+        "videoExtendSourceOnly": "“Video extend” accepts only the source video; remove image or audio assets",
         "happyHorseUnsupported": "HappyHorse doesn't support this mode",
         "modelNoVideoEdit": "This model doesn't support “Video edit”",
+        "modelNoVideoExtend": "This model doesn't support “Video extend”",
         "videoUpstreamAllRefOrEdit": "With video upstream, only “All reference” or “Video edit” are available",
         "videoUpstreamAllRefOnly": "With video upstream, only “All reference” is available",
         "hasImageOrAudioRefs": "Unavailable while image/audio assets are referenced",

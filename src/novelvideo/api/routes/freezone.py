@@ -78,6 +78,7 @@ from novelvideo.api.schemas import (
     FreezoneVideoCharacterLibraryItemRequest,
     FreezoneVideoComposeRequest,
     FreezoneVideoEditRequest,
+    FreezoneVideoExtendRequest,
     FreezoneVideoEraseRequest,
     FreezoneVideoGenRequest,
     FreezoneVideoOmniGenRequest,
@@ -285,6 +286,7 @@ from novelvideo.freezone.video_node import (
     build_freezone_image_to_video_prompt,
     build_freezone_keyframe_video_prompt,
     build_freezone_omni_video_prompt,
+    build_freezone_video_extend_prompt,
     build_freezone_video_prompt,
     delete_video_character_folder,
     delete_video_character_library_item,
@@ -9551,6 +9553,105 @@ async def freezone_video_edit(
         )
         raise HTTPException(
             503, f"failed to start freezone video edit task: {exc}"
+        ) from exc
+
+
+@router.post("/projects/{project}/freezone/video/video-extend", tags=[TAG_FREEZONE_VIDEO])
+async def freezone_video_extend(
+    project: str,
+    body: FreezoneVideoExtendRequest,
+    user: dict = Depends(get_api_user),
+):
+    """视频处理：从一个源视频的结尾继续生成指定时长。"""
+
+    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
+        project, user
+    )
+    if not body.prompt.strip():
+        raise HTTPException(400, "prompt is required")
+    if body.camera_template_id and not get_video_camera_template(body.camera_template_id):
+        raise HTTPException(400, f"unknown camera_template_id: {body.camera_template_id}")
+    try:
+        backend = await _resolve_catalog_video_backend(
+            body.model,
+            requester_user_id=ctx.requester_user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    request_schema, model_params, capabilities = await _resolve_catalog_request(
+        "video",
+        body.model,
+        body.model_params,
+        mode=body.gen_mode,
+        requester_user_id=ctx.requester_user_id,
+    )
+    if _catalog_mode_enabled(capabilities, "video_extend") is not True:
+        raise HTTPException(400, "this model does not support video_extend mode")
+
+    if not body.video_url.strip():
+        raise HTTPException(400, "video_url is required")
+    video_paths = _resolve_url_list(project_dir, [body.video_url])
+    if not video_paths:
+        raise HTTPException(400, "video_url could not be resolved")
+    reference_limits = _catalog_reference_limits(
+        capabilities,
+        image_default=0,
+        video_default=1,
+        audio_default=0,
+    )
+    if reference_limits["video"] < 1:
+        raise HTTPException(400, "this model does not support video references")
+
+    reference_items = [
+        {"type": "video", "path": video_paths[0], "role": "视频延长源"}
+    ]
+    final_prompt = build_freezone_video_extend_prompt(
+        user_prompt=body.prompt,
+        camera_template_id=body.camera_template_id,
+    )
+    job_id = _new_job_id()
+    try:
+        return await _start_or_enqueue_freezone_video_gen(
+            ctx=ctx,
+            username=username,
+            project=project_name,
+            project_dir=project_dir,
+            output_dir=output_dir,
+            job_id=job_id,
+            prompt=final_prompt,
+            reference_items=reference_items,
+            # 延长任务沿用源视频画幅，但时长表示新生成片段的长度。
+            aspect_ratio="auto",
+            resolution=normalize_video_resolution_for_backend(
+                backend,
+                body.resolution,
+                _catalog_resolution_options(capabilities),
+            ),
+            duration_seconds=normalize_video_duration_for_backend(
+                backend,
+                body.duration_seconds,
+                *_catalog_duration_bounds(capabilities),
+            ),
+            generate_audio=body.generate_audio,
+            human_review=body.human_review,
+            scene_optimize=None,
+            backend=backend,
+            canvas_id=body.canvas_id or None,
+            node_id=body.node_id or None,
+            model_id=body.model,
+            catalog_id=_catalog_entry_id(capabilities) or None,
+            gen_mode="video_extend",
+            requested_gen_mode=body.gen_mode,
+            model_params=model_params,
+            request_schema=request_schema,
+            capabilities=capabilities,
+        )
+    except RuntimeError as exc:
+        _handle_task_start_runtime_error(
+            "failed to start freezone video extend task", exc
+        )
+        raise HTTPException(
+            503, f"failed to start freezone video extend task: {exc}"
         ) from exc
 
 

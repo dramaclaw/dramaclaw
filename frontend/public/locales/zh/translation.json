@@ -6000,7 +6000,8 @@
         "firstFrame": "首帧",
         "firstLastFrame": "首尾帧",
         "imageReference": "图片参考",
-        "videoEdit": "视频编辑"
+        "videoEdit": "视频编辑",
+        "videoExtend": "视频延长"
       },
       "placeholder": "根据文字描述生成视频。",
       "referenceDocument": {
@@ -6225,7 +6226,8 @@
         "grokImageLimit": "Grok Video Channel 最多支持 1 张首帧和 7 张参考图",
         "maxImages": "该模型最多支持 {{count}} 张图片素材",
         "maxVideos": "该模型最多支持 {{count}} 个视频素材",
-        "maxAudios": "该模型最多支持 {{count}} 个音频素材"
+        "maxAudios": "该模型最多支持 {{count}} 个音频素材",
+        "videoExtendSourceOnly": "视频延长仅支持连接 1 个源视频，不接受图片或音频素材"
       }
     },
     "scriptNode": {
@@ -6473,6 +6475,7 @@
         "imageReference": "多图参考",
         "firstLastFrame": "首尾帧",
         "videoEdit": "视频编辑",
+        "videoExtend": "视频延长",
         "allReference": "全能参考",
         "current": "当前模式"
       },
@@ -6509,8 +6512,11 @@
         "imageReferenceMax9": "「图片参考」最多支持 9 张图片",
         "needOneVideo": "需要连接视频节点（1个）",
         "videoEditSingleVideo": "「视频编辑」仅支持连接 1 个视频节点",
+        "videoExtendSingleVideo": "「视频延长」仅支持连接 1 个源视频节点",
+        "videoExtendSourceOnly": "「视频延长」只接受源视频，请移除图片或音频素材",
         "happyHorseUnsupported": "HappyHorse 不支持该模式",
         "modelNoVideoEdit": "该模型不支持「视频编辑」",
+        "modelNoVideoExtend": "该模型不支持「视频延长」",
         "videoUpstreamAllRefOrEdit": "上游含视频素材时只能用「全能参考」或「视频编辑」",
         "videoUpstreamAllRefOnly": "上游含视频素材时只能用「全能参考」",
         "hasImageOrAudioRefs": "已引用图片/音频素材时不可用",

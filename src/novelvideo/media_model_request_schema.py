@@ -31,6 +31,7 @@ MODE_ALIASES = {
     "imageReference": "image_reference",
     "allReference": "all_reference",
     "videoEdit": "video_edit",
+    "videoExtend": "video_extend",
 }
 MEDIA_MODEL_MODES = {
     "text_to_video",
@@ -40,6 +41,7 @@ MEDIA_MODEL_MODES = {
     "image_reference",
     "all_reference",
     "video_edit",
+    "video_extend",
 }
 PARAMETER_MODES = MEDIA_MODEL_MODES | {
     "text_to_image",
@@ -223,7 +225,19 @@ def enforce_newapi_video_mode_contract(
     """Apply product-level invariants that model parameters may not override."""
 
     result = copy.deepcopy(payload)
-    if normalize_media_model_mode(mode) != "video_edit":
+    normalized_mode = normalize_media_model_mode(mode)
+    raw_metadata = result.get("metadata")
+    metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+    metadata.pop("omni_reference_task_type", None)
+    omni_task_type = {
+        "all_reference": "reference",
+        "video_edit": "edit",
+        "video_extend": "extend",
+    }.get(normalized_mode)
+    if omni_task_type:
+        metadata["omni_reference_task_type"] = omni_task_type
+
+    if normalized_mode != "video_edit":
         if (
             str(result.get("duration") or result.get("seconds") or "")
             .strip()
@@ -233,10 +247,17 @@ def enforce_newapi_video_mode_contract(
         ):
             result["duration"] = fixed_duration
             result.pop("seconds", None)
+        if normalized_mode == "video_extend":
+            metadata["ratio"] = "auto"
+            metadata.pop("aspect_ratio", None)
+            for key in ("ratio", "aspect_ratio", "size", "width", "height"):
+                result.pop(key, None)
+        if metadata:
+            result["metadata"] = metadata
+        else:
+            result.pop("metadata", None)
         return result
 
-    raw_metadata = result.get("metadata")
-    metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
     metadata["ratio"] = "auto"
     metadata.pop("aspect_ratio", None)
     result["metadata"] = metadata
@@ -544,10 +565,12 @@ def validate_media_model_catalog_config(
         if (
             type(video_limit) is int
             and video_limit > 0
-            and not configured_modes.intersection({"all_reference", "video_edit"})
+            and not configured_modes.intersection(
+                {"all_reference", "video_edit", "video_extend"}
+            )
         ):
             raise MediaModelSchemaError(
-                "referenceVideoMax requires all_reference or video_edit mode"
+                "referenceVideoMax requires all_reference, video_edit, or video_extend mode"
             )
         for field in ("referenceFileMax", "referenceLinkMax"):
             limit = config.get(field)
