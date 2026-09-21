@@ -2834,6 +2834,7 @@ tests/test_task_tracking_capacity.py,Elastic-2.0,2026 SuperTale contributors,REU
 tests/test_task_video_global_optimizer_lifecycle.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_task_video_runner_returned_last_frame.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_tasks_stream_list.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_tool_policy_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_transport_retry_disabled.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_trusted_task_settlement_resolution.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_undelivered_refund_result.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

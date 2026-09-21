@@ -13,19 +13,10 @@ from typing import Any
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from novelvideo.chat.tool_policy import DISPLAY_TOOL_NAMES as _DISPLAY_TOOL_NAMES
 from novelvideo.utils.static_urls import project_static_url
 
 logger = logging.getLogger("novelvideo.chat.service")
-
-_DISPLAY_TOOL_NAMES = {
-    "dramaclaw_get_sketches",
-    "dramaclaw_get_sketch_candidates",
-    "dramaclaw_get_first_frames",
-    "dramaclaw_get_scene_images",
-    "dramaclaw_get_character_media",
-    "dramaclaw_get_episode_media",
-    "dramaclaw_get_final_video",
-}
 
 
 def _limit_display_items(

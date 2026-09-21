@@ -21,9 +21,12 @@ def test_runtime_event_evidence_has_no_application_or_persistence_imports() -> N
         for node in ast.walk(tree)
         if isinstance(node, (ast.Import, ast.ImportFrom))
     ]
+    # The tool-name policy leaf is the one novelvideo module this boundary may
+    # depend on; everything else stays stdlib-only.
+    allowed = ("novelvideo.chat.tool_policy",)
     forbidden = ("novelvideo", "sqlite3", "openai_codex")
     assert all(
-        not name.startswith(forbidden)
+        name in allowed or not name.startswith(forbidden)
         for node in imports
         for name in (
             [node.module or ""]
