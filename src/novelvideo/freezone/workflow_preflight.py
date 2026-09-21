@@ -407,27 +407,27 @@ def evaluate_workflow_preflight(
                 )
                 continue
             raw_models = response.get("data")
-            catalog_by_id = (
-                {
-                    str(
-                        item.get("id")
-                        or item.get("apiModel")
-                        or item.get("api_model")
-                        or ""
-                    ).strip(): item
-                    for item in raw_models
-                    if isinstance(item, dict)
-                    and str(
-                        item.get("id")
-                        or item.get("apiModel")
-                        or item.get("api_model")
-                        or ""
-                    ).strip()
-                }
+            catalog = (
+                [item for item in raw_models if isinstance(item, dict)]
                 if isinstance(raw_models, list)
-                else {}
+                else []
             )
-            missing = sorted(requested - set(catalog_by_id))
+            # Primary ids for the available_models listing only; a node may name
+            # the same entry by any legal identifier (id, apiModel, alias...).
+            catalog_by_id = {
+                str(
+                    item.get("id") or item.get("apiModel") or item.get("api_model") or ""
+                ).strip(): item
+                for item in catalog
+                if str(
+                    item.get("id") or item.get("apiModel") or item.get("api_model") or ""
+                ).strip()
+            }
+            missing = sorted(
+                model
+                for model in requested
+                if _catalog_entry_for_model(catalog, model) is None
+            )
             checks[f"{node_type}.models"] = {
                 "requested": sorted(requested),
                 "available": not missing,
@@ -470,7 +470,7 @@ def evaluate_workflow_preflight(
             )
             for node in typed_nodes:
                 model = str((node.get("data") or {}).get("model") or "").strip()
-                catalog_entry = catalog_by_id.get(model)
+                catalog_entry = _catalog_entry_for_model(catalog, model)
                 if catalog_entry is not None:
                     blockers.extend(
                         _workflow_node_capability_blockers(node, catalog_entry)

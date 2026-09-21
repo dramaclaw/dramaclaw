@@ -306,3 +306,53 @@ def test_recommended_fields_on_an_alias_model_resolve_without_fill_missing():
     assert blockers == []
     assert data["aspectRatio"] == "9:16"
     assert data["model"] == "newapi_gpt_image2"
+
+
+_ALIAS_IMAGE_CATALOG = {"imageGenNode": {"ok": True, "data": [{
+    "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+    "ratioOptions": ["9:16"], "resolutionOptions": ["1K"], "qualityOptions": ["medium"],
+}]}}
+
+
+def _image_preflight(data):
+    node = {"id": "image", "node_type": "imageGenNode", "data": data}
+    result = evaluate_workflow_preflight(
+        {"plan": {"nodes": [node]}},
+        model_responses=_ALIAS_IMAGE_CATALOG,
+        limits={"ok": True, "data": {"default": {"limit": 4, "remaining": 4}}},
+    )
+    return result, node["data"]
+
+
+def test_full_preflight_accepts_a_legal_catalog_alias_for_recommended_fields():
+    """An alias model (the sketch default) must not be reported as unavailable."""
+    result, data = _image_preflight({
+        "model": "newapi_gpt_image2", "aspectRatio": "recommended",
+        "size": "1K", "quality": "medium", "count": 1,
+    })
+    assert result["status"] == "ready", result["blockers"]
+    assert result["runtime_checks"]["imageGenNode.models"] == {
+        "requested": ["newapi_gpt_image2"], "available": True,
+    }
+    assert data["aspectRatio"] == "9:16"
+    assert data["model"] == "newapi_gpt_image2"
+
+
+def test_full_preflight_checks_alias_model_capabilities_against_its_entry():
+    result, _data = _image_preflight({
+        "model": "newapi_gpt_image2", "aspectRatio": "21:9",
+        "size": "1K", "quality": "medium", "count": 1,
+    })
+    assert result["status"] == "blocked"
+    assert all(blocker["code"] != "model_unavailable" for blocker in result["blockers"])
+    assert any("21:9" in str(blocker) for blocker in result["blockers"])
+
+
+def test_full_preflight_still_rejects_an_unknown_model():
+    result, _data = _image_preflight({
+        "model": "not-in-catalog", "aspectRatio": "9:16",
+        "size": "1K", "quality": "medium", "count": 1,
+    })
+    assert result["status"] == "blocked"
+    assert result["blockers"][0]["code"] == "model_unavailable"
+    assert [item["id"] for item in result["blockers"][0]["available_models"]] == ["LingShan-G2"]
