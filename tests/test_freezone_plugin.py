@@ -6417,6 +6417,7 @@ def test_freezone_mcp_default_create_node_uses_frontend_bridge(monkeypatch):
         "DRAMACLAW_CANVAS_COMMAND_BRIDGE_DIR", "/tmp/dramaclaw-test-bridge"
     )
     monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-create-node")
     monkeypatch.delenv("DRAMACLAW_MCP_DIRECT_CANVAS_APPLY", raising=False)
 
     def fake_bridge_key(*, project_id, canvas_id, commands):
@@ -6464,6 +6465,7 @@ def test_freezone_mcp_default_create_node_uses_frontend_bridge(monkeypatch):
     assert "auto_apply_after_mcp_approval" not in envelope
     assert envelope["agent_id"] == "main"
     assert envelope["external_mcp_command"] is True
+    assert envelope["turn_id"] == "turn-create-node"
     assert envelope["commands"][0]["type"] == "create_node"
     assert str(pending_commands[0]["bridge_dir"]) == "/tmp/dramaclaw-test-bridge"
 

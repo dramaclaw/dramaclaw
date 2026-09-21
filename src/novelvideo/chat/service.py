@@ -2823,6 +2823,7 @@ def _build_codex_env(
     agent_profile: str = "main",
     tool_mode: str = "default",
     canvas_id: str | None = None,
+    turn_id: str | None = None,
     project_state_dir: str | Path | None = None,
     agent_token_file: str | Path | None = None,
 ) -> dict[str, str]:
@@ -2857,6 +2858,11 @@ def _build_codex_env(
     if agent_token_file is not None:
         env["DRAMACLAW_AGENT_TOKEN_FILE"] = str(agent_token_file)
     env["DRAMACLAW_TOOL_MODE"] = str(tool_mode or "default").strip() or "default"
+    normalized_turn_id = str(turn_id or "").strip()
+    if normalized_turn_id:
+        env["DRAMACLAW_TURN_ID"] = normalized_turn_id
+    else:
+        env.pop("DRAMACLAW_TURN_ID", None)
     if str(tool_mode or "").strip() == "freezone_canvas":
         # Keep Codex MCP on the authoritative project/profile bridge used by
         # Hermes and the browser command and receipt routes.
@@ -2982,6 +2988,7 @@ def _dramaclaw_mcp_servers(
                 "DRAMACLAW_ROOT",
                 "DRAMACLAW_SKILLS_DIR",
                 "DRAMACLAW_TOOL_MODE",
+                "DRAMACLAW_TURN_ID",
                 "DRAMACLAW_USERNAME",
                 "NOVELVIDEO_OUTPUT_DIR",
                 "PYTHONPATH",
@@ -3144,6 +3151,7 @@ def _build_codex_thread(
     agent_profile: str = "main",
     tool_mode: str = "default",
     canvas_id: str | None = None,
+    turn_id: str | None = None,
     project_state_dir: str | Path | None = None,
     agent_token_file: str | Path | None = None,
 ) -> AgentRuntimeThreadPort:
@@ -3163,6 +3171,7 @@ def _build_codex_thread(
         agent_profile=agent_profile,
         tool_mode=tool_mode,
         canvas_id=canvas_id,
+        turn_id=turn_id,
         project_state_dir=project_state_dir,
         agent_token_file=agent_token_file,
     )
@@ -4469,6 +4478,7 @@ async def _stream_assistant_reply_codex(
             agent_profile=agent_profile,
             tool_mode=tool_mode,
             canvas_id=canvas_id,
+            turn_id=business_turn_id,
             project_state_dir=project_state_dir,
             agent_token_file=token_file,
         )

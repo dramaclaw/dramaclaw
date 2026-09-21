@@ -1190,6 +1190,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
     assert captured["agent_profile"] == expected_profile
     assert captured["tool_mode"] == tool_mode
     assert captured["canvas_id"] == expected_canvas
+    assert captured["turn_id"] == "business-turn"
     assert history_sentinel not in str(captured["prompt"])
     assert not Path(captured["agent_token_file"]).exists()
     assert revoked == ["agent-token"]
@@ -2505,6 +2506,7 @@ def test_dramaclaw_mcp_server_config_is_agent_neutral():
         "DRAMACLAW_ROOT",
         "DRAMACLAW_SKILLS_DIR",
         "DRAMACLAW_TOOL_MODE",
+        "DRAMACLAW_TURN_ID",
         "DRAMACLAW_USERNAME",
         "NOVELVIDEO_OUTPUT_DIR",
         "PYTHONPATH",
@@ -2556,7 +2558,8 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
         '"DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",'
         '"DRAMACLAW_AGENT_PROFILE","DRAMACLAW_PROJECT_ID",'
         '"DRAMACLAW_ROOT","DRAMACLAW_SKILLS_DIR","DRAMACLAW_TOOL_MODE",'
-        '"DRAMACLAW_USERNAME","NOVELVIDEO_OUTPUT_DIR","PYTHONPATH"]' in overrides
+        '"DRAMACLAW_TURN_ID","DRAMACLAW_USERNAME",'
+        '"NOVELVIDEO_OUTPUT_DIR","PYTHONPATH"]' in overrides
     )
     assert "mcp_servers.dramaclaw.required=true" in overrides
     assert 'mcp_servers.dramaclaw.default_tools_approval_mode="approve"' in overrides
@@ -2569,6 +2572,7 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
             "DRAMACLAW_AGENT_PROFILE": "freezone:agent-2",
             "DRAMACLAW_CANVAS_ID": "canvas-a",
             "DRAMACLAW_TOOL_MODE": "freezone_canvas",
+            "DRAMACLAW_TURN_ID": "turn-a",
         },
         model="DC-codex-agent-LLM",
         model_provider="dramaclaw_gateway",
@@ -2584,6 +2588,7 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
         "DRAMACLAW_AGENT_PROFILE": "freezone:agent-2",
         "DRAMACLAW_CANVAS_ID": "canvas-a",
         "DRAMACLAW_TOOL_MODE": "freezone_canvas",
+        "DRAMACLAW_TURN_ID": "turn-a",
     }
     assert "mcp_servers.dramaclaw.env_vars" not in thread._thread_config
     assert thread._model == "DC-codex-agent-LLM"
@@ -2806,6 +2811,7 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
         "admin",
         "project-a",
         "agent-token",
+        turn_id="turn-a",
         project_state_dir=project_state,
         agent_token_file=project_state / "turn.token",
     )
@@ -2818,6 +2824,7 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
     assert env["SUPERTALE_AGENT_SCOPE"] == "project"
     assert env["DRAMACLAW_AGENT_PROFILE"] == "main"
     assert env["DRAMACLAW_TOOL_MODE"] == "default"
+    assert env["DRAMACLAW_TURN_ID"] == "turn-a"
     assert env["DRAMACLAW_SKILLS_DIR"].endswith(
         "/agents/codex/workspaces/main-0d6e4079e367/.agents/skills"
     )

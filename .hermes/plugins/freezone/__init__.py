@@ -4169,6 +4169,9 @@ def _dispatch_mcp_approved_frontend_commands(
     if external_mcp:
         envelope["agent_id"] = agent_id or "main"
         envelope["external_mcp_command"] = True
+        turn_id = os.environ.get("DRAMACLAW_TURN_ID", "").strip()
+        if turn_id:
+            envelope["turn_id"] = turn_id
     # Dynamic workflow commands carry a stable workflowInstanceId on every
     # create_node. Reuse one bridge key for identical retries so a lost MCP
     # response cannot create a second approval or duplicate the graph.
