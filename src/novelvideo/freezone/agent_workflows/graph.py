@@ -11,7 +11,6 @@ from novelvideo.freezone.workflow_schema import (
     LINK_TYPE_VALUES as PORTABLE_LINK_TYPE_VALUES,
     NODE_TYPE_VALUES,
 )
-from novelvideo.freezone.workflow_contract_generated import MODEL_ALIASES_BY_NODE_TYPE
 from novelvideo.freezone.workflow_semantics import text_edge_error
 
 CANVAS_CHAT_COMMANDS_SCHEMA_VERSION = "canvas_chat_commands.v1"
@@ -580,7 +579,8 @@ def _node_data(
     if node_type == "htmlArtifactNode":
         result.pop("content", None)
         result.pop("description", None)
-    _normalize_model_alias(result, node_type)
+    # Model values in a validated plan are live Catalog ids. Rewriting a
+    # provider-prefixed id here would invalidate the frontend's model options.
     if node_type == "audioNode":
         result.setdefault("audioKind", "speech")
         if result.get("audioKind") == "speech":
@@ -766,17 +766,6 @@ def validate_workflow_graph_commands(
                 )
 
     return errors
-
-
-def _normalize_model_alias(data: dict[str, Any], node_type: str) -> None:
-    model = data.get("model")
-    if not isinstance(model, str) or not model.strip():
-        return
-    aliases = MODEL_ALIASES_BY_NODE_TYPE.get(node_type) or {}
-    normalized_key = model.strip().lower()
-    replacement = aliases.get(normalized_key)
-    if replacement:
-        data["model"] = replacement
 
 
 def _edge_pairs(raw_edges: Any) -> list[tuple[str, str, str | None]]:

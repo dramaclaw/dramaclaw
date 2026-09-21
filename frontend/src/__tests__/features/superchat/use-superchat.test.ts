@@ -58,6 +58,7 @@ import {
   canvasApprovalRequiresHumanReviewConfirmationForTest,
   clarificationQuestionsWithLiveModelCatalogsForTest,
   assistantClarificationCanSubmit,
+  assistantClarificationCanSubmitRecommended,
   assistantClarificationGenerationCatalogIssue,
   assistantClarificationShowsRecommended,
   imageApprovalInitialParamsForTest,
@@ -3375,6 +3376,21 @@ describe("Canvas command approval image params", () => {
       image_resolution: { option_ids: ["1K"] },
     })).toBe(true);
     expect(assistantClarificationShowsRecommended(questions, true)).toBe(false);
+    const recommendationEvent = {
+      type: "assistant.clarification.request" as const,
+      questions,
+      recommended_answers: {
+        image_model: { option_ids: ["image-a"] },
+        image_resolution: { option_ids: ["1K"] },
+      },
+    };
+    expect(assistantClarificationCanSubmitRecommended({ ...recommendationEvent, recommended_answers: {} }, {
+      __action: "recommended",
+    })).toBe(false);
+    expect(assistantClarificationCanSubmitRecommended(recommendationEvent, {
+      __action: "recommended",
+      image_model: { option_ids: ["image-a"] },
+    })).toBe(false);
     expect(assistantClarificationShowsRecommended(questions, true, {
       image_model: { option_ids: ["image-a"] },
       image_resolution: { option_ids: ["1K"] },
@@ -3395,6 +3411,14 @@ describe("Canvas command approval image params", () => {
       image_model: { option_ids: ["image-a"] },
       image_resolution: { option_ids: ["1K"] },
     });
+    expect(assistantClarificationCanSubmitRecommended(recommendationEvent, {
+      __action: "recommended",
+      ...payload.answers,
+    })).toBe(true);
+    expect(assistantClarificationCanSubmitRecommended({
+      ...recommendationEvent,
+      questions: questions.map((question) => ({ ...question, options: [] })),
+    }, { __action: "recommended", ...payload.answers })).toBe(true);
     expect(assistantClarificationShowsRecommended([
       { id: "creative_style", title: "风格", options: [{ id: "warm", label: "温暖" }] },
     ], true)).toBe(true);
