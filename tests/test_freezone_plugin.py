@@ -3134,6 +3134,265 @@ def test_generation_clarification_recommendation_has_concrete_answers(monkeypatc
     }
 
 
+_ISSUE_637_IMAGE_CATALOG = {
+    "ok": True, "data": [
+        {
+            "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+            "ratioOptions": ["9:16"], "resolutionOptions": ["2K", "1K"],
+            "qualityOptions": ["medium"],
+        },
+        {
+            "id": "Other-Wide", "ratioOptions": ["21:9", "16:9"],
+            "resolutionOptions": ["4K"], "qualityOptions": [],
+        },
+    ],
+}
+
+
+def test_generation_clarification_partial_card_recommends_from_confirmed_model(monkeypatch):
+    """CORE-CANVAS-01: a re-ask for one field keeps the model the user confirmed."""
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    captured = []
+    monkeypatch.setattr(plugin, "_emit_clarification_event",
+                        lambda _project, _canvas, event: captured.append(event) or "shown")
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: _ISSUE_637_IMAGE_CATALOG)
+
+    result = handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a",
+        "generation_required_choices": {"image": ["aspect_ratio", "count"]},
+        "answers": {"image_model": {"option_ids": ["Other-Wide"]}, "image_resolution": "4K"},
+    })
+
+    assert result == "shown"
+    event = captured[0]
+    assert [question["id"] for question in event["questions"]] == [
+        "image_aspect_ratio", "image_variants_per_node",
+    ]
+    assert event["allow_recommended"] is True
+    # 16:9 comes from Other-Wide, not from the default LingShan-G2 entry.
+    assert event["recommended_answers"] == {
+        "image_aspect_ratio": {"option_ids": ["16:9"]},
+        "image_variants_per_node": {"option_ids": ["1"]},
+    }
+
+
+def test_generation_clarification_partial_card_recommends_for_alias_model(monkeypatch):
+    """CORE-CANVAS-01: a confirmed catalog alias still yields concrete recommendations."""
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    captured = []
+    monkeypatch.setattr(plugin, "_emit_clarification_event",
+                        lambda _project, _canvas, event: captured.append(event) or "shown")
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: _ISSUE_637_IMAGE_CATALOG)
+
+    handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a",
+        "generation_required_choices": {
+            "image": ["aspect_ratio", "resolution", "quality", "count"],
+        },
+        "answers": {"image_model": {"option_ids": ["newapi_gpt_image2"]}},
+    })
+
+    event = captured[0]
+    assert event["allow_recommended"] is True
+    # Resolved from the LingShan-G2 entry the alias points at.
+    assert event["recommended_answers"] == {
+        "image_aspect_ratio": {"option_ids": ["9:16"]},
+        "image_resolution": {"option_ids": ["1K"]},
+        "image_quality": {"option_ids": ["medium"]},
+        "image_variants_per_node": {"option_ids": ["1"]},
+    }
+
+
+def test_generation_clarification_partial_card_without_model_hides_recommendation(monkeypatch):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    captured = []
+    monkeypatch.setattr(plugin, "_emit_clarification_event",
+                        lambda _project, _canvas, event: captured.append(event) or "shown")
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: _ISSUE_637_IMAGE_CATALOG)
+
+    handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a",
+        "generation_required_choices": {"image": ["aspect_ratio"]},
+        "allow_recommended": True,
+    })
+
+    assert captured[0]["allow_recommended"] is False
+    assert "recommended_answers" not in captured[0]
+
+
+def test_generation_clarification_canonical_questions_offer_recommendation(monkeypatch):
+    """CORE-PLAN-09: hand-listed canonical questions still get a concrete recommendation."""
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    captured = []
+    monkeypatch.setattr(plugin, "_emit_clarification_event",
+                        lambda _project, _canvas, event: captured.append(event) or "shown")
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: _ISSUE_637_IMAGE_CATALOG)
+
+    handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a",
+        "allow_recommended": False,
+        "questions": [
+            {"id": "image_model"}, {"id": "image_resolution"},
+            {"id": "image_quality"}, {"id": "image_variants_per_node"},
+        ],
+    })
+
+    event = captured[0]
+    assert event["allow_recommended"] is True
+    assert event["recommended_answers"] == {
+        "image_model": {"option_ids": ["LingShan-G2"]},
+        "image_resolution": {"option_ids": ["1K"]},
+        "image_quality": {"option_ids": ["medium"]},
+        "image_variants_per_node": {"option_ids": ["1"]},
+    }
+
+
+def test_generation_clarification_recommended_action_returns_concrete_node_data(monkeypatch):
+    """CORE-CANVAS-01: used_recommended with answers={} is completed by the server."""
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    monkeypatch.setattr(plugin, "_emit_clarification_event", lambda *_args: {
+        "ok": True, "status": "clarification_frontend_result",
+        "clarification_status": "recommended", "tool_call_status": "completed",
+        "bridge_key": "clarification-1", "action": "recommended",
+        "answers": {}, "used_recommended": True,
+    })
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: _ISSUE_637_IMAGE_CATALOG)
+
+    result = handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a", "generation_media_types": ["image"],
+    })
+
+    assert result["ok"] is True
+    assert result["used_recommended"] is True
+    assert result["answers"]["image_aspect_ratio"] == {"option_ids": ["9:16"]}
+    assert result["generation_choices"] == {
+        "image_model": "LingShan-G2", "image_aspect_ratio": "9:16",
+        "image_resolution": "1K", "image_quality": "medium",
+        "image_variants_per_node": 1,
+    }
+    assert result["node_data"] == {"imageGenNode": {
+        "model": "LingShan-G2", "aspectRatio": "9:16", "size": "1K",
+        "quality": "medium", "count": 1,
+    }}
+    assert "node_data.<node_type>" in result["agent_instruction"]
+    Draft202012Validator(
+        plugin._output_schema("freezone_request_user_clarification")
+    ).validate(result)
+
+
+def test_generation_clarification_empty_recommended_answers_fail_closed(monkeypatch):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    monkeypatch.setattr(plugin, "_emit_clarification_event", lambda *_args: {
+        "ok": True, "status": "clarification_frontend_result",
+        "clarification_status": "recommended", "tool_call_status": "completed",
+        "bridge_key": "clarification-1", "answers": {}, "used_recommended": True,
+    })
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: {"ok": False})
+
+    result = handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a",
+        "generation_required_choices": {"image": ["aspect_ratio", "quality"]},
+        "answers": {"image_model": "LingShan-G2"},
+    })
+
+    assert result["ok"] is False
+    assert result["status"] == "generation_answers_incomplete"
+    assert "image_aspect_ratio" in result["error"]
+    assert result["required_choices"] == {"image": ["aspect_ratio", "quality"]}
+    assert "node_data" not in result
+    Draft202012Validator(
+        plugin._output_schema("freezone_request_user_clarification")
+    ).validate(result)
+
+
+def test_generation_clarification_answered_partial_card_maps_node_fields(monkeypatch):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    monkeypatch.setattr(plugin, "_emit_clarification_event", lambda *_args: {
+        "ok": True, "status": "clarification_frontend_result",
+        "clarification_status": "answered", "tool_call_status": "completed",
+        "bridge_key": "clarification-1",
+        "answers": {"image_aspect_ratio": {"option_ids": ["16:9"]}},
+    })
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: _ISSUE_637_IMAGE_CATALOG)
+
+    result = handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a",
+        "generation_required_choices": {"image": ["aspect_ratio"]},
+        "answers": {"image_model": "Other-Wide"},
+    })
+
+    assert result["ok"] is True
+    assert result["used_recommended"] is False
+    assert result["node_data"] == {"imageGenNode": {"aspectRatio": "16:9"}}
+
+
+def test_generation_clarification_recommended_draft_writeback_uses_server_answers(
+    monkeypatch, tmp_path,
+):
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    monkeypatch.setattr(plugin, "compile_workflow_intent", lambda intent: {
+        "ok": True, "skill_id": "video-ad", "plan": {"summary": "广告", "nodes": [{
+            "id": "image-1", "node_type": "imageGenNode", "stage": "image",
+            "data": {"model": (intent.get("inputs") or {}).get("image_model", "recommended")},
+        }], "edges": []},
+    })
+    monkeypatch.setattr(
+        plugin, "_workflow_runtime_preflight", lambda *_args, **_kwargs: {"blockers": []}
+    )
+    monkeypatch.setattr(plugin, "_emit_clarification_event", lambda *_args: {
+        "ok": True, "status": "clarification_frontend_result",
+        "clarification_status": "recommended", "tool_call_status": "completed",
+        "bridge_key": "clarification-1", "answers": {}, "used_recommended": True,
+    })
+    original_request = plugin._request
+    monkeypatch.setattr(plugin, "_request", lambda method, path, **kwargs: (
+        _ISSUE_637_IMAGE_CATALOG if path.endswith("/freezone/image/models")
+        else original_request(method, path, **kwargs)
+    ))
+    prepared = plugin._handle_prepare_workflow_draft({
+        "intent": {"skill_id": "video-ad", "user_goal": "广告"},
+    })
+
+    result = handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "workflow_draft_id": prepared["draft_id"],
+        "workflow_expected_revision": prepared["revision"],
+        "generation_media_types": ["image"],
+    })
+
+    assert result["ok"] is True
+    assert result["draft_updated"] is True
+    from novelvideo.freezone.workflow_drafts import read_workflow_draft
+    stored, error = read_workflow_draft(
+        project_dir=tmp_path, canvas_id="canvas-a", draft_id=prepared["draft_id"]
+    )
+    assert error is None
+    assert stored["intent"]["inputs"] == {
+        "image_model": "LingShan-G2", "image_aspect_ratio": "9:16",
+        "image_resolution": "1K", "image_quality": "medium",
+        "image_variants_per_node": 1,
+    }
+
+
+def test_generation_parameters_required_result_points_to_node_data():
+    plugin = _load_plugin_module()
+    result = plugin._generation_parameters_required_result([
+        {"node_id": "image-1", "node_type": "imageGenNode", "fields": ["aspectRatio"]},
+    ])
+    assert result["required_choices"] == {"image": ["aspect_ratio"]}
+    assert "allow_recommended" not in result["clarification"]
+    assert "node_data.<node_type>" in result["agent_instruction"]
+
+
 def test_generation_clarification_builds_exact_preflight_questions(monkeypatch):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}

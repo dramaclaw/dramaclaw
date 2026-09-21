@@ -1032,9 +1032,19 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
         )
         if draft_error is not None:
             return tool_result(draft_error)
+    generation_question_ids = [
+        str(question.get("id") or "")
+        for question in questions
+        if isinstance(question, dict)
+        and str(question.get("id") or "") in _GENERATION_ANSWER_DATA_FIELDS
+    ]
     recommended_answers: dict[str, Any] = {}
-    if generation_media_types is not None or generation_required_choices is not None:
-        recommended_answers = _generation_clarification_recommendations(project, questions)
+    if generation_question_ids:
+        recommended_answers = _generation_clarification_recommendations(
+            project, generation_question_ids, answers
+        )
+        # A recommended action is offered only with concrete values resolved from
+        # the caller's current Catalog; an empty "use recommended" is never valid.
         args = {**args, "allow_recommended": bool(recommended_answers)}
     result = _emit_clarification_event(
         project,
@@ -1051,9 +1061,16 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
             "allow_skip": bool(args.get("allow_skip", True)),
         },
     )
+    response = _tool_result_payload(result)
+    if generation_question_ids:
+        finalized = _finalize_generation_clarification_result(
+            response, generation_question_ids, recommended_answers
+        )
+        if finalized is not None:
+            response = finalized
+            result = tool_result(finalized)
     if not draft_id:
         return result
-    response = _tool_result_payload(result)
     if (
         not isinstance(response, dict)
         or response.get("ok") is not True
@@ -3309,27 +3326,60 @@ _RECOMMENDED_GENERATION_MODEL_VALUES = {
 }
 
 
+_GENERATION_OPTIONAL_QUESTION_IDS = frozenset({"image_quality", "video_generate_audio"})
+_GENERATION_MEDIA_NODE_TYPES = {"image": "imageGenNode", "video": "videoNode"}
+
+
 def _generation_clarification_recommendations(
-    project: str | None, questions: list[Any]
+    project: str | None, question_ids: list[str], answers: Any = None,
 ) -> dict[str, Any]:
-    """Return concrete option ids for one current scoped Catalog snapshot."""
+    """Return concrete option ids for one current scoped Catalog snapshot.
+
+    A card that asks the model question recommends the product default model.
+    A partial card (for example only ``image_aspect_ratio`` after a rejected
+    write) resolves against the model the user already confirmed in ``answers``
+    so every recommended value comes from that same catalog entry. Without a
+    model question or a confirmed model there is nothing authoritative to
+    recommend, and the caller must not offer a recommended action.
+    """
     from novelvideo.freezone.workflow_preflight import resolve_generation_recommendations
 
     if not project:
         return {}
-    question_ids = {
-        str(question.get("id") or "") for question in questions if isinstance(question, dict)
-    }
-    media = [name for name in ("image", "video") if any(
-        question_id.startswith(f"{name}_") for question_id in question_ids
-    )]
-    if any(f"{name}_model" not in question_ids for name in media):
-        return {}  # Partial questions may refer to a different confirmed model.
-    nodes = [{
-        "node_type": "imageGenNode" if name == "image" else "videoNode",
-        "data": {"model": "recommended"},
-    } for name in media]
-    responses = {}
+    asked = [
+        question_id for question_id in question_ids
+        if question_id in _GENERATION_ANSWER_DATA_FIELDS
+    ]
+    media = [
+        name for name, node_type in _GENERATION_MEDIA_NODE_TYPES.items()
+        if any(_GENERATION_ANSWER_DATA_FIELDS[q][0] == node_type for q in asked)
+    ]
+    if not media:
+        return {}
+    confirmed: dict[str, Any] = {}
+    if isinstance(answers, dict):
+        for question_id, selection in answers.items():
+            if question_id not in _GENERATION_ANSWER_DATA_FIELDS or question_id in asked:
+                continue
+            try:
+                confirmed[question_id] = _generation_answer_value(question_id, selection)
+            except ValueError:
+                return {}
+    nodes: list[dict[str, Any]] = []
+    for name in media:
+        node_type = _GENERATION_MEDIA_NODE_TYPES[name]
+        data = {
+            field: value
+            for question_id, value in confirmed.items()
+            for target_type, field in (_GENERATION_ANSWER_DATA_FIELDS[question_id],)
+            if target_type == node_type
+        }
+        if f"{name}_model" in asked:
+            data["model"] = "recommended"
+        elif not (isinstance(data.get("model"), str) and data["model"].strip()):
+            return {}
+        nodes.append({"node_type": node_type, "data": data})
+    responses: dict[str, dict[str, Any]] = {}
     try:
         for name, node in zip(media, nodes):
             response = _request(
@@ -3340,32 +3390,113 @@ def _generation_clarification_recommendations(
             responses[node["node_type"]] = response
     except Exception:  # noqa: BLE001 - recommendation is optional on catalog failure
         return {}
-    if resolve_generation_recommendations(nodes, responses):
+    if resolve_generation_recommendations(nodes, responses, fill_missing=True):
         return {}
-    data_by_media = {name: node["data"] for name, node in zip(media, nodes)}
-    field_by_question = {
-        "model": "model", "aspect_ratio": "aspectRatio", "resolution": "size",
-        "quality": "quality", "variants_per_node": "count",
-        "duration_seconds": "durationSec", "generate_audio": "generateAudio",
-    }
-    answers = {}
-    for question_id in question_ids:
-        name, _, suffix = question_id.partition("_")
-        data = data_by_media.get(name)
-        if data is None:
-            continue
-        field = field_by_question.get(suffix)
-        if name == "video" and suffix == "resolution":
-            field = "quality"
-        if field is None:
-            return {}
-        value = data.get(field)
-        if value is None:
-            if question_id in {"image_quality", "video_generate_audio"}:
+    data_by_type = {node["node_type"]: node["data"] for node in nodes}
+    recommended: dict[str, Any] = {}
+    for question_id in asked:
+        node_type, field = _GENERATION_ANSWER_DATA_FIELDS[question_id]
+        value = data_by_type[node_type].get(field)
+        if value is None or (
+            isinstance(value, str)
+            and value.strip().casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
+        ):
+            if question_id in _GENERATION_OPTIONAL_QUESTION_IDS:
                 continue
             return {}
-        answers[question_id] = {"option_ids": [str(value).lower() if isinstance(value, bool) else str(value)]}
-    return answers
+        recommended[question_id] = {
+            "option_ids": [str(value).lower() if isinstance(value, bool) else str(value)]
+        }
+    return recommended
+
+
+def _generation_required_choices_for_questions(question_ids: list[str]) -> dict[str, list[str]]:
+    required: dict[str, list[str]] = {}
+    for question_id in question_ids:
+        media, _, suffix = question_id.partition("_")
+        required.setdefault(media, []).append(
+            "count" if suffix == "variants_per_node" else suffix
+        )
+    return required
+
+
+def _finalize_generation_clarification_result(
+    response: Any, question_ids: list[str], recommended_answers: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Turn a submitted generation card into concrete node data, or fail closed.
+
+    A recommended action carries the server's own concrete answers, so a
+    frontend receipt that only says ``used_recommended`` never reaches the
+    agent as an empty selection. Missing or malformed values for asked fields
+    return ``generation_answers_incomplete`` instead of a success result.
+    Returns ``None`` when the response is not a completed generation answer.
+    """
+    if (
+        not isinstance(response, dict)
+        or response.get("ok") is not True
+        or response.get("skipped")
+        or response.get("clarification_status") not in {"answered", "recommended"}
+    ):
+        return None
+    used_recommended = (
+        response.get("clarification_status") == "recommended"
+        or bool(response.get("used_recommended"))
+    )
+    answers = dict(response.get("answers") or {}) if isinstance(
+        response.get("answers"), dict
+    ) else {}
+    if used_recommended:
+        for question_id in question_ids:
+            if question_id not in answers and question_id in recommended_answers:
+                answers[question_id] = recommended_answers[question_id]
+    choices: dict[str, Any] = {}
+    missing: list[str] = []
+    try:
+        for question_id in question_ids:
+            if question_id not in answers:
+                if question_id not in _GENERATION_OPTIONAL_QUESTION_IDS:
+                    missing.append(question_id)
+                continue
+            choices[question_id] = _generation_answer_value(question_id, answers[question_id])
+    except ValueError as exc:
+        missing = [str(exc)]
+    if missing:
+        return {
+            **response,
+            "ok": False,
+            "status": "generation_answers_incomplete",
+            "error": "generation clarification returned no concrete value for: "
+            + ", ".join(missing),
+            "answers": answers,
+            "used_recommended": used_recommended,
+            "required_choices": _generation_required_choices_for_questions(
+                [item for item in question_ids if item not in choices]
+            ),
+            "agent_instruction": (
+                "The user's selection did not produce concrete generation values. "
+                "Do not guess, do not use defaults, and do not retry the canvas write. "
+                "Call freezone_request_user_clarification again with "
+                "generation_required_choices set to this result's required_choices."
+            ),
+        }
+    node_data: dict[str, dict[str, Any]] = {}
+    for question_id, value in choices.items():
+        node_type, field = _GENERATION_ANSWER_DATA_FIELDS[question_id]
+        node_data.setdefault(node_type, {})[field] = value
+    return {
+        **response,
+        "answers": answers,
+        "used_recommended": used_recommended,
+        "generation_choices": choices,
+        "node_data": node_data,
+        "agent_instruction": (
+            "Concrete generation values are in node_data keyed by node type. Copy every "
+            "field of node_data.<node_type> verbatim into each matching image/video node's "
+            "data on the retried canvas write or WorkflowPlan; do not translate question ids "
+            "yourself or drop a field. For a workflow draft, pass answers unchanged as "
+            "generation_answers, or use the draft id and revision so the tool applies them."
+        ),
+    }
 
 
 def _generation_parameter_value_present(field: str, value: Any) -> bool:
@@ -3691,18 +3822,19 @@ def _generation_parameters_required_result(
         "required_choices": required_choices,
         "clarification": {
             "title": "确认图片和视频生成参数",
-            "allow_recommended": False,
             "allow_skip": False,
         },
         "agent_instruction": (
             "Stop before every canvas write. Call freezone_request_user_clarification "
             "exactly once with generation_required_choices set to this result's "
-            "required_choices and pass any already confirmed model choices in answers. "
-            "The server assembles every missing question. "
-            "After the user answers, retry the same operation with the chosen "
-            "values. For a WorkflowPlan, put them in each image/video node data. For a "
-            "workflow draft, patch inputs with the portable image_* and video_* keys. "
-            "Do not claim success and do not silently choose defaults."
+            "required_choices and pass every already confirmed choice (at least the "
+            "model) in answers so the server can offer a recommendation from the same "
+            "catalog entry. The server assembles every missing question. "
+            "The clarification result returns node_data keyed by node type: copy each "
+            "node_data.<node_type> field verbatim into the matching node's data and retry "
+            "the same operation. For a WorkflowPlan, put them in each image/video node "
+            "data. For a workflow draft, pass the draft id and revision so the tool "
+            "applies them. Do not claim success and do not silently choose defaults."
         ),
     }
 
@@ -7031,6 +7163,8 @@ _RESULT_OBJECT_FIELDS = frozenset(
         "answers",
         "client_debug",
         "clarification",
+        "generation_choices",
+        "node_data",
         "operations",
         "required_choices",
         "selections",
@@ -7189,6 +7323,8 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
         "missing_parameters",
         "required_choices",
         "clarification",
+        "generation_choices",
+        "node_data",
         "errors",
     ),
     "freezone_begin_agent_catalog_draft": (
