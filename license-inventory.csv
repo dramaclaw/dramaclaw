@@ -65,25 +65,32 @@ assets/readme/director-world.jpg,Elastic-2.0,2026 SuperTale contributors,REUSE.t
 assets/readme/storyboards.jpg,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 assets/readme/xia-director.jpg,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 assets/xiahua-canvas.jpg,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+blender/README.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 blender/build.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 blender/dramaclaw_blender/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 blender/dramaclaw_blender/core/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 blender/dramaclaw_blender/core/blockout.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+blender/dramaclaw_blender/core/bundled_config.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 blender/dramaclaw_blender/core/http.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 blender/dramaclaw_blender/core/limits.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 blender/dramaclaw_blender/core/naming.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 blender/dramaclaw_blender/core/pairing.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+blender/dramaclaw_blender/core/projects.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 blender/dramaclaw_blender/ops.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 blender/dramaclaw_blender/panel.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 blender/dramaclaw_blender/prefs.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 blender/dramaclaw_blender/registry.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 blender/dramaclaw_blender/render.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+blender/tests/test_addon_reload.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 blender/tests/test_blockout.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+blender/tests/test_bundled_config.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 blender/tests/test_http.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 blender/tests/test_limits.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 blender/tests/test_naming.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 blender/tests/test_package_imports_without_bpy.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 blender/tests/test_pairing.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+blender/tests/test_projects.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+blender/tests/test_render_output_format.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 ce-allowlist.toml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 deploy/sandbox/linux-amd64/codex-linux-sandbox,Apache-2.0,2026 OpenAI,built from openai/codex codex-rs/linux-sandbox commit da4c8ca57d40b074bdc1b5b1218851100150c56b
 deploy/sandbox/linux-arm64/codex-linux-sandbox,Apache-2.0,2026 OpenAI,built from openai/codex codex-rs/linux-sandbox commit da4c8ca57d40b074bdc1b5b1218851100150c56b
@@ -403,6 +410,10 @@ frontend/src/__tests__/components/themed-toaster.test.tsx,Elastic-2.0,2026 Super
 frontend/src/__tests__/components/ui/header-refresh-button.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/viewport-lazy-image.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/deployment/org-brand-assets.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/blender/blender-addon-download-link.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/blender/blender-client-list.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/blender/blender-pairing-page.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/blender/use-blender-inbox.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/anchored-menu-placement.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/asset-drag-director-bundle.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/asset-drag-hydrate.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -942,6 +953,12 @@ frontend/src/components/ui/useDialogTransition.ts,Elastic-2.0,2026 SuperTale con
 frontend/src/components/viewport-lazy-image.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/env.d.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/app/errorDialogEvents.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/blender/BlenderAddonDownloadLink.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/blender/BlenderClientList.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/blender/BlenderPairingPage.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/blender/api.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/blender/styles.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/blender/useBlenderInbox.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/Canvas.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/CanvasToolbar.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/canvas/NodeSelectionMenu.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1255,6 +1272,7 @@ frontend/src/features/freezone/projectionStatusStore.ts,Elastic-2.0,2026 SuperTa
 frontend/src/features/freezone/projections.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/referenceRoles.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/shotMetadataStore.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/freezone/spawnToViewport.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/freezone/useCanvasSync.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/piko-mini-game/PikoBreakoutGame.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/piko-mini-game/PikoFlyingGame.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1443,6 +1461,7 @@ frontend/src/routeTree.gen.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml
 frontend/src/routes/__root.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/routes/_app.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/routes/_app/access-unavailable.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/routes/_app/blender-pairing.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/routes/_app/credits.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/routes/_app/index.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/routes/_app/payment-return.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1998,10 +2017,13 @@ tests/test_api_audio_prereq.py,Elastic-2.0,2026 SuperTale contributors,REUSE.tom
 tests/test_api_auth_ports.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_beat_image_upload.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_beats_media_urls.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_api_blender_addon.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_blender_auth_boundary.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_blender_clients.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_blender_deliver.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_api_blender_inbox.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_blender_pairing.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_api_blender_projects.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_character_identity_costume.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_character_voice_samples.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_api_characters_asset_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
