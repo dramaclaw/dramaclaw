@@ -156,6 +156,12 @@ function formatTimecode(ms: number, fps = 30): string {
   return `${pad(h)}:${pad(m)}:${pad(s)}:${pad(f)}`;
 }
 
+/**
+ * 探测超时：URL 网络卡住时元素既不触发 loadedmetadata 也不触发 error，自动合成
+ * 会 await 在这里永不返回。超时按探测失败处理。
+ */
+export const PROBE_TIMEOUT_MS = 15_000;
+
 /** Probe a media file's intrinsic duration (ms) via an offscreen element. */
 function probeMediaDuration(
   url: string,
@@ -165,7 +171,12 @@ function probeMediaDuration(
     const el = document.createElement(kind === "audio" ? "audio" : "video");
     el.preload = "metadata";
     el.muted = true;
+    let settled = false;
+    const timer = setTimeout(() => done(null), PROBE_TIMEOUT_MS);
     const done = (value: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       el.removeAttribute("src");
       try {
         el.load();
