@@ -3027,6 +3027,30 @@ def test_external_mcp_canvas_write_rejects_project_outside_bound_session(monkeyp
     Draft202012Validator(plugin._output_schema("freezone_emit_canvas_command")).validate(result)
 
 
+def test_public_create_node_handler_rejects_scope_mismatch_on_external_mcp(monkeypatch):
+    """Drive the public write handler into the external MCP branch, as a real session does."""
+    plugin = _load_plugin_module()
+    _bind_session(monkeypatch, plugin)
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_args, **_kw: None)
+    monkeypatch.setattr(plugin, "_external_generation_parameter_preflight", lambda *_args: None)
+    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: False)
+    monkeypatch.setattr(
+        plugin, "_request", lambda *_a, **_kw: pytest.fail("no API call is needed to reject scope"),
+    )
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+
+    result = handlers["freezone_create_node"]({
+        "project_id": "project-b", "canvas_id": "canvas-a",
+        "node_type": "textAnnotationNode", "data": {"content": "hello"},
+    })
+
+    assert result["ok"] is False
+    assert result["status"] == "scope_mismatch"
+    assert result["project_id"] == "project-a" and result["canvas_id"] == "canvas-a"
+    Draft202012Validator(plugin._output_schema("freezone_create_node")).validate(result)
+
+
 def test_clarification_rejects_project_outside_bound_session(monkeypatch):
     plugin = _load_plugin_module()
     _bind_session(monkeypatch, plugin)
