@@ -2608,10 +2608,12 @@ function FreezoneChatDock({
     document.body.style.userSelect = "none";
     setResizingPane(pane);
 
+    // 浮窗不挤占画布，只需在视口里留出左右边距；停靠态才要给画布预留最小宽度。
+    const reservedWidth = floating ? FREEZONE_CHAT_FLOAT_MARGIN * 2 : minContentWidth;
     const clampChatWidth = (value: number) => {
       const maxByViewport = Math.max(
         FREEZONE_CHAT_WIDTH_MIN,
-        window.innerWidth - minContentWidth - (agentHistoryOpen ? agentHistoryWidth : 0),
+        window.innerWidth - reservedWidth - (agentHistoryOpen ? agentHistoryWidth : 0),
       );
       return clampNumber(
         value,
@@ -2622,7 +2624,7 @@ function FreezoneChatDock({
     const clampHistoryWidth = (value: number) => {
       const maxByViewport = Math.max(
         FREEZONE_AGENT_HISTORY_WIDTH_MIN,
-        window.innerWidth - minContentWidth - chatWidth,
+        window.innerWidth - reservedWidth - chatWidth,
       );
       return clampNumber(
         value,
@@ -2881,8 +2883,10 @@ function FreezoneChatDock({
     return () => window.removeEventListener("resize", handleResize);
   }, [floating]);
 
+  // 可用高度是硬上限：矮窗口里宁可浮窗变矮，也不能压住底部状态区或越出视口、
+  // 让输入框够不着。
   const floatHeight = Math.max(
-    320,
+    0,
     Math.min(
       FREEZONE_CHAT_FLOAT_HEIGHT,
       viewportSize.height - FREEZONE_CHAT_FLOAT_MIN_TOP - FREEZONE_CHAT_FLOAT_BOTTOM_RESERVE,
