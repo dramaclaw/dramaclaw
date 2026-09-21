@@ -911,7 +911,9 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     clarification_id = str(
         args.get("clarification_id") or args.get("request_id") or ""
     ).strip()
-    resumable_clarification_id = clarification_id
+    # An id the agent already holds may name a card that is still waiting (or
+    # was answered late). Resolve it first so a bare resume call needs no questions.
+    resumed = _resume_clarification(project, canvas, clarification_id)
     if not clarification_id:
         context_id = str(
             args.get("skill_studio_session_id") or canvas or "default"
@@ -1046,7 +1048,7 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     answers = args.get("answers")
     if not isinstance(answers, dict):
         answers = {}
-    if not questions:
+    if not questions and resumed is None:
         return tool_result(
             {
                 "ok": False,
@@ -1129,7 +1131,6 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
         )
         if draft_error is not None:
             return tool_result(draft_error)
-    resumed = _resume_clarification(project, canvas, resumable_clarification_id)
     if resumed is not None:
         # The card already exists from an earlier call that timed out. Reuse its
         # questions and recommendations, and collect the answer the user gave
