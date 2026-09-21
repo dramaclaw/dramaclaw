@@ -888,6 +888,8 @@
       "toggle": "Mở Xia Director trong Freezone",
       "close": "Thu gọn Xia Director trong Freezone",
       "resize": "Kéo để đổi kích thước Xia Director trong Freezone",
+      "floatWindow": "Chuyển sang cửa sổ nổi",
+      "dockRight": "Neo sang bên phải",
       "audioApproval": {
         "chooseVoiceTitle": "Chọn giọng thuyết minh",
         "chooseVoiceDescription": "Chọn một giọng tuỳ chỉnh. Nếu chưa chọn bây giờ, bước tạo thuyết minh sẽ được bỏ qua.",

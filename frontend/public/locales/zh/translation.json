@@ -906,6 +906,8 @@
       "toggle": "打开虾画虾导",
       "close": "收起虾画虾导",
       "resize": "拖动调整虾画虾导宽度",
+      "floatWindow": "切换为浮窗",
+      "dockRight": "停靠到右侧",
       "audioApproval": {
         "chooseVoiceTitle": "请选择旁白声线",
         "chooseVoiceDescription": "请选择自定义声线；如果暂不选择，本次将跳过旁白生成。",
