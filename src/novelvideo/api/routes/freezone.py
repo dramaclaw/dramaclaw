@@ -577,12 +577,19 @@ async def _enqueue_claimed_workflow_media(
                     ctx, task_type, 0, scope=job_id,
                 )
         if existing is not None:
+            await _cancel_claimed_media_if_run_cancelled(
+                ctx=ctx,
+                project_dir=project_dir,
+                canvas_id=str(payload.get("canvas_id") or ""),
+                run_id=claim["run_id"],
+                task=existing,
+            )
             return _project_job_response(
                 task_type=task_type,
                 ctx=ctx,
                 job_id=job_id,
                 backend=str((existing.metadata or {}).get("backend") or "celery"),
-                queue=(existing.metadata or {}).get("queue_kind"),
+                queue=(existing.metadata or {}).get("queue"),
                 task_id=existing.task_id,
             )
         run = await asyncio.to_thread(
@@ -630,17 +637,13 @@ async def _enqueue_claimed_workflow_media(
             task_type=task_type,
             task_key=task_key,
         )
-        run = await asyncio.to_thread(
-            read_workflow_run,
-            project_dir=_canvas_state_project_dir(ctx, project_dir),
+        await _cancel_claimed_media_if_run_cancelled(
+            ctx=ctx,
+            project_dir=project_dir,
             canvas_id=str(payload.get("canvas_id") or ""),
             run_id=claim["run_id"],
+            task=queued.task_state,
         )
-        if run is not None and run.get("status") == "cancelled":
-            try:
-                await get_task_backend().cancel_project_task(ctx, queued.task_state)
-            except Exception:
-                logger.exception("failed to cancel media task after workflow cancellation")
     return _project_job_response(
         task_type=task_type,
         ctx=ctx,
@@ -649,6 +652,31 @@ async def _enqueue_claimed_workflow_media(
         queue=queued.queue,
         task_id=queued.task_state.task_id,
     )
+
+
+async def _cancel_claimed_media_if_run_cancelled(
+    *,
+    ctx: ProjectContext,
+    project_dir: Path,
+    canvas_id: str,
+    run_id: str,
+    task: Any,
+) -> None:
+    run = await asyncio.to_thread(
+        read_workflow_run,
+        project_dir=_canvas_state_project_dir(ctx, project_dir),
+        canvas_id=canvas_id,
+        run_id=run_id,
+    )
+    if run is None or run.get("status") != "cancelled":
+        return
+    if task.status not in {"pending", "starting", "submitting", "queued", "running"}:
+        return
+    try:
+        await get_task_backend().cancel_project_task(ctx, task)
+    except Exception as exc:
+        logger.exception("failed to cancel media task after workflow cancellation")
+        raise HTTPException(503, "workflow media task cancellation is pending") from exc
 
 
 async def _start_or_enqueue_freezone_video_gen(

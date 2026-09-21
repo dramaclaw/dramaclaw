@@ -314,10 +314,16 @@ def test_recipe_media_claim_accepts_trusted_compile_and_rejects_replay_change(
         )
 
 
-@pytest.mark.parametrize("cancel_during_enqueue", [False, True])
+@pytest.mark.parametrize(
+    "cancel_during_enqueue,fail_cancel_once",
+    [(False, False), (True, False), (True, True)],
+)
 @pytest.mark.asyncio
 async def test_recipe_media_enqueue_replays_terminal_task_without_rebilling(
-    workflow_run_client: TestClient, monkeypatch, cancel_during_enqueue: bool
+    workflow_run_client: TestClient,
+    monkeypatch,
+    cancel_during_enqueue: bool,
+    fail_cancel_once: bool,
 ) -> None:
     from novelvideo.api.routes import freezone
     from novelvideo.freezone.agent_product_operations import (
@@ -361,6 +367,7 @@ async def test_recipe_media_enqueue_replays_terminal_task_without_rebilling(
     tasks = {}
     enqueue_count = 0
     cancelled_tasks = []
+    cancel_attempts = 0
 
     class TaskManager:
         def get_task_for_project(self, _ctx, _task_type, _episode, *, scope):
@@ -373,7 +380,7 @@ async def test_recipe_media_enqueue_replays_terminal_task_without_rebilling(
             state = SimpleNamespace(
                 task_id="media-task-1",
                 status="running" if cancel_during_enqueue else "completed",
-                metadata={"backend": "celery", "queue_kind": "default"},
+                metadata={"backend": "celery", "queue_kind": "default", "queue": "default"},
             )
             tasks[scope] = state
             if cancel_during_enqueue:
@@ -388,6 +395,10 @@ async def test_recipe_media_enqueue_replays_terminal_task_without_rebilling(
             return SimpleNamespace(task_state=state, backend="celery", queue="default")
 
         async def cancel_project_task(self, _ctx, task):
+            nonlocal cancel_attempts
+            cancel_attempts += 1
+            if fail_cancel_once and cancel_attempts == 1:
+                raise RuntimeError("temporary cancellation failure")
             cancelled_tasks.append(task.task_id)
             task.status = "cancelled"
 
@@ -414,12 +425,19 @@ async def test_recipe_media_enqueue_replays_terminal_task_without_rebilling(
             job_id="discarded-client-job",
         )
 
-    first = await enqueue(payload)
+    if fail_cancel_once:
+        with pytest.raises(HTTPException) as cancellation_error:
+            await enqueue(payload)
+        assert cancellation_error.value.status_code == 503
+        first = await enqueue(payload)
+    else:
+        first = await enqueue(payload)
     again = await enqueue(payload)
-    assert first["data"]["job_id"] == again["data"]["job_id"]
-    assert first["data"]["task_id"] == again["data"]["task_id"]
+    for field in ("job_id", "task_id", "queue", "backend"):
+        assert first["data"][field] == again["data"][field]
     assert enqueue_count == 1
     assert cancelled_tasks == (["media-task-1"] if cancel_during_enqueue else [])
+    assert cancel_attempts == (2 if fail_cancel_once else int(cancel_during_enqueue))
     with pytest.raises(HTTPException) as exc:
         await enqueue({**payload, "prompt": "another castle"})
     assert exc.value.status_code == 409
