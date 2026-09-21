@@ -40,7 +40,10 @@ from novelvideo.novel_source import has_imported_novel
 from novelvideo.ports import get_project_access, get_project_output_purger, get_project_registry
 from novelvideo.scene_prerequisites import scene_build_applies
 from novelvideo.ports.project import ProjectRecord, require_role_value
-from novelvideo.security import ProjectStorageOwnershipError, assert_owned_project_storage
+from novelvideo.security.project_storage import (
+    ProjectStorageOwnershipError,
+    assert_owned_project_storage,
+)
 from novelvideo.project_config import (
     default_aspect_ratio_for_spine_template,
     load_effective_narration_style_for_voice_from_state_dir,
@@ -210,13 +213,9 @@ def _narrator_voice_sample_path(project_dir: str | Path, filename: str) -> Path:
     return Path(project_dir) / "assets" / "narrator" / f"voice{ext}"
 
 
-def _validated_owned_dirs(record: ProjectRecord) -> list[Path]:
-    """校验三类目录确属 owner,返回去重后的真实路径;校验失败直接抛出。
-
-    这是所有对项目整树的移动/删除的唯一入口,任一目录不在
-    ``<root>/<owner>/`` 下即拒绝,禁止碰任何目录。
-    """
-    validated = assert_owned_project_storage(
+def _validated_owned_dirs(record: ProjectRecord) -> tuple[Path, Path, Path]:
+    """Validate the three distinct project paths before any cleanup."""
+    return assert_owned_project_storage(
         owner_username=record.owner_username,
         project_name=record.name,
         storage_org_id=getattr(record, "storage_org_id", None),
@@ -224,15 +223,7 @@ def _validated_owned_dirs(record: ProjectRecord) -> list[Path]:
         output_dir=record.output_dir,
         state_dir=record.state_dir,
         runtime_dir=record.runtime_dir,
-    )
-    unique: list[Path] = []
-    seen: set[Path] = set()
-    for path in validated.as_tuple():
-        if path in seen:
-            continue
-        seen.add(path)
-        unique.append(path)
-    return unique
+    ).as_tuple()
 
 
 async def _cleanup_uncommitted_project_dirs(record: ProjectRecord) -> None:
