@@ -11,6 +11,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import i18n from "i18next";
 import {
   ArrowLeftToLine,
   ArrowRightToLine,
@@ -212,7 +213,9 @@ export async function resolveUnknownClipDurations(
         probed.set(clip.id, durationMs);
       } else if (clip.kind === "video") {
         throw new Error(
-          `无法读取视频素材时长：${clip.displayName ?? clip.sourceUrl}`,
+          i18n.t("videoCompose.error.probeFailed", {
+            name: clip.displayName ?? clip.sourceUrl,
+          }),
         );
       }
     }),

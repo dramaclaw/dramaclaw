@@ -7994,7 +7994,8 @@
     "error": {
       "prefix": "Compose failed",
       "noUrl": "Compose finished but returned no video URL",
-      "overlap": "Video clips overlap in time, which compositing doesn't support yet. Space the overlapping video clips apart or remove one, then export again."
+      "overlap": "Video clips overlap in time, which compositing doesn't support yet. Space the overlapping video clips apart or remove one, then export again.",
+      "probeFailed": "Could not read the video clip duration: {{name}}"
     },
     "node": {
       "hint": "Connect at least {{min}} video nodes to open",
