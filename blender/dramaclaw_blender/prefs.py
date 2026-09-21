@@ -18,14 +18,35 @@ class DramaClawPreferences(bpy.types.AddonPreferences):
         name="服务器地址",
         default=DEFAULT_SERVER,
     )
+    web_url: bpy.props.StringProperty(
+        # 页面和接口不一定同源。生产由 nginx 合到一个源上，这里留空即可；开发
+        # 环境后端在 19081、页面在 vite 的 5174，不填就会把用户送去后端吃 404。
+        name="网页地址",
+        description="留空则与服务器地址相同。开发环境请填前端地址",
+        default="",
+    )
     token: bpy.props.StringProperty(
         name="令牌",
         default="",
         subtype="PASSWORD",
     )
     project: bpy.props.StringProperty(
+        # 存的是项目 **id**，投递地址拼的就是它；名字只拿来显示，见下面 project_name。
         name="项目",
         default="",
+    )
+    project_name: bpy.props.StringProperty(
+        # 只用于面板显示。下拉框的缓存重启 Blender 就没了，没有它面板上只能画出一串
+        # id。老版本存下的 `project` 是名字而这里是空的——投递前据此当作「没选项目」。
+        name="项目名",
+        default="",
+    )
+    pending_code: bpy.props.StringProperty(
+        # 配对码过去只在状态栏报一次就没了，而库里只存哈希，错过就再也拿不回来，
+        # 用户只能反复点「连接」。它必须留在面板上，直到配对有结果。
+        name="配对码",
+        default="",
+        options={"SKIP_SAVE"},
     )
     last_error: bpy.props.StringProperty(
         # 配对是在 `bpy.app.timers` 的回调里收尾的，那里没有 operator 可以
@@ -39,6 +60,7 @@ class DramaClawPreferences(bpy.types.AddonPreferences):
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "server_url")
+        layout.prop(self, "web_url")
         row = layout.row()
         row.enabled = False
         row.label(text="已连接" if self.token else "未连接")

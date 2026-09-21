@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dramaclaw_blender.core.pairing import PairingSession
+from dramaclaw_blender.core.pairing import PairingSession, approve_page_url
 
 
 def test_a_fresh_session_wants_to_poll():
@@ -128,3 +128,36 @@ def test_every_way_a_session_can_end_badly_leaves_something_to_show_the_user():
         assert session.finished is True
         assert not session.token
         assert session.error, end
+
+
+def test_approve_page_url_prefers_the_web_url():
+    # 开发环境：后端 19081，页面在 vite 的 5174。填了网页地址就必须用它。
+    url = approve_page_url(
+        web_url="http://127.0.0.1:5174/",
+        server_url="http://127.0.0.1:19081",
+        code="ABCD-EFGH",
+    )
+
+    assert url == "http://127.0.0.1:5174/blender-pairing?code=ABCD-EFGH"
+
+
+def test_approve_page_url_falls_back_to_the_server_url():
+    # 生产：nginx 把页面和 /api 放在同一个源上，网页地址留空就够了。
+    url = approve_page_url(
+        web_url="   ",
+        server_url="https://app.example.com/",
+        code="ABCD-EFGH",
+    )
+
+    assert url == "https://app.example.com/blender-pairing?code=ABCD-EFGH"
+
+
+def test_approve_page_url_escapes_the_code():
+    # 码本身不会有这些字符，但它来自网络。别让它逃逸成别的查询参数。
+    url = approve_page_url(
+        web_url="",
+        server_url="http://x",
+        code="A&B=C D",
+    )
+
+    assert url == "http://x/blender-pairing?code=A%26B%3DC%20D"

@@ -51,8 +51,10 @@ class DRAMACLAW_MT_projects(bpy.types.Menu):
         if not PROJECT_CACHE:
             layout.label(text="先点右边的刷新")
             return
-        for name in PROJECT_CACHE:
-            layout.operator("dramaclaw.set_project", text=name).name = name
+        for project_id, name in PROJECT_CACHE:
+            op = layout.operator("dramaclaw.set_project", text=name)
+            op.project_id = project_id
+            op.project_name = name
 
 
 class DRAMACLAW_PT_panel(bpy.types.Panel):
@@ -68,17 +70,28 @@ class DRAMACLAW_PT_panel(bpy.types.Panel):
         scene = context.scene
 
         if not prefs.token:
-            layout.operator("dramaclaw.connect", icon="LINKED")
+            if prefs.pending_code:
+                # 码只在状态栏报过一次，而服务端只存哈希——错过就再也拿不回来。
+                # 画在这里，等配对有结果再由 ops 清掉。
+                box = layout.box()
+                box.label(text="配对码", icon="COPYDOWN")
+                box.label(text=prefs.pending_code)
+                box.label(text="已在浏览器里打开确认页")
+            layout.operator(
+                "dramaclaw.connect",
+                icon="LINKED",
+                text="重新连接" if prefs.pending_code else "连接 DramaClaw",
+            )
             if prefs.last_error:
                 # 配对是在定时器里收尾的，那边没有 operator 能 report。这是失败
                 # 原因唯一能露头的地方。
                 layout.label(text=prefs.last_error, icon="ERROR")
-            else:
+            elif not prefs.pending_code:
                 layout.label(text="连接后才能导入", icon="INFO")
             return
 
         row = layout.row(align=True)
-        row.menu("DRAMACLAW_MT_projects", text=prefs.project or "选择项目")
+        row.menu("DRAMACLAW_MT_projects", text=prefs.project_name or "选择项目")
         row.operator("dramaclaw.refresh_projects", text="", icon="FILE_REFRESH")
         layout.prop(scene, "dramaclaw_short_side")
 

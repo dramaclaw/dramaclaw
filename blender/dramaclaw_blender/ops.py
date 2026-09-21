@@ -30,7 +30,8 @@ from .core.limits import (
     LimitError,
     check_frame_range,
 )
-from .core.pairing import PairingSession
+from .core.pairing import PairingSession, approve_page_url
+from .core.projects import parse_projects, reconcile_selection
 from .prefs import api_url, get_prefs
 
 
@@ -61,9 +62,16 @@ class DRAMACLAW_OT_connect(bpy.types.Operator):
             code=started["code"],
             deadline=time.time() + float(started["expires_in"]),
         )
-        approve_url = f"{prefs.server_url.rstrip('/')}/blender-pairing"
-        bpy.ops.wm.url_open(url=approve_url)
-        self.report({"INFO"}, f"DramaClaw：在浏览器里输入配对码 {session.code}")
+        # 先落到偏好设置，面板才画得出来。状态栏那条消息一闪就没，不能当唯一出口。
+        prefs.pending_code = session.code
+        bpy.ops.wm.url_open(
+            url=approve_page_url(
+                web_url=prefs.web_url,
+                server_url=prefs.server_url,
+                code=session.code,
+            )
+        )
+        self.report({"INFO"}, f"DramaClaw：在浏览器里确认配对码 {session.code}")
 
         server_url = prefs.server_url
         addon_key = __package__
@@ -91,6 +99,7 @@ class DRAMACLAW_OT_connect(bpy.types.Operator):
 def _finish(session: PairingSession, addon_key: str) -> None:
     """把配对结果写回偏好设置。定时器里没有 operator 可以 report，所以只能写状态。"""
     prefs = bpy.context.preferences.addons[addon_key].preferences
+    prefs.pending_code = ""
     if session.token:
         prefs.token = session.token
         prefs.last_error = ""
@@ -110,12 +119,15 @@ class DRAMACLAW_OT_disconnect(bpy.types.Operator):
     bl_description = "清掉本机保存的令牌。服务器上的授权在设置页里吊销"
 
     def execute(self, context):
-        get_prefs(context).token = ""
+        prefs = get_prefs(context)
+        prefs.token = ""
+        prefs.pending_code = ""
         self.report({"INFO"}, "DramaClaw：已断开")
         return {"FINISHED"}
 
 
-PROJECT_CACHE: list[str] = []
+# `(id, name)`：下拉框显示名字，选中后存 id。
+PROJECT_CACHE: list[tuple[str, str]] = []
 
 
 class DRAMACLAW_OT_refresh_projects(bpy.types.Operator):
@@ -133,12 +145,10 @@ class DRAMACLAW_OT_refresh_projects(bpy.types.Operator):
             _report_error(self, str(exc))
             return {"CANCELLED"}
 
-        PROJECT_CACHE[:] = [str(name) for name in payload.get("projects", [])]
+        PROJECT_CACHE[:] = parse_projects(payload)
         if not PROJECT_CACHE:
-            self.report({"WARNING"}, "DramaClaw：这个账号下还没有项目")
-        elif prefs.project not in PROJECT_CACHE:
-            # 之前选的项目没了（改名、删了、换了账号）。别留着一个投不进去的名字。
-            prefs.project = PROJECT_CACHE[0]
+            self.report({"WARNING"}, "DramaClaw：这个账号下还没有能投递的项目")
+        prefs.project, prefs.project_name = reconcile_selection(prefs.project, PROJECT_CACHE)
         return {"FINISHED"}
 
 
@@ -146,10 +156,13 @@ class DRAMACLAW_OT_set_project(bpy.types.Operator):
     bl_idname = "dramaclaw.set_project"
     bl_label = "选择项目"
 
-    name: bpy.props.StringProperty()
+    project_id: bpy.props.StringProperty()
+    project_name: bpy.props.StringProperty()
 
     def execute(self, context):
-        get_prefs(context).project = self.name
+        prefs = get_prefs(context)
+        prefs.project = self.project_id
+        prefs.project_name = self.project_name
         return {"FINISHED"}
 
 
@@ -175,7 +188,8 @@ class _DeliverBase(bpy.types.Operator):
         if not prefs.token:
             _report_error(self, "还没连接，先点「连接 DramaClaw」")
             return {"CANCELLED"}
-        if not prefs.project:
+        # 只有 id 没有名字，是老版本存下的项目名，投出去必然 `Project not found`。
+        if not prefs.project or not prefs.project_name:
             _report_error(self, "先在面板里选一个项目")
             return {"CANCELLED"}
 
@@ -409,7 +423,7 @@ class DRAMACLAW_OT_deliver_local_video(bpy.types.Operator, ImportHelper):
 
     def execute(self, context):
         prefs = get_prefs(context)
-        if not prefs.token or not prefs.project:
+        if not prefs.token or not prefs.project or not prefs.project_name:
             _report_error(self, "先连接并选好项目")
             return {"CANCELLED"}
 

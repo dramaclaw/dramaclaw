@@ -6,6 +6,23 @@
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
+PAIRING_PAGE_PATH = "/blender-pairing"
+
+
+def approve_page_url(*, web_url: str, server_url: str, code: str) -> str:
+    """浏览器里确认配对的页面地址。
+
+    页面是前端的，不是后端的。生产由 nginx 把两者放在同一个源上，填服务器地址
+    即可；开发环境后端在 19081、页面在 vite 的 5174，必须单独填网页地址，否则
+    打开的是后端，只会得到 404。
+
+    码带在查询串里，用户不必手敲——敲错一位就整体被拒，而服务端不会说错在哪。
+    """
+    base = (web_url.strip() or server_url.strip()).rstrip("/")
+    return f"{base}{PAIRING_PAGE_PATH}?code={quote(code, safe='')}"
+
 
 class PairingSession:
     MAX_CONSECUTIVE_FAILURES = 5

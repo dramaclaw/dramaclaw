@@ -57,17 +57,36 @@ def make_blockout_scene(
     if animation:
         scene.frame_start = frame_start
         scene.frame_end = frame_end
-        scene.render.image_settings.file_format = "FFMPEG"
+        _set_output_format(
+            scene.render.image_settings, media_type="VIDEO", file_format="FFMPEG"
+        )
         for key, value in blockout.ffmpeg_settings().items():
             setattr(scene.render.ffmpeg, key, value)
         output = os.path.join(directory, "blockout")
     else:
-        scene.render.image_settings.file_format = "PNG"
+        _set_output_format(
+            scene.render.image_settings, media_type="IMAGE", file_format="PNG"
+        )
         scene.render.image_settings.color_mode = "RGB"
         output = os.path.join(directory, "blockout.png")
 
     scene.render.filepath = output
     return scene, output
+
+
+def _set_output_format(image_settings, *, media_type: str, file_format: str) -> None:
+    """设输出格式，兼容 Blender 5.x 把它拆成了两级。
+
+    5.x 起先有 `media_type`（IMAGE / MULTI_LAYER_IMAGE / VIDEO），`file_format` 的可选项
+    跟着它变：`media_type` 不是 VIDEO 时枚举里根本没有 `FFMPEG`，直接赋值就是
+    `TypeError: enum "FFMPEG" not found`（5.2 真机上踩过）。反方向也一样——场景副本
+    继承了用户的输出设置，用户场景要是本来就输出视频，不先切回 IMAGE 就设不上 PNG。
+
+    插件声明支持到 3.6，那时候还没有 `media_type`，只能按属性在不在来分支。
+    """
+    if hasattr(image_settings, "media_type"):
+        image_settings.media_type = media_type
+    image_settings.file_format = file_format
 
 
 def discard_blockout_scene(scene: bpy.types.Scene) -> None:
