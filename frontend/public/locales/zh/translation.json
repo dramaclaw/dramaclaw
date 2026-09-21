@@ -2248,6 +2248,7 @@
     "dashboardTitle": "项目管理中心",
     "dashboardReturn": "返回项目管理中心",
     "dashboardSubtitle": "管理你的短剧项目和脚本",
+    "blenderAddon": "Blender 插件",
     "emptyTitle": "开启你的第一个故事",
     "emptyDescription": "创建项目以开始撰写剧本、生成分镜、制作视频",
     "heroTitle": "开启你的创作之旅",
@@ -7733,5 +7734,34 @@
     "reload": "重新加载",
     "statusUnknown": "暂时无法确认功能开放状态，请稍后重试。",
     "unavailableTitle": "功能未开放"
+  },
+  "blender": {
+    "pairing": {
+      "title": "连接 Blender",
+      "description": "在 Blender 的 DramaClaw 面板上点「连接」，把面板显示的配对码填在这里。",
+      "codeLabel": "配对码",
+      "codePlaceholder": "XXXX-XXXX",
+      "submit": "确认连接",
+      "submitting": "连接中…",
+      "success": "已连接，回到 Blender 即可开始投递。",
+      "again": "再连一台"
+    },
+    "clients": {
+      "title": "已连接的 Blender",
+      "empty": "还没有连接过 Blender。",
+      "download": "下载插件",
+      "createdAt": "连接于 {{when}}",
+      "lastSeen": "最近使用 {{when}}",
+      "neverUsed": "从未使用",
+      "revoke": "断开",
+      "revokeTitle": "断开这台 Blender？",
+      "revokeBody": "断开后这台机器上的插件要重新配对才能继续投递。",
+      "revoked": "已断开",
+      "manage": "管理连接"
+    },
+    "inbox": {
+      "arrived_one": "从 Blender 收到 1 个素材",
+      "arrived_other": "从 Blender 收到 {{count}} 个素材"
+    }
   }
 }

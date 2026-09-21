@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { BlenderAddonDownloadLink } from "@/features/blender/BlenderAddonDownloadLink";
 import {
   Select,
   SelectContent,
@@ -1310,6 +1311,13 @@ function ProjectDashboard() {
           </p>
         </div>
         <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+          <BlenderAddonDownloadLink />
+          <Link
+            to="/blender-pairing"
+            className="text-xs text-muted-foreground underline-offset-4 hover:underline"
+          >
+            {t("blender.clients.manage")}
+          </Link>
           {totalProjects > 0 && (
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />

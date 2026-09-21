@@ -61,6 +61,7 @@ import { withImageCacheBust } from "@/features/canvas/application/imageData";
 import { queryKeys } from "@/lib/query-keys";
 import { SESSION_EXPIRED_EVENT } from "@/lib/session-expiry";
 import { useCanvasSync, type CanvasSyncStatus, type ConflictSnapshot } from "./useCanvasSync";
+import { useBlenderInbox } from "@/features/blender/useBlenderInbox";
 import { prefetchFreezoneImageModels } from "@/features/canvas/hooks/useFreezoneImageModels";
 import { prefetchFreezoneVideoModels } from "@/features/canvas/hooks/useFreezoneVideoModels";
 import { prefetchFreezoneCameraOptions } from "@/features/canvas/hooks/useFreezoneCameraOptions";
@@ -506,6 +507,7 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
     }
   }, [projectId, queryClient]);
   const sync = useCanvasSync(projectId, canvasId);
+  useBlenderInbox({ projectId, canvasId, sync });
 
   const handleBlankPaneClick = useCallback(() => {
     setAssetPanelCollapsed(true);

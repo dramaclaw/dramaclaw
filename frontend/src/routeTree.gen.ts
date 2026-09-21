@@ -19,6 +19,7 @@ import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as WatchWorkRouteImport } from './routes/watch.$work'
 import { Route as AppPaymentReturnRouteImport } from './routes/_app/payment-return'
 import { Route as AppCreditsRouteImport } from './routes/_app/credits'
+import { Route as AppBlenderPairingRouteImport } from './routes/_app/blender-pairing'
 import { Route as AppAccessUnavailableRouteImport } from './routes/_app/access-unavailable'
 import { Route as AppProjectsProjectTasksRouteImport } from './routes/_app/projects.$project/tasks'
 import { Route as AppProjectsProjectStylesRouteImport } from './routes/_app/projects.$project/styles'
@@ -98,6 +99,11 @@ const AppPaymentReturnRoute = AppPaymentReturnRouteImport.update({
 const AppCreditsRoute = AppCreditsRouteImport.update({
   id: '/credits',
   path: '/credits',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppBlenderPairingRoute = AppBlenderPairingRouteImport.update({
+  id: '/blender-pairing',
+  path: '/blender-pairing',
   getParentRoute: () => AppRoute,
 } as any)
 const AppAccessUnavailableRoute = AppAccessUnavailableRouteImport.update({
@@ -242,6 +248,7 @@ export interface FileRoutesByFullPath {
   '/recharge': typeof RechargeRoute
   '/download': typeof DownloadLazyRoute
   '/access-unavailable': typeof AppAccessUnavailableRoute
+  '/blender-pairing': typeof AppBlenderPairingRoute
   '/credits': typeof AppCreditsRoute
   '/payment-return': typeof AppPaymentReturnRoute
   '/watch/$work': typeof WatchWorkRoute
@@ -267,6 +274,7 @@ export interface FileRoutesByTo {
   '/recharge': typeof RechargeRoute
   '/download': typeof DownloadLazyRoute
   '/access-unavailable': typeof AppAccessUnavailableRoute
+  '/blender-pairing': typeof AppBlenderPairingRoute
   '/credits': typeof AppCreditsRoute
   '/payment-return': typeof AppPaymentReturnRoute
   '/watch/$work': typeof WatchWorkRoute
@@ -295,6 +303,7 @@ export interface FileRoutesById {
   '/recharge': typeof RechargeRoute
   '/download': typeof DownloadLazyRoute
   '/_app/access-unavailable': typeof AppAccessUnavailableRoute
+  '/_app/blender-pairing': typeof AppBlenderPairingRoute
   '/_app/credits': typeof AppCreditsRoute
   '/_app/payment-return': typeof AppPaymentReturnRoute
   '/watch/$work': typeof WatchWorkRoute
@@ -324,6 +333,7 @@ export interface FileRouteTypes {
     | '/recharge'
     | '/download'
     | '/access-unavailable'
+    | '/blender-pairing'
     | '/credits'
     | '/payment-return'
     | '/watch/$work'
@@ -349,6 +359,7 @@ export interface FileRouteTypes {
     | '/recharge'
     | '/download'
     | '/access-unavailable'
+    | '/blender-pairing'
     | '/credits'
     | '/payment-return'
     | '/watch/$work'
@@ -376,6 +387,7 @@ export interface FileRouteTypes {
     | '/recharge'
     | '/download'
     | '/_app/access-unavailable'
+    | '/_app/blender-pairing'
     | '/_app/credits'
     | '/_app/payment-return'
     | '/watch/$work'
@@ -469,6 +481,13 @@ declare module '@tanstack/react-router' {
       path: '/credits'
       fullPath: '/credits'
       preLoaderRoute: typeof AppCreditsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/blender-pairing': {
+      id: '/_app/blender-pairing'
+      path: '/blender-pairing'
+      fullPath: '/blender-pairing'
+      preLoaderRoute: typeof AppBlenderPairingRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/access-unavailable': {
@@ -624,6 +643,7 @@ const AppProjectsProjectEpisodesRouteWithChildren =
 
 interface AppRouteChildren {
   AppAccessUnavailableRoute: typeof AppAccessUnavailableRoute
+  AppBlenderPairingRoute: typeof AppBlenderPairingRoute
   AppCreditsRoute: typeof AppCreditsRoute
   AppPaymentReturnRoute: typeof AppPaymentReturnRoute
   AppIndexRoute: typeof AppIndexRoute
@@ -638,6 +658,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppAccessUnavailableRoute: AppAccessUnavailableRoute,
+  AppBlenderPairingRoute: AppBlenderPairingRoute,
   AppCreditsRoute: AppCreditsRoute,
   AppPaymentReturnRoute: AppPaymentReturnRoute,
   AppIndexRoute: AppIndexRoute,

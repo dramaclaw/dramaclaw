@@ -2248,6 +2248,7 @@
     "dashboardTitle": "Project Management Center",
     "dashboardReturn": "Back to Project Management",
     "dashboardSubtitle": "Manage your drama productions and scripts.",
+    "blenderAddon": "Blender Add-on",
     "emptyTitle": "Start your first story",
     "emptyDescription": "Create a project to begin scripting, generating sketches, and producing episodes.",
     "heroTitle": "Start your creative journey",
@@ -7733,5 +7734,34 @@
     "reload": "Reload",
     "statusUnknown": "Can't confirm feature availability right now. Please try again later.",
     "unavailableTitle": "Feature unavailable"
+  },
+  "blender": {
+    "pairing": {
+      "title": "Connect Blender",
+      "description": "Click Connect in the DramaClaw panel inside Blender, then enter the pairing code it shows here.",
+      "codeLabel": "Pairing code",
+      "codePlaceholder": "XXXX-XXXX",
+      "submit": "Connect",
+      "submitting": "Connecting…",
+      "success": "Connected. Head back to Blender and start sending.",
+      "again": "Connect another"
+    },
+    "clients": {
+      "title": "Connected Blender",
+      "empty": "No Blender connected yet.",
+      "download": "Download add-on",
+      "createdAt": "Connected {{when}}",
+      "lastSeen": "Last used {{when}}",
+      "neverUsed": "Never used",
+      "revoke": "Disconnect",
+      "revokeTitle": "Disconnect this Blender?",
+      "revokeBody": "After disconnecting, the add-on on that machine has to pair again before it can send anything.",
+      "revoked": "Disconnected",
+      "manage": "Manage connections"
+    },
+    "inbox": {
+      "arrived_one": "1 asset received from Blender",
+      "arrived_other": "{{count}} assets received from Blender"
+    }
   }
 }

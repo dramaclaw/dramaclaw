@@ -2152,6 +2152,7 @@
     "dashboardTitle": "Trung tâm quản lý dự án",
     "dashboardReturn": "Về Trung tâm quản lý dự án",
     "dashboardSubtitle": "Quản lý các dự án phim và kịch bản của bạn.",
+    "blenderAddon": "Tiện ích Blender",
     "emptyTitle": "Bắt đầu câu chuyện đầu tiên",
     "emptyDescription": "Tạo một dự án để bắt đầu viết kịch bản, tạo phác thảo và sản xuất tập phim.",
     "heroTitle": "Bắt đầu hành trình sáng tạo",
@@ -7733,5 +7734,34 @@
     "creating": "Đang tạo đơn…",
     "createFailed": "Không thể tạo đơn thanh toán. Vui lòng thử lại sau.",
     "orderAlreadyCreated": "Đơn này đã tồn tại. Hãy kiểm tra lịch sử nạp."
+  },
+  "blender": {
+    "pairing": {
+      "title": "Kết nối Blender",
+      "description": "Nhấn Kết nối trong bảng DramaClaw của Blender, rồi nhập mã ghép nối hiển thị ở đó vào đây.",
+      "codeLabel": "Mã ghép nối",
+      "codePlaceholder": "XXXX-XXXX",
+      "submit": "Kết nối",
+      "submitting": "Đang kết nối…",
+      "success": "Đã kết nối. Quay lại Blender để bắt đầu gửi.",
+      "again": "Kết nối máy khác"
+    },
+    "clients": {
+      "title": "Blender đã kết nối",
+      "empty": "Chưa kết nối Blender nào.",
+      "download": "Tải tiện ích",
+      "createdAt": "Kết nối lúc {{when}}",
+      "lastSeen": "Dùng gần nhất {{when}}",
+      "neverUsed": "Chưa từng dùng",
+      "revoke": "Ngắt kết nối",
+      "revokeTitle": "Ngắt kết nối Blender này?",
+      "revokeBody": "Sau khi ngắt, tiện ích trên máy đó phải ghép nối lại mới gửi được.",
+      "revoked": "Đã ngắt kết nối",
+      "manage": "Quản lý kết nối"
+    },
+    "inbox": {
+      "arrived_one": "Đã nhận 1 tài nguyên từ Blender",
+      "arrived_other": "Đã nhận {{count}} tài nguyên từ Blender"
+    }
   }
 }
