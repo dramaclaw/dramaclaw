@@ -2379,7 +2379,8 @@ async def list_pending_canvas_commands(
             frames.append(
                 {
                     "type": "canvas.command",
-                    "turn_id": f"external-agent:{key}",
+                    "turn_id": str(envelope.get("turn_id") or "").strip()
+                    or f"external-agent:{key}",
                     "canvas_id": envelope.get("canvas_id") or canvas_id,
                     "agent_id": str(envelope.get("agent_id") or agent_id),
                     "bridge_key": key,
@@ -2430,7 +2431,8 @@ async def list_pending_canvas_commands(
             frames.append(
                 {
                     "type": "canvas.command",
-                    "turn_id": f"external-agent:{key}",
+                    "turn_id": str(envelope.get("turn_id") or "").strip()
+                    or f"external-agent:{key}",
                     "canvas_id": envelope.get("canvas_id") or canvas_id,
                     "agent_id": str(envelope.get("agent_id") or agent_id),
                     "bridge_key": key,
