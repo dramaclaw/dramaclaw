@@ -2956,6 +2956,89 @@ def test_freezone_plugin_clarification_tool_waits_for_frontend_result(monkeypatc
     assert pending_events[0]["event"]["questions"][0]["mode"] == "multiple"
 
 
+def _bind_session(monkeypatch, plugin, project="project-a", canvas="canvas-a"):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", project)
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", canvas)
+    for name in (
+        "put_pending_canvas_context", "put_pending_canvas_command",
+        "put_pending_clarification_event", "put_pending_skill_studio_event",
+    ):
+        monkeypatch.setattr(
+            plugin, name, lambda **_kw: pytest.fail("mismatched scope must not reach the bridge")
+        )
+
+
+def test_canvas_context_rejects_project_outside_bound_session(monkeypatch):
+    """A retyped project id fails immediately instead of waiting for a delivery that never comes."""
+    plugin = _load_plugin_module()
+    _bind_session(monkeypatch, plugin, project="01M2Z11A4CYCFE5XPVAYE04PRX")
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+
+    result = handlers["freezone_get_canvas_ontology"]({
+        "project_id": "01M2Z11A4CYFE5XPVAYE04PRX", "canvas_id": "canvas-a",
+    })
+
+    assert result["ok"] is False
+    assert result["status"] == "scope_mismatch"
+    assert result["project_id"] == "01M2Z11A4CYCFE5XPVAYE04PRX"
+    assert result["canvas_id"] == "canvas-a"
+    assert "01M2Z11A4CYFE5XPVAYE04PRX" in result["error"]
+    assert result["retryable"] is True
+    Draft202012Validator(plugin._output_schema("freezone_get_canvas_ontology")).validate(result)
+
+
+def test_canvas_write_rejects_canvas_outside_bound_session(monkeypatch):
+    plugin = _load_plugin_module()
+    _bind_session(monkeypatch, plugin)
+    monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_args: None)
+    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: False)
+    monkeypatch.setattr(
+        plugin, "_dispatch_mcp_approved_frontend_commands",
+        lambda **_kw: pytest.fail("mismatched scope must not dispatch"),
+    )
+
+    result = plugin._dispatch_frontend_canvas_commands(
+        project="project-a", canvas="canvas-b",
+        commands=[{"type": "create_node", "node_type": "textAnnotationNode"}],
+        slim_result=False,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "scope_mismatch"
+    assert "canvas-b" in result["error"] and "canvas-a" in result["error"]
+    Draft202012Validator(plugin._output_schema("freezone_create_node")).validate(result)
+
+
+def test_clarification_rejects_project_outside_bound_session(monkeypatch):
+    plugin = _load_plugin_module()
+    _bind_session(monkeypatch, plugin)
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+
+    result = handlers["freezone_request_user_clarification"]({
+        "project_id": "project-b", "canvas_id": "canvas-a",
+        "questions": [{"id": "scope", "title": "主要做什么？",
+                       "options": [{"id": "workflow", "label": "工作流"}]}],
+    })
+
+    assert result["ok"] is False
+    assert result["status"] == "scope_mismatch"
+    Draft202012Validator(
+        plugin._output_schema("freezone_request_user_clarification")
+    ).validate(result)
+
+
+def test_bound_scope_allows_matching_or_omitted_ids(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    assert plugin._bound_scope_mismatch("project-a", "canvas-a") is None
+    assert plugin._bound_scope_mismatch(None, None) is None
+    assert plugin._bound_scope_mismatch("project-a", None) is None
+    monkeypatch.delenv("DRAMACLAW_PROJECT_ID")
+    monkeypatch.delenv("DRAMACLAW_CANVAS_ID")
+    assert plugin._bound_scope_mismatch("project-z", "canvas-z") is None
+
+
 def test_external_generation_clarification_rejects_bundled_settings(monkeypatch):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
