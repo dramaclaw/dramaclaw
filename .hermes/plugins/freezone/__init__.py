@@ -4204,6 +4204,9 @@ def _dispatch_mcp_approved_frontend_commands(
             "Canvas command bridge is unavailable; cannot dispatch frontend node action. "
             f"Import error: {_CANVAS_COMMAND_BRIDGE_IMPORT_ERROR}"
         )
+    mismatch = _bound_scope_mismatch(project, canvas)
+    if mismatch is not None:
+        return tool_result(mismatch)
     external_mcp = os.environ.get("DRAMACLAW_EXTERNAL_MCP", "").strip() == "1"
     profile = os.environ.get("DRAMACLAW_AGENT_PROFILE", "").strip()
     agent_id = (

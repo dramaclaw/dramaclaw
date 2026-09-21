@@ -3009,6 +3009,24 @@ def test_canvas_write_rejects_canvas_outside_bound_session(monkeypatch):
     Draft202012Validator(plugin._output_schema("freezone_create_node")).validate(result)
 
 
+def test_external_mcp_canvas_write_rejects_project_outside_bound_session(monkeypatch):
+    """The Codex/external MCP approval path is the one real sessions use; guard it too."""
+    plugin = _load_plugin_module()
+    _bind_session(monkeypatch, plugin, project="01M2Z11A4CYCFE5XPVAYE04PRX")
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+
+    result = plugin._dispatch_mcp_approved_frontend_commands(
+        project="01M2Z11A4CYFE5XPVAYE04PRX", canvas="canvas-a",
+        commands=[{"type": "create_node", "node_type": "imageGenNode"}],
+        slim_result=True,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "scope_mismatch"
+    assert result["project_id"] == "01M2Z11A4CYCFE5XPVAYE04PRX"
+    Draft202012Validator(plugin._output_schema("freezone_emit_canvas_command")).validate(result)
+
+
 def test_clarification_rejects_project_outside_bound_session(monkeypatch):
     plugin = _load_plugin_module()
     _bind_session(monkeypatch, plugin)
