@@ -7871,7 +7871,8 @@
     "error": {
       "prefix": "Dựng video thất bại",
       "noUrl": "Dựng xong nhưng không trả về URL video",
-      "overlap": "Các đoạn video bị chồng thời gian, phần dựng chưa hỗ trợ điều này. Hãy tách các đoạn bị chồng ra hoặc xoá bớt một đoạn rồi xuất lại."
+      "overlap": "Các đoạn video bị chồng thời gian, phần dựng chưa hỗ trợ điều này. Hãy tách các đoạn bị chồng ra hoặc xoá bớt một đoạn rồi xuất lại.",
+      "probeFailed": "Không đọc được thời lượng đoạn video: {{name}}"
     },
     "node": {
       "hint": "Nối ít nhất {{min}} node video để mở được",

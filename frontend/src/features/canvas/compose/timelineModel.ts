@@ -159,6 +159,36 @@ export function compactVideoTracks(
 }
 
 /**
+ * 把探测到的源时长（clipId → ms）写回片段：仍停在兜底长度或超出源长的裁剪终点
+ * 收到真实时长，然后主视频轨补位。不补位的话，按 5s 兜底排好的后继片段起点不会
+ * 跟着右移，片段变长后就会与后继重叠。
+ */
+export function applyProbedDurations(
+  state: ComposeTimelineState,
+  probed: ReadonlyMap<string, number>,
+): ComposeTimelineState {
+  if (probed.size === 0) return state;
+  return compactVideoTracks({
+    ...state,
+    tracks: state.tracks.map((track) => ({
+      ...track,
+      clips: track.clips.map((clip) => {
+        const durationMs = probed.get(clip.id);
+        if (durationMs == null) return clip;
+        return {
+          ...clip,
+          durationMs,
+          trimEndMs:
+            clip.trimEndMs === FALLBACK_CLIP_MS || clip.trimEndMs > durationMs
+              ? durationMs
+              : clip.trimEndMs,
+        };
+      }),
+    })),
+  });
+}
+
+/**
  * 拖拽换序时，根据被拖片段左缘在时间线上的落点（ms），算它该插入到「已无缝排布的
  * siblings」中的下标。判定基准是被拖片段的中心越过某 sibling 的中心即排到其前面。
  * siblings 必须已按时间线顺序排列。

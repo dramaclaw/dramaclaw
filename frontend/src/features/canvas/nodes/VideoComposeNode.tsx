@@ -32,6 +32,7 @@ import { readUrl } from "@/lib/url-params";
 import {
   buildInitialTimeline,
   reconcileDraftWithUpstream,
+  resolveUnknownClipDurations,
   VideoComposeModal,
 } from "@/features/canvas/compose/VideoComposeModal";
 import {
@@ -113,9 +114,11 @@ export const VideoComposeNode = memo(
         throw new Error("自动合成至少需要 1 个视频和共计 2 个已完成媒体节点");
       }
       const draft = data.draftTimeline as ComposeTimelineState | undefined;
-      const timeline = draft?.tracks?.length
-        ? reconcileDraftWithUpstream(draft, seedNodeIds)
-        : buildInitialTimeline(seedNodeIds);
+      const timeline = await resolveUnknownClipDurations(
+        draft?.tracks?.length
+          ? reconcileDraftWithUpstream(draft, seedNodeIds)
+          : buildInitialTimeline(seedNodeIds),
+      );
       if (!hasExportableClips(timeline)) throw new Error("视频合成没有可用素材");
       if (hasOverlappingVideoClips(timeline)) {
         throw new Error("视频轨道存在重叠片段，请先在时间线中调整");
