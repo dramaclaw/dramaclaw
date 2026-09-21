@@ -1,4 +1,18 @@
 {
+  "referenceValidation": {
+    "firstFrame": "First frame", "lastFrame": "Last frame",
+    "title": "Reference media does not meet model requirements", "hint": "Correct the listed media before generating. Locate opens the corresponding canvas node.", "locate": "Locate media",
+    "image": "Image", "audio": "Audio", "video": "Video",
+    "format": "Actual format: {{actual}}; supported: {{expected}}.",
+    "unreadable": "Unable to read or identify this media. Please upload a valid file.",
+    "maxMB": "Actual size: {{actual}} MB; maximum: {{expected}} MB.",
+    "minWidth": "Width: {{actual}} px; minimum: {{expected}} px.", "maxWidth": "Width: {{actual}} px; maximum: {{expected}} px.",
+    "minHeight": "Height: {{actual}} px; minimum: {{expected}} px.", "maxHeight": "Height: {{actual}} px; maximum: {{expected}} px.",
+    "minAspectRatio": "Aspect ratio: {{actual}}; minimum: {{expected}}.", "maxAspectRatio": "Aspect ratio: {{actual}}; maximum: {{expected}}.",
+    "minFPS": "Frame rate: {{actual}} fps; minimum: {{expected}} fps.", "maxFPS": "Frame rate: {{actual}} fps; maximum: {{expected}} fps.",
+    "minDuration": "Duration: {{actual}} s; each clip must be at least {{expected}} s.", "maxDuration": "Duration: {{actual}} s; each clip must be at most {{expected}} s.",
+    "totalMinDuration": "Total reference duration: {{actual}} s; minimum: {{expected}} s.", "totalMaxDuration": "Total reference duration: {{actual}} s; maximum: {{expected}} s."
+  },
   "app": {
     "title": "SuperTale",
     "subtitle": "SuperTale candidate generation and asset commit workbench",
@@ -3993,6 +4007,7 @@
       },
       "render": {
         "generateNew": "Generate new",
+        "sketchRequired": "Generate or upload a sketch first",
         "switched": "Render switched",
         "switchFailed": "Switch failed",
         "forcedUse": "Force-applied this render",

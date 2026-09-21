@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { NO_CHARACTER_MARKER, NO_PROP_MARKER } from "@/lib/beat-markers";
 import {
   extractMainlineContextsFromNode,
   type MainlineContext,
@@ -112,11 +113,13 @@ export function getCurrentBeatContextFromNode(
       const markers = parseBeatContextVisualMarkers(visualDescription);
       return {
         ...explicitBeatContext,
-        detected_identities: stringList(explicitBeatContext.detected_identities).filter((id) =>
-          markers.identities.includes(id),
+        // 「无角色出场 / 无道具」哨兵不会出现在 {{}} / [[]] 标记里，过滤时必须保留，
+        // 否则 Render 会把用户显式选择的空镜判为「尚未标注出场身份」。
+        detected_identities: stringList(explicitBeatContext.detected_identities).filter(
+          (id) => id === NO_CHARACTER_MARKER || markers.identities.includes(id),
         ),
-        detected_props: stringList(explicitBeatContext.detected_props).filter((id) =>
-          markers.props.includes(id),
+        detected_props: stringList(explicitBeatContext.detected_props).filter(
+          (id) => id === NO_PROP_MARKER || markers.props.includes(id),
         ),
       };
     }

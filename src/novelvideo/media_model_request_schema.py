@@ -86,6 +86,16 @@ def normalize_media_model_catalog_config(config: object) -> dict[str, Any]:
     if not isinstance(config, dict):
         raise MediaModelSchemaError("media model config must be an object")
     normalized = copy.deepcopy(config)
+    from novelvideo.freezone.reference_validation import PREFIXES, normalize_format
+
+    for prefix in PREFIXES.values():
+        key = prefix + "Formats"
+        if isinstance(normalized.get(key), list):
+            if any(not isinstance(value, str) for value in normalized[key]):
+                raise MediaModelSchemaError(f"{key} must contain format names")
+            normalized[key] = list(dict.fromkeys(
+                normalize_format(value) for value in normalized[key] if value.strip().lstrip(".")
+            ))
     # Briefly introduced during development, then removed when native-audio
     # defaults were fixed by product policy (supported => on by default).
     # Drop it on save/import so previewed local configs do not retain dead data.
@@ -390,6 +400,12 @@ def validate_media_model_catalog_config(
         raise MediaModelSchemaError(
             "media model config contains reserved fields: " + ", ".join(reserved_fields)
         )
+    from novelvideo.freezone.reference_validation import validate_reference_config
+
+    try:
+        validate_reference_config(config)
+    except ValueError as exc:
+        raise MediaModelSchemaError(str(exc)) from exc
     request_schema = validate_media_request_schema(config.get("request"))
     expected_endpoint = (
         "images/generations" if media_type == "image" else "video/generations"

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { apiCall, apiCallEnvelope, apiClient } from "./client";
+import { readReferenceMediaLimits, type ReferenceMediaLimits } from "./referenceMediaLimits";
 
 // Per-node generation history -------------------------------------------- //
 
@@ -916,7 +917,7 @@ export interface MediaModelRequestSchema {
   omitPaths?: string[];
 }
 
-export interface FreezoneImageModelInfo {
+export interface FreezoneImageModelInfo extends ReferenceMediaLimits {
   /** Opaque database identity used by new billing and task records. */
   catalogId?: string;
   /** Stable picker id, e.g. `"huimeng/gpt-image-2"`. */
@@ -1033,6 +1034,7 @@ function modelEntryFromObject(entry: Record<string, unknown>): FreezoneImageMode
     resolutionOptions: pickStringArray(entry, "resolutionOptions", "resolution_options"),
     qualityOptions: pickStringArray(entry, "qualityOptions", "quality_options"),
     ratioOptions: pickStringArray(entry, "ratioOptions", "ratio_options"),
+    ...readReferenceMediaLimits(entry),
     referenceImageMax: pickNumber(entry, "referenceImageMax", "reference_image_max"),
     request: pickMediaRequestSchema(entry.request),
   };
@@ -1108,7 +1110,7 @@ export async function fetchFreezoneImageModels(
 /** Provider tab id for video generation models. */
 export type FreezoneVideoProvider = "newapi" | "seedance" | "huimeng";
 
-export interface FreezoneVideoModelInfo {
+export interface FreezoneVideoModelInfo extends ReferenceMediaLimits {
   /** Opaque database identity used by new billing and task records. */
   catalogId?: string;
   /** Stable picker id, e.g. `"seedance_2"` (backend currently keys by api id). */
@@ -1224,6 +1226,7 @@ function videoModelEntryFromObject(
     ratioOptions: pickStringArray(entry, "ratioOptions", "ratio_options"),
     supportedModes: pickStringArray(entry, "supportedModes", "supported_modes"),
     referenceImageMax: pickNumber(entry, "referenceImageMax", "reference_image_max"),
+    ...readReferenceMediaLimits(entry),
     referenceVideoMax: pickNumber(entry, "referenceVideoMax", "reference_video_max"),
     referenceAudioMax: pickNumber(entry, "referenceAudioMax", "reference_audio_max"),
     referenceFileMax: pickNumber(entry, "referenceFileMax", "reference_file_max"),

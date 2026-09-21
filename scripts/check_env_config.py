@@ -134,6 +134,11 @@ COMMON_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 CE_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
     (
+        re.compile(r"^ST_MEDIA_ARCHIVE_COPY_ENABLED$"),
+        "EE-only archive copy switch checked by shared CE delivery code; "
+        "CE does not expose it as operator configuration.",
+    ),
+    (
         re.compile(r"^NEWAPI_(?:API_KEY|BASE_URL)$"),
         "EE deployment credentials read by shared CE/EE gateway code; CE dynamic "
         "credentials live in settings.db and intentionally omit these variables.",

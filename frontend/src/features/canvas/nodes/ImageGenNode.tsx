@@ -96,6 +96,7 @@ import {
 import { useNaturalSizeRecordTrust } from '@/features/canvas/hooks/useNaturalSizeRecordTrust';
 import { useNodeBodyVariantBudget } from '@/features/canvas/hooks/useNodeBodyVariantBudget';
 import { useCanvasStore, useIsBoxSelecting } from '@/stores/canvasStore';
+import { ReferenceValidationDialog, referenceIssues, matchesReference, referenceIssueName, type ReferenceIssue } from './shared/ReferenceValidationDialog';
 import { useShallow } from 'zustand/react/shallow';
 import { getFreezoneCanvasMetadata } from '@/features/freezone/canvasMetadataContext';
 import {
@@ -303,6 +304,8 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   const { t } = useTranslation();
   const updateNodeInternals = useUpdateNodeInternals();
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
+  const [referenceErrors, setReferenceErrors] = useState<ReferenceIssue[]>([]);
+  const [referenceErrorsOpen, setReferenceErrorsOpen] = useState(false);
   const isBoxSelecting = useIsBoxSelecting();
   // 顶部工具栏打开了二级功能浮层（全景 / 多角度 / 打光 等）时，浮层会在节点下方
   // 展开自己的操作区。此时隐藏本节点底部的生成/历史面板，让位给浮层，避免两块
@@ -1195,6 +1198,9 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       : [upstreamTextJoined, ownPrompt]
         .filter((s) => s.length > 0)
         .join('\n\n');
+    setReferenceErrors([]);
+    setReferenceErrorsOpen(false);
+    const referenceSnapshot = [...upstreamNodes, ...useCanvasStore.getState().nodes.filter((node) => node.id === id)];
     const genPayload = {
       prompt: effectivePrompt,
       // 后端只接受固定的几个比例；节点上的 aspectRatio 可能是图片自然尺寸约分出的
@@ -1296,6 +1302,25 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         // 已有同批其它图完成（主图已落）时不覆盖成功态为错误——部分失败只
         // 影响画册张数。
         if (completedUrls.length > 0) return;
+        const issues = referenceIssues(error);
+        if (issues.length) {
+          if (runIndex === 0) {
+            setReferenceErrors(issues.map((issue) => {
+              const matching = referenceSnapshot.filter((node) => {
+                const content = extractUpstreamContent(node);
+                const values = [content.imageUrl, "referenceImageUrl" in node.data ? node.data.referenceImageUrl : null];
+                return values.some((url) => typeof url === "string" && matchesReference(url, issue.reference_key));
+              });
+              const node = matching.length === 1 ? matching[0] : undefined;
+              return { ...issue, nodeId: node?.id,
+                label: referenceIssueName(issue, node?.data.sourceFileName) };
+            }));
+            setReferenceErrorsOpen(true);
+            updateNodeData(id, { isGenerating: false, generationStartedAt: null,
+              generationError: t("referenceValidation.title"), generationErrorDetails: null, generationErrorRequestId: null });
+          }
+          return;
+        }
         // 轮询超时 ≠ 生成失败：后端还在跑，节点上的任务句柄仍可续接（刷新后
         // resumeNodeGeneration 会重新接上）。写错误横幅只会把一个还活着的任务
         // 标成失败、并清掉可续接的句柄。
@@ -1373,6 +1398,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     supportsImageQuality,
     modelId,
     orderedReferenceUrls,
+    upstreamNodes,
     prompt,
     quality,
     styleTemplateId,
@@ -1525,6 +1551,10 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       style={{ width: resolvedWidth, height: resolvedHeight }}
       onClick={() => setSelectedNode(id)}
     >
+      <ReferenceValidationDialog issues={referenceErrors} open={referenceErrorsOpen} onClose={() => setReferenceErrorsOpen(false)} />
+      {referenceErrors.length > 0 && <button type="button" className="tap-button nodrag absolute -top-10 left-0" onClick={(event) => {
+        event.stopPropagation(); setReferenceErrorsOpen(true);
+      }}>{t("referenceValidation.title")}</button>}
       {/* 叠卡画册的卡片边缘：从主图右下方探出，张数与画册一致（最多露 3 张）。
           先渲染、被后面的主卡覆盖，只露出错位的边。 */}
       {hasAlbum && !albumExpanded && previewUrl && (

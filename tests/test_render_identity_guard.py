@@ -36,6 +36,29 @@ def test_render_guard_allows_explicit_no_character_marker():
     assert render_ai_detection_error(beats) is None
 
 
+def test_render_guard_standalone_message_points_to_canvas_node_not_mainline_beat():
+    error = render_ai_detection_error(
+        [{"beat_number": 0, "detected_identities": []}],
+        standalone_beat_context=True,
+    )
+
+    assert error is not None
+    assert "镜头上下文" in error
+    assert "无角色出场" in error
+    assert "AI 检测" not in error
+    assert "#0" not in error
+
+
+def test_render_guard_standalone_allows_no_character_marker():
+    assert (
+        render_ai_detection_error(
+            [{"beat_number": 0, "detected_identities": [NO_CHARACTER_MARKER]}],
+            standalone_beat_context=True,
+        )
+        is None
+    )
+
+
 def test_render_filter_drops_character_map_when_no_identity_detected():
     character_map = {
         "沈知薇": {"reference_mode": "portrait_only", "reference_path": "/tmp/portrait.png"}

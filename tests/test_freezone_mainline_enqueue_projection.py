@@ -94,7 +94,7 @@ async def _enqueue_frame(harness) -> dict:
         project_dir=harness.project_dir,
         episode=1,
         beat=1,
-        beat_payload={"beat_number": 1},
+        beat_payload={"beat_number": 1, "detected_identities": ["__NO_CHARACTER__"]},
         sketch_url="/x/bg.png",
         reference_urls=[],
     )

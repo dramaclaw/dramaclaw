@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from novelvideo.media_archive_copy import copy_archived_result
 
 from novelvideo.ports import get_usage_meter, update_current_model_call_log
 from novelvideo.shared.billing_errors import is_fatal_billing_error
@@ -286,7 +287,8 @@ class IndexTTS2FalClient:
                 response_payload=self._last_provider_response_payload,
             )
             if lease is not None:
-                digest = hashlib.sha256(target.read_bytes()).hexdigest()
+                with target.open("rb") as audio_file:
+                    digest = hashlib.file_digest(audio_file, "sha256").hexdigest()
                 await complete_audio_operation(
                     lease,
                     result_ref=f"audio:sha256:{digest}",
@@ -431,9 +433,12 @@ class IndexTTS2FalClient:
                             success=False,
                             error="DramaClawAPI IndexTTS2 response missing audio bytes or URL",
                         )
-                    audio_response = await client.get(result_url)
-                    audio_response.raise_for_status()
-                    output_path.write_bytes(audio_response.content)
+                    if not await copy_archived_result(
+                        payload.get("archive"), output_path
+                    ):
+                        audio_response = await client.get(result_url)
+                        audio_response.raise_for_status()
+                        output_path.write_bytes(audio_response.content)
                 else:
                     self._last_provider_response_payload = {
                         "content_type": content_type,
