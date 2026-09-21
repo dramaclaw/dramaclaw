@@ -1,24 +1,29 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { useCanvasStore } from '@/stores/canvasStore';
 import { CANVAS_NODE_TYPES, STORY_CHOICE_EDGE_TYPE, type CanvasNode, type CanvasEdge } from '../domain/canvasNodes';
+import {
+  isFmvVideoNode,
+  isWorkflowContinuityTailFrameEdge,
+  withoutFmvContinuityNote,
+} from '../domain/fmvContinuity';
 import { getOrCaptureVideoFrame } from './videoCaptureFrame';
 import { sortUpstreamByReferenceOrder, videoReferenceNodesInEdgeOrder } from '../nodes/referenceOrdering';
 import { readKeyElementCategory } from '../domain/keyElements';
 
-const FMV_CONTINUITY_NOTE = /\n?\[FMV自动承接\][\s\S]*?\[\/FMV自动承接\]/g;
-
-function withoutFmvContinuityNote(prompt: unknown): string {
-  return String(prompt || '').replace(FMV_CONTINUITY_NOTE, '').trim();
-}
+export { isFmvVideoNode } from '../domain/fmvContinuity';
 
 /** Only count images that the video submit paths can actually send to the model. */
 function submittableContinuityImage(node: CanvasNode): string | null {
+  // `data` 是多类型 union，imageUrl 在个别成员上是对象型字段，这里只取字符串形态。
+  const data = node.data as { imageUrl?: unknown; referenceImageUrl?: unknown };
+  const imageString = (value: unknown): string | null =>
+    typeof value === 'string' && value ? value : null;
   if (node.type === CANVAS_NODE_TYPES.imageGen) {
-    return node.data.imageUrl || node.data.referenceImageUrl || null;
+    return imageString(data.imageUrl) ?? imageString(data.referenceImageUrl);
   }
   if (node.type === CANVAS_NODE_TYPES.upload || node.type === CANVAS_NODE_TYPES.imageEdit ||
       node.type === CANVAS_NODE_TYPES.exportImage || node.type === CANVAS_NODE_TYPES.storyboardGen) {
-    return node.data.imageUrl || null;
+    return imageString(data.imageUrl);
   }
   return null;
 }
@@ -33,16 +38,6 @@ function fmvSupplementalReference(node: CanvasNode, index: number): string {
     case 'scene': return `${reference}${name} 是场景参考，只用于对应场景的环境细节，不替代开场帧。`;
     default: return `${reference}${name} 是补充图片参考，按该素材的实际内容使用，不替代开场帧。`;
   }
-}
-
-/** Story clips use FMV continuity; dependency-only workflow nodes keep their original path. */
-export function isFmvVideoNode(node: CanvasNode, edges: CanvasEdge[]): boolean {
-  return node.type === CANVAS_NODE_TYPES.video && (
-    Boolean(node.data.storySegmentId) ||
-    node.data.storyRole === 'start' ||
-    edges.some((edge) => edge.type === STORY_CHOICE_EDGE_TYPE &&
-      (edge.source === node.id || edge.target === node.id))
-  );
 }
 
 /** Playback edges become production dependencies only after continuity is enabled. */
@@ -64,7 +59,7 @@ export async function ensureVideoContinuity(targetId: string, projectId?: string
   if (!target || !isFmvVideoNode(target, state.edges)) return;
   if (target.data.continuityMode !== 'auto' && target.data.continuityMode !== 'independent') return;
   if (target.data.continuityMode === 'independent') {
-    for (const edge of state.edges.filter((edge) => edge.target === targetId && edge.data?.edgeKind === 'workflow_continuity_tail_frame')) {
+    for (const edge of state.edges.filter((edge) => edge.target === targetId && isWorkflowContinuityTailFrameEdge(edge))) {
       state.deleteEdge(edge.id);
     }
     const prompt = withoutFmvContinuityNote(target.data.prompt);
@@ -95,7 +90,7 @@ export async function ensureVideoContinuity(targetId: string, projectId?: string
   }
   // Replace only automatically managed references, preserving manual references.
   const oldEdges = state.edges.filter((edge) => edge.target === targetId &&
-    edge.data?.edgeKind === 'workflow_continuity_tail_frame' && edge.source !== captured.nodeId);
+    isWorkflowContinuityTailFrameEdge(edge) && edge.source !== captured.nodeId);
   for (const edge of oldEdges) state.deleteEdge(edge.id);
   state.updateNodeData(captured.nodeId, {
     workflowContinuityFrame: { sourceVideoNodeId: source.id, targetVideoNodeId: targetId, kind: 'video_tail_frame' },

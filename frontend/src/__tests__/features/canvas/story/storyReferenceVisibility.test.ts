@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CANVAS_NODE_TYPES, type CanvasNode, type CanvasEdge } from '@/features/canvas/domain/canvasNodes';
-import { storyReferenceVisibleEdges } from '@/features/canvas/story/storyReferenceVisibility';
+import { isReferenceDimmedEdge, storyReferenceVisibleEdges } from '@/features/canvas/story/storyReferenceVisibility';
 
 const nodes = [
   { id: 'group', type: CANVAS_NODE_TYPES.group, data: { storyGroup: true } },
@@ -16,23 +16,28 @@ const edges = [
   { id: 'normal', source: 'asset', target: 'ordinary' },
   { id: 'dependency', source: 'clip', target: 'next', data: { link_type: 'dependency_for' } },
 ] as CanvasEdge[];
+const dimmed = (result: CanvasEdge[]) => result.filter(isReferenceDimmedEdge).map((edge) => edge.id);
 const hidden = (result: CanvasEdge[]) => result.filter((edge) => edge.hidden).map((edge) => edge.id);
 const select = (...ids: string[]) => nodes.map((node) => ({ ...node, selected: ids.includes(node.id) }));
 
-describe('影游引用线按需显示', () => {
-  it('默认隐藏素材线，保留剧情线、执行依赖和普通工作流，不修改原数据', () => {
-    expect(hidden(storyReferenceVisibleEdges(nodes, edges))).toEqual(['ref', 'ref2']);
+describe('影游引用线减弱常显', () => {
+  it('默认素材线常显但减弱，剧情线、执行依赖和普通工作流不受影响，不修改原数据', () => {
+    const rendered = storyReferenceVisibleEdges(nodes, edges);
+    expect(dimmed(rendered)).toEqual(['ref', 'ref2']);
+    expect(hidden(rendered)).toEqual([]);
     expect(hidden(edges)).toEqual([]);
+    expect(isReferenceDimmedEdge(edges[0]!)).toBe(false);
   });
-  it('选中片段仅显示其引用，选中素材不展开全部使用方，取消后恢复', () => {
-    expect(hidden(storyReferenceVisibleEdges(select('clip'), edges))).toEqual(['ref2']);
-    expect(hidden(storyReferenceVisibleEdges(select('asset'), edges))).toEqual(['ref', 'ref2']);
+  it('选中片段仅点亮其引用，选中素材不展开全部使用方，取消后恢复减弱', () => {
+    expect(dimmed(storyReferenceVisibleEdges(select('clip'), edges))).toEqual(['ref2']);
+    expect(dimmed(storyReferenceVisibleEdges(select('asset'), edges))).toEqual(['ref', 'ref2']);
     expect(storyReferenceVisibleEdges(select('clip', 'next'), edges)).toBe(edges);
-    expect(hidden(storyReferenceVisibleEdges(select('group'), edges))).toEqual(['ref', 'ref2']);
-    expect(hidden(storyReferenceVisibleEdges(select(), edges))).toEqual(['ref', 'ref2']);
+    expect(dimmed(storyReferenceVisibleEdges(select('group'), edges))).toEqual(['ref', 'ref2']);
+    expect(dimmed(storyReferenceVisibleEdges(select(), edges))).toEqual(['ref', 'ref2']);
   });
-  it('全局隐藏优先，原本隐藏的边不被强行显示，移出故事组恢复普通行为', () => {
+  it('全局隐藏优先，原本隐藏的边不被强行调整，移出故事组恢复普通行为', () => {
     expect(hidden(storyReferenceVisibleEdges(select('asset'), edges, true))).toHaveLength(edges.length);
+    expect(dimmed(storyReferenceVisibleEdges(select('asset'), edges, true))).toHaveLength(0);
     const originalHidden = [{ ...edges[0], hidden: true }];
     expect(storyReferenceVisibleEdges(select('asset'), originalHidden)).toBe(originalHidden);
     expect(storyReferenceVisibleEdges(nodes.filter((node) => node.id !== 'group'), edges)).toBe(edges);

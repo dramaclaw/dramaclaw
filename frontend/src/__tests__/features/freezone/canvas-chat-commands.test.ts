@@ -7058,6 +7058,43 @@ describe("canvas chat commands", () => {
       .match(/\[FMV自动承接\]/g)).toHaveLength(1);
   });
 
+  it("clears auto-continuity residue the moment a clip switches to independent opening", async () => {
+    const store = useCanvasStore.getState();
+    const source = store.addNode(CANVAS_NODE_TYPES.video, { x: 0, y: 0 }, {
+      videoUrl: "/static/project/shot-1.mp4",
+    });
+    const target = store.addNode(CANVAS_NODE_TYPES.video, { x: 360, y: 0 }, {
+      storySegmentId: "segment-2", continuityMode: "auto", genMode: "allReference",
+      prompt: "继续动作",
+    });
+    const character = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 400 }, {
+      displayName: "主角小林", referenceImageUrl: "/static/character.png", keyElementCategory: "character",
+    });
+    store.addEdgeWithData(source, target, { link_type: "dependency_for" });
+    store.addEdge(character, target);
+
+    await ensureVideoContinuity(target, "project-a");
+    expect(String(useCanvasStore.getState().nodes.find((node) => node.id === target)?.data.prompt))
+      .toContain("[FMV自动承接]");
+
+    store.updateNodeData(target, { continuityMode: "independent", continuitySourceNodeId: "" });
+
+    const state = useCanvasStore.getState();
+    expect(state.edges.some((edge) => edge.target === target
+      && (edge.data as { edgeKind?: unknown } | undefined)?.edgeKind === "workflow_continuity_tail_frame")).toBe(false);
+    expect(state.edges.some((edge) => edge.target === target && edge.source === character)).toBe(true);
+    expect(state.nodes.find((node) => node.id === target)?.data.prompt).toBe("继续动作");
+    expect(state.nodes.some((node) => node.data.videoFrameSource)).toBe(true);
+
+    // 再切回自动承接不会预先写入提示词；生成入口仍按旧规则惰性重建。
+    store.updateNodeData(target, { continuityMode: "auto" });
+    expect(useCanvasStore.getState().nodes.find((node) => node.id === target)?.data.prompt).toBe("继续动作");
+    // 已即时清理后，生成入口的兑底分支保持幂等。
+    store.updateNodeData(target, { continuityMode: "independent" });
+    await ensureVideoContinuity(target, "project-a");
+    expect(useCanvasStore.getState().nodes.find((node) => node.id === target)?.data.prompt).toBe("继续动作");
+  });
+
   it("leaves legacy story clips without an explicit continuity mode on their old path", async () => {
     const store = useCanvasStore.getState();
     const source = store.addNode(CANVAS_NODE_TYPES.video, { x: 0, y: 0 }, {

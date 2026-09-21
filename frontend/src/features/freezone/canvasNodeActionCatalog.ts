@@ -817,7 +817,7 @@ function editableSchemaForNode(node: CanvasNode): Record<string, CanvasEditableF
           ? {
               continuityMode: {
                 type: 'enum' as const, label: '镜头承接', options: ['auto', 'independent'],
-                description: '用户要求连续镜头自动承接时，批量将相应视频节点设为 auto。生成时自动截取或复用上游当前视频尾帧并绑定，无需另行截图和连线；分支共用同一尾帧。换场或跳时间设 independent。不会自动切换已选模型或生成模式。',
+                description: '镜头承接：审制作方案获批后，批量将连续片段的相应视频节点设为 auto（自动承接）。生成时自动截取或复用上游当前视频尾帧并绑定，无需另行截图和连线；分支共用同一尾帧。换场、跳时间或多上游汇合未指定来源时设 independent（独立开场）；切换为独立开场时立即清理旧自动承接连线与提示词段。不会自动切换已选模型或生成模式。',
               },
               continuitySourceNodeId: {
                 type: 'string' as const, label: '承接来源',

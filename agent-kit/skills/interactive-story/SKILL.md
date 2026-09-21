@@ -22,7 +22,7 @@ description: "在 DramaClaw 中规划、创建、检查或增量编辑互动影�
 用户明确要求先给方案、稍后确认，且上下文已经充分时，在对话中给出完整方案，最后自然地询问一次确认。不要仅为收集该确认而打开结构化澄清卡片。
 
 - **定故事**：提出创作方向、分支、结局和单次游玩的目标观看时长。用户没有时长偏好时主动给出估算，不要求其逐片段分配秒数。统计实际片段并分别汇总每条可玩路径；互斥分支和结局不能计入同一次游玩。选择等待时间单独报告，并在展示大纲前让路径总时长与用户目标一致。大纲获批后创建并校验故事。占位素材试玩是可选的修订方式，不是强制检查点。
-- **审制作**：故事创建后，简要说明制作准备是下一阶段。用户要求完整视频工作时继续形成可审核的制作方案；只要求故事或占位原型时，只提供下一步选项，不预先填写所有制作字段。先给摘要，逐段细节按需展开；允许用户一次提出多个例外，不要求逐节点配置。
+- **审制作**：故事创建后，简要说明制作准备是下一阶段。用户要求完整视频工作时继续形成可审核的制作方案，方案默认包含逐段推荐时长（对齐模型实际时长档位）与镜头承接建议（自动承接／独立开场），不等用户开口要求；只要求故事或占位原型时，只提供下一步选项，不预先填写所有制作字段。先给摘要，逐段细节按需展开；允许用户一次提出多个例外，不要求逐节点配置。
 - **看成品**：制作方案获批且用户明确授权生成后，应用已确认的准备，并按依赖分批生成。真实尾帧可用后完善下游提示词。在授权范围不变时连续完成常规工作；遇到缺少输入或创作方向、设置、费用范围的实质变化时再说明。邀请用户试玩并定点修订；仅在用户请求且能力支持时导出，不宣称自动发布。
 
 根据用户意图和模型实际能力推荐一致的默认方案。Agent 负责逐片段分析，用户审核创作选择和例外。不要分别追问每项资产、模型、时长或参考。仅确认方案不授权付费生成；范围不变时已有授权继续有效。局部编辑、检查或只改文案的请求只完成该任务，不重新启动完整三阶段。
@@ -37,7 +37,7 @@ Agent 规划故事语义、片段时长、资产和提示词；story tools 负�
 - 构造 Create 或 Patch 参数前，完整读取 [references/story-contract.md](references/story-contract.md)。
 - 涉及选择反馈、choice loop、锚点或烘焙视频选择、长按手势、广告 CTA 时，读取 [references/interaction-options.md](references/interaction-options.md)。
 - 校验故事或解释校验结果前，读取 [references/validation.md](references/validation.md)。
-- 涉及制作方案、节点参数、资产、参考、尾帧或就绪状态时，读取 [references/production-planning.md](references/production-planning.md)。
+- 涉及制作方案、节点参数、资产、参考、镜头承接、尾帧或就绪状态时，读取 [references/production-planning.md](references/production-planning.md)。
 - 准备或修正视频提示词时，额外读取 [references/prompt-fidelity.md](references/prompt-fidelity.md)。
 - 生成、继续或重做视频前，读取 [references/generation-execution.md](references/generation-execution.md)。
 - Create 或 Patch 失败后，仅在准备执行允许的恢复操作前读取 [references/error-recovery.md](references/error-recovery.md)。

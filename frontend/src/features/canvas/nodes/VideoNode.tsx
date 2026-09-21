@@ -1027,8 +1027,17 @@ export const VideoNode = memo(
       (next: string) => updateNodeData(id, { prompt: next }),
       [id, updateNodeData],
     );
+    // 重编号的基线 prompt 必须与引用列表（useVideoReferenceNodes）同一帧同源：
+    // data prop 经 React Flow 内部转发，在删边发生的那一帧可能仍是旧 prompt，拿迟到的
+    // 副本 remap 会把 store 里的最新文本覆盖回旧版——切「独立开场」原子剥离承接段并
+    // 删尾帧边时，旧副本会让被剥掉的 [FMV自动承接] 段复活（体感为“连线没了但文字还
+    // 在，再切换一次才消失”）。与上游订阅同源订阅 store ⇒ 同一次渲染读到同一快照。
+    const storePromptForMentionSync = useCanvasStore((state) => {
+      const node = state.nodes.find((candidate) => candidate.id === id);
+      return typeof node?.data.prompt === "string" ? (node.data.prompt as string) : "";
+    });
     useReferenceMentionSync(
-      prompt,
+      storePromptForMentionSync,
       [
         // 这三个前缀是提示词里 `@图片1` 这类引用记号的**协议**，会随 prompt 原样发给
         // 后端，不是界面文案，翻了就对不上。

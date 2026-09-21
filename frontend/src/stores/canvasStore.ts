@@ -103,6 +103,11 @@ import {
   isPresetManagedEdge,
   isPresetManagedNode,
 } from '@/features/canvas/domain/mainlineNodeFlags';
+import {
+  fmvIndependentCleanup,
+  isWorkflowContinuityTailFrameEdge,
+  withoutFmvContinuityNote,
+} from '@/features/canvas/domain/fmvContinuity';
 import { scopeProjectionGraphIds } from '@/features/freezone/projectionGraphIds';
 import { slugifyName } from '@/features/canvas/story/variableName';
 import { storyFlagsOfNode, storyVariablesOfNode } from '@/features/canvas/story/storyVariableSelectors';
@@ -3065,6 +3070,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   updateNodeData: (nodeId, data, options) => {
     set((state) => {
       let changed = false;
+      let fmvContinuityCleared = false;
       const nextNodes = state.nodes.map((node) => {
         if (node.id !== nodeId) {
           return node;
@@ -3082,10 +3088,28 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           ...node.data,
           ...data,
         } as CanvasNodeData;
+        // 切到「独立开场」即刻清理上次自动承接的残留：删自动绑定的尾帧参考边、剥离
+        // [FMV自动承接] 提示词段，而不是拖到下次生成入口（ensureVideoContinuity 的
+        // independent 分支仍作幂等兑底）。手动参考边与已截帧图片节点保留。
+        let preparedData = mergedData;
+        if (
+          fmvIndependentCleanup(
+            node,
+            (node.data as { continuityMode?: unknown }).continuityMode,
+            (mergedData as { continuityMode?: unknown }).continuityMode,
+            state.edges,
+          )
+        ) {
+          fmvContinuityCleared = true;
+          preparedData = {
+            ...mergedData,
+            prompt: withoutFmvContinuityNote((mergedData as { prompt?: unknown }).prompt),
+          } as CanvasNodeData;
+        }
         const storyClipLayout = isStoryClipNodeInCanvas(node, state.nodes);
         const synchronizedData = storyClipLayout
-          ? synchronizeStoryMediaMetadata(node, data, mergedData)
-          : mergedData;
+          ? synchronizeStoryMediaMetadata(node, data, preparedData)
+          : preparedData;
         const resizedNode = maybeApplyImageAutoResize(
           {
             ...node,
@@ -3103,12 +3127,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         return {};
       }
 
+      const nextEdges = fmvContinuityCleared
+        ? state.edges.filter((edge) => !(edge.target === nodeId && isWorkflowContinuityTailFrameEdge(edge)))
+        : state.edges;
+
       if (options?.recordHistory === false) {
-        return { nodes: nextNodes, ...trackEdit(state) };
+        return { nodes: nextNodes, edges: nextEdges, ...trackEdit(state) };
       }
 
       return {
         nodes: nextNodes,
+        edges: nextEdges,
         history: {
           past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)),
           future: [],
