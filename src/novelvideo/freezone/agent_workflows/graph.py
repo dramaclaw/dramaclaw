@@ -123,6 +123,9 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
     skipped_edges: list[dict[str, Any]] = []
     commands: list[dict[str, Any]] = []
     workflow_instance_id = _workflow_instance_id(args, payload)
+    plan_skill = (
+        payload.get("skill") if isinstance(payload.get("skill"), dict) else None
+    )
     node_by_plan_id: dict[str, dict[str, Any]] = {}
     used_client_ids: set[str] = set()
 
@@ -249,6 +252,7 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
             raw_node,
             node["node_type"],
             audio_uses_upstream_text=node["plan_id"] in audio_prompt_target_plan_ids,
+            plan_skill=plan_skill,
         )
         raw_data = raw_node.get("data")
         raw_stage = str(
@@ -521,12 +525,14 @@ def _node_data(
     node_type: str,
     *,
     audio_uses_upstream_text: bool = False,
+    plan_skill: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     data = node.get("data")
     result = dict(data) if isinstance(data, dict) else {}
     # ``data.stage`` is accepted as an agent compatibility input but stage is
     # workflow metadata, not canvas node data.
     result.pop("stage", None)
+    _fill_catalog_skill(result, plan_skill)
     label = node.get("label") or node.get("title") or node.get("name")
     description = (
         node.get("description") or node.get("responsibility") or node.get("purpose")
@@ -604,6 +610,34 @@ def _node_data(
         result.setdefault("isGenerating", False)
         result.setdefault("generationStartedAt", None)
     return result
+
+
+def _fill_catalog_skill(
+    data: dict[str, Any], plan_skill: dict[str, Any] | None
+) -> None:
+    """Backfill ``workflowCatalog.skillId`` from the plan's single Skill.
+
+    Agent-authored (raw) plans commonly declare the Skill once at
+    ``plan.skill`` and only give ``recipeId`` per node. The runtime Recipe
+    compiler receives the node's ``workflowCatalog`` alone, so an absent
+    ``skillId`` silently drops the Skill's Recipe boundary and production
+    constraints. Standard planner output already carries both fields and is
+    left untouched.
+    """
+    if not plan_skill:
+        return
+    catalog = data.get("workflowCatalog")
+    if not isinstance(catalog, dict):
+        return
+    skill_id = str(plan_skill.get("id") or "").strip()
+    if not skill_id or str(catalog.get("skillId") or "").strip():
+        return
+    filled = dict(catalog)
+    filled["skillId"] = skill_id
+    skill_version = plan_skill.get("version")
+    if skill_version not in (None, "") and catalog.get("skillVersion") in (None, ""):
+        filled["skillVersion"] = skill_version
+    data["workflowCatalog"] = filled
 
 
 def validate_workflow_graph_commands(

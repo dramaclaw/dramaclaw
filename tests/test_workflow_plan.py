@@ -1053,6 +1053,52 @@ def test_validator_rejects_skill_version_mismatch_and_recipe_outside_whitelist()
     assert any("not allowed by skill" in issue["message"] for issue in result["errors"])
 
 
+def test_graph_builder_backfills_plan_skill_into_node_catalog():
+    """Issue 676: raw plans declare the Skill once at plan.skill; the built
+    node must still carry skillId so the runtime Recipe compiler keeps the
+    Skill boundary and production constraints."""
+    plan = _dynamic_plan(image_count=2)
+    del plan["nodes"][1]["data"]["workflowCatalog"]["skillId"]
+    plan["nodes"][2]["data"]["workflowCatalog"]["skillId"] = "other-skill"
+    plan["nodes"][2]["data"]["workflowCatalog"]["skillVersion"] = "3"
+    original_catalog = dict(plan["nodes"][1]["data"]["workflowCatalog"])
+
+    graph = build_workflow_graph_commands({"plan": plan, "run_after_create": False})
+
+    assert graph["ok"] is True, graph
+    catalogs = {
+        command["data"]["workflowPlanNodeId"]: command["data"].get("workflowCatalog")
+        for command in graph["commands"]
+        if command["type"] == "create_node"
+    }
+    assert catalogs["product_image_1"]["skillId"] == "ecommerce-product"
+    assert catalogs["product_image_1"]["skillVersion"] == 6
+    assert catalogs["product_image_1"]["recipeId"] == "ecommerce-ad-image"
+    # Explicit node-level Skill identity is never overwritten.
+    assert catalogs["product_image_2"]["skillId"] == "other-skill"
+    assert catalogs["product_image_2"]["skillVersion"] == "3"
+    # Nodes without a catalog gain nothing; the source plan is not mutated.
+    assert catalogs["brief"] is None
+    assert plan["nodes"][1]["data"]["workflowCatalog"] == original_catalog
+
+
+def test_graph_builder_keeps_node_catalog_without_plan_skill():
+    plan = _dynamic_plan()
+    del plan["skill"]
+    del plan["nodes"][1]["data"]["workflowCatalog"]["skillId"]
+
+    graph = build_workflow_graph_commands({"plan": plan, "run_after_create": False})
+
+    assert graph["ok"] is True, graph
+    image_command = next(
+        command
+        for command in graph["commands"]
+        if command["type"] == "create_node"
+        and command["data"]["workflowPlanNodeId"] == "product_image_1"
+    )
+    assert "skillId" not in image_command["data"]["workflowCatalog"]
+
+
 def test_compiler_uses_explicit_anchor_and_skips_audio_only_compose(monkeypatch):
     catalog = _load_catalog_module()
     monkeypatch.setattr(catalog, "list_user_agent_config_items", None)
