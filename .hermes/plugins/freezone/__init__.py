@@ -119,6 +119,7 @@ try:
         canvas_command_idempotency_key,
         canvas_context_bridge_key,
         clarification_bridge_key,
+        find_clarification_bridge_message,
         put_pending_clarification_event,
         put_pending_canvas_command,
         put_pending_canvas_context,
@@ -135,6 +136,7 @@ except Exception as exc:
     canvas_command_idempotency_key = None
     canvas_context_bridge_key = None
     clarification_bridge_key = None
+    find_clarification_bridge_message = None
     put_pending_clarification_event = None
     put_pending_canvas_command = None
     put_pending_canvas_context = None
@@ -825,36 +827,77 @@ def _emit_clarification_event(
         canvas_id=canvas,
         event=event,
     )
+    return _await_clarification_result(key, project, canvas, event)
+
+
+def _clarification_timeout_seconds() -> int:
     try:
-        timeout_seconds = max(
+        return max(
             1,
             int(
                 os.environ.get("DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS", "240")
             ),
         )
     except ValueError:
-        timeout_seconds = 240
-    resolved = wait_clarification_result(key, timeout_seconds=timeout_seconds)
+        return 240
+
+
+def _clarification_timeout_result(
+    key: str, project: str | None, canvas: str | None, event: dict[str, Any]
+) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "status": "clarification_frontend_timeout",
+        "tool_call_status": "completed",
+        "clarification_status": "pending_user_input",
+        "bridge_key": key,
+        "project_id": project,
+        "canvas_id": canvas,
+        "type": event.get("type"),
+        "clarification_id": event.get("clarification_id"),
+        "message": (
+            "Clarification UI is still waiting for the user's frontend response. "
+            "The card stays answerable for ten minutes and reappears on the user's "
+            "next message."
+        ),
+        "agent_instruction": (
+            "Do not continue, guess, or summarize the user's choices. Tell the user "
+            "briefly that the parameter card is still waiting at the bottom of the chat "
+            "and will reappear when they send their next message. When they reply, call "
+            "freezone_request_user_clarification again with this exact clarification_id "
+            "(and the same project, canvas and workflow draft arguments) to resume waiting "
+            "on the same card; do not build a new card or repeat the questions."
+        ),
+    }
+
+
+def _await_clarification_result(
+    key: str, project: str | None, canvas: str | None, event: dict[str, Any]
+) -> str:
+    resolved = wait_clarification_result(
+        key, timeout_seconds=_clarification_timeout_seconds()
+    )
     if resolved is not None:
         return tool_result(resolved)
-    return tool_result(
-        {
-            "ok": False,
-            "status": "clarification_frontend_timeout",
-            "tool_call_status": "completed",
-            "clarification_status": "pending_user_input",
-            "bridge_key": key,
-            "project_id": project,
-            "canvas_id": canvas,
-            "type": event.get("type"),
-            "clarification_id": event.get("clarification_id"),
-            "message": "Clarification UI is still waiting for the user's frontend response.",
-            "agent_instruction": (
-                "Do not continue or summarize the user's choices until the frontend returns "
-                "a clarification tool result."
-            ),
-        }
-    )
+    return tool_result(_clarification_timeout_result(key, project, canvas, event))
+
+
+def _resume_clarification(
+    project: str | None, canvas: str | None, clarification_id: str
+) -> tuple[str, dict[str, Any], dict[str, Any] | None] | None:
+    """Return (key, stored event, result-or-None) for a card the agent already showed."""
+    if find_clarification_bridge_message is None or not clarification_id:
+        return None
+    try:
+        found = find_clarification_bridge_message(
+            project_id=project, canvas_id=canvas, clarification_id=clarification_id
+        )
+    except Exception:  # noqa: BLE001 - a lookup failure only means a fresh card
+        return None
+    if not isinstance(found, dict) or not isinstance(found.get("event"), dict):
+        return None
+    result = found.get("result")
+    return str(found["key"]), found["event"], result if isinstance(result, dict) else None
 
 
 def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
@@ -868,6 +911,14 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     clarification_id = str(
         args.get("clarification_id") or args.get("request_id") or ""
     ).strip()
+    # The bridge directory is shared per user/profile and may hold cards from
+    # other projects; never look one up outside this session's bound scope.
+    mismatch = _bound_scope_mismatch(project, canvas)
+    if mismatch is not None:
+        return tool_result(mismatch)
+    # An id the agent already holds may name a card that is still waiting (or
+    # was answered late). Resolve it first so a bare resume call needs no questions.
+    resumed = _resume_clarification(project, canvas, clarification_id)
     if not clarification_id:
         context_id = str(
             args.get("skill_studio_session_id") or canvas or "default"
@@ -1002,7 +1053,7 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     answers = args.get("answers")
     if not isinstance(answers, dict):
         answers = {}
-    if not questions:
+    if not questions and resumed is None:
         return tool_result(
             {
                 "ok": False,
@@ -1085,35 +1136,52 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
         )
         if draft_error is not None:
             return tool_result(draft_error)
+    if resumed is not None:
+        # The card already exists from an earlier call that timed out. Reuse its
+        # questions and recommendations, and collect the answer the user gave
+        # (or keep waiting) instead of showing a second card.
+        key, stored_event, stored_result = resumed
+        questions = _safe_list(stored_event.get("questions")) or questions
+        recommended_answers = (
+            stored_event.get("recommended_answers")
+            if isinstance(stored_event.get("recommended_answers"), dict)
+            else {}
+        )
+        result = (
+            tool_result(stored_result)
+            if stored_result is not None
+            else _await_clarification_result(key, project, canvas, stored_event)
+        )
     generation_question_ids = [
         str(question.get("id") or "")
         for question in questions
         if isinstance(question, dict)
         and str(question.get("id") or "") in _GENERATION_ANSWER_DATA_FIELDS
     ]
-    recommended_answers: dict[str, Any] = {}
-    if generation_question_ids:
-        recommended_answers = _generation_clarification_recommendations(
-            project, generation_question_ids, answers
+    if resumed is None:
+        recommended_answers = {}
+        if generation_question_ids:
+            recommended_answers = _generation_clarification_recommendations(
+                project, generation_question_ids, answers
+            )
+            # A recommended action is offered only with concrete values resolved from
+            # the caller's current Catalog; an empty "use recommended" is never valid.
+            args = {**args, "allow_recommended": bool(recommended_answers)}
+        result = _emit_clarification_event(
+            project,
+            canvas,
+            {
+                "type": "assistant.clarification.request",
+                "clarification_id": clarification_id,
+                "title": str(args.get("title") or "").strip(),
+                "description": str(args.get("description") or "").strip(),
+                "questions": questions,
+                "answers": answers,
+                "allow_recommended": bool(args.get("allow_recommended", False)),
+                **({"recommended_answers": recommended_answers} if recommended_answers else {}),
+                "allow_skip": bool(args.get("allow_skip", True)),
+            },
         )
-        # A recommended action is offered only with concrete values resolved from
-        # the caller's current Catalog; an empty "use recommended" is never valid.
-        args = {**args, "allow_recommended": bool(recommended_answers)}
-    result = _emit_clarification_event(
-        project,
-        canvas,
-        {
-            "type": "assistant.clarification.request",
-            "clarification_id": clarification_id,
-            "title": str(args.get("title") or "").strip(),
-            "description": str(args.get("description") or "").strip(),
-            "questions": questions,
-            "answers": answers,
-            "allow_recommended": bool(args.get("allow_recommended", False)),
-            **({"recommended_answers": recommended_answers} if recommended_answers else {}),
-            "allow_skip": bool(args.get("allow_skip", True)),
-        },
-    )
     response = _tool_result_payload(result)
     if generation_question_ids:
         finalized = _finalize_generation_clarification_result(
@@ -9144,7 +9212,7 @@ TOOLS = (
             {
                 "clarification_id": {
                     "type": "string",
-                    "description": "Optional stable id for this clarification request. Omit this unless you already have one; Freezone will generate it automatically.",
+                    "description": "Optional stable id for this clarification request. Omit it for a new card; Freezone will generate it automatically. Pass the clarification_id from a clarification_frontend_timeout result to resume waiting on that same card and collect the user's answer instead of showing a second card.",
                 },
                 "skill_studio_session_id": {
                     "type": "string",

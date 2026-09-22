@@ -204,6 +204,56 @@ def read_bridge_message(
     }
 
 
+def find_clarification_bridge_message(
+    *,
+    project_id: str | None,
+    canvas_id: str | None,
+    clarification_id: str,
+    bridge_dir: str | Path | None = None,
+) -> dict[str, Any] | None:
+    """Locate the newest live clarification card for one clarification id.
+
+    Returns the stored pending payload plus ``key``, ``transport_status`` and,
+    once the frontend answered, ``result``. Used to resume waiting on a card
+    after the tool call that created it timed out, so the user's later answer
+    is collected instead of a second card being shown. An expired card (its
+    pending TTL passed before anyone answered) is reported as absent.
+    """
+    wanted = str(clarification_id or "").strip()
+    if not wanted:
+        return None
+    now = time.time()
+    with _bridge_db(bridge_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        _prune_bridge_rows(conn, now=now, bridge_dir=bridge_dir)
+        rows = conn.execute(
+            "SELECT * FROM canvas_command_messages "
+            "WHERE project_id = ? AND canvas_id = ? AND kind = 'clarification_event' "
+            "ORDER BY created_at DESC LIMIT 50",
+            (project_id or "", canvas_id or ""),
+        ).fetchall()
+    for row in rows:
+        payload = _decode_bridge_json(row["payload_json"])
+        event = payload.get("event") if payload else None
+        if not isinstance(event, dict) or str(event.get("clarification_id") or "") != wanted:
+            continue
+        status = str(row["status"])
+        if status == "expired":
+            return None
+        return {
+            **payload,
+            "key": str(row["bridge_key"]),
+            "kind": str(row["kind"]),
+            "transport_status": status,
+            "result": (
+                _decode_bridge_json(row["result_json"])
+                if status in _TERMINAL_BRIDGE_STATUSES
+                else None
+            ),
+        }
+    return None
+
+
 def bridge_message_exists(key: str, *, bridge_dir: str | Path | None = None) -> bool:
     """Return whether SQLite owns a key, even if its payload cannot be decoded."""
     with _bridge_db(bridge_dir) as conn:
