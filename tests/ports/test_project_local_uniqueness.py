@@ -1,4 +1,5 @@
 import pytest
+import sqlite3
 
 from novelvideo.ports.local.project import SQLiteProjectRegistry
 
@@ -21,6 +22,7 @@ async def test_purge_deletes_registry_row_and_releases_owner_name(local_registry
         name="agent",
     )
     await local_registry.update_project_status(first.id, "deleted")
+    await local_registry.begin_project_purge(first.id)
     purged = await local_registry.mark_project_purged(first.id)
 
     second = await local_registry.create_project(
@@ -37,6 +39,46 @@ async def test_purge_deletes_registry_row_and_releases_owner_name(local_registry
     assert second.id != first.id
     assert resolved is not None
     assert resolved.id == second.id
+
+
+@pytest.mark.asyncio
+async def test_started_purge_blocks_restore_and_keeps_name_reserved(local_registry):
+    project = await local_registry.create_project(
+        owner_user_id="local", owner_username="alice", name="agent"
+    )
+    await local_registry.update_project_status(project.id, "deleted")
+    started = await local_registry.begin_project_purge(project.id)
+    assert started is not None and started.purge_started_at
+    retry = await local_registry.begin_project_purge(project.id)
+    assert retry is not None and retry.purge_started_at == started.purge_started_at
+
+    restored = await local_registry.update_project_status(project.id, "active")
+    assert restored is not None and restored.status == "deleted"
+    with pytest.raises(ValueError, match="already exists"):
+        await local_registry.create_project(
+            owner_user_id="local", owner_username="alice", name="agent"
+        )
+
+
+@pytest.mark.asyncio
+async def test_existing_ce_registry_adds_purge_started_column(local_registry):
+    path = local_registry._db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path) as db:
+        db.execute(
+            """CREATE TABLE projects (
+                id TEXT PRIMARY KEY, owner_type TEXT NOT NULL, owner_id TEXT NOT NULL,
+                owner_username TEXT NOT NULL, name TEXT NOT NULL, home_node_id TEXT NOT NULL,
+                output_dir TEXT NOT NULL, state_dir TEXT NOT NULL, runtime_dir TEXT NOT NULL,
+                status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                purged_at TEXT, UNIQUE(owner_type, owner_id, name))"""
+        )
+    conn = await local_registry._connect()
+    try:
+        columns = await conn.execute_fetchall("PRAGMA table_info(projects)")
+    finally:
+        await conn.close()
+    assert "purge_started_at" in {row[1] for row in columns}
 
 
 @pytest.mark.asyncio

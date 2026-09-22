@@ -192,6 +192,8 @@ async def test_new_projects_are_structured_and_carry_no_embedding_binding(
     state_dir = tmp_path / "user" / "fresh"
     record = SimpleNamespace(
         id="proj_1",
+        name="fresh",
+        owner_username="someone",
         output_dir=str(tmp_path / "out"),
         state_dir=str(state_dir),
         runtime_dir=str(tmp_path / "run"),
@@ -200,13 +202,32 @@ async def test_new_projects_are_structured_and_carry_no_embedding_binding(
     async def create_project(**_kwargs):
         return record
 
+    async def delete_uncommitted_project(_project_id):
+        return None
+
+    async def has_current_data(_record):
+        return False
+
     def boom():
         raise AssertionError("new projects must not bind an embedding model")
 
     monkeypatch.setattr(
-        projects, "get_project_registry", lambda: SimpleNamespace(create_project=create_project)
+        projects, "get_project_registry", lambda: SimpleNamespace(
+            create_project=create_project,
+            delete_uncommitted_project=delete_uncommitted_project,
+        )
     )
     monkeypatch.setattr(projects, "validate_project_name", lambda _name: None)
+    monkeypatch.setattr(
+        projects,
+        "get_project_output_purger",
+        lambda: SimpleNamespace(has_current_data=has_current_data),
+    )
+    monkeypatch.setattr(
+        projects,
+        "_validated_owned_dirs",
+        lambda _record: (tmp_path / "out", state_dir, tmp_path / "run"),
+    )
     monkeypatch.setattr(projects, "user_id_from_api_user", _async(1))
     monkeypatch.setattr(projects, "ensure_project_dirs_at_paths", lambda **_kw: None)
     monkeypatch.setattr(
