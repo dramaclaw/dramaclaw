@@ -994,6 +994,9 @@
     "stages": {
       "navLabel": "创作阶段",
       "current": "当前阶段：{{stage}}",
+      "completedSummary": "已完成 {{count}} 项",
+      "upcomingSummary": "后续 {{count}} 项",
+      "showHidden": "查看{{summary}}",
       "proposal": "策划案",
       "outline": "大纲",
       "script": "剧本",

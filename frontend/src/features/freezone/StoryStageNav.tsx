@@ -6,7 +6,7 @@
 
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, CircleDashed, Loader, MinusCircle } from 'lucide-react';
+import { Check, CircleDashed, Loader, MinusCircle, MoreHorizontal } from 'lucide-react';
 
 import { useCanvasStore } from '@/stores/canvasStore';
 import { isVideoNode } from '@/features/canvas/domain/canvasNodes';
@@ -27,6 +27,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 const STATUS_ICON: Record<StoryStageStatus, typeof Check> = {
   done: Check,
@@ -46,6 +47,61 @@ export interface StoryStageNavModel {
   kind: StoryStageModel['kind'];
   stages: StoryStageModel['stages'];
   currentStageId: StoryStageModel['currentStageId'];
+}
+
+type StageNavCollapseDirection = 'none' | 'start' | 'end' | 'both';
+
+interface StoryStageNavProps {
+  outline: PendingStoryOutline | null;
+  leftPanelExpanded?: boolean;
+  rightPanelExpanded?: boolean;
+}
+
+interface StageNavLayout {
+  leading: StoryStageModel['stages'];
+  visible: StoryStageModel['stages'];
+  trailing: StoryStageModel['stages'];
+  compact: boolean;
+}
+
+/**
+ * Keep the active task path readable while either canvas drawer takes space.
+ * A left drawer folds the already-completed prefix; a right drawer folds the
+ * distant suffix. If the current stage sits at an edge, fold the opposite side
+ * as a fallback so the bar still becomes meaningfully shorter.
+ */
+export function deriveStageNavLayout(
+  stages: StoryStageModel['stages'],
+  currentStageId: StoryStageModel['currentStageId'],
+  direction: StageNavCollapseDirection,
+): StageNavLayout {
+  if (direction === 'none' || stages.length <= 3) {
+    return { leading: [], visible: stages, trailing: [], compact: false };
+  }
+
+  const resolvedCurrentIndex = currentStageId
+    ? stages.findIndex((stage) => stage.id === currentStageId)
+    : stages.length - 1;
+  const currentIndex = resolvedCurrentIndex >= 0 ? resolvedCurrentIndex : 0;
+  // A one-item summary is not shorter than the stage it replaces, so only
+  // collapse a side when it can absorb at least two stages.
+  const canCollapseStart = currentIndex > 1;
+  const canCollapseEnd = currentIndex < stages.length - 3;
+  const collapseStart = direction === 'start' || direction === 'both';
+  const collapseEnd = direction === 'end' || direction === 'both';
+
+  let visibleStart = collapseStart && canCollapseStart ? currentIndex : 0;
+  let visibleEnd = collapseEnd && canCollapseEnd ? currentIndex + 2 : stages.length;
+
+  if (direction === 'start' && !canCollapseStart && canCollapseEnd) visibleEnd = currentIndex + 2;
+  if (direction === 'end' && !canCollapseEnd && canCollapseStart) visibleStart = currentIndex;
+
+  return {
+    leading: stages.slice(0, visibleStart),
+    visible: stages.slice(visibleStart, visibleEnd),
+    trailing: stages.slice(visibleEnd),
+    compact: visibleStart > 0 || visibleEnd < stages.length,
+  };
 }
 
 /** 从画布当前状态推导阶段导航模型；不满足 fmv 条件时返回 null。 */
@@ -118,7 +174,11 @@ export function deriveStoryStageNav(
   });
 }
 
-export function StoryStageNav({ outline }: { outline: PendingStoryOutline | null }) {
+export function StoryStageNav({
+  outline,
+  leftPanelExpanded = false,
+  rightPanelExpanded = false,
+}: StoryStageNavProps) {
   const { t } = useTranslation();
   const nodes = useCanvasStore((s) => s.nodes);
   const edges = useCanvasStore((s) => s.edges);
@@ -137,59 +197,130 @@ export function StoryStageNav({ outline }: { outline: PendingStoryOutline | null
   const currentLabel = model.currentStageId
     ? t(`freezone.stages.${model.currentStageId}`)
     : null;
+  const collapseDirection: StageNavCollapseDirection = leftPanelExpanded
+    ? rightPanelExpanded
+      ? 'both'
+      : 'start'
+    : rightPanelExpanded
+      ? 'end'
+      : 'none';
+  const layout = deriveStageNavLayout(model.stages, model.currentStageId, collapseDirection);
+  const navItems = [
+    ...(layout.leading.length > 0 ? [{ kind: 'leading' as const, stages: layout.leading }] : []),
+    ...layout.visible.map((stage) => ({ kind: 'stage' as const, stage })),
+    ...(layout.trailing.length > 0 ? [{ kind: 'trailing' as const, stages: layout.trailing }] : []),
+  ];
+
+  const focusStoryGroup = () => {
+    if (!groupId) return;
+    setSelectedNode(groupId);
+    requestFocusNode(groupId);
+  };
 
   return (
     <div
       data-stage-nav-region
-      className="pointer-events-auto absolute bottom-4 left-4 z-30 max-w-[calc(100%_-_2rem_-_var(--freezone-dock-width,0px))]"
-      style={FREEZONE_DOCK_OFFSET_ANIMATED_STYLE}
+      className="pointer-events-auto absolute bottom-4 left-8 right-4 z-30 flex"
+      style={{
+        ...FREEZONE_DOCK_OFFSET_ANIMATED_STYLE,
+        marginLeft: leftPanelExpanded ? 300 : 0,
+      }}
     >
       <TooltipProvider delay={120}>
         <nav
           aria-label={t('freezone.stages.navLabel')}
-          className="flex items-center gap-1 overflow-x-auto rounded-[10px] border border-border/70 bg-background/95 px-2 py-1.5 shadow-lg backdrop-blur"
+          className="flex max-w-full items-center gap-1 overflow-hidden rounded-[10px] border border-border/70 bg-background/95 px-2 py-1.5 shadow-lg backdrop-blur"
         >
-          {model.stages.map((stage, index) => {
+          {navItems.map((item, index) => {
+            const separator = index < navItems.length - 1 && (
+              <span aria-hidden="true" className="shrink-0 text-text-muted/50">→</span>
+            );
+
+            if (item.kind !== 'stage') {
+              const isLeading = item.kind === 'leading';
+              const summaryLabel = t(
+                isLeading ? 'freezone.stages.completedSummary' : 'freezone.stages.upcomingSummary',
+                { count: item.stages.length },
+              );
+              return (
+                <div key={item.kind} className="flex shrink-0 items-center gap-1">
+                  <Popover>
+                    <PopoverTrigger
+                      render={
+                        <button
+                          type="button"
+                          className="flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs text-text-muted transition-colors hover:bg-muted hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                          aria-label={t('freezone.stages.showHidden', { summary: summaryLabel })}
+                        >
+                          {isLeading ? <Check className="size-3 text-success" /> : <MoreHorizontal className="size-3" />}
+                          <span>{summaryLabel}</span>
+                        </button>
+                      }
+                    />
+                    <PopoverContent side="top" align="start" className="w-52 p-2">
+                      <div className="flex flex-col gap-0.5">
+                        {item.stages.map((stage) => {
+                          const Icon = STATUS_ICON[stage.status];
+                          return (
+                            <button
+                              key={stage.id}
+                              type="button"
+                              onClick={focusStoryGroup}
+                              className="flex w-full items-center gap-2 rounded-[var(--ui-radius-sm)] px-2 py-1.5 text-left text-xs text-popover-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                            >
+                              <Icon className={`size-3 ${STATUS_CLASS[stage.status]}`} />
+                              <span>{t(`freezone.stages.${stage.id}`)}</span>
+                              <span className="ml-auto text-[11px] text-muted-foreground">
+                                {t(`freezone.stages.status.${stage.status}`)}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                  {separator}
+                </div>
+              );
+            }
+
+            const stage = item.stage;
             const Icon = STATUS_ICON[stage.status];
             const label = t(`freezone.stages.${stage.id}`);
             const statusLabel = t(`freezone.stages.status.${stage.status}`);
             const hint = t(`freezone.stages.hint.${stage.id}`, { defaultValue: '' });
             return (
-              <Tooltip key={stage.id}>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (groupId) {
-                          setSelectedNode(groupId);
-                          requestFocusNode(groupId);
+              <div key={stage.id} className="flex shrink-0 items-center gap-1">
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        onClick={focusStoryGroup}
+                        aria-current={stage.id === model.currentStageId ? 'step' : undefined}
+                        className={
+                          stage.id === model.currentStageId
+                            ? 'flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs ring-1 ring-primary/60'
+                            : 'flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs'
                         }
-                      }}
-                      className={
-                        stage.id === model.currentStageId
-                          ? 'flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs ring-1 ring-primary/60'
-                          : 'flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs'
-                      }
-                    >
-                      <Icon className={`size-3 ${STATUS_CLASS[stage.status]}`} />
-                      <span className={stage.status === 'todo' ? 'text-text-muted' : 'text-text'}>
-                        {label}
-                      </span>
-                      {index < model.stages.length - 1 && (
-                        <span aria-hidden="true" className="text-text-muted/50">→</span>
-                      )}
-                    </button>
-                  }
-                />
-                <TooltipContent side="top" className="flex-col items-start max-w-64 text-xs">
-                  <span className="font-medium">{statusLabel}</span>
-                  {hint && <span className="text-background/70">{hint}</span>}
-                </TooltipContent>
-              </Tooltip>
+                      >
+                        <Icon className={`size-3 ${STATUS_CLASS[stage.status]}`} />
+                        <span className={stage.status === 'todo' ? 'text-text-muted' : 'text-text'}>
+                          {label}
+                        </span>
+                      </button>
+                    }
+                  />
+                  <TooltipContent side="top" className="flex-col items-start max-w-64 text-xs">
+                    <span className="font-medium">{statusLabel}</span>
+                    {hint && <span className="text-background/70">{hint}</span>}
+                  </TooltipContent>
+                </Tooltip>
+                {separator}
+              </div>
             );
           })}
-          {currentLabel && (
+          {currentLabel && !layout.compact && (
             <span className="ml-1 shrink-0 border-l border-border/60 pl-2 text-xs text-text-muted">
               {t('freezone.stages.current', { stage: currentLabel })}
             </span>

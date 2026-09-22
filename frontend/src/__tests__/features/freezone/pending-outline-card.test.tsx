@@ -27,6 +27,7 @@ vi.mock("@/features/freezone/canvasSyncRuntime", () => ({
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  window.localStorage.clear();
 });
 
 function outline(overrides: Partial<PendingStoryOutline> = {}): PendingStoryOutline {
@@ -223,5 +224,51 @@ describe("PendingOutlineCard duration label", () => {
     const view = renderWithDuration(240);
     expect(view.getByText('freezone.outline.duration:{"minutes":4}')).toBeInTheDocument();
     expect(view.queryByText(/durationSeconds/)).toBeNull();
+  });
+});
+
+describe("PendingOutlineCard collapse persistence", () => {
+  function renderCard(currentOutline = outline(), canvasId = "c1") {
+    return render(
+      <PendingOutlineCard
+        projectId="p1"
+        canvasId={canvasId}
+        outline={currentOutline}
+        canvasRevision={3}
+      />,
+    );
+  }
+
+  it("keeps the same outline collapsed after the card remounts", () => {
+    const first = renderCard();
+    fireEvent.click(first.getByRole("button", { name: "freezone.outline.dismiss" }));
+    expect(first.getByRole("button", { name: "freezone.outline.reopen" })).toBeInTheDocument();
+
+    first.unmount();
+    const refreshed = renderCard();
+
+    expect(refreshed.getByRole("button", { name: "freezone.outline.reopen" })).toBeInTheDocument();
+    expect(refreshed.queryByRole("button", { name: "freezone.outline.confirm" })).toBeNull();
+  });
+
+  it("automatically expands a new outline version and discards the stale collapse", async () => {
+    const first = renderCard();
+    fireEvent.click(first.getByRole("button", { name: "freezone.outline.dismiss" }));
+    first.unmount();
+
+    const updated = renderCard(outline({ updated_at: "2026-09-22T00:00:00Z" }));
+
+    expect(updated.getByRole("button", { name: "freezone.outline.confirm" })).toBeInTheDocument();
+    await waitFor(() => expect(window.localStorage.length).toBe(0));
+  });
+
+  it("stores collapse state independently for each canvas", () => {
+    const first = renderCard(outline(), "canvas-a");
+    fireEvent.click(first.getByRole("button", { name: "freezone.outline.dismiss" }));
+    first.unmount();
+
+    const otherCanvas = renderCard(outline(), "canvas-b");
+
+    expect(otherCanvas.getByRole("button", { name: "freezone.outline.confirm" })).toBeInTheDocument();
   });
 });

@@ -180,6 +180,17 @@ import { parsePendingStoryOutline, type PendingStoryOutline } from "@/features/c
 
 export { hasLegacyPresetCanvasMetadata } from "@/features/freezone/projections";
 
+export function shouldKeepCanvasOverlaysMounted(
+  status: CanvasSyncStatus,
+  hydratedCanvasId: string | null,
+  canvasId: string,
+): boolean {
+  return (
+    hydratedCanvasId === canvasId &&
+    (status === "ready" || status === "saving")
+  );
+}
+
 interface FreezoneShellProps {
   project: SupertaleProjectSummary;
   canvasId: string;
@@ -2234,6 +2245,13 @@ export function FreezoneShell({
   const showBlockingLoading =
     !hasRenderedCanvas && sync.status !== "error" && sync.status !== "conflict";
   const showLoadingOverlay = sync.status === "loading" && hasRenderedCanvas;
+  // Autosave moves ready -> saving -> ready for every persisted node edit.
+  // Keep read-only canvas chrome mounted through that transition so dragging a
+  // node does not make the outline/stage UI disappear and remount. Mutating
+  // outline actions receive a null revision below while the save is in flight.
+  const keepCanvasOverlaysMounted =
+    active &&
+    shouldKeepCanvasOverlaysMounted(sync.status, sync.hydratedCanvasId, canvasId);
 
   return (
     <div className="relative w-full h-full flex flex-col overflow-hidden">
@@ -2271,23 +2289,27 @@ export function FreezoneShell({
             />
           )}
           <BackupStatusIndicator status={sync.backupStatus} />
-          {active && sync.status === "ready" && sync.hydratedCanvasId === canvasId && (
+          {keepCanvasOverlaysMounted && (
             // 自带 15s 轮询，保活期间不挂载。
             <WorkflowRunRecoveryBar projectId={projectId} canvasId={canvasId} />
           )}
-          {active && sync.status === "ready" && pendingOutline && (
+          {keepCanvasOverlaysMounted && pendingOutline && (
             <PendingOutlineCard
               projectId={projectId}
               canvasId={canvasId}
               outline={pendingOutline}
-              canvasRevision={sync.revision}
+              canvasRevision={sync.status === "ready" ? sync.revision : null}
               onConfirmed={handleOutlineConfirmed}
               onRevisionRequested={handleOutlineRevisionRequested}
             />
           )}
           {/* 阶段D：纯读的阶段导航，只在有大纲/正式故事组的 fmv 画布上出现。 */}
-          {active && sync.status === "ready" && (
-            <StoryStageNav outline={pendingOutline} />
+          {keepCanvasOverlaysMounted && (
+            <StoryStageNav
+              outline={pendingOutline}
+              leftPanelExpanded={!assetPanelCollapsed}
+              rightPanelExpanded={chatOpen}
+            />
           )}
           {/* 调试面板暂时隐藏，恢复时去掉 `false &&` 即可 */}
           {false && import.meta.env.DEV && (

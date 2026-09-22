@@ -24,6 +24,33 @@ import { refreshRemoteFreezoneCanvas } from "@/features/freezone/canvasSyncRunti
 import { FREEZONE_DOCK_OFFSET_ANIMATED_STYLE } from "@/features/freezone/dockOffset";
 import { Button } from "@/components/ui/button";
 
+const OUTLINE_DISMISSAL_STORAGE_PREFIX = "supertale.freezone.outlineDismissed.v1";
+
+function outlineDismissalStorageKey(projectId: string, canvasId: string): string {
+  return `${OUTLINE_DISMISSAL_STORAGE_PREFIX}:${encodeURIComponent(projectId)}:${encodeURIComponent(canvasId)}`;
+}
+
+function readDismissedOutlineKey(storageKey: string): string | null {
+  try {
+    return window.localStorage.getItem(storageKey);
+  } catch {
+    // localStorage can be unavailable in restricted browser contexts.
+    return null;
+  }
+}
+
+function writeDismissedOutlineKey(storageKey: string, outlineKey: string | null): void {
+  try {
+    if (outlineKey === null) {
+      window.localStorage.removeItem(storageKey);
+    } else {
+      window.localStorage.setItem(storageKey, outlineKey);
+    }
+  } catch {
+    // Keep the in-memory collapse behavior when persistence is unavailable.
+  }
+}
+
 function newConfirmIdempotencyKey(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return `outline-confirm:${crypto.randomUUID()}`;
@@ -76,14 +103,32 @@ export function PendingOutlineCard({
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Local-only collapse: the card is metadata-driven, so dismissing must not
-  // survive a new proposal round.
-  const [dismissedKey, setDismissedKey] = useState<string | null>(null);
+  // Persist the collapsed version per canvas. The versioned outline key means
+  // a newly generated proposal still opens automatically for review.
+  const [dismissedToken, setDismissedToken] = useState<string | null>(null);
   const outlineKey = `${outline.outline_id}:${outline.updated_at}`;
+  const dismissalStorageKey = outlineDismissalStorageKey(projectId, canvasId);
+  const dismissalToken = `${dismissalStorageKey}:${outlineKey}`;
+  const dismissed =
+    dismissedToken === dismissalToken ||
+    readDismissedOutlineKey(dismissalStorageKey) === outlineKey;
   useEffect(() => {
-    setDismissedKey(null);
     setError(null);
-  }, [outlineKey]);
+    const storedOutlineKey = readDismissedOutlineKey(dismissalStorageKey);
+    if (storedOutlineKey !== null && storedOutlineKey !== outlineKey) {
+      writeDismissedOutlineKey(dismissalStorageKey, null);
+    }
+  }, [dismissalStorageKey, outlineKey]);
+
+  const collapse = useCallback(() => {
+    writeDismissedOutlineKey(dismissalStorageKey, outlineKey);
+    setDismissedToken(dismissalToken);
+  }, [dismissalStorageKey, dismissalToken, outlineKey]);
+
+  const reopen = useCallback(() => {
+    writeDismissedOutlineKey(dismissalStorageKey, null);
+    setDismissedToken(null);
+  }, [dismissalStorageKey]);
 
   const refreshCanvas = useCallback(async () => {
     return await refreshRemoteFreezoneCanvas(projectId, canvasId, {
@@ -168,7 +213,7 @@ export function PendingOutlineCard({
   const actionable = outline.status === "pending" || outline.status === "needs_revision";
   // 收起只是折叠：大纲内容还在画布 metadata 里，没地方确认的就找不回了。
   // 原地换成紧凑胶囊入口，点开重新展开；新方案（outline_id/updated_at 变化）到达时自动展开。
-  if (dismissedKey === outlineKey) {
+  if (dismissed) {
     // 状态用前置小圆点表达，不放实心徽章：实心 chip 挂在右端会把视觉重心拉偏、
     // 胶囊看着歪。圆点（左）+ 截断标题（右）+ 两端等宽 px-3 才对称。
     const dotClass =
@@ -184,7 +229,7 @@ export function PendingOutlineCard({
       >
         <button
           type="button"
-          onClick={() => setDismissedKey(null)}
+          onClick={reopen}
           aria-label={t("freezone.outline.reopen")}
           title={t("freezone.outline.reopen")}
           // 外层容器的 marginRight 已按抽屉宽度整块左移让位，这里不能再减一次
@@ -220,7 +265,7 @@ export function PendingOutlineCard({
           type="button"
           variant="ghost"
           size="icon-sm"
-          onClick={() => setDismissedKey(outlineKey)}
+          onClick={collapse}
           aria-label={t("freezone.outline.dismiss")}
           title={t("freezone.outline.dismiss")}
         >
