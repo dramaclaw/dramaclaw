@@ -511,6 +511,18 @@ def validate_workflow_plan(
     }
 
 
+_IGNORED_VIDEO_DURATION_KEYS = (
+    "duration",
+    "durationSeconds",
+    "duration_seconds",
+    "durationMs",
+    "duration_ms",
+    "lengthSec",
+    "length_seconds",
+    "seconds",
+)
+
+
 def _build_plan_preflight(nodes: list[Any]) -> dict[str, Any]:
     counts = {
         "text": 0,
@@ -562,6 +574,18 @@ def _build_plan_preflight(nodes: list[Any]) -> dict[str, Any]:
                             "video duration exceeds 15 seconds and will be split or clamped by the runtime",
                         )
                     )
+            else:
+                # A duration written under a key the compiler never reads is
+                # silently dropped and the planned duration stays 0; say so.
+                for alias in _IGNORED_VIDEO_DURATION_KEYS:
+                    if alias in data:
+                        warnings.append(
+                            _issue(
+                                f"nodes[{index}].data.{alias}",
+                                f"video duration key {alias} is ignored by the compiler; "
+                                "set data.durationSec (seconds)",
+                            )
+                        )
             if not model:
                 warnings.append(
                     _issue(

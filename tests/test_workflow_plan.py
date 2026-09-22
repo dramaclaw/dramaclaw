@@ -390,6 +390,89 @@ def test_standard_skill_planners_expand_without_agent_authored_topology(monkeypa
         assert catalog.validate_agent_workflow_plan(plan)["ok"] is True
 
 
+def test_agent_authored_plan_backfills_runtime_fields_from_skill_inputs(monkeypatch):
+    """Issue #677: the raw plan path applies the same portable preferences the
+    standard planner writes, without overriding values the plan states."""
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    compiled = catalog.compile_workflow_intent(
+        {"skill_id": "text-to-image-video", "user_goal": "生成一段赛博城市文生图生视频"}
+    )
+    assert compiled["ok"] is True
+    plan = copy.deepcopy(compiled["plan"])
+    plan.pop("planner", None)
+    video_nodes = [node for node in plan["nodes"] if node["node_type"] == "videoNode"]
+    assert video_nodes
+    for node in video_nodes:
+        for field in ("durationSec", "genMode", "generateAudio", "quality", "count"):
+            node["data"].pop(field, None)
+    # One node states its own duration; it must survive the backfill.
+    video_nodes[0]["data"]["durationSec"] = 3
+    plan["inputs"] = {
+        "video_duration_seconds": 6,
+        "video_generate_audio": True,
+        "video_generation_mode": "imageToVideo",
+        "video_resolution": "720P",
+        "video_variants_per_node": 2,
+    }
+
+    validated = catalog.validate_agent_workflow_plan(plan)
+
+    assert validated["ok"] is True, validated
+    filled = {
+        node["id"]: node["data"]
+        for node in validated["plan"]["nodes"]
+        if node["node_type"] == "videoNode"
+    }
+    first = filled[video_nodes[0]["id"]]
+    assert first["durationSec"] == 3
+    assert first["genMode"] == "imageToVideo"
+    assert first["generateAudio"] is True
+    assert first["quality"] == "720P"
+    assert first["count"] == 2
+    for node_id, data in filled.items():
+        if node_id != video_nodes[0]["id"]:
+            assert data["durationSec"] == 6
+    backfilled = validated["backfilled_runtime_fields"]
+    assert "durationSec" not in backfilled[video_nodes[0]["id"]]
+    assert set(backfilled[video_nodes[0]["id"]]) == {"genMode", "generateAudio", "quality", "count"}
+    # The plan preflight is rebuilt on the backfilled nodes.
+    assert validated["preflight"]["planned_video_duration_seconds"] == 3 + 6 * (len(filled) - 1)
+
+
+def test_agent_authored_plan_without_preferences_is_left_untouched(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    compiled = catalog.compile_workflow_intent(
+        {"skill_id": "text-to-image-video", "user_goal": "生成一段赛博城市文生图生视频"}
+    )
+    plan = copy.deepcopy(compiled["plan"])
+    plan.pop("planner", None)
+    before = copy.deepcopy(plan["nodes"])
+
+    validated = catalog.validate_agent_workflow_plan(plan)
+
+    assert validated["ok"] is True
+    assert "backfilled_runtime_fields" not in validated
+    assert validated["plan"]["nodes"] == before
+
+
+def test_plan_preflight_warns_about_duration_written_under_ignored_keys():
+    """Issue #677: a duration the compiler never reads leaves the planned
+    duration at 0; the plan preflight now says which key was ignored."""
+    from novelvideo.freezone.workflow_plan import _build_plan_preflight
+
+    preflight = _build_plan_preflight([
+        {"id": "shot", "node_type": "videoNode",
+         "data": {"model": "video-model", "duration_seconds": 5}},
+        {"id": "ok", "node_type": "videoNode",
+         "data": {"model": "video-model", "durationSec": 4, "duration": 9}},
+    ])
+    assert preflight["planned_video_duration_seconds"] == 4
+    assert [w["path"] for w in preflight["warnings"]] == ["nodes[0].data.duration_seconds"]
+    assert "durationSec" in preflight["warnings"][0]["message"]
+
+
 def test_standard_skill_planner_uses_defaults_for_minimal_intent(monkeypatch):
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)

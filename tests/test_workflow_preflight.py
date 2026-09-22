@@ -209,14 +209,82 @@ def test_video_mode_must_match_live_model_capabilities():
             "text_to_video", "all_reference", "first_last_frame", "image_reference",
         ],
     }
-    blocked = _check({"model": entry["id"], "genMode": "imageToVideo"}, entry)
+    blocked = _check({"model": entry["id"], "genMode": "imageToVideo", "durationSec": 5}, entry)
     assert blocked["status"] == "blocked"
     assert blocked["blockers"][0]["path"] == "runtime.models.video.genMode"
     assert blocked["blockers"][0]["code"] == "model_capability_unsupported"
     assert "imageReference" in blocked["blockers"][0]["allowed_values"]
-    assert _check({"model": entry["id"], "genMode": "imageReference"}, entry)[
-        "status"
-    ] == "ready"
+    assert _check(
+        {"model": entry["id"], "genMode": "imageReference", "durationSec": 5}, entry
+    )["status"] == "ready"
+
+
+def test_video_node_without_planned_duration_asks_for_clarification():
+    """Issue #677: an agent-authored video node that pins a model but no
+    durationSec would run as a 0-second shot; preflight blocks and names the
+    portable choice the agent must collect."""
+    result = _check({"model": "video-model", "quality": "720P"})
+    assert result["status"] == "blocked"
+    blocker = next(b for b in result["blockers"] if b["path"].endswith(".durationSec"))
+    assert blocker["code"] == "generation_parameters_required"
+    assert blocker["required_choices"] == {"video": ["duration_seconds"]}
+    # Still fine once the duration is stated.
+    assert _check({"model": "video-model", "quality": "720P", "durationSec": 5})["status"] == "ready"
+
+
+_AUDIO_CAPABLE_ENTRY = {
+    "id": "video-model",
+    "ratioOptions": ["16:9"],
+    "resolutionOptions": ["720P"],
+    "minDuration": 2,
+    "maxDuration": 10,
+    "supportsGenerateAudio": True,
+}
+
+
+def _voiced(data, *, recipe="dialogue-continuity-shot-video", role=None):
+    catalog = {"recipeId": recipe}
+    if role:
+        catalog["timelineRole"] = role
+    return {"model": "video-model", "durationSec": 5, "workflowCatalog": catalog, **data}
+
+
+def test_voiced_shot_must_state_generate_audio_explicitly():
+    """Issue #677: a dialogue/voice-over shot with generateAudio left unset would
+    render silent under the runtime default, so preflight asks for the choice."""
+    result = _check(_voiced({}), _AUDIO_CAPABLE_ENTRY)
+    assert result["status"] == "blocked"
+    blocker = next(b for b in result["blockers"] if b["path"].endswith(".generateAudio"))
+    assert blocker["code"] == "generation_parameters_required"
+    assert blocker["required_choices"] == {"video": ["generate_audio"]}
+    # An explicit answer either way is accepted.
+    assert _check(_voiced({"generateAudio": True}), _AUDIO_CAPABLE_ENTRY)["status"] == "ready"
+    assert _check(_voiced({"generateAudio": False}), _AUDIO_CAPABLE_ENTRY)["status"] == "ready"
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        _voiced({}, recipe="drama-shot-voice"),
+        _voiced({}, recipe="general-video", role="voiceover"),
+        {
+            "model": "video-model", "durationSec": 5,
+            "workflowCatalog": {"recipeId": "general-video",
+                                "recipePipeline": [{"id": "dialogue-drama-storyboard-plan"}]},
+        },
+    ],
+)
+def test_voiced_signal_comes_from_recipe_ids_or_timeline_role(data):
+    result = _check(data, _AUDIO_CAPABLE_ENTRY)
+    assert any(b["path"].endswith(".generateAudio") for b in result["blockers"])
+
+
+def test_generate_audio_is_not_required_for_plain_shots_or_silent_models():
+    # A shot that carries no dialogue signal keeps today's behaviour.
+    assert _check(_voiced({}, recipe="general-video"), _AUDIO_CAPABLE_ENTRY)["status"] == "ready"
+    # A model that cannot generate audio has nothing to ask.
+    silent_entry = {**_AUDIO_CAPABLE_ENTRY, "supportsGenerateAudio": False}
+    assert _check(_voiced({}), silent_entry)["status"] == "ready"
 
 
 @pytest.mark.parametrize(
