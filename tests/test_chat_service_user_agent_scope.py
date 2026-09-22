@@ -1459,6 +1459,10 @@ def test_codex_freezone_instructions_forbid_invented_resource_uris():
     assert "freezone_get_canvas_ontology" in instructions
     assert "one and only run request" in instructions
     assert "never call freezone_run_workflow again in the same turn" in instructions
+    assert "pass run_after_create=true at prepare time" in instructions
+    assert (
+        "freezone_confirm_workflow_draft does not accept run_after_create" in instructions
+    )
     assert "not a Workflow catalog skill_id" in instructions
     assert "text-to-image-video" in instructions
     assert "Never ask for a duplicate 'create and run' confirmation" in instructions
