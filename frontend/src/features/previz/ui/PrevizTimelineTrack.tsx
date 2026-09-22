@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next';
 import type { CloseupTarget } from '../domain/closeupClip';
 import type { PrevizClip, PrevizObjectKind, PrevizTrack } from '../domain/scene';
 import { isActionClip, isPathClip, pathClipAt, uToFrame } from '../domain/timeline';
+import { PrevizHoverTip } from './PrevizHoverTip';
 
 /** 头列宽度。轨道行、子轨道行、标尺占位共用同一个数，三者才对得齐。 */
 export const PREVIZ_TRACK_HEADER_PX = 240;
@@ -177,14 +178,16 @@ export function PrevizTimelineTrack({
               ))}
             </div>
           )}
-          <button
-            type="button"
-            className={ICON_BUTTON}
-            aria-label={expanded ? t('previz.timeline.collapseTrack') : t('previz.timeline.expandTrack')}
-            onClick={onToggleExpand}
-          >
-            {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-          </button>
+          <PrevizHoverTip label={expanded ? t('previz.timeline.collapseTrack') : t('previz.timeline.expandTrack')}>
+            <button
+              type="button"
+              className={ICON_BUTTON}
+              aria-label={expanded ? t('previz.timeline.collapseTrack') : t('previz.timeline.expandTrack')}
+              onClick={onToggleExpand}
+            >
+              {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+            </button>
+          </PrevizHoverTip>
           <KindIcon className="h-3.5 w-3.5 shrink-0 text-[#6d7585]" />
           <span className="min-w-0 flex-1 truncate text-xs text-[#c7cedb]">{name}</span>
           {/* 直播标、切换机位、跟拍都只对机位轨有意义，同一个判断管三个。 */}
@@ -196,57 +199,62 @@ export function PrevizTimelineTrack({
                 </span>
               )}
               {onCut && (
+                <PrevizHoverTip label={t('previz.timeline.cutHere')}>
+                  <button
+                    type="button"
+                    className={ICON_BUTTON}
+                    aria-label={t('previz.timeline.cutHere')}
+                    onClick={onCut}
+                  >
+                    <SwitchCamera className="h-3.5 w-3.5" />
+                  </button>
+                </PrevizHoverTip>
+              )}
+              <PrevizHoverTip label={t('previz.timeline.addCloseup')}>
                 <button
                   type="button"
                   className={ICON_BUTTON}
-                  aria-label={t('previz.timeline.cutHere')}
-                  title={t('previz.timeline.cutHere')}
-                  onClick={onCut}
+                  aria-label={t('previz.timeline.addCloseup')}
+                  // 场景里只有这台机位时没得跟。摆一个按下去没反应的按钮比没有更糟。
+                  disabled={closeupTargets.length === 0}
+                  onClick={() => setPicking((open) => !open)}
                 >
-                  <SwitchCamera className="h-3.5 w-3.5" />
+                  <Link2 className="h-3.5 w-3.5" />
                 </button>
-              )}
-              <button
-                type="button"
-                className={ICON_BUTTON}
-                aria-label={t('previz.timeline.addCloseup')}
-                title={t('previz.timeline.addCloseup')}
-                // 场景里只有这台机位时没得跟。摆一个按下去没反应的按钮比没有更糟。
-                disabled={closeupTargets.length === 0}
-                onClick={() => setPicking((open) => !open)}
-              >
-                <Link2 className="h-3.5 w-3.5" />
-              </button>
+              </PrevizHoverTip>
             </>
           )}
-          <button
-            type="button"
-            className={ICON_BUTTON}
-            aria-label={t('previz.timeline.razor')}
-            title={t('previz.timeline.razor')}
-            disabled={!current}
-            onClick={() => current && onSplit(current.id)}
-          >
-            <Scissors className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            className={ICON_BUTTON}
-            aria-label={t('previz.timeline.pinTrack')}
-            title={t('previz.timeline.pinTrack')}
-            onClick={onPin}
-          >
-            <Pin className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            className={ICON_BUTTON}
-            aria-label={t('previz.timeline.removeTrack')}
-            title={t('previz.timeline.removeTrack')}
-            onClick={onRemove}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+          <PrevizHoverTip label={t('previz.timeline.razor')}>
+            <button
+              type="button"
+              className={ICON_BUTTON}
+              aria-label={t('previz.timeline.razor')}
+              disabled={!current}
+              onClick={() => current && onSplit(current.id)}
+            >
+              <Scissors className="h-3.5 w-3.5" />
+            </button>
+          </PrevizHoverTip>
+          <PrevizHoverTip label={t('previz.timeline.pinTrack')}>
+            <button
+              type="button"
+              className={ICON_BUTTON}
+              aria-label={t('previz.timeline.pinTrack')}
+              onClick={onPin}
+            >
+              <Pin className="h-3.5 w-3.5" />
+            </button>
+          </PrevizHoverTip>
+          <PrevizHoverTip label={t('previz.timeline.removeTrack')}>
+            <button
+              type="button"
+              className={ICON_BUTTON}
+              aria-label={t('previz.timeline.removeTrack')}
+              onClick={onRemove}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </PrevizHoverTip>
         </div>
 
         <div className="relative shrink-0" style={{ width: laneWidthPx }}>
@@ -285,43 +293,50 @@ export function PrevizTimelineTrack({
             <span className="min-w-0 flex-1 truncate text-[11px] text-[#8b93a3]">
               {t('previz.timeline.motionPath')}
             </span>
-            <button
-              type="button"
-              className={ICON_BUTTON}
-              aria-label={t('previz.timeline.prevKeyframe')}
-              disabled={previous === undefined}
-              onClick={() => previous !== undefined && onSeek(previous)}
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              className={ICON_BUTTON}
-              aria-label={t('previz.timeline.insertKeyframe')}
-              disabled={!pathEditable}
-              onClick={() => currentPath && onInsertKeyframe(currentPath.id)}
-            >
-              <Diamond className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              className={ICON_BUTTON}
-              aria-label={t('previz.timeline.nextKeyframe')}
-              disabled={next === undefined}
-              onClick={() => next !== undefined && onSeek(next)}
-            >
-              <ChevronRight className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              className={ICON_BUTTON}
-              aria-label={t('previz.timeline.clearPath')}
-              title={t('previz.timeline.clearPath')}
-              disabled={!pathEditable}
-              onClick={() => currentPath && onClearPath(currentPath.id)}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
+            <PrevizHoverTip label={t('previz.timeline.prevKeyframe')}>
+              <button
+                type="button"
+                className={ICON_BUTTON}
+                aria-label={t('previz.timeline.prevKeyframe')}
+                disabled={previous === undefined}
+                onClick={() => previous !== undefined && onSeek(previous)}
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </button>
+            </PrevizHoverTip>
+            <PrevizHoverTip label={t('previz.timeline.insertKeyframe')}>
+              <button
+                type="button"
+                className={ICON_BUTTON}
+                aria-label={t('previz.timeline.insertKeyframe')}
+                disabled={!pathEditable}
+                onClick={() => currentPath && onInsertKeyframe(currentPath.id)}
+              >
+                <Diamond className="h-3.5 w-3.5" />
+              </button>
+            </PrevizHoverTip>
+            <PrevizHoverTip label={t('previz.timeline.nextKeyframe')}>
+              <button
+                type="button"
+                className={ICON_BUTTON}
+                aria-label={t('previz.timeline.nextKeyframe')}
+                disabled={next === undefined}
+                onClick={() => next !== undefined && onSeek(next)}
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </PrevizHoverTip>
+            <PrevizHoverTip label={t('previz.timeline.clearPath')}>
+              <button
+                type="button"
+                className={ICON_BUTTON}
+                aria-label={t('previz.timeline.clearPath')}
+                disabled={!pathEditable}
+                onClick={() => currentPath && onClearPath(currentPath.id)}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </PrevizHoverTip>
           </div>
 
           <div className="relative shrink-0" style={{ width: laneWidthPx }}>

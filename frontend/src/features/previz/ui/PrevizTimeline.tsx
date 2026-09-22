@@ -16,6 +16,8 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import { TooltipProvider } from '@/components/ui/tooltip';
+
 import { closeupTargets } from '../domain/closeupClip';
 import type { PrevizRange } from '../domain/camera';
 import { liveCameraAt } from '../domain/program';
@@ -24,6 +26,7 @@ import { PREVIZ_FPS } from '../domain/scene';
 import { PREVIZ_PLAYBACK_RATES, usePrevizStore } from '../store';
 import { PrevizActionRow } from './PrevizActionRow';
 import { PrevizAudioTrack } from './PrevizAudioTrack';
+import { PrevizHoverTip } from './PrevizHoverTip';
 import { PrevizProgramTrack } from './PrevizProgramTrack';
 import { PrevizTimeRuler } from './PrevizTimeRuler';
 import { PREVIZ_TRACK_HEADER_PX, PrevizTimelineTrack } from './PrevizTimelineTrack';
@@ -217,347 +220,367 @@ export function PrevizTimeline({
   );
 
   return (
-    <div className="flex flex-col border-t border-[#232833] bg-[#15181f]">
-      {/*
-        面板顶边就是把手。做成 `role="separator"` 而不是一颗按钮：它分的是视口与轨道
-        两块区域，且可聚焦、能用上下键调——只能拖的话，触控板上精确到几像素很难受。
-      */}
-      <div
-        data-testid="previz-timeline-resize"
-        role="separator"
-        aria-orientation="horizontal"
-        aria-label={t('previz.timeline.resize')}
-        aria-valuenow={trackHeightPx}
-        aria-valuemin={PREVIZ_TIMELINE_HEIGHT.min}
-        aria-valuemax={PREVIZ_TIMELINE_HEIGHT.max}
-        tabIndex={0}
-        className="h-1.5 w-full shrink-0 cursor-row-resize hover:bg-[#5b8cff]/50 focus-visible:bg-[#5b8cff]/50 focus-visible:outline-none"
-        onPointerDown={resizeFrom}
-        onKeyDown={(event) => {
-          if (event.key === 'ArrowUp') resizeBy(RESIZE_STEP_PX);
-          else if (event.key === 'ArrowDown') resizeBy(-RESIZE_STEP_PX);
-          else return;
-          // 上下键在这条面板里本来会滚动轨道区，按一下既调高度又滚一截很难受。
-          event.preventDefault();
-        }}
-      />
+    <TooltipProvider delay={120}>
+      <div className="flex flex-col border-t border-[#232833] bg-[#15181f]">
+        {/*
+          面板顶边就是把手。做成 `role="separator"` 而不是一颗按钮：它分的是视口与轨道
+          两块区域，且可聚焦、能用上下键调——只能拖的话，触控板上精确到几像素很难受。
+        */}
+        <div
+          data-testid="previz-timeline-resize"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label={t('previz.timeline.resize')}
+          aria-valuenow={trackHeightPx}
+          aria-valuemin={PREVIZ_TIMELINE_HEIGHT.min}
+          aria-valuemax={PREVIZ_TIMELINE_HEIGHT.max}
+          tabIndex={0}
+          className="h-1.5 w-full shrink-0 cursor-row-resize hover:bg-[#5b8cff]/50 focus-visible:bg-[#5b8cff]/50 focus-visible:outline-none"
+          onPointerDown={resizeFrom}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowUp') resizeBy(RESIZE_STEP_PX);
+            else if (event.key === 'ArrowDown') resizeBy(-RESIZE_STEP_PX);
+            else return;
+            // 上下键在这条面板里本来会滚动轨道区，按一下既调高度又滚一截很难受。
+            event.preventDefault();
+          }}
+        />
 
-      <div className="flex items-center gap-1 px-3 py-1.5">
-        <button
-          type="button"
-          className={BUTTON_CLASS}
-          aria-label={playing ? t('previz.timeline.pause') : t('previz.timeline.play')}
-          onClick={() => setTimelinePlaying(!playing)}
-        >
-          {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-        </button>
-        <button
-          type="button"
-          className={BUTTON_CLASS}
-          aria-label={t('previz.timeline.stop')}
-          onClick={stopPlayback}
-        >
-          <Square className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          className={BUTTON_CLASS}
-          aria-label={t('previz.timeline.goToStart')}
-          onClick={() => setTimelineFrame(0)}
-        >
-          <ChevronFirst className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          className={BUTTON_CLASS}
-          aria-label={t('previz.timeline.prevFrame')}
-          onClick={() => setTimelineFrame(frame - 1)}
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          className={BUTTON_CLASS}
-          aria-label={t('previz.timeline.nextFrame')}
-          onClick={() => setTimelineFrame(frame + 1)}
-        >
-          <ChevronRight className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          className={BUTTON_CLASS}
-          aria-label={t('previz.timeline.goToEnd')}
-          onClick={() => setTimelineFrame(durationFrames)}
-        >
-          <ChevronLast className="h-4 w-4" />
-        </button>
+        <div className="flex items-center gap-1 px-3 py-1.5">
+          <PrevizHoverTip label={playing ? t('previz.timeline.pause') : t('previz.timeline.play')}>
+            <button
+              type="button"
+              className={BUTTON_CLASS}
+              aria-label={playing ? t('previz.timeline.pause') : t('previz.timeline.play')}
+              onClick={() => setTimelinePlaying(!playing)}
+            >
+              {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+            </button>
+          </PrevizHoverTip>
+          <PrevizHoverTip label={t('previz.timeline.stop')}>
+            <button
+              type="button"
+              className={BUTTON_CLASS}
+              aria-label={t('previz.timeline.stop')}
+              onClick={stopPlayback}
+            >
+              <Square className="h-4 w-4" />
+            </button>
+          </PrevizHoverTip>
+          <PrevizHoverTip label={t('previz.timeline.goToStart')}>
+            <button
+              type="button"
+              className={BUTTON_CLASS}
+              aria-label={t('previz.timeline.goToStart')}
+              onClick={() => setTimelineFrame(0)}
+            >
+              <ChevronFirst className="h-4 w-4" />
+            </button>
+          </PrevizHoverTip>
+          <PrevizHoverTip label={t('previz.timeline.prevFrame')}>
+            <button
+              type="button"
+              className={BUTTON_CLASS}
+              aria-label={t('previz.timeline.prevFrame')}
+              onClick={() => setTimelineFrame(frame - 1)}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+          </PrevizHoverTip>
+          <PrevizHoverTip label={t('previz.timeline.nextFrame')}>
+            <button
+              type="button"
+              className={BUTTON_CLASS}
+              aria-label={t('previz.timeline.nextFrame')}
+              onClick={() => setTimelineFrame(frame + 1)}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </PrevizHoverTip>
+          <PrevizHoverTip label={t('previz.timeline.goToEnd')}>
+            <button
+              type="button"
+              className={BUTTON_CLASS}
+              aria-label={t('previz.timeline.goToEnd')}
+              onClick={() => setTimelineFrame(durationFrames)}
+            >
+              <ChevronLast className="h-4 w-4" />
+            </button>
+          </PrevizHoverTip>
 
-        <span
-          data-testid="previz-timecode"
-          className="ml-2 font-mono text-xs tabular-nums text-[#c7cedb]"
-        >
-          {/* 帧号、已走的秒数、总长一起报：只报帧号的话「这个镜头几秒」每次都得心算。 */}
-          F{frame} · {(frame / PREVIZ_FPS).toFixed(2)}s /{' '}
-          {(durationFrames / PREVIZ_FPS).toFixed(2)}s
-        </span>
-
-        <label className="ml-3 flex items-center gap-1 text-xs text-[#8b93a3]">
-          {t('previz.timeline.rate')}
-          <select
-            aria-label={t('previz.timeline.rate')}
-            className="rounded bg-[#1d222b] px-1 py-0.5 text-[#c7cedb]"
-            value={rate}
-            onChange={(event) => setTimelineRate(Number(event.target.value))}
+          <span
+            data-testid="previz-timecode"
+            className="ml-2 font-mono text-xs tabular-nums text-[#c7cedb]"
           >
-            {PREVIZ_PLAYBACK_RATES.map((option) => (
-              <option key={option} value={option}>
-                {option}×
-              </option>
-            ))}
-          </select>
-        </label>
+            {/* 帧号、已走的秒数、总长一起报：只报帧号的话「这个镜头几秒」每次都得心算。 */}
+            F{frame} · {(frame / PREVIZ_FPS).toFixed(2)}s /{' '}
+            {(durationFrames / PREVIZ_FPS).toFixed(2)}s
+          </span>
 
-        <label className="flex items-center gap-1 text-xs text-[#8b93a3]">
-          {t('previz.timeline.duration')}
-          <input
-            type="number"
-            aria-label={t('previz.timeline.duration')}
-            className="w-16 rounded bg-[#1d222b] px-1 py-0.5 text-right text-[#c7cedb]"
-            defaultValue={durationFrames}
-            key={durationFrames}
-            onBlur={(event) => setDurationFrames(Number(event.target.value))}
-          />
-        </label>
+          <label className="ml-3 flex items-center gap-1 text-xs text-[#8b93a3]">
+            {t('previz.timeline.rate')}
+            <select
+              aria-label={t('previz.timeline.rate')}
+              className="rounded bg-[#1d222b] px-1 py-0.5 text-[#c7cedb]"
+              value={rate}
+              onChange={(event) => setTimelineRate(Number(event.target.value))}
+            >
+              {PREVIZ_PLAYBACK_RATES.map((option) => (
+                <option key={option} value={option}>
+                  {option}×
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <label className="flex items-center gap-1 text-xs text-[#8b93a3]">
-          <Plus className="h-3.5 w-3.5" />
-          <span className="sr-only">{t('previz.timeline.addObject')}</span>
-          <select
-            aria-label={t('previz.timeline.addObject')}
-            className="rounded bg-[#1d222b] px-1 py-0.5 text-[#c7cedb]"
-            value=""
-            onChange={(event) => event.target.value && addObjectToTimeline(event.target.value)}
-          >
-            <option value="">{t('previz.timeline.addObject')}</option>
-            {/* 已经有轨道的对象不列：一个对象一条轨道，再加一次只会加到原来那条上。 */}
-            {untracked.map((object) => (
-              <option key={object.id} value={object.id}>
-                {object.name}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <div className="ml-auto flex items-center gap-1">
-          <button
-            type="button"
-            className={BUTTON_CLASS}
-            aria-label={t('previz.timeline.zoomOut')}
-            onClick={() => zoomTimelineBy(1 / ZOOM_STEP)}
-          >
-            <ZoomOut className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            className={BUTTON_CLASS}
-            aria-label={t('previz.timeline.zoomIn')}
-            onClick={() => zoomTimelineBy(ZOOM_STEP)}
-          >
-            <ZoomIn className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            className={BUTTON_CLASS}
-            aria-label={t('previz.timeline.zoomFit')}
-            onClick={() => fitTimelineZoom(lanePx)}
-          >
-            <Maximize className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
-
-      {/*
-        播放头另外挂一个 range：jsdom 没有布局，在轨槽上按下拖动的命中测试只能对着
-        mock 出来的 getBoundingClientRect 断言，等于没测。range 顺带白拿键盘可达性，
-        视觉上藏起来——参照实现的时间轴上并没有这么一根滑块。
-      */}
-      <input
-        type="range"
-        aria-label={t('previz.timeline.playhead')}
-        className="sr-only"
-        min={0}
-        max={durationFrames}
-        step={1}
-        value={frame}
-        onChange={(event) => setTimelineFrame(Number(event.target.value))}
-      />
-
-      <div
-        ref={scrollRef}
-        data-testid="previz-timeline-tracks"
-        className="relative overflow-auto"
-        style={resized ? { height: trackHeightPx } : { maxHeight: trackHeightPx }}
-      >
-        <div className="relative min-w-max">
-          {/*
-            三层压着的顺序是有讲究的：头列（30）> 播放头（20）> 标尺与轨槽（10）。
-            头列要在最上面，横向滚动时片段得从它底下穿过去；播放头要压过标尺，
-            不然顶上那个把手看不见——而参照实现里正是抓着那个把手拖的。
-          */}
-          <div className="sticky top-0 z-10 flex items-stretch bg-[#15181f]">
-            <div
-              className="sticky left-0 z-30 shrink-0 border-b border-[#232833] bg-[#15181f]"
-              style={{ width: PREVIZ_TRACK_HEADER_PX }}
+          <label className="flex items-center gap-1 text-xs text-[#8b93a3]">
+            {t('previz.timeline.duration')}
+            <input
+              type="number"
+              aria-label={t('previz.timeline.duration')}
+              className="w-16 rounded bg-[#1d222b] px-1 py-0.5 text-right text-[#c7cedb]"
+              defaultValue={durationFrames}
+              key={durationFrames}
+              onBlur={(event) => setDurationFrames(Number(event.target.value))}
             />
-            <div
-              className="shrink-0 cursor-ew-resize"
-              style={{ width: laneWidthPx }}
-              onPointerDown={scrubFrom}
+          </label>
+
+          <label className="flex items-center gap-1 text-xs text-[#8b93a3]">
+            <Plus className="h-3.5 w-3.5" />
+            <span className="sr-only">{t('previz.timeline.addObject')}</span>
+            <select
+              aria-label={t('previz.timeline.addObject')}
+              className="rounded bg-[#1d222b] px-1 py-0.5 text-[#c7cedb]"
+              value=""
+              onChange={(event) => event.target.value && addObjectToTimeline(event.target.value)}
             >
-              <PrevizTimeRuler seconds={laneWidthPx / zoom} pxPerSecond={zoom} />
-            </div>
+              <option value="">{t('previz.timeline.addObject')}</option>
+              {/* 已经有轨道的对象不列：一个对象一条轨道，再加一次只会加到原来那条上。 */}
+              {untracked.map((object) => (
+                <option key={object.id} value={object.id}>
+                  {object.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="ml-auto flex items-center gap-1">
+            <PrevizHoverTip label={t('previz.timeline.zoomOut')}>
+              <button
+                type="button"
+                className={BUTTON_CLASS}
+                aria-label={t('previz.timeline.zoomOut')}
+                onClick={() => zoomTimelineBy(1 / ZOOM_STEP)}
+              >
+                <ZoomOut className="h-4 w-4" />
+              </button>
+            </PrevizHoverTip>
+            <PrevizHoverTip label={t('previz.timeline.zoomIn')}>
+              <button
+                type="button"
+                className={BUTTON_CLASS}
+                aria-label={t('previz.timeline.zoomIn')}
+                onClick={() => zoomTimelineBy(ZOOM_STEP)}
+              >
+                <ZoomIn className="h-4 w-4" />
+              </button>
+            </PrevizHoverTip>
+            <PrevizHoverTip label={t('previz.timeline.zoomFit')}>
+              <button
+                type="button"
+                className={BUTTON_CLASS}
+                aria-label={t('previz.timeline.zoomFit')}
+                onClick={() => fitTimelineZoom(lanePx)}
+              >
+                <Maximize className="h-4 w-4" />
+              </button>
+            </PrevizHoverTip>
           </div>
+        </div>
 
-          <PrevizProgramTrack
-            scene={scene}
-            pxPerFrame={pxPerFrame}
-            laneWidthPx={laneWidthPx}
-            selectedClipId={selectedClipId}
-            onSelect={selectClip}
-            onTrim={setClipEdge}
-            onCut={cutToCamera}
-          />
+        {/*
+          播放头另外挂一个 range：jsdom 没有布局，在轨槽上按下拖动的命中测试只能对着
+          mock 出来的 getBoundingClientRect 断言，等于没测。range 顺带白拿键盘可达性，
+          视觉上藏起来——参照实现的时间轴上并没有这么一根滑块。
+        */}
+        <input
+          type="range"
+          aria-label={t('previz.timeline.playhead')}
+          className="sr-only"
+          min={0}
+          max={durationFrames}
+          step={1}
+          value={frame}
+          onChange={(event) => setTimelineFrame(Number(event.target.value))}
+        />
 
-          <ul>
-            {tracks.map((track) => {
-              const kind = kindOf(track.objectId);
-              const isCamera = kind === 'camera';
-              return (
-                <PrevizTimelineTrack
-                  key={track.id}
-                  track={track}
-                  name={nameOf(track.objectId)}
-                  kind={kind}
-                  pxPerFrame={pxPerFrame}
-                  laneWidthPx={laneWidthPx}
-                  frame={frame}
-                  expanded={!collapsed[track.id]}
-                  selectedClipId={selectedClipId}
-                  selectedPointId={selectedPointId}
-                  onToggleExpand={() =>
-                    setCollapsed((current) => {
-                      const next = { ...current };
-                      if (next[track.id]) delete next[track.id];
-                      else next[track.id] = true;
-                      return next;
-                    })
-                  }
-                  onSelectClip={selectClip}
-                  onSelectPoint={(clipId, pointId, at) => {
-                    selectClip(clipId);
-                    selectPathPoint(pointId);
-                    // 播放头跟着跳过去：不跳的话属性面板改的那个点在视口里根本看不见。
-                    setTimelineFrame(at);
-                  }}
-                  onTrimClip={setClipEdge}
-                  onSplit={splitClipAtPlayhead}
-                  onAppend={() => appendClip(track.objectId)}
-                  onPin={() => pinTrackToTop(track.objectId)}
-                  onRemove={() => removeTrackFor(track.objectId)}
-                  onInsertKeyframe={insertKeyframe}
-                  onClearPath={clearPath}
-                  onSeek={setTimelineFrame}
-                  // 只有机位跟得了别人。其余轨道拿到空列表，那颗按钮根本不出现。
-                  closeupTargets={isCamera ? closeupTargets(scene, track.objectId) : []}
-                  onAddCloseup={(target) => addCloseup(track.objectId, target)}
-                  // 只有机位切得了镜。轨道组件里那道 kind 判断也会拦一次，这里仍然自己守住：
-                  // 传下去的每个回调都得是真能调的，不靠下游替我们筛。
-                  onCut={isCamera ? () => cutToCamera(track.objectId) : undefined}
-                  live={liveCameraId === track.objectId}
-                  actionRow={
-                    kind === 'character' ? (
-                      <PrevizActionRow
-                        track={track}
-                        pxPerFrame={pxPerFrame}
-                        laneWidthPx={laneWidthPx}
-                        frame={frame}
-                        selectedClipId={selectedClipId}
-                        motions={scene.motions}
-                        motionStatus={motionStatus}
-                        onSelectClip={selectClip}
-                        onTrimClip={setClipEdge}
-                        onSplit={splitClipAtPlayhead}
-                        onAdd={() => openMotionDialog({ mode: 'add', objectId: track.objectId })}
-                      />
-                    ) : undefined
-                  }
-                />
-              );
-            })}
-          </ul>
-
-          {tracks.length === 0 && (
-            <div className="sticky left-0 flex flex-col items-center gap-2 px-4 py-8 text-center">
-              {objects.length === 0 ? (
-                <>
-                  <p className="text-xs text-[#c7cedb]">{t('previz.timeline.emptyNoObjects')}</p>
-                  <p className="text-[11px] text-[#6d7585]">
-                    {t('previz.timeline.emptyNoObjectsHint')}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      className="rounded-full border border-[#2f3542] px-3 py-1 text-xs text-[#c7cedb] hover:border-[#5b8cff]"
-                      onClick={() => create('character')}
-                    >
-                      {t('previz.timeline.createCharacter')}
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-full border border-[#2f3542] px-3 py-1 text-xs text-[#c7cedb] hover:border-[#5b8cff]"
-                      onClick={() => create('camera')}
-                    >
-                      {t('previz.timeline.createCamera')}
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p className="text-xs text-[#8b93a3]">{t('previz.timeline.empty')}</p>
-                  <p className="text-[11px] text-[#6d7585]">{t('previz.timeline.emptyHint')}</p>
-                </>
-              )}
+        <div
+          ref={scrollRef}
+          data-testid="previz-timeline-tracks"
+          className="relative overflow-auto"
+          style={resized ? { height: trackHeightPx } : { maxHeight: trackHeightPx }}
+        >
+          <div className="relative min-w-max">
+            {/*
+              三层压着的顺序是有讲究的：头列（30）> 播放头（20）> 标尺与轨槽（10）。
+              头列要在最上面，横向滚动时片段得从它底下穿过去；播放头要压过标尺，
+              不然顶上那个把手看不见——而参照实现里正是抓着那个把手拖的。
+            */}
+            <div className="sticky top-0 z-10 flex items-stretch bg-[#15181f]">
+              <div
+                className="sticky left-0 z-30 shrink-0 border-b border-[#232833] bg-[#15181f]"
+                style={{ width: PREVIZ_TRACK_HEADER_PX }}
+              />
+              <div
+                className="shrink-0 cursor-ew-resize"
+                style={{ width: laneWidthPx }}
+                onPointerDown={scrubFrom}
+              >
+                <PrevizTimeRuler seconds={laneWidthPx / zoom} pxPerSecond={zoom} />
+              </div>
             </div>
-          )}
 
-          <PrevizAudioTrack
-            scene={scene}
-            pxPerFrame={pxPerFrame}
-            laneWidthPx={laneWidthPx}
-            selectedClipId={selectedClipId}
-            onSelect={selectClip}
-            onTrim={setClipEdge}
-            upstreamAudio={upstreamAudio}
-            pending={audioImport.pending}
-            onAddFile={(file) => void audioImport.addFile(file)}
-            onAddUpstream={(source) => void audioImport.addUpstream(source)}
-          />
+            <PrevizProgramTrack
+              scene={scene}
+              pxPerFrame={pxPerFrame}
+              laneWidthPx={laneWidthPx}
+              selectedClipId={selectedClipId}
+              onSelect={selectClip}
+              onTrim={setClipEdge}
+              onCut={cutToCamera}
+            />
 
-          {/* 播放头：一条贯穿所有轨道的竖线，压在头列下面（头列 z 更高）。 */}
-          <div
-            className="pointer-events-none absolute inset-y-0 z-20"
-            style={{ left: PREVIZ_TRACK_HEADER_PX, width: laneWidthPx }}
-          >
+            <ul>
+              {tracks.map((track) => {
+                const kind = kindOf(track.objectId);
+                const isCamera = kind === 'camera';
+                return (
+                  <PrevizTimelineTrack
+                    key={track.id}
+                    track={track}
+                    name={nameOf(track.objectId)}
+                    kind={kind}
+                    pxPerFrame={pxPerFrame}
+                    laneWidthPx={laneWidthPx}
+                    frame={frame}
+                    expanded={!collapsed[track.id]}
+                    selectedClipId={selectedClipId}
+                    selectedPointId={selectedPointId}
+                    onToggleExpand={() =>
+                      setCollapsed((current) => {
+                        const next = { ...current };
+                        if (next[track.id]) delete next[track.id];
+                        else next[track.id] = true;
+                        return next;
+                      })
+                    }
+                    onSelectClip={selectClip}
+                    onSelectPoint={(clipId, pointId, at) => {
+                      selectClip(clipId);
+                      selectPathPoint(pointId);
+                      // 播放头跟着跳过去：不跳的话属性面板改的那个点在视口里根本看不见。
+                      setTimelineFrame(at);
+                    }}
+                    onTrimClip={setClipEdge}
+                    onSplit={splitClipAtPlayhead}
+                    onAppend={() => appendClip(track.objectId)}
+                    onPin={() => pinTrackToTop(track.objectId)}
+                    onRemove={() => removeTrackFor(track.objectId)}
+                    onInsertKeyframe={insertKeyframe}
+                    onClearPath={clearPath}
+                    onSeek={setTimelineFrame}
+                    // 只有机位跟得了别人。其余轨道拿到空列表，那颗按钮根本不出现。
+                    closeupTargets={isCamera ? closeupTargets(scene, track.objectId) : []}
+                    onAddCloseup={(target) => addCloseup(track.objectId, target)}
+                    // 只有机位切得了镜。轨道组件里那道 kind 判断也会拦一次，这里仍然自己守住：
+                    // 传下去的每个回调都得是真能调的，不靠下游替我们筛。
+                    onCut={isCamera ? () => cutToCamera(track.objectId) : undefined}
+                    live={liveCameraId === track.objectId}
+                    actionRow={
+                      kind === 'character' ? (
+                        <PrevizActionRow
+                          track={track}
+                          pxPerFrame={pxPerFrame}
+                          laneWidthPx={laneWidthPx}
+                          frame={frame}
+                          selectedClipId={selectedClipId}
+                          motions={scene.motions}
+                          motionStatus={motionStatus}
+                          onSelectClip={selectClip}
+                          onTrimClip={setClipEdge}
+                          onSplit={splitClipAtPlayhead}
+                          onAdd={() => openMotionDialog({ mode: 'add', objectId: track.objectId })}
+                        />
+                      ) : undefined
+                    }
+                  />
+                );
+              })}
+            </ul>
+
+            {tracks.length === 0 && (
+              <div className="sticky left-0 flex flex-col items-center gap-2 px-4 py-8 text-center">
+                {objects.length === 0 ? (
+                  <>
+                    <p className="text-xs text-[#c7cedb]">{t('previz.timeline.emptyNoObjects')}</p>
+                    <p className="text-[11px] text-[#6d7585]">
+                      {t('previz.timeline.emptyNoObjectsHint')}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="rounded-full border border-[#2f3542] px-3 py-1 text-xs text-[#c7cedb] hover:border-[#5b8cff]"
+                        onClick={() => create('character')}
+                      >
+                        {t('previz.timeline.createCharacter')}
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-full border border-[#2f3542] px-3 py-1 text-xs text-[#c7cedb] hover:border-[#5b8cff]"
+                        onClick={() => create('camera')}
+                      >
+                        {t('previz.timeline.createCamera')}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-xs text-[#8b93a3]">{t('previz.timeline.empty')}</p>
+                    <p className="text-[11px] text-[#6d7585]">{t('previz.timeline.emptyHint')}</p>
+                  </>
+                )}
+              </div>
+            )}
+
+            <PrevizAudioTrack
+              scene={scene}
+              pxPerFrame={pxPerFrame}
+              laneWidthPx={laneWidthPx}
+              selectedClipId={selectedClipId}
+              onSelect={selectClip}
+              onTrim={setClipEdge}
+              upstreamAudio={upstreamAudio}
+              pending={audioImport.pending}
+              onAddFile={(file) => void audioImport.addFile(file)}
+              onAddUpstream={(source) => void audioImport.addUpstream(source)}
+            />
+
+            {/* 播放头：一条贯穿所有轨道的竖线，压在头列下面（头列 z 更高）。 */}
             <div
-              data-testid="previz-playhead"
-              className="absolute inset-y-0 w-px bg-[#e8ecf5]"
-              style={{ left: frame * pxPerFrame }}
+              className="pointer-events-none absolute inset-y-0 z-20"
+              style={{ left: PREVIZ_TRACK_HEADER_PX, width: laneWidthPx }}
             >
-              <span className="absolute -left-[5px] top-0 h-2.5 w-2.5 rounded-b-sm bg-[#e8ecf5]" />
+              <div
+                data-testid="previz-playhead"
+                className="absolute inset-y-0 w-px bg-[#e8ecf5]"
+                style={{ left: frame * pxPerFrame }}
+              >
+                <span className="absolute -left-[5px] top-0 h-2.5 w-2.5 rounded-b-sm bg-[#e8ecf5]" />
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }
