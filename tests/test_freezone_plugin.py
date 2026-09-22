@@ -3526,6 +3526,55 @@ _ISSUE_637_IMAGE_CATALOG = {
 }
 
 
+_ISSUE_674_VIDEO_CATALOG = {
+    "ok": True, "data": [
+        {
+            # The default video model declares resolutions but no ratioOptions.
+            "id": "newapi_seedance-2.0-fast", "resolutionOptions": ["480P", "720P"],
+            "minDuration": 4, "maxDuration": 15, "supportsGenerateAudio": False,
+        },
+        {
+            "id": "newapi_happyhorse-1.0", "ratioOptions": ["16:9"],
+            "resolutionOptions": ["720P"], "minDuration": 4, "maxDuration": 8,
+        },
+    ],
+}
+
+
+def test_generation_clarification_offers_recommendation_without_catalog_ratio_options(
+    monkeypatch,
+):
+    """Issue #674: a default video model without ratioOptions still gets a full
+    recommendation, so the card keeps its recommended action."""
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    captured = []
+    monkeypatch.setattr(plugin, "_emit_clarification_event",
+                        lambda _project, _canvas, event: captured.append(event) or "shown")
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: _ISSUE_674_VIDEO_CATALOG)
+
+    result = handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a",
+        "generation_media_types": ["video"],
+        "allow_recommended": True,
+    })
+
+    assert result == "shown"
+    event = captured[0]
+    assert event["allow_recommended"] is True
+    recommended = event["recommended_answers"]
+    assert recommended["video_model"] == {"option_ids": ["newapi_seedance-2.0-fast"]}
+    # Unconstrained by the catalog: the product default ratio, which the frontend
+    # also lists for manual selection when a model declares no ratioOptions.
+    assert recommended["video_aspect_ratio"] == {"option_ids": ["9:16"]}
+    assert recommended["video_resolution"] == {"option_ids": ["720P"]}
+    assert recommended["video_duration_seconds"] == {"option_ids": ["5"]}
+    assert recommended["video_variants_per_node"] == {"option_ids": ["1"]}
+    assert set(recommended) >= {question["id"] for question in event["questions"]} - {
+        "video_generate_audio"
+    }
+
+
 def test_generation_clarification_partial_card_recommends_from_confirmed_model(monkeypatch):
     """CORE-CANVAS-01: a re-ask for one field keeps the model the user confirmed."""
     plugin = _load_plugin_module()
