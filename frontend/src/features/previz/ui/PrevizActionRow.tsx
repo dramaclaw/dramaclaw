@@ -13,6 +13,7 @@ import {
 import { actionClipsOf } from '../domain/timeline';
 import { motionErrorText, motionLabel } from './motionLabel';
 import { ClipBar, PREVIZ_TRACK_HEADER_PX } from './PrevizTimelineTrack';
+import { PrevizHoverTip } from './PrevizHoverTip';
 
 const ICON_BUTTON =
   'flex h-6 w-6 shrink-0 items-center justify-center rounded text-[#8b93a3] hover:bg-[#2a2f3a] hover:text-[#c7cedb] disabled:opacity-30 disabled:hover:bg-transparent';
@@ -96,26 +97,28 @@ export function PrevizActionRow({
         style={{ width: PREVIZ_TRACK_HEADER_PX }}
       >
         <span className="min-w-0 flex-1 truncate text-[11px] text-[#8b93a3]">{t('previz.motion.row')}</span>
-        <button
-          type="button"
-          className={ICON_BUTTON}
-          aria-label={t('previz.motion.razor')}
-          title={t('previz.motion.razor')}
-          disabled={!current}
-          onClick={() => current && onSplit(current.id)}
-        >
-          <Scissors className="h-3.5 w-3.5" />
-        </button>
-        {clips.length > 0 && (
+        <PrevizHoverTip label={t('previz.motion.razor')}>
           <button
             type="button"
             className={ICON_BUTTON}
-            aria-label={t('previz.motion.addTitle')}
-            title={t('previz.motion.addTitle')}
-            onClick={onAdd}
+            aria-label={t('previz.motion.razor')}
+            disabled={!current}
+            onClick={() => current && onSplit(current.id)}
           >
-            <Plus className="h-3.5 w-3.5" />
+            <Scissors className="h-3.5 w-3.5" />
           </button>
+        </PrevizHoverTip>
+        {clips.length > 0 && (
+          <PrevizHoverTip label={t('previz.motion.addTitle')}>
+            <button
+              type="button"
+              className={ICON_BUTTON}
+              aria-label={t('previz.motion.addTitle')}
+              onClick={onAdd}
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+          </PrevizHoverTip>
         )}
       </div>
 
