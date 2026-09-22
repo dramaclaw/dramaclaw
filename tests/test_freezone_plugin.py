@@ -1473,6 +1473,27 @@ def test_dynamic_workflow_plan_uses_draft_before_canvas_bridge(monkeypatch, tmp_
     assert confirmed["ok"] is True
     assert captured["commands"] == commands
     assert captured["kwargs"]["allow_dynamic_workflow_batch"] is True
+    # Issue #672: the receipt names the draft and its frozen execution policy so
+    # the chat evidence layer can verify a policy retry was actually honoured.
+    assert confirmed["draft_id"] == prepared["draft_id"]
+    assert confirmed["run_after_create"] is False
+    _assert_real_mcp_output(plugin, "freezone_confirm_workflow_draft", confirmed)
+
+    prepared_run = plugin._handle_prepare_workflow_plan_draft(
+        {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "plan": plan,
+            "run_after_create": True,
+        }
+    )
+    confirmed_run = plugin._handle_confirm_workflow_draft(
+        {"draft_id": prepared_run["draft_id"], "revision": prepared_run["revision"]}
+    )
+    assert confirmed_run["ok"] is True
+    assert confirmed_run["draft_id"] == prepared_run["draft_id"]
+    assert confirmed_run["run_after_create"] is True
+    _assert_real_mcp_output(plugin, "freezone_confirm_workflow_draft", confirmed_run)
 
 
 def test_dynamic_workflow_creation_stops_when_live_model_catalog_is_unavailable(
@@ -7046,6 +7067,51 @@ def test_confirm_draft_cannot_expand_execution_policy(monkeypatch, requested):
     )
     assert result["status"] == "workflow_draft_execution_policy_changed"
     assert calls == ["GET"]
+    # Issue #672: the guard is side-effect free, so it must tell the agent how to
+    # recover and give the user a localized message instead of the internal hint.
+    assert result["retryable"] is True
+    assert result["current_revision"] == 1
+    assert result["run_after_create"] is False
+    assert "freezone_patch_workflow_draft" in result["agent_instruction"]
+    assert "without run_after_create" in result["agent_instruction"]
+    assert result["user_message"] and "Patch the draft" not in result["user_message"]
+    schema = next(
+        schema for name, schema, _handler in plugin.TOOLS
+        if name == "freezone_confirm_workflow_draft"
+    )
+    Draft202012Validator(schema["output_schema"]).validate(result)
+
+
+def test_confirm_draft_revision_conflict_requires_fresh_user_confirmation(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "_workflow_draft_dependencies_available", lambda: True)
+    monkeypatch.setattr(plugin, "_workflow_draft_scope", lambda args: ("p", "c", None))
+    calls = []
+
+    def request(method, path, **kwargs):
+        calls.append(method)
+        assert method == "GET", "Revision conflict must fail before claim or dispatch"
+        return {"ok": True, "data": {"revision": 2, "run_after_create": True}}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = plugin._handle_confirm_workflow_draft(
+        {"draft_id": "workflow_draft_example", "revision": 1}
+    )
+    assert result["status"] == "workflow_draft_revision_conflict"
+    assert calls == ["GET"]
+    # The user confirmed revision 1; revision 2 may hold changes they never
+    # reviewed, so the agent must re-present it, never confirm it on its own.
+    assert result["retryable"] is False
+    assert result["current_revision"] == 2
+    assert "freezone_get_workflow" in result["agent_instruction"]
+    assert "explicitly confirm" in result["agent_instruction"]
+    assert "Never confirm current_revision" in result["agent_instruction"]
+    assert result["user_message"] and "重新确认" in result["user_message"]
+    schema = next(
+        schema for name, schema, _handler in plugin.TOOLS
+        if name == "freezone_confirm_workflow_draft"
+    )
+    Draft202012Validator(schema["output_schema"]).validate(result)
 
 
 def test_workflow_requires_browser_receipt_even_in_direct_apply_mode(monkeypatch):
