@@ -1,7 +1,7 @@
 import { RECIPE_OUTPUT_CHOICES, recipeOutputChoice, recipeOutputFields, type RecipeOutputChoice } from "@/lib/recipe-output";
 import { type HtmlArtifactReference, parseHtmlArtifactReference, appendHtmlArtifactTransportContext } from '@/features/html-artifacts/chatReference';
 import { HtmlArtifactResultCard } from '@/features/html-artifacts/HtmlArtifactResultCard';
-import { WorkflowDraftContinuation } from './WorkflowDraftContinuation';
+import { WorkflowDraftContinuation, insertWorkflowDraftCancellationMessages, workflowDraftIds, type CancelledWorkflowDraft } from './WorkflowDraftContinuation';
 import { activeHtmlArtifactContext, HTML_ARTIFACT_REFERENCE_EVENT } from '@/features/html-artifacts/api';
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
@@ -4166,6 +4166,107 @@ const CLARIFICATION_SOURCE_BY_QUESTION_ID: Record<string, ClarificationOptionsSo
   video_variants_per_node: "video_variant_counts",
 };
 
+export function assistantClarificationIsGenerationCard(
+  questions: AssistantClarificationQuestion[],
+): boolean {
+  return questions.some((question) =>
+    Boolean(CLARIFICATION_SOURCE_BY_QUESTION_ID[normalizedClarificationId(question.id)]
+      || question.options_source),
+  );
+}
+
+export function assistantClarificationCanSubmit(
+  questions: AssistantClarificationQuestion[],
+  answers: AssistantClarificationAnswers,
+): boolean {
+  if (assistantClarificationIsGenerationCard(questions)) {
+    return questions.length > 0 && questions.every((question, index) => {
+      const options = question.options ?? [];
+      if (options.length === 0) return false;
+      const selection = normalizedSkillStudioQuestionSelection(
+        answers[skillStudioQuestionKey(question, index)],
+      );
+      return selection.optionIds.length > 0
+        && selection.optionIds.every((id) => options.some((option, optionIndex) =>
+          skillStudioOptionKey(option, optionIndex) === id));
+    });
+  }
+  const selectable = questions
+    .map((question, index) => ({ question, index }))
+    .filter(({ question }) => (question.options ?? []).length > 0 || skillStudioQuestionAllowsCustom(question));
+  const answered = selectable.filter(({ question, index }) =>
+    skillStudioSelectionHasAnswer(answers[skillStudioQuestionKey(question, index)]),
+  ).length;
+  return answered > 0 || selectable.length === 0;
+}
+
+type GenerationCatalogState = {
+  models: readonly ClarificationCatalogModel[];
+  isLoading: boolean;
+  isFallback: boolean;
+};
+
+export function assistantClarificationGenerationCatalogIssue(
+  questions: AssistantClarificationQuestion[],
+  imageCatalog: GenerationCatalogState,
+  videoCatalog: GenerationCatalogState,
+  answers: AssistantClarificationAnswers = {},
+): "loading" | "fallback" | "empty" | "model_unavailable" | null {
+  const requestedCatalogs = [
+    ["image_models", "selected_image_model_", "image_model", imageCatalog],
+    ["video_models", "selected_video_model_", "video_model", videoCatalog],
+  ] as const;
+  const needed = requestedCatalogs
+    .filter(([modelSource, dependentPrefix]) => questions.some((question) => {
+      const source = question.options_source ?? CLARIFICATION_SOURCE_BY_QUESTION_ID[
+        normalizedClarificationId(question.id)
+      ];
+      return source === modelSource || source?.startsWith(dependentPrefix);
+    }));
+  if (needed.some(([, , , catalog]) => catalog.isLoading)) return "loading";
+  if (needed.some(([, , , catalog]) => catalog.isFallback)) return "fallback";
+  if (needed.some(([, , , catalog]) => catalog.models.length === 0)) return "empty";
+  for (const [, dependentPrefix, modelQuestionId, catalog] of needed) {
+    const hasDependentQuestion = questions.some((question) =>
+      (question.options_source ?? CLARIFICATION_SOURCE_BY_QUESTION_ID[
+        normalizedClarificationId(question.id)
+      ])?.startsWith(dependentPrefix));
+    const hasModelQuestion = questions.some((question) =>
+      normalizedClarificationId(question.id) === modelQuestionId);
+    const selectedValue = clarificationSelectedValue(questions, answers, modelQuestionId);
+    if (hasDependentQuestion && !hasModelQuestion && selectedValue
+      && !clarificationSelectedModel(questions, answers, modelQuestionId, catalog.models)) {
+      return "model_unavailable";
+    }
+  }
+  return null;
+}
+
+export function assistantClarificationShowsRecommended(
+  questions: AssistantClarificationQuestion[],
+  allowed: boolean | undefined,
+  recommendedAnswers?: AssistantClarificationAnswers,
+): boolean {
+  return Boolean(allowed) && (!assistantClarificationIsGenerationCard(questions)
+    || Boolean(recommendedAnswers && assistantClarificationCanSubmit(questions, recommendedAnswers)));
+}
+
+export function assistantClarificationCanSubmitRecommended(
+  event: AssistantClarificationUiEvent,
+  answers: AssistantClarificationAnswers,
+): boolean {
+  if (!assistantClarificationIsGenerationCard(event.questions ?? [])) return true;
+  const recommended = event.recommended_answers;
+  if (!recommended || Object.keys(recommended).length === 0) return false;
+  return Object.entries(recommended).every(([key, selection]) => {
+    const expected = normalizedSkillStudioQuestionSelection(selection).optionIds;
+    const actual = normalizedSkillStudioQuestionSelection(answers[key]).optionIds;
+    return expected.length > 0
+      && expected.length === actual.length
+      && expected.every((id, index) => id === actual[index]);
+  });
+}
+
 const normalizedClarificationId = (value: unknown) =>
   String(value ?? "").trim().toLowerCase().replace(/-/g, "_");
 
@@ -4258,10 +4359,10 @@ function clarificationQuestionsWithLiveModelCatalogs(
     const normalized = (value: unknown) => String(value ?? "").trim().toLowerCase();
     if (source === "image_models" || source === "video_models") {
       const models = source === "image_models" ? imageModels : videoModels;
-      if (!models.length) return question;
       return {
         ...question,
         options_source: source,
+        allow_custom: false,
         options: models.map((model) => {
           const identifiers = [model.id, model.apiModel, model.catalogId, model.label]
             .map(normalized)
@@ -4282,12 +4383,14 @@ function clarificationQuestionsWithLiveModelCatalogs(
     let values: readonly (string | number | boolean)[] | null = null;
     let labelFor: (value: string | number | boolean) => string = String;
     if (source?.startsWith("selected_image_model_") && !selectedImageModel) {
-      return hasImageModelQuestion
+      return hasImageModelQuestion || imageModels.length === 0
+        || Boolean(clarificationSelectedValue(questions, answers, "image_model"))
         ? { ...question, options_source: source, options: [], allow_custom: false }
         : question;
     }
     if (source?.startsWith("selected_video_model_") && !selectedVideoModel) {
-      return hasVideoModelQuestion
+      return hasVideoModelQuestion || videoModels.length === 0
+        || Boolean(clarificationSelectedValue(questions, answers, "video_model"))
         ? { ...question, options_source: source, options: [], allow_custom: false }
         : question;
     }
@@ -4361,6 +4464,15 @@ function clarificationQuestionsWithLiveModelCatalogs(
       options: clarificationOptions(values, existingOptions, labelFor),
       allow_custom: false,
     };
+  }).filter((question) => {
+    const questionId = normalizedClarificationId(question.id);
+    if (questionId === "image_quality" && selectedImageModel) {
+      return (selectedImageModel.qualityOptions?.filter(Boolean).length ?? 0) > 0;
+    }
+    if (questionId === "video_generate_audio" && selectedVideoModel) {
+      return selectedVideoModel.supportsGenerateAudio !== false;
+    }
+    return true;
   });
 }
 
@@ -4379,6 +4491,7 @@ type AssistantClarificationUiEvent = {
   description?: string;
   questions?: AssistantClarificationQuestion[];
   allow_recommended?: boolean;
+  recommended_answers?: AssistantClarificationAnswers;
   allow_skip?: boolean;
   submitted?: boolean;
   action?: string;
@@ -6738,6 +6851,9 @@ function AssistantClarificationInputCard({
   const [answers, setAnswers] = useState<AssistantClarificationAnswers>(() =>
     event.answers && typeof event.answers === "object" ? event.answers : {},
   );
+  const generationCatalogIssue = assistantClarificationGenerationCatalogIssue(
+    eventQuestions, imageModelCatalog, videoModelCatalog, answers,
+  );
   const [activeQuestionPosition, setActiveQuestionPosition] = useState(0);
   useEffect(() => {
     setAnswers(event.answers && typeof event.answers === "object" ? event.answers : {});
@@ -6767,6 +6883,16 @@ function AssistantClarificationInputCard({
       t,
     ],
   );
+  const recommendedAnswers = event.recommended_answers;
+  const recommendedQuestions = useMemo(() => clarificationQuestionsWithLiveModelCatalogs(
+    eventQuestions,
+    !imageModelCatalog.isLoading && !imageModelCatalog.isFallback ? imageModelCatalog.models : [],
+    !videoModelCatalog.isLoading && !videoModelCatalog.isFallback ? videoModelCatalog.models : [],
+    recommendedAnswers ?? {},
+    t,
+  ), [eventQuestions, imageModelCatalog.isLoading, imageModelCatalog.isFallback,
+    imageModelCatalog.models, videoModelCatalog.isLoading, videoModelCatalog.isFallback,
+    videoModelCatalog.models, recommendedAnswers, t]);
   const selectableQuestions = questions
     .map((question, index) => ({ question, index }))
     .filter(({ question }) => (question.options ?? []).length > 0 || skillStudioQuestionAllowsCustom(question));
@@ -6775,7 +6901,8 @@ function AssistantClarificationInputCard({
     skillStudioSelectionHasAnswer(answers[skillStudioQuestionKey(question, index)]),
   ).length;
   const allQuestionsAnswered = selectableQuestions.length > 0 && answeredCount === selectableQuestions.length;
-  const canSubmit = answeredCount > 0 || selectableQuestions.length === 0;
+  const canSubmit = assistantClarificationCanSubmit(questions, answers);
+  const isGenerationCard = assistantClarificationIsGenerationCard(questions);
   const goToQuestion = useCallback((position: number) => {
     if (selectableQuestions.length === 0) return;
     setActiveQuestionPosition(Math.max(0, Math.min(position, selectableQuestions.length - 1)));
@@ -6832,7 +6959,11 @@ function AssistantClarificationInputCard({
   const hasPrevious = activeQuestionPosition > 0;
   const hasNext = activeQuestionPosition < selectableQuestions.length - 1;
   const activeSelectedCount = activeSelection.optionIds.length + (activeSelection.customText.trim() ? 1 : 0);
-  const continueLabel = hasNext ? "下一题" : allQuestionsAnswered ? "提交选择" : "用当前选择继续";
+  const continueLabel = hasNext
+    ? "下一题"
+    : allQuestionsAnswered
+      ? "提交选择"
+      : isGenerationCard ? "请完成所有选择" : "用当前选择继续";
   const continueAction = () => {
     if (hasNext) {
       goToQuestion(activeQuestionPosition + 1);
@@ -6936,6 +7067,11 @@ function AssistantClarificationInputCard({
           暂无可选择的问题
         </div>
       )}
+      {generationCatalogIssue && (
+        <div role="alert" className="mt-2 text-xs text-amber-300/90">
+          {t(`freezone.chat.generationParams.catalog.${generationCatalogIssue}`)}
+        </div>
+      )}
       <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
         <div className="text-xs text-muted-foreground/80">
           已选择 {activeSelectedCount} 项 · {answeredCount} / {selectableQuestions.length}
@@ -6954,14 +7090,16 @@ function AssistantClarificationInputCard({
               跳过
             </Button>
           )}
-          {event.allow_recommended && (
+          {!generationCatalogIssue && assistantClarificationShowsRecommended(
+            recommendedQuestions, event.allow_recommended, recommendedAnswers,
+          ) && (
             <Button
               type="button"
               size="sm"
               variant="outline"
               className="h-8 rounded-full border-white/[0.12] bg-white/[0.04] px-3 text-xs hover:bg-white/[0.08]"
               onClick={() => {
-                void onSubmit?.(event, { __action: "recommended" });
+                void onSubmit?.(event, { ...recommendedAnswers, __action: "recommended" });
               }}
             >
               使用推荐配置
@@ -7952,6 +8090,7 @@ export const MessageBubble = memo(function MessageBubble({
   }
   const isHistoricalTool = isTool && isHistoricalToolMessage(message);
   const isFreezoneLayout = variant === "freezone";
+  const isWorkflowDraftCancelledNotice = message.id.startsWith("workflow-draft-cancelled:");
   const freezoneToolActivity = isTool ? freezoneToolDisplay(message) : null;
   const isErrorReply = isAssistantErrorReply(message);
   const isCompletionNotice = isAssistantCompletionNotice(message);
@@ -8313,12 +8452,15 @@ export const MessageBubble = memo(function MessageBubble({
           )}
         >
           <article
+            role={isWorkflowDraftCancelledNotice ? "status" : undefined}
             className={cn(
               "group relative text-sm leading-6 shadow-none",
               (visibleBlocks.length > 0 || assistantPrefersWideLayout) && !isTool
                 ? "w-full min-w-0 overflow-visible"
                 : "w-fit overflow-hidden",
-              presentation.surface === "tool"
+              isWorkflowDraftCancelledNotice
+                ? "max-w-full rounded-[12px] border border-amber-500/50 bg-amber-500/15 px-3 py-2.5 font-medium text-amber-800 dark:text-amber-200"
+                : presentation.surface === "tool"
                 ? "max-w-[86%] rounded-[14px] border border-amber-500/20 bg-amber-500/8 px-4 pb-3 pt-2 text-card-foreground"
                 : presentation.surface === "system"
                   ? "max-w-[86%] rounded-[12px] border border-border/70 bg-muted/25 px-3 py-2 text-muted-foreground"
@@ -12191,6 +12333,7 @@ export function SuperChatPanel({
   });
   const updateChatUiEvent = chat.updateUiEvent;
   const [pendingCanvasCommandApprovals, setPendingCanvasCommandApprovals] = useState<PendingCanvasCommandApproval[]>([]);
+  const [cancelledWorkflowDrafts, setCancelledWorkflowDrafts] = useState<Record<string, CancelledWorkflowDraft>>({});
   const [canvasCommandFeedbackByMessageId, setCanvasCommandFeedbackByMessageId] = useState<Record<string, CanvasCommandFeedback[]>>({});
   const [canvasContextActivitiesByMessageId, setCanvasContextActivitiesByMessageId] = useState<Record<string, CanvasContextActivity[]>>({});
   const [executingCanvasCommandApprovalIds, setExecutingCanvasCommandApprovalIds] = useState<Set<string>>(() => new Set());
@@ -13597,10 +13740,17 @@ export function SuperChatPanel({
       && !shouldHideOrphanRecoveredUiEventsMessage(message, userTurnIds)
       && !isUsageOnlyRuntimeMetadataMessage(message),
     );
+    const scope = `${params.project}:${effectiveFreezoneCanvasId}`;
+    const cancelled = workflowDraftIds(chat.messages)
+      .map((draftId) => cancelledWorkflowDrafts[`${scope}:${draftId}`])
+      .filter((draft): draft is CancelledWorkflowDraft => Boolean(draft));
+    const orderedMessages = insertWorkflowDraftCancellationMessages(
+      messages, cancelled, t("workflowDraftContinuation.cancelled"),
+    );
     return searchQuery
-      ? messages.filter((message) => message.text.toLowerCase().includes(searchQuery))
-      : messages;
-  }, [activeMessages, searchQuery]);
+      ? orderedMessages.filter((message) => message.text.toLowerCase().includes(searchQuery))
+      : orderedMessages;
+  }, [activeMessages, cancelledWorkflowDrafts, chat.messages, effectiveFreezoneCanvasId, params.project, searchQuery, t]);
   const activeClarificationEvent = useMemo(
     () => latestPendingAssistantClarificationEventForActiveTurn(visibleMessages, {
       busy: chat.busy,
@@ -14724,6 +14874,12 @@ export function SuperChatPanel({
         : answers.__action === "skip"
           ? "skip"
           : "submit";
+      if (action === "recommended" && !assistantClarificationCanSubmitRecommended(
+        event, answers,
+      )) {
+        toast.error("推荐配置缺少有效参数，请重新选择或刷新后重试");
+        return false;
+      }
       const skillStudioRevision = activeAssistantClarificationIsSkillStudioRevision(visibleMessages, event);
 	      const payload = {
 	        ...buildAssistantClarificationToolResultForTest(event, answers, { skillStudioRevision, projectId: params.project || undefined, canvasId: effectiveFreezoneCanvasId || undefined, agentId: effectiveFreezoneAgentId || undefined }),
@@ -15184,7 +15340,11 @@ export function SuperChatPanel({
       )}
       <section className="relative z-10 flex min-w-0 flex-1 flex-col">
         {isFreezoneLayout && (
-          <div className="flex min-h-9 shrink-0 items-center gap-2 border-b border-white/[0.06] bg-black/[0.16] px-3 py-1 backdrop-blur-xl">
+          // data-freezone-chat-drag-handle：虾导切成浮窗时，宿主靠它认出「按住这里拖窗」。
+          <div
+            data-freezone-chat-drag-handle=""
+            className="flex min-h-9 shrink-0 items-center gap-2 border-b border-white/[0.06] bg-black/[0.16] px-3 py-1 backdrop-blur-xl"
+          >
             <div className="flex min-w-0 flex-1 items-center gap-3">
               <div className="truncate text-sm font-medium text-foreground">
                 {t("freezone.chat.title")}
@@ -15440,6 +15600,11 @@ export function SuperChatPanel({
                     busy={chat.busy}
                     hasApproval={pendingCanvasCommandApprovals.length > 0}
                     onConfirm={(display, transport) => chat.send(display, [], transport)}
+                    onCancelled={(cancelled) => setCancelledWorkflowDrafts((current) => {
+                      const key = `${params.project}:${effectiveFreezoneCanvasId}:${cancelled.draftId}`;
+                      return current[key]?.updatedAt === cancelled.updatedAt
+                        ? current : { ...current, [key]: cancelled };
+                    })}
                   />
                 )}
                 {thinkingCanvasContextActivity && !thinkingCanvasContextMessageId && (

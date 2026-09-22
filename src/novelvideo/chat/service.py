@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import hashlib
 import importlib.util
 import json
@@ -11,7 +10,7 @@ import logging
 import os
 import re
 import shutil
-import socket
+import socket as socket
 import sqlite3
 import stat
 import sys
@@ -20,16 +19,13 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import quote, unquote, urlparse
-from urllib.request import Request, urlopen
+from urllib.parse import urlparse
+from urllib.request import urlopen
 
-from novelvideo.chat import presentation
+from novelvideo.chat import display_fallback, media_presentation, message_repository, presentation, presentation_mapping, runtime_event_mapper, session_registry
 from novelvideo.chat.backend_sdk import (
     ClaudeSdkClient,
     CodexClient,
-    _codex_item_completed_trace,
-    _codex_item_started_trace,
-    _codex_unwrap_item,
     control_codex_runtime,
     interrupt_live_claude_client,
     interrupt_live_codex_turn,
@@ -40,18 +36,127 @@ from novelvideo.chat.canvas_outcome import (
     finalize_canvas_reply,
     receipt_reference,
 )
+from novelvideo.chat.display_fallback import (
+    _limit_display_items as _limit_display_items,
+    _requested_display_beats as _requested_display_beats,
+    _requested_display_names as _requested_display_names,
+    _requested_display_queries as _requested_display_queries,
+    _requested_display_scene_names as _requested_display_scene_names,
+    _requested_display_scene_indices as _requested_display_scene_indices,
+    _matches_any_display_scene_name as _matches_any_display_scene_name,
+    _flatten_display_text_fields as _flatten_display_text_fields,
+    _matches_any_display_text as _matches_any_display_text,
+    _media_ui_spec as _media_ui_spec,
+    _project_static_url_from_path as _project_static_url_from_path,
+    _api_response_items as _api_response_items,
+    _decode_tool_args as _decode_tool_args,
+    _extract_display_tool_call as _extract_display_tool_call,
+    _display_tool_call_key as _display_tool_call_key,
+    _infer_display_tool_call_from_text as _infer_display_tool_call_from_text,
+    _DISPLAY_TOOL_NAMES as _DISPLAY_TOOL_NAMES,
+)
 from novelvideo.chat.execution_context import AgentExecutionContext
 from novelvideo.chat.presentation import (
-    UI_SPEC_BLOCK_RE as _UI_SPEC_BLOCK_RE,
-    UI_SPEC_FENCE_RE as _UI_SPEC_FENCE_RE,
-    canonicalize_ui_spec as _canonicalize_ui_spec,
+    UI_SPEC_BLOCK_RE as _UI_SPEC_BLOCK_RE,  # noqa: F401 - compatibility export
+    UI_SPEC_FENCE_RE as _UI_SPEC_FENCE_RE,  # noqa: F401 - compatibility export
+    canonicalize_ui_spec as _canonicalize_ui_spec,  # noqa: F401 - compatibility export
     dedupe_tool_ui_specs as _dedupe_tool_ui_specs,
-    json_loads_with_trailing_repair as _json_loads_with_trailing_repair,
-    ui_spec_block as _ui_spec_block,
-    wrap_ui_spec_bundle as _wrap_ui_spec_bundle,
+    json_loads_with_trailing_repair as _json_loads_with_trailing_repair,  # noqa: F401
+    ui_spec_block as _ui_spec_block,  # noqa: F401 - compatibility export
+    wrap_ui_spec_bundle as _wrap_ui_spec_bundle,  # noqa: F401 - compatibility export
+)
+from novelvideo.chat.runtime_event_mapper import (  # noqa: F401 - compatibility exports
+    _is_anonymous_hermes_tool_call_update,
+    _is_hermes_lifecycle_tool_update,
+)
+from novelvideo.chat.runtime_history import (
+    _extract_codex_history_trace as _extract_codex_history_trace,
+    _extract_codex_user_message_text as _extract_codex_user_message_text,
+    _split_trace_contents,
+    parse_codex_history_item,
+)
+from novelvideo.chat.presentation_text import (
+    _completion_text_or_existing as _completion_text_or_existing,
+    _is_completion_notice as _is_completion_notice,
+    _merge_stream_text as _merge_stream_text,
+    _assistant_prefix_candidates as _assistant_prefix_candidates,
+    _bounded_replay_history as _bounded_replay_history,
+    _is_truncated_assistant_replay as _is_truncated_assistant_replay,
+    _strip_replayed_assistant_prefix as _strip_replayed_assistant_prefix,
+    _compact_chat_text as _compact_chat_text,
+    _strip_leading_assistant_label as _strip_leading_assistant_label,
+    _looks_like_labeled_transcript_replay as _looks_like_labeled_transcript_replay,
+    _strip_replayed_turn_transcript as _strip_replayed_turn_transcript,
+    _strip_replayed_chat_response as _strip_replayed_chat_response,
+    _redact_local_filesystem_paths as _redact_local_filesystem_paths,
+    _strip_media_rendering_leaks as _strip_media_rendering_leaks,
+    _USER_TURN_LABEL_RE as _USER_TURN_LABEL_RE,
+    _ASSISTANT_TURN_LABEL_RE as _ASSISTANT_TURN_LABEL_RE,
+    _LOCAL_FILESYSTEM_PATH_RE as _LOCAL_FILESYSTEM_PATH_RE,
+    _HERMES_REPLAY_HISTORY_MESSAGES as _HERMES_REPLAY_HISTORY_MESSAGES,
+    _HERMES_REPLAY_HISTORY_MAX_CHARS as _HERMES_REPLAY_HISTORY_MAX_CHARS,
+)
+from novelvideo.chat.presentation_mapping import (
+    _HIDDEN_TOOL_MARKERS as _HIDDEN_TOOL_MARKERS,
+    _is_hidden_chat_tool_event as _is_hidden_chat_tool_event,
+    _wrap_embedded_ui_spec_json as _wrap_embedded_ui_spec_json,
+    _strip_embedded_ui_spec_json_text as _strip_embedded_ui_spec_json_text,
+    _decode_tool_jsonish as _decode_tool_jsonish,
+    _contains_freezone_canvas_bridge_result as _contains_freezone_canvas_bridge_result,
+    _suppress_freezone_tool_lifecycle_error as _suppress_freezone_tool_lifecycle_error,
+    _strip_freezone_tool_lifecycle_failure_text as _strip_freezone_tool_lifecycle_failure_text,
+    _visible_tool_chat_error_for_mode as _visible_tool_chat_error_for_mode,
+    _prompt_wants_sketch_only as _prompt_wants_sketch_only,
+    _is_frame_image_element as _is_frame_image_element,
+    _filter_tool_ui_specs_for_prompt as _filter_tool_ui_specs_for_prompt,
+    _prompt_continues_video_generation_without_display as _prompt_continues_video_generation_without_display,
+    _is_beat_video_ui_spec as _is_beat_video_ui_spec,
+)
+from novelvideo.chat.media_presentation import (
+    _media_path_from_static_url as _media_path_from_static_url,
+    _canonical_project_static_media_url as _canonical_project_static_media_url,
+    _collect_markdown_image_refs as _collect_markdown_image_refs,
+    _merge_media_items as _merge_media_items,
+    _filter_markdown_duplicate_images as _filter_markdown_duplicate_images,
+    _MEDIA_EXTENSIONS as _MEDIA_EXTENSIONS,
+    _URL_RE as _URL_RE,
+    _REL_PATH_RE as _REL_PATH_RE,
+    _MARKDOWN_IMAGE_RE as _MARKDOWN_IMAGE_RE,
 )
 from novelvideo.chat.runtime_port import AgentRuntimeThreadPort
+from novelvideo.chat.session_registry import (
+    atomic_write_chat_run_lock_file as _atomic_write_chat_run_lock_file,
+    remove_chat_run_lock_file as _remove_chat_run_lock_file,
+    _CHAT_RUN_LOCK_BIRTH_GRACE_SECONDS as _CHAT_RUN_LOCK_BIRTH_GRACE_SECONDS,
+    _CHAT_RUN_LOCK_HEARTBEAT_SECONDS as _CHAT_RUN_LOCK_HEARTBEAT_SECONDS,
+    _CHAT_RUN_LOCK_KEY as _CHAT_RUN_LOCK_KEY,
+    _CHAT_RUN_LOCK_MAX_SECONDS as _CHAT_RUN_LOCK_MAX_SECONDS,
+    _CHAT_RUN_LOCK_TTL_SECONDS as _CHAT_RUN_LOCK_TTL_SECONDS,
+    _chat_run_lock_is_stale as _chat_run_lock_is_stale,
+    _chat_run_lock_key as _chat_run_lock_key,
+    _chat_run_lock_project_for_turn as _chat_run_lock_project_for_turn,
+    _parse_chat_run_lock as _parse_chat_run_lock,
+    _parse_iso_datetime as _parse_iso_datetime,
+)
+from novelvideo.chat.runtime_event_evidence import (
+    _FREEZONE_CANVAS_WRITE_TOOLS as _FREEZONE_CANVAS_WRITE_TOOLS,
+    _GENERATION_RETRY_DATA_FIELDS as _GENERATION_RETRY_DATA_FIELDS,
+    _FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS as _FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS,
+    _codex_freezone_clarification_answered as _codex_freezone_clarification_answered,
+    _codex_freezone_generation_retry_key,
+    _codex_freezone_is_generation_preflight_rejection,
+    _codex_freezone_is_write_event,
+    _codex_freezone_ready_workflow_draft,
+    _codex_freezone_tool_name,
+    _codex_freezone_write_receipt,
+    _codex_freezone_write_result_error,
+    _codex_freezone_write_result_state,
+    _codex_freezone_write_result_succeeded as _codex_freezone_write_result_succeeded,
+    _json_objects_from_codex_tool_value,
+)
 from novelvideo.chat.tool_policy import (
+    AGENT_PRODUCT_RESULT_TOOLS as _AGENT_PRODUCT_RESULT_TOOLS,
+    FREEZONE_WORKFLOW_DRAFT_TOOLS as _FREEZONE_WORKFLOW_DRAFT_TOOLS,
     allows_mainline_media_ui_specs as _allows_mainline_media_ui_specs,
     freezone_canvas_execution_mode_from_context as _freezone_canvas_execution_mode_from_context,
     freezone_canvas_id_from_context as _freezone_canvas_id_from_context,
@@ -59,12 +164,13 @@ from novelvideo.chat.tool_policy import (
 )
 from novelvideo.freezone.workflow_plan import MAX_WORKFLOW_PLANNING_TEXT_CHARS
 from novelvideo.ports import get_auth_session_port
-from novelvideo.sqlite_pragmas import configure_sqlite_connection
 from novelvideo.utils.document_parsers import count_billable_text_chars
 from novelvideo.utils.error_redaction import redact_secrets
-from novelvideo.utils.static_urls import project_static_url
 
 logger = logging.getLogger("novelvideo.chat.service")
+
+# Legacy import path used by route and lock compatibility tests.
+_read_chat_run_lock_file = session_registry.read_chat_run_lock_file
 
 # Compatibility exports for callers migrating to the presentation boundary.
 _ui_spec_json = presentation.ui_spec_json
@@ -73,38 +179,6 @@ _can_merge_ui_specs = presentation.can_merge_ui_specs
 _merge_ui_specs = presentation.merge_ui_specs
 _MERGEABLE_MEDIA_SPEC_TYPES = presentation.MERGEABLE_MEDIA_SPEC_TYPES
 
-_MEDIA_EXTENSIONS = {
-    ".png": "image",
-    ".jpg": "image",
-    ".jpeg": "image",
-    ".webp": "image",
-    ".gif": "image",
-    ".mp4": "video",
-    ".mov": "video",
-    ".webm": "video",
-    ".wav": "audio",
-    ".mp3": "audio",
-    ".m4a": "audio",
-}
-_URL_RE = re.compile(r"(https?://[^\s)>\"]+|/static/[^\s)>\"]+)")
-_REL_PATH_RE = re.compile(
-    r"(?P<path>(?:assets|videos|audio|images|frames|sketches|grids|uploads|scripts)/[^\s)>\"]+\.(?:png|jpg|jpeg|webp|gif|mp4|mov|webm|wav|mp3|m4a))"
-)
-_MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
-_USER_TURN_LABEL_RE = re.compile(r"(?im)^\s*(?:user|human|用户|我)\s*[:：]\s*")
-_ASSISTANT_TURN_LABEL_RE = re.compile(
-    r"(?i)^\s*(?:assistant|ai|助手|助理|模型)\s*[:：]\s*"
-)
-_LOCAL_FILESYSTEM_PATH_RE = re.compile(
-    r"(?<![\w./-])(?:~|/Users/[^\s`'\"<>)]+)(?:/[^\s`'\"<>)]+)+"
-)
-_CHAT_RUN_LOCK_KEY = "active_chat_run"
-_CHAT_RUN_LOCK_TTL_SECONDS = 2 * 60
-_CHAT_RUN_LOCK_MAX_SECONDS = 60 * 60
-_CHAT_RUN_LOCK_HEARTBEAT_SECONDS = 30.0
-_CHAT_RUN_LOCK_BIRTH_GRACE_SECONDS = 5.0
-_HERMES_REPLAY_HISTORY_MESSAGES = 1
-_HERMES_REPLAY_HISTORY_MAX_CHARS = 64_000
 _CODEX_MODEL_PROVIDER = "dramaclaw_gateway"
 _DEFAULT_CODEX_MODEL = "DC-codex-agent-LLM"
 _DEFAULT_CODEX_REASONING_EFFORT = "medium"
@@ -212,18 +286,24 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "the selected Recipe, and existing target-node data before any canvas write. Obey the injected "
     "FREEZONE_CANVAS_EXECUTION_MODE contract for whether a fresh preliminary parameter selection is "
     "required; do not infer that policy from conversation history. When that contract requires a "
-    "selection, call freezone_request_user_clarification once for the current request. "
+    "selection, call freezone_request_user_clarification once for the current request "
+    "with generation_media_types listing image and/or video. Do not hand-build the "
+    "generation questions; the tool includes every required field. Pass the returned "
+    "answers object unchanged as generation_answers to the workflow prepare tool; "
+    "the server maps it into node parameters. If a draft already exists, instead pass "
+    "workflow_draft_id and workflow_expected_revision to the clarification tool so "
+    "it saves the submitted answers into that same draft and returns a new preview. "
     "Image choices are model preference, aspect "
     "ratio, resolution/quality, and variants per node. Video choices are model or generation mode, aspect "
-    "ratio, resolution, duration, sound generation, and variants per node. Offer a recommended/default "
-    "choice for each relevant field. Never include an audio voice-source question in this preliminary "
+    "ratio, resolution, duration, sound generation, and variants per node. Show the exact live "
+    "choices for each relevant field; do not submit a generic recommended preset. Never include "
+    "an audio voice-source question in this preliminary "
     "clarification: do not ask the user to choose system voice versus custom voice. Freezone speech "
     "uses an already selected custom voiceRef or skips generation when none is selected. "
     "Never bundle these fields into one preset such "
-    "as 'recommended settings'. Use one clarification question per missing field with the portable "
-    "field name as its question id. Before asking, inspect the live node create schema once for each "
-    "relevant image/video type and use its exact options; video_resolution must show every supported "
-    "value, including 480P whenever the selected/live model supports it. Do not write, approve, or start the workflow "
+    "as 'recommended settings'. The clarification tool constructs one question per "
+    "required field and the frontend resolves exact live options, including 480P "
+    "whenever the selected video model supports it. Do not write, approve, or start the workflow "
     "until the answer is returned. This rule applies to generation or run requests, including "
     "run_after_create=true; it does not apply when the user only asks to create empty nodes, connect, "
     "group, lay out, or edit them without generation. It is an explicit exception to any general "
@@ -234,12 +314,23 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "video_generation_mode, and video_variants_per_node keys. The Skill-specific "
     "image_count/video_count fields describe "
     "workflow deliverable or node counts and must never be copied to a node's data.count. If a "
-    "canvas write returns code=generation_parameters_required, never retry unchanged. Follow the "
-    "injected execution-mode contract to collect or populate the returned fields, then retry the "
+    "canvas write returns code=generation_parameters_required, never retry unchanged. Pass "
+    "the returned required_choices as generation_required_choices to "
+    "freezone_request_user_clarification, including confirmed model choices in answers "
+    "so dependent options stay model-specific and the server can offer a recommendation "
+    "from the same catalog entry. The clarification result returns node_data keyed by "
+    "node type with the exact data fields (for example node_data.imageGenNode.aspectRatio); "
+    "copy those fields verbatim into the retried node data or Plan instead of translating "
+    "question ids yourself. For an existing workflow draft, pass "
+    "its draft id and revision so the tool applies the answers automatically; use the "
+    "new preview and revision before confirmation. For a raw Plan, pass the returned "
+    "answers unchanged as generation_answers to prepare the plan again, then retry the "
     "same plan. A "
     "recommended/default model choice is symbolic: serialize "
     'it as model="recommended" (or the matching portable intent input), not as an invented model '
-    "id. The authorized adapter resolves it through the live frontend default. If a complete graph "
+    "id. Scoped runtime preflight resolves the preference and compatible parameters from one "
+    "live Catalog snapshot before draft persistence. Never use recommended as size or quality. "
+    "If a complete graph "
     "write fails, do not regenerate or truncate the whole plan merely to replace that sentinel. "
     "For a "
     "standalone canvas mutation, your first assistant action must be the matching "
@@ -352,15 +443,6 @@ _DRAMACLAW_SCRIPT_UPLOAD_MODEL_REPLY_INSTRUCTIONS = """[DRAMACLAW_SCRIPT_UPLOAD_
 - 只回复 1-2 句，不要列步骤，不要输出 markdown 标题。
 [/DRAMACLAW_SCRIPT_UPLOAD_GUIDANCE]
 """
-_HIDDEN_TOOL_MARKERS = (
-    "skill_view",
-    "skills_list",
-    "skill view",
-    "skills list",
-    "loading skill",
-    "→ skill view",
-    "→ skills list",
-)
 _JSON_RENDER_CHAT_INSTRUCTIONS = """[RENDERING_CONTRACT]
 这是硬性输出合同，优先级高于普通叙述习惯。违反时必须自我修正后再回复。
 
@@ -403,32 +485,6 @@ _JSON_RENDER_CHAT_INSTRUCTIONS = """[RENDERING_CONTRACT]
 3. 如果不展示图片/视频/音频，是否使用 markdown？
 4. 如果任一答案是否，先修正再回复。
 [/RENDERING_CONTRACT]"""
-
-
-def _media_path_from_static_url(url: str) -> str | None:
-    parsed = urlparse(url)
-    path = parsed.path if parsed.scheme in {"http", "https"} else url.split("?", 1)[0]
-    if not path.startswith("/static/"):
-        return None
-    rel = path[len("/static/") :]
-    parts = rel.split("/", 2)
-    if len(parts) == 3:
-        return unquote(parts[2])
-    return unquote(rel)
-
-
-def _canonical_project_static_media_url(
-    project_id: str,
-    project_dir: Path,
-    url_or_path: str,
-) -> tuple[str, str] | None:
-    media_path = _media_path_from_static_url(url_or_path)
-    if media_path is None:
-        media_path = url_or_path.strip().split("?", 1)[0].lstrip("./")
-    if not media_path:
-        return None
-    local_path = project_dir / media_path
-    return project_static_url(project_id, media_path, local_path=local_path), media_path
 
 
 def _media_project_dir(
@@ -708,32 +764,6 @@ _FREEZONE_SKILL_RUNTIME_REQUEST_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
-_FREEZONE_CANVAS_WRITE_TOOLS = frozenset(
-    {
-        "dramaclaw_create_interactive_story",
-        "dramaclaw_patch_interactive_story",
-        "dramaclaw_save_interactive_story_outline",
-        "dramaclaw_confirm_interactive_story_stages",
-        "freezone_create_node",
-        "freezone_add_next_node",
-        "freezone_emit_canvas_command",
-        "freezone_update_node_data",
-        "freezone_delete_nodes",
-        "freezone_delete_edges",
-        "freezone_create_edge",
-        "freezone_layout_nodes",
-        "freezone_group_nodes",
-        "freezone_move_nodes",
-        "freezone_select_nodes",
-        "freezone_open_mainline_projection",
-        "freezone_run_node_action",
-        "freezone_run_workflow",
-        "freezone_confirm_workflow_draft",
-        "freezone_confirm_canvas_action",
-    }
-)
-
-
 def _freezone_canvas_write_requested(prompt: str | None) -> bool:
     """Legacy intent hint; never use this to enforce canvas receipt postconditions."""
 
@@ -807,153 +837,6 @@ def _interactive_story_stage_confirmation_requested(prompt: str | None) -> bool:
             text,
         )
     )
-
-
-def _codex_freezone_tool_name(event: Any) -> str:
-    return str(getattr(event, "name", "") or "").rsplit(".", 1)[-1].strip()
-
-
-def _json_objects_from_codex_tool_value(value: Any) -> list[dict[str, Any]]:
-    objects: list[dict[str, Any]] = []
-    if isinstance(value, dict):
-        objects.append(value)
-        for nested in value.values():
-            objects.extend(_json_objects_from_codex_tool_value(nested))
-    elif isinstance(value, list):
-        for nested in value:
-            objects.extend(_json_objects_from_codex_tool_value(nested))
-    elif isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-        except (TypeError, json.JSONDecodeError):
-            return objects
-        objects.extend(_json_objects_from_codex_tool_value(parsed))
-    return objects
-
-
-def _codex_freezone_is_write_event(event: Any) -> bool:
-    name = _codex_freezone_tool_name(event)
-    if name not in _FREEZONE_CANVAS_WRITE_TOOLS:
-        return False
-    if name == "freezone_run_node_action":
-        for payload in _json_objects_from_codex_tool_value(
-            getattr(event, "input", None)
-        ):
-            action = payload.get("action")
-            if action in {"read_source", "history"}:
-                return False
-            if isinstance(action, str) and action.strip():
-                return True
-        return True
-    return True
-
-
-def _codex_freezone_write_result_succeeded(event: Any) -> bool:
-    return _codex_freezone_write_receipt(event) is not None
-
-
-def _codex_freezone_write_receipt(
-    event: Any,
-    *,
-    expected_project: str | None = None,
-    expected_canvas: str | None = None,
-) -> dict[str, Any] | None:
-    if _codex_freezone_tool_name(event) not in _FREEZONE_CANVAS_WRITE_TOOLS:
-        return None
-    status = str(getattr(event, "status", "") or "").strip().lower()
-    if status not in {"completed", "success", "succeeded"} or getattr(
-        event, "error", None
-    ):
-        return None
-    values = [getattr(event, "structured", None), getattr(event, "output", None)]
-    for value in values:
-        for payload in _json_objects_from_codex_tool_value(value):
-            if payload.get("ok") is not True:
-                continue
-            apply_status = str(payload.get("canvas_apply_status") or "").strip().lower()
-            project_id = str(payload.get("project_id") or "").strip()
-            canvas_id = str(payload.get("canvas_id") or "").strip()
-            if expected_project is not None and project_id != expected_project:
-                continue
-            if expected_canvas is not None and canvas_id != expected_canvas:
-                continue
-            bridge_key = str(payload.get("bridge_key") or "").strip()
-            revision = payload.get("revision")
-            story_tool = _codex_freezone_tool_name(event)
-            if story_tool in {
-                "dramaclaw_create_interactive_story",
-                "dramaclaw_patch_interactive_story",
-                "dramaclaw_save_interactive_story_outline",
-                "dramaclaw_confirm_interactive_story_stages",
-            }:
-                identity_field = (
-                    "outline_id"
-                    if story_tool == "dramaclaw_save_interactive_story_outline"
-                    else "story_id"
-                )
-                if (
-                    payload.get("refresh_canvas") is True
-                    and isinstance(payload.get(identity_field), str)
-                    and payload[identity_field].strip()
-                    and project_id
-                    and canvas_id
-                    and type(revision) is int
-                    and revision >= 0
-                ):
-                    return payload
-                continue
-            # A transport/tool status is not proof that the canvas mutation
-            # was persisted. Browser-applied results are durable only when
-            # they carry the bridge receipt identity; direct applies must
-            # carry the saved canvas revision returned by the persistence API.
-            browser_receipt = (
-                apply_status in {"applied", "accepted"}
-                and payload.get("applied") is True
-                and bool(bridge_key and project_id and canvas_id)
-            )
-            direct_receipt = (
-                apply_status == "direct_applied"
-                and payload.get("applied") is True
-                and bool(project_id and canvas_id)
-                and isinstance(revision, int)
-                and not isinstance(revision, bool)
-                and revision >= 0
-            )
-            if browser_receipt or direct_receipt:
-                return payload
-    return None
-
-
-def _codex_freezone_write_result_error(event: Any) -> str:
-    """Extract the business error returned by a completed Freezone write tool."""
-
-    if _codex_freezone_tool_name(event) not in _FREEZONE_CANVAS_WRITE_TOOLS:
-        return ""
-    values = [
-        getattr(event, "structured", None),
-        getattr(event, "output", None),
-        getattr(event, "error", None),
-    ]
-    for value in values:
-        for payload in _json_objects_from_codex_tool_value(value):
-            if payload.get("ok") is not False:
-                continue
-            for key in ("user_message", "error"):
-                message = payload.get(key)
-                if isinstance(message, str) and message.strip():
-                    return message.strip()[:1000]
-            errors = payload.get("errors")
-            if isinstance(errors, list):
-                messages = [str(item).strip() for item in errors if str(item).strip()]
-                if messages:
-                    return "；".join(messages[:3])[:1000]
-            message = payload.get("message")
-            if isinstance(message, str) and message.strip():
-                return message.strip()[:1000]
-    raw_error = getattr(event, "error", None)
-    if isinstance(raw_error, str) and raw_error.strip():
-        return raw_error.strip()[:1000]
-    return ""
 
 
 def _codex_story_preflight_rejection(event: Any) -> tuple[str, str] | None:
@@ -1074,87 +957,6 @@ def _codex_story_validation_receipt_alias(
             ):
                 return ("", revision), canonical
     return None
-
-
-def _codex_freezone_write_result_state(event: Any) -> str:
-    """Keep cancellation, timeout, and pending approval separate from failure."""
-    for value in (
-        getattr(event, "structured", None),
-        getattr(event, "output", None),
-        {"tool_call_status": getattr(event, "status", None)},
-    ):
-        for payload in _json_objects_from_codex_tool_value(value):
-            states = {
-                str(payload.get(key) or "").lower()
-                for key in ("canvas_apply_status", "tool_call_status", "status")
-            }
-            if states & {"cancelled", "canceled", "rejected"}:
-                return "cancelled"
-            if states & {"timeout", "timed_out", "expired"}:
-                return "timeout"
-            if states & {
-                "pending",
-                "awaiting_approval",
-                "waiting_approval",
-                "in_progress",
-            }:
-                return "waiting_approval"
-    return "failed"
-
-
-def _codex_freezone_clarification_answered(event: Any) -> bool:
-    """Recognize a successful answer, not merely a submitted or failed tool call."""
-    if _codex_freezone_tool_name(event) != "freezone_request_user_clarification":
-        return False
-    if getattr(event, "error", None) or str(
-        getattr(event, "status", "") or ""
-    ).lower() not in {"completed", "success", "succeeded"}:
-        return False
-    for value in (getattr(event, "structured", None), getattr(event, "output", None)):
-        for payload in _json_objects_from_codex_tool_value(value):
-            if (
-                payload.get("ok") is True
-                and not payload.get("errors")
-                and payload.get("clarification_status") == "answered"
-            ):
-                return True
-    return False
-
-
-_FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS = {
-    "freezone_prepare_workflow_draft",
-    "freezone_prepare_workflow_plan_draft",
-}
-
-
-def _codex_freezone_ready_workflow_draft(event: Any) -> dict[str, Any] | None:
-    """Return a successfully prepared workflow draft carried by a Codex event."""
-
-    if _codex_freezone_tool_name(event) not in _FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS:
-        return None
-    status = str(getattr(event, "status", "") or "").strip().lower()
-    if status not in {"completed", "success", "succeeded"} or getattr(
-        event, "error", None
-    ):
-        return None
-    for value in (getattr(event, "structured", None), getattr(event, "output", None)):
-        for payload in _json_objects_from_codex_tool_value(value):
-            if (
-                payload.get("ok") is True
-                and str(payload.get("status") or "") == "workflow_draft_ready"
-                and str(payload.get("draft_id") or "").strip()
-            ):
-                return payload
-    return None
-
-
-_AGENT_PRODUCT_RESULT_TOOLS = {
-    "freezone_prepare_workflow",
-    "freezone_prepare_workflow_draft",
-    "freezone_prepare_workflow_plan_draft",
-    "freezone_put_agent_catalog_skill",
-    "freezone_put_agent_catalog_recipe",
-}
 
 
 async def _bind_server_observed_agent_product_execution(
@@ -1993,15 +1795,6 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _parse_iso_datetime(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        return None
-
-
 def _project_dir(username: str, project: str) -> Path:
     base_dir = _output_root() / username / project
     for path in (
@@ -2064,29 +1857,11 @@ def _migrate_legacy_chat_db(
     *,
     create_parent: bool = True,
 ) -> None:
-    legacy_db_path = _legacy_chat_db_path(username, project, project_dir)
-    if new_db_path.exists() or not legacy_db_path.exists():
-        return
-    if not create_parent and not new_db_path.parent.exists():
-        return
-
-    if create_parent:
-        new_db_path.parent.mkdir(parents=True, exist_ok=True)
-    for suffix in ("", "-wal", "-shm"):
-        src = Path(f"{legacy_db_path}{suffix}")
-        if not src.exists():
-            continue
-        dst = Path(f"{new_db_path}{suffix}")
-        if dst.exists():
-            continue
-        shutil.move(str(src), str(dst))
-
-    legacy_dir = legacy_db_path.parent
-    try:
-        if legacy_dir.exists() and not any(legacy_dir.iterdir()):
-            legacy_dir.rmdir()
-    except OSError:
-        pass
+    message_repository.migrate_legacy_chat_db(
+        _legacy_chat_db_path(username, project, project_dir),
+        new_db_path,
+        create_parent=create_parent,
+    )
 
 
 def _chat_db_path(
@@ -2115,48 +1890,15 @@ def _chat_input_history_path(username: str, project: str) -> Path:
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    configure_sqlite_connection(conn)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS chat_settings (
-          key TEXT PRIMARY KEY,
-          value TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        )
-        """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS chat_messages (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          role TEXT NOT NULL,
-          content TEXT NOT NULL,
-          media_json TEXT NOT NULL DEFAULT '[]',
-          created_at TEXT NOT NULL
-        )
-        """)
-    conn.commit()
-    return conn
+    return message_repository.connect(db_path)
 
 
 def load_chat_input_history(username: str, project: str) -> list[str]:
     if not username or not project:
         return []
-    path = _chat_input_history_path(username, project)
-    if not path.exists():
-        return []
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    if not isinstance(payload, list):
-        return []
-    history: list[str] = []
-    for item in payload:
-        text = str(item or "").strip()
-        if text:
-            history.append(text)
-    return history
+    return message_repository.load_chat_input_history(
+        _chat_input_history_path(username, project)
+    )
 
 
 def save_chat_input_history(
@@ -2164,42 +1906,17 @@ def save_chat_input_history(
 ) -> None:
     if not username or not project:
         return
-    cleaned: list[str] = []
-    for item in history:
-        text = str(item or "").strip()
-        if text:
-            cleaned.append(text)
-    if limit > 0:
-        cleaned = cleaned[-limit:]
-    path = _chat_input_history_path(username, project)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(".tmp")
-    tmp_path.write_text(
-        json.dumps(cleaned, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    message_repository.save_chat_input_history(
+        _chat_input_history_path(username, project), history, limit=limit
     )
-    tmp_path.replace(path)
 
 
 def _get_setting(conn: sqlite3.Connection, key: str) -> str | None:
-    row = conn.execute(
-        "SELECT value FROM chat_settings WHERE key = ?", (key,)
-    ).fetchone()
-    return str(row["value"]) if row else None
+    return message_repository.get_setting(conn, key)
 
 
 def _set_setting(conn: sqlite3.Connection, key: str, value: str) -> None:
-    conn.execute(
-        """
-        INSERT INTO chat_settings(key, value, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(key) DO UPDATE SET
-          value = excluded.value,
-          updated_at = excluded.updated_at
-        """,
-        (key, value, _now_iso()),
-    )
-    conn.commit()
+    message_repository.set_setting(conn, key, value, now_iso=_now_iso)
 
 
 def _pid_is_alive(pid: int | None) -> bool:
@@ -2214,128 +1931,18 @@ def _pid_is_alive(pid: int | None) -> bool:
     return True
 
 
-def _parse_chat_run_lock(
-    value: str | None,
-) -> tuple[str | None, str | None, int | None, datetime | None, datetime | None]:
-    if not value:
-        return None, None, None, None, None
-    try:
-        payload = json.loads(value)
-    except json.JSONDecodeError:
-        return value, None, None, None, None
-    if not isinstance(payload, dict):
-        return None, None, None, None, None
-    lock_id = payload.get("lock_id")
-    owner_id = payload.get("owner_id")
-    owner_pid = payload.get("owner_pid")
-    started_at = payload.get("started_at")
-    updated_at = payload.get("updated_at") or started_at
-    return (
-        str(lock_id).strip() or None if lock_id is not None else None,
-        str(owner_id).strip() or None if owner_id is not None else None,
-        int(owner_pid) if isinstance(owner_pid, int) else None,
-        _parse_iso_datetime(str(started_at)) if started_at is not None else None,
-        _parse_iso_datetime(str(updated_at)) if updated_at is not None else None,
-    )
-
-
-def _chat_run_lock_is_stale(
-    started_at: datetime | None,
-    updated_at: datetime | None = None,
-) -> bool:
-    now = datetime.now(timezone.utc)
-    if started_at is not None:
-        if started_at.tzinfo is None:
-            started_at = started_at.replace(tzinfo=timezone.utc)
-        if (now - started_at).total_seconds() > _CHAT_RUN_LOCK_MAX_SECONDS:
-            return True
-    heartbeat_at = updated_at or started_at
-    if heartbeat_at is None:
-        return False
-    if heartbeat_at.tzinfo is None:
-        heartbeat_at = heartbeat_at.replace(tzinfo=timezone.utc)
-    return (now - heartbeat_at).total_seconds() > _CHAT_RUN_LOCK_TTL_SECONDS
-
-
-def _chat_run_lock_key(project: str) -> str:
-    if project.startswith("freezone:"):
-        return project
-    return _CHAT_RUN_LOCK_KEY
-
-
-def _chat_run_lock_project_for_turn(
-    project: str,
-    *,
-    tool_mode: str,
-    store_scope: Any | None = None,
-) -> str:
-    if tool_mode != "freezone_canvas":
-        return project
-    canvas_id = str(getattr(store_scope, "canvas_id", "") or "").strip()
-    agent_id = str(getattr(store_scope, "agent_id", "") or "main").strip() or "main"
-    if canvas_id:
-        return f"freezone:{project}:canvas:{canvas_id}:agent:{agent_id}"
-    return f"freezone:{project}:agent:{agent_id}"
-
-
 def _chat_run_lock_path(username: str, project: str) -> Path:
-    lock_key = _chat_run_lock_key(project)
-    digest = hashlib.sha256(lock_key.encode("utf-8")).hexdigest()
-    return _user_chat_agent_locks_dir(username) / f"{digest}.lock"
-
-
-def _read_chat_run_lock_file(
-    path: Path,
-) -> tuple[str | None, str | None, int | None, datetime | None, datetime | None]:
-    try:
-        value = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return None, None, None, None, None
-    except OSError:
-        return None, None, None, None, None
-    return _parse_chat_run_lock(value)
-
-
-def _remove_chat_run_lock_file(path: Path) -> None:
-    try:
-        path.unlink()
-    except FileNotFoundError:
-        pass
-
-
-def _atomic_write_chat_run_lock_file(path: Path, payload: str) -> None:
-    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-    try:
-        tmp_path.write_text(payload, encoding="utf-8")
-        tmp_path.replace(path)
-    finally:
-        tmp_path.unlink(missing_ok=True)
+    return session_registry.chat_run_lock_path(
+        _user_chat_agent_locks_dir(username), project
+    )
 
 
 def _chat_run_lock_payload(lock_id: str, *, started_at: str | None = None) -> str:
-    now = _now_iso()
-    return json.dumps(
-        {
-            "lock_id": lock_id,
-            "owner_id": f"{socket.gethostname()}:{os.getpid()}",
-            "owner_pid": os.getpid(),
-            "started_at": started_at or now,
-            "updated_at": now,
-        },
-        ensure_ascii=False,
-    )
+    return session_registry.chat_run_lock_payload(lock_id, started_at=started_at)
 
 
 def _chat_run_lock_file_is_new(path: Path) -> bool:
-    try:
-        mtime = path.stat().st_mtime
-    except FileNotFoundError:
-        return False
-    except OSError:
-        return True
-    return (
-        datetime.now(timezone.utc).timestamp() - mtime
-    ) < _CHAT_RUN_LOCK_BIRTH_GRACE_SECONDS
+    return session_registry.chat_run_lock_file_is_new(path)
 
 
 def _chat_run_lock_owner_is_active(
@@ -2344,88 +1951,37 @@ def _chat_run_lock_owner_is_active(
     started_at: datetime | None,
     updated_at: datetime | None,
 ) -> bool:
-    if started_at is None and updated_at is None:
-        return False
-    if _chat_run_lock_is_stale(started_at, updated_at):
-        return False
-    owner_host, separator, _owner_process = (owner_id or "").rpartition(":")
-    if separator and owner_host == socket.gethostname():
-        return _pid_is_alive(owner_pid)
-    return True
+    return session_registry.chat_run_lock_owner_is_active(
+        owner_id, owner_pid, started_at, updated_at, pid_is_alive=_pid_is_alive
+    )
 
 
 def _acquire_chat_run_lock(username: str, project: str) -> str:
-    lock_path = _chat_run_lock_path(username, project)
-    lock_id = uuid.uuid4().hex
-    lock_payload = _chat_run_lock_payload(lock_id)
-    payload_bytes = lock_payload.encode("utf-8")
-    for _attempt in range(3):
-        try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError:
-            existing_lock_id, owner_id, owner_pid, started_at, updated_at = (
-                _read_chat_run_lock_file(lock_path)
-            )
-            if not existing_lock_id and _chat_run_lock_file_is_new(lock_path):
-                raise RuntimeError("当前用户已有 AI 对话正在处理中，请稍后再试。")
-            if existing_lock_id and _chat_run_lock_owner_is_active(
-                owner_id, owner_pid, started_at, updated_at
-            ):
-                raise RuntimeError("当前用户已有 AI 对话正在处理中，请稍后再试。")
-            _remove_chat_run_lock_file(lock_path)
-            continue
-        try:
-            with os.fdopen(fd, "wb") as file:
-                file.write(payload_bytes)
-            return lock_id
-        except Exception:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-            _remove_chat_run_lock_file(lock_path)
-            raise
-    raise RuntimeError("当前用户已有 AI 对话正在处理中，请稍后再试。")
+    return session_registry.acquire_chat_run_lock(
+        _chat_run_lock_path(username, project),
+        owner_is_active=_chat_run_lock_owner_is_active,
+    )
 
 
 def _release_chat_run_lock(username: str, project: str, lock_id: str) -> None:
-    lock_path = _chat_run_lock_path(username, project)
-    current_lock_id, _owner_id, _owner_pid, _started_at, _updated_at = (
-        _read_chat_run_lock_file(lock_path)
+    session_registry.release_chat_run_lock(
+        _chat_run_lock_path(username, project), lock_id
     )
-    if current_lock_id == lock_id:
-        _remove_chat_run_lock_file(lock_path)
 
 
 def _heartbeat_chat_run_lock(username: str, project: str, lock_id: str) -> bool:
-    lock_path = _chat_run_lock_path(username, project)
-    current_lock_id, _owner_id, _owner_pid, started_at, _updated_at = (
-        _read_chat_run_lock_file(lock_path)
-    )
-    if current_lock_id != lock_id:
-        return False
-    payload = _chat_run_lock_payload(
+    return session_registry.heartbeat_chat_run_lock(
+        _chat_run_lock_path(username, project),
         lock_id,
-        started_at=started_at.isoformat() if started_at else None,
+        atomic_write=_atomic_write_chat_run_lock_file,
     )
-    try:
-        _atomic_write_chat_run_lock_file(lock_path, payload)
-    except OSError:
-        return False
-    return True
 
 
 def chat_run_lock_is_active(username: str, project: str = "") -> bool:
-    lock_path = _chat_run_lock_path(username, project)
-    existing_lock_id, owner_id, owner_pid, started_at, updated_at = (
-        _read_chat_run_lock_file(lock_path)
+    return session_registry.chat_run_lock_is_active(
+        _chat_run_lock_path(username, project),
+        owner_is_active=_chat_run_lock_owner_is_active,
     )
-    if existing_lock_id and _chat_run_lock_owner_is_active(
-        owner_id, owner_pid, started_at, updated_at
-    ):
-        return True
-    _remove_chat_run_lock_file(lock_path)
-    return False
 
 
 def force_release_chat_run_lock(username: str, project: str) -> None:
@@ -2510,88 +2066,11 @@ def _append_message(
     content: str,
     media: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    media = media or []
-    created_at_iso = _now_iso()
-    cursor = conn.execute(
-        """
-        INSERT INTO chat_messages(role, content, media_json, created_at)
-        VALUES (?, ?, ?, ?)
-        """,
-        (role, content, json.dumps(media, ensure_ascii=False), created_at_iso),
-    )
-    conn.commit()
-    return {
-        "id": int(cursor.lastrowid),
-        "role": role,
-        "content": content,
-        "media": media,
-        "created_at": created_at_iso,
-    }
-
-
-def _split_trace_contents(content: str) -> list[str]:
-    raw_lines = str(content or "").rstrip().splitlines()
-    blocks: list[list[str]] = []
-    current: list[str] = []
-    for line in raw_lines:
-        if not line.strip():
-            if current:
-                blocks.append(current)
-                current = []
-            continue
-        current.append(line)
-    if current:
-        blocks.append(current)
-    return ["\n".join(block) for block in blocks if block]
-
-
-def _is_hidden_chat_tool_event(name: object, text: object) -> bool:
-    """Internal Hermes bookkeeping tools should not become user-visible cards."""
-    haystack = f"{name or ''}\n{text or ''}".lower()
-    return any(marker in haystack for marker in _HIDDEN_TOOL_MARKERS)
-
-
-def _is_anonymous_hermes_tool_call_update(event: Any) -> bool:
-    raw = getattr(event, "raw", None)
-    if getattr(event, "name", None) is not None or not isinstance(raw, dict):
-        return False
-    return raw.get("sessionUpdate") == "tool_call_update" and bool(
-        str(raw.get("toolCallId") or "").strip()
+    return message_repository.append_message(
+        conn, role, content, media, now_iso=_now_iso
     )
 
 
-def _is_hermes_lifecycle_tool_update(event: Any) -> bool:
-    raw = getattr(event, "raw", None)
-    if not isinstance(raw, dict):
-        return False
-    kind = raw.get("sessionUpdate")
-    if kind == "tool_call":
-        return True
-    if kind != "tool_call_update":
-        return False
-    has_result_payload = any(
-        raw.get(key) not in (None, "", [], {})
-        for key in ("content", "result", "data", "output", "message", "error")
-    )
-    if has_result_payload:
-        return False
-    text = str(getattr(event, "text", "") or "").strip().lower()
-    status = str(raw.get("status") or "").strip().lower()
-    return bool(status) and text in {status, f"{status}."}
-
-
-def _completion_text_or_existing(event_text: object, existing: str) -> str:
-    """ACP may finish with metadata like ``stop=end_turn`` after text deltas."""
-    final_text = str(event_text or "").strip()
-    if not final_text or final_text.startswith("stop="):
-        return existing
-    if final_text.lower() == "(hermes timed out)" and existing.strip():
-        return existing
-    if existing.strip() and _is_completion_notice(final_text):
-        if final_text in existing:
-            return existing
-        return f"{existing.rstrip()}\n\n{final_text}"
-    return final_text
 
 
 def _bounded_workflow_planning_reply(text: str, *, draft_ready: bool) -> str:
@@ -2607,23 +2086,6 @@ def _bounded_workflow_planning_reply(text: str, *, draft_ready: bool) -> str:
     )
 
 
-def _is_completion_notice(text: str) -> bool:
-    return text in {
-        "当前任务已开始处理。请稍后让我查看当前任务进度，或在任务完成后再继续下一步。",
-        "刚才这一步没有成功启动任务。请先根据返回的错误补齐前置条件；如果是配音缺少声线，可以到「虾塘」上传或录制缺失声线后再继续。",
-    }
-
-
-def _merge_stream_text(existing: str, incoming: object) -> str:
-    """Support providers that emit either cumulative text or delta chunks."""
-    chunk = str(incoming or "")
-    if not chunk:
-        return existing
-    if chunk.startswith(existing):
-        return chunk
-    return existing + chunk
-
-
 async def _emit_chat_event_best_effort(on_event, event: dict[str, Any]) -> bool:
     """Emit to the connected client without making persistence depend on it."""
     try:
@@ -2631,178 +2093,6 @@ async def _emit_chat_event_best_effort(on_event, event: dict[str, Any]) -> bool:
         return True
     except Exception:
         return False
-
-
-def _assistant_prefix_candidates(previous_assistant: object) -> list[str]:
-    if isinstance(previous_assistant, (list, tuple)):
-        items = [
-            str(item or "").strip()
-            for item in previous_assistant
-            if str(item or "").strip()
-        ]
-        candidates = []
-        for index in range(len(items)):
-            suffix = items[index:]
-            candidates.append("".join(suffix))
-            candidates.append("\n".join(suffix))
-            candidates.append("\n\n".join(suffix))
-        candidates.extend(items)
-        return sorted(set(candidates), key=len, reverse=True)
-    prefix = str(previous_assistant or "").strip()
-    return [prefix] if prefix else []
-
-
-def _bounded_replay_history(contents: list[str]) -> list[str]:
-    """Keep only a small display-dedup window; this history never becomes agent context."""
-
-    bounded = [
-        str(content or "") for content in contents[-_HERMES_REPLAY_HISTORY_MESSAGES:]
-    ]
-    return [
-        content[:_HERMES_REPLAY_HISTORY_MAX_CHARS] for content in bounded if content
-    ]
-
-
-def _is_truncated_assistant_replay(content: str, candidates: list[str]) -> bool:
-    """Detect a sufficiently long strict prefix of previously emitted assistant text."""
-    compact_content = "".join(str(content or "").split())
-    if len(compact_content) < 16:
-        return False
-
-    compact_candidates = {"".join(candidate.split()) for candidate in candidates}
-    if compact_content in compact_candidates:
-        return False
-    return any(
-        candidate.startswith(compact_content) for candidate in compact_candidates
-    )
-
-
-def _strip_replayed_assistant_prefix(
-    content: str,
-    previous_assistant: object,
-    *,
-    suppress_partial_replay: bool = False,
-    candidates: list[str] | None = None,
-) -> str:
-    """Hermes ACP can replay prior assistant text at the start of a new turn."""
-    text = str(content or "")
-    original_text = text
-    prefixes = (
-        candidates
-        if candidates is not None
-        else _assistant_prefix_candidates(previous_assistant)
-    )
-    if _is_truncated_assistant_replay(text, prefixes):
-        return ""
-    while text and prefixes:
-        original = text
-        for prefix in prefixes:
-            if text.startswith(prefix):
-                text = text[len(prefix) :].lstrip()
-                break
-            compact_prefix = "".join(prefix.split())
-            if not compact_prefix:
-                continue
-            matched = 0
-            end_index = 0
-            for index, char in enumerate(text):
-                if char.isspace():
-                    continue
-                if matched >= len(compact_prefix) or char != compact_prefix[matched]:
-                    break
-                matched += 1
-                end_index = index + 1
-                if matched == len(compact_prefix):
-                    text = text[end_index:].lstrip()
-                    break
-            if text != original:
-                break
-        if text == original:
-            break
-    if suppress_partial_replay and not text.strip() and str(content or "").strip():
-        return ""
-    if not suppress_partial_replay and not text.strip() and original_text.strip():
-        return original_text
-    return text
-
-
-def _compact_chat_text(content: object) -> str:
-    return "".join(str(content or "").split())
-
-
-def _strip_leading_assistant_label(content: str) -> str:
-    return _ASSISTANT_TURN_LABEL_RE.sub("", str(content or ""), count=1).lstrip()
-
-
-def _looks_like_labeled_transcript_replay(content: str) -> bool:
-    text = str(content or "").lstrip()
-    if not text:
-        return False
-    if _USER_TURN_LABEL_RE.match(text):
-        return True
-    return bool(
-        _USER_TURN_LABEL_RE.search(text) and _ASSISTANT_TURN_LABEL_RE.search(text)
-    )
-
-
-def _strip_replayed_turn_transcript(
-    content: str,
-    current_prompt: object,
-    *,
-    suppress_partial_replay: bool = False,
-) -> str:
-    """Remove a replayed labeled transcript while keeping normal short replies intact."""
-    text = str(content or "")
-    prompt = str(current_prompt or "").strip()
-    if not text or not prompt:
-        return text
-
-    compact_prompt = _compact_chat_text(prompt)
-    best_end = -1
-    for match in _USER_TURN_LABEL_RE.finditer(text):
-        start = match.end()
-        line_end = text.find("\n", start)
-        if line_end < 0:
-            line_end = len(text)
-        line = text[start:line_end]
-
-        prompt_index = line.rfind(prompt)
-        if prompt_index >= 0:
-            best_end = max(best_end, start + prompt_index + len(prompt))
-            continue
-
-        if len(compact_prompt) >= 4 and compact_prompt in _compact_chat_text(line):
-            best_end = max(best_end, line_end)
-
-    if best_end < 0:
-        if suppress_partial_replay and _looks_like_labeled_transcript_replay(text):
-            return ""
-        return text
-    remainder = _strip_leading_assistant_label(text[best_end:])
-    if suppress_partial_replay and not remainder.strip():
-        return ""
-    return remainder
-
-
-def _strip_replayed_chat_response(
-    content: str,
-    previous_assistant: object,
-    current_prompt: object,
-    *,
-    suppress_partial_replay: bool = False,
-    assistant_prefix_candidates: list[str] | None = None,
-) -> str:
-    text = _strip_replayed_turn_transcript(
-        content,
-        current_prompt,
-        suppress_partial_replay=suppress_partial_replay,
-    )
-    return _strip_replayed_assistant_prefix(
-        text,
-        previous_assistant,
-        suppress_partial_replay=suppress_partial_replay,
-        candidates=assistant_prefix_candidates,
-    )
 
 
 def _log_json_render_error(error: ValueError, body: str) -> None:
@@ -2822,402 +2112,33 @@ def _log_json_render_error(error: ValueError, body: str) -> None:
 
 
 def _normalize_single_ui_spec_block(body: str) -> str:
-    nested_start = body.lower().rfind("<ui-spec")
-    if nested_start >= 0:
-        close_index = body.lower().find("</ui-spec>", nested_start)
-        if close_index >= 0:
-            nested_block = body[nested_start : close_index + len("</ui-spec>")]
-            return _normalize_json_render_reply(nested_block)
-
-    try:
-        value = _json_loads_with_trailing_repair(body)
-        if isinstance(value, list):
-            specs = [_canonicalize_ui_spec(item) for item in value]
-            return _wrap_ui_spec_bundle(specs)
-        spec = _canonicalize_ui_spec(value)
-    except ValueError as exc:
-        _log_json_render_error(exc, body)
-        return "（json-render 格式校验失败：模型返回的 ui-spec 不是合法 canonical JSON，已阻止展示。请重新生成。）"
-
-    spec_type = spec.get("type") if isinstance(spec.get("type"), str) else "ui_spec"
-    json_text = json.dumps(spec, ensure_ascii=False, indent=2)
-    return f'<ui-spec type="{spec_type}">\n{json_text}\n</ui-spec>'
+    return presentation_mapping._normalize_single_ui_spec_block(
+        body, log_error=_log_json_render_error
+    )
 
 
 def _normalize_json_render_reply(content: str) -> str:
-    text = str(content or "")
-    text = _wrap_embedded_ui_spec_json(text)
-    if "<ui-spec" not in text.lower():
-        return text
-    text = _UI_SPEC_FENCE_RE.sub(lambda match: match.group(1).strip(), text)
-    return _UI_SPEC_BLOCK_RE.sub(
-        lambda match: _normalize_single_ui_spec_block(match.group(1)),
-        text,
+    return presentation_mapping._normalize_json_render_reply(
+        content, log_error=_log_json_render_error
     )
-
-
-def _wrap_embedded_ui_spec_json(content: str) -> str:
-    text = str(content or "")
-    if "<ui-spec" in text.lower():
-        return text
-    if '"elements"' not in text or '"root"' not in text:
-        return text
-
-    decoder = json.JSONDecoder()
-    index = 0
-    parts: list[str] = []
-    changed = False
-    while index < len(text):
-        start = text.find("{", index)
-        if start < 0:
-            parts.append(text[index:])
-            break
-        parts.append(text[index:start])
-        try:
-            value, end = decoder.raw_decode(text[start:])
-        except json.JSONDecodeError:
-            parts.append(text[start : start + 1])
-            index = start + 1
-            continue
-        if isinstance(value, dict):
-            try:
-                spec = _canonicalize_ui_spec(value)
-            except ValueError:
-                spec = None
-            if spec is not None:
-                parts.append(_ui_spec_block(spec))
-                index = start + end
-                changed = True
-                continue
-        parts.append(text[start : start + end])
-        index = start + end
-
-    if not changed:
-        return text
-    return re.sub(r"\n{3,}", "\n\n", "".join(parts)).strip()
-
-
-def _redact_local_filesystem_paths(content: str) -> str:
-    """Hide local developer paths before text is shown or persisted in chat."""
-    text = str(content or "")
-    if not text:
-        return ""
-    return _LOCAL_FILESYSTEM_PATH_RE.sub("[本地路径]", text)
-
-
-def _strip_media_rendering_leaks(content: str) -> str:
-    """Remove internal rendering/tool chatter that models sometimes echo."""
-    lines: list[str] = []
-    for line in str(content or "").splitlines():
-        stripped = line.strip()
-        lower = stripped.lower()
-        if not stripped:
-            lines.append(line)
-            continue
-        if "<ui-spec" in lower or "ui-spec" in lower or "ui_spec" in lower:
-            continue
-        if (
-            "json-render" in lower
-            or "automatically rendered" in lower
-            or "backend" in lower
-        ):
-            continue
-        if "dramaclaw_" in lower:
-            continue
-        if "按规范渲染" in stripped or "UI画廊" in stripped:
-            continue
-        lines.append(line)
-    text = _redact_local_filesystem_paths("\n".join(lines).strip())
-    return re.sub(r"\n{3,}", "\n\n", text)
-
-
-def _strip_embedded_ui_spec_json_text(content: str) -> str:
-    """Remove model-written media JSON from prose before appending tool specs."""
-    text = str(content or "")
-    pattern = re.compile(
-        r'\{\s*"type"\s*:\s*"(?:character_showcase|sketch_gallery|keyframe_video|audio_list|media_bundle)"'
-    )
-    index = 0
-    parts: list[str] = []
-    decoder = json.JSONDecoder()
-    changed = False
-
-    while True:
-        match = pattern.search(text, index)
-        if not match:
-            parts.append(text[index:])
-            break
-        start = match.start()
-        parts.append(text[index:start])
-        try:
-            value, end = decoder.raw_decode(text[start:])
-        except json.JSONDecodeError:
-            next_paragraph = text.find("\n\n", start)
-            index = len(text) if next_paragraph < 0 else next_paragraph
-            changed = True
-            continue
-        if isinstance(value, dict):
-            try:
-                _canonicalize_ui_spec(value)
-                index = start + end
-                changed = True
-                continue
-            except ValueError:
-                pass
-        parts.append(text[start : start + end])
-        index = start + end
-
-    if not changed:
-        return text.strip()
-    return re.sub(r"\n{3,}", "\n\n", "".join(parts)).strip()
 
 
 def _extract_tool_ui_specs(value: Any) -> list[dict[str, Any]]:
-    specs: list[dict[str, Any]] = []
-
-    def append_spec(node: Any) -> None:
-        try:
-            specs.append(_canonicalize_ui_spec(node))
-        except ValueError as exc:
-            _log_json_render_error(
-                exc, json.dumps(node, ensure_ascii=False, default=str)
-            )
-
-    def visit(node: Any) -> None:
-        if isinstance(node, dict):
-            ui_spec = node.get("ui_spec")
-            if isinstance(ui_spec, dict):
-                append_spec(ui_spec)
-            elif {"type", "root", "elements"}.issubset(node):
-                append_spec(node)
-            for child in node.values():
-                visit(child)
-        elif isinstance(node, list):
-            for child in node:
-                visit(child)
-        elif isinstance(node, str):
-            text = node.strip()
-            if not text or len(text) > 1_000_000:
-                return
-            if "<ui-spec" in text.casefold():
-                _, embedded_specs = _split_ui_specs_from_text(text)
-                specs.extend(embedded_specs)
-                return
-            if "ui_spec" not in text and not {"type", "root", "elements"}.issubset(
-                set(re.findall(r'"([^"]+)"\s*:', text))
-            ):
-                return
-            try:
-                decoded = json.loads(text)
-            except json.JSONDecodeError:
-                return
-            visit(decoded)
-
-    visit(value)
-    deduped: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for spec in specs:
-        key = json.dumps(spec, ensure_ascii=False, sort_keys=True)
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(spec)
-    return deduped
+    return presentation_mapping._extract_tool_ui_specs(
+        value, log_error=_log_json_render_error
+    )
 
 
 def _extract_tool_chat_error(value: Any) -> str | None:
-    def normalize_error_text(text: object) -> str:
-        raw = redact_secrets(str(text or "")).strip()
-        raw = re.sub(r"\s+", " ", raw)
-        raw = re.sub(
-            r"provider_response_id[\"']?\s*[:=]\s*[\"']?[^\"'\s,;}]+",
-            "provider_response_id=[redacted]",
-            raw,
-            flags=re.IGNORECASE,
-        )
-        raw = re.sub(
-            r"response_id[\"']?\s*[:=]\s*[\"']?[^\"'\s,;}]+",
-            "response_id=[redacted]",
-            raw,
-            flags=re.IGNORECASE,
-        )
-        if len(raw) > 1200:
-            raw = raw[:1200].rstrip() + "..."
-        return raw
-
-    def business_chat_error_from_text(text: object) -> str | None:
-        raw = normalize_error_text(text)
-        if not raw:
-            return None
-        if "Render 模式需要草图" in raw or "未生成可用图片" in raw:
-            return (
-                "Render 任务没有生成可用图片：当前缺少必要草图前置。"
-                "请先在「虾塘」生成或确认对应 Beat 的草图后，再重新生成 Render。"
-                f"\n\n错误原因：{raw[:1200]}"
-            )
-        return None
-
-    def generic_chat_error_from_text(text: object) -> str | None:
-        raw = normalize_error_text(text)
-        if not raw:
-            return None
-        lowered = raw.casefold()
-        if "provider_response_id" in lowered and "content_filter" in lowered:
-            return None
-        return f"任务执行失败：{raw}"
-
-    def parse_jsonish(text: str) -> Any | None:
-        raw = str(text or "").strip()
-        if not raw:
-            return None
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            pass
-        try:
-            return _json_loads_with_trailing_repair(raw)
-        except ValueError:
-            return None
-
-    def visit(node: Any) -> str | None:
-        if isinstance(node, str):
-            decoded = parse_jsonish(node)
-            if decoded is not None:
-                return visit(decoded)
-            return None
-        if isinstance(node, list):
-            for child in node:
-                found = visit(child)
-                if found:
-                    return found
-            return None
-        if not isinstance(node, dict):
-            return None
-
-        chat_error = node.get("chat_error")
-        if isinstance(chat_error, str) and chat_error.strip():
-            return chat_error.strip()
-
-        for key in ("error", "detail", "message"):
-            mapped = business_chat_error_from_text(node.get(key))
-            if mapped:
-                return mapped
-
-        status = str(node.get("status") or "").strip().lower()
-        failed_status = status in {"failed", "error", "cancelled", "canceled"}
-        ok_false = node.get("ok") is False
-        if failed_status or ok_false:
-            for key in ("error", "detail", "message"):
-                generic = generic_chat_error_from_text(node.get(key))
-                if generic:
-                    return generic
-            if failed_status:
-                return f"任务执行失败：当前状态为 {status}。"
-            return "任务执行失败：接口返回 ok=false，但没有提供具体错误原因。"
-
-        for key in ("result", "message", "content", "data", "output"):
-            found = visit(node.get(key))
-            if found:
-                return found
-        for child in node.values():
-            found = visit(child)
-            if found:
-                return found
-        return None
-
-    return visit(value)
-
-
-def _decode_tool_jsonish(text: str) -> Any | None:
-    raw = str(text or "").strip()
-    if not raw:
-        return None
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-    try:
-        return _json_loads_with_trailing_repair(raw)
-    except ValueError:
-        return None
-
-
-def _contains_freezone_canvas_bridge_result(value: Any) -> bool:
-    """Return true when a Hermes tool update contains a Freezone bridge result."""
-    if isinstance(value, str):
-        decoded = _decode_tool_jsonish(value)
-        if decoded is None:
-            return False
-        return _contains_freezone_canvas_bridge_result(decoded)
-    if isinstance(value, list):
-        return any(_contains_freezone_canvas_bridge_result(item) for item in value)
-    if not isinstance(value, dict):
-        return False
-
-    has_bridge_status = "tool_call_status" in value or "canvas_apply_status" in value
-    has_bridge_body = (
-        "command_results" in value
-        or "applied_count" in value
-        or "opened_ui_actions" in value
-        or "created_node_ids" in value
-        or "user_message" in value
-        or "agent_instruction" in value
-    )
-    if has_bridge_status and has_bridge_body:
-        return True
-
-    return any(
-        _contains_freezone_canvas_bridge_result(child) for child in value.values()
+    return presentation_mapping._extract_tool_chat_error(
+        value, redact=redact_secrets
     )
 
 
-def _suppress_freezone_tool_lifecycle_error(value: Any, *, tool_mode: str) -> bool:
-    """Ignore Hermes lifecycle-only failures for Freezone canvas bridge tools.
-
-    Freezone canvas commands are resolved by the frontend bridge result.  A
-    bare Hermes ``tool_call_update.status=failed`` can be transient lifecycle
-    noise and must not be surfaced as the canvas command result.
-    """
-    if tool_mode != "freezone_canvas" or not isinstance(value, dict):
-        return False
-    if value.get("sessionUpdate") != "tool_call_update":
-        return False
-    status = str(value.get("status") or "").strip().lower()
-    if status not in {"failed", "error", "cancelled", "canceled"}:
-        return False
-    business_payload_keys = {
-        "chat_error",
-        "error",
-        "detail",
-        "message",
-        "result",
-        "content",
-        "data",
-        "output",
-    }
-    if not any(key in value for key in business_payload_keys):
-        return True
-    return _contains_freezone_canvas_bridge_result(value)
-
-
-def _strip_freezone_tool_lifecycle_failure_text(text: str, *, tool_mode: str) -> str:
-    if tool_mode != "freezone_canvas":
-        return text
-    return re.sub(
-        r"\A\s*任务执行失败：当前状态为\s+(?:failed|error|cancelled|canceled)。\s*",
-        "",
-        text,
-        flags=re.IGNORECASE,
-    ).lstrip()
-
-
-def _visible_tool_chat_error_for_mode(
-    text: str | None, *, tool_mode: str
-) -> str | None:
-    if not text:
-        return None
-    visible = _strip_freezone_tool_lifecycle_failure_text(text, tool_mode=tool_mode)
-    return visible or None
+def _append_tool_ui_specs(content: str, specs: list[dict[str, Any]]) -> str:
+    return presentation_mapping._append_tool_ui_specs(
+        content, specs, log_error=_log_json_render_error
+    )
 
 
 def _merge_tool_ui_specs_by_type(specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -3226,548 +2147,14 @@ def _merge_tool_ui_specs_by_type(specs: list[dict[str, Any]]) -> list[dict[str, 
     )
 
 
-def _append_tool_ui_specs(content: str, specs: list[dict[str, Any]]) -> str:
-    raw_text = str(content or "").strip()
-    if specs and _UI_SPEC_BLOCK_RE.search(raw_text):
-        return raw_text
-    text = _strip_media_rendering_leaks(raw_text)
-    if not specs:
-        return text
-    text = _strip_embedded_ui_spec_json_text(text)
-    specs = _merge_tool_ui_specs_by_type(specs)
-    blocks: list[str] = []
-    for spec in specs:
-        try:
-            blocks.append(_ui_spec_block(spec))
-        except ValueError as exc:
-            _log_json_render_error(exc, json.dumps(spec, ensure_ascii=False))
-    if not blocks:
-        return text
-    prefix = text or "已为你展示相关媒体。"
-    return f"{prefix}\n\n" + "\n\n".join(blocks)
-
-
 def _split_ui_specs_from_text(content: str) -> tuple[str, list[dict[str, Any]]]:
     return presentation.split_ui_specs_from_text(
         content, log_error=_log_json_render_error
     )
 
 
-def _prompt_wants_sketch_only(prompt: str) -> bool:
-    text = str(prompt or "")
-    if "草图" not in text and "sketch" not in text.casefold():
-        return False
-    frame_terms = (
-        "首帧",
-        "第一帧",
-        "关键帧",
-        "first frame",
-        "first-frame",
-        "keyframe",
-        "frame",
-    )
-    return not any(term in text.casefold() for term in frame_terms)
-
-
-def _is_frame_image_element(element: Any) -> bool:
-    if not isinstance(element, dict):
-        return False
-    props = element.get("props")
-    if not isinstance(props, dict):
-        return False
-    fields = [
-        props.get("src"),
-        props.get("poster"),
-        props.get("title"),
-        props.get("alt"),
-        props.get("description"),
-        props.get("overlayTitle"),
-        props.get("overlayDescription"),
-    ]
-    text = "\n".join(str(value or "") for value in fields).casefold()
-    return (
-        "首帧" in text
-        or "/frames/" in text
-        or "first frame" in text
-        or "first-frame" in text
-    )
-
-
-def _filter_tool_ui_specs_for_prompt(
-    prompt: str, specs: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    if not specs:
-        return specs
-
-    if _prompt_continues_video_generation_without_display(prompt):
-        specs = [spec for spec in specs if not _is_beat_video_ui_spec(spec)]
-
-    if not specs or not _prompt_wants_sketch_only(prompt):
-        return specs
-
-    filtered_specs: list[dict[str, Any]] = []
-    for spec in specs:
-        if not isinstance(spec, dict) or spec.get("type") != "sketch_gallery":
-            filtered_specs.append(spec)
-            continue
-        elements = spec.get("elements")
-        root_key = spec.get("root")
-        if not isinstance(elements, dict) or not isinstance(root_key, str):
-            filtered_specs.append(spec)
-            continue
-        root = elements.get(root_key)
-        if not isinstance(root, dict):
-            filtered_specs.append(spec)
-            continue
-        children = root.get("children")
-        if not isinstance(children, list):
-            filtered_specs.append(spec)
-            continue
-
-        kept_children: list[str] = []
-        kept_elements: dict[str, Any] = {}
-        for key, element in elements.items():
-            if key == root_key:
-                continue
-            if key in children and _is_frame_image_element(element):
-                continue
-            kept_elements[key] = element
-            if key in children:
-                kept_children.append(key)
-
-        if not kept_children:
-            continue
-        new_root = copy.deepcopy(root)
-        new_root["children"] = kept_children
-        filtered_specs.append(
-            {
-                **spec,
-                "elements": {
-                    root_key: new_root,
-                    **{key: kept_elements[key] for key in kept_elements},
-                },
-            }
-        )
-    return filtered_specs
-
-
-def _prompt_continues_video_generation_without_display(prompt: str) -> bool:
-    text = str(prompt or "").strip()
-    lower = text.casefold()
-    continue_terms = ("继续", "恢复", "接着", "下一步", "继续跑", "继续做")
-    video_terms = ("视频", "beat", "镜头", "成片", "生成")
-    display_terms = (
-        "展示",
-        "显示",
-        "查看",
-        "看看",
-        "看一下",
-        "播放",
-        "预览",
-        "给我看",
-        "show",
-        "display",
-        "view",
-        "preview",
-        "play",
-    )
-    return (
-        any(term in lower for term in continue_terms)
-        and any(term in lower for term in video_terms)
-        and not any(term in lower for term in display_terms)
-    )
-
-
-def _is_beat_video_ui_spec(spec: dict[str, Any]) -> bool:
-    if not isinstance(spec, dict) or spec.get("type") != "keyframe_video":
-        return False
-    elements = spec.get("elements")
-    if not isinstance(elements, dict):
-        return False
-    for element in elements.values():
-        if not isinstance(element, dict) or element.get("type") != "Video":
-            continue
-        props = element.get("props")
-        if not isinstance(props, dict):
-            continue
-        title = str(props.get("title") or "")
-        src = str(props.get("src") or "")
-        if re.search(r"\bbeat\s*\d+\b", title, re.IGNORECASE) or "/beats/" in src:
-            return True
-    return False
-
-
-_DISPLAY_TOOL_NAMES = {
-    "dramaclaw_get_sketches",
-    "dramaclaw_get_sketch_candidates",
-    "dramaclaw_get_first_frames",
-    "dramaclaw_get_scene_images",
-    "dramaclaw_get_character_media",
-    "dramaclaw_get_episode_media",
-    "dramaclaw_get_final_video",
-}
-
-
-def _limit_display_items(
-    items: list[dict[str, Any]], args: dict[str, Any], default: int
-) -> list[dict[str, Any]]:
-    try:
-        limit = int(args.get("limit")) if args.get("limit") is not None else default
-    except (TypeError, ValueError):
-        limit = default
-    try:
-        offset = int(args.get("offset") or 0)
-    except (TypeError, ValueError):
-        offset = 0
-    offset = max(0, offset)
-    limit = max(1, min(limit, default))
-    return items[offset : offset + limit]
-
-
-def _requested_display_beats(args: dict[str, Any]) -> set[int] | None:
-    raw = args.get("beat_indices") or args.get("beats")
-    values: list[Any] = []
-    if isinstance(raw, list):
-        values.extend(raw)
-    elif raw is not None:
-        values.append(raw)
-    for key in ("beat", "beat_num", "beat_number", "index"):
-        if args.get(key) is not None:
-            values.append(args[key])
-    beats: set[int] = set()
-    for value in values:
-        try:
-            beat = int(value)
-        except (TypeError, ValueError):
-            continue
-        if beat > 0:
-            beats.add(beat)
-    return beats or None
-
-
-def _requested_display_names(args: dict[str, Any]) -> set[str] | None:
-    raw = args.get("names")
-    values: list[Any] = []
-    if isinstance(raw, list):
-        values.extend(raw)
-    elif raw is not None:
-        values.append(raw)
-    for key in ("name", "character"):
-        if args.get(key) is not None:
-            values.append(args[key])
-    names = {str(value).strip() for value in values if str(value or "").strip()}
-    return names or None
-
-
-def _requested_display_queries(args: dict[str, Any]) -> set[str] | None:
-    raw = args.get("queries") or args.get("keywords")
-    values: list[Any] = []
-    if isinstance(raw, list):
-        values.extend(raw)
-    elif raw is not None:
-        values.append(raw)
-    for key in ("query", "search", "keyword", "text", "identity_name"):
-        if args.get(key) is not None:
-            values.append(args[key])
-    queries = {str(value).strip() for value in values if str(value or "").strip()}
-    return queries or None
-
-
-def _requested_display_scene_names(args: dict[str, Any]) -> set[str] | None:
-    raw = args.get("names") or args.get("scene_names")
-    values: list[Any] = []
-    if isinstance(raw, list):
-        values.extend(raw)
-    elif raw is not None:
-        values.append(raw)
-    for key in ("name", "scene_name"):
-        if args.get(key) is not None:
-            values.append(args[key])
-    names = {str(value).strip() for value in values if str(value or "").strip()}
-    return names or None
-
-
-def _requested_display_scene_indices(args: dict[str, Any]) -> set[int] | None:
-    raw = args.get("scene_indices") or args.get("indices")
-    values: list[Any] = []
-    if isinstance(raw, list):
-        values.extend(raw)
-    elif raw is not None:
-        values.append(raw)
-    if args.get("index") is not None:
-        values.append(args["index"])
-    indices: set[int] = set()
-    for value in values:
-        try:
-            index = int(value)
-        except (TypeError, ValueError):
-            continue
-        if index > 0:
-            indices.add(index)
-    return indices or None
-
-
-def _matches_any_display_scene_name(
-    scene_name: str, requested_names: set[str] | None
-) -> bool:
-    if requested_names is None:
-        return True
-    haystack = str(scene_name or "").casefold()
-    return any(needle.casefold() in haystack for needle in requested_names if needle)
-
-
-def _flatten_display_text_fields(fields: list[Any]) -> list[str]:
-    values: list[str] = []
-    for field in fields:
-        if isinstance(field, dict):
-            values.extend(_flatten_display_text_fields(list(field.values())))
-        elif isinstance(field, list):
-            values.extend(_flatten_display_text_fields(field))
-        elif field is not None:
-            text = str(field).strip()
-            if text:
-                values.append(text)
-    return values
-
-
-def _matches_any_display_text(fields: list[Any], queries: set[str] | None) -> bool:
-    if queries is None:
-        return True
-    haystack = "\n".join(_flatten_display_text_fields(fields)).casefold()
-    return any(query.casefold() in haystack for query in queries if query)
-
-
-def _media_ui_spec(
-    spec_type: str, component_type: str, items: list[dict[str, Any]]
-) -> dict[str, Any]:
-    elements: dict[str, Any] = {
-        "root": {
-            "type": "Stack",
-            "props": {
-                "direction": "row",
-                "wrap": "wrap",
-                "spacing": 16,
-                "alignItems": "flex-start",
-                "width": "100%",
-            },
-            "children": [],
-        }
-    }
-    for index, item in enumerate(items, start=1):
-        src = str(item.get("src") or item.get("url") or "").strip()
-        if not src:
-            continue
-        key = f"media_{index}"
-        title = str(item.get("title") or item.get("label") or f"媒体 {index}").strip()
-        description = str(item.get("description") or "").strip()
-        props: dict[str, Any] = {"src": src, "alt": title, "title": title}
-        if description:
-            props["description"] = description
-        if component_type == "Image":
-            props.update(
-                {
-                    "fit": item.get("fit") or "cover",
-                    "aspectRatio": item.get("aspectRatio") or "3/4",
-                    "overlayTitle": title,
-                }
-            )
-            if description:
-                props["overlayDescription"] = description
-        elif component_type == "Video":
-            poster = str(item.get("poster") or item.get("thumbnail") or "").strip()
-            if poster:
-                props["poster"] = poster
-            props["controls"] = True
-        elif component_type == "Audio":
-            props["controls"] = True
-
-        elements[key] = {"type": component_type, "props": props, "children": []}
-        elements["root"]["children"].append(key)
-    return {"type": spec_type, "root": "root", "elements": elements}
-
-
-def _project_static_url_from_path(
-    project_id: str, rel_path: str, local_path: Path | None = None
-) -> str:
-    return project_static_url(project_id, rel_path, local_path=local_path)
-
-
-def _api_response_items(resp: Any, *keys: str) -> list[Any]:
-    if not isinstance(resp, dict):
-        return []
-    for key in keys:
-        value = resp.get(key)
-        if isinstance(value, list):
-            return value
-    data = resp.get("data")
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
-        for key in keys:
-            value = data.get(key)
-            if isinstance(value, list):
-                return value
-    return []
-
-
-def _decode_tool_args(value: Any) -> dict[str, Any]:
-    if isinstance(value, dict):
-        return value
-    if isinstance(value, str) and value.strip():
-        try:
-            decoded = json.loads(value)
-        except json.JSONDecodeError:
-            return {}
-        return decoded if isinstance(decoded, dict) else {}
-    return {}
-
-
-def _extract_display_tool_call(raw: Any) -> tuple[str, dict[str, Any]] | None:
-    if not isinstance(raw, dict):
-        return None
-    title = str(
-        raw.get("title")
-        or raw.get("kind")
-        or raw.get("name")
-        or raw.get("tool_name")
-        or ""
-    ).strip()
-    tool_name = title.partition(":")[0].split()[0].strip()
-    if tool_name not in _DISPLAY_TOOL_NAMES:
-        for key in ("name", "tool", "toolName", "tool_name"):
-            candidate = str(raw.get(key) or "").strip()
-            if candidate in _DISPLAY_TOOL_NAMES:
-                tool_name = candidate
-                break
-    if tool_name not in _DISPLAY_TOOL_NAMES:
-        function = raw.get("function")
-        if isinstance(function, dict):
-            candidate = str(function.get("name") or "").strip()
-            if candidate in _DISPLAY_TOOL_NAMES:
-                tool_name = candidate
-    if tool_name not in _DISPLAY_TOOL_NAMES:
-        return None
-    for key in ("arguments", "args", "input", "params"):
-        args = _decode_tool_args(raw.get(key))
-        if args:
-            return tool_name, args
-    content = raw.get("content")
-    if isinstance(content, list):
-        for item in content:
-            if not isinstance(item, dict):
-                continue
-            nested = item.get("content")
-            if isinstance(nested, dict):
-                args = _decode_tool_args(nested.get("text"))
-                if args:
-                    return tool_name, args
-    return tool_name, {}
-
-
-def _display_tool_call_key(tool_name: str, args: dict[str, Any]) -> str:
-    try:
-        encoded_args = json.dumps(args, ensure_ascii=False, sort_keys=True, default=str)
-    except TypeError:
-        encoded_args = repr(args)
-    return f"{tool_name}:{encoded_args}"
-
-
-def _infer_display_tool_call_from_text(
-    prompt: str,
-    assistant_text: str,
-    previous_assistant: list[str],
-) -> tuple[str, dict[str, Any]] | None:
-    """Recover from display promises where the model forgot to call a display tool."""
-    prompt_text = str(prompt or "")
-    prompt_lower = prompt_text.casefold()
-    recent_context = "\n".join(previous_assistant[-2:] if previous_assistant else [])
-    context_text = "\n".join([prompt_text, str(assistant_text or ""), recent_context])
-    context_lower = context_text.casefold()
-    progress_terms = ("进度", "状态", "任务", "做到哪", "做到哪儿", "当前情况")
-    if any(term in prompt_text for term in progress_terms):
-        return None
-    display_terms = (
-        "展示",
-        "显示",
-        "查看",
-        "看",
-        "全部显示",
-        "show",
-        "display",
-        "view",
-    )
-    if not any(term in prompt_lower for term in display_terms):
-        return None
-    prompt_mentions_sketch = "草图" in prompt_text or "sketch" in prompt_lower
-    context_mentions_sketch = "草图" in context_text or "sketch" in context_lower
-    short_followup = len(prompt_text.strip()) <= 20 and any(
-        term in prompt_text for term in ("全部", "继续", "下一页", "更多")
-    )
-    if not prompt_mentions_sketch and not (short_followup and context_mentions_sketch):
-        return None
-
-    episode = 1
-    episode_match = re.search(
-        r"(?:第\s*(\d+)\s*集|ep(?:isode)?\s*\.?\s*(\d+))",
-        context_text,
-        re.IGNORECASE,
-    )
-    if episode_match:
-        raw_episode = episode_match.group(1) or episode_match.group(2)
-        try:
-            episode = max(1, int(raw_episode))
-        except (TypeError, ValueError):
-            episode = 1
-    wants_sketch_candidates = any(
-        term in context_text for term in ("草图候选", "候选草图", "图池", "备选草图")
-    )
-    if wants_sketch_candidates:
-        beat_match = re.search(
-            r"(?:beat|Beat|BEAT)\s*\.?\s*(\d+)|第\s*(\d+)\s*(?:个|张)?\s*beat|Beat\s*(\d+)",
-            context_text,
-            re.IGNORECASE,
-        )
-        raw_beat = None
-        if beat_match:
-            raw_beat = next((group for group in beat_match.groups() if group), None)
-        if raw_beat:
-            try:
-                beat = max(1, int(raw_beat))
-            except (TypeError, ValueError):
-                beat = 0
-            if beat > 0:
-                return "dramaclaw_get_sketch_candidates", {
-                    "episode": episode,
-                    "beat": beat,
-                }
-        return None
-    return "dramaclaw_get_sketches", {"episode": episode}
-
-
 def _backend_api_get(path: str, token: str) -> dict[str, Any]:
-    base_url = (
-        os.environ.get("DRAMACLAW_API_URL")
-        or os.environ.get("NOVELVIDEO_API_URL")
-        or f"http://127.0.0.1:{os.environ.get('NOVELVIDEO_API_PORT', '19080')}"
-        or os.environ.get("SUPERTALE_API_URL")
-    ).strip()
-    url = f"{base_url.rstrip('/')}{path}"
-    req = Request(
-        url,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
-            "User-Agent": "dramaclaw-chat-fallback/0.1.0",
-        },
-        method="GET",
-    )
-    with urlopen(req, timeout=30) as resp:
-        text = resp.read().decode("utf-8", errors="replace")
-    try:
-        value = json.loads(text)
-    except json.JSONDecodeError:
-        return {"ok": False, "error": text[:500]}
-    return value if isinstance(value, dict) else {"ok": True, "data": value}
+    return display_fallback._backend_api_get(path, token, open_url=urlopen)
 
 
 async def _fallback_display_tool_ui_specs(
@@ -3779,435 +2166,15 @@ async def _fallback_display_tool_ui_specs(
     token: str,
     project_dir: str | Path | None = None,
 ) -> list[dict[str, Any]]:
-    if not project or tool_name not in _DISPLAY_TOOL_NAMES:
-        return []
-
-    def build() -> list[dict[str, Any]]:
-        api_project = str(
-            args.get("project_id") or args.get("project") or project
-        ).strip()
-        project_q = quote(api_project, safe="")
-        if tool_name == "dramaclaw_get_final_video":
-            raw_episode_indices = args.get("episode_indices")
-            episode_indices: list[int] = []
-            if args.get("episode") is not None and not raw_episode_indices:
-                episode_indices = [int(args["episode"])]
-            elif isinstance(raw_episode_indices, list):
-                for value in raw_episode_indices:
-                    try:
-                        episode = int(value)
-                    except (TypeError, ValueError):
-                        continue
-                    if episode > 0 and episode not in episode_indices:
-                        episode_indices.append(episode)
-            if not episode_indices:
-                episodes_resp = _backend_api_get(
-                    f"/api/v1/projects/{project_q}/episodes",
-                    token,
-                )
-                for item in _api_response_items(episodes_resp, "episodes", "items"):
-                    if not isinstance(item, dict):
-                        continue
-                    try:
-                        episode = int(item.get("number") or 0)
-                    except (TypeError, ValueError):
-                        continue
-                    if episode > 0 and episode not in episode_indices:
-                        episode_indices.append(episode)
-
-            media_items: list[dict[str, Any]] = []
-            for episode in sorted(episode_indices):
-                resp = _backend_api_get(
-                    f"/api/v1/projects/{project_q}/episodes/{episode}/final",
-                    token,
-                )
-                data = resp.get("data") if isinstance(resp, dict) else None
-                video_url = (
-                    str(data.get("video_url") or "").strip()
-                    if isinstance(data, dict) and data.get("exists")
-                    else ""
-                )
-                if video_url:
-                    media_items.append(
-                        {
-                            "src": video_url,
-                            "title": f"第 {episode} 集成片",
-                            "description": "最终合成视频",
-                        }
-                    )
-            if not media_items:
-                return []
-            page_items = _limit_display_items(media_items, args, 6)
-            return [
-                _media_ui_spec(
-                    "keyframe_video",
-                    "Video",
-                    page_items,
-                )
-            ]
-        if tool_name in {"dramaclaw_get_sketches", "dramaclaw_get_first_frames"}:
-            episode = int(args.get("episode") or 1)
-            media_kind = (
-                "frame" if tool_name == "dramaclaw_get_first_frames" else "sketch"
-            )
-            resp = _backend_api_get(
-                f"/api/v1/projects/{project_q}/episodes/{episode}/beats",
-                token,
-            )
-            media_items: list[dict[str, Any]] = []
-            requested_beats = _requested_display_beats(args)
-            for beat in _api_response_items(resp, "beats", "items"):
-                if not isinstance(beat, dict):
-                    continue
-                beat_number = beat.get("beat_number")
-                try:
-                    beat_int = int(beat_number)
-                except (TypeError, ValueError):
-                    beat_int = None
-                if requested_beats is not None and beat_int not in requested_beats:
-                    continue
-                sketch_url = str(beat.get("sketch_url") or "").strip()
-                frame_url = str(beat.get("frame_url") or "").strip()
-                if sketch_url and media_kind == "sketch":
-                    media_items.append(
-                        {
-                            "src": sketch_url,
-                            "title": f"Beat {beat_number} 草图",
-                            "description": "草图",
-                            "aspectRatio": "3/4",
-                        }
-                    )
-                if frame_url and media_kind == "frame":
-                    media_items.append(
-                        {
-                            "src": frame_url,
-                            "title": f"Beat {beat_number} 首帧",
-                            "description": "首帧",
-                            "aspectRatio": "3/4",
-                        }
-                    )
-            limited = _limit_display_items(media_items, args, 12)
-            return (
-                [_media_ui_spec("sketch_gallery", "Image", limited)] if limited else []
-            )
-
-        if tool_name == "dramaclaw_get_sketch_candidates":
-            episode = int(args.get("episode") or 1)
-            try:
-                beat = int(
-                    args.get("beat")
-                    or args.get("beat_num")
-                    or args.get("beat_number")
-                    or 0
-                )
-            except (TypeError, ValueError):
-                beat = 0
-            if beat <= 0:
-                return []
-            resp = _backend_api_get(
-                f"/api/v1/projects/{project_q}/episodes/{episode}/beats/{beat}/sketch-candidates",
-                token,
-            )
-            data = resp.get("data") if isinstance(resp, dict) else None
-            candidates = data.get("candidates") if isinstance(data, dict) else []
-            media_items = []
-            for candidate in candidates if isinstance(candidates, list) else []:
-                if not isinstance(candidate, dict):
-                    continue
-                src = str(candidate.get("url") or "").strip()
-                if not src:
-                    continue
-                media_items.append(
-                    {
-                        "src": src,
-                        "title": f"Beat {beat} 草图候选",
-                        "description": (
-                            "过期候选" if candidate.get("stale") else "草图候选"
-                        ),
-                        "aspectRatio": "3/4",
-                    }
-                )
-            limited = _limit_display_items(media_items, args, 12)
-            return (
-                [_media_ui_spec("sketch_gallery", "Image", limited)] if limited else []
-            )
-
-        if tool_name == "dramaclaw_get_scene_images":
-            resp = _backend_api_get(
-                f"/api/v1/projects/{project_q}/scenes?summary=false", token
-            )
-            media_items = []
-            include_reverse = bool(args.get("include_reverse", True))
-            include_pano = bool(args.get("include_pano", False))
-            include_custom = bool(args.get("include_custom", False))
-            requested_names = _requested_display_scene_names(args)
-            requested_indices = _requested_display_scene_indices(args)
-            requested_type = str(args.get("scene_type") or "").strip()
-            for scene_index, scene in enumerate(
-                _api_response_items(resp, "scenes", "items"), start=1
-            ):
-                if not isinstance(scene, dict):
-                    continue
-                scene_name = str(scene.get("name") or "").strip()
-                scene_type = str(scene.get("scene_type") or "").strip()
-                if (
-                    requested_indices is not None
-                    and scene_index not in requested_indices
-                ):
-                    continue
-                if not _matches_any_display_scene_name(scene_name, requested_names):
-                    continue
-                if requested_type and scene_type != requested_type:
-                    continue
-                for kind, field, enabled in (
-                    ("master", "master_url", True),
-                    ("reverse_master", "reverse_master_url", include_reverse),
-                    ("pano", "pano_url", include_pano),
-                    ("custom_scene", "custom_scene_url", include_custom),
-                ):
-                    src = str(scene.get(field) or "").strip()
-                    if enabled and src:
-                        media_items.append(
-                            {
-                                "src": src,
-                                "title": f"{scene_name or '场景'} · {kind}",
-                                "description": scene.get("description")
-                                or scene.get("environment_prompt")
-                                or "",
-                                "aspectRatio": "16/9" if kind == "pano" else "3/4",
-                            }
-                        )
-            limited = _limit_display_items(media_items, args, 12)
-            return (
-                [_media_ui_spec("sketch_gallery", "Image", limited)] if limited else []
-            )
-
-        if tool_name == "dramaclaw_get_character_media":
-            resp = _backend_api_get(
-                f"/api/v1/projects/{project_q}/characters?summary=false", token
-            )
-            media_kind = (
-                str(args.get("media_kind") or args.get("kind") or "all").strip().lower()
-            )
-            if media_kind not in {"all", "portrait", "identity"}:
-                media_kind = "all"
-            include_identities = (
-                bool(args.get("include_identities", True)) and media_kind != "portrait"
-            )
-            media_items = []
-            requested_names = _requested_display_names(args)
-            requested_queries = _requested_display_queries(args)
-            for character in _api_response_items(resp, "characters", "items"):
-                if not isinstance(character, dict):
-                    continue
-                name = str(character.get("name") or "").strip()
-                role = str(
-                    character.get("role") or character.get("description") or ""
-                ).strip()
-                character_name_match = _matches_any_display_text(
-                    [name, character.get("aliases")],
-                    requested_names,
-                )
-                character_query_match = _matches_any_display_text(
-                    [
-                        name,
-                        role,
-                        character.get("description"),
-                        character.get("appearance"),
-                        character.get("profile"),
-                        character.get("aliases"),
-                    ],
-                    requested_queries,
-                )
-                character_match = character_name_match and character_query_match
-                portrait_url = str(character.get("portrait_url") or "").strip()
-                if portrait_url and character_match:
-                    if media_kind in {"all", "portrait"}:
-                        media_items.append(
-                            {
-                                "src": portrait_url,
-                                "title": name or "角色肖像",
-                                "description": role,
-                                "aspectRatio": "3/4",
-                            }
-                        )
-                identities = (
-                    character.get("identities")
-                    or character.get("identity_images")
-                    or []
-                )
-                if include_identities:
-                    try:
-                        identities_resp = _backend_api_get(
-                            f"/api/v1/projects/{project_q}/characters/{quote(name, safe='')}/identities",
-                            token,
-                        )
-                        for key in ("data", "identities", "items"):
-                            value = (
-                                identities_resp.get(key)
-                                if isinstance(identities_resp, dict)
-                                else None
-                            )
-                            if isinstance(value, list):
-                                identities = value
-                                break
-                        data = (
-                            identities_resp.get("data")
-                            if isinstance(identities_resp, dict)
-                            else None
-                        )
-                        if isinstance(data, dict):
-                            value = data.get("identities")
-                            if isinstance(value, list):
-                                identities = value
-                    except Exception:
-                        pass
-                if include_identities and isinstance(identities, list):
-                    for identity in identities:
-                        if not isinstance(identity, dict):
-                            continue
-                        src = str(
-                            identity.get("image_url")
-                            or identity.get("portrait_image_url")
-                            or identity.get("costume_image_url")
-                            or ""
-                        ).strip()
-                        if src:
-                            title = str(
-                                identity.get("identity_name")
-                                or identity.get("name")
-                                or identity.get("identity_id")
-                                or name
-                                or "身份图"
-                            )
-                            identity_name_match = _matches_any_display_text(
-                                [
-                                    name,
-                                    character.get("aliases"),
-                                    title,
-                                    identity.get("identity_name"),
-                                    identity.get("name"),
-                                    identity.get("identity_id"),
-                                ],
-                                requested_names,
-                            )
-                            identity_query_match = _matches_any_display_text(
-                                [
-                                    title,
-                                    identity.get("identity_name"),
-                                    identity.get("name"),
-                                    identity.get("identity_id"),
-                                    identity.get("description"),
-                                    identity.get("appearance_details"),
-                                    identity.get("prompt"),
-                                    identity.get("role"),
-                                    name,
-                                    role,
-                                ],
-                                requested_queries,
-                            )
-                            identity_match = (
-                                identity_name_match and identity_query_match
-                            )
-                            if not identity_match:
-                                continue
-                            media_items.append(
-                                {
-                                    "src": src,
-                                    "title": f"{name} · {title}" if name else title,
-                                    "description": role,
-                                    "aspectRatio": "3/4",
-                                }
-                            )
-            limited = _limit_display_items(media_items, args, 12)
-            return (
-                [_media_ui_spec("character_showcase", "Image", limited)]
-                if limited
-                else []
-            )
-
-        if tool_name == "dramaclaw_get_episode_media":
-            episode = int(args.get("episode") or 1)
-            media_type = str(args.get("media_type") or "video").strip().lower()
-            resp = _backend_api_get(
-                f"/api/v1/projects/{project_q}/episodes/{episode}/beats",
-                token,
-            )
-            video_items: list[dict[str, Any]] = []
-            audio_items: list[dict[str, Any]] = []
-            requested_beats = _requested_display_beats(args)
-            requested_queries = _requested_display_queries(args)
-            for beat in _api_response_items(resp, "beats", "items"):
-                if not isinstance(beat, dict):
-                    continue
-                beat_number = beat.get("beat_number")
-                try:
-                    beat_int = int(beat_number)
-                except (TypeError, ValueError):
-                    beat_int = None
-                if requested_beats is not None and beat_int not in requested_beats:
-                    continue
-                if not _matches_any_display_text(
-                    [
-                        beat.get("title"),
-                        beat.get("summary"),
-                        beat.get("description"),
-                        beat.get("visual_description"),
-                        beat.get("image_prompt"),
-                        beat.get("video_prompt"),
-                        beat.get("narration"),
-                        beat.get("voiceover"),
-                        beat.get("dialogue"),
-                        beat.get("audio_text"),
-                        beat.get("speaker"),
-                        beat.get("character_names"),
-                        beat.get("characters"),
-                        beat.get("scene_name"),
-                        beat.get("location"),
-                    ],
-                    requested_queries,
-                ):
-                    continue
-                video_url = str(beat.get("video_url") or "").strip()
-                audio_url = str(beat.get("audio_url") or "").strip()
-                frame_url = str(
-                    beat.get("frame_url") or beat.get("sketch_url") or ""
-                ).strip()
-                if video_url:
-                    video_items.append(
-                        {
-                            "src": video_url,
-                            "poster": frame_url,
-                            "title": f"Beat {beat_number} 视频",
-                        }
-                    )
-                if audio_url:
-                    audio_items.append(
-                        {"src": audio_url, "title": f"Beat {beat_number} 音频"}
-                    )
-            if media_type == "audio":
-                limited = _limit_display_items(audio_items, args, 20)
-                return (
-                    [_media_ui_spec("audio_list", "Audio", limited)] if limited else []
-                )
-            limited = _limit_display_items(video_items, args, 6)
-            return (
-                [_media_ui_spec("keyframe_video", "Video", limited)] if limited else []
-            )
-
-        return []
-
-    try:
-        return await asyncio.to_thread(build)
-    except Exception as exc:
-        logger.info(
-            "display fallback failed project=%s tool=%s args=%s error=%s",
-            project,
-            tool_name,
-            json.dumps(args, ensure_ascii=False, sort_keys=True, default=str)[:1000],
-            exc,
-        )
-        return []
+    return await display_fallback._fallback_display_tool_ui_specs(
+        username,
+        project,
+        tool_name,
+        args,
+        token=token,
+        _backend_api_get=_backend_api_get,
+        project_dir=project_dir,
+    )
 
 
 def _assistant_history_contents(
@@ -4219,21 +2186,12 @@ def _assistant_history_contents(
 ) -> list[str]:
     conn = _connect(_chat_db_path(username, project, project_dir, project_state_dir))
     try:
-        rows = conn.execute(
-            """
-            SELECT content
-              FROM chat_messages
-             WHERE role = 'assistant'
-             ORDER BY id DESC
-             LIMIT ?
-            """,
-            (_HERMES_REPLAY_HISTORY_MESSAGES,),
-        ).fetchall()
+        contents = message_repository.history_contents(
+            conn, "assistant", limit=_HERMES_REPLAY_HISTORY_MESSAGES
+        )
     finally:
         conn.close()
-    return _bounded_replay_history(
-        [str(row["content"] or "") for row in reversed(rows)]
-    )
+    return _bounded_replay_history(contents)
 
 
 def _trace_history_contents(
@@ -4245,21 +2203,12 @@ def _trace_history_contents(
 ) -> list[str]:
     conn = _connect(_chat_db_path(username, project, project_dir, project_state_dir))
     try:
-        rows = conn.execute(
-            """
-            SELECT content
-              FROM chat_messages
-             WHERE role = 'trace'
-             ORDER BY id DESC
-             LIMIT ?
-            """,
-            (_HERMES_REPLAY_HISTORY_MESSAGES,),
-        ).fetchall()
+        contents = message_repository.history_contents(
+            conn, "trace", limit=_HERMES_REPLAY_HISTORY_MESSAGES
+        )
     finally:
         conn.close()
-    return _bounded_replay_history(
-        [str(row["content"] or "") for row in reversed(rows)]
-    )
+    return _bounded_replay_history(contents)
 
 
 async def _store_history_contents_async(
@@ -4284,65 +2233,7 @@ async def _store_history_contents_async(
 def _replace_trace_messages(
     conn: sqlite3.Connection, messages: list[dict[str, Any]]
 ) -> None:
-    conn.execute("DELETE FROM chat_messages WHERE role = 'trace'")
-    for message in messages:
-        conn.execute(
-            """
-            INSERT INTO chat_messages(role, content, media_json, created_at)
-            VALUES (?, ?, ?, ?)
-            """,
-            (
-                str(message.get("role") or "assistant"),
-                str(message.get("content") or ""),
-                json.dumps(message.get("media") or [], ensure_ascii=False),
-                str(message.get("created_at") or _now_iso()),
-            ),
-        )
-    conn.commit()
-
-
-def _extract_codex_user_message_text(item: Any) -> str:
-    thread_item = _codex_unwrap_item(item)
-    parts: list[str] = []
-    for content in getattr(thread_item, "content", []) or []:
-        item_type = str(getattr(content, "type", "") or "")
-        if item_type == "text":
-            text = str(getattr(content, "text", "") or "").strip()
-            if text:
-                parts.append(text)
-        elif item_type == "skill":
-            name = str(getattr(content, "name", "") or "").strip()
-            if name:
-                parts.append(f"[skill] {name}")
-        elif item_type == "mention":
-            name = str(getattr(content, "name", "") or "").strip()
-            path = str(getattr(content, "path", "") or "").strip()
-            parts.append(f"[mention] {name or path}".strip())
-        elif item_type == "image":
-            url = str(getattr(content, "url", "") or "").strip()
-            if url:
-                parts.append(f"[image] {url}")
-        elif item_type == "localImage":
-            path = str(getattr(content, "path", "") or "").strip()
-            if path:
-                parts.append(f"[image] {path}")
-    return "\n".join(part for part in parts if part).strip()
-
-
-def _extract_codex_history_trace(item: Any) -> str:
-    from openai_codex.generated.v2_all import CommandExecutionThreadItem
-
-    thread_item = _codex_unwrap_item(item)
-    started = _codex_item_started_trace(thread_item) or ""
-    completed = _codex_item_completed_trace(thread_item) or ""
-    body = ""
-    if isinstance(thread_item, CommandExecutionThreadItem):
-        aggregated = str(thread_item.aggregated_output or "")
-        if aggregated:
-            body = aggregated
-            if not body.endswith("\n"):
-                body += "\n"
-    return (started + body + completed).strip()
+    message_repository.replace_trace_messages(conn, messages, now_iso=_now_iso)
 
 
 def _load_codex_thread_history(
@@ -4352,10 +2243,6 @@ def _load_codex_thread_history(
     project_state_dir: str | Path | None = None,
 ) -> list[dict[str, Any]]:
     from openai_codex import CodexConfig
-    from openai_codex.generated.v2_all import (
-        AgentMessageThreadItem,
-        UserMessageThreadItem,
-    )
     from novelvideo.chat.codex_app_server import shared_codex
 
     thread_id = _get_codex_thread_id(
@@ -4397,51 +2284,24 @@ def _load_codex_thread_history(
     history: list[dict[str, Any]] = []
     for turn_index, turn in enumerate(turns):
         for item_index, item in enumerate(getattr(turn, "items", []) or []):
-            thread_item = _codex_unwrap_item(item)
             created_at = _now_iso()
-            if isinstance(thread_item, UserMessageThreadItem):
-                content = _extract_codex_user_message_text(thread_item)
-                if content:
-                    history.append(
-                        {
-                            "id": turn_index * 1000 + item_index,
-                            "role": "user",
-                            "content": content,
-                            "media": _filter_markdown_duplicate_images(
-                                content,
-                                _extract_media(content, username, project),
-                            ),
-                            "created_at": created_at,
-                        }
+            for parsed in parse_codex_history_item(item, turn_index, item_index):
+                content = parsed["content"]
+                role = parsed["role"]
+                media = (
+                    _filter_markdown_duplicate_images(
+                        content, _extract_media(content, username, project)
                     )
-                continue
-            if isinstance(thread_item, AgentMessageThreadItem):
-                content = str(thread_item.text or "").strip()
-                if content:
-                    media = _extract_media(content, username, project)
-                    history.append(
-                        {
-                            "id": turn_index * 1000 + item_index,
-                            "role": "assistant",
-                            "content": content,
-                            "media": _filter_markdown_duplicate_images(content, media),
-                            "created_at": created_at,
-                        }
-                    )
-                continue
-
-            trace = _extract_codex_history_trace(thread_item)
-            if trace:
-                for block_index, block in enumerate(_split_trace_contents(trace)):
-                    history.append(
-                        {
-                            "id": turn_index * 10000 + item_index * 10 + block_index,
-                            "role": "trace",
-                            "content": block,
-                            "media": [],
-                            "created_at": created_at,
-                        }
-                    )
+                    if role != "trace"
+                    else []
+                )
+                history.append(
+                    {
+                        **parsed,
+                        "media": media,
+                        "created_at": created_at,
+                    }
+                )
 
     return history
 
@@ -4478,20 +2338,7 @@ def list_messages(
 ) -> list[dict[str, Any]]:
     conn = _connect(_chat_db_path(username, project, project_dir, project_state_dir))
     try:
-        rows = conn.execute(
-            """
-            SELECT id, role, content, media_json, created_at
-              FROM (
-                    SELECT id, role, content, media_json, created_at
-                      FROM chat_messages
-                     WHERE role <> 'trace'
-                     ORDER BY id DESC
-                     LIMIT ?
-                   )
-             ORDER BY id ASC
-            """,
-            (max(1, int(limit)),),
-        ).fetchall()
+        rows = message_repository.recent_messages(conn, limit=limit)
         messages: list[dict[str, Any]] = []
         previous_assistants: list[str] = []
         for row in rows:
@@ -4598,52 +2445,27 @@ def _agent_session_state_path(username: str) -> Path:
 
 
 def _load_agent_session_state(username: str) -> dict[str, str]:
-    path = _agent_session_state_path(username)
-    if not path.exists():
-        return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    return {
-        str(key): str(value).strip()
-        for key, value in payload.items()
-        if str(value or "").strip()
-    }
+    return session_registry.load_agent_session_state(_agent_session_state_path(username))
 
 
 def _save_agent_session_state(username: str, payload: dict[str, str]) -> None:
-    path = _agent_session_state_path(username)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(".tmp")
-    tmp_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    tmp_path.replace(path)
+    session_registry.save_agent_session_state(_agent_session_state_path(username), payload)
 
 
 def _get_active_agent_session_id(username: str, backend: str) -> str | None:
-    payload = _load_agent_session_state(username)
-    active_backend = str(payload.get("backend", "") or "").strip()
-    if active_backend != backend:
-        return None
-    return str(payload.get("thread_id", "") or "").strip() or None
+    return session_registry.get_active_agent_session_id(
+        _agent_session_state_path(username), backend
+    )
 
 
 def _set_active_agent_session_id(username: str, backend: str, thread_id: str) -> None:
-    normalized = str(thread_id or "").strip()
-    if not normalized:
+    if not str(thread_id or "").strip():
         return
-    _save_agent_session_state(
-        username,
-        {
-            "backend": backend,
-            "thread_id": normalized,
-            "updated_at": _now_iso(),
-        },
+    session_registry.set_active_agent_session_id(
+        _agent_session_state_path(username),
+        backend,
+        thread_id,
+        updated_at=_now_iso(),
     )
 
 
@@ -4677,30 +2499,13 @@ def _codex_scope_key(
     agent_profile: str = "main",
     canvas_id: str | None = None,
 ) -> str:
-    normalized_project = str(project or "").strip()
-    profile = str(agent_profile or "main").strip() or "main"
-    if profile == "main":
-        # Tool definitions are retained by a resumed App Server thread. Include
-        # the discovery protocol so a deployment cannot resume a thread whose
-        # catalog still contains the incompatible concrete/special tools.
-        scope = (
-            profile,
-            "project" if normalized_project else "home",
-            normalized_project or None,
-            _CODEX_THREAD_PROTOCOL_VERSION,
-        )
-        return json.dumps(scope, ensure_ascii=False, separators=(",", ":"))
-    scoped_canvas = str(canvas_id or "").strip() or None
-    if not profile.startswith("freezone"):
-        scoped_canvas = None
-    scope = (
-        profile,
-        "project" if normalized_project else "home",
-        normalized_project or None,
-        scoped_canvas,
-        _CODEX_FREEZONE_THREAD_PROTOCOL_VERSION,
+    return session_registry.codex_scope_key(
+        project,
+        agent_profile=agent_profile,
+        canvas_id=canvas_id,
+        main_protocol=_CODEX_THREAD_PROTOCOL_VERSION,
+        freezone_protocol=_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION,
     )
-    return json.dumps(scope, ensure_ascii=False, separators=(",", ":"))
 
 
 def _load_codex_session_state(
@@ -4709,22 +2514,11 @@ def _load_codex_session_state(
     *,
     project_state_dir: str | Path | None = None,
 ) -> dict[str, str]:
-    path = _codex_session_state_path(
-        username, project, project_state_dir=project_state_dir
+    return session_registry.load_codex_session_state(
+        _codex_session_state_path(
+            username, project, project_state_dir=project_state_dir
+        )
     )
-    if not path.exists():
-        return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    return {
-        str(key): str(value).strip()
-        for key, value in payload.items()
-        if str(key).strip() and str(value or "").strip()
-    }
 
 
 def _save_codex_session_state(
@@ -4736,10 +2530,13 @@ def _save_codex_session_state(
 ) -> None:
     from novelvideo.utils.state_index_files import write_json_atomic
 
-    path = _codex_session_state_path(
-        username, project, project_state_dir=project_state_dir
+    session_registry.save_codex_session_state(
+        _codex_session_state_path(
+            username, project, project_state_dir=project_state_dir
+        ),
+        payload,
+        write_json_atomic=write_json_atomic,
     )
-    write_json_atomic(path, payload)
 
 
 def _get_codex_thread_id(
@@ -4750,14 +2547,15 @@ def _get_codex_thread_id(
     canvas_id: str | None = None,
     project_state_dir: str | Path | None = None,
 ) -> str | None:
-    return _load_codex_session_state(
-        username, project, project_state_dir=project_state_dir
-    ).get(
+    return session_registry.get_codex_thread_id(
+        _codex_session_state_path(
+            username, project, project_state_dir=project_state_dir
+        ),
         _codex_scope_key(
             project,
             agent_profile=agent_profile,
             canvas_id=canvas_id,
-        )
+        ),
     )
 
 
@@ -4770,31 +2568,23 @@ def _set_codex_thread_id(
     canvas_id: str | None = None,
     project_state_dir: str | Path | None = None,
 ) -> None:
-    normalized = str(thread_id or "").strip()
-    if not normalized:
+    if not str(thread_id or "").strip():
         return
-    from novelvideo.utils.state_index_files import index_file_lock
+    from novelvideo.utils.state_index_files import index_file_lock, write_json_atomic
 
-    state_path = _codex_session_state_path(
-        username, project, project_state_dir=project_state_dir
-    )
-    with index_file_lock(state_path):
-        payload = _load_codex_session_state(
+    session_registry.set_codex_thread_id(
+        _codex_session_state_path(
             username, project, project_state_dir=project_state_dir
-        )
-        payload[
-            _codex_scope_key(
-                project,
-                agent_profile=agent_profile,
-                canvas_id=canvas_id,
-            )
-        ] = normalized
-        _save_codex_session_state(
-            username,
+        ),
+        _codex_scope_key(
             project,
-            payload,
-            project_state_dir=project_state_dir,
-        )
+            agent_profile=agent_profile,
+            canvas_id=canvas_id,
+        ),
+        thread_id,
+        index_file_lock=index_file_lock,
+        write_json_atomic=write_json_atomic,
+    )
 
 
 def reset_codex_scope_thread(
@@ -4806,23 +2596,19 @@ def reset_codex_scope_thread(
     project_state_dir: str | Path | None = None,
 ) -> None:
     """Make the next turn start a fresh thread without touching other scopes."""
-    from novelvideo.utils.state_index_files import index_file_lock
+    from novelvideo.utils.state_index_files import index_file_lock, write_json_atomic
 
     scope_key = _codex_scope_key(
         project, agent_profile=agent_profile, canvas_id=canvas_id
     )
-    state_path = _codex_session_state_path(
-        username, project, project_state_dir=project_state_dir
-    )
-    with index_file_lock(state_path):
-        payload = _load_codex_session_state(
+    session_registry.reset_codex_scope_thread(
+        _codex_session_state_path(
             username, project, project_state_dir=project_state_dir
-        )
-        if scope_key in payload:
-            payload.pop(scope_key)
-            _save_codex_session_state(
-                username, project, payload, project_state_dir=project_state_dir
-            )
+        ),
+        scope_key,
+        index_file_lock=index_file_lock,
+        write_json_atomic=write_json_atomic,
+    )
     _set_active_codex_turn(username, scope_key, None)
 
 
@@ -4831,18 +2617,9 @@ def _active_codex_turns_path(username: str) -> Path:
 
 
 def _load_active_codex_turns(username: str) -> dict[str, dict[str, str]]:
-    path = _active_codex_turns_path(username)
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    return {
-        str(key): {str(k): str(v) for k, v in value.items()}
-        for key, value in payload.items()
-        if isinstance(value, dict)
-    }
+    return session_registry.load_active_codex_turns(
+        _active_codex_turns_path(username)
+    )
 
 
 def _set_active_codex_turn(
@@ -4852,16 +2629,13 @@ def _set_active_codex_turn(
 ) -> None:
     from novelvideo.utils.state_index_files import index_file_lock, write_json_atomic
 
-    path = _active_codex_turns_path(username)
-    with index_file_lock(path):
-        payload = _load_active_codex_turns(username)
-        if value is None:
-            payload.pop(scope_key, None)
-        else:
-            payload[scope_key] = {"thread_id": value[0], "turn_id": value[1]}
-            if len(value) >= 3 and str(value[2]).strip():
-                payload[scope_key]["business_turn_id"] = str(value[2]).strip()
-        write_json_atomic(path, payload)
+    session_registry.set_active_codex_turn(
+        _active_codex_turns_path(username),
+        scope_key,
+        value,
+        index_file_lock=index_file_lock,
+        write_json_atomic=write_json_atomic,
+    )
 
 
 def _write_codex_turn_token(
@@ -5216,6 +2990,7 @@ def _build_codex_env(
     agent_profile: str = "main",
     tool_mode: str = "default",
     canvas_id: str | None = None,
+    turn_id: str | None = None,
     project_state_dir: str | Path | None = None,
     agent_token_file: str | Path | None = None,
 ) -> dict[str, str]:
@@ -5250,6 +3025,11 @@ def _build_codex_env(
     if agent_token_file is not None:
         env["DRAMACLAW_AGENT_TOKEN_FILE"] = str(agent_token_file)
     env["DRAMACLAW_TOOL_MODE"] = str(tool_mode or "default").strip() or "default"
+    normalized_turn_id = str(turn_id or "").strip()
+    if normalized_turn_id:
+        env["DRAMACLAW_TURN_ID"] = normalized_turn_id
+    else:
+        env.pop("DRAMACLAW_TURN_ID", None)
     if str(tool_mode or "").strip() == "freezone_canvas":
         # Keep Codex MCP on the authoritative project/profile bridge used by
         # Hermes and the browser command and receipt routes.
@@ -5320,92 +3100,9 @@ def _extract_media(
     *,
     project_dir: str | Path | None = None,
 ) -> list[dict[str, str]]:
-    media_project_dir = _media_project_dir(username, project, project_dir)
-    items: list[dict[str, str]] = []
-    seen: set[str] = set()
-    markdown_images = _collect_markdown_image_refs(content)
-
-    def add_item(raw_url: str, path: str | None = None) -> None:
-        candidate = raw_url.strip(".,;)]}")
-        parsed = urlparse(candidate)
-        if parsed.scheme in {"http", "https"} and parsed.path.startswith("/static/"):
-            candidate = parsed.path
-        if candidate.startswith("/static/"):
-            canonical = _canonical_project_static_media_url(
-                project, media_project_dir, candidate
-            )
-            if canonical is None:
-                return
-            candidate, path = canonical
-        ext = Path(urlparse(candidate).path).suffix.lower()
-        kind = _MEDIA_EXTENSIONS.get(ext)
-        if not kind:
-            return
-        if kind == "image" and (
-            candidate in markdown_images
-            or (path and path in markdown_images)
-            or (path and path.lstrip("./") in markdown_images)
-        ):
-            return
-        effective_path = path or ""
-        if not effective_path:
-            effective_path = _media_path_from_static_url(candidate) or ""
-        key = f"{kind}:{effective_path or candidate}"
-        if key in seen:
-            return
-        seen.add(key)
-        items.append(
-            {
-                "kind": kind,
-                "url": candidate,
-                "path": effective_path,
-                "label": Path(effective_path or candidate).name,
-            }
-        )
-
-    for match in _URL_RE.finditer(content):
-        url = match.group(1)
-        if url.startswith("/static/"):
-            add_item(url)
-        else:
-            add_item(url)
-
-    for match in _REL_PATH_RE.finditer(content):
-        rel_path = match.group("path")
-        full_path = media_project_dir / rel_path
-        if full_path.exists():
-            static_url = project_static_url(project, rel_path, local_path=full_path)
-            add_item(static_url, rel_path)
-
-    return items
-
-
-def _collect_markdown_image_refs(content: str) -> set[str]:
-    refs: set[str] = set()
-
-    for match in _MARKDOWN_IMAGE_RE.finditer(content):
-        raw = (match.group(1) or "").strip().strip("<>").strip(".,;)]}")
-        if not raw:
-            continue
-        refs.add(raw)
-        parsed = urlparse(raw)
-        path = (
-            parsed.path if parsed.scheme in {"http", "https"} else raw.split("?", 1)[0]
-        )
-        if path:
-            refs.add(path)
-        static_path = _media_path_from_static_url(raw)
-        if static_path:
-            refs.add(static_path)
-            refs.add(static_path.lstrip("./"))
-        elif parsed.scheme in {"http", "https"} and parsed.path.startswith("/static/"):
-            refs.add(parsed.path)
-        elif raw.startswith("/static/"):
-            refs.add(raw.split("?", 1)[0])
-        else:
-            refs.add(path.lstrip("./") if path else raw.lstrip("./"))
-
-    return refs
+    return media_presentation._extract_media(
+        content, project, _media_project_dir(username, project, project_dir)
+    )
 
 
 def _normalize_media_items(
@@ -5415,115 +3112,9 @@ def _normalize_media_items(
     *,
     project_dir: str | Path | None = None,
 ) -> list[dict[str, str]]:
-    normalized: list[dict[str, str]] = []
-    seen: set[str] = set()
-    media_project_dir = _media_project_dir(username, project, project_dir)
-
-    for item in media:
-        if not isinstance(item, dict):
-            continue
-
-        candidate = str(item.get("url", "") or "").strip()
-        path = str(item.get("path", "") or "").strip()
-        if not candidate and not path:
-            continue
-
-        if not candidate and path:
-            canonical = _canonical_project_static_media_url(
-                project, media_project_dir, path
-            )
-            if canonical is None:
-                continue
-            candidate, path = canonical
-
-        parsed = urlparse(candidate)
-        if parsed.scheme in {"http", "https"} and parsed.path.startswith("/static/"):
-            candidate = parsed.path
-        if candidate.startswith("/static/"):
-            canonical = _canonical_project_static_media_url(
-                project, media_project_dir, candidate
-            )
-            if canonical is None:
-                continue
-            candidate, path = canonical
-
-        ext = Path(urlparse(candidate).path).suffix.lower()
-        kind = _MEDIA_EXTENSIONS.get(ext)
-        if not kind:
-            continue
-
-        if not path:
-            path = _media_path_from_static_url(candidate) or ""
-
-        key = f"{kind}:{path or candidate}"
-        if key in seen:
-            continue
-        seen.add(key)
-
-        normalized.append(
-            {
-                "kind": kind,
-                "url": candidate,
-                "path": path,
-                "label": str(item.get("label", "") or Path(path or candidate).name),
-            }
-        )
-
-    return normalized
-
-
-def _merge_media_items(*groups: list[dict[str, str]]) -> list[dict[str, str]]:
-    merged: list[dict[str, str]] = []
-    seen: set[str] = set()
-
-    for group in groups:
-        for item in group:
-            kind = str(item.get("kind", "") or "").strip()
-            url = str(item.get("url", "") or "").strip()
-            path = str(item.get("path", "") or "").strip()
-            if not kind or not url:
-                continue
-            key = f"{kind}:{path or url}"
-            if key in seen:
-                continue
-            seen.add(key)
-            merged.append(
-                {
-                    "kind": kind,
-                    "url": url,
-                    "path": path,
-                    "label": str(item.get("label", "") or Path(path or url).name),
-                }
-            )
-
-    return merged
-
-
-def _filter_markdown_duplicate_images(
-    content: str, media: list[dict[str, str]]
-) -> list[dict[str, str]]:
-    markdown_images = _collect_markdown_image_refs(content)
-    if not markdown_images:
-        return media
-
-    filtered: list[dict[str, str]] = []
-    for item in media:
-        kind = str(item.get("kind", "") or "").strip()
-        if kind != "image":
-            filtered.append(item)
-            continue
-
-        url = str(item.get("url", "") or "").strip()
-        path = str(item.get("path", "") or "").strip()
-        if (
-            url in markdown_images
-            or (path and path in markdown_images)
-            or (path and path.lstrip("./") in markdown_images)
-        ):
-            continue
-        filtered.append(item)
-
-    return filtered
+    return media_presentation._normalize_media_items(
+        media, project, _media_project_dir(username, project, project_dir)
+    )
 
 
 def _build_claude_thread(
@@ -5564,6 +3155,7 @@ def _dramaclaw_mcp_servers(
                 "DRAMACLAW_ROOT",
                 "DRAMACLAW_SKILLS_DIR",
                 "DRAMACLAW_TOOL_MODE",
+                "DRAMACLAW_TURN_ID",
                 "DRAMACLAW_USERNAME",
                 "NOVELVIDEO_OUTPUT_DIR",
                 "PYTHONPATH",
@@ -5726,6 +3318,7 @@ def _build_codex_thread(
     agent_profile: str = "main",
     tool_mode: str = "default",
     canvas_id: str | None = None,
+    turn_id: str | None = None,
     project_state_dir: str | Path | None = None,
     agent_token_file: str | Path | None = None,
 ) -> AgentRuntimeThreadPort:
@@ -5745,6 +3338,7 @@ def _build_codex_thread(
         agent_profile=agent_profile,
         tool_mode=tool_mode,
         canvas_id=canvas_id,
+        turn_id=turn_id,
         project_state_dir=project_state_dir,
         agent_token_file=agent_token_file,
     )
@@ -6349,9 +3943,8 @@ async def _stream_assistant_reply_hermes(
                         saw_complete = True
                         turn_disposition = _turn_disposition_for(stream_event)
                     guard_details = (
-                        stream_event.raw
+                        getattr(stream_event, "guard", None) or {}
                         if stream_event.type == "complete"
-                        and isinstance(stream_event.raw, dict)
                         else {}
                     )
                     if (
@@ -6360,12 +3953,7 @@ async def _stream_assistant_reply_hermes(
                         and guard_details.get("reason") == "tool_call_guard"
                         and guard_details.get("guard_reason") == "repeated_read"
                         and guard_details.get("tool_name")
-                        not in {
-                            "freezone_prepare_workflow_draft",
-                            "freezone_prepare_workflow_plan_draft",
-                            "freezone_patch_workflow_draft",
-                            "freezone_confirm_workflow_draft",
-                        }
+                        not in _FREEZONE_WORKFLOW_DRAFT_TOOLS
                         and not guard_details.get("had_write")
                     ):
                         guard_tool_name = str(
@@ -6575,21 +4163,12 @@ async def _stream_assistant_reply_hermes(
             if event.type == "thread_started":
                 await _emit_chat_event_best_effort(
                     on_event,
-                    {
-                        "type": "thread_started",
-                        "thread_id": str(event.thread_id or "").strip() or None,
-                        "turn_id": str(event.turn_id or "").strip() or None,
-                    },
+                    runtime_event_mapper.lifecycle_event(event),
                 )
                 continue
             if event.type == "turn_started":
                 await on_event(
-                    {
-                        "type": "turn_started",
-                        "thread_id": str(event.thread_id or "").strip() or None,
-                        "turn_id": str(event.turn_id or "").strip() or None,
-                        "status": event.status or "in_progress",
-                    }
+                    runtime_event_mapper.lifecycle_event(event)
                 )
                 continue
             if event.type == "turn_completed":
@@ -6597,14 +4176,7 @@ async def _stream_assistant_reply_hermes(
                     event.disposition or event.status or turn_disposition
                 )
                 await on_event(
-                    {
-                        "type": "turn_completed",
-                        "thread_id": str(event.thread_id or "").strip() or None,
-                        "turn_id": str(event.turn_id or "").strip() or None,
-                        "status": event.status or "completed",
-                        "error": event.error,
-                        "disposition": event.disposition,
-                    }
+                    runtime_event_mapper.lifecycle_event(event)
                 )
                 continue
             if event.type == "assistant_delta":
@@ -6632,19 +4204,19 @@ async def _stream_assistant_reply_hermes(
             if event.type == "thought_delta":
                 await _emit_chat_event_best_effort(
                     on_event,
-                    {"type": "thought_delta", "text": str(event.text or "")},
+                    runtime_event_mapper.progress_event(event, include_details=False),
                 )
                 continue
             if event.type == "plan_update":
                 await _emit_chat_event_best_effort(
                     on_event,
-                    {"type": "plan_update", "entries": event.entries or []},
+                    runtime_event_mapper.progress_event(event, include_details=False),
                 )
                 continue
             if event.type == "usage_update":
                 await _emit_chat_event_best_effort(
                     on_event,
-                    {"type": "usage_update", "usage": event.usage or {}},
+                    runtime_event_mapper.progress_event(event, include_details=False),
                 )
                 continue
             if event.type == "permission_requested":
@@ -6668,9 +4240,10 @@ async def _stream_assistant_reply_hermes(
                 if event.raw is not None:
                     tool_chat_error = None
                     raw = event.raw
-                    suppress_lifecycle_error = _suppress_freezone_tool_lifecycle_error(
-                        raw,
-                        tool_mode=tool_mode,
+                    # Only a Freezone canvas surface hides a bridge-settled or
+                    # payload-less failure; the adapter says whether it is one.
+                    suppress_lifecycle_error = tool_mode == "freezone_canvas" and bool(
+                        getattr(event, "transient_failure", False)
                     )
                     if not suppress_lifecycle_error:
                         tool_chat_error = _extract_tool_chat_error(raw)
@@ -6715,11 +4288,7 @@ async def _stream_assistant_reply_hermes(
                                     sort_keys=True,
                                     default=str,
                                 )[:1000],
-                                (
-                                    event.raw.get("sessionUpdate")
-                                    if isinstance(event.raw, dict)
-                                    else None
-                                ),
+                                getattr(event, "native_kind", None),
                             )
                         else:
                             seen_display_calls.add(display_call_key)
@@ -6744,9 +4313,7 @@ async def _stream_assistant_reply_hermes(
                     current_tool_hidden = _is_hidden_chat_tool_event(
                         event.name, event.text
                     )
-                elif _is_anonymous_hermes_tool_call_update(event):
-                    continue
-                if _is_hermes_lifecycle_tool_update(event):
+                if getattr(event, "lifecycle_only", False):
                     continue
                 if current_tool_hidden or _is_hidden_chat_tool_event(
                     current_tool_name, event.text
@@ -6898,11 +4465,7 @@ async def _stream_assistant_reply_claude(
                 if thread_id:
                     _set_claude_session_id(username, project, thread_id)
                 await on_event(
-                    {
-                        "type": "thread_started",
-                        "thread_id": thread_id,
-                        "turn_id": str(event.turn_id or "").strip() or None,
-                    }
+                    runtime_event_mapper.lifecycle_event(event)
                 )
                 continue
             if event.type == "assistant_delta":
@@ -6917,41 +4480,23 @@ async def _stream_assistant_reply_claude(
                 continue
             if event.type == "thought_delta":
                 await on_event(
-                    {
-                        "type": "thought_delta",
-                        "text": str(event.text or ""),
-                        "source": event.name,
-                    }
+                    runtime_event_mapper.progress_event(event)
                 )
                 continue
             if event.type == "plan_update":
                 await on_event(
-                    {
-                        "type": "plan_update",
-                        "text": str(event.text or ""),
-                        "entries": event.entries or [],
-                    }
+                    runtime_event_mapper.progress_event(event)
                 )
                 continue
             if event.type == "usage_update":
-                await on_event({"type": "usage_update", "usage": event.usage or {}})
+                await on_event(runtime_event_mapper.progress_event(event))
                 continue
             if event.type in {"tool_started", "tool_updated"}:
                 event_tool_text = str(event.text or "")
                 if event_tool_text:
                     tool_text += event_tool_text
                 await on_event(
-                    {
-                        "type": event.type,
-                        "text": event_tool_text.strip(),
-                        "name": event.name,
-                        "call_id": event.call_id,
-                        "status": event.status,
-                        "input": event.input,
-                        "output": event.output,
-                        "error": event.error,
-                        "result_json": event.structured,
-                    }
+                    runtime_event_mapper.sdk_tool_event(event, text=event_tool_text)
                 )
                 continue
             if event.type == "tool_update":
@@ -7032,7 +4577,8 @@ async def _stream_assistant_reply_codex(
     canvas_receipt_aliases: dict[
         tuple[str, int | None], tuple[str, int | None]
     ] = {}
-    canvas_write_failure = ""
+    canvas_write_failures: dict[str, str] = {}
+    canvas_generation_preflights: dict[str, str] = {}
     stage_confirmation_expected = (
         structured_canvas_reply
         and _interactive_story_stage_confirmation_requested(prompt)
@@ -7111,6 +4657,7 @@ async def _stream_assistant_reply_codex(
             agent_profile=agent_profile,
             tool_mode=tool_mode,
             canvas_id=canvas_id,
+            turn_id=business_turn_id,
             project_state_dir=project_state_dir,
             agent_token_file=token_file,
         )
@@ -7163,21 +4710,12 @@ async def _stream_assistant_reply_codex(
                         _ACTIVE_CODEX_TURNS[active_turn_key] = active_turn_value
                     _set_active_codex_turn(username, codex_scope_key, active_turn_value)
                 await on_event(
-                    {
-                        "type": "thread_started",
-                        "thread_id": codex_thread_id,
-                        "turn_id": codex_turn_id,
-                    }
+                    runtime_event_mapper.lifecycle_event(event)
                 )
                 continue
             if event.type == "turn_started":
                 await on_event(
-                    {
-                        "type": "turn_started",
-                        "thread_id": str(event.thread_id or "").strip() or None,
-                        "turn_id": str(event.turn_id or "").strip() or None,
-                        "status": event.status or "in_progress",
-                    }
+                    runtime_event_mapper.lifecycle_event(event)
                 )
                 continue
             if event.type == "turn_completed":
@@ -7185,14 +4723,7 @@ async def _stream_assistant_reply_codex(
                     event.disposition or event.status or turn_disposition
                 )
                 await on_event(
-                    {
-                        "type": "turn_completed",
-                        "thread_id": str(event.thread_id or "").strip() or None,
-                        "turn_id": str(event.turn_id or "").strip() or None,
-                        "status": event.status or "completed",
-                        "error": event.error,
-                        "disposition": event.disposition,
-                    }
+                    runtime_event_mapper.lifecycle_event(event)
                 )
                 continue
             if event.type == "assistant_delta":
@@ -7208,24 +4739,16 @@ async def _stream_assistant_reply_codex(
                 continue
             if event.type == "thought_delta":
                 await on_event(
-                    {
-                        "type": "thought_delta",
-                        "text": str(event.text or ""),
-                        "source": event.name,
-                    }
+                    runtime_event_mapper.progress_event(event)
                 )
                 continue
             if event.type == "plan_update":
                 await on_event(
-                    {
-                        "type": "plan_update",
-                        "text": str(event.text or ""),
-                        "entries": event.entries or [],
-                    }
+                    runtime_event_mapper.progress_event(event)
                 )
                 continue
             if event.type == "usage_update":
-                await on_event({"type": "usage_update", "usage": event.usage or {}})
+                await on_event(runtime_event_mapper.progress_event(event))
                 continue
             if event.type in {"tool_started", "tool_updated"}:
                 await _bind_server_observed_agent_product_execution(
@@ -7265,11 +4788,14 @@ async def _stream_assistant_reply_codex(
                             # the same story may satisfy this rejected input.
                             canvas_write_attempts.pop(call_id, None)
                             preflight_rejections[call_id] = preflight_target
-                            canvas_write_failure = _codex_freezone_write_result_error(event)
+                            failure = _codex_freezone_write_result_error(event)
+                            if failure:
+                                canvas_write_failures[call_id] = failure
                         else:
                             receipt = _codex_freezone_write_receipt(
                                 event, expected_project=project, expected_canvas=canvas_id
                             )
+                            retry_key = _codex_freezone_generation_retry_key(event)
                             if receipt is not None and identifiable_call:
                                 intent = _codex_story_write_intent(
                                     event, project=project, canvas_id=canvas_id or "default"
@@ -7290,6 +4816,7 @@ async def _stream_assistant_reply_codex(
                                             and intent[2] == conflict[2]
                                         ):
                                             canvas_write_attempts.pop(rejected_call, None)
+                                            canvas_write_failures.pop(rejected_call, None)
                                             del story_conflicts[rejected_call]
                             else:
                                 conflict = _codex_story_revision_conflict(
@@ -7319,24 +4846,33 @@ async def _stream_assistant_reply_codex(
                                     for rejected_call, rejected_target in preflight_rejections.items()
                                     if rejected_target != target
                                 }
+                                if retry_key is not None:
+                                    for rejected_call, rejected_key in list(
+                                        canvas_generation_preflights.items()
+                                    ):
+                                        if (
+                                            rejected_key == retry_key
+                                            and rejected_call != call_id
+                                        ):
+                                            canvas_write_attempts.pop(rejected_call, None)
+                                            canvas_write_failures.pop(rejected_call, None)
+                                            canvas_generation_preflights.pop(
+                                                rejected_call, None
+                                            )
+                            elif (
+                                canvas_write_attempts[call_id] == "failed"
+                                and retry_key is not None
+                                and _codex_freezone_is_generation_preflight_rejection(event)
+                            ):
+                                canvas_generation_preflights[call_id] = retry_key
                             failure = _codex_freezone_write_result_error(event)
                             if failure:
-                                canvas_write_failure = failure
+                                canvas_write_failures[call_id] = failure
                 event_tool_text = str(event.text or "")
                 if event_tool_text:
                     tool_text += event_tool_text
                 await on_event(
-                    {
-                        "type": event.type,
-                        "text": event_tool_text.strip(),
-                        "name": event.name,
-                        "call_id": event.call_id,
-                        "status": event.status,
-                        "input": event.input,
-                        "output": event.output,
-                        "error": event.error,
-                        "result_json": event.structured,
-                    }
+                    runtime_event_mapper.sdk_tool_event(event, text=event_tool_text)
                 )
                 continue
             if event.type == "tool_update":
@@ -7441,7 +4977,14 @@ async def _stream_assistant_reply_codex(
             attempts=canvas_write_attempts,
             receipts=canvas_receipts,
             receipt_aliases=canvas_receipt_aliases,
-            failure=canvas_write_failure,
+            failure=next(
+                (
+                    canvas_write_failures.get(call_id, "")
+                    for call_id, state in canvas_write_attempts.items()
+                    if state == "failed" and canvas_write_failures.get(call_id)
+                ),
+                "",
+            ),
             draft_ready=ready_workflow_draft is not None,
         )
         if not canvas_write_attempts and assistant_text.startswith(

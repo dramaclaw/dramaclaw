@@ -1258,6 +1258,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
     assert captured["agent_profile"] == expected_profile
     assert captured["tool_mode"] == tool_mode
     assert captured["canvas_id"] == expected_canvas
+    assert captured["turn_id"] == "business-turn"
     assert history_sentinel not in str(captured["prompt"])
     assert not Path(captured["agent_token_file"]).exists()
     assert revoked == ["agent-token"]
@@ -1647,6 +1648,17 @@ def test_codex_clarification_requires_successful_answer(container, outcome):
         "story_validate_after_create",
         "outline_conflict_retry",
         "unstructured_proposal",
+        "preflight_retry",
+        "video_preflight_retry",
+        "video_preflight_other_failure",
+        "preflight_only",
+        "preflight_other_success",
+        "single_run_retry",
+        "workflow_run_retry",
+        "single_run_only_update",
+        "draft_confirm_retry",
+        "draft_confirm_other_success",
+        "draft_confirm_only_patch",
     ],
 )
 async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
@@ -1877,7 +1889,258 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                         structured=payload,
                         error=None,
                     )
-            elif tool_outcome not in {"missing", "blocked", "read_only", "unstructured_proposal"}:
+            elif tool_outcome in {
+                "preflight_retry",
+                "video_preflight_retry",
+                "video_preflight_other_failure",
+                "preflight_only",
+                "preflight_other_success",
+            }:
+                is_video = tool_outcome.startswith("video_preflight")
+                node_id = "video-a" if is_video else "image-a"
+                initial_data = (
+                    {
+                        "prompt": "海边日落",
+                        "model": "video-model-a",
+                        "aspectRatio": "16:9",
+                        "quality": "720p",
+                    }
+                    if is_video
+                    else {"prompt": "水彩风格"}
+                )
+                base_commands = [
+                    {
+                        "type": "add_next_node",
+                        "source_node_id": "source-a",
+                        "client_id": node_id,
+                        "node_type": "videoGenNode" if is_video else "imageGenNode",
+                        "data": initial_data,
+                    },
+                    {
+                        "type": "run_node_action",
+                        "node_id": node_id,
+                        "action": "generate_video" if is_video else "generate_image",
+                    },
+                ]
+                yield SimpleNamespace(
+                    type="tool_updated",
+                    text="[mcp:completed] dramaclaw.freezone_emit_canvas_command",
+                    name="dramaclaw.freezone_emit_canvas_command",
+                    call_id="call-preflight",
+                    status="completed",
+                    input={
+                        "project_id": "project-a",
+                        "canvas_id": "canvas-a",
+                        "commands": base_commands,
+                    },
+                    output=None,
+                    structured={
+                        "ok": False,
+                        "status": "clarification_required",
+                        "code": "generation_parameters_required",
+                        "error": "image/video generation parameters require user clarification",
+                    },
+                    error=None,
+                )
+                if tool_outcome != "preflight_only":
+                    retry_commands = [dict(command) for command in base_commands]
+                    retry_commands[0]["data"] = dict(initial_data)
+                    if is_video:
+                        retry_commands[0]["data"]["durationSec"] = 5
+                    else:
+                        retry_commands[0]["data"]["model"] = "image-model-a"
+                        if tool_outcome == "preflight_other_success":
+                            retry_commands[0]["data"]["prompt"] = "另一张图片"
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        text="[mcp:completed] dramaclaw.freezone_emit_canvas_command",
+                        name="dramaclaw.freezone_emit_canvas_command",
+                        call_id="call-retry",
+                        status="completed",
+                        input={
+                            "project_id": "project-a",
+                            "canvas_id": "canvas-a",
+                            "commands": retry_commands,
+                        },
+                        output=None,
+                        structured={
+                            "ok": True,
+                            "canvas_apply_status": "accepted",
+                            "applied": True,
+                            "bridge_key": "bridge-call-1",
+                            "project_id": "project-a",
+                            "canvas_id": "canvas-a",
+                        },
+                        error=None,
+                    )
+                    if tool_outcome == "video_preflight_other_failure":
+                        yield SimpleNamespace(
+                            type="tool_updated",
+                            text="[mcp:completed] dramaclaw.freezone_create_node",
+                            name="dramaclaw.freezone_create_node",
+                            call_id="call-other-failure",
+                            status="completed",
+                            input={},
+                            output=None,
+                            structured={"ok": False, "error": "另一个节点未保存"},
+                            error=None,
+                        )
+            elif tool_outcome in {
+                "single_run_retry",
+                "workflow_run_retry",
+                "single_run_only_update",
+            }:
+                is_workflow = tool_outcome == "workflow_run_retry"
+                run_name = (
+                    "freezone_run_workflow"
+                    if is_workflow
+                    else "freezone_run_node_action"
+                )
+                run_input = {
+                    "project_id": "project-a",
+                    "canvas_id": "canvas-a",
+                    **(
+                        {"node_ids": ["video-a"], "direction": "node"}
+                        if is_workflow
+                        else {"node_id": "image-a", "action": "generate_image"}
+                    ),
+                }
+                yield SimpleNamespace(
+                    type="tool_updated",
+                    text=f"[mcp:completed] dramaclaw.{run_name}",
+                    name=f"dramaclaw.{run_name}",
+                    call_id="call-preflight",
+                    status="completed",
+                    input=run_input,
+                    output=None,
+                    structured={
+                        "ok": False,
+                        "status": "clarification_required",
+                        "code": "generation_parameters_required",
+                        "error": "image/video generation parameters require user clarification",
+                    },
+                    error=None,
+                )
+                yield SimpleNamespace(
+                    type="tool_updated",
+                    text="[mcp:completed] dramaclaw.freezone_update_node_data",
+                    name="dramaclaw.freezone_update_node_data",
+                    call_id="call-update",
+                    status="completed",
+                    input={
+                        "node_id": "video-a" if is_workflow else "image-a",
+                        "data": (
+                            {"durationSec": 5} if is_workflow else {"model": "image-a"}
+                        ),
+                    },
+                    output=None,
+                    structured={
+                        "ok": True,
+                        "canvas_apply_status": "accepted",
+                        "applied": True,
+                        "bridge_key": "bridge-update",
+                        "project_id": "project-a",
+                        "canvas_id": "canvas-a",
+                    },
+                    error=None,
+                )
+                if tool_outcome != "single_run_only_update":
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        text=f"[mcp:completed] dramaclaw.{run_name}",
+                        name=f"dramaclaw.{run_name}",
+                        call_id="call-retry",
+                        status="completed",
+                        input=run_input,
+                        output=None,
+                        structured={
+                            "ok": True,
+                            "canvas_apply_status": "accepted",
+                            "applied": True,
+                            "bridge_key": "bridge-call-1",
+                            "project_id": "project-a",
+                            "canvas_id": "canvas-a",
+                        },
+                        error=None,
+                    )
+            elif tool_outcome in {
+                "draft_confirm_retry",
+                "draft_confirm_other_success",
+                "draft_confirm_only_patch",
+            }:
+                name = "dramaclaw.freezone_confirm_workflow_draft"
+                first_input = {
+                    "project_id": "project-a",
+                    "canvas_id": "canvas-a",
+                    "draft_id": "workflow_draft_a",
+                    "revision": 1,
+                }
+                yield SimpleNamespace(
+                    type="tool_updated",
+                    text=f"[mcp:completed] {name}",
+                    name=name,
+                    call_id="call-preflight",
+                    status="completed",
+                    input=first_input,
+                    output=None,
+                    structured={
+                        "ok": False,
+                        "status": "clarification_required",
+                        "code": "generation_parameters_required",
+                        "error": "image/video generation parameters require user clarification",
+                    },
+                    error=None,
+                )
+                yield SimpleNamespace(
+                    type="tool_updated",
+                    text="[mcp:completed] dramaclaw.freezone_patch_workflow_draft",
+                    name="dramaclaw.freezone_patch_workflow_draft",
+                    call_id="call-patch",
+                    status="completed",
+                    input={"draft_id": "workflow_draft_a", "revision": 1},
+                    output=None,
+                    structured={
+                        "ok": True,
+                        "status": "workflow_draft_ready",
+                        "draft_id": "workflow_draft_a",
+                        "revision": 2,
+                    },
+                    error=None,
+                )
+                if tool_outcome != "draft_confirm_only_patch":
+                    retry_input = {
+                        **first_input,
+                        "draft_id": (
+                            "workflow_draft_b"
+                            if tool_outcome == "draft_confirm_other_success"
+                            else "workflow_draft_a"
+                        ),
+                        "revision": 2,
+                    }
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        text=f"[mcp:completed] {name}",
+                        name=name,
+                        call_id="call-retry",
+                        status="completed",
+                        input=retry_input,
+                        output=None,
+                        structured={
+                            "ok": True,
+                            "canvas_apply_status": "accepted",
+                            "applied": True,
+                            "bridge_key": "bridge-call-1",
+                            "project_id": "project-a",
+                            "canvas_id": "canvas-a",
+                        },
+                        error=None,
+                    )
+            elif tool_outcome not in {
+                "missing",
+                "blocked",
+                "read_only",
+                "unstructured_proposal",
+            }:
                 result_payload = (
                     {
                         "ok": True,
@@ -1948,6 +2211,39 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 "outline_conflict_retry",
             }:
                 assistant_reply = "互动故事已更新。"
+            if tool_outcome.startswith("video_preflight"):
+                assistant_reply = "已提交视频生成任务。"
+            if tool_outcome in {"single_run_retry", "workflow_run_retry"}:
+                assistant_reply = "已提交生成任务。"
+            if tool_outcome == "draft_confirm_retry":
+                assistant_reply = "工作流已提交创建。"
+            receipts = []
+            if tool_outcome in {
+                "single_run_retry",
+                "workflow_run_retry",
+                "single_run_only_update",
+            }:
+                receipts.append({"bridge_key": "bridge-update", "revision": None})
+            if tool_outcome in {
+                "success",
+                "preflight_retry",
+                "video_preflight_retry",
+                "video_preflight_other_failure",
+                "preflight_other_success",
+                "single_run_retry",
+                "workflow_run_retry",
+                "draft_confirm_retry",
+                "draft_confirm_other_success",
+            }:
+                receipts.append({"bridge_key": "bridge-call-1", "revision": None})
+            if tool_outcome in {"story_retry", "story_wrong_retry"}:
+                receipts.append({"bridge_key": None, "revision": 4})
+            if tool_outcome in {"story_conflict_retry", "story_conflict_wrong_retry"}:
+                receipts.append({"bridge_key": None, "revision": 36})
+            if tool_outcome == "story_validate_after_create":
+                receipts.append({"bridge_key": None, "revision": 5})
+            if tool_outcome == "outline_conflict_retry":
+                receipts.append({"bridge_key": None, "revision": 2})
             structured_reply = json.dumps(
                 {
                     "message": assistant_reply,
@@ -1957,19 +2253,7 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                         in {"skill_saved", "read_only", "clarification_answered"}
                         else "blocked" if tool_outcome == "blocked" else "mutation"
                     ),
-                    "canvas_receipts": (
-                        [{"bridge_key": "bridge-call-1", "revision": None}]
-                        if tool_outcome == "success"
-                        else [{"bridge_key": None, "revision": 4}]
-                        if tool_outcome in {"story_retry", "story_wrong_retry"}
-                        else [{"bridge_key": None, "revision": 36}]
-                        if tool_outcome in {"story_conflict_retry", "story_conflict_wrong_retry"}
-                        else [{"bridge_key": None, "revision": 5}]
-                        if tool_outcome == "story_validate_after_create"
-                        else [{"bridge_key": None, "revision": 2}]
-                        if tool_outcome == "outline_conflict_retry"
-                        else []
-                    ),
+                    "canvas_receipts": receipts,
                 },
             )
             if tool_outcome == "unstructured_proposal":
@@ -2027,9 +2311,30 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
     assistant_deltas = [
         event["text"] for event in events if event["type"] == "assistant_delta"
     ]
-    if tool_outcome == "success":
+    if tool_outcome in {"success", "preflight_retry"}:
         assert result["content"] == "好的，已创建一个图片节点。"
         assert assistant_deltas == ["好的，已创建一个图片节点。"]
+    elif tool_outcome == "video_preflight_retry":
+        assert result["content"] == "已提交视频生成任务。"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "video_preflight_other_failure":
+        assert result["content"] == "画布操作未完成：另一个节点未保存"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome in {"single_run_retry", "workflow_run_retry"}:
+        assert result["content"] == "已提交生成任务。"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "draft_confirm_retry":
+        assert result["content"] == "工作流已提交创建。"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome in {
+        "preflight_only", "preflight_other_success", "single_run_only_update",
+        "draft_confirm_other_success", "draft_confirm_only_patch",
+    }:
+        assert result["content"] == (
+            "画布操作未完成：image/video generation parameters "
+            "require user clarification"
+        )
+        assert assistant_deltas == [result["content"]]
     elif tool_outcome == "failure":
         assert result["content"] == "画布操作未完成：文本节点缺少 content 字段"
         assert assistant_deltas == [result["content"]]
@@ -2478,6 +2783,7 @@ def test_dramaclaw_mcp_server_config_is_agent_neutral():
         "DRAMACLAW_ROOT",
         "DRAMACLAW_SKILLS_DIR",
         "DRAMACLAW_TOOL_MODE",
+        "DRAMACLAW_TURN_ID",
         "DRAMACLAW_USERNAME",
         "NOVELVIDEO_OUTPUT_DIR",
         "PYTHONPATH",
@@ -2529,7 +2835,8 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
         '"DRAMACLAW_MCP_DIRECT_CANVAS_APPLY",'
         '"DRAMACLAW_AGENT_PROFILE","DRAMACLAW_PROJECT_ID",'
         '"DRAMACLAW_ROOT","DRAMACLAW_SKILLS_DIR","DRAMACLAW_TOOL_MODE",'
-        '"DRAMACLAW_USERNAME","NOVELVIDEO_OUTPUT_DIR","PYTHONPATH"]' in overrides
+        '"DRAMACLAW_TURN_ID","DRAMACLAW_USERNAME",'
+        '"NOVELVIDEO_OUTPUT_DIR","PYTHONPATH"]' in overrides
     )
     assert "mcp_servers.dramaclaw.required=true" in overrides
     assert 'mcp_servers.dramaclaw.default_tools_approval_mode="approve"' in overrides
@@ -2542,6 +2849,7 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
             "DRAMACLAW_AGENT_PROFILE": "freezone:agent-2",
             "DRAMACLAW_CANVAS_ID": "canvas-a",
             "DRAMACLAW_TOOL_MODE": "freezone_canvas",
+            "DRAMACLAW_TURN_ID": "turn-a",
         },
         model="DC-codex-agent-LLM",
         model_provider="dramaclaw_gateway",
@@ -2557,6 +2865,7 @@ def test_codex_client_carries_dramaclaw_mcp_servers(tmp_path):
         "DRAMACLAW_AGENT_PROFILE": "freezone:agent-2",
         "DRAMACLAW_CANVAS_ID": "canvas-a",
         "DRAMACLAW_TOOL_MODE": "freezone_canvas",
+        "DRAMACLAW_TURN_ID": "turn-a",
     }
     assert "mcp_servers.dramaclaw.env_vars" not in thread._thread_config
     assert thread._model == "DC-codex-agent-LLM"
@@ -2651,6 +2960,7 @@ def test_codex_client_keeps_gateway_credentials_in_turn_metadata(tmp_path):
 def test_codex_gateway_overrides_use_responses_without_embedding_secret(
     monkeypatch,
 ):
+    monkeypatch.delenv("CODEX_REASONING_EFFORT", raising=False)
     catalog_path = (
         Path(chat_service.__file__).resolve().parents[3]
         / "deploy"
@@ -2779,6 +3089,7 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
         "admin",
         "project-a",
         "agent-token",
+        turn_id="turn-a",
         project_state_dir=project_state,
         agent_token_file=project_state / "turn.token",
     )
@@ -2791,6 +3102,7 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
     assert env["SUPERTALE_AGENT_SCOPE"] == "project"
     assert env["DRAMACLAW_AGENT_PROFILE"] == "main"
     assert env["DRAMACLAW_TOOL_MODE"] == "default"
+    assert env["DRAMACLAW_TURN_ID"] == "turn-a"
     assert env["DRAMACLAW_SKILLS_DIR"].endswith(
         "/agents/codex/workspaces/main-0d6e4079e367/.agents/skills"
     )
@@ -4948,7 +5260,7 @@ async def test_freezone_hermes_recovers_once_from_repeated_read(
             yield backend_sdk.ChatBackendEvent(
                 type="complete",
                 text="本轮操作已停止：虾导重复读取同一项状态。",
-                raw={
+                guard={
                     "reason": "tool_call_guard",
                     "guard_reason": "repeated_read",
                     "tool_name": guard_tool_name,
@@ -5029,7 +5341,7 @@ async def test_freezone_hermes_does_not_replay_failed_workflow_draft_operation(
             yield backend_sdk.ChatBackendEvent(
                 type="complete",
                 text="本轮操作已停止：工作流草稿操作重复失败。",
-                raw={
+                guard={
                     "reason": "tool_call_guard",
                     "guard_reason": "repeated_read",
                     "tool_name": "freezone_prepare_workflow_draft",

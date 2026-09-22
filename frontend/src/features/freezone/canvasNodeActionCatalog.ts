@@ -560,6 +560,48 @@ function imageModelSchema(node: CanvasNode): CanvasEditableFieldSchema {
   };
 }
 
+function selectedImageModel(node: CanvasNode): ModelOption | undefined {
+  const modelId = (node.data as { model?: unknown }).model;
+  return typeof modelId === "string"
+    ? getFreezoneImageModelsSnapshot().models.find((model) => model.id === modelId)
+    : undefined;
+}
+
+function imageSizeSchema(node: CanvasNode): CanvasEditableFieldSchema {
+  const options = (selectedImageModel(node)?.resolutionOptions ?? [])
+    .map((value) => value.trim()).filter(Boolean);
+  return {
+    type: "enum",
+    label: "分辨率",
+    options: options.length > 0 ? options : [...IMAGE_SIZE_OPTIONS],
+    description: "使用所选图片模型目录返回的原始分辨率选项。",
+  };
+}
+
+function imageQualitySchema(node: CanvasNode): CanvasEditableFieldSchema {
+  const model = selectedImageModel(node);
+  const options = (model?.qualityOptions ?? []).map((value) => value.trim()).filter(Boolean);
+  return {
+    type: "enum",
+    label: "画质",
+    options: model ? options : [...IMAGE_QUALITY_OPTIONS],
+    description: model && options.length === 0
+      ? "所选模型不支持画质档位；请省略 quality。"
+      : "仅使用所选图片模型支持的画质档位。",
+  };
+}
+
+function imageAspectRatioSchema(node: CanvasNode, label: string): CanvasEditableFieldSchema {
+  const options = (selectedImageModel(node)?.ratioOptions ?? [])
+    .map((value) => value.trim()).filter(Boolean);
+  return {
+    type: "enum",
+    label: "比例",
+    options: options.length > 0 ? options : [...IMAGE_ASPECT_RATIO_OPTIONS],
+    description: label,
+  };
+}
+
 function videoModelSchema(node: CanvasNode): CanvasEditableFieldSchema {
   const snapshot = getFreezoneVideoModelsSnapshot();
   return {
@@ -576,10 +618,16 @@ function videoModelSchema(node: CanvasNode): CanvasEditableFieldSchema {
 }
 
 function videoAspectRatioSchema(node: CanvasNode): CanvasEditableFieldSchema {
+  const snapshot = getFreezoneVideoModelsSnapshot();
+  const modelId = (node.data as { model?: unknown }).model;
+  const model = typeof modelId === "string"
+    ? snapshot.models.find((item) => item.id === modelId)
+    : undefined;
+  const options = (model?.ratioOptions ?? []).map((value) => value.trim()).filter(Boolean);
   return {
     type: "enum",
     label: "视频比例",
-    options: [...VIDEO_ASPECT_RATIO_OPTIONS],
+    options: options.length > 0 ? options : [...VIDEO_ASPECT_RATIO_OPTIONS],
     current_value: (node.data as { aspectRatio?: unknown }).aspectRatio ?? "auto",
     description: "视频节点底部参数里的比例；修改视频比例时更新 aspectRatio，不要改模型来间接实现。",
   };
@@ -593,17 +641,15 @@ function videoQualitySchema(node: CanvasNode): CanvasEditableFieldSchema {
       ? snapshot.models.find((model) => model.id === currentModelId)
       : null;
   const options = (currentModel?.resolutionOptions ?? [])
-    .map((value) => value.trim().toUpperCase())
-    .filter((value): value is (typeof VIDEO_QUALITY_OPTIONS)[number] =>
-      (VIDEO_QUALITY_OPTIONS as readonly string[]).includes(value),
-    );
+    .map((value) => value.trim())
+    .filter(Boolean);
   const resolvedOptions = options.length > 0 ? options : [...VIDEO_QUALITY_OPTIONS];
   return {
     type: "enum",
     label: "清晰度",
     options: resolvedOptions,
     current_value: (node.data as { quality?: unknown }).quality ?? null,
-    description: "视频节点底部参数里的清晰度；使用当前模型支持的分辨率选项，例如 480P/720P/1080P。",
+    description: "视频节点底部参数里的清晰度；使用所选模型目录返回的原始分辨率选项。",
   };
 }
 
@@ -765,24 +811,9 @@ function editableSchemaForNode(node: CanvasNode): Record<string, CanvasEditableF
         prompt: { type: "string", label: "提示词", description: GENERATOR_PROMPT_DESCRIPTION },
         negativePrompt: { type: "string", label: "反向提示词" },
         model: imageModelSchema(node),
-        size: {
-          type: "enum",
-          label: "分辨率",
-          options: [...IMAGE_SIZE_OPTIONS],
-          description: "图片节点底部参数里的分辨率；必须使用 1K/2K/4K，不要写 1024x1024。",
-        },
-        quality: {
-          type: "enum",
-          label: "画质",
-          options: [...IMAGE_QUALITY_OPTIONS],
-          description: "图片节点底部参数里的画质，仅对支持画质档位的模型生效。",
-        },
-        aspectRatio: {
-          type: "enum",
-          label: "比例",
-          options: [...IMAGE_ASPECT_RATIO_OPTIONS],
-          description: "图片节点底部参数里的比例；修改分辨率时不要顺手改比例。",
-        },
+        size: imageSizeSchema(node),
+        quality: imageQualitySchema(node),
+        aspectRatio: imageAspectRatioSchema(node, "图片节点底部参数里的比例；修改分辨率时不要顺手改比例。"),
         count: { type: "enum", label: "生成数量", options: [...IMAGE_COUNT_OPTIONS] },
       };
     case CANVAS_NODE_TYPES.imageEdit:
@@ -791,19 +822,9 @@ function editableSchemaForNode(node: CanvasNode): Record<string, CanvasEditableF
         prompt: { type: "string", label: "提示词", description: GENERATOR_PROMPT_DESCRIPTION },
         negativePrompt: { type: "string", label: "反向提示词" },
         model: imageModelSchema(node),
-        size: {
-          type: "enum",
-          label: "分辨率",
-          options: [...IMAGE_SIZE_OPTIONS],
-          description: "图片编辑节点的分辨率；必须使用 1K/2K/4K，不要写 1024x1024。",
-        },
-        quality: { type: "enum", label: "画质", options: [...IMAGE_QUALITY_OPTIONS] },
-        requestAspectRatio: {
-          type: "enum",
-          label: "比例",
-          options: [...IMAGE_ASPECT_RATIO_OPTIONS],
-          description: "图片编辑节点使用 requestAspectRatio 保存目标比例。",
-        },
+        size: imageSizeSchema(node),
+        quality: imageQualitySchema(node),
+        requestAspectRatio: imageAspectRatioSchema(node, "图片编辑节点使用 requestAspectRatio 保存目标比例。"),
         count: { type: "enum", label: "生成数量", options: [...IMAGE_COUNT_OPTIONS] },
       };
     case CANVAS_NODE_TYPES.video:

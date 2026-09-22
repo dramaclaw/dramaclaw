@@ -165,6 +165,11 @@ def bind_workflow_inputs(plan: dict, bindings: Any) -> dict:
     if not isinstance(bindings, list) or len(bindings) > 200:
         raise WorkflowOperationError("bindings must be an array with at most 200 items")
     nodes = _node_index(plan)
+    external_ids: set[str] = set()
+    for source in plan.get("external_inputs") or []:
+        if isinstance(source, dict) and source.get("media_kind") == "image":
+            nodes[source["id"]] = {"id": source["id"], "node_type": "imageGenNode", "data": {}}
+            external_ids.add(source["id"])
     for binding in bindings:
         if not isinstance(binding, dict) or set(binding) - {
             "source",
@@ -178,6 +183,8 @@ def bind_workflow_inputs(plan: dict, bindings: Any) -> dict:
         source_id, target_id = binding.get("source"), binding.get("target")
         if not isinstance(source_id, str) or not isinstance(target_id, str):
             raise WorkflowOperationError("binding source and target must be node ids")
+        if target_id in external_ids or (source_id in external_ids and binding.get("usage") != "reference"):
+            raise WorkflowOperationError("external image input only supports outgoing reference usage")
         source, target = nodes.get(source_id), nodes.get(target_id)
         if source is None or target is None or source_id == target_id:
             raise WorkflowOperationError(
@@ -402,6 +409,11 @@ def prepare_workflow_source(body: dict, *, username: str) -> dict:
             plan = compiled.get("plan")
             if isinstance(intent, dict) and "plan" in intent and intent["plan"] != plan:
                 raise WorkflowOperationError("workflow intent and compiled plan differ")
+            if (isinstance(intent, dict) and "plan" not in intent
+                    and isinstance(plan, dict) and plan.get("external_inputs")):
+                server_plan = _require_result(compile_workflow_intent(intent))["plan"]
+                if plan != server_plan:
+                    raise WorkflowOperationError("external input plan differs from server compilation")
         elif isinstance(intent, dict):
             if isinstance(intent.get("plan"), dict):
                 plan = intent["plan"]

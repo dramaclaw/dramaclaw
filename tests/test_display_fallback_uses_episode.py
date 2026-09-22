@@ -54,9 +54,9 @@ def test_the_fallback_reads_its_episode_from_the_episode_key():
     """
     import inspect
 
-    import novelvideo.chat.service as service
+    import novelvideo.chat.display_fallback as display_fallback
 
-    source = inspect.getsource(service._fallback_display_tool_ui_specs)
+    source = inspect.getsource(display_fallback._fallback_display_tool_ui_specs)
     assert 'args.get("episode")' in source, (
         "the fallback no longer reads the episode argument by name")
     assert 'args.get("trajectory")' not in source
@@ -72,9 +72,10 @@ def test_no_display_argument_is_named_trajectory():
     """
     import inspect
 
+    import novelvideo.chat.display_fallback as display_fallback
     import novelvideo.chat.service as service
 
-    source = inspect.getsource(service)
+    source = inspect.getsource(service) + inspect.getsource(display_fallback)
     for offender in ('"trajectory": episode',
                      'args.get("trajectory")',
                      'args["trajectory"]'):

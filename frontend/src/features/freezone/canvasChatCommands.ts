@@ -1,6 +1,7 @@
 import { STORY_CHOICE_EDGE_TYPE } from "@/features/canvas/story/storyTypes";
 import i18next from "i18next";
 import { executeWorkflowHtmlNode } from "@/features/canvas/application/workflowHtmlRuntime";
+import { extractUpstreamContent } from "@/features/canvas/application/graphContentResolver";
 import { type HtmlArtifactCommand, parseHtmlArtifactCommand, executeHtmlArtifactCommand } from '@/features/html-artifacts/commands';
 import { executeHtmlNodeWriteAction } from '@/features/html-artifacts/nodeActions';
 import {
@@ -132,6 +133,7 @@ export type CanvasChatCommand =
       source: string;
       target: string;
       link_type: CanvasEdgeSemanticKind;
+      expected_source_image_url?: string;
     }
   | {
       type: "layout_nodes";
@@ -396,6 +398,10 @@ const RUN_NODE_ACTIONS = new Set([
   "open_video_subtitle_erase_smart",
   "open_video_subtitle_erase_box",
 ]);
+
+export function isCanvasChatRunNodeAction(action: string): boolean {
+  return RUN_NODE_ACTIONS.has(action);
+}
 
 const GENERATION_NODE_ACTIONS = new Set([
   "generate_text",
@@ -980,6 +986,8 @@ function parseCommand(value: unknown): CanvasChatCommand | null {
           source: value.source,
           target: value.target,
           link_type: linkType,
+          expected_source_image_url: typeof value.expected_source_image_url === "string"
+            ? value.expected_source_image_url : undefined,
         };
       }
     case "layout_nodes":
@@ -1397,13 +1405,16 @@ function chooseNextNodeType(sourceNode: CanvasNode, requestedType?: CanvasNodeTy
 function connectNodes(
   source: string,
   target: string,
-  options: { link_type?: CanvasEdgeSemanticKind } = {},
+  options: { link_type?: CanvasEdgeSemanticKind; external_input_image_url?: string } = {},
 ): string | null {
   if (source === target) throw new Error("connection requires two different nodes");
   const store = useCanvasStore.getState();
   const data: Record<string, unknown> = {};
   if (options.link_type) {
     data.link_type = options.link_type;
+  }
+  if (options.external_input_image_url) {
+    data.workflowExternalInputImageUrl = options.external_input_image_url;
   }
   if (Object.keys(data).length > 0) {
     return store.addEdgeWithData(source, target, {
@@ -1760,9 +1771,13 @@ function expandWorkflowNodeIds(
   const upstreamByNodeId = new Map<string, string[]>();
   const downstreamByNodeId = new Map<string, string[]>();
   for (const edge of state.edges) {
-    const upstream = upstreamByNodeId.get(edge.target) ?? [];
-    upstream.push(edge.source);
-    upstreamByNodeId.set(edge.target, upstream);
+    // A Recipe consumes the existing image at this edge. Traversing back into
+    // its source would also reach unrelated branches that share that image.
+    if (!edge.data?.workflowExternalInputImageUrl) {
+      const upstream = upstreamByNodeId.get(edge.target) ?? [];
+      upstream.push(edge.source);
+      upstreamByNodeId.set(edge.target, upstream);
+    }
     const downstream = downstreamByNodeId.get(edge.source) ?? [];
     downstream.push(edge.target);
     downstreamByNodeId.set(edge.source, downstream);
@@ -1825,6 +1840,14 @@ function isWorkflowUserInputNode(node: CanvasNode | undefined): boolean {
   if (!node) return false;
   const data = node.data as Record<string, unknown>;
   if (data.workflowCatalogRole === "user_input") return true;
+  // An image node containing only an uploaded reference already supplies media to
+  // downstream nodes. It has no generated output to wait for and no prompt to run.
+  if (
+    node.type === CANVAS_NODE_TYPES.imageGen
+    && Boolean(nonEmptyString(data.referenceImageUrl))
+    && !nonEmptyString(data.imageUrl)
+    && !nonEmptyString(data.prompt)
+  ) return true;
   const catalog = data.workflowCatalog && typeof data.workflowCatalog === "object"
     && !Array.isArray(data.workflowCatalog)
     ? data.workflowCatalog as Record<string, unknown>
@@ -1834,6 +1857,30 @@ function isWorkflowUserInputNode(node: CanvasNode | undefined): boolean {
     .toLowerCase()
     .replace(/-/g, "_");
   return ["workflow_input", "user_input", "user_requirement"].includes(stepId);
+}
+
+function workflowExternalImageSourceIds(
+  edges: CanvasEdge[],
+  scopedNodeIds: Set<string>,
+  nodes: CanvasNode[],
+): Set<string> {
+  const nodeById = new Map(nodes.map((node) => [node.id, node] as const));
+  const scopedEdges = edges.filter((edge) => scopedNodeIds.has(edge.target));
+  const externalSources = new Set<string>();
+  const ordinarySources = new Set<string>();
+  for (const edge of scopedEdges) {
+    const expectedUrl = edge.data?.workflowExternalInputImageUrl;
+    if (typeof expectedUrl !== "string" || !expectedUrl.trim()) {
+      ordinarySources.add(edge.source);
+      continue;
+    }
+    const source = nodeById.get(edge.source);
+    if (!source || extractUpstreamContent(source).imageUrl !== expectedUrl) {
+      throw new Error(`workflow source image changed: ${edge.source}`);
+    }
+    externalSources.add(edge.source);
+  }
+  return new Set([...externalSources].filter((sourceId) => !ordinarySources.has(sourceId)));
 }
 
 function isRedundantLegacyComposeGenerator(
@@ -1969,6 +2016,9 @@ function workflowNodeActions(
   const expandedNodeIds = expandWorkflowNodeIds(initialNodeIds, directions);
   const nodeByIdMap = new Map(useCanvasStore.getState().nodes.map((node) => [node.id, node] as const));
   const scopedNodeIds = new Set(expandedNodeIds);
+  const externalImageSourceIds = workflowExternalImageSourceIds(
+    state.edges, scopedNodeIds, state.nodes,
+  );
   const protectedUpstreamNodeIds = satisfiedVideoComposeUpstreamNodeIds(
     expandedNodeIds,
     initialNodeIds,
@@ -1984,6 +2034,7 @@ function workflowNodeActions(
   ].flatMap((nodeId) => {
     const node = nodeByIdMap.get(nodeId);
     if (!node || node.type === CANVAS_NODE_TYPES.group) return [];
+    if (externalImageSourceIds.has(nodeId)) return [];
     if (isRedundantLegacyComposeGenerator(node, state.nodes, state.edges)) return [];
     if (node.type === CANVAS_NODE_TYPES.videoCompose) {
       return [{
@@ -2029,13 +2080,18 @@ function directNodeActionQueue(
       && !hasVideoComposeMinimumInputs(nodeId)
     )
   );
-  const upstreamActions = (includeUpstream
+  const upstreamNodeIds = includeUpstream
     ? expandWorkflowNodeIds([nodeId], ["upstream"])
-    : [nodeId])
+    : [nodeId];
+  const externalImageSourceIds = workflowExternalImageSourceIds(
+    state.edges, new Set(upstreamNodeIds), state.nodes,
+  );
+  const upstreamActions = upstreamNodeIds
     .filter((upstreamId) => upstreamId !== nodeId)
     .flatMap((upstreamId): PendingNodeAction[] => {
       const node = nodeByIdMap.get(upstreamId);
       if (!node || node.type === CANVAS_NODE_TYPES.group) return [];
+      if (externalImageSourceIds.has(upstreamId)) return [];
       if (isRedundantLegacyComposeGenerator(node, state.nodes, state.edges)) return [];
       const upstreamAction = defaultWorkflowActionForNode(node);
       if (!upstreamAction || hasGeneratedResult(upstreamId, upstreamAction)) return [];
@@ -4260,6 +4316,13 @@ function* applyCanvasChatCommandsInternal(
           case "create_edge": {
             const source = resolveNodeId(command.source, clientIdMap);
             const target = resolveNodeId(command.target, clientIdMap);
+            if (command.expected_source_image_url) {
+              const sourceNode = useCanvasStore.getState().nodes.find((node) => node.id === source);
+              if (!sourceNode ||
+                extractUpstreamContent(sourceNode).imageUrl !== command.expected_source_image_url) {
+                throw new Error(`workflow source image changed: ${source}`);
+              }
+            }
             const invalidReason = invalidConnectionReason(source, target);
             if (invalidReason) {
               if (isMissingOrFatalConnectionReason(invalidReason)) throw new Error(invalidReason);
@@ -4273,7 +4336,10 @@ function* applyCanvasChatCommandsInternal(
               });
               break;
             }
-            const edgeId = connectNodes(source, target, { link_type: command.link_type });
+            const edgeId = connectNodes(source, target, {
+              link_type: command.link_type,
+              external_input_image_url: command.expected_source_image_url,
+            });
             if (!edgeId) throw new Error(`edge rejected: ${command.source} -> ${command.target}`);
             envelopeConnectionCount += 1;
             result.applied += 1;

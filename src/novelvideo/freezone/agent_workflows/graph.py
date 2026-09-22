@@ -11,7 +11,6 @@ from novelvideo.freezone.workflow_schema import (
     LINK_TYPE_VALUES as PORTABLE_LINK_TYPE_VALUES,
     NODE_TYPE_VALUES,
 )
-from novelvideo.freezone.workflow_contract_generated import MODEL_ALIASES_BY_NODE_TYPE
 from novelvideo.freezone.workflow_semantics import text_edge_error
 
 CANVAS_CHAT_COMMANDS_SCHEMA_VERSION = "canvas_chat_commands.v1"
@@ -163,6 +162,22 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
             "warnings": warnings,
         }
 
+    external_node_ids = args.get("external_node_ids") or {}
+    if not isinstance(external_node_ids, dict):
+        external_node_ids = {}
+    for source in payload.get("external_inputs") or []:
+        if not isinstance(source, dict):
+            continue
+        alias = str(source.get("id") or "")
+        node_id = str(external_node_ids.get(alias) or source.get("node_id") or "")
+        if not alias or not node_id or alias in node_by_plan_id or node_id in used_client_ids:
+            return {"ok": False, "status": "invalid_external_input", "commands": [],
+                    "skipped_edges": [], "warnings": [], "error": "external input alias is invalid"}
+        node_by_plan_id[alias] = {
+            "plan_id": alias, "client_id": node_id, "node_type": "imageGenNode",
+            "raw": source, "external": True,
+        }
+
     edge_records: list[dict[str, Any]] = []
     audio_prompt_target_plan_ids: set[str] = set()
     for edge_index, edge in enumerate(_edge_pairs(payload.get("edges"))):
@@ -284,6 +299,10 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
             "target": target["client_id"],
             "link_type": link_type,
         }
+        if source.get("external"):
+            media_urls = args.get("external_media_urls") or {}
+            if isinstance(media_urls, dict) and media_urls.get(source["plan_id"]):
+                command["expected_source_image_url"] = media_urls[source["plan_id"]]
         commands.append(command)
 
     groups = _groups(
@@ -346,7 +365,11 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
-    command_errors = validate_workflow_graph_commands(commands)
+    command_errors = validate_workflow_graph_commands(
+        commands,
+        external_source_ids={node_by_plan_id[source["id"]]["client_id"]
+                             for source in payload.get("external_inputs") or []},
+    )
     if command_errors:
         return {
             "ok": False,
@@ -556,7 +579,8 @@ def _node_data(
     if node_type == "htmlArtifactNode":
         result.pop("content", None)
         result.pop("description", None)
-    _normalize_model_alias(result, node_type)
+    # Model values in a validated plan are live Catalog ids. Rewriting a
+    # provider-prefixed id here would invalidate the frontend's model options.
     if node_type == "audioNode":
         result.setdefault("audioKind", "speech")
         if result.get("audioKind") == "speech":
@@ -582,7 +606,9 @@ def _node_data(
     return result
 
 
-def validate_workflow_graph_commands(commands: Any) -> list[dict[str, str]]:
+def validate_workflow_graph_commands(
+    commands: Any, *, external_source_ids: set[str] | None = None
+) -> list[dict[str, str]]:
     """Validate the static canvas contract emitted by the workflow compiler.
 
     The frontend still performs authoritative stateful validation (live model
@@ -600,6 +626,7 @@ def validate_workflow_graph_commands(commands: Any) -> list[dict[str, str]]:
         ]
 
     errors: list[dict[str, str]] = []
+    external_source_ids = external_source_ids or set()
     created_ids: set[str] = set()
     created_nodes: dict[str, dict[str, Any]] = {}
     for index, command in enumerate(commands):
@@ -689,13 +716,16 @@ def validate_workflow_graph_commands(commands: Any) -> list[dict[str, str]]:
                     errors.append({"path": path, "message": role_error})
             for field in ("source", "target"):
                 value = command.get(field)
-                if not isinstance(value, str) or value not in created_ids:
+                allowed = created_ids | (external_source_ids if field == "source" else set())
+                if not isinstance(value, str) or value not in allowed:
                     errors.append(
                         {
                             "path": f"{path}.{field}",
                             "message": f"{path}.{field} must reference a created client_id",
                         }
                     )
+            if command.get("source") in external_source_ids and command.get("link_type") != "media_input_for":
+                errors.append({"path": f"{path}.link_type", "message": "external input requires media_input_for"})
             if command.get("link_type") not in LINK_TYPE_VALUES:
                 errors.append(
                     {
@@ -736,17 +766,6 @@ def validate_workflow_graph_commands(commands: Any) -> list[dict[str, str]]:
                 )
 
     return errors
-
-
-def _normalize_model_alias(data: dict[str, Any], node_type: str) -> None:
-    model = data.get("model")
-    if not isinstance(model, str) or not model.strip():
-        return
-    aliases = MODEL_ALIASES_BY_NODE_TYPE.get(node_type) or {}
-    normalized_key = model.strip().lower()
-    replacement = aliases.get(normalized_key)
-    if replacement:
-        data["model"] = replacement
 
 
 def _edge_pairs(raw_edges: Any) -> list[tuple[str, str, str | None]]:

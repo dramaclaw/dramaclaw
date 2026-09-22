@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   activeClipAt,
+  applyProbedDurations,
   buildComposePayload,
   clipLengthMs,
   hasExportableClips,
@@ -310,5 +311,48 @@ describe("timelineModel", () => {
         tracks: [videoTrack([clip({ trimStartMs: 1000, trimEndMs: 1000 })])],
       }),
     ).toBe(false);
+  });
+
+  it("applyProbedDurations widens fallback trims and ripples the main video track", () => {
+    // 两段 10s 源：a 已知时长，b 未知（按 5s 兜底排在 10s 处）。
+    const state: ComposeTimelineState = {
+      resolution: "1080p",
+      tracks: [
+        videoTrack([
+          clip({ id: "a", durationMs: 10000, trimEndMs: 10000, timelineStartMs: 0 }),
+          { ...clip({ id: "b", trimEndMs: 5000, timelineStartMs: 10000 }), durationMs: null },
+        ]),
+      ],
+    };
+    const next = applyProbedDurations(state, new Map([["b", 10080]]));
+    const b = next.tracks[0].clips.find((c) => c.id === "b");
+    expect(b).toMatchObject({ durationMs: 10080, trimEndMs: 10080, timelineStartMs: 10000 });
+    expect(timelineDurationMs(next)).toBe(20080);
+    const payload = buildComposePayload(next);
+    expect(payload.tracks[0].items.map((item) => item.sourceEnd)).toEqual([10, 10.08]);
+  });
+
+  it("applyProbedDurations repacks successors when an earlier fallback clip grows", () => {
+    const state: ComposeTimelineState = {
+      resolution: "1080p",
+      tracks: [
+        videoTrack([
+          { ...clip({ id: "a", trimEndMs: 5000, timelineStartMs: 0 }), durationMs: null },
+          { ...clip({ id: "b", trimEndMs: 5000, timelineStartMs: 5000 }), durationMs: null },
+        ]),
+      ],
+    };
+    const next = applyProbedDurations(state, new Map([["a", 10000]]));
+    expect(hasOverlappingVideoClips(next)).toBe(false);
+    expect(next.tracks[0].clips.map((c) => c.timelineStartMs)).toEqual([0, 10000]);
+  });
+
+  it("applyProbedDurations keeps a user trim that fits inside the probed source", () => {
+    const state: ComposeTimelineState = {
+      resolution: "1080p",
+      tracks: [videoTrack([{ ...clip({ id: "a", trimEndMs: 3000 }), durationMs: null }])],
+    };
+    const next = applyProbedDurations(state, new Map([["a", 10000]]));
+    expect(next.tracks[0].clips[0]).toMatchObject({ durationMs: 10000, trimEndMs: 3000 });
   });
 });

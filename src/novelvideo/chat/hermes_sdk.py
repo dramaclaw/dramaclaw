@@ -25,7 +25,13 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 from novelvideo.security import SandboxSpec, wrap_command
+from novelvideo.chat import hermes_events
 from novelvideo.chat.runtime_port import ChatBackendEvent
+from novelvideo.chat.tool_policy import (
+    DRAMACLAW_WRITE_TOOLS as _DRAMACLAW_WRITE_TOOLS,
+    FREEZONE_CANVAS_WRITE_TOOLS as _FREEZONE_CANVAS_WRITE_TOOLS,
+    FREEZONE_TERMINAL_WRITE_TOOLS as _FREEZONE_TERMINAL_WRITE_TOOLS,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -121,58 +127,6 @@ def _is_session_unavailable_error(error: Any) -> bool:
         and "not found" in normalized
     ) or "failed to recreate agent for acp session" in normalized
 
-_DRAMACLAW_WRITE_TOOLS = {
-    "dramaclaw_post",
-    "dramaclaw_patch",
-    "dramaclaw_delete",
-    "dramaclaw_build_characters",
-    "dramaclaw_plan_episodes",
-    "dramaclaw_generate_script",
-    "dramaclaw_update_character_face_prompt",
-    "dramaclaw_plan_identities",
-    "dramaclaw_plan_scenes",
-    "dramaclaw_plan_props",
-    "dramaclaw_generate_scene_master",
-    "dramaclaw_generate_scene_reverse",
-    "dramaclaw_generate_sketches",
-    "dramaclaw_detect_sketch_identities",
-    "dramaclaw_optimize_video_global",
-    "dramaclaw_generate_audio",
-    "dramaclaw_prepare_system_voices",
-    "dramaclaw_render_first_frames",
-    "dramaclaw_compose_episode",
-    "dramaclaw_generate_portrait",
-    "dramaclaw_generate_identity_image",
-    "dramaclaw_start_single_video",
-    "dramaclaw_start_video_batch",
-    "dramaclaw_run_freezone_skill",
-    "dramaclaw_save_freezone_canvas",
-    "dramaclaw_delete_freezone_canvas",
-    "dramaclaw_create_freezone_canvas_from_preset",
-    "dramaclaw_create_interactive_story",
-    "dramaclaw_patch_interactive_story",
-    "dramaclaw_confirm_interactive_story_stages",
-}
-
-_FREEZONE_CANVAS_WRITE_TOOLS = {
-    "dramaclaw_confirm_interactive_story_stages",
-    "freezone_emit_canvas_command",
-    "freezone_confirm_workflow_draft",
-    "freezone_create_node",
-    "freezone_add_next_node",
-    "freezone_update_node_data",
-    "freezone_create_edge",
-    "freezone_delete_nodes",
-    "freezone_delete_edges",
-    "freezone_move_nodes",
-    "freezone_layout_nodes",
-    "freezone_group_nodes",
-    "freezone_select_nodes",
-    "freezone_open_mainline_projection",
-    "freezone_run_node_action",
-    "freezone_run_workflow",
-}
-_FREEZONE_TERMINAL_WRITE_TOOLS = {"freezone_run_workflow"}
 FREEZONE_FAILED_WRITE_RETRY_LIMIT = 1
 
 
@@ -740,6 +694,7 @@ def _can_retry_failed_canvas_write(
         and failed_write_retry_count < FREEZONE_FAILED_WRITE_RETRY_LIMIT
         and _is_freezone_canvas_write_tool(first_write_tool)
         and _is_freezone_canvas_write_tool(next_tool_name)
+        and not _is_dramaclaw_write_tool(first_write_tool)
         and _canonical_tool_name(first_write_tool) not in _FREEZONE_TERMINAL_WRITE_TOOLS
     )
 
@@ -1583,18 +1538,20 @@ class HermesSdkThread:
                             tool_call_guard.total,
                             ev.name or "tool",
                         )
+                        guard = {
+                            "reason": "tool_call_guard",
+                            "guard_reason": _tool_call_guard_reason(stop_text),
+                            "tool_name": str(ev.name or "").strip() or None,
+                            "had_write": first_write_tool is not None,
+                        }
                         await self.close()
                         yield ChatBackendEvent(
                             type="complete",
                             thread_id=self.id,
                             turn_id=turn_id,
                             text=stop_text,
-                            raw={
-                                "reason": "tool_call_guard",
-                                "guard_reason": _tool_call_guard_reason(stop_text),
-                                "tool_name": str(ev.name or "").strip() or None,
-                                "had_write": first_write_tool is not None,
-                            },
+                            guard=guard,
+                            raw=guard,
                         )
                         return
                     if ev.type == "tool_started":
@@ -1741,7 +1698,7 @@ class HermesSdkThread:
             text = content.get("text") if isinstance(content, dict) else None
             return ChatBackendEvent(
                 type="thought_delta", thread_id=self.id, turn_id=turn_id,
-                text=text or "", raw=update,
+                text=text or "", native_kind=kind, raw=update,
             )
         if kind == "plan":
             raw_entries = update.get("entries")
@@ -1749,7 +1706,7 @@ class HermesSdkThread:
                 if isinstance(raw_entries, list) else []
             return ChatBackendEvent(
                 type="plan_update", thread_id=self.id, turn_id=turn_id,
-                entries=entries, raw=update,
+                entries=entries, native_kind=kind, raw=update,
             )
         if kind == "tool_call":
             title = update.get("title") or update.get("kind") or "tool"
@@ -1772,6 +1729,8 @@ class HermesSdkThread:
                 call_id=call_id,
                 status=str(update.get("status") or "pending"),
                 input=tool_input,
+                native_kind=kind,
+                lifecycle_only=True,
                 raw=update,
             )
         if kind == "tool_call_update":
@@ -1809,9 +1768,10 @@ class HermesSdkThread:
                 tool_input=update_input if update_input is not None else tool_input,
                 min_created_at=tool_started_at,
             )
+            text = f"  {status}"
             return ChatBackendEvent(
                 type="tool_updated", thread_id=self.id, turn_id=turn_id,
-                text=f"  {status}",
+                text=text,
                 name=tool_name,
                 call_id=call_id,
                 status=status,
@@ -1819,12 +1779,19 @@ class HermesSdkThread:
                 output=tool_output,
                 error=tool_error,
                 structured=structured_result,
+                native_kind=kind,
+                lifecycle_only=(
+                    hermes_events.is_anonymous_tool_call_update(tool_name, update)
+                    or hermes_events.is_lifecycle_only_tool_update(text, update)
+                ),
+                transient_failure=hermes_events.is_transient_tool_failure(update),
                 raw=update,
             )
         if kind == "usage_update":
             return ChatBackendEvent(
                 type="usage_update", thread_id=self.id, turn_id=turn_id,
                 usage={key: value for key, value in update.items() if key != "sessionUpdate"},
+                native_kind=kind,
                 raw=update,
             )
         _log.debug("ignoring unsupported Hermes ACP session update: %s", kind)

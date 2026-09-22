@@ -18,6 +18,8 @@ compatibility: Requires Freezone/虾画 chat surface and preferably injected can
 
 涉及分支故事、选择、结局或互动广告剧情时，先读取 `interactive-story` Skill。故事结构使用其业务工具；普通工作流只负责素材生产，不替代故事创建或修改。剧情选择线表示播放路由，不是素材输入依赖。恢复已准备的生成任务仍复用现有执行器；仅在制作备注中写明等待上一镜头尾帧而尚未绑定真实尾帧素材或已支持的依赖时，先准备该输入，不能直接把该片段当作就绪任务运行。不要擅自为此重建整套工作流。
 
+用户未指定内部媒体参数或要求推荐时，在对应图片／视频节点的 `model` 中写 `recommended`，直接准备草稿；服务端用当前用户可见的同一 Catalog 快照解析具体模型和兼容参数，返回的预览供用户确认。不得把 `recommended` 写进 size、quality 或 resolution，也不得按 Catalog 列表顺序取第一个模型。推荐模型不可用或用户明确要求选择参数时，调用 `freezone_request_user_clarification(generation_media_types=[...])`，只列出本次涉及的 `image`/`video` 类型；工具负责生成完整字段问题和实时选项，不手写生成参数问题列表。首次准备草稿时，把问题卡返回的 `answers` 原样作为 `generation_answers` 传给准备工具，由工具映射到节点参数。已有草稿需要补问时，把 `draft_id`、`revision` 分别作为 `workflow_draft_id`、`workflow_expected_revision` 传给澄清工具；它校验答案并修订同一草稿，返回新的预览和 revision。若确认入口或画布写入返回 `generation_parameters_required`，还应将返回的 `required_choices` 原样传入 `generation_required_choices`，并把已确认的模型等选择放进 `answers`，服务端据此从同一 Catalog 条目给出推荐值。澄清结果里的 `node_data.<节点类型>` 就是可直接写入节点 `data` 的具体字段（如 `node_data.imageGenNode.aspectRatio`），逐字复制到重试的节点或 Plan 中，不要自行翻译问题 id，也不要漏字段。修订后必须展示新预览、等待用户确认。
+
 ## 工具调用方式
 
 `freezone_*` 工具不在工具列表里，统一用 `tool_call(name="<工具名>", arguments={...})` 调用；JSON 里先写 `name` 再写 `arguments`（arguments 很大时后写的 `name` 容易被漏掉，缺 `name` 会直接报错）；`arguments` 必须传 JSON 对象——不要传转义后的 JSON 字符串，大型嵌套 intent 会因转义损坏而反复失败。**不要先跑 `tool_search` 或 `tool_describe`**——`tool_call` 不依赖它们。**顺序固定：读规划包 → 生成结构化 intent → 编译草稿 → 用户确认 → 创建**。`deliverable`、Recipe、字段枚举都来自规划包，跳过它自造字段会被校验反复打回。所需参数如下：
@@ -28,6 +30,11 @@ compatibility: Requires Freezone/虾画 chat surface and preferably injected can
 - 自定义拓扑草稿：`tool_call(name="freezone_prepare_workflow_plan_draft", arguments={"canvas_id": ..., "plan": {...}})`；返回精确预览而不直接写画布
 - 修改草稿：`freezone_patch_workflow_draft`，arguments `{"draft_id": ..., "expected_revision": ..., "changes": {...}}`
 - 确认落图：`freezone_confirm_workflow_draft`，arguments `{"draft_id": ..., "revision": ...}`
+
+用户指定已有画布图片作为 Recipe 参考图时，在 intent 或 Plan 顶层声明
+`external_inputs: [{"id":"source_image","node_id":"真实画布节点 ID","media_kind":"image"}]`，
+并在目标 item 的 `reference_inputs` 或 Plan 的 `media_input_for` 边中引用 `source_image`。
+不要把已有图片写进 `nodes`、复制源节点或手填图片 URL；服务端在准备和确认时校验源图。
 
 如果用户只是咨询或分析，只展示一般性说明，不创建草稿或写画布。用户提出具体创建需求后，先读取当前已选的唯一 Skill 紧凑规划包并生成结构化 `intent`，再调用 `freezone_prepare_workflow_draft`。只有用户明确要求 Skill 蓝图无法表达的自定义拓扑时，才使用 `freezone_prepare_workflow_plan_draft(plan=...)`，并继续走同一草稿确认入口。
 

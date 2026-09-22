@@ -62,6 +62,8 @@ describe('updateStoryChoiceEdgeData', () => {
     expect((added.data as { interaction?: unknown }).interaction).toEqual({
       presentation: 'baked-video',
       anchor: { x: 0.5, y: 0.5, width: 0.24, height: 0.14 },
+      motion: 'fade',
+      uiStyle: 'glass',
     });
   });
 

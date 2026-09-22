@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  PROBE_TIMEOUT_MS,
   buildInitialTimeline,
   reconcileDraftWithUpstream,
+  resolveUnknownClipDurations,
 } from '@/features/canvas/compose/VideoComposeModal';
 import { orderedComposeSeedNodeIds } from '@/features/canvas/compose/composeInputOrdering';
 import {
@@ -264,5 +266,37 @@ describe('orderedComposeSeedNodeIds', () => {
       'shot-3',
       'shot-4',
     ])).toEqual(['shot-1', 'shot-2', 'shot-3', 'shot-4']);
+  });
+});
+
+describe('resolveUnknownClipDurations', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function unknownDurationState(kind: 'video' | 'audio'): ComposeTimelineState {
+    const base = draft('/stalled.media');
+    const clip = { ...base.tracks[0]!.clips[0]!, kind, durationMs: null };
+    return {
+      ...base,
+      tracks: [{ ...base.tracks[0]!, id: kind === 'video' ? 'track_video' : AUDIO_TRACK_ID, kind, clips: [clip] }],
+    };
+  }
+
+  // jsdom 不加载媒体：元素既不触发 loadedmetadata 也不触发 error，正是网络卡住的情形。
+  it('fails a stalled video probe after the timeout instead of hanging', async () => {
+    vi.useFakeTimers();
+    const pending = resolveUnknownClipDurations(unknownDurationState('video'));
+    const assertion = expect(pending).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS);
+    await assertion;
+  });
+
+  it('keeps a stalled audio clip as-is after the timeout', async () => {
+    vi.useFakeTimers();
+    const state = unknownDurationState('audio');
+    const pending = resolveUnknownClipDurations(state);
+    await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS);
+    await expect(pending).resolves.toBe(state);
   });
 });

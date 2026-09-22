@@ -81,7 +81,9 @@ export function extractUpstreamContent(node: CanvasNode): UpstreamContent {
     return {
       ...base,
       imageUrl:
-        nonEmpty(node.data.imageUrl) ?? nonEmpty(node.data.previewImageUrl ?? undefined),
+        nonEmpty(node.data.imageUrl)
+        ?? nonEmpty(node.data.previewImageUrl ?? undefined)
+        ?? nonEmpty((node.data as { source_url?: string }).source_url),
     };
   }
   if (isExportImageNode(node)) {

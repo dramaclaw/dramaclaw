@@ -174,7 +174,7 @@ export function StoryPublicationPanel({
       form.append("file", file);
       const result = await apiCall<{ url: string }>(
         `projects/${encodeURIComponent(project ?? "")}/freezone/upload`,
-        { method: "POST", body: form },
+        { method: "POST", body: form, timeout: false },
       );
       formEdited.current = true;
       recoveringCoverVersion.current = null;

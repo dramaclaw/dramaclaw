@@ -864,6 +864,7 @@ async def test_pending_canvas_command_poll_only_returns_external_mcp_commands(
             "canvas_id": "canvas-a",
             "agent_id": "agent-2",
             "external_mcp_command": True,
+            "turn_id": "turn-create-node",
             "commands": commands,
         },
         bridge_dir=bridge_dir,
@@ -881,6 +882,7 @@ async def test_pending_canvas_command_poll_only_returns_external_mcp_commands(
     frames = result["data"]["frames"]
     assert [frame["bridge_key"] for frame in frames] == ["approved-external-command"]
     assert frames[0]["agent_id"] == "agent-2"
+    assert frames[0]["turn_id"] == "turn-create-node"
 
 
 @pytest.mark.anyio
@@ -928,6 +930,7 @@ async def test_pending_canvas_command_json_mirror_cannot_bypass_sqlite_lease(
     assert [frame["bridge_key"] for frame in first["data"]["frames"]] == [
         "leased-command"
     ]
+    assert first["data"]["frames"][0]["turn_id"] == "external-agent:leased-command"
     assert second["data"]["frames"] == []
 
 

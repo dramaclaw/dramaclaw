@@ -3,11 +3,17 @@
     "ariaLabel": "工作流创建确认",
     "title": "待确认的工作流方案",
     "summary": "{{nodes}} 个节点 · {{edges}} 条连线。尚未写入画布。",
+    "referenceImages": "参考图片",
     "changed": "方案状态已更新，请重新查看后确认。",
     "failed": "未能提交确认，请重试；没有重新创建草稿。",
+    "cancelFailed": "未能取消方案，请重试。",
+    "cancelled": "已取消工作流方案，画布未作修改。你可以继续告诉我想怎么调整。",
+    "notConfirmable": "该工作流方案已取消，不能再创建节点。",
     "confirmMessage": "确认创建此工作流",
     "confirmRunMessage": "确认创建并执行此工作流",
     "sending": "正在提交确认…",
+    "cancelling": "正在取消…",
+    "cancel": "取消方案",
     "confirmRun": "确认创建并执行",
     "confirm": "确认创建"
   },
@@ -900,6 +906,8 @@
       "toggle": "打开虾画虾导",
       "close": "收起虾画虾导",
       "resize": "拖动调整虾画虾导宽度",
+      "floatWindow": "切换为浮窗",
+      "dockRight": "停靠到右侧",
       "audioApproval": {
         "chooseVoiceTitle": "请选择旁白声线",
         "chooseVoiceDescription": "请选择自定义声线；如果暂不选择，本次将跳过旁白生成。",
@@ -923,6 +931,12 @@
       "canvasRetryPrompt": "请重新检查并继续刚才未完成的画布操作。先核对已有节点和运行状态，保留已完成结果；补齐生成参数后再提交新的审批。",
       "canvasRetryDisplay": "重新检查并继续未完成的画布操作",
       "generationParams": {
+        "catalog": {
+          "loading": "正在加载模型目录，请稍后选择参数。",
+          "fallback": "暂时无法获取模型目录，请稍后重试。",
+          "empty": "管理员尚未配置可用的生成模型，暂时无法提交参数。",
+          "model_unavailable": "已确认的模型不在当前模型目录中，请重新选择模型后再填写参数。"
+        },
         "autoRatio": "自动比例",
         "imageQuality": "图片画质",
         "quality": {
@@ -8290,7 +8304,8 @@
     "error": {
       "prefix": "合成失败",
       "noUrl": "合成完成但未返回视频地址",
-      "overlap": "存在时间重叠的视频片段，当前不支持视频叠加合成。请把重叠的视频片段错开时间或删除其一后再导出。"
+      "overlap": "存在时间重叠的视频片段，当前不支持视频叠加合成。请把重叠的视频片段错开时间或删除其一后再导出。",
+      "probeFailed": "无法读取视频素材时长：{{name}}"
     },
     "node": {
       "hint": "连接至少 {{min}} 个视频节点后可打开",

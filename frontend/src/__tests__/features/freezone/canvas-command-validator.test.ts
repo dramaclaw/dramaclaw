@@ -7,7 +7,7 @@ import compiledHtmlPlan from "@/features/html-artifacts/compiledHtmlPlan.fixture
 
 import { CANVAS_NODE_TYPES, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { validateCanvasChatCommandEnvelopes } from "@/features/freezone/context/canvasCommandValidator";
-import { CANVAS_CHAT_COMMANDS_SCHEMA_VERSION, type CanvasChatCommandEnvelope } from "@/features/freezone/canvasChatCommands";
+import { CANVAS_CHAT_COMMANDS_SCHEMA_VERSION, extractCanvasChatCommandEnvelopes, type CanvasChatCommandEnvelope } from "@/features/freezone/canvasChatCommands";
 import { canvasLinkTypeCatalogJson, canvasLinkTypeCatalogText, canvasNodeTypeLinkObjectType, allowedCanvasLinkTypesForNodes } from "@/features/freezone/canvasEdgeSemantics";
 
 function node(partial: Partial<CanvasNode> & { id: string; type: CanvasNode["type"] }): CanvasNode {
@@ -20,6 +20,42 @@ function node(partial: Partial<CanvasNode> & { id: string; type: CanvasNode["typ
 }
 
 describe("canvas command validator", () => {
+  it("accepts a Recipe image node connected to an existing uploaded image", () => {
+    const source = node({id: "red-cup-source", type: CANVAS_NODE_TYPES.upload, data: {imageUrl: "/static/projects/project-a/red-cup.png"}});
+    const envelope: CanvasChatCommandEnvelope = {
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: [
+        {type: "create_node", client_id: "blue-cup", node_type: CANVAS_NODE_TYPES.imageGen,
+          data: {displayName: "蓝底红杯", prompt: "保留杯形，蓝底，不加字", workflowCatalog: {
+            skillId: "ecommerce-ad", recipeId: "ecommerce-remix-image",
+          }}},
+        {type: "create_edge", source: "red-cup-source", target: "blue-cup", link_type: "media_input_for",
+          expected_source_image_url: "/static/projects/project-a/red-cup.png"},
+      ],
+    };
+    expect(validateCanvasChatCommandEnvelopes([envelope], [source], [])).toEqual({ok: true, issues: []});
+    expect(extractCanvasChatCommandEnvelopes([envelope])[0]?.commands[1]).toMatchObject({
+      expected_source_image_url: "/static/projects/project-a/red-cup.png",
+    });
+    const replaced = node({id: "red-cup-source", type: CANVAS_NODE_TYPES.upload,
+      data: {imageUrl: "/static/projects/project-a/replaced.png"}});
+    expect(validateCanvasChatCommandEnvelopes([envelope], [replaced], []).issues[0]?.message)
+      .toContain("workflow source image changed");
+  });
+  it("accepts a guarded reference image on an ungenerated image node", () => {
+    const source = node({ id: "reference", type: CANVAS_NODE_TYPES.imageGen,
+      data: { referenceImageUrl: "/static/projects/project-a/reference.png" } });
+    const envelope: CanvasChatCommandEnvelope = {
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: [
+        { type: "create_node", client_id: "result", node_type: CANVAS_NODE_TYPES.imageGen,
+          data: { prompt: "改蓝色背景" } },
+        { type: "create_edge", source: "reference", target: "result", link_type: "media_input_for",
+          expected_source_image_url: "/static/projects/project-a/reference.png" },
+      ],
+    };
+    expect(validateCanvasChatCommandEnvelopes([envelope], [source], [])).toEqual({ ok: true, issues: [] });
+  });
   it("validates HTML source action parameters and same-batch aliases", () => {
     const createAndSave: CanvasChatCommandEnvelope = {
       schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,

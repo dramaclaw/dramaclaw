@@ -7,6 +7,7 @@ import json
 import re
 import sqlite3
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -108,6 +109,8 @@ CREATE TABLE IF NOT EXISTS workflow_run_actions (
     recipe_version       TEXT,
     generation_attempt_id TEXT,
     product_operation_id TEXT,
+    media_request_fingerprint TEXT,
+    media_claimed_at REAL,
     PRIMARY KEY (run_id, node_id, action),
     FOREIGN KEY (run_id) REFERENCES workflow_runs(run_id) ON DELETE CASCADE
 );
@@ -356,10 +359,13 @@ def _connect(project_dir: Path):
                     "recipe_version",
                     "generation_attempt_id",
                     "product_operation_id",
+                    "media_request_fingerprint",
+                    "media_claimed_at",
                 ):
                     if column not in columns:
                         conn.execute(
-                            f"ALTER TABLE workflow_run_actions ADD COLUMN {column} TEXT"
+                            f"ALTER TABLE workflow_run_actions ADD COLUMN {column} "
+                            + ("REAL" if column == "media_claimed_at" else "TEXT")
                         )
                 conn.commit()
                 _SCHEMA_READY_PATHS.add(db_path)
@@ -408,6 +414,8 @@ def _action_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "recipe_version": row["recipe_version"],
         "generation_attempt_id": row["generation_attempt_id"],
         "product_operation_id": row["product_operation_id"],
+        "media_request_fingerprint": row["media_request_fingerprint"],
+        "media_claimed_at": row["media_claimed_at"],
     }
     for field in (
         "error_category",
@@ -510,8 +518,9 @@ def _write_run(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
                 error, error_category, retryable, error_request_id,
                 error_fingerprint, user_error, task_key, task_type, job_id,
                 retry_count, artifact_status, recipe_id, recipe_version,
-                generation_attempt_id, product_operation_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                generation_attempt_id, product_operation_id,
+                media_request_fingerprint, media_claimed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(run_id, node_id, action) DO UPDATE SET
                 sequence_no = excluded.sequence_no,
                 status = excluded.status,
@@ -532,6 +541,8 @@ def _write_run(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
                 ,recipe_version = excluded.recipe_version
                 ,generation_attempt_id = excluded.generation_attempt_id
                 ,product_operation_id = excluded.product_operation_id
+                ,media_request_fingerprint = excluded.media_request_fingerprint
+                ,media_claimed_at = excluded.media_claimed_at
             """,
             (
                 payload["run_id"],
@@ -560,6 +571,8 @@ def _write_run(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
                 item.get("recipe_version"),
                 item.get("generation_attempt_id"),
                 item.get("product_operation_id"),
+                item.get("media_request_fingerprint"),
+                item.get("media_claimed_at"),
             ),
         )
 
@@ -688,6 +701,192 @@ def bind_workflow_action_product_operation(
     if payload is None:
         raise ValueError("workflow run not found")
     return payload
+
+
+def claim_workflow_media_action(
+    *,
+    project_dir: Path,
+    project_id: str,
+    canvas_id: str,
+    node_id: str,
+    operation_id: str,
+    attempt_id: str,
+    task_type: str,
+    fingerprint: str,
+) -> dict[str, Any]:
+    """Atomically admit one media request for a trusted Recipe operation."""
+    from novelvideo.freezone.agent_product_operations import (
+        PENDING_STATUSES,
+        is_recipe_compile_receipt,
+    )
+    from novelvideo.task_state import project_task_state_key
+
+    allowed_actions = {
+        "freezone_gen": {"generate_image"},
+        "freezone_video_gen": {"generate_video", "generate_text_video"},
+        "freezone_audio_speech": {"generate_audio"},
+        "freezone_audio_eleven_music": {"generate_audio"},
+    }
+    if task_type not in allowed_actions or len(fingerprint) != 64:
+        raise ValueError("invalid workflow media claim")
+    with _connect(project_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        operation = conn.execute(
+            "SELECT * FROM freezone_agent_product_operations WHERE operation_id = ?",
+            (operation_id,),
+        ).fetchone()
+        if operation is None:
+            raise ValueError(
+                "workflow media link does not match admitted Recipe attempt"
+            )
+        metadata = _decode_metadata(operation["metadata_json"])
+        run_id = str(metadata.get("workflow_run_id") or "")
+        _validate_scope(canvas_id, run_id)
+        run = conn.execute(
+            "SELECT * FROM workflow_runs WHERE run_id = ? AND project_id = ? AND canvas_id = ?",
+            (run_id, project_id, canvas_id),
+        ).fetchone()
+        action = conn.execute(
+            """SELECT * FROM workflow_run_actions
+               WHERE run_id = ? AND node_id = ? AND product_operation_id = ?
+                 AND generation_attempt_id = ?""",
+            (run_id, node_id, operation_id, attempt_id),
+        ).fetchone()
+        if (
+            run is None
+            or action is None
+            or action["action"] not in allowed_actions[task_type]
+            or operation["product_kind"] != "recipe_result"
+            or operation["project_id"] != project_id
+            or operation["canvas_id"] != canvas_id
+            or operation["artifact_id"] != node_id
+            or metadata.get("generation_attempt_id") != attempt_id
+            or metadata.get("node_id") != node_id
+            or operation["status"] in {"failed", "cancelled"}
+        ):
+            raise ValueError(
+                "workflow media link does not match admitted Recipe attempt"
+            )
+        existing = str(action["media_request_fingerprint"] or "")
+        if existing:
+            if existing != fingerprint or action["task_type"] not in (None, task_type):
+                raise ValueError(
+                    "workflow media attempt already claimed by another request"
+                )
+            result_ref = _decode_metadata(operation["result_ref_json"])
+            if (
+                operation["status"] == "delivered"
+                and not is_recipe_compile_receipt("recipe_result", operation_id, result_ref)
+                and (
+                    result_ref.get("kind") != "recipe_result"
+                    or result_ref.get("id") != action["job_id"]
+                    or result_ref.get("workflow_run_id") != run_id
+                    or result_ref.get("node_id") != node_id
+                )
+            ):
+                raise ValueError("delivered Recipe result belongs to another media task")
+            return {
+                "job_id": action["job_id"],
+                "claimed_at": action["media_claimed_at"],
+                "created": False,
+                "run_id": run_id,
+            }
+        receipt = _decode_metadata(operation["result_ref_json"])
+        evidence = _decode_metadata(operation["model_evidence_json"])
+        compiled = is_recipe_compile_receipt("recipe_result", operation_id, receipt)
+        modeled = (
+            operation["status"] in PENDING_STATUSES
+            and evidence.get("source") == "server_recipe_compiler"
+            and evidence.get("compile_mode") == "model"
+            and bool(evidence.get("model_call_id"))
+            and bool(evidence.get("executed_at"))
+        )
+        if (
+            run["status"] != "running"
+            or action["status"] not in {"pending", "running"}
+            or not (compiled and operation["status"] == "delivered" or modeled)
+        ):
+            raise ValueError("Recipe compilation is not ready for media submission")
+        job_id = uuid.uuid4().hex[:16]
+        task_key = project_task_state_key(task_type, project_id, 0, scope=job_id)
+        claimed_at = time.time()
+        conn.execute(
+            """UPDATE workflow_run_actions
+               SET media_request_fingerprint = ?, media_claimed_at = ?,
+                   job_id = ?, task_type = ?, task_key = ?
+               WHERE run_id = ? AND node_id = ? AND action = ?""",
+            (
+                fingerprint,
+                claimed_at,
+                job_id,
+                task_type,
+                task_key,
+                run_id,
+                node_id,
+                action["action"],
+            ),
+        )
+        return {
+            "job_id": job_id,
+            "claimed_at": claimed_at,
+            "created": True,
+            "run_id": run_id,
+        }
+
+
+def bind_workflow_media_task(
+    *,
+    project_dir: Path,
+    run_id: str,
+    node_id: str,
+    operation_id: str,
+    job_id: str,
+    task_type: str,
+    task_key: str,
+) -> None:
+    with _connect(project_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        current = conn.execute(
+            """SELECT task_key FROM workflow_run_actions
+               WHERE run_id = ? AND node_id = ? AND product_operation_id = ?
+                 AND media_request_fingerprint IS NOT NULL AND job_id = ?
+                 AND task_type = ?""",
+            (run_id, node_id, operation_id, job_id, task_type),
+        ).fetchone()
+        if current is None or current["task_key"] not in (None, task_key):
+            raise ValueError("workflow media task claim changed")
+        conn.execute(
+            """UPDATE workflow_run_actions SET task_key = ?
+               WHERE run_id = ? AND node_id = ? AND product_operation_id = ?""",
+            (task_key, run_id, node_id, operation_id),
+        )
+
+
+def renew_workflow_media_claim(
+    *,
+    project_dir: Path,
+    run_id: str,
+    node_id: str,
+    operation_id: str,
+    job_id: str,
+    claimed_at: float,
+) -> bool:
+    """Give one caller ownership of a stale claim whose task was never reserved."""
+    with _connect(project_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        updated = conn.execute(
+            """UPDATE workflow_run_actions SET media_claimed_at = ?
+               WHERE run_id = ? AND node_id = ? AND product_operation_id = ?
+                 AND job_id = ? AND media_claimed_at = ?
+                 AND status IN ('pending', 'running')
+                 AND EXISTS (
+                     SELECT 1 FROM workflow_runs
+                      WHERE workflow_runs.run_id = workflow_run_actions.run_id
+                        AND workflow_runs.status = 'running'
+                 )""",
+            (time.time(), run_id, node_id, operation_id, job_id, claimed_at),
+        )
+        return updated.rowcount == 1
 
 
 def create_workflow_run(
@@ -1166,6 +1365,12 @@ def update_workflow_run(
                 if field not in update:
                     continue
                 value = str(update.get(field) or "").strip()
+                if item.get("media_request_fingerprint") and value != str(
+                    item.get(field) or ""
+                ):
+                    raise ValueError(
+                        "claimed workflow media task identity cannot change"
+                    )
                 item[field] = value[:256] or None
             if "retry_count" in update:
                 try:

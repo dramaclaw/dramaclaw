@@ -128,20 +128,28 @@ to every matching generated node. Node `data` may instead pin the equivalent can
 field for a step, but a value that conflicts with the shared choice is rejected rather than
 silently overriding either value. If a write returns
 `code="generation_parameters_required"`, do not retry unchanged. Call
-`freezone_request_user_clarification` once for all returned missing choices, apply the current
-request's answers to the same intent/plan, and retry the same operation. Approval behavior remains
-controlled by the execution mode.
+`freezone_request_user_clarification` once for all returned missing choices, passing already
+confirmed choices (at least the model) in `answers` so the recommendation comes from the same
+catalog entry. The clarification result carries `node_data.<node_type>` with the exact canvas
+fields; copy them verbatim into each matching node of the same intent/plan and retry the same
+operation. A recommended action always returns concrete values; a result with
+`status="generation_answers_incomplete"` means the choice is still missing and must be asked
+again, never defaulted. Approval behavior remains controlled by the execution mode.
 
-If the user selects a recommended/default image or video model, use the symbolic value
-`"recommended"` in the portable intent input or the media node's `data.model`. It is a user
-preference, not a catalog model id; the authorized adapter resolves it through the frontend's live
-default immediately before commit. Never invent a model id, and never rebuild a complete graph just
-to replace the symbolic recommendation after a failed write.
+When the user does not specify internal media settings, use `"recommended"` only for the media
+model preference in the portable intent or Plan. The authorized preflight resolves it to a concrete
+model id and compatible parameters from one scoped live Catalog snapshot before saving the draft.
+The final draft preview must contain concrete values. If the configured preferred model is absent
+or its capabilities do not support the requested values, stop on the returned blocker and ask the
+user to choose a product-level alternative. Never submit `"recommended"` as size, quality, or
+resolution, and never select the first Catalog model by position.
 
 Generation clarification must use one question per missing portable field; never combine model,
 ratio, resolution, duration, sound, or count into a single recommended-settings preset. Read the
-live node create schema once for each relevant image/video node type and use its exact options. A
-`video_resolution` question must expose every resolution supported by the selected/live model,
+live node create schema for each relevant image/video node type, then query it again with the
+selected `model_id` before choosing model-dependent parameters. Use the second response's exact
+options; do not reuse defaults from the model-agnostic schema or rewrite a user's selected value.
+A `video_resolution` question must expose every resolution supported by the selected/live model,
 including `480P` whenever the schema lists it.
 
 1. Identify the single matching workflow Skill from the user's explicit goal. Use

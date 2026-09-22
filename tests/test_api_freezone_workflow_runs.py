@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sqlite3
+import time
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from types import SimpleNamespace
 
@@ -196,6 +199,319 @@ def test_workflow_run_api_lifecycle(workflow_run_client: TestClient) -> None:
         workflow_run_client.get(base).json()["data"]["runs"][0]["run_id"]
         == created["run_id"]
     )
+
+
+@pytest.mark.parametrize(
+    "compile_mode",
+    ["memory_cache", "persistent_cache", "deterministic", "timeout_fallback", "model"],
+)
+def test_recipe_media_claim_accepts_trusted_compile_and_rejects_replay_change(
+    workflow_run_client: TestClient, monkeypatch, compile_mode: str
+) -> None:
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.agent_product_operations import (
+        bind_agent_product_model_execution,
+        finish_agent_product_operation,
+        read_agent_product_operation,
+    )
+    from novelvideo.freezone.workflow_runs import (
+        claim_workflow_media_action,
+        update_workflow_run,
+    )
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    created = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs",
+        json={
+            "actions": [
+                {
+                    "node_id": "image-1",
+                    "action": "generate_image",
+                    "recipe_id": "product-image",
+                    "recipe_version": "1.0.0",
+                    "generation_attempt_id": "attempt-image",
+                }
+            ]
+        },
+    ).json()["data"]
+    operation_id = created["actions"][0]["product_operation_id"]
+    operation = read_agent_product_operation(
+        project_dir=workflow_run_client.state_dir,
+        operation_id=operation_id,
+    )
+    if compile_mode == "model":
+        bind_agent_product_model_execution(
+            project_dir=workflow_run_client.state_dir,
+            operation_id=operation_id,
+            model_call_id="recipe-compiler:image",
+            executed_at=1.0,
+            source="server_recipe_compiler",
+            compile_mode="model",
+        )
+    else:
+        finish_agent_product_operation(
+            project_dir=workflow_run_client.state_dir,
+            operation_id=operation_id,
+            outcome="delivered",
+            expected_task_id=operation["task_id"],
+            result_ref={
+                "kind": "recipe_compile_result",
+                "id": operation_id,
+                "reason": compile_mode,
+                "content": "compiled prompt",
+            },
+            server_recipe_compile=True,
+        )
+    request = dict(
+        project_dir=workflow_run_client.state_dir,
+        project_id="proj_demo",
+        canvas_id="default",
+        node_id="image-1",
+        operation_id=operation_id,
+        attempt_id="attempt-image",
+        task_type="freezone_gen",
+        fingerprint="a" * 64,
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, again = list(
+            pool.map(lambda _index: claim_workflow_media_action(**request), range(2))
+        )
+    first, again = sorted((first, again), key=lambda claim: not claim["created"])
+    assert first["created"] is True
+    assert again["created"] is False
+    assert first["job_id"] == again["job_id"]
+    if compile_mode == "model":
+        finish_agent_product_operation(
+            project_dir=workflow_run_client.state_dir,
+            operation_id=operation_id,
+            outcome="delivered",
+            expected_task_id=operation["task_id"],
+            result_ref={
+                "kind": "recipe_result",
+                "id": first["job_id"],
+                "workflow_run_id": created["run_id"],
+                "node_id": "image-1",
+            },
+        )
+        assert claim_workflow_media_action(**request)["job_id"] == first["job_id"]
+    with pytest.raises(ValueError, match="already claimed"):
+        claim_workflow_media_action(**{**request, "fingerprint": "b" * 64})
+    with pytest.raises(ValueError, match="does not match"):
+        claim_workflow_media_action(**{**request, "attempt_id": "another"})
+    with pytest.raises(ValueError, match="cannot change"):
+        update_workflow_run(
+            project_dir=workflow_run_client.state_dir,
+            canvas_id="default",
+            run_id=created["run_id"],
+            action_updates=[
+                {
+                    "node_id": "image-1",
+                    "action": "generate_image",
+                    "status": "running",
+                    "job_id": "attacker-job",
+                }
+            ],
+        )
+
+
+@pytest.mark.parametrize(
+    "cancel_during_enqueue,fail_cancel_once",
+    [(False, False), (True, False), (True, True)],
+)
+@pytest.mark.asyncio
+async def test_recipe_media_enqueue_replays_terminal_task_without_rebilling(
+    workflow_run_client: TestClient,
+    monkeypatch,
+    cancel_during_enqueue: bool,
+    fail_cancel_once: bool,
+) -> None:
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.agent_product_operations import (
+        finish_agent_product_operation,
+        read_agent_product_operation,
+    )
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    created = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs",
+        json={
+            "actions": [
+                {
+                    "node_id": "image-1",
+                    "action": "generate_image",
+                    "recipe_id": "product-image",
+                    "recipe_version": "1.0.0",
+                    "generation_attempt_id": "attempt-image",
+                }
+            ]
+        },
+    ).json()["data"]
+    operation_id = created["actions"][0]["product_operation_id"]
+    operation = read_agent_product_operation(
+        project_dir=workflow_run_client.state_dir,
+        operation_id=operation_id,
+    )
+    finish_agent_product_operation(
+        project_dir=workflow_run_client.state_dir,
+        operation_id=operation_id,
+        outcome="delivered",
+        expected_task_id=operation["task_id"],
+        result_ref={
+            "kind": "recipe_compile_result",
+            "id": operation_id,
+            "reason": "memory_cache",
+            "content": "compiled prompt",
+        },
+        server_recipe_compile=True,
+    )
+    tasks = {}
+    enqueue_count = 0
+    cancelled_tasks = []
+    cancel_attempts = 0
+
+    class TaskManager:
+        def get_task_for_project(self, _ctx, _task_type, _episode, *, scope):
+            return tasks.get(scope)
+
+    class TaskBackend:
+        async def enqueue_project_task(self, _ctx, *, scope, **_kwargs):
+            nonlocal enqueue_count
+            enqueue_count += 1
+            state = SimpleNamespace(
+                task_id="media-task-1",
+                status="running" if cancel_during_enqueue else "completed",
+                metadata={"backend": "celery", "queue_kind": "default", "queue": "default"},
+            )
+            tasks[scope] = state
+            if cancel_during_enqueue:
+                from novelvideo.freezone.workflow_runs import update_workflow_run
+
+                update_workflow_run(
+                    project_dir=workflow_run_client.state_dir,
+                    canvas_id="default",
+                    run_id=created["run_id"],
+                    status="cancelled",
+                )
+            return SimpleNamespace(task_state=state, backend="celery", queue="default")
+
+        async def cancel_project_task(self, _ctx, task):
+            nonlocal cancel_attempts
+            cancel_attempts += 1
+            if fail_cancel_once and cancel_attempts == 1:
+                raise RuntimeError("temporary cancellation failure")
+            cancelled_tasks.append(task.task_id)
+            task.status = "cancelled"
+
+    monkeypatch.setattr(freezone, "get_task_manager", lambda: TaskManager())
+    monkeypatch.setattr(freezone, "get_task_backend", lambda: TaskBackend())
+    ctx = SimpleNamespace(
+        project_id="proj_demo", state_dir=str(workflow_run_client.state_dir)
+    )
+    payload = {
+        "canvas_id": "default",
+        "node_id": "image-1",
+        "product_operation_id": operation_id,
+        "generation_attempt_id": "attempt-image",
+        "prompt": "a castle",
+    }
+
+    async def enqueue(data):
+        return await freezone._enqueue_claimed_workflow_media(
+            ctx=ctx,
+            project_dir=workflow_run_client.state_dir,
+            task_type="freezone_gen",
+            queue_kind="default",
+            payload=data.copy(),
+            job_id="discarded-client-job",
+        )
+
+    if fail_cancel_once:
+        with pytest.raises(HTTPException) as cancellation_error:
+            await enqueue(payload)
+        assert cancellation_error.value.status_code == 503
+        first = await enqueue(payload)
+    else:
+        first = await enqueue(payload)
+    again = await enqueue(payload)
+    for field in ("job_id", "task_id", "queue", "backend"):
+        assert first["data"][field] == again["data"][field]
+    assert enqueue_count == 1
+    assert cancelled_tasks == (["media-task-1"] if cancel_during_enqueue else [])
+    assert cancel_attempts == (2 if fail_cancel_once else int(cancel_during_enqueue))
+    with pytest.raises(HTTPException) as exc:
+        await enqueue({**payload, "prompt": "another castle"})
+    assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_recipe_media_claim_recovers_after_enqueue_interruption(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.agent_product_operations import (
+        bind_agent_product_model_execution,
+    )
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    created = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs",
+        json={"actions": [{
+            "node_id": "image-1", "action": "generate_image",
+            "recipe_id": "product-image", "recipe_version": "1.0.0",
+            "generation_attempt_id": "attempt-image",
+        }]},
+    ).json()["data"]
+    operation_id = created["actions"][0]["product_operation_id"]
+    bind_agent_product_model_execution(
+        project_dir=workflow_run_client.state_dir,
+        operation_id=operation_id,
+        model_call_id="recipe-compiler:image", executed_at=1.0,
+        source="server_recipe_compiler", compile_mode="model",
+    )
+    attempts = []
+
+    class TaskManager:
+        def get_task_for_project(self, *_args, **_kwargs):
+            return None
+
+    class TaskBackend:
+        async def enqueue_project_task(self, _ctx, *, scope, **_kwargs):
+            attempts.append(scope)
+            if len(attempts) == 1:
+                raise RuntimeError("interrupted before task reservation")
+            return SimpleNamespace(
+                task_state=SimpleNamespace(task_id="recovered-task"),
+                backend="celery", queue="default",
+            )
+
+    monkeypatch.setattr(freezone, "get_task_manager", lambda: TaskManager())
+    monkeypatch.setattr(freezone, "get_task_backend", lambda: TaskBackend())
+    ctx = SimpleNamespace(project_id="proj_demo", state_dir=str(workflow_run_client.state_dir))
+    payload = {
+        "canvas_id": "default", "node_id": "image-1",
+        "product_operation_id": operation_id,
+        "generation_attempt_id": "attempt-image", "prompt": "a castle",
+    }
+
+    async def enqueue():
+        return await freezone._enqueue_claimed_workflow_media(
+            ctx=ctx, project_dir=workflow_run_client.state_dir,
+            task_type="freezone_gen", queue_kind="default",
+            payload=payload.copy(), job_id="discarded-client-job",
+        )
+
+    with pytest.raises(RuntimeError, match="interrupted"):
+        await enqueue()
+    with pytest.raises(HTTPException) as early:
+        await enqueue()
+    assert early.value.status_code == 503
+    with sqlite3.connect(workflow_run_client.state_dir / "data.db") as conn:
+        conn.execute(
+            "UPDATE workflow_run_actions SET media_claimed_at = ? WHERE run_id = ?",
+            (time.time() - 20, created["run_id"]),
+        )
+    recovered = await enqueue()
+    assert recovered["data"]["job_id"] == attempts[0] == attempts[1]
 
 
 def test_metered_workflow_run_admits_each_model_recipe_before_run_creation(
@@ -1006,6 +1322,7 @@ async def test_late_agent_product_delivery_confirms_reserved_credit(
         ctx=SimpleNamespace(project_id="proj_demo"),
         operation={
             "operation_id": "agent_product_a",
+            "project_id": "proj_demo",
             "task_id": "product-task-a",
             "task_type": "freezone_agent_recipe_result",
             "product_kind": "recipe_result",
@@ -1018,6 +1335,84 @@ async def test_late_agent_product_delivery_confirms_reserved_credit(
     assert settlements == [("reservation-a", "confirm")]
     assert completions[0]["metadata"]["settlement_status"] == "reconciled"
     assert observed_metrics == ["agent_product_reconciled"]
+
+
+@pytest.mark.asyncio
+async def test_late_agent_product_delivery_does_not_claim_failed_task_reconciled(
+    monkeypatch,
+) -> None:
+    from novelvideo.api.routes import freezone
+
+    settlements: list[str] = []
+    observed_metrics: list[str] = []
+    task = SimpleNamespace(
+        task_id="product-task-a",
+        status="failed",
+        metadata={
+            "feature_credit_reservation_id": "reservation-a",
+            "error_code": "AGENT_PRODUCT_SETTLEMENT_PENDING",
+        },
+    )
+
+    class UsageMeter:
+        async def settle_feature_credit_reservation(self, reservation_id, *, action, metadata):
+            settlements.append(reservation_id)
+
+    class Manager:
+        def get_task_for_project(self, *_args, **_kwargs):
+            return task
+
+        def complete_task_for_project(self, *_args, **_kwargs):
+            return False
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: UsageMeter())
+    monkeypatch.setattr(freezone, "get_task_manager", lambda: Manager())
+    monkeypatch.setattr(freezone.evidence_metrics, "observe", observed_metrics.append)
+
+    with pytest.raises(RuntimeError, match="did not reconcile"):
+        await freezone._settle_delivered_agent_product_task(
+            ctx=SimpleNamespace(project_id="proj_demo"),
+            operation={
+                "operation_id": "agent_product_a",
+                "project_id": "proj_demo",
+                "task_id": "product-task-a",
+                "task_type": "freezone_agent_recipe_result",
+                "product_kind": "recipe_result",
+                "status": "delivered",
+                "model_evidence": {"model_call_id": "provider-job-a"},
+                "result_ref": {"kind": "recipe_result", "id": "asset-a"},
+            },
+        )
+    assert settlements == ["reservation-a"]
+    assert observed_metrics == []
+
+
+@pytest.mark.asyncio
+async def test_late_agent_product_delivery_rejects_cross_project_receipt(monkeypatch) -> None:
+    from novelvideo.api.routes import freezone
+
+    class UsageMeter:
+        async def settle_feature_credit_reservation(self, *_args, **_kwargs):
+            pytest.fail("cross-project operation must not settle a reservation")
+
+    class Manager:
+        def get_task_for_project(self, *_args, **_kwargs):
+            pytest.fail("cross-project operation must not read another task")
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: UsageMeter())
+    monkeypatch.setattr(freezone, "get_task_manager", lambda: Manager())
+
+    await freezone._settle_delivered_agent_product_task(
+        ctx=SimpleNamespace(project_id="proj_demo"),
+        operation={
+            "operation_id": "agent_product_a",
+            "project_id": "another-project",
+            "task_id": "product-task-a",
+            "task_type": "freezone_agent_recipe_result",
+            "product_kind": "recipe_result",
+            "status": "delivered",
+        },
+    )
 
 
 @pytest.mark.asyncio
@@ -1503,6 +1898,34 @@ def test_workflow_draft_api_lifecycle(workflow_run_client: TestClient) -> None:
         ]
         == "confirming"
     )
+
+
+def test_workflow_draft_cancel_prevents_later_canvas_creation(
+    workflow_run_client: TestClient,
+) -> None:
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-drafts"
+    created = workflow_run_client.post(
+        base,
+        json={
+            "intent": {"skill_id": "video-ad", "user_goal": "广告"},
+            "compiled": _valid_draft_compiled(),
+        },
+    ).json()["data"]
+    path = f"{base}/{created['draft_id']}"
+
+    stale = workflow_run_client.post(
+        f"{path}/cancel", json={"expected_revision": 2}
+    )
+    assert stale.json()["status"] == "workflow_draft_revision_conflict"
+    cancelled = workflow_run_client.post(
+        f"{path}/cancel", json={"expected_revision": 1}
+    )
+    assert cancelled.status_code == 200
+    assert cancelled.json()["data"]["status"] == "cancelled"
+    assert workflow_run_client.get(path).json()["data"]["status"] == "cancelled"
+    claim = workflow_run_client.post(f"{path}/claim", json={"revision": 1})
+    assert claim.json()["status"] == "workflow_draft_not_confirmable"
+    assert workflow_run_client.enqueued_tasks == []
 
 
 @pytest.mark.parametrize("method", ["post", "patch"])
@@ -2291,6 +2714,55 @@ def test_backend_rejects_model_parameters_without_plugin_preflight(
     )
     assert response.status_code == 400, response.text
     assert response.json()["detail"]["status"] == "workflow_preflight_failed"
+
+
+@pytest.mark.parametrize("via_patch", [False, True])
+def test_exact_plan_recommendation_can_be_confirmed(
+    workflow_run_client, runtime_workflow_source, monkeypatch, via_patch
+):
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.workflow_transactions import prepare_workflow_source
+
+    async def recommended_models(project, user):
+        return {"ok": True, "data": [{
+            "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+            "ratioOptions": ["1:1", "9:16"],
+            "resolutionOptions": ["1K"], "qualityOptions": ["medium"],
+        }]}
+
+    monkeypatch.setattr(freezone, "freezone_image_models", recommended_models)
+    plan = prepare_workflow_source(runtime_workflow_source, username="alice")["compiled"]["plan"]
+    plan["inputs"] = {}
+    image = next(node for node in plan["nodes"] if node["node_type"] == "imageGenNode")
+    image["data"]["model"] = "recommended"
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-drafts"
+    if via_patch:
+        original = deepcopy(plan)
+        next(node for node in original["nodes"] if node["node_type"] == "imageGenNode")[
+            "data"
+        ]["model"] = "LingShan-G2"
+        created = workflow_run_client.post(base, json={"plan": original})
+        assert created.status_code == 200, created.text
+        target = f"{base}/{created.json()['data']['draft_id']}"
+        response = workflow_run_client.patch(
+            target, json={"expected_revision": 1, "plan": plan}
+        )
+    else:
+        response = workflow_run_client.post(base, json={"plan": plan})
+    assert response.status_code == 200, response.text
+    draft = response.json()["data"]
+    assert draft["intent"]["plan"] == draft["compiled"]["plan"]
+    resolved = next(
+        node for node in draft["compiled"]["plan"]["nodes"]
+        if node["node_type"] == "imageGenNode"
+    )["data"]
+    assert resolved["model"] == "LingShan-G2"
+    assert resolved["size"] == "1K"
+    claim = workflow_run_client.post(
+        f"{base}/{draft['draft_id']}/claim", json={"revision": draft["revision"]}
+    )
+    assert claim.status_code == 200, claim.text
+    assert claim.json()["data"]["status"] == "confirming"
 
 
 def test_confirmation_rechecks_live_models(

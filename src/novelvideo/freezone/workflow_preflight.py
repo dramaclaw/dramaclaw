@@ -4,6 +4,9 @@ from copy import deepcopy
 from typing import Any
 import math
 
+from novelvideo.api.schemas import FREEZONE_DEFAULT_IMAGE_MODEL
+from novelvideo.freezone.video_node import FREEZONE_DEFAULT_VIDEO_BACKEND
+
 _RECOMMENDED_GENERATION_MODEL_VALUES = {
     "auto",
     "default",
@@ -14,6 +17,177 @@ _RECOMMENDED_GENERATION_MODEL_VALUES = {
     "默认",
     "自动",
 }
+
+# Product defaults are preferences, never catalog ids. Resolve them only against
+# the caller's visible catalog. The order of entries in that catalog is irrelevant.
+_RECOMMENDED_MODEL_ALIASES = {
+    "imageGenNode": FREEZONE_DEFAULT_IMAGE_MODEL,
+    "videoNode": FREEZONE_DEFAULT_VIDEO_BACKEND,
+}
+_RECOMMENDED_OPTIONS = {
+    "aspectRatio": ("9:16", "16:9", "1:1"),
+    "imageSize": ("1K", "2K", "4K"),
+    "imageQuality": ("medium", "low", "high"),
+    "videoResolution": ("720p", "480p", "1080p", "2K"),
+}
+_VIDEO_CATALOG_MODES = {
+    "textToVideo": "text_to_video",
+    "firstFrame": "first_frame",
+    "imageToVideo": "image_to_video",
+    "firstLastFrame": "first_last_frame",
+    "imageReference": "image_reference",
+    "allReference": "all_reference",
+    "videoEdit": "video_edit",
+}
+
+
+def _preferred_option(entry: dict[str, Any], key: str, preferences: tuple[str, ...]) -> str | None:
+    options = _catalog_string_options(entry, key)
+    preferred = next(
+        (option for preferred in preferences for option in options
+         if option.casefold() == preferred.casefold()),
+        None,
+    )
+    return preferred or (options[0] if len(options) == 1 else None)
+
+
+def _catalog_entry_identifiers(entry: dict[str, Any]) -> set[str]:
+    """Every identifier a node may legitimately use for one catalog entry."""
+    values = (
+        entry.get("id"), entry.get("apiModel"), entry.get("api_model"),
+        entry.get("catalogId"), *(entry.get("aliases") or []),
+    )
+    return {
+        str(value).strip().casefold()
+        for value in values
+        if isinstance(value, (str, int)) and str(value).strip()
+    }
+
+
+def _catalog_entry_for_model(
+    catalog: list[dict[str, Any]], requested: str
+) -> dict[str, Any] | None:
+    wanted = requested.strip().casefold()
+    return next(
+        (item for item in catalog if wanted in _catalog_entry_identifiers(item)), None
+    )
+
+
+def resolve_generation_recommendations(
+    nodes: list[Any],
+    model_responses: dict[str, dict[str, Any]],
+    *,
+    fill_missing: bool = False,
+) -> list[dict[str, Any]]:
+    """Materialize concrete choices from one scoped catalog snapshot per media type.
+
+    Mutates only valid choices. A missing default or capability leaves a blocker;
+    callers must not persist or dispatch any node when blockers are returned.
+
+    ``fill_missing`` also completes nodes whose model is already concrete but
+    whose other fields are absent. It exists to build a recommendation the user
+    will see and accept; plan and canvas preflight keep the default so an
+    incomplete node is reported instead of silently defaulted.
+    """
+    blockers: list[dict[str, Any]] = []
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("node_type") not in _RECOMMENDED_MODEL_ALIASES:
+            continue
+        kind = node["node_type"]
+        data = node.get("data")
+        if not isinstance(data, dict):
+            data = {}
+            node["data"] = data
+        response = model_responses.get(kind) or {}
+        raw_catalog = response.get("data") if response.get("ok") is not False else None
+        if not isinstance(raw_catalog, list):
+            continue  # Existing runtime preflight reports unavailable catalogs.
+        catalog = [entry for entry in raw_catalog if isinstance(entry, dict)]
+        requested = str(data.get("model") or "").strip()
+        symbolic_fields = any(
+            isinstance(value, str)
+            and value.strip().casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
+            for key, value in data.items() if key in {"aspectRatio", "size", "quality"}
+        )
+        if not requested and not symbolic_fields:
+            continue
+        symbolic = not requested or requested.casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
+        if not symbolic and not symbolic_fields and not fill_missing:
+            continue
+        # A concrete model may be any identifier the catalog publishes for the
+        # entry (id, apiModel, catalogId or an alias such as ``newapi_gpt_image2``
+        # for ``LingShan-G2``); the symbolic default resolves the same way.
+        entry = _catalog_entry_for_model(
+            catalog, _RECOMMENDED_MODEL_ALIASES[kind] if symbolic else requested
+        )
+        if entry is None:
+            if symbolic or symbolic_fields:
+                blockers.append({
+                    "path": f"runtime.models.{node.get('id') or kind}.model",
+                    "code": "recommended_model_unavailable",
+                    "message": "The selected model is unavailable for recommended parameters",
+                })
+            continue
+        model_id = str(entry.get("id") or "").strip()
+        if not model_id:
+            blockers.append({
+                "path": f"runtime.models.{node.get('id') or kind}.model",
+                "code": "recommended_model_unavailable",
+                "message": "The recommended catalog entry has no model id",
+            })
+            continue
+        option_fields = {
+            "aspectRatio": ("ratioOptions", "aspectRatio"),
+            ("size" if kind == "imageGenNode" else "quality"): (
+                "resolutionOptions",
+                "imageSize" if kind == "imageGenNode" else "videoResolution",
+            ),
+        }
+        if kind == "imageGenNode" and _catalog_string_options(entry, "qualityOptions"):
+            option_fields["quality"] = ("qualityOptions", "imageQuality")
+        candidates = {
+            field: _preferred_option(entry, catalog_key, _RECOMMENDED_OPTIONS[preference_key])
+            for field, (catalog_key, preference_key) in option_fields.items()
+            if not data.get(field) or (
+                isinstance(data.get(field), str)
+                and str(data[field]).strip().casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
+            )
+        }
+        if any(value is None for value in candidates.values()):
+            blockers.append({
+                "path": f"runtime.models.{node.get('id') or kind}",
+                "code": "recommended_parameters_unavailable",
+                "message": "The selected catalog model has no compatible recommended parameters",
+            })
+            continue
+        if symbolic:
+            data["model"] = model_id
+        for field, value in candidates.items():
+            current = data.get(field)
+            if not current or (
+                isinstance(current, str)
+                and current.strip().casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
+            ):
+                data[field] = value
+        if kind == "imageGenNode" and not _catalog_string_options(entry, "qualityOptions"):
+            quality = str(data.get("quality") or "").strip().casefold()
+            if quality in _RECOMMENDED_GENERATION_MODEL_VALUES:
+                data.pop("quality", None)
+        data.setdefault("count", 1)
+        if kind == "videoNode":
+            minimum = entry.get("minDuration")
+            maximum = entry.get("maxDuration")
+            duration = data.get("durationSec")
+            if duration is None:
+                duration = 5
+                if isinstance(minimum, (int, float)) and minimum > duration:
+                    duration = int(math.ceil(minimum))
+                if isinstance(maximum, (int, float)) and maximum < duration:
+                    duration = int(math.floor(maximum))
+                data["durationSec"] = duration
+            if entry.get("supportsGenerateAudio") is not False:
+                data.setdefault("generateAudio", False)
+    return blockers
 
 
 def _catalog_string_options(entry: dict[str, Any], key: str) -> list[str]:
@@ -135,6 +309,30 @@ def _workflow_node_capability_blockers(
         )
     type_blockers = workflow_parameter_type_blockers(node)
     blockers.extend(type_blockers)
+    if node_type == "videoNode":
+        supported_modes = catalog_entry.get("supportedModes")
+        selected_mode = data.get("genMode") or "textToVideo"
+        catalog_mode = (
+            _VIDEO_CATALOG_MODES.get(selected_mode)
+            if isinstance(selected_mode, str) else None
+        )
+        if isinstance(supported_modes, list) and supported_modes and (
+            catalog_mode not in supported_modes
+        ):
+            allowed = [
+                mode for mode, catalog_mode in _VIDEO_CATALOG_MODES.items()
+                if catalog_mode in supported_modes
+            ]
+            blockers.append({
+                "path": f"runtime.models.{node_id}.genMode",
+                "message": (
+                    f"genMode value {selected_mode!r} is not supported by model "
+                    f"{model_id}; supported values: {allowed!r}"
+                ),
+                "code": "model_capability_unsupported",
+                "allowed_values": allowed,
+                "recovery": "choose_supported_value",
+            })
     duration_value = data.get("durationSec")
     invalid_duration = any(
         item["path"].endswith(".durationSec") for item in type_blockers
@@ -194,6 +392,8 @@ def evaluate_workflow_preflight(
     checks: dict[str, Any] = {}
     plan = compiled.get("plan") if isinstance(compiled.get("plan"), dict) else {}
     nodes = plan.get("nodes") if isinstance(plan.get("nodes"), list) else []
+    if runtime_available:
+        blockers.extend(resolve_generation_recommendations(nodes, model_responses))
     for node in nodes:
         if (
             isinstance(node, dict)
@@ -240,27 +440,27 @@ def evaluate_workflow_preflight(
                 )
                 continue
             raw_models = response.get("data")
-            catalog_by_id = (
-                {
-                    str(
-                        item.get("id")
-                        or item.get("apiModel")
-                        or item.get("api_model")
-                        or ""
-                    ).strip(): item
-                    for item in raw_models
-                    if isinstance(item, dict)
-                    and str(
-                        item.get("id")
-                        or item.get("apiModel")
-                        or item.get("api_model")
-                        or ""
-                    ).strip()
-                }
+            catalog = (
+                [item for item in raw_models if isinstance(item, dict)]
                 if isinstance(raw_models, list)
-                else {}
+                else []
             )
-            missing = sorted(requested - set(catalog_by_id))
+            # Primary ids for the available_models listing only; a node may name
+            # the same entry by any legal identifier (id, apiModel, alias...).
+            catalog_by_id = {
+                str(
+                    item.get("id") or item.get("apiModel") or item.get("api_model") or ""
+                ).strip(): item
+                for item in catalog
+                if str(
+                    item.get("id") or item.get("apiModel") or item.get("api_model") or ""
+                ).strip()
+            }
+            missing = sorted(
+                model
+                for model in requested
+                if _catalog_entry_for_model(catalog, model) is None
+            )
             checks[f"{node_type}.models"] = {
                 "requested": sorted(requested),
                 "available": not missing,
@@ -303,7 +503,7 @@ def evaluate_workflow_preflight(
             )
             for node in typed_nodes:
                 model = str((node.get("data") or {}).get("model") or "").strip()
-                catalog_entry = catalog_by_id.get(model)
+                catalog_entry = _catalog_entry_for_model(catalog, model)
                 if catalog_entry is not None:
                     blockers.extend(
                         _workflow_node_capability_blockers(node, catalog_entry)

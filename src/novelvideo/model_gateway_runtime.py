@@ -72,6 +72,10 @@ _MODEL_GATEWAY_SUBMIT_LEDGER: ContextVar[_SubmitLedger | None] = ContextVar(
     "novelvideo_model_gateway_submit_ledger",
     default=None,
 )
+_MODEL_GATEWAY_ATTEMPT_KEY: ContextVar[str | None] = ContextVar(
+    "novelvideo_model_gateway_attempt_key",
+    default=None,
+)
 
 _EGRESS_ERROR_MESSAGES = {
     "EGRESS_OPERATION_REPLAYED": "egress operation cannot be replayed",
@@ -115,6 +119,23 @@ def model_gateway_request_scope(
     finally:
         _MODEL_GATEWAY_SUBMIT_LEDGER.reset(ledger_token)
         _MODEL_GATEWAY_CONTEXT.reset(token)
+
+
+@contextmanager
+def model_gateway_attempt_scope(attempt_key: str) -> Iterator[None]:
+    """Name an orchestrator-approved retry independently of a leaf's scope.
+
+    A leaf may reopen ``model_gateway_request_scope`` for every call, resetting
+    its occurrence counter. The stable attempt key survives that nested scope,
+    while a redelivery of the same task reproduces the same egress identity.
+    """
+    if type(attempt_key) is not str or not attempt_key.strip():
+        raise ValueError("attempt_key must be a nonempty string")
+    token = _MODEL_GATEWAY_ATTEMPT_KEY.set(attempt_key)
+    try:
+        yield
+    finally:
+        _MODEL_GATEWAY_ATTEMPT_KEY.reset(token)
 
 
 @contextmanager
@@ -164,6 +185,9 @@ def next_model_gateway_business_task_id(
     if context is None or ledger is None:
         raise ModelGatewayEgressError("ORG_EGRESS_DENIED")
     occurrence = ledger.next_occurrence(capability, request_digest)
+    attempt_key = _MODEL_GATEWAY_ATTEMPT_KEY.get()
+    if attempt_key is not None:
+        return f"{context.envelope_id}:{attempt_key}:{capability}:{request_digest}:{occurrence:06d}"
     return f"{context.envelope_id}:{capability}:{request_digest}:{occurrence:06d}"
 
 

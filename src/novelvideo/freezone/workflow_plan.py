@@ -229,6 +229,27 @@ def validate_workflow_plan(
             errors=errors,
         )
 
+    external_inputs = payload.get("external_inputs") or []
+    external_ids: set[str] = set()
+    if not isinstance(external_inputs, list) or len(external_inputs) > 24:
+        errors.append(_issue("external_inputs", "must be an array of at most 24 items"))
+        external_inputs = []
+    for index, source in enumerate(external_inputs):
+        path = f"external_inputs[{index}]"
+        if not isinstance(source, dict) or set(source) != {"id", "node_id", "media_kind"}:
+            errors.append(_issue(path, "requires id, node_id and media_kind"))
+            continue
+        alias, node_id = source.get("id"), source.get("node_id")
+        if (not isinstance(alias, str) or not _ID_RE.fullmatch(alias)
+                or alias in node_types or not isinstance(node_id, str)
+                or not _ID_RE.fullmatch(node_id) or source.get("media_kind") != "image"):
+            errors.append(_issue(path, "invalid external image input"))
+            continue
+        external_ids.add(alias)
+        node_types[alias] = "imageGenNode"
+        node_values[alias] = {"id": alias, "node_type": "imageGenNode", "data": {}}
+        node_indexes[alias] = -1
+
     top_level_skill = payload.get("skill")
     if isinstance(top_level_skill, dict):
         skill_id = str(top_level_skill.get("id") or "").strip()
@@ -286,6 +307,10 @@ def validate_workflow_plan(
         source = edge.get("source")
         target = edge.get("target")
         link_type = str(edge.get("link_type") or "").strip()
+        if target in external_ids:
+            errors.append(_issue(f"{path}.target", "external input cannot be an edge target"))
+        if source in external_ids and link_type != "media_input_for":
+            errors.append(_issue(f"{path}.link_type", "external image input requires media_input_for"))
         if source not in node_types:
             errors.append(_issue(f"{path}.source", f"unknown node: {source}"))
         if target not in node_types:
@@ -348,6 +373,8 @@ def validate_workflow_plan(
             )
         )
     for node_id, node in node_values.items():
+        if node_id in external_ids:
+            continue
         node_type = node_types[node_id]
         node_index = node_indexes[node_id]
         data = node.get("data") if isinstance(node.get("data"), dict) else {}

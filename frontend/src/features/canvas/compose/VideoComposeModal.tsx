@@ -11,6 +11,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import i18n from "i18next";
 import {
   ArrowLeftToLine,
   ArrowRightToLine,
@@ -65,6 +66,7 @@ import {
 } from "./audioPeaks";
 import {
   activeClipAt,
+  applyProbedDurations,
   buildComposePayload,
   clipLengthMs,
   compactVideoTracks,
@@ -154,6 +156,12 @@ function formatTimecode(ms: number, fps = 30): string {
   return `${pad(h)}:${pad(m)}:${pad(s)}:${pad(f)}`;
 }
 
+/**
+ * 探测超时：URL 网络卡住时元素既不触发 loadedmetadata 也不触发 error，自动合成
+ * 会 await 在这里永不返回。超时按探测失败处理。
+ */
+export const PROBE_TIMEOUT_MS = 15_000;
+
 /** Probe a media file's intrinsic duration (ms) via an offscreen element. */
 function probeMediaDuration(
   url: string,
@@ -163,7 +171,12 @@ function probeMediaDuration(
     const el = document.createElement(kind === "audio" ? "audio" : "video");
     el.preload = "metadata";
     el.muted = true;
+    let settled = false;
+    const timer = setTimeout(() => done(null), PROBE_TIMEOUT_MS);
     const done = (value: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       el.removeAttribute("src");
       try {
         el.load();
@@ -188,6 +201,37 @@ function probeMediaDuration(
       done(null);
     }
   });
+}
+
+/**
+ * 为源时长未知（durationMs 为空、仍按 5s 兜底排布）的片段探测真实时长并写回。
+ * 自动合成不经过弹窗、没有弹窗里的探测 effect，提交前必须先走这里，否则兜底
+ * 长度会被当成裁剪区间直接导出（两段 10s 合出 15s）。视频片段探测失败时抛错，
+ * 宁可不合成也不静默截断。
+ */
+export async function resolveUnknownClipDurations(
+  state: ComposeTimelineState,
+): Promise<ComposeTimelineState> {
+  const pending = state.tracks.flatMap((track) =>
+    track.clips.filter((clip) => clip.durationMs == null),
+  );
+  if (pending.length === 0) return state;
+  const probed = new Map<string, number>();
+  await Promise.all(
+    pending.map(async (clip) => {
+      const durationMs = await probeMediaDuration(clip.sourceUrl, clip.kind);
+      if (durationMs != null) {
+        probed.set(clip.id, durationMs);
+      } else if (clip.kind === "video") {
+        throw new Error(
+          i18n.t("videoCompose.error.probeFailed", {
+            name: clip.displayName ?? clip.sourceUrl,
+          }),
+        );
+      }
+    }),
+  );
+  return applyProbedDurations(state, probed);
 }
 
 /** Seed an initial timeline from the selected video/audio canvas nodes. */
@@ -804,35 +848,16 @@ export function VideoComposeModal({
     const pending = timeline.tracks.flatMap((track) =>
       track.clips
         .filter((clip) => clip.durationMs == null)
-        .map((clip) => ({ trackId: track.id, clip, kind: track.kind })),
+        .map((clip) => ({ clip, kind: track.kind })),
     );
     if (pending.length === 0) return;
     void Promise.all(
-      pending.map(async ({ trackId, clip, kind }) => {
+      pending.map(async ({ clip, kind }) => {
         const probed = await probeMediaDuration(clip.sourceUrl, kind);
         if (cancelled || probed == null) return;
-        setTimeline((prev) => ({
-          ...prev,
-          tracks: prev.tracks.map((track) =>
-            track.id !== trackId
-              ? track
-              : {
-                  ...track,
-                  clips: track.clips.map((c) =>
-                    c.id !== clip.id
-                      ? c
-                      : {
-                          ...c,
-                          durationMs: probed,
-                          trimEndMs:
-                            c.trimEndMs === FALLBACK_CLIP_MS || c.trimEndMs > probed
-                              ? probed
-                              : c.trimEndMs,
-                        },
-                  ),
-                },
-          ),
-        }));
+        setTimeline((prev) =>
+          applyProbedDurations(prev, new Map([[clip.id, probed]])),
+        );
       }),
     );
     return () => {

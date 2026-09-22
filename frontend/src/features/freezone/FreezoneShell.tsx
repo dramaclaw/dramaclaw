@@ -9,8 +9,10 @@ import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Clapperboard,
+  PanelRight,
   PanelRightClose,
   PanelRightOpen,
+  PictureInPicture2,
   Plus,
   Search,
   Workflow,
@@ -224,6 +226,20 @@ const FREEZONE_CHAT_MIN_BOARD_CONTENT_WIDTH = 680;
  */
 const CHAT_PANE_WIDTH_VAR = "--freezone-chat-pane-width";
 const AGENT_HISTORY_PANE_WIDTH_VAR = "--freezone-agent-history-pane-width";
+/**
+ * 虾导两种摆法：停靠右侧（通高抽屉，顶栏等据 --freezone-dock-width 让位）或浮窗
+ * （圆角悬浮窗压在内容上，可拖动，谁也不挤）。用户在聊天头部切换，偏好存本地。
+ */
+type FreezoneChatDockMode = "docked" | "floating";
+const FREEZONE_CHAT_DOCK_MODE_STORAGE_KEY = "freezone.chatDock.mode";
+/** 浮窗位置按「右边距 + 上边距」存：左缘拖宽时右边不动，与停靠态的拖宽手感一致。 */
+const FREEZONE_CHAT_FLOAT_POS_STORAGE_KEY = "freezone.chatDock.floatPos";
+const FREEZONE_CHAT_FLOAT_HEIGHT = 720;
+const FREEZONE_CHAT_FLOAT_MARGIN = 12;
+/** 上下各让开顶栏（48px）与底部任务状态条（36px），浮窗不被它们压住。 */
+const FREEZONE_CHAT_FLOAT_MIN_TOP = 56;
+const FREEZONE_CHAT_FLOAT_BOTTOM_RESERVE = 44;
+const FREEZONE_CHAT_FLOAT_DEFAULT_POS = { right: 24, top: FREEZONE_CHAT_FLOAT_MIN_TOP + 8 };
 const EXTERNAL_CANVAS_COMMAND_POLL_MS = 800;
 const EXTERNAL_CANVAS_REVISION_POLL_MS = 2_000;
 
@@ -258,6 +274,49 @@ function loadStoredPanelWidth(key: string, fallback: number, min: number, max: n
 function storePanelWidth(key: string, value: number): void {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(key, String(Math.round(value)));
+}
+
+function loadChatDockMode(): FreezoneChatDockMode {
+  try {
+    return window.localStorage.getItem(FREEZONE_CHAT_DOCK_MODE_STORAGE_KEY) === "floating"
+      ? "floating"
+      : "docked";
+  } catch {
+    return "docked";
+  }
+}
+
+function storeChatDockMode(mode: FreezoneChatDockMode): void {
+  try {
+    window.localStorage.setItem(FREEZONE_CHAT_DOCK_MODE_STORAGE_KEY, mode);
+  } catch {
+    // 存不下只是下次回到默认停靠，不影响本次切换。
+  }
+}
+
+function loadChatFloatPos(): { right: number; top: number } {
+  try {
+    const raw = window.localStorage.getItem(FREEZONE_CHAT_FLOAT_POS_STORAGE_KEY);
+    if (!raw) return FREEZONE_CHAT_FLOAT_DEFAULT_POS;
+    const parsed = JSON.parse(raw) as { right?: unknown; top?: unknown };
+    if (typeof parsed.right === "number" && typeof parsed.top === "number") {
+      return { right: parsed.right, top: parsed.top };
+    }
+  } catch {
+    // ignore malformed storage
+  }
+  return FREEZONE_CHAT_FLOAT_DEFAULT_POS;
+}
+
+function storeChatFloatPos(pos: { right: number; top: number }): void {
+  try {
+    window.localStorage.setItem(
+      FREEZONE_CHAT_FLOAT_POS_STORAGE_KEY,
+      JSON.stringify({ right: Math.round(pos.right), top: Math.round(pos.top) }),
+    );
+  } catch {
+    // ignore storage failures
+  }
 }
 
 /**
@@ -2466,6 +2525,7 @@ function FreezoneChatDock({
   /** 画布是否在前台。false 时抽屉不再向全局广播让位宽度（见下方 effect）。 */
   hostActive: boolean;
 }) {
+  const { t } = useTranslation();
   const isDesktop = useMediaQuery("(min-width: 1024px)");
   const [shouldRenderPanel, setShouldRenderPanel] = useState(open);
   const [panelVisible, setPanelVisible] = useState(open);
@@ -2488,6 +2548,15 @@ function FreezoneChatDock({
     ),
   );
   const [resizingPane, setResizingPane] = useState<"chat" | "history" | null>(null);
+  const [dockMode, setDockMode] = useState<FreezoneChatDockMode>(loadChatDockMode);
+  // 窄屏走 Sheet，没有浮窗一说。
+  const floating = isDesktop && dockMode === "floating";
+  const [floatPos, setFloatPos] = useState(loadChatFloatPos);
+  const [draggingFloat, setDraggingFloat] = useState(false);
+  const [viewportSize, setViewportSize] = useState(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  }));
   const asideRef = useRef<HTMLElement | null>(null);
   const spacerRef = useRef<HTMLDivElement | null>(null);
   const localAgentSelectionRef = useRef(false);
@@ -2602,10 +2671,12 @@ function FreezoneChatDock({
     document.body.style.userSelect = "none";
     setResizingPane(pane);
 
+    // 浮窗不挤占画布，只需在视口里留出左右边距；停靠态才要给画布预留最小宽度。
+    const reservedWidth = floating ? FREEZONE_CHAT_FLOAT_MARGIN * 2 : minContentWidth;
     const clampChatWidth = (value: number) => {
       const maxByViewport = Math.max(
         FREEZONE_CHAT_WIDTH_MIN,
-        window.innerWidth - minContentWidth - (agentHistoryOpen ? agentHistoryWidth : 0),
+        window.innerWidth - reservedWidth - (agentHistoryOpen ? agentHistoryWidth : 0),
       );
       return clampNumber(
         value,
@@ -2616,7 +2687,7 @@ function FreezoneChatDock({
     const clampHistoryWidth = (value: number) => {
       const maxByViewport = Math.max(
         FREEZONE_AGENT_HISTORY_WIDTH_MIN,
-        window.innerWidth - minContentWidth - chatWidth,
+        window.innerWidth - reservedWidth - chatWidth,
       );
       return clampNumber(
         value,
@@ -2654,10 +2725,13 @@ function FreezoneChatDock({
       }
       if (spacerRef.current) spacerRef.current.style.width = `${dockWidth}px`;
       // 顶栏 / 底部状态条也在同一帧让位（过渡已被压成 0ms），否则它们会拖在手后面。
-      document.documentElement.style.setProperty(
-        FREEZONE_DOCK_WIDTH_VAR,
-        freezoneDockOffsetCss(dockWidth, minContentWidth),
-      );
+      // 浮窗不占位，也就不让位。
+      if (!floating) {
+        document.documentElement.style.setProperty(
+          FREEZONE_DOCK_WIDTH_VAR,
+          freezoneDockOffsetCss(dockWidth, minContentWidth),
+        );
+      }
     };
 
     const handlePointerMove = (moveEvent: PointerEvent) => {
@@ -2708,7 +2782,16 @@ function FreezoneChatDock({
     window.addEventListener("pointercancel", cleanup);
     window.addEventListener("blur", cleanup);
     target.addEventListener("lostpointercapture", cleanup);
-  }, [agentHistoryOpen, agentHistoryWidth, chatWidth, minContentWidth]);
+  }, [agentHistoryOpen, agentHistoryWidth, chatWidth, floating, minContentWidth]);
+
+  const toggleDockMode = useCallback(() => {
+    setDockMode((current) => {
+      const next = current === "floating" ? "docked" : "floating";
+      storeChatDockMode(next);
+      return next;
+    });
+  }, []);
+  const dockModeToggleLabel = floating ? t("freezone.chat.dockRight") : t("freezone.chat.floatWindow");
 
   const agentHeaderActions = (
     <>
@@ -2741,6 +2824,27 @@ function FreezoneChatDock({
         >
           {agentHistoryOpen ? <PanelRightClose className="size-4" /> : <PanelRightOpen className="size-4" />}
         </Button>
+      )}
+      {isDesktop && (
+        <TooltipProvider delay={80}>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={toggleDockMode}
+                  aria-label={dockModeToggleLabel}
+                  className="text-muted-foreground hover:bg-white/[0.08] hover:text-foreground"
+                />
+              }
+            >
+              {floating ? <PanelRight className="size-4" /> : <PictureInPicture2 className="size-4" />}
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{dockModeToggleLabel}</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       )}
     </>
   );
@@ -2826,14 +2930,108 @@ function FreezoneChatDock({
     const root = document.documentElement;
     root.style.setProperty(
       FREEZONE_DOCK_WIDTH_VAR,
-      isDesktop && panelVisible && hostActive
+      isDesktop && panelVisible && hostActive && !floating
         ? freezoneDockOffsetCss(dockWidth, minContentWidth)
         : "0px",
     );
     return () => {
       root.style.removeProperty(FREEZONE_DOCK_WIDTH_VAR);
     };
-  }, [dockWidth, hostActive, isDesktop, minContentWidth, panelVisible]);
+  }, [dockWidth, floating, hostActive, isDesktop, minContentWidth, panelVisible]);
+
+  // 浮窗要跟着窗口尺寸重新钳位，否则缩窗后标题栏可能跑出可视区、再也拖不回来。
+  useEffect(() => {
+    if (!floating) return;
+    const handleResize = () => setViewportSize({ width: window.innerWidth, height: window.innerHeight });
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [floating]);
+
+  // 可用高度是硬上限：矮窗口里宁可浮窗变矮，也不能压住底部状态区或越出视口、
+  // 让输入框够不着。
+  const floatHeight = Math.max(
+    0,
+    Math.min(
+      FREEZONE_CHAT_FLOAT_HEIGHT,
+      viewportSize.height - FREEZONE_CHAT_FLOAT_MIN_TOP - FREEZONE_CHAT_FLOAT_BOTTOM_RESERVE,
+    ),
+  );
+  const clampFloatPos = useCallback((pos: { right: number; top: number }, width: number) => ({
+    right: clampNumber(
+      pos.right,
+      FREEZONE_CHAT_FLOAT_MARGIN,
+      Math.max(FREEZONE_CHAT_FLOAT_MARGIN, window.innerWidth - width - FREEZONE_CHAT_FLOAT_MARGIN),
+    ),
+    top: clampNumber(
+      pos.top,
+      FREEZONE_CHAT_FLOAT_MIN_TOP,
+      Math.max(
+        FREEZONE_CHAT_FLOAT_MIN_TOP,
+        window.innerHeight - floatHeight - FREEZONE_CHAT_FLOAT_BOTTOM_RESERVE,
+      ),
+    ),
+  }), [floatHeight]);
+  // 每次渲染现钳：viewportSize 变化会触发重渲染，钳位本身读实时的 window 尺寸。
+  const renderedFloatPos = clampFloatPos(floatPos, dockWidth);
+
+  // 浮窗靠聊天头部拖动。按在头部的按钮/菜单上不算拖（交给按钮自己）。
+  // 与拖宽同理：拖动期间只改 DOM 的 right/top，松手才回写 state、落库。
+  const startFloatDrag = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    if (!floating || event.button !== 0) return;
+    const target = event.target as HTMLElement | null;
+    if (!target?.closest("[data-freezone-chat-drag-handle]")) return;
+    if (target.closest("button, a, input, textarea, select, [role='button'], [role='menuitem']")) return;
+    event.preventDefault();
+    const pointerId = event.pointerId;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const start = renderedFloatPos;
+    let latest = start;
+    let frame = 0;
+    let pointerX = startX;
+    let pointerY = startY;
+
+    document.body.style.userSelect = "none";
+    setDraggingFloat(true);
+
+    const paint = () => {
+      frame = 0;
+      latest = clampFloatPos(
+        { right: start.right - (pointerX - startX), top: start.top + (pointerY - startY) },
+        dockWidth,
+      );
+      const aside = asideRef.current;
+      if (aside) {
+        aside.style.right = `${latest.right}px`;
+        aside.style.top = `${latest.top}px`;
+      }
+    };
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      pointerX = moveEvent.clientX;
+      pointerY = moveEvent.clientY;
+      if (frame === 0) frame = window.requestAnimationFrame(paint);
+    };
+    const cleanup = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", cleanup);
+      window.removeEventListener("pointercancel", cleanup);
+      window.removeEventListener("blur", cleanup);
+      if (frame !== 0) {
+        window.cancelAnimationFrame(frame);
+        paint();
+      }
+      document.body.style.userSelect = "";
+      setDraggingFloat(false);
+      setFloatPos(latest);
+      storeChatFloatPos(latest);
+    };
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", cleanup);
+    window.addEventListener("pointercancel", cleanup);
+    window.addEventListener("blur", cleanup);
+  }, [clampFloatPos, dockWidth, floating, renderedFloatPos]);
 
   // 拖宽期间把让位动画压成 0ms：留着 300ms 缓动的话，每一帧都会重排一段新的缓动，
   // 顶栏边缘会像橡皮筋一样吊在抽屉后面。
@@ -2902,9 +3100,12 @@ function FreezoneChatDock({
     : "transition-[opacity,transform,width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]";
   const dockStyle = {
     width: dockWidth,
-    maxWidth: dockMaxWidth,
+    maxWidth: floating ? `calc(100vw - ${FREEZONE_CHAT_FLOAT_MARGIN * 2}px)` : dockMaxWidth,
     [CHAT_PANE_WIDTH_VAR]: `${chatWidth}px`,
     [AGENT_HISTORY_PANE_WIDTH_VAR]: `${agentHistoryWidth}px`,
+    ...(floating
+      ? { right: renderedFloatPos.right, top: renderedFloatPos.top, height: floatHeight }
+      : null),
   } as CSSProperties;
 
   return (
@@ -2919,7 +3120,7 @@ function FreezoneChatDock({
       {/* 故事板：在 flex 行里占一格，把 <main>(flex-1) 挤窄——抽屉本身仍是绝对定位
           的浮层，正好盖住这一格。这样开合/拖宽只动这个占位块，抽屉内部布局与工作流
           态共用同一份代码。拖拽中关掉宽度过渡，否则跟手会有一帧延迟。 */}
-      {pushesContent && (
+      {pushesContent && !floating && (
         <div
           ref={spacerRef}
           aria-hidden="true"
@@ -2942,17 +3143,26 @@ function FreezoneChatDock({
           // z 必须 <50：shadcn 的浮层（下拉/选择/气泡/提示/弹窗）都 portal 到 body 且
           // 定位层是 isolate z-50，抽屉一旦到 50 以上，抽屉内所有菜单都会被自己的实底
           // 盖住 —— 表现就是「点了没反应」。45 只要高过任务面板(z-40)与其遮罩(z-30)即可。
-          "fixed inset-y-0 right-0 z-[45] hidden flex-col overflow-hidden border-l border-white/[0.12] shadow-none lg:flex",
+          // 浮窗：同一个 fixed 外壳改成圆角悬浮窗，位置/高度走 style；拖头部移动。
+          floating
+            ? "fixed z-[45] hidden flex-col overflow-hidden rounded-2xl border border-white/[0.12] shadow-[0_24px_64px_rgba(0,0,0,0.55)] lg:flex [&_[data-freezone-chat-drag-handle]]:cursor-grab"
+            : "fixed inset-y-0 right-0 z-[45] hidden flex-col overflow-hidden border-l border-white/[0.12] shadow-none lg:flex",
+          draggingFloat && "[&_[data-freezone-chat-drag-handle]]:cursor-grabbing",
           // 实底 #212121（用户指定）：比故事板面板的 #262626 再深一档，agent 抽屉不再是半透明
           // 毛玻璃。顺带把 backdrop-blur-2xl 一起去掉——通高的大半径模糊每帧都要
           // 重新光栅化，是拖宽「跟不上手」的主因，实底之后它也没有可模糊的东西了。
-          "bg-[#212121]",
+          // 浮窗例外：压在画布/预览图上，半透明 + 模糊能透出底下的内容（对标参考稿）。
+          // 浮窗只有 720px 高、面积小，模糊的光栅化成本比通高抽屉低得多。
+          floating ? "bg-[#212121]/25 backdrop-blur-md" : "bg-[#212121]",
           dockTransition,
-          panelVisible ? "translate-x-0 opacity-100" : "translate-x-10 opacity-0",
+          panelVisible
+            ? floating ? "scale-100 opacity-100" : "translate-x-0 opacity-100"
+            : floating ? "scale-95 opacity-0" : "translate-x-10 opacity-0",
           !panelVisible && "pointer-events-none",
         )}
         style={dockStyle}
         aria-label={title}
+        onPointerDown={startFloatDrag}
       >
         {/* 命中区整条压在面板内侧（12px）：外壳是 overflow-hidden，把手往画布那侧
             平移出去的部分会被裁掉——连同命中区一起裁，原来 -translate-x-1 的写法

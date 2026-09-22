@@ -3,11 +3,17 @@
     "ariaLabel": "Confirm workflow creation",
     "title": "Workflow plan awaiting confirmation",
     "summary": "{{nodes}} nodes · {{edges}} connections. Not yet applied to the canvas.",
+    "referenceImages": "Reference images",
     "changed": "The plan has changed. Review it again before confirming.",
     "failed": "Confirmation could not be submitted. Retry; no new draft was created.",
+    "cancelFailed": "Could not cancel the plan. Please retry.",
+    "cancelled": "Workflow plan cancelled. The canvas was not changed. Tell me what you would like to adjust.",
+    "notConfirmable": "This workflow plan was cancelled and can no longer create canvas nodes.",
     "confirmMessage": "Confirm creation of this workflow",
     "confirmRunMessage": "Confirm creation and execution of this workflow",
     "sending": "Submitting confirmation…",
+    "cancelling": "Cancelling…",
+    "cancel": "Cancel plan",
     "confirmRun": "Confirm and run",
     "confirm": "Confirm creation"
   },
@@ -900,6 +906,8 @@
       "toggle": "Open Freezone Xia Director",
       "close": "Collapse Freezone Xia Director",
       "resize": "Drag to resize Freezone Xia Director",
+      "floatWindow": "Switch to floating window",
+      "dockRight": "Dock to the right",
       "audioApproval": {
         "chooseVoiceTitle": "Choose a narration voice",
         "chooseVoiceDescription": "Choose a custom voice. If you do not choose one now, narration generation will be skipped.",
@@ -923,6 +931,12 @@
       "canvasRetryPrompt": "Recheck and continue the unfinished canvas operation. Preserve completed results, verify existing nodes and run state, then complete generation parameters before requesting approval again.",
       "canvasRetryDisplay": "Recheck and continue the unfinished canvas operation",
       "generationParams": {
+        "catalog": {
+          "loading": "Loading the model catalog. Choose parameters when it is ready.",
+          "fallback": "The model catalog is unavailable. Please try again later.",
+          "empty": "No generation models are configured. Ask an administrator to configure one.",
+          "model_unavailable": "The previously selected model is unavailable. Select a model again before choosing parameters."
+        },
         "autoRatio": "Auto ratio",
         "imageQuality": "Image quality",
         "quality": {
@@ -8290,7 +8304,8 @@
     "error": {
       "prefix": "Compose failed",
       "noUrl": "Compose finished but returned no video URL",
-      "overlap": "Video clips overlap in time, which compositing doesn't support yet. Space the overlapping video clips apart or remove one, then export again."
+      "overlap": "Video clips overlap in time, which compositing doesn't support yet. Space the overlapping video clips apart or remove one, then export again.",
+      "probeFailed": "Could not read the video clip duration: {{name}}"
     },
     "node": {
       "hint": "Connect at least {{min}} video nodes to open",

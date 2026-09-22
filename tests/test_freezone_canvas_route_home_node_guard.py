@@ -288,11 +288,14 @@ def test_only_placement_free_canvas_routes_opt_out_of_the_home_node_guard() -> N
         and _opts_out_of_the_guard(call)
     }
 
-    # 合并工作流、互动故事及跨项目资源复制路由后的数量。
-    assert router_decorators == 109
-    assert len(canvas_routes) == 30
+    # Combined Agent/Workflow, interactive-story, and asset-copy routes.
+    assert router_decorators == 110
+    assert len(canvas_routes) == 31
 
     assert set(canvas_routes) >= PLACEMENT_FREE_CANVAS_ROUTES
+    assert "cancel_canvas_workflow_draft" in canvas_routes
+    assert canvas_routes["cancel_canvas_workflow_draft"]
+    assert not any(_opts_out_of_the_guard(call) for call in canvas_routes["cancel_canvas_workflow_draft"])
 
     # 正向：白名单路由必须全部、且每一处调用都 opt-out。
     missing = {

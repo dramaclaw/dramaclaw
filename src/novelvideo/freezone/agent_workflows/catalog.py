@@ -579,6 +579,15 @@ def get_workflow_skill(args: dict[str, Any]) -> dict[str, Any]:
     from novelvideo.freezone.workflow_planning import WORKFLOW_PLANNING_INSTRUCTIONS
 
     planning_skill = _without_private_fields(skill)
+    allowed_node_types = {
+        node_type
+        for node_type, capability in _CAPABILITY_BY_NODE_TYPE.items()
+        if capability in allowed_capabilities
+    }
+    # Composition is a terminal canvas operation rather than a Recipe capability.
+    # Keep the planning package aligned with plan validation for video Skills.
+    if "videoNode" in allowed_node_types:
+        allowed_node_types.add("videoComposeNode")
     return {
         "ok": True,
         "schema_version": "freezone_workflow_skill_package.v1",
@@ -607,11 +616,7 @@ def get_workflow_skill(args: dict[str, Any]) -> dict[str, Any]:
             }
             for capability in allowed_capabilities
         ],
-        "allowed_node_types": sorted(
-            node_type
-            for node_type, capability in _CAPABILITY_BY_NODE_TYPE.items()
-            if capability in allowed_capabilities
-        ),
+        "allowed_node_types": sorted(allowed_node_types),
         "allowed_link_types": sorted(ALLOWED_LINK_TYPES),
         "input_contract": input_contract,
         "planning_contract": {
@@ -1204,6 +1209,20 @@ def _compile_dynamic_recipe_items_intent(
     node_recipes: dict[str, dict[str, Any] | None] = {"workflow_input": None}
     node_requires_source: dict[str, bool] = {"workflow_input": False}
     item_by_id: dict[str, dict[str, Any]] = {}
+    external_inputs = intent.get("external_inputs") or []
+    if not isinstance(external_inputs, list) or len(external_inputs) > 24:
+        return _intent_error("external_inputs must be an array of at most 24 items", path="external_inputs")
+    external_ids: set[str] = set()
+    for index, source in enumerate(external_inputs):
+        if not isinstance(source, dict) or set(source) != {"id", "node_id", "media_kind"}:
+            return _intent_error("external input requires id, node_id and media_kind", path=f"external_inputs.{index}")
+        alias = _text(source.get("id"))
+        if (not alias or _safe_id(alias) != alias or alias == "workflow_input"
+                or alias in external_ids or not _text(source.get("node_id"))
+                or source.get("media_kind") != "image"):
+            return _intent_error("invalid external image input", path=f"external_inputs.{index}")
+        external_ids.add(alias)
+        node_types[alias] = "imageGenNode"
     phases: list[str] = []
     include_audio = _intent_bool(intent, "include_audio", True)
     planner = intent.get("planner") if isinstance(intent.get("planner"), dict) else {}
@@ -1216,7 +1235,7 @@ def _compile_dynamic_recipe_items_intent(
 
     for index, item in enumerate(items):
         item_id = _safe_id(_text(item.get("id")) or f"item_{index + 1}")
-        if item_id == "workflow_input" or item_id in item_by_id:
+        if item_id in node_types or item_id in item_by_id:
             return _intent_error(
                 f"duplicate or reserved dynamic item id: {item_id}",
                 path=f"items.{index}.id",
@@ -1360,6 +1379,8 @@ def _compile_dynamic_recipe_items_intent(
         for reference_id in references:
             if reference_id not in dependencies:
                 dependencies.append(reference_id)
+        if external_ids.intersection(dependencies) and "workflow_input" not in dependencies:
+            dependencies.append("workflow_input")
         if not dependencies:
             dependencies = ["workflow_input"]
         normalized_dependencies: list[str] = []
@@ -1519,6 +1540,7 @@ def _compile_dynamic_recipe_items_intent(
         "missing_inputs": [],
         "expansion_rules": {"item_count": len(items)},
         "inputs": resolved_inputs,
+        "external_inputs": deepcopy(external_inputs),
         "nodes": nodes,
         "edges": edges,
         "layout": {

@@ -42,6 +42,18 @@ class ChatBackendEvent:
     usage: dict[str, Any] | None = None
     structured: Any | None = None
     raw: Any | None = None
+    # Provider-neutral classification stamped by the adapter. The chat
+    # application reads these instead of inspecting ``raw``.
+    native_kind: str | None = None
+    """The provider's own event kind (for diagnostics only, never for logic)."""
+    lifecycle_only: bool = False
+    """A tool event that carries no result the user should see (start / status ping)."""
+    transient_failure: bool = False
+    """A failed tool update with no business payload, or one already settled by the
+    Freezone canvas bridge; canvas surfaces may hide it instead of rendering an error."""
+    guard: dict[str, Any] | None = None
+    """Why the adapter stopped the turn early (``reason``, ``guard_reason``,
+    ``tool_name``, ``had_write``), present on the synthesized ``complete`` event."""
 
 
 @dataclass(slots=True)

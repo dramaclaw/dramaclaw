@@ -29,6 +29,127 @@ def _check(data, entry=None):
     )
 
 
+def test_recommended_model_materializes_one_scoped_catalog_configuration():
+    plan = {"nodes": [{
+        "id": "image", "node_type": "imageGenNode",
+        "data": {"model": "recommended", "aspectRatio": "9:16"},
+    }]}
+    catalog = [
+        {"id": "first-but-not-default", "ratioOptions": ["9:16"],
+         "resolutionOptions": ["1K"], "qualityOptions": ["medium"]},
+        {"id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+         "ratioOptions": ["9:16"], "resolutionOptions": ["2K", "1K"],
+         "qualityOptions": ["high", "medium"]},
+    ]
+    result = evaluate_workflow_preflight(
+        {"plan": plan},
+        model_responses={"imageGenNode": {"ok": True, "data": catalog}},
+        limits={"ok": True, "data": {"default": {"limit": 2, "remaining": 1}}},
+    )
+    assert result["status"] == "ready"
+    assert plan["nodes"][0]["data"] == {
+        "model": "LingShan-G2", "aspectRatio": "9:16", "size": "1K",
+        "quality": "medium", "count": 1,
+    }
+
+
+def test_recommended_model_rejects_incompatible_explicit_ratio():
+    plan = {"nodes": [{
+        "id": "image", "node_type": "imageGenNode",
+        "data": {"model": "recommended", "aspectRatio": "21:9"},
+    }]}
+    result = evaluate_workflow_preflight(
+        {"plan": plan},
+        model_responses={"imageGenNode": {"ok": True, "data": [{
+            "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+            "ratioOptions": ["9:16"], "resolutionOptions": ["1K"],
+        }]}},
+        limits={"ok": True, "data": {"default": {"limit": 2, "remaining": 1}}},
+    )
+    assert result["status"] == "blocked"
+    assert any(blocker["code"] == "model_capability_unsupported" for blocker in result["blockers"])
+
+
+def test_recommended_model_keeps_explicit_catalog_supported_tenant_options():
+    plan = {"nodes": [{
+        "id": "image", "node_type": "imageGenNode",
+        "data": {
+            "model": "recommended", "aspectRatio": "21:9",
+            "size": "3K", "quality": "ultra",
+        },
+    }]}
+    result = evaluate_workflow_preflight(
+        {"plan": plan},
+        model_responses={"imageGenNode": {"ok": True, "data": [{
+            "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+            "ratioOptions": ["21:9"], "resolutionOptions": ["3K"],
+            "qualityOptions": ["ultra"],
+        }]}},
+        limits={"ok": True, "data": {"default": {"limit": 2, "remaining": 1}}},
+    )
+    assert result["status"] == "ready"
+    assert plan["nodes"][0]["data"] == {
+        "model": "LingShan-G2", "aspectRatio": "21:9",
+        "size": "3K", "quality": "ultra", "count": 1,
+    }
+
+
+def test_recommended_model_does_not_fall_back_to_first_visible_model():
+    plan = {"nodes": [{
+        "id": "image", "node_type": "imageGenNode", "data": {"model": "recommended"},
+    }]}
+    result = evaluate_workflow_preflight(
+        {"plan": plan},
+        model_responses={"imageGenNode": {"ok": True, "data": [{
+            "id": "some-other-model", "ratioOptions": ["9:16"],
+            "resolutionOptions": ["1K"],
+        }]}},
+        limits={"ok": True, "data": {"default": {"limit": 2, "remaining": 1}}},
+    )
+    assert result["status"] == "blocked"
+    assert result["blockers"][0]["code"] == "recommended_model_unavailable"
+    assert plan["nodes"][0]["data"]["model"] == "recommended"
+
+
+def test_recommended_video_uses_video_capabilities_and_concrete_resolution():
+    plan = {"nodes": [{
+        "id": "video", "node_type": "videoNode",
+        "data": {"model": "recommended", "quality": "recommended"},
+    }]}
+    result = evaluate_workflow_preflight(
+        {"plan": plan},
+        model_responses={"videoNode": {"ok": True, "data": [{
+            "id": "seedance-2.0-fast", "aliases": ["newapi_seedance-2.0-fast"],
+            "ratioOptions": ["16:9", "9:16"], "resolutionOptions": ["480P", "720P"],
+            "minDuration": 4, "maxDuration": 15,
+            "supportsGenerateAudio": False,
+        }]}},
+        limits={"ok": True, "data": {"video": {"limit": 2, "remaining": 1}}},
+    )
+    assert result["status"] == "ready"
+    assert plan["nodes"][0]["data"] == {
+        "model": "seedance-2.0-fast", "aspectRatio": "9:16",
+        "quality": "720P", "durationSec": 5, "count": 1,
+    }
+
+
+def test_video_mode_must_match_live_model_capabilities():
+    entry = {
+        "id": "newapi_seedance-2.0",
+        "supportedModes": [
+            "text_to_video", "all_reference", "first_last_frame", "image_reference",
+        ],
+    }
+    blocked = _check({"model": entry["id"], "genMode": "imageToVideo"}, entry)
+    assert blocked["status"] == "blocked"
+    assert blocked["blockers"][0]["path"] == "runtime.models.video.genMode"
+    assert blocked["blockers"][0]["code"] == "model_capability_unsupported"
+    assert "imageReference" in blocked["blockers"][0]["allowed_values"]
+    assert _check({"model": entry["id"], "genMode": "imageReference"}, entry)[
+        "status"
+    ] == "ready"
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
@@ -86,7 +207,8 @@ def test_canvas_catalog_id_is_valid_when_live_entry_has_separate_backend_api_mod
     }
 
 
-def test_ready_video_catalog_id_remains_valid_in_canvas_command():
+@pytest.mark.parametrize("model_id", ["seedance-2.0", "newapi_seedance-2.0"])
+def test_ready_video_catalog_id_remains_valid_in_canvas_command(model_id):
     plan = {
         "schema_version": "freezone_workflow_plan.v1",
         "workflow_type": "dynamic.video",
@@ -96,7 +218,8 @@ def test_ready_video_catalog_id_remains_valid_in_canvas_command():
                 "node_type": "videoNode",
                 "stage": "video",
                 "data": {
-                    "model": "seedance-2.0",
+                    "model": model_id,
+                    "genMode": "imageReference",
                     "durationSec": 5,
                     "quality": "720P",
                 },
@@ -105,8 +228,9 @@ def test_ready_video_catalog_id_remains_valid_in_canvas_command():
         "edges": [],
     }
     catalog_entry = {
-        "id": "seedance-2.0",
+        "id": model_id,
         "apiModel": "newapi_seedance-2.0",
+        "supportedModes": ["text_to_video", "image_reference"],
         "resolutionOptions": ["720P"],
         "minDuration": 4,
         "maxDuration": 15,
@@ -122,7 +246,6 @@ def test_ready_video_catalog_id_remains_valid_in_canvas_command():
     graph = build_workflow_graph_commands({"plan": plan, "run_after_create": True})
     command = next(item for item in graph["commands"] if item["type"] == "create_node")
     assert command["data"]["model"] == catalog_entry["id"]
-    assert command["data"]["model"] != catalog_entry["apiModel"]
 
 
 def test_live_catalog_failure_is_not_a_successful_preflight():
@@ -142,3 +265,113 @@ def test_live_catalog_failure_is_not_a_successful_preflight():
         limits={"ok": False},
     )
     assert result["blockers"][0]["code"] == "model_catalog_unavailable"
+
+
+
+def _image_check(data, *, fill_missing):
+    from novelvideo.freezone.workflow_preflight import resolve_generation_recommendations
+
+    node = {"id": "image", "node_type": "imageGenNode", "data": data}
+    blockers = resolve_generation_recommendations(
+        [node],
+        {"imageGenNode": {"ok": True, "data": [
+            {
+                "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+                "ratioOptions": ["9:16"], "resolutionOptions": ["2K", "1K"],
+                "qualityOptions": ["medium"],
+            },
+            {
+                "id": "Other-Wide", "ratioOptions": ["21:9", "16:9"],
+                "resolutionOptions": ["4K"], "qualityOptions": [],
+            },
+        ]}},
+        fill_missing=fill_missing,
+    )
+    return blockers, node["data"]
+
+
+def test_concrete_model_with_missing_fields_is_not_defaulted_by_preflight():
+    blockers, data = _image_check({"model": "Other-Wide"}, fill_missing=False)
+    assert blockers == []
+    assert data == {"model": "Other-Wide"}
+
+
+def test_fill_missing_completes_concrete_model_from_its_own_catalog_entry():
+    blockers, data = _image_check({"model": "Other-Wide", "size": "4K"}, fill_missing=True)
+    assert blockers == []
+    assert data == {"model": "Other-Wide", "aspectRatio": "16:9", "size": "4K", "count": 1}
+
+
+def test_fill_missing_still_blocks_unknown_concrete_model():
+    blockers, data = _image_check({"model": "Missing-Model"}, fill_missing=True)
+    assert blockers == []  # unknown concrete ids are reported by the capability check
+    assert data == {"model": "Missing-Model"}
+
+
+def test_fill_missing_resolves_a_catalog_alias_to_its_entry():
+    """A node keeps a legal alias (the sketch default) and still gets its fields."""
+    blockers, data = _image_check({"model": "newapi_gpt_image2"}, fill_missing=True)
+    assert blockers == []
+    assert data == {
+        "model": "newapi_gpt_image2", "aspectRatio": "9:16", "size": "1K",
+        "quality": "medium", "count": 1,
+    }
+
+
+def test_recommended_fields_on_an_alias_model_resolve_without_fill_missing():
+    blockers, data = _image_check(
+        {"model": "newapi_gpt_image2", "aspectRatio": "recommended"}, fill_missing=False,
+    )
+    assert blockers == []
+    assert data["aspectRatio"] == "9:16"
+    assert data["model"] == "newapi_gpt_image2"
+
+
+_ALIAS_IMAGE_CATALOG = {"imageGenNode": {"ok": True, "data": [{
+    "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+    "ratioOptions": ["9:16"], "resolutionOptions": ["1K"], "qualityOptions": ["medium"],
+}]}}
+
+
+def _image_preflight(data):
+    node = {"id": "image", "node_type": "imageGenNode", "data": data}
+    result = evaluate_workflow_preflight(
+        {"plan": {"nodes": [node]}},
+        model_responses=_ALIAS_IMAGE_CATALOG,
+        limits={"ok": True, "data": {"default": {"limit": 4, "remaining": 4}}},
+    )
+    return result, node["data"]
+
+
+def test_full_preflight_accepts_a_legal_catalog_alias_for_recommended_fields():
+    """An alias model (the sketch default) must not be reported as unavailable."""
+    result, data = _image_preflight({
+        "model": "newapi_gpt_image2", "aspectRatio": "recommended",
+        "size": "1K", "quality": "medium", "count": 1,
+    })
+    assert result["status"] == "ready", result["blockers"]
+    assert result["runtime_checks"]["imageGenNode.models"] == {
+        "requested": ["newapi_gpt_image2"], "available": True,
+    }
+    assert data["aspectRatio"] == "9:16"
+    assert data["model"] == "newapi_gpt_image2"
+
+
+def test_full_preflight_checks_alias_model_capabilities_against_its_entry():
+    result, _data = _image_preflight({
+        "model": "newapi_gpt_image2", "aspectRatio": "21:9",
+        "size": "1K", "quality": "medium", "count": 1,
+    })
+    assert result["status"] == "blocked"
+    assert all(blocker["code"] != "model_unavailable" for blocker in result["blockers"])
+    assert any("21:9" in str(blocker) for blocker in result["blockers"])
+
+
+def test_full_preflight_still_rejects_an_unknown_model():
+    result, _data = _image_preflight({
+        "model": "not-in-catalog", "aspectRatio": "9:16",
+        "size": "1K", "quality": "medium", "count": 1,
+    })
+    assert result["status"] == "blocked"
+    assert result["blockers"][0]["code"] == "model_unavailable"
+    assert [item["id"] for item in result["blockers"][0]["available_models"]] == ["LingShan-G2"]
