@@ -632,10 +632,16 @@ def _fill_catalog_skill(
     skill_id = str(plan_skill.get("id") or "").strip()
     if not skill_id or str(catalog.get("skillId") or "").strip():
         return
+    # The Skill identity is adopted as a whole. A node-level skillVersion
+    # without a skillId does not identify anything on its own, and keeping it
+    # would make the runtime reject the node with a version mismatch against
+    # the plan's Skill.
     filled = dict(catalog)
     filled["skillId"] = skill_id
     skill_version = plan_skill.get("version")
-    if skill_version not in (None, "") and catalog.get("skillVersion") in (None, ""):
+    if skill_version in (None, ""):
+        filled.pop("skillVersion", None)
+    else:
         filled["skillVersion"] = skill_version
     data["workflowCatalog"] = filled
 

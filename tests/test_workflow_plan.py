@@ -1082,6 +1082,47 @@ def test_graph_builder_backfills_plan_skill_into_node_catalog():
     assert plan["nodes"][1]["data"]["workflowCatalog"] == original_catalog
 
 
+def test_graph_builder_adopts_plan_skill_version_over_stale_node_version():
+    """A node may carry skillVersion without skillId; the validator accepts
+    that. Adopting the plan Skill must also adopt its version, otherwise the
+    runtime rejects the node with a skill version mismatch."""
+    plan = _dynamic_plan()
+    catalog = plan["nodes"][1]["data"]["workflowCatalog"]
+    del catalog["skillId"]
+    catalog["skillVersion"] = "5"
+
+    graph = build_workflow_graph_commands({"plan": plan, "run_after_create": False})
+
+    assert graph["ok"] is True, graph
+    built = next(
+        command["data"]["workflowCatalog"]
+        for command in graph["commands"]
+        if command["type"] == "create_node"
+        and command["data"]["workflowPlanNodeId"] == "product_image_1"
+    )
+    assert built["skillId"] == "ecommerce-product"
+    assert built["skillVersion"] == 6
+
+    # An unversioned plan Skill drops the orphan node version too.
+    plan = _dynamic_plan()
+    plan["skill"] = {"id": "ecommerce-product"}
+    catalog = plan["nodes"][1]["data"]["workflowCatalog"]
+    del catalog["skillId"]
+    catalog["skillVersion"] = "5"
+
+    graph = build_workflow_graph_commands({"plan": plan, "run_after_create": False})
+
+    assert graph["ok"] is True, graph
+    built = next(
+        command["data"]["workflowCatalog"]
+        for command in graph["commands"]
+        if command["type"] == "create_node"
+        and command["data"]["workflowPlanNodeId"] == "product_image_1"
+    )
+    assert built["skillId"] == "ecommerce-product"
+    assert "skillVersion" not in built
+
+
 def test_graph_builder_keeps_node_catalog_without_plan_skill():
     plan = _dynamic_plan()
     del plan["skill"]
