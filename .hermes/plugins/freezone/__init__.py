@@ -6453,8 +6453,10 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
         not isinstance(args["run_after_create"], bool)
         or args["run_after_create"] != bool(current_payload.get("run_after_create"))
     ):
-        # Same: rejected before claim or dispatch, so the follow-up patch +
-        # confirmation of this draft supersedes this rejection.
+        # The tool schema no longer admits run_after_create, so this only fires
+        # for callers that bypass schema validation. It still rejects before
+        # claim or dispatch, so the follow-up patch + confirmation of this draft
+        # supersedes this rejection.
         return tool_result(
             {
                 "ok": False,
@@ -8412,7 +8414,12 @@ _WORKFLOW_INTENT_OBJECT_SCHEMA = {
 _WORKFLOW_RUN_AFTER_CREATE_PROPS = {
     "run_after_create": {
         "type": "boolean",
-        "description": "Append deterministic workflow execution after graph creation.",
+        "description": (
+            "Append deterministic workflow execution after graph creation. Decide this "
+            "when preparing or patching the draft: pass true when the user asked to start "
+            "generation right after approving the plan. freezone_confirm_workflow_draft "
+            "does not accept it."
+        ),
     },
 }
 
@@ -10051,7 +10058,9 @@ TOOLS = (
                 "Create the exact persisted workflow draft after the user confirms its preview. "
                 "Requires the shown revision, prevents duplicate confirmation, and delegates "
                 "node creation, approval, and optional execution to the deterministic canvas path. "
-                "Execution policy is frozen in the draft; patch it before confirming a policy change."
+                "Execution policy (run_after_create) is frozen in the draft when it is prepared or "
+                "patched and is not accepted here: to change it, call "
+                "freezone_patch_workflow_draft first and confirm the new revision."
             ),
             {
                 **_SCOPE_PROPS,
@@ -10060,7 +10069,6 @@ TOOLS = (
                     "type": "integer",
                     "description": "Exact draft revision confirmed by the user.",
                 },
-                **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
             },
             ["draft_id", "revision"],
             reject_unknown=True,
@@ -10090,7 +10098,9 @@ TOOLS = (
                     "type": "boolean",
                     "description": (
                         "When true, append run_workflow after graph creation in the same approved "
-                        "frontend batch after the user has approved the WorkflowPlan."
+                        "frontend batch after the user has approved the WorkflowPlan. Decide it "
+                        "here: pass true when the user asked to start generation right after "
+                        "approving the plan. freezone_confirm_workflow_draft does not accept it."
                     ),
                 },
             },

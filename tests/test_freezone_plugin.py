@@ -480,6 +480,22 @@ def test_freezone_plugin_registers_canvas_command_tools():
     assert plan_schema["properties"] != {}
     draft_schema = schemas["freezone_confirm_workflow_draft"]["parameters"]
     assert draft_schema["required"] == ["draft_id", "revision"]
+    # Execution policy is decided when the draft is prepared or patched and the
+    # user reviews that preview; confirmation must not be able to change it.
+    assert "run_after_create" not in draft_schema["properties"]
+    assert draft_schema["additionalProperties"] is False
+    for prepare_name in (
+        "freezone_prepare_workflow",
+        "freezone_prepare_workflow_draft",
+        "freezone_prepare_workflow_plan_draft",
+        "freezone_patch_workflow_draft",
+        "freezone_revise_workflow",
+    ):
+        prepare_props = schemas[prepare_name]["parameters"]["properties"]
+        assert prepare_props["run_after_create"]["type"] == "boolean", prepare_name
+        assert "freezone_confirm_workflow_draft does not accept it" in (
+            prepare_props["run_after_create"]["description"]
+        ), prepare_name
     prepare_draft_schema = schemas["freezone_prepare_workflow_draft"]["parameters"]
     assert prepare_draft_schema["required"] == ["operation_id"]
     intent_inputs = prepare_draft_schema["properties"]["intent"]["properties"]["inputs"]
