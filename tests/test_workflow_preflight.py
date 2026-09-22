@@ -232,6 +232,24 @@ def test_video_node_without_planned_duration_asks_for_clarification():
     assert _check({"model": "video-model", "quality": "720P", "durationSec": 5})["status"] == "ready"
 
 
+def test_missing_duration_is_reported_without_a_live_catalog():
+    """Duration existence does not depend on model capabilities: a voiced or
+    plain video node with a model but no durationSec blocks even when the
+    runtime catalog cannot be checked."""
+    plan = {"nodes": [{
+        "id": "shot", "node_type": "videoNode",
+        "data": {"model": "video-model", "workflowCatalog": {"recipeId": "dialogue-continuity-shot-video"}},
+    }]}
+    result = evaluate_workflow_preflight(
+        {"plan": plan}, model_responses={}, limits={"ok": False}, runtime_available=False
+    )
+    assert result["status"] == "blocked"
+    codes = [(b["code"], b["path"]) for b in result["blockers"]]
+    assert ("generation_parameters_required", "runtime.models.shot.durationSec") in codes
+    # The audio question needs the catalog and is not asked blind.
+    assert not any(path.endswith(".generateAudio") for _code, path in codes)
+
+
 _AUDIO_CAPABLE_ENTRY = {
     "id": "video-model",
     "ratioOptions": ["16:9"],

@@ -2195,12 +2195,14 @@ def _dedupe_intent_edges(edges: list[dict[str, str]]) -> list[dict[str, str]]:
 # nodes: an explicit node value always wins, only absent fields are filled.
 _PLAN_RUNTIME_BACKFILL_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
     "imageGenNode": (
+        ("image_model", "model"),
         ("image_aspect_ratio", "aspectRatio"),
         ("image_resolution", "size"),
         ("image_quality", "quality"),
         ("image_variants_per_node", "count"),
     ),
     "videoNode": (
+        ("video_model", "model"),
         ("video_aspect_ratio", "aspectRatio"),
         ("video_resolution", "quality"),
         ("video_duration_seconds", "durationSec"),
@@ -2237,6 +2239,10 @@ def _backfill_plan_runtime_fields(
             if data.get(field) is not None:
                 continue
             raw = resolved_inputs.get(input_key)
+            if field == "aspectRatio" and not _text(raw):
+                # Same precedence as _intent_item_node: the media-specific
+                # ratio first, then the universal aspect_ratio preference.
+                raw = resolved_inputs.get("aspect_ratio")
             value: Any
             if field == "durationSec":
                 value = _positive_duration_seconds(raw)

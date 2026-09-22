@@ -257,18 +257,25 @@ def test_prepared_exact_plan_applies_confirmed_shared_inputs_to_media_nodes():
     }
 
 
-def test_prepared_exact_plan_rejects_shared_input_and_node_setting_conflict():
+@pytest.mark.parametrize("node_key", ["duration_seconds", "durationSec"])
+def test_prepared_exact_plan_node_setting_wins_over_shared_input(node_key):
+    """Issue #677: shared plan inputs only fill fields a node leaves unset, so the
+    server entry point agrees with the plugin entry point and the standard
+    planner: an explicit node value (either spelling) is never overridden."""
     plan = _exact_media_plan()
-    plan["inputs"] = {"video_duration_seconds": 10}
+    video_data = plan["nodes"][1]["data"]
+    video_data.pop("duration_seconds", None)
+    video_data[node_key] = 3
+    plan["inputs"] = {"video_duration_seconds": 10, "video_generation_mode": "firstLastFrame"}
 
-    with pytest.raises(
-        WorkflowOperationError,
-        match=(
-            "conflicting plan input video_duration_seconds and node setting "
-            "duration_seconds for video"
-        ),
-    ):
-        prepare_workflow_source({"plan": plan}, username="tester")
+    prepared = prepare_workflow_source({"plan": plan}, username="tester")
+
+    video = prepared["compiled"]["plan"]["nodes"][1]
+    assert video["data"]["durationSec"] == 3
+    # A field the node did not state is still filled from the shared inputs
+    # (the fixture states generation_mode itself, so it keeps its own value).
+    assert video["data"]["genMode"] == "imageToVideo"
+    assert "duration_seconds" not in video["data"]
 
 
 def test_binding_preserves_planning_and_is_idempotent():

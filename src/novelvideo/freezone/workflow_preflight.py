@@ -228,29 +228,39 @@ def _video_node_is_voiced(node: dict[str, Any]) -> bool:
     )
 
 
-def _video_runtime_parameter_blockers(
-    node: dict[str, Any], catalog_entry: dict[str, Any]
-) -> list[dict[str, Any]]:
-    """Runtime fields a video node must state before its draft can be ready.
+def _video_duration_blockers(node: dict[str, Any]) -> list[dict[str, Any]]:
+    """A video node must state a positive durationSec before its draft is ready.
 
-    The standard planner writes them from user preferences; an agent-authored
-    plan may omit them, and the runtime then renders a 0-second or silent shot.
-    The blocker carries ``required_choices`` in the same shape as the canvas
-    write preflight so the agent asks the user through one clarification card.
+    The standard planner writes it from user preferences; an agent-authored
+    plan may omit it and the runtime then renders a 0-second shot. Duration
+    existence does not depend on model capabilities, so this runs for every
+    video node even when the live catalog is unavailable. The blocker carries
+    ``required_choices`` in the canvas-write preflight shape so the agent asks
+    the user through one clarification card (issue #677).
     """
     data = node.get("data") if isinstance(node.get("data"), dict) else {}
     node_id = str(node.get("id") or "video").strip()
-    blockers: list[dict[str, Any]] = []
     duration = data.get("durationSec")
-    if not (isinstance(duration, (int, float)) and not isinstance(duration, bool) and duration > 0):
-        blockers.append(
-            {
-                "path": f"runtime.models.{node_id}.durationSec",
-                "code": "generation_parameters_required",
-                "message": "video node has no planned duration; set data.durationSec (seconds)",
-                "required_choices": {"video": ["duration_seconds"]},
-            }
-        )
+    if isinstance(duration, (int, float)) and not isinstance(duration, bool) and duration > 0:
+        return []
+    return [
+        {
+            "path": f"runtime.models.{node_id}.durationSec",
+            "code": "generation_parameters_required",
+            "message": "video node has no planned duration; set data.durationSec (seconds)",
+            "required_choices": {"video": ["duration_seconds"]},
+        }
+    ]
+
+
+def _video_runtime_parameter_blockers(
+    node: dict[str, Any], catalog_entry: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Catalog-dependent runtime fields: a voiced shot on an audio-capable model
+    must state generateAudio, or the runtime default renders it silent."""
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    node_id = str(node.get("id") or "video").strip()
+    blockers: list[dict[str, Any]] = []
     if (
         _video_node_is_voiced(node)
         and catalog_entry.get("supportsGenerateAudio") is not False
@@ -653,6 +663,12 @@ def evaluate_workflow_preflight(
                             "message": f"{lane} generation queue is currently full; tasks will wait",
                         }
                     )
+    # Duration existence is model-independent: check every video node whether
+    # or not the live catalog was reachable (after catalog-level blockers so an
+    # unavailable catalog is still reported first).
+    for node in nodes:
+        if isinstance(node, dict) and node.get("node_type") == "videoNode":
+            blockers.extend(_video_duration_blockers(node))
     return {
         **base,
         "status": "blocked" if blockers else "ready",

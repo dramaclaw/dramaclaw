@@ -440,6 +440,48 @@ def test_agent_authored_plan_backfills_runtime_fields_from_skill_inputs(monkeypa
     assert validated["preflight"]["planned_video_duration_seconds"] == 3 + 6 * (len(filled) - 1)
 
 
+def test_agent_authored_plan_backfills_model_and_generic_aspect_ratio(monkeypatch):
+    """Raw plans that carry the model / universal ratio only in plan.inputs must
+    not run on the runtime default model or shape."""
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    compiled = catalog.compile_workflow_intent(
+        {"skill_id": "text-to-image-video", "user_goal": "生成一段赛博城市文生图生视频"}
+    )
+    plan = copy.deepcopy(compiled["plan"])
+    plan.pop("planner", None)
+    for node in plan["nodes"]:
+        if node["node_type"] in {"imageGenNode", "videoNode"}:
+            node["data"].pop("model", None)
+            node["data"].pop("aspectRatio", None)
+    video = next(node for node in plan["nodes"] if node["node_type"] == "videoNode")
+    video["data"]["durationSec"] = 5
+    plan["inputs"] = {
+        "image_model": "LingShan-G2",
+        "video_model": "seedance-2.0",
+        "aspect_ratio": "16:9",
+    }
+
+    validated = catalog.validate_agent_workflow_plan(plan)
+
+    assert validated["ok"] is True, validated
+    for node in validated["plan"]["nodes"]:
+        if node["node_type"] == "imageGenNode":
+            assert node["data"]["model"] == "LingShan-G2"
+            assert node["data"]["aspectRatio"] == "16:9"
+        elif node["node_type"] == "videoNode":
+            assert node["data"]["model"] == "seedance-2.0"
+            assert node["data"]["aspectRatio"] == "16:9"
+    # The media-specific ratio takes precedence over the universal one.
+    plan["inputs"]["video_aspect_ratio"] = "9:16"
+    for node in plan["nodes"]:
+        node["data"].pop("model", None)
+        node["data"].pop("aspectRatio", None)
+    validated = catalog.validate_agent_workflow_plan(plan)
+    video = next(n for n in validated["plan"]["nodes"] if n["node_type"] == "videoNode")
+    assert video["data"]["aspectRatio"] == "9:16"
+
+
 def test_agent_authored_plan_without_preferences_is_left_untouched(monkeypatch):
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)
