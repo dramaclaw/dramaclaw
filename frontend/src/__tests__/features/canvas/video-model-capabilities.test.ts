@@ -295,6 +295,29 @@ describe("resolveVideoKeyframeUrls — stable edge slots", () => {
 describe("videoSubmitMediaRejectionReason — 提交前素材守卫 (P1/P2)", () => {
   const none = { images: 0, videos: 0, audios: 0 };
 
+  it("存量视频延长在模型能力被撤销后禁止提交", () => {
+    const videoEditOnly = {
+      apiModel: "seedance-2.5",
+      supportedModes: ["video_edit"],
+      referenceVideoMax: 1,
+    };
+    const counts = { ...none, videos: 1 };
+
+    expect(
+      videoSubmitMediaRejectionReason("videoExtend", videoEditOnly, counts),
+    ).toBe("node.videoOps.modeDisabled.modelNoVideoExtend");
+    expect(
+      videoSubmitMediaRejectionReason(
+        "videoExtend",
+        {
+          ...videoEditOnly,
+          supportedModes: ["video_edit", "video_extend"],
+        },
+        counts,
+      ),
+    ).toBeNull();
+  });
+
   it("Seedance 1.x：接入视频 → 拦 (P1 静默丢视频)", () => {
     expect(
       videoSubmitMediaRejectionReason("imageToVideo", SEEDANCE10_PRO_FAST, { ...none, videos: 1 }),

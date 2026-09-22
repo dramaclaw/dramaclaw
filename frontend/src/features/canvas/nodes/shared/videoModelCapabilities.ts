@@ -586,6 +586,12 @@ export function videoSubmitMediaRejectionReason(
 ): string | null {
   if (
     mode === "videoExtend" &&
+    !isVideoModeSupportedByModel("videoExtend", model)
+  ) {
+    return "node.videoOps.modeDisabled.modelNoVideoExtend";
+  }
+  if (
+    mode === "videoExtend" &&
     (counts.videos !== 1 || counts.images > 0 || counts.audios > 0)
   ) {
     return "node.videoModel.reason.videoExtendSourceOnly";
