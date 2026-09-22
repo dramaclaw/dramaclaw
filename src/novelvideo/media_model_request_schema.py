@@ -563,6 +563,14 @@ def validate_media_model_catalog_config(
         video_limit = config.get("referenceVideoMax")
         configured_modes = set(modes or [])
         if (
+            "video_extend" in configured_modes
+            and type(video_limit) is int
+            and video_limit == 0
+        ):
+            raise MediaModelSchemaError(
+                "video_extend requires referenceVideoMax to be omitted or at least 1"
+            )
+        if (
             type(video_limit) is int
             and video_limit > 0
             and not configured_modes.intersection(
