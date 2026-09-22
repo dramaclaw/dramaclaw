@@ -1,7 +1,12 @@
 # Exact custom workflow topology
 
-Use this path whenever the user explicitly names the required nodes and dependencies. A matching
-production Skill does not turn an exact topology request into the normal draft flow.
+Use this path when the user explicitly names required nodes and dependencies that deviate from the
+matching Skill's standard template. A matching production Skill does not turn a genuinely custom
+topology request into the normal draft flow. An explicit planner instruction takes priority over
+this heuristic: when the user names the standard planner or the Skill's standard flow and the
+listed nodes merely restate that template (same stages, order, and dependencies), stay on the
+normal Intent path; when the instruction and the listed topology conflict, ask one single-question
+clarification first (see the routing order in SKILL.md).
 
 1. Load exactly one matching production Workflow Skill. Prefer
    `workflow_skill_get(skill_id=...)` on the standalone workflow MCP server; that reader is always
@@ -66,9 +71,11 @@ production Skill does not turn an exact topology request into the normal draft f
 5. When the user states exact totals, copy them into `expected_node_count` and
    `expected_node_counts`. Counts refer to Plan/business nodes; the generated group node is not
    included. Never lower these expectations to make a partial plan validate.
-6. Requests that explicitly enumerate Beats, shots, nodes, or dependency order always stay on this
-   full Plan path, including requests above the compact Intent planner's item limit. Do not switch to
-   `workflow_intent_compile`, a smaller sample plan, or standalone node tools after a validation error.
+6. Once a request is on this path because its enumerated Beats, shots, nodes, or dependency order
+   deviate from the template, it stays on this full Plan path, including requests above the compact
+   Intent planner's item limit. Do not switch to `workflow_intent_compile`, a smaller sample plan, or
+   standalone node tools after a validation error. (An explicit standard-planner instruction with a
+   template-shaped list never enters this path in the first place; see SKILL.md routing order.)
    Every edge endpoint must match an `id` in `nodes` or a declared external input alias. Never
    invent a source such as `source` or `input` without a matching declaration.
 7. Call `freezone_prepare_workflow(plan=...)` once. It strictly validates the complete Plan,

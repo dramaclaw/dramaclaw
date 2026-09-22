@@ -169,11 +169,26 @@ including `480P` whenever the schema lists it.
 6. After explicit user confirmation, call `freezone_confirm_workflow_draft` once with the exact
    `draft_id` and `revision`.
 
-When the user explicitly names the required nodes and their dependency order, use the exact topology
-path in [references/custom-topology.md](references/custom-topology.md), preparing the complete Plan
-as a persisted draft even when a production Skill
-also matches. For error recovery, read
-[references/error-recovery.md](references/error-recovery.md).
+Route between the normal draft flow and the exact topology path in this priority order:
+
+1. An explicit planner instruction wins. When the user names the standard planner or a Skill's
+   standard flow ("use the standard planner", "按标准模板"), submit a compact Intent to
+   `freezone_prepare_workflow(intent=...)` even if the message also lists nodes and dependencies:
+   compare the listed topology with that Skill's standard template first, and treat a same-shape
+   list (same stages, order, and dependencies) as a restatement of the template, not a custom
+   request.
+2. Otherwise, when the user explicitly names required nodes and their dependency order that
+   deviate from the matching Skill's template, use the exact topology path in
+   [references/custom-topology.md](references/custom-topology.md), preparing the complete Plan as
+   a persisted draft even when a production Skill also matches.
+3. When an explicit planner instruction and the listed topology genuinely conflict (for example
+   the standard planner is named but a mandatory template stage is dropped), ask one
+   single-question clarification with `freezone_request_user_clarification` before choosing a
+   path; never pick a side silently.
+
+The prepared draft records which path was taken (`preview.planner.mode` is
+`deterministic_standard` or `agent_authored`) so the choice can be audited. For error recovery,
+read [references/error-recovery.md](references/error-recovery.md).
 
 When packaging this Skill for another agent host, read
 [references/integration.md](references/integration.md).

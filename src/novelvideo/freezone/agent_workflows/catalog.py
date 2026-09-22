@@ -720,7 +720,20 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
 
     compiled_intent = deepcopy(intent)
     planner_metadata: dict[str, Any] | None = None
-    if not _intent_items(compiled_intent):
+    plan_metadata: dict[str, Any] | None = None
+    if _intent_items(compiled_intent):
+        # Agent-authored items take precedence over the standard planner; record
+        # that choice (and whether a standard planner was available) so the
+        # draft shows why the template path was not taken (issue #678).
+        planner_metadata = _agent_authored_planner_metadata(
+            skill_id,
+            source="intent_items",
+            requested_mode=_text((intent.get("planner") or {}).get("mode"))
+            if isinstance(intent.get("planner"), dict)
+            else "",
+            item_count=len(_intent_items(compiled_intent)),
+        )
+    else:
         compiled_intent, planner_metadata, planner_error = (
             _expand_standard_skill_intent(
                 intent=compiled_intent,
@@ -731,6 +744,7 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
         )
         if planner_error is not None:
             return planner_error
+        plan_metadata = planner_metadata
 
     compiled = _compile_dynamic_recipe_items_intent(
         intent=compiled_intent,
@@ -741,9 +755,29 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
     if compiled.get("ok") and planner_metadata is not None:
         compiled["planner"] = planner_metadata
         plan = compiled.get("plan")
-        if isinstance(plan, dict):
-            plan["planner"] = deepcopy(planner_metadata)
+        # Only the deterministic planner stamps the plan itself; the plan JSON
+        # schema does not declare ``planner`` for agent-authored graphs.
+        if isinstance(plan, dict) and plan_metadata is not None:
+            plan["planner"] = deepcopy(plan_metadata)
     return compiled
+
+
+def _agent_authored_planner_metadata(
+    skill_id: str, *, source: str, requested_mode: str = "", item_count: int | None = None
+) -> dict[str, Any]:
+    """Audit record for a topology the agent authored instead of the standard planner."""
+    metadata: dict[str, Any] = {
+        "mode": "agent_authored",
+        "source": source,
+        "skill_id": skill_id,
+        "selected_by": "agent",
+        "standard_planner_available": skill_id in _DETERMINISTIC_SKILL_PLANNERS,
+    }
+    if requested_mode:
+        metadata["requested_mode"] = requested_mode
+    if item_count is not None:
+        metadata["item_count"] = item_count
+    return metadata
 
 
 def _standard_skill_items(
@@ -2422,6 +2456,12 @@ def validate_agent_workflow_plan(
     validated["recommended_run_after_create"] = input_contract[
         "recommended_run_after_create"
     ]
+    if not isinstance(validated.get("planner"), dict):
+        validated["planner"] = _agent_authored_planner_metadata(
+            skill_id,
+            source="exact_plan",
+            item_count=len(validated_plan.get("nodes") or []),
+        )
     return validated
 
 

@@ -443,6 +443,10 @@ def test_agent_authored_plan_backfills_runtime_fields_from_skill_inputs(monkeypa
 def test_agent_authored_plan_backfills_model_and_generic_aspect_ratio(monkeypatch):
     """Raw plans that carry the model / universal ratio only in plan.inputs must
     not run on the runtime default model or shape."""
+
+
+def test_exact_plan_validation_records_agent_authored_planner(monkeypatch):
+    """Issue #678: a raw plan draft shows which path produced it."""
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)
     compiled = catalog.compile_workflow_intent(
@@ -480,6 +484,20 @@ def test_agent_authored_plan_backfills_model_and_generic_aspect_ratio(monkeypatc
     validated = catalog.validate_agent_workflow_plan(plan)
     video = next(n for n in validated["plan"]["nodes"] if n["node_type"] == "videoNode")
     assert video["data"]["aspectRatio"] == "9:16"
+
+
+    validated = catalog.validate_agent_workflow_plan(plan)
+
+    assert validated["ok"] is True
+    assert validated["planner"] == {
+        "mode": "agent_authored",
+        "source": "exact_plan",
+        "skill_id": "text-to-image-video",
+        "selected_by": "agent",
+        "standard_planner_available": True,
+        "item_count": len(validated["plan"]["nodes"]),
+    }
+    assert "planner" not in validated["plan"]
 
 
 def test_agent_authored_plan_without_preferences_is_left_untouched(monkeypatch):
@@ -592,7 +610,18 @@ def test_custom_items_take_precedence_over_standard_planner(monkeypatch):
     )
 
     assert result["ok"] is True
-    assert "planner" not in result
+    # Issue #678: the agent-authored choice is recorded, including that a
+    # standard planner existed for this Skill and what mode the agent asked for.
+    assert result["planner"] == {
+        "mode": "agent_authored",
+        "source": "intent_items",
+        "skill_id": "ecommerce-ad",
+        "selected_by": "agent",
+        "standard_planner_available": True,
+        "requested_mode": "standard",
+        "item_count": 1,
+    }
+    assert "planner" not in result["plan"]
     node_ids = {node["id"] for node in result["plan"]["nodes"]}
     assert node_ids == {"workflow_input", "custom_image"}
 
