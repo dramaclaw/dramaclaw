@@ -133,6 +133,75 @@ def test_recommended_video_uses_video_capabilities_and_concrete_resolution():
     }
 
 
+@pytest.mark.parametrize("ratio_options", [None, []])
+def test_recommended_video_without_catalog_ratio_options_still_resolves(ratio_options):
+    """Issue #674: a catalog entry that declares no ratioOptions is unconstrained,
+    exactly as runtime preflight already treats aspectRatio, so the remaining
+    recommendations resolve and the ratio falls back to the product default."""
+    entry = {
+        "id": "seedance-2.0-fast", "aliases": ["newapi_seedance-2.0-fast"],
+        "resolutionOptions": ["480P", "720P"],
+        "minDuration": 4, "maxDuration": 15, "supportsGenerateAudio": False,
+    }
+    if ratio_options is not None:
+        entry["ratioOptions"] = ratio_options
+    plan = {"nodes": [{
+        "id": "video", "node_type": "videoNode",
+        "data": {"model": "recommended", "aspectRatio": "recommended", "quality": "recommended"},
+    }]}
+    result = evaluate_workflow_preflight(
+        {"plan": plan},
+        model_responses={"videoNode": {"ok": True, "data": [entry]}},
+        limits={"ok": True, "data": {"video": {"limit": 2, "remaining": 1}}},
+    )
+    assert result["status"] == "ready", result["blockers"]
+    assert plan["nodes"][0]["data"] == {
+        "model": "seedance-2.0-fast", "aspectRatio": "9:16",
+        "quality": "720P", "durationSec": 5, "count": 1,
+    }
+
+
+def test_recommended_image_without_catalog_ratio_options_still_resolves():
+    plan = {"nodes": [{
+        "id": "image", "node_type": "imageGenNode",
+        "data": {"model": "recommended"},
+    }]}
+    result = evaluate_workflow_preflight(
+        {"plan": plan},
+        model_responses={"imageGenNode": {"ok": True, "data": [{
+            "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+            "resolutionOptions": ["1K"], "qualityOptions": ["medium"],
+        }]}},
+        limits={"ok": True, "data": {"default": {"limit": 2, "remaining": 1}}},
+    )
+    assert result["status"] == "ready", result["blockers"]
+    assert plan["nodes"][0]["data"] == {
+        "model": "LingShan-G2", "aspectRatio": "9:16", "size": "1K",
+        "quality": "medium", "count": 1,
+    }
+
+
+def test_recommended_ratio_still_requires_a_declared_catalog_option_when_constrained():
+    """A declared ratio list without a preferred value keeps blocking recommendations."""
+    plan = {"nodes": [{
+        "id": "video", "node_type": "videoNode",
+        "data": {"model": "recommended", "quality": "recommended"},
+    }]}
+    result = evaluate_workflow_preflight(
+        {"plan": plan},
+        model_responses={"videoNode": {"ok": True, "data": [{
+            "id": "seedance-2.0-fast", "aliases": ["newapi_seedance-2.0-fast"],
+            "ratioOptions": ["21:9", "4:3"], "resolutionOptions": ["720P"],
+            "minDuration": 4, "maxDuration": 15, "supportsGenerateAudio": False,
+        }]}},
+        limits={"ok": True, "data": {"video": {"limit": 2, "remaining": 1}}},
+    )
+    assert result["status"] == "blocked"
+    assert any(
+        blocker["code"] == "recommended_parameters_unavailable" for blocker in result["blockers"]
+    )
+
+
 def test_video_mode_must_match_live_model_capabilities():
     entry = {
         "id": "newapi_seedance-2.0",

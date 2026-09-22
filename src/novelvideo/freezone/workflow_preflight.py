@@ -153,6 +153,13 @@ def resolve_generation_recommendations(
                 and str(data[field]).strip().casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
             )
         }
+        if "aspectRatio" in candidates and not _catalog_string_options(entry, "ratioOptions"):
+            # The catalog leaves the ratio unconstrained: runtime preflight treats
+            # aspectRatio as optional for exactly this case, so a missing
+            # ``ratioOptions`` must not abandon every other recommendation.
+            # Recommend the product default ratio instead; the frontend offers the
+            # same built-in ratio list when a model declares none (issue #674).
+            candidates["aspectRatio"] = _RECOMMENDED_OPTIONS["aspectRatio"][0]
         if any(value is None for value in candidates.values()):
             blockers.append({
                 "path": f"runtime.models.{node.get('id') or kind}",
