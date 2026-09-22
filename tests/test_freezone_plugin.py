@@ -1473,6 +1473,27 @@ def test_dynamic_workflow_plan_uses_draft_before_canvas_bridge(monkeypatch, tmp_
     assert confirmed["ok"] is True
     assert captured["commands"] == commands
     assert captured["kwargs"]["allow_dynamic_workflow_batch"] is True
+    # Issue #672: the receipt names the draft and its frozen execution policy so
+    # the chat evidence layer can verify a policy retry was actually honoured.
+    assert confirmed["draft_id"] == prepared["draft_id"]
+    assert confirmed["run_after_create"] is False
+    _assert_real_mcp_output(plugin, "freezone_confirm_workflow_draft", confirmed)
+
+    prepared_run = plugin._handle_prepare_workflow_plan_draft(
+        {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "plan": plan,
+            "run_after_create": True,
+        }
+    )
+    confirmed_run = plugin._handle_confirm_workflow_draft(
+        {"draft_id": prepared_run["draft_id"], "revision": prepared_run["revision"]}
+    )
+    assert confirmed_run["ok"] is True
+    assert confirmed_run["draft_id"] == prepared_run["draft_id"]
+    assert confirmed_run["run_after_create"] is True
+    _assert_real_mcp_output(plugin, "freezone_confirm_workflow_draft", confirmed_run)
 
 
 def test_dynamic_workflow_creation_stops_when_live_model_catalog_is_unavailable(

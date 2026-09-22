@@ -6370,6 +6370,21 @@ def _tool_result_payload(value: Any) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
+def _with_confirmed_execution_policy(
+    result: Any, payload: dict[str, Any], *, draft_id: str, run_after_create: bool
+) -> Any:
+    """Attach the draft's frozen execution policy to a successful confirmation.
+
+    The chat evidence layer uses it to verify that a retry after
+    workflow_draft_execution_policy_changed really applied the policy the user
+    asked for, instead of silently confirming the old one (issue #672).
+    """
+    merged = {**payload, "draft_id": draft_id, "run_after_create": bool(run_after_create)}
+    if isinstance(result, dict):
+        return merged
+    return _structured_tool_result(merged, tool_name="freezone_confirm_workflow_draft")
+
+
 def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     if not _workflow_draft_dependencies_available():
         return _workflow_draft_unavailable()
@@ -6652,6 +6667,9 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             outcome=outcome,
             task_id=confirmation_task_id,
             revision=revision,
+        )
+        result = _with_confirmed_execution_policy(
+            result, result_payload, draft_id=draft_id, run_after_create=run_after_create
         )
     else:
         _finish_workflow_draft(

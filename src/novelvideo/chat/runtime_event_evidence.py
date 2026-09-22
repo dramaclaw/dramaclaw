@@ -277,7 +277,8 @@ def _codex_freezone_generation_retry_key(event: Any) -> str | None:
 # Workflow draft confirmation guard that rejects before any claim or dispatch.
 # The plugin answers it from a single GET of the draft, and the only way forward
 # is the agent's own patch of run_after_create in this turn, so a later
-# confirmation of the same draft is the real outcome of that call. A
+# confirmation of the same draft that reports the requested policy is the real
+# outcome of that call (see _codex_freezone_execution_policy_requirement). A
 # workflow_draft_revision_conflict is deliberately excluded: the new revision
 # may hold changes the user never reviewed, so it needs a fresh confirmation
 # rather than a silent retry.
@@ -309,6 +310,52 @@ def _codex_freezone_is_generation_preflight_rejection(event: Any) -> bool:
             ):
                 return True
     return False
+
+
+def _codex_freezone_is_execution_policy_rejection(event: Any) -> bool:
+    """A draft confirmation the plugin refused because run_after_create differed."""
+    if _codex_freezone_tool_name(event) != "freezone_confirm_workflow_draft":
+        return False
+    for value in (getattr(event, "structured", None), getattr(event, "output", None)):
+        for payload in _json_objects_from_codex_tool_value(value):
+            if (
+                payload.get("ok") is False
+                and str(payload.get("status") or "")
+                in _FREEZONE_DRAFT_CONFIRM_GUARD_STATUSES
+            ):
+                return True
+    return False
+
+
+def _codex_freezone_execution_policy_requirement(event: Any) -> bool | None:
+    """The run_after_create the agent asked for in a policy-guard rejection.
+
+    Only a boolean request can be honoured later. The rejection is superseded
+    solely by a confirmation of the same draft whose receipt reports this same
+    policy; a confirmation that silently kept the old policy (the agent skipped
+    the patch and simply omitted run_after_create) leaves the rejection on
+    record, because the user's request was not executed.
+    """
+    if not _codex_freezone_is_execution_policy_rejection(event):
+        return None
+    for payload in _json_objects_from_codex_tool_value(getattr(event, "input", None)):
+        requested = payload.get("run_after_create")
+        if isinstance(requested, bool):
+            return requested
+    return None
+
+
+def _codex_freezone_confirmed_execution_policy(event: Any) -> bool | None:
+    """The run_after_create a successful draft confirmation receipt reports."""
+    if _codex_freezone_tool_name(event) != "freezone_confirm_workflow_draft":
+        return None
+    for value in (getattr(event, "structured", None), getattr(event, "output", None)):
+        for payload in _json_objects_from_codex_tool_value(value):
+            if payload.get("ok") is True and isinstance(
+                payload.get("run_after_create"), bool
+            ):
+                return payload["run_after_create"]
+    return None
 
 
 def _codex_freezone_clarification_answered(event: Any) -> bool:

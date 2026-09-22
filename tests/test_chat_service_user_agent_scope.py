@@ -1564,6 +1564,8 @@ def test_codex_clarification_requires_successful_answer(container, outcome):
         "draft_confirm_only_patch",
         "draft_confirm_policy_retry",
         "draft_confirm_policy_only_patch",
+        "draft_confirm_policy_skip_patch",
+        "draft_confirm_policy_unverified_retry",
     ],
 )
 async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
@@ -1913,6 +1915,8 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
             elif tool_outcome in {
                 "draft_confirm_policy_retry",
                 "draft_confirm_policy_only_patch",
+                "draft_confirm_policy_skip_patch",
+                "draft_confirm_policy_unverified_retry",
             }:
                 # Issue #672: the execution-policy guard rejects before
                 # claim/dispatch; the agent's own patch in this turn resolves it.
@@ -1946,28 +1950,48 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                     },
                     error=None,
                 )
-                yield SimpleNamespace(
-                    type="tool_updated",
-                    text="[mcp:completed] dramaclaw.freezone_patch_workflow_draft",
-                    name="dramaclaw.freezone_patch_workflow_draft",
-                    call_id="call-patch",
-                    status="completed",
-                    input={
-                        "draft_id": "workflow_draft_a",
-                        "expected_revision": 1,
-                        "changes": {"run_after_create": True},
-                    },
-                    output=None,
-                    structured={
-                        "ok": True,
-                        "status": "workflow_draft_ready",
-                        "draft_id": "workflow_draft_a",
-                        "revision": 2,
-                        "run_after_create": True,
-                    },
-                    error=None,
-                )
+                # skip_patch: the agent ignores the patch instruction and simply
+                # omits run_after_create on the retry, so the guard no longer
+                # fires and the draft is confirmed with the old policy.
+                if tool_outcome != "draft_confirm_policy_skip_patch":
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        text="[mcp:completed] dramaclaw.freezone_patch_workflow_draft",
+                        name="dramaclaw.freezone_patch_workflow_draft",
+                        call_id="call-patch",
+                        status="completed",
+                        input={
+                            "draft_id": "workflow_draft_a",
+                            "expected_revision": 1,
+                            "changes": {"run_after_create": True},
+                        },
+                        output=None,
+                        structured={
+                            "ok": True,
+                            "status": "workflow_draft_ready",
+                            "draft_id": "workflow_draft_a",
+                            "revision": 2,
+                            "run_after_create": True,
+                        },
+                        error=None,
+                    )
                 if tool_outcome != "draft_confirm_policy_only_patch":
+                    retry_structured = {
+                        "ok": True,
+                        "canvas_apply_status": "accepted",
+                        "applied": True,
+                        "bridge_key": "bridge-call-1",
+                        "project_id": "project-a",
+                        "canvas_id": "canvas-a",
+                        "draft_id": "workflow_draft_a",
+                    }
+                    if tool_outcome == "draft_confirm_policy_retry":
+                        # The plugin reports the frozen policy with the receipt.
+                        retry_structured["run_after_create"] = True
+                    elif tool_outcome == "draft_confirm_policy_skip_patch":
+                        retry_structured["run_after_create"] = False
+                    # unverified_retry: an older plugin receipt without the
+                    # policy field cannot prove the request was honoured.
                     yield SimpleNamespace(
                         type="tool_updated",
                         text=f"[mcp:completed] {name}",
@@ -1978,17 +2002,14 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                             "project_id": "project-a",
                             "canvas_id": "canvas-a",
                             "draft_id": "workflow_draft_a",
-                            "revision": 2,
+                            "revision": (
+                                1
+                                if tool_outcome == "draft_confirm_policy_skip_patch"
+                                else 2
+                            ),
                         },
                         output=None,
-                        structured={
-                            "ok": True,
-                            "canvas_apply_status": "accepted",
-                            "applied": True,
-                            "bridge_key": "bridge-call-1",
-                            "project_id": "project-a",
-                            "canvas_id": "canvas-a",
-                        },
+                        structured=retry_structured,
                         error=None,
                     )
             elif tool_outcome not in {"missing", "blocked", "read_only"}:
@@ -2057,7 +2078,12 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 assistant_reply = "已提交视频生成任务。"
             if tool_outcome in {"single_run_retry", "workflow_run_retry"}:
                 assistant_reply = "已提交生成任务。"
-            if tool_outcome in {"draft_confirm_retry", "draft_confirm_policy_retry"}:
+            if tool_outcome in {
+                "draft_confirm_retry",
+                "draft_confirm_policy_retry",
+                "draft_confirm_policy_skip_patch",
+                "draft_confirm_policy_unverified_retry",
+            }:
                 assistant_reply = "工作流已提交创建。"
             receipts = []
             if tool_outcome in {
@@ -2077,6 +2103,8 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 "draft_confirm_retry",
                 "draft_confirm_other_success",
                 "draft_confirm_policy_retry",
+                "draft_confirm_policy_skip_patch",
+                "draft_confirm_policy_unverified_retry",
             }:
                 receipts.append({"bridge_key": "bridge-call-1", "revision": None})
             structured_reply = json.dumps(
@@ -2159,9 +2187,16 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
     elif tool_outcome in {"draft_confirm_retry", "draft_confirm_policy_retry"}:
         assert result["content"] == "工作流已提交创建。"
         assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "draft_confirm_policy_only_patch":
-        # The guard rejection stays a failure without a confirming receipt, and
-        # the user sees the localized message rather than the agent hint.
+    elif tool_outcome in {
+        "draft_confirm_policy_only_patch",
+        "draft_confirm_policy_skip_patch",
+        "draft_confirm_policy_unverified_retry",
+    }:
+        # The guard rejection stays a failure unless a confirming receipt of the
+        # same draft verifiably applied the requested run_after_create: no
+        # receipt at all, a receipt that kept the old policy (patch skipped), or
+        # a receipt that does not report the policy. The user sees the localized
+        # message rather than the agent hint.
         assert result["content"] == "画布操作未完成：工作流草稿的执行方式需要先更新草稿再确认。"
         assert assistant_deltas == [result["content"]]
     elif tool_outcome in {

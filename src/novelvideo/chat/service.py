@@ -143,7 +143,10 @@ from novelvideo.chat.runtime_event_evidence import (
     _GENERATION_RETRY_DATA_FIELDS as _GENERATION_RETRY_DATA_FIELDS,
     _FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS as _FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS,
     _codex_freezone_clarification_answered as _codex_freezone_clarification_answered,
+    _codex_freezone_confirmed_execution_policy,
+    _codex_freezone_execution_policy_requirement,
     _codex_freezone_generation_retry_key,
+    _codex_freezone_is_execution_policy_rejection,
     _codex_freezone_is_generation_preflight_rejection,
     _codex_freezone_is_write_event,
     _codex_freezone_ready_workflow_draft,
@@ -4409,6 +4412,9 @@ async def _stream_assistant_reply_codex(
     canvas_receipts: set[tuple[str, int | None]] = set()
     canvas_write_failures: dict[str, str] = {}
     canvas_generation_preflights: dict[str, str] = {}
+    # call_id -> run_after_create the agent requested when the draft policy
+    # guard rejected it; only a receipt reporting that policy may supersede it.
+    canvas_policy_requirements: dict[str, bool] = {}
     ready_workflow_draft: dict[str, Any] | None = None
     authorization = await authorize_hermes_launch(
         egress_context=egress_context,
@@ -4604,24 +4610,46 @@ async def _stream_assistant_reply_codex(
                         if receipt is not None and identifiable_call:
                             canvas_receipts.add(receipt_reference(receipt))
                             if retry_key is not None:
+                                confirmed_policy = (
+                                    _codex_freezone_confirmed_execution_policy(event)
+                                )
                                 for rejected_call, rejected_key in list(
                                     canvas_generation_preflights.items()
                                 ):
+                                    if rejected_key != retry_key or rejected_call == call_id:
+                                        continue
+                                    required_policy = canvas_policy_requirements.get(
+                                        rejected_call
+                                    )
+                                    # A policy-guard rejection is resolved only by a
+                                    # confirmation whose receipt verifiably applied
+                                    # the requested run_after_create. An unverified
+                                    # or downgraded confirmation keeps it on record.
                                     if (
-                                        rejected_key == retry_key
-                                        and rejected_call != call_id
+                                        required_policy is not None
+                                        and confirmed_policy != required_policy
                                     ):
-                                        canvas_write_attempts.pop(rejected_call, None)
-                                        canvas_write_failures.pop(rejected_call, None)
-                                        canvas_generation_preflights.pop(
-                                            rejected_call, None
-                                        )
+                                        continue
+                                    canvas_write_attempts.pop(rejected_call, None)
+                                    canvas_write_failures.pop(rejected_call, None)
+                                    canvas_generation_preflights.pop(rejected_call, None)
+                                    canvas_policy_requirements.pop(rejected_call, None)
                         elif (
                             canvas_write_attempts[call_id] == "failed"
                             and retry_key is not None
                             and _codex_freezone_is_generation_preflight_rejection(event)
                         ):
-                            canvas_generation_preflights[call_id] = retry_key
+                            if _codex_freezone_is_execution_policy_rejection(event):
+                                required_policy = (
+                                    _codex_freezone_execution_policy_requirement(event)
+                                )
+                                # A non-boolean request cannot be matched to a
+                                # receipt, so that rejection is never superseded.
+                                if required_policy is not None:
+                                    canvas_generation_preflights[call_id] = retry_key
+                                    canvas_policy_requirements[call_id] = required_policy
+                            else:
+                                canvas_generation_preflights[call_id] = retry_key
                         failure = _codex_freezone_write_result_error(event)
                         if failure:
                             canvas_write_failures[call_id] = failure
