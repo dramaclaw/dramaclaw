@@ -274,18 +274,38 @@ def _codex_freezone_generation_retry_key(event: Any) -> str | None:
     return None
 
 
+# Workflow draft confirmation guard that rejects before any claim or dispatch.
+# The plugin answers it from a single GET of the draft, and the only way forward
+# is the agent's own patch of run_after_create in this turn, so a later
+# confirmation of the same draft is the real outcome of that call. A
+# workflow_draft_revision_conflict is deliberately excluded: the new revision
+# may hold changes the user never reviewed, so it needs a fresh confirmation
+# rather than a silent retry.
+_FREEZONE_DRAFT_CONFIRM_GUARD_STATUSES = frozenset(
+    {"workflow_draft_execution_policy_changed"}
+)
+
+
 def _codex_freezone_is_generation_preflight_rejection(event: Any) -> bool:
-    """Only this explicit, side-effect-free rejection may be superseded."""
+    """Only explicit, side-effect-free rejections may be superseded by a retry."""
     if getattr(event, "error", None) or str(
         getattr(event, "status", "") or ""
     ).lower() not in {"completed", "success", "succeeded"}:
         return False
     for value in (getattr(event, "structured", None), getattr(event, "output", None)):
         for payload in _json_objects_from_codex_tool_value(value):
+            if payload.get("ok") is not False:
+                continue
+            status = str(payload.get("status") or "")
             if (
-                payload.get("ok") is False
-                and payload.get("status") == "clarification_required"
+                status == "clarification_required"
                 and payload.get("code") == "generation_parameters_required"
+            ):
+                return True
+            if (
+                status in _FREEZONE_DRAFT_CONFIRM_GUARD_STATUSES
+                and _codex_freezone_tool_name(event)
+                == "freezone_confirm_workflow_draft"
             ):
                 return True
     return False

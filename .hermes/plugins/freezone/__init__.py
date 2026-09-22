@@ -6414,23 +6414,48 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     if current_payload is None:
         return tool_result(current_error)
     if int(current_payload.get("revision") or 0) != revision:
+        # Rejected from the GET above only: nothing was claimed or dispatched.
+        # The user confirmed an exact revision, and the current one may carry
+        # changes they never reviewed, so it must not be confirmed silently.
         return tool_result(
             {
                 "ok": False,
                 "status": "workflow_draft_revision_conflict",
                 "error": "workflow draft revision changed before confirmation",
+                "user_message": "工作流草稿在你确认后已被修改，本次确认未创建任何节点，请查看最新方案后重新确认。",
+                "retryable": False,
                 "current_revision": current_payload.get("revision"),
+                "agent_instruction": (
+                    "Nothing was created. The draft changed after the user reviewed it. "
+                    "Read the draft with freezone_get_workflow, show the current "
+                    "revision's preview to the user, and call "
+                    "freezone_confirm_workflow_draft only after they explicitly confirm "
+                    "that exact revision. Never confirm current_revision on your own."
+                ),
             }
         )
     if "run_after_create" in args and (
         not isinstance(args["run_after_create"], bool)
         or args["run_after_create"] != bool(current_payload.get("run_after_create"))
     ):
+        # Same: rejected before claim or dispatch, so the follow-up patch +
+        # confirmation of this draft supersedes this rejection.
         return tool_result(
             {
                 "ok": False,
                 "status": "workflow_draft_execution_policy_changed",
                 "error": "Patch the draft and confirm its new revision to change run_after_create.",
+                "user_message": "工作流草稿的执行方式需要先更新草稿再确认，本次确认未创建任何节点。",
+                "retryable": True,
+                "current_revision": current_payload.get("revision"),
+                "run_after_create": bool(current_payload.get("run_after_create")),
+                "agent_instruction": (
+                    "Nothing was created. Execution policy is frozen in the draft: call "
+                    "freezone_patch_workflow_draft with changes.run_after_create set to the "
+                    "value the user asked for, then call freezone_confirm_workflow_draft with "
+                    "the new revision and without run_after_create. Do not report failure to "
+                    "the user."
+                ),
             }
         )
     # Check turn-scoped generation choices before admitting a durable task.
@@ -7186,6 +7211,7 @@ _RESULT_COMMON_PROPERTIES: dict[str, Any] = {
     "code": {"type": ["string", "null"]},
     "error": {"type": ["string", "object", "array", "null"]},
     "message": {"type": ["string", "null"]},
+    "user_message": {"type": ["string", "null"]},
     "retryable": {"type": "boolean"},
     "next_action": {"type": ["string", "null"]},
     "agent_instruction": {"type": ["string", "null"]},
