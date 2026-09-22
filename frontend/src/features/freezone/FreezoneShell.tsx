@@ -172,6 +172,9 @@ import {
 import type { ServerFrame } from "@/features/superchat/types";
 import { initializeEmptyFreezoneAgentChat } from "@/features/superchat/freezoneChatScopeCache";
 import { WorkflowRunRecoveryBar } from "./WorkflowRunRecoveryBar";
+import { PendingOutlineCard } from "./PendingOutlineCard";
+import { StoryStageNav } from "./StoryStageNav";
+import { parsePendingStoryOutline, type PendingStoryOutline } from "@/features/canvas/story/pendingStoryOutline";
 
 export { hasLegacyPresetCanvasMetadata } from "@/features/freezone/projections";
 
@@ -913,6 +916,13 @@ export function FreezoneShell({
   const [chatOpen, setChatOpen] = useState(loadChatOpen);
   const [pendingChatAttachments, setPendingChatAttachments] = useState<ChatAttachment[]>([]);
   const [pendingChatNodeMentions, setPendingChatNodeMentions] = useState<string[]>([]);
+  // 面板外「提交并继续」（如大纲确认后自动接龙）：drain 归 SuperChatPanel 的发送队列。
+  // mode="draft" 只预填输入框（如「需要修改」后等用户补意见），不代发送。
+  const [pendingChatExternalSubmit, setPendingChatExternalSubmit] = useState<{
+    id: string;
+    text: string;
+    mode?: "send" | "draft";
+  } | null>(null);
   const deliveredSelectionAttachmentKeyRef = useRef<string | null>(null);
   const handlePendingChatAttachmentsConsumed = useCallback(() => {
     setPendingChatAttachments([]);
@@ -920,6 +930,34 @@ export function FreezoneShell({
   const handlePendingChatNodeMentionsConsumed = useCallback(() => {
     setPendingChatNodeMentions([]);
   }, []);
+  const handlePendingChatExternalSubmitConsumed = useCallback(() => {
+    setPendingChatExternalSubmit(null);
+  }, []);
+  const handleOutlineConfirmed = useCallback(
+    (outline: PendingStoryOutline) => {
+      // 确认成功的同一动线里展开虾导并代投「继续创作」，不等用户回聊天再说一遍；
+      // Agent 忙时消息排队，空闲即发（见 SuperChatPanel 的 pendingExternalSubmit drain）。
+      setChatOpen(true);
+      setPendingChatExternalSubmit({
+        id: `outline-confirmed:${outline.outline_id}`,
+        text: t(outline.kind === "ad" ? "freezone.outline.continueMessageAd" : "freezone.outline.continueMessageStory"),
+      });
+    },
+    [t],
+  );
+  const handleOutlineRevisionRequested = useCallback(
+    (outline: PendingStoryOutline) => {
+      // 「需要修改」只改状态，Agent 得从聊天里知道改哪里：展开虾导预填草稿并聚焦，
+      // 用户补完意见自己发。id 按点击唯一：同一份大纲连续要求修改要能反复预填。
+      setChatOpen(true);
+      setPendingChatExternalSubmit({
+        id: `outline-revision:${outline.outline_id}:${Date.now()}`,
+        text: t("freezone.outline.revisionDraft"),
+        mode: "draft",
+      });
+    },
+    [t],
+  );
   const [htmlTarget, setHtmlTarget] = useState<HtmlArtifactTarget | null>(null);
   useEffect(() => {
     const open = (event: Event) => {
@@ -1044,6 +1082,11 @@ export function FreezoneShell({
     }
   }, [projectId, queryClient]);
   const sync = useCanvasSync(projectId, canvasId);
+  // fmv marker：画布 metadata 里出现待确认大纲时才挂方案卡（阶段B）。
+  const pendingOutline = useMemo(
+    () => parsePendingStoryOutline(sync.metadata),
+    [sync.metadata],
+  );
   const canvasNodes = useCanvasStore((state) => state.nodes);
   const canvasEdges = useCanvasStore((state) => state.edges);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
@@ -2173,6 +2216,20 @@ export function FreezoneShell({
             // 自带 15s 轮询，保活期间不挂载。
             <WorkflowRunRecoveryBar projectId={projectId} canvasId={canvasId} />
           )}
+          {active && sync.status === "ready" && pendingOutline && (
+            <PendingOutlineCard
+              projectId={projectId}
+              canvasId={canvasId}
+              outline={pendingOutline}
+              canvasRevision={sync.revision}
+              onConfirmed={handleOutlineConfirmed}
+              onRevisionRequested={handleOutlineRevisionRequested}
+            />
+          )}
+          {/* 阶段D：纯读的阶段导航，只在有大纲/正式故事组的 fmv 画布上出现。 */}
+          {active && sync.status === "ready" && (
+            <StoryStageNav outline={pendingOutline} />
+          )}
           {/* 调试面板暂时隐藏，恢复时去掉 `false &&` 即可 */}
           {false && import.meta.env.DEV && (
             <CanvasDebugPanel
@@ -2290,6 +2347,8 @@ export function FreezoneShell({
             onPendingAttachmentsConsumed={handlePendingChatAttachmentsConsumed}
             pendingNodeMentions={pendingChatNodeMentions}
             onPendingNodeMentionsConsumed={handlePendingChatNodeMentionsConsumed}
+            pendingExternalSubmit={pendingChatExternalSubmit}
+            onPendingExternalSubmitConsumed={handlePendingChatExternalSubmitConsumed}
             open={chatOpen}
             onOpenChange={handleChatOpenChange}
             // 抽屉会往 <html> 上广播 --freezone-dock-width，顶栏 / 任务状态条 / 任务
@@ -2376,6 +2435,8 @@ function FreezoneChatDock({
   onPendingAttachmentsConsumed,
   pendingNodeMentions,
   onPendingNodeMentionsConsumed,
+  pendingExternalSubmit,
+  onPendingExternalSubmitConsumed,
   open,
   onOpenChange,
   pushesContent,
@@ -2393,6 +2454,8 @@ function FreezoneChatDock({
   onPendingAttachmentsConsumed: () => void;
   pendingNodeMentions: string[];
   onPendingNodeMentionsConsumed: () => void;
+  pendingExternalSubmit: { id: string; text: string; mode?: "send" | "draft" } | null;
+  onPendingExternalSubmitConsumed: () => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** true=抽屉在 flex 行里占位（左侧内容被挤窄）；false=纯浮层，左侧内容不动。 */
@@ -2715,6 +2778,8 @@ function FreezoneChatDock({
           onPendingAttachmentsConsumed={active ? onPendingAttachmentsConsumed : undefined}
           pendingNodeMentions={active ? pendingNodeMentions : []}
           onPendingNodeMentionsConsumed={active ? onPendingNodeMentionsConsumed : undefined}
+          pendingExternalSubmit={active ? pendingExternalSubmit : null}
+          onPendingExternalSubmitConsumed={active ? onPendingExternalSubmitConsumed : undefined}
           onRequestClose={() => onOpenChange(false)}
           freezoneHeaderActions={agentHeaderActions}
           onFreezoneUserMessage={(message, timestamp) => handleAgentUserMessage(agent.id, message, timestamp)}

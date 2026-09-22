@@ -151,9 +151,11 @@ _DRAMACLAW_WRITE_TOOLS = {
     "dramaclaw_create_freezone_canvas_from_preset",
     "dramaclaw_create_interactive_story",
     "dramaclaw_patch_interactive_story",
+    "dramaclaw_confirm_interactive_story_stages",
 }
 
 _FREEZONE_CANVAS_WRITE_TOOLS = {
+    "dramaclaw_confirm_interactive_story_stages",
     "freezone_emit_canvas_command",
     "freezone_confirm_workflow_draft",
     "freezone_create_node",
@@ -900,6 +902,10 @@ def _load_recent_freezone_tool_result(
         "dramaclaw_patch_interactive_story",
         "dramaclaw_get_interactive_story",
         "dramaclaw_validate_interactive_story",
+        "dramaclaw_save_interactive_story_outline",
+        "dramaclaw_get_interactive_story_outline",
+        "dramaclaw_get_interactive_story_progress",
+        "dramaclaw_confirm_interactive_story_stages",
         "dramaclaw_get_freezone_canvas",
     }
     if not (name.startswith("freezone_") or story_tool) or not root_text:

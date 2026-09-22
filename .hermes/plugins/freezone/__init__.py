@@ -3350,38 +3350,77 @@ def _generation_parameters_required_result(
         "count": "count",
     }
     required_choices: dict[str, list[str]] = {}
+    dynamic_story_duration_nodes: list[str] = []
     for item in missing:
         media_type = "image" if item["node_type"] == "imageGenNode" else "video"
-        choices = required_choices.setdefault(media_type, [])
         for field in item.get("fields") or []:
+            if (
+                field == "durationSec"
+                and item.get("interactive_story_segment") is True
+            ):
+                dynamic_story_duration_nodes.append(str(item["node_id"]))
+                continue
+            choices = required_choices.setdefault(media_type, [])
             portable = portable_fields.get(str(field), str(field))
             # Video stores its resolution in data.quality.
             if media_type == "video" and field == "quality":
                 portable = "resolution"
             if portable not in choices:
                 choices.append(portable)
-    return {
+    requires_user_choices = any(required_choices.values())
+    result = {
         "ok": False,
-        "status": "clarification_required",
-        "code": "generation_parameters_required",
-        "error": "image/video generation parameters require user clarification",
+        "status": (
+            "clarification_required"
+            if requires_user_choices
+            else "interactive_story_duration_plan_required"
+        ),
+        "code": (
+            "generation_parameters_required"
+            if requires_user_choices
+            else "interactive_story_duration_plan_required"
+        ),
+        "error": (
+            "image/video generation parameters require user clarification"
+            if requires_user_choices
+            else "interactive story segments require per-segment planned durations"
+        ),
         "media_types": media_types,
         "missing_parameters": missing,
         "required_choices": required_choices,
-        "clarification": {
+        "agent_instruction": (
+            (
+                "Do not ask for one shared video_duration_seconds value for interactive "
+                "story segments. Derive each missing segment duration from its dialogue, "
+                "action and pacing, fit it to the selected model capability, and write "
+                "durationSec on that specific video node. "
+                if dynamic_story_duration_nodes
+                else ""
+            )
+            + (
+                "Stop before every canvas write. Call freezone_request_user_clarification "
+                "exactly once for the required image/video choices listed in required_choices, "
+                "offering a recommended option. Do not add a duration question for interactive "
+                "story segments. After the user answers, retry the same operation with the "
+                "chosen values and the per-segment durations. For a WorkflowPlan, put them in "
+                "each image/video node data. For a workflow draft, patch shared inputs only for "
+                "the listed portable choices. Do not claim success and do not silently choose "
+                "defaults."
+                if requires_user_choices
+                else "Retry the same operation only after every listed story segment has its "
+                "own durationSec; no user clarification card is needed for duration."
+            )
+        ),
+    }
+    if dynamic_story_duration_nodes:
+        result["dynamic_story_duration_node_ids"] = dynamic_story_duration_nodes
+    if requires_user_choices:
+        result["clarification"] = {
             "title": "确认图片和视频生成参数",
             "allow_recommended": True,
             "allow_skip": False,
-        },
-        "agent_instruction": (
-            "Stop before every canvas write. Call freezone_request_user_clarification "
-            "exactly once for all missing image/video choices, offering a recommended "
-            "option. After the user answers, retry the same operation with the chosen "
-            "values. For a WorkflowPlan, put them in each image/video node data. For a "
-            "workflow draft, patch inputs with the portable image_* and video_* keys. "
-            "Do not claim success and do not silently choose defaults."
-        ),
-    }
+        }
+    return result
 
 
 def _external_generation_parameter_preflight(
@@ -3511,6 +3550,13 @@ def _external_generation_parameter_preflight(
                         data.get("displayName") or data.get("title") or node_id
                     )[:120],
                     "fields": missing_fields,
+                    **(
+                        {"interactive_story_segment": True}
+                        if node_type == "videoNode"
+                        and isinstance(data.get("storySegmentId"), str)
+                        and data["storySegmentId"].strip()
+                        else {}
+                    ),
                 }
     if not missing_by_node:
         return None
@@ -6353,6 +6399,7 @@ _RESULT_ARRAY_FIELDS = frozenset(
         "available_ids",
         "candidates",
         "commands",
+        "confirmed_stages",
         "edge_ids",
         "edges",
         "errors",
@@ -6365,6 +6412,7 @@ _RESULT_ARRAY_FIELDS = frozenset(
         "saved_recipe_ids",
         "saved_skill_ids",
         "skipped_edges",
+        "stages",
         "voices",
         "warnings",
     }
@@ -6409,9 +6457,11 @@ _RESULT_INTEGER_FIELDS = frozenset(
 _RESULT_OBJECT_FIELDS = frozenset(
     {
         "story",
+        "outline",
         "counts",
         "answers",
         "client_debug",
+        "evidence",
         "operations",
         "selections",
     }
@@ -6419,6 +6469,7 @@ _RESULT_OBJECT_FIELDS = frozenset(
 _RESULT_STRING_FIELDS = frozenset(
     {
         "story_id",
+        "current_stage_id",
         "run_status",
         "observation_token",
         "action",
@@ -6506,6 +6557,10 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
     "dramaclaw_patch_interactive_story": ("project_id", "canvas_id", "story_id", "revision", "issues", "current_revision", "idempotent", "refresh_canvas"),
     "dramaclaw_get_interactive_story": ("canvas_id", "story_id", "revision", "issues", "current_revision", "story"),
     "dramaclaw_validate_interactive_story": ("canvas_id", "story_id", "revision", "issues", "current_revision", "valid"),
+    "dramaclaw_save_interactive_story_outline": ("project_id", "canvas_id", "outline_id", "status", "revision", "current_revision", "idempotent", "refresh_canvas"),
+    "dramaclaw_get_interactive_story_outline": ("canvas_id", "revision", "outline", "current_revision"),
+    "dramaclaw_get_interactive_story_progress": ("canvas_id", "revision", "kind", "stages", "current_stage_id", "evidence"),
+    "dramaclaw_confirm_interactive_story_stages": ("project_id", "canvas_id", "story_id", "revision", "confirmed_stages", "current_revision", "idempotent", "refresh_canvas"),
     "freezone_observe_workflow_run": (
         "run_id",
         "run_status",
@@ -6780,6 +6835,10 @@ _RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
     "dramaclaw_patch_interactive_story": ("project_id", "canvas_id", "story_id", "revision", "refresh_canvas"),
     "dramaclaw_get_interactive_story": ("canvas_id", "story"),
     "dramaclaw_validate_interactive_story": ("canvas_id", "story_id", "revision", "valid", "issues"),
+    "dramaclaw_save_interactive_story_outline": ("project_id", "canvas_id", "outline_id", "status", "revision", "refresh_canvas"),
+    "dramaclaw_get_interactive_story_outline": ("canvas_id", "revision"),
+    "dramaclaw_get_interactive_story_progress": ("canvas_id", "revision", "kind", "stages", "evidence"),
+    "dramaclaw_confirm_interactive_story_stages": ("project_id", "canvas_id", "story_id", "revision", "confirmed_stages", "refresh_canvas"),
     "freezone_observe_workflow_run": (
         "run_id",
         "run_status",

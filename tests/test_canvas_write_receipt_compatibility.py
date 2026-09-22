@@ -13,14 +13,25 @@ from novelvideo.chat.canvas_outcome import receipt_reference
 from novelvideo.chat.service import (
     _codex_freezone_write_receipt,
     _codex_freezone_write_result_succeeded,
+    _codex_story_revision_conflict,
+    _codex_story_validation_receipt_alias,
+    _codex_story_write_intent,
 )
 
 
-def _event(payload, *, name="freezone_confirm_workflow_draft", status="completed", error=None):
+def _event(
+    payload,
+    *,
+    name="freezone_confirm_workflow_draft",
+    status="completed",
+    error=None,
+    input=None,
+):
     return SimpleNamespace(
         name=name,
         status=status,
         error=error,
+        input=input,
         structured=payload,
         output=None,
     )
@@ -28,6 +39,7 @@ def _event(payload, *, name="freezone_confirm_workflow_draft", status="completed
 
 @pytest.mark.parametrize("name", [
     "dramaclaw_create_interactive_story", "dramaclaw_patch_interactive_story",
+    "dramaclaw_confirm_interactive_story_stages",
 ])
 def test_story_persistence_receipt_is_a_canvas_write(name):
     payload = {"ok": True, "project_id": "project-a", "canvas_id": "canvas-a", "story_id": "story-a",
@@ -53,6 +65,100 @@ def test_story_persistence_receipt_is_a_canvas_write(name):
     assert not _codex_freezone_write_result_succeeded(_event(payload, name=name, error="cancelled"))
     # A story receipt does not stand in for a browser-applied ordinary canvas write.
     assert not _codex_freezone_write_result_succeeded(_event(payload))
+
+
+def test_story_outline_persistence_receipt_is_a_canvas_write():
+    payload = {
+        "ok": True,
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "outline_id": "outline-a",
+        "revision": 2,
+        "refresh_canvas": True,
+    }
+    event = _event(payload, name="dramaclaw_save_interactive_story_outline")
+
+    assert _codex_freezone_write_receipt(
+        event, expected_project="project-a", expected_canvas="canvas-a"
+    ) == payload
+    assert receipt_reference(payload) == ("", 2)
+
+    for field in (
+        "project_id",
+        "canvas_id",
+        "outline_id",
+        "revision",
+        "refresh_canvas",
+    ):
+        incomplete = {key: value for key, value in payload.items() if key != field}
+        assert _codex_freezone_write_receipt(
+            _event(incomplete, name="dramaclaw_save_interactive_story_outline"),
+            expected_project="project-a",
+            expected_canvas="canvas-a",
+        ) is None
+
+
+def test_story_outline_revision_conflict_identifies_a_rebased_retry():
+    event = _event(
+        {
+            "ok": False,
+            "code": "revision_conflict",
+            "story_id": "outline-a",
+            "current_revision": 3,
+        },
+        name="dramaclaw_save_interactive_story_outline",
+        input={
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "outline": {"outline_id": "outline-a"},
+            "base_revision": 1,
+            "idempotency_key": "outline-key",
+        },
+    )
+
+    assert _codex_story_write_intent(
+        event, project="project-a", canvas_id="canvas-a"
+    ) == (
+        "dramaclaw_save_interactive_story_outline",
+        "outline-a",
+        1,
+        "outline-key",
+    )
+    assert _codex_story_revision_conflict(
+        event, project="project-a", canvas_id="canvas-a"
+    ) == (
+        "dramaclaw_save_interactive_story_outline",
+        "outline-a",
+        3,
+        "outline-key",
+    )
+
+
+def test_valid_story_readback_can_alias_only_its_same_turn_write_revision():
+    event = _event(
+        {
+            "ok": True,
+            "valid": True,
+            "canvas_id": "canvas-a",
+            "story_id": "story-a",
+            "revision": 5,
+        },
+        name="dramaclaw_validate_interactive_story",
+    )
+
+    assert _codex_story_validation_receipt_alias(
+        event,
+        canvas_id="canvas-a",
+        story_receipts={"story-a": ("", 4)},
+    ) == (("", 5), ("", 4))
+    assert (
+        _codex_story_validation_receipt_alias(
+            event,
+            canvas_id="another-canvas",
+            story_receipts={"story-a": ("", 4)},
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize(

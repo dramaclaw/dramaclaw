@@ -208,6 +208,101 @@ def test_interactive_story_api_returns_structured_revision_conflict(
     }
 
 
+def test_interactive_story_api_rejects_a_second_story_on_one_canvas(
+    interactive_story_client,
+) -> None:
+    client, state_dir, _roles = interactive_story_client
+    story = _story_payload()
+    first = client.post(
+        "/api/v1/projects/proj_demo/interactive-stories",
+        json={
+            "canvas_id": "default",
+            "base_revision": 0,
+            "idempotency_key": "api-single-story-first",
+            "story": story,
+        },
+    )
+    assert first.status_code == 200, first.text
+
+    second_story = {**story, "story_id": "another-story"}
+    second = client.post(
+        "/api/v1/projects/proj_demo/interactive-stories",
+        json={
+            "canvas_id": "default",
+            "base_revision": 1,
+            "idempotency_key": "api-single-story-second",
+            "story": second_story,
+        },
+    )
+
+    assert second.status_code == 409
+    assert second.json()["code"] == "story_already_exists"
+    assert second.json()["story_id"] == story["story_id"]
+    saved = json.loads(
+        (state_dir / "freezone" / "canvases" / "default.json").read_text()
+    )
+    assert saved["revision"] == 1
+    assert sum(
+        (node.get("data") or {}).get("storyGroup") is True
+        for node in saved["nodes"]
+    ) == 1
+
+
+def test_interactive_story_api_persists_explicit_stage_confirmation(
+    interactive_story_client,
+) -> None:
+    client, state_dir, roles = interactive_story_client
+    story = _story_payload()
+    created = client.post(
+        "/api/v1/projects/proj_demo/interactive-stories",
+        json={
+            "canvas_id": "default",
+            "base_revision": 0,
+            "idempotency_key": "api-stage-create",
+            "story": story,
+        },
+    )
+    assert created.status_code == 200, created.text
+
+    confirmed = client.post(
+        "/api/v1/projects/proj_demo/interactive-stories/"
+        "fizz_choice_ad/stage-confirmations",
+        json={
+            "canvas_id": "default",
+            "story_id": "fizz_choice_ad",
+            "stages": ["characters", "scenes"],
+            "action": "confirm",
+            "base_revision": 1,
+            "idempotency_key": "api-stage-confirm",
+        },
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["confirmed_stages"] == ["characters", "scenes"]
+    assert confirmed.json()["refresh_canvas"] is True
+
+    progress = client.get(
+        "/api/v1/projects/proj_demo/interactive-story-progress",
+        params={"canvas_id": "default"},
+    )
+    assert progress.status_code == 200, progress.text
+    status = {item["id"]: item["status"] for item in progress.json()["stages"]}
+    assert status["characters"] == "done"
+    assert status["scenes"] == "done"
+    assert progress.json()["evidence"]["confirmed_stages"] == [
+        "characters",
+        "scenes",
+    ]
+
+    saved = json.loads(
+        (state_dir / "freezone" / "canvases" / "default.json").read_text()
+    )
+    group = next(node for node in saved["nodes"] if node["data"].get("storyGroup"))
+    assert group["data"]["storyStageConfirmations"]["characters"]["confirmedBy"] == (
+        "u-alice"
+    )
+    assert roles == ["editor", "editor", "viewer"]
+
+
 def test_story_event_failure_does_not_hide_saved_result(
     interactive_story_client, monkeypatch,
 ) -> None:
@@ -298,3 +393,128 @@ async def test_interactive_story_route_moves_blocking_service_work_off_event_loo
 
     release.set()
     assert await task == expected
+
+
+def test_create_tool_hard_gates_unconfirmed_outline(
+    interactive_story_client, monkeypatch,
+) -> None:
+    """Agent 的 Create 工具入口硬校验大纲确认状态；底层 service 保持宽松。"""
+    from novelvideo.chat import dramaclaw_mcp
+
+    client, _state_dir, _roles = interactive_story_client
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "proj_demo")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "default")
+    plugin = dramaclaw_mcp._plugin("freezone")
+
+    def request(method, path, *, query=None, body=None):
+        response = client.request(method, path, params=query, json=body)
+        return {"status_code": response.status_code, **response.json()}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    create = dramaclaw_mcp._plugin_tools("freezone")[
+        "dramaclaw_create_interactive_story"
+    ][1]
+
+    saved = client.put(
+        "/api/v1/projects/proj_demo/interactive-story-outline",
+        json={
+            "canvas_id": "default",
+            "base_revision": 0,
+            "idempotency_key": "gate-outline-0001",
+            "outline": {
+                "outline_id": "outline-round-1",
+                "kind": "story",
+                "title": "雨夜出租车",
+                "premise": "司机在雨夜接到自称来自十年前的乘客。",
+                "plot_summary": "三幕：接载—试探—抉择。",
+            },
+        },
+    )
+    assert saved.status_code == 200, saved.text
+
+    story = _story_payload()
+    blocked = json.loads(create({
+        "project_id": "proj_demo",
+        "canvas_id": "default",
+        "base_revision": 1,
+        "idempotency_key": "gate-create-blocked",
+        "story": story,
+    }))
+    assert blocked["ok"] is False
+    assert "outline_not_confirmed" in blocked["error"]
+    # 被拦下的请求不得碰画布：revision 仍为 1。
+    read = client.get(
+        "/api/v1/projects/proj_demo/interactive-story-outline",
+        params={"canvas_id": "default"},
+    )
+    assert read.json()["revision"] == 1
+
+    confirmed = client.post(
+        "/api/v1/projects/proj_demo/interactive-story-outline/confirm",
+        json={
+            "canvas_id": "default",
+            "outline_id": "outline-round-1",
+            "status": "confirmed",
+            "base_revision": 1,
+            "idempotency_key": "gate-confirm-0001",
+        },
+    )
+    assert confirmed.status_code == 200, confirmed.text
+
+    created = json.loads(create({
+        "project_id": "proj_demo",
+        "canvas_id": "default",
+        "base_revision": 2,
+        "idempotency_key": "gate-create-allowed",
+        "story": story,
+    }))
+    assert created.get("ok") is True, created
+    assert created["revision"] == 3
+    after = client.get(
+        "/api/v1/projects/proj_demo/interactive-story-outline",
+        params={"canvas_id": "default"},
+    )
+    assert after.json()["outline"]["status"] == "linked"
+
+
+def test_create_route_rejects_unconfirmed_outline(
+    interactive_story_client,
+) -> None:
+    """绕过 MCP 工具直接打 REST Create：后端同样拒绝未确认大纲。"""
+    client, _state_dir, _roles = interactive_story_client
+    saved = client.put(
+        "/api/v1/projects/proj_demo/interactive-story-outline",
+        json={
+            "canvas_id": "default",
+            "base_revision": 0,
+            "idempotency_key": "route-gate-outline",
+            "outline": {
+                "outline_id": "outline-round-9",
+                "kind": "story",
+                "title": "雨夜出租车",
+                "premise": "司机在雨夜接到自称来自十年前的乘客。",
+                "plot_summary": "三幕：接载—试探—抉择。",
+            },
+        },
+    )
+    assert saved.status_code == 200, saved.text
+
+    response = client.post(
+        "/api/v1/projects/proj_demo/interactive-stories",
+        json={
+            "canvas_id": "default",
+            "base_revision": 1,
+            "idempotency_key": "route-gate-create",
+            "story": _story_payload(),
+        },
+    )
+    assert response.status_code == 409
+    body = response.json()
+    assert body["ok"] is False
+    assert body["code"] == "outline_not_confirmed"
+    # 被拒的请求不写画布：大纲读回 revision 仍为 1。
+    read = client.get(
+        "/api/v1/projects/proj_demo/interactive-story-outline",
+        params={"canvas_id": "default"},
+    )
+    assert read.json()["revision"] == 1

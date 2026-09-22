@@ -3710,6 +3710,81 @@ describe("Canvas command approval image params", () => {
       "video-model",
     )).toHaveLength(2);
   });
+
+  it("keeps interactive-story durations dynamic and exposes segment continuity", () => {
+    const approval = {
+      id: "story-dynamic-duration", key: "story-dynamic-duration", messageId: "assistant",
+      receivedAt: 1, commandCount: 4, plans: [],
+      envelopes: [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [
+          { type: "update_node_data" as const, node_id: "story-a", data: { durationSec: 6, continuityMode: "independent" } },
+          { type: "update_node_data" as const, node_id: "story-b", data: { durationSec: 11, continuityMode: "auto" } },
+          { type: "run_node_action" as const, node_id: "story-a", action: "generate_video" },
+          { type: "run_node_action" as const, node_id: "story-b", action: "generate_video" },
+        ],
+      }],
+    };
+    const canvasNodes = [
+      {
+        id: "story-a", type: "videoNode" as const, position: { x: 0, y: 0 },
+        data: { storySegmentId: "a", storyRole: "start", displayName: "开场", model: "video-model" },
+      },
+      {
+        id: "story-b", type: "videoNode" as const, position: { x: 0, y: 0 },
+        data: { storySegmentId: "b", displayName: "追问", model: "video-model" },
+      },
+    ];
+    const groups = videoApprovalParamGroupsForTest(
+      approval as never,
+      canvasNodes as never,
+      [],
+      [{ id: "video-model", minDuration: 5, maxDuration: 15 }],
+      "video-model",
+    );
+    expect(groups).toHaveLength(2);
+    expect(groups.map((group) => ({
+      durationSec: group.durationSec,
+      labels: group.storySegmentLabels,
+      continuityMode: group.continuityMode,
+    }))).toEqual([
+      { durationSec: 6, labels: ["开场"], continuityMode: "independent" },
+      { durationSec: 11, labels: ["追问"], continuityMode: "auto" },
+    ]);
+  });
+
+  it("keeps equal-duration interactive-story segments independently editable", () => {
+    const approval = {
+      id: "story-independent-rows", key: "story-independent-rows", messageId: "assistant",
+      receivedAt: 1, commandCount: 4, plans: [],
+      envelopes: [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [
+          { type: "update_node_data" as const, node_id: "story-a", data: { durationSec: 8, continuityMode: "auto" } },
+          { type: "update_node_data" as const, node_id: "story-b", data: { durationSec: 8, continuityMode: "auto" } },
+          { type: "run_node_action" as const, node_id: "story-a", action: "generate_video" },
+          { type: "run_node_action" as const, node_id: "story-b", action: "generate_video" },
+        ],
+      }],
+    };
+    const canvasNodes = ["a", "b"].map((id) => ({
+      id: `story-${id}`,
+      type: "videoNode" as const,
+      position: { x: 0, y: 0 },
+      data: { storySegmentId: id, displayName: `片段${id}`, model: "video-model" },
+    }));
+
+    const groups = videoApprovalParamGroupsForTest(
+      approval as never,
+      canvasNodes as never,
+      [],
+      [{ id: "video-model", minDuration: 5, maxDuration: 15 }],
+      "video-model",
+    );
+
+    expect(groups).toHaveLength(2);
+    expect(groups.map((group) => group.storySegmentLabels)).toEqual([["片段a"], ["片段b"]]);
+  });
 });
 
 describe("Canvas command approval audio params", () => {

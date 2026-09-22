@@ -388,6 +388,38 @@ def test_create_retry_is_idempotent_and_does_not_duplicate_story(
     assert len(groups) == 1
 
 
+def test_create_rejects_a_second_story_on_the_same_canvas(
+    service: InteractiveStoryService,
+    story: StoryDraftV2,
+) -> None:
+    first = service.create(create_request(story))
+    second_story = story.model_copy(update={"story_id": "another-story"})
+    second_request = CreateInteractiveStoryRequest(
+        canvas_id="default",
+        base_revision=first.revision,
+        idempotency_key="agent-create-second-story",
+        story=second_story,
+    )
+
+    with pytest.raises(InteractiveStoryServiceError) as caught:
+        service.create(second_request)
+
+    assert caught.value.code == "story_already_exists"
+    assert caught.value.story_id == story.story_id
+    canvas = canvas_store.read_canvas(service.project_dir, "default")
+    assert canvas is not None
+    assert canvas["revision"] == first.revision
+    assert [
+        node
+        for node in canvas["nodes"]
+        if (node.get("data") or {}).get("storyGroup") is True
+    ] == [
+        node
+        for node in canvas["nodes"]
+        if (node.get("data") or {}).get("interactiveStoryId") == story.story_id
+    ]
+
+
 def test_create_rejects_idempotency_key_reuse_for_different_story_payload(
     service: InteractiveStoryService,
     story: StoryDraftV2,

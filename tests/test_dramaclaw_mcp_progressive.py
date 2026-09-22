@@ -336,6 +336,10 @@ async def test_project_scope_lists_only_profile_concrete_tools(
             "dramaclaw_get_interactive_story",
             "dramaclaw_patch_interactive_story",
             "dramaclaw_validate_interactive_story",
+            "dramaclaw_save_interactive_story_outline",
+            "dramaclaw_get_interactive_story_outline",
+            "dramaclaw_get_interactive_story_progress",
+            "dramaclaw_confirm_interactive_story_stages",
         }
 
     schemas = {tool.name: tool.outputSchema for tool in tools}
@@ -1083,6 +1087,10 @@ def test_freezone_scope_loads_only_canvas_plugin_tools(monkeypatch):
         "dramaclaw_get_interactive_story",
         "dramaclaw_patch_interactive_story",
         "dramaclaw_validate_interactive_story",
+        "dramaclaw_save_interactive_story_outline",
+        "dramaclaw_get_interactive_story_outline",
+        "dramaclaw_get_interactive_story_progress",
+        "dramaclaw_confirm_interactive_story_stages",
     }
     assert "freezone_emit_canvas_command" in available
 

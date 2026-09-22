@@ -740,6 +740,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
         story_write = name in {
             "dramaclaw_create_interactive_story",
             "dramaclaw_patch_interactive_story",
+            "dramaclaw_confirm_interactive_story_stages",
         }
         validation_errors: list[Any] = []
         try:

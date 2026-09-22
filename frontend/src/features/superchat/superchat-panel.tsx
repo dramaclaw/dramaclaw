@@ -2690,6 +2690,18 @@ function videoApprovalParamGroups(
       && approvalVideoHasImageInput(approval, canvasNodes, canvasEdges, nodeId, nodeData)
       && nodeData.humanReview !== true
     );
+    const isStorySegment = typeof nodeData.storySegmentId === "string"
+      && Boolean(nodeData.storySegmentId.trim());
+    const continuityMode = isStorySegment
+      ? nodeData.storyRole === "start"
+        ? "independent"
+        : nodeData.continuityMode === "auto" || nodeData.continuityMode === "independent"
+          ? nodeData.continuityMode
+          : null
+      : null;
+    const storySegmentLabel = isStorySegment
+      ? textValue(nodeData.displayName ?? nodeData.title, nodeId)
+      : null;
     const params: CanvasApprovalVideoParams = {
       nodeId,
       nodeIds: [nodeId],
@@ -2703,6 +2715,8 @@ function videoApprovalParamGroups(
       humanReview: requiresHumanReviewConfirmation || Boolean(nodeData?.humanReview),
       requiresHumanReviewConfirmation,
       count: isCanvasApprovalVideoCount(nodeData?.count) ? nodeData.count : 1,
+      storySegmentLabels: storySegmentLabel ? [storySegmentLabel] : [],
+      continuityMode,
     };
     const signature = JSON.stringify({
       model: params.model,
@@ -2712,9 +2726,21 @@ function videoApprovalParamGroups(
       generateAudio: params.generateAudio,
       humanReview: params.humanReview,
       count: params.count,
+      continuityMode: params.continuityMode,
+      // 互动故事必须逐片段审核；即使两个片段当前参数相同，也不能合并成一行后
+      // 让一次时长调整同时覆盖两段剧情。
+      storySegmentNodeId: isStorySegment ? nodeId : null,
     });
     const existing = groups.get(signature);
-    if (existing) existing.nodeIds = [...(existing.nodeIds ?? []), nodeId];
+    if (existing) {
+      existing.nodeIds = [...(existing.nodeIds ?? []), nodeId];
+      if (storySegmentLabel) {
+        existing.storySegmentLabels = [
+          ...(existing.storySegmentLabels ?? []),
+          storySegmentLabel,
+        ];
+      }
+    }
     else groups.set(signature, params);
   }
   return [...groups.values()];
@@ -3660,8 +3686,28 @@ function CanvasCommandApprovalCard({
           selectedVideoModel?.ratioOptions,
           VIDEO_GENERATION_ASPECT_RATIOS,
         );
+        const storySegmentLabels = videoParam.storySegmentLabels ?? [];
+        const storySegmentSummary = storySegmentLabels.join("、");
+        const continuityLabel = videoParam.continuityMode
+          ? t(`freezone.story.continuity.${videoParam.continuityMode}`)
+          : null;
         return (
         <div key={`${videoParam.nodeId}:${videoParam.model}`} className="border-t border-amber-400/10 px-3 py-1">
+          {storySegmentLabels.length > 0 && (
+            <div className="mb-1 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+              <span
+                className="min-w-0 truncate text-foreground/85"
+                title={storySegmentSummary}
+              >
+                {storySegmentSummary}
+              </span>
+              {continuityLabel && (
+                <span className="shrink-0 rounded-full bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                  {continuityLabel}
+                </span>
+              )}
+            </div>
+          )}
           <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
             <span className="inline-flex items-center gap-1 text-[11px] font-medium text-foreground">
               <Play className="size-3" />视频
@@ -10671,6 +10717,8 @@ type CanvasApprovalVideoParams = {
   humanReview: boolean;
   requiresHumanReviewConfirmation: boolean;
   count: 1 | 2 | 4;
+  storySegmentLabels?: string[];
+  continuityMode?: "auto" | "independent" | null;
 };
 
 type CanvasApprovalVideoUpscaleParams = {
@@ -11995,6 +12043,11 @@ interface SuperChatPanelProps {
   /** 「添加到对话」落地：一批 nodeId,面板挂载后 drain 成 draft 里的行内 mention chip。 */
   pendingNodeMentions?: string[];
   onPendingNodeMentionsConsumed?: () => void;
+  /** 面板外的「提交并继续」：外壳决策落定（如确认大纲）后代投一条用户消息，
+   * 面板 drain 进发送队列，与手动发送同管道（忙时排队、空闲即发）。
+   * mode="draft" 则不发送，只把文本预填进输入框并聚焦（如「需要修改」等用户补意见）。 */
+  pendingExternalSubmit?: { id: string; text: string; mode?: "send" | "draft" } | null;
+  onPendingExternalSubmitConsumed?: () => void;
   onRequestClose?: () => void;
   freezoneHeaderActions?: ReactNode;
   onFreezoneUserMessage?: (message: string, timestamp: number) => void;
@@ -12029,6 +12082,8 @@ export function SuperChatPanel({
   onPendingAttachmentsConsumed,
   pendingNodeMentions = [],
   onPendingNodeMentionsConsumed,
+  pendingExternalSubmit = null,
+  onPendingExternalSubmitConsumed,
   onRequestClose,
   freezoneHeaderActions,
   onFreezoneUserMessage,
@@ -12119,6 +12174,7 @@ export function SuperChatPanel({
   const onConnectionStateChangeRef = useRef(onConnectionStateChange);
   const consumedPendingAttachmentsKeyRef = useRef<string | null>(null);
   const consumedPendingNodeMentionsKeyRef = useRef<string | null>(null);
+  const consumedPendingExternalSubmitIdRef = useRef<string | null>(null);
   const notifiedTaskKeysRef = useRef<Set<string>>(new Set());
   const directorAutoTerminalTaskIdsRef = useRef<Set<string>>(new Set());
   const taskEventBus = useEventBus();
@@ -13956,6 +14012,35 @@ export function SuperChatPanel({
     onPendingNodeMentionsConsumed?.();
     restoreDraftFocusRef.current = true;
   }, [pendingNodeMentions, canvasNodes, canvasEdges, onPendingNodeMentionsConsumed]);
+
+  // 「提交并继续」drain：send 直接进发送队列，和手动忙时排队共用同一条 flush 路径——
+  // 空闲且已连接就立即发出，Agent 忙则排队，用户全程能在队列里看到将要发送的内容。
+  // draft 只预填输入框并聚焦，把要不要发、发什么留给用户（「需要修改」后的意见补写）。
+  useEffect(() => {
+    if (!pendingExternalSubmit) {
+      consumedPendingExternalSubmitIdRef.current = null;
+      return;
+    }
+    if (consumedPendingExternalSubmitIdRef.current === pendingExternalSubmit.id) return;
+    consumedPendingExternalSubmitIdRef.current = pendingExternalSubmit.id;
+    if (pendingExternalSubmit.mode === "draft") {
+      setDraft((current) =>
+        current.trim() ? `${current}\n${pendingExternalSubmit.text}` : pendingExternalSubmit.text,
+      );
+      restoreDraftFocusRef.current = true;
+    } else {
+      setQueuedMessages((current) => [
+        ...current,
+        {
+          id: `external-${pendingExternalSubmit.id}`,
+          text: pendingExternalSubmit.text,
+          attachments: [],
+          createdAt: Date.now(),
+        },
+      ]);
+    }
+    onPendingExternalSubmitConsumed?.();
+  }, [pendingExternalSubmit, onPendingExternalSubmitConsumed]);
 
   useEffect(() => {
     if (variant !== "freezone" || currentCanvasSelection.length > 0) return;

@@ -18,6 +18,9 @@ CANVAS_FINAL_RESPONSE_INSTRUCTIONS = (
     "{\"bridge_key\":\"actual returned key\",\"revision\":null}, or "
     "{\"bridge_key\":null,\"revision\":actual_returned_integer} for direct apply. "
     "Never invent receipts. For read_only or blocked, use canvas_receipts=[]. "
+    "Validation/read tools may return a newer snapshot revision; that value is not "
+    "a write receipt. For a mutation, copy the revision from the successful write "
+    "tool result, not from a later validation result. "
     "A creation receipt does not prove media generation or parameter persistence."
 )
 
@@ -76,6 +79,9 @@ def finalize_canvas_reply(
     *,
     attempts: dict[str, str],
     receipts: set[tuple[str, int | None]],
+    receipt_aliases: dict[
+        tuple[str, int | None], tuple[str, int | None]
+    ] | None = None,
     failure: str = "",
     draft_ready: bool = False,
 ) -> str:
@@ -120,8 +126,11 @@ def finalize_canvas_reply(
         if not attempts or not claims:
             return "画布操作未完成：本轮没有可验证的画布写入回执，请重试。"
         references = set()
+        aliases = receipt_aliases or {}
         for claim in claims:
             reference = _claim_reference(claim)
+            if reference is not None:
+                reference = aliases.get(reference, reference)
             if reference is None or reference not in receipts:
                 return "画布操作未完成：成功声明与本轮写入回执不匹配，请重试。"
             references.add(reference)

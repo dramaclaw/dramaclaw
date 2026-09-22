@@ -955,6 +955,56 @@
       "editPrompt": "Edit prompt",
       "skipNode": "Skip node"
     },
+    "outline": {
+      "kindStory": "Interactive story",
+      "kindAd": "Interactive ad",
+      "status": {
+        "pending": "Awaiting confirmation",
+        "needs_revision": "Needs revision",
+        "confirmed": "Confirmed",
+        "linked": "Linked to script"
+      },
+      "confirm": "Confirm outline",
+      "needsRevision": "Needs revision",
+      "dismiss": "Hide",
+      "reopen": "Show outline proposal",
+      "duration": "Target length: {{minutes}} min",
+      "durationSeconds": "Target length: {{seconds}} s",
+      "continueMessageStory": "The outline is confirmed — please continue and build the formal branching script.",
+      "continueMessageAd": "The outline is confirmed — please continue and produce the formal script.",
+      "revisionDraft": "The outline needs revision: ",
+      "superseded": "The outline was updated by the assistant. Review the latest version, then confirm again.",
+      "refreshBlocked": "Your decision was saved, but the canvas still has unsaved local edits. Resolve the canvas conflict and load the latest version before continuing.",
+      "failed": "Could not save the confirmation. Please try again."
+    },
+    "stages": {
+      "navLabel": "Creation stages",
+      "current": "Current stage: {{stage}}",
+      "proposal": "Proposal",
+      "outline": "Outline",
+      "script": "Script",
+      "characters": "Characters",
+      "scenes": "Scenes",
+      "storyboard": "Storyboard",
+      "video": "Video",
+      "complete": "Complete",
+      "status": {
+        "todo": "Not started",
+        "active": "In progress",
+        "done": "Done",
+        "manual": "No automatic check"
+      },
+      "hint": {
+        "proposal": "Set the creative direction with the assistant in chat; it is saved as a pending canvas outline",
+        "outline": "Confirm the outline on the plan card before the agent builds the story tree",
+        "script": "Use “View script” to check copy and branches; ask the agent to patch changes",
+        "characters": "A cast list is not a character asset; verify character cards, designs, or reference images first",
+        "scenes": "No unified automatic criterion yet; prepare scene material on the canvas first",
+        "storyboard": "No unified automatic criterion yet",
+        "video": "Done only when every segment's video is ready; generation in progress does not count",
+        "complete": "Completion requires an actual playtest and deliverable acceptance; not automatic"
+      }
+    },
     "canvases": {
       "defaultSection": "Default canvas",
       "myCanvasSection": "My canvas",
@@ -5002,6 +5052,25 @@
         "ending": "Ending",
         "hasIssue": "This scene needs review",
         "noResults": "No matching story scenes"
+      },
+      "overview": {
+        "open": "View script",
+        "title": "Script overview",
+        "empty": "No script segments on this canvas yet",
+        "synopsis": "Background",
+        "synopsisEmpty": "No synopsis saved yet",
+        "characters": "Characters",
+        "branches": "Branches",
+        "scriptReady": "{{ready}}/{{total}} with script",
+        "noStart": "No unique start segment; check the canvas",
+        "orphans": "Unreachable from the start",
+        "merge": "↩ merge",
+        "loop": "↩ loop",
+        "conditional": "conditional",
+        "ending": "Ending",
+        "endings": "Endings",
+        "missingScript": "missing script",
+        "productionNotes": "Production notes"
       },
       "lint": {
         "open": "Production readiness",

@@ -654,6 +654,41 @@ def _story_patch_operations_schema() -> dict[str, Any]:
     }
 
 
+def _story_outline_schema() -> dict[str, Any]:
+    return _strict_object(
+        {
+            "schema_version": {"const": "pending_story_outline.v1"},
+            "outline_id": dict(_ENTITY_ID_SCHEMA),
+            "kind": {"enum": ["story", "ad"]},
+            "title": {"type": "string", "minLength": 1, "maxLength": 200},
+            "premise": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4_000,
+                "description": "Background or creative idea awaiting confirmation.",
+            },
+            "plot_summary": {"type": "string", "minLength": 1, "maxLength": 8_000},
+            "interaction_summary": {"type": "string", "maxLength": 4_000},
+            "endings_summary": {"type": "string", "maxLength": 2_000},
+            "duration_budget_sec": _nullable(
+                {"type": "integer", "minimum": 1, "maximum": 86_400}
+            ),
+            "open_questions": {
+                "type": "array",
+                "maxItems": 20,
+                "items": {"type": "string", "minLength": 1, "maxLength": 500},
+            },
+            "status": {"enum": ["pending", "needs_revision"]},
+        },
+        ["outline_id", "kind", "title", "premise", "plot_summary"],
+    )
+
+
+# The SKILL's "only Create after the user confirmed" is no longer prompt-only:
+# the Create entry hard-gates on the canvas outline when one exists.
+_CONFIRMED_OUTLINE_STATUSES = frozenset({"confirmed", "linked"})
+
+
 def build_tools(
     *,
     schema: Callable[..., dict[str, Any]],
@@ -662,7 +697,7 @@ def build_tools(
     tool_result: Callable[[Any], str],
     tool_error: Callable[[Any], str],
 ) -> tuple[tuple[str, dict[str, Any], Callable[..., str]], ...]:
-    """Build the four interactive-story tools against one host adapter."""
+    """Build the interactive-story tools against one host adapter."""
 
     def story_path(args: dict[str, Any], story_id: str | None = None) -> str:
         project = quote(project_from_args(args), safe="")
@@ -687,8 +722,39 @@ def build_tools(
             raise ValueError("story_id is required")
         return story_id
 
+    def outline_confirmation_gate(args: dict[str, Any]) -> str | None:
+        """Cheap pre-check: refuse Create while the canvas outline is unconfirmed.
+
+        The authoritative gate lives in the backend create path itself (the
+        REST route returns the same outline_not_confirmed code), so this
+        pre-check may fail open on read errors without letting an unconfirmed
+        create through; it exists to give the agent the clearer "do not retry,
+        ask the user to confirm" instruction before a write is attempted.
+        A missing outline passes: outline-free direct creation stays
+        permissive.
+        """
+        canvas_id = str(
+            args.get("canvas_id")
+            or os.environ.get("DRAMACLAW_CANVAS_ID")
+            or "default"
+        ).strip() or "default"
+        result = request("GET", outline_path(args), query={"canvas_id": canvas_id})
+        outline = result.get("outline") if isinstance(result, dict) else None
+        if isinstance(outline, dict) and outline.get("status") not in _CONFIRMED_OUTLINE_STATUSES:
+            return (
+                "outline_not_confirmed: the canvas still has a pending story outline "
+                f"(status={outline.get('status')!r}) that the user has not confirmed "
+                "on the plan card. Do not retry; ask the user to confirm it, and "
+                "only call Create after dramaclaw_get_interactive_story_outline "
+                "reports status confirmed or linked."
+            )
+        return None
+
     def handle_create(args: dict[str, Any], **_: Any) -> str:
         try:
+            gate_error = outline_confirmation_gate(args)
+            if gate_error is not None:
+                return tool_error(gate_error)
             body = story_body(args, "base_revision", "idempotency_key", "story")
             return tool_result(request("POST", story_path(args), body=body))
         except Exception as exc:
@@ -742,12 +808,83 @@ def build_tools(
         except Exception as exc:
             return tool_error(str(exc))
 
+    def outline_path(args: dict[str, Any]) -> str:
+        project = quote(project_from_args(args), safe="")
+        return f"/api/v1/projects/{project}/interactive-story-outline"
+
+    def handle_save_outline(args: dict[str, Any], **_: Any) -> str:
+        try:
+            outline = args.get("outline")
+            if not isinstance(outline, dict):
+                raise ValueError("outline is required")
+            body = story_body(args, "base_revision", "idempotency_key")
+            body["outline"] = outline
+            return tool_result(request("PUT", outline_path(args), body=body))
+        except Exception as exc:
+            return tool_error(str(exc))
+
+    def handle_get_outline(args: dict[str, Any], **_: Any) -> str:
+        try:
+            canvas_id = str(
+                args.get("canvas_id")
+                or os.environ.get("DRAMACLAW_CANVAS_ID")
+                or "default"
+            ).strip()
+            return tool_result(
+                request(
+                    "GET",
+                    outline_path(args),
+                    query={"canvas_id": canvas_id or "default"},
+                )
+            )
+        except Exception as exc:
+            return tool_error(str(exc))
+
+    def handle_get_progress(args: dict[str, Any], **_: Any) -> str:
+        try:
+            project = quote(project_from_args(args), safe="")
+            canvas_id = str(
+                args.get("canvas_id")
+                or os.environ.get("DRAMACLAW_CANVAS_ID")
+                or "default"
+            ).strip()
+            return tool_result(
+                request(
+                    "GET",
+                    f"/api/v1/projects/{project}/interactive-story-progress",
+                    query={"canvas_id": canvas_id or "default"},
+                )
+            )
+        except Exception as exc:
+            return tool_error(str(exc))
+
+    def handle_confirm_stages(args: dict[str, Any], **_: Any) -> str:
+        try:
+            story_id = require_story_id(args)
+            body = story_body(
+                args,
+                "story_id",
+                "stages",
+                "action",
+                "base_revision",
+                "idempotency_key",
+            )
+            return tool_result(
+                request(
+                    "POST",
+                    f"{story_path(args, story_id)}/stage-confirmations",
+                    body=body,
+                )
+            )
+        except Exception as exc:
+            return tool_error(str(exc))
+
     return (
         (
             "dramaclaw_create_interactive_story",
             schema(
                 "dramaclaw_create_interactive_story",
-                "Create one confirmed branching interactive story and project it into the current Freezone canvas. Never replay a successful or ambiguous write; after an explicit request-validation rejection, correct only the reported fields and retry at most once.",
+                "Create one confirmed branching interactive story and project it into the current Freezone canvas. The call is rejected with outline_not_confirmed while the canvas still holds a user-unconfirmed pending outline. Never replay a successful or ambiguous write; after an explicit request-validation rejection, correct only the reported fields and retry at most once.",
                 {
                     "project_id": {
                         "type": "string",
@@ -858,5 +995,117 @@ def build_tools(
                 additional_properties=False,
             ),
             handle_validate,
+        ),
+        (
+            "dramaclaw_save_interactive_story_outline",
+            schema(
+                "dramaclaw_save_interactive_story_outline",
+                "Save or update the canvas-level pending story outline for user review. This is not the formal story: it never creates story nodes, and any content change resets the user's confirmation. Only call after the user agreed to move the plan onto the canvas.",
+                {
+                    "project_id": {
+                        "type": "string",
+                        "description": "Defaults to DRAMACLAW_PROJECT_ID.",
+                    },
+                    "canvas_id": {
+                        "type": "string",
+                        "description": "Defaults to DRAMACLAW_CANVAS_ID or default.",
+                    },
+                    "base_revision": {"type": "integer", "minimum": 0},
+                    "idempotency_key": {
+                        "type": "string",
+                        "minLength": 8,
+                        "maxLength": 200,
+                    },
+                    "outline": {
+                        **_story_outline_schema(),
+                        "description": "Complete PendingStoryOutline payload.",
+                    },
+                },
+                ["base_revision", "idempotency_key", "outline"],
+                additional_properties=False,
+            ),
+            handle_save_outline,
+        ),
+        (
+            "dramaclaw_get_interactive_story_outline",
+            schema(
+                "dramaclaw_get_interactive_story_outline",
+                "Read the canvas-level pending story outline and its confirmation status before creating the formal story.",
+                {
+                    "project_id": {
+                        "type": "string",
+                        "description": "Defaults to DRAMACLAW_PROJECT_ID.",
+                    },
+                    "canvas_id": {
+                        "type": "string",
+                        "description": "Defaults to DRAMACLAW_CANVAS_ID or default.",
+                    },
+                },
+                None,
+                additional_properties=False,
+            ),
+            handle_get_outline,
+        ),
+        (
+            "dramaclaw_get_interactive_story_progress",
+            schema(
+                "dramaclaw_get_interactive_story_progress",
+                "Read the canvas-derived creative pipeline progress (proposal/outline/script/characters/video/... plus the underlying evidence counts). This read writes nothing. Call it before drafting a production plan or writing per-segment video prompts so the plan matches the stage the user actually sees. A script-like stage that is not done means narration or structural errors are still missing. character_count only counts story definitions; it is not evidence that character cards, designs, or reference assets exist. confirmed_stages contains only explicit user confirmations recorded through dramaclaw_confirm_interactive_story_stages.",
+                {
+                    "project_id": {
+                        "type": "string",
+                        "description": "Defaults to DRAMACLAW_PROJECT_ID.",
+                    },
+                    "canvas_id": {
+                        "type": "string",
+                        "description": "Defaults to DRAMACLAW_CANVAS_ID or default.",
+                    },
+                },
+                None,
+                additional_properties=False,
+            ),
+            handle_get_progress,
+        ),
+        (
+            "dramaclaw_confirm_interactive_story_stages",
+            schema(
+                "dramaclaw_confirm_interactive_story_stages",
+                "Confirm or reopen manual interactive-story stages on the persisted canvas. Call action=confirm only when the user explicitly says the listed stages are complete or asks to continue past them; never infer confirmation from image nodes, filenames, generated assets, or later-stage content. Call action=reopen when the user explicitly asks to redo a previously confirmed stage.",
+                {
+                    "project_id": {
+                        "type": "string",
+                        "description": "Defaults to DRAMACLAW_PROJECT_ID.",
+                    },
+                    "canvas_id": {
+                        "type": "string",
+                        "description": "Defaults to DRAMACLAW_CANVAS_ID or default.",
+                    },
+                    "story_id": {"type": "string", "minLength": 1},
+                    "stages": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 4,
+                        "uniqueItems": True,
+                        "items": {
+                            "enum": [
+                                "characters",
+                                "scenes",
+                                "storyboard",
+                                "complete",
+                            ]
+                        },
+                    },
+                    "action": {"enum": ["confirm", "reopen"]},
+                    "base_revision": {"type": "integer", "minimum": 0},
+                    "idempotency_key": {
+                        "type": "string",
+                        "minLength": 8,
+                        "maxLength": 200,
+                    },
+                },
+                ["story_id", "stages", "action", "base_revision", "idempotency_key"],
+                additional_properties=False,
+            ),
+            handle_confirm_stages,
         ),
     )

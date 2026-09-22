@@ -910,6 +910,53 @@ def test_generation_preflight_does_not_require_quality_for_model_without_quality
     )
 
 
+def test_interactive_story_missing_duration_requires_node_plan_not_fixed_question(
+    monkeypatch,
+):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "data": [{"id": "video-model", "supportsGenerateAudio": True}],
+        },
+    )
+    commands = [
+        {
+            "type": "create_node",
+            "client_id": "story-segment-a",
+            "node_type": "videoNode",
+            "data": {
+                "storySegmentId": "segment-a",
+                "displayName": "开场",
+                "model": "video-model",
+                "aspectRatio": "16:9",
+                "quality": "720P",
+                "generateAudio": False,
+                "count": 1,
+            },
+        },
+        {
+            "type": "run_node_action",
+            "node_id": "story-segment-a",
+            "action": "generate_video",
+        },
+    ]
+
+    result = plugin._external_generation_parameter_preflight(
+        "project-a", "canvas-a", commands
+    )
+
+    assert result is not None
+    assert result["status"] == "interactive_story_duration_plan_required"
+    assert result["code"] == "interactive_story_duration_plan_required"
+    assert result["required_choices"] == {}
+    assert "clarification" not in result
+    assert result["dynamic_story_duration_node_ids"] == ["story-segment-a"]
+    assert "Do not ask for one shared video_duration_seconds" in result["agent_instruction"]
+
+
 def test_generation_preflight_keeps_quality_for_model_with_quality_options(
     monkeypatch,
 ):

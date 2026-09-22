@@ -1427,6 +1427,56 @@
       "safetyReviewFailed": "Một số node không vượt qua kiểm duyệt an toàn",
       "editPrompt": "Sửa câu lệnh",
       "skipNode": "Bỏ qua node"
+    },
+    "outline": {
+      "kindStory": "Phim tương tác",
+      "kindAd": "Quảng cáo tương tác",
+      "status": {
+        "pending": "Chờ xác nhận",
+        "needs_revision": "Cần chỉnh sửa",
+        "confirmed": "Đã xác nhận",
+        "linked": "Đã gắn với kịch bản"
+      },
+      "confirm": "Xác nhận dàn ý",
+      "needsRevision": "Cần chỉnh sửa",
+      "dismiss": "Ẩn",
+            "reopen": "Xem đề xuất dàn ý",
+      "duration": "Thời lượng mục tiêu: {{minutes}} phút",
+      "durationSeconds": "Thời lượng mục tiêu: {{seconds}} giây",
+      "continueMessageStory": "Dàn ý đã được xác nhận, hãy tiếp tục dựng kịch bản tương tác chính thức.",
+      "continueMessageAd": "Dàn ý đã được xác nhận, hãy tiếp tục tạo kịch bản chính thức.",
+      "revisionDraft": "Dàn ý cần chỉnh sửa: ",
+      "superseded": "Trợ lý đã cập nhật dàn ý. Hãy xem phiên bản mới nhất rồi xác nhận lại.",
+      "refreshBlocked": "Quyết định đã được lưu nhưng canvas vẫn còn thay đổi cục bộ chưa lưu. Hãy xử lý xung đột canvas và tải phiên bản mới nhất trước khi tiếp tục.",
+      "failed": "Không lưu được xác nhận, vui lòng thử lại."
+    },
+    "stages": {
+      "navLabel": "Các giai đoạn sáng tạo",
+      "current": "Giai đoạn hiện tại: {{stage}}",
+      "proposal": "Ý tưởng",
+      "outline": "Dàn ý",
+      "script": "Kịch bản",
+      "characters": "Nhân vật",
+      "scenes": "Bối cảnh",
+      "storyboard": "Storyboard",
+      "video": "Video",
+      "complete": "Hoàn tất",
+      "status": {
+        "todo": "Chưa bắt đầu",
+        "active": "Đang tiến hành",
+        "done": "Hoàn thành",
+        "manual": "Chưa có đánh giá tự động"
+      },
+      "hint": {
+        "proposal": "Chốt hướng sáng tạo với trợ lý trong chat; dàn ý sẽ lưu dạng chờ xác nhận trên canvas",
+        "outline": "Xác nhận dàn ý trên thẻ kế hoạch trước khi trợ lý dựng cây truyện chính thức",
+        "script": "Dùng “Xem kịch bản” để đối chiếu lời thoại và nhánh; để trợ lý Patch khi cần sửa",
+        "characters": "Danh sách nhân vật không phải tài sản nhân vật; hãy kiểm tra thẻ, thiết kế hoặc ảnh tham chiếu trước",
+        "scenes": "Chưa có tiêu chí tự động thống nhất; hãy chuẩn bị tư liệu bối cảnh trên canvas",
+        "storyboard": "Chưa có tiêu chí tự động thống nhất",
+        "video": "Chỉ hoàn thành khi video của mọi phân cảnh đã sẵn sàng; đang tạo không tính",
+        "complete": "Hoàn tất cần chơi thử thực tế và nghiệm thu sản phẩm, không tự động"
+      }
     }
   },
   "theme": {
@@ -4604,6 +4654,27 @@
       "firstFrameVideo": "Khung đầu thành video",
       "audioToVideo": "Audio to Video",
       "templates": "Mẫu dựng sẵn"
+    },
+    "story": {
+      "overview": {
+        "open": "Xem kịch bản",
+        "title": "Tổng quan kịch bản",
+        "empty": "Canvas chưa có phân cảnh kịch bản",
+        "synopsis": "Bối cảnh",
+        "synopsisEmpty": "Chưa lưu tóm tắt",
+        "characters": "Nhân vật",
+        "branches": "Nhánh truyện",
+        "scriptReady": "{{ready}}/{{total}} có lời thoại",
+        "noStart": "Không xác định được điểm bắt đầu duy nhất",
+        "orphans": "Phân cảnh không thể tới từ điểm bắt đầu",
+        "merge": "↩ hội tụ",
+        "loop": "↩ vòng lặp",
+        "conditional": "có điều kiện",
+        "ending": "Kết thúc",
+        "endings": "Các kết thúc",
+        "missingScript": "thiếu lời thoại",
+        "productionNotes": "Ghi chú sản xuất"
+      }
     },
     "toolbar": {
       "zoomIn": "Phóng to",

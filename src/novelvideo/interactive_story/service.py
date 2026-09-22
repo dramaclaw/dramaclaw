@@ -19,18 +19,26 @@ from novelvideo.interactive_story.canvas_mapper import (
 from novelvideo.interactive_story.models import (
     AddStoryChoice,
     AddStorySegment,
+    ConfirmInteractiveStoryStagesRequest,
+    ConfirmStoryOutlineRequest,
     CreateInteractiveStoryRequest,
     GetInteractiveStoryRequest,
     InteractiveStoryError,
     InteractiveStoryIssue,
     InteractiveStoryMutationResult,
+    InteractiveStoryOutlineReadResult,
+    InteractiveStoryOutlineSaveResult,
+    InteractiveStoryProgressResult,
     InteractiveStoryReadResult,
+    InteractiveStoryStageConfirmationResult,
     InteractiveStoryValidationResult,
+    PendingStoryOutline,
     RemoveStoryCharacter,
     RemoveStoryChoice,
     RemoveStorySegment,
     RemoveStoryFlag,
     RemoveStoryVariable,
+    SaveStoryOutlineRequest,
     SetStoryStart,
     StoryChoice,
     StoryDraftV2,
@@ -46,9 +54,20 @@ from novelvideo.interactive_story.models import (
     ValidateInteractiveStoryRequest,
 )
 from novelvideo.interactive_story.path_analysis import analyze_story_paths
+from novelvideo.interactive_story.stage_progress import (
+    build_progress_result,
+    collect_stage_evidence,
+    confirmed_manual_stages,
+    find_first_story_group,
+)
 
 AGENT_CREATE_SAVE_SOURCE = "agent_create"
 AGENT_PATCH_SAVE_SOURCE = "agent_patch"
+AGENT_OUTLINE_SAVE_SOURCE = "agent_outline"
+USER_OUTLINE_CONFIRM_SAVE_SOURCE = "user_outline_confirm"
+AGENT_STAGE_CONFIRM_SAVE_SOURCE = "agent_stage_confirm"
+# 待确认大纲寄存在画布级 metadata；正式故事仍以画布节点为唯一事实源。
+PENDING_OUTLINE_METADATA_KEY = "pendingStoryOutline"
 
 
 class InteractiveStoryServiceError(RuntimeError):
@@ -99,12 +118,18 @@ class InteractiveStoryService:
                     current_revision=0,
                     base_revision=request.base_revision,
                 )
-            if find_story_group(current, request.story.story_id) is not None:
+            existing_group = find_first_story_group(current)
+            if existing_group is not None:
+                existing_story_id = str(
+                    (existing_group.get("data") or {}).get("interactiveStoryId") or ""
+                ).strip()
                 raise InteractiveStoryServiceError(
                     "story_already_exists",
-                    f"story {request.story.story_id!r} already exists",
-                    story_id=request.story.story_id,
+                    "canvas already contains interactive story "
+                    f"{existing_story_id!r}; only one interactive story is allowed per canvas",
+                    story_id=existing_story_id,
                 )
+            _require_confirmed_outline_for_create(current)
             projection = project_story_to_canvas(
                 request.story,
                 existing_canvas=current,
@@ -115,12 +140,14 @@ class InteractiveStoryService:
             )
             nodes = [*_dict_list(current.get("nodes")), *projection.nodes]
             edges = [*_dict_list(current.get("edges")), *projection.edges]
+            metadata = _link_confirmed_outline(current.get("metadata"), request.story.story_id)
             return self._canvas_payload(
                 current,
                 canvas_id=request.canvas_id,
                 nodes=nodes,
                 edges=edges,
                 save_source=AGENT_CREATE_SAVE_SOURCE,
+                metadata=metadata,
             )
 
         saved = self._save(
@@ -243,6 +270,250 @@ class InteractiveStoryService:
             issues=issues,
         )
 
+    def save_outline(
+        self, request: SaveStoryOutlineRequest
+    ) -> InteractiveStoryOutlineSaveResult:
+        """Upsert the canvas-level pending outline without touching nodes/edges."""
+
+        def build_payload(existing: dict | None) -> dict:
+            current = existing or {}
+            if existing is None and request.base_revision != 0:
+                raise canvas_store.CanvasRevisionConflict(
+                    current_revision=0,
+                    base_revision=request.base_revision,
+                )
+            metadata = _with_outline(
+                current.get("metadata"),
+                _next_outline_state(
+                    _stored_outline(current.get("metadata")), request.outline
+                ),
+            )
+            return self._canvas_payload(
+                current,
+                canvas_id=request.canvas_id,
+                nodes=_dict_list(current.get("nodes")),
+                edges=_dict_list(current.get("edges")),
+                save_source=AGENT_OUTLINE_SAVE_SOURCE,
+                metadata=metadata,
+            )
+
+        saved = self._save(
+            canvas_id=request.canvas_id,
+            base_revision=request.base_revision,
+            idempotency_key=request.idempotency_key,
+            request_payload=request.model_dump(mode="json"),
+            build_payload=build_payload,
+            story_id=request.outline.outline_id,
+            save_source=AGENT_OUTLINE_SAVE_SOURCE,
+        )
+        return self._outline_result(
+            request.canvas_id,
+            _saved_revision(saved),
+            idempotent=saved.idempotent,
+        )
+
+    def confirm_outline(
+        self, request: ConfirmStoryOutlineRequest
+    ) -> InteractiveStoryOutlineSaveResult:
+        """Record the user's canvas-side confirmation; never rewrites outline content."""
+
+        def build_payload(existing: dict | None) -> dict:
+            current = existing or {}
+            stored = _stored_outline(current.get("metadata"))
+            if (
+                existing is None
+                or stored is None
+                or stored.outline_id != request.outline_id
+            ):
+                raise InteractiveStoryServiceError(
+                    "outline_not_found",
+                    f"pending outline {request.outline_id!r} was not found",
+                    story_id=request.outline_id,
+                )
+            metadata = _with_outline(
+                current.get("metadata"),
+                stored.model_copy(
+                    update={
+                        "status": request.status,
+                        "updated_at": canvas_store.utc_now_iso(),
+                    }
+                ),
+            )
+            return self._canvas_payload(
+                current,
+                canvas_id=request.canvas_id,
+                nodes=_dict_list(current.get("nodes")),
+                edges=_dict_list(current.get("edges")),
+                save_source=USER_OUTLINE_CONFIRM_SAVE_SOURCE,
+                metadata=metadata,
+            )
+
+        saved = self._save(
+            canvas_id=request.canvas_id,
+            base_revision=request.base_revision,
+            idempotency_key=request.idempotency_key,
+            request_payload=request.model_dump(mode="json"),
+            build_payload=build_payload,
+            story_id=request.outline_id,
+            save_source=USER_OUTLINE_CONFIRM_SAVE_SOURCE,
+        )
+        return self._outline_result(
+            request.canvas_id,
+            _saved_revision(saved),
+            idempotent=saved.idempotent,
+        )
+
+    def get_outline(self, canvas_id: str) -> InteractiveStoryOutlineReadResult:
+        try:
+            canvas = canvas_store.read_canvas(self.project_dir, canvas_id)
+        except (canvas_store.CanvasStoreError, OSError, ValueError) as exc:
+            raise InteractiveStoryServiceError(
+                "canvas_write_failed", str(exc)
+            ) from exc
+        if canvas is None:
+            return InteractiveStoryOutlineReadResult(
+                canvas_id=canvas_id, revision=0, outline=None
+            )
+        revision = canvas.get("revision") if isinstance(canvas.get("revision"), int) else 0
+        return InteractiveStoryOutlineReadResult(
+            canvas_id=canvas_id,
+            revision=revision,
+            outline=_stored_outline(canvas.get("metadata")),
+        )
+
+    def progress(self, canvas_id: str) -> InteractiveStoryProgressResult:
+        """Read-only stage progress mirroring the frontend canvas nav.
+
+        This read call writes nothing: statuses are re-derived from canvas
+        artifacts and explicit stage confirmations on every call so the Agent
+        gates production plans on the same evidence the user can see.
+        """
+
+        try:
+            canvas = canvas_store.read_canvas(self.project_dir, canvas_id)
+        except (canvas_store.CanvasStoreError, OSError, ValueError) as exc:
+            raise InteractiveStoryServiceError(
+                "canvas_write_failed", str(exc)
+            ) from exc
+        if canvas is None:
+            canvas = {"nodes": [], "edges": []}
+        revision = canvas.get("revision") if isinstance(canvas.get("revision"), int) else 0
+        outline = _stored_outline(canvas.get("metadata"))
+        group = find_first_story_group(canvas)
+        lint_error_count = 0
+        if group is not None:
+            story_id = str((group.get("data") or {}).get("interactiveStoryId") or "")
+            try:
+                story = story_from_canvas(canvas, story_id)
+            except (CanvasStoryMappingError, ValidationError, ValueError):
+                # 故事结构已损坏到无法映射：至少计一个 error，与前端
+                # lintStory 的 no_start/dangling 拒绝口径对齐。
+                lint_error_count = 1
+            else:
+                lint_error_count = sum(
+                    1
+                    for issue in issues_for_story(story)
+                    if issue.severity == "error"
+                )
+        evidence = collect_stage_evidence(
+            canvas, outline, lint_error_count=lint_error_count, story_group=group
+        )
+        return build_progress_result(
+            canvas_id=canvas_id, revision=revision, outline=outline, evidence=evidence
+        )
+
+    def confirm_stages(
+        self, request: ConfirmInteractiveStoryStagesRequest
+    ) -> InteractiveStoryStageConfirmationResult:
+        """Persist or reopen explicit user confirmations for manual stages."""
+
+        def build_payload(existing: dict | None) -> dict:
+            if existing is None:
+                raise InteractiveStoryServiceError(
+                    "story_not_found",
+                    f"story {request.story_id!r} was not found",
+                    story_id=request.story_id,
+                )
+            group = find_story_group(existing, request.story_id)
+            if group is None:
+                raise InteractiveStoryServiceError(
+                    "story_not_found",
+                    f"story {request.story_id!r} was not found",
+                    story_id=request.story_id,
+                )
+            group_id = str(group.get("id") or "")
+            nodes: list[dict[str, Any]] = []
+            for node in _dict_list(existing.get("nodes")):
+                if str(node.get("id") or "") != group_id:
+                    nodes.append(node)
+                    continue
+                updated = dict(node)
+                data = dict(updated.get("data") or {})
+                raw = data.get("storyStageConfirmations")
+                confirmations = dict(raw) if isinstance(raw, dict) else {}
+                for stage in dict.fromkeys(request.stages):
+                    if request.action == "confirm":
+                        confirmations[stage] = {
+                            "status": "confirmed",
+                            "confirmedAt": canvas_store.utc_now_iso(),
+                            "confirmedBy": self.actor_id,
+                        }
+                    else:
+                        confirmations.pop(stage, None)
+                data["storyStageConfirmations"] = confirmations
+                updated["data"] = data
+                nodes.append(updated)
+            return self._canvas_payload(
+                existing,
+                canvas_id=request.canvas_id,
+                nodes=nodes,
+                edges=_dict_list(existing.get("edges")),
+                save_source=AGENT_STAGE_CONFIRM_SAVE_SOURCE,
+            )
+
+        saved = self._save(
+            canvas_id=request.canvas_id,
+            base_revision=request.base_revision,
+            idempotency_key=request.idempotency_key,
+            request_payload=request.model_dump(mode="json"),
+            build_payload=build_payload,
+            story_id=request.story_id,
+            save_source=AGENT_STAGE_CONFIRM_SAVE_SOURCE,
+        )
+        canvas = self._read_canvas(request.canvas_id, request.story_id)
+        group = find_story_group(canvas, request.story_id)
+        return InteractiveStoryStageConfirmationResult(
+            project_id=self.project_id,
+            canvas_id=request.canvas_id,
+            story_id=request.story_id,
+            revision=_saved_revision(saved),
+            confirmed_stages=confirmed_manual_stages(group),
+            idempotent=saved.idempotent,
+        )
+
+    def _outline_result(
+        self, canvas_id: str, revision: int, *, idempotent: bool
+    ) -> InteractiveStoryOutlineSaveResult:
+        try:
+            canvas = canvas_store.read_canvas(self.project_dir, canvas_id)
+        except (canvas_store.CanvasStoreError, OSError, ValueError) as exc:
+            raise InteractiveStoryServiceError(
+                "canvas_write_failed", str(exc)
+            ) from exc
+        outline = _stored_outline((canvas or {}).get("metadata"))
+        if outline is None:
+            raise InteractiveStoryServiceError(
+                "canvas_write_failed", "outline missing after canvas save"
+            )
+        return InteractiveStoryOutlineSaveResult(
+            project_id=self.project_id,
+            canvas_id=canvas_id,
+            outline_id=outline.outline_id,
+            status=outline.status,
+            revision=revision,
+            idempotent=idempotent,
+        )
+
     def _save(
         self,
         *,
@@ -346,6 +617,7 @@ class InteractiveStoryService:
         nodes: list[dict[str, Any]],
         edges: list[dict[str, Any]],
         save_source: str,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         now = canvas_store.utc_now_iso()
         current_revision = (
@@ -362,7 +634,9 @@ class InteractiveStoryService:
                 "nodes": nodes,
                 "edges": edges,
                 "viewport": existing.get("viewport"),
-                "metadata": existing.get("metadata"),
+                "metadata": (
+                    metadata if metadata is not None else existing.get("metadata")
+                ),
                 "owner_principal_type": existing.get("owner_principal_type") or "user",
                 "owner_principal_id": existing.get("owner_principal_id")
                 or self.actor_id,
@@ -586,6 +860,101 @@ def issues_for_story(story: StoryDraftV2) -> list[InteractiveStoryIssue]:
     issues.extend(analyze_story_paths(story))
     severity_order = {"error": 0, "warning": 1, "info": 2}
     return sorted(issues, key=lambda issue: severity_order[issue.severity])
+
+
+def _stored_outline(metadata: Any) -> PendingStoryOutline | None:
+    """Parse the pending outline slot; unreadable content degrades to absent."""
+    if not isinstance(metadata, dict):
+        return None
+    raw = metadata.get(PENDING_OUTLINE_METADATA_KEY)
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return PendingStoryOutline.model_validate(raw)
+    except ValidationError:
+        return None
+
+
+def _require_confirmed_outline_for_create(canvas: dict) -> None:
+    """Hard gate on the formal-story create path.
+
+    A canvas that carries a pending outline slot may only be created into
+    once the user confirmed it on the plan card. This is enforced here (not
+    just at the MCP tool entry) so no caller can bypass the confirmation.
+    A missing slot stays permissive for outline-free direct creation; an
+    unreadable slot fails closed because its confirmation cannot be proven.
+    """
+    metadata = canvas.get("metadata")
+    if not isinstance(metadata, dict):
+        return
+    if metadata.get(PENDING_OUTLINE_METADATA_KEY) is None:
+        return
+    stored = _stored_outline(metadata)
+    if stored is None or stored.status in {"pending", "needs_revision"}:
+        raise InteractiveStoryServiceError(
+            "outline_not_confirmed",
+            "the canvas still carries a user-unconfirmed pending story outline"
+            + (f" (status={stored.status!r})" if stored is not None else " (unreadable slot)")
+            + "; ask the user to confirm it on the plan card before creating",
+        )
+
+
+def _with_outline(metadata: Any, outline: PendingStoryOutline) -> dict[str, Any]:
+    """Return new metadata carrying only the outline slot changed."""
+    merged = dict(metadata) if isinstance(metadata, dict) else {}
+    merged[PENDING_OUTLINE_METADATA_KEY] = outline.model_dump(mode="json")
+    return merged
+
+
+def _next_outline_state(
+    previous: PendingStoryOutline | None, incoming: PendingStoryOutline
+) -> PendingStoryOutline:
+    """Apply confirmation-reset rules to an agent-side outline write.
+
+    An identical re-save keeps an existing confirmation (safe retries); any
+    content change resets to pending because the user approved different text.
+    Agents never persist confirmed/linked: those statuses belong to the canvas
+    confirmation and the create-time link respectively.
+    """
+    now = canvas_store.utc_now_iso()
+    if previous is not None and previous.outline_id == incoming.outline_id:
+        content = {"exclude": {"status", "updated_at", "story_id"}}
+        if previous.model_dump(mode="json", **content) == incoming.model_dump(
+            mode="json", **content
+        ) and previous.status in {"confirmed", "linked"}:
+            return previous.model_copy(update={"updated_at": now})
+    return incoming.model_copy(
+        update={
+            "status": (
+                incoming.status
+                if incoming.status in {"pending", "needs_revision"}
+                else "pending"
+            ),
+            "story_id": None,
+            "updated_at": now,
+        }
+    )
+
+
+def _link_confirmed_outline(metadata: Any, story_id: str) -> dict[str, Any] | None:
+    """Mark a confirmed outline as linked to the newly created story.
+
+    Returns None when there is nothing to change so the create path keeps
+    reusing the existing metadata untouched.
+    """
+    outline = _stored_outline(metadata)
+    if outline is None or outline.status != "confirmed" or outline.story_id is not None:
+        return None
+    return _with_outline(
+        metadata,
+        outline.model_copy(
+            update={
+                "status": "linked",
+                "story_id": story_id,
+                "updated_at": canvas_store.utc_now_iso(),
+            }
+        ),
+    )
 
 
 def _ensure_projection_ids_available(

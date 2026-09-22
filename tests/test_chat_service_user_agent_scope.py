@@ -1540,6 +1540,28 @@ def test_codex_freezone_instructions_forbid_invented_resource_uris():
     assert "one-node workflow is still a workflow" in canvas_instructions
     assert "do not read node detail before starting it" in canvas_instructions
     assert "freezone_run_node_action" in canvas_instructions
+    assert "dramaclaw_confirm_interactive_story_stages" in canvas_instructions
+    assert "Stage confirmation itself does not generate media" in canvas_instructions
+    assert "without a successful persisted" in canvas_instructions
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        ("当前角色和场景都完成了", True),
+        ("当前角色和场景已经完成了，可以做分镜了", True),
+        ("分镜确认完成，继续进入视频", True),
+        ("角色和场景完成了吗？", False),
+        ("场景还没完成", False),
+        ("分镜需要返工重做", False),
+        ("视频已经生成完成", False),
+    ],
+)
+def test_interactive_story_manual_stage_confirmation_intent(prompt, expected):
+    assert (
+        chat_service._interactive_story_stage_confirmation_requested(prompt)
+        is expected
+    )
 
 
 def test_codex_freezone_write_result_error_preserves_canvas_validation_reason():
@@ -1622,6 +1644,8 @@ def test_codex_clarification_requires_successful_answer(container, outcome):
         "story_wrong_retry",
         "story_conflict_retry",
         "story_conflict_wrong_retry",
+        "story_validate_after_create",
+        "outline_conflict_retry",
         "unstructured_proposal",
     ],
 )
@@ -1769,6 +1793,90 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                         output={"content": [{"type": "text", "text": json.dumps(payload)}]},
                         structured=payload, error=None,
                     )
+            elif tool_outcome == "story_validate_after_create":
+                for call_id, name, input_payload, payload in (
+                    (
+                        "create-story",
+                        "dramaclaw_create_interactive_story",
+                        {
+                            "story": {"story_id": "story-a"},
+                            "base_revision": 3,
+                            "idempotency_key": "story-key",
+                        },
+                        {
+                            "ok": True,
+                            "project_id": "project-a",
+                            "canvas_id": "canvas-a",
+                            "story_id": "story-a",
+                            "revision": 4,
+                            "refresh_canvas": True,
+                        },
+                    ),
+                    (
+                        "validate-story",
+                        "dramaclaw_validate_interactive_story",
+                        {"story_id": "story-a"},
+                        {
+                            "ok": True,
+                            "valid": True,
+                            "canvas_id": "canvas-a",
+                            "story_id": "story-a",
+                            "revision": 5,
+                        },
+                    ),
+                ):
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        text=f"[mcp:completed] dramaclaw.{name}",
+                        name=f"dramaclaw.{name}",
+                        call_id=call_id,
+                        status="completed",
+                        input=input_payload,
+                        output={"content": [{"type": "text", "text": json.dumps(payload)}]},
+                        structured=payload,
+                        error=None,
+                    )
+            elif tool_outcome == "outline_conflict_retry":
+                for call_id, base_revision, payload in (
+                    (
+                        "outline-conflict",
+                        0,
+                        {
+                            "ok": False,
+                            "code": "revision_conflict",
+                            "story_id": "outline-a",
+                            "current_revision": 1,
+                            "message": "canvas revision conflict",
+                        },
+                    ),
+                    (
+                        "outline-rebased",
+                        1,
+                        {
+                            "ok": True,
+                            "project_id": "project-a",
+                            "canvas_id": "canvas-a",
+                            "outline_id": "outline-a",
+                            "revision": 2,
+                            "refresh_canvas": True,
+                        },
+                    ),
+                ):
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        text="[mcp:completed] dramaclaw.dramaclaw_save_interactive_story_outline",
+                        name="dramaclaw.dramaclaw_save_interactive_story_outline",
+                        call_id=call_id,
+                        status="completed",
+                        input={
+                            "outline": {"outline_id": "outline-a"},
+                            "base_revision": base_revision,
+                            "idempotency_key": "outline-key",
+                        },
+                        output={"content": [{"type": "text", "text": json.dumps(payload)}]},
+                        structured=payload,
+                        error=None,
+                    )
             elif tool_outcome not in {"missing", "blocked", "read_only", "unstructured_proposal"}:
                 result_payload = (
                     {
@@ -1831,7 +1939,14 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 assistant_reply = "建议保持当前节点位置，先检查配置。"
             if tool_outcome == "clarification_answered":
                 assistant_reply = "参数已确认，尚未执行画布操作。"
-            if tool_outcome in {"story_retry", "story_wrong_retry", "story_conflict_retry", "story_conflict_wrong_retry"}:
+            if tool_outcome in {
+                "story_retry",
+                "story_wrong_retry",
+                "story_conflict_retry",
+                "story_conflict_wrong_retry",
+                "story_validate_after_create",
+                "outline_conflict_retry",
+            }:
                 assistant_reply = "互动故事已更新。"
             structured_reply = json.dumps(
                 {
@@ -1849,6 +1964,10 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                         if tool_outcome in {"story_retry", "story_wrong_retry"}
                         else [{"bridge_key": None, "revision": 36}]
                         if tool_outcome in {"story_conflict_retry", "story_conflict_wrong_retry"}
+                        else [{"bridge_key": None, "revision": 5}]
+                        if tool_outcome == "story_validate_after_create"
+                        else [{"bridge_key": None, "revision": 2}]
+                        if tool_outcome == "outline_conflict_retry"
                         else []
                     ),
                 },
@@ -1950,6 +2069,9 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         assert result["content"] == "画布操作未完成：tool_arguments_invalid"
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "story_conflict_retry":
+        assert result["content"] == "互动故事已更新。"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome in {"story_validate_after_create", "outline_conflict_retry"}:
         assert result["content"] == "互动故事已更新。"
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "story_conflict_wrong_retry":

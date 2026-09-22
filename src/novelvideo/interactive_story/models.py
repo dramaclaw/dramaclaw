@@ -24,6 +24,7 @@ VariableName = Annotated[
     Field(min_length=1, max_length=64, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$"),
 ]
 ComparisonOperator = Literal[">=", "<=", "==", ">", "<"]
+PendingOutlineStatus = Literal["pending", "needs_revision", "confirmed", "linked"]
 
 
 class StoryContractModel(BaseModel):
@@ -588,6 +589,8 @@ class InteractiveStoryError(StoryContractModel):
         "story_not_found",
         "story_already_exists",
         "story_id_conflict",
+        "outline_not_found",
+        "outline_not_confirmed",
         "revision_conflict",
         "idempotency_conflict",
         "canvas_write_failed",
@@ -596,3 +599,140 @@ class InteractiveStoryError(StoryContractModel):
     story_id: str | None = Field(default=None, max_length=128)
     current_revision: int | None = Field(default=None, ge=0)
     issues: list[InteractiveStoryIssue] = Field(default_factory=list)
+
+
+class PendingStoryOutline(StoryContractModel):
+    """Canvas-level creative outline awaiting user confirmation.
+
+    This is not a formal story: it never fabricates story nodes and must not
+    become a second source of truth once a story is created and linked.
+    """
+
+    schema_version: Literal["pending_story_outline.v1"] = "pending_story_outline.v1"
+    outline_id: EntityId
+    kind: Literal["story", "ad"]
+    title: str = Field(min_length=1, max_length=200)
+    premise: str = Field(min_length=1, max_length=4_000)
+    plot_summary: str = Field(min_length=1, max_length=8_000)
+    interaction_summary: str = Field(default="", max_length=4_000)
+    endings_summary: str = Field(default="", max_length=2_000)
+    duration_budget_sec: int | None = Field(default=None, ge=1, le=86_400)
+    open_questions: list[str] = Field(default_factory=list, max_length=20)
+    status: PendingOutlineStatus = "pending"
+    story_id: EntityId | None = None
+    updated_at: str = Field(default="", max_length=64)
+
+
+class SaveStoryOutlineRequest(StoryContractModel):
+    schema_version: Literal["interactive_story_outline_save.v1"] = (
+        "interactive_story_outline_save.v1"
+    )
+    canvas_id: CanvasId
+    base_revision: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=8, max_length=200)
+    outline: PendingStoryOutline
+
+
+class ConfirmStoryOutlineRequest(StoryContractModel):
+    schema_version: Literal["interactive_story_outline_confirm.v1"] = (
+        "interactive_story_outline_confirm.v1"
+    )
+    canvas_id: CanvasId
+    outline_id: EntityId
+    status: Literal["confirmed", "needs_revision"]
+    base_revision: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=8, max_length=200)
+
+
+class InteractiveStoryOutlineSaveResult(StoryContractModel):
+    ok: Literal[True] = True
+    project_id: str
+    canvas_id: CanvasId
+    outline_id: EntityId
+    status: PendingOutlineStatus
+    revision: int = Field(ge=1)
+    idempotent: bool = False
+    refresh_canvas: Literal[True] = True
+
+
+class InteractiveStoryOutlineReadResult(StoryContractModel):
+    ok: Literal[True] = True
+    canvas_id: CanvasId
+    revision: int = Field(ge=0)
+    outline: PendingStoryOutline | None = None
+
+
+StoryStageId = Literal[
+    "proposal",
+    "outline",
+    "script",
+    "characters",
+    "scenes",
+    "storyboard",
+    "video",
+    "complete",
+]
+StoryStageStatus = Literal["todo", "active", "done", "manual"]
+ManualStoryStageId = Literal["characters", "scenes", "storyboard", "complete"]
+
+
+class InteractiveStoryStage(StoryContractModel):
+    id: StoryStageId
+    status: StoryStageStatus
+
+
+class InteractiveStoryStageEvidence(StoryContractModel):
+    """Raw canvas evidence counts behind the stage derivation.
+
+    Mirrors the frontend stage-D projection (storyStages.ts evidence shape)
+    so the Agent reads back the same progress the user sees on the canvas.
+    """
+
+    outline_status: PendingOutlineStatus | None = None
+    outline_kind: Literal["story", "ad"] | None = None
+    has_story_group: bool = False
+    synopsis_present: bool = False
+    segment_count: int = Field(default=0, ge=0)
+    script_ready_count: int = Field(default=0, ge=0)
+    prompt_ready_count: int = Field(default=0, ge=0)
+    video_ready_count: int = Field(default=0, ge=0)
+    lint_error_count: int = Field(default=0, ge=0)
+    character_count: int = Field(default=0, ge=0)
+    confirmed_stages: list[ManualStoryStageId] = Field(default_factory=list)
+
+
+class ConfirmInteractiveStoryStagesRequest(StoryContractModel):
+    """Persist an explicit user decision for stages without automatic evidence."""
+
+    schema_version: Literal["interactive_story_stage_confirm.v1"] = (
+        "interactive_story_stage_confirm.v1"
+    )
+    canvas_id: CanvasId
+    story_id: EntityId
+    stages: list[ManualStoryStageId] = Field(min_length=1, max_length=4)
+    action: Literal["confirm", "reopen"] = "confirm"
+    base_revision: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=8, max_length=200)
+
+
+class InteractiveStoryStageConfirmationResult(StoryContractModel):
+    ok: Literal[True] = True
+    project_id: str
+    canvas_id: CanvasId
+    story_id: EntityId
+    revision: int = Field(ge=1)
+    confirmed_stages: list[ManualStoryStageId] = Field(default_factory=list)
+    idempotent: bool = False
+    refresh_canvas: Literal[True] = True
+
+
+class InteractiveStoryProgressResult(StoryContractModel):
+    """Read-only stage progress derived from canvas evidence; never persisted."""
+
+    ok: Literal[True] = True
+    canvas_id: CanvasId
+    revision: int = Field(ge=0)
+    kind: Literal["story", "ad"]
+    stages: list[InteractiveStoryStage]
+    current_stage_id: StoryStageId | None = None
+    evidence: InteractiveStoryStageEvidence

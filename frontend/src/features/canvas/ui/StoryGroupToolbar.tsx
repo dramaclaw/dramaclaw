@@ -1,8 +1,9 @@
 import { createPortal } from 'react-dom';
 import { StoryPublicationPanel } from '@/features/canvas/story/StoryPublicationPanel';
+import { StoryOverviewPanel } from '@/components/canvas/StoryOverviewPanel';
 import { memo, useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Download, ListTree, MoreHorizontal, Play, Plus, ShieldCheck, SlidersHorizontal } from 'lucide-react';
+import { Download, ListTree, MoreHorizontal, Play, Plus, ScrollText, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 import { toast } from 'sonner';
 import { Compiler } from 'inkjs/full';
 import { useCanvasStore } from '@/stores/canvasStore';
@@ -30,11 +31,12 @@ export const StoryGroupToolbar = memo(function StoryGroupToolbar() {
   });
   const mode = useStoryRuntimeStore((state) => state.mode);
   const [publishing, setPublishing] = useState(false);
+  const [overviewOpen, setOverviewOpen] = useState(false);
   if (!group || (mode === 'play' && !publishing)) return null;
-  return <><StoryGroupActions id={group.id} data={group.data as GroupNodeData} onPublish={() => setPublishing(true)} />{publishing && createPortal(<StoryPublicationPanel groupId={group.id} title={String(group.data.displayName ?? group.data.label ?? '')} onClose={() => setPublishing(false)} />, document.body)}</>;
+  return <><StoryGroupActions id={group.id} data={group.data as GroupNodeData} onPublish={() => setPublishing(true)} onOverview={() => setOverviewOpen(true)} />{publishing && createPortal(<StoryPublicationPanel groupId={group.id} title={String(group.data.displayName ?? group.data.label ?? '')} onClose={() => setPublishing(false)} />, document.body)}{overviewOpen && createPortal(<StoryOverviewPanel groupId={group.id} onClose={() => setOverviewOpen(false)} />, document.body)}</>;
 });
 
-function StoryGroupActions({ id, data, onPublish }: { id: string; data: GroupNodeData; onPublish: () => void }) {
+function StoryGroupActions({ id, data, onPublish, onOverview }: { id: string; data: GroupNodeData; onPublish: () => void; onOverview: () => void }) {
   const { t } = useTranslation();
   const handleStoryGroupPlay = useCallback((groupId: string) => {
     const { nodes, edges } = useCanvasStore.getState();
@@ -141,6 +143,7 @@ function StoryGroupActions({ id, data, onPublish }: { id: string; data: GroupNod
             <button type="button" className={ACTION_CLASS}><MoreHorizontal className="size-4" />{t('canvas.story.moreActions')}</button>
           </DropdownMenuTrigger>
           <DropdownMenuContent side="bottom" align="end" className="min-w-48">
+            <DropdownMenuItem onSelect={onOverview}><ScrollText className="mr-2 size-4" />{t('canvas.story.overview.open')}</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => useCanvasStore.getState().openStoryVariables(id)}><SlidersHorizontal className="mr-2 size-4" />{t('canvas.story.states')}</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => useCanvasStore.getState().openStoryLint(id)}><ShieldCheck className="mr-2 size-4" />{t('canvas.story.lint.open')}</DropdownMenuItem>
             <DropdownMenuItem disabled={exporting} onSelect={() => void handleStoryGroupExport(id)}><Download className="mr-2 size-4" />{t('canvas.story.export')}</DropdownMenuItem>

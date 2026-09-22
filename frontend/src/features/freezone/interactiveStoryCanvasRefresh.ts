@@ -6,6 +6,8 @@ import type { ServerFrame } from "@/features/superchat/types";
 const INTERACTIVE_STORY_WRITE_TOOL_NAMES = new Set([
   "dramaclaw_create_interactive_story",
   "dramaclaw_patch_interactive_story",
+  "dramaclaw_save_interactive_story_outline",
+  "dramaclaw_confirm_interactive_story_stages",
 ]);
 
 function nestedJsonObjects(value: unknown): Array<Record<string, unknown>> {

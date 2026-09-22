@@ -955,6 +955,56 @@
       "editPrompt": "修改提示词",
       "skipNode": "跳过节点"
     },
+    "outline": {
+      "kindStory": "互动故事",
+      "kindAd": "互动广告",
+      "status": {
+        "pending": "待确认",
+        "needs_revision": "需要修改",
+        "confirmed": "已确认",
+        "linked": "已关联剧本"
+      },
+      "confirm": "确认大纲",
+      "needsRevision": "需要修改",
+      "dismiss": "收起",
+      "reopen": "查看大纲方案",
+      "duration": "目标时长：{{minutes}} 分钟",
+      "durationSeconds": "目标时长：{{seconds}} 秒",
+      "continueMessageStory": "大纲已确认，请继续创建正式剧本。",
+      "continueMessageAd": "大纲已确认，请继续创建正式脚本。",
+      "revisionDraft": "大纲需要修改：",
+      "superseded": "大纲已被助手更新，请查看最新内容后重新点击确认。",
+      "refreshBlocked": "决定已保存，但画布还有未保存的本地修改。请先处理画布冲突并加载最新版本，再继续创作。",
+      "failed": "确认保存失败，请重试。"
+    },
+    "stages": {
+      "navLabel": "创作阶段",
+      "current": "当前阶段：{{stage}}",
+      "proposal": "策划案",
+      "outline": "大纲",
+      "script": "剧本",
+      "characters": "角色",
+      "scenes": "场景",
+      "storyboard": "分镜",
+      "video": "视频",
+      "complete": "完成",
+      "status": {
+        "todo": "待开始",
+        "active": "进行中",
+        "done": "已完成",
+        "manual": "暂无自动判定"
+      },
+      "hint": {
+        "proposal": "在对话中与助手确定创作偏好，方案会保存为画布待确认大纲",
+        "outline": "在右上角方案卡确认大纲后，助手才能创建正式故事树",
+        "script": "用「查看剧本」核对文案与分支；修改可让助手 Patch",
+        "characters": "故事里的角色名单不等于角色资产；请先核对角色卡、设定或参考图",
+        "scenes": "暂无统一的自动完成判据，可先在画布上准备场景素材",
+        "storyboard": "暂无统一的自动完成判据",
+        "video": "所有片段视频素材就绪后才算完成；生成中不计入",
+        "complete": "完成需要实际试玩与交付项验收，不自动判定"
+      }
+    },
     "canvases": {
       "defaultSection": "默认画布",
       "myCanvasSection": "我的画布",
@@ -5002,6 +5052,25 @@
         "ending": "结局",
         "hasIssue": "此片段需要检查",
         "noResults": "没有匹配的故事片段"
+      },
+      "overview": {
+        "open": "查看剧本",
+        "title": "剧本总览",
+        "empty": "画布上还没有剧本片段",
+        "synopsis": "故事背景",
+        "synopsisEmpty": "尚未保存梗概",
+        "characters": "角色",
+        "branches": "分支结构",
+        "scriptReady": "文案 {{ready}}/{{total}}",
+        "noStart": "未识别到唯一起点，请检查画布",
+        "orphans": "起点不可达的片段",
+        "merge": "↩ 汇合",
+        "loop": "↩ 循环",
+        "conditional": "有条件",
+        "ending": "结局",
+        "endings": "结局",
+        "missingScript": "缺剧情文案",
+        "productionNotes": "制作说明"
       },
       "lint": {
         "open": "制作就绪检查",

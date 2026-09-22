@@ -265,7 +265,7 @@ _CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS = (
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
 _CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v2"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v24"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v25"
 
 
 def _codex_developer_instructions(tool_mode: str | None) -> str:
@@ -505,9 +505,19 @@ Clarification:
 
 Canvas write contract:
 - Interactive short dramas, branching stories, choices and endings use the interactive-story
-  Skill and its four dramaclaw_*_interactive_story tools. This takes precedence over the generic
+  Skill and its dedicated dramaclaw_*_interactive_story tools. This takes precedence over the generic
   workflow and single-operation rules below. Read dramaclaw_get_freezone_canvas for the persisted
-  revision, create or patch with the story tools, then validate. Placeholder media is supported.
+  revision, save the approved outline with dramaclaw_save_interactive_story_outline and wait for the
+  user to confirm it on the canvas before creating the story, then create or patch with the story
+  tools and validate. Placeholder media is supported.
+  Characters, scenes, storyboard, and complete are manual progress stages. When the user explicitly
+  says one of these stages is complete, or explicitly asks to continue past it, this is a canvas
+  write request: read the current story/revision as needed, then call
+  dramaclaw_confirm_interactive_story_stages in that same turn before discussing the next stage.
+  Stage confirmation itself does not generate media and must not trigger image/video parameter
+  clarification. Never merely say a manual stage is confirmed: without a successful persisted
+  stage-confirmation receipt, report that its progress was not changed. When the user explicitly
+  asks to redo a confirmed stage, call the same tool with action=reopen.
   Never substitute ordinary nodes, text annotations, generic edges or freezone_emit_canvas_command
   for an interactive story. If the story tools are unavailable, report the blocker; do not downgrade
   the request. Report story creation only after a successful story write and report validation
@@ -702,6 +712,8 @@ _FREEZONE_CANVAS_WRITE_TOOLS = frozenset(
     {
         "dramaclaw_create_interactive_story",
         "dramaclaw_patch_interactive_story",
+        "dramaclaw_save_interactive_story_outline",
+        "dramaclaw_confirm_interactive_story_stages",
         "freezone_create_node",
         "freezone_add_next_node",
         "freezone_emit_canvas_command",
@@ -776,6 +788,27 @@ def _freezone_canvas_write_requested(prompt: str | None) -> bool:
     )
 
 
+def _interactive_story_stage_confirmation_requested(prompt: str | None) -> bool:
+    """Recognize explicit manual-stage approval, not questions or negations."""
+
+    text = str(prompt or "").strip()
+    if not text or not re.search(r"(?:角色|场景|分镜|交付|验收)", text):
+        return False
+    if re.search(
+        r"(?:还没|没有|尚未|未完成|没完成|不确认|撤回|返工|重做)",
+        text,
+    ):
+        return False
+    if re.search(r"(?:吗|么|是否|是不是|有没有|为何|为什么|怎么|如何|进度)", text):
+        return False
+    return bool(
+        re.search(
+            r"(?:已完成|完成了|做好了|已经做好|确认完成|确认通过|可以进入|可以做|继续(?:做|进入)?)",
+            text,
+        )
+    )
+
+
 def _codex_freezone_tool_name(event: Any) -> str:
     return str(getattr(event, "name", "") or "").rsplit(".", 1)[-1].strip()
 
@@ -846,13 +879,22 @@ def _codex_freezone_write_receipt(
                 continue
             bridge_key = str(payload.get("bridge_key") or "").strip()
             revision = payload.get("revision")
-            if _codex_freezone_tool_name(event) in {
-                "dramaclaw_create_interactive_story", "dramaclaw_patch_interactive_story",
+            story_tool = _codex_freezone_tool_name(event)
+            if story_tool in {
+                "dramaclaw_create_interactive_story",
+                "dramaclaw_patch_interactive_story",
+                "dramaclaw_save_interactive_story_outline",
+                "dramaclaw_confirm_interactive_story_stages",
             }:
+                identity_field = (
+                    "outline_id"
+                    if story_tool == "dramaclaw_save_interactive_story_outline"
+                    else "story_id"
+                )
                 if (
                     payload.get("refresh_canvas") is True
-                    and isinstance(payload.get("story_id"), str)
-                    and payload["story_id"].strip()
+                    and isinstance(payload.get(identity_field), str)
+                    and payload[identity_field].strip()
                     and project_id
                     and canvas_id
                     and type(revision) is int
@@ -920,6 +962,7 @@ def _codex_story_preflight_rejection(event: Any) -> tuple[str, str] | None:
     if name not in {
         "dramaclaw_create_interactive_story",
         "dramaclaw_patch_interactive_story",
+        "dramaclaw_confirm_interactive_story_stages",
     }:
         return None
     rejected = any(
@@ -946,15 +989,23 @@ def _codex_story_write_intent(
     """Identify the exact story, revision and key used by a story write."""
     name = _codex_freezone_tool_name(event)
     if name not in {
-        "dramaclaw_create_interactive_story", "dramaclaw_patch_interactive_story",
+        "dramaclaw_create_interactive_story",
+        "dramaclaw_patch_interactive_story",
+        "dramaclaw_save_interactive_story_outline",
+        "dramaclaw_confirm_interactive_story_stages",
     }:
         return None
     for args in _json_objects_from_codex_tool_value(getattr(event, "input", None)):
         story = args.get("story")
-        story_id = (
-            story.get("story_id") if name == "dramaclaw_create_interactive_story"
-            and isinstance(story, dict) else args.get("story_id")
-        )
+        outline = args.get("outline")
+        if name == "dramaclaw_create_interactive_story" and isinstance(story, dict):
+            story_id = story.get("story_id")
+        elif name == "dramaclaw_save_interactive_story_outline" and isinstance(
+            outline, dict
+        ):
+            story_id = outline.get("outline_id")
+        else:
+            story_id = args.get("story_id")
         base = args.get("base_revision")
         key = args.get("idempotency_key")
         if (
@@ -988,6 +1039,40 @@ def _codex_story_revision_conflict(
                 and revision != intent[2]
             ):
                 return intent[0], intent[1], revision, intent[3]
+    return None
+
+
+def _codex_story_validation_receipt_alias(
+    event: Any,
+    *,
+    canvas_id: str,
+    story_receipts: dict[str, tuple[str, int | None]],
+) -> tuple[tuple[str, int | None], tuple[str, int | None]] | None:
+    """Map a later valid readback revision to its same-turn story write receipt."""
+
+    if _codex_freezone_tool_name(event) != "dramaclaw_validate_interactive_story":
+        return None
+    status = str(getattr(event, "status", "") or "").strip().lower()
+    if status not in {"completed", "success", "succeeded"} or getattr(
+        event, "error", None
+    ):
+        return None
+    for value in (getattr(event, "structured", None), getattr(event, "output", None)):
+        for payload in _json_objects_from_codex_tool_value(value):
+            story_id = payload.get("story_id")
+            revision = payload.get("revision")
+            canonical = story_receipts.get(story_id) if isinstance(story_id, str) else None
+            if (
+                payload.get("ok") is True
+                and payload.get("valid") is True
+                and payload.get("canvas_id") == canvas_id
+                and canonical is not None
+                and canonical[0] == ""
+                and type(canonical[1]) is int
+                and type(revision) is int
+                and revision >= canonical[1]
+            ):
+                return ("", revision), canonical
     return None
 
 
@@ -6943,7 +7028,17 @@ async def _stream_assistant_reply_codex(
     preflight_rejections: dict[str, tuple[str, str]] = {}
     story_conflicts: dict[str, tuple[str, str, int, str]] = {}
     canvas_receipts: set[tuple[str, int | None]] = set()
+    story_receipts: dict[str, tuple[str, int | None]] = {}
+    canvas_receipt_aliases: dict[
+        tuple[str, int | None], tuple[str, int | None]
+    ] = {}
     canvas_write_failure = ""
+    stage_confirmation_expected = (
+        structured_canvas_reply
+        and _interactive_story_stage_confirmation_requested(prompt)
+    )
+    stage_confirmation_attempted = False
+    stage_confirmation_succeeded = False
     ready_workflow_draft: dict[str, Any] | None = None
     authorization = await authorize_hermes_launch(
         egress_context=egress_context,
@@ -7142,7 +7237,21 @@ async def _stream_assistant_reply_codex(
                     prepared_draft = _codex_freezone_ready_workflow_draft(event)
                     if prepared_draft is not None:
                         ready_workflow_draft = prepared_draft
+                    validation_alias = _codex_story_validation_receipt_alias(
+                        event,
+                        canvas_id=canvas_id or "default",
+                        story_receipts=story_receipts,
+                    )
+                    if validation_alias is not None:
+                        alias, canonical = validation_alias
+                        canvas_receipt_aliases[alias] = canonical
                 if _codex_freezone_is_write_event(event):
+                    is_stage_confirmation = (
+                        _codex_freezone_tool_name(event)
+                        == "dramaclaw_confirm_interactive_story_stages"
+                    )
+                    if is_stage_confirmation:
+                        stage_confirmation_attempted = True
                     call_id = str(getattr(event, "call_id", "") or "")
                     identifiable_call = bool(call_id)
                     # An unidentified write cannot be associated with a final
@@ -7165,7 +7274,13 @@ async def _stream_assistant_reply_codex(
                                 intent = _codex_story_write_intent(
                                     event, project=project, canvas_id=canvas_id or "default"
                                 )
-                                if intent is not None and receipt.get("story_id") == intent[1]:
+                                receipt_identity = receipt.get(
+                                    "outline_id"
+                                    if _codex_freezone_tool_name(event)
+                                    == "dramaclaw_save_interactive_story_outline"
+                                    else "story_id"
+                                )
+                                if intent is not None and receipt_identity == intent[1]:
                                     # A server 409 rejected this exact story write
                                     # before saving. Only its verified rebased
                                     # successor can settle that failed attempt.
@@ -7173,7 +7288,6 @@ async def _stream_assistant_reply_codex(
                                         if (
                                             intent[:2] == conflict[:2]
                                             and intent[2] == conflict[2]
-                                            and intent[3] != conflict[3]
                                         ):
                                             canvas_write_attempts.pop(rejected_call, None)
                                             del story_conflicts[rejected_call]
@@ -7189,7 +7303,13 @@ async def _stream_assistant_reply_codex(
                                 else _codex_freezone_write_result_state(event)
                             )
                             if receipt is not None and identifiable_call:
-                                canvas_receipts.add(receipt_reference(receipt))
+                                if is_stage_confirmation:
+                                    stage_confirmation_succeeded = True
+                                reference = receipt_reference(receipt)
+                                canvas_receipts.add(reference)
+                                receipt_story_id = receipt.get("story_id")
+                                if isinstance(receipt_story_id, str) and receipt_story_id.strip():
+                                    story_receipts[receipt_story_id.strip()] = reference
                                 target = (
                                     _codex_freezone_tool_name(event),
                                     receipt.get("story_id"),
@@ -7292,11 +7412,35 @@ async def _stream_assistant_reply_codex(
         # that unvalidated payload may reach presentation or persisted history.
         assistant_text = "已取消本轮请求。"
     elif structured_canvas_reply and canvas_postcondition_applies:
+        if (
+            stage_confirmation_expected
+            and not stage_confirmation_attempted
+            and not stage_confirmation_succeeded
+        ):
+            reset_codex_scope_thread(
+                username,
+                project,
+                agent_profile=agent_profile,
+                canvas_id=canvas_id,
+                project_state_dir=project_state_dir,
+            )
+            assistant_text = json.dumps(
+                {
+                    "message": (
+                        "阶段确认未写入：虾导没有执行阶段确认工具，"
+                        "因此画布进度没有改变。请重试本次确认。"
+                    ),
+                    "mode": "blocked",
+                    "canvas_receipts": [],
+                },
+                ensure_ascii=False,
+            )
         raw_assistant_text = assistant_text.strip()
         assistant_text = finalize_canvas_reply(
             assistant_text,
             attempts=canvas_write_attempts,
             receipts=canvas_receipts,
+            receipt_aliases=canvas_receipt_aliases,
             failure=canvas_write_failure,
             draft_ready=ready_workflow_draft is not None,
         )

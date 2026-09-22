@@ -98,6 +98,26 @@ def test_canvas_success_accepts_verified_direct_revision():
     )
 
 
+def test_validated_story_snapshot_revision_can_alias_its_write_receipt():
+    assert (
+        finalize_canvas_reply(
+            reply("mutation", [{"bridge_key": None, "revision": 5}], "脚本已创建。"),
+            attempts={"call-a": "succeeded"},
+            receipts={("", 4)},
+            receipt_aliases={("", 5): ("", 4)},
+        )
+        == "脚本已创建。"
+    )
+
+
+def test_unverified_later_revision_cannot_alias_a_write_receipt():
+    assert "不匹配" in finalize_canvas_reply(
+        reply("mutation", [{"bridge_key": None, "revision": 5}]),
+        attempts={"call-a": "succeeded"},
+        receipts={("", 4)},
+    )
+
+
 def test_one_success_cannot_mask_another_failed_write():
     assert (
         finalize_canvas_reply(

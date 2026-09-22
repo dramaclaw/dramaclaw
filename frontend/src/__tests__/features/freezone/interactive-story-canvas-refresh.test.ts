@@ -49,6 +49,50 @@ describe("interactive story canvas refresh", () => {
     })).toEqual({ project: "project-a", canvasId: "canvas-a" });
   });
 
+  it("refreshes the canvas after an agent outline save", () => {
+    expect(interactiveStoryRefreshTarget({
+      type: "agent.tool.updated",
+      scope: { kind: "project", id: "project-a", canvasId: "canvas-a" },
+      name: "dramaclaw_save_interactive_story_outline",
+      status: "completed",
+      result_json: {
+        ok: true,
+        canvas_id: "canvas-a",
+        outline_id: "outline-round-1",
+        status: "pending",
+        revision: 5,
+        refresh_canvas: true,
+      },
+    })).toEqual({ project: "project-a", canvasId: "canvas-a" });
+  });
+
+  it("refreshes the canvas after an explicit stage confirmation", () => {
+    expect(interactiveStoryRefreshTarget({
+      type: "agent.tool.updated",
+      scope: { kind: "project", id: "project-a", canvasId: "canvas-a" },
+      name: "dramaclaw_confirm_interactive_story_stages",
+      status: "completed",
+      result_json: {
+        ok: true,
+        canvas_id: "canvas-a",
+        story_id: "story-a",
+        revision: 6,
+        confirmed_stages: ["characters", "scenes"],
+        refresh_canvas: true,
+      },
+    })).toEqual({ project: "project-a", canvasId: "canvas-a" });
+  });
+
+  it("ignores outline reads that carry no canvas write", () => {
+    expect(interactiveStoryRefreshTarget({
+      type: "agent.tool.updated",
+      scope: { kind: "project", id: "project-a", canvasId: "canvas-a" },
+      name: "dramaclaw_get_interactive_story_outline",
+      status: "completed",
+      result_json: { ok: true, canvas_id: "canvas-a", revision: 5 },
+    })).toBeNull();
+  });
+
   it("ignores validation and failed writes", () => {
     expect(interactiveStoryRefreshTarget({
       type: "agent.tool.updated",
