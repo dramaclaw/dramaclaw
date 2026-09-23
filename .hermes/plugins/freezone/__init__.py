@@ -1078,6 +1078,70 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     answers = args.get("answers")
     if not isinstance(answers, dict):
         answers = {}
+    generation_preferences = args.get("generation_preferences")
+    if generation_preferences is None:
+        generation_preferences = {}
+    if not isinstance(generation_preferences, dict) or any(
+        key not in {
+            "image_aspect_ratio", "video_aspect_ratio", "video_resolution",
+            "video_duration_seconds", "video_generate_audio",
+            "video_shot_durations_seconds", "delivery_resolution",
+        }
+        for key in generation_preferences
+    ):
+        return tool_result({
+            "ok": False, "status": "generation_clarification_args_invalid",
+            "error": "generation_preferences contains unsupported fields",
+        })
+    scalar_text_fields = (
+        "image_aspect_ratio", "video_aspect_ratio", "video_resolution",
+        "delivery_resolution",
+    )
+    if any(
+        field in generation_preferences
+        and (not isinstance(generation_preferences[field], str)
+             or not generation_preferences[field].strip())
+        for field in scalar_text_fields
+    ) or (
+        "video_generate_audio" in generation_preferences
+        and not isinstance(generation_preferences["video_generate_audio"], bool)
+    ) or (
+        "video_duration_seconds" in generation_preferences
+        and (
+            not isinstance(generation_preferences["video_duration_seconds"], (int, float))
+            or isinstance(generation_preferences["video_duration_seconds"], bool)
+            or not math.isfinite(generation_preferences["video_duration_seconds"])
+            or not 0 < generation_preferences["video_duration_seconds"] <= 600
+        )
+    ):
+        return tool_result({
+            "ok": False, "status": "generation_clarification_args_invalid",
+            "error": "generation_preferences contains an invalid value",
+        })
+    shot_durations = generation_preferences.get("video_shot_durations_seconds")
+    if shot_durations is not None and (
+        not isinstance(shot_durations, list) or not shot_durations
+        or any(
+            not isinstance(value, (int, float)) or isinstance(value, bool)
+            or not math.isfinite(value) or not 0 < value <= 600
+            for value in shot_durations
+        )
+    ):
+        return tool_result({
+            "ok": False, "status": "generation_clarification_args_invalid",
+            "error": "video_shot_durations_seconds must contain positive durations",
+        })
+    if shot_durations is not None and "video_duration_seconds" in generation_preferences:
+        return tool_result({
+            "ok": False, "status": "generation_clarification_args_invalid",
+            "error": "Pass either a shared video duration or per-shot durations",
+        })
+    if generation_media_types is not None and shot_durations is not None:
+        questions = [
+            question for question in questions
+            if not isinstance(question, dict)
+            or question.get("id") != "video_duration_seconds"
+        ]
     if not questions and resumed is None:
         return tool_result(
             {
@@ -1187,11 +1251,21 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
         recommended_answers = {}
         if generation_question_ids:
             recommended_answers = _generation_clarification_recommendations(
-                project, generation_question_ids, answers
+                project, generation_question_ids, answers, generation_preferences
             )
             # A recommended action is offered only with concrete values resolved from
             # the caller's current Catalog; an empty "use recommended" is never valid.
             args = {**args, "allow_recommended": bool(recommended_answers)}
+        description_parts = [str(args.get("description") or "").strip()]
+        delivery_resolution = generation_preferences.get("delivery_resolution")
+        if isinstance(delivery_resolution, str) and delivery_resolution.strip():
+            description_parts.append(
+                f"{delivery_resolution.strip()} 是成片交付清晰度；视频节点生成分辨率按模型能力单独选择。"
+            )
+        if generation_preferences and not recommended_answers:
+            description_parts.append(
+                "当前推荐模型无法满足已明确的声音或画面规格，请逐项选择兼容配置。"
+            )
         result = _emit_clarification_event(
             project,
             canvas,
@@ -1199,7 +1273,7 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
                 "type": "assistant.clarification.request",
                 "clarification_id": clarification_id,
                 "title": str(args.get("title") or "").strip(),
-                "description": str(args.get("description") or "").strip(),
+                "description": " ".join(part for part in description_parts if part),
                 "questions": questions,
                 "answers": answers,
                 "allow_recommended": bool(args.get("allow_recommended", False)),
@@ -1210,7 +1284,8 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     response = _tool_result_payload(result)
     if generation_question_ids:
         finalized = _finalize_generation_clarification_result(
-            response, generation_question_ids, recommended_answers
+            response, generation_question_ids, recommended_answers,
+            require_recommendation=bool(generation_preferences),
         )
         if finalized is not None:
             response = finalized
@@ -3478,6 +3553,7 @@ _GENERATION_MEDIA_NODE_TYPES = {"image": "imageGenNode", "video": "videoNode"}
 
 def _generation_clarification_recommendations(
     project: str | None, question_ids: list[str], answers: Any = None,
+    preferences: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return concrete option ids for one current scoped Catalog snapshot.
 
@@ -3488,7 +3564,11 @@ def _generation_clarification_recommendations(
     model question or a confirmed model there is nothing authoritative to
     recommend, and the caller must not offer a recommended action.
     """
-    from novelvideo.freezone.workflow_preflight import resolve_generation_recommendations
+    from novelvideo.freezone.workflow_preflight import (
+        _catalog_entry_for_model,
+        _workflow_node_capability_blockers,
+        resolve_generation_recommendations,
+    )
 
     if not project:
         return {}
@@ -3502,6 +3582,7 @@ def _generation_clarification_recommendations(
     ]
     if not media:
         return {}
+    preferences = preferences or {}
     confirmed: dict[str, Any] = {}
     if isinstance(answers, dict):
         for question_id, selection in answers.items():
@@ -3524,6 +3605,23 @@ def _generation_clarification_recommendations(
             data["model"] = "recommended"
         elif not (isinstance(data.get("model"), str) and data["model"].strip()):
             return {}
+        for question_id in asked:
+            if question_id not in preferences:
+                continue
+            target_type, field = _GENERATION_ANSWER_DATA_FIELDS[question_id]
+            if target_type != node_type:
+                continue
+            value = preferences[question_id]
+            if question_id == "video_generate_audio":
+                if not isinstance(value, bool):
+                    return {}
+            elif question_id == "video_duration_seconds":
+                if (not isinstance(value, (int, float)) or isinstance(value, bool)
+                    or not math.isfinite(value) or not 0 < value <= 600):
+                    return {}
+            elif not isinstance(value, str) or not value.strip():
+                return {}
+            data[field] = value
         nodes.append({"node_type": node_type, "data": data})
     responses: dict[str, dict[str, Any]] = {}
     try:
@@ -3538,6 +3636,28 @@ def _generation_clarification_recommendations(
         return {}
     if resolve_generation_recommendations(nodes, responses, fill_missing=True):
         return {}
+    for node in nodes:
+        entry = _catalog_entry_for_model(
+            [item for item in responses[node["node_type"]]["data"] if isinstance(item, dict)],
+            str(node["data"].get("model") or ""),
+        )
+        if entry is None:
+            return {}
+        # The catalog may use a different case for an otherwise valid option.
+        for field, catalog_key in (
+            ("size", "resolutionOptions"), ("quality", "resolutionOptions")
+        ):
+            if field not in node["data"]:
+                continue
+            wanted = str(node["data"][field]).casefold()
+            canonical = next(
+                (str(value) for value in entry.get(catalog_key) or []
+                 if str(value).casefold() == wanted), None
+            )
+            if canonical is not None:
+                node["data"][field] = canonical
+        if _workflow_node_capability_blockers(node, entry):
+            return {}
     data_by_type = {node["node_type"]: node["data"] for node in nodes}
     recommended: dict[str, Any] = {}
     for question_id in asked:
@@ -3568,6 +3688,7 @@ def _generation_required_choices_for_questions(question_ids: list[str]) -> dict[
 
 def _finalize_generation_clarification_result(
     response: Any, question_ids: list[str], recommended_answers: dict[str, Any],
+    *, require_recommendation: bool = False,
 ) -> dict[str, Any] | None:
     """Turn a submitted generation card into concrete node data, or fail closed.
 
@@ -3592,8 +3713,12 @@ def _finalize_generation_clarification_result(
         response.get("answers"), dict
     ) else {}
     if used_recommended:
+        # A stale frontend must not turn a disabled recommendation into a valid
+        # receipt by echoing old per-field selections.
+        if require_recommendation and not recommended_answers:
+            answers = {}
         for question_id in question_ids:
-            if question_id not in answers and question_id in recommended_answers:
+            if question_id in recommended_answers:
                 answers[question_id] = recommended_answers[question_id]
     choices: dict[str, Any] = {}
     missing: list[str] = []
@@ -3636,10 +3761,11 @@ def _finalize_generation_clarification_result(
         "generation_choices": choices,
         "node_data": node_data,
         "agent_instruction": (
-            "Concrete generation values are in node_data keyed by node type. Copy every "
-            "field of node_data.<node_type> verbatim into each matching image/video node's "
-            "data on the retried canvas write or WorkflowPlan; do not translate question ids "
-            "yourself or drop a field. For a new workflow draft, pass only this result's "
+            "Concrete generation values are in node_data keyed by node type. Apply each "
+            "node_data.<node_type> field only where the matching image/video node does not "
+            "already state an explicit value; retain each shot's own duration and audio "
+            "requirement. Do not translate question ids yourself. For a new workflow draft, "
+            "pass only this result's "
             "answers field: generation_answers = result['answers']; do not pass the entire "
             "clarification result. If using plan, put the user goal in plan.summary, never "
             "plan.user_goal (which is only valid on intent). For an existing draft, use its "
@@ -4026,7 +4152,8 @@ def _generation_parameters_required_result(
             "model) in answers so the server can offer a recommendation from the same "
             "catalog entry. The server assembles every missing question. "
             "The clarification result returns node_data keyed by node type: copy each "
-            "node_data.<node_type> field verbatim into the matching node's data and retry "
+            "node_data.<node_type> field into missing matching node data without replacing "
+            "explicit per-shot values, then retry "
             "the same operation. For a WorkflowPlan, put them in each image/video node "
             "data. For a workflow draft, pass the draft id and revision so the tool "
             "applies them. Do not claim success and do not silently choose defaults."
@@ -5371,7 +5498,7 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
     if "generation_answers" in args:
         source_plan = _clone_json(source_plan)
         choices, answers_error = _generation_choices_from_answers(
-            args["generation_answers"]
+            args["generation_answers"], plan=source_plan
         )
         if answers_error is not None:
             return tool_result(answers_error)
@@ -5858,7 +5985,7 @@ def _handle_workflow_operation(args: dict[str, Any], *, action: str) -> str:
     request_args = args
     if action == "prepare" and "generation_answers" in args:
         choices, answers_error = _generation_choices_from_answers(
-            args["generation_answers"]
+            args["generation_answers"], plan=args.get("plan")
         )
         if answers_error is not None:
             return tool_result(answers_error)
@@ -6272,8 +6399,22 @@ def _generation_answer_value(question_id: str, selection: Any) -> Any:
     return value
 
 
+def _plan_has_explicit_video_durations(plan: Any) -> bool:
+    if not isinstance(plan, dict) or not isinstance(plan.get("nodes"), list):
+        return False
+    video_nodes = [
+        node for node in plan["nodes"]
+        if isinstance(node, dict) and node.get("node_type") == "videoNode"
+    ]
+    return bool(video_nodes) and all(
+        isinstance(node.get("data"), dict)
+        and _generation_parameter_value_present("durationSec", node["data"].get("durationSec"))
+        for node in video_nodes
+    )
+
+
 def _generation_choices_from_answers(
-    answers: Any,
+    answers: Any, *, plan: Any = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     receipt_choices: Any = None
     if isinstance(answers, dict) and "answers" in answers:
@@ -6313,6 +6454,8 @@ def _generation_choices_from_answers(
             if any(key.startswith(f"{media}_") for key in choices):
                 for field in mandatory:
                     key = f"{media}_{field}"
+                    if key == "video_duration_seconds" and _plan_has_explicit_video_durations(plan):
+                        continue
                     if key not in choices:
                         raise ValueError(f"missing generation answer: {key}")
     except ValueError as exc:
@@ -6324,7 +6467,7 @@ def _generation_choices_from_answers(
 
 
 def _apply_generation_choices_to_plan(
-    plan: dict[str, Any], choices: dict[str, Any], *, missing_only: bool = False
+    plan: dict[str, Any], choices: dict[str, Any], *, missing_only: bool = True
 ) -> None:
     for node in plan.get("nodes") or []:
         if not isinstance(node, dict):
@@ -6339,7 +6482,12 @@ def _apply_generation_choices_to_plan(
             continue
         data = node.get("data") if isinstance(node.get("data"), dict) else {}
         for field, value in node_choices:
-            if missing_only and _generation_parameter_value_present(field, data.get(field)):
+            current = data.get(field)
+            symbolic = (
+                isinstance(current, str)
+                and current.strip().casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
+            )
+            if missing_only and not symbolic and _generation_parameter_value_present(field, current):
                 continue
             data[field] = value
         node["data"] = data
@@ -6385,7 +6533,7 @@ def _apply_workflow_generation_answers(
                     "error": "WorkflowPlan validation is unavailable"}
         source = _clone_json(intent)
         plan = source.get("plan") if isinstance(source.get("plan"), dict) else {}
-        _apply_generation_choices_to_plan(plan, choices, missing_only=missing_only)
+        _apply_generation_choices_to_plan(plan, choices, missing_only=True)
         compiled = validate_agent_workflow_plan(plan)
         if not compiled.get("ok"):
             return compiled
@@ -9349,7 +9497,7 @@ TOOLS = (
         "freezone_request_user_clarification",
         _schema(
             "freezone_request_user_clarification",
-            "Ask the user structured clarification questions in the Freezone frontend and wait for their submitted answers, including Skill Studio setup questions. For image/video generation pass generation_media_types to ask every field, or pass generation_required_choices returned by preflight to ask only missing fields; the server assembles canonical questions and the frontend resolves live options. With workflow_draft_id and workflow_expected_revision, submitted answers are validated and saved to that draft before returning its new preview. For legacy canonical generation questions, title and options may be omitted. Do not hand-build generation questions. For other clarifications, decide the next step from the current context. This tool never creates or runs canvas nodes.",
+            "Ask the user structured clarification questions in the Freezone frontend and wait for their submitted answers, including Skill Studio setup questions. For image/video generation pass generation_media_types to ask every field, or pass generation_required_choices returned by preflight to ask only missing fields; pass generation_preferences for specs the user already stated, keeping per-shot durations and final delivery resolution distinct from global video parameters. The server assembles canonical questions and the frontend resolves live options. With workflow_draft_id and workflow_expected_revision, submitted answers are validated and saved to that draft before returning its new preview. For legacy canonical generation questions, title and options may be omitted. Do not hand-build generation questions. For other clarifications, decide the next step from the current context. This tool never creates or runs canvas nodes.",
             {
                 "clarification_id": {
                     "type": "string",
@@ -9383,6 +9531,32 @@ TOOLS = (
                     "properties": {
                         "image": {"type": "array", "items": {"type": "string"}},
                         "video": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "additionalProperties": False,
+                },
+                "generation_preferences": {
+                    "type": "object",
+                    "description": (
+                        "Only generation specs explicitly stated by the user. Pass image/video "
+                        "aspect ratios and whether video shots need generated speech/audio. "
+                        "Use video_shot_durations_seconds for distinct shot lengths; each "
+                        "WorkflowPlan video node must also carry its own durationSec. "
+                        "delivery_resolution describes final output and does not set video_resolution. "
+                        "No BGM does not mean video_generate_audio=false."
+                    ),
+                    "properties": {
+                        "image_aspect_ratio": {"type": "string"},
+                        "video_aspect_ratio": {"type": "string"},
+                        "video_resolution": {"type": "string"},
+                        "video_duration_seconds": {
+                            "type": "number", "exclusiveMinimum": 0, "maximum": 600,
+                        },
+                        "video_generate_audio": {"type": "boolean"},
+                        "video_shot_durations_seconds": {
+                            "type": "array", "minItems": 1,
+                            "items": {"type": "number", "exclusiveMinimum": 0, "maximum": 600},
+                        },
+                        "delivery_resolution": {"type": "string"},
                     },
                     "additionalProperties": False,
                 },

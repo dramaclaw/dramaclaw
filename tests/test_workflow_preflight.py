@@ -284,6 +284,35 @@ def test_voiced_shot_must_state_generate_audio_explicitly():
     assert _check(_voiced({"generateAudio": False}), _AUDIO_CAPABLE_ENTRY)["status"] == "ready"
 
 
+def test_embedded_dialogue_requirement_rejects_silent_video_node():
+    data = _voiced({"generateAudio": False}, recipe="general-video")
+    data["workflowCatalog"]["requiresGeneratedAudio"] = True
+
+    result = _check(data, _AUDIO_CAPABLE_ENTRY)
+
+    assert result["status"] == "blocked"
+    assert any(
+        blocker["path"].endswith(".generateAudio")
+        and blocker["code"] == "generation_parameter_conflict"
+        for blocker in result["blockers"]
+    )
+    data["generateAudio"] = True
+    assert _check(data, _AUDIO_CAPABLE_ENTRY)["status"] == "ready"
+
+
+def test_embedded_dialogue_conflict_blocks_without_live_catalog():
+    data = _voiced({"generateAudio": False}, recipe="general-video")
+    data["workflowCatalog"]["requiresGeneratedAudio"] = True
+
+    result = evaluate_workflow_preflight(
+        {"plan": {"nodes": [{"id": "shot", "node_type": "videoNode", "data": data}]}},
+        model_responses={}, limits={"ok": False}, runtime_available=False,
+    )
+
+    assert result["status"] == "blocked"
+    assert any(b["code"] == "generation_parameter_conflict" for b in result["blockers"])
+
+
 @pytest.mark.parametrize(
     "data",
     [

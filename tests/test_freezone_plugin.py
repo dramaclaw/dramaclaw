@@ -3514,6 +3514,146 @@ def test_generation_clarification_recommendation_has_concrete_answers(monkeypatc
     }
 
 
+def test_generation_recommendation_uses_explicit_specs_and_keeps_delivery_separate(monkeypatch):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    events = []
+    monkeypatch.setattr(plugin, "_emit_clarification_event",
+                        lambda _project, _canvas, event: events.append(event) or "shown")
+    monkeypatch.setattr(plugin, "_request", lambda method, path, **_kwargs: {
+        "ok": True, "data": [{
+            "id": "newapi_seedance-2.0-fast", "ratioOptions": ["9:16", "16:9"],
+            "resolutionOptions": ["720P", "1080P"], "minDuration": 4,
+            "maxDuration": 15, "supportsGenerateAudio": True,
+        }] if "/video/models" in path else [{
+            "id": "LingShan-G2", "aliases": ["newapi_gpt_image2"],
+            "ratioOptions": ["9:16", "16:9"],
+            "resolutionOptions": ["1K"], "qualityOptions": ["medium"],
+        }],
+    })
+
+    handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a", "generation_media_types": ["image", "video"],
+        "generation_preferences": {
+            "image_aspect_ratio": "16:9", "video_aspect_ratio": "16:9",
+            "video_generate_audio": True, "delivery_resolution": "1080p",
+        },
+    })
+
+    recommended = events[0]["recommended_answers"]
+    assert events[0]["allow_recommended"] is True
+    assert recommended["image_aspect_ratio"] == {"option_ids": ["16:9"]}
+    assert recommended["video_aspect_ratio"] == {"option_ids": ["16:9"]}
+    assert recommended["video_generate_audio"] == {"option_ids": ["true"]}
+    assert recommended["video_resolution"] == {"option_ids": ["720P"]}
+    assert "1080p" in events[0]["description"]
+    assert "交付" in events[0]["description"]
+
+    handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a", "generation_media_types": ["video"],
+        "generation_preferences": {"video_resolution": "1080p"},
+    })
+    assert events[1]["recommended_answers"]["video_resolution"] == {
+        "option_ids": ["1080P"]
+    }
+
+
+def test_generation_recommendation_keeps_distinct_shot_durations_out_of_global_card(
+    monkeypatch,
+):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    events = []
+    monkeypatch.setattr(plugin, "_emit_clarification_event",
+                        lambda _project, _canvas, event: events.append(event) or "shown")
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: {
+        "ok": True, "data": [{
+            "id": "newapi_seedance-2.0-fast", "ratioOptions": ["16:9"],
+            "resolutionOptions": ["720P"], "minDuration": 4,
+            "maxDuration": 15, "supportsGenerateAudio": True,
+        }],
+    })
+
+    handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a", "generation_media_types": ["video"],
+        "generation_preferences": {"video_shot_durations_seconds": [7, 7, 8, 8]},
+    })
+
+    event = events[0]
+    assert "video_duration_seconds" not in [q["id"] for q in event["questions"]]
+    assert "video_duration_seconds" not in event["recommended_answers"]
+    assert event["allow_recommended"] is True
+
+
+def test_generation_recommendation_hides_one_click_when_explicit_audio_is_unsupported(
+    monkeypatch,
+):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    events = []
+    monkeypatch.setattr(plugin, "_emit_clarification_event",
+                        lambda _project, _canvas, event: events.append(event) or "shown")
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: _ISSUE_674_VIDEO_CATALOG)
+
+    handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a", "generation_media_types": ["video"],
+        "generation_preferences": {"video_generate_audio": True},
+    })
+
+    assert events[0]["allow_recommended"] is False
+    assert "recommended_answers" not in events[0]
+    assert "声音" in events[0]["description"]
+
+
+def test_unsupported_explicit_audio_rejects_stale_recommended_receipt(monkeypatch):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    monkeypatch.setattr(plugin, "_emit_clarification_event", lambda *_args: {
+        "ok": True, "clarification_status": "recommended", "used_recommended": True,
+        "answers": {
+            "video_model": {"option_ids": ["newapi_seedance-2.0-fast"]},
+            "video_aspect_ratio": {"option_ids": ["9:16"]},
+            "video_resolution": {"option_ids": ["720P"]},
+            "video_duration_seconds": {"option_ids": ["5"]},
+            "video_generate_audio": {"option_ids": ["false"]},
+            "video_variants_per_node": {"option_ids": ["1"]},
+        },
+    })
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: _ISSUE_674_VIDEO_CATALOG)
+
+    result = handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a", "generation_media_types": ["video"],
+        "generation_preferences": {"video_generate_audio": True},
+    })
+
+    assert result["ok"] is False
+    assert result["status"] == "generation_answers_incomplete"
+
+
+def test_use_recommended_ignores_stale_frontend_answer_for_explicit_audio(monkeypatch):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    monkeypatch.setattr(plugin, "_emit_clarification_event", lambda *_args: {
+        "ok": True, "clarification_status": "recommended", "used_recommended": True,
+        "answers": {"video_generate_audio": {"option_ids": ["false"]}},
+    })
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: {
+        "ok": True, "data": [{
+            "id": "newapi_seedance-2.0-fast", "ratioOptions": ["16:9"],
+            "resolutionOptions": ["720P"], "minDuration": 4,
+            "maxDuration": 15, "supportsGenerateAudio": True,
+        }],
+    })
+
+    result = handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a", "generation_media_types": ["video"],
+        "generation_preferences": {"video_generate_audio": True},
+    })
+
+    assert result["generation_choices"]["video_generate_audio"] is True
+    assert result["answers"]["video_generate_audio"] == {"option_ids": ["true"]}
+
+
 _ISSUE_637_IMAGE_CATALOG = {
     "ok": True, "data": [
         {
@@ -4071,6 +4211,52 @@ def test_prepare_exact_plan_maps_generation_answers_into_nodes(monkeypatch, tmp_
     assert all(node["data"]["count"] == 2 for node in received[0]["nodes"])
     assert all(node["data"]["quality"] == "720P" for node in received[0]["nodes"])
     assert all(node["data"]["generateAudio"] is False for node in received[0]["nodes"])
+
+
+def test_prepare_exact_plan_keeps_explicit_shot_values_when_card_has_global_defaults(
+    monkeypatch, tmp_path,
+):
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    received = []
+    monkeypatch.setattr(plugin, "validate_agent_workflow_plan", lambda plan: (
+        received.append(copy.deepcopy(plan)) or {"ok": True, "skill_id": "video-ad", "plan": plan}
+    ))
+    monkeypatch.setattr(plugin, "_workflow_runtime_preflight",
+                        lambda *_args, **_kwargs: {"blockers": []})
+    durations = [7, 7, 8, 8]
+    args = {
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "plan": {"schema_version": "freezone_workflow_plan.v1", "nodes": [
+            {"id": f"shot-{index}", "node_type": "videoNode", "data": {
+                "aspectRatio": "16:9", "durationSec": duration,
+                "generateAudio": True,
+                **({"model": "recommended"} if index == 1 else {}),
+            }} for index, duration in enumerate(durations, 1)
+        ], "edges": []},
+        "generation_answers": {
+            "video_model": {"option_ids": ["video-a"]},
+            "video_aspect_ratio": {"option_ids": ["9:16"]},
+            "video_resolution": {"option_ids": ["720P"]},
+            "video_duration_seconds": {"option_ids": ["5"]},
+            "video_generate_audio": {"option_ids": ["false"]},
+            "video_variants_per_node": {"option_ids": ["1"]},
+        },
+    }
+    result = plugin._handle_prepare_workflow_plan_draft(args)
+
+    assert result["ok"] is True
+    assert [n["data"]["durationSec"] for n in received[0]["nodes"]] == durations
+    assert all(n["data"]["aspectRatio"] == "16:9" for n in received[0]["nodes"])
+    assert all(n["data"]["generateAudio"] is True for n in received[0]["nodes"])
+    assert all(n["data"]["model"] == "video-a" for n in received[0]["nodes"])
+
+    # A full card omits the global duration when all shots already state one.
+    without_global_duration = copy.deepcopy(args)
+    del without_global_duration["generation_answers"]["video_duration_seconds"]
+    second_result = plugin._handle_prepare_workflow_plan_draft(without_global_duration)
+    assert second_result["ok"] is True
+    assert [n["data"]["durationSec"] for n in received[1]["nodes"]] == durations
 
 
 def test_prepare_exact_plan_missing_runtime_fields_returns_standard_clarification(
