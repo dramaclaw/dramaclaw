@@ -1017,9 +1017,11 @@ def _merge_agent_nodes_into_standard(
     node the agent wrote: each mapped standard node is replaced by the
     agent's node itself, id and ``data`` included, so no field the runtime
     might read (``promptBuilder.planItem.audio_kind``, a voice id, anything
-    added later) can be lost or reset. Edges, compose input order and layout
-    groups are rewritten to the agent's ids. Returns ``(None, reason)`` when
-    an agent id collides with a node the planner added.
+    added later) can be lost or reset. The agent's edges are kept as written
+    (their ``link_type`` too); the planner's edges are added only where they
+    touch a node it added, and its compose input order and layout groups are
+    rewritten to the agent's ids. Returns ``(None, reason)`` when an agent id
+    collides with a node the planner added.
     """
     reverse = {standard_id: agent_id for agent_id, standard_id in mapping.items()}
     agent_nodes = {
@@ -1050,18 +1052,42 @@ def _merge_agent_nodes_into_standard(
         return reverse.get(_text(node_id), node_id)
 
     merged["nodes"] = nodes
-    merged["edges"] = [
-        (
-            {
-                **edge,
-                "source": translate(edge.get("source")),
-                "target": translate(edge.get("target")),
-            }
-            if isinstance(edge, dict)
-            else edge
-        )
-        for edge in merged.get("edges") or []
+    # The agent's own edges stay as written, link_type included (derived_from
+    # and media_input_for mean different things on the canvas); the planner
+    # contributes only the edges that touch a node it added.
+    edges: list[Any] = [
+        deepcopy(edge)
+        for edge in agent_plan.get("edges") or []
+        if isinstance(edge, dict)
+        and _text(edge.get("source")) in agent_nodes
+        and _text(edge.get("target")) in agent_nodes
     ]
+    seen = {
+        (_text(e.get("source")), _text(e.get("target")), _text(e.get("link_type")))
+        for e in edges
+    }
+    for edge in merged.get("edges") or []:
+        if not isinstance(edge, dict):
+            continue
+        if (
+            _text(edge.get("source")) not in kept_ids
+            and _text(edge.get("target")) not in kept_ids
+        ):
+            continue
+        added = {
+            **edge,
+            "source": translate(edge.get("source")),
+            "target": translate(edge.get("target")),
+        }
+        key = (
+            _text(added["source"]),
+            _text(added["target"]),
+            _text(added.get("link_type")),
+        )
+        if key not in seen:
+            seen.add(key)
+            edges.append(added)
+    merged["edges"] = edges
     for node in nodes:
         if _text(node.get("id")) in kept_ids and _node_role(node) == "compose":
             data = node.get("data") if isinstance(node.get("data"), dict) else {}

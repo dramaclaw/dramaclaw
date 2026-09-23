@@ -909,6 +909,36 @@ def test_reroute_carries_the_agent_nodes_over_verbatim(monkeypatch):
     assert validated["preflight"]["blockers"] == []
 
 
+def test_reroute_keeps_the_agent_link_types(monkeypatch):
+    """Sixth review of #696: derived_from and media_input_for mean different
+    things on the canvas; a rerouted draft keeps the agent's edges as written
+    and only adds the planner's edges to the nodes the planner added."""
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    tutorial = {"skill_id": "text-to-image-video", "user_goal": "赛博城市",
+                "planner": {"mode": "standard", "item_count": 2}}
+    plan = _raw_plan_from_standard(catalog, tutorial, deviate=False)
+    plan["nodes"] = [n for n in plan["nodes"] if n["node_type"] != "videoComposeNode"]
+    plan["edges"] = [e for e in plan["edges"] if e["target"] != "final_compose"]
+    for edge in plan["edges"]:
+        if (edge["source"], edge["target"]) == ("frame_1", "clip_1"):
+            edge["link_type"] = "derived_from"
+    agent_edges = {(e["source"], e["target"], e["link_type"]) for e in plan["edges"]}
+
+    validated = catalog.validate_agent_workflow_plan(plan)
+
+    assert validated["ok"] is True, validated
+    assert validated["planner"]["selected_by"] == "template_isomorphic"
+    result_edges = {(e["source"], e["target"], e["link_type"]) for e in validated["plan"]["edges"]}
+    assert agent_edges <= result_edges
+    assert ("frame_1", "clip_1", "derived_from") in result_edges
+    assert ("frame_1", "clip_1", "media_input_for") not in result_edges
+    added = result_edges - agent_edges
+    assert added and all("final_compose" in (s, t) for s, t, _ in added)
+    assert added == {("clip_1", "final_compose", "composition_input_for"),
+                     ("clip_2", "final_compose", "composition_input_for")}
+
+
 def test_reroute_carries_agent_ids_and_wiring_for_renamed_nodes(monkeypatch):
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)
