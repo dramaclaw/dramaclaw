@@ -979,7 +979,7 @@ def build_tools(
             "dramaclaw_validate_interactive_story",
             schema(
                 "dramaclaw_validate_interactive_story",
-                "Validate the stored branching story and return structural and media-readiness issues without writing the canvas.",
+                "Validate the stored branching story and return structural and media-readiness issues without writing the canvas. Structural unreachable segments are blocking errors; missing video remains a non-blocking placeholder warning. Do not report the story as valid when blocking issues are present.",
                 {
                     "project_id": {
                         "type": "string",

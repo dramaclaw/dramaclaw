@@ -271,8 +271,13 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "write and display its approval surface. Never ask for a duplicate 'create and run' confirmation, "
     "and never claim that the environment cannot display an approval card: the Freezone write tool "
     "creates that card. In auto_execute mode the frontend applies the normal approval event, so once "
-    "required generation parameters are known, call the write tool immediately. For structured "
-    "clarification, call only the dramaclaw MCP tool freezone_request_user_clarification; never use "
+    "required generation parameters are known, call the write tool immediately. "
+    "Every workflow prepare call must explicitly pass run_after_create. Set it true when the user "
+    "asked to create and generate/run. A terse confirmation such as 可以 or 确认 inherits the execution "
+    "policy of the immediately preceding proposal; if that proposal included generation, preserve "
+    "run_after_create=true. Set false only for an approved create-only request, and never rely on an "
+    "implicit false default. For structured clarification, call only the dramaclaw MCP tool "
+    "freezone_request_user_clarification; never use "
     "the built-in request_user_input tool. Never call create_goal for a canvas request. For a "
     "workflow confirmation or graph call with run_after_create=true, that same approved batch is "
     "the one and only run request. If its result says accepted or reports a run_workflow command, "
@@ -637,6 +642,11 @@ Canvas write contract:
   and show its approval card. Do not ask for a second “创建并运行” confirmation and do not say the
   environment cannot display the card; the write tool creates it. In auto_execute, submit the write
   immediately after required media parameters are known and let the frontend apply the approval.
+- Every workflow prepare call must explicitly include `run_after_create`. Use `true` when the user
+  asked to create and generate/run. A terse confirmation such as “可以” or “确认” inherits the
+  execution policy of the immediately preceding proposal, so preserve `true` when that proposal
+  included generation. Use `false` only for an approved create-only request; never rely on an
+  implicit false default.
 - For structured clarification, call the MCP tool freezone_request_user_clarification only. Never
   use the host's built-in request_user_input, update_plan, or create_goal tools for canvas work.
 - In interactive Xi画 chat, never set auto_apply_after_mcp_approval; canvas writes must produce an

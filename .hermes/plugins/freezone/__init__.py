@@ -7384,6 +7384,8 @@ def _result_field_schema(field: str) -> dict[str, Any]:
         return {"type": "boolean"}
     if field in _RESULT_INTEGER_FIELDS:
         return {"type": ["integer", "null"]}
+    if field == "outline":
+        return {"type": ["object", "null"]}
     if field in _RESULT_OBJECT_FIELDS:
         return {"type": "object"}
     if field in {"draft", "draft_ref"}:
@@ -8395,7 +8397,12 @@ _WORKFLOW_INTENT_OBJECT_SCHEMA = {
 _WORKFLOW_RUN_AFTER_CREATE_PROPS = {
     "run_after_create": {
         "type": "boolean",
-        "description": "Append deterministic workflow execution after graph creation.",
+        "description": (
+            "Required execution decision. Set true when the user asked to create and generate/run, "
+            "or when a terse confirmation such as 可以/确认 approves a preceding proposal that "
+            "included generation. Set false only when the approved request is create-only. Never "
+            "omit this field or rely on an implicit false default."
+        ),
     },
 }
 
@@ -9194,8 +9201,29 @@ def _handle_get_story_canvas(args: dict[str, Any], **_: Any) -> Any:
             "GET",
             f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/{quote(canvas, safe='')}",
         )
-        if isinstance(result.get("data"), dict):
-            result["data"].setdefault("canvas_id", canvas)
+        if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
+            raise ValueError("canvas read returned an invalid API response")
+        if result["ok"] is True:
+            data = result.get("data")
+            revision = data.get("revision") if isinstance(data, dict) else None
+            if (
+                not isinstance(revision, int)
+                or isinstance(revision, bool)
+                or revision < 1
+            ):
+                return _structured_tool_result(
+                    {
+                        "ok": False,
+                        "status": "canvas_not_created",
+                        "code": "canvas_not_created",
+                        "error": (
+                            "当前画布尚未创建，无法读取有效的 revision；请先保存大纲 "
+                            "或创建画布后再重试。"
+                        ),
+                    },
+                    tool_name="dramaclaw_get_freezone_canvas",
+                )
+            data.setdefault("canvas_id", canvas)
         return _structured_tool_result(
             result, tool_name="dramaclaw_get_freezone_canvas"
         )
@@ -10015,7 +10043,7 @@ TOOLS = (
                 "operation_id": {"type": "string"},
                 **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
             },
-            ["operation_id"],
+            ["operation_id", "run_after_create"],
             reject_unknown=True,
         ),
         _handle_prepare_workflow,
@@ -10078,7 +10106,7 @@ TOOLS = (
                 },
                 **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
             },
-            ["operation_id"],
+            ["operation_id", "run_after_create"],
             reject_unknown=True,
         ),
         _handle_prepare_workflow_draft,
@@ -10161,12 +10189,14 @@ TOOLS = (
                 "run_after_create": {
                     "type": "boolean",
                     "description": (
-                        "When true, append run_workflow after graph creation in the same approved "
-                        "frontend batch after the user has approved the WorkflowPlan."
+                        "Required execution decision. Set true to append run_workflow after graph "
+                        "creation in the same approved frontend batch. A terse confirmation such "
+                        "as 可以/确认 inherits true from a preceding create-and-generate proposal. "
+                        "Set false only for create-only; never omit this field."
                     ),
                 },
             },
-            ["operation_id", "plan"],
+            ["operation_id", "plan", "run_after_create"],
             reject_unknown=True,
         ),
         _handle_prepare_workflow_plan_draft,

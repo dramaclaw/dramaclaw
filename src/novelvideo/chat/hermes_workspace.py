@@ -770,7 +770,7 @@ def _render_workflow_skill(item: dict) -> tuple[str, dict[str, object]]:
 ## 执行规则
 
 1. 本 Skill 已由用户明确选择。只调用一次 `freezone_get_workflow_skill`，固定传入 `skill_id=\"{skill_id}\"`；不要再次选择或替换 Skill。只补充 `input_contract.missing_required`，不要重复询问已经推断或有默认值的参数。
-2. 生成精简 `freezone_workflow_intent.v1`，以结构化 JSON 对象（不是字符串）调用 `freezone_prepare_workflow_draft`。不要传 `draft_id` 或调用 `execute_code`。
+2. 生成精简 `freezone_workflow_intent.v1`，以结构化 JSON 对象（不是字符串）调用 `freezone_prepare_workflow_draft`，并显式传入 `run_after_create`：创建并生成/运行时为 `true`，仅创建时为 `false`；“可以”“确认”等简短回复沿用上一轮方案的执行策略。不要传 `draft_id` 或调用 `execute_code`。
 3. 返回草稿后，严格按预览向用户确认。
 4. 用户调整方案时调用 `freezone_patch_workflow_draft`，只提交发生变化的字段。
 5. 用户确认方案后调用 `freezone_confirm_workflow_draft`，始终使用已确认的 draft_id 和 revision。

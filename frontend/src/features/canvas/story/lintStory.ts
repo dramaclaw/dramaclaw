@@ -88,7 +88,7 @@ export function lintStory(
     }
     for (const n of members) {
       if (!reached.has(n.id)) {
-        issues.push({ severity: 'warning', code: 'unreachable', nodeId: n.id });
+        issues.push({ severity: 'error', code: 'unreachable', nodeId: n.id });
       }
     }
   }

@@ -12,7 +12,7 @@ Validate 检查持久化故事的 schema、图可达性、自动兜底顺序、�
 
 其他常见结果包括 `missing_video`、`media_url_unresolved`、`timed_choice_uses_first_default`、`automatic_no_fallback`、`automatic_fallback_order`、`unreachable`、`leaf_no_ending`。
 
-- `error` 表示无效或不安全的故事状态，会阻塞后续预览/导出门禁。
+- `error` 表示无效、不安全或结构上无法正常走通的故事状态，会阻塞后续预览/导出门禁；`unreachable` 属于此类错误。
 - `warning` 表示应修复或明确接受的制作、体验问题。
 - `info` 是不阻塞流程的提示。
 

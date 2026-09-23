@@ -26,8 +26,8 @@ compatibility: Requires Freezone/虾画 chat surface and preferably injected can
 
 - 读规划包：`tool_call(name="freezone_get_workflow_skill", arguments={"skill_id": ..., "inputs": {...}})`
 - 生成准入：`tool_call(name="freezone_begin_agent_product_generation", arguments={"product_kind": "workflow_result", "generation_session_id": ..., "artifact_id": "<skill_id>@<skill_version>", "skill_id": ..., "skill_version": ..., "normalized_inputs": {...}})`；`artifact_id`、`skill_id` 必须与随后提交的 `compiled.skill_id` 一致。
-- 规划草稿：`tool_call(name="freezone_prepare_workflow_draft", arguments={"canvas_id": ..., "operation_id": ..., "intent": {...}})`
-- 自定义拓扑草稿：`tool_call(name="freezone_prepare_workflow_plan_draft", arguments={"canvas_id": ..., "plan": {...}})`；返回精确预览而不直接写画布
+- 规划草稿：`tool_call(name="freezone_prepare_workflow_draft", arguments={"canvas_id": ..., "operation_id": ..., "intent": {...}, "run_after_create": true|false})`
+- 自定义拓扑草稿：`tool_call(name="freezone_prepare_workflow_plan_draft", arguments={"canvas_id": ..., "operation_id": ..., "plan": {...}, "run_after_create": true|false})`；返回精确预览而不直接写画布
 - 修改草稿：`freezone_patch_workflow_draft`，arguments `{"draft_id": ..., "expected_revision": ..., "changes": {...}}`
 - 确认落图：`freezone_confirm_workflow_draft`，arguments `{"draft_id": ..., "revision": ...}`
 
@@ -55,7 +55,7 @@ compatibility: Requires Freezone/虾画 chat surface and preferably injected can
 5. 缺少素材但允许从文字创建时，把素材锚点作为第一个 PlanItem，选择同一 Skill 允许的、`requires_source_media=false` 且输出类型匹配的 Recipe；后续依赖项通过 `depends_on` 引用该语义 item id。
 6. 严格按草稿工具返回的 `preview` 展示节点数量、作品清单、阶段和执行方式，不展示内部 JSON、`draft_id` 或 `revision`。
 7. 用户调整方案时，只把发生变化的字段传给 `freezone_patch_workflow_draft(draft_id=..., expected_revision=..., changes=...)`；不要重建 Intent 或创建新草稿。按新预览展示结果并记录新 revision。
-8. 用户确认后调用一次 `freezone_confirm_workflow_draft(draft_id=..., revision=...)`。执行方式默认使用草稿中已经确认的 `run_after_create`。
+8. 用户确认后调用一次 `freezone_confirm_workflow_draft(draft_id=..., revision=...)`。每次准备草稿都必须显式传 `run_after_create`：用户要求创建并生成/运行时传 `true`；用户用“可以”“确认”等简短回复确认上一轮含生成的方案时，继承该方案并继续传 `true`；只有明确仅创建画布时才传 `false`，不得依赖缺省值。确认时使用草稿中已经固定的执行策略。
 9. 草稿校验失败时只修正返回的输入、item 或选项字段后重试；禁止改用单节点工具绕过校验，也不要退回生成整份 Plan。
 
 Plan 中的边只表示真实输入依赖，不表示时间顺序。节点 ID 必须稳定且唯一；禁止环、坏边、未知节点类型、未知 Recipe 和不兼容 Recipe。用户要求自动执行时才设置 `run_after_create=true`，否则只创建画布。

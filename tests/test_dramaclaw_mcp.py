@@ -384,6 +384,93 @@ def test_freezone_story_canvas_read_preserves_revision(monkeypatch):
     assert calls == [("GET", "/api/v1/projects/project-a/freezone/canvases/canvas-a")]
 
 
+def test_freezone_story_canvas_read_reports_uncreated_canvas(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    plugin = dramaclaw_mcp._plugin("freezone")
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda *args, **kwargs: {
+            "ok": True,
+            "data": {"nodes": [], "edges": [], "viewport": None},
+        },
+    )
+
+    result = asyncio.run(dramaclaw_mcp.call_tool("dramaclaw_get_freezone_canvas", {}))
+
+    assert result.isError is True
+    assert result.structuredContent["status"] == "canvas_not_created"
+    assert result.structuredContent["code"] == "canvas_not_created"
+    assert "当前画布尚未创建" in result.structuredContent["error"]
+
+
+def test_freezone_story_outline_result_allows_null_outline(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+
+    result = dramaclaw_mcp._structured_tool_result(
+        "dramaclaw_get_interactive_story_outline",
+        json.dumps(
+            {
+                "ok": True,
+                "status": "completed",
+                "canvas_id": "canvas-a",
+                "revision": 0,
+                "outline": None,
+            }
+        ),
+    )
+
+    assert result.isError is False
+    assert result.structuredContent["outline"] is None
+
+
+def test_freezone_empty_canvas_without_outline_is_safe_to_read(monkeypatch):
+    """Cover the initial Freezone state before any outline has been saved."""
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    plugin = dramaclaw_mcp._plugin("freezone")
+    calls = []
+
+    def request(method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        if path.endswith("/freezone/canvases/canvas-a"):
+            return {
+                "ok": True,
+                "data": {"nodes": [], "edges": [], "viewport": None},
+            }
+        if path == "/api/v1/projects/project-a/interactive-story-outline":
+            return {
+                "ok": True,
+                "data": {"canvas_id": "canvas-a", "revision": 0, "outline": None},
+            }
+        raise AssertionError(f"unexpected request: {method} {path}")
+
+    monkeypatch.setattr(plugin, "_request", request)
+
+    canvas_result = asyncio.run(
+        dramaclaw_mcp.call_tool("dramaclaw_get_freezone_canvas", {})
+    )
+    outline_result = asyncio.run(
+        dramaclaw_mcp.call_tool("dramaclaw_get_interactive_story_outline", {})
+    )
+
+    assert canvas_result.isError is True
+    assert canvas_result.structuredContent["code"] == "canvas_not_created"
+    assert outline_result.isError is False
+    assert outline_result.structuredContent["canvas_id"] == "canvas-a"
+    assert outline_result.structuredContent["revision"] == 0
+    assert outline_result.structuredContent["outline"] is None
+    assert [path for _method, path, _kwargs in calls] == [
+        "/api/v1/projects/project-a/freezone/canvases/canvas-a",
+        "/api/v1/projects/project-a/interactive-story-outline",
+    ]
+
+
 @pytest.mark.parametrize("tool_name", [
     "dramaclaw_create_interactive_story", "dramaclaw_patch_interactive_story",
 ])

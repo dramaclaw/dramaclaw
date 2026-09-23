@@ -79,7 +79,7 @@ describe('lintStory', () => {
     const members = [vnode('a', { start: true }), vnode('b', { endingLabel: 'GE' }), vnode('island', { endingLabel: 'X' })];
     const edges = [cedge('e', 'a', 'b')];
     const issues = lintStory(members, edges, []);
-    expect(issues.some((i) => i.code === 'unreachable' && i.nodeId === 'island')).toBe(true);
+    expect(issues.some((i) => i.code === 'unreachable' && i.nodeId === 'island' && i.severity === 'error')).toBe(true);
   });
 
   it('missing_video:占位片段无视频', () => {

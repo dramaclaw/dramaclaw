@@ -53,6 +53,11 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
   Do not ask for a duplicate create/run confirmation and do not claim that the host cannot display
   the approval surface; the write tool emits it. In `auto_execute`, the host applies the ordinary
   approval event after required image/video parameters are known.
+- Every workflow prepare call must explicitly include `run_after_create`. Set it to `true` when the
+  user asks to create and generate/run. A terse confirmation such as “可以” or “确认” inherits the
+  execution policy of the immediately preceding proposal; preserve `true` when that proposal
+  included generation. Set it to `false` only for an approved create-only request. Never omit the
+  field or rely on an implicit `false` default.
 - Use `freezone_request_user_clarification` for structured questions. Never substitute a host's
   built-in `request_user_input`, `update_plan`, or `create_goal` for canvas work.
 - For Skill/Recipe authoring, read and follow
@@ -162,9 +167,9 @@ including `480P` whenever the schema lists it.
    generation session, `skill_id`, `skill_version`, `artifact_id="<skill_id>@<skill_version>"`,
    and the normalized inputs before authoring the result. These Skill identities must match the
    later compiled result.
-4. For a normal workflow, submit one compact `freezone_workflow_intent.v1` and the admitted
-   `operation_id` to `freezone_prepare_workflow`. The backend compiles and validates it; do not
-   run a separate compile first.
+4. For a normal workflow, submit one compact `freezone_workflow_intent.v1`, the admitted
+   `operation_id`, and the explicit `run_after_create` decision to `freezone_prepare_workflow`.
+   The backend compiles and validates it; do not run a separate compile first.
 5. Present the returned preview. Adjust it with `freezone_revise_workflow`, sending the same
    `draft_id`, `expected_revision`, and only changed fields.
 6. After explicit user confirmation, call `freezone_confirm_workflow_draft` once with the exact

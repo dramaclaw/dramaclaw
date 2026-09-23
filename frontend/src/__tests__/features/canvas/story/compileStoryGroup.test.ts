@@ -58,7 +58,11 @@ describe('compileStoryGroup', () => {
       clip('orphan', 'g1', 'orphan.mp4'),
     ];
 
-    const result = compileStoryGroup('g1', nodes, [cedge('a', 'b', '继续', 0)], {
+    const edges = [cedge('a', 'b', '继续', 0)];
+
+    expect(() => compileStoryGroup('g1', nodes, edges)).toThrow(/严重问题/);
+
+    const result = compileStoryGroup('g1', nodes, edges, {
       entryNodeId: 'orphan',
     });
 

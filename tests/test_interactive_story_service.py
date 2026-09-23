@@ -884,3 +884,32 @@ def test_validate_reports_malformed_canvas_without_modifying_it(
     assert result.issues[0].severity == "error"
     assert result.issues[0].code == "invalid_story"
     assert canvas_store.read_canvas(service.project_dir, "default") == canvas
+
+
+def test_validate_blocks_structurally_unreachable_segments(
+    service: InteractiveStoryService,
+    story: StoryDraftV2,
+) -> None:
+    payload = story.model_dump(mode="json")
+    payload["segments"][0].pop("choice_loop", None)
+    payload["choices"] = [
+        choice
+        for choice in payload["choices"]
+        if choice["source_segment_id"] != story.start_segment_id
+    ]
+    disconnected = StoryDraftV2.model_validate(payload)
+    service.create(create_request(disconnected))
+
+    result = service.validate(
+        ValidateInteractiveStoryRequest(
+            canvas_id="default", story_id=disconnected.story_id
+        )
+    )
+
+    assert result.valid is False
+    unreachable = [issue for issue in result.issues if issue.code == "unreachable"]
+    assert unreachable
+    assert all(issue.severity == "error" for issue in unreachable)
+    # Placeholder media is still allowed when the graph itself is valid or is
+    # being repaired; it must not be confused with the structural failure.
+    assert any(issue.code == "missing_video" for issue in result.issues)

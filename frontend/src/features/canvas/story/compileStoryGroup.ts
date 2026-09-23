@@ -24,7 +24,10 @@ export function compileStoryGroup(
   const scopedEdges = edges.filter(
     (e) => e.type === STORY_CHOICE_EDGE_TYPE && memberIds.has(e.source),
   );
-  const errors = lintStory(members, scopedEdges, variables, flags).filter((issue) => issue.severity === 'error');
+  // An explicit entry is the editor's isolated clip debugger; normal play and export have no entry override.
+  const errors = lintStory(members, scopedEdges, variables, flags).filter((issue) =>
+    issue.severity === 'error' && !(options.entryNodeId && issue.code === 'unreachable'),
+  );
   if (errors.length > 0) {
     throw new StoryCompileError(
       'invalid_story',

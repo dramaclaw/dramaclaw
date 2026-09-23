@@ -104,6 +104,8 @@ describe('buildStoryTree', () => {
     const m = buildStoryTree(members, edges, []);
     expect(m.orphans.map((o) => o.nodeId)).toContain('lonely');
     expect(m.orphans.find((o) => o.nodeId === 'lonely')?.issues).toContain('unreachable');
+    expect(m.errorCount).toBe(1);
+    expect(m.warningCount).toBe(0);
   });
 
   it('多起点 → noStart,root 为 null,orphans 为全部成员', () => {

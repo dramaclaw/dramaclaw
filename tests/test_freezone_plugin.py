@@ -432,7 +432,7 @@ def test_freezone_plugin_registers_canvas_command_tools():
     assert "freezone_get_saved_skill" in names
     assert "freezone_get_saved_recipe" in names
     create_schema = schemas["freezone_prepare_workflow_plan_draft"]["parameters"]
-    assert create_schema["required"] == ["operation_id", "plan"]
+    assert create_schema["required"] == ["operation_id", "plan", "run_after_create"]
     assert "workflow_type" not in create_schema["properties"]
     assert "items" not in create_schema["properties"]
     plan_schema = create_schema["properties"]["plan"]
@@ -481,8 +481,10 @@ def test_freezone_plugin_registers_canvas_command_tools():
     assert plan_schema["properties"] != {}
     draft_schema = schemas["freezone_confirm_workflow_draft"]["parameters"]
     assert draft_schema["required"] == ["draft_id", "revision"]
+    prepare_schema = schemas["freezone_prepare_workflow"]["parameters"]
+    assert prepare_schema["required"] == ["operation_id", "run_after_create"]
     prepare_draft_schema = schemas["freezone_prepare_workflow_draft"]["parameters"]
-    assert prepare_draft_schema["required"] == ["operation_id"]
+    assert prepare_draft_schema["required"] == ["operation_id", "run_after_create"]
     intent_inputs = prepare_draft_schema["properties"]["intent"]["properties"]["inputs"]
     assert intent_inputs["additionalProperties"] is True
     assert intent_inputs["properties"]["image_variants_per_node"] == {
@@ -2625,7 +2627,13 @@ def test_compiled_workflow_timeline_role_passes_plan_submission_schema(monkeypat
                for n in plan["nodes"])
     schema = {name: schema for name, schema, _ in plugin.TOOLS}[
         "freezone_prepare_workflow_plan_draft"]["parameters"]
-    Draft202012Validator(schema).validate({"operation_id": "agent_product_test", "plan": plan})
+    Draft202012Validator(schema).validate(
+        {
+            "operation_id": "agent_product_test",
+            "plan": plan,
+            "run_after_create": False,
+        }
+    )
 
 
 def test_plan_submission_tool_schema_accepts_terminal_video_compose():
@@ -2652,7 +2660,11 @@ def test_plan_submission_tool_schema_accepts_terminal_video_compose():
     }
 
     Draft202012Validator(schema).validate(
-        {"operation_id": "agent_product_test", "plan": plan}
+        {
+            "operation_id": "agent_product_test",
+            "plan": plan,
+            "run_after_create": False,
+        }
     )
 
 

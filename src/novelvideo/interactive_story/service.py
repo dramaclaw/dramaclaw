@@ -772,9 +772,13 @@ def issues_for_story(story: StoryDraftV2) -> list[InteractiveStoryIssue]:
         if segment.id not in reached:
             issues.append(
                 InteractiveStoryIssue(
-                    severity="warning",
+                    # A structurally unreachable segment can never be played
+                    # from the story start. Keep missing media as a warning so
+                    # placeholder stories remain playable, but block this
+                    # graph state from being reported as valid.
+                    severity="error",
                     code="unreachable",
-                    message="剧情节点从开始节点不可达。",
+                    message="剧情节点无法从开始节点到达，故事不能正常走通。",
                     entity_type="segment",
                     entity_id=segment.id,
                 )

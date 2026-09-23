@@ -1,7 +1,8 @@
 # Backend workflow operations
 
 `freezone_prepare_workflow` takes exactly one `intent` or `plan`, the admitted `operation_id`,
-optional `run_after_create`, and optional `bindings`. It returns the persisted identity, revision,
+required boolean `run_after_create`, and optional `bindings`. A terse confirmation inherits this
+decision from the immediately preceding proposal. It returns the persisted identity, revision,
 digest, preview and next action, not the full compiled graph. It does not execute the canvas.
 
 For an exact `plan`, shared generation controls may use these stable portable names under
