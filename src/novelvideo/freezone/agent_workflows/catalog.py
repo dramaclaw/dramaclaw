@@ -131,32 +131,324 @@ _TEXT_FIRST_BUILTIN_RECIPE_IDS = {
     "video-storyboard-script",
 }
 
+def _stage(
+    stage_id: str, node_type: str, recipes: list[str], *, required: bool
+) -> dict[str, Any]:
+    """One stage of a standard planner template (see ``stages`` below)."""
+    return {
+        "id": stage_id,
+        "node_type": node_type,
+        "recipes": list(recipes),
+        "required": required,
+    }
+
+
+# ``stages`` is the machine-comparable shape of what ``_standard_skill_items``
+# emits for the skill: one entry per planner stage, in template order, with the
+# recipes the planner (and its catalog siblings) use for it. ``required`` marks
+# the stages the planner emits for every deliverable / include_audio choice;
+# an agent-authored plan for the skill must contain each of them or its draft
+# preflight reports ``skill_stage_missing`` (issue #677). ``edges`` lists which
+# stage's output the next stage consumes: every node of the downstream stage
+# must be reachable from a node of the upstream stage over consuming edges
+# (any link type but ``dependency_for``, which only orders execution), or the
+# preflight reports ``skill_stage_unused`` (a shot-planning node nothing
+# consumes is not a shot-planning stage). Text-to-media ``dependency_for``
+# gating (a planning document ahead of a media stage) is deliberately not an
+# edge here. The table is locked to the planner output by
+# tests/test_workflow_plan.py.
 _DETERMINISTIC_SKILL_PLANNERS = {
     "ecommerce-ad": {
         "default_item_count": 3,
         "deliverables": ["images", "video", "mixed"],
         "default_deliverable": "video",
         "default_include_audio": True,
+        "stages": [
+            _stage(
+                "planning",
+                "textAnnotationNode",
+                [
+                    "video-ad-creative-outline",
+                    "video-ad-brief",
+                    "video-storyboard-script",
+                    "ecommerce-text-plan",
+                    "digital-product-text-plan",
+                    "general-text",
+                ],
+                required=True,
+            ),
+            _stage(
+                "assets",
+                "imageGenNode",
+                ["general-image", "ecommerce-style-reference"],
+                required=True,
+            ),
+            _stage(
+                "images",
+                "imageGenNode",
+                [
+                    "ecommerce-scene-image",
+                    "ecommerce-ad-image",
+                    "ecommerce-remix-image",
+                    "digital-product-ad-image",
+                ],
+                required=True,
+            ),
+            _stage("video", "videoNode", ["video-clip-generation"], required=False),
+            _stage("audio", "audioNode", ["general-audio"], required=False),
+        ],
+        "edges": [["assets", "images"], ["images", "video"]],
     },
     "text-to-image-video": {
         "default_item_count": 3,
         "deliverables": ["video"],
         "default_deliverable": "video",
         "default_include_audio": False,
+        "stages": [
+            _stage(
+                "planning",
+                "textAnnotationNode",
+                ["video-creative-outline", "general-text"],
+                required=True,
+            ),
+            _stage(
+                "images",
+                "imageGenNode",
+                ["general-image", "video-storyboard-grid"],
+                required=True,
+            ),
+            _stage("video", "videoNode", ["general-video"], required=True),
+        ],
+        "edges": [["images", "video"]],
     },
     "video-tutorial": {
         "default_item_count": 3,
         "deliverables": ["video"],
         "default_deliverable": "video",
         "default_include_audio": True,
+        "stages": [
+            _stage("planning", "textAnnotationNode", ["general-text"], required=True),
+            _stage("images", "imageGenNode", ["general-image"], required=True),
+            _stage("video", "videoNode", ["general-video"], required=True),
+            _stage("audio", "audioNode", ["general-audio"], required=False),
+        ],
+        "edges": [["images", "video"]],
     },
     "short-drama-quick": {
         "default_item_count": 3,
         "deliverables": ["video"],
         "default_deliverable": "video",
         "default_include_audio": True,
+        "stages": [
+            _stage(
+                "planning",
+                "textAnnotationNode",
+                ["drama-plot-outline", "general-text"],
+                required=True,
+            ),
+            _stage(
+                "shots",
+                "textAnnotationNode",
+                [
+                    "drama-shot-group-detail",
+                    "drama-shot-planning",
+                    "drama-shot-group-storyboard",
+                    "keyframe-scene-script",
+                ],
+                required=True,
+            ),
+            _stage("video", "videoNode", ["general-video"], required=True),
+            _stage(
+                "audio",
+                "audioNode",
+                ["drama-shot-voice", "drama-background-music"],
+                required=False,
+            ),
+        ],
+        "edges": [["planning", "shots"], ["shots", "video"]],
     },
 }
+
+_TEXT_NODE_TYPES = {"textAnnotationNode", "scriptNode", "beatContextNode"}
+_USER_MATERIAL_STAGES = {"input", "resource", "asset"}
+
+
+def standard_skill_stages(skill_id: str) -> list[dict[str, Any]]:
+    """The standard planner's stage template for ``skill_id`` ([] without one)."""
+    profile = _DETERMINISTIC_SKILL_PLANNERS.get(skill_id) or {}
+    return [deepcopy(stage) for stage in profile.get("stages") or []]
+
+
+def standard_skill_stage_edges(skill_id: str) -> list[tuple[str, str]]:
+    """``(upstream_stage, downstream_stage)`` feeding pairs of the template."""
+    profile = _DETERMINISTIC_SKILL_PLANNERS.get(skill_id) or {}
+    return [(str(edge[0]), str(edge[1])) for edge in profile.get("edges") or []]
+
+
+_ORDER_ONLY_LINK_TYPE = "dependency_for"
+
+
+def _downstream_node_ids(node_ids: set[str], edges: Any) -> set[str]:
+    """Every node that consumes ``node_ids`` output, directly or transitively.
+
+    Only consuming edges count: ``dependency_for`` orders execution without
+    handing the source output to the target (the runtime skips such edges when
+    it gathers upstream text), so it cannot make a stage's result "used".
+    """
+    successors: dict[str, set[str]] = {}
+    for edge in edges if isinstance(edges, list) else []:
+        if not isinstance(edge, dict):
+            continue
+        if _text(edge.get("link_type")) == _ORDER_ONLY_LINK_TYPE:
+            continue
+        source = _text(edge.get("source"))
+        target = _text(edge.get("target"))
+        if source and target:
+            successors.setdefault(source, set()).add(target)
+    reached: set[str] = set()
+    pending = list(node_ids)
+    while pending:
+        current = pending.pop()
+        for target in successors.get(current, ()):
+            if target not in reached:
+                reached.add(target)
+                pending.append(target)
+    return reached
+
+
+def _node_kind(node_type: str) -> str:
+    """Text node types are interchangeable for stage matching; media are exact."""
+    return "text" if node_type in _TEXT_NODE_TYPES else node_type
+
+
+def _node_fills_stage(
+    node: Any, stage: dict[str, Any], *, kind_is_unique: bool
+) -> bool:
+    if not isinstance(node, dict):
+        return False
+    node_type = _text(node.get("node_type") or node.get("type"))
+    if _node_kind(node_type) != _node_kind(_text(stage["node_type"])):
+        return False
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    label = _text(node.get("stage") or data.get("stage")).lower()
+    if label == stage["id"]:
+        return True
+    if label in _USER_MATERIAL_STAGES:
+        return False
+    catalog = data.get("workflowCatalog") if isinstance(data.get("workflowCatalog"), dict) else {}
+    recipe_id = _text(catalog.get("recipeId"))
+    if recipe_id in stage["recipes"]:
+        return True
+    # When the skill has a single stage of this kind, any executable node of
+    # the kind fills it (node_type + recipe family, issue #678 tolerance); a
+    # kind shared by two stages needs the stage label or a family recipe.
+    return kind_is_unique and bool(recipe_id)
+
+
+def skill_stage_blockers(
+    skill_id: str, nodes: Any, edges: Any = None
+) -> list[dict[str, Any]]:
+    """Preflight blockers for standard-planner stages a plan skips or bypasses.
+
+    The standard planner always emits the ``required`` stages and wires them
+    in template order; an agent-authored plan (raw plan or intent items) that
+    skips one, such as a short drama without its shot-planning stage, compiled
+    and reached ``ready`` before issue #677 (``skill_stage_missing``). A stage
+    node that exists but feeds nothing downstream is no better: every node of
+    a downstream stage must be reachable from a node of the upstream stage
+    (``skill_stage_unused``), and only consuming edges count for that: a
+    ``dependency_for`` edge orders execution without feeding the target.
+    Skills without a standard planner have no template and are not checked.
+    """
+    stages = standard_skill_stages(skill_id)
+    if not stages or not isinstance(nodes, list):
+        return []
+    kind_counts: dict[str, int] = {}
+    for stage in stages:
+        kind = _node_kind(_text(stage["node_type"]))
+        kind_counts[kind] = kind_counts.get(kind, 0) + 1
+    filled: dict[str, list[str]] = {}
+    for stage in stages:
+        kind_is_unique = kind_counts[_node_kind(_text(stage["node_type"]))] == 1
+        filled[stage["id"]] = [
+            _text(node.get("id"))
+            for node in nodes
+            if _node_fills_stage(node, stage, kind_is_unique=kind_is_unique)
+        ]
+    blockers: list[dict[str, Any]] = []
+    for stage in stages:
+        if not stage.get("required") or filled[stage["id"]]:
+            continue
+        recipes = ", ".join(stage["recipes"])
+        blockers.append(
+            {
+                "path": f"plan.stages.{stage['id']}",
+                "code": "skill_stage_missing",
+                "message": (
+                    f"Skill {skill_id} requires a {stage['id']} stage; no "
+                    f"{stage['node_type']} node carries stage=\"{stage['id']}\" or one of "
+                    f"its recipes ({recipes})"
+                ),
+                "stage": stage["id"],
+                "node_type": stage["node_type"],
+                "recipes": list(stage["recipes"]),
+                "hint": (
+                    f"Add a {stage['node_type']} node for the {stage['id']} stage (set its "
+                    f"stage to \"{stage['id']}\" or use one of {recipes}) and feed the "
+                    "downstream nodes from it, or drop the custom items and let the "
+                    "standard planner (planner.mode=standard) produce every required stage."
+                ),
+            }
+        )
+    for upstream, downstream in standard_skill_stage_edges(skill_id):
+        sources = filled.get(upstream) or []
+        targets = filled.get(downstream) or []
+        if not sources or not targets:
+            continue  # a missing stage is reported above; an absent optional one is fine
+        reached = _downstream_node_ids(set(sources), edges)
+        unfed = [node_id for node_id in targets if node_id not in reached]
+        if not unfed:
+            continue
+        blockers.append(
+            {
+                "path": f"plan.stages.{upstream}.feeds.{downstream}",
+                "code": "skill_stage_unused",
+                "message": (
+                    f"Skill {skill_id} requires the {upstream} stage to feed the "
+                    f"{downstream} stage; {downstream} node(s) {', '.join(unfed)} do not "
+                    f"consume any {upstream} node ({', '.join(sources)}) through a "
+                    "consuming edge (dependency_for only orders execution)"
+                ),
+                "stage": upstream,
+                "downstream_stage": downstream,
+                "node_ids": unfed,
+                "hint": (
+                    f"Connect a {upstream} node to each listed {downstream} node (directly "
+                    "or through its inputs) with an edge the target consumes: prompt_for "
+                    "from text to generated media, context_for between text nodes, "
+                    "media_input_for from media. dependency_for does not count; a "
+                    f"{upstream} node nothing downstream reads does not satisfy the stage."
+                ),
+            }
+        )
+    return blockers
+
+
+def _attach_skill_stage_blockers(result: dict[str, Any], skill_id: str) -> None:
+    """Fold stage blockers into ``result['preflight']`` (status → blocked)."""
+    plan = result.get("plan") if isinstance(result.get("plan"), dict) else {}
+    blockers = skill_stage_blockers(
+        skill_id, plan.get("nodes") or [], plan.get("edges") or []
+    )
+    if not blockers:
+        return
+    preflight = result.get("preflight") if isinstance(result.get("preflight"), dict) else {}
+    result["preflight"] = {
+        **preflight,
+        "status": "blocked",
+        "blockers": [*(preflight.get("blockers") or []), *blockers],
+        "warnings": list(preflight.get("warnings") or []),
+    }
 
 _UNIVERSAL_GENERATION_INPUT_KEYS = {
     "aspect_ratio",
@@ -759,6 +1051,9 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
         # schema does not declare ``planner`` for agent-authored graphs.
         if isinstance(plan, dict) and plan_metadata is not None:
             plan["planner"] = deepcopy(plan_metadata)
+    # Agent-authored items that skip a stage the Skill's standard planner
+    # always emits surface as a ``skill_stage_missing`` preflight blocker; the
+    # check runs in validate_agent_workflow_plan, which compilation goes through.
     return compiled
 
 
@@ -898,6 +1193,12 @@ def _standard_skill_items(
                 recipe_id="general-video",
                 depends_on=[source_id],
                 stage="video",
+                # The shot plan is what the clip renders, not a gate ahead of
+                # it: reference it so the edge is prompt_for and the runtime
+                # feeds the shot text into the video prompt (issue #677).
+                reference_inputs=(
+                    [source_id] if skill_id == "short-drama-quick" else None
+                ),
                 timeline_role="visual",
                 duration_seconds=unit.get("duration_seconds"),
             )
@@ -1015,6 +1316,7 @@ def _planned_item(
     recipe_id: str,
     depends_on: list[str],
     stage: str,
+    reference_inputs: list[str] | None = None,
     narration: str = "",
     timeline_role: str = "",
     duration_seconds: int | None = None,
@@ -1026,6 +1328,7 @@ def _planned_item(
         "recipe_id": recipe_id,
         "depends_on": depends_on,
         "stage": stage,
+        **({"reference_inputs": reference_inputs} if reference_inputs else {}),
         **({"narration": narration} if narration else {}),
         **({"timeline_role": timeline_role} if timeline_role else {}),
         **(
@@ -2456,6 +2759,10 @@ def validate_agent_workflow_plan(
     validated["recommended_run_after_create"] = input_contract[
         "recommended_run_after_create"
     ]
+    # A raw plan that skips a stage the Skill's standard planner always emits
+    # (e.g. a short drama without shot planning) is a preflight blocker, not a
+    # schema error: the draft can be revised or re-planned (issue #677).
+    _attach_skill_stage_blockers(validated, skill_id)
     if not isinstance(validated.get("planner"), dict):
         validated["planner"] = _agent_authored_planner_metadata(
             skill_id,
