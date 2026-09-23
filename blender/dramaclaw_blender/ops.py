@@ -23,6 +23,7 @@ from bpy_extras.io_utils import ImportHelper
 
 from . import render
 from .core import naming
+from .core.auth import forget_revoked_token
 from .core.http import ApiError, get_json, post_json, post_multipart
 from .core.limits import (
     MAX_IMAGE_BYTES,
@@ -41,6 +42,19 @@ def _timestamp() -> str:
 
 def _report_error(operator, message: str) -> None:
     operator.report({"ERROR"}, f"DramaClaw：{message}")
+
+
+def _redraw_panels() -> None:
+    for window in bpy.context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type == "VIEW_3D":
+                area.tag_redraw()
+
+
+def _handle_auth_failure(context, status: int) -> None:
+    """吃到 401 就回到「未连接」，面板重新露出「连接」按钮。只能在主线程调。"""
+    if forget_revoked_token(get_prefs(context), status):
+        _redraw_panels()
 
 
 class DRAMACLAW_OT_connect(bpy.types.Operator):
@@ -107,10 +121,7 @@ def _finish(session: PairingSession, addon_key: str) -> None:
         # 失败（过期、被用过、连着连不上）只有这一个出口。不写出去的话，面板上
         # 一个字都不会变，用户只会反复点「连接」。
         prefs.last_error = session.error or "配对没有完成，请重新点「连接」"
-    for window in bpy.context.window_manager.windows:
-        for area in window.screen.areas:
-            if area.type == "VIEW_3D":
-                area.tag_redraw()
+    _redraw_panels()
 
 
 class DRAMACLAW_OT_disconnect(bpy.types.Operator):
@@ -142,6 +153,7 @@ class DRAMACLAW_OT_refresh_projects(bpy.types.Operator):
                 api_url(context, "/blender/projects"), token=prefs.token
             )
         except ApiError as exc:
+            _handle_auth_failure(context, exc.status)
             _report_error(self, str(exc))
             return {"CANCELLED"}
 
@@ -181,6 +193,7 @@ class _DeliverBase(bpy.types.Operator):
     _render_cancelled = False
     _upload_thread = None
     _upload_error = ""
+    _upload_status = 0
     _upload_result = None
 
     def invoke(self, context, event):
@@ -220,6 +233,7 @@ class _DeliverBase(bpy.types.Operator):
         self._render_cancelled = False
         self._upload_thread = None
         self._upload_error = ""
+        self._upload_status = 0
         self._upload_result = None
         bpy.app.handlers.render_complete.append(self._on_render_complete)
         bpy.app.handlers.render_cancel.append(self._on_render_cancel)
@@ -286,6 +300,7 @@ class _DeliverBase(bpy.types.Operator):
 
         if self._upload_thread is not None and not self._upload_thread.is_alive():
             if self._upload_error:
+                _handle_auth_failure(context, self._upload_status)
                 return self._cleanup(context, {"CANCELLED"}, message=self._upload_error)
             if not isinstance(self._upload_result, dict) or not self._upload_result.get("filename"):
                 # 线程跑完了、没报错、也没拿回像样的回应。硬取下标就是一个
@@ -360,7 +375,9 @@ class _DeliverBase(bpy.types.Operator):
                     token=token,
                 )
             except ApiError as exc:
+                # 线程里不能碰 bpy 数据；令牌留给 modal 在主线程里清。
                 self._upload_error = str(exc)
+                self._upload_status = exc.status
             except Exception as exc:
                 # 线程里的异常不会传播到 modal。漏一个，`_upload_error` 就还是空、
                 # `_upload_result` 还是 None，modal 一取下标就崩。非 JSON 的 2xx
@@ -419,6 +436,7 @@ class DRAMACLAW_OT_deliver_local_video(bpy.types.Operator, ImportHelper):
     _timer = None
     _thread = None
     _error = ""
+    _status = 0
     _result = None
 
     def execute(self, context):
@@ -448,6 +466,7 @@ class DRAMACLAW_OT_deliver_local_video(bpy.types.Operator, ImportHelper):
         )
         token = prefs.token
         self._error = ""
+        self._status = 0
         self._result = None
 
         def _work():
@@ -463,6 +482,7 @@ class DRAMACLAW_OT_deliver_local_video(bpy.types.Operator, ImportHelper):
                 )
             except ApiError as exc:
                 self._error = str(exc)
+                self._status = exc.status
             except Exception as exc:
                 # 同 `_DeliverBase._work`：线程里漏掉的异常会变成 modal 里的
                 # `'NoneType' object is not subscriptable`。
@@ -484,6 +504,7 @@ class DRAMACLAW_OT_deliver_local_video(bpy.types.Operator, ImportHelper):
             context.window_manager.event_timer_remove(self._timer)
             self._timer = None
         if self._error:
+            _handle_auth_failure(context, self._status)
             _report_error(self, self._error)
             return {"CANCELLED"}
         if not isinstance(self._result, dict) or not self._result.get("filename"):
