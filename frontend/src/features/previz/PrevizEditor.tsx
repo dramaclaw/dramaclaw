@@ -365,6 +365,7 @@ export function PrevizEditor({
   const pathSpeedMps = usePrevizStore((state) => state.pathSpeedMps);
   const setPathSpeed = usePrevizStore((state) => state.setPathSpeed);
   const timelineFrame = usePrevizStore((state) => state.timelineFrame);
+  const soloObjectIds = usePrevizStore((state) => state.soloObjectIds);
   const timelinePlaying = usePrevizStore((state) => state.timelinePlaying);
   const timelineRate = usePrevizStore((state) => state.timelineRate);
   const seekSerial = usePrevizStore((state) => state.seekSerial);
@@ -735,6 +736,10 @@ export function PrevizEditor({
   useEffect(() => {
     renderer?.setFrame(timelineFrame);
   }, [renderer, timelineFrame]);
+
+  useEffect(() => {
+    renderer?.setSoloObjects(soloObjectIds);
+  }, [renderer, soloObjectIds]);
 
   useEffect(() => {
     renderer?.setSelectedClip(selectedClipId, selectedPointId);

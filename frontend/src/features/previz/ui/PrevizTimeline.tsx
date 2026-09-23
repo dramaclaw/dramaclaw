@@ -110,6 +110,8 @@ export function PrevizTimeline({
   const selectPathPoint = usePrevizStore((state) => state.selectPathPoint);
   const splitClipAtPlayhead = usePrevizStore((state) => state.splitClipAtPlayhead);
   const removeTrackFor = usePrevizStore((state) => state.removeTrackFor);
+  const soloObjectIds = usePrevizStore((state) => state.soloObjectIds);
+  const toggleSolo = usePrevizStore((state) => state.toggleSolo);
   const pinTrackToTop = usePrevizStore((state) => state.pinTrackToTop);
   const addObjectToTimeline = usePrevizStore((state) => state.addObjectToTimeline);
   const appendClip = usePrevizStore((state) => state.appendClip);
@@ -496,6 +498,9 @@ export function PrevizTimeline({
                     // 传下去的每个回调都得是真能调的，不靠下游替我们筛。
                     onCut={isCamera ? () => cutToCamera(track.objectId) : undefined}
                     live={liveCameraId === track.objectId}
+                    soloed={soloObjectIds.includes(track.objectId)}
+                    // 机位始终照常动，不给独奏回调；和 onCut 一样自己守住，不靠下游筛。
+                    onToggleSolo={isCamera ? undefined : () => toggleSolo(track.objectId)}
                     actionRow={
                       kind === 'character' ? (
                         <PrevizActionRow

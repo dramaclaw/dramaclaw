@@ -7805,6 +7805,7 @@
       "addCloseup": "New closeup",
       "closeupTarget": "Tracking target",
       "pinTrack": "Pin track to top",
+      "solo": "Solo",
       "removeTrack": "Remove track",
       "expandTrack": "Expand track",
       "collapseTrack": "Collapse track",

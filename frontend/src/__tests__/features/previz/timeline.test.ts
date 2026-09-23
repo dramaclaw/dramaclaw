@@ -17,6 +17,7 @@ import {
   removeTrack,
   rulerTicks,
   setPathAim,
+  soloScene,
   splitClip,
   timelineSeconds,
   trackFor,
@@ -33,6 +34,7 @@ import {
   type PrevizScene,
   type PrevizTrack,
 } from '@/features/previz/domain/scene';
+import { createPrevizObject } from '@/features/previz/domain/objects';
 
 function pathClip(id: string, startFrame: number, endFrame: number): PrevizPathClip {
   return { id, kind: 'path', startFrame, endFrame, points: [] };
@@ -444,5 +446,59 @@ describe('setPathAim', () => {
     // 特写片段有自己那套「看向」，动作片段根本没有朝向可言。
     expect(setPathAim(before, 'c1', 'hero')).toBe(before);
     expect(setPathAim(before, 'missing', 'hero')).toBe(before);
+  });
+});
+
+describe('soloScene', () => {
+  function stage() {
+    const base = createDefaultScene();
+    const hero = createPrevizObject('character', base.objects);
+    const extra = createPrevizObject('character', [hero]);
+    const cam = createPrevizObject('camera', [hero, extra]);
+    const scene: PrevizScene = {
+      ...base,
+      objects: [hero, extra, cam],
+      timeline: {
+        ...base.timeline,
+        tracks: [
+          { id: 'th', objectId: hero.id, clips: [pathClip('h', 0, 60)] },
+          { id: 'te', objectId: extra.id, clips: [pathClip('e', 0, 60)] },
+          { id: 'tc', objectId: cam.id, clips: [pathClip('c', 0, 60)] },
+        ],
+      },
+    };
+    return { scene, hero, extra, cam };
+  }
+
+  it('returns the same scene when nothing is soloed', () => {
+    const { scene } = stage();
+    expect(soloScene(scene, [])).toBe(scene);
+  });
+
+  it('empties the clips of non-camera tracks that are not soloed', () => {
+    const { scene, hero, extra, cam } = stage();
+    const solo = soloScene(scene, [hero.id]);
+    expect(trackFor(solo, hero.id)?.clips).toHaveLength(1);
+    expect(trackFor(solo, extra.id)?.clips).toEqual([]);
+    // 机位始终照常动：运镜不受独奏影响。
+    expect(trackFor(solo, cam.id)?.clips).toHaveLength(1);
+  });
+
+  it('does not touch the input scene', () => {
+    const { scene, hero, extra } = stage();
+    soloScene(scene, [hero.id]);
+    expect(trackFor(scene, extra.id)?.clips).toHaveLength(1);
+  });
+
+  it('returns the same scene when no soloed id has a track', () => {
+    const { scene } = stage();
+    expect(soloScene(scene, ['gone'])).toBe(scene);
+  });
+
+  it('ignores ids that are not in the scene', () => {
+    const { scene, hero, extra } = stage();
+    const solo = soloScene(scene, [hero.id, 'gone']);
+    expect(trackFor(solo, hero.id)?.clips).toHaveLength(1);
+    expect(trackFor(solo, extra.id)?.clips).toEqual([]);
   });
 });

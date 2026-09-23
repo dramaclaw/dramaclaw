@@ -1491,6 +1491,32 @@ describe('PrevizRenderer timeline', () => {
     return instance.nodeFor(objectId)?.children.find((child) => child.userData.previzRig);
   }
 
+  /**
+   * 走位的人物之外再加一个有自己轨道的旁观者：`soloScene` 认「独奏集合里至少有一个 id
+   * 落在场景的某条轨道上」才会真的裁剪，独奏一个场景里根本不存在的 id 等于没独奏，见
+   * `domain/timeline.ts` 的 `soloScene`。
+   */
+  function sceneWithWalkAndBystander() {
+    const scene = sceneWithWalk();
+    const walker = scene.objects[0]!;
+    const bystander = createPrevizObject('character', scene.objects);
+    return {
+      scene: {
+        ...scene,
+        objects: [...scene.objects, bystander],
+        timeline: {
+          ...scene.timeline,
+          tracks: [
+            ...scene.timeline.tracks,
+            { id: 'bystander-track', objectId: bystander.id, clips: [] },
+          ],
+        },
+      },
+      walker,
+      bystander,
+    };
+  }
+
   it('poses the actor for the playhead frame', async () => {
     const { instance } = await createRenderer();
     pendingGltf = { scene: new THREE.Object3D(), animations: [] };
@@ -1532,6 +1558,94 @@ describe('PrevizRenderer timeline', () => {
     const node = instance.nodeFor(scene.objects[0].id);
     // 半程：两点之间的中点。
     expect(node?.position.x).toBeCloseTo(5, 5);
+  });
+
+  it('keeps an object that is not soloed at its static placement', async () => {
+    const { instance } = await createRenderer();
+    const { scene, walker, bystander } = sceneWithWalkAndBystander();
+    instance.setScene(scene);
+
+    instance.setSoloObjects([bystander.id]);
+    instance.setFrame(60);
+
+    expect(instance.nodeFor(walker.id)?.position.x).toBeCloseTo(walker.transform.position[0], 5);
+  });
+
+  it('re-evaluates the paused frame when solo changes', async () => {
+    const { instance } = await createRenderer();
+    const { scene, walker, bystander } = sceneWithWalkAndBystander();
+    instance.setScene(scene);
+    instance.setFrame(60);
+
+    instance.setSoloObjects([bystander.id]);
+    expect(instance.nodeFor(walker.id)?.position.x).toBeCloseTo(walker.transform.position[0], 5);
+
+    instance.setSoloObjects([]);
+    expect(instance.nodeFor(walker.id)?.position.x).toBeCloseTo(5, 5);
+  });
+
+  it('records the full scene even while a track is soloed', async () => {
+    const { instance } = await createRenderer();
+    const { scene, walker, bystander } = sceneWithWalkAndBystander();
+    instance.setScene(scene);
+    instance.setSoloObjects([bystander.id]);
+
+    const pass = instance.startRecording('global', null)!;
+    try {
+      pass.drawFrame(60, null);
+      // 忘了关 S 就导出，视频里其他人全站着不动——只有看片时才发现。录制一律按完整场景。
+      expect(instance.nodeFor(walker.id)?.position.x).toBeCloseTo(5, 5);
+    } finally {
+      pass.end();
+    }
+
+    // 录完视口回到独奏视图，不用等播放头再动一下。
+    expect(instance.nodeFor(walker.id)?.position.x).toBeCloseTo(walker.transform.position[0], 5);
+  });
+
+  it('captures the full scene even while a track is soloed', async () => {
+    const { instance } = await createRenderer();
+    const { scene, walker, bystander } = sceneWithWalkAndBystander();
+    instance.setScene(scene);
+    instance.setFrame(60);
+    instance.setSoloObjects([bystander.id]);
+
+    // 在 render() 被调用的那一刻取样：出图结束就换回独奏视图了，事后读到的是还原后的位置。
+    const seenX: number[] = [];
+    render.mockImplementation(() => {
+      seenX.push(instance.nodeFor(walker.id)!.position.x);
+    });
+    // jsdom 交不出 2D 上下文、也没实现 toBlob，不垫上出片会当场抛错或一直挂着。
+    const getContext = vi
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockImplementation((contextId: string) =>
+        contextId === '2d'
+          ? ({
+              createImageData: (width: number, height: number) => ({
+                data: new Uint8ClampedArray(width * height * 4),
+                width,
+                height,
+              }),
+              putImageData: () => {},
+            } as unknown as CanvasRenderingContext2D)
+          : null,
+      );
+    const toBlob = vi
+      .spyOn(HTMLCanvasElement.prototype, 'toBlob')
+      .mockImplementation((callback: BlobCallback) => callback(new Blob()));
+    try {
+      await instance.capture();
+    } finally {
+      toBlob.mockRestore();
+      getContext.mockRestore();
+      render.mockReset();
+    }
+
+    // 忘了关 S 就出图，图里其他人不该停着。
+    expect(seenX).toHaveLength(1);
+    expect(seenX[0]).toBeCloseTo(5, 5);
+    // 出完视口回到独奏视图。
+    expect(instance.nodeFor(walker.id)?.position.x).toBeCloseTo(walker.transform.position[0], 5);
   });
 
   it('re-applies the evaluated frame after a scene sync', async () => {

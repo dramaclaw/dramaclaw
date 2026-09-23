@@ -505,6 +505,31 @@ export function removeTrack(scene: PrevizScene, objectId: string): PrevizScene {
   };
 }
 
+/**
+ * 独奏：集合非空时，不在集合里的非机位对象不吃任何片段，停在静态摆位上。机位轨道
+ * 原样保留——独奏是为了单独看人走位，运镜照常。集合为空原样返回同一个对象，调用方不白算。
+ *
+ * 没有轨道的 id 不算数：撤销一次「加到时间轴」轨道就没了，S 也随之点不到，
+ * 留着它当独奏会把全场冻住且无从解开。
+ */
+export function soloScene(scene: PrevizScene, soloObjectIds: readonly string[]): PrevizScene {
+  if (!soloObjectIds.some((id) => trackFor(scene, id))) return scene;
+  const cameras = new Set(
+    scene.objects.filter((object) => object.kind === 'camera').map((object) => object.id),
+  );
+  return {
+    ...scene,
+    timeline: {
+      ...scene.timeline,
+      tracks: scene.timeline.tracks.map((track) =>
+        cameras.has(track.objectId) || soloObjectIds.includes(track.objectId)
+          ? track
+          : { ...track, clips: [] },
+      ),
+    },
+  };
+}
+
 /** 两个 u 差在这以内就算同一个关键帧。120 帧的片段上 1e-6 远小于半帧。 */
 const U_EPSILON = 1e-6;
 

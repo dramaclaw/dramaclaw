@@ -1232,3 +1232,81 @@ describe("previz store clip editing", () => {
     expect(usePrevizStore.getState().scene.timeline.tracks[0].objectId).toBe(second);
   });
 });
+
+describe("previz store track solo", () => {
+  beforeEach(() => {
+    usePrevizStore.getState().loadScene(createDefaultScene());
+  });
+
+  it("toggles an object in and out of the solo set", () => {
+    const store = usePrevizStore.getState();
+    const a = store.addObject("character")!;
+    const b = usePrevizStore.getState().addObject("character")!;
+    // S 长在轨道头上：先有轨道才点得到。
+    usePrevizStore.getState().addObjectToTimeline(a);
+    usePrevizStore.getState().addObjectToTimeline(b);
+
+    usePrevizStore.getState().toggleSolo(a);
+    usePrevizStore.getState().toggleSolo(b);
+    expect(usePrevizStore.getState().soloObjectIds).toEqual([a, b]);
+
+    usePrevizStore.getState().toggleSolo(a);
+    expect(usePrevizStore.getState().soloObjectIds).toEqual([b]);
+  });
+
+  it("keeps solo out of the scene and the undo stack", () => {
+    const id = usePrevizStore.getState().addObject("character")!;
+    const before = usePrevizStore.getState();
+
+    before.toggleSolo(id);
+
+    const after = usePrevizStore.getState();
+    expect(after.scene).toBe(before.scene);
+    expect(after.past).toBe(before.past);
+  });
+
+  it("drops a removed object from the solo set", () => {
+    const id = usePrevizStore.getState().addObject("character")!;
+    usePrevizStore.getState().toggleSolo(id);
+
+    usePrevizStore.getState().removeObject(id);
+
+    expect(usePrevizStore.getState().soloObjectIds).toEqual([]);
+  });
+
+  it("drops a removed track from the solo set", () => {
+    const id = usePrevizStore.getState().addObject("character")!;
+    usePrevizStore.getState().addObjectToTimeline(id);
+    usePrevizStore.getState().toggleSolo(id);
+
+    usePrevizStore.getState().removeTrackFor(id);
+
+    // 轨道没了 S 也点不到了，留着就是一个看不见的独奏把全场冻住。
+    expect(usePrevizStore.getState().soloObjectIds).toEqual([]);
+  });
+
+  it("forgets a soloed object whose track was undone away", () => {
+    const a = usePrevizStore.getState().addObject("character")!;
+    const b = usePrevizStore.getState().addObject("character")!;
+    usePrevizStore.getState().addObjectToTimeline(b);
+    usePrevizStore.getState().addObjectToTimeline(a);
+    usePrevizStore.getState().toggleSolo(a);
+
+    // 撤销「把 a 加到时间轴」：a 的轨道没了，它的 S 也点不到了。
+    usePrevizStore.getState().undo();
+    usePrevizStore.getState().toggleSolo(b);
+    usePrevizStore.getState().redo();
+
+    // 重做把 a 的轨道带回来，但它不该悄悄重新独奏。
+    expect(usePrevizStore.getState().soloObjectIds).toEqual([b]);
+  });
+
+  it("clears the solo set when another scene loads", () => {
+    const id = usePrevizStore.getState().addObject("character")!;
+    usePrevizStore.getState().toggleSolo(id);
+
+    usePrevizStore.getState().loadScene(createDefaultScene());
+
+    expect(usePrevizStore.getState().soloObjectIds).toEqual([]);
+  });
+});

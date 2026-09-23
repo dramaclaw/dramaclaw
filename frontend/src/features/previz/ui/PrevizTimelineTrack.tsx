@@ -73,6 +73,10 @@ export interface PrevizTimelineTrackProps {
   onCut?: () => void;
   /** 镜头轨此刻正播这台机位；表头亮「直播」。 */
   live?: boolean;
+  /** 非机位轨才有：这条轨道正在独奏，S 亮起。 */
+  soloed?: boolean;
+  /** 非机位轨才有：切换独奏。机位始终照常动，不给它这颗开关。 */
+  onToggleSolo?: () => void;
   /**
    * 人物轨道才有的「动作」行，由时间线拼好传进来。不在这里直接 import 动作行：
    * 动作行要复用本文件的 `ClipBar`，两边互相 import 就成了环。
@@ -123,6 +127,8 @@ export function PrevizTimelineTrack({
   onAddCloseup,
   onCut,
   live = false,
+  soloed = false,
+  onToggleSolo,
   actionRow,
 }: PrevizTimelineTrackProps) {
   const { t } = useTranslation();
@@ -223,6 +229,20 @@ export function PrevizTimelineTrack({
                 </button>
               </PrevizHoverTip>
             </>
+          )}
+          {kind !== 'camera' && onToggleSolo && (
+            <PrevizHoverTip label={t('previz.timeline.solo')}>
+              <button
+                type="button"
+                // 按下态沿用 PrevizLayerPanel 钉住机位的那套天蓝强调色，不另起一个高饱和色。
+                className={`${ICON_BUTTON} text-[11px] font-semibold aria-pressed:bg-sky-400/20 aria-pressed:text-sky-300 aria-pressed:hover:bg-sky-400/30`}
+                aria-label={t('previz.timeline.solo')}
+                aria-pressed={soloed}
+                onClick={onToggleSolo}
+              >
+                S
+              </button>
+            </PrevizHoverTip>
           )}
           <PrevizHoverTip label={t('previz.timeline.razor')}>
             <button
