@@ -190,6 +190,7 @@ import {
   directGenerationTargetsForPreflight,
   FREEZONE_CANVAS_COMMAND_APPROVAL_EVENT,
   FREEZONE_CANVAS_COMMAND_RESULT_EVENT,
+  isGeneratedCanvasClientId,
   subscribeCanvasCommandApprovals,
   waitForImmediateCanvasCommandResult,
   workflowGenerationTargetsForPreflight,
@@ -11147,7 +11148,8 @@ function canvasCommandPlanLabel(command: CanvasChatCommand): string {
 function canvasCommandPlanPrimary(command: CanvasChatCommand): string | undefined {
   switch (command.type) {
     case "create_node":
-      return command.client_id;
+      // 规范化补的合成 client_id 只是内部标识，不展示给用户。
+      return isGeneratedCanvasClientId(command.client_id) ? undefined : command.client_id;
     case "add_next_node":
       return command.source_node_id;
     case "update_node_data":

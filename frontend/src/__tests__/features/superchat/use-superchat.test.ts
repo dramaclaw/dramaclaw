@@ -3,7 +3,10 @@
 import { act, render, renderHook, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { useCanvasStore } from "@/stores/canvasStore";
-import { workflowGenerationTargetsForPreflight } from "@/features/freezone/canvasChatCommands";
+import {
+  normalizeCanvasChatCommandEnvelopesForValidation,
+  workflowGenerationTargetsForPreflight,
+} from "@/features/freezone/canvasChatCommands";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { normalizeMessage } from "@/features/superchat/message";
 import { buildCanvasCommandToolResultPayloadForTest } from "@/features/freezone/canvasCommandToolResult";
@@ -4002,6 +4005,58 @@ describe("Canvas command approval image params", () => {
       expect(groups).toHaveLength(2);
       expect(groups[0]).toMatchObject({ nodeIds: ["image-a"], aspectRatio: "9:16", size: "1k" });
       expect(groups[1]).toMatchObject({ nodeIds: ["image-b"], aspectRatio: "1:1", size: "2k" });
+    } finally {
+      useCanvasStore.setState(previous, true);
+    }
+  });
+
+  it("collects add_next_node without client_id for run_workflow approvals", () => {
+    const previous = useCanvasStore.getState();
+    const uploadNode = {
+      id: "upload-1",
+      type: "uploadNode" as const,
+      position: { x: 0, y: 0 },
+      data: { imageUrl: "https://example.com/source.png" },
+    };
+    useCanvasStore.setState({ nodes: [uploadNode] as never, edges: [] });
+    try {
+      const envelopes = normalizeCanvasChatCommandEnvelopesForValidation([{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [
+          {
+            type: "add_next_node" as const,
+            source_node_id: "upload-1",
+            node_type: "imageGenNode" as const,
+            data: { model: "newapi_gpt_image2", aspectRatio: "9:16", size: "1k" },
+          },
+          { type: "run_workflow" as const, scope: "canvas" as const },
+        ],
+      }], ["upload-1"]);
+      const clientId = (envelopes[0].commands[0] as { client_id?: string }).client_id;
+      expect(clientId).toBe("auto:new:0:0");
+      // 执行器会再规范化一次，已补的 id 必须保持不变，审批与执行才对得上同一节点。
+      expect(normalizeCanvasChatCommandEnvelopesForValidation(envelopes, ["upload-1"])).toEqual(envelopes);
+
+      const approval = {
+        id: "add-next-no-client-id", key: "add-next-no-client-id", messageId: "assistant",
+        receivedAt: 1, commandCount: 2, plans: [], envelopes,
+      };
+      const groups = imageApprovalParamGroupsForTest(approval as never, [], "other-model", [{
+        id: "newapi_gpt_image2",
+        resolutionOptions: ["1k", "2k", "4k"],
+      }]);
+      expect(groups).toHaveLength(1);
+      expect(groups[0]).toMatchObject({ nodeId: clientId, aspectRatio: "9:16", size: "1k" });
+
+      const amended = amendCanvasApprovalWithImageParamsForTest(approval as never, {
+        ...groups[0],
+        aspectRatio: "3:4",
+      });
+      expect(amended.envelopes[0].commands[0]).toMatchObject({
+        type: "add_next_node",
+        client_id: clientId,
+        data: { aspectRatio: "3:4", size: "1k" },
+      });
     } finally {
       useCanvasStore.setState(previous, true);
     }
