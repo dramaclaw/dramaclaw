@@ -3,7 +3,10 @@ from copy import deepcopy
 import pytest
 
 from novelvideo.freezone.agent_workflows.graph import build_workflow_graph_commands
-from novelvideo.freezone.workflow_preflight import evaluate_workflow_preflight
+from novelvideo.freezone.workflow_preflight import (
+    evaluate_workflow_preflight,
+    generation_clarification_request,
+)
 
 
 def _check(data, entry=None):
@@ -530,3 +533,26 @@ def test_full_preflight_still_rejects_an_unknown_model():
     assert result["status"] == "blocked"
     assert result["blockers"][0]["code"] == "model_unavailable"
     assert [item["id"] for item in result["blockers"][0]["available_models"]] == ["LingShan-G2"]
+
+
+def test_generation_clarification_request_merges_blockers_per_node():
+    preflight = {"blockers": [
+        {"path": "runtime.models.shot-1.durationSec", "code": "generation_parameters_required",
+         "message": "m", "required_choices": {"video": ["duration_seconds"]}},
+        {"path": "runtime.models.shot-1.generateAudio", "code": "generation_parameters_required",
+         "message": "m", "required_choices": {"video": ["generate_audio"]}},
+        {"path": "runtime.models.shot-2.durationSec", "code": "generation_parameters_required",
+         "message": "m", "required_choices": {"video": ["duration_seconds"]}},
+        {"path": "runtime.models", "code": "model_catalog_unavailable", "message": "x"},
+    ]}
+    request = generation_clarification_request(preflight)
+    assert request is not None
+    assert request["status"] == "clarification_required"
+    assert request["code"] == "generation_parameters_required"
+    assert request["media_types"] == ["video"]
+    assert request["required_choices"] == {"video": ["duration_seconds", "generate_audio"]}
+    assert request["missing_parameters"] == [
+        {"node_id": "shot-1", "node_type": "videoNode", "fields": ["durationSec", "generateAudio"]},
+        {"node_id": "shot-2", "node_type": "videoNode", "fields": ["durationSec"]},
+    ]
+    assert generation_clarification_request({"blockers": preflight["blockers"][-1:]}) is None

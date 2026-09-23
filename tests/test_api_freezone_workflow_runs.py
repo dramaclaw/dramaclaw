@@ -2716,6 +2716,55 @@ def test_backend_rejects_model_parameters_without_plugin_preflight(
     assert response.json()["detail"]["status"] == "workflow_preflight_failed"
 
 
+def test_backend_returns_standard_clarification_for_missing_generation_choices(monkeypatch):
+    """Issue #677: the drafts API is the server-owned entry the Skill recommends;
+    a video node without durationSec must come back as the standard
+    clarification structure, not a generic preflight failure."""
+    import asyncio
+
+    from novelvideo.api.routes import freezone, tasks
+
+    async def video_models(project, user):
+        return {"ok": True, "data": [{
+            "id": "seedance-2.0", "ratioOptions": ["16:9"], "resolutionOptions": ["720P"],
+            "minDuration": 2, "maxDuration": 10, "supportsGenerateAudio": True,
+        }]}
+
+    async def limits(project, user):
+        return {"ok": True, "data": {"video": {"limit": 2, "remaining": 2}}}
+
+    monkeypatch.setattr(freezone, "freezone_video_models", video_models)
+    monkeypatch.setattr(tasks, "get_project_task_limits", limits)
+    compiled = {
+        "ok": True,
+        "skill_id": "video-ad",
+        "plan": {"nodes": [
+            {"id": "shot-1", "node_type": "videoNode", "data": {
+                "model": "seedance-2.0", "quality": "720P",
+                "workflowCatalog": {"recipeId": "dialogue-continuity-shot-video"},
+            }},
+        ], "edges": []},
+        "preflight": {"status": "ready", "blockers": [], "warnings": []},
+    }
+
+    with pytest.raises(HTTPException) as excinfo:
+        asyncio.run(freezone._check_workflow_runtime(
+            compiled, project="proj_demo", user={"username": "alice"}
+        ))
+
+    detail = excinfo.value.detail
+    assert excinfo.value.status_code == 400
+    assert detail["status"] == "clarification_required"
+    assert detail["code"] == "generation_parameters_required"
+    assert detail["required_choices"] == {"video": ["duration_seconds", "generate_audio"]}
+    assert detail["missing_parameters"] == [
+        {"node_id": "shot-1", "node_type": "videoNode", "fields": ["durationSec", "generateAudio"]},
+    ]
+    assert detail["retryable"] is True
+    assert detail["next_action"] == "request_user_clarification"
+    assert detail["preflight"]["status"] == "blocked"
+
+
 @pytest.mark.parametrize("via_patch", [False, True])
 def test_exact_plan_recommendation_can_be_confirmed(
     workflow_run_client, runtime_workflow_source, monkeypatch, via_patch

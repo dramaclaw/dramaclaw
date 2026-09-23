@@ -14342,6 +14342,22 @@ async def _check_workflow_runtime(compiled: dict, *, project: str, user: dict) -
         limits=results[-1],
     )
     if preflight["blockers"]:
+        from novelvideo.freezone.workflow_preflight import generation_clarification_request
+
+        clarification = generation_clarification_request(preflight)
+        if clarification is not None:
+            # Missing generation choices are a user question, not a dead end:
+            # return the standard clarification structure the agent recovers
+            # from with one freezone_request_user_clarification call.
+            raise HTTPException(
+                400,
+                {
+                    **clarification,
+                    "preflight": preflight,
+                    "retryable": True,
+                    "next_action": "request_user_clarification",
+                },
+            )
         raise HTTPException(
             400,
             {

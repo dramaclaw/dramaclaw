@@ -7410,6 +7410,62 @@ def test_server_workflow_adapter_makes_one_request(monkeypatch, action, args, me
     Draft202012Validator(plugin._output_schema(name)).validate(result)
 
 
+@pytest.mark.parametrize("action", ["prepare", "revise"])
+def test_workflow_adapter_forwards_standard_clarification_from_api(monkeypatch, action):
+    """Issue #677: the server-owned entry point must hand the agent the same
+    clarification contract as the legacy handlers when the drafts API reports
+    missing generation choices."""
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "tool_result", lambda value: json.dumps(value))
+    monkeypatch.setattr(
+        plugin, "_workflow_draft_scope", lambda _: ("proj_demo", "canvas_demo", None)
+    )
+    detail = {
+        "ok": False,
+        "status": "clarification_required",
+        "code": "generation_parameters_required",
+        "error": "image/video generation parameters require user clarification",
+        "media_types": ["video"],
+        "missing_parameters": [
+            {"node_id": "shot-1", "node_type": "videoNode", "fields": ["durationSec", "generateAudio"]},
+            {"node_id": "shot-2", "node_type": "videoNode", "fields": ["durationSec"]},
+        ],
+        "required_choices": {"video": ["duration_seconds", "generate_audio"]},
+        "clarification": {"title": "确认图片和视频生成参数", "allow_skip": False},
+        "preflight": {"status": "blocked", "blockers": [], "warnings": []},
+        "retryable": True,
+        "next_action": "request_user_clarification",
+    }
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda *_a, **_kw: plugin._http_error_result(
+            400, json.dumps({"detail": detail}), "Bad Request"
+        ),
+    )
+    args = (
+        {"plan": {"nodes": [], "edges": []}, "operation_id": "op-1"}
+        if action == "prepare"
+        else {"draft_id": "draft_a", "expected_revision": 1, "changes": {}}
+    )
+
+    result = json.loads(plugin._handle_workflow_operation(args, action=action))
+
+    assert result["ok"] is False
+    assert result["status"] == "clarification_required"
+    assert result["code"] == "generation_parameters_required"
+    assert result["required_choices"] == {"video": ["duration_seconds", "generate_audio"]}
+    assert result["media_types"] == ["video"]
+    assert [item["node_id"] for item in result["missing_parameters"]] == ["shot-1", "shot-2"]
+    assert "freezone_request_user_clarification" in result["agent_instruction"]
+    assert result["retryable"] is True
+    assert result["next_action"] == "request_user_clarification"
+    if action == "revise":
+        assert result["draft_id"] == "draft_a"
+    name = {"prepare": "freezone_prepare_workflow", "revise": "freezone_revise_workflow"}[action]
+    Draft202012Validator(plugin._output_schema(name)).validate(result)
+
+
 def test_workflow_adapter_preserves_structured_validation_error(monkeypatch):
     plugin = _load_plugin_module()
     monkeypatch.setattr(plugin, "tool_result", lambda value: json.dumps(value))
