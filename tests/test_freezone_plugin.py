@@ -4140,6 +4140,52 @@ def test_prepare_exact_plan_other_preflight_blockers_still_fail(monkeypatch, tmp
     assert result["error"] == "could not verify videoNode capabilities"
 
 
+def test_prepare_exact_plan_mixed_preflight_blockers_fail_without_clarification(
+    monkeypatch, tmp_path
+):
+    """Missing generation choices beside a disabled queue are not a
+    clarification: asking the user first would only defer the same failure."""
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    monkeypatch.setattr(
+        plugin,
+        "validate_agent_workflow_plan",
+        lambda plan: {"ok": True, "skill_id": "video-ad", "plan": plan},
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_workflow_runtime_preflight",
+        lambda *_args, **_kwargs: {"status": "blocked", "warnings": [], "blockers": [
+            {"path": "runtime.models.shot-1.generateAudio",
+             "code": "generation_parameters_required",
+             "message": "dialogue or voice-over shot must state generateAudio explicitly",
+             "required_choices": {"video": ["generate_audio"]}},
+            {"path": "runtime.queue_capacity.video", "code": "queue_disabled",
+             "message": "video generation queue is disabled"},
+            {"path": "runtime.models.shot-1.durationSec",
+             "code": "generation_parameters_required",
+             "message": "video node has no planned duration; set data.durationSec (seconds)",
+             "required_choices": {"video": ["duration_seconds"]}},
+        ]},
+    )
+
+    result = plugin._handle_prepare_workflow_plan_draft({
+        "plan": {"schema_version": "freezone_workflow_plan.v1", "nodes": [
+            {"id": "shot-1", "node_type": "videoNode", "data": {"model": "video-a"}},
+        ], "edges": []},
+    })
+
+    assert result["ok"] is False
+    assert result["status"] == "workflow_preflight_failed"
+    assert result["error"] == "video generation queue is disabled"
+    assert "missing_parameters" not in result
+    assert "agent_instruction" not in result
+    assert [b["code"] for b in result["preflight"]["blockers"]] == [
+        "generation_parameters_required", "queue_disabled", "generation_parameters_required",
+    ]
+    _assert_real_mcp_output(plugin, "freezone_prepare_workflow_plan_draft", result)
+
+
 def test_generation_clarification_updates_exact_plan_draft(monkeypatch, tmp_path):
     plugin = _load_plugin_module()
     _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
@@ -7407,6 +7453,62 @@ def test_server_workflow_adapter_makes_one_request(monkeypatch, action, args, me
         "revise": "freezone_revise_workflow",
         "get": "freezone_get_workflow",
     }[action]
+    Draft202012Validator(plugin._output_schema(name)).validate(result)
+
+
+@pytest.mark.parametrize("action", ["prepare", "revise"])
+def test_workflow_adapter_forwards_standard_clarification_from_api(monkeypatch, action):
+    """Issue #677: the server-owned entry point must hand the agent the same
+    clarification contract as the legacy handlers when the drafts API reports
+    missing generation choices."""
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(plugin, "tool_result", lambda value: json.dumps(value))
+    monkeypatch.setattr(
+        plugin, "_workflow_draft_scope", lambda _: ("proj_demo", "canvas_demo", None)
+    )
+    detail = {
+        "ok": False,
+        "status": "clarification_required",
+        "code": "generation_parameters_required",
+        "error": "image/video generation parameters require user clarification",
+        "media_types": ["video"],
+        "missing_parameters": [
+            {"node_id": "shot-1", "node_type": "videoNode", "fields": ["durationSec", "generateAudio"]},
+            {"node_id": "shot-2", "node_type": "videoNode", "fields": ["durationSec"]},
+        ],
+        "required_choices": {"video": ["duration_seconds", "generate_audio"]},
+        "clarification": {"title": "确认图片和视频生成参数", "allow_skip": False},
+        "preflight": {"status": "blocked", "blockers": [], "warnings": []},
+        "retryable": True,
+        "next_action": "request_user_clarification",
+    }
+    monkeypatch.setattr(
+        plugin,
+        "_request",
+        lambda *_a, **_kw: plugin._http_error_result(
+            400, json.dumps({"detail": detail}), "Bad Request"
+        ),
+    )
+    args = (
+        {"plan": {"nodes": [], "edges": []}, "operation_id": "op-1"}
+        if action == "prepare"
+        else {"draft_id": "draft_a", "expected_revision": 1, "changes": {}}
+    )
+
+    result = json.loads(plugin._handle_workflow_operation(args, action=action))
+
+    assert result["ok"] is False
+    assert result["status"] == "clarification_required"
+    assert result["code"] == "generation_parameters_required"
+    assert result["required_choices"] == {"video": ["duration_seconds", "generate_audio"]}
+    assert result["media_types"] == ["video"]
+    assert [item["node_id"] for item in result["missing_parameters"]] == ["shot-1", "shot-2"]
+    assert "freezone_request_user_clarification" in result["agent_instruction"]
+    assert result["retryable"] is True
+    assert result["next_action"] == "request_user_clarification"
+    if action == "revise":
+        assert result["draft_id"] == "draft_a"
+    name = {"prepare": "freezone_prepare_workflow", "revise": "freezone_revise_workflow"}[action]
     Draft202012Validator(plugin._output_schema(name)).validate(result)
 
 

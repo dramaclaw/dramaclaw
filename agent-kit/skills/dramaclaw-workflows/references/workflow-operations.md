@@ -12,8 +12,10 @@ accepted under node `data` for step-local pins:
 `video_duration_seconds`, `video_generate_audio`, `video_generation_mode`, and
 `video_variants_per_node`. Preparation converts them to the canvas runtime fields before validation
 and persistence. The shorter semantic setting names used by revision are also accepted under node
-`data` during exact plan preparation. A shared value that conflicts with a node pin, or two aliases
-for the same setting with different values, is rejected; the server never silently chooses one.
+`data` during exact plan preparation. Shared `plan.inputs` values only fill fields a node leaves
+unset: an explicit node pin (either spelling) wins over the shared value. Two aliases for the same
+setting with different values on one node are still rejected; the server never silently chooses
+between them.
 
 Bindings refer to existing plan node IDs:
 

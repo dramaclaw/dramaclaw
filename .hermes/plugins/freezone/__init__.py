@@ -447,6 +447,31 @@ def _http_error_result(status_code: int, text: str, reason: str) -> dict[str, An
         result["error"] = _safe_error_string(detail, 300) or result["error"]
     if isinstance(source.get("retryable"), bool):
         result["retryable"] = source["retryable"]
+    if result.get("code") == "generation_parameters_required":
+        # Bounded copy of the standard clarification request so the agent can
+        # answer it; anything malformed is dropped rather than forwarded.
+        missing = source.get("missing_parameters")
+        safe_missing: list[dict[str, Any]] = []
+        if isinstance(missing, list):
+            for item in missing[:50]:
+                if not isinstance(item, dict):
+                    continue
+                node_type = _safe_error_string(item.get("node_type"), 40)
+                node_id = _safe_error_string(item.get("node_id"), 160)
+                fields = item.get("fields")
+                if node_type not in {"imageGenNode", "videoNode"} or not isinstance(fields, list):
+                    continue
+                safe_fields = [
+                    value
+                    for value in (_safe_error_string(field, 40) for field in fields[:12])
+                    if value and re.fullmatch(r"[A-Za-z0-9_]+", value)
+                ]
+                if node_id and safe_fields:
+                    safe_missing.append(
+                        {"node_id": node_id, "node_type": node_type, "fields": safe_fields}
+                    )
+        if safe_missing:
+            result["missing_parameters"] = safe_missing
     errors = source.get("errors")
     if isinstance(errors, list):
         safe_errors = []
@@ -3913,11 +3938,6 @@ def _workflow_generation_target_ids(
     return visited
 
 
-_GENERATION_FIELDS_BY_PORTABLE = {
-    portable: field for field, portable in _GENERATION_PORTABLE_FIELDS.items()
-}
-
-
 def _preflight_clarification_result(
     preflight: dict[str, Any], **extra: Any
 ) -> dict[str, Any] | None:
@@ -3928,37 +3948,19 @@ def _preflight_clarification_result(
     voiced shot without generateAudio as ``generation_parameters_required``
     blockers carrying ``required_choices``. Returning them inside a generic
     ``workflow_preflight_failed`` would stop the agent; merging them into one
-    ``clarification_required`` result lets it ask through a single card.
+    ``clarification_required`` result lets it ask through a single card. The
+    merge itself lives in CE (``generation_clarification_request``) so the
+    HTTP drafts API returns the same structure; it declines (``None``) when
+    any non-answerable blocker sits beside the questions, so those preflights
+    fail below instead of asking a question that cannot unblock the draft.
     """
-    by_node: dict[str, dict[str, Any]] = {}
-    for blocker in preflight.get("blockers") or []:
-        if not isinstance(blocker, dict):
-            continue
-        if blocker.get("code") != "generation_parameters_required":
-            continue
-        choices = blocker.get("required_choices")
-        if not isinstance(choices, dict):
-            continue
-        path = str(blocker.get("path") or "")
-        node_id = path.split(".")[2] if path.count(".") >= 3 else path
-        for media, portable_fields in choices.items():
-            node_type = _GENERATION_MEDIA_NODE_TYPES.get(str(media))
-            if node_type is None or not isinstance(portable_fields, list):
-                continue
-            item = by_node.setdefault(
-                f"{node_type}:{node_id}",
-                {"node_id": node_id, "node_type": node_type, "fields": []},
-            )
-            for portable in portable_fields:
-                field = _GENERATION_FIELDS_BY_PORTABLE.get(str(portable), str(portable))
-                if node_type == "videoNode" and portable == "resolution":
-                    field = "quality"
-                if field not in item["fields"]:
-                    item["fields"].append(field)
-    if not by_node:
+    from novelvideo.freezone.workflow_preflight import generation_clarification_request
+
+    request = generation_clarification_request(preflight)
+    if request is None:
         return None
     return {
-        **_generation_parameters_required_result(list(by_node.values())),
+        **_generation_parameters_required_result(request["missing_parameters"]),
         "preflight": preflight,
         **extra,
     }
@@ -3968,13 +3970,15 @@ def _workflow_preflight_failure(
     preflight: dict[str, Any], **extra: Any
 ) -> dict[str, Any]:
     """Standard failure payload for a blocked draft preflight."""
+    from novelvideo.freezone.workflow_preflight import preflight_failure_blocker
+
     clarification = _preflight_clarification_result(preflight, **extra)
     if clarification is not None:
         return clarification
     return {
         "ok": False,
         "status": "workflow_preflight_failed",
-        "error": preflight["blockers"][0]["message"],
+        "error": preflight_failure_blocker(preflight)["message"],
         "preflight": preflight,
         **extra,
     }
@@ -5907,6 +5911,24 @@ def _handle_workflow_operation(args: dict[str, Any], *, action: str) -> str:
     if error:
         if action in {"revise", "get"}:
             error.setdefault("draft_id", draft_id)
+        if error.get("code") == "generation_parameters_required" and isinstance(
+            error.get("missing_parameters"), list
+        ):
+            # The drafts API already merged the missing generation choices;
+            # attach the agent recovery contract so this entry point behaves
+            # like the legacy handlers (issue #677).
+            standard = _generation_parameters_required_result(error["missing_parameters"])
+            error = {
+                **{key: value for key, value in error.items() if key != "status_code"},
+                "status": standard["status"],
+                "error": standard["error"],
+                "media_types": standard["media_types"],
+                "required_choices": standard["required_choices"],
+                "clarification": standard["clarification"],
+                "agent_instruction": standard["agent_instruction"],
+                "retryable": True,
+                "next_action": "request_user_clarification",
+            }
         error.setdefault("retryable", False)
         error.setdefault(
             "next_action",

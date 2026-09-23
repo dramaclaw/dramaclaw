@@ -280,6 +280,123 @@ def _video_runtime_parameter_blockers(
     return blockers
 
 
+# Portable choice names used in required_choices -> canvas data field.
+_PORTABLE_CHOICE_DATA_FIELDS = {
+    "model": "model",
+    "aspect_ratio": "aspectRatio",
+    "resolution": "size",  # videoNode stores its resolution in data.quality
+    "quality": "quality",
+    "duration_seconds": "durationSec",
+    "generate_audio": "generateAudio",
+    "count": "count",
+}
+_MEDIA_NODE_TYPES = {"image": "imageGenNode", "video": "videoNode"}
+
+
+_MODEL_BLOCKER_PATH_PREFIX = "runtime.models."
+
+
+def _blocker_node_id(path: str) -> str:
+    """Node id from a ``runtime.models.<node_id>.<field>`` blocker path.
+
+    Node ids may contain dots, so split on the known prefix and the trailing
+    field name rather than on every dot.
+    """
+    if not path.startswith(_MODEL_BLOCKER_PATH_PREFIX):
+        return path
+    rest = path[len(_MODEL_BLOCKER_PATH_PREFIX) :]
+    node_id, separator, _field = rest.rpartition(".")
+    return node_id if separator else rest
+
+
+def preflight_failure_blocker(preflight: dict[str, Any]) -> dict[str, Any]:
+    """The blocker to report when a blocked preflight is not a clarification.
+
+    A missing generation choice is answerable; a disabled queue or an
+    unavailable model/catalog is not. When both kinds are present the
+    non-answerable one is reported first so the agent does not ask the user a
+    question whose answer cannot unblock the draft.
+    """
+    blockers = [b for b in preflight.get("blockers") or [] if isinstance(b, dict)]
+    for blocker in blockers:
+        if blocker.get("code") != "generation_parameters_required":
+            return blocker
+    return blockers[0] if blockers else {}
+
+
+def generation_clarification_request(preflight: dict[str, Any]) -> dict[str, Any] | None:
+    """Merge generation_parameters_required blockers into one clarification request.
+
+    Returns ``None`` when the preflight has no such blocker, and also when any
+    other blocker is present: a clarification is retryable, so returning one
+    while a ``queue_disabled`` / ``model_unavailable`` blocker sits beside it
+    would make the agent ask the user a question and only then fail. Mixed
+    preflights stay a ``workflow_preflight_failed`` error that reports the
+    non-answerable blocker first (``preflight_failure_blocker``). Otherwise
+    the result carries the same ``media_types`` / ``missing_parameters`` /
+    ``required_choices`` shape as the canvas-write preflight, so every entry
+    point (HTTP drafts API, server-owned MCP operations, legacy plugin
+    handlers) can hand the agent a single clarification card (issue #677).
+    """
+    blockers = [b for b in preflight.get("blockers") or [] if isinstance(b, dict)]
+    if any(
+        blocker.get("code") != "generation_parameters_required" for blocker in blockers
+    ):
+        return None
+    by_node: dict[str, dict[str, Any]] = {}
+    for blocker in blockers:
+        choices = blocker.get("required_choices")
+        if not isinstance(choices, dict):
+            continue
+        node_id = _blocker_node_id(str(blocker.get("path") or ""))
+        for media, portable_fields in choices.items():
+            node_type = _MEDIA_NODE_TYPES.get(str(media))
+            if node_type is None or not isinstance(portable_fields, list):
+                continue
+            item = by_node.setdefault(
+                f"{node_type}:{node_id}",
+                {"node_id": node_id, "node_type": node_type, "fields": []},
+            )
+            for portable in portable_fields:
+                field = _PORTABLE_CHOICE_DATA_FIELDS.get(str(portable), str(portable))
+                if node_type == "videoNode" and portable == "resolution":
+                    field = "quality"
+                if field not in item["fields"]:
+                    item["fields"].append(field)
+    if not by_node:
+        return None
+    # Canonical field order (model, ratio, resolution, ..., duration, audio,
+    # count) so the request is stable regardless of blocker emission order.
+    field_rank = {field: index for index, field in enumerate(_PORTABLE_CHOICE_DATA_FIELDS.values())}
+    missing = list(by_node.values())
+    for item in missing:
+        item["fields"].sort(key=lambda field: (field_rank.get(field, len(field_rank)), field))
+    required_choices: dict[str, list[str]] = {}
+    data_to_portable = {v: k for k, v in _PORTABLE_CHOICE_DATA_FIELDS.items()}
+    for item in missing:
+        media = "image" if item["node_type"] == "imageGenNode" else "video"
+        bucket = required_choices.setdefault(media, [])
+        for field in item["fields"]:
+            portable = "resolution" if media == "video" and field == "quality" else (
+                data_to_portable.get(field, field)
+            )
+            if portable not in bucket:
+                bucket.append(portable)
+    portable_rank = {name: index for index, name in enumerate(_PORTABLE_CHOICE_DATA_FIELDS)}
+    for bucket in required_choices.values():
+        bucket.sort(key=lambda name: (portable_rank.get(name, len(portable_rank)), name))
+    return {
+        "ok": False,
+        "status": "clarification_required",
+        "code": "generation_parameters_required",
+        "error": "image/video generation parameters require user clarification",
+        "media_types": sorted(required_choices),
+        "missing_parameters": missing,
+        "required_choices": required_choices,
+        "clarification": {"title": "确认图片和视频生成参数", "allow_skip": False},
+    }
+
+
 def _catalog_option_supported(
     value: Any,
     options: list[str],
