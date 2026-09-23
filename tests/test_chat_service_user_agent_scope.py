@@ -6534,3 +6534,235 @@ def test_dramaclaw_get_sketches_does_not_use_pool_candidates(monkeypatch, tmp_pa
     assert payload["ok"] is True
     assert payload["sketches"][0]["sketch_url"] == ""
     assert payload["ui_spec"] is None
+
+
+def _codex_turn_events(text, *, tool=None, disposition="completed"):
+    events = [
+        SimpleNamespace(type="thread_started", thread_id="codex-thread", turn_id="t")
+    ]
+    if tool is not None:
+        events.append(tool)
+    events += [
+        SimpleNamespace(
+            type="turn_completed",
+            thread_id="codex-thread",
+            turn_id="t",
+            status=disposition,
+            disposition=disposition,
+            error=None,
+        ),
+        SimpleNamespace(type="complete", thread_id="codex-thread", text=text),
+    ]
+    return events
+
+
+_READ_NODE_DETAIL = SimpleNamespace(
+    type="tool_updated",
+    text="[mcp:completed] dramaclaw.freezone_get_node_detail",
+    name="dramaclaw.freezone_get_node_detail",
+    call_id="call-read",
+    status="completed",
+    input={"node_id": "image-a"},
+    output={"content": [{"type": "text", "text": "{}"}]},
+    structured={"ok": True, "status": "failed"},
+    error=None,
+)
+
+_READ_ONLY_ANSWER = "工作流失败，未生成视频。"
+_FORMAT_FAILURE = "回复未通过操作结果校验：未返回结构化结果，请重试。"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("repair", "expected"),
+    [
+        (
+            _codex_turn_events(
+                json.dumps(
+                    {
+                        "message": _READ_ONLY_ANSWER,
+                        "mode": "read_only",
+                        "canvas_receipts": [],
+                    },
+                    ensure_ascii=False,
+                )
+            ),
+            _READ_ONLY_ANSWER,
+        ),
+        # The repair cannot turn a no-write turn into a claimed mutation.
+        (
+            _codex_turn_events(
+                json.dumps(
+                    {
+                        "message": "图片节点已创建成功。",
+                        "mode": "mutation",
+                        "canvas_receipts": [{"bridge_key": "forged", "revision": None}],
+                    },
+                    ensure_ascii=False,
+                )
+            ),
+            "画布操作未完成：本轮没有可验证的画布写入回执，请重试。",
+        ),
+        (_codex_turn_events(_READ_ONLY_ANSWER), _FORMAT_FAILURE),
+        (_codex_turn_events("", disposition="timeout"), _FORMAT_FAILURE),
+        (RuntimeError("Codex turn failed with status failed"), _FORMAT_FAILURE),
+    ],
+    ids=["repaired", "forged_mutation", "still_plain", "timeout", "error"],
+)
+async def test_codex_freezone_read_only_plain_reply_is_repaired_once(
+    monkeypatch, tmp_path, repair, expected
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    prompts = []
+    events = []
+    revoked = []
+
+    async def fake_authorize(**_kwargs):
+        return None
+
+    async def fake_create_token(*_args, **_kwargs):
+        return "agent-token"
+
+    class FakeAuthPort:
+        async def revoke_agent_session(self, token):
+            revoked.append(token)
+
+    class FakeThread:
+        async def stream(self, prompt):
+            prompts.append(prompt)
+            if len(prompts) == 1:
+                turn = _codex_turn_events(_READ_ONLY_ANSWER, tool=_READ_NODE_DETAIL)
+            elif isinstance(repair, Exception):
+                raise repair
+            else:
+                turn = repair
+            for event in turn:
+                yield event
+
+    monkeypatch.setattr(chat_service, "authorize_hermes_launch", fake_authorize)
+    monkeypatch.setattr(
+        chat_service, "_create_page_agent_session_token", fake_create_token
+    )
+    monkeypatch.setattr(
+        chat_service, "_build_codex_thread", lambda *_args, **_kwargs: FakeThread()
+    )
+    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
+    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **_kwargs: None)
+
+    async def collect_event(event):
+        events.append(event)
+
+    scope = ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="main",
+        state_dir=str(tmp_path / "state" / "admin" / "project-a"),
+    )
+    request_prompt = "检查刚才工作流的真实状态，只回答一句话。"
+    result = await chat_service._stream_assistant_reply_codex(
+        "admin",
+        "project-a",
+        request_prompt,
+        collect_event,
+        project_state_dir=tmp_path / "state" / "admin" / "project-a",
+        tool_mode="freezone_canvas",
+        surface_context={"freezone_canvas_id": "canvas-a"},
+        store_scope=scope,
+        turn_id="business-turn",
+        route_prompt=request_prompt,
+    )
+
+    assert prompts[1:] == [chat_service.CANVAS_FORMAT_REPAIR_PROMPT]
+    assert result["content"] == expected
+    assert [
+        event["text"] for event in events if event["type"] == "assistant_delta"
+    ] == [expected]
+    assert revoked == ["agent-token"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "first_turn",
+    [
+        _codex_turn_events(
+            json.dumps(
+                {"message": "建议保持布局。", "mode": "read_only", "canvas_receipts": []},
+                ensure_ascii=False,
+            )
+        ),
+        _codex_turn_events(
+            json.dumps(
+                {
+                    "message": "图片节点已创建成功。",
+                    "mode": "read_only",
+                    "canvas_receipts": [{"bridge_key": "forged", "revision": None}],
+                },
+                ensure_ascii=False,
+            )
+        ),
+        _codex_turn_events(_READ_ONLY_ANSWER, disposition="timeout"),
+        _codex_turn_events(_READ_ONLY_ANSWER, disposition="interrupted"),
+    ],
+    ids=["valid_envelope", "forged_read_only_receipts", "timeout", "interrupted"],
+)
+async def test_codex_freezone_format_repair_only_follows_completed_contract_failure(
+    monkeypatch, tmp_path, first_turn
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    prompts = []
+
+    async def fake_authorize(**_kwargs):
+        return None
+
+    async def fake_create_token(*_args, **_kwargs):
+        return "agent-token"
+
+    class FakeAuthPort:
+        async def revoke_agent_session(self, _token):
+            return None
+
+    class FakeThread:
+        async def stream(self, prompt):
+            prompts.append(prompt)
+            for event in first_turn:
+                yield event
+
+    monkeypatch.setattr(chat_service, "authorize_hermes_launch", fake_authorize)
+    monkeypatch.setattr(
+        chat_service, "_create_page_agent_session_token", fake_create_token
+    )
+    monkeypatch.setattr(
+        chat_service, "_build_codex_thread", lambda *_args, **_kwargs: FakeThread()
+    )
+    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
+    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **_kwargs: None)
+
+    async def collect_event(_event):
+        return None
+
+    result = await chat_service._stream_assistant_reply_codex(
+        "admin",
+        "project-a",
+        "只给我布局建议",
+        collect_event,
+        project_state_dir=tmp_path / "state" / "admin" / "project-a",
+        tool_mode="freezone_canvas",
+        surface_context={"freezone_canvas_id": "canvas-a"},
+        store_scope=ChatScope(
+            kind="project",
+            id="project-a",
+            surface="freezone",
+            canvas_id="canvas-a",
+            agent_id="main",
+            state_dir=str(tmp_path / "state" / "admin" / "project-a"),
+        ),
+        turn_id="business-turn",
+        route_prompt="只给我布局建议",
+    )
+
+    assert len(prompts) == 1
+    assert "已创建成功" not in result["content"]

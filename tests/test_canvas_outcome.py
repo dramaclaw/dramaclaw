@@ -3,7 +3,12 @@ import json
 import pytest
 from jsonschema import Draft202012Validator
 
-from novelvideo.chat.canvas_outcome import CANVAS_REPLY_SCHEMA, finalize_canvas_reply
+from novelvideo.chat.canvas_outcome import (
+    CANVAS_FORMAT_REPAIR_PROMPT,
+    CANVAS_REPLY_SCHEMA,
+    finalize_canvas_reply,
+    needs_canvas_format_repair,
+)
 
 
 def reply(mode="read_only", claims=None, message="建议保持当前布局。"):
@@ -168,3 +173,55 @@ def test_invalid_revision_claims_fail_closed(revision):
         attempts={"call-a": "succeeded"},
         receipts={("", 3)},
     )
+
+
+def test_read_only_plain_text_needs_format_repair():
+    # #680: a no-write turn that answered in prose is repaired, not replaced.
+    assert needs_canvas_format_repair(
+        "工作流失败，未生成视频。", attempts={}, receipts=set()
+    )
+    assert needs_canvas_format_repair("{}", attempts={}, receipts=set())
+
+
+@pytest.mark.parametrize(
+    ("text", "attempts", "receipts", "draft_ready"),
+    [
+        (reply(), {}, set(), False),
+        ("已创建节点。", {"call-a": "succeeded"}, {("bridge-a", None)}, False),
+        ("已创建节点。", {}, {("", 7)}, False),
+        ("已创建节点。", {"call-a": "failed"}, set(), False),
+        ("草稿已准备。", {}, set(), True),
+        (reply("mutation", [{"bridge_key": "bridge-a", "revision": None}]), {}, set(), False),
+        # A well-formed envelope with invented receipts is a false claim, not a
+        # format slip: a retry could drop the receipts and keep the claim.
+        (
+            reply(
+                "read_only",
+                [{"bridge_key": "forged", "revision": None}],
+                message="图片节点已创建成功。",
+            ),
+            {},
+            set(),
+            False,
+        ),
+        (
+            reply("blocked", [{"bridge_key": None, "revision": 3}]),
+            {},
+            set(),
+            False,
+        ),
+    ],
+)
+def test_format_repair_never_applies_to_write_evidence_or_false_mutation(
+    text, attempts, receipts, draft_ready
+):
+    assert not needs_canvas_format_repair(
+        text, attempts=attempts, receipts=receipts, draft_ready=draft_ready
+    )
+
+
+def test_format_repair_prompt_rewrites_from_evidence_instead_of_repeating():
+    assert "same answer" not in CANVAS_FORMAT_REPAIR_PROMPT
+    assert "zero canvas writes" in CANVAS_FORMAT_REPAIR_PROMPT
+    assert "do not repeat it" in CANVAS_FORMAT_REPAIR_PROMPT
+    assert "canvas_receipts=[]" in CANVAS_FORMAT_REPAIR_PROMPT
