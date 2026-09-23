@@ -443,7 +443,9 @@ async def test_recipe_media_enqueue_replays_terminal_task_without_rebilling(
     assert exc.value.status_code == 409
 
 
-def _cached_recipe_media_operation(client: TestClient, monkeypatch) -> tuple[dict, str]:
+def _cached_recipe_media_operation(
+    client: TestClient, monkeypatch, *, runner_id: str = ""
+) -> tuple[dict, str]:
     """Create a workflow image action whose Recipe was settled by a cache hit."""
     from novelvideo.api.routes import freezone
     from novelvideo.freezone.agent_product_operations import (
@@ -458,7 +460,7 @@ def _cached_recipe_media_operation(client: TestClient, monkeypatch) -> tuple[dic
             "node_id": "image-1", "action": "generate_image",
             "recipe_id": "product-image", "recipe_version": "1.0.0",
             "generation_attempt_id": "attempt-image",
-        }]},
+        }], **({"runner_id": runner_id} if runner_id else {})},
     ).json()["data"]
     operation_id = created["actions"][0]["product_operation_id"]
     operation = read_agent_product_operation(
@@ -650,6 +652,169 @@ async def test_recipe_media_retry_reclaims_failed_task_once_per_retry(
     record_retry(3)
     assert (await enqueue())["data"]["job_id"] == third["data"]["job_id"]
     assert len(enqueued) == 3
+
+
+class _MediaTasks:
+    """In-memory task manager/backend pair for workflow media enqueue tests."""
+
+    def __init__(self, monkeypatch, client: TestClient, operation_id: str) -> None:
+        from novelvideo.api.routes import freezone
+
+        self.freezone = freezone
+        self.client = client
+        self.tasks: dict[str, SimpleNamespace] = {}
+        self.enqueued: list[str] = []
+        outer = self
+
+        class TaskManager:
+            def get_task_for_project(self, _ctx, _task_type, _episode, *, scope):
+                return outer.tasks.get(scope)
+
+        class TaskBackend:
+            async def enqueue_project_task(self, _ctx, *, scope, **_kwargs):
+                outer.enqueued.append(scope)
+                state = SimpleNamespace(
+                    task_id=f"media-task-{len(outer.enqueued)}", status="running",
+                    metadata={"backend": "celery", "queue": "default"},
+                )
+                outer.tasks[scope] = state
+                return SimpleNamespace(task_state=state, backend="celery", queue="default")
+
+        monkeypatch.setattr(freezone, "get_task_manager", lambda: TaskManager())
+        monkeypatch.setattr(freezone, "get_task_backend", lambda: TaskBackend())
+        self.ctx = SimpleNamespace(project_id="proj_demo", state_dir=str(client.state_dir))
+        self.payload = {
+            "canvas_id": "default", "node_id": "image-1",
+            "product_operation_id": operation_id,
+            "generation_attempt_id": "attempt-image", "prompt": "cached castle prompt",
+        }
+
+    async def enqueue(self) -> dict:
+        return await self.freezone._enqueue_claimed_workflow_media(
+            ctx=self.ctx, project_dir=self.client.state_dir,
+            task_type="freezone_gen", queue_kind="default",
+            payload=self.payload.copy(), job_id="discarded-client-job",
+        )
+
+
+def _record_workflow_retry(
+    client: TestClient, run_id: str, retry_count: int, *, runner_id: str = ""
+) -> None:
+    from novelvideo.freezone.workflow_runs import update_workflow_run
+
+    update_workflow_run(
+        project_dir=client.state_dir,
+        canvas_id="default",
+        run_id=run_id,
+        runner_id=runner_id,
+        action_updates=[{
+            "node_id": "image-1", "action": "generate_image",
+            "status": "running", "phase": "retrying", "retry_count": retry_count,
+        }],
+    )
+
+
+@pytest.mark.parametrize(
+    "scenario", ["live_retry", "non_retryable", "lease_expired", "retries_exhausted"]
+)
+@pytest.mark.asyncio
+async def test_workflow_run_poll_keeps_live_runner_media_retry(
+    workflow_run_client: TestClient, monkeypatch, scenario: str
+) -> None:
+    """Issue #681 review: a status poll between failure and retry must not end the run."""
+    from novelvideo.freezone.workflow_runs import (
+        read_workflow_run,
+        reconcile_workflow_runs_with_tasks,
+    )
+
+    created, operation_id = _cached_recipe_media_operation(
+        workflow_run_client, monkeypatch, runner_id="runner-one"
+    )
+    media = _MediaTasks(monkeypatch, workflow_run_client, operation_id)
+    first = await media.enqueue()
+    if scenario == "retries_exhausted":
+        _record_workflow_retry(
+            workflow_run_client, created["run_id"], 2, runner_id="runner-one"
+        )
+    if scenario == "lease_expired":
+        with sqlite3.connect(workflow_run_client.state_dir / "data.db") as conn:
+            conn.execute(
+                "UPDATE workflow_runs SET lease_expires_at = ? WHERE run_id = ?",
+                ("2000-01-01T00:00:00Z", created["run_id"]),
+            )
+    error = (
+        "HTTP 401: invalid api key"
+        if scenario == "non_retryable"
+        else "HTTP 503: upstream service unavailable"
+    )
+    media.tasks[first["data"]["job_id"]].status = "failed"
+    run = read_workflow_run(
+        project_dir=workflow_run_client.state_dir,
+        canvas_id="default",
+        run_id=created["run_id"],
+    )
+    reconcile_workflow_runs_with_tasks(
+        project_dir=workflow_run_client.state_dir,
+        canvas_id="default",
+        tasks_by_key={
+            run["actions"][0]["task_key"]: {
+                "status": "failed", "result": None, "error": error,
+            }
+        },
+    )
+    run = read_workflow_run(
+        project_dir=workflow_run_client.state_dir,
+        canvas_id="default",
+        run_id=created["run_id"],
+    )
+    if scenario != "live_retry":
+        assert run["actions"][0]["status"] == "failed"
+        assert run["status"] == "failed"
+        return
+    assert run["actions"][0]["status"] in {"pending", "running"}
+    assert run["status"] == "running"
+    _record_workflow_retry(
+        workflow_run_client, created["run_id"], 1, runner_id="runner-one"
+    )
+    second = await media.enqueue()
+    assert second["data"]["job_id"] != first["data"]["job_id"]
+    assert second["data"]["task_id"] == "media-task-2"
+
+
+@pytest.mark.asyncio
+async def test_recipe_media_retry_follows_concurrent_reclaim(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    """Issue #681 review: a losing duplicate must not return the replaced failed task."""
+    from novelvideo.api.routes import freezone
+
+    created, operation_id = _cached_recipe_media_operation(
+        workflow_run_client, monkeypatch
+    )
+    media = _MediaTasks(monkeypatch, workflow_run_client, operation_id)
+    first = await media.enqueue()
+    media.tasks[first["data"]["job_id"]].status = "failed"
+    _record_workflow_retry(workflow_run_client, created["run_id"], 1)
+
+    real_reclaim = freezone.reclaim_failed_workflow_media_action
+    winners: list[str] = []
+
+    def racing_reclaim(**kwargs):
+        if not winners:
+            # Another request reclaims and enqueues between our reads.
+            winner = real_reclaim(**kwargs)
+            winners.append(winner["job_id"])
+            media.tasks[winner["job_id"]] = SimpleNamespace(
+                task_id="winner-task", status="running",
+                metadata={"backend": "celery", "queue": "default"},
+            )
+        return real_reclaim(**kwargs)
+
+    monkeypatch.setattr(freezone, "reclaim_failed_workflow_media_action", racing_reclaim)
+    loser = await media.enqueue()
+    assert loser["data"]["job_id"] == winners[0]
+    assert loser["data"]["task_id"] == "winner-task"
+    assert media.enqueued == [first["data"]["job_id"]]
 
 
 @pytest.mark.asyncio

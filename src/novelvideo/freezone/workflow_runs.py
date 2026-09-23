@@ -40,6 +40,8 @@ TERMINAL_RUN_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
 WORKFLOW_RUN_LEASE_SECONDS = 45
 ACTIVE_TASK_STATUSES = {"pending", "starting", "submitting", "queued", "running"}
 TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
+# Mirrors the canvas runner's WORKFLOW_ACTION_MAX_RETRIES (canvasChatCommands.ts).
+WORKFLOW_ACTION_MAX_RETRIES = 2
 GENERATION_ACTIONS = set(GENERATION_ACTION_TYPES)
 NON_RETRYABLE_ERROR_MARKERS = {
     "invalid token",
@@ -1515,11 +1517,19 @@ def reconcile_workflow_runs_with_tasks(
 
     changed_run_ids: list[str] = []
     timestamp = _now()
+    current = datetime.now(timezone.utc)
     with _connect(project_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
         for payload in _list_runs_in_transaction(conn, canvas_id=canvas_id):
             if payload.get("status") == "cancelled":
                 continue
+            lease_expires_at = _parse_timestamp(payload.get("lease_expires_at"))
+            runner_alive = (
+                payload.get("status") == "running"
+                and bool(str(payload.get("runner_id") or "").strip())
+                and lease_expires_at is not None
+                and lease_expires_at > current
+            )
             actions = payload.get("actions")
             actions = actions if isinstance(actions, list) else []
             changed = False
@@ -1548,6 +1558,18 @@ def reconcile_workflow_runs_with_tasks(
                     continue
                 if task_status in {"failed", "cancelled"}:
                     error = str(task.get("error") or "生成任务失败").strip()
+                    if (
+                        task_status == "failed"
+                        and runner_alive
+                        and item.get("status") in {"pending", "running"}
+                        and int(item.get("retry_count") or 0)
+                        < WORKFLOW_ACTION_MAX_RETRIES
+                        and workflow_error_diagnostics(error)["retryable"]
+                    ):
+                        # The live runner owns retryable failures and will either
+                        # resubmit or record the final outcome itself (issue #681).
+                        # An expired lease falls through to failed as before.
+                        continue
                     updates = {
                         "status": "failed",
                         "error": error,

@@ -550,35 +550,42 @@ async def _enqueue_claimed_workflow_media(
                 default=str,
             ).encode("utf-8")
         ).hexdigest()
-        try:
-            claim = await asyncio.to_thread(
-                claim_workflow_media_action,
-                project_dir=_canvas_state_project_dir(ctx, project_dir),
-                project_id=ctx.project_id,
-                canvas_id=str(payload.get("canvas_id") or ""),
-                node_id=str(payload.get("node_id") or ""),
-                operation_id=operation_id,
-                attempt_id=str(payload.get("generation_attempt_id") or ""),
-                task_type=task_type,
-                fingerprint=fingerprint,
-            )
-        except ValueError as exc:
-            raise HTTPException(409, str(exc)) from exc
-        job_id = str(claim["job_id"])
-        payload["job_id"] = job_id
-        task_key = project_task_state_key(task_type, ctx.project_id, 0, scope=job_id)
-        existing = await asyncio.to_thread(
-            get_task_manager().get_task_for_project, ctx, task_type, 0, scope=job_id
-        )
-        if existing is None and not claim["created"]:
-            deadline = time.monotonic() + 1.0
-            while existing is None and time.monotonic() < deadline:
-                await asyncio.sleep(0.05)
-                existing = await asyncio.to_thread(
-                    get_task_manager().get_task_for_project,
-                    ctx, task_type, 0, scope=job_id,
+        async def current_claim() -> dict[str, Any]:
+            try:
+                return await asyncio.to_thread(
+                    claim_workflow_media_action,
+                    project_dir=_canvas_state_project_dir(ctx, project_dir),
+                    project_id=ctx.project_id,
+                    canvas_id=str(payload.get("canvas_id") or ""),
+                    node_id=str(payload.get("node_id") or ""),
+                    operation_id=operation_id,
+                    attempt_id=str(payload.get("generation_attempt_id") or ""),
+                    task_type=task_type,
+                    fingerprint=fingerprint,
                 )
-        if existing is not None and str(existing.status or "") == "failed":
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from exc
+
+        async def claimed_task(claimed: dict[str, Any]) -> Any:
+            scope = str(claimed["job_id"])
+            task = await asyncio.to_thread(
+                get_task_manager().get_task_for_project, ctx, task_type, 0, scope=scope
+            )
+            if task is None and not claimed["created"]:
+                deadline = time.monotonic() + 1.0
+                while task is None and time.monotonic() < deadline:
+                    await asyncio.sleep(0.05)
+                    task = await asyncio.to_thread(
+                        get_task_manager().get_task_for_project,
+                        ctx, task_type, 0, scope=scope,
+                    )
+            return task
+
+        claim = await current_claim()
+        existing = await claimed_task(claim)
+        for _ in range(3):
+            if existing is None or str(existing.status or "") != "failed":
+                break
             # A retryable provider failure leaves the claim on a failed task;
             # the runner's next recorded retry gets a fresh job (issue #681).
             retry_claim = await asyncio.to_thread(
@@ -592,16 +599,21 @@ async def _enqueue_claimed_workflow_media(
                 attempt_id=str(payload.get("generation_attempt_id") or ""),
                 task_type=task_type,
                 fingerprint=fingerprint,
-                failed_job_id=job_id,
+                failed_job_id=str(claim["job_id"]),
             )
             if retry_claim is not None:
-                claim = retry_claim
-                job_id = str(claim["job_id"])
-                payload["job_id"] = job_id
-                task_key = project_task_state_key(
-                    task_type, ctx.project_id, 0, scope=job_id
-                )
-                existing = None
+                claim, existing = retry_claim, None
+                break
+            # A concurrent duplicate may have just moved the claim; follow it
+            # instead of handing back the failed task it replaced.
+            latest = await current_claim()
+            if latest["job_id"] == claim["job_id"]:
+                break
+            claim = latest
+            existing = await claimed_task(claim)
+        job_id = str(claim["job_id"])
+        payload["job_id"] = job_id
+        task_key = project_task_state_key(task_type, ctx.project_id, 0, scope=job_id)
         if existing is not None:
             await _cancel_claimed_media_if_run_cancelled(
                 ctx=ctx,
