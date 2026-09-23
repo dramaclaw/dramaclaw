@@ -3714,6 +3714,28 @@ def test_generation_clarification_recommended_action_returns_concrete_node_data(
     ).validate(result)
 
 
+def test_generation_receipt_explains_workflow_prepare_argument_shapes(monkeypatch):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    schemas = {name: schema for name, schema, _handler in plugin.TOOLS}
+    monkeypatch.setattr(plugin, "_emit_clarification_event", lambda *_args: {
+        "ok": True, "clarification_status": "recommended", "answers": {},
+        "used_recommended": True,
+    })
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: _ISSUE_637_IMAGE_CATALOG)
+
+    result = handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a", "generation_media_types": ["image"],
+    })
+    instruction = result["agent_instruction"]
+    assert "generation_answers = result['answers']" in instruction
+    assert "plan.summary" in instruction
+    assert "plan.user_goal" in instruction
+    prepare = schemas["freezone_prepare_workflow"]["parameters"]
+    assert "answers field" in prepare["properties"]["generation_answers"]["description"]
+    assert "user_goal" not in prepare["properties"]["plan"]["properties"]
+
+
 def test_generation_clarification_empty_recommended_answers_fail_closed(monkeypatch):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
@@ -4330,6 +4352,92 @@ def test_unified_prepare_maps_raw_generation_answers(monkeypatch):
     assert result["ok"] is True
     assert captured["intent"]["inputs"]["image_variants_per_node"] == 2
     assert "generation_answers" not in captured
+
+
+def test_unified_prepare_accepts_generation_clarification_receipt(monkeypatch):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    captured = {}
+
+    def fake_request(method, path, *, body=None, **_kwargs):
+        assert method == "POST"
+        assert path.endswith("/workflow-drafts")
+        captured.update(body)
+        return {"ok": True, "data": {"ok": True, "status": "workflow_draft_ready"}}
+
+    monkeypatch.setattr(plugin, "_request", fake_request)
+    answers = {
+        "video_model": {"option_ids": ["video-a"]},
+        "video_aspect_ratio": {"option_ids": ["16:9"]},
+        "video_resolution": {"option_ids": ["1080p"]},
+        "video_duration_seconds": {"option_ids": ["7"]},
+        "video_generate_audio": {"option_ids": ["true"]},
+        "video_variants_per_node": {"option_ids": ["1"]},
+    }
+    args = {
+        "project_id": "project-a", "canvas_id": "canvas-a", "operation_id": "op-a",
+        "plan": {
+            "schema_version": "freezone_workflow_plan.v1",
+            "summary": "对白镜头",
+            "skill": {"id": "video-ad"},
+            "nodes": [{"id": "shot-1", "node_type": "videoNode", "data": {
+                "workflowCatalog": {"recipeId": "shot-video"},
+            }}],
+            "edges": [],
+        },
+        "generation_answers": {
+            "answers": answers,
+            "generation_choices": {
+                "video_model": "video-a", "video_aspect_ratio": "16:9",
+                "video_resolution": "1080p", "video_duration_seconds": 7,
+                "video_generate_audio": True, "video_variants_per_node": 1,
+            },
+        },
+    }
+    schema = {name: schema for name, schema, _handler in plugin.TOOLS}[
+        "freezone_prepare_workflow"
+    ]["parameters"]
+    Draft202012Validator(schema).validate(args)
+    result = handlers["freezone_prepare_workflow"](args)
+
+    assert result["status"] == "workflow_draft_ready"
+    assert captured["plan"]["nodes"][0]["data"]["generateAudio"] is True
+    assert captured["plan"]["nodes"][0]["data"]["durationSec"] == 7
+
+
+def test_unified_prepare_rejects_conflicting_clarification_choices(monkeypatch):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    monkeypatch.setattr(
+        plugin, "_request", lambda *_args, **_kwargs: pytest.fail("conflicting answers must stop"),
+    )
+
+    args = {
+        "project_id": "project-a", "canvas_id": "canvas-a", "operation_id": "op-a",
+        "plan": {"schema_version": "freezone_workflow_plan.v1", "skill": {"id": "video-ad"},
+                 "nodes": [{"id": "shot-1", "node_type": "videoNode", "data": {
+                     "workflowCatalog": {"recipeId": "shot-video"},
+                 }}],
+                 "edges": []},
+        "generation_answers": {
+            "answers": {
+                "video_model": {"option_ids": ["video-a"]},
+                "video_aspect_ratio": {"option_ids": ["16:9"]},
+                "video_resolution": {"option_ids": ["1080p"]},
+                "video_duration_seconds": {"option_ids": ["7"]},
+                "video_variants_per_node": {"option_ids": ["1"]},
+            },
+            "generation_choices": {"video_aspect_ratio": "9:16"},
+        },
+    }
+    schema = {name: schema for name, schema, _handler in plugin.TOOLS}[
+        "freezone_prepare_workflow"
+    ]["parameters"]
+    Draft202012Validator(schema).validate(args)
+    result = handlers["freezone_prepare_workflow"](args)
+
+    assert result["status"] == "generation_answers_incomplete"
+    assert "video_aspect_ratio" in result["error"]
 
 
 def test_generation_clarification_preserves_confirmed_model_context(monkeypatch):
