@@ -48,6 +48,7 @@ const pickAt = vi.fn(() => null as string | null);
 const pickPathPointAt = vi.fn(() => null as { clipId: string; pointId: string } | null);
 const capture = vi.fn(async () => new Blob(["png"], { type: "image/png" }));
 const setFrame = vi.fn();
+const setSoloObjects = vi.fn();
 const setSelectedClip = vi.fn();
 const planePointAt = vi.fn(
   (_clientX: number, _clientY: number, _height: number): Vec3 | null => [0, 0, 0],
@@ -113,6 +114,7 @@ function fakeRenderer() {
     pickPathPointAt,
     capture,
     setFrame,
+    setSoloObjects,
     setSelectedClip,
     planePointAt,
     setStroke,
@@ -1459,6 +1461,7 @@ async function renderEditor(overrides: Partial<ComponentProps<typeof PrevizEdito
     ...result,
     renderer: {
       setFrame,
+      setSoloObjects,
       setSelectedClip,
       planePointAt,
       setStroke,
@@ -1487,6 +1490,21 @@ describe("PrevizEditor timeline", () => {
     act(() => usePrevizStore.getState().setTimelineFrame(42));
 
     expect(renderer.setFrame).toHaveBeenLastCalledWith(42);
+  });
+
+  it("tells the renderer which tracks are soloed", async () => {
+    const { renderer } = await renderEditor();
+
+    act(() => {
+      const id = usePrevizStore.getState().addObject("character")!;
+      usePrevizStore.getState().addObjectToTimeline(id);
+      usePrevizStore.getState().toggleSolo(id);
+    });
+
+    expect(renderer.setSoloObjects).toHaveBeenLastCalledWith(
+      usePrevizStore.getState().soloObjectIds,
+    );
+    expect(usePrevizStore.getState().soloObjectIds).toHaveLength(1);
   });
 
   it("tells the renderer which clip is selected", async () => {

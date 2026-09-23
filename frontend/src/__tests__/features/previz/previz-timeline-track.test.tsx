@@ -346,3 +346,38 @@ describe('PrevizTimelineTrack motion path row', () => {
     expect(onSplit).toHaveBeenCalledWith('r1');
   });
 });
+
+describe('PrevizTimelineTrack solo toggle', () => {
+  it('toggles solo on a non-camera track and reflects it in aria-pressed', async () => {
+    const onToggleSolo = vi.fn();
+    const { rerender } = render(
+      <ul>
+        <PrevizTimelineTrack {...trackProps({ kind: 'character', soloed: false, onToggleSolo })} />
+      </ul>,
+    );
+
+    const toggle = screen.getByRole('button', { name: 'previz.timeline.solo' });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await userEvent.click(toggle);
+    expect(onToggleSolo).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <ul>
+        <PrevizTimelineTrack {...trackProps({ kind: 'character', soloed: true, onToggleSolo })} />
+      </ul>,
+    );
+    expect(screen.getByRole('button', { name: 'previz.timeline.solo' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('has no solo toggle on a camera track', () => {
+    render(
+      <ul>
+        <PrevizTimelineTrack {...trackProps({ onToggleSolo: vi.fn() })} />
+      </ul>,
+    );
+    expect(screen.queryByRole('button', { name: 'previz.timeline.solo' })).toBeNull();
+  });
+});

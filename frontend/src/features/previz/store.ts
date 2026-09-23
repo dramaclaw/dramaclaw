@@ -198,6 +198,11 @@ interface PrevizStoreState {
   timelineRate: number;
   /** 时间轴的横向比例，每秒多少像素。是「怎么看」，不进场景也不进 undo 栈。 */
   timelineZoom: number;
+  /**
+   * 独奏的对象。非空时视口里只有它们吃片段，其余非机位对象停在静态摆位。
+   * 和播放头同类的会话态：不进场景、不进 undo 栈，换节点即清空。
+   */
+  soloObjectIds: string[];
   selectedClipId: string | null;
   selectedPointId: string | null;
   /** 绘制轨迹时的轨迹点间距，单位米。 */
@@ -269,6 +274,7 @@ interface PrevizStoreState {
   splitClipAtPlayhead: (clipId: string) => void;
   removeClipById: (clipId: string) => void;
   removeTrackFor: (objectId: string) => void;
+  toggleSolo: (objectId: string) => void;
   /** 路径片段的「看向」：走的是自己那条路，眼睛一路盯着谁。null 回到沿切线朝向。 */
   setClipAim: (clipId: string, aimObjectId: string | null) => void;
   /** 给机位新建一段特写，覆盖被跟对象在时间轴上已经占到的那一段。 */
@@ -317,6 +323,7 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   playbackCarry: 0,
   timelineRate: 1,
   timelineZoom: PREVIZ_TIMELINE_ZOOM.default,
+  soloObjectIds: [],
   selectedClipId: null,
   selectedPointId: null,
   pathSpacingM: PREVIZ_PATH_SPACING_M.default,
@@ -338,6 +345,7 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
       playbackCarry: 0,
       // 换节点等于换一条时间轴，上一条缩到多大跟这条的时长没关系。
       timelineZoom: PREVIZ_TIMELINE_ZOOM.default,
+      soloObjectIds: [],
       selectedClipId: null,
       selectedPointId: null,
       motionDialog: null,
@@ -415,7 +423,8 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   },
 
   removeObject: (id) => {
-    const { scene, applyScene, selectedObjectId, activeCameraId, monitorFollowsProgram } = get();
+    const { scene, applyScene, selectedObjectId, activeCameraId, monitorFollowsProgram, soloObjectIds } =
+      get();
     if (!scene.objects.some((object) => object.id === id)) return;
 
     applyScene({
@@ -434,6 +443,7 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
       activeCameraId: activeCameraId === id ? null : activeCameraId,
       // 手动挑的那台没了，监看回到跟随，而不是黑着等人再点一次「跟随」。
       monitorFollowsProgram: activeCameraId === id ? true : monitorFollowsProgram,
+      soloObjectIds: soloObjectIds.filter((soloId) => soloId !== id),
     });
   },
 
@@ -680,9 +690,24 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   },
 
   removeTrackFor: (objectId) => {
-    const { scene, applyScene } = get();
+    const { scene, applyScene, soloObjectIds } = get();
     applyScene(removeTrack(scene, objectId));
-    set({ selectedClipId: null, selectedPointId: null });
+    set({
+      selectedClipId: null,
+      selectedPointId: null,
+      // 轨道没了 S 也点不到了，留着就是一个看不见的独奏把全场冻住。
+      soloObjectIds: soloObjectIds.filter((id) => id !== objectId),
+    });
+  },
+
+  toggleSolo: (objectId) => {
+    const { scene, soloObjectIds } = get();
+    // 顺手清掉已经没有轨道的 id：撤销「加到时间轴」后它的 S 点不到了，
+    // 留着的话重做一次它会悄悄重新独奏。
+    const kept = soloObjectIds.filter((id) => id !== objectId && trackFor(scene, id));
+    set({
+      soloObjectIds: soloObjectIds.includes(objectId) ? kept : [...kept, objectId],
+    });
   },
 
   openMotionDialog: (dialog) => set({ motionDialog: dialog }),

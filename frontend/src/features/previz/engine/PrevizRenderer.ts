@@ -14,6 +14,7 @@ import type { PrevizPropExtent } from '../domain/moveAssist';
 import type { PrevizMotionStatus } from '../domain/motionLibrary';
 import { PREVIZ_DEFAULT_HEIGHT_CM } from '../domain/objects';
 import type { PrevizObject, PrevizScene, PrevizTransform, Vec3 } from '../domain/scene';
+import { soloScene } from '../domain/timeline';
 import {
   PREVIZ_TOP_DOWN_DEFAULT_BOUNDS,
   topDownView,
@@ -241,6 +242,10 @@ export class PrevizRenderer {
   }
   /** 录制进行中：位图钉在出片分辨率上，rAF 循环与 resize() 都让路，见 `startRecording`。 */
   private recording = false;
+  /** 独奏的对象，由编辑器从 store 同步过来。录制与出图期间不看它，见 `applyEvaluatedFrame`。 */
+  private soloObjectIds: readonly string[] = [];
+  /** 出图进行中：和录制一样按完整场景解算，见 `capture`。 */
+  private capturing = false;
   /** 懒建：从不点画布的会话不需要它。Raycaster 没有 dispose()，纯数学对象，不用还。 */
   private raycaster: THREE.Raycaster | null = null;
   private currentScene: PrevizScene | null = null;
@@ -669,6 +674,14 @@ export class PrevizRenderer {
     this.requestRender();
   }
 
+  /** 换独奏集合。暂停时也要立刻看到效果，所以当场按当前帧重解一遍。 */
+  setSoloObjects(ids: readonly string[]): void {
+    if (this.disposed) return;
+    this.soloObjectIds = ids;
+    this.applyEvaluatedFrame();
+    this.requestRender();
+  }
+
   /**
    * 高亮某条轨迹，以及其中某一个轨迹点。传 null 取消高亮。
    *
@@ -771,7 +784,10 @@ export class PrevizRenderer {
   private applyEvaluatedFrame(): void {
     const scene = this.currentScene;
     if (!scene) return;
-    const evaluated = evaluateSceneAt(scene, this.currentFrame, this.propExtents());
+    // 录制、出图一律按完整场景：独奏是看的工具，不该漏进导出的成片。
+    const solved =
+      this.recording || this.capturing ? scene : soloScene(scene, this.soloObjectIds);
+    const evaluated = evaluateSceneAt(solved, this.currentFrame, this.propExtents());
     for (const [objectId, state] of evaluated) {
       // 姿势不归手摆管：拖动一个正在走的人物改的是他站在哪，不是把他的腿定住。
       if (state.motion) {
@@ -1056,6 +1072,10 @@ export class PrevizRenderer {
       active && active.kind === 'camera' && activeNode && this.monitorCamera,
     );
 
+    // 忘了关 S 就出图，图里其他人全停在静态摆位上：先按完整场景把这一帧重解一遍。
+    const soloed = this.soloObjectIds.length > 0;
+    this.capturing = true;
+    if (soloed) this.applyEvaluatedFrame();
     // 手柄、轨迹辅助物、描边名牌、以及出片机位自己的锥体，都不该进画面。
     this.gizmo?.setHelperVisible(false);
     this.setEditorHelpersVisible(false);
@@ -1087,6 +1107,8 @@ export class PrevizRenderer {
         aspect,
       );
     } finally {
+      this.capturing = false;
+      if (soloed) this.applyEvaluatedFrame();
       this.camera.aspect = editorAspect;
       this.camera.updateProjectionMatrix();
       if (useMonitor && activeNode) activeNode.visible = true;
@@ -1199,6 +1221,8 @@ export class PrevizRenderer {
         if (ended) return;
         ended = true;
         this.recording = false;
+        // 录制最后一帧是按完整场景解的；有独奏时换回独奏视图，别等播放头再动一下。
+        if (this.soloObjectIds.length > 0) this.applyEvaluatedFrame();
         this.controls.enabled = controlsWereEnabled;
         this.canvas.style.objectFit = '';
         if (cameraNode) cameraNode.visible = true;
