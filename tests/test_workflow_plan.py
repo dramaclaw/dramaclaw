@@ -626,6 +626,192 @@ def test_custom_items_take_precedence_over_standard_planner(monkeypatch):
     assert node_ids == {"workflow_input", "custom_image"}
 
 
+_STAGE_LOCK_UNITS = [
+    {"title": "开场", "prompt": "快速建立主题", "narration": "先看核心内容。"},
+    {"title": "收尾", "prompt": "完成信息收束", "narration": "以上就是全部内容。"},
+]
+
+
+def test_standard_skill_stage_templates_are_locked_to_the_planner_output(monkeypatch):
+    """Issue #677: ``stages`` on each deterministic profile is the machine-comparable
+    shape of what the standard planner emits. Every planner output must map onto
+    it, and ``required`` must mean "emitted for every deliverable / audio choice"."""
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    for skill_id, profile in catalog._DETERMINISTIC_SKILL_PLANNERS.items():
+        stages = {stage["id"]: stage for stage in profile["stages"]}
+        assert stages, skill_id
+        seen_in_every_run = set(stages)
+        seen_in_any_run: set[str] = set()
+        for deliverable in profile["deliverables"]:
+            for include_audio in (True, False):
+                result = catalog.compile_workflow_intent({
+                    "skill_id": skill_id,
+                    "user_goal": "生成一个两段式竖屏测试视频",
+                    "planner": {
+                        "mode": "standard",
+                        "item_count": 2,
+                        "deliverable": deliverable,
+                        "include_audio": include_audio,
+                        "units": _STAGE_LOCK_UNITS,
+                    },
+                })
+                assert result["ok"] is True, (skill_id, deliverable, include_audio, result)
+                # The planner's own output never trips the stage check.
+                assert result["preflight"]["blockers"] == [], (skill_id, deliverable)
+                labels: set[str] = set()
+                for node in result["plan"]["nodes"]:
+                    label = node.get("stage") or node.get("data", {}).get("stage")
+                    if label in {"input", "compose"}:
+                        continue
+                    assert label in stages, (skill_id, node["id"], label)
+                    stage = stages[label]
+                    assert node["node_type"] == stage["node_type"], (skill_id, node["id"])
+                    recipe_id = node["data"]["workflowCatalog"]["recipeId"]
+                    assert recipe_id in stage["recipes"], (skill_id, node["id"], recipe_id)
+                    labels.add(label)
+                seen_in_every_run &= labels
+                seen_in_any_run |= labels
+        assert seen_in_any_run == set(stages), (skill_id, seen_in_any_run)
+        assert {s for s, stage in stages.items() if stage["required"]} == seen_in_every_run, (
+            skill_id
+        )
+        # The template is what the agent sees in the planning contract.
+        package = catalog.get_workflow_skill({"skill_id": skill_id, "user_goal": "测试"})
+        assert package["planning_contract"]["standard_planner"]["stages"] == profile["stages"]
+
+
+def _short_drama_plan_without_shot_planning(catalog) -> dict:
+    compiled = catalog.compile_workflow_intent({
+        "skill_id": "short-drama-quick",
+        "user_goal": "舞台对决",
+        "planner": {"mode": "standard", "item_count": 2, "include_audio": False},
+    })
+    assert compiled["ok"] is True, compiled
+    plan = copy.deepcopy(compiled["plan"])
+    plan.pop("planner", None)
+    plan.pop("layout", None)
+    shot_ids = {node["id"] for node in plan["nodes"] if node.get("stage") == "shots"}
+    assert shot_ids
+    plan["nodes"] = [node for node in plan["nodes"] if node["id"] not in shot_ids]
+    # Feed the clips straight from the outline, as the agent-authored draft did.
+    plan["edges"] = [
+        {**edge, "source": "outline"} if edge["source"] in shot_ids else edge
+        for edge in plan["edges"]
+        if edge["target"] not in shot_ids
+    ]
+    return plan
+
+
+def test_exact_plan_without_a_required_stage_is_a_preflight_blocker(monkeypatch):
+    """Issue #677 (舞台对决): a raw plan that skips the Skill's shot-planning stage
+    validates but its preflight is blocked instead of ready."""
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    plan = _short_drama_plan_without_shot_planning(catalog)
+
+    validated = catalog.validate_agent_workflow_plan(plan)
+
+    assert validated["ok"] is True, validated
+    assert validated["planner"]["mode"] == "agent_authored"
+    preflight = validated["preflight"]
+    assert preflight["status"] == "blocked"
+    assert [b["code"] for b in preflight["blockers"]] == ["skill_stage_missing"]
+    blocker = preflight["blockers"][0]
+    assert blocker["path"] == "plan.stages.shots"
+    assert blocker["stage"] == "shots"
+    assert blocker["node_type"] == "textAnnotationNode"
+    assert "drama-shot-group-detail" in blocker["recipes"]
+    assert "shots stage" in blocker["message"]
+    assert "planner.mode=standard" in blocker["hint"]
+    # The ordinary plan preflight fields survive beside the blocker.
+    assert preflight["counts"]["video"] == 2
+    assert "warnings" in preflight
+
+    # A shot-planning node clears it: by stage label ...
+    labelled = copy.deepcopy(plan)
+    labelled["nodes"].append({
+        "id": "shot_design", "node_type": "textAnnotationNode", "stage": "shots",
+        "prompt": "拆解每个镜头", "data": {"workflowCatalog": {"recipeId": "general-text"}},
+    })
+    labelled["edges"].append({"source": "outline", "target": "shot_design", "link_type": "context_for"})
+    assert catalog.validate_agent_workflow_plan(labelled)["preflight"]["blockers"] == []
+    # ... or by a recipe of the stage's family without any label.
+    by_recipe = copy.deepcopy(plan)
+    by_recipe["nodes"].append({
+        "id": "shot_design", "node_type": "textAnnotationNode",
+        "prompt": "拆解每个镜头",
+        "data": {"workflowCatalog": {"recipeId": "drama-shot-planning"}},
+    })
+    by_recipe["edges"].append({"source": "outline", "target": "shot_design", "link_type": "context_for"})
+    assert catalog.validate_agent_workflow_plan(by_recipe)["preflight"]["blockers"] == []
+
+
+def test_intent_items_without_a_required_stage_are_a_preflight_blocker(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+
+    result = catalog.compile_workflow_intent({
+        "skill_id": "video-tutorial",
+        "user_goal": "三步教你泡咖啡",
+        "include_compose": False,
+        "items": [
+            {"id": "outline", "title": "教程大纲", "prompt": "列出三个步骤",
+             "recipe_id": "general-text"},
+            {"id": "clip_1", "title": "步骤一", "prompt": "研磨咖啡豆",
+             "recipe_id": "general-video", "depends_on": ["outline"],
+             "duration_seconds": 5},
+        ],
+    })
+
+    assert result["ok"] is True, result
+    assert result["planner"]["mode"] == "agent_authored"
+    assert result["preflight"]["status"] == "blocked"
+    assert [(b["code"], b["stage"]) for b in result["preflight"]["blockers"]] == [
+        ("skill_stage_missing", "images"),
+    ]
+
+
+def test_skill_stage_blockers_tolerance():
+    """node_type + recipe family: a single stage of a kind accepts any executable
+    node of that kind; a kind shared by two stages needs the label or a family
+    recipe; user-material text nodes never count; skills without a standard
+    planner are not checked."""
+    catalog = _load_catalog_module()
+
+    def node(node_id, node_type, recipe_id=None, stage=None):
+        data = {"workflowCatalog": {"recipeId": recipe_id}} if recipe_id else {}
+        return {"id": node_id, "node_type": node_type, "data": data,
+                **({"stage": stage} if stage else {})}
+
+    ok_plan = [
+        node("brief", "textAnnotationNode", stage="input"),
+        node("outline", "scriptNode", "video-creative-outline"),
+        node("frame", "imageGenNode", "some-custom-image-recipe"),
+        node("clip", "videoNode", "some-custom-video-recipe"),
+    ]
+    assert catalog.skill_stage_blockers("text-to-image-video", ok_plan) == []
+    # Only user material of the text kind: the planning stage is still missing.
+    codes = [
+        b["stage"]
+        for b in catalog.skill_stage_blockers("text-to-image-video", ok_plan[:1] + ok_plan[2:])
+    ]
+    assert codes == ["planning"]
+    # Two text stages: two unlabeled general-text nodes fill only planning.
+    drama = [
+        node("outline", "textAnnotationNode", "general-text"),
+        node("more_text", "textAnnotationNode", "general-text"),
+        node("clip", "videoNode", "general-video"),
+    ]
+    assert [b["stage"] for b in catalog.skill_stage_blockers("short-drama-quick", drama)] == [
+        "shots"
+    ]
+    drama[1]["data"]["stage"] = "Shots"
+    assert catalog.skill_stage_blockers("short-drama-quick", drama) == []
+    assert catalog.skill_stage_blockers("not-a-template-skill", []) == []
+    assert catalog.standard_skill_stages("not-a-template-skill") == []
+
+
 def _dynamic_plan(*, image_count: int = 1) -> dict:
     nodes = [
         {

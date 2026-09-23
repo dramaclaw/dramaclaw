@@ -2765,6 +2765,61 @@ def test_backend_returns_standard_clarification_for_missing_generation_choices(m
     assert detail["preflight"]["status"] == "blocked"
 
 
+def test_backend_reports_missing_skill_stage_before_missing_generation_choices(monkeypatch):
+    """Issue #677: a required stage the plan skipped is a structural blocker the
+    server-owned entry keeps from the compiled preflight and reports first,
+    ahead of any clarification about generation choices."""
+    import asyncio
+
+    from novelvideo.api.routes import freezone, tasks
+
+    async def video_models(project, user):
+        return {"ok": True, "data": [{
+            "id": "seedance-2.0", "ratioOptions": ["16:9"], "resolutionOptions": ["720P"],
+            "minDuration": 2, "maxDuration": 10, "supportsGenerateAudio": True,
+        }]}
+
+    async def limits(project, user):
+        return {"ok": True, "data": {"video": {"limit": 2, "remaining": 2}}}
+
+    monkeypatch.setattr(freezone, "freezone_video_models", video_models)
+    monkeypatch.setattr(tasks, "get_project_task_limits", limits)
+    stage_blocker = {
+        "path": "plan.stages.shots",
+        "code": "skill_stage_missing",
+        "message": "Skill short-drama-quick requires a shots stage; no textAnnotationNode "
+                   "node carries stage=\"shots\" or one of its recipes (drama-shot-group-detail)",
+        "stage": "shots", "node_type": "textAnnotationNode",
+        "recipes": ["drama-shot-group-detail"],
+    }
+    compiled = {
+        "ok": True,
+        "skill_id": "short-drama-quick",
+        "plan": {"nodes": [
+            {"id": "shot-1", "node_type": "videoNode", "data": {
+                "model": "seedance-2.0", "quality": "720P",
+                "workflowCatalog": {"recipeId": "general-video"},
+            }},
+        ], "edges": []},
+        "preflight": {"status": "blocked", "blockers": [stage_blocker], "warnings": []},
+    }
+
+    with pytest.raises(HTTPException) as excinfo:
+        asyncio.run(freezone._check_workflow_runtime(
+            compiled, project="proj_demo", user={"username": "alice"}
+        ))
+
+    detail = excinfo.value.detail
+    assert excinfo.value.status_code == 400
+    assert detail["status"] == "workflow_preflight_failed"
+    assert detail["error"] == stage_blocker["message"]
+    assert detail["retryable"] is False
+    assert detail["next_action"] == "resolve_preflight_blockers"
+    codes = [blocker["code"] for blocker in detail["preflight"]["blockers"]]
+    assert codes[0] == "skill_stage_missing"
+    assert "generation_parameters_required" in codes
+
+
 def test_backend_reports_non_retryable_blocker_before_missing_generation_choices(monkeypatch):
     """A disabled queue cannot be fixed by answering a card: beside missing
     generation choices the entry must fail with that blocker instead of
