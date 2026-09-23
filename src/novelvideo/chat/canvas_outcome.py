@@ -18,15 +18,19 @@ CANVAS_FINAL_RESPONSE_INSTRUCTIONS = (
     "A creation receipt does not prove media generation or parameter persistence."
 )
 
-# Sent once, on the same thread, when a turn with no canvas write ended in a
-# reply that broke the envelope contract (#680). The answer is kept; only its
-# format is repaired, and without write evidence it cannot become a mutation.
+# Sent once, on the same thread, when a turn with no canvas write attempt ended
+# in a reply that is not a well-formed envelope (#680). The answer is rewritten
+# from this turn's evidence rather than repeated: prose from the malformed
+# reply may claim a change that never happened.
 CANVAS_FORMAT_REPAIR_PROMPT = (
-    "Your previous final response did not follow the required JSON format, and "
-    "no canvas write happened in this turn. Do not call any tools. Send the same "
-    "answer to the user again as the message field, with mode=read_only (or "
-    "blocked if the request could not be completed) and canvas_receipts=[]. Do "
-    "not claim any canvas change."
+    "Your previous final response was not the required JSON object. This turn "
+    "made zero canvas writes: no node, edge, parameter, or run was created, "
+    "changed, deleted, or started. Do not call any tools. Rewrite your answer to "
+    "the user using only this turn's tool results. If your previous answer said "
+    "or implied that anything on the canvas was created, changed, saved, or run, "
+    "that statement is false: do not repeat it, and say instead that the canvas "
+    "was not changed. Use mode=read_only (or blocked if the request could not be "
+    "completed) and canvas_receipts=[]."
 )
 
 _REPLY_CONTRACT_FAILURE = "回复未通过操作结果校验："
@@ -81,6 +85,28 @@ def _claim_reference(value: Any) -> tuple[str, int | None] | None:
     return None
 
 
+def _parse_canvas_envelope(text: str) -> tuple[dict[str, Any] | None, str]:
+    """Check only the reply's shape; claims are judged against evidence later."""
+    try:
+        reply = json.loads(text)
+    except (TypeError, ValueError):
+        return None, _REPLY_CONTRACT_FAILURE + "未返回结构化结果，请重试。"
+    if not isinstance(reply, dict):
+        return None, _REPLY_CONTRACT_FAILURE + "结果格式无效，请重试。"
+    message = reply.get("message")
+    mode = reply.get("mode")
+    if (
+        set(reply) != {"message", "mode", "canvas_receipts"}
+        or not isinstance(message, str)
+        or not message.strip()
+        or not isinstance(mode, str)
+        or mode not in {"read_only", "mutation", "blocked"}
+        or not isinstance(reply.get("canvas_receipts"), list)
+    ):
+        return None, _REPLY_CONTRACT_FAILURE + "结果格式无效，请重试。"
+    return reply, ""
+
+
 def finalize_canvas_reply(
     text: str,
     *,
@@ -108,24 +134,10 @@ def finalize_canvas_reply(
         return "画布操作等待确认或执行回执，尚未完成。"
     if draft_ready and not attempts:
         return "工作流草稿已准备完成，等待你确认后创建画布节点；尚未执行生成。"
-    try:
-        reply = json.loads(text)
-    except (TypeError, ValueError):
-        return _REPLY_CONTRACT_FAILURE + "未返回结构化结果，请重试。"
-    if not isinstance(reply, dict):
-        return _REPLY_CONTRACT_FAILURE + "结果格式无效，请重试。"
-    message = reply.get("message")
-    mode = reply.get("mode")
-    claims = reply.get("canvas_receipts")
-    if (
-        set(reply) != {"message", "mode", "canvas_receipts"}
-        or not isinstance(message, str)
-        or not message.strip()
-        or not isinstance(mode, str)
-        or mode not in {"read_only", "mutation", "blocked"}
-        or not isinstance(claims, list)
-    ):
-        return _REPLY_CONTRACT_FAILURE + "结果格式无效，请重试。"
+    reply, envelope_error = _parse_canvas_envelope(text)
+    if reply is None:
+        return envelope_error
+    message, mode, claims = reply["message"], reply["mode"], reply["canvas_receipts"]
     if mode == "mutation":
         if not attempts or not claims:
             return "画布操作未完成：本轮没有可验证的画布写入回执，请重试。"
@@ -149,13 +161,13 @@ def needs_canvas_format_repair(
     receipts: set[tuple[str, int | None]],
     draft_ready: bool = False,
 ) -> bool:
-    """Whether a no-write turn failed only the reply contract, not the evidence.
+    """Whether a no-write turn's reply failed the envelope shape, not the evidence.
 
     Turns with any write attempt, receipt, or pending draft are settled by the
-    receipt checks alone; a format retry must never get to rewrite those.
+    receipt checks alone. A well-formed envelope whose claims contradict the
+    evidence (for example read_only with invented receipts) is a false claim,
+    not a format slip, and is never given a second attempt.
     """
     if attempts or receipts or draft_ready:
         return False
-    return finalize_canvas_reply(
-        text, attempts=attempts, receipts=receipts
-    ).startswith(_REPLY_CONTRACT_FAILURE)
+    return _parse_canvas_envelope(text)[0] is None

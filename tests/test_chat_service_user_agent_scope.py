@@ -6693,10 +6693,20 @@ async def test_codex_freezone_read_only_plain_reply_is_repaired_once(
                 ensure_ascii=False,
             )
         ),
+        _codex_turn_events(
+            json.dumps(
+                {
+                    "message": "图片节点已创建成功。",
+                    "mode": "read_only",
+                    "canvas_receipts": [{"bridge_key": "forged", "revision": None}],
+                },
+                ensure_ascii=False,
+            )
+        ),
         _codex_turn_events(_READ_ONLY_ANSWER, disposition="timeout"),
         _codex_turn_events(_READ_ONLY_ANSWER, disposition="interrupted"),
     ],
-    ids=["valid_envelope", "timeout", "interrupted"],
+    ids=["valid_envelope", "forged_read_only_receipts", "timeout", "interrupted"],
 )
 async def test_codex_freezone_format_repair_only_follows_completed_contract_failure(
     monkeypatch, tmp_path, first_turn
@@ -6734,7 +6744,7 @@ async def test_codex_freezone_format_repair_only_follows_completed_contract_fail
     async def collect_event(_event):
         return None
 
-    await chat_service._stream_assistant_reply_codex(
+    result = await chat_service._stream_assistant_reply_codex(
         "admin",
         "project-a",
         "只给我布局建议",
@@ -6755,3 +6765,4 @@ async def test_codex_freezone_format_repair_only_follows_completed_contract_fail
     )
 
     assert len(prompts) == 1
+    assert "已创建成功" not in result["content"]
