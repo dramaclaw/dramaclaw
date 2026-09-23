@@ -2240,6 +2240,7 @@ class NewApiVideoGenerator(VideoGeneratorBase):
             "imageReference": "image_reference",
             "allReference": "all_reference",
             "videoEdit": "video_edit",
+            "videoExtend": "video_extend",
         }.get(str(mode or "").strip(), str(mode or "").strip())
 
         if normalized_mode == "text_to_video":
@@ -2328,7 +2329,12 @@ class NewApiVideoGenerator(VideoGeneratorBase):
         if file_urls and link_urls:
             raise ValueError("reference_file and reference_link are mutually exclusive")
 
-        if normalized_mode in {"image_reference", "all_reference", "video_edit"}:
+        if normalized_mode in {
+            "image_reference",
+            "all_reference",
+            "video_edit",
+            "video_extend",
+        }:
             if image_urls:
                 metadata["reference_images"] = image_urls
             if video_urls:

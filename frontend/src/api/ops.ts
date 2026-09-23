@@ -476,6 +476,47 @@ export async function submitFreezoneVideoEdit(
   );
 }
 
+// /freezone/video/video-extend -------------------------------------------- //
+
+export interface FreezoneVideoExtendPayload extends FreezoneNodeContext {
+  /** 待延长的源视频静态地址，必填。 */
+  videoUrl: string;
+  /** 源视频结束后要继续生成的内容。 */
+  prompt: string;
+  cameraTemplateId?: string | null;
+  resolution?: FreezoneVideoResolution;
+  /** 新生成延长片段的时长。 */
+  durationSeconds?: number;
+  generateAudio?: boolean;
+  model?: string;
+  genMode: "videoExtend";
+  humanReview?: boolean;
+}
+
+export async function submitFreezoneVideoExtend(
+  project: string,
+  payload: FreezoneVideoExtendPayload,
+): Promise<FreezoneJobRef> {
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/video/video-extend`,
+    {
+      method: "POST",
+      json: {
+        video_url: payload.videoUrl,
+        prompt: payload.prompt,
+        camera_template_id: payload.cameraTemplateId ?? null,
+        resolution: payload.resolution ?? "720p",
+        duration_seconds: Math.max(payload.durationSeconds ?? 5, 1),
+        generate_audio: payload.generateAudio ?? false,
+        ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
+        gen_mode: payload.genMode,
+        human_review: payload.humanReview ?? false,
+        ...nodeContextBody(payload),
+      },
+    },
+  );
+}
+
 // /freezone/video/omni-gen ------------------------------------------------ //
 
 export type FreezoneVideoReferenceType = "image" | "video" | "audio" | "file" | "link";
