@@ -199,7 +199,8 @@ item list that restates the template (every executable node fills a template sta
 stages present and fed, no edge from a later stage back to an earlier one; node counts and
 prompts are parameters) is compiled by the standard planner with the briefs as its units, but
 only when that compilation reproduces the plan node for node (same prompts per stage, same
-dependencies, same narration and music); the draft then shows
+recipes and execution parameters, same dependencies, same narration and music); the draft then
+shows
 `preview.planner.selected_by = template_isomorphic`. A genuine deviation, or a plan the standard
 units cannot express, stays agent-authored and `preview.planner.template_match.reason` names it.
 For error recovery,

@@ -643,33 +643,86 @@ def _narrations_by_unit(
     return narrations
 
 
-_SIGNATURE_MEDIA_FIELDS = (
-    "model",
-    "aspectRatio",
-    "quality",
-    "size",
-    "genMode",
-    "generateAudio",
-    "durationSec",
-    "count",
-)
+# Node data that describes the node rather than what it generates: labels,
+# the prompt / text (compared separately, whitespace-normalised) and the
+# catalog bookkeeping the compiler derives. Everything else in ``data`` is an
+# execution parameter (model, ratio, quality, duration, speechMode, voiceId,
+# voiceAvailable, presetVoice, makeInstrumental, ...) and must match exactly.
+_PRESENTATION_DATA_KEYS = {
+    "displayName",
+    "title",
+    "name",
+    "label",
+    "description",
+    "content",
+    "prompt",
+    "text",
+    "stage",
+    "workflowCatalog",
+    "workflowCatalogRole",
+}
+_DERIVED_CATALOG_KEYS = {
+    "recipeId",
+    "recipePipeline",
+}
+
+
+def _hashable(value: Any) -> Any:
+    if isinstance(value, dict):
+        return tuple(sorted((str(k), _hashable(v)) for k, v in value.items()))
+    if isinstance(value, (list, tuple)):
+        return tuple(_hashable(v) for v in value)
+    return value
+
+
+def _node_signature(node: dict[str, Any]) -> tuple:
+    """What an executable node says, independent of id, label and layout."""
+    node_type = _text(node.get("node_type") or node.get("type"))
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    kind = _node_kind(node_type)
+    if kind == "audioNode":
+        text = _node_text(node, "text", "prompt", "content")
+    else:
+        text = _node_text(node, "prompt", "description", "content")
+    catalog = (
+        data.get("workflowCatalog")
+        if isinstance(data.get("workflowCatalog"), dict)
+        else {}
+    )
+    pipeline = (
+        catalog.get("recipePipeline")
+        if isinstance(catalog.get("recipePipeline"), list)
+        else []
+    )
+    recipe = (
+        _text(catalog.get("recipeId")),
+        tuple(
+            _text(step.get("id") if isinstance(step, dict) else step)
+            for step in pipeline
+        ),
+    )
+    settings = tuple(
+        sorted(
+            (key, _hashable(value))
+            for key, value in data.items()
+            if key not in _PRESENTATION_DATA_KEYS
+        )
+    )
+    return (kind, re.sub(r"\s+", " ", text), recipe, settings)
 
 
 def _plan_signature(
-    plan: dict[str, Any], stages: list[dict[str, Any]]
-) -> tuple[dict[str, tuple], dict[tuple, int]]:
-    """Per-node content signatures and the edge multiset between them.
+    plan: dict[str, Any],
+) -> tuple[dict[str, tuple], dict[tuple[str, str, str], int]]:
+    """Per-node signatures and the edge multiset (by node id) between them.
 
     Node ids, titles and layout are presentation; what a plan says is each
-    executable node's kind, prompt / text, generation fields and which node
-    is wired to which, consuming (``prompt_for`` / ``context_for`` /
-    ``media_input_for`` ...) or order-only (``dependency_for``). User-material
-    and compose nodes are left out (the planner adds compose itself).
+    executable node's kind, prompt / text, recipe, execution parameters and
+    which node is wired to which, consuming (``prompt_for`` / ``context_for``
+    / ``media_input_for`` ...) or order-only (``dependency_for``).
+    User-material and compose nodes are left out (the planner adds compose
+    itself).
     """
-    kind_counts: dict[str, int] = {}
-    for stage in stages:
-        kind = _node_kind(_text(stage["node_type"]))
-        kind_counts[kind] = kind_counts.get(kind, 0) + 1
     signatures: dict[str, tuple] = {}
     for node in plan.get("nodes") or []:
         if not isinstance(node, dict):
@@ -681,49 +734,105 @@ def _plan_signature(
             node_type in _TEXT_NODE_TYPES and label in _USER_MATERIAL_STAGES
         ):
             continue
-        kind = _node_kind(node_type)
-        if kind == "audioNode":
-            text = _node_text(node, "text", "prompt", "content")
-        else:
-            text = _node_text(node, "prompt", "description", "content")
-        text = re.sub(r"\s+", " ", text)
-        extra: tuple = ()
-        if kind == "audioNode":
-            extra = (("audioKind", _text(data.get("audioKind")) or "speech"),)
-        elif kind in {"imageGenNode", "videoNode"}:
-            extra = tuple((field, data.get(field)) for field in _SIGNATURE_MEDIA_FIELDS)
-        signatures[_text(node.get("id"))] = (kind, text, extra)
-    edge_counts: dict[tuple, int] = {}
+        signatures[_text(node.get("id"))] = _node_signature(node)
+    edges: dict[tuple[str, str, str], int] = {}
     for edge in plan.get("edges") or []:
         if not isinstance(edge, dict):
             continue
-        source = signatures.get(_text(edge.get("source")))
-        target = signatures.get(_text(edge.get("target")))
-        if source is None or target is None:
+        source = _text(edge.get("source"))
+        target = _text(edge.get("target"))
+        if source not in signatures or target not in signatures:
             continue
         link_class = (
-            "order" if _text(edge.get("link_type")) == _ORDER_ONLY_LINK_TYPE else "consume"
+            "order"
+            if _text(edge.get("link_type")) == _ORDER_ONLY_LINK_TYPE
+            else "consume"
         )
-        key = (source, target, link_class)
-        edge_counts[key] = edge_counts.get(key, 0) + 1
-    return signatures, edge_counts
+        edges[(source, target, link_class)] = (
+            edges.get((source, target, link_class), 0) + 1
+        )
+    return signatures, edges
+
+
+def _match_plan_nodes(
+    agent: tuple[dict[str, tuple], dict[tuple[str, str, str], int]],
+    standard: tuple[dict[str, tuple], dict[tuple[str, str, str], int]],
+) -> dict[str, str] | None:
+    """A node-for-node mapping under which both plans have the same edges.
+
+    Nodes with identical signatures are still distinct identities: a frame
+    both clips read maps to one standard frame only, so the second clip's
+    edge cannot be satisfied and no mapping exists. Backtracking over the
+    few same-signature candidates (a plan has at most a dozen units).
+    """
+    agent_sigs, agent_edges = agent
+    standard_sigs, standard_edges = standard
+    if len(agent_sigs) != len(standard_sigs) or sum(agent_edges.values()) != sum(
+        standard_edges.values()
+    ):
+        return None
+    candidates: dict[str, list[str]] = {}
+    for node_id, signature in agent_sigs.items():
+        candidates[node_id] = [k for k, v in standard_sigs.items() if v == signature]
+        if not candidates[node_id]:
+            return None
+    agent_adjacency: dict[str, list[tuple[str, str, str, int]]] = {}
+    for (source, target, link_class), count in agent_edges.items():
+        agent_adjacency.setdefault(source, []).append(
+            (source, target, link_class, count)
+        )
+        agent_adjacency.setdefault(target, []).append(
+            (source, target, link_class, count)
+        )
+    order = sorted(agent_sigs, key=lambda node_id: len(candidates[node_id]))
+    mapping: dict[str, str] = {}
+    used: set[str] = set()
+
+    def consistent(node_id: str) -> bool:
+        for source, target, link_class, count in agent_adjacency.get(node_id, []):
+            if source in mapping and target in mapping:
+                key = (mapping[source], mapping[target], link_class)
+                if standard_edges.get(key, 0) != count:
+                    return False
+        return True
+
+    def assign(index: int) -> bool:
+        if index == len(order):
+            mapped = {
+                (mapping[s], mapping[t], c): n for (s, t, c), n in agent_edges.items()
+            }
+            return mapped == standard_edges
+        node_id = order[index]
+        for candidate in candidates[node_id]:
+            if candidate in used:
+                continue
+            mapping[node_id] = candidate
+            used.add(candidate)
+            if consistent(node_id) and assign(index + 1):
+                return True
+            used.discard(candidate)
+            del mapping[node_id]
+        return False
+
+    return dict(mapping) if assign(0) else None
 
 
 def _template_round_trip_reason(
-    agent_plan: dict[str, Any],
-    standard_plan: dict[str, Any],
-    stages: list[dict[str, Any]],
+    agent_plan: dict[str, Any], standard_plan: dict[str, Any]
 ) -> str | None:
     """Why the standard compilation is not the agent's plan, or None if it is.
 
     Rerouting must never change what the user planned: every executable node
-    of the agent's plan (kind, prompt, generation fields) has to reappear in
-    the standard planner's output, nothing may be added, and the edges have
-    to connect the same nodes the same way (consuming or order-only). Node
-    ids and list order do not matter.
+    of the agent's plan (kind, prompt / text, recipe, execution parameters)
+    has to map onto exactly one node of the standard planner's output with
+    the same signature, nothing may be added, and under that mapping the
+    edges have to be the same (consuming or order-only). Node ids and list
+    order do not count.
     """
-    agent_sigs, agent_edges = _plan_signature(agent_plan, stages)
-    standard_sigs, standard_edges = _plan_signature(standard_plan, stages)
+    agent = _plan_signature(agent_plan)
+    standard = _plan_signature(standard_plan)
+    agent_sigs, agent_edges = agent
+    standard_sigs, standard_edges = standard
     remaining: dict[tuple, int] = {}
     for signature in standard_sigs.values():
         remaining[signature] = remaining.get(signature, 0) + 1
@@ -733,20 +842,46 @@ def _template_round_trip_reason(
         remaining[signature] -= 1
     for node_id, signature in standard_sigs.items():
         if remaining.get(signature, 0) > 0:
-            remaining[signature] -= 1
             return f"not_expressible:extra_node:{node_id}"
-    if agent_edges != standard_edges:
-        for key, count in agent_edges.items():
-            if standard_edges.get(key, 0) != count:
-                src_id = next(k for k, v in agent_sigs.items() if v == key[0])
-                tgt_id = next(k for k, v in agent_sigs.items() if v == key[1])
-                return f"not_expressible:edge:{src_id}->{tgt_id}"
-        for key, count in standard_edges.items():
-            if agent_edges.get(key, 0) != count:
-                src_id = next(k for k, v in standard_sigs.items() if v == key[0])
-                tgt_id = next(k for k, v in standard_sigs.items() if v == key[1])
-                return f"not_expressible:extra_edge:{src_id}->{tgt_id}"
-    return None
+    if _match_plan_nodes(agent, standard) is not None:
+        return None
+    # Same nodes, different wiring: name the first agent edge that no
+    # signature-preserving mapping can place (by node identity, not content).
+    standard_pairs: dict[tuple, int] = {}
+    for (source, target, link_class), count in standard_edges.items():
+        key = (standard_sigs[source], standard_sigs[target], link_class)
+        standard_pairs[key] = standard_pairs.get(key, 0) + count
+    agent_pairs: dict[tuple, int] = {}
+    for (source, target, link_class), count in agent_edges.items():
+        key = (agent_sigs[source], agent_sigs[target], link_class)
+        agent_pairs[key] = agent_pairs.get(key, 0) + count
+        if standard_pairs.get(key, 0) < agent_pairs[key]:
+            return f"not_expressible:edge:{source}->{target}"
+    for (source, target, link_class), count in standard_edges.items():
+        key = (standard_sigs[source], standard_sigs[target], link_class)
+        if agent_pairs.get(key, 0) < standard_pairs[key]:
+            return f"not_expressible:extra_edge:{source}->{target}"
+    # Same content pairs, but no consistent node mapping: some node is wired
+    # to more targets than any node of its kind in the template (a frame both
+    # clips read where the template has one frame per clip).
+    def out_degrees(
+        edges: dict[tuple[str, str, str], int],
+    ) -> dict[tuple[str, str], int]:
+        degrees: dict[tuple[str, str], int] = {}
+        for (source, _target, link_class), count in edges.items():
+            degrees[(source, link_class)] = degrees.get((source, link_class), 0) + count
+        return degrees
+
+    standard_degree: dict[tuple, int] = {}
+    for (source, link_class), degree in out_degrees(standard_edges).items():
+        key = (standard_sigs[source], link_class)
+        standard_degree[key] = max(standard_degree.get(key, 0), degree)
+    agent_degree = out_degrees(agent_edges)
+    for source, target, link_class in agent_edges:
+        allowed = standard_degree.get((agent_sigs[source], link_class), 0)
+        if agent_degree[(source, link_class)] > allowed:
+            return f"not_expressible:edge:{source}->{target}"
+    return "not_expressible:wiring"
 
 
 def _plan_goal_text(plan: dict[str, Any]) -> str:
@@ -1459,7 +1594,7 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
                 )
                 if rerouted is not None:
                     mismatch = _template_round_trip_reason(
-                        compiled["plan"], rerouted["plan"], standard_skill_stages(skill_id)
+                        compiled["plan"], rerouted["plan"]
                     )
                     if mismatch is None:
                         rerouted["planner"] = _template_planner_metadata(
@@ -3235,9 +3370,7 @@ def validate_agent_workflow_plan(
             if rerouted.get("ok"):
                 # Only when the standard planner reproduces the agent's plan node
                 # for node: a plan it cannot express stays agent-authored.
-                mismatch = _template_round_trip_reason(
-                    validated_plan, rerouted["plan"], standard_skill_stages(skill_id)
-                )
+                mismatch = _template_round_trip_reason(validated_plan, rerouted["plan"])
                 if mismatch is None:
                     rerouted["planner"] = _template_planner_metadata(
                         compiled["planner"],

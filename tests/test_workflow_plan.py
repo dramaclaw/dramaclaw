@@ -709,6 +709,108 @@ def test_reroute_never_rewrites_what_the_plan_says(monkeypatch):
     assert nodes["voice_2"]["data"]["text"] == "他没想到，对手是自己的影子。"
 
 
+def test_reroute_maps_nodes_by_identity_and_keeps_execution_parameters(monkeypatch):
+    """Second review of #696: identical-looking nodes are distinct identities
+    (a frame both clips read cannot become two frames), and the recipe and
+    every execution parameter a node carries must survive the round trip."""
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+
+    def validated_planner(plan):
+        validated = catalog.validate_agent_workflow_plan(plan)
+        assert validated["ok"] is True, validated
+        return validated["planner"]
+
+    # 1. Two frames with the same brief and settings; both clips read frame_1.
+    same_units = {"skill_id": "text-to-image-video", "user_goal": "赛博城市",
+                  "planner": {"mode": "standard", "item_count": 2, "units": [
+                      {"title": "镜头", "prompt": "霓虹街道"},
+                      {"title": "镜头", "prompt": "霓虹街道"},
+                  ]}}
+    shared = _raw_plan_from_standard(catalog, same_units, deviate=False)
+    frames = [n for n in shared["nodes"] if n["node_type"] == "imageGenNode"]
+    assert catalog._node_signature(frames[0]) == catalog._node_signature(frames[1])
+    shared["edges"] = [
+        {**e, "source": "frame_1"} if e["source"] == "frame_2" and e["target"] == "clip_2"
+        else e
+        for e in shared["edges"]
+    ]
+    planner = validated_planner(shared)
+    assert planner["mode"] == "agent_authored"
+    assert planner["template_match"]["reason"].startswith("not_expressible:edge:frame_1->")
+    # The untouched twin-unit plan still maps node for node and is rerouted.
+    assert validated_planner(_raw_plan_from_standard(catalog, same_units, deviate=False))[
+        "selected_by"
+    ] == "template_isomorphic"
+
+    # 2. The agent chose a different recipe for the frames.
+    grid = _raw_plan_from_standard(
+        catalog, {"skill_id": "text-to-image-video", "user_goal": "赛博城市",
+                  "planner": {"mode": "standard", "item_count": 1}}, deviate=False,
+    )
+    for node in grid["nodes"]:
+        if node["id"] == "frame_1":
+            node["data"]["workflowCatalog"]["recipeId"] = "video-storyboard-grid"
+    planner = validated_planner(grid)
+    assert planner["mode"] == "agent_authored"
+    assert planner["template_match"]["reason"] == "not_expressible:node:frame_1"
+
+    # 3. A custom voice on the speech node.
+    voiced = _raw_plan_from_standard(
+        catalog, {"skill_id": "short-drama-quick", "user_goal": "舞台对决",
+                  "planner": {"mode": "standard", "item_count": 1, "units": [
+                      {"title": "开场", "prompt": "两人对峙", "narration": "今晚只能有一个人站着离开。"},
+                  ]}}, deviate=False,
+    )
+    for node in voiced["nodes"]:
+        if node["id"] == "voice_1":
+            node["data"].update({"speechMode": "user_custom", "voiceId": "v-42",
+                                 "voiceAvailable": True})
+    planner = validated_planner(voiced)
+    assert planner["mode"] == "agent_authored"
+    assert planner["template_match"]["reason"] == "not_expressible:node:voice_1"
+
+
+def test_intent_items_with_a_custom_recipe_stay_agent_authored(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    result = catalog.compile_workflow_intent({
+        "skill_id": "text-to-image-video",
+        "user_goal": "赛博城市",
+        "planner": {"mode": "standard"},
+        "items": [
+            {"id": "outline", "title": "大纲", "prompt": "赛博城市",
+             "recipe_id": "video-creative-outline"},
+            {"id": "frame_1", "title": "分镜格", "prompt": "霓虹街道",
+             "recipe_id": "video-storyboard-grid", "depends_on": ["outline"]},
+            {"id": "clip_1", "title": "镜头", "prompt": "霓虹街道",
+             "recipe_id": "general-video", "depends_on": ["frame_1"], "duration_seconds": 5},
+        ],
+    })
+    assert result["ok"] is True, result
+    assert result["planner"]["mode"] == "agent_authored"
+    assert result["planner"]["template_match"]["reason"] == "not_expressible:node:frame_1"
+    frame = next(n for n in result["plan"]["nodes"] if n["id"] == "frame_1")
+    assert frame["data"]["workflowCatalog"]["recipeId"] == "video-storyboard-grid"
+
+
+def test_plan_node_matching_is_by_identity():
+    catalog = _load_catalog_module()
+    sig = ("imageGenNode", "x", ("general-image", ()), ())
+    csig = ("videoNode", "x", ("general-video", ()), ())
+    standard = ({"f1": sig, "f2": sig, "c1": csig, "c2": csig},
+                {("f1", "c1", "consume"): 1, ("f2", "c2", "consume"): 1})
+    fan_out = ({"a": sig, "b": sig, "p": csig, "q": csig},
+               {("a", "p", "consume"): 1, ("a", "q", "consume"): 1})
+    assert catalog._match_plan_nodes(fan_out, standard) is None
+    swapped = ({"b": sig, "a": sig, "q": csig, "p": csig},
+               {("b", "q", "consume"): 1, ("a", "p", "consume"): 1})
+    mapping = catalog._match_plan_nodes(swapped, standard)
+    assert mapping is not None
+    assert {mapping["b"], mapping["a"]} == {"f1", "f2"}
+    assert mapping[mapping_key := "q"] in {"c1", "c2"} and mapping_key
+
+
 def test_narrations_follow_their_attachment_not_list_order():
     catalog = _load_catalog_module()
     units = [{"id": "clip_1"}, {"id": "clip_2"}]
