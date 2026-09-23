@@ -149,10 +149,13 @@ def _stage(
 # the stages the planner emits for every deliverable / include_audio choice;
 # an agent-authored plan for the skill must contain each of them or its draft
 # preflight reports ``skill_stage_missing`` (issue #677). ``edges`` lists which
-# stage feeds which: every node of the downstream stage must sit below some
-# node of the upstream stage in the plan graph, or the preflight reports
-# ``skill_stage_unused`` (a shot-planning node nothing consumes is not a
-# shot-planning stage). The table is locked to the planner output by
+# stage's output the next stage consumes: every node of the downstream stage
+# must be reachable from a node of the upstream stage over consuming edges
+# (any link type but ``dependency_for``, which only orders execution), or the
+# preflight reports ``skill_stage_unused`` (a shot-planning node nothing
+# consumes is not a shot-planning stage). Text-to-media ``dependency_for``
+# gating (a planning document ahead of a media stage) is deliberately not an
+# edge here. The table is locked to the planner output by
 # tests/test_workflow_plan.py.
 _DETERMINISTIC_SKILL_PLANNERS = {
     "ecommerce-ad": {
@@ -194,11 +197,7 @@ _DETERMINISTIC_SKILL_PLANNERS = {
             _stage("video", "videoNode", ["video-clip-generation"], required=False),
             _stage("audio", "audioNode", ["general-audio"], required=False),
         ],
-        "edges": [
-            ["planning", "assets"],
-            ["assets", "images"],
-            ["images", "video"],
-        ],
+        "edges": [["assets", "images"], ["images", "video"]],
     },
     "text-to-image-video": {
         "default_item_count": 3,
@@ -220,7 +219,7 @@ _DETERMINISTIC_SKILL_PLANNERS = {
             ),
             _stage("video", "videoNode", ["general-video"], required=True),
         ],
-        "edges": [["planning", "images"], ["images", "video"]],
+        "edges": [["images", "video"]],
     },
     "video-tutorial": {
         "default_item_count": 3,
@@ -233,7 +232,7 @@ _DETERMINISTIC_SKILL_PLANNERS = {
             _stage("video", "videoNode", ["general-video"], required=True),
             _stage("audio", "audioNode", ["general-audio"], required=False),
         ],
-        "edges": [["planning", "images"], ["images", "video"]],
+        "edges": [["images", "video"]],
     },
     "short-drama-quick": {
         "default_item_count": 3,
@@ -286,11 +285,21 @@ def standard_skill_stage_edges(skill_id: str) -> list[tuple[str, str]]:
     return [(str(edge[0]), str(edge[1])) for edge in profile.get("edges") or []]
 
 
+_ORDER_ONLY_LINK_TYPE = "dependency_for"
+
+
 def _downstream_node_ids(node_ids: set[str], edges: Any) -> set[str]:
-    """Every node reachable from ``node_ids`` over the plan's directed edges."""
+    """Every node that consumes ``node_ids`` output, directly or transitively.
+
+    Only consuming edges count: ``dependency_for`` orders execution without
+    handing the source output to the target (the runtime skips such edges when
+    it gathers upstream text), so it cannot make a stage's result "used".
+    """
     successors: dict[str, set[str]] = {}
     for edge in edges if isinstance(edges, list) else []:
         if not isinstance(edge, dict):
+            continue
+        if _text(edge.get("link_type")) == _ORDER_ONLY_LINK_TYPE:
             continue
         source = _text(edge.get("source"))
         target = _text(edge.get("target"))
@@ -347,8 +356,9 @@ def skill_stage_blockers(
     and reached ``ready`` before issue #677 (``skill_stage_missing``). A stage
     node that exists but feeds nothing downstream is no better: every node of
     a downstream stage must be reachable from a node of the upstream stage
-    (``skill_stage_unused``). Skills without a standard planner have no
-    template and are not checked.
+    (``skill_stage_unused``), and only consuming edges count for that: a
+    ``dependency_for`` edge orders execution without feeding the target.
+    Skills without a standard planner have no template and are not checked.
     """
     stages = standard_skill_stages(skill_id)
     if not stages or not isinstance(nodes, list):
@@ -405,17 +415,19 @@ def skill_stage_blockers(
                 "code": "skill_stage_unused",
                 "message": (
                     f"Skill {skill_id} requires the {upstream} stage to feed the "
-                    f"{downstream} stage; {downstream} node(s) {', '.join(unfed)} are not "
-                    f"downstream of any {upstream} node ({', '.join(sources)})"
+                    f"{downstream} stage; {downstream} node(s) {', '.join(unfed)} do not "
+                    f"consume any {upstream} node ({', '.join(sources)}) through a "
+                    "consuming edge (dependency_for only orders execution)"
                 ),
                 "stage": upstream,
                 "downstream_stage": downstream,
                 "node_ids": unfed,
                 "hint": (
-                    f"Add an edge from a {upstream} node to each listed {downstream} node "
-                    f"(directly or through its inputs) so the {upstream} output is what "
-                    f"the {downstream} generation consumes; a {upstream} node nothing "
-                    "downstream reads does not satisfy the stage."
+                    f"Connect a {upstream} node to each listed {downstream} node (directly "
+                    "or through its inputs) with an edge the target consumes: prompt_for "
+                    "from text to generated media, context_for between text nodes, "
+                    "media_input_for from media. dependency_for does not count; a "
+                    f"{upstream} node nothing downstream reads does not satisfy the stage."
                 ),
             }
         )
@@ -1181,6 +1193,12 @@ def _standard_skill_items(
                 recipe_id="general-video",
                 depends_on=[source_id],
                 stage="video",
+                # The shot plan is what the clip renders, not a gate ahead of
+                # it: reference it so the edge is prompt_for and the runtime
+                # feeds the shot text into the video prompt (issue #677).
+                reference_inputs=(
+                    [source_id] if skill_id == "short-drama-quick" else None
+                ),
                 timeline_role="visual",
                 duration_seconds=unit.get("duration_seconds"),
             )
@@ -1298,6 +1316,7 @@ def _planned_item(
     recipe_id: str,
     depends_on: list[str],
     stage: str,
+    reference_inputs: list[str] | None = None,
     narration: str = "",
     timeline_role: str = "",
     duration_seconds: int | None = None,
@@ -1309,6 +1328,7 @@ def _planned_item(
         "recipe_id": recipe_id,
         "depends_on": depends_on,
         "stage": stage,
+        **({"reference_inputs": reference_inputs} if reference_inputs else {}),
         **({"narration": narration} if narration else {}),
         **({"timeline_role": timeline_role} if timeline_role else {}),
         **(

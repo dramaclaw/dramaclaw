@@ -18,9 +18,11 @@ clarification first (see the routing order in SKILL.md).
    stages; every stage marked `required` must appear in a custom plan too (for example the
    shot-planning stage of a short drama). A node fills a stage when it has that stage's
    `node_type` and either sets `stage` to the stage id or uses one of the stage's `recipes`.
-   `standard_planner.edges` lists which stage feeds which (for example `shots` → `video`): every
-   node of the downstream stage must be reachable from a node of the upstream stage through the
-   plan's edges. A draft missing a required stage is not `ready`: its preflight reports
+   `standard_planner.edges` lists which stage's output the next stage consumes (for example
+   `shots` → `video`): every node of the downstream stage must be reachable from a node of the
+   upstream stage through consuming edges (`prompt_for`, `context_for`, `media_input_for`, ...);
+   `dependency_for` only orders execution and does not count. A draft missing a required stage
+   is not `ready`: its preflight reports
    `code="skill_stage_missing"` naming the stage; a stage node that nothing downstream consumes
    reports `code="skill_stage_unused"` with the bypassed node ids. Add the node and feed the
    downstream nodes from it, or use the standard planner instead.

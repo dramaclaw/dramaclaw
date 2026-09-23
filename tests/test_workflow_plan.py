@@ -674,7 +674,8 @@ def test_standard_skill_stage_templates_are_locked_to_the_planner_output(monkeyp
                     ids_by_label.setdefault(label, set()).add(node["id"])
                 seen_in_every_run &= labels
                 seen_in_any_run |= labels
-                # Every declared feeding pair holds in the planner's own graph.
+                # Every declared feeding pair holds in the planner's own graph
+                # over consuming edges (dependency_for does not count).
                 for upstream, downstream in profile["edges"]:
                     assert upstream in stages and downstream in stages, (skill_id, upstream)
                     if downstream not in ids_by_label:
@@ -683,14 +684,20 @@ def test_standard_skill_stage_templates_are_locked_to_the_planner_output(monkeyp
                         ids_by_label[upstream], result["plan"]["edges"]
                     )
                     assert ids_by_label[downstream] <= reached, (skill_id, upstream, downstream)
+                if skill_id == "short-drama-quick":
+                    # The clip consumes its shot plan: prompt_for, not an order gate.
+                    shot_to_clip = {
+                        edge["link_type"]
+                        for edge in result["plan"]["edges"]
+                        if edge["source"].startswith("shot_plan_")
+                        and edge["target"].startswith("clip_")
+                    }
+                    assert shot_to_clip == {"prompt_for"}, shot_to_clip
         assert seen_in_any_run == set(stages), (skill_id, seen_in_any_run)
         assert {s for s, stage in stages.items() if stage["required"]} == seen_in_every_run, (
             skill_id
         )
         assert profile["edges"], skill_id
-        assert {s for pair in profile["edges"] for s in pair} >= {
-            s for s, stage in stages.items() if stage["required"]
-        }, skill_id
         # The template is what the agent sees in the planning contract.
         package = catalog.get_workflow_skill({"skill_id": skill_id, "user_goal": "测试"})
         assert package["planning_contract"]["standard_planner"]["stages"] == profile["stages"]
@@ -744,9 +751,9 @@ def test_exact_plan_without_a_required_stage_is_a_preflight_blocker(monkeypatch)
     assert preflight["counts"]["video"] == 2
     assert "warnings" in preflight
 
-    def with_shot_design(node: dict, *, feeds_clips: bool) -> dict:
-        """Add a shot-planning node under the outline; optionally re-source the
-        clips from it (as the standard planner wires them)."""
+    def with_shot_design(node: dict, *, feeds_clips: bool, link_type: str = "prompt_for") -> dict:
+        """Add a shot-planning node under the outline; optionally connect the
+        clips to it with ``link_type`` (the standard planner uses prompt_for)."""
         revised = copy.deepcopy(plan)
         revised["nodes"].append({**node, "id": "shot_design", "prompt": "拆解每个镜头"})
         revised["edges"].append(
@@ -754,7 +761,7 @@ def test_exact_plan_without_a_required_stage_is_a_preflight_blocker(monkeypatch)
         )
         if feeds_clips:
             revised["edges"] = [
-                {**edge, "source": "shot_design"}
+                {**edge, "source": "shot_design", "link_type": link_type}
                 if edge["source"] == "outline" and edge["target"].startswith("clip_")
                 else edge
                 for edge in revised["edges"]
@@ -785,13 +792,20 @@ def test_exact_plan_without_a_required_stage_is_a_preflight_blocker(monkeypatch)
     # Feeding one clip is not enough: the other is still bypassed.
     partial = with_shot_design(labelled, feeds_clips=False)
     partial["edges"] = [
-        {**edge, "source": "shot_design"}
+        {**edge, "source": "shot_design", "link_type": "prompt_for"}
         if edge["source"] == "outline" and edge["target"] == "clip_1"
         else edge
         for edge in partial["edges"]
     ]
     (unused,) = catalog.validate_agent_workflow_plan(partial)["preflight"]["blockers"]
     assert unused["node_ids"] == ["clip_2"]
+    # An order-only edge does not make the clips consume the shot plan: wiring
+    # shot_design → clip with dependency_for keeps the draft blocked.
+    gated = with_shot_design(labelled, feeds_clips=True, link_type="dependency_for")
+    (unused,) = catalog.validate_agent_workflow_plan(gated)["preflight"]["blockers"]
+    assert unused["code"] == "skill_stage_unused"
+    assert unused["node_ids"] == ["clip_1", "clip_2"]
+    assert "dependency_for" in unused["message"]
 
 
 def test_intent_items_without_a_required_stage_are_a_preflight_blocker(monkeypatch):
@@ -841,20 +855,25 @@ def test_skill_stage_blockers_tolerance():
     ]
     chain = [
         {"source": "brief", "target": "outline", "link_type": "context_for"},
-        {"source": "outline", "target": "frame", "link_type": "context_for"},
+        {"source": "outline", "target": "frame", "link_type": "dependency_for"},
         {"source": "frame", "target": "clip", "link_type": "media_input_for"},
     ]
     assert catalog.skill_stage_blockers("text-to-image-video", ok_plan, chain) == []
-    # Reachability is transitive: outline → frame → clip satisfies planning → images
-    # even without a direct edge, but a clip sourced from the brief bypasses images.
-    bypass = chain[:2] + [{"source": "brief", "target": "clip", "link_type": "context_for"}]
+    # A clip that only waits for the frame (dependency_for) does not consume it.
+    gated = chain[:2] + [{"source": "frame", "target": "clip", "link_type": "dependency_for"}]
     assert [
         (b["code"], b["stage"], b["downstream_stage"], b["node_ids"])
-        for b in catalog.skill_stage_blockers("text-to-image-video", ok_plan, bypass)
+        for b in catalog.skill_stage_blockers("text-to-image-video", ok_plan, gated)
     ] == [("skill_stage_unused", "images", "video", ["clip"])]
-    # Without edges at all every feeding pair is unmet; each is reported once.
+    # Reachability is transitive over consuming edges: frame → extra → clip.
+    extra = ok_plan + [node("extra", "imageGenNode", "another-image-recipe")]
+    via_extra = chain[:2] + [
+        {"source": "frame", "target": "extra", "link_type": "media_input_for"},
+        {"source": "extra", "target": "clip", "link_type": "media_input_for"},
+    ]
+    assert catalog.skill_stage_blockers("text-to-image-video", extra, via_extra) == []
+    # Without edges at all the feeding pair is unmet and reported once.
     assert [b["path"] for b in catalog.skill_stage_blockers("text-to-image-video", ok_plan)] == [
-        "plan.stages.planning.feeds.images",
         "plan.stages.images.feeds.video",
     ]
     # Only user material of the text kind: the planning stage is still missing.
@@ -873,7 +892,7 @@ def test_skill_stage_blockers_tolerance():
     ]
     drama_edges = [
         {"source": "outline", "target": "more_text", "link_type": "context_for"},
-        {"source": "more_text", "target": "clip", "link_type": "dependency_for"},
+        {"source": "more_text", "target": "clip", "link_type": "prompt_for"},
     ]
     assert [
         b["stage"] for b in catalog.skill_stage_blockers("short-drama-quick", drama, drama_edges)
