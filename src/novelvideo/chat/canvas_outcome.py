@@ -18,7 +18,18 @@ CANVAS_FINAL_RESPONSE_INSTRUCTIONS = (
     "A creation receipt does not prove media generation or parameter persistence."
 )
 
-NO_CANVAS_WRITE_NOTE = "\n\n（本轮未修改画布。）"
+# Sent once, on the same thread, when a turn with no canvas write ended in a
+# reply that broke the envelope contract (#680). The answer is kept; only its
+# format is repaired, and without write evidence it cannot become a mutation.
+CANVAS_FORMAT_REPAIR_PROMPT = (
+    "Your previous final response did not follow the required JSON format, and "
+    "no canvas write happened in this turn. Do not call any tools. Send the same "
+    "answer to the user again as the message field, with mode=read_only (or "
+    "blocked if the request could not be completed) and canvas_receipts=[]. Do "
+    "not claim any canvas change."
+)
+
+_REPLY_CONTRACT_FAILURE = "回复未通过操作结果校验："
 
 CANVAS_REPLY_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -100,14 +111,9 @@ def finalize_canvas_reply(
     try:
         reply = json.loads(text)
     except (TypeError, ValueError):
-        plain = text.strip() if isinstance(text, str) else ""
-        if plain and not attempts and not receipts:
-            # A read-only turn's prose is still the answer (#680). Surface it,
-            # but never as a verified write: state the same-turn evidence.
-            return plain + NO_CANVAS_WRITE_NOTE
-        return "回复未通过操作结果校验：未返回结构化结果，请重试。"
+        return _REPLY_CONTRACT_FAILURE + "未返回结构化结果，请重试。"
     if not isinstance(reply, dict):
-        return "回复未通过操作结果校验：结果格式无效，请重试。"
+        return _REPLY_CONTRACT_FAILURE + "结果格式无效，请重试。"
     message = reply.get("message")
     mode = reply.get("mode")
     claims = reply.get("canvas_receipts")
@@ -119,7 +125,7 @@ def finalize_canvas_reply(
         or mode not in {"read_only", "mutation", "blocked"}
         or not isinstance(claims, list)
     ):
-        return "回复未通过操作结果校验：结果格式无效，请重试。"
+        return _REPLY_CONTRACT_FAILURE + "结果格式无效，请重试。"
     if mode == "mutation":
         if not attempts or not claims:
             return "画布操作未完成：本轮没有可验证的画布写入回执，请重试。"
@@ -132,5 +138,24 @@ def finalize_canvas_reply(
         if references != receipts:
             return "画布操作未完成：成功声明未覆盖本轮全部写入回执，请重试。"
     elif claims or attempts:
-        return "回复未通过操作结果校验：操作声明与工具结果不一致，请重试。"
+        return _REPLY_CONTRACT_FAILURE + "操作声明与工具结果不一致，请重试。"
     return message.strip()
+
+
+def needs_canvas_format_repair(
+    text: str,
+    *,
+    attempts: dict[str, str],
+    receipts: set[tuple[str, int | None]],
+    draft_ready: bool = False,
+) -> bool:
+    """Whether a no-write turn failed only the reply contract, not the evidence.
+
+    Turns with any write attempt, receipt, or pending draft are settled by the
+    receipt checks alone; a format retry must never get to rewrite those.
+    """
+    if attempts or receipts or draft_ready:
+        return False
+    return finalize_canvas_reply(
+        text, attempts=attempts, receipts=receipts
+    ).startswith(_REPLY_CONTRACT_FAILURE)

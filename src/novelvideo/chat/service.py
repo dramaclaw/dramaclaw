@@ -31,9 +31,11 @@ from novelvideo.chat.backend_sdk import (
     interrupt_live_codex_turn,
 )
 from novelvideo.chat.canvas_outcome import (
+    CANVAS_FORMAT_REPAIR_PROMPT,
     CANVAS_REPLY_SCHEMA,
     CANVAS_FINAL_RESPONSE_INSTRUCTIONS,
     finalize_canvas_reply,
+    needs_canvas_format_repair,
     receipt_reference,
 )
 from novelvideo.chat.display_fallback import (
@@ -4505,7 +4507,45 @@ async def _stream_assistant_reply_codex(
             turn_id=business_turn_id,
             require_generation_parameter_preflight=tool_mode == "freezone_canvas",
         )
-        async for event in thread.stream(agent_prompt):
+
+        async def turn_events():
+            nonlocal assistant_text, turn_disposition
+            async for event in thread.stream(agent_prompt):
+                yield event
+            if not (
+                structured_canvas_reply
+                and turn_disposition == "completed"
+                and needs_canvas_format_repair(
+                    assistant_text,
+                    attempts=canvas_write_attempts,
+                    receipts=canvas_receipts,
+                    draft_ready=ready_workflow_draft is not None,
+                )
+            ):
+                return
+            # A no-write turn answered outside the envelope (#680). Ask once,
+            # on the same thread, for the same answer in the required format;
+            # its events go through the same write tracking as the first turn.
+            logger.info(
+                "codex canvas reply format repair user=%s project=%s turn=%s",
+                username,
+                project or "<home>",
+                business_turn_id,
+            )
+            original_text, original_disposition = assistant_text, turn_disposition
+            assistant_text, turn_disposition = "", _DEFAULT_TURN_DISPOSITION
+            try:
+                async for event in thread.stream(CANVAS_FORMAT_REPAIR_PROMPT):
+                    yield event
+            except Exception:
+                logger.warning("codex canvas reply format repair failed", exc_info=True)
+                turn_disposition = "failed"
+            if turn_disposition not in {"completed", "cancelled"}:
+                # A failed repair must not surface a transport error in place
+                # of the original contract failure.
+                assistant_text, turn_disposition = original_text, original_disposition
+
+        async for event in turn_events():
             logger.debug(
                 "codex event user=%s project=%s profile=%s type=%s thread=%s turn=%s",
                 username,
