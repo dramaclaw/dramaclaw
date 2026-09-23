@@ -11,8 +11,7 @@ function rawText(errors: string[] | undefined, commandResults: Array<Partial<Can
 }
 
 function isUnavailableModelError(text: string): boolean {
-  return /field model value|not a valid option.*model|模型|model/i.test(text)
-    && /not a valid option|不可用|invalid/i.test(text);
+  return /field model value|not a valid option.*model|模型|model/i.test(text) && /not a valid option|不可用|invalid/i.test(text);
 }
 
 export function canvasCommandUserMessageFromResult(
@@ -25,7 +24,7 @@ export function canvasCommandUserMessageFromResult(
     return "Recipe 文本生成超时：模型在规定时间内未返回结果，请稍后重试。本轮未继续执行下游节点。"; // i18n-exempt -- transport fallback
   }
   if (/cancel|取消|超时/i.test(text)) return "画布操作已取消，没有应用到画布。";
-  // 换模型会改变产物和计费，必须由用户选定，不能由 Agent 自行替换后重跑。
+  // Switching models changes the output and billing, so the user picks it; the agent must not swap and rerun.
   if (isUnavailableModelError(text)) {
     return "当前选择的生成模型不可用，请从当前画布支持的模型中选择一个，我再按你的选择修改。";
   }
