@@ -3639,8 +3639,11 @@ def _finalize_generation_clarification_result(
             "Concrete generation values are in node_data keyed by node type. Copy every "
             "field of node_data.<node_type> verbatim into each matching image/video node's "
             "data on the retried canvas write or WorkflowPlan; do not translate question ids "
-            "yourself or drop a field. For a workflow draft, pass answers unchanged as "
-            "generation_answers, or use the draft id and revision so the tool applies them."
+            "yourself or drop a field. For a new workflow draft, pass only this result's "
+            "answers field: generation_answers = result['answers']; do not pass the entire "
+            "clarification result. If using plan, put the user goal in plan.summary, never "
+            "plan.user_goal (which is only valid on intent). For an existing draft, use its "
+            "draft id and revision so the tool applies the answers."
         ),
     }
 
@@ -6272,6 +6275,16 @@ def _generation_answer_value(question_id: str, selection: Any) -> Any:
 def _generation_choices_from_answers(
     answers: Any,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    receipt_choices: Any = None
+    if isinstance(answers, dict) and "answers" in answers:
+        unknown = set(answers) - {"answers", "generation_choices"}
+        if unknown:
+            return {}, {
+                "ok": False, "status": "generation_answers_incomplete",
+                "error": f"unsupported generation receipt field: {sorted(unknown)[0]}",
+            }
+        receipt_choices = answers.get("generation_choices")
+        answers = answers["answers"]
     if not isinstance(answers, dict) or not answers:
         return {}, {
             "ok": False, "status": "generation_answers_incomplete",
@@ -6283,6 +6296,13 @@ def _generation_choices_from_answers(
             if question_id not in _GENERATION_ANSWER_DATA_FIELDS:
                 raise ValueError(f"unsupported generation answer: {question_id}")
             choices[question_id] = _generation_answer_value(question_id, selection)
+        if receipt_choices is not None:
+            if not isinstance(receipt_choices, dict):
+                raise ValueError("generation_choices must be an object")
+            for question_id, value in receipt_choices.items():
+                expected = choices.get(question_id)
+                if type(value) is not type(expected) or value != expected:
+                    raise ValueError(f"conflicting generation choice: {question_id}")
         for media, mandatory in {
             "image": ("model", "aspect_ratio", "resolution", "variants_per_node"),
             "video": (
@@ -10007,14 +10027,14 @@ TOOLS = (
         "freezone_prepare_workflow",
         _schema(
             "freezone_prepare_workflow",
-            "Prepare a persisted workflow using server-owned compilation. Provide exactly one of intent or plan; optional bindings declare prompt/context/reference/dependency/composition usage. A planning-to-generator prompt binding requires actual prompt text and preserves the original planning role. Returns compact preview; does not create canvas nodes or execute. Follow normal product admission and confirm the returned revision via freezone_confirm_workflow_draft.",
+            "Prepare a persisted workflow using server-owned compilation. Provide exactly one of intent or plan; user_goal belongs in intent, while a plan can use summary for the user goal and does not accept user_goal. Optional bindings declare prompt/context/reference/dependency/composition usage. A planning-to-generator prompt binding requires actual prompt text and preserves the original planning role. Returns compact preview; does not create canvas nodes or execute. Follow normal product admission and confirm the returned revision via freezone_confirm_workflow_draft.",
             {
                 **_SCOPE_PROPS,
                 "intent": _WORKFLOW_INTENT_OBJECT_SCHEMA,
                 "plan": _WORKFLOW_PLAN_OBJECT_SCHEMA,
                 "generation_answers": {
                     "type": "object",
-                    "description": "Pass submitted generation answers unchanged; the server maps them into the selected intent or plan.",
+                    "description": "Pass the clarification result's answers field itself (generation_answers = result['answers']), not the whole result. A receipt envelope with answers and generation_choices is also accepted. The server maps answers into the selected intent or plan.",
                 },
                 "bindings": _WORKFLOW_BINDINGS_SCHEMA,
                 "operation_id": {"type": "string"},
