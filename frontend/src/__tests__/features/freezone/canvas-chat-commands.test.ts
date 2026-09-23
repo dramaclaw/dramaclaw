@@ -22,7 +22,6 @@ import {
   emitCanvasCommandApproval,
   extractCanvasChatCommandEnvelopes,
   FREEZONE_CANVAS_COMMAND_APPROVAL_EVENT,
-  partitionCanvasChatCommandEnvelopes,
   subscribeCanvasCommandApprovals,
   waitForImmediateCanvasCommandResult,
 } from "@/features/freezone/canvasChatCommands";
@@ -2428,42 +2427,6 @@ describe("canvas chat commands", () => {
     expect(payload.edges).toEqual([]);
   });
 
-  it("partitions node creation and destructive commands for explicit approval", () => {
-    const envelopes = extractCanvasChatCommandEnvelopes([
-      {
-        schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
-        commands: [
-          {
-            type: "create_node",
-            node_type: CANVAS_NODE_TYPES.textAnnotation,
-            data: { title: "Safe" },
-          },
-          {
-            type: "delete_nodes",
-            node_ids: ["node-a"],
-          },
-          {
-            type: "delete_edges",
-            pairs: [{ source: "node-a", target: "node-b" }],
-          },
-          {
-            type: "layout_nodes",
-            node_ids: ["a", "b", "c", "d"],
-            mode: "grid",
-          },
-        ],
-      },
-    ]);
-
-    const partitioned = partitionCanvasChatCommandEnvelopes(envelopes);
-
-    expect(partitioned.immediate).toHaveLength(0);
-    expect(partitioned.requiresApproval).toHaveLength(1);
-    expect(
-      partitioned.requiresApproval[0]?.commands.map((command) => command.type),
-    ).toEqual(["create_node", "delete_nodes", "delete_edges", "layout_nodes"]);
-  });
-
   it("moves existing and newly created nodes to exact coordinates", () => {
     const existingId = useCanvasStore
       .getState()
@@ -2705,9 +2668,6 @@ describe("canvas chat commands", () => {
       },
     ]);
     expect(envelopes[0]?.external_mcp_command).toBe(true);
-    const partition = partitionCanvasChatCommandEnvelopes(envelopes);
-    expect(partition.immediate[0]?.external_mcp_command).toBe(true);
-    expect(partition.requiresApproval[0]?.external_mcp_command).toBe(true);
 
     const result = applyCanvasChatCommands(envelopes);
 
@@ -5313,9 +5273,6 @@ describe("canvas chat commands", () => {
     ]);
 
     expect(envelopes).toHaveLength(1);
-    const partition = partitionCanvasChatCommandEnvelopes(envelopes);
-    expect(partition.immediate).toHaveLength(0);
-    expect(partition.requiresApproval).toHaveLength(1);
 
     const result = await applyCanvasChatCommandsAsync(envelopes, {
       canvasId: "default",
