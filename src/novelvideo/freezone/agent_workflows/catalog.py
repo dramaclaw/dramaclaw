@@ -499,7 +499,11 @@ def template_isomorphism(skill_id: str, plan: Any) -> dict[str, Any]:
     ``resource`` / ``asset``) and the planner-added compose node are ignored.
     The result carries ``isomorphic`` plus a machine-readable ``reason`` for
     the first deviation, or the standard planner ``units`` / ``deliverable`` /
-    ``include_audio`` recovered from the nodes when it matches.
+    ``include_audio`` recovered from the nodes when it matches. This is the
+    cheap structural screen; before a plan is actually rerouted the standard
+    compilation is compared with it node for node
+    (``_template_round_trip_reason``), so per-node dependencies, per-stage
+    prompts, narration pairing and music are never changed silently.
     """
     stages = standard_skill_stages(skill_id)
     if not stages:
@@ -560,6 +564,7 @@ def template_isomorphism(skill_id: str, plan: Any) -> dict[str, Any]:
         for node in by_stage.get("audio") or []
         if _text((node.get("data") or {}).get("audioKind") or "speech") != "music"
     ]
+    narrations = _narrations_by_unit(unit_nodes, speech_nodes, edges)
     units: list[dict[str, Any]] = []
     for index, node in enumerate(unit_nodes):
         data = node.get("data") if isinstance(node.get("data"), dict) else {}
@@ -569,10 +574,8 @@ def template_isomorphism(skill_id: str, plan: Any) -> dict[str, Any]:
             "prompt": _node_text(node, "prompt", "description", "content")
             or f"内容段 {index + 1}",
         }
-        if index < len(speech_nodes):
-            unit["narration"] = _node_text(
-                speech_nodes[index], "text", "prompt", "content"
-            )
+        if narrations[index] is not None:
+            unit["narration"] = narrations[index]
         duration = _positive_duration_seconds(data.get("durationSec"))
         if video_nodes and duration is not None:
             unit["duration_seconds"] = duration
@@ -585,6 +588,165 @@ def template_isomorphism(skill_id: str, plan: Any) -> dict[str, Any]:
         "unit_count": len(units),
         "units": units,
     }
+
+
+def _edge_predecessors(edges: Any) -> dict[str, set[str]]:
+    """target -> sources over every edge, order-only ones included.
+
+    Used for attachment (which unit a node belongs to), not consumption: a
+    voice-over the planner gates behind its shot plan with ``dependency_for``
+    is still that shot's voice-over.
+    """
+    predecessors: dict[str, set[str]] = {}
+    for edge in edges if isinstance(edges, list) else []:
+        if not isinstance(edge, dict):
+            continue
+        source = _text(edge.get("source"))
+        target = _text(edge.get("target"))
+        if source and target:
+            predecessors.setdefault(target, set()).add(source)
+    return predecessors
+
+
+def _narrations_by_unit(
+    unit_nodes: list[dict[str, Any]],
+    speech_nodes: list[dict[str, Any]],
+    edges: Any,
+) -> list[str | None]:
+    """Pair speech nodes with units by what they are attached to, not by order.
+
+    A speech node attached (by any edge) to a unit's video node or to that
+    unit's own source (its frame / shot plan) narrates that unit; only speech
+    nodes attached to nothing unit-specific (an ecommerce voice-over that
+    reads the creative outline) fall back to list order. A wrong pairing can
+    never be applied silently: the standard compilation is compared with the
+    plan afterwards, edges included.
+    """
+    predecessors = _edge_predecessors(edges)
+    unit_ids = [_text(node.get("id")) for node in unit_nodes]
+    unit_scope: list[set[str]] = [
+        {unit_id, *predecessors.get(unit_id, set())} for unit_id in unit_ids
+    ]
+    narrations: list[str | None] = [None] * len(unit_nodes)
+    unattached: list[str] = []
+    for node in speech_nodes:
+        text = _node_text(node, "text", "prompt", "content")
+        upstream = predecessors.get(_text(node.get("id")), set())
+        owners = [index for index, scope in enumerate(unit_scope) if scope & upstream]
+        if len(owners) == 1 and narrations[owners[0]] is None:
+            narrations[owners[0]] = text
+        else:
+            unattached.append(text)
+    for index in range(len(narrations)):
+        if narrations[index] is None and unattached:
+            narrations[index] = unattached.pop(0)
+    return narrations
+
+
+_SIGNATURE_MEDIA_FIELDS = (
+    "model",
+    "aspectRatio",
+    "quality",
+    "size",
+    "genMode",
+    "generateAudio",
+    "durationSec",
+    "count",
+)
+
+
+def _plan_signature(
+    plan: dict[str, Any], stages: list[dict[str, Any]]
+) -> tuple[dict[str, tuple], dict[tuple, int]]:
+    """Per-node content signatures and the edge multiset between them.
+
+    Node ids, titles and layout are presentation; what a plan says is each
+    executable node's kind, prompt / text, generation fields and which node
+    is wired to which, consuming (``prompt_for`` / ``context_for`` /
+    ``media_input_for`` ...) or order-only (``dependency_for``). User-material
+    and compose nodes are left out (the planner adds compose itself).
+    """
+    kind_counts: dict[str, int] = {}
+    for stage in stages:
+        kind = _node_kind(_text(stage["node_type"]))
+        kind_counts[kind] = kind_counts.get(kind, 0) + 1
+    signatures: dict[str, tuple] = {}
+    for node in plan.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        node_type = _text(node.get("node_type") or node.get("type"))
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        label = _text(node.get("stage") or data.get("stage")).lower()
+        if node_type == "videoComposeNode" or (
+            node_type in _TEXT_NODE_TYPES and label in _USER_MATERIAL_STAGES
+        ):
+            continue
+        kind = _node_kind(node_type)
+        if kind == "audioNode":
+            text = _node_text(node, "text", "prompt", "content")
+        else:
+            text = _node_text(node, "prompt", "description", "content")
+        text = re.sub(r"\s+", " ", text)
+        extra: tuple = ()
+        if kind == "audioNode":
+            extra = (("audioKind", _text(data.get("audioKind")) or "speech"),)
+        elif kind in {"imageGenNode", "videoNode"}:
+            extra = tuple((field, data.get(field)) for field in _SIGNATURE_MEDIA_FIELDS)
+        signatures[_text(node.get("id"))] = (kind, text, extra)
+    edge_counts: dict[tuple, int] = {}
+    for edge in plan.get("edges") or []:
+        if not isinstance(edge, dict):
+            continue
+        source = signatures.get(_text(edge.get("source")))
+        target = signatures.get(_text(edge.get("target")))
+        if source is None or target is None:
+            continue
+        link_class = (
+            "order" if _text(edge.get("link_type")) == _ORDER_ONLY_LINK_TYPE else "consume"
+        )
+        key = (source, target, link_class)
+        edge_counts[key] = edge_counts.get(key, 0) + 1
+    return signatures, edge_counts
+
+
+def _template_round_trip_reason(
+    agent_plan: dict[str, Any],
+    standard_plan: dict[str, Any],
+    stages: list[dict[str, Any]],
+) -> str | None:
+    """Why the standard compilation is not the agent's plan, or None if it is.
+
+    Rerouting must never change what the user planned: every executable node
+    of the agent's plan (kind, prompt, generation fields) has to reappear in
+    the standard planner's output, nothing may be added, and the edges have
+    to connect the same nodes the same way (consuming or order-only). Node
+    ids and list order do not matter.
+    """
+    agent_sigs, agent_edges = _plan_signature(agent_plan, stages)
+    standard_sigs, standard_edges = _plan_signature(standard_plan, stages)
+    remaining: dict[tuple, int] = {}
+    for signature in standard_sigs.values():
+        remaining[signature] = remaining.get(signature, 0) + 1
+    for node_id, signature in agent_sigs.items():
+        if remaining.get(signature, 0) <= 0:
+            return f"not_expressible:node:{node_id}"
+        remaining[signature] -= 1
+    for node_id, signature in standard_sigs.items():
+        if remaining.get(signature, 0) > 0:
+            remaining[signature] -= 1
+            return f"not_expressible:extra_node:{node_id}"
+    if agent_edges != standard_edges:
+        for key, count in agent_edges.items():
+            if standard_edges.get(key, 0) != count:
+                src_id = next(k for k, v in agent_sigs.items() if v == key[0])
+                tgt_id = next(k for k, v in agent_sigs.items() if v == key[1])
+                return f"not_expressible:edge:{src_id}->{tgt_id}"
+        for key, count in standard_edges.items():
+            if agent_edges.get(key, 0) != count:
+                src_id = next(k for k, v in standard_sigs.items() if v == key[0])
+                tgt_id = next(k for k, v in standard_sigs.items() if v == key[1])
+                return f"not_expressible:extra_edge:{src_id}->{tgt_id}"
+    return None
 
 
 def _plan_goal_text(plan: dict[str, Any]) -> str:
@@ -1296,13 +1458,18 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
                     match=match,
                 )
                 if rerouted is not None:
-                    rerouted["planner"] = _template_planner_metadata(
-                        rerouted["planner"],
-                        source="intent_items",
-                        requested_mode=requested_mode,
-                        match=match,
+                    mismatch = _template_round_trip_reason(
+                        compiled["plan"], rerouted["plan"], standard_skill_stages(skill_id)
                     )
-                    return rerouted
+                    if mismatch is None:
+                        rerouted["planner"] = _template_planner_metadata(
+                            rerouted["planner"],
+                            source="intent_items",
+                            requested_mode=requested_mode,
+                            match=match,
+                        )
+                        return rerouted
+                    match = {"isomorphic": False, "reason": mismatch}
             planner_metadata = _agent_authored_planner_metadata(
                 skill_id,
                 source="intent_items",
@@ -3066,17 +3233,25 @@ def validate_agent_workflow_plan(
                 compiled["plan"], username=username, allow_template_reroute=False
             )
             if rerouted.get("ok"):
-                rerouted["planner"] = _template_planner_metadata(
-                    compiled["planner"],
-                    source="exact_plan",
-                    requested_mode="",
-                    match=match,
+                # Only when the standard planner reproduces the agent's plan node
+                # for node: a plan it cannot express stays agent-authored.
+                mismatch = _template_round_trip_reason(
+                    validated_plan, rerouted["plan"], standard_skill_stages(skill_id)
                 )
-                return rerouted
-            match = {
-                "isomorphic": False,
-                "reason": f"standard_validate_failed:{_text(rerouted.get('error'))}",
-            }
+                if mismatch is None:
+                    rerouted["planner"] = _template_planner_metadata(
+                        compiled["planner"],
+                        source="exact_plan",
+                        requested_mode="",
+                        match=match,
+                    )
+                    return rerouted
+                match = {"isomorphic": False, "reason": mismatch}
+            else:
+                match = {
+                    "isomorphic": False,
+                    "reason": f"standard_validate_failed:{_text(rerouted.get('error'))}",
+                }
     validated["planner"] = _agent_authored_planner_metadata(
         skill_id,
         source="exact_plan",

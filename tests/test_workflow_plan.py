@@ -540,12 +540,14 @@ def test_exact_plan_restating_the_template_is_compiled_by_the_standard_planner(m
     # The agent rewrote the briefs and dropped the compose node it did not think of.
     plan["nodes"] = [n for n in plan["nodes"] if n["node_type"] != "videoComposeNode"]
     plan["edges"] = [e for e in plan["edges"] if e["target"] != "final_compose"]
+    briefs = {"1": "霓虹雨夜的街道推镜", "2": "天台俯瞰全城"}
     for node in plan["nodes"]:
+        for suffix, brief in briefs.items():
+            if node["id"] in {f"frame_{suffix}", f"clip_{suffix}"}:
+                node["data"]["prompt"] = brief
+                node["data"]["content"] = brief
         if node["id"] == "clip_1":
-            node["data"]["prompt"] = "霓虹雨夜的街道推镜"
             node["data"]["durationSec"] = 4
-        if node["id"] == "clip_2":
-            node["data"]["prompt"] = "天台俯瞰全城"
 
     validated = catalog.validate_agent_workflow_plan(plan)
 
@@ -563,6 +565,7 @@ def test_exact_plan_restating_the_template_is_compiled_by_the_standard_planner(m
     nodes = {node["id"]: node for node in validated["plan"]["nodes"]}
     assert "final_compose" in nodes
     assert nodes["clip_1"]["data"]["prompt"] == "霓虹雨夜的街道推镜"
+    assert nodes["frame_1"]["data"]["prompt"] == "霓虹雨夜的街道推镜"
     assert nodes["clip_1"]["data"]["durationSec"] == 4
     assert nodes["clip_2"]["data"]["prompt"] == "天台俯瞰全城"
     assert validated["preflight"]["blockers"] == []
@@ -631,6 +634,105 @@ def test_template_restatement_that_the_standard_planner_rejects_stays_agent_auth
     reason = validated["planner"]["template_match"]["reason"]
     assert reason.startswith("standard_compile_failed:"), reason
     assert "narration" in reason
+
+
+def test_reroute_never_rewrites_what_the_plan_says(monkeypatch):
+    """Review of #696: a structurally template-shaped plan is only rerouted
+    when the standard planner reproduces it node for node. Otherwise the
+    agent's plan stands and the record names the node or edge that differs."""
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    tutorial = {"skill_id": "text-to-image-video", "user_goal": "赛博城市",
+                "planner": {"mode": "standard", "item_count": 2}}
+
+    def validated_planner(plan):
+        validated = catalog.validate_agent_workflow_plan(plan)
+        assert validated["ok"] is True, validated
+        return validated["planner"]
+
+    # 1. Both clips read frame_1: rerouting would re-source clip_2 from frame_2.
+    shared_frame = _raw_plan_from_standard(catalog, tutorial, deviate=False)
+    shared_frame["edges"] = [
+        {**e, "source": "frame_1"} if e["target"] == "clip_2" and e["source"] == "frame_2"
+        else e
+        for e in shared_frame["edges"]
+    ]
+    planner = validated_planner(shared_frame)
+    assert planner["mode"] == "agent_authored"
+    assert planner["template_match"]["reason"] == "not_expressible:edge:frame_1->clip_2"
+
+    # 2. Frame and clip carry different briefs: one standard unit has one prompt.
+    two_briefs = _raw_plan_from_standard(catalog, tutorial, deviate=False)
+    for node in two_briefs["nodes"]:
+        if node["id"] == "frame_1":
+            node["data"]["prompt"] = node["data"]["content"] = "只画建筑轮廓"
+    planner = validated_planner(two_briefs)
+    assert planner["mode"] == "agent_authored"
+    assert planner["template_match"]["reason"] == "not_expressible:node:frame_1"
+
+    drama = {"skill_id": "short-drama-quick", "user_goal": "舞台对决",
+             "planner": {"mode": "standard", "item_count": 2, "units": [
+                 {"title": "开场", "prompt": "两人对峙", "narration": "今晚只能有一个人站着离开。"},
+                 {"title": "反转", "prompt": "灯光骤暗", "narration": "他没想到，对手是自己的影子。"},
+             ]}}
+    # 3. Background music without voice-over: the planner cannot say music-only.
+    music_only = _raw_plan_from_standard(catalog, drama, deviate=False)
+    voice_ids = {n["id"] for n in music_only["nodes"] if n["id"].startswith("voice_")}
+    music_only["nodes"] = [n for n in music_only["nodes"] if n["id"] not in voice_ids]
+    music_only["edges"] = [
+        e for e in music_only["edges"]
+        if e["source"] not in voice_ids and e["target"] not in voice_ids
+    ]
+    planner = validated_planner(music_only)
+    assert planner["mode"] == "agent_authored"
+    assert planner["template_match"]["reason"] == "not_expressible:node:background_music"
+    assert any(n["id"] == "background_music" for n in music_only["nodes"])
+
+    # 4. Voice nodes listed in swapped order but attached to their own shot
+    #    plans: narration follows the attachment, so the reroute keeps each
+    #    line on the shot it belongs to.
+    swapped = _raw_plan_from_standard(catalog, drama, deviate=False)
+    order = [n["id"] for n in swapped["nodes"]]
+    i, j = order.index("voice_1"), order.index("voice_2")
+    swapped["nodes"][i], swapped["nodes"][j] = swapped["nodes"][j], swapped["nodes"][i]
+    validated = catalog.validate_agent_workflow_plan(swapped)
+    assert validated["ok"] is True, validated
+    assert validated["planner"]["selected_by"] == "template_isomorphic"
+    nodes = {n["id"]: n for n in validated["plan"]["nodes"]}
+    fed_by = {
+        e["target"]: e["source"] for e in validated["plan"]["edges"]
+        if e["target"].startswith("voice_")
+    }
+    assert nodes[fed_by["voice_1"]]["data"]["prompt"] == "两人对峙"
+    assert nodes["voice_1"]["data"]["text"] == "今晚只能有一个人站着离开。"
+    assert nodes[fed_by["voice_2"]]["data"]["prompt"] == "灯光骤暗"
+    assert nodes["voice_2"]["data"]["text"] == "他没想到，对手是自己的影子。"
+
+
+def test_narrations_follow_their_attachment_not_list_order():
+    catalog = _load_catalog_module()
+    units = [{"id": "clip_1"}, {"id": "clip_2"}]
+    speech = [
+        {"id": "v_b", "data": {"text": "second"}},
+        {"id": "v_a", "data": {"text": "first"}},
+        {"id": "v_free", "data": {"text": "loose"}},
+    ]
+    edges = [
+        {"source": "shot_1", "target": "clip_1", "link_type": "prompt_for"},
+        {"source": "shot_2", "target": "clip_2", "link_type": "prompt_for"},
+        {"source": "shot_1", "target": "v_a", "link_type": "prompt_for"},
+        {"source": "shot_2", "target": "v_b", "link_type": "prompt_for"},
+    ]
+    assert catalog._narrations_by_unit(units, speech, edges) == ["first", "second"]
+    # Attached through the clip itself works too; unattached ones fill gaps in order.
+    edges = [{"source": "clip_2", "target": "v_a", "link_type": "prompt_for"}]
+    assert catalog._narrations_by_unit(units, speech, edges) == ["second", "first"]
+    # An order-only edge is still an attachment (the planner gates a voice-over
+    # behind its shot plan with dependency_for).
+    edges = [{"source": "clip_2", "target": "v_a", "link_type": "dependency_for"}]
+    assert catalog._narrations_by_unit(units, speech, edges) == ["second", "first"]
+    # Nothing attached: list order.
+    assert catalog._narrations_by_unit(units, speech, []) == ["second", "first"]
 
 
 def test_template_isomorphism_reports_the_first_deviation(monkeypatch):
@@ -812,13 +914,13 @@ def test_intent_items_restating_the_template_use_the_standard_planner(monkeypatc
         "planner": {"mode": "standard"},
         "inputs": {"video_duration_seconds": 5},
         "items": [
-            {"id": "outline", "title": "教程大纲", "prompt": "列出三个步骤",
+            {"id": "outline", "title": "教程大纲", "prompt": "三步教你手冲咖啡",
              "recipe_id": "general-text"},
-            {"id": "frame_1", "title": "步骤一画面", "prompt": "研磨咖啡豆",
+            {"id": "frame_1", "title": "步骤一画面", "prompt": "研磨咖啡豆的特写",
              "recipe_id": "general-image", "depends_on": ["outline"]},
             {"id": "clip_1", "title": "步骤一视频", "prompt": "研磨咖啡豆的特写",
              "recipe_id": "general-video", "depends_on": ["frame_1"]},
-            {"id": "frame_2", "title": "步骤二画面", "prompt": "注水闷蒸",
+            {"id": "frame_2", "title": "步骤二画面", "prompt": "注水闷蒸的慢镜头",
              "recipe_id": "general-image", "depends_on": ["outline"]},
             {"id": "clip_2", "title": "步骤二视频", "prompt": "注水闷蒸的慢镜头",
              "recipe_id": "general-video", "depends_on": ["frame_2"]},
@@ -839,6 +941,36 @@ def test_intent_items_restating_the_template_use_the_standard_planner(monkeypatc
     assert nodes["clip_2"]["data"]["durationSec"] == 5
     assert "final_compose" in nodes
     assert result["preflight"]["blockers"] == []
+
+
+def test_intent_items_the_standard_planner_cannot_reproduce_stay_agent_authored(
+    monkeypatch,
+):
+    """A frame brief that differs from its clip brief cannot be expressed as one
+    standard unit; rerouting would overwrite it, so the items stand."""
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+
+    result = catalog.compile_workflow_intent({
+        "skill_id": "video-tutorial",
+        "user_goal": "三步教你手冲咖啡",
+        "planner": {"mode": "standard"},
+        "items": [
+            {"id": "outline", "title": "教程大纲", "prompt": "三步教你手冲咖啡",
+             "recipe_id": "general-text"},
+            {"id": "frame_1", "title": "步骤一画面", "prompt": "研磨咖啡豆",
+             "recipe_id": "general-image", "depends_on": ["outline"]},
+            {"id": "clip_1", "title": "步骤一视频", "prompt": "研磨咖啡豆的特写",
+             "recipe_id": "general-video", "depends_on": ["frame_1"],
+             "duration_seconds": 5},
+        ],
+    })
+
+    assert result["ok"] is True, result
+    assert result["planner"]["mode"] == "agent_authored"
+    assert result["planner"]["requested_mode"] == "standard"
+    assert result["planner"]["template_match"]["reason"] == "not_expressible:node:frame_1"
+    assert {n["id"] for n in result["plan"]["nodes"]} >= {"outline", "frame_1", "clip_1"}
 
 
 _STAGE_LOCK_UNITS = [

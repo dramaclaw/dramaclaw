@@ -197,9 +197,12 @@ The prepared draft records which path was taken (`preview.planner.mode` is
 every agent-authored topology with the Skill's standard template before compiling it: a plan or
 item list that restates the template (every executable node fills a template stage, required
 stages present and fed, no edge from a later stage back to an earlier one; node counts and
-prompts are parameters) is compiled by the standard planner with the briefs as its units, and
-the draft shows `preview.planner.selected_by = template_isomorphic`; a genuine deviation stays
-agent-authored and `preview.planner.template_match.reason` names it. For error recovery,
+prompts are parameters) is compiled by the standard planner with the briefs as its units, but
+only when that compilation reproduces the plan node for node (same prompts per stage, same
+dependencies, same narration and music); the draft then shows
+`preview.planner.selected_by = template_isomorphic`. A genuine deviation, or a plan the standard
+units cannot express, stays agent-authored and `preview.planner.template_match.reason` names it.
+For error recovery,
 read [references/error-recovery.md](references/error-recovery.md).
 
 When packaging this Skill for another agent host, read
