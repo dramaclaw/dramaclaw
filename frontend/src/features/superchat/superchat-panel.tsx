@@ -2571,8 +2571,10 @@ function approvalNodeData(
     : {};
   for (const envelope of approval.envelopes) {
     for (const command of envelope.commands) {
+      // add_next_node 与 create_node 一样新建节点并携带 data；漏掉它会让确认卡
+      // 读不到 Agent 给的比例/分辨率而回落默认值，确认时再把默认值写回节点（#685）。
       if (
-        command.type === "create_node"
+        (command.type === "create_node" || command.type === "add_next_node")
         && command.client_id === nodeId
         && command.data
       ) {
@@ -2595,9 +2597,14 @@ function approvalNodeType(
   if (existingType) return existingType;
   for (const envelope of approval.envelopes) {
     const createCommand = envelope.commands.find(
-      (command) => command.type === "create_node" && command.client_id === nodeId,
+      (command) =>
+        (command.type === "create_node" || command.type === "add_next_node")
+        && command.client_id === nodeId,
     );
     if (createCommand?.type === "create_node") return createCommand.node_type;
+    if (createCommand?.type === "add_next_node" && createCommand.node_type) {
+      return createCommand.node_type;
+    }
   }
   return "";
 }
@@ -2890,7 +2897,7 @@ function amendCanvasApprovalWithGenerationData(
       ...envelope,
       commands: envelope.commands.map((command) => {
         if (
-          command.type === "create_node"
+          (command.type === "create_node" || command.type === "add_next_node")
           && command.client_id
           && remaining.has(command.client_id)
         ) {

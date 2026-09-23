@@ -3832,6 +3832,56 @@ describe("Canvas command approval image params", () => {
     ]);
   });
 
+  it("keeps add_next_node image params through the approval card and amend (#685)", () => {
+    const approval = {
+      id: "add-next-approval", key: "add-next-approval", messageId: "assistant",
+      receivedAt: 1, commandCount: 2, plans: [],
+      envelopes: [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [
+          {
+            type: "add_next_node" as const,
+            client_id: "image-a",
+            source_node_id: "upload-1",
+            node_type: "imageGenNode" as const,
+            data: {
+              prompt: "水彩风格",
+              model: "newapi_gpt_image2",
+              aspectRatio: "9:16",
+              size: "1k",
+              quality: "medium",
+              count: 1,
+            },
+          },
+          { type: "run_node_action" as const, node_id: "image-a", action: "generate_image" },
+        ],
+      }],
+    };
+    const groups = imageApprovalParamGroupsForTest(approval as never, [], "other-model", [{
+      id: "newapi_gpt_image2",
+      resolutionOptions: ["1k", "2k", "4k"],
+      qualityOptions: ["low", "medium", "high"],
+    }]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({
+      nodeId: "image-a",
+      model: "newapi_gpt_image2",
+      aspectRatio: "9:16",
+      size: "1k",
+      quality: "medium",
+      count: 1,
+    });
+
+    const amended = amendCanvasApprovalWithImageParamsForTest(approval as never, groups[0]);
+    expect(amended.envelopes[0].commands).toEqual([
+      {
+        ...approval.envelopes[0].commands[0],
+        data: { ...approval.envelopes[0].commands[0].data },
+      },
+      approval.envelopes[0].commands[1],
+    ]);
+  });
+
   it("groups mixed workflow media in one approval and amends one run request", () => {
     const approval = {
       id: "mixed-approval", key: "mixed-approval", messageId: "assistant",
