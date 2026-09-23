@@ -265,11 +265,6 @@ type ApplyCanvasChatCommandsOptions = {
   onWorkflowRunPersisted?: (runId: string) => void;
 };
 
-export type CanvasChatCommandPartition = {
-  immediate: CanvasChatCommandEnvelope[];
-  requiresApproval: CanvasChatCommandEnvelope[];
-};
-
 type CanvasCommandApprovalSubscriber = (detail: CanvasCommandApprovalEventDetail) => boolean | void;
 
 const queuedCanvasCommandApprovals: CanvasCommandApprovalEventDetail[] = [];
@@ -1151,64 +1146,11 @@ export function extractCanvasChatCommandEnvelopes(values: unknown[]): CanvasChat
     });
 }
 
-function commandRequiresApproval(command: CanvasChatCommand): boolean {
-  if (command.type === "html_artifact") return true;
-  // Creating a node changes the user's canvas and can trigger generation or
-  // billing once the node is run. Keep it behind the same confirmation card
-  // as other mutating workflow operations. Legacy envelopes may still contain
-  // an auto-apply field, but interactive Freezone never bypasses confirmation.
-  if (command.type === "create_node" || command.type === "add_next_node") return true;
-  if (command.type === "clear_canvas") return true;
-  if (command.type === "delete_nodes") return command.node_ids.length > 0;
-  if (command.type === "delete_edges") return (command.edge_ids?.length ?? 0) > 0 || (command.pairs?.length ?? 0) > 0;
-  if (command.type === "layout_nodes") return !command.node_ids || command.node_ids.length === 0 || command.node_ids.length >= 4;
-  if (command.type === "open_mainline_projection") return true;
-  if (command.type === "run_workflow") return true;
-  return false;
-}
-
-function envelopeWithCommands(
-  commands: CanvasChatCommand[],
-  source?: CanvasChatCommandEnvelope,
-): CanvasChatCommandEnvelope | null {
-  if (commands.length === 0) return null;
-  return {
-    ...source,
-    schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
-    commands,
-  };
-}
-
 export function canvasCommandEnvelopeMatchesCanvas(
   envelope: CanvasChatCommandEnvelope,
   canvasId: string | null | undefined,
 ): boolean {
   return !envelope.canvas_id || !canvasId || envelope.canvas_id === canvasId;
-}
-
-export function partitionCanvasChatCommandEnvelopes(
-  envelopes: CanvasChatCommandEnvelope[],
-): CanvasChatCommandPartition {
-  const immediate: CanvasChatCommandEnvelope[] = [];
-  const requiresApproval: CanvasChatCommandEnvelope[] = [];
-
-  for (const envelope of envelopes) {
-    const safeCommands: CanvasChatCommand[] = [];
-    const approvalCommands: CanvasChatCommand[] = [];
-    for (const command of envelope.commands) {
-      if (commandRequiresApproval(command)) {
-        approvalCommands.push(command);
-      } else {
-        safeCommands.push(command);
-      }
-    }
-    const safeEnvelope = envelopeWithCommands(safeCommands, envelope);
-    const approvalEnvelope = envelopeWithCommands(approvalCommands, envelope);
-    if (safeEnvelope) immediate.push(safeEnvelope);
-    if (approvalEnvelope) requiresApproval.push(approvalEnvelope);
-  }
-
-  return { immediate, requiresApproval };
 }
 
 function nodeById(id: string): CanvasNode | null {

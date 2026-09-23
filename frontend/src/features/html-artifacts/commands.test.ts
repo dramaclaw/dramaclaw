@@ -1,7 +1,7 @@
 import {registerFreezoneCanvasRuntime} from '@/features/freezone/canvasSyncRuntime';
 import {beforeEach,describe,expect,it,vi} from 'vitest';
 import {useCanvasStore} from '@/stores/canvasStore';
-import {applyCanvasChatCommandsAsync,extractCanvasChatCommandEnvelopes,partitionCanvasChatCommandEnvelopes} from '@/features/freezone/canvasChatCommands';
+import {applyCanvasChatCommandsAsync,extractCanvasChatCommandEnvelopes} from '@/features/freezone/canvasChatCommands';
 import * as api from './api';
 import {parseHtmlArtifactCommand} from './commands';
 import {subscribeNodeAction,publishNodeActionAccepted,publishNodeActionSuccess} from '@/features/canvas/application/nodeActionResult';
@@ -192,10 +192,9 @@ describe('director HTML commands',()=>{
   expect(useCanvasStore.getState().nodes.filter(node=>node.type==='htmlArtifactNode')).toHaveLength(1);
   expect(useCanvasStore.getState().nodes.filter(node=>node.type==='imageGenNode')).toHaveLength(1);
  });
- it('requires approval and creates artifact and node only on execution',async()=>{
+ it('creates artifact and node only on execution',async()=>{
   const envelopes=extractCanvasChatCommandEnvelopes([envelope({type:'html_artifact',action:'create',title:'Hello',html:artifact.html})]);
   expect(envelopes).toHaveLength(1);
-  expect(partitionCanvasChatCommandEnvelopes(envelopes).requiresApproval).toHaveLength(1);
   expect(api.createHtmlArtifact).not.toHaveBeenCalled();
   vi.mocked(api.createHtmlArtifact).mockResolvedValue(artifact);
   const result=await applyCanvasChatCommandsAsync(envelopes,{projectId:'p',canvasId:'c'});

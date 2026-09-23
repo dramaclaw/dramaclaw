@@ -10,6 +10,11 @@ function rawText(errors: string[] | undefined, commandResults: Array<Partial<Can
   ].join("\n");
 }
 
+function isUnavailableModelError(text: string): boolean {
+  return /field model value|not a valid option.*model|模型|model/i.test(text)
+    && /not a valid option|不可用|invalid/i.test(text);
+}
+
 export function canvasCommandUserMessageFromResult(
   errors: string[] | undefined,
   commandResults: Array<Partial<CanvasChatCommandApplyStep>> | undefined,
@@ -20,8 +25,9 @@ export function canvasCommandUserMessageFromResult(
     return "Recipe 文本生成超时：模型在规定时间内未返回结果，请稍后重试。本轮未继续执行下游节点。"; // i18n-exempt -- transport fallback
   }
   if (/cancel|取消|超时/i.test(text)) return "画布操作已取消，没有应用到画布。";
-  if (/field model value|not a valid option.*model|模型|model/i.test(text) && /not a valid option|不可用|invalid/i.test(text)) {
-    return "当前选择的生成模型不可用，我会改用当前画布支持的模型。";
+  // 换模型会改变产物和计费，必须由用户选定，不能由 Agent 自行替换后重跑。
+  if (isUnavailableModelError(text)) {
+    return "当前选择的生成模型不可用，请从当前画布支持的模型中选择一个，我再按你的选择修改。";
   }
   if (/planning_text|input_text|semanticOutputRole|prompt_for/.test(text)) {
     return "当前文本需要先作为生成提示词连接到图片节点，我会按可执行的提示词来源来处理。";
@@ -46,9 +52,12 @@ export function canvasCommandAgentHintFromResult(
   commandResults: Array<Partial<CanvasChatCommandApplyStep>> | undefined,
 ): string {
   const userMessage = canvasCommandUserMessageFromResult(errors, commandResults);
+  const nextStep = isUnavailableModelError(rawText(errors, commandResults))
+    ? "Do not change the node's model or rerun the generation yourself; list the models this canvas supports and ask the user which one to use, then wait for their choice."
+    : "The raw errors and command_results remain available for diagnosis; fix the command and retry only when it is safe.";
   return [
     "Do not mention raw canvas protocol details to the user, including semanticOutputRole, planning_text, input_text, prompt_for, context_for, schema names, command paths, or node ids unless the user explicitly asks for implementation details.",
     `Use this user-facing summary if you need to explain the failure: ${userMessage}`,
-    "The raw errors and command_results remain available for diagnosis; fix the command and retry only when it is safe.",
+    nextStep,
   ].join(" ");
 }
