@@ -586,13 +586,6 @@ def test_short_drama_restatement_recovers_narration_and_audio(monkeypatch):
          ]}},
         deviate=False,
     )
-    # A user-material node the agent added on top does not count against the template.
-    plan["nodes"].append({
-        "id": "reference_notes", "node_type": "textAnnotationNode", "stage": "resource",
-        "data": {"title": "参考", "content": "舞台灯光偏冷"},
-    })
-    plan["edges"].append({"source": "reference_notes", "target": "outline", "link_type": "context_for"})
-
     validated = catalog.validate_agent_workflow_plan(plan)
 
     assert validated["ok"] is True, validated
@@ -769,6 +762,101 @@ def test_reroute_maps_nodes_by_identity_and_keeps_execution_parameters(monkeypat
     planner = validated_planner(voiced)
     assert planner["mode"] == "agent_authored"
     assert planner["template_match"]["reason"] == "not_expressible:node:voice_1"
+
+
+def test_reroute_keeps_user_material_compose_order_and_stays_fast(monkeypatch):
+    """Third review of #696: a compose input order or a user-provided note is
+    part of the plan and must survive the round trip; a plan full of
+    look-alike nodes must be judged in bounded time."""
+    import time
+
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    tutorial = {"skill_id": "text-to-image-video", "user_goal": "赛博城市",
+                "planner": {"mode": "standard", "item_count": 2}}
+
+    def validated_planner(plan):
+        validated = catalog.validate_agent_workflow_plan(plan)
+        assert validated["ok"] is True, validated
+        return validated["planner"]
+
+    # 1. The user ordered the final cut clip_2 first.
+    reordered = _raw_plan_from_standard(catalog, tutorial, deviate=False)
+    compose = next(n for n in reordered["nodes"] if n["node_type"] == "videoComposeNode")
+    assert compose["data"]["compositionInputOrder"] == ["clip_1", "clip_2"]
+    compose["data"]["compositionInputOrder"] = ["clip_2", "clip_1"]
+    planner = validated_planner(reordered)
+    assert planner["mode"] == "agent_authored"
+    assert planner["template_match"]["reason"] == "not_expressible:compose_order:final_compose"
+    # The planner's own order, or no compose node at all, still reroutes.
+    assert validated_planner(_raw_plan_from_standard(catalog, tutorial, deviate=False))[
+        "selected_by"
+    ] == "template_isomorphic"
+
+    # 2. A reference note the user supplied feeds the outline.
+    noted = _raw_plan_from_standard(catalog, tutorial, deviate=False)
+    noted["nodes"].append({
+        "id": "reference_notes", "node_type": "textAnnotationNode", "stage": "resource",
+        "data": {"title": "参考", "content": "霓虹偏冷色"},
+    })
+    noted["edges"].append(
+        {"source": "reference_notes", "target": "outline", "link_type": "context_for"}
+    )
+    planner = validated_planner(noted)
+    assert planner["mode"] == "agent_authored"
+    assert planner["template_match"]["reason"] == "not_expressible:node:reference_notes"
+    # The planner's own input node is user material too and maps onto itself.
+    assert any(n.get("stage") == "input" for n in noted["nodes"])
+
+    # 3. Ten look-alike units with one shared frame: rejected quickly, not by
+    #    permuting every frame.
+    lookalike = {"skill_id": "text-to-image-video", "user_goal": "赛博城市",
+                 "planner": {"mode": "standard", "item_count": 10,
+                             "units": [{"title": "镜头", "prompt": "霓虹街道"}] * 10}}
+    crowded = _raw_plan_from_standard(catalog, lookalike, deviate=False)
+    crowded["edges"] = [
+        {**e, "source": "frame_1"} if e["source"] == "frame_2" and e["target"] == "clip_2"
+        else e
+        for e in crowded["edges"]
+    ]
+    started = time.monotonic()
+    planner = validated_planner(crowded)
+    elapsed = time.monotonic() - started
+    assert planner["mode"] == "agent_authored"
+    assert planner["template_match"]["reason"].startswith("not_expressible:edge:frame_1->")
+    assert elapsed < 2.0, elapsed
+    started = time.monotonic()
+    assert validated_planner(_raw_plan_from_standard(catalog, lookalike, deviate=False))[
+        "selected_by"
+    ] == "template_isomorphic"
+    assert time.monotonic() - started < 2.0
+
+
+def test_plan_node_matching_gives_up_within_budget():
+    catalog = _load_catalog_module()
+    sig = ("imageGenNode", "x", ("general-image", ()), ())
+    # Twelve isolated look-alike frames on each side: every permutation is a
+    # valid mapping, so the search succeeds at once ...
+    frames = {f"f{i}": sig for i in range(12)}
+    assert catalog._match_plan_nodes((frames, {}), (dict(frames), {})) is not None
+    # ... while a wiring with identical degrees but no mapping (one 24-cycle
+    # against twelve 2-cycles) is cut off by the budget instead of permuting.
+    csig = ("videoNode", "x", ("general-video", ()), ())
+    agent_nodes = {**frames, **{f"c{i}": csig for i in range(12)}}
+    standard_edges = {}
+    agent_edges = {}
+    for i in range(12):
+        standard_edges[(f"f{i}", f"c{i}", "consume")] = 1
+        standard_edges[(f"c{i}", f"f{i}", "order")] = 1
+        agent_edges[(f"f{i}", f"c{i}", "consume")] = 1
+        agent_edges[(f"c{i}", f"f{(i + 1) % 12}", "order")] = 1
+    with pytest.raises(catalog._MappingBudgetExceeded):
+        catalog._match_plan_nodes(
+            (agent_nodes, agent_edges), (dict(agent_nodes), standard_edges), budget=50
+        )
+    assert catalog._match_plan_nodes(
+        (agent_nodes, agent_edges), (dict(agent_nodes), standard_edges), budget=100000
+    ) is None
 
 
 def test_intent_items_with_a_custom_recipe_stay_agent_authored(monkeypatch):

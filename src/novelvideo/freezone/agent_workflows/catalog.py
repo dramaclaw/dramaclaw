@@ -675,13 +675,45 @@ def _hashable(value: Any) -> Any:
     return value
 
 
-def _node_signature(node: dict[str, Any]) -> tuple:
-    """What an executable node says, independent of id, label and layout."""
+_COMPOSE_ORDER_KEY = "compositionInputOrder"
+_MAPPING_SEARCH_BUDGET = 20000
+
+
+class _MappingBudgetExceeded(Exception):
+    """The node-mapping search gave up; the plan is treated as not expressible."""
+
+
+def _node_role(node: Any) -> str:
+    """``material`` (user input / resource / asset), ``compose``, ``executable`` or ``""``."""
+    if not isinstance(node, dict):
+        return ""
     node_type = _text(node.get("node_type") or node.get("type"))
     data = node.get("data") if isinstance(node.get("data"), dict) else {}
-    kind = _node_kind(node_type)
+    label = _text(node.get("stage") or data.get("stage")).lower()
+    if node_type == "videoComposeNode":
+        return "compose"
+    if node_type in _TEXT_NODE_TYPES and label in _USER_MATERIAL_STAGES:
+        return "material"
+    return "executable"
+
+
+def _node_signature(node: dict[str, Any]) -> tuple:
+    """What a node says, independent of id, label and layout.
+
+    Executable nodes: kind, prompt / text, recipe and every execution
+    parameter. User material: its text. The compose node: its settings other
+    than the input order, which is compared under the node mapping.
+    """
+    node_type = _text(node.get("node_type") or node.get("type"))
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    role = _node_role(node)
+    kind = "material" if role == "material" else _node_kind(node_type)
     if kind == "audioNode":
         text = _node_text(node, "text", "prompt", "content")
+    elif kind == "material":
+        text = _node_text(node, "content", "text", "prompt", "description")
+    elif role == "compose":
+        text = ""  # the planner writes a fixed caption; not a user decision
     else:
         text = _node_text(node, "prompt", "description", "content")
     catalog = (
@@ -705,36 +737,44 @@ def _node_signature(node: dict[str, Any]) -> tuple:
         sorted(
             (key, _hashable(value))
             for key, value in data.items()
-            if key not in _PRESENTATION_DATA_KEYS
+            if key not in _PRESENTATION_DATA_KEYS and key != _COMPOSE_ORDER_KEY
         )
     )
     return (kind, re.sub(r"\s+", " ", text), recipe, settings)
 
 
 def _plan_signature(
-    plan: dict[str, Any],
-) -> tuple[dict[str, tuple], dict[tuple[str, str, str], int]]:
-    """Per-node signatures and the edge multiset (by node id) between them.
+    plan: dict[str, Any], *, include_material: bool, include_compose: bool
+) -> tuple[dict[str, tuple], dict[tuple[str, str, str], int], dict[str, list[str]]]:
+    """Per-node signatures, the edge multiset (by node id) and compose orders.
 
     Node ids, titles and layout are presentation; what a plan says is each
-    executable node's kind, prompt / text, recipe, execution parameters and
-    which node is wired to which, consuming (``prompt_for`` / ``context_for``
-    / ``media_input_for`` ...) or order-only (``dependency_for``).
-    User-material and compose nodes are left out (the planner adds compose
-    itself).
+    node's signature and which node is wired to which, consuming
+    (``prompt_for`` / ``context_for`` / ``media_input_for`` ...) or order-only
+    (``dependency_for``). User-material and compose nodes are included only
+    when the agent's plan has them (``include_*``): the planner adds its own
+    input and compose nodes, which must not count as differences when the
+    agent left them out, but an input / resource note or a compose order the
+    agent did write has to survive the round trip.
     """
     signatures: dict[str, tuple] = {}
+    compose_orders: dict[str, list[str]] = {}
     for node in plan.get("nodes") or []:
-        if not isinstance(node, dict):
+        role = _node_role(node)
+        if not role:
             continue
-        node_type = _text(node.get("node_type") or node.get("type"))
-        data = node.get("data") if isinstance(node.get("data"), dict) else {}
-        label = _text(node.get("stage") or data.get("stage")).lower()
-        if node_type == "videoComposeNode" or (
-            node_type in _TEXT_NODE_TYPES and label in _USER_MATERIAL_STAGES
-        ):
+        if role == "material" and not include_material:
             continue
-        signatures[_text(node.get("id"))] = _node_signature(node)
+        if role == "compose" and not include_compose:
+            continue
+        node_id = _text(node.get("id"))
+        signatures[node_id] = _node_signature(node)
+        if role == "compose":
+            data = node.get("data") if isinstance(node.get("data"), dict) else {}
+            order = data.get(_COMPOSE_ORDER_KEY)
+            compose_orders[node_id] = (
+                [_text(item) for item in order] if isinstance(order, list) else []
+            )
     edges: dict[tuple[str, str, str], int] = {}
     for edge in plan.get("edges") or []:
         if not isinstance(edge, dict):
@@ -751,70 +791,116 @@ def _plan_signature(
         edges[(source, target, link_class)] = (
             edges.get((source, target, link_class), 0) + 1
         )
-    return signatures, edges
+    return signatures, edges, compose_orders
+
+
+def _degree_profile(
+    node_ids: dict[str, tuple], edges: dict[tuple[str, str, str], int]
+) -> dict[str, tuple]:
+    """Signature refined by in/out degree per link class: a cheap invariant
+    any node-for-node mapping has to respect."""
+    out_deg: dict[str, dict[str, int]] = {n: {} for n in node_ids}
+    in_deg: dict[str, dict[str, int]] = {n: {} for n in node_ids}
+    for (source, target, link_class), count in edges.items():
+        out_deg[source][link_class] = out_deg[source].get(link_class, 0) + count
+        in_deg[target][link_class] = in_deg[target].get(link_class, 0) + count
+    return {
+        n: (sig, tuple(sorted(out_deg[n].items())), tuple(sorted(in_deg[n].items())))
+        for n, sig in node_ids.items()
+    }
 
 
 def _match_plan_nodes(
-    agent: tuple[dict[str, tuple], dict[tuple[str, str, str], int]],
-    standard: tuple[dict[str, tuple], dict[tuple[str, str, str], int]],
+    agent: tuple,
+    standard: tuple,
+    *,
+    budget: int = _MAPPING_SEARCH_BUDGET,
 ) -> dict[str, str] | None:
     """A node-for-node mapping under which both plans have the same edges.
 
     Nodes with identical signatures are still distinct identities: a frame
     both clips read maps to one standard frame only, so the second clip's
-    edge cannot be satisfied and no mapping exists. Backtracking over the
-    few same-signature candidates (a plan has at most a dozen units).
+    edge cannot be satisfied and no mapping exists. Candidates are filtered
+    by signature *and* degree first (that alone rejects a shared frame), then
+    a backtracking search extends the mapping one node at a time, always
+    picking the unmapped node with the most already-mapped neighbours so an
+    inconsistent edge is found immediately instead of after permuting every
+    look-alike node. ``budget`` bounds the number of search steps; exceeding
+    it raises ``_MappingBudgetExceeded``.
     """
-    agent_sigs, agent_edges = agent
-    standard_sigs, standard_edges = standard
+    agent_sigs, agent_edges = agent[0], agent[1]
+    standard_sigs, standard_edges = standard[0], standard[1]
     if len(agent_sigs) != len(standard_sigs) or sum(agent_edges.values()) != sum(
         standard_edges.values()
     ):
         return None
-    candidates: dict[str, list[str]] = {}
-    for node_id, signature in agent_sigs.items():
-        candidates[node_id] = [k for k, v in standard_sigs.items() if v == signature]
-        if not candidates[node_id]:
-            return None
-    agent_adjacency: dict[str, list[tuple[str, str, str, int]]] = {}
+    agent_profile = _degree_profile(agent_sigs, agent_edges)
+    standard_profile = _degree_profile(standard_sigs, standard_edges)
+    by_profile: dict[tuple, list[str]] = {}
+    for node_id, profile in standard_profile.items():
+        by_profile.setdefault(profile, []).append(node_id)
+    candidates = {n: list(by_profile.get(p, [])) for n, p in agent_profile.items()}
+    if any(not options for options in candidates.values()):
+        return None
+    neighbours: dict[str, dict[str, list[tuple[str, int]]]] = {
+        n: {} for n in agent_sigs
+    }
     for (source, target, link_class), count in agent_edges.items():
-        agent_adjacency.setdefault(source, []).append(
-            (source, target, link_class, count)
-        )
-        agent_adjacency.setdefault(target, []).append(
-            (source, target, link_class, count)
-        )
-    order = sorted(agent_sigs, key=lambda node_id: len(candidates[node_id]))
+        neighbours[source].setdefault(target, []).append((f"out:{link_class}", count))
+        neighbours[target].setdefault(source, []).append((f"in:{link_class}", count))
     mapping: dict[str, str] = {}
     used: set[str] = set()
+    steps = 0
 
-    def consistent(node_id: str) -> bool:
-        for source, target, link_class, count in agent_adjacency.get(node_id, []):
-            if source in mapping and target in mapping:
-                key = (mapping[source], mapping[target], link_class)
+    def consistent(node_id: str, candidate: str) -> bool:
+        for other, links in neighbours[node_id].items():
+            if other not in mapping:
+                continue
+            for direction, count in links:
+                kind, _, link_class = direction.partition(":")
+                key = (
+                    (candidate, mapping[other], link_class)
+                    if kind == "out"
+                    else (mapping[other], candidate, link_class)
+                )
                 if standard_edges.get(key, 0) != count:
                     return False
         return True
 
-    def assign(index: int) -> bool:
-        if index == len(order):
+    def next_node() -> str:
+        return max(
+            (n for n in agent_sigs if n not in mapping),
+            key=lambda n: (
+                sum(1 for other in neighbours[n] if other in mapping),
+                -len(candidates[n]),
+            ),
+        )
+
+    def assign() -> bool:
+        nonlocal steps
+        if len(mapping) == len(agent_sigs):
             mapped = {
                 (mapping[s], mapping[t], c): n for (s, t, c), n in agent_edges.items()
             }
             return mapped == standard_edges
-        node_id = order[index]
+        node_id = next_node()
         for candidate in candidates[node_id]:
             if candidate in used:
                 continue
+            steps += 1
+            if steps > budget:
+                raise _MappingBudgetExceeded()
+            if not consistent(node_id, candidate):
+                continue
             mapping[node_id] = candidate
             used.add(candidate)
-            if consistent(node_id) and assign(index + 1):
+            if assign():
                 return True
             used.discard(candidate)
             del mapping[node_id]
         return False
 
-    return dict(mapping) if assign(0) else None
+    return dict(mapping) if assign() else None
 
 
 def _template_round_trip_reason(
@@ -822,17 +908,27 @@ def _template_round_trip_reason(
 ) -> str | None:
     """Why the standard compilation is not the agent's plan, or None if it is.
 
-    Rerouting must never change what the user planned: every executable node
-    of the agent's plan (kind, prompt / text, recipe, execution parameters)
-    has to map onto exactly one node of the standard planner's output with
-    the same signature, nothing may be added, and under that mapping the
-    edges have to be the same (consuming or order-only). Node ids and list
-    order do not count.
+    Rerouting must never change what the user planned: every node of the
+    agent's plan (kind, prompt / text, recipe, execution parameters; user
+    material and compose settings when the agent wrote them) has to map onto
+    exactly one node of the standard planner's output with the same
+    signature, nothing may be added, under that mapping the edges have to be
+    the same (consuming or order-only) and a compose node's input order has
+    to match. Node ids and list order do not count.
     """
-    agent = _plan_signature(agent_plan)
-    standard = _plan_signature(standard_plan)
-    agent_sigs, agent_edges = agent
-    standard_sigs, standard_edges = standard
+    nodes = agent_plan.get("nodes") or []
+    include_material = any(_node_role(node) == "material" for node in nodes)
+    include_compose = any(_node_role(node) == "compose" for node in nodes)
+    agent = _plan_signature(
+        agent_plan, include_material=include_material, include_compose=include_compose
+    )
+    standard = _plan_signature(
+        standard_plan,
+        include_material=include_material,
+        include_compose=include_compose,
+    )
+    agent_sigs, agent_edges, agent_orders = agent
+    standard_sigs, standard_edges, standard_orders = standard
     remaining: dict[tuple, int] = {}
     for signature in standard_sigs.values():
         remaining[signature] = remaining.get(signature, 0) + 1
@@ -843,7 +939,15 @@ def _template_round_trip_reason(
     for node_id, signature in standard_sigs.items():
         if remaining.get(signature, 0) > 0:
             return f"not_expressible:extra_node:{node_id}"
-    if _match_plan_nodes(agent, standard) is not None:
+    try:
+        mapping = _match_plan_nodes(agent, standard)
+    except _MappingBudgetExceeded:
+        return "not_expressible:mapping_budget"
+    if mapping is not None:
+        for node_id, order in agent_orders.items():
+            mapped = [mapping.get(item, item) for item in order]
+            if mapped != standard_orders.get(mapping[node_id], []):
+                return f"not_expressible:compose_order:{node_id}"
         return None
     # Same nodes, different wiring: name the first agent edge that no
     # signature-preserving mapping can place (by node identity, not content).
@@ -864,22 +968,10 @@ def _template_round_trip_reason(
     # Same content pairs, but no consistent node mapping: some node is wired
     # to more targets than any node of its kind in the template (a frame both
     # clips read where the template has one frame per clip).
-    def out_degrees(
-        edges: dict[tuple[str, str, str], int],
-    ) -> dict[tuple[str, str], int]:
-        degrees: dict[tuple[str, str], int] = {}
-        for (source, _target, link_class), count in edges.items():
-            degrees[(source, link_class)] = degrees.get((source, link_class), 0) + count
-        return degrees
-
-    standard_degree: dict[tuple, int] = {}
-    for (source, link_class), degree in out_degrees(standard_edges).items():
-        key = (standard_sigs[source], link_class)
-        standard_degree[key] = max(standard_degree.get(key, 0), degree)
-    agent_degree = out_degrees(agent_edges)
-    for source, target, link_class in agent_edges:
-        allowed = standard_degree.get((agent_sigs[source], link_class), 0)
-        if agent_degree[(source, link_class)] > allowed:
+    agent_profile = _degree_profile(agent_sigs, agent_edges)
+    standard_profiles = set(_degree_profile(standard_sigs, standard_edges).values())
+    for source, target, _link_class in agent_edges:
+        if agent_profile[source] not in standard_profiles:
             return f"not_expressible:edge:{source}->{target}"
     return "not_expressible:wiring"
 
