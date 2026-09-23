@@ -62,3 +62,24 @@ def test_reconcile_replaces_a_stale_pick_with_the_first_project():
 
 def test_reconcile_clears_the_pick_when_there_is_nothing_to_choose():
     assert reconcile_selection("01JA", []) == ("", "")
+
+
+def test_canvas_page_url_points_at_the_project_freezone():
+    from dramaclaw_blender.core.projects import canvas_page_url
+
+    assert (
+        canvas_page_url(
+            web_url="http://127.0.0.1:5174/", server_url="http://127.0.0.1:19081", project_id="01JA"
+        )
+        == "http://127.0.0.1:5174/projects/01JA/freezone"
+    )
+
+
+def test_canvas_page_url_falls_back_to_server_url_and_escapes_the_id():
+    """生产页面和接口同源，网页地址留空；id 按路径段转义，别让怪字符拼出别的路径。"""
+    from dramaclaw_blender.core.projects import canvas_page_url
+
+    assert (
+        canvas_page_url(web_url="  ", server_url="https://x.example", project_id="a/b c")
+        == "https://x.example/projects/a%2Fb%20c/freezone"
+    )

@@ -41,6 +41,11 @@ class DramaClawPreferences(bpy.types.AddonPreferences):
         name="项目名",
         default="",
     )
+    open_canvas_after_import: bpy.props.BoolProperty(
+        name="导入后打开画布页",
+        description="投递成功后在浏览器里打开该项目的画布，并定位到刚导入的节点",
+        default=True,
+    )
     pending_code: bpy.props.StringProperty(
         # 配对码过去只在状态栏报一次就没了，而库里只存哈希，错过就再也拿不回来，
         # 用户只能反复点「连接」。它必须留在面板上，直到配对有结果。
@@ -61,6 +66,7 @@ class DramaClawPreferences(bpy.types.AddonPreferences):
         layout = self.layout
         layout.prop(self, "server_url")
         layout.prop(self, "web_url")
+        layout.prop(self, "open_canvas_after_import")
         row = layout.row()
         row.enabled = False
         row.label(text="已连接" if self.token else "未连接")

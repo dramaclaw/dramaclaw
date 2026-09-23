@@ -32,7 +32,7 @@ from .core.limits import (
     check_frame_range,
 )
 from .core.pairing import PairingSession, approve_page_url
-from .core.projects import parse_projects, reconcile_selection
+from .core.projects import canvas_page_url, parse_projects, reconcile_selection
 from .prefs import api_url, get_prefs
 
 
@@ -49,6 +49,21 @@ def _redraw_panels() -> None:
         for area in window.screen.areas:
             if area.type == "VIEW_3D":
                 area.tag_redraw()
+
+
+def _open_canvas(context, project_id: str) -> None:
+    """投递成功后把人送到画布页；认领、摆放、聚焦都由页面自己做。
+
+    用的是投递时的项目 id，不是此刻偏好里的——上传途中用户可能已经换了项目。
+    """
+    prefs = get_prefs(context)
+    if not prefs.open_canvas_after_import:
+        return
+    bpy.ops.wm.url_open(
+        url=canvas_page_url(
+            web_url=prefs.web_url, server_url=prefs.server_url, project_id=project_id
+        )
+    )
 
 
 def _handle_auth_failure(context, status: int) -> None:
@@ -195,6 +210,7 @@ class _DeliverBase(bpy.types.Operator):
     _upload_error = ""
     _upload_status = 0
     _upload_result = None
+    _project_id = ""
 
     def invoke(self, context, event):
         prefs = get_prefs(context)
@@ -309,6 +325,7 @@ class _DeliverBase(bpy.types.Operator):
                     context, {"CANCELLED"}, message="服务端没有返回投递结果，请重试"
                 )
             self.report({"INFO"}, f"DramaClaw：已导入 {self._upload_result['filename']}")
+            _open_canvas(context, self._project_id)
             return self._cleanup(context, {"FINISHED"})
 
         return {"RUNNING_MODAL"}
@@ -317,6 +334,7 @@ class _DeliverBase(bpy.types.Operator):
         """读出渲染结果、起上传线程。返回空串表示起成功，否则是给用户看的原因。"""
         prefs = get_prefs(context)
         scene = context.scene
+        self._project_id = prefs.project
         url = (
             f"{prefs.server_url.rstrip('/')}"
             f"/api/v1/projects/{quote(prefs.project, safe='')}/blender/deliver"
@@ -438,6 +456,7 @@ class DRAMACLAW_OT_deliver_local_video(bpy.types.Operator, ImportHelper):
     _error = ""
     _status = 0
     _result = None
+    _project_id = ""
 
     def execute(self, context):
         prefs = get_prefs(context)
@@ -465,6 +484,7 @@ class DRAMACLAW_OT_deliver_local_video(bpy.types.Operator, ImportHelper):
             f"/api/v1/projects/{quote(prefs.project, safe='')}/blender/deliver"
         )
         token = prefs.token
+        self._project_id = prefs.project
         self._error = ""
         self._status = 0
         self._result = None
@@ -511,4 +531,5 @@ class DRAMACLAW_OT_deliver_local_video(bpy.types.Operator, ImportHelper):
             _report_error(self, "服务端没有返回投递结果，请重试")
             return {"CANCELLED"}
         self.report({"INFO"}, f"DramaClaw：已导入 {self._result['filename']}")
+        _open_canvas(context, self._project_id)
         return {"FINISHED"}

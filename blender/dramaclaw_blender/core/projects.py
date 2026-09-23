@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 
 def parse_projects(payload: object) -> list[tuple[str, str]]:
     """把 `/blender/projects` 的响应解析成 `[(id, name), ...]`。
@@ -40,3 +42,13 @@ def reconcile_selection(current_id: str, projects: list[tuple[str, str]]) -> tup
         if project_id == current_id:
             return project_id, name
     return projects[0] if projects else ("", "")
+
+
+def canvas_page_url(*, web_url: str, server_url: str, project_id: str) -> str:
+    """投递成功后在浏览器里打开的画布页。
+
+    页面加载完会自己认领收件箱、把节点放到视口中心并聚焦，插件只管把人送到这儿。
+    网页地址的取法同 `pairing.approve_page_url`：生产同源留空，开发环境指向 vite。
+    """
+    base = (web_url.strip() or server_url.strip()).rstrip("/")
+    return f"{base}/projects/{quote(project_id, safe='')}/freezone"
