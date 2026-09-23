@@ -832,6 +832,40 @@ def test_reroute_keeps_user_material_compose_order_and_stays_fast(monkeypatch):
     assert time.monotonic() - started < 2.0
 
 
+def test_reroute_keeps_workflow_catalog_execution_fields(monkeypatch):
+    """Fourth review of #696: workflowCatalog carries fields the runtime prompt
+    compiler reads (promptStrategy, inputStrategy, confirmedInputs, recipe
+    version); a value the standard planner would not write blocks the reroute."""
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    tutorial = {"skill_id": "text-to-image-video", "user_goal": "赛博城市",
+                "planner": {"mode": "standard", "item_count": 1}}
+
+    def reason_for(node_id: str, **catalog_fields):
+        plan = _raw_plan_from_standard(catalog, tutorial, deviate=False)
+        node = next(n for n in plan["nodes"] if n["id"] == node_id)
+        node["data"]["workflowCatalog"].update(catalog_fields)
+        validated = catalog.validate_agent_workflow_plan(plan)
+        assert validated["ok"] is True, validated
+        assert validated["planner"]["mode"] == "agent_authored", validated["planner"]
+        return validated["planner"]["template_match"]["reason"]
+
+    assert reason_for("frame_1", promptStrategy="user_message") == "not_expressible:node:frame_1"
+    assert reason_for("clip_1", inputStrategy={"upstream": "none"}) == (
+        "not_expressible:node:clip_1"
+    )
+    assert reason_for("frame_1", confirmedInputs={"aspect_ratio": "9:16"}) == (
+        "not_expressible:node:frame_1"
+    )
+    assert reason_for("clip_1", timelineRole="voiceover") == "not_expressible:node:clip_1"
+    # The planner's own catalog bookkeeping (name, step id, prompt builder's
+    # plan item) is derived and does not block: the untouched plan reroutes.
+    untouched = _raw_plan_from_standard(catalog, tutorial, deviate=False)
+    assert catalog.validate_agent_workflow_plan(untouched)["planner"]["selected_by"] == (
+        "template_isomorphic"
+    )
+
+
 def test_reroute_keeps_plan_summary_and_assumptions(monkeypatch):
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)
@@ -1138,11 +1172,13 @@ def test_intent_items_restating_the_template_use_the_standard_planner(monkeypatc
             {"id": "frame_1", "title": "步骤一画面", "prompt": "研磨咖啡豆的特写",
              "recipe_id": "general-image", "depends_on": ["outline"]},
             {"id": "clip_1", "title": "步骤一视频", "prompt": "研磨咖啡豆的特写",
-             "recipe_id": "general-video", "depends_on": ["frame_1"]},
+             "recipe_id": "general-video", "depends_on": ["frame_1"],
+             "timeline_role": "visual"},
             {"id": "frame_2", "title": "步骤二画面", "prompt": "注水闷蒸的慢镜头",
              "recipe_id": "general-image", "depends_on": ["outline"]},
             {"id": "clip_2", "title": "步骤二视频", "prompt": "注水闷蒸的慢镜头",
-             "recipe_id": "general-video", "depends_on": ["frame_2"]},
+             "recipe_id": "general-video", "depends_on": ["frame_2"],
+             "timeline_role": "visual"},
         ],
     })
 

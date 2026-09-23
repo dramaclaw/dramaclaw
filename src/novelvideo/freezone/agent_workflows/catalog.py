@@ -661,9 +661,14 @@ _PRESENTATION_DATA_KEYS = {
     "workflowCatalog",
     "workflowCatalogRole",
 }
+# ``workflowCatalog`` keys the compiler derives from the recipe / skill / node
+# id; everything else in it (recipeId, recipeVersion, recipePipeline,
+# promptStrategy, inputStrategy, confirmedInputs, operationType, timelineRole,
+# ...) reaches the runtime prompt compiler and must match exactly.
 _DERIVED_CATALOG_KEYS = {
-    "recipeId",
-    "recipePipeline",
+    "recipeName",
+    "stepId",
+    "promptBuilder",  # compared through its userGoal only; planItem repeats the brief
 }
 
 
@@ -700,8 +705,10 @@ def _node_role(node: Any) -> str:
 def _node_signature(node: dict[str, Any]) -> tuple:
     """What a node says, independent of id, label and layout.
 
-    Executable nodes: kind, prompt / text, recipe and every execution
-    parameter. User material: its text. The compose node: its settings other
+    Executable nodes: kind, prompt / text, the workflowCatalog fields the
+    runtime prompt compiler reads (recipe, version, pipeline, promptStrategy,
+    inputStrategy, confirmedInputs, ...) and every execution parameter in
+    ``data``. User material: its text. The compose node: its settings other
     than the input order, which is compared under the node mapping.
     """
     node_type = _text(node.get("node_type") or node.get("type"))
@@ -726,12 +733,25 @@ def _node_signature(node: dict[str, Any]) -> tuple:
         if isinstance(catalog.get("recipePipeline"), list)
         else []
     )
+    prompt_builder = (
+        catalog.get("promptBuilder")
+        if isinstance(catalog.get("promptBuilder"), dict)
+        else {}
+    )
     recipe = (
         _text(catalog.get("recipeId")),
         tuple(
             _text(step.get("id") if isinstance(step, dict) else step)
             for step in pipeline
         ),
+        tuple(
+            sorted(
+                (key, _hashable(value))
+                for key, value in catalog.items()
+                if key not in _DERIVED_CATALOG_KEYS and key != "recipePipeline"
+            )
+        ),
+        _text(prompt_builder.get("userGoal")),
     )
     settings = tuple(
         sorted(
