@@ -200,7 +200,9 @@ stages present and fed, no edge from a later stage back to an earlier one; node 
 prompts are parameters) is compiled by the standard planner with the briefs as its units, but
 only when that compilation reproduces the plan node for node (same prompts per stage, same
 recipes and execution parameters, same dependencies, same narration and music, the same user
-material and compose order when the plan states them); the draft then shows
+material and compose order when the plan states them); the agent's nodes are then carried into
+that compilation as written (id and data), so only the planner's own additions (input and
+compose nodes, production shape, layout) are new, and the draft shows
 `preview.planner.selected_by = template_isomorphic`. A genuine deviation, or a plan the standard
 units cannot express, stays agent-authored and `preview.planner.template_match.reason` names it.
 For error recovery,

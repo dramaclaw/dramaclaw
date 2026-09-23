@@ -9,7 +9,8 @@ normal Intent path; when the instruction and the listed topology conflict, ask o
 clarification first (see the routing order in SKILL.md). The server applies the same comparison:
 a custom plan that turns out to restate the template is compiled by the standard planner
 (`planner.selected_by = template_isomorphic`) when, and only when, that compilation reproduces
-the plan node for node; anything the standard units cannot express (a clip reading another
+the plan node for node, and the plan's own nodes are carried over as written; anything the
+standard units cannot express (a clip reading another
 unit's frame, a frame brief that differs from its clip brief, a different Recipe or voice
 setting, music without voice-over, a reference note feeding the outline, a custom compose
 order) stays an agent-authored draft with the difference recorded in

@@ -866,6 +866,80 @@ def test_reroute_keeps_workflow_catalog_execution_fields(monkeypatch):
     )
 
 
+def test_reroute_carries_the_agent_nodes_over_verbatim(monkeypatch):
+    """Fifth review of #696: a rerouted draft contains the agent's nodes as
+    written (id and data), so a runtime-read field the comparison does not
+    know about, such as promptBuilder.planItem.audio_kind, cannot be reset."""
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    drama = {"skill_id": "short-drama-quick", "user_goal": "舞台对决",
+             "planner": {"mode": "standard", "item_count": 2, "units": [
+                 {"title": "开场", "prompt": "两人对峙", "narration": "今晚只能有一个人站着离开。"},
+                 {"title": "反转", "prompt": "灯光骤暗", "narration": "他没想到，对手是自己的影子。"},
+             ]}}
+    plan = _raw_plan_from_standard(catalog, drama, deviate=False)
+    voice = next(n for n in plan["nodes"] if n["id"] == "voice_1")
+    voice["data"]["workflowCatalog"]["promptBuilder"]["planItem"]["audio_kind"] = "music"
+    # Drop the compose node and layout: the planner adds them back.
+    plan["nodes"] = [n for n in plan["nodes"] if n["node_type"] != "videoComposeNode"]
+    plan["edges"] = [e for e in plan["edges"] if e["target"] != "final_compose"]
+    before = {n["id"]: copy.deepcopy(n) for n in plan["nodes"]}
+
+    validated = catalog.validate_agent_workflow_plan(plan)
+
+    assert validated["ok"] is True, validated
+    assert validated["planner"]["selected_by"] == "template_isomorphic"
+    after = {n["id"]: n for n in validated["plan"]["nodes"]}
+    assert after["voice_1"]["data"]["workflowCatalog"]["promptBuilder"]["planItem"][
+        "audio_kind"
+    ] == "music"
+    assert after["voice_1"]["data"]["audioKind"] == "speech"
+    for node_id, node in before.items():
+        assert after[node_id]["data"] == node["data"], node_id
+    # Only the planner's additions are new, wired to the agent's ids.
+    assert set(after) - set(before) == {"final_compose"}
+    compose_inputs = {
+        e["source"] for e in validated["plan"]["edges"] if e["target"] == "final_compose"
+    }
+    assert compose_inputs >= {"clip_1", "clip_2"}
+    order = after["final_compose"]["data"]["compositionInputOrder"]
+    assert order[0] == "clip_1" and "clip_2" in order and set(order) <= set(after)
+    group_ids = {i for g in validated["plan"]["layout"]["groups"] for i in g["node_ids"]}
+    assert group_ids <= set(after)
+    assert validated["preflight"]["blockers"] == []
+
+
+def test_reroute_carries_agent_ids_and_wiring_for_renamed_nodes(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    tutorial = {"skill_id": "text-to-image-video", "user_goal": "赛博城市",
+                "planner": {"mode": "standard", "item_count": 2}}
+    plan = _raw_plan_from_standard(catalog, tutorial, deviate=False)
+    renames = {"frame_1": "shot_a_frame", "clip_1": "shot_a_clip"}
+    for node in plan["nodes"]:
+        node["id"] = renames.get(node["id"], node["id"])
+        step = node["data"].get("workflowCatalog", {})
+        if "stepId" in step:
+            step["stepId"] = renames.get(step["stepId"], step["stepId"])
+    for edge in plan["edges"]:
+        edge["source"] = renames.get(edge["source"], edge["source"])
+        edge["target"] = renames.get(edge["target"], edge["target"])
+    compose = next(n for n in plan["nodes"] if n["node_type"] == "videoComposeNode")
+    compose["data"]["compositionInputOrder"] = ["shot_a_clip", "clip_2"]
+
+    validated = catalog.validate_agent_workflow_plan(plan)
+
+    assert validated["ok"] is True, validated
+    assert validated["planner"]["selected_by"] == "template_isomorphic"
+    ids = {n["id"] for n in validated["plan"]["nodes"]}
+    assert {"shot_a_frame", "shot_a_clip", "clip_2"} <= ids and "frame_1" not in ids
+    edges = {(e["source"], e["target"]) for e in validated["plan"]["edges"]}
+    assert ("shot_a_frame", "shot_a_clip") in edges
+    assert ("shot_a_clip", "final_compose") in edges
+    compose = next(n for n in validated["plan"]["nodes"] if n["node_type"] == "videoComposeNode")
+    assert compose["data"]["compositionInputOrder"] == ["shot_a_clip", "clip_2"]
+
+
 def test_reroute_keeps_plan_summary_and_assumptions(monkeypatch):
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)

@@ -925,8 +925,9 @@ def _match_plan_nodes(
 
 def _template_round_trip_reason(
     agent_plan: dict[str, Any], standard_plan: dict[str, Any]
-) -> str | None:
-    """Why the standard compilation is not the agent's plan, or None if it is.
+) -> tuple[str | None, dict[str, str]]:
+    """Why the standard compilation is not the agent's plan, or None if it is,
+    together with the agent-id -> standard-id node mapping when it is.
 
     Rerouting must never change what the user planned: every node of the
     agent's plan (kind, prompt / text, recipe, execution parameters; user
@@ -943,7 +944,7 @@ def _template_round_trip_reason(
             produced = standard_plan.get(field)
             if not isinstance(produced, str) or stated.strip() != produced.strip():
                 # The draft is titled from the plan summary: not the planner's to rename.
-                return f"not_expressible:{field}"
+                return f"not_expressible:{field}", {}
     nodes = agent_plan.get("nodes") or []
     include_material = any(_node_role(node) == "material" for node in nodes)
     include_compose = any(_node_role(node) == "compose" for node in nodes)
@@ -962,21 +963,21 @@ def _template_round_trip_reason(
         remaining[signature] = remaining.get(signature, 0) + 1
     for node_id, signature in agent_sigs.items():
         if remaining.get(signature, 0) <= 0:
-            return f"not_expressible:node:{node_id}"
+            return f"not_expressible:node:{node_id}", {}
         remaining[signature] -= 1
     for node_id, signature in standard_sigs.items():
         if remaining.get(signature, 0) > 0:
-            return f"not_expressible:extra_node:{node_id}"
+            return f"not_expressible:extra_node:{node_id}", {}
     try:
         mapping = _match_plan_nodes(agent, standard)
     except _MappingBudgetExceeded:
-        return "not_expressible:mapping_budget"
+        return "not_expressible:mapping_budget", {}
     if mapping is not None:
         for node_id, order in agent_orders.items():
             mapped = [mapping.get(item, item) for item in order]
             if mapped != standard_orders.get(mapping[node_id], []):
-                return f"not_expressible:compose_order:{node_id}"
-        return None
+                return f"not_expressible:compose_order:{node_id}", {}
+        return None, mapping
     # Same nodes, different wiring: name the first agent edge that no
     # signature-preserving mapping can place (by node identity, not content).
     standard_pairs: dict[tuple, int] = {}
@@ -988,11 +989,11 @@ def _template_round_trip_reason(
         key = (agent_sigs[source], agent_sigs[target], link_class)
         agent_pairs[key] = agent_pairs.get(key, 0) + count
         if standard_pairs.get(key, 0) < agent_pairs[key]:
-            return f"not_expressible:edge:{source}->{target}"
+            return f"not_expressible:edge:{source}->{target}", {}
     for (source, target, link_class), count in standard_edges.items():
         key = (standard_sigs[source], standard_sigs[target], link_class)
         if agent_pairs.get(key, 0) < standard_pairs[key]:
-            return f"not_expressible:extra_edge:{source}->{target}"
+            return f"not_expressible:extra_edge:{source}->{target}", {}
     # Same content pairs, but no consistent node mapping: some node is wired
     # to more targets than any node of its kind in the template (a frame both
     # clips read where the template has one frame per clip).
@@ -1000,8 +1001,79 @@ def _template_round_trip_reason(
     standard_profiles = set(_degree_profile(standard_sigs, standard_edges).values())
     for source, target, _link_class in agent_edges:
         if agent_profile[source] not in standard_profiles:
-            return f"not_expressible:edge:{source}->{target}"
-    return "not_expressible:wiring"
+            return f"not_expressible:edge:{source}->{target}", {}
+    return "not_expressible:wiring", {}
+
+
+def _merge_agent_nodes_into_standard(
+    agent_plan: dict[str, Any],
+    standard_plan: dict[str, Any],
+    mapping: dict[str, str],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """The standard compilation with the agent's mapped nodes carried over verbatim.
+
+    A reroute may only add what the planner adds (its input and compose
+    nodes, the plan-level production shape, layout) and must never touch a
+    node the agent wrote: each mapped standard node is replaced by the
+    agent's node itself, id and ``data`` included, so no field the runtime
+    might read (``promptBuilder.planItem.audio_kind``, a voice id, anything
+    added later) can be lost or reset. Edges, compose input order and layout
+    groups are rewritten to the agent's ids. Returns ``(None, reason)`` when
+    an agent id collides with a node the planner added.
+    """
+    reverse = {standard_id: agent_id for agent_id, standard_id in mapping.items()}
+    agent_nodes = {
+        _text(node.get("id")): node
+        for node in agent_plan.get("nodes") or []
+        if isinstance(node, dict)
+    }
+    merged = deepcopy(standard_plan)
+    nodes: list[dict[str, Any]] = []
+    kept_ids: set[str] = set()
+    for node in merged.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        standard_id = _text(node.get("id"))
+        if standard_id in reverse:
+            carried = deepcopy(agent_nodes[reverse[standard_id]])
+            if not _text(carried.get("stage")) and _text(node.get("stage")):
+                carried["stage"] = node["stage"]  # the planner's label, when none given
+            nodes.append(carried)
+        else:
+            nodes.append(node)
+            kept_ids.add(standard_id)
+    collision = kept_ids & set(reverse.values())
+    if collision:
+        return None, f"not_expressible:id_collision:{sorted(collision)[0]}"
+
+    def translate(node_id: Any) -> Any:
+        return reverse.get(_text(node_id), node_id)
+
+    merged["nodes"] = nodes
+    merged["edges"] = [
+        (
+            {
+                **edge,
+                "source": translate(edge.get("source")),
+                "target": translate(edge.get("target")),
+            }
+            if isinstance(edge, dict)
+            else edge
+        )
+        for edge in merged.get("edges") or []
+    ]
+    for node in nodes:
+        if _text(node.get("id")) in kept_ids and _node_role(node) == "compose":
+            data = node.get("data") if isinstance(node.get("data"), dict) else {}
+            order = data.get(_COMPOSE_ORDER_KEY)
+            if isinstance(order, list):
+                data[_COMPOSE_ORDER_KEY] = [translate(item) for item in order]
+    layout = merged.get("layout") if isinstance(merged.get("layout"), dict) else None
+    if layout:
+        for group in layout.get("groups") or []:
+            if isinstance(group, dict) and isinstance(group.get("node_ids"), list):
+                group["node_ids"] = [translate(item) for item in group["node_ids"]]
+    return merged, None
 
 
 def _plan_goal_text(plan: dict[str, Any]) -> str:
@@ -1725,17 +1797,31 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
                     assumptions=intent.get("assumptions"),
                 )
                 if rerouted is not None:
-                    mismatch = _template_round_trip_reason(
+                    mismatch, mapping = _template_round_trip_reason(
                         compiled["plan"], rerouted["plan"]
                     )
+                    merged = None
                     if mismatch is None:
-                        rerouted["planner"] = _template_planner_metadata(
-                            rerouted["planner"],
-                            source="intent_items",
-                            requested_mode=requested_mode,
-                            match=match,
+                        merged, mismatch = _merge_agent_nodes_into_standard(
+                            compiled["plan"], rerouted["plan"], mapping
                         )
-                        return rerouted
+                    if merged is not None:
+                        checked = validate_agent_workflow_plan(
+                            merged, allow_template_reroute=False
+                        )
+                        if checked.get("ok"):
+                            rerouted["plan"] = checked["plan"]
+                            rerouted["preflight"] = checked.get("preflight") or {}
+                            rerouted["planner"] = _template_planner_metadata(
+                                rerouted["planner"],
+                                source="intent_items",
+                                requested_mode=requested_mode,
+                                match=match,
+                            )
+                            return rerouted
+                        mismatch = (
+                            f"standard_validate_failed:{_text(checked.get('error'))}"
+                        )
                     match = {"isomorphic": False, "reason": mismatch}
             planner_metadata = _agent_authored_planner_metadata(
                 skill_id,
@@ -3502,9 +3588,22 @@ def validate_agent_workflow_plan(
             )
             if rerouted.get("ok"):
                 # Only when the standard planner reproduces the agent's plan node
-                # for node: a plan it cannot express stays agent-authored.
-                mismatch = _template_round_trip_reason(validated_plan, rerouted["plan"])
+                # for node: a plan it cannot express stays agent-authored. The
+                # agent's nodes are then carried over verbatim into the standard
+                # compilation, which is validated once more.
+                mismatch, mapping = _template_round_trip_reason(
+                    validated_plan, rerouted["plan"]
+                )
+                merged = None
                 if mismatch is None:
+                    merged, mismatch = _merge_agent_nodes_into_standard(
+                        validated_plan, rerouted["plan"], mapping
+                    )
+                if merged is not None:
+                    rerouted = validate_agent_workflow_plan(
+                        merged, username=username, allow_template_reroute=False
+                    )
+                if merged is not None and rerouted.get("ok"):
                     rerouted["planner"] = _template_planner_metadata(
                         compiled["planner"],
                         source="exact_plan",
@@ -3512,6 +3611,8 @@ def validate_agent_workflow_plan(
                         match=match,
                     )
                     return rerouted
+                if merged is not None:
+                    mismatch = f"standard_validate_failed:{_text(rerouted.get('error'))}"
                 match = {"isomorphic": False, "reason": mismatch}
             else:
                 match = {
