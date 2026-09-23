@@ -424,6 +424,25 @@ def test_authenticated_catalog_isolation_and_scope_cleanup(monkeypatch):
         assert b.result() == ["bob"]
 
 
+def test_exact_plan_restating_the_template_becomes_the_standard_compilation(monkeypatch):
+    """Issue #678: the draft's source plan is the standard planner's output,
+    so intent and compiled agree when the draft is claimed."""
+    compiled = catalog.compile_workflow_intent(
+        {"skill_id": "text-to-image-video", "user_goal": "赛博城市",
+         "planner": {"mode": "standard", "item_count": 1}}
+    )
+    plan = deepcopy(compiled["plan"])
+    plan.pop("planner", None)
+    plan.pop("layout", None)
+
+    prepared = prepare_workflow_source({"plan": plan}, username="tester")
+
+    assert prepared["compiled"]["planner"]["selected_by"] == "template_isomorphic"
+    assert prepared["intent"]["schema_version"] == "freezone_workflow_plan_draft.v1"
+    assert prepared["intent"]["plan"] == prepared["compiled"]["plan"]
+    assert prepared["intent"]["plan"]["planner"]["mode"] == "deterministic_standard"
+
+
 def test_source_rejects_mixed_input_without_compiling(monkeypatch):
     monkeypatch.setattr(catalog, "list_user_agent_config_items", lambda *_: [])
     with pytest.raises(WorkflowOperationError, match="exactly one"):

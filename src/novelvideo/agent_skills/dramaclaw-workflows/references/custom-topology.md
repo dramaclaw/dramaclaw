@@ -6,7 +6,15 @@ topology request into the normal draft flow. An explicit planner instruction tak
 this heuristic: when the user names the standard planner or the Skill's standard flow and the
 listed nodes merely restate that template (same stages, order, and dependencies), stay on the
 normal Intent path; when the instruction and the listed topology conflict, ask one single-question
-clarification first (see the routing order in SKILL.md).
+clarification first (see the routing order in SKILL.md). The server applies the same comparison:
+a custom plan that turns out to restate the template is compiled by the standard planner
+(`planner.selected_by = template_isomorphic`) when, and only when, that compilation reproduces
+the plan node for node, and the plan's own nodes are carried over as written; anything the
+standard units cannot express (a clip reading another
+unit's frame, a frame brief that differs from its clip brief, a different Recipe or voice
+setting, music without voice-over, a reference note feeding the outline, a custom compose
+order) stays an agent-authored draft with the difference recorded in
+`planner.template_match.reason`.
 
 1. Load exactly one matching production Workflow Skill. Prefer
    `workflow_skill_get(skill_id=...)` on the standalone workflow MCP server; that reader is always
