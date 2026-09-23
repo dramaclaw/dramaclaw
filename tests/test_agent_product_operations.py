@@ -731,6 +731,63 @@ async def test_recipe_waiter_releases_worker_after_workflow_ends(
     assert result["delivery_status"] == "delivered"
 
 
+@pytest.mark.asyncio
+async def test_recipe_waiter_does_not_hold_worker_slot_while_run_is_live(
+    tmp_path, monkeypatch
+):
+    # Issue #700: the waiter shares the default lane with the media task it
+    # waits for. Holding the slot while the Run is live deadlocks small lanes.
+    from novelvideo.freezone import workflow_runs
+    from novelvideo.task_backend.runners import freezone as freezone_runner
+
+    operation = create_agent_product_operation(
+        project_dir=tmp_path,
+        project_id="project-a",
+        product_kind="recipe_result",
+        idempotency_key="recipe-live-run",
+        generation_session_id="run-a",
+        canvas_id="canvas-a",
+        artifact_id="image-a",
+        metadata={"workflow_run_id": "run-a", "node_id": "image-a"},
+    )
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+    monkeypatch.setattr(
+        workflow_runs,
+        "read_workflow_run",
+        lambda **_kwargs: {
+            "status": "running",
+            "lease_expires_at": "2999-01-01T00:00:00Z",
+        },
+    )
+
+    async def must_not_wait(_seconds):
+        raise AssertionError("recipe waiter held its worker slot")
+
+    monkeypatch.setattr(freezone_runner.asyncio, "sleep", must_not_wait)
+
+    with pytest.raises(AgentProductSettlementPending) as exc_info:
+        await freezone_runner._run_freezone_agent_product_async(
+            {
+                "task_type": "freezone_agent_recipe_result",
+                "__run_task_id": "task-a",
+                "payload": {
+                    "operation_id": operation["operation_id"],
+                    "product_kind": "recipe_result",
+                },
+            },
+            SimpleNamespace(state_dir=tmp_path),
+        )
+    assert exc_info.value.status == "awaiting_delivery"
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation["operation_id"]
+    )["status"] == "reserved"
+
+
 def test_product_task_timeout_preserves_pending_operation(tmp_path, monkeypatch):
     from novelvideo.task_backend.cancel import TaskTimedOut
     from novelvideo.task_backend.runners import freezone as freezone_runner
