@@ -832,6 +832,35 @@ def test_reroute_keeps_user_material_compose_order_and_stays_fast(monkeypatch):
     assert time.monotonic() - started < 2.0
 
 
+def test_reroute_keeps_plan_summary_and_assumptions(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    tutorial = {"skill_id": "text-to-image-video", "user_goal": "赛博城市",
+                "planner": {"mode": "standard", "item_count": 1}}
+    # A summary the agent wrote as the draft title is not the planner's to rename.
+    retitled = _raw_plan_from_standard(catalog, tutorial, deviate=False)
+    assert retitled["summary"] == "赛博城市"
+    retitled["summary"] = "赛博城市三镜头样片"
+    validated = catalog.validate_agent_workflow_plan(retitled)
+    assert validated["planner"]["mode"] == "agent_authored"
+    # The summary is also where a raw plan states its goal, so the planner's
+    # input node (which repeats the goal) differs first; either way, no reroute.
+    assert validated["planner"]["template_match"]["reason"] in {
+        "not_expressible:summary", "not_expressible:node:workflow_input",
+    }
+    # With the summary matching the goal the plan reroutes and keeps its title.
+    titled = _raw_plan_from_standard(catalog, tutorial, deviate=False)
+    validated = catalog.validate_agent_workflow_plan(titled)
+    assert validated["planner"]["selected_by"] == "template_isomorphic"
+    assert validated["plan"]["summary"] == "赛博城市"
+    # Plan assumptions ride along into the standard compilation.
+    assumed = _raw_plan_from_standard(catalog, tutorial, deviate=False)
+    assumed["assumptions"] = ["夜景为主", "无对白"]
+    validated = catalog.validate_agent_workflow_plan(assumed)
+    assert validated["planner"]["selected_by"] == "template_isomorphic"
+    assert validated["plan"]["assumptions"] == ["夜景为主", "无对白"]
+
+
 def test_plan_node_matching_gives_up_within_budget():
     catalog = _load_catalog_module()
     sig = ("imageGenNode", "x", ("general-image", ()), ())

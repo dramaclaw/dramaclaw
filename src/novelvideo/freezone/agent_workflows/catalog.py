@@ -913,9 +913,17 @@ def _template_round_trip_reason(
     material and compose settings when the agent wrote them) has to map onto
     exactly one node of the standard planner's output with the same
     signature, nothing may be added, under that mapping the edges have to be
-    the same (consuming or order-only) and a compose node's input order has
-    to match. Node ids and list order do not count.
+    the same (consuming or order-only), a compose node's input order has to
+    match and a stated plan summary / title (the draft title) is kept. Node
+    ids and list order do not count.
     """
+    for field in ("summary", "title"):
+        stated = agent_plan.get(field)
+        if isinstance(stated, str) and stated.strip():
+            produced = standard_plan.get(field)
+            if not isinstance(produced, str) or stated.strip() != produced.strip():
+                # The draft is titled from the plan summary: not the planner's to rename.
+                return f"not_expressible:{field}"
     nodes = agent_plan.get("nodes") or []
     include_material = any(_node_role(node) == "material" for node in nodes)
     include_compose = any(_node_role(node) == "compose" for node in nodes)
@@ -1011,12 +1019,18 @@ def _standard_intent_from_match(
     user_goal: str,
     inputs: Any,
     match: dict[str, Any],
+    assumptions: Any = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": WORKFLOW_INTENT_SCHEMA_VERSION,
         "skill_id": skill_id,
         "user_goal": user_goal,
         "inputs": dict(inputs) if isinstance(inputs, dict) else {},
+        **(
+            {"assumptions": [str(item) for item in assumptions]}
+            if isinstance(assumptions, list) and assumptions
+            else {}
+        ),
         "planner": {
             "mode": "standard",
             "deliverable": match["deliverable"],
@@ -1061,10 +1075,15 @@ def _compile_isomorphic_plan_through_template(
     user_goal: str,
     inputs: Any,
     match: dict[str, Any],
+    assumptions: Any = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     """Compile the recovered standard intent; on failure return the reason instead."""
     intent = _standard_intent_from_match(
-        skill_id=skill_id, user_goal=user_goal, inputs=inputs, match=match
+        skill_id=skill_id,
+        user_goal=user_goal,
+        inputs=inputs,
+        match=match,
+        assumptions=assumptions,
     )
     compiled = compile_workflow_intent(intent)
     if not compiled.get("ok"):
@@ -1683,6 +1702,7 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
                     user_goal=user_goal,
                     inputs=intent.get("inputs"),
                     match=match,
+                    assumptions=intent.get("assumptions"),
                 )
                 if rerouted is not None:
                     mismatch = _template_round_trip_reason(
@@ -3454,6 +3474,7 @@ def validate_agent_workflow_plan(
             user_goal=_plan_goal_text(plan),
             inputs=plan.get("inputs"),
             match=match,
+            assumptions=plan.get("assumptions"),
         )
         if compiled is not None:
             rerouted = validate_agent_workflow_plan(
