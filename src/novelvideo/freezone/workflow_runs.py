@@ -1497,6 +1497,28 @@ def update_workflow_run(
         return payload
 
 
+def workflow_media_failure_awaits_retry(
+    *, run: dict[str, Any], action: dict[str, Any], error: str | None
+) -> bool:
+    """Whether a failed media task still belongs to its live runner's retry loop.
+
+    The runner either resubmits or records the final outcome itself, so
+    reconciliation and product settlement must not end the action or its
+    Recipe operation first (issue #681). An expired lease, a non-retryable
+    error or exhausted retries all fall through to the usual failure.
+    """
+    lease_expires_at = _parse_timestamp(run.get("lease_expires_at"))
+    return (
+        run.get("status") == "running"
+        and bool(str(run.get("runner_id") or "").strip())
+        and lease_expires_at is not None
+        and lease_expires_at > datetime.now(timezone.utc)
+        and action.get("status") in {"pending", "running"}
+        and int(action.get("retry_count") or 0) < WORKFLOW_ACTION_MAX_RETRIES
+        and bool(workflow_error_diagnostics(error)["retryable"])
+    )
+
+
 def reconcile_workflow_runs_with_tasks(
     *,
     project_dir: Path,
@@ -1517,19 +1539,11 @@ def reconcile_workflow_runs_with_tasks(
 
     changed_run_ids: list[str] = []
     timestamp = _now()
-    current = datetime.now(timezone.utc)
     with _connect(project_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
         for payload in _list_runs_in_transaction(conn, canvas_id=canvas_id):
             if payload.get("status") == "cancelled":
                 continue
-            lease_expires_at = _parse_timestamp(payload.get("lease_expires_at"))
-            runner_alive = (
-                payload.get("status") == "running"
-                and bool(str(payload.get("runner_id") or "").strip())
-                and lease_expires_at is not None
-                and lease_expires_at > current
-            )
             actions = payload.get("actions")
             actions = actions if isinstance(actions, list) else []
             changed = False
@@ -1558,17 +1572,9 @@ def reconcile_workflow_runs_with_tasks(
                     continue
                 if task_status in {"failed", "cancelled"}:
                     error = str(task.get("error") or "生成任务失败").strip()
-                    if (
-                        task_status == "failed"
-                        and runner_alive
-                        and item.get("status") in {"pending", "running"}
-                        and int(item.get("retry_count") or 0)
-                        < WORKFLOW_ACTION_MAX_RETRIES
-                        and workflow_error_diagnostics(error)["retryable"]
+                    if task_status == "failed" and workflow_media_failure_awaits_retry(
+                        run=payload, action=item, error=error
                     ):
-                        # The live runner owns retryable failures and will either
-                        # resubmit or record the final outcome itself (issue #681).
-                        # An expired lease falls through to failed as before.
                         continue
                     updates = {
                         "status": "failed",

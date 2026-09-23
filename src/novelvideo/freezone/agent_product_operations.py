@@ -110,6 +110,12 @@ CREATE TABLE IF NOT EXISTS freezone_agent_product_operations (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_product_session
 ON freezone_agent_product_operations(generation_session_id, product_kind);
+CREATE TABLE IF NOT EXISTS freezone_recipe_model_prompts (
+    operation_id          TEXT PRIMARY KEY,
+    model_call_id         TEXT NOT NULL,
+    prompt                TEXT NOT NULL,
+    created_at            REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS freezone_agent_generation_sessions (
     generation_session_id TEXT PRIMARY KEY,
     project_id            TEXT NOT NULL,
@@ -334,12 +340,14 @@ def bind_agent_product_model_execution(
     turn_id: str = "",
     tool_call_id: str = "",
     compile_mode: str = "",
+    compiled_prompt: str = "",
 ) -> dict[str, Any]:
     """Persist model execution observed by trusted server-side orchestration.
 
     Result submission routes deliberately cannot write this record.  They may
     only consume evidence that the chat runtime or Recipe compiler recorded
-    after observing the actual model/tool call.
+    after observing the actual model/tool call. ``compiled_prompt`` keeps the
+    Recipe compiler's output so a media retry replays it (issue #681).
     """
     clean_model_call_id = str(model_call_id or "").strip()
     clean_source = str(source or "").strip()
@@ -379,6 +387,7 @@ def bind_agent_product_model_execution(
                     "agent product operation is bound to another model execution"
                 )
             return payload
+        now = time.time()
         conn.execute(
             """
             UPDATE freezone_agent_product_operations
@@ -387,16 +396,50 @@ def bind_agent_product_model_execution(
             """,
             (
                 json.dumps(evidence, ensure_ascii=False, separators=(",", ":")),
-                time.time(),
+                now,
                 operation_id,
             ),
         )
+        if str(compiled_prompt or "").strip():
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO freezone_recipe_model_prompts (
+                    operation_id, model_call_id, prompt, created_at
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (operation_id, clean_model_call_id, compiled_prompt, now),
+            )
         row = conn.execute(
             "SELECT * FROM freezone_agent_product_operations WHERE operation_id = ?",
             (operation_id,),
         ).fetchone()
     assert row is not None
     return _payload(row)
+
+
+def read_recipe_model_prompt(*, project_dir: Path, operation_id: str) -> str:
+    """Return the Recipe compiler prompt bound to the operation's model execution."""
+    with _connect(project_dir) as conn:
+        row = conn.execute(
+            """
+            SELECT p.prompt, p.model_call_id, o.model_evidence_json
+              FROM freezone_recipe_model_prompts AS p
+              JOIN freezone_agent_product_operations AS o
+                ON o.operation_id = p.operation_id
+             WHERE p.operation_id = ?
+            """,
+            (operation_id,),
+        ).fetchone()
+    if row is None:
+        return ""
+    evidence = _json_object(row["model_evidence_json"])
+    if (
+        evidence.get("source") != "server_recipe_compiler"
+        or evidence.get("compile_mode") != "model"
+        or evidence.get("model_call_id") != row["model_call_id"]
+    ):
+        return ""
+    return str(row["prompt"] or "")
 
 
 def finish_agent_product_operation(

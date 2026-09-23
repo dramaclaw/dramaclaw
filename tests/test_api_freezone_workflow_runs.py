@@ -670,12 +670,17 @@ class _MediaTasks:
             def get_task_for_project(self, _ctx, _task_type, _episode, *, scope):
                 return outer.tasks.get(scope)
 
+            def list_tasks_for_project(self, _ctx):
+                return list(outer.tasks.values())
+
         class TaskBackend:
             async def enqueue_project_task(self, _ctx, *, scope, **_kwargs):
                 outer.enqueued.append(scope)
                 state = SimpleNamespace(
                     task_id=f"media-task-{len(outer.enqueued)}", status="running",
                     metadata={"backend": "celery", "queue": "default"},
+                    task_type="freezone_gen", episode=0, beat_num=None, scope=scope,
+                    progress=0.0, current_task="", result=None, error=None,
                 )
                 outer.tasks[scope] = state
                 return SimpleNamespace(task_state=state, backend="celery", queue="default")
@@ -779,6 +784,89 @@ async def test_workflow_run_poll_keeps_live_runner_media_retry(
     second = await media.enqueue()
     assert second["data"]["job_id"] != first["data"]["job_id"]
     assert second["data"]["task_id"] == "media-task-2"
+
+
+@pytest.mark.parametrize("scenario", ["live_retry", "retries_exhausted"])
+@pytest.mark.asyncio
+async def test_model_recipe_media_retry_survives_status_poll(
+    workflow_run_client: TestClient, monkeypatch, scenario: str
+) -> None:
+    """Issue #681 review: model-compiled Recipes stay settleable across a retry poll."""
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.agent_product_operations import (
+        read_agent_product_operation,
+    )
+    from novelvideo.freezone.recipe_runtime import RecipeCompileResult
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    created = workflow_run_client.post(
+        base,
+        json={"actions": [{
+            "node_id": "image-1", "action": "generate_image",
+            "recipe_id": "product-image", "recipe_version": "1.0.0",
+            "generation_attempt_id": "attempt-image",
+        }], "runner_id": "runner-one"},
+    ).json()["data"]
+    operation_id = created["actions"][0]["product_operation_id"]
+    compile_calls = []
+
+    async def model_compile(**_kwargs):
+        compile_calls.append(1)
+        return RecipeCompileResult(
+            "model castle prompt", "model", ("product-image",),
+            model_call_id=f"recipe-compiler:{len(compile_calls)}", executed_at=1.0,
+        )
+
+    monkeypatch.setattr(freezone, "compile_recipe_prompt_result", model_compile)
+    request = {
+        "project_id": "proj_demo",
+        "product_operation_id": operation_id,
+        "recipe_id": "product-image",
+        "node_kind": "image",
+    }
+
+    def compile_prompt():
+        return workflow_run_client.post("/api/v1/freezone/recipes/compile", json=request)
+
+    first_compile = compile_prompt()
+    assert first_compile.status_code == 200, first_compile.text
+    media = _MediaTasks(monkeypatch, workflow_run_client, operation_id)
+    media.payload["prompt"] = first_compile.json()["data"]["prompt"]
+    first = await media.enqueue()
+    failed_task = media.tasks[first["data"]["job_id"]]
+    failed_task.status = "failed"
+    failed_task.error = "HTTP 503: upstream service unavailable"
+    if scenario == "retries_exhausted":
+        _record_workflow_retry(
+            workflow_run_client, created["run_id"], 2, runner_id="runner-one"
+        )
+
+    assert workflow_run_client.get(base).status_code == 200
+    operation = read_agent_product_operation(
+        project_dir=workflow_run_client.state_dir, operation_id=operation_id
+    )
+    if scenario == "retries_exhausted":
+        assert operation["status"] == "failed"
+        assert compile_prompt().status_code == 409
+        return
+    assert operation["status"] not in {"failed", "cancelled", "delivered"}
+
+    # The retry replays the bound model compilation instead of rebinding a new one.
+    retry_compile = compile_prompt()
+    assert retry_compile.status_code == 200, retry_compile.text
+    assert retry_compile.json()["data"]["prompt"] == "model castle prompt"
+    assert retry_compile.json()["data"]["compile_mode"] == "model"
+    assert len(compile_calls) == 1
+    _record_workflow_retry(
+        workflow_run_client, created["run_id"], 1, runner_id="runner-one"
+    )
+    second = await media.enqueue()
+    assert second["data"]["job_id"] != first["data"]["job_id"]
+    assert second["data"]["task_id"] == "media-task-2"
+    assert read_agent_product_operation(
+        project_dir=workflow_run_client.state_dir, operation_id=operation_id
+    )["model_evidence"]["model_call_id"] == "recipe-compiler:1"
 
 
 @pytest.mark.asyncio
