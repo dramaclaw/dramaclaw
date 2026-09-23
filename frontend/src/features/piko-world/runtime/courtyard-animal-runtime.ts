@@ -9,7 +9,7 @@ import { createCharacterName } from "./character-presentation";
 import { Container, Rectangle, Sprite, Texture, type Ticker } from "pixi.js";
 import type { PikoNavigation, PikoOccluder } from "./map-package-schema";
 import { createBakedActorOcclusion } from "./map-occlusion";
-import { CAT_HEART_FRAME, CAT_HEART_SRC, isAnimalPositionNavigable, ANIMAL_SHEETS, COURTYARD_ANIMALS, createAnimalMotion, type AnimalClip } from "./courtyard-animals";
+import { CAT_HEART_FRAME, CAT_HEART_SRC, isAnimalPositionNavigable, ANIMAL_SHEETS, COURTYARD_ANIMALS, ARTISAN_MARKET_ANIMALS, createAnimalMotion, type AnimalClip } from "./courtyard-animals";
 
 export function animalAtlasFrames(atlas: Texture) {
   if (atlas.width !== 2048 || atlas.height !== 2048) {
@@ -34,16 +34,19 @@ export async function createCourtyardAnimalRuntime({ ticker, navigation, bakedOc
   worldDog?: ReturnType<typeof createDogWorld>;
   mapId?: string;
 }) {
+  const placements = mapId === "artisan-market"
+    ? [...ARTISAN_MARKET_ANIMALS, ...COURTYARD_ANIMALS.filter(p => p.kind === "dog")]
+    : COURTYARD_ANIMALS.filter(p => mapId === "welcome-courtyard" || p.kind === "dog");
+  const kinds = new Set<string>(placements.map(p => p.kind));
+  const requiredClip = (clip: string) => kinds.has(clip.match(/^[a-z]+/)?.[0] ?? "");
   const replacedClips: ReadonlySet<AnimalClip> = new Set(["dogWalk", "dogBark", "catIdle"]);
   const entries: { clip: AnimalClip | keyof typeof petAtlases | null; url: string }[] = (Object.keys(ANIMAL_SHEETS) as AnimalClip[])
-    .filter(clip => !replacedClips.has(clip))
+    .filter(clip => !replacedClips.has(clip) && requiredClip(clip))
     .map(clip => ({ clip, url: resolveAssetUrl(ANIMAL_SHEETS[clip].src) }));
-  for (const [clip, sheet] of Object.entries(petAtlases)) entries.push({ clip: clip as keyof typeof petAtlases, url: resolveAssetUrl(sheet.src) });
-  entries.push({ clip: null, url: resolveAssetUrl(CAT_HEART_SRC) });
-  if (mapId !== "welcome-courtyard") {
-    // Other maps only display the shared dog, so load only its directional atlases.
-    for (let i=entries.length-1;i>=0;i--) if (!entries[i].clip?.startsWith("dog-")) entries.splice(i,1);
+  for (const [clip, sheet] of Object.entries(petAtlases)) {
+    if (requiredClip(clip)) entries.push({ clip: clip as keyof typeof petAtlases, url: resolveAssetUrl(sheet.src) });
   }
+  if (kinds.has("cat")) entries.push({ clip: null, url: resolveAssetUrl(CAT_HEART_SRC) });
   const releases: (() => void)[] = [];
   const results = await Promise.allSettled(entries.map(async ({ url }) => {
     const lease = await acquireSharedTexture(url);
@@ -78,7 +81,7 @@ export async function createCourtyardAnimalRuntime({ ticker, navigation, bakedOc
     unload();
     throw error;
   }
-  const actors = COURTYARD_ANIMALS.filter(p => mapId === "welcome-courtyard" || p.kind === "dog").map(placement => {
+  const actors = placements.map(placement => {
     const container = new Container({ label: placement.id, eventMode: "none" });
     const shadow = new Sprite({ texture: shadowTexture, label: "animal-contact-shadow", eventMode: "none", roundPixels: true });
     shadow.anchor.set(0.5);

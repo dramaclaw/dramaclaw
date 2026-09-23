@@ -90,6 +90,69 @@ export const COURTYARD_ANIMALS: readonly AnimalPlacement[] = [
   { id: "riverside-flowers-butterfly", kind: "butterfly", position: { x: 1724, y: 710 }, scale: 0.017 },
 ];
 
+/** Artisan-market: hens near workshop/stall, rabbits by trees, butterflies near flowers. */
+export const ARTISAN_MARKET_ANIMALS: readonly AnimalPlacement[] = [
+  // Hens foraging near the workshop and market stall
+  { id: "market-workshop-hen-1", kind: "hen", position: { x: 720, y: 420 }, scale: 0.054,
+    facing: 1, initialPauseSeconds: 2.0,
+    route: [{ x: 750, y: 430 }, { x: 700, y: 440 }, { x: 720, y: 420 }] },
+  { id: "market-workshop-hen-2", kind: "hen", position: { x: 650, y: 430 }, scale: 0.054,
+    facing: -1, initialPauseSeconds: 4.5, animationOffsetSeconds: 1.2,
+    route: [{ x: 680, y: 440 }, { x: 630, y: 450 }, { x: 650, y: 430 }] },
+  { id: "market-stall-hen-1", kind: "hen", position: { x: 1520, y: 470 }, scale: 0.054,
+    facing: 1, initialPauseSeconds: 3.0, animationOffsetSeconds: 0.6,
+    route: [{ x: 1550, y: 480 }, { x: 1500, y: 490 }, { x: 1520, y: 470 }] },
+  { id: "market-stall-hen-2", kind: "hen", position: { x: 1600, y: 450 }, scale: 0.054,
+    facing: -1, initialPauseSeconds: 2.5, animationOffsetSeconds: 1.5,
+    route: [{ x: 1630, y: 460 }, { x: 1580, y: 470 }, { x: 1600, y: 450 }] },
+  { id: "market-east-hen", kind: "hen", position: { x: 1700, y: 580 }, scale: 0.054,
+    facing: 1, initialPauseSeconds: 1.5, animationOffsetSeconds: 0.3,
+    route: [{ x: 1730, y: 590 }, { x: 1680, y: 600 }, { x: 1700, y: 580 }] },
+  { id: "market-west-hen", kind: "hen", position: { x: 900, y: 700 }, scale: 0.054,
+    facing: -1, initialPauseSeconds: 6.0, animationOffsetSeconds: 1.8,
+    route: [{ x: 930, y: 710 }, { x: 880, y: 720 }, { x: 900, y: 700 }] },
+  // Hens in upper forest lawn area
+  { id: "market-forest-hen-1", kind: "hen", position: { x: 450, y: 200 }, scale: 0.054,
+    facing: 1, initialPauseSeconds: 3.5, animationOffsetSeconds: 0.8,
+    route: [{ x: 480, y: 210 }, { x: 430, y: 220 }, { x: 450, y: 200 }] },
+  { id: "market-forest-hen-2", kind: "hen", position: { x: 1200, y: 180 }, scale: 0.054,
+    facing: -1, initialPauseSeconds: 4.0, animationOffsetSeconds: 2.2,
+    route: [{ x: 1230, y: 190 }, { x: 1180, y: 200 }, { x: 1200, y: 180 }] },
+  // Rabbits near trees and bushes
+  { id: "market-left-tree-rabbit", kind: "rabbit", position: { x: 480, y: 650 }, scale: 0.058,
+    facing: 1, animationOffsetSeconds: 1.5 },
+  { id: "market-right-tree-rabbit", kind: "rabbit", position: { x: 1450, y: 650 }, scale: 0.058,
+    facing: -1, animationOffsetSeconds: 3.8 },
+  { id: "market-southwest-rabbit", kind: "rabbit", position: { x: 280, y: 900 }, scale: 0.058,
+    facing: 1, animationOffsetSeconds: 2.2 },
+  { id: "market-southeast-rabbit", kind: "rabbit", position: { x: 1720, y: 900 }, scale: 0.058,
+    facing: -1, animationOffsetSeconds: 4.5 },
+  // Rabbits in upper forest area
+  { id: "market-forest-rabbit-1", kind: "rabbit", position: { x: 350, y: 150 }, scale: 0.058,
+    facing: 1, animationOffsetSeconds: 1.0 },
+  { id: "market-forest-rabbit-2", kind: "rabbit", position: { x: 1400, y: 160 }, scale: 0.058,
+    facing: -1, animationOffsetSeconds: 2.8 },
+  // Squirrel in lower-left grass lawn area
+  { id: "market-lawn-squirrel", kind: "squirrel", position: { x: 180, y: 900 }, scale: 0.059,
+    facing: 1, animationOffsetSeconds: 1.5 },
+  // Butterflies near flower patches
+  { id: "market-workshop-butterfly-1", kind: "butterfly", position: { x: 760, y: 310 }, scale: 0.018 },
+  { id: "market-workshop-butterfly-2", kind: "butterfly", position: { x: 740, y: 330 }, scale: 0.016 },
+  { id: "market-house-butterfly", kind: "butterfly", position: { x: 1310, y: 300 }, scale: 0.017 },
+  { id: "market-stall-butterfly-1", kind: "butterfly", position: { x: 1630, y: 380 }, scale: 0.017 },
+  { id: "market-stall-butterfly-2", kind: "butterfly", position: { x: 1660, y: 410 }, scale: 0.015 },
+  { id: "market-left-tree-butterfly", kind: "butterfly", position: { x: 610, y: 630 }, scale: 0.018 },
+  { id: "market-right-tree-butterfly", kind: "butterfly", position: { x: 1450, y: 630 }, scale: 0.016 },
+  { id: "market-east-butterfly", kind: "butterfly", position: { x: 1800, y: 380 }, scale: 0.018 },
+  { id: "market-west-butterfly", kind: "butterfly", position: { x: 200, y: 420 }, scale: 0.016 },
+  { id: "market-south-butterfly-1", kind: "butterfly", position: { x: 380, y: 900 }, scale: 0.017 },
+  { id: "market-south-butterfly-2", kind: "butterfly", position: { x: 1600, y: 900 }, scale: 0.018 },
+  { id: "market-forest-butterfly-1", kind: "butterfly", position: { x: 500, y: 180 }, scale: 0.017 },
+  { id: "market-forest-butterfly-2", kind: "butterfly", position: { x: 1150, y: 200 }, scale: 0.016 },
+  { id: "market-left-bench-butterfly", kind: "butterfly", position: { x: 600, y: 540 }, scale: 0.017 },
+  { id: "market-right-bench-butterfly", kind: "butterfly", position: { x: 1200, y: 560 }, scale: 0.016 },
+];
+
 export const ANIMAL_FRAME_SECONDS: Record<AnimalClip, readonly number[]> = {
   henWalk: [0.19, 0.19, 0.19, 0.19], henPeck: [0.55, 0.32, 0.14, 0.48],
   dogWalk: [0.18, 0.18, 0.18, 0.18], dogBark: [0.48, 0.16, 0.18, 0.42],

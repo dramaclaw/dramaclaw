@@ -1,3 +1,4 @@
+import { mapPerspectiveScale } from './runtime/map-perspective';
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { PikoTaskLabel } from "./PikoTaskLabel";
@@ -50,7 +51,7 @@ import { playPikoUiSound } from "./piko-audio";
 import { canStand } from "./runtime/character-movement";
 import { canActivateTransport, createExitGate, enabledMapExits, type MapExit } from "./runtime/map-travel";
 import { PIKO_MAP_TRANSITIONS, isPikoMapId } from "./piko-map-transitions";
-import type { PikoNavigation } from "./runtime/map-package-schema";
+import type { PikoNavigation, PikoOcclusion } from "./runtime/map-package-schema";
 const NavigationEditor = lazy(() => import("./PikoNavigationEditor"));
 
 export type PikoMapLoadState = "loading" | "ready" | "error";
@@ -77,6 +78,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
   const onExitRef = useRef(onExit);
   onExitRef.current = onExit;
   const [debugNavigation, setDebugNavigation] = useState<PikoNavigation | null>(null);
+  const [debugOcclusion, setDebugOcclusion] = useState<PikoOcclusion | null>(null);
   const debugEditingRef = useRef(false);
   const navigationRef = useRef<PikoNavigation | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -382,6 +384,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
           if (spawnId && (!spawn || !canStand(spawn.position, navigation))) throw new Error("Invalid map arrival");
           navigationRef.current = navigation;
           setDebugNavigation(structuredClone(navigation));
+          setDebugOcclusion(structuredClone(occlusion));
           const checkExit = createExitGate(enabledMapExits(navigation));
           if (mapId === "welcome-courtyard") {
             const mayorTexture = await loadTexture(PIKO_MAYOR_IDLE_SRC);
@@ -435,9 +438,12 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
               onPose: (facing, column, idleElapsedMs) => {
                 if (residentActor) {
                   const seated = residentActor.isSeated();
-                  const scaleX = RESIDENT_WORLD_SCALE * (seated ? SEATED_POSE.scale : 1);
-                  const scaleY = RESIDENT_WORLD_SCALE * (seated ? SEATED_POSE.scale : pikoPlayerPoseHeightScale(playerGender, facing, column));
+                  const perspectiveScale = mapPerspectiveScale(mapId, residentActor.container.y);
+                  const scaleX = RESIDENT_WORLD_SCALE * (seated ? SEATED_POSE.scale : 1) * perspectiveScale;
+                  const scaleY = RESIDENT_WORLD_SCALE * (seated ? SEATED_POSE.scale : pikoPlayerPoseHeightScale(playerGender, facing, column)) * perspectiveScale;
                   residentActor.body.scale.x = scaleX;
+                  // Also scale the shadow to match perspective
+                  residentActor.shadow.scale.set(scaleX);
                   if (residentActor.body.scale.y !== scaleY) {
                     residentActor.body.scale.y = scaleY;
                     residentPresentationRef.current?.setNameGap(playerNameGapRef.current);
@@ -455,7 +461,10 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
               idleCycleMs: playerGender ? PIKO_PLAYER_IDLE_CYCLE_MS : undefined,
               speed: playerGender ? PIKO_PLAYER_SPEED : undefined,
               gaitCycleSourcePixels: playerGender ? PIKO_PLAYER_GAIT_CYCLE_SOURCE_PIXELS : undefined});
-          residentActor.body.scale.y = RESIDENT_WORLD_SCALE * pikoPlayerPoseHeightScale(playerGender, spawn?.facing ?? "south", 0);
+          const initialPerspectiveScale = mapPerspectiveScale(mapId, residentActor.container.y);
+          residentActor.body.scale.y = RESIDENT_WORLD_SCALE * pikoPlayerPoseHeightScale(playerGender, spawn?.facing ?? "south", 0) * initialPerspectiveScale;
+          residentActor.body.scale.x = RESIDENT_WORLD_SCALE * initialPerspectiveScale;
+          residentActor.shadow.scale.set(RESIDENT_WORLD_SCALE * initialPerspectiveScale);
           if (playerGender) {
             const textures = new Map<PlayerAccessoryId, Texture>();
             await Promise.all(PLAYER_ACCESSORIES.map(async item => {
@@ -504,7 +513,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
           environmentAudio?.update({ x: playerX, y: playerY });
           animalAudio?.update({ x: playerX, y: playerY });
           setPlayerHeadOccluded(isResidentHeadOccluded(
-            { x: playerX, y: playerY }, occlusion, RESIDENT_WORLD_SCALE,
+            { x: playerX, y: playerY }, occlusion, RESIDENT_WORLD_SCALE * initialPerspectiveScale,
           ));
           let lastTreeOutline = animatedTree?.outline;
           let lastHeadSeated = false;
@@ -533,7 +542,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
               lastTreeOutline = animatedTree?.outline;
               lastHeadSeated = headSeated;
               setPlayerHeadOccluded(isResidentHeadOccluded(
-                { x: playerX, y: playerY }, occlusion, RESIDENT_WORLD_SCALE * (headSeated ? SEATED_POSE.scale : 1),
+                { x: playerX, y: playerY }, occlusion, RESIDENT_WORLD_SCALE * (headSeated ? SEATED_POSE.scale : 1) * mapPerspectiveScale(mapId, playerY),
                 { depthY: residentActor?.container.zIndex ?? playerY, headOffset: headSeated ? SEATED_POSE.headOffset : 42 },
               ));
             }
@@ -627,14 +636,14 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
         <PikoResidentInteraction key={PIKO_SIMULATED_RESIDENT.id} target={PIKO_SIMULATED_RESIDENT}
           position={simulatedPosition} fit={worldFit} onBusyChange={onSocialBusyChange} onHover={onSimulatedHover} />
       )}
-      {taskStatus && <PikoTaskLabel task={taskStatus} position={playerPosition} fit={worldFit} headOffset={(playerSeated ? 81 : 136) + playerNameGap}
+      {taskStatus && <PikoTaskLabel task={taskStatus} position={playerPosition} fit={worldFit} headOffset={(playerSeated ? 81 : 136) * mapPerspectiveScale(mapId, playerPosition.y) + playerNameGap}
         available={loadState === "ready" && showMayorHint && !movementBlocked && !welcomeOpen && !speech}
         onInteract={() => stopPlayerRef.current()} />}
-      {loadState === "ready" && showMayorHint && speech && !playerHeadOccluded && <PikoSpeechBubble body={speech.body} position={playerPosition} fit={worldFit} headOffset={(playerSeated ? 73 : 128) + playerNameGap} />}
+      {loadState === "ready" && showMayorHint && speech && !playerHeadOccluded && <PikoSpeechBubble body={speech.body} position={playerPosition} fit={worldFit} headOffset={(playerSeated ? 73 : 128) * mapPerspectiveScale(mapId, playerPosition.y) + playerNameGap} />}
       {loadState === "ready" && showMayorHint && dogGreeting?.mapId === mapId && <PikoSpeechBubble body="🐶❤️" position={dogGreeting} fit={worldFit} headOffset={dogGreeting.headOffset} />}
       <PikoWelcomeDialog open={welcomeOpen} onOpenChange={open=>{welcomeOpenRef.current=open;setWelcomeOpen(open);}} />
       {import.meta.env.DEV && loadState === "ready" && showMayorHint && debugNavigation && worldFit.scale > 0 && !movementBlocked && (
-        <Suspense fallback={null}><NavigationEditor key={mapId} navigation={debugNavigation} fit={worldFit} player={playerPosition}
+        <Suspense fallback={null}><NavigationEditor key={mapId} navigation={debugNavigation} occlusion={debugOcclusion} fit={worldFit} player={playerPosition}
           onEditing={editing => { debugEditingRef.current = editing; if(editing) stopPlayerRef.current(); }}
           onApply={next => { if(navigationRef.current) Object.assign(navigationRef.current, next); }}
           onPlay={() => hostRef.current?.focus({preventScroll:true})} /></Suspense>

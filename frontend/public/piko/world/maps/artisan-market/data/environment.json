@@ -5,6 +5,175 @@
     "preset": "baked-daylight",
     "intensity": 0
   },
-  "effects": [],
-  "audioZones": []
+  "effects": [
+    {
+      "id": "grass-workshop-front",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-workshop-front-patch",
+        "points": [{ "x": 680, "y": 310 }, { "x": 776, "y": 310 }, { "x": 776, "y": 406 }, { "x": 680, "y": 406 }]
+      },
+      "animation": { "columns": 4, "rows": 4, "frames": 8, "fps": 3, "inset": 0, "playback": "ping-pong", "startStep": 0 },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-market-stall",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-market-stall-patch",
+        "points": [{ "x": 1570, "y": 310 }, { "x": 1666, "y": 310 }, { "x": 1666, "y": 406 }, { "x": 1570, "y": 406 }]
+      },
+      "animation": { "columns": 4, "rows": 4, "frames": 8, "fps": 3, "inset": 0, "playback": "ping-pong", "startStep": 6 },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-east-path",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-east-path-patch",
+        "points": [{ "x": 1680, "y": 560 }, { "x": 1776, "y": 560 }, { "x": 1776, "y": 656 }, { "x": 1680, "y": 656 }]
+      },
+      "animation": { "columns": 4, "rows": 4, "frames": 8, "fps": 3, "inset": 0, "playback": "ping-pong", "startStep": 7 },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-west-arch",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-west-arch-patch",
+        "points": [{ "x": 200, "y": 390 }, { "x": 296, "y": 390 }, { "x": 296, "y": 486 }, { "x": 200, "y": 486 }]
+      },
+      "animation": { "columns": 4, "rows": 4, "frames": 8, "fps": 3, "inset": 0, "playback": "ping-pong", "startStep": 9 },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-south-center",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-south-center-patch",
+        "points": [{ "x": 920, "y": 700 }, { "x": 1016, "y": 700 }, { "x": 1016, "y": 796 }, { "x": 920, "y": 796 }]
+      },
+      "animation": { "columns": 4, "rows": 4, "frames": 8, "fps": 3, "inset": 0, "playback": "ping-pong", "startStep": 10 },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-bottom-left",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-bottom-left-patch",
+        "points": [{ "x": 300, "y": 950 }, { "x": 396, "y": 950 }, { "x": 396, "y": 1046 }, { "x": 300, "y": 1046 }]
+      },
+      "animation": { "columns": 4, "rows": 4, "frames": 8, "fps": 3, "inset": 0, "playback": "ping-pong", "startStep": 13 },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "grass-bottom-right",
+      "kind": "sprite",
+      "src": "effects/grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "grass-bottom-right-patch",
+        "points": [{ "x": 1620, "y": 950 }, { "x": 1716, "y": 950 }, { "x": 1716, "y": 1046 }, { "x": 1620, "y": 1046 }]
+      },
+      "animation": { "columns": 4, "rows": 4, "frames": 8, "fps": 3, "inset": 0, "playback": "ping-pong", "startStep": 14 },
+      "reducedMotion": "simplify"
+    },
+    { "id": "flower-market-stall", "kind": "sprite", "src": "effects/flower-clump-atlas-v1.png", "layer": "front-scenery",
+      "region": { "id": "flower-market-stall", "points": [{ "x": 1620, "y": 360 }, { "x": 1688, "y": 360 }, { "x": 1688, "y": 428 }, { "x": 1620, "y": 428 }] },
+      "animation": { "columns": 2, "rows": 2, "frames": 4, "fps": 0.62, "inset": 0, "sequence": [0, 1, 2, 1], "clock": "courtyard-wind", "loopSeconds": 6.4, "phaseSeconds": 0.08 }, "reducedMotion": "simplify" },
+    { "id": "flower-east-arch", "kind": "sprite", "src": "effects/flower-clump-atlas-v1.png", "layer": "front-scenery",
+      "region": { "id": "flower-east-arch", "points": [{ "x": 1780, "y": 360 }, { "x": 1850, "y": 360 }, { "x": 1850, "y": 430 }, { "x": 1780, "y": 430 }] },
+      "animation": { "columns": 2, "rows": 2, "frames": 4, "fps": 0.56, "inset": 0, "sequence": [0, 1, 2, 1], "clock": "courtyard-wind", "loopSeconds": 7.1, "phaseSeconds": 0.02 }, "reducedMotion": "simplify" },
+    { "id": "flower-west-arch", "kind": "sprite", "src": "effects/flower-clump-atlas-v1.png", "layer": "front-scenery",
+      "region": { "id": "flower-west-arch", "points": [{ "x": 180, "y": 400 }, { "x": 248, "y": 400 }, { "x": 248, "y": 468 }, { "x": 180, "y": 468 }] },
+      "animation": { "columns": 2, "rows": 2, "frames": 4, "fps": 0.61, "inset": 0, "sequence": [0, 1, 2, 1], "clock": "courtyard-wind", "loopSeconds": 6.5, "phaseSeconds": -0.08 }, "reducedMotion": "simplify" },
+    { "id": "flower-bottom-left", "kind": "sprite", "src": "effects/flower-clump-atlas-v1.png", "layer": "front-scenery",
+      "region": { "id": "flower-bottom-left", "points": [{ "x": 360, "y": 880 }, { "x": 430, "y": 880 }, { "x": 430, "y": 950 }, { "x": 360, "y": 950 }] },
+      "animation": { "columns": 2, "rows": 2, "frames": 4, "fps": 0.58, "inset": 0, "sequence": [0, 1, 2, 1], "clock": "courtyard-wind", "loopSeconds": 6.8, "phaseSeconds": -0.02 }, "reducedMotion": "simplify" },
+    { "id": "flower-bottom-right", "kind": "sprite", "src": "effects/flower-clump-atlas-v1.png", "layer": "front-scenery",
+      "region": { "id": "flower-bottom-right", "points": [{ "x": 1580, "y": 880 }, { "x": 1650, "y": 880 }, { "x": 1650, "y": 950 }, { "x": 1580, "y": 950 }] },
+      "animation": { "columns": 2, "rows": 2, "frames": 4, "fps": 0.6, "inset": 0, "sequence": [0, 1, 2, 1], "clock": "courtyard-wind", "loopSeconds": 6.6, "phaseSeconds": 0.06 }, "reducedMotion": "simplify" },
+    { "id": "grass-forest-lawn-1", "kind": "sprite", "src": "effects/grass-breeze-v1.png", "layer": "front-scenery",
+      "region": { "id": "grass-forest-lawn-1-patch", "points": [{ "x": 400, "y": 160 }, { "x": 496, "y": 160 }, { "x": 496, "y": 256 }, { "x": 400, "y": 256 }] },
+      "animation": { "columns": 4, "rows": 4, "frames": 8, "fps": 3, "inset": 0, "playback": "ping-pong", "startStep": 15 },
+      "reducedMotion": "simplify" },
+    { "id": "grass-forest-lawn-2", "kind": "sprite", "src": "effects/grass-breeze-v1.png", "layer": "front-scenery",
+      "region": { "id": "grass-forest-lawn-2-patch", "points": [{ "x": 1100, "y": 140 }, { "x": 1196, "y": 140 }, { "x": 1196, "y": 236 }, { "x": 1100, "y": 236 }] },
+      "animation": { "columns": 4, "rows": 4, "frames": 8, "fps": 3, "inset": 0, "playback": "ping-pong", "startStep": 16 },
+      "reducedMotion": "simplify" },
+    { "id": "grass-forest-path", "kind": "sprite", "src": "effects/grass-breeze-v1.png", "layer": "front-scenery",
+      "region": { "id": "grass-forest-path-patch", "points": [{ "x": 750, "y": 100 }, { "x": 846, "y": 100 }, { "x": 846, "y": 196 }, { "x": 750, "y": 196 }] },
+      "animation": { "columns": 4, "rows": 4, "frames": 8, "fps": 3, "inset": 0, "playback": "ping-pong", "startStep": 17 },
+      "reducedMotion": "simplify" },
+    { "id": "flower-forest-path-1", "kind": "sprite", "src": "effects/flower-clump-atlas-v1.png", "layer": "front-scenery",
+      "region": { "id": "flower-forest-path-1", "points": [{ "x": 500, "y": 130 }, { "x": 560, "y": 130 }, { "x": 560, "y": 190 }, { "x": 500, "y": 190 }] },
+      "animation": { "columns": 2, "rows": 2, "frames": 4, "fps": 0.57, "inset": 0, "sequence": [0, 1, 2, 1], "clock": "courtyard-wind", "loopSeconds": 7.0, "phaseSeconds": 0.05 }, "reducedMotion": "simplify" },
+    { "id": "flower-forest-path-2", "kind": "sprite", "src": "effects/flower-clump-atlas-v1.png", "layer": "front-scenery",
+      "region": { "id": "flower-forest-path-2", "points": [{ "x": 1200, "y": 120 }, { "x": 1260, "y": 120 }, { "x": 1260, "y": 180 }, { "x": 1200, "y": 180 }] },
+      "animation": { "columns": 2, "rows": 2, "frames": 4, "fps": 0.59, "inset": 0, "sequence": [0, 1, 2, 1], "clock": "courtyard-wind", "loopSeconds": 6.7, "phaseSeconds": -0.03 }, "reducedMotion": "simplify" },
+    { "id": "flower-forest-lawn", "kind": "sprite", "src": "effects/flower-clump-atlas-v1.png", "layer": "front-scenery",
+      "region": { "id": "flower-forest-lawn", "points": [{ "x": 850, "y": 80 }, { "x": 910, "y": 80 }, { "x": 910, "y": 140 }, { "x": 850, "y": 140 }] },
+      "animation": { "columns": 2, "rows": 2, "frames": 4, "fps": 0.56, "inset": 0, "sequence": [0, 1, 2, 1], "clock": "courtyard-wind", "loopSeconds": 7.2, "phaseSeconds": 0.07 }, "reducedMotion": "simplify" },
+    { "id": "grass-forest-upper-left", "kind": "sprite", "src": "effects/grass-breeze-v1.png", "layer": "front-scenery",
+      "region": { "id": "grass-forest-upper-left-patch", "points": [{ "x": 480, "y": 60 }, { "x": 560, "y": 60 }, { "x": 560, "y": 130 }, { "x": 480, "y": 130 }] },
+      "animation": { "columns": 4, "rows": 4, "frames": 8, "fps": 3, "inset": 0, "playback": "ping-pong", "startStep": 2 },
+      "reducedMotion": "simplify" },
+    { "id": "flower-forest-upper-left", "kind": "sprite", "src": "effects/flower-clump-atlas-v1.png", "layer": "front-scenery",
+      "region": { "id": "flower-forest-upper-left", "points": [{ "x": 640, "y": 100 }, { "x": 700, "y": 100 }, { "x": 700, "y": 160 }, { "x": 640, "y": 160 }] },
+      "animation": { "columns": 2, "rows": 2, "frames": 4, "fps": 0.58, "inset": 0, "sequence": [0, 1, 2, 1], "clock": "courtyard-wind", "loopSeconds": 6.9, "phaseSeconds": 0.04 }, "reducedMotion": "simplify" },
+    { "id": "grass-forest-upper-right", "kind": "sprite", "src": "effects/grass-breeze-v1.png", "layer": "front-scenery",
+      "region": { "id": "grass-forest-upper-right-patch", "points": [{ "x": 1330, "y": 80 }, { "x": 1410, "y": 80 }, { "x": 1410, "y": 150 }, { "x": 1330, "y": 150 }] },
+      "animation": { "columns": 4, "rows": 4, "frames": 8, "fps": 3, "inset": 0, "playback": "ping-pong", "startStep": 5 },
+      "reducedMotion": "simplify" },
+    { "id": "flower-forest-upper-right", "kind": "sprite", "src": "effects/flower-clump-atlas-v1.png", "layer": "front-scenery",
+      "region": { "id": "flower-forest-upper-right", "points": [{ "x": 1500, "y": 110 }, { "x": 1560, "y": 110 }, { "x": 1560, "y": 170 }, { "x": 1500, "y": 170 }] },
+      "animation": { "columns": 2, "rows": 2, "frames": 4, "fps": 0.57, "inset": 0, "sequence": [0, 1, 2, 1], "clock": "courtyard-wind", "loopSeconds": 7.1, "phaseSeconds": -0.02 }, "reducedMotion": "simplify" },
+    { "id": "flower-right-path", "kind": "sprite", "src": "effects/flower-clump-atlas-v1.png", "layer": "front-scenery",
+      "region": { "id": "flower-right-path", "points": [{ "x": 1720, "y": 620 }, { "x": 1780, "y": 620 }, { "x": 1780, "y": 680 }, { "x": 1720, "y": 680 }] },
+      "animation": { "columns": 2, "rows": 2, "frames": 4, "fps": 0.59, "inset": 0, "sequence": [0, 1, 2, 1], "clock": "courtyard-wind", "loopSeconds": 6.8, "phaseSeconds": 0.03 }, "reducedMotion": "simplify" },
+    { "id": "grass-right-path", "kind": "sprite", "src": "effects/grass-breeze-v1.png", "layer": "front-scenery",
+      "region": { "id": "grass-right-path-patch", "points": [{ "x": 1800, "y": 660 }, { "x": 1896, "y": 660 }, { "x": 1896, "y": 756 }, { "x": 1800, "y": 756 }] },
+      "animation": { "columns": 4, "rows": 4, "frames": 8, "fps": 3, "inset": 0, "playback": "ping-pong", "startStep": 4 },
+      "reducedMotion": "simplify" }
+  ],
+  "audioZones": [
+    {
+      "id": "birds",
+      "src": "audio/birds-v1.ogg",
+      "region": {
+        "id": "birds-sound-zone",
+        "points": [{ "x": 0, "y": 0 }, { "x": 2048, "y": 0 }, { "x": 2048, "y": 1152 }, { "x": 0, "y": 1152 }]
+      },
+      "volume": 0.12,
+      "fadeDistance": 900,
+      "repeatDelay": 60
+    },
+    {
+      "id": "insects",
+      "src": "audio/insects-v1.ogg",
+      "region": {
+        "id": "insects-center",
+        "points": [{ "x": 850, "y": 450 }, { "x": 1150, "y": 450 }, { "x": 1150, "y": 700 }, { "x": 850, "y": 700 }]
+      },
+      "additionalRegions": [
+        { "id": "insects-left-tree", "points": [{ "x": 480, "y": 500 }, { "x": 680, "y": 500 }, { "x": 680, "y": 680 }, { "x": 480, "y": 680 }] },
+        { "id": "insects-right-tree", "points": [{ "x": 1320, "y": 500 }, { "x": 1520, "y": 500 }, { "x": 1520, "y": 680 }, { "x": 1320, "y": 680 }] }
+      ],
+      "volume": 0.14,
+      "fadeDistance": 120,
+      "repeatDelay": 0
+    }
+  ]
 }

@@ -71,7 +71,7 @@ export const MAP_EXIT_MARKERS: Record<PikoMapId, readonly PikoExitMarkerDefiniti
     { exitId: "to-frostmoon-tundra", targetMapId: "frostmoon-tundra",
       position: { x: 1090, y: 70 }, direction: "north" },
     { exitId: "to-whalesong-skyport", targetMapId: "whalesong-skyport",
-      position: { x: 1200, y: 310 }, direction: "north", action: "ascend" },
+      position: { x: 1200, y: 330 }, direction: "north", action: "ascend" },
   ],
   "frostmoon-tundra": [
     { exitId: "to-cloudtop-slope", targetMapId: "cloudtop-slope",

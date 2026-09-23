@@ -151,3 +151,25 @@ it('renders the shared dog only on its current map and never advances it from a 
   expect(runtime.actors[0].container.visible).toBe(true);
   runtime.destroy();ticker.destroy();sheet.destroy(true);
 });
+
+it.each(['artisan-market', 'lantern-canal-street'])('keeps the shared dog in %s without loading unused cat assets', async mapId => {
+  vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+  const sheets: Texture[] = [];
+  const load = vi.spyOn(Assets, 'load').mockImplementation(async () => {
+    const sheet = atlas(); sheets.push(sheet); return sheet as never;
+  });
+  vi.spyOn(Assets, 'unload').mockResolvedValue(undefined);
+  const ticker = new Ticker(); ticker.autoStart = false;
+  const runtime = (await createCourtyardAnimalRuntime({ ...options(ticker), mapId }))!;
+  try {
+    expect(runtime.actors.filter(actor => actor.placement.kind === 'dog')).toHaveLength(1);
+    expect(runtime.actors.some(actor => actor.placement.kind === 'hen')).toBe(mapId === 'artisan-market');
+    expect(load.mock.calls.some(([url]) => String(url).includes('cat'))).toBe(false);
+    runtime.actors.forEach(actor => {
+      actor.render();
+      expect(actor.body.texture).toBeDefined();
+    });
+  } finally {
+    runtime.destroy(); ticker.destroy(); sheets.forEach(sheet => sheet.destroy(true));
+  }
+});

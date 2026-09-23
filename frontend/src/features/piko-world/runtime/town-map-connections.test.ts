@@ -11,7 +11,7 @@ import { createExitGate, enabledMapExits, prepareMapTravel } from "./map-travel"
 
 const read = (map: string, file: string) => JSON.parse(readFileSync(`public/piko/world/maps/${map}/${file}`, "utf8"));
 const maps = Object.keys(MAP_EXIT_MARKERS) as PikoMapId[];
-const previewMaps = maps.filter(map => map !== "welcome-courtyard");
+const previewMaps = maps.filter(map => !["welcome-courtyard", "artisan-market", "amber-wilds", "cloudtop-slope", "lantern-canal-street"].includes(map));
 const packages = new Map(maps.map(map => [map, PikoMapPackageSchema.parse({
   manifest: read(map, "manifest.json"), navigation: read(map, "data/navigation.json"),
   occlusion: read(map, "data/occlusion.json"), environment: read(map, "data/environment.json"),

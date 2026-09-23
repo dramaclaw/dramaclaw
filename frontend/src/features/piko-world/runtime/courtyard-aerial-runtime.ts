@@ -132,7 +132,7 @@ export function createCloudEvent(lane: AerialLane, random: Random = Math.random)
       ...offset,
       width: randomBetween(random, 320, 520),
       alpha: randomBetween(random, 0.24, 0.34),
-      shadowAlpha: randomBetween(random, 0.08, 0.14),
+      shadowAlpha: randomBetween(random, 0.12, 0.2),
       shadowOffset: { x: randomBetween(random, 58, 96), y: randomBetween(random, 42, 72) },
       flipped: random() >= 0.5,
       drift: randomBetween(random, -18, 18),
