@@ -3873,13 +3873,24 @@ function commandNodeRefs(command: CanvasChatCommand): string[] {
   }
 }
 
+/**
+ * 规范化时给未带 client_id 的新建命令补的合成 id 前缀。审批卡按 client_id 收集并改写
+ * 新节点的生成参数，执行器再用同一个 id 找回建出的节点；没有它，这类节点在审批阶段
+ * 无法被识别（#685）。格式不匹配 Agent 可引用的 `auto:N`，不会与其混淆。
+ */
+const GENERATED_CLIENT_ID_PREFIX = "auto:new:";
+
+export function isGeneratedCanvasClientId(id: string | undefined): boolean {
+  return typeof id === "string" && id.startsWith(GENERATED_CLIENT_ID_PREFIX);
+}
+
 export function normalizeCanvasChatCommandEnvelopesForValidation(
   envelopes: CanvasChatCommandEnvelope[],
   initialNodeIds?: Iterable<string>,
 ): CanvasChatCommandEnvelope[] {
   const baseNodeIds = new Set(initialNodeIds ?? useCanvasStore.getState().nodes.map((node) => node.id));
 
-  return envelopes.map((envelope) => {
+  return envelopes.map((envelope, envelopeIndex) => {
     const knownRefs = new Set(baseNodeIds);
     const referencedAutoClientIds = new Set(
       envelope.commands
@@ -3921,7 +3932,14 @@ export function normalizeCanvasChatCommandEnvelopesForValidation(
         ? [...new Set(commandNodeRefs(nextCommand))]
           .filter((ref) => ref.trim().length > 0 && !knownRefs.has(ref))
         : [];
-      if (nextUnknownRefs.length !== 1) return command;
+      if (nextUnknownRefs.length !== 1) {
+        const generatedClientId = `${GENERATED_CLIENT_ID_PREFIX}${envelopeIndex}:${index}`;
+        knownRefs.add(generatedClientId);
+        return {
+          ...command,
+          client_id: generatedClientId,
+        };
+      }
 
       const clientId = nextUnknownRefs[0];
       knownRefs.add(clientId);

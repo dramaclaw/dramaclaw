@@ -3,7 +3,10 @@
 import { act, render, renderHook, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { useCanvasStore } from "@/stores/canvasStore";
-import { workflowGenerationTargetsForPreflight } from "@/features/freezone/canvasChatCommands";
+import {
+  normalizeCanvasChatCommandEnvelopesForValidation,
+  workflowGenerationTargetsForPreflight,
+} from "@/features/freezone/canvasChatCommands";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { normalizeMessage } from "@/features/superchat/message";
 import { buildCanvasCommandToolResultPayloadForTest } from "@/features/freezone/canvasCommandToolResult";
@@ -3830,6 +3833,233 @@ describe("Canvas command approval image params", () => {
       },
       { type: "run_workflow", node_ids: ["image-a"], scope: "selection" },
     ]);
+  });
+
+  it("keeps add_next_node image params through the approval card and amend (#685)", () => {
+    const approval = {
+      id: "add-next-approval", key: "add-next-approval", messageId: "assistant",
+      receivedAt: 1, commandCount: 2, plans: [],
+      envelopes: [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [
+          {
+            type: "add_next_node" as const,
+            client_id: "image-a",
+            source_node_id: "upload-1",
+            node_type: "imageGenNode" as const,
+            data: {
+              prompt: "水彩风格",
+              model: "newapi_gpt_image2",
+              aspectRatio: "9:16",
+              size: "1k",
+              quality: "medium",
+              count: 1,
+            },
+          },
+          { type: "run_node_action" as const, node_id: "image-a", action: "generate_image" },
+        ],
+      }],
+    };
+    const groups = imageApprovalParamGroupsForTest(approval as never, [], "other-model", [{
+      id: "newapi_gpt_image2",
+      resolutionOptions: ["1k", "2k", "4k"],
+      qualityOptions: ["low", "medium", "high"],
+    }]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({
+      nodeId: "image-a",
+      model: "newapi_gpt_image2",
+      aspectRatio: "9:16",
+      size: "1k",
+      quality: "medium",
+      count: 1,
+    });
+
+    const amended = amendCanvasApprovalWithImageParamsForTest(approval as never, groups[0]);
+    expect(amended.envelopes[0].commands).toEqual([
+      {
+        ...approval.envelopes[0].commands[0],
+        data: { ...approval.envelopes[0].commands[0].data },
+      },
+      approval.envelopes[0].commands[1],
+    ]);
+  });
+
+  it("keeps confirmed params when a later update_node_data targets the add_next_node node", () => {
+    const approval = {
+      id: "add-next-update-approval", key: "add-next-update-approval", messageId: "assistant",
+      receivedAt: 1, commandCount: 3, plans: [],
+      envelopes: [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [
+          {
+            type: "add_next_node" as const,
+            client_id: "image-a",
+            source_node_id: "upload-1",
+            node_type: "imageGenNode" as const,
+            data: { model: "newapi_gpt_image2", aspectRatio: "9:16", size: "1k" },
+          },
+          { type: "update_node_data" as const, node_id: "image-a", data: { aspectRatio: "1:1", prompt: "水彩" } },
+          { type: "run_node_action" as const, node_id: "image-a", action: "generate_image" },
+        ],
+      }],
+    };
+    const models = [{ id: "newapi_gpt_image2", resolutionOptions: ["1k", "2k", "4k"] }];
+    const groups = imageApprovalParamGroupsForTest(approval as never, [], "other-model", models);
+    expect(groups[0]).toMatchObject({ aspectRatio: "1:1", size: "1k" });
+
+    const amended = amendCanvasApprovalWithImageParamsForTest(approval as never, {
+      ...groups[0],
+      aspectRatio: "3:4",
+      size: "2k",
+    });
+    const commands = amended.envelopes[0].commands as Array<{ type: string; data?: Record<string, unknown> }>;
+    expect(commands.map((command) => command.type)).toEqual([
+      "add_next_node",
+      "update_node_data",
+      "run_node_action",
+    ]);
+    expect(commands[1].data).toMatchObject({ aspectRatio: "3:4", size: "2k", prompt: "水彩" });
+    expect(imageApprovalParamGroupsForTest(amended as never, [], "other-model", models)[0])
+      .toMatchObject({ aspectRatio: "3:4", size: "2k" });
+  });
+
+  it("collects add_next_node image params for run_workflow approvals", () => {
+    const approval = {
+      id: "add-next-workflow-approval", key: "add-next-workflow-approval", messageId: "assistant",
+      receivedAt: 1, commandCount: 2, plans: [],
+      envelopes: [{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [
+          {
+            type: "add_next_node" as const,
+            client_id: "image-a",
+            source_node_id: "upload-1",
+            node_type: "imageGenNode" as const,
+            data: { model: "newapi_gpt_image2", aspectRatio: "9:16", size: "1k" },
+          },
+          { type: "run_workflow" as const, scope: "canvas" as const },
+        ],
+      }],
+    };
+    const groups = imageApprovalParamGroupsForTest(approval as never, [], "other-model", [{
+      id: "newapi_gpt_image2",
+      resolutionOptions: ["1k", "2k", "4k"],
+    }]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ nodeId: "image-a", aspectRatio: "9:16", size: "1k" });
+
+    const amended = amendCanvasApprovalWithImageParamsForTest(approval as never, {
+      ...groups[0],
+      aspectRatio: "3:4",
+    });
+    expect(amended.envelopes[0].commands).toEqual([
+      {
+        ...approval.envelopes[0].commands[0],
+        data: expect.objectContaining({ aspectRatio: "3:4", size: "1k" }),
+      },
+      approval.envelopes[0].commands[1],
+    ]);
+  });
+
+  it("infers an omitted add_next_node node_type for run_workflow approvals", () => {
+    const previous = useCanvasStore.getState();
+    useCanvasStore.setState({
+      nodes: [{
+        id: "upload-1",
+        type: "uploadNode" as const,
+        position: { x: 0, y: 0 },
+        data: { imageUrl: "https://example.com/source.png" },
+      }] as never,
+      edges: [],
+    });
+    try {
+      const approval = {
+        id: "add-next-inferred-approval", key: "add-next-inferred-approval", messageId: "assistant",
+        receivedAt: 1, commandCount: 3, plans: [],
+        envelopes: [{
+          schema_version: "canvas_chat_commands.v1" as const,
+          commands: [
+            {
+              type: "add_next_node" as const,
+              client_id: "image-a",
+              source_node_id: "upload-1",
+              data: { model: "newapi_gpt_image2", aspectRatio: "9:16", size: "1k" },
+            },
+            // 本批新建节点作源：类型沿 client_id 链继续推断（imageGen 的首个下游
+            // 类型仍是 imageGen），与执行器 chooseNextNodeType 的结果一致。
+            {
+              type: "add_next_node" as const,
+              client_id: "image-b",
+              source_node_id: "image-a",
+              data: { model: "newapi_gpt_image2", aspectRatio: "1:1", size: "2k" },
+            },
+            { type: "run_workflow" as const, scope: "canvas" as const },
+          ],
+        }],
+      };
+      const groups = imageApprovalParamGroupsForTest(approval as never, [], "other-model", [{
+        id: "newapi_gpt_image2",
+        resolutionOptions: ["1k", "2k", "4k"],
+      }]);
+      expect(groups).toHaveLength(2);
+      expect(groups[0]).toMatchObject({ nodeIds: ["image-a"], aspectRatio: "9:16", size: "1k" });
+      expect(groups[1]).toMatchObject({ nodeIds: ["image-b"], aspectRatio: "1:1", size: "2k" });
+    } finally {
+      useCanvasStore.setState(previous, true);
+    }
+  });
+
+  it("collects add_next_node without client_id for run_workflow approvals", () => {
+    const previous = useCanvasStore.getState();
+    const uploadNode = {
+      id: "upload-1",
+      type: "uploadNode" as const,
+      position: { x: 0, y: 0 },
+      data: { imageUrl: "https://example.com/source.png" },
+    };
+    useCanvasStore.setState({ nodes: [uploadNode] as never, edges: [] });
+    try {
+      const envelopes = normalizeCanvasChatCommandEnvelopesForValidation([{
+        schema_version: "canvas_chat_commands.v1" as const,
+        commands: [
+          {
+            type: "add_next_node" as const,
+            source_node_id: "upload-1",
+            node_type: "imageGenNode" as const,
+            data: { model: "newapi_gpt_image2", aspectRatio: "9:16", size: "1k" },
+          },
+          { type: "run_workflow" as const, scope: "canvas" as const },
+        ],
+      }], ["upload-1"]);
+      const clientId = (envelopes[0].commands[0] as { client_id?: string }).client_id;
+      expect(clientId).toBe("auto:new:0:0");
+      // 执行器会再规范化一次，已补的 id 必须保持不变，审批与执行才对得上同一节点。
+      expect(normalizeCanvasChatCommandEnvelopesForValidation(envelopes, ["upload-1"])).toEqual(envelopes);
+
+      const approval = {
+        id: "add-next-no-client-id", key: "add-next-no-client-id", messageId: "assistant",
+        receivedAt: 1, commandCount: 2, plans: [], envelopes,
+      };
+      const groups = imageApprovalParamGroupsForTest(approval as never, [], "other-model", [{
+        id: "newapi_gpt_image2",
+        resolutionOptions: ["1k", "2k", "4k"],
+      }]);
+      expect(groups).toHaveLength(1);
+      expect(groups[0]).toMatchObject({ nodeId: clientId, aspectRatio: "9:16", size: "1k" });
+
+      const amended = amendCanvasApprovalWithImageParamsForTest(approval as never, {
+        ...groups[0],
+        aspectRatio: "3:4",
+      });
+      expect(amended.envelopes[0].commands[0]).toMatchObject({
+        type: "add_next_node",
+        client_id: clientId,
+        data: { aspectRatio: "3:4", size: "1k" },
+      });
+    } finally {
+      useCanvasStore.setState(previous, true);
+    }
   });
 
   it("groups mixed workflow media in one approval and amends one run request", () => {

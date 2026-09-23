@@ -158,12 +158,14 @@ import type { ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
 import type { CanvasOntologyContext } from "@/features/canvas/ontology/canvasOntology";
 import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
 import { useCanvasStore, type CanvasNode } from "@/stores/canvasStore";
-import type {
-  AudioVoiceRef,
-  CanvasEdge,
-  CanvasNodeType,
-  VideoGenQuality,
+import {
+  CANVAS_NODE_TYPES,
+  type AudioVoiceRef,
+  type CanvasEdge,
+  type CanvasNodeType,
+  type VideoGenQuality,
 } from "@/features/canvas/domain/canvasNodes";
+import { getDownstreamSpawnTypes } from "@/features/canvas/domain/nodeRegistry";
 import { VIDEO_GENERATION_ASPECT_RATIOS } from "@/features/canvas/application/imageData";
 import {
   VIDEO_UPSCALE_DENOISE_OPTIONS,
@@ -188,6 +190,7 @@ import {
   directGenerationTargetsForPreflight,
   FREEZONE_CANVAS_COMMAND_APPROVAL_EVENT,
   FREEZONE_CANVAS_COMMAND_RESULT_EVENT,
+  isGeneratedCanvasClientId,
   subscribeCanvasCommandApprovals,
   waitForImmediateCanvasCommandResult,
   workflowGenerationTargetsForPreflight,
@@ -2340,7 +2343,7 @@ function generationCommandNodeIds(
 ): string[] {
   const nodeIds = new Set<string>();
   const createNodeNeedsAction = (
-    command: Extract<CanvasChatCommand, { type: "create_node" }>,
+    command: Extract<CanvasChatCommand, { type: "create_node" | "add_next_node" }>,
   ): boolean => {
     const data = command.data as Record<string, unknown> | undefined;
     if (expectedAction === "generate_image") return !data?.imageUrl && !data?.image_url;
@@ -2378,6 +2381,22 @@ function generationCommandNodeIds(
         && createNodeNeedsAction(command)
       ) {
         nodeIds.add(command.client_id);
+      }
+      // add_next_node 同样会在 run_workflow 里被执行；省略 node_type 时按执行器的
+      // 规则从源节点推断类型，否则参数审批卡不会出现。
+      if (hasWorkflowRun && command.type === "add_next_node" && command.client_id) {
+        const nodeType = approvalCommandNodeType(
+          envelopes,
+          useCanvasStore.getState().nodes,
+          command.client_id,
+        );
+        if (
+          nodeType
+          && APPROVAL_GENERATION_ACTION_BY_NODE_TYPE[nodeType] === expectedAction
+          && createNodeNeedsAction(command)
+        ) {
+          nodeIds.add(command.client_id);
+        }
       }
       if (command.type === "run_workflow") {
         try {
@@ -2571,8 +2590,10 @@ function approvalNodeData(
     : {};
   for (const envelope of approval.envelopes) {
     for (const command of envelope.commands) {
+      // add_next_node 与 create_node 一样新建节点并携带 data；漏掉它会让确认卡
+      // 读不到 Agent 给的比例/分辨率而回落默认值，确认时再把默认值写回节点（#685）。
       if (
-        command.type === "create_node"
+        (command.type === "create_node" || command.type === "add_next_node")
         && command.client_id === nodeId
         && command.data
       ) {
@@ -2586,20 +2607,50 @@ function approvalNodeData(
   return data;
 }
 
+/**
+ * 解析审批批次里某个节点（画布已有节点或本批 client_id）的节点类型。
+ *
+ * add_next_node 可以省略 node_type，执行器按源节点推断（canvasChatCommands 的
+ * chooseNextNodeType：取源节点类型的第一个下游可生成类型）；审批阶段节点还没建出来，
+ * 这里按同一规则推断，源节点本身也可能是本批新建的节点，所以递归解析。
+ */
+function approvalCommandNodeType(
+  envelopes: CanvasChatCommandEnvelope[],
+  canvasNodes: readonly CanvasNode[],
+  nodeId: string,
+  visited: Set<string> = new Set(),
+): CanvasNodeType | undefined {
+  const existingType = canvasNodes.find((node) => node.id === nodeId)?.type;
+  if (existingType) return existingType as CanvasNodeType;
+  if (visited.has(nodeId)) return undefined;
+  visited.add(nodeId);
+  for (const envelope of envelopes) {
+    for (const command of envelope.commands) {
+      if (command.type === "create_node" && command.client_id === nodeId) {
+        return command.node_type;
+      }
+      if (command.type === "add_next_node" && command.client_id === nodeId) {
+        if (command.node_type) return command.node_type;
+        const sourceType = approvalCommandNodeType(
+          envelopes,
+          canvasNodes,
+          command.source_node_id,
+          visited,
+        );
+        if (!sourceType) return undefined;
+        return getDownstreamSpawnTypes(sourceType)[0] ?? CANVAS_NODE_TYPES.textAnnotation;
+      }
+    }
+  }
+  return undefined;
+}
+
 function approvalNodeType(
   approval: PendingCanvasCommandApproval,
   canvasNodes: CanvasNode[],
   nodeId: string,
 ): string {
-  const existingType = canvasNodes.find((node) => node.id === nodeId)?.type;
-  if (existingType) return existingType;
-  for (const envelope of approval.envelopes) {
-    const createCommand = envelope.commands.find(
-      (command) => command.type === "create_node" && command.client_id === nodeId,
-    );
-    if (createCommand?.type === "create_node") return createCommand.node_type;
-  }
-  return "";
+  return approvalCommandNodeType(approval.envelopes, canvasNodes, nodeId) ?? "";
 }
 
 function isImageSourceNode(
@@ -2882,6 +2933,7 @@ function amendCanvasApprovalWithGenerationData(
   action: string,
   data: Record<string, unknown>,
 ): PendingCanvasCommandApproval {
+  const targets = new Set(nodeIds);
   const remaining = new Set(nodeIds);
   if (remaining.size === 0) return approval;
   const withCreatedNodeData: PendingCanvasCommandApproval = {
@@ -2889,8 +2941,16 @@ function amendCanvasApprovalWithGenerationData(
     envelopes: approval.envelopes.map((envelope) => ({
       ...envelope,
       commands: envelope.commands.map((command) => {
+        // 同一批里 Agent 对该节点的 update_node_data 会在创建之后执行；确认值也要
+        // 合并进去，否则后续更新会把用户在审批卡上确认的参数覆盖回旧值。
+        if (command.type === "update_node_data" && targets.has(command.node_id)) {
+          return {
+            ...command,
+            data: { ...(command.data ?? {}), ...data },
+          };
+        }
         if (
-          command.type === "create_node"
+          (command.type === "create_node" || command.type === "add_next_node")
           && command.client_id
           && remaining.has(command.client_id)
         ) {
@@ -11088,7 +11148,8 @@ function canvasCommandPlanLabel(command: CanvasChatCommand): string {
 function canvasCommandPlanPrimary(command: CanvasChatCommand): string | undefined {
   switch (command.type) {
     case "create_node":
-      return command.client_id;
+      // 规范化补的合成 client_id 只是内部标识，不展示给用户。
+      return isGeneratedCanvasClientId(command.client_id) ? undefined : command.client_id;
     case "add_next_node":
       return command.source_node_id;
     case "update_node_data":
