@@ -443,6 +443,215 @@ async def test_recipe_media_enqueue_replays_terminal_task_without_rebilling(
     assert exc.value.status_code == 409
 
 
+def _cached_recipe_media_operation(client: TestClient, monkeypatch) -> tuple[dict, str]:
+    """Create a workflow image action whose Recipe was settled by a cache hit."""
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.agent_product_operations import (
+        finish_agent_product_operation,
+        read_agent_product_operation,
+    )
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    created = client.post(
+        "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs",
+        json={"actions": [{
+            "node_id": "image-1", "action": "generate_image",
+            "recipe_id": "product-image", "recipe_version": "1.0.0",
+            "generation_attempt_id": "attempt-image",
+        }]},
+    ).json()["data"]
+    operation_id = created["actions"][0]["product_operation_id"]
+    operation = read_agent_product_operation(
+        project_dir=client.state_dir, operation_id=operation_id
+    )
+    finish_agent_product_operation(
+        project_dir=client.state_dir,
+        operation_id=operation_id,
+        outcome="delivered",
+        expected_task_id=operation["task_id"],
+        result_ref={
+            "kind": "recipe_compile_result",
+            "id": operation_id,
+            "reason": "persistent_cache",
+            "content": "cached castle prompt",
+        },
+        server_recipe_compile=True,
+    )
+    return created, operation_id
+
+
+@pytest.mark.parametrize("endpoint", ["compile", "compile-batch"])
+def test_recipe_compile_replays_cached_receipt_for_media_retry(
+    workflow_run_client: TestClient, monkeypatch, endpoint: str
+) -> None:
+    """Issue #681: a retry after a transient media failure recompiles the same operation."""
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.agent_product_operations import (
+        read_agent_product_operation,
+    )
+
+    _created, operation_id = _cached_recipe_media_operation(
+        workflow_run_client, monkeypatch
+    )
+    stored = read_agent_product_operation(
+        project_dir=workflow_run_client.state_dir, operation_id=operation_id
+    )
+
+    async def forbidden_compile(*_args, **_kwargs):
+        raise AssertionError("a settled compile receipt must be replayed, not recompiled")
+
+    monkeypatch.setattr(freezone, "compile_recipe_prompt_result", forbidden_compile)
+    monkeypatch.setattr(freezone, "compile_recipe_prompt_batch", forbidden_compile)
+
+    def post(recipe_id: str):
+        item = {
+            "project_id": "proj_demo",
+            "product_operation_id": operation_id,
+            "recipe_id": recipe_id,
+            "recipe_pipeline": [{"id": "style-pack"}],
+            "node_kind": "image",
+        }
+        if endpoint == "compile":
+            return workflow_run_client.post("/api/v1/freezone/recipes/compile", json=item)
+        return workflow_run_client.post(
+            "/api/v1/freezone/recipes/compile-batch",
+            json={"items": [{"request_id": "retry-1", **item}]},
+        )
+
+    response = post("product-image")
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    if endpoint == "compile-batch":
+        assert data["items"][0]["request_id"] == "retry-1"
+        assert data["items"][0]["ok"] is True
+        data = data["items"][0]["data"]
+    assert data == {
+        "prompt": "cached castle prompt",
+        "compile_mode": "persistent_cache",
+        "recipe_ids": ["product-image", "style-pack"],
+    }
+    assert (
+        read_agent_product_operation(
+            project_dir=workflow_run_client.state_dir, operation_id=operation_id
+        )
+        == stored
+    )
+    mismatch = post("another-recipe")
+    assert mismatch.status_code == 409
+    assert "does not match admitted operation" in mismatch.json()["detail"]
+
+
+def test_recipe_text_generation_does_not_replay_compile_receipt(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    _created, operation_id = _cached_recipe_media_operation(
+        workflow_run_client, monkeypatch
+    )
+    response = workflow_run_client.post(
+        "/api/v1/freezone/recipes/generate-text",
+        json={
+            "project_id": "proj_demo",
+            "product_operation_id": operation_id,
+            "recipe_id": "product-image",
+            "node_kind": "text",
+        },
+    )
+    assert response.status_code == 409
+    assert "not admitted" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_recipe_media_retry_reclaims_failed_task_once_per_retry(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    """Issue #681: a retryable provider failure must lead to a real second submission."""
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.workflow_runs import read_workflow_run, update_workflow_run
+
+    created, operation_id = _cached_recipe_media_operation(
+        workflow_run_client, monkeypatch
+    )
+    tasks: dict[str, SimpleNamespace] = {}
+    enqueued: list[str] = []
+
+    class TaskManager:
+        def get_task_for_project(self, _ctx, _task_type, _episode, *, scope):
+            return tasks.get(scope)
+
+    class TaskBackend:
+        async def enqueue_project_task(self, _ctx, *, scope, **_kwargs):
+            enqueued.append(scope)
+            state = SimpleNamespace(
+                task_id=f"media-task-{len(enqueued)}", status="running",
+                metadata={"backend": "celery", "queue": "default"},
+            )
+            tasks[scope] = state
+            return SimpleNamespace(task_state=state, backend="celery", queue="default")
+
+    monkeypatch.setattr(freezone, "get_task_manager", lambda: TaskManager())
+    monkeypatch.setattr(freezone, "get_task_backend", lambda: TaskBackend())
+    ctx = SimpleNamespace(project_id="proj_demo", state_dir=str(workflow_run_client.state_dir))
+    payload = {
+        "canvas_id": "default", "node_id": "image-1",
+        "product_operation_id": operation_id,
+        "generation_attempt_id": "attempt-image", "prompt": "cached castle prompt",
+    }
+
+    async def enqueue(data=payload):
+        return await freezone._enqueue_claimed_workflow_media(
+            ctx=ctx, project_dir=workflow_run_client.state_dir,
+            task_type="freezone_gen", queue_kind="default",
+            payload=data.copy(), job_id="discarded-client-job",
+        )
+
+    def record_retry(retry_count: int) -> None:
+        update_workflow_run(
+            project_dir=workflow_run_client.state_dir,
+            canvas_id="default",
+            run_id=created["run_id"],
+            action_updates=[{
+                "node_id": "image-1", "action": "generate_image",
+                "status": "running", "phase": "retrying", "retry_count": retry_count,
+            }],
+        )
+
+    first = await enqueue()
+    tasks[first["data"]["job_id"]].status = "failed"
+    # Without a recorded retry the failed task is replayed, never resubmitted.
+    assert (await enqueue())["data"]["job_id"] == first["data"]["job_id"]
+    assert len(enqueued) == 1
+
+    record_retry(1)
+    with pytest.raises(HTTPException) as changed:
+        await enqueue({**payload, "prompt": "another castle"})
+    assert changed.value.status_code == 409
+    second = await enqueue()
+    assert second["data"]["job_id"] != first["data"]["job_id"]
+    assert second["data"]["task_id"] == "media-task-2"
+    assert enqueued == [first["data"]["job_id"], second["data"]["job_id"]]
+    # Duplicate submissions of the same retry still collapse onto its task.
+    tasks[second["data"]["job_id"]].status = "failed"
+    assert (await enqueue())["data"]["job_id"] == second["data"]["job_id"]
+    assert len(enqueued) == 2
+    run = read_workflow_run(
+        project_dir=workflow_run_client.state_dir,
+        canvas_id="default",
+        run_id=created["run_id"],
+    )
+    assert run["actions"][0]["job_id"] == second["data"]["job_id"]
+    assert second["data"]["job_id"] in run["actions"][0]["task_key"]
+
+    record_retry(2)
+    third = await enqueue()
+    assert third["data"]["task_id"] == "media-task-3"
+
+    # A completed task is never resubmitted, even when a later retry is recorded.
+    tasks[third["data"]["job_id"]].status = "completed"
+    record_retry(3)
+    assert (await enqueue())["data"]["job_id"] == third["data"]["job_id"]
+    assert len(enqueued) == 3
+
+
 @pytest.mark.asyncio
 async def test_recipe_media_claim_recovers_after_enqueue_interruption(
     workflow_run_client: TestClient, monkeypatch

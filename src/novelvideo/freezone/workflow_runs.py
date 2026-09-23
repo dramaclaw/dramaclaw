@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS workflow_run_actions (
     product_operation_id TEXT,
     media_request_fingerprint TEXT,
     media_claimed_at REAL,
+    media_claim_retry_count INTEGER,
     PRIMARY KEY (run_id, node_id, action),
     FOREIGN KEY (run_id) REFERENCES workflow_runs(run_id) ON DELETE CASCADE
 );
@@ -361,11 +362,16 @@ def _connect(project_dir: Path):
                     "product_operation_id",
                     "media_request_fingerprint",
                     "media_claimed_at",
+                    "media_claim_retry_count",
                 ):
                     if column not in columns:
+                        column_type = {
+                            "media_claimed_at": "REAL",
+                            "media_claim_retry_count": "INTEGER",
+                        }.get(column, "TEXT")
                         conn.execute(
                             f"ALTER TABLE workflow_run_actions ADD COLUMN {column} "
-                            + ("REAL" if column == "media_claimed_at" else "TEXT")
+                            + column_type
                         )
                 conn.commit()
                 _SCHEMA_READY_PATHS.add(db_path)
@@ -813,7 +819,8 @@ def claim_workflow_media_action(
         conn.execute(
             """UPDATE workflow_run_actions
                SET media_request_fingerprint = ?, media_claimed_at = ?,
-                   job_id = ?, task_type = ?, task_key = ?
+                   job_id = ?, task_type = ?, task_key = ?,
+                   media_claim_retry_count = retry_count
                WHERE run_id = ? AND node_id = ? AND action = ?""",
             (
                 fingerprint,
@@ -887,6 +894,71 @@ def renew_workflow_media_claim(
             (time.time(), run_id, node_id, operation_id, job_id, claimed_at),
         )
         return updated.rowcount == 1
+
+
+def reclaim_failed_workflow_media_action(
+    *,
+    project_dir: Path,
+    project_id: str,
+    canvas_id: str,
+    run_id: str,
+    node_id: str,
+    operation_id: str,
+    attempt_id: str,
+    task_type: str,
+    fingerprint: str,
+    failed_job_id: str,
+) -> dict[str, Any] | None:
+    """Move a claim off a failed media task for the runner's next retry.
+
+    The same request (fingerprint) may be resubmitted once per recorded
+    workflow retry after its bound task failed; every other replay keeps
+    returning the original task. Returns ``None`` when not eligible.
+    """
+    from novelvideo.task_state import project_task_state_key
+
+    with _connect(project_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        action = conn.execute(
+            """SELECT a.* FROM workflow_run_actions AS a
+                 JOIN workflow_runs AS r ON r.run_id = a.run_id
+               WHERE a.run_id = ? AND a.node_id = ? AND a.product_operation_id = ?
+                 AND a.generation_attempt_id = ? AND r.project_id = ?
+                 AND r.canvas_id = ? AND r.status = 'running'""",
+            (run_id, node_id, operation_id, attempt_id, project_id, canvas_id),
+        ).fetchone()
+        if (
+            action is None
+            or action["status"] not in {"pending", "running"}
+            or action["job_id"] != failed_job_id
+            or action["task_type"] != task_type
+            or action["media_request_fingerprint"] != fingerprint
+            or int(action["retry_count"] or 0)
+            <= int(action["media_claim_retry_count"] or 0)
+        ):
+            return None
+        job_id = uuid.uuid4().hex[:16]
+        claimed_at = time.time()
+        conn.execute(
+            """UPDATE workflow_run_actions
+               SET job_id = ?, task_key = ?, media_claimed_at = ?,
+                   media_claim_retry_count = retry_count
+               WHERE run_id = ? AND node_id = ? AND action = ?""",
+            (
+                job_id,
+                project_task_state_key(task_type, project_id, 0, scope=job_id),
+                claimed_at,
+                run_id,
+                node_id,
+                action["action"],
+            ),
+        )
+        return {
+            "job_id": job_id,
+            "claimed_at": claimed_at,
+            "created": True,
+            "run_id": run_id,
+        }
 
 
 def create_workflow_run(
