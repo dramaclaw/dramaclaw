@@ -3959,6 +3959,54 @@ describe("Canvas command approval image params", () => {
     ]);
   });
 
+  it("infers an omitted add_next_node node_type for run_workflow approvals", () => {
+    const previous = useCanvasStore.getState();
+    useCanvasStore.setState({
+      nodes: [{
+        id: "upload-1",
+        type: "uploadNode" as const,
+        position: { x: 0, y: 0 },
+        data: { imageUrl: "https://example.com/source.png" },
+      }] as never,
+      edges: [],
+    });
+    try {
+      const approval = {
+        id: "add-next-inferred-approval", key: "add-next-inferred-approval", messageId: "assistant",
+        receivedAt: 1, commandCount: 3, plans: [],
+        envelopes: [{
+          schema_version: "canvas_chat_commands.v1" as const,
+          commands: [
+            {
+              type: "add_next_node" as const,
+              client_id: "image-a",
+              source_node_id: "upload-1",
+              data: { model: "newapi_gpt_image2", aspectRatio: "9:16", size: "1k" },
+            },
+            // 本批新建节点作源：类型沿 client_id 链继续推断（imageGen 的首个下游
+            // 类型仍是 imageGen），与执行器 chooseNextNodeType 的结果一致。
+            {
+              type: "add_next_node" as const,
+              client_id: "image-b",
+              source_node_id: "image-a",
+              data: { model: "newapi_gpt_image2", aspectRatio: "1:1", size: "2k" },
+            },
+            { type: "run_workflow" as const, scope: "canvas" as const },
+          ],
+        }],
+      };
+      const groups = imageApprovalParamGroupsForTest(approval as never, [], "other-model", [{
+        id: "newapi_gpt_image2",
+        resolutionOptions: ["1k", "2k", "4k"],
+      }]);
+      expect(groups).toHaveLength(2);
+      expect(groups[0]).toMatchObject({ nodeIds: ["image-a"], aspectRatio: "9:16", size: "1k" });
+      expect(groups[1]).toMatchObject({ nodeIds: ["image-b"], aspectRatio: "1:1", size: "2k" });
+    } finally {
+      useCanvasStore.setState(previous, true);
+    }
+  });
+
   it("groups mixed workflow media in one approval and amends one run request", () => {
     const approval = {
       id: "mixed-approval", key: "mixed-approval", messageId: "assistant",

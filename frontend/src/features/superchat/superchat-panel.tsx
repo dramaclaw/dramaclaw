@@ -158,12 +158,14 @@ import type { ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
 import type { CanvasOntologyContext } from "@/features/canvas/ontology/canvasOntology";
 import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
 import { useCanvasStore, type CanvasNode } from "@/stores/canvasStore";
-import type {
-  AudioVoiceRef,
-  CanvasEdge,
-  CanvasNodeType,
-  VideoGenQuality,
+import {
+  CANVAS_NODE_TYPES,
+  type AudioVoiceRef,
+  type CanvasEdge,
+  type CanvasNodeType,
+  type VideoGenQuality,
 } from "@/features/canvas/domain/canvasNodes";
+import { getDownstreamSpawnTypes } from "@/features/canvas/domain/nodeRegistry";
 import { VIDEO_GENERATION_ASPECT_RATIOS } from "@/features/canvas/application/imageData";
 import {
   VIDEO_UPSCALE_DENOISE_OPTIONS,
@@ -2379,17 +2381,21 @@ function generationCommandNodeIds(
       ) {
         nodeIds.add(command.client_id);
       }
-      // add_next_node 同样会在 run_workflow 里被执行；只有显式给了 node_type 才能在
-      // 审批阶段确定节点类型（未给时由执行期按源节点推断，这里拿不到源节点）。
-      if (
-        hasWorkflowRun
-        && command.type === "add_next_node"
-        && command.client_id
-        && command.node_type
-        && APPROVAL_GENERATION_ACTION_BY_NODE_TYPE[command.node_type] === expectedAction
-        && createNodeNeedsAction(command)
-      ) {
-        nodeIds.add(command.client_id);
+      // add_next_node 同样会在 run_workflow 里被执行；省略 node_type 时按执行器的
+      // 规则从源节点推断类型，否则参数审批卡不会出现。
+      if (hasWorkflowRun && command.type === "add_next_node" && command.client_id) {
+        const nodeType = approvalCommandNodeType(
+          envelopes,
+          useCanvasStore.getState().nodes,
+          command.client_id,
+        );
+        if (
+          nodeType
+          && APPROVAL_GENERATION_ACTION_BY_NODE_TYPE[nodeType] === expectedAction
+          && createNodeNeedsAction(command)
+        ) {
+          nodeIds.add(command.client_id);
+        }
       }
       if (command.type === "run_workflow") {
         try {
@@ -2600,25 +2606,50 @@ function approvalNodeData(
   return data;
 }
 
+/**
+ * 解析审批批次里某个节点（画布已有节点或本批 client_id）的节点类型。
+ *
+ * add_next_node 可以省略 node_type，执行器按源节点推断（canvasChatCommands 的
+ * chooseNextNodeType：取源节点类型的第一个下游可生成类型）；审批阶段节点还没建出来，
+ * 这里按同一规则推断，源节点本身也可能是本批新建的节点，所以递归解析。
+ */
+function approvalCommandNodeType(
+  envelopes: CanvasChatCommandEnvelope[],
+  canvasNodes: readonly CanvasNode[],
+  nodeId: string,
+  visited: Set<string> = new Set(),
+): CanvasNodeType | undefined {
+  const existingType = canvasNodes.find((node) => node.id === nodeId)?.type;
+  if (existingType) return existingType as CanvasNodeType;
+  if (visited.has(nodeId)) return undefined;
+  visited.add(nodeId);
+  for (const envelope of envelopes) {
+    for (const command of envelope.commands) {
+      if (command.type === "create_node" && command.client_id === nodeId) {
+        return command.node_type;
+      }
+      if (command.type === "add_next_node" && command.client_id === nodeId) {
+        if (command.node_type) return command.node_type;
+        const sourceType = approvalCommandNodeType(
+          envelopes,
+          canvasNodes,
+          command.source_node_id,
+          visited,
+        );
+        if (!sourceType) return undefined;
+        return getDownstreamSpawnTypes(sourceType)[0] ?? CANVAS_NODE_TYPES.textAnnotation;
+      }
+    }
+  }
+  return undefined;
+}
+
 function approvalNodeType(
   approval: PendingCanvasCommandApproval,
   canvasNodes: CanvasNode[],
   nodeId: string,
 ): string {
-  const existingType = canvasNodes.find((node) => node.id === nodeId)?.type;
-  if (existingType) return existingType;
-  for (const envelope of approval.envelopes) {
-    const createCommand = envelope.commands.find(
-      (command) =>
-        (command.type === "create_node" || command.type === "add_next_node")
-        && command.client_id === nodeId,
-    );
-    if (createCommand?.type === "create_node") return createCommand.node_type;
-    if (createCommand?.type === "add_next_node" && createCommand.node_type) {
-      return createCommand.node_type;
-    }
-  }
-  return "";
+  return approvalCommandNodeType(approval.envelopes, canvasNodes, nodeId) ?? "";
 }
 
 function isImageSourceNode(
