@@ -358,30 +358,34 @@ def _normalize_exact_plan_settings(plan: dict) -> dict:
                 )
             settings[key] = value
             aliases.add(alias)
+        # Shared plan inputs only fill fields the node leaves unset: a node's
+        # own value (any spelling) always wins, matching the agent-plan backfill
+        # in validate_agent_workflow_plan and the standard planner (issue #677).
+        from_inputs: set[str] = set()
         for alias, key in _EXACT_PLAN_SETTING_ALIASES.get(node_type, {}).items():
-            if alias not in plan_inputs:
+            if alias not in plan_inputs or key in settings:
                 continue
-            value = deepcopy(plan_inputs[alias])
-            if key in settings and settings[key] != value:
-                raise WorkflowOperationError(
-                    f"conflicting plan input {alias} and node setting {key} "
-                    f"for {node_id}"
-                )
-            settings[key] = value
+            settings[key] = deepcopy(plan_inputs[alias])
+            from_inputs.add(key)
         if not settings:
             continue
-        for key, value in settings.items():
+        for key, value in list(settings.items()):
             field = (
                 ("size" if node_type == "imageGenNode" else "quality")
                 if key == "resolution"
                 else _SETTINGS[key]
             )
-            if field != key:
-                aliases.add(key)
             if field in data and field != key and data[field] != value:
+                if key in from_inputs:
+                    settings.pop(key)
+                    continue
                 raise WorkflowOperationError(
                     f"conflicting settings {key} and {field} for {node_id}"
                 )
+            if field != key:
+                aliases.add(key)
+        if not settings:
+            continue
         updates.append({"node_id": node_id, "settings": settings})
         aliases_by_node[node_id] = aliases
     if updates:

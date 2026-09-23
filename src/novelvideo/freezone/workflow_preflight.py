@@ -204,6 +204,82 @@ def _catalog_string_options(entry: dict[str, Any], key: str) -> list[str]:
     return [str(value).strip() for value in values if str(value).strip()]
 
 
+# Recipe ids / timeline roles that mark a video shot as carrying dialogue or
+# voice-over. There is no first-class "voiced" flag on plan nodes yet, so this
+# is the narrow, explicit signal preflight can act on (issue #677).
+_VOICED_RECIPE_MARKERS = ("dialog", "voice", "speech", "narrat", "lipsync", "lip-sync")
+_VOICED_TIMELINE_ROLES = frozenset({"voiceover", "narration", "shot_voice", "dialogue"})
+
+
+def _video_node_is_voiced(node: dict[str, Any]) -> bool:
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    catalog = data.get("workflowCatalog") if isinstance(data.get("workflowCatalog"), dict) else {}
+    role = str(catalog.get("timelineRole") or "").strip().casefold()
+    if role in _VOICED_TIMELINE_ROLES:
+        return True
+    recipe_ids = [str(catalog.get("recipeId") or "")]
+    pipeline = catalog.get("recipePipeline")
+    if isinstance(pipeline, list):
+        recipe_ids.extend(
+            str(item.get("id") if isinstance(item, dict) else item or "") for item in pipeline
+        )
+    return any(
+        marker in recipe_id.casefold() for recipe_id in recipe_ids for marker in _VOICED_RECIPE_MARKERS
+    )
+
+
+def _video_duration_blockers(node: dict[str, Any]) -> list[dict[str, Any]]:
+    """A video node must state a positive durationSec before its draft is ready.
+
+    The standard planner writes it from user preferences; an agent-authored
+    plan may omit it and the runtime then renders a 0-second shot. Duration
+    existence does not depend on model capabilities, so this runs for every
+    video node even when the live catalog is unavailable. The blocker carries
+    ``required_choices`` in the canvas-write preflight shape so the agent asks
+    the user through one clarification card (issue #677).
+    """
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    node_id = str(node.get("id") or "video").strip()
+    duration = data.get("durationSec")
+    if isinstance(duration, (int, float)) and not isinstance(duration, bool) and duration > 0:
+        return []
+    return [
+        {
+            "path": f"runtime.models.{node_id}.durationSec",
+            "code": "generation_parameters_required",
+            "message": "video node has no planned duration; set data.durationSec (seconds)",
+            "required_choices": {"video": ["duration_seconds"]},
+        }
+    ]
+
+
+def _video_runtime_parameter_blockers(
+    node: dict[str, Any], catalog_entry: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Catalog-dependent runtime fields: a voiced shot on an audio-capable model
+    must state generateAudio, or the runtime default renders it silent."""
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    node_id = str(node.get("id") or "video").strip()
+    blockers: list[dict[str, Any]] = []
+    if (
+        _video_node_is_voiced(node)
+        and catalog_entry.get("supportsGenerateAudio") is not False
+        and not isinstance(data.get("generateAudio"), bool)
+    ):
+        blockers.append(
+            {
+                "path": f"runtime.models.{node_id}.generateAudio",
+                "code": "generation_parameters_required",
+                "message": (
+                    "dialogue or voice-over shot must state generateAudio explicitly; "
+                    "the runtime default renders it silent"
+                ),
+                "required_choices": {"video": ["generate_audio"]},
+            }
+        )
+    return blockers
+
+
 def _catalog_option_supported(
     value: Any,
     options: list[str],
@@ -515,6 +591,10 @@ def evaluate_workflow_preflight(
                     blockers.extend(
                         _workflow_node_capability_blockers(node, catalog_entry)
                     )
+                    if node_type == "videoNode":
+                        blockers.extend(
+                            _video_runtime_parameter_blockers(node, catalog_entry)
+                        )
         lane_demand = {
             "default": sum(
                 1
@@ -583,6 +663,12 @@ def evaluate_workflow_preflight(
                             "message": f"{lane} generation queue is currently full; tasks will wait",
                         }
                     )
+    # Duration existence is model-independent: check every video node whether
+    # or not the live catalog was reachable (after catalog-level blockers so an
+    # unavailable catalog is still reported first).
+    for node in nodes:
+        if isinstance(node, dict) and node.get("node_type") == "videoNode":
+            blockers.extend(_video_duration_blockers(node))
     return {
         **base,
         "status": "blocked" if blockers else "ready",

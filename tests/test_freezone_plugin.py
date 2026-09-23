@@ -1609,6 +1609,9 @@ def test_workflow_draft_can_be_prepared_patched_and_confirmed_once(
                     "name": str(item),
                     "node_type": "videoNode",
                     "stage": "video",
+                    # Draft preflight requires a planned duration on every video
+                    # node (issue #677); the real compiler always writes it.
+                    "data": {"durationSec": 5},
                 }
                 for index, item in enumerate(items)
             ],
@@ -4046,6 +4049,95 @@ def test_prepare_exact_plan_maps_generation_answers_into_nodes(monkeypatch, tmp_
     assert all(node["data"]["count"] == 2 for node in received[0]["nodes"])
     assert all(node["data"]["quality"] == "720P" for node in received[0]["nodes"])
     assert all(node["data"]["generateAudio"] is False for node in received[0]["nodes"])
+
+
+def test_prepare_exact_plan_missing_runtime_fields_returns_standard_clarification(
+    monkeypatch, tmp_path
+):
+    """Issue #677: draft preflight blockers that ask for generation choices are
+    folded into the clarification result the agent already recovers from."""
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    monkeypatch.setattr(
+        plugin,
+        "validate_agent_workflow_plan",
+        lambda plan: {"ok": True, "skill_id": "video-ad", "plan": plan},
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_workflow_runtime_preflight",
+        lambda *_args, **_kwargs: {
+            "status": "blocked",
+            "warnings": [],
+            "blockers": [
+                {
+                    "path": "runtime.models.shot-1.durationSec",
+                    "code": "generation_parameters_required",
+                    "message": "video node has no planned duration; set data.durationSec (seconds)",
+                    "required_choices": {"video": ["duration_seconds"]},
+                },
+                {
+                    "path": "runtime.models.shot-1.generateAudio",
+                    "code": "generation_parameters_required",
+                    "message": "dialogue or voice-over shot must state generateAudio explicitly",
+                    "required_choices": {"video": ["generate_audio"]},
+                },
+                {
+                    "path": "runtime.models.shot-2.durationSec",
+                    "code": "generation_parameters_required",
+                    "message": "video node has no planned duration; set data.durationSec (seconds)",
+                    "required_choices": {"video": ["duration_seconds"]},
+                },
+            ],
+        },
+    )
+
+    result = plugin._handle_prepare_workflow_plan_draft({
+        "plan": {"schema_version": "freezone_workflow_plan.v1", "nodes": [
+            {"id": "shot-1", "node_type": "videoNode", "data": {"model": "video-a"}},
+            {"id": "shot-2", "node_type": "videoNode", "data": {"model": "video-a"}},
+        ], "edges": []},
+    })
+
+    assert result["ok"] is False
+    assert result["status"] == "clarification_required"
+    assert result["code"] == "generation_parameters_required"
+    assert result["required_choices"] == {"video": ["duration_seconds", "generate_audio"]}
+    assert result["media_types"] == ["video"]
+    assert {item["node_id"]: item["fields"] for item in result["missing_parameters"]} == {
+        "shot-1": ["durationSec", "generateAudio"],
+        "shot-2": ["durationSec"],
+    }
+    assert "freezone_request_user_clarification" in result["agent_instruction"]
+    assert result["preflight"]["status"] == "blocked"
+    _assert_real_mcp_output(plugin, "freezone_prepare_workflow_plan_draft", result)
+
+
+def test_prepare_exact_plan_other_preflight_blockers_still_fail(monkeypatch, tmp_path):
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    monkeypatch.setattr(
+        plugin,
+        "validate_agent_workflow_plan",
+        lambda plan: {"ok": True, "skill_id": "video-ad", "plan": plan},
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_workflow_runtime_preflight",
+        lambda *_args, **_kwargs: {"status": "blocked", "warnings": [], "blockers": [
+            {"path": "runtime.models", "code": "model_catalog_unavailable",
+             "message": "could not verify videoNode capabilities"},
+        ]},
+    )
+
+    result = plugin._handle_prepare_workflow_plan_draft({
+        "plan": {"schema_version": "freezone_workflow_plan.v1", "nodes": [
+            {"id": "shot-1", "node_type": "videoNode", "data": {"model": "video-a", "durationSec": 5}},
+        ], "edges": []},
+    })
+
+    assert result["status"] == "workflow_preflight_failed"
+    assert result["error"] == "could not verify videoNode capabilities"
 
 
 def test_generation_clarification_updates_exact_plan_draft(monkeypatch, tmp_path):

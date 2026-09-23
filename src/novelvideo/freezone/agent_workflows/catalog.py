@@ -26,10 +26,12 @@ try:
     from novelvideo.freezone.workflow_plan import (
         ALLOWED_LINK_TYPES,
         ALLOWED_NODE_TYPES,
+        _build_plan_preflight,
         validate_workflow_plan,
     )
 except Exception:  # pragma: no cover - Hermes can run before app imports are available.
     validate_workflow_plan = None
+    _build_plan_preflight = None
     ALLOWED_LINK_TYPES = set()
     ALLOWED_NODE_TYPES = set()
 
@@ -718,7 +720,20 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
 
     compiled_intent = deepcopy(intent)
     planner_metadata: dict[str, Any] | None = None
-    if not _intent_items(compiled_intent):
+    plan_metadata: dict[str, Any] | None = None
+    if _intent_items(compiled_intent):
+        # Agent-authored items take precedence over the standard planner; record
+        # that choice (and whether a standard planner was available) so the
+        # draft shows why the template path was not taken (issue #678).
+        planner_metadata = _agent_authored_planner_metadata(
+            skill_id,
+            source="intent_items",
+            requested_mode=_text((intent.get("planner") or {}).get("mode"))
+            if isinstance(intent.get("planner"), dict)
+            else "",
+            item_count=len(_intent_items(compiled_intent)),
+        )
+    else:
         compiled_intent, planner_metadata, planner_error = (
             _expand_standard_skill_intent(
                 intent=compiled_intent,
@@ -729,6 +744,7 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
         )
         if planner_error is not None:
             return planner_error
+        plan_metadata = planner_metadata
 
     compiled = _compile_dynamic_recipe_items_intent(
         intent=compiled_intent,
@@ -739,9 +755,29 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
     if compiled.get("ok") and planner_metadata is not None:
         compiled["planner"] = planner_metadata
         plan = compiled.get("plan")
-        if isinstance(plan, dict):
-            plan["planner"] = deepcopy(planner_metadata)
+        # Only the deterministic planner stamps the plan itself; the plan JSON
+        # schema does not declare ``planner`` for agent-authored graphs.
+        if isinstance(plan, dict) and plan_metadata is not None:
+            plan["planner"] = deepcopy(plan_metadata)
     return compiled
+
+
+def _agent_authored_planner_metadata(
+    skill_id: str, *, source: str, requested_mode: str = "", item_count: int | None = None
+) -> dict[str, Any]:
+    """Audit record for a topology the agent authored instead of the standard planner."""
+    metadata: dict[str, Any] = {
+        "mode": "agent_authored",
+        "source": source,
+        "skill_id": skill_id,
+        "selected_by": "agent",
+        "standard_planner_available": skill_id in _DETERMINISTIC_SKILL_PLANNERS,
+    }
+    if requested_mode:
+        metadata["requested_mode"] = requested_mode
+    if item_count is not None:
+        metadata["item_count"] = item_count
+    return metadata
 
 
 def _standard_skill_items(
@@ -2187,6 +2223,76 @@ def _dedupe_intent_edges(edges: list[dict[str, str]]) -> list[dict[str, str]]:
     return result
 
 
+# Portable generation preferences the standard planner writes into node data
+# (see _intent_item_node). An agent-authored plan gets the same runtime fields
+# backfilled from the Skill input contract so both paths produce comparable
+# nodes: an explicit node value always wins, only absent fields are filled.
+_PLAN_RUNTIME_BACKFILL_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
+    "imageGenNode": (
+        ("image_model", "model"),
+        ("image_aspect_ratio", "aspectRatio"),
+        ("image_resolution", "size"),
+        ("image_quality", "quality"),
+        ("image_variants_per_node", "count"),
+    ),
+    "videoNode": (
+        ("video_model", "model"),
+        ("video_aspect_ratio", "aspectRatio"),
+        ("video_resolution", "quality"),
+        ("video_duration_seconds", "durationSec"),
+        ("video_generation_mode", "genMode"),
+        ("video_generate_audio", "generateAudio"),
+        ("video_variants_per_node", "count"),
+    ),
+}
+
+
+def _backfill_plan_runtime_fields(
+    nodes: list[Any], resolved_inputs: dict[str, Any]
+) -> dict[str, list[str]]:
+    """Fill absent generation fields on plan nodes from resolved Skill inputs.
+
+    Returns ``{node_id: [field, ...]}`` for every field that was written, so the
+    draft can show which values came from preferences rather than the plan.
+    """
+    filled: dict[str, list[str]] = {}
+    if not isinstance(resolved_inputs, dict) or not resolved_inputs:
+        return filled
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        node_type = _text(node.get("node_type") or node.get("type"))
+        fields = _PLAN_RUNTIME_BACKFILL_FIELDS.get(node_type)
+        if not fields:
+            continue
+        data = node.get("data")
+        if not isinstance(data, dict):
+            data = {}
+            node["data"] = data
+        for input_key, field in fields:
+            if data.get(field) is not None:
+                continue
+            raw = resolved_inputs.get(input_key)
+            if field == "aspectRatio" and not _text(raw):
+                # Same precedence as _intent_item_node: the media-specific
+                # ratio first, then the universal aspect_ratio preference.
+                raw = resolved_inputs.get("aspect_ratio")
+            value: Any
+            if field == "durationSec":
+                value = _positive_duration_seconds(raw)
+            elif field == "generateAudio":
+                value = raw if isinstance(raw, bool) else None
+            elif field == "count":
+                value = raw if isinstance(raw, int) and not isinstance(raw, bool) else None
+            else:
+                value = _text(raw) or None
+            if value is None:
+                continue
+            data[field] = value
+            filled.setdefault(_text(node.get("id")) or node_type, []).append(field)
+    return filled
+
+
 def validate_agent_workflow_plan(
     plan: Any, *, username: str | None = None
 ) -> dict[str, Any]:
@@ -2336,11 +2442,26 @@ def validate_agent_workflow_plan(
             "error": errors[0]["message"],
             "errors": errors,
         }
+    validated_plan = validated.get("plan") if isinstance(validated.get("plan"), dict) else {}
+    backfilled = _backfill_plan_runtime_fields(
+        validated_plan.get("nodes") or [], input_contract["resolved"]
+    )
+    if backfilled:
+        validated["backfilled_runtime_fields"] = backfilled
+        if _build_plan_preflight is not None:
+            # Planned duration and warnings must reflect the backfilled nodes.
+            validated["preflight"] = _build_plan_preflight(validated_plan.get("nodes") or [])
     validated["resolved_inputs"] = input_contract["resolved"]
     validated["execution_mode"] = input_contract["execution_mode"]
     validated["recommended_run_after_create"] = input_contract[
         "recommended_run_after_create"
     ]
+    if not isinstance(validated.get("planner"), dict):
+        validated["planner"] = _agent_authored_planner_metadata(
+            skill_id,
+            source="exact_plan",
+            item_count=len(validated_plan.get("nodes") or []),
+        )
     return validated
 
 

@@ -3913,6 +3913,73 @@ def _workflow_generation_target_ids(
     return visited
 
 
+_GENERATION_FIELDS_BY_PORTABLE = {
+    portable: field for field, portable in _GENERATION_PORTABLE_FIELDS.items()
+}
+
+
+def _preflight_clarification_result(
+    preflight: dict[str, Any], **extra: Any
+) -> dict[str, Any] | None:
+    """Fold generation_parameters_required preflight blockers into the standard
+    clarification result the agent already knows how to recover from.
+
+    Draft preflight (issue #677) reports a video node without durationSec or a
+    voiced shot without generateAudio as ``generation_parameters_required``
+    blockers carrying ``required_choices``. Returning them inside a generic
+    ``workflow_preflight_failed`` would stop the agent; merging them into one
+    ``clarification_required`` result lets it ask through a single card.
+    """
+    by_node: dict[str, dict[str, Any]] = {}
+    for blocker in preflight.get("blockers") or []:
+        if not isinstance(blocker, dict):
+            continue
+        if blocker.get("code") != "generation_parameters_required":
+            continue
+        choices = blocker.get("required_choices")
+        if not isinstance(choices, dict):
+            continue
+        path = str(blocker.get("path") or "")
+        node_id = path.split(".")[2] if path.count(".") >= 3 else path
+        for media, portable_fields in choices.items():
+            node_type = _GENERATION_MEDIA_NODE_TYPES.get(str(media))
+            if node_type is None or not isinstance(portable_fields, list):
+                continue
+            item = by_node.setdefault(
+                f"{node_type}:{node_id}",
+                {"node_id": node_id, "node_type": node_type, "fields": []},
+            )
+            for portable in portable_fields:
+                field = _GENERATION_FIELDS_BY_PORTABLE.get(str(portable), str(portable))
+                if node_type == "videoNode" and portable == "resolution":
+                    field = "quality"
+                if field not in item["fields"]:
+                    item["fields"].append(field)
+    if not by_node:
+        return None
+    return {
+        **_generation_parameters_required_result(list(by_node.values())),
+        "preflight": preflight,
+        **extra,
+    }
+
+
+def _workflow_preflight_failure(
+    preflight: dict[str, Any], **extra: Any
+) -> dict[str, Any]:
+    """Standard failure payload for a blocked draft preflight."""
+    clarification = _preflight_clarification_result(preflight, **extra)
+    if clarification is not None:
+        return clarification
+    return {
+        "ok": False,
+        "status": "workflow_preflight_failed",
+        "error": preflight["blockers"][0]["message"],
+        "preflight": preflight,
+        **extra,
+    }
+
+
 def _generation_parameters_required_result(
     missing: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -5315,14 +5382,7 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
     )
     validated["preflight"] = preflight
     if preflight["blockers"]:
-        return tool_result(
-            {
-                "ok": False,
-                "status": "workflow_preflight_failed",
-                "error": preflight["blockers"][0]["message"],
-                "preflight": preflight,
-            }
-        )
+        return tool_result(_workflow_preflight_failure(preflight))
     run_after_create = _run_after_create_arg(args)
     operation_id = str(args.get("operation_id") or "").strip()
     if not operation_id and _available():
@@ -5967,14 +6027,7 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     preflight = _workflow_runtime_preflight(compiled, project_id=project_id)
     compiled["preflight"] = preflight
     if preflight["blockers"]:
-        return tool_result(
-            {
-                "ok": False,
-                "status": "workflow_preflight_failed",
-                "error": preflight["blockers"][0]["message"],
-                "preflight": preflight,
-            }
-        )
+        return tool_result(_workflow_preflight_failure(preflight))
     run_after_create = _run_after_create_arg(args)
     operation_id = str(args.get("operation_id") or "").strip()
     if not operation_id and _available():
@@ -6311,11 +6364,9 @@ def _apply_workflow_generation_answers(
     assert project is not None and canvas is not None
     preflight = _workflow_runtime_preflight(compiled, project_id=project)
     if preflight["blockers"]:
-        return {
-            "ok": False, "status": "workflow_preflight_failed",
-            "error": preflight["blockers"][0]["message"],
-            "preflight": preflight, "draft_id": draft_id,
-        }
+        return _workflow_preflight_failure(
+            preflight, draft_id=draft_id, current_revision=expected_revision
+        )
     compiled["preflight"] = preflight
     if draft.get("run_after_create"):
         verified = (compiled.get("external_inputs_verified") or {})
@@ -6567,12 +6618,9 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             revision=revision,
         )
         return tool_result(
-            {
-                "ok": False,
-                "status": "workflow_preflight_failed",
-                "error": preflight["blockers"][0]["message"],
-                "preflight": preflight,
-            }
+            _workflow_preflight_failure(
+                preflight, draft_id=draft_id, current_revision=revision
+            )
         )
     plan = compiled.get("plan")
     built = checked_graph or build_workflow_graph_commands(
