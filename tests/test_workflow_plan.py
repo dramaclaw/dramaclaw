@@ -9,7 +9,10 @@ from jsonschema import Draft202012Validator, ValidationError
 
 from novelvideo.freezone.agent_workflows.graph import build_workflow_graph_commands
 from novelvideo.freezone.workflow_plan import validate_workflow_plan
-from novelvideo.freezone.workflow_schema import workflow_plan_json_schema
+from novelvideo.freezone.workflow_schema import (
+    workflow_intent_json_schema,
+    workflow_plan_json_schema,
+)
 
 _MINIMAL_ECOMMERCE_SKILL = {
     "id": "ecommerce-product",
@@ -438,6 +441,28 @@ def test_agent_authored_plan_backfills_runtime_fields_from_skill_inputs(monkeypa
     assert set(backfilled[video_nodes[0]["id"]]) == {"genMode", "generateAudio", "quality", "count"}
     # The plan preflight is rebuilt on the backfilled nodes.
     assert validated["preflight"]["planned_video_duration_seconds"] == 3 + 6 * (len(filled) - 1)
+
+
+def test_intent_video_item_carries_explicit_embedded_audio_requirement():
+    item = {
+        "id": "shot-1", "title": "对白镜头", "recipe_id": "general-video",
+        "prompt": "人物说出对白", "duration_seconds": 7,
+        "requires_generated_audio": True,
+    }
+    Draft202012Validator(workflow_intent_json_schema()).validate({
+        "skill_id": "video-ad", "user_goal": "对白短片", "items": [item],
+    })
+    catalog = _load_catalog_module()
+    parsed_item = catalog._intent_items({"items": [item]})[0]
+    assert parsed_item["requires_generated_audio"] is True
+    node = catalog._intent_item_node(
+        skill={"id": "video-ad", "version": 1},
+        recipe={"id": "general-video", "name": "视频", "version": 1},
+        node_type="videoNode", item_id="shot-1", item=parsed_item,
+        user_goal="对白短片", resolved_inputs={}, recipe_pipeline=[],
+    )
+
+    assert node["data"]["workflowCatalog"]["requiresGeneratedAudio"] is True
 
 
 def test_agent_authored_plan_backfills_model_and_generic_aspect_ratio(monkeypatch):

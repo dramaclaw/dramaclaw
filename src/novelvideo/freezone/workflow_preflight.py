@@ -214,6 +214,8 @@ _VOICED_TIMELINE_ROLES = frozenset({"voiceover", "narration", "shot_voice", "dia
 def _video_node_is_voiced(node: dict[str, Any]) -> bool:
     data = node.get("data") if isinstance(node.get("data"), dict) else {}
     catalog = data.get("workflowCatalog") if isinstance(data.get("workflowCatalog"), dict) else {}
+    if catalog.get("requiresGeneratedAudio") is True:
+        return True
     role = str(catalog.get("timelineRole") or "").strip().casefold()
     if role in _VOICED_TIMELINE_ROLES:
         return True
@@ -253,6 +255,19 @@ def _video_duration_blockers(node: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _video_audio_intent_blockers(node: dict[str, Any]) -> list[dict[str, Any]]:
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    catalog = data.get("workflowCatalog") if isinstance(data.get("workflowCatalog"), dict) else {}
+    if catalog.get("requiresGeneratedAudio") is not True or data.get("generateAudio") is not False:
+        return []
+    node_id = str(node.get("id") or "video").strip()
+    return [{
+        "path": f"runtime.models.{node_id}.generateAudio",
+        "code": "generation_parameter_conflict",
+        "message": "this shot requires generated dialogue or sound; set generateAudio=true",
+    }]
+
+
 def _video_runtime_parameter_blockers(
     node: dict[str, Any], catalog_entry: dict[str, Any]
 ) -> list[dict[str, Any]]:
@@ -261,6 +276,14 @@ def _video_runtime_parameter_blockers(
     data = node.get("data") if isinstance(node.get("data"), dict) else {}
     node_id = str(node.get("id") or "video").strip()
     blockers: list[dict[str, Any]] = []
+    catalog = data.get("workflowCatalog") if isinstance(data.get("workflowCatalog"), dict) else {}
+    if catalog.get("requiresGeneratedAudio") is True:
+        if catalog_entry.get("supportsGenerateAudio") is False:
+            blockers.append({
+                "path": f"runtime.models.{node_id}.generateAudio",
+                "code": "model_capability_unsupported",
+                "message": "this video model cannot generate the audio required by the shot",
+            })
     if (
         _video_node_is_voiced(node)
         and catalog_entry.get("supportsGenerateAudio") is not False
@@ -786,6 +809,7 @@ def evaluate_workflow_preflight(
     for node in nodes:
         if isinstance(node, dict) and node.get("node_type") == "videoNode":
             blockers.extend(_video_duration_blockers(node))
+            blockers.extend(_video_audio_intent_blockers(node))
     return {
         **base,
         "status": "blocked" if blockers else "ready",

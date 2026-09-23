@@ -2234,6 +2234,11 @@ def _intent_items(intent: dict[str, Any]) -> list[dict[str, Any]]:
                             else {}
                         ),
                         **(
+                            {"requires_generated_audio": raw_item["requires_generated_audio"]}
+                            if isinstance(raw_item.get("requires_generated_audio"), bool)
+                            else {}
+                        ),
+                        **(
                             {"model": _text(raw_item.get("model"))}
                             if _text(raw_item.get("model"))
                             else {}
@@ -2415,6 +2420,12 @@ def _intent_item_node(
             "confirmedInputs": resolved_inputs,
             "stepId": item_id,
             **({"timelineRole": timeline_role} if timeline_role else {}),
+            **(
+                {"requiresGeneratedAudio": item["requires_generated_audio"]}
+                if node_type == "videoNode"
+                and isinstance(item.get("requires_generated_audio"), bool)
+                else {}
+            ),
             "operationType": operation_type,
             "recipeId": recipe_id,
             "recipeName": _text(recipe.get("name") if recipe else ""),
