@@ -450,6 +450,241 @@ def _attach_skill_stage_blockers(result: dict[str, Any], skill_id: str) -> None:
         "warnings": list(preflight.get("warnings") or []),
     }
 
+
+_MAX_STANDARD_PLANNER_UNITS = 12
+_TEMPLATE_ISOMORPHIC = "template_isomorphic"
+
+
+def _node_template_stage(
+    node: Any, stages: list[dict[str, Any]], kind_counts: dict[str, int]
+) -> dict[str, Any] | None:
+    """The template stage an executable node fills, preferring its stage label."""
+    if not isinstance(node, dict):
+        return None
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    label = _text(node.get("stage") or data.get("stage")).lower()
+    matches = [
+        stage
+        for stage in stages
+        if _node_fills_stage(
+            node,
+            stage,
+            kind_is_unique=kind_counts[_node_kind(_text(stage["node_type"]))] == 1,
+        )
+    ]
+    for stage in matches:
+        if stage["id"] == label:
+            return stage
+    return matches[0] if matches else None
+
+
+def _node_text(node: dict[str, Any], *keys: str) -> str:
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    for key in keys:
+        for source in (node, data):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
+
+
+def template_isomorphism(skill_id: str, plan: Any) -> dict[str, Any]:
+    """Compare an agent-authored plan with the Skill's standard planner template.
+
+    Issue #678: a plan whose executable nodes all fill template stages, whose
+    required stages are present and fed (``skill_stage_blockers`` is empty)
+    and whose edges never run from a later stage back to an earlier one
+    restates the template rather than customising it; node counts and prompts
+    are parameters, not topology. User-material nodes (``input`` /
+    ``resource`` / ``asset``) and the planner-added compose node are ignored.
+    The result carries ``isomorphic`` plus a machine-readable ``reason`` for
+    the first deviation, or the standard planner ``units`` / ``deliverable`` /
+    ``include_audio`` recovered from the nodes when it matches.
+    """
+    stages = standard_skill_stages(skill_id)
+    if not stages:
+        return {"isomorphic": False, "reason": "no_standard_planner"}
+    if not isinstance(plan, dict):
+        return {"isomorphic": False, "reason": "plan_not_an_object"}
+    if plan.get("external_inputs"):
+        return {"isomorphic": False, "reason": "external_inputs"}
+    nodes = [node for node in plan.get("nodes") or [] if isinstance(node, dict)]
+    edges = plan.get("edges") if isinstance(plan.get("edges"), list) else []
+    kind_counts: dict[str, int] = {}
+    for stage in stages:
+        kind = _node_kind(_text(stage["node_type"]))
+        kind_counts[kind] = kind_counts.get(kind, 0) + 1
+    stage_index = {stage["id"]: index for index, stage in enumerate(stages)}
+    node_stage: dict[str, str] = {}
+    by_stage: dict[str, list[dict[str, Any]]] = {stage["id"]: [] for stage in stages}
+    for node in nodes:
+        node_id = _text(node.get("id"))
+        node_type = _text(node.get("node_type") or node.get("type"))
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        label = _text(node.get("stage") or data.get("stage")).lower()
+        if node_type == "videoComposeNode" or (
+            node_type in _TEXT_NODE_TYPES and label in _USER_MATERIAL_STAGES
+        ):
+            continue
+        stage = _node_template_stage(node, stages, kind_counts)
+        if stage is None:
+            return {"isomorphic": False, "reason": f"node_outside_template:{node_id}"}
+        node_stage[node_id] = stage["id"]
+        by_stage[stage["id"]].append(node)
+    for blocker in skill_stage_blockers(skill_id, nodes, edges):
+        if blocker["code"] == "skill_stage_missing":
+            return {"isomorphic": False, "reason": f"stage_missing:{blocker['stage']}"}
+        return {
+            "isomorphic": False,
+            "reason": f"stage_unused:{blocker['stage']}->{blocker['downstream_stage']}",
+        }
+    for edge in edges:
+        if not isinstance(edge, dict):
+            continue
+        source = node_stage.get(_text(edge.get("source")))
+        target = node_stage.get(_text(edge.get("target")))
+        if source and target and stage_index[source] > stage_index[target]:
+            return {
+                "isomorphic": False,
+                "reason": f"stage_order:{_text(edge.get('source'))}->{_text(edge.get('target'))}",
+            }
+    video_nodes = by_stage.get("video") or []
+    image_nodes = by_stage.get("images") or []
+    unit_nodes = video_nodes or image_nodes
+    if not unit_nodes:
+        return {"isomorphic": False, "reason": "unit_stage_empty"}
+    if len(unit_nodes) > _MAX_STANDARD_PLANNER_UNITS:
+        return {"isomorphic": False, "reason": f"unit_count:{len(unit_nodes)}"}
+    speech_nodes = [
+        node
+        for node in by_stage.get("audio") or []
+        if _text((node.get("data") or {}).get("audioKind") or "speech") != "music"
+    ]
+    units: list[dict[str, Any]] = []
+    for index, node in enumerate(unit_nodes):
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        unit: dict[str, Any] = {
+            "title": _node_text(node, "title", "name", "label", "displayName")
+            or f"内容段 {index + 1}",
+            "prompt": _node_text(node, "prompt", "description", "content")
+            or f"内容段 {index + 1}",
+        }
+        if index < len(speech_nodes):
+            unit["narration"] = _node_text(
+                speech_nodes[index], "text", "prompt", "content"
+            )
+        duration = _positive_duration_seconds(data.get("durationSec"))
+        if video_nodes and duration is not None:
+            unit["duration_seconds"] = duration
+        units.append(unit)
+    return {
+        "isomorphic": True,
+        "reason": None,
+        "deliverable": "video" if video_nodes else "images",
+        "include_audio": bool(speech_nodes),
+        "unit_count": len(units),
+        "units": units,
+    }
+
+
+def _plan_goal_text(plan: dict[str, Any]) -> str:
+    """The user goal a raw plan states, or the closest thing it carries.
+
+    Raw plans are not required to repeat ``user_goal``; the standard planner
+    writes the goal into ``summary`` and into the user-material input node.
+    """
+    goal = _workflow_goal_text(plan)
+    if goal:
+        return goal
+    summary = plan.get("summary")
+    if isinstance(summary, str) and summary.strip():
+        return re.sub(r"\s+", " ", summary.strip())
+    for node in plan.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        label = _text(node.get("stage") or data.get("stage")).lower()
+        if label in _USER_MATERIAL_STAGES:
+            text = _node_text(node, "content", "prompt", "description", "text")
+            if text:
+                return text
+    for node in plan.get("nodes") or []:
+        if isinstance(node, dict):
+            text = _node_text(node, "prompt", "description", "content")
+            if text:
+                return text
+    return ""
+
+
+def _standard_intent_from_match(
+    *,
+    skill_id: str,
+    user_goal: str,
+    inputs: Any,
+    match: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "schema_version": WORKFLOW_INTENT_SCHEMA_VERSION,
+        "skill_id": skill_id,
+        "user_goal": user_goal,
+        "inputs": dict(inputs) if isinstance(inputs, dict) else {},
+        "planner": {
+            "mode": "standard",
+            "deliverable": match["deliverable"],
+            "item_count": match["unit_count"],
+            "include_audio": match["include_audio"],
+            "units": deepcopy(match["units"]),
+        },
+    }
+
+
+def _template_match_audit(match: dict[str, Any]) -> dict[str, Any]:
+    """The part of a template comparison that goes into ``planner`` metadata."""
+    audit: dict[str, Any] = {"isomorphic": bool(match.get("isomorphic"))}
+    if match.get("reason"):
+        audit["reason"] = match["reason"]
+    if match.get("isomorphic"):
+        audit["unit_count"] = match.get("unit_count")
+    return audit
+
+
+def _template_planner_metadata(
+    compiled_planner: dict[str, Any],
+    *,
+    source: str,
+    requested_mode: str,
+    match: dict[str, Any],
+) -> dict[str, Any]:
+    metadata = {
+        **compiled_planner,
+        "selected_by": _TEMPLATE_ISOMORPHIC,
+        "source": source,
+        "template_match": _template_match_audit(match),
+    }
+    if requested_mode:
+        metadata["requested_mode"] = requested_mode
+    return metadata
+
+
+def _compile_isomorphic_plan_through_template(
+    *,
+    skill_id: str,
+    user_goal: str,
+    inputs: Any,
+    match: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Compile the recovered standard intent; on failure return the reason instead."""
+    intent = _standard_intent_from_match(
+        skill_id=skill_id, user_goal=user_goal, inputs=inputs, match=match
+    )
+    compiled = compile_workflow_intent(intent)
+    if not compiled.get("ok"):
+        return None, {
+            "isomorphic": False,
+            "reason": f"standard_compile_failed:{_text(compiled.get('error'))}",
+        }
+    return compiled, match
+
 _UNIVERSAL_GENERATION_INPUT_KEYS = {
     "aspect_ratio",
     "image_aspect_ratio",
@@ -1013,6 +1248,11 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
     compiled_intent = deepcopy(intent)
     planner_metadata: dict[str, Any] | None = None
     plan_metadata: dict[str, Any] | None = None
+    requested_mode = (
+        _text((intent.get("planner") or {}).get("mode"))
+        if isinstance(intent.get("planner"), dict)
+        else ""
+    )
     if _intent_items(compiled_intent):
         # Agent-authored items take precedence over the standard planner; record
         # that choice (and whether a standard planner was available) so the
@@ -1020,9 +1260,7 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
         planner_metadata = _agent_authored_planner_metadata(
             skill_id,
             source="intent_items",
-            requested_mode=_text((intent.get("planner") or {}).get("mode"))
-            if isinstance(intent.get("planner"), dict)
-            else "",
+            requested_mode=requested_mode,
             item_count=len(_intent_items(compiled_intent)),
         )
     else:
@@ -1045,6 +1283,33 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
         resolved_inputs=input_contract["resolved"],
     )
     if compiled.get("ok") and planner_metadata is not None:
+        if planner_metadata.get("mode") == "agent_authored":
+            # Items that merely restate the Skill's standard template are the
+            # template: compile them through the standard planner so the draft
+            # gets its production shape, and record why (issue #678).
+            match = template_isomorphism(skill_id, compiled.get("plan"))
+            if match["isomorphic"]:
+                rerouted, match = _compile_isomorphic_plan_through_template(
+                    skill_id=skill_id,
+                    user_goal=user_goal,
+                    inputs=intent.get("inputs"),
+                    match=match,
+                )
+                if rerouted is not None:
+                    rerouted["planner"] = _template_planner_metadata(
+                        rerouted["planner"],
+                        source="intent_items",
+                        requested_mode=requested_mode,
+                        match=match,
+                    )
+                    return rerouted
+            planner_metadata = _agent_authored_planner_metadata(
+                skill_id,
+                source="intent_items",
+                requested_mode=requested_mode,
+                item_count=len(_intent_items(compiled_intent)),
+                template_match=match,
+            )
         compiled["planner"] = planner_metadata
         plan = compiled.get("plan")
         # Only the deterministic planner stamps the plan itself; the plan JSON
@@ -1058,9 +1323,18 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
 
 
 def _agent_authored_planner_metadata(
-    skill_id: str, *, source: str, requested_mode: str = "", item_count: int | None = None
+    skill_id: str,
+    *,
+    source: str,
+    requested_mode: str = "",
+    item_count: int | None = None,
+    template_match: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Audit record for a topology the agent authored instead of the standard planner."""
+    """Audit record for a topology the agent authored instead of the standard planner.
+
+    ``template_match`` says why the standard planner was not used for a Skill
+    that has one: the first deviation from its template (issue #678).
+    """
     metadata: dict[str, Any] = {
         "mode": "agent_authored",
         "source": source,
@@ -1072,6 +1346,8 @@ def _agent_authored_planner_metadata(
         metadata["requested_mode"] = requested_mode
     if item_count is not None:
         metadata["item_count"] = item_count
+    if template_match is not None and skill_id in _DETERMINISTIC_SKILL_PLANNERS:
+        metadata["template_match"] = _template_match_audit(template_match)
     return metadata
 
 
@@ -1898,7 +2174,9 @@ def _compile_dynamic_recipe_items_intent(
             "handoff_tool": "freezone_prepare_workflow_draft",
         },
     }
-    validated = validate_agent_workflow_plan(plan)
+    # The intent compiler decides the planner path itself (compile_workflow_intent
+    # reroutes template-shaped items); never reroute from inside compilation.
+    validated = validate_agent_workflow_plan(plan, allow_template_reroute=False)
     if not validated.get("ok"):
         return {
             **validated,
@@ -2597,9 +2875,16 @@ def _backfill_plan_runtime_fields(
 
 
 def validate_agent_workflow_plan(
-    plan: Any, *, username: str | None = None
+    plan: Any, *, username: str | None = None, allow_template_reroute: bool = True
 ) -> dict[str, Any]:
-    """Strictly validate an agent-authored plan against the live catalog."""
+    """Strictly validate an agent-authored plan against the live catalog.
+
+    A raw plan that restates the Skill's standard template (issue #678) is
+    compiled through the standard planner instead and returned in the same
+    validated shape with ``planner.selected_by = template_isomorphic``;
+    ``allow_template_reroute=False`` skips that (used when validating the
+    standard planner's own output).
+    """
     if validate_workflow_plan is None:
         return {
             "ok": False,
@@ -2763,12 +3048,41 @@ def validate_agent_workflow_plan(
     # (e.g. a short drama without shot planning) is a preflight blocker, not a
     # schema error: the draft can be revised or re-planned (issue #677).
     _attach_skill_stage_blockers(validated, skill_id)
-    if not isinstance(validated.get("planner"), dict):
-        validated["planner"] = _agent_authored_planner_metadata(
-            skill_id,
-            source="exact_plan",
-            item_count=len(validated_plan.get("nodes") or []),
+    stamped = plan.get("planner") if isinstance(plan.get("planner"), dict) else None
+    if stamped and _text(stamped.get("mode")) == "deterministic_standard":
+        # The standard planner's own output keeps its audit record.
+        validated["planner"] = deepcopy(stamped)
+        return validated
+    match = template_isomorphism(skill_id, plan) if allow_template_reroute else None
+    if match is not None and match["isomorphic"]:
+        compiled, match = _compile_isomorphic_plan_through_template(
+            skill_id=skill_id,
+            user_goal=_plan_goal_text(plan),
+            inputs=plan.get("inputs"),
+            match=match,
         )
+        if compiled is not None:
+            rerouted = validate_agent_workflow_plan(
+                compiled["plan"], username=username, allow_template_reroute=False
+            )
+            if rerouted.get("ok"):
+                rerouted["planner"] = _template_planner_metadata(
+                    compiled["planner"],
+                    source="exact_plan",
+                    requested_mode="",
+                    match=match,
+                )
+                return rerouted
+            match = {
+                "isomorphic": False,
+                "reason": f"standard_validate_failed:{_text(rerouted.get('error'))}",
+            }
+    validated["planner"] = _agent_authored_planner_metadata(
+        skill_id,
+        source="exact_plan",
+        item_count=len(validated_plan.get("nodes") or []),
+        template_match=match,
+    )
     return validated
 
 

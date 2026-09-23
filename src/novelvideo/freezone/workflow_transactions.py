@@ -436,6 +436,15 @@ def prepare_workflow_source(body: dict, *, username: str) -> dict:
         if isinstance(intent.get("plan"), dict):
             intent = {**deepcopy(intent), "plan": deepcopy(plan)}
         validated = _require_result(validate_agent_workflow_plan(plan))
+        if (
+            isinstance(intent.get("plan"), dict)
+            and (validated.get("planner") or {}).get("selected_by")
+            == "template_isomorphic"
+        ):
+            # The exact plan restated the Skill's standard template and was
+            # compiled through the standard planner (issue #678): the draft's
+            # source plan is that compilation, so intent and compiled agree.
+            intent = {**deepcopy(intent), "plan": deepcopy(validated["plan"])}
         if isinstance(compiled, dict) and compiled.get("skill_id") != validated.get(
             "skill_id"
         ):

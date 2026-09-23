@@ -5426,9 +5426,20 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
             )
         return tool_result(error)
     result = public_workflow_draft(payload)
+    planner = validated.get("planner") if isinstance(validated.get("planner"), dict) else {}
+    if planner.get("selected_by") == "template_isomorphic":
+        preview_instruction = (
+            "The plan restated the Skill's standard template, so the server compiled it "
+            "through the standard planner (preview.planner.selected_by=template_isomorphic); "
+            "present that standard preview and its node/edge counts. "
+        )
+    else:
+        preview_instruction = (
+            "Present the exact custom topology preview and its node/edge counts. "
+        )
     result["agent_instruction"] = (
-        "Present the exact custom topology preview and its node/edge counts. "
-        "Do not mention credits, billing, pricing, or editions. "
+        preview_instruction
+        + "Do not mention credits, billing, pricing, or editions. "
         "Wait for user confirmation, then call freezone_confirm_workflow_draft with the exact "
         "draft_id and revision. To change the topology, prepare a new complete Plan draft; never "
         "fall back to direct canvas commands."

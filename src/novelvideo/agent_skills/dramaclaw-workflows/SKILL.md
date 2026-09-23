@@ -193,7 +193,13 @@ Route between the normal draft flow and the exact topology path in this priority
    path; never pick a side silently.
 
 The prepared draft records which path was taken (`preview.planner.mode` is
-`deterministic_standard` or `agent_authored`) so the choice can be audited. For error recovery,
+`deterministic_standard` or `agent_authored`) so the choice can be audited. The server compares
+every agent-authored topology with the Skill's standard template before compiling it: a plan or
+item list that restates the template (every executable node fills a template stage, required
+stages present and fed, no edge from a later stage back to an earlier one; node counts and
+prompts are parameters) is compiled by the standard planner with the briefs as its units, and
+the draft shows `preview.planner.selected_by = template_isomorphic`; a genuine deviation stays
+agent-authored and `preview.planner.template_match.reason` names it. For error recovery,
 read [references/error-recovery.md](references/error-recovery.md).
 
 When packaging this Skill for another agent host, read

@@ -390,17 +390,34 @@ def test_standard_skill_planners_expand_without_agent_authored_topology(monkeypa
         assert catalog.validate_agent_workflow_plan(plan)["ok"] is True
 
 
+def _raw_plan_from_standard(catalog, intent: dict, *, deviate: bool = True) -> dict:
+    """A raw plan derived from the standard planner output.
+
+    With ``deviate`` the plan feeds the second frame from the first clip, an
+    edge that runs from the video stage back to the images stage: a genuine
+    custom topology that stays on the agent-authored path (issue #678).
+    Without it the plan restates the template and is rerouted.
+    """
+    compiled = catalog.compile_workflow_intent(intent)
+    assert compiled["ok"] is True, compiled
+    plan = copy.deepcopy(compiled["plan"])
+    plan.pop("planner", None)
+    plan.pop("layout", None)
+    if deviate:
+        plan["edges"].append(
+            {"source": "clip_1", "target": "frame_2", "link_type": "media_input_for"}
+        )
+    return plan
+
+
 def test_agent_authored_plan_backfills_runtime_fields_from_skill_inputs(monkeypatch):
     """Issue #677: the raw plan path applies the same portable preferences the
     standard planner writes, without overriding values the plan states."""
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)
-    compiled = catalog.compile_workflow_intent(
-        {"skill_id": "text-to-image-video", "user_goal": "生成一段赛博城市文生图生视频"}
+    plan = _raw_plan_from_standard(
+        catalog, {"skill_id": "text-to-image-video", "user_goal": "生成一段赛博城市文生图生视频"}
     )
-    assert compiled["ok"] is True
-    plan = copy.deepcopy(compiled["plan"])
-    plan.pop("planner", None)
     video_nodes = [node for node in plan["nodes"] if node["node_type"] == "videoNode"]
     assert video_nodes
     for node in video_nodes:
@@ -443,17 +460,11 @@ def test_agent_authored_plan_backfills_runtime_fields_from_skill_inputs(monkeypa
 def test_agent_authored_plan_backfills_model_and_generic_aspect_ratio(monkeypatch):
     """Raw plans that carry the model / universal ratio only in plan.inputs must
     not run on the runtime default model or shape."""
-
-
-def test_exact_plan_validation_records_agent_authored_planner(monkeypatch):
-    """Issue #678: a raw plan draft shows which path produced it."""
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)
-    compiled = catalog.compile_workflow_intent(
-        {"skill_id": "text-to-image-video", "user_goal": "生成一段赛博城市文生图生视频"}
+    plan = _raw_plan_from_standard(
+        catalog, {"skill_id": "text-to-image-video", "user_goal": "生成一段赛博城市文生图生视频"}
     )
-    plan = copy.deepcopy(compiled["plan"])
-    plan.pop("planner", None)
     for node in plan["nodes"]:
         if node["node_type"] in {"imageGenNode", "videoNode"}:
             node["data"].pop("model", None)
@@ -486,6 +497,18 @@ def test_exact_plan_validation_records_agent_authored_planner(monkeypatch):
     assert video["data"]["aspectRatio"] == "9:16"
 
 
+def test_exact_plan_validation_records_agent_authored_planner(monkeypatch):
+    """Issue #678: a raw plan draft shows which path produced it, and why the
+    standard planner was not used (the first deviation from its template)."""
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    plan = _raw_plan_from_standard(
+        catalog, {"skill_id": "text-to-image-video", "user_goal": "生成一段赛博城市文生图生视频"}
+    )
+    for node in plan["nodes"]:
+        if node["node_type"] == "videoNode":
+            node["data"]["durationSec"] = 5
+
     validated = catalog.validate_agent_workflow_plan(plan)
 
     assert validated["ok"] is True
@@ -496,18 +519,166 @@ def test_exact_plan_validation_records_agent_authored_planner(monkeypatch):
         "selected_by": "agent",
         "standard_planner_available": True,
         "item_count": len(validated["plan"]["nodes"]),
+        "template_match": {"isomorphic": False, "reason": "stage_order:clip_1->frame_2"},
     }
     assert "planner" not in validated["plan"]
+
+
+def test_exact_plan_restating_the_template_is_compiled_by_the_standard_planner(monkeypatch):
+    """Issue #678: a raw plan whose stages, order and dependencies are the Skill's
+    standard template is the template; the server compiles it through the
+    standard planner (production shape, compose, recommended models) and
+    records the choice, carrying the agent's briefs as the planner units."""
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    plan = _raw_plan_from_standard(
+        catalog,
+        {"skill_id": "text-to-image-video", "user_goal": "生成一段赛博城市文生图生视频",
+         "planner": {"mode": "standard", "item_count": 2}},
+        deviate=False,
+    )
+    # The agent rewrote the briefs and dropped the compose node it did not think of.
+    plan["nodes"] = [n for n in plan["nodes"] if n["node_type"] != "videoComposeNode"]
+    plan["edges"] = [e for e in plan["edges"] if e["target"] != "final_compose"]
+    for node in plan["nodes"]:
+        if node["id"] == "clip_1":
+            node["data"]["prompt"] = "霓虹雨夜的街道推镜"
+            node["data"]["durationSec"] = 4
+        if node["id"] == "clip_2":
+            node["data"]["prompt"] = "天台俯瞰全城"
+
+    validated = catalog.validate_agent_workflow_plan(plan)
+
+    assert validated["ok"] is True, validated
+    planner = validated["planner"]
+    assert planner["mode"] == "deterministic_standard"
+    assert planner["selected_by"] == "template_isomorphic"
+    assert planner["source"] == "exact_plan"
+    assert planner["skill_id"] == "text-to-image-video"
+    assert planner["deliverable"] == "video"
+    assert planner["item_count"] == 2
+    assert planner["template_match"] == {"isomorphic": True, "unit_count": 2}
+    # The standard planner's own output, stamped as such on the plan.
+    assert validated["plan"]["planner"]["mode"] == "deterministic_standard"
+    nodes = {node["id"]: node for node in validated["plan"]["nodes"]}
+    assert "final_compose" in nodes
+    assert nodes["clip_1"]["data"]["prompt"] == "霓虹雨夜的街道推镜"
+    assert nodes["clip_1"]["data"]["durationSec"] == 4
+    assert nodes["clip_2"]["data"]["prompt"] == "天台俯瞰全城"
+    assert validated["preflight"]["blockers"] == []
+    # The same fields every validated plan carries.
+    assert set(validated) >= {"resolved_inputs", "execution_mode", "recommended_run_after_create"}
+    assert validated["plan"]["summary"] == "生成一段赛博城市文生图生视频"
+
+
+def test_short_drama_restatement_recovers_narration_and_audio(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    plan = _raw_plan_from_standard(
+        catalog,
+        {"skill_id": "short-drama-quick", "user_goal": "舞台对决",
+         "planner": {"mode": "standard", "item_count": 2, "units": [
+             {"title": "开场", "prompt": "两人对峙", "narration": "今晚只能有一个人站着离开。"},
+             {"title": "反转", "prompt": "灯光骤暗", "narration": "他没想到，对手是自己的影子。"},
+         ]}},
+        deviate=False,
+    )
+    # A user-material node the agent added on top does not count against the template.
+    plan["nodes"].append({
+        "id": "reference_notes", "node_type": "textAnnotationNode", "stage": "resource",
+        "data": {"title": "参考", "content": "舞台灯光偏冷"},
+    })
+    plan["edges"].append({"source": "reference_notes", "target": "outline", "link_type": "context_for"})
+
+    validated = catalog.validate_agent_workflow_plan(plan)
+
+    assert validated["ok"] is True, validated
+    assert validated["planner"]["selected_by"] == "template_isomorphic"
+    assert validated["planner"]["include_audio"] is True
+    assert validated["planner"]["item_count"] == 2
+    voices = {n["id"]: n["data"]["text"] for n in validated["plan"]["nodes"]
+              if n["node_type"] == "audioNode" and n["data"].get("audioKind") == "speech"}
+    assert voices == {"voice_1": "今晚只能有一个人站着离开。", "voice_2": "他没想到，对手是自己的影子。"}
+    assert any(n["node_type"] == "videoComposeNode" for n in validated["plan"]["nodes"])
+    assert any(n["id"] == "background_music" for n in validated["plan"]["nodes"])
+
+
+def test_template_restatement_that_the_standard_planner_rejects_stays_agent_authored(
+    monkeypatch,
+):
+    """Same shape but a speech node without narration text: the standard planner
+    refuses it, so the agent-authored plan stands and the record says why."""
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    plan = _raw_plan_from_standard(
+        catalog,
+        {"skill_id": "short-drama-quick", "user_goal": "舞台对决",
+         "planner": {"mode": "standard", "item_count": 1, "units": [
+             {"title": "开场", "prompt": "两人对峙", "narration": "今晚只能有一个人站着离开。"},
+         ]}},
+        deviate=False,
+    )
+    for node in plan["nodes"]:
+        if node["id"] == "voice_1":
+            for key in ("text", "prompt", "content"):
+                node["data"].pop(key, None)
+            node["data"]["title"] = "开场旁白"
+
+    validated = catalog.validate_agent_workflow_plan(plan)
+
+    assert validated["ok"] is True, validated
+    assert validated["planner"]["mode"] == "agent_authored"
+    reason = validated["planner"]["template_match"]["reason"]
+    assert reason.startswith("standard_compile_failed:"), reason
+    assert "narration" in reason
+
+
+def test_template_isomorphism_reports_the_first_deviation(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    intent = {"skill_id": "short-drama-quick", "user_goal": "舞台对决",
+              "planner": {"mode": "standard", "item_count": 1, "include_audio": False}}
+    plan = _raw_plan_from_standard(catalog, intent, deviate=False)
+    assert catalog.template_isomorphism("short-drama-quick", plan)["isomorphic"] is True
+    assert catalog.template_isomorphism("not-a-template-skill", plan) == {
+        "isomorphic": False, "reason": "no_standard_planner",
+    }
+    # A node of a kind the template has no stage for.
+    outside = copy.deepcopy(plan)
+    outside["nodes"].append({
+        "id": "scene_ref", "node_type": "imageGenNode",
+        "data": {"prompt": "舞台全景", "workflowCatalog": {"recipeId": "drama-scene-image"}},
+    })
+    assert catalog.template_isomorphism("short-drama-quick", outside)["reason"] == (
+        "node_outside_template:scene_ref"
+    )
+    # A required stage missing, or present but bypassed.
+    missing = _short_drama_plan_without_shot_planning(catalog)
+    assert catalog.template_isomorphism("short-drama-quick", missing)["reason"] == (
+        "stage_missing:shots"
+    )
+    bypassed = copy.deepcopy(plan)
+    bypassed["edges"] = [
+        {**e, "link_type": "dependency_for"} if e["source"] == "shot_plan_1" else e
+        for e in bypassed["edges"]
+    ]
+    assert catalog.template_isomorphism("short-drama-quick", bypassed)["reason"] == (
+        "stage_unused:shots->video"
+    )
+    # External inputs are never a template restatement.
+    external = copy.deepcopy(plan)
+    external["external_inputs"] = [{"id": "ref", "node_id": "workflow_input", "media_kind": "image"}]
+    assert catalog.template_isomorphism("short-drama-quick", external)["reason"] == (
+        "external_inputs"
+    )
 
 
 def test_agent_authored_plan_without_preferences_is_left_untouched(monkeypatch):
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)
-    compiled = catalog.compile_workflow_intent(
-        {"skill_id": "text-to-image-video", "user_goal": "生成一段赛博城市文生图生视频"}
+    plan = _raw_plan_from_standard(
+        catalog, {"skill_id": "text-to-image-video", "user_goal": "生成一段赛博城市文生图生视频"}
     )
-    plan = copy.deepcopy(compiled["plan"])
-    plan.pop("planner", None)
     before = copy.deepcopy(plan["nodes"])
 
     validated = catalog.validate_agent_workflow_plan(plan)
@@ -611,7 +782,8 @@ def test_custom_items_take_precedence_over_standard_planner(monkeypatch):
 
     assert result["ok"] is True
     # Issue #678: the agent-authored choice is recorded, including that a
-    # standard planner existed for this Skill and what mode the agent asked for.
+    # standard planner existed for this Skill, what mode the agent asked for,
+    # and why the items were not the template.
     assert result["planner"] == {
         "mode": "agent_authored",
         "source": "intent_items",
@@ -620,10 +792,53 @@ def test_custom_items_take_precedence_over_standard_planner(monkeypatch):
         "standard_planner_available": True,
         "requested_mode": "standard",
         "item_count": 1,
+        "template_match": {"isomorphic": False, "reason": "stage_missing:planning"},
     }
     assert "planner" not in result["plan"]
     node_ids = {node["id"] for node in result["plan"]["nodes"]}
     assert node_ids == {"workflow_input", "custom_image"}
+
+
+def test_intent_items_restating_the_template_use_the_standard_planner(monkeypatch):
+    """Issue #678: the user named the standard planner and the agent still
+    wrote items that restate the template; the server compiles them through
+    the standard planner and records the requested mode."""
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+
+    result = catalog.compile_workflow_intent({
+        "skill_id": "video-tutorial",
+        "user_goal": "三步教你手冲咖啡",
+        "planner": {"mode": "standard"},
+        "inputs": {"video_duration_seconds": 5},
+        "items": [
+            {"id": "outline", "title": "教程大纲", "prompt": "列出三个步骤",
+             "recipe_id": "general-text"},
+            {"id": "frame_1", "title": "步骤一画面", "prompt": "研磨咖啡豆",
+             "recipe_id": "general-image", "depends_on": ["outline"]},
+            {"id": "clip_1", "title": "步骤一视频", "prompt": "研磨咖啡豆的特写",
+             "recipe_id": "general-video", "depends_on": ["frame_1"]},
+            {"id": "frame_2", "title": "步骤二画面", "prompt": "注水闷蒸",
+             "recipe_id": "general-image", "depends_on": ["outline"]},
+            {"id": "clip_2", "title": "步骤二视频", "prompt": "注水闷蒸的慢镜头",
+             "recipe_id": "general-video", "depends_on": ["frame_2"]},
+        ],
+    })
+
+    assert result["ok"] is True, result
+    planner = result["planner"]
+    assert planner["mode"] == "deterministic_standard"
+    assert planner["selected_by"] == "template_isomorphic"
+    assert planner["source"] == "intent_items"
+    assert planner["requested_mode"] == "standard"
+    assert planner["item_count"] == 2
+    assert planner["include_audio"] is False
+    assert planner["template_match"] == {"isomorphic": True, "unit_count": 2}
+    nodes = {node["id"]: node for node in result["plan"]["nodes"]}
+    assert nodes["clip_2"]["data"]["prompt"] == "注水闷蒸的慢镜头"
+    assert nodes["clip_2"]["data"]["durationSec"] == 5
+    assert "final_compose" in nodes
+    assert result["preflight"]["blockers"] == []
 
 
 _STAGE_LOCK_UNITS = [
