@@ -8,6 +8,7 @@ from __future__ import annotations
 import io
 import json
 import zipfile
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -398,7 +399,8 @@ def test_oss_missing_is_a_502_without_leaking_the_url(dist, oss):
     with TestClient(_app()) as client:
         response = client.get("/api/v1/blender/addon")
     assert response.status_code == 502
-    assert "aliyuncs" not in response.json()["detail"]
+    # 取默认地址的真实域名，别写死：换过一次域名，写死的断言就成了空跑。
+    assert urlsplit(blender.DEFAULT_ADDON_URL).hostname not in response.json()["detail"]
 
 
 def test_oss_unreachable_is_a_502(dist, monkeypatch):

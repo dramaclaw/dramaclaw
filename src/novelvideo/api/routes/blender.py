@@ -208,10 +208,10 @@ ADDON_URL_ENV = "DRAMACLAW_BLENDER_ADDON_URL"
 PUBLIC_BASE_URL_ENV = "DRAMACLAW_PUBLIC_BASE_URL"
 ADDON_CONFIG_PATH = "dramaclaw_blender/config.json"
 # 发版时每个版本传一份带版本号的（不覆盖，留着回滚），再覆盖这一份 latest。
-# 与官方媒体目录同一个 bucket，见 `official_media_catalog_remote.py`。
+# 走 CDN 域名而不是 OSS 直连：bucket 是私有的，直连 403，CDN 回源带鉴权。
+# 与桌面端安装包同一个域名，见 `frontend/src/lib/desktop-download.ts`。
 DEFAULT_ADDON_URL = (
-    "https://dramaclaw-dl.oss-cn-chengdu.aliyuncs.com/"
-    "blender-addon/dramaclaw_blender-latest.zip"
+    "https://dramaclaw-dl.cdnfg.com/blender-addon/dramaclaw_blender-latest.zip"
 )
 # 真包 30KB 上下。这个上限只防 URL 配错指到一个大文件，把整个文件读进内存。
 MAX_ADDON_BYTES = 10 * 1024 * 1024

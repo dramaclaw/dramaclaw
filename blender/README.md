@@ -62,9 +62,14 @@ ossutil cp blender/dist/dramaclaw_blender-$V.zip \
 ossutil cp -f blender/dist/dramaclaw_blender-$V.zip \
   oss://dramaclaw-dl/blender-addon/dramaclaw_blender-latest.zip \
   --meta "Cache-Control:no-cache"                                 # 网页下载的就是这份
+# 4. 刷新 CDN 缓存：阿里云 CDN 控制台「刷新预热」→ URL 刷新
+#    https://dramaclaw-dl.cdnfg.com/blender-addon/dramaclaw_blender-latest.zip
 ```
 
-回滚：把旧版本那份再 `cp` 一遍覆盖 `-latest.zip`。后端不用重新部署。
+bucket 是私有的，OSS 直连地址一律 403，对外只走 CDN 域名 `dramaclaw-dl.cdnfg.com`。
+`-latest.zip` 名字不变、内容会变，覆盖后不刷新 CDN，后端可能还拿到旧包。
+
+回滚：把旧版本那份再 `cp` 一遍覆盖 `-latest.zip`，再刷新 CDN。后端不用重新部署。
 
 ### 网页上的「下载插件」怎么拿到包
 
@@ -79,8 +84,8 @@ ossutil cp -f blender/dist/dramaclaw_blender-$V.zip \
 
 1. **本地 `blender/dist/`**（或 `DRAMACLAW_BLENDER_ADDON_DIST` 指定的目录）里有
    `dramaclaw_blender-x.y.z.zip`，就取版本号最大的那个。开发机跑过 `build.py`，下载到的就是刚打的包。
-2. 否则从 OSS 下载：`DRAMACLAW_BLENDER_ADDON_URL`，默认是
-   `https://dramaclaw-dl.oss-cn-chengdu.aliyuncs.com/blender-addon/dramaclaw_blender-latest.zip`。
+2. 否则经 CDN 从 OSS 下载：`DRAMACLAW_BLENDER_ADDON_URL`，默认是
+   `https://dramaclaw-dl.cdnfg.com/blender-addon/dramaclaw_blender-latest.zip`。
    下载文件名按包里 `bl_info` 的版本号命名。OSS 取不到时返回 502，**不会**回落到本地。
 
 注入的两个地址：
