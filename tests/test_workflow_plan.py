@@ -660,6 +660,7 @@ def test_standard_skill_stage_templates_are_locked_to_the_planner_output(monkeyp
                 # The planner's own output never trips the stage check.
                 assert result["preflight"]["blockers"] == [], (skill_id, deliverable)
                 labels: set[str] = set()
+                ids_by_label: dict[str, set[str]] = {}
                 for node in result["plan"]["nodes"]:
                     label = node.get("stage") or node.get("data", {}).get("stage")
                     if label in {"input", "compose"}:
@@ -670,15 +671,30 @@ def test_standard_skill_stage_templates_are_locked_to_the_planner_output(monkeyp
                     recipe_id = node["data"]["workflowCatalog"]["recipeId"]
                     assert recipe_id in stage["recipes"], (skill_id, node["id"], recipe_id)
                     labels.add(label)
+                    ids_by_label.setdefault(label, set()).add(node["id"])
                 seen_in_every_run &= labels
                 seen_in_any_run |= labels
+                # Every declared feeding pair holds in the planner's own graph.
+                for upstream, downstream in profile["edges"]:
+                    assert upstream in stages and downstream in stages, (skill_id, upstream)
+                    if downstream not in ids_by_label:
+                        continue
+                    reached = catalog._downstream_node_ids(
+                        ids_by_label[upstream], result["plan"]["edges"]
+                    )
+                    assert ids_by_label[downstream] <= reached, (skill_id, upstream, downstream)
         assert seen_in_any_run == set(stages), (skill_id, seen_in_any_run)
         assert {s for s, stage in stages.items() if stage["required"]} == seen_in_every_run, (
             skill_id
         )
+        assert profile["edges"], skill_id
+        assert {s for pair in profile["edges"] for s in pair} >= {
+            s for s, stage in stages.items() if stage["required"]
+        }, skill_id
         # The template is what the agent sees in the planning contract.
         package = catalog.get_workflow_skill({"skill_id": skill_id, "user_goal": "测试"})
         assert package["planning_contract"]["standard_planner"]["stages"] == profile["stages"]
+        assert package["planning_contract"]["standard_planner"]["edges"] == profile["edges"]
 
 
 def _short_drama_plan_without_shot_planning(catalog) -> dict:
@@ -728,23 +744,54 @@ def test_exact_plan_without_a_required_stage_is_a_preflight_blocker(monkeypatch)
     assert preflight["counts"]["video"] == 2
     assert "warnings" in preflight
 
-    # A shot-planning node clears it: by stage label ...
-    labelled = copy.deepcopy(plan)
-    labelled["nodes"].append({
-        "id": "shot_design", "node_type": "textAnnotationNode", "stage": "shots",
-        "prompt": "拆解每个镜头", "data": {"workflowCatalog": {"recipeId": "general-text"}},
-    })
-    labelled["edges"].append({"source": "outline", "target": "shot_design", "link_type": "context_for"})
-    assert catalog.validate_agent_workflow_plan(labelled)["preflight"]["blockers"] == []
-    # ... or by a recipe of the stage's family without any label.
-    by_recipe = copy.deepcopy(plan)
-    by_recipe["nodes"].append({
-        "id": "shot_design", "node_type": "textAnnotationNode",
-        "prompt": "拆解每个镜头",
-        "data": {"workflowCatalog": {"recipeId": "drama-shot-planning"}},
-    })
-    by_recipe["edges"].append({"source": "outline", "target": "shot_design", "link_type": "context_for"})
-    assert catalog.validate_agent_workflow_plan(by_recipe)["preflight"]["blockers"] == []
+    def with_shot_design(node: dict, *, feeds_clips: bool) -> dict:
+        """Add a shot-planning node under the outline; optionally re-source the
+        clips from it (as the standard planner wires them)."""
+        revised = copy.deepcopy(plan)
+        revised["nodes"].append({**node, "id": "shot_design", "prompt": "拆解每个镜头"})
+        revised["edges"].append(
+            {"source": "outline", "target": "shot_design", "link_type": "context_for"}
+        )
+        if feeds_clips:
+            revised["edges"] = [
+                {**edge, "source": "shot_design"}
+                if edge["source"] == "outline" and edge["target"].startswith("clip_")
+                else edge
+                for edge in revised["edges"]
+            ]
+        return revised
+
+    labelled = {"node_type": "textAnnotationNode", "stage": "shots",
+                "data": {"workflowCatalog": {"recipeId": "general-text"}}}
+    by_recipe = {"node_type": "textAnnotationNode",
+                 "data": {"workflowCatalog": {"recipeId": "drama-shot-planning"}}}
+    # A shot-planning node that feeds the clips clears it: by stage label or
+    # by a recipe of the stage's family without any label.
+    for node in (labelled, by_recipe):
+        validated = catalog.validate_agent_workflow_plan(with_shot_design(node, feeds_clips=True))
+        assert validated["preflight"]["blockers"] == [], validated["preflight"]
+    # A shot-planning node on a side branch, with the clips still reading the
+    # outline directly, is not a shot-planning stage: the draft stays blocked.
+    validated = catalog.validate_agent_workflow_plan(with_shot_design(labelled, feeds_clips=False))
+    assert validated["ok"] is True
+    (unused,) = validated["preflight"]["blockers"]
+    assert unused["code"] == "skill_stage_unused"
+    assert unused["path"] == "plan.stages.shots.feeds.video"
+    assert unused["stage"] == "shots"
+    assert unused["downstream_stage"] == "video"
+    assert unused["node_ids"] == ["clip_1", "clip_2"]
+    assert "shot_design" in unused["message"]
+    assert validated["preflight"]["status"] == "blocked"
+    # Feeding one clip is not enough: the other is still bypassed.
+    partial = with_shot_design(labelled, feeds_clips=False)
+    partial["edges"] = [
+        {**edge, "source": "shot_design"}
+        if edge["source"] == "outline" and edge["target"] == "clip_1"
+        else edge
+        for edge in partial["edges"]
+    ]
+    (unused,) = catalog.validate_agent_workflow_plan(partial)["preflight"]["blockers"]
+    assert unused["node_ids"] == ["clip_2"]
 
 
 def test_intent_items_without_a_required_stage_are_a_preflight_blocker(monkeypatch):
@@ -767,6 +814,8 @@ def test_intent_items_without_a_required_stage_are_a_preflight_blocker(monkeypat
     assert result["ok"] is True, result
     assert result["planner"]["mode"] == "agent_authored"
     assert result["preflight"]["status"] == "blocked"
+    # The missing stage is reported once; its feeding pairs are not reported
+    # on top (nothing to reach from or to).
     assert [(b["code"], b["stage"]) for b in result["preflight"]["blockers"]] == [
         ("skill_stage_missing", "images"),
     ]
@@ -790,11 +839,30 @@ def test_skill_stage_blockers_tolerance():
         node("frame", "imageGenNode", "some-custom-image-recipe"),
         node("clip", "videoNode", "some-custom-video-recipe"),
     ]
-    assert catalog.skill_stage_blockers("text-to-image-video", ok_plan) == []
+    chain = [
+        {"source": "brief", "target": "outline", "link_type": "context_for"},
+        {"source": "outline", "target": "frame", "link_type": "context_for"},
+        {"source": "frame", "target": "clip", "link_type": "media_input_for"},
+    ]
+    assert catalog.skill_stage_blockers("text-to-image-video", ok_plan, chain) == []
+    # Reachability is transitive: outline → frame → clip satisfies planning → images
+    # even without a direct edge, but a clip sourced from the brief bypasses images.
+    bypass = chain[:2] + [{"source": "brief", "target": "clip", "link_type": "context_for"}]
+    assert [
+        (b["code"], b["stage"], b["downstream_stage"], b["node_ids"])
+        for b in catalog.skill_stage_blockers("text-to-image-video", ok_plan, bypass)
+    ] == [("skill_stage_unused", "images", "video", ["clip"])]
+    # Without edges at all every feeding pair is unmet; each is reported once.
+    assert [b["path"] for b in catalog.skill_stage_blockers("text-to-image-video", ok_plan)] == [
+        "plan.stages.planning.feeds.images",
+        "plan.stages.images.feeds.video",
+    ]
     # Only user material of the text kind: the planning stage is still missing.
     codes = [
         b["stage"]
-        for b in catalog.skill_stage_blockers("text-to-image-video", ok_plan[:1] + ok_plan[2:])
+        for b in catalog.skill_stage_blockers(
+            "text-to-image-video", ok_plan[:1] + ok_plan[2:], chain
+        )
     ]
     assert codes == ["planning"]
     # Two text stages: two unlabeled general-text nodes fill only planning.
@@ -803,13 +871,18 @@ def test_skill_stage_blockers_tolerance():
         node("more_text", "textAnnotationNode", "general-text"),
         node("clip", "videoNode", "general-video"),
     ]
-    assert [b["stage"] for b in catalog.skill_stage_blockers("short-drama-quick", drama)] == [
-        "shots"
+    drama_edges = [
+        {"source": "outline", "target": "more_text", "link_type": "context_for"},
+        {"source": "more_text", "target": "clip", "link_type": "dependency_for"},
     ]
+    assert [
+        b["stage"] for b in catalog.skill_stage_blockers("short-drama-quick", drama, drama_edges)
+    ] == ["shots"]
     drama[1]["data"]["stage"] = "Shots"
-    assert catalog.skill_stage_blockers("short-drama-quick", drama) == []
+    assert catalog.skill_stage_blockers("short-drama-quick", drama, drama_edges) == []
     assert catalog.skill_stage_blockers("not-a-template-skill", []) == []
     assert catalog.standard_skill_stages("not-a-template-skill") == []
+    assert catalog.standard_skill_stage_edges("not-a-template-skill") == []
 
 
 def _dynamic_plan(*, image_count: int = 1) -> dict:

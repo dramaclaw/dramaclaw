@@ -148,8 +148,12 @@ def _stage(
 # recipes the planner (and its catalog siblings) use for it. ``required`` marks
 # the stages the planner emits for every deliverable / include_audio choice;
 # an agent-authored plan for the skill must contain each of them or its draft
-# preflight reports ``skill_stage_missing`` (issue #677). The table is locked
-# to the planner output by tests/test_workflow_plan.py.
+# preflight reports ``skill_stage_missing`` (issue #677). ``edges`` lists which
+# stage feeds which: every node of the downstream stage must sit below some
+# node of the upstream stage in the plan graph, or the preflight reports
+# ``skill_stage_unused`` (a shot-planning node nothing consumes is not a
+# shot-planning stage). The table is locked to the planner output by
+# tests/test_workflow_plan.py.
 _DETERMINISTIC_SKILL_PLANNERS = {
     "ecommerce-ad": {
         "default_item_count": 3,
@@ -190,6 +194,11 @@ _DETERMINISTIC_SKILL_PLANNERS = {
             _stage("video", "videoNode", ["video-clip-generation"], required=False),
             _stage("audio", "audioNode", ["general-audio"], required=False),
         ],
+        "edges": [
+            ["planning", "assets"],
+            ["assets", "images"],
+            ["images", "video"],
+        ],
     },
     "text-to-image-video": {
         "default_item_count": 3,
@@ -211,6 +220,7 @@ _DETERMINISTIC_SKILL_PLANNERS = {
             ),
             _stage("video", "videoNode", ["general-video"], required=True),
         ],
+        "edges": [["planning", "images"], ["images", "video"]],
     },
     "video-tutorial": {
         "default_item_count": 3,
@@ -223,6 +233,7 @@ _DETERMINISTIC_SKILL_PLANNERS = {
             _stage("video", "videoNode", ["general-video"], required=True),
             _stage("audio", "audioNode", ["general-audio"], required=False),
         ],
+        "edges": [["planning", "images"], ["images", "video"]],
     },
     "short-drama-quick": {
         "default_item_count": 3,
@@ -255,6 +266,7 @@ _DETERMINISTIC_SKILL_PLANNERS = {
                 required=False,
             ),
         ],
+        "edges": [["planning", "shots"], ["shots", "video"]],
     },
 }
 
@@ -266,6 +278,33 @@ def standard_skill_stages(skill_id: str) -> list[dict[str, Any]]:
     """The standard planner's stage template for ``skill_id`` ([] without one)."""
     profile = _DETERMINISTIC_SKILL_PLANNERS.get(skill_id) or {}
     return [deepcopy(stage) for stage in profile.get("stages") or []]
+
+
+def standard_skill_stage_edges(skill_id: str) -> list[tuple[str, str]]:
+    """``(upstream_stage, downstream_stage)`` feeding pairs of the template."""
+    profile = _DETERMINISTIC_SKILL_PLANNERS.get(skill_id) or {}
+    return [(str(edge[0]), str(edge[1])) for edge in profile.get("edges") or []]
+
+
+def _downstream_node_ids(node_ids: set[str], edges: Any) -> set[str]:
+    """Every node reachable from ``node_ids`` over the plan's directed edges."""
+    successors: dict[str, set[str]] = {}
+    for edge in edges if isinstance(edges, list) else []:
+        if not isinstance(edge, dict):
+            continue
+        source = _text(edge.get("source"))
+        target = _text(edge.get("target"))
+        if source and target:
+            successors.setdefault(source, set()).add(target)
+    reached: set[str] = set()
+    pending = list(node_ids)
+    while pending:
+        current = pending.pop()
+        for target in successors.get(current, ()):
+            if target not in reached:
+                reached.add(target)
+                pending.append(target)
+    return reached
 
 
 def _node_kind(node_type: str) -> str:
@@ -297,13 +336,19 @@ def _node_fills_stage(
     return kind_is_unique and bool(recipe_id)
 
 
-def skill_stage_blockers(skill_id: str, nodes: Any) -> list[dict[str, Any]]:
-    """Preflight blockers for required standard-planner stages missing from a plan.
+def skill_stage_blockers(
+    skill_id: str, nodes: Any, edges: Any = None
+) -> list[dict[str, Any]]:
+    """Preflight blockers for standard-planner stages a plan skips or bypasses.
 
-    The standard planner always emits these stages; an agent-authored plan
-    (raw plan or intent items) that skips one, such as a short drama without
-    its shot-planning stage, compiled and reached ``ready`` before issue #677.
-    Skills without a standard planner have no template and are not checked.
+    The standard planner always emits the ``required`` stages and wires them
+    in template order; an agent-authored plan (raw plan or intent items) that
+    skips one, such as a short drama without its shot-planning stage, compiled
+    and reached ``ready`` before issue #677 (``skill_stage_missing``). A stage
+    node that exists but feeds nothing downstream is no better: every node of
+    a downstream stage must be reachable from a node of the upstream stage
+    (``skill_stage_unused``). Skills without a standard planner have no
+    template and are not checked.
     """
     stages = standard_skill_stages(skill_id)
     if not stages or not isinstance(nodes, list):
@@ -312,15 +357,17 @@ def skill_stage_blockers(skill_id: str, nodes: Any) -> list[dict[str, Any]]:
     for stage in stages:
         kind = _node_kind(_text(stage["node_type"]))
         kind_counts[kind] = kind_counts.get(kind, 0) + 1
+    filled: dict[str, list[str]] = {}
+    for stage in stages:
+        kind_is_unique = kind_counts[_node_kind(_text(stage["node_type"]))] == 1
+        filled[stage["id"]] = [
+            _text(node.get("id"))
+            for node in nodes
+            if _node_fills_stage(node, stage, kind_is_unique=kind_is_unique)
+        ]
     blockers: list[dict[str, Any]] = []
     for stage in stages:
-        if not stage.get("required"):
-            continue
-        kind_is_unique = kind_counts[_node_kind(_text(stage["node_type"]))] == 1
-        if any(
-            _node_fills_stage(node, stage, kind_is_unique=kind_is_unique)
-            for node in nodes
-        ):
+        if not stage.get("required") or filled[stage["id"]]:
             continue
         recipes = ", ".join(stage["recipes"])
         blockers.append(
@@ -343,13 +390,44 @@ def skill_stage_blockers(skill_id: str, nodes: Any) -> list[dict[str, Any]]:
                 ),
             }
         )
+    for upstream, downstream in standard_skill_stage_edges(skill_id):
+        sources = filled.get(upstream) or []
+        targets = filled.get(downstream) or []
+        if not sources or not targets:
+            continue  # a missing stage is reported above; an absent optional one is fine
+        reached = _downstream_node_ids(set(sources), edges)
+        unfed = [node_id for node_id in targets if node_id not in reached]
+        if not unfed:
+            continue
+        blockers.append(
+            {
+                "path": f"plan.stages.{upstream}.feeds.{downstream}",
+                "code": "skill_stage_unused",
+                "message": (
+                    f"Skill {skill_id} requires the {upstream} stage to feed the "
+                    f"{downstream} stage; {downstream} node(s) {', '.join(unfed)} are not "
+                    f"downstream of any {upstream} node ({', '.join(sources)})"
+                ),
+                "stage": upstream,
+                "downstream_stage": downstream,
+                "node_ids": unfed,
+                "hint": (
+                    f"Add an edge from a {upstream} node to each listed {downstream} node "
+                    f"(directly or through its inputs) so the {upstream} output is what "
+                    f"the {downstream} generation consumes; a {upstream} node nothing "
+                    "downstream reads does not satisfy the stage."
+                ),
+            }
+        )
     return blockers
 
 
 def _attach_skill_stage_blockers(result: dict[str, Any], skill_id: str) -> None:
-    """Fold missing-stage blockers into ``result['preflight']`` (status → blocked)."""
+    """Fold stage blockers into ``result['preflight']`` (status → blocked)."""
     plan = result.get("plan") if isinstance(result.get("plan"), dict) else {}
-    blockers = skill_stage_blockers(skill_id, plan.get("nodes") or [])
+    blockers = skill_stage_blockers(
+        skill_id, plan.get("nodes") or [], plan.get("edges") or []
+    )
     if not blockers:
         return
     preflight = result.get("preflight") if isinstance(result.get("preflight"), dict) else {}
