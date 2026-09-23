@@ -2340,7 +2340,7 @@ function generationCommandNodeIds(
 ): string[] {
   const nodeIds = new Set<string>();
   const createNodeNeedsAction = (
-    command: Extract<CanvasChatCommand, { type: "create_node" }>,
+    command: Extract<CanvasChatCommand, { type: "create_node" | "add_next_node" }>,
   ): boolean => {
     const data = command.data as Record<string, unknown> | undefined;
     if (expectedAction === "generate_image") return !data?.imageUrl && !data?.image_url;
@@ -2374,6 +2374,18 @@ function generationCommandNodeIds(
         hasWorkflowRun
         && command.type === "create_node"
         && command.client_id
+        && APPROVAL_GENERATION_ACTION_BY_NODE_TYPE[command.node_type] === expectedAction
+        && createNodeNeedsAction(command)
+      ) {
+        nodeIds.add(command.client_id);
+      }
+      // add_next_node 同样会在 run_workflow 里被执行；只有显式给了 node_type 才能在
+      // 审批阶段确定节点类型（未给时由执行期按源节点推断，这里拿不到源节点）。
+      if (
+        hasWorkflowRun
+        && command.type === "add_next_node"
+        && command.client_id
+        && command.node_type
         && APPROVAL_GENERATION_ACTION_BY_NODE_TYPE[command.node_type] === expectedAction
         && createNodeNeedsAction(command)
       ) {
@@ -2889,6 +2901,7 @@ function amendCanvasApprovalWithGenerationData(
   action: string,
   data: Record<string, unknown>,
 ): PendingCanvasCommandApproval {
+  const targets = new Set(nodeIds);
   const remaining = new Set(nodeIds);
   if (remaining.size === 0) return approval;
   const withCreatedNodeData: PendingCanvasCommandApproval = {
@@ -2896,6 +2909,14 @@ function amendCanvasApprovalWithGenerationData(
     envelopes: approval.envelopes.map((envelope) => ({
       ...envelope,
       commands: envelope.commands.map((command) => {
+        // 同一批里 Agent 对该节点的 update_node_data 会在创建之后执行；确认值也要
+        // 合并进去，否则后续更新会把用户在审批卡上确认的参数覆盖回旧值。
+        if (command.type === "update_node_data" && targets.has(command.node_id)) {
+          return {
+            ...command,
+            data: { ...(command.data ?? {}), ...data },
+          };
+        }
         if (
           (command.type === "create_node" || command.type === "add_next_node")
           && command.client_id
