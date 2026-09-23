@@ -14342,13 +14342,19 @@ async def _check_workflow_runtime(compiled: dict, *, project: str, user: dict) -
         limits=results[-1],
     )
     if preflight["blockers"]:
-        from novelvideo.freezone.workflow_preflight import generation_clarification_request
+        from novelvideo.freezone.workflow_preflight import (
+            generation_clarification_request,
+            preflight_failure_blocker,
+        )
 
         clarification = generation_clarification_request(preflight)
         if clarification is not None:
             # Missing generation choices are a user question, not a dead end:
             # return the standard clarification structure the agent recovers
-            # from with one freezone_request_user_clarification call.
+            # from with one freezone_request_user_clarification call. Only
+            # when every blocker is such a question, though: beside a
+            # queue_disabled / model_unavailable blocker the answers could
+            # not unblock the draft, so that case falls through below.
             raise HTTPException(
                 400,
                 {
@@ -14363,7 +14369,7 @@ async def _check_workflow_runtime(compiled: dict, *, project: str, user: dict) -
             {
                 "ok": False,
                 "status": "workflow_preflight_failed",
-                "error": preflight["blockers"][0]["message"],
+                "error": preflight_failure_blocker(preflight)["message"],
                 "preflight": preflight,
                 "retryable": False,
                 "next_action": "resolve_preflight_blockers",

@@ -3950,7 +3950,9 @@ def _preflight_clarification_result(
     ``workflow_preflight_failed`` would stop the agent; merging them into one
     ``clarification_required`` result lets it ask through a single card. The
     merge itself lives in CE (``generation_clarification_request``) so the
-    HTTP drafts API returns the same structure.
+    HTTP drafts API returns the same structure; it declines (``None``) when
+    any non-answerable blocker sits beside the questions, so those preflights
+    fail below instead of asking a question that cannot unblock the draft.
     """
     from novelvideo.freezone.workflow_preflight import generation_clarification_request
 
@@ -3968,13 +3970,15 @@ def _workflow_preflight_failure(
     preflight: dict[str, Any], **extra: Any
 ) -> dict[str, Any]:
     """Standard failure payload for a blocked draft preflight."""
+    from novelvideo.freezone.workflow_preflight import preflight_failure_blocker
+
     clarification = _preflight_clarification_result(preflight, **extra)
     if clarification is not None:
         return clarification
     return {
         "ok": False,
         "status": "workflow_preflight_failed",
-        "error": preflight["blockers"][0]["message"],
+        "error": preflight_failure_blocker(preflight)["message"],
         "preflight": preflight,
         **extra,
     }

@@ -132,9 +132,14 @@ of the same setting with different values on one node are rejected. If a write r
 confirmed choices (at least the model) in `answers` so the recommendation comes from the same
 catalog entry. The clarification result carries `node_data.<node_type>` with the exact canvas
 fields; copy them verbatim into each matching node of the same intent/plan and retry the same
-operation. A recommended action always returns concrete values; a result with
-`status="generation_answers_incomplete"` means the choice is still missing and must be asked
-again, never defaulted. Approval behavior remains controlled by the execution mode.
+operation. Draft preparation, patching and confirmation all run this preflight, so the
+clarification can also come back at confirm time. It comes back only when every blocker is a
+missing generation choice; a preflight that also reports a blocker no answer can fix (a disabled
+queue, an unavailable model or catalog) fails with `status="workflow_preflight_failed"` naming
+that blocker first, so resolve it before asking. A recommended action always returns concrete
+values; a result with `status="generation_answers_incomplete"` means the choice is still missing
+and must be asked again, never defaulted. Approval behavior remains controlled by the execution
+mode.
 
 When the user does not specify internal media settings, use `"recommended"` only for the media
 model preference in the portable intent or Plan. The authorized preflight resolves it to a concrete

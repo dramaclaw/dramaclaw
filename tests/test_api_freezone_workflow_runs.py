@@ -2765,6 +2765,54 @@ def test_backend_returns_standard_clarification_for_missing_generation_choices(m
     assert detail["preflight"]["status"] == "blocked"
 
 
+def test_backend_reports_non_retryable_blocker_before_missing_generation_choices(monkeypatch):
+    """A disabled queue cannot be fixed by answering a card: beside missing
+    generation choices the entry must fail with that blocker instead of
+    sending the agent through a clarification that ends in the same error."""
+    import asyncio
+
+    from novelvideo.api.routes import freezone, tasks
+
+    async def video_models(project, user):
+        return {"ok": True, "data": [{
+            "id": "seedance-2.0", "ratioOptions": ["16:9"], "resolutionOptions": ["720P"],
+            "minDuration": 2, "maxDuration": 10, "supportsGenerateAudio": True,
+        }]}
+
+    async def limits(project, user):
+        return {"ok": True, "data": {"video": {"limit": 0, "remaining": 0}}}
+
+    monkeypatch.setattr(freezone, "freezone_video_models", video_models)
+    monkeypatch.setattr(tasks, "get_project_task_limits", limits)
+    compiled = {
+        "ok": True,
+        "skill_id": "video-ad",
+        "plan": {"nodes": [
+            {"id": "shot-1", "node_type": "videoNode", "data": {
+                "model": "seedance-2.0", "quality": "720P",
+                "workflowCatalog": {"recipeId": "dialogue-continuity-shot-video"},
+            }},
+        ], "edges": []},
+        "preflight": {"status": "ready", "blockers": [], "warnings": []},
+    }
+
+    with pytest.raises(HTTPException) as excinfo:
+        asyncio.run(freezone._check_workflow_runtime(
+            compiled, project="proj_demo", user={"username": "alice"}
+        ))
+
+    detail = excinfo.value.detail
+    assert excinfo.value.status_code == 400
+    assert detail["status"] == "workflow_preflight_failed"
+    assert detail["error"] == "video generation queue is disabled"
+    assert detail["retryable"] is False
+    assert detail["next_action"] == "resolve_preflight_blockers"
+    assert "missing_parameters" not in detail
+    codes = [blocker["code"] for blocker in detail["preflight"]["blockers"]]
+    assert "queue_disabled" in codes
+    assert "generation_parameters_required" in codes
+
+
 @pytest.mark.parametrize("via_patch", [False, True])
 def test_exact_plan_recommendation_can_be_confirmed(
     workflow_run_client, runtime_workflow_source, monkeypatch, via_patch

@@ -4140,6 +4140,52 @@ def test_prepare_exact_plan_other_preflight_blockers_still_fail(monkeypatch, tmp
     assert result["error"] == "could not verify videoNode capabilities"
 
 
+def test_prepare_exact_plan_mixed_preflight_blockers_fail_without_clarification(
+    monkeypatch, tmp_path
+):
+    """Missing generation choices beside a disabled queue are not a
+    clarification: asking the user first would only defer the same failure."""
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    monkeypatch.setattr(
+        plugin,
+        "validate_agent_workflow_plan",
+        lambda plan: {"ok": True, "skill_id": "video-ad", "plan": plan},
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_workflow_runtime_preflight",
+        lambda *_args, **_kwargs: {"status": "blocked", "warnings": [], "blockers": [
+            {"path": "runtime.models.shot-1.generateAudio",
+             "code": "generation_parameters_required",
+             "message": "dialogue or voice-over shot must state generateAudio explicitly",
+             "required_choices": {"video": ["generate_audio"]}},
+            {"path": "runtime.queue_capacity.video", "code": "queue_disabled",
+             "message": "video generation queue is disabled"},
+            {"path": "runtime.models.shot-1.durationSec",
+             "code": "generation_parameters_required",
+             "message": "video node has no planned duration; set data.durationSec (seconds)",
+             "required_choices": {"video": ["duration_seconds"]}},
+        ]},
+    )
+
+    result = plugin._handle_prepare_workflow_plan_draft({
+        "plan": {"schema_version": "freezone_workflow_plan.v1", "nodes": [
+            {"id": "shot-1", "node_type": "videoNode", "data": {"model": "video-a"}},
+        ], "edges": []},
+    })
+
+    assert result["ok"] is False
+    assert result["status"] == "workflow_preflight_failed"
+    assert result["error"] == "video generation queue is disabled"
+    assert "missing_parameters" not in result
+    assert "agent_instruction" not in result
+    assert [b["code"] for b in result["preflight"]["blockers"]] == [
+        "generation_parameters_required", "queue_disabled", "generation_parameters_required",
+    ]
+    _assert_real_mcp_output(plugin, "freezone_prepare_workflow_plan_draft", result)
+
+
 def test_generation_clarification_updates_exact_plan_draft(monkeypatch, tmp_path):
     plugin = _load_plugin_module()
     _install_workflow_draft_api(monkeypatch, plugin, tmp_path)

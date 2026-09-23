@@ -6,6 +6,7 @@ from novelvideo.freezone.agent_workflows.graph import build_workflow_graph_comma
 from novelvideo.freezone.workflow_preflight import (
     evaluate_workflow_preflight,
     generation_clarification_request,
+    preflight_failure_blocker,
 )
 
 
@@ -543,7 +544,6 @@ def test_generation_clarification_request_merges_blockers_per_node():
          "message": "m", "required_choices": {"video": ["generate_audio"]}},
         {"path": "runtime.models.shot-2.durationSec", "code": "generation_parameters_required",
          "message": "m", "required_choices": {"video": ["duration_seconds"]}},
-        {"path": "runtime.models", "code": "model_catalog_unavailable", "message": "x"},
     ]}
     request = generation_clarification_request(preflight)
     assert request is not None
@@ -555,4 +555,42 @@ def test_generation_clarification_request_merges_blockers_per_node():
         {"node_id": "shot-1", "node_type": "videoNode", "fields": ["durationSec", "generateAudio"]},
         {"node_id": "shot-2", "node_type": "videoNode", "fields": ["durationSec"]},
     ]
-    assert generation_clarification_request({"blockers": preflight["blockers"][-1:]}) is None
+    assert generation_clarification_request({"blockers": []}) is None
+    assert generation_clarification_request({"blockers": [
+        {"path": "runtime.models", "code": "model_catalog_unavailable", "message": "x"},
+    ]}) is None
+
+
+def test_generation_clarification_request_declines_mixed_blockers():
+    """A clarification is retryable; beside a blocker no answer can fix it would
+    make the agent ask the user and only then fail. Mixed preflights stay a
+    plain failure that names the non-answerable blocker first."""
+    questions = [
+        {"path": "runtime.models.shot-1.generateAudio", "code": "generation_parameters_required",
+         "message": "audio", "required_choices": {"video": ["generate_audio"]}},
+        {"path": "runtime.models.shot-1.durationSec", "code": "generation_parameters_required",
+         "message": "duration", "required_choices": {"video": ["duration_seconds"]}},
+    ]
+    for hard in (
+        {"path": "runtime.queue_capacity.video", "code": "queue_disabled",
+         "message": "video generation queue is disabled"},
+        {"path": "runtime.models.shot-1.model", "code": "model_unavailable", "message": "gone"},
+        {"path": "runtime.models", "code": "model_catalog_unavailable", "message": "no catalog"},
+    ):
+        preflight = {"blockers": [questions[0], hard, questions[1]]}
+        assert generation_clarification_request(preflight) is None
+        assert preflight_failure_blocker(preflight) is hard
+    assert preflight_failure_blocker({"blockers": questions}) is questions[0]
+    assert preflight_failure_blocker({"blockers": []}) == {}
+
+
+def test_generation_clarification_request_keeps_dotted_node_ids():
+    request = generation_clarification_request({"blockers": [
+        {"path": "runtime.models.scene.1.shot.2.durationSec",
+         "code": "generation_parameters_required", "message": "m",
+         "required_choices": {"video": ["duration_seconds"]}},
+    ]})
+    assert request is not None
+    assert request["missing_parameters"] == [
+        {"node_id": "scene.1.shot.2", "node_type": "videoNode", "fields": ["durationSec"]},
+    ]
