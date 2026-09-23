@@ -175,6 +175,12 @@ async def _run_freezone_agent_product_async(
                             operation_id=operation_id,
                             status="workflow_lease_expired",
                         )
+            # The media task this waits for runs on the same lane. Polling here
+            # would hold the slot it needs (#700); delivery paths settle late.
+            raise AgentProductSettlementPending(
+                operation_id=operation_id,
+                status="awaiting_delivery",
+            )
         await asyncio.sleep(0.2)
 
 
