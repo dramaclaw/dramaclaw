@@ -18,6 +18,8 @@ CANVAS_FINAL_RESPONSE_INSTRUCTIONS = (
     "A creation receipt does not prove media generation or parameter persistence."
 )
 
+NO_CANVAS_WRITE_NOTE = "\n\n（本轮未修改画布。）"
+
 CANVAS_REPLY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -98,6 +100,11 @@ def finalize_canvas_reply(
     try:
         reply = json.loads(text)
     except (TypeError, ValueError):
+        plain = text.strip() if isinstance(text, str) else ""
+        if plain and not attempts and not receipts:
+            # A read-only turn's prose is still the answer (#680). Surface it,
+            # but never as a verified write: state the same-turn evidence.
+            return plain + NO_CANVAS_WRITE_NOTE
         return "回复未通过操作结果校验：未返回结构化结果，请重试。"
     if not isinstance(reply, dict):
         return "回复未通过操作结果校验：结果格式无效，请重试。"

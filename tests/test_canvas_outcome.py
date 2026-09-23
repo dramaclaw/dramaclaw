@@ -3,7 +3,11 @@ import json
 import pytest
 from jsonschema import Draft202012Validator
 
-from novelvideo.chat.canvas_outcome import CANVAS_REPLY_SCHEMA, finalize_canvas_reply
+from novelvideo.chat.canvas_outcome import (
+    CANVAS_REPLY_SCHEMA,
+    NO_CANVAS_WRITE_NOTE,
+    finalize_canvas_reply,
+)
 
 
 def reply(mode="read_only", claims=None, message="建议保持当前布局。"):
@@ -48,10 +52,38 @@ def test_freezone_instructions_embed_schema_and_valid_greeting_example():
     assert "canvas_receipts" not in service._codex_developer_instructions("default")
 
 
-def test_plain_success_claim_is_still_rejected_without_receipts():
-    assert "未返回结构化结果" in finalize_canvas_reply(
-        "图片节点已创建成功。", attempts={}, receipts=set()
+def test_read_only_plain_text_reply_is_surfaced_not_replaced():
+    # #680: a read-only status turn answered in prose must reach the user.
+    assert (
+        finalize_canvas_reply(
+            "工作流失败，未生成视频。\n", attempts={}, receipts=set(), failure=""
+        )
+        == "工作流失败，未生成视频。" + NO_CANVAS_WRITE_NOTE
     )
+
+
+def test_plain_success_claim_without_receipts_is_marked_as_no_write():
+    result = finalize_canvas_reply("图片节点已创建成功。", attempts={}, receipts=set())
+    assert result.endswith(NO_CANVAS_WRITE_NOTE)
+    assert "未修改画布" in result
+
+
+@pytest.mark.parametrize(
+    ("attempts", "receipts"),
+    [
+        ({"call-a": "succeeded"}, {("bridge-a", None)}),
+        ({}, {("", 7)}),
+    ],
+)
+def test_plain_text_after_canvas_writes_still_fails_closed(attempts, receipts):
+    assert "未返回结构化结果" in finalize_canvas_reply(
+        "图片节点已创建成功。", attempts=attempts, receipts=receipts
+    )
+
+
+@pytest.mark.parametrize("text", ["", "   "])
+def test_empty_plain_reply_fails_closed(text):
+    assert "未返回结构化结果" in finalize_canvas_reply(text, attempts={}, receipts=set())
 
 
 def test_catalog_only_success_needs_no_canvas_receipt():
@@ -131,7 +163,6 @@ def test_workflow_draft_is_pending_approval_not_success_or_failure():
 @pytest.mark.parametrize(
     "text",
     [
-        "已创建节点。",
         "[]",
         "null",
         "{}",
