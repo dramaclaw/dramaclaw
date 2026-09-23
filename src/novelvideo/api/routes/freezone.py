@@ -193,8 +193,10 @@ from novelvideo.freezone.agent_product_operations import (
     create_agent_product_operation,
     finish_agent_product_operation,
     list_agent_product_operations_for_session,
+    is_recipe_compile_receipt,
     read_agent_generation_session,
     read_agent_product_operation,
+    read_recipe_model_prompt,
     save_agent_generation_session,
 )
 from novelvideo.freezone.workflow_runs import (
@@ -209,11 +211,13 @@ from novelvideo.freezone.workflow_runs import (
     list_workflow_runs,
     prune_workflow_runs,
     read_workflow_run,
+    reclaim_failed_workflow_media_action,
     renew_workflow_media_claim,
     reconcile_workflow_runs_with_canvas_nodes,
     reconcile_workflow_runs_with_canvas_results,
     reconcile_workflow_runs_with_tasks,
     update_workflow_run,
+    workflow_media_failure_awaits_retry,
 )
 from novelvideo.freezone.image_node import (
     DEFAULT_IMAGE_REVERSE_PROMPT_INSTRUCTION,
@@ -548,34 +552,70 @@ async def _enqueue_claimed_workflow_media(
                 default=str,
             ).encode("utf-8")
         ).hexdigest()
-        try:
-            claim = await asyncio.to_thread(
-                claim_workflow_media_action,
+        async def current_claim() -> dict[str, Any]:
+            try:
+                return await asyncio.to_thread(
+                    claim_workflow_media_action,
+                    project_dir=_canvas_state_project_dir(ctx, project_dir),
+                    project_id=ctx.project_id,
+                    canvas_id=str(payload.get("canvas_id") or ""),
+                    node_id=str(payload.get("node_id") or ""),
+                    operation_id=operation_id,
+                    attempt_id=str(payload.get("generation_attempt_id") or ""),
+                    task_type=task_type,
+                    fingerprint=fingerprint,
+                )
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from exc
+
+        async def claimed_task(claimed: dict[str, Any]) -> Any:
+            scope = str(claimed["job_id"])
+            task = await asyncio.to_thread(
+                get_task_manager().get_task_for_project, ctx, task_type, 0, scope=scope
+            )
+            if task is None and not claimed["created"]:
+                deadline = time.monotonic() + 1.0
+                while task is None and time.monotonic() < deadline:
+                    await asyncio.sleep(0.05)
+                    task = await asyncio.to_thread(
+                        get_task_manager().get_task_for_project,
+                        ctx, task_type, 0, scope=scope,
+                    )
+            return task
+
+        claim = await current_claim()
+        existing = await claimed_task(claim)
+        for _ in range(3):
+            if existing is None or str(existing.status or "") != "failed":
+                break
+            # A retryable provider failure leaves the claim on a failed task;
+            # the runner's next recorded retry gets a fresh job (issue #681).
+            retry_claim = await asyncio.to_thread(
+                reclaim_failed_workflow_media_action,
                 project_dir=_canvas_state_project_dir(ctx, project_dir),
                 project_id=ctx.project_id,
                 canvas_id=str(payload.get("canvas_id") or ""),
+                run_id=claim["run_id"],
                 node_id=str(payload.get("node_id") or ""),
                 operation_id=operation_id,
                 attempt_id=str(payload.get("generation_attempt_id") or ""),
                 task_type=task_type,
                 fingerprint=fingerprint,
+                failed_job_id=str(claim["job_id"]),
             )
-        except ValueError as exc:
-            raise HTTPException(409, str(exc)) from exc
+            if retry_claim is not None:
+                claim, existing = retry_claim, None
+                break
+            # A concurrent duplicate may have just moved the claim; follow it
+            # instead of handing back the failed task it replaced.
+            latest = await current_claim()
+            if latest["job_id"] == claim["job_id"]:
+                break
+            claim = latest
+            existing = await claimed_task(claim)
         job_id = str(claim["job_id"])
         payload["job_id"] = job_id
         task_key = project_task_state_key(task_type, ctx.project_id, 0, scope=job_id)
-        existing = await asyncio.to_thread(
-            get_task_manager().get_task_for_project, ctx, task_type, 0, scope=job_id
-        )
-        if existing is None and not claim["created"]:
-            deadline = time.monotonic() + 1.0
-            while existing is None and time.monotonic() < deadline:
-                await asyncio.sleep(0.05)
-                existing = await asyncio.to_thread(
-                    get_task_manager().get_task_for_project,
-                    ctx, task_type, 0, scope=job_id,
-                )
         if existing is not None:
             await _cancel_claimed_media_if_run_cancelled(
                 ctx=ctx,
@@ -5391,6 +5431,7 @@ async def _record_recipe_compile_product_evidence(
             executed_at=compiled.executed_at,
             source="server_recipe_compiler",
             compile_mode="model",
+            compiled_prompt="" if deliver_text else compiled.prompt,
         )
         if deliver_text:
             # Synchronous text generation has no separate media task. Persist
@@ -5448,9 +5489,18 @@ async def _record_recipe_compile_product_evidence(
 
 
 async def _require_recipe_compile_product_admission(
-    *, body: FreezoneRecipeCompileRequest, user: dict
-) -> None:
-    """Require metered Recipe admission for every compilation strategy."""
+    *,
+    body: FreezoneRecipeCompileRequest,
+    user: dict,
+    allow_compile_replay: bool = False,
+) -> RecipeCompileResult | None:
+    """Require metered Recipe admission for every compilation strategy.
+
+    With ``allow_compile_replay`` an operation that already holds its server
+    compilation (a cache/deterministic receipt, or a model compilation awaiting
+    media delivery) returns that result instead of compiling again, so a media
+    retry of the same attempt reuses the same prompt and charge (issue #681).
+    """
     operation_id = str(body.product_operation_id or "").strip()
     project_id = str(body.project_id or "").strip()
     if bool(operation_id) != bool(project_id):
@@ -5458,8 +5508,9 @@ async def _require_recipe_compile_product_admission(
             400,
             "project_id and product_operation_id must be supplied together",
         )
-    if isinstance(get_usage_meter(), NoOpUsageMeter):
-        return
+    metered = not isinstance(get_usage_meter(), NoOpUsageMeter)
+    if not metered and not (allow_compile_replay and operation_id):
+        return None
     if not operation_id:
         raise HTTPException(
             400,
@@ -5468,21 +5519,63 @@ async def _require_recipe_compile_product_admission(
     ctx, _username, _project_name, project_dir, _output_dir = (
         await _resolve_freezone_project(project_id, user)
     )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
     try:
         operation = await asyncio.to_thread(
             read_agent_product_operation,
-            project_dir=_canvas_state_project_dir(ctx, project_dir),
+            project_dir=state_dir,
             operation_id=operation_id,
         )
     except ValueError as exc:
+        if not metered:
+            return None
         raise HTTPException(400, str(exc)) from exc
     if operation is None or operation.get("product_kind") != "recipe_result":
+        if not metered:
+            return None
         raise HTTPException(409, "Recipe result operation is unavailable")
-    if operation.get("status") not in {"reserved", "running", "accepted", "submitted"}:
-        raise HTTPException(409, "Recipe result operation is not admitted")
     admitted_recipe_id = str((operation.get("metadata") or {}).get("recipe_id") or "")
     if admitted_recipe_id and admitted_recipe_id != body.recipe_id:
         raise HTTPException(409, "Recipe compilation does not match admitted operation")
+    if allow_compile_replay:
+        replayed = await _replayed_recipe_compilation(
+            body=body, operation=operation, state_dir=state_dir
+        )
+        if replayed is not None or not metered:
+            return replayed
+    if operation.get("status") not in {"reserved", "running", "accepted", "submitted"}:
+        raise HTTPException(409, "Recipe result operation is not admitted")
+    return None
+
+
+async def _replayed_recipe_compilation(
+    *,
+    body: FreezoneRecipeCompileRequest,
+    operation: dict[str, Any],
+    state_dir: Path,
+) -> RecipeCompileResult | None:
+    operation_id = str(operation.get("operation_id") or "")
+    receipt = operation.get("result_ref")
+    receipt = receipt if isinstance(receipt, dict) else {}
+    if operation.get("status") == "delivered" and is_recipe_compile_receipt(
+        "recipe_result", operation_id, receipt
+    ):
+        prompt, mode = str(receipt["content"]), str(receipt["reason"])
+    elif operation.get("status") in {"reserved", "running", "accepted", "submitted"}:
+        prompt = await asyncio.to_thread(
+            read_recipe_model_prompt, project_dir=state_dir, operation_id=operation_id
+        )
+        mode = "model"
+        if not prompt.strip():
+            return None
+    else:
+        return None
+    recipe_ids = [body.recipe_id, *(item.id for item in body.recipe_pipeline)]
+    return RecipeCompileResult(
+        prompt=prompt,
+        mode=mode,
+        recipe_ids=tuple(dict.fromkeys(item for item in recipe_ids if item)),
+    )
 
 
 async def _fail_recipe_product_operation(
@@ -5534,7 +5627,11 @@ async def compile_freezone_recipe(
 ):
     """Compile an effective user Recipe without returning its internal definition."""
     username = str(user.get("username") or "")
-    await _require_recipe_compile_product_admission(body=body, user=user)
+    replayed = await _require_recipe_compile_product_admission(
+        body=body, user=user, allow_compile_replay=True
+    )
+    if replayed is not None:
+        return _recipe_compile_response(replayed)
     try:
         compiled = await compile_recipe_prompt_result(
             **_recipe_compile_args(body, username)
@@ -5555,6 +5652,10 @@ async def compile_freezone_recipe(
         raise HTTPException(
             status_code=503, detail="Recipe compilation failed"
         ) from exc
+    return _recipe_compile_response(compiled)
+
+
+def _recipe_compile_response(compiled: RecipeCompileResult) -> dict[str, Any]:
     return {
         "ok": True,
         "data": {
@@ -5597,13 +5698,29 @@ async def compile_freezone_recipe_batch(
 ):
     """Compile several independent node prompts without one failure cancelling the batch."""
     username = str(user.get("username") or "")
-    for item in body.items:
-        await _require_recipe_compile_product_admission(body=item, user=user)
-    outcomes = await compile_recipe_prompt_batch(
-        [_recipe_compile_args(item, username) for item in body.items]
+    replays: dict[int, RecipeCompileResult] = {}
+    for index, item in enumerate(body.items):
+        replayed = await _require_recipe_compile_product_admission(
+            body=item, user=user, allow_compile_replay=True
+        )
+        if replayed is not None:
+            replays[index] = replayed
+    pending_compiles = [
+        _recipe_compile_args(item, username)
+        for index, item in enumerate(body.items)
+        if index not in replays
+    ]
+    compiled_outcomes = iter(
+        await compile_recipe_prompt_batch(pending_compiles) if pending_compiles else []
     )
     items: list[dict[str, Any]] = []
-    for request, outcome in zip(body.items, outcomes, strict=True):
+    for index, request in enumerate(body.items):
+        if index in replays:
+            items.append(
+                {"request_id": request.request_id, **_recipe_compile_response(replays[index])}
+            )
+            continue
+        outcome = next(compiled_outcomes)
         if isinstance(outcome, RecipeRuntimeError):
             await _fail_recipe_product_operation(body=request, user=user)
             items.append(
@@ -15740,6 +15857,11 @@ async def get_canvas_workflow_runs(
                     "node_id": action.get("node_id"),
                     "recipe_id": action.get("recipe_id"),
                 }
+            elif task_status == "failed" and workflow_media_failure_awaits_retry(
+                run=run, action=action, error=task.get("error")
+            ):
+                # The runner is about to resubmit this attempt (issue #681).
+                continue
             elif task_status in {"failed", "cancelled"}:
                 outcome = "failed" if task_status == "failed" else "cancelled"
                 result_ref = {}
