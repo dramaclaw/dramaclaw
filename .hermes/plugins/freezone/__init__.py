@@ -9323,20 +9323,27 @@ _CANVAS_COMMAND_ITEM_SCHEMA = {
             },
             ["node_type"],
         ),
-        _command_variant(
-            "add_next_node",
-            {
-                "client_id": _NON_EMPTY_STRING,
-                "source_node_id": _NON_EMPTY_STRING,
-                "node_type": {
-                    "type": "string",
-                    "enum": _AGENT_CREATABLE_NODE_TYPE_VALUES,
+        {
+            **_command_variant(
+                "add_next_node",
+                {
+                    "client_id": _NON_EMPTY_STRING,
+                    "source_node_id": _NON_EMPTY_STRING,
+                    "node_type": {
+                        "type": "string",
+                        "enum": _AGENT_CREATABLE_NODE_TYPE_VALUES,
+                    },
+                    "data": {"type": "object"},
+                    "connect": {"type": "boolean"},
                 },
-                "data": {"type": "object"},
-                "connect": {"type": "boolean"},
-            },
-            ["source_node_id"],
-        ),
+                ["source_node_id"],
+            ),
+            "description": (
+                "Creates a node downstream of source_node_id. It is placed next to "
+                "the source automatically and takes no position field; use "
+                "create_node when an explicit position is needed."
+            ),
+        },
         _command_variant(
             "update_node_data",
             {"node_id": _NON_EMPTY_STRING, "data": {"type": "object"}},

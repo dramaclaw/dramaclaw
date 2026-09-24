@@ -274,6 +274,92 @@ def _codex_freezone_generation_retry_key(event: Any) -> str | None:
     return None
 
 
+# Fields that name what a write command acts on, as opposed to how. A call the
+# MCP input schema rejected is matched to its corrected retry on these alone,
+# because the correction itself (e.g. dropping an unsupported position) is
+# exactly what differs between the two calls.
+_ARGUMENT_RETRY_IDENTITY_FIELDS = (
+    "type",
+    "action",
+    "client_id",
+    "node_id",
+    "node_ids",
+    "source_node_id",
+    "source",
+    "target",
+    "edge_ids",
+)
+
+
+def _codex_freezone_is_tool_argument_rejection(event: Any) -> bool:
+    """A write the MCP input schema refused before its handler ever ran (#686)."""
+    if _codex_freezone_tool_name(event) not in _FREEZONE_CANVAS_WRITE_TOOLS:
+        return False
+    for value in (
+        getattr(event, "structured", None),
+        getattr(event, "output", None),
+        getattr(event, "error", None),
+    ):
+        for payload in _json_objects_from_codex_tool_value(value):
+            if (
+                payload.get("ok") is False
+                and payload.get("error") == "tool_arguments_invalid"
+                and payload.get("phase") == "tool_validation"
+            ):
+                return True
+    return False
+
+
+def _codex_freezone_argument_retry_scope(
+    event: Any,
+) -> tuple[str, frozenset[str]] | None:
+    """The target canvas and command identities of a write tool call.
+
+    A schema-rejected call is superseded only by a successful call of the same
+    tool on the same canvas that covers every command the rejected call named,
+    so a batch retried with a command silently dropped stays failed.
+    """
+    name = _codex_freezone_tool_name(event)
+    if name not in _FREEZONE_CANVAS_WRITE_TOOLS:
+        return None
+    payload = getattr(event, "input", None)
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except (TypeError, json.JSONDecodeError):
+            return None
+    if not isinstance(payload, dict):
+        return None
+    if name == "freezone_emit_canvas_command":
+        commands = payload.get("commands")
+        if (
+            not isinstance(commands, list)
+            or not commands
+            or not all(isinstance(command, dict) for command in commands)
+        ):
+            return None
+    else:
+        commands = [payload]
+    identities = frozenset(
+        json.dumps(
+            {
+                key: command[key]
+                for key in _ARGUMENT_RETRY_IDENTITY_FIELDS
+                if key in command
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+        for command in commands
+    )
+    scope = json.dumps(
+        [name, payload.get("project_id"), payload.get("canvas_id")],
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    return scope, identities
+
+
 # Workflow draft confirmation guard that rejects before any claim or dispatch.
 # The plugin answers it from a single GET of the draft, and the only way forward
 # is the agent's own patch of run_after_create in this turn, so a later

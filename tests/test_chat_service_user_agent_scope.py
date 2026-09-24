@@ -2252,6 +2252,182 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
+    "scenario",
+    [
+        "argument_retry",
+        "argument_retry_dropped_command",
+        "argument_only",
+        "handler_failure_retry",
+    ],
+)
+async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
+    monkeypatch,
+    tmp_path,
+    scenario,
+):
+    """#686: a schema-rejected write retried successfully is not a failed turn."""
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    events = []
+
+    async def fake_authorize(**_kwargs):
+        return None
+
+    async def fake_create_token(*_args, **_kwargs):
+        return "agent-token"
+
+    class FakeAuthPort:
+        async def revoke_agent_session(self, token):
+            return None
+
+    commands = [
+        {
+            "type": "add_next_node",
+            "source_node_id": "upload-a",
+            "client_id": "watercolor",
+            "node_type": "imageGenNode",
+            "data": {"prompt": "水彩风格"},
+        },
+        {
+            "type": "run_node_action",
+            "node_id": "watercolor",
+            "action": "generate_image",
+        },
+    ]
+    rejected_commands = [dict(command) for command in commands]
+    rejected_commands[0]["position"] = {"x": 640, "y": 120}
+    if scenario == "handler_failure_retry":
+        rejected_commands = commands
+        rejection = {"ok": False, "error": "源节点不存在"}
+    else:
+        # Shape of dramaclaw_mcp._mcp_error_result for an input-schema failure.
+        rejection = {
+            "ok": False,
+            "error": "tool_arguments_invalid",
+            "tool_name": "freezone_emit_canvas_command",
+            "message": "{...} is not valid under any of the given schemas",
+            "path": "commands[0]",
+            "status": "tool_arguments_invalid",
+            "phase": "tool_validation",
+            "retryable": False,
+        }
+    retry_commands = (
+        commands[:1] if scenario == "argument_retry_dropped_command" else commands
+    )
+
+    class FakeThread:
+        async def stream(self, _prompt):
+            yield SimpleNamespace(
+                type="thread_started",
+                thread_id="codex-thread",
+                turn_id="codex-turn",
+            )
+            yield SimpleNamespace(
+                type="tool_updated",
+                text="[mcp:failed] dramaclaw.freezone_emit_canvas_command",
+                name="dramaclaw.freezone_emit_canvas_command",
+                call_id="call-rejected",
+                status="failed",
+                input={
+                    "project_id": "project-a",
+                    "canvas_id": "canvas-a",
+                    "commands": rejected_commands,
+                },
+                output={
+                    "content": [{"type": "text", "text": json.dumps(rejection)}]
+                },
+                structured=rejection,
+                error=None,
+            )
+            receipts = []
+            if scenario != "argument_only":
+                receipts.append({"bridge_key": "bridge-retry", "revision": None})
+                yield SimpleNamespace(
+                    type="tool_updated",
+                    text="[mcp:completed] dramaclaw.freezone_emit_canvas_command",
+                    name="dramaclaw.freezone_emit_canvas_command",
+                    call_id="call-retry",
+                    status="completed",
+                    input={
+                        "project_id": "project-a",
+                        "canvas_id": "canvas-a",
+                        "commands": retry_commands,
+                    },
+                    output=None,
+                    structured={
+                        "ok": True,
+                        "canvas_apply_status": "accepted",
+                        "applied": True,
+                        "errors": [],
+                        "bridge_key": "bridge-retry",
+                        "project_id": "project-a",
+                        "canvas_id": "canvas-a",
+                    },
+                    error=None,
+                )
+            yield SimpleNamespace(
+                type="assistant_delta",
+                text=json.dumps(
+                    {
+                        "message": "已创建水彩风格图片节点并提交生成。",
+                        "mode": "mutation",
+                        "canvas_receipts": receipts,
+                    }
+                ),
+            )
+            yield SimpleNamespace(type="complete", thread_id="codex-thread", text="")
+
+    monkeypatch.setattr(chat_service, "authorize_hermes_launch", fake_authorize)
+    monkeypatch.setattr(
+        chat_service, "_create_page_agent_session_token", fake_create_token
+    )
+    monkeypatch.setattr(
+        chat_service, "_build_codex_thread", lambda *_args, **_kwargs: FakeThread()
+    )
+    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
+    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **_kwargs: None)
+
+    async def collect_event(event):
+        events.append(event)
+
+    scope = ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="main",
+        state_dir=str(tmp_path / "state" / "admin" / "project-a"),
+    )
+    result = await chat_service._stream_assistant_reply_codex(
+        "admin",
+        "project-a",
+        "把选中的图片转成水彩风格",
+        collect_event,
+        project_state_dir=tmp_path / "state" / "admin" / "project-a",
+        tool_mode="freezone_canvas",
+        surface_context={"freezone_canvas_id": "canvas-a"},
+        store_scope=scope,
+        turn_id="business-turn",
+        route_prompt="把选中的图片转成水彩风格",
+    )
+
+    if scenario == "argument_retry":
+        assert result["content"] == "已创建水彩风格图片节点并提交生成。"
+    elif scenario == "handler_failure_retry":
+        # Only a pre-handler schema rejection is side-effect free; a business
+        # failure from the handler keeps the turn failed.
+        assert result["content"] == "画布操作未完成：源节点不存在"
+    else:
+        # No retry, or a retry that silently dropped a rejected command.
+        assert result["content"] == "画布操作未完成：tool_arguments_invalid"
+    assistant_deltas = [
+        event["text"] for event in events if event["type"] == "assistant_delta"
+    ]
+    assert assistant_deltas == [result["content"]]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
     "disposition,runtime_text,expected",
     [
         (
