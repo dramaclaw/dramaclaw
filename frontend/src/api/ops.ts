@@ -265,16 +265,26 @@ export async function submitFreezoneVideoGen(
 /** Target clarity tier. Scales by long edge: 1080p=1920, 2k=2560, 4k=3840. */
 export type FreezoneVideoUpscaleResolution = "1080p" | "2k" | "4k";
 
-/** Denoise strength. none=off, 1x=light, 2x=medium. */
-export type FreezoneVideoUpscaleDenoise = "none" | "1x" | "2x";
+export type FreezoneVideoTargetFps = "auto" | number;
+export type FreezoneVideoSlowdown = "auto" | "2x" | "3x" | "4x" | "5x";
+export type FreezoneVideoScene = "realistic" | "anime";
+
+export interface FreezoneVideoProbe {
+  width: number;
+  height: number;
+  fps: number;
+  duration: number;
+}
 
 export interface FreezoneVideoUpscalePayload extends FreezoneNodeContext {
   /** Static URL of the source video to upscale. */
   sourceUrl: string;
   resolution?: FreezoneVideoUpscaleResolution;
-  /** Base version only supports "none" (frame rate unchanged). */
-  frameInterpolation?: "none";
-  denoiseStrength?: FreezoneVideoUpscaleDenoise;
+  targetFps?: FreezoneVideoTargetFps;
+  slowdown?: FreezoneVideoSlowdown;
+  smartInterpolation?: boolean;
+  scene?: FreezoneVideoScene;
+  faceEnhance?: boolean;
 }
 
 export async function submitFreezoneVideoUpscale(
@@ -288,11 +298,44 @@ export async function submitFreezoneVideoUpscale(
       json: {
         source_url: payload.sourceUrl,
         resolution: payload.resolution ?? "1080p",
-        frame_interpolation: payload.frameInterpolation ?? "none",
-        denoise_strength: payload.denoiseStrength ?? "1x",
+        target_fps: payload.targetFps === "auto" ? null : payload.targetFps,
+        slowdown: payload.slowdown ?? "auto",
+        smart_interpolation: payload.smartInterpolation ?? true,
+        scene: payload.scene ?? "realistic",
+        face_enhance: payload.faceEnhance ?? false,
         ...nodeContextBody(payload),
       },
     },
+  );
+}
+
+export async function quoteFreezoneVideoUpscale(
+  project: string,
+  payload: FreezoneVideoUpscalePayload,
+): Promise<{ cost: number; display: string; promotion?: { name?: string; discount_basis_points?: number; ends_at?: string | null } }> {
+  return await apiCall<{ cost: number; display: string; promotion?: { name?: string; discount_basis_points?: number; ends_at?: string | null } }>(
+    `projects/${encodeURIComponent(project)}/freezone/video/upscale/quote`,
+    {
+      method: "POST",
+      json: {
+        source_url: payload.sourceUrl,
+        resolution: payload.resolution ?? "1080p",
+        target_fps: payload.targetFps === "auto" ? null : payload.targetFps,
+        slowdown: payload.slowdown ?? "auto",
+        smart_interpolation: payload.smartInterpolation ?? true,
+        scene: payload.scene ?? "realistic",
+        face_enhance: payload.faceEnhance ?? false,
+      },
+    },
+  );
+}
+
+export async function probeFreezoneVideoUpscale(
+  project: string,
+  sourceUrl: string,
+): Promise<FreezoneVideoProbe> {
+  return await apiCall<FreezoneVideoProbe>(
+    `projects/${encodeURIComponent(project)}/freezone/video/upscale/probe?source_url=${encodeURIComponent(sourceUrl)}`,
   );
 }
 

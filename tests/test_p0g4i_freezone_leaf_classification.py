@@ -4,7 +4,7 @@
 `egress_context`，不接受且信封属组织即抛 `InvalidTaskEnvelope`。签名形状不是
 出网与否的证据，于是两个方向同时错：
 
-- **误拦**：5 个纯本地 ffmpeg leaf（`run_freezone_extract_frames` /
+- **误拦**：原有 5 个纯本地 ffmpeg leaf（`run_freezone_extract_frames` /
   `run_freezone_video_upscale` / `run_freezone_video_compose` /
   `run_freezone_video_erase` / `run_freezone_audio_separate`，均为
   `egress-inventory.md:54` 的 EG-20a `service/local`，不出网、不取凭证）没有
@@ -40,15 +40,14 @@ from novelvideo.ports.model_credentials import CredentialReference
 from novelvideo.project_context import ProjectContext
 from novelvideo.task_backend.envelope import InvalidTaskEnvelope
 
-# `egress-inventory.md:54` EG-20a `service/local`——ffmpeg/subprocess，无凭证。
-# 与 EE `feature_billing.py:389-399` 的计费豁免集逐条对应（同一批本地任务）。
+# `run_freezone_video_upscale` 已升级为网关模型流水线，因而从本地表迁到 NETWORK；
+# 它仍保留 task 级计费豁免，因为两个模型调用分别走模型额度，避免重复计费。
 AUDITED_LOCAL_LEAVES = frozenset(
     {
         "run_freezone_audio_separate",
         "run_freezone_extract_frames",
         "run_freezone_video_compose",
         "run_freezone_video_erase",
-        "run_freezone_video_upscale",
     }
 )
 
@@ -352,8 +351,8 @@ async def test_analyze_shots_leaf_receives_the_organization_egress_context(
     assert seen[0] is not None and seen[0].is_organization
 
 
-def test_local_table_is_exactly_the_five_audited_leaves() -> None:
-    """本地表严格 5 个，不得凭「看起来像本地」扩表（护栏 b）。
+def test_local_table_is_exactly_the_audited_leaves() -> None:
+    """本地表严格匹配当前仍不出网的 leaf（护栏 b）。
 
     每一条都对到 EG-20a，且与 EE 计费豁免集 `feature_billing.py:389-399` 同源。
     """

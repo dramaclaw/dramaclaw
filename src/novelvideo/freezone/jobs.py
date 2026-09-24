@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import re
 import shutil
@@ -23,12 +24,13 @@ import subprocess
 import tempfile
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import numpy as np
 from PIL import Image
 
 from novelvideo.freezone.paths import output_path_for_job, outputs_dir
+from novelvideo.freezone.video_slowdown import slowdown_factor
 from novelvideo.egress_context import (
     TrustedEgressContext,
     ambient_organization_egress_context,
@@ -444,8 +446,44 @@ async def run_freezone_video_upscale(
     resolution: str = "1080p",
     frame_interpolation: str = "none",
     denoise_strength: str = "1x",
+    target_fps: float | None = None,
+    smart_interpolation: bool = True,
+    slowdown: Literal["auto", "2x", "3x", "4x", "5x"] = "auto",
+    scene: Literal["realistic", "anime"] = "realistic",
+    face_enhance: bool = False,
+    upscale_backend: str | None = None,
+    upscale_model_params: Optional[dict[str, Any]] = None,
+    upscale_request_schema: Optional[dict[str, Any]] = None,
+    frame_rate_backend: str | None = None,
+    frame_rate_model_params: Optional[dict[str, Any]] = None,
+    frame_rate_request_schema: Optional[dict[str, Any]] = None,
+    egress_context: TrustedEgressContext | None = None,
 ) -> tuple[Path, dict]:
-    """Basic ffmpeg video enhancement: scale, denoise, sharpen, preserve audio."""
+    """Enhance a video through configured gateway models.
+
+    Calls without an ``upscale_backend`` retain the historical local ffmpeg path
+    for compatibility with old queued tasks. New canvas submissions always freeze
+    their catalog-selected processing model(s) into the task payload.
+    """
+    if upscale_backend:
+        return await _run_model_video_enhancement(
+            project_dir=project_dir,
+            job_id=job_id,
+            source_path=source_path,
+            resolution=resolution,
+            target_fps=target_fps,
+            smart_interpolation=smart_interpolation,
+            slowdown=slowdown,
+            scene=scene,
+            face_enhance=face_enhance,
+            upscale_backend=upscale_backend,
+            upscale_model_params=upscale_model_params,
+            upscale_request_schema=upscale_request_schema,
+            frame_rate_backend=frame_rate_backend,
+            frame_rate_model_params=frame_rate_model_params,
+            frame_rate_request_schema=frame_rate_request_schema,
+            egress_context=egress_context,
+        )
     if frame_interpolation != "none":
         raise ValueError("basic video upscale only supports frame_interpolation='none'")
     if not shutil.which("ffmpeg"):
@@ -477,15 +515,7 @@ async def run_freezone_video_upscale(
         "+faststart",
         str(out),
     ]
-    proc = await asyncio.to_thread(
-        subprocess.run,
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=1800,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg video upscale failed: {proc.stderr[-1000:]}")
+    await _run_cmd(cmd, cwd=project_dir, egress_context=egress_context)
     meta = {
         "backend": "ffmpeg",
         "resolution": resolution,
@@ -494,6 +524,275 @@ async def run_freezone_video_upscale(
         "video_filter": vf,
     }
     return out, meta
+
+
+async def probe_video_stream(
+    source_path: str,
+    *,
+    cwd: Path | None = None,
+    egress_context: TrustedEgressContext | None = None,
+) -> dict[str, float | int]:
+    """Return the first video stream geometry, frame rate, and duration."""
+    if not shutil.which("ffprobe"):
+        raise RuntimeError("ffprobe not found on PATH; install via brew/apt")
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height,avg_frame_rate:format=duration",
+        "-of",
+        "json",
+        source_path,
+    ]
+    if egress_context is None:
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    else:
+        if cwd is None:
+            raise EgressBoundaryError("ORG_SERVICE_EGRESS_DENIED")
+        minimal_env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"}
+        policy = RestrictedSubprocessPolicy(command=tuple(cmd), cwd=cwd.resolve(), env=minimal_env)
+        proc = await asyncio.to_thread(
+            run_project_subprocess,
+            cmd,
+            cwd=cwd,
+            env=minimal_env,
+            egress_context=egress_context,
+            restricted_policy=policy,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr or "").strip()[-500:] or "ffprobe failed")
+    import json
+
+    try:
+        data = json.loads(proc.stdout)
+        stream = data["streams"][0]
+        numerator, denominator = str(stream.get("avg_frame_rate") or "0/1").split("/", 1)
+        fps = float(numerator) / max(float(denominator), 1.0)
+        return {
+            "width": int(stream["width"]),
+            "height": int(stream["height"]),
+            "fps": fps,
+            "duration": max(0.1, float(data["format"]["duration"])),
+        }
+    except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError) as exc:
+        raise RuntimeError("unable to parse video stream metadata") from exc
+
+
+async def _slow_video(
+    source: Path,
+    output: Path,
+    *,
+    factor: int,
+    project_dir: Path,
+    egress_context: TrustedEgressContext | None,
+) -> None:
+    """Slow playback by the given factor while preserving audio when present."""
+    if factor not in (2, 3, 4, 5):
+        raise ValueError(f"unsupported slowdown factor: {factor}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    has_audio = await _probe_has_audio(
+        str(source),
+        cwd=project_dir,
+        egress_context=egress_context,
+    )
+    cmd = ["ffmpeg", "-y", "-i", str(source)]
+    video_filter = f"setpts={factor}*PTS"
+    if has_audio:
+        tempo = 1 / factor
+        audio_filters = []
+        while tempo < 0.5:
+            audio_filters.append("atempo=0.5")
+            tempo *= 2
+        audio_filters.append(f"atempo={tempo:.10g}")
+        cmd.extend(
+            [
+                "-filter_complex",
+                f"[0:v]{video_filter}[v];[0:a]{','.join(audio_filters)}[a]",
+                "-map",
+                "[v]",
+                "-map",
+                "[a]",
+            ]
+        )
+    else:
+        cmd.extend(["-vf", video_filter])
+    cmd.extend(
+        [
+            "-c:v",
+            "libx264",
+            "-preset",
+            "medium",
+            "-crf",
+            "18",
+            "-c:a",
+            "aac",
+            "-movflags",
+            "+faststart",
+            str(output),
+        ]
+    )
+    await _run_cmd(cmd, cwd=project_dir, egress_context=egress_context)
+
+
+async def _run_video_processing_model(
+    *,
+    project_dir: Path,
+    job_id: str,
+    source_path: Path,
+    output_path: Path,
+    backend: str,
+    mode: str,
+    duration: float,
+    resolution: str,
+    processing_metadata: dict[str, Any],
+    model_params: Optional[dict[str, Any]],
+    request_schema: Optional[dict[str, Any]],
+    egress_context: TrustedEgressContext | None,
+) -> None:
+    from novelvideo.generators.video_generator import (
+        ShotReference,
+        create_video_generator,
+    )
+
+    generator = create_video_generator(
+        backend=backend,
+        resolution=resolution,
+        generate_audio=False,
+        model_params=model_params,
+        request_schema=request_schema,
+        egress_context=egress_context,
+    )
+    result = await generator.generate(
+        image_path=None,
+        prompt="",
+        output_path=str(output_path),
+        aspect_ratio="auto",
+        duration=max(1, math.ceil(duration)),
+        references=[ShotReference("video", str(source_path), "源视频")],
+        gen_mode=mode,
+        processing_metadata=processing_metadata,
+        egress_context=egress_context,
+        task_type="freezone_video_upscale",
+        project_output_dir=str(project_dir),
+    )
+    if not result or result.status.value != "done":
+        raise RuntimeError(result.error if result else f"{mode} failed")
+    if not output_path.exists():
+        raise RuntimeError(f"{mode} completed without an output file")
+
+
+async def _run_model_video_enhancement(
+    *,
+    project_dir: Path,
+    job_id: str,
+    source_path: str,
+    resolution: str,
+    target_fps: float | None,
+    smart_interpolation: bool,
+    slowdown: str,
+    scene: str,
+    face_enhance: bool,
+    upscale_backend: str,
+    upscale_model_params: Optional[dict[str, Any]],
+    upscale_request_schema: Optional[dict[str, Any]],
+    frame_rate_backend: str | None,
+    frame_rate_model_params: Optional[dict[str, Any]],
+    frame_rate_request_schema: Optional[dict[str, Any]],
+    egress_context: TrustedEgressContext | None,
+) -> tuple[Path, dict]:
+    src = Path(source_path)
+    if not src.exists():
+        raise FileNotFoundError(f"video source not found: {src}")
+    factor = slowdown_factor(slowdown)
+    probe = await probe_video_stream(str(src), cwd=project_dir, egress_context=egress_context)
+    work_dir = outputs_dir(project_dir, "freezone_video_upscale") / f"{job_id}_stages"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    current = work_dir / "01_upscaled.mp4"
+    await _run_video_processing_model(
+        project_dir=project_dir,
+        job_id=f"{job_id}_upscale",
+        source_path=src,
+        output_path=current,
+        backend=upscale_backend,
+        mode="video_upscale",
+        duration=float(probe["duration"]),
+        resolution=resolution,
+        processing_metadata={
+            "scene": scene,
+            "face_enhance": bool(face_enhance),
+        },
+        model_params=upscale_model_params,
+        request_schema=upscale_request_schema,
+        egress_context=egress_context,
+    )
+
+    if factor > 1:
+        slowed = work_dir / "02_slowed.mp4"
+        await _slow_video(
+            current,
+            slowed,
+            factor=factor,
+            project_dir=project_dir,
+            egress_context=egress_context,
+        )
+        current = slowed
+
+    effective_target_fps = target_fps
+    if factor > 1 and effective_target_fps is None:
+        effective_target_fps = max(1, round(float(probe["fps"]), 3))
+    if effective_target_fps is not None:
+        if not frame_rate_backend:
+            raise RuntimeError("video frame-rate model is not configured")
+        framed = work_dir / "03_frame_rate.mp4"
+        await _run_video_processing_model(
+            project_dir=project_dir,
+            job_id=f"{job_id}_frame_rate",
+            source_path=current,
+            output_path=framed,
+            backend=frame_rate_backend,
+            mode="video_frame_rate",
+            duration=float(probe["duration"]) * factor,
+            resolution=resolution,
+            processing_metadata={
+                "target_fps": effective_target_fps,
+                "smart_interpolation": smart_interpolation,
+                "resolution_tier": {
+                    "1080p": "fhd",
+                    "2k": "2k",
+                    "4k": "4k",
+                }.get(resolution, resolution),
+            },
+            model_params=frame_rate_model_params,
+            request_schema=frame_rate_request_schema,
+            egress_context=egress_context,
+        )
+        current = framed
+
+    out = outputs_dir(project_dir, "freezone_video_upscale") / f"{job_id}.mp4"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(current), str(out))
+    return out, {
+        "backend": "gateway",
+        "resolution": resolution,
+        "target_fps": effective_target_fps,
+        "slowdown": slowdown,
+        "scene": scene,
+        "face_enhance": bool(face_enhance),
+        "source": probe,
+        "stages": 1 + int(factor > 1) + int(effective_target_fps is not None),
+    }
 
 
 async def _run_cmd(
@@ -541,25 +840,48 @@ async def _run_cmd(
         raise RuntimeError(stderr[-1000:] or f"command failed: {' '.join(cmd)}")
 
 
-async def _probe_has_audio(source_path: str) -> bool:
-    proc = await asyncio.to_thread(
-        subprocess.run,
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "a:0",
-            "-show_entries",
-            "stream=codec_type",
-            "-of",
-            "csv=p=0",
-            source_path,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
+async def _probe_has_audio(
+    source_path: str,
+    *,
+    cwd: Path | None = None,
+    egress_context: TrustedEgressContext | None = None,
+) -> bool:
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "a:0",
+        "-show_entries",
+        "stream=codec_type",
+        "-of",
+        "csv=p=0",
+        source_path,
+    ]
+    if egress_context is None:
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    else:
+        if cwd is None:
+            raise EgressBoundaryError("ORG_SERVICE_EGRESS_DENIED")
+        minimal_env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"}
+        policy = RestrictedSubprocessPolicy(command=tuple(cmd), cwd=cwd.resolve(), env=minimal_env)
+        proc = await asyncio.to_thread(
+            run_project_subprocess,
+            cmd,
+            cwd=cwd,
+            env=minimal_env,
+            egress_context=egress_context,
+            restricted_policy=policy,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
     return proc.returncode == 0 and bool((proc.stdout or "").strip())
 
 
