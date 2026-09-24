@@ -717,7 +717,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                         result = await result
                     adapted = _adapt_external_agent_tool_result(name, result)
                     return _structured_tool_result(name, adapted)
-            diagnostics = workflow_plan_schema_diagnostics(arguments)
+            diagnostics = workflow_plan_schema_diagnostics(arguments, input_schema)
             validation_path, validation_message = _schema_validation_diagnostic(exc)
             error_payload = {
                 "ok": False,

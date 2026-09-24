@@ -281,7 +281,7 @@ def test_conflicting_node_stage_is_not_merged():
              "data": {"prompt": "p", "stage": "storyboard",
                       "workflowCatalog": {"recipeId": "r"}}},
             "plan.nodes[0].data.stage",
-            "put the stage label only in plan.nodes[0].stage",
+            "plan.nodes[0].stage is already set to a different value",
         ),
         (
             {"id": "shot", "node_type": "videoNode", "scene": "s1",
@@ -356,3 +356,73 @@ async def test_node_data_stage_reaches_compiler_as_top_level_stage(monkeypatch):
 
     assert seen[0]["nodes"][0]["stage"] == "storyboard"
     assert "stage" not in seen[0]["nodes"][0]["data"]
+
+
+@pytest.mark.parametrize(
+    ("stage", "fragment"),
+    [
+        (3, "a stage label must be a string at plan.nodes[0].stage"),
+        ({"name": "storyboard"}, "a stage label must be a string at plan.nodes[0].stage"),
+    ],
+)
+def test_data_stage_hint_only_claims_conflict_when_top_level_stage_differs(stage, fragment):
+    from novelvideo.freezone.workflow_schema import (
+        workflow_plan_json_schema,
+        workflow_plan_schema_diagnostics,
+    )
+
+    args = {"plan": _plan_with({
+        "id": "shot", "node_type": "videoNode",
+        "data": {"stage": stage, "workflowCatalog": {"recipeId": "r"}},
+    })}
+    schema = {"type": "object", "properties": {"plan": workflow_plan_json_schema()}}
+
+    issues = workflow_plan_schema_diagnostics(
+        normalize_workflow_tool_arguments("workflow_graph_compile", args), schema
+    )
+
+    assert issues == [{
+        "path": "plan.nodes[0].data.stage",
+        "message": f"field is not allowed for node_type videoNode; {fragment}",
+    }]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("adapter", ["workflow", "dramaclaw"])
+async def test_node_diagnostics_keep_plan_level_errors(monkeypatch, adapter):
+    import json
+    from novelvideo.chat import dramaclaw_mcp
+    from novelvideo.freezone.workflow_schema import workflow_plan_json_schema
+
+    plan = _plan_with({
+        "id": "shot", "node_type": "videoNode", "scene": "s1",
+        "data": {"workflowCatalog": {"recipeId": "r"}},
+    })
+    del plan["skill"]
+    if adapter == "workflow":
+        result = await workflow_mcp.call_tool("workflow_graph_compile", {"plan": plan})
+        payload = result.structuredContent
+        message = payload["error"]
+        assert {issue["path"] for issue in payload["errors"]} == {
+            "plan.skill", "plan.nodes[0].scene",
+        }
+    else:
+        monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+        monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+        name = "freezone_prepare_workflow_plan_draft"
+        schema = dramaclaw_mcp._agent_tools()[name][0]
+
+        def must_not_run(_args):
+            raise AssertionError("invalid plan reached handler")
+
+        monkeypatch.setattr(dramaclaw_mcp, "_agent_tools", lambda: {name: ({
+            **schema,
+            "parameters": {"type": "object", "properties": {
+                "plan": workflow_plan_json_schema(),
+            }, "required": ["plan"]},
+        }, must_not_run)})
+        result = await dramaclaw_mcp.call_tool(name, {"plan": plan})
+        payload = json.loads(result.content[0].text)
+        message = payload["message"]
+    assert "plan.skill: field is required" in message
+    assert "plan.nodes[0].scene: field is not allowed for node_type videoNode" in message

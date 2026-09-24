@@ -119,25 +119,61 @@ def _normalize_plan_node_stage(arguments: dict[str, Any]) -> dict[str, Any]:
     return arguments if result is None else result
 
 
-def workflow_plan_schema_diagnostics(arguments: dict[str, Any]) -> list[dict[str, str]]:
+def workflow_plan_schema_diagnostics(
+    arguments: dict[str, Any], input_schema: dict[str, Any]
+) -> list[dict[str, str]]:
     """Explain node failures hidden by the JSON Schema ``anyOf`` over node shapes.
 
     Each invalid node is checked against the branch its ``node_type`` selects, so
-    the Agent gets field-level paths instead of the whole node echoed back. This
-    only describes invalid arguments; it never fills values or changes a node's
-    requested deliverable type. The strict validator remains authoritative.
+    the Agent gets field-level paths instead of the whole node echoed back. Other
+    argument errors are kept beside them. Returns ``[]`` when no node is invalid,
+    leaving the caller's own error reporting unchanged. This only describes
+    invalid arguments; it never fills values or changes a node's requested
+    deliverable type. The strict validator remains authoritative.
     """
-    plan = arguments.get("plan")
-    if not isinstance(plan, dict) or not isinstance(plan.get("nodes"), list):
+    errors = list(Draft202012Validator(input_schema).iter_errors(arguments))
+    if not any(_node_index(error) is not None for error in errors):
         return []
     branches = _node_branch_schemas()
-    node_validator = Draft202012Validator({"anyOf": branches})
+    nodes = arguments["plan"]["nodes"]
     issues: list[dict[str, str]] = []
-    for index, node in enumerate(plan["nodes"]):
-        if node_validator.is_valid(node):
-            continue
-        issues.extend(_node_issues(f"plan.nodes[{index}]", node, branches))
+    for error in errors:
+        index = _node_index(error)
+        found = (
+            _node_issues(f"plan.nodes[{index}]", nodes[index], branches)
+            if index is not None
+            else _argument_error_issues(error)
+        )
+        issues.extend(issue for issue in found if issue not in issues)
     return issues
+
+
+def _node_index(error: ValidationError) -> int | None:
+    path = list(error.absolute_path)
+    if len(path) == 3 and path[:2] == ["plan", "nodes"] and isinstance(path[2], int):
+        return path[2]
+    return None
+
+
+def _format_error_path(parts: Any) -> str:
+    path = "".join(
+        f"[{part}]" if isinstance(part, int) else f".{part}" for part in parts
+    )
+    return path.lstrip(".") or "arguments"
+
+
+def _argument_error_issues(error: ValidationError) -> list[dict[str, str]]:
+    if error.validator in {"anyOf", "oneOf"} and error.context:
+        return _argument_error_issues(best_match(error.context))
+    path = _format_error_path(error.absolute_path)
+    if error.validator == "required" and isinstance(error.instance, dict):
+        return [
+            {"path": _format_error_path([*error.absolute_path, key]),
+             "message": "field is required"}
+            for key in error.validator_value
+            if key not in error.instance
+        ]
+    return [{"path": path, "message": error.message[:300]}]
 
 
 def _node_branch_schemas() -> list[dict[str, Any]]:
@@ -235,8 +271,7 @@ def _node_error_issues(
             {
                 "path": f"{path}.{key}",
                 "message": f"field is not allowed for node_type {node_type}" + (
-                    f"; put the stage label only in {base}.stage "
-                    "(a different top-level stage is already set)"
+                    _data_stage_hint(base, node)
                     if [*error.absolute_path, key] == ["data", "stage"]
                     else ""
                 ),
@@ -244,6 +279,18 @@ def _node_error_issues(
             for key in keys
         ] or [{"path": path, "message": f"field is not allowed for node_type {node_type}"}]
     return [{"path": path, "message": error.message[:300]}]
+
+
+def _data_stage_hint(base: str, node: dict[str, Any]) -> str:
+    value = node["data"]["stage"]
+    if not isinstance(value, str):
+        return f"; a stage label must be a string at {base}.stage"
+    if "stage" in node and node["stage"] != value:
+        return (
+            f"; {base}.stage is already set to a different value, "
+            "keep only the top-level stage"
+        )
+    return f"; move the stage label to {base}.stage"
 
 
 def _false_schema_keys(
