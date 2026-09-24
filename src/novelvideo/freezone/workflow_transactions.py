@@ -491,9 +491,12 @@ def _confirm_revised_video_modes(plan: dict, updates: list) -> None:
         if not isinstance(workflow_catalog, dict):
             workflow_catalog = data["workflowCatalog"] = {}
         confirmed = workflow_catalog.get("confirmedInputs")
-        if not isinstance(confirmed, dict):
-            confirmed = workflow_catalog["confirmedInputs"] = {}
-        confirmed["video_generation_mode"] = data["genMode"]
+        # A new dict: the standard planner shares one confirmedInputs object
+        # between every node and plan.inputs, which must not change here.
+        workflow_catalog["confirmedInputs"] = {
+            **(confirmed if isinstance(confirmed, dict) else {}),
+            "video_generation_mode": data["genMode"],
+        }
 
 
 def revise_workflow_source(payload: dict, changes: Any, *, username: str) -> dict:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -3518,3 +3519,103 @@ def test_workflow_policy_change_persists_new_revision(workflow_run_client):
         "expected_revision": created["revision"], "changes": {"run_after_create": False},
     })
     assert stale.json()["status"] == "workflow_draft_revision_conflict"
+
+
+def _mode_revision_plan() -> dict:
+    from novelvideo.freezone.agent_workflows import catalog
+
+    compiled = catalog.compile_workflow_intent(
+        {
+            "skill_id": "text-to-image-video",
+            "user_goal": "一段图生视频",
+            "inputs": {
+                "image_model": "LingShan-G2",
+                "image_aspect_ratio": "16:9",
+                "image_resolution": "2K",
+                "image_quality": "medium",
+                "video_model": "seedance-2.0",
+                "video_aspect_ratio": "16:9",
+                "video_resolution": "720P",
+                "video_duration_seconds": 5,
+                "video_generate_audio": False,
+                "video_generation_mode": "imageToVideo",
+            },
+            "planner": {"mode": "standard", "item_count": 1},
+        }
+    )
+    assert compiled["ok"] is True, compiled
+    # A JSON round trip, like a request body: the planner shares one inputs
+    # object between plan.inputs and every node's confirmedInputs.
+    plan = json.loads(json.dumps(compiled["plan"]))
+    plan.pop("planner", None)
+    plan.pop("layout", None)
+    return plan
+
+
+def _video_node(plan: dict) -> dict:
+    return next(node for node in plan["nodes"] if node["node_type"] == "videoNode")
+
+
+def _genmode_blockers(preflight: dict) -> list[str]:
+    return [
+        blocker["code"]
+        for blocker in (preflight or {}).get("blockers") or []
+        if str(blocker.get("path", "")).endswith(".genMode")
+    ]
+
+
+def test_revised_per_node_video_mode_draft_can_be_claimed(workflow_run_client):
+    """Review of #714: a per-node mode revision recorded by the server keeps the
+    stored draft claimable; claim-time revalidation must not drop it."""
+    base = "/api/v1/projects/proj_demo/freezone/canvases/canvas_demo/workflow-drafts"
+    created = workflow_run_client.post(base, json={"plan": _mode_revision_plan()})
+    assert created.status_code == 200, created.text
+    draft = created.json()["data"]
+    target = f"{base}/{draft['draft_id']}"
+    stored = workflow_run_client.get(target).json()["data"]
+    assert _genmode_blockers(stored["compiled"]["preflight"]) == []
+    revised = workflow_run_client.patch(
+        target,
+        json={
+            "expected_revision": draft["revision"],
+            "changes": {"step_updates": [
+                {
+                    "node_id": _video_node(stored["compiled"]["plan"])["id"],
+                    "settings": {"generation_mode": "firstFrame"},
+                }
+            ]},
+        },
+    )
+    assert revised.status_code == 200, revised.text
+    stored = workflow_run_client.get(target).json()["data"]
+    assert _video_node(stored["compiled"]["plan"])["data"]["genMode"] == "firstFrame"
+    assert _genmode_blockers(stored["compiled"]["preflight"]) == []
+
+    claimed = workflow_run_client.post(
+        f"{target}/claim", json={"revision": stored["revision"]}
+    )
+
+    assert claimed.status_code == 200, claimed.text
+    assert claimed.json()["data"]["task_id"]
+
+
+def test_caller_written_video_mode_confirmation_is_rejected_at_the_route(
+    workflow_run_client,
+):
+    """A submitted plan that confirms its own swapped mode is refused by the
+    route, so no caller-written confirmation is ever stored as trusted."""
+    plan = _mode_revision_plan()
+    video = _video_node(plan)["data"]
+    video["genMode"] = "firstFrame"
+    video["workflowCatalog"].setdefault("confirmedInputs", {})[
+        "video_generation_mode"
+    ] = "firstFrame"
+    base = "/api/v1/projects/proj_demo/freezone/canvases/canvas_demo/workflow-drafts"
+
+    created = workflow_run_client.post(base, json={"plan": plan})
+
+    assert created.status_code == 400, created.text
+    assert _genmode_blockers(created.json()["detail"]["preflight"]) == [
+        "video_generation_mode_conflict"
+    ]
+    assert workflow_run_client.enqueued_tasks == []

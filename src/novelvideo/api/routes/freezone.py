@@ -14524,8 +14524,14 @@ async def _validate_workflow_draft_submission(body: dict, user: dict) -> dict:
     if "run_after_create" in body and not isinstance(body["run_after_create"], bool):
         raise HTTPException(400, "run_after_create must be a boolean")
     try:
+        # ``body`` is a stored draft (its only caller is the claim route): a
+        # per-node video mode confirmation in it was recorded by a server-side
+        # revision, while caller-written ones were discarded before storage.
         validated = await asyncio.to_thread(
-            validate_agent_workflow_plan, plan, username=str(user.get("username") or "")
+            validate_agent_workflow_plan,
+            plan,
+            username=str(user.get("username") or ""),
+            trusted_mode_confirmations=True,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
