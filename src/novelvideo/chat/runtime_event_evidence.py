@@ -34,7 +34,9 @@ def _json_objects_from_codex_tool_value(value: Any) -> list[dict[str, Any]]:
     elif isinstance(value, str):
         try:
             parsed = json.loads(value)
-        except (TypeError, json.JSONDecodeError):
+        except (TypeError, ValueError):
+            # ValueError also covers a digit string beyond int()'s digit limit,
+            # which json.loads raises as a plain ValueError, not a decode error.
             return objects
         objects.extend(_json_objects_from_codex_tool_value(parsed))
     return objects
@@ -336,7 +338,11 @@ def _argument_retry_identity(command: dict[str, Any]) -> str:
             continue
         value = command[key]
         if isinstance(value, str) and _ASCII_INTEGER.fullmatch(value.strip()):
-            value = int(value.strip())
+            try:
+                value = int(value.strip())
+            except ValueError:
+                # Beyond the int conversion digit limit: keep it distinct.
+                pass
         identity[key] = value
     for key in _ARGUMENT_RETRY_KEYED_TARGET_FIELDS:
         if key not in command:
@@ -389,7 +395,7 @@ def _codex_freezone_argument_retry_scope(
     if isinstance(payload, str):
         try:
             payload = json.loads(payload)
-        except (TypeError, json.JSONDecodeError):
+        except (TypeError, ValueError):
             return None
     if not isinstance(payload, dict):
         return None
@@ -403,7 +409,12 @@ def _codex_freezone_argument_retry_scope(
             return None
     else:
         commands = [payload]
-    identities = Counter(_argument_retry_identity(command) for command in commands)
+    try:
+        identities = Counter(_argument_retry_identity(command) for command in commands)
+    except (TypeError, ValueError):
+        # Unrepresentable arguments cannot be matched: a rejection stays failed
+        # and a success supersedes nothing.
+        return None
     scope = json.dumps(
         [name, payload.get("project_id"), payload.get("canvas_id")],
         sort_keys=True,

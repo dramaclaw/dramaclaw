@@ -2268,6 +2268,7 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         "argument_retry_other_draft_revision",
         "argument_retry_other_html_version",
         "argument_retry_non_ascii_revision",
+        "argument_retry_huge_revision",
         "argument_retry_projection_episode_corrected",
     ],
 )
@@ -2363,15 +2364,20 @@ async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
                 1 if scenario == "argument_retry_draft_revision_corrected" else 2
             ),
         }
-    elif scenario == "argument_retry_non_ascii_revision":
-        # "²".isdigit() is true but int("²") raises; the turn must still fail
-        # cleanly instead of aborting.
+    elif scenario in {
+        "argument_retry_non_ascii_revision",
+        "argument_retry_huge_revision",
+    }:
+        # "²".isdigit() is true but int("²") raises, and int() refuses strings
+        # beyond its digit limit; the turn must still fail cleanly.
         tool = "freezone_confirm_workflow_draft"
         rejected_input = {
             "project_id": "project-a",
             "canvas_id": "canvas-a",
             "draft_id": "draft-a",
-            "revision": "²",
+            "revision": (
+                "²" if scenario == "argument_retry_non_ascii_revision" else "9" * 5000
+            ),
         }
         retry_input = {**rejected_input, "revision": 2}
     elif scenario == "argument_retry_projection_episode_corrected":
