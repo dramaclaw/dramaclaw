@@ -13,6 +13,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import sys
 import time
 import types as py_types
@@ -613,12 +614,11 @@ def _format_schema_path(parts: list[Any]) -> str:
     return path or "arguments"
 
 
-def _closed_object_fields(schema: Any, value: dict[str, Any]) -> set[str] | None:
-    """Fields a closed object schema allows for this value, or None if unknown.
-
-    A oneOf/anyOf union is narrowed by its type discriminator. Open schemas,
-    or unions with no matching variant, are never judged.
-    """
+def _matching_object_variants(
+    schema: Any, value: dict[str, Any]
+) -> list[dict[str, Any]] | None:
+    """The object schemas that apply to this value, narrowing a oneOf/anyOf
+    union by its type discriminator; None when that cannot be decided."""
     if not isinstance(schema, dict):
         return None
     variants = schema.get("oneOf") or schema.get("anyOf")
@@ -633,7 +633,16 @@ def _closed_object_fields(schema: Any, value: dict[str, Any]) -> set[str] | None
         if isinstance(allowed, list) and value.get("type") not in allowed:
             continue
         matching.append(variant)
-    if not matching or any(
+    return matching or None
+
+
+def _closed_object_fields(schema: Any, value: dict[str, Any]) -> set[str] | None:
+    """Fields a closed object schema allows for this value, or None if unknown.
+
+    Open schemas, or unions with no matching variant, are never judged.
+    """
+    matching = _matching_object_variants(schema, value)
+    if matching is None or any(
         variant.get("additionalProperties") is not False
         or not isinstance(variant.get("properties"), dict)
         for variant in matching
@@ -670,6 +679,52 @@ def _unexpected_argument_fields(
                 found.append(
                     {"path": [key, index], "fields": sorted(set(item) - allowed)}
                 )
+    return found
+
+
+_ASCII_INTEGER_STRING = re.compile(r"-?[0-9]+", re.ASCII)
+
+
+def _declares_integer(schema: Any) -> bool:
+    if not isinstance(schema, dict):
+        return False
+    declared = schema.get("type")
+    types = declared if isinstance(declared, list) else [declared]
+    return "integer" in types and "string" not in types
+
+
+def _integer_string_argument_paths(schema: Any, value: Any) -> list[list[Any]]:
+    """Paths the schema declares integer but that hold a numeric string (#686).
+
+    Coercing exactly these values is the only value correction the chat
+    service accepts as the same call on retry. Open objects such as node data
+    declare nothing, so their contents are never coerced.
+    """
+    found: list[list[Any]] = []
+    if isinstance(value, list) and isinstance(schema, dict):
+        for index, item in enumerate(value):
+            for path in _integer_string_argument_paths(schema.get("items"), item):
+                found.append([index, *path])
+        return found
+    if not isinstance(value, dict):
+        return found
+    matching = _matching_object_variants(schema, value)
+    if matching is None:
+        return found
+    for key, item in value.items():
+        property_schemas = [
+            (variant.get("properties") or {}).get(key) for variant in matching
+        ]
+        # Every applicable variant must agree, or the type is not provable.
+        if any(not isinstance(candidate, dict) for candidate in property_schemas):
+            continue
+        if all(_declares_integer(candidate) for candidate in property_schemas):
+            if isinstance(item, str) and _ASCII_INTEGER_STRING.fullmatch(item):
+                found.append([key])
+            continue
+        if len(property_schemas) == 1:
+            for path in _integer_string_argument_paths(property_schemas[0], item):
+                found.append([key, *path])
     return found
 
 
@@ -779,6 +834,9 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
             diagnostics = workflow_plan_schema_diagnostics(arguments)
             validation_path, validation_message = _schema_validation_diagnostic(exc)
             unexpected_fields = _unexpected_argument_fields(input_schema, arguments)
+            integer_string_fields = _integer_string_argument_paths(
+                input_schema, arguments
+            )
             error_payload = {
                 "ok": False,
                 "error": "tool_arguments_invalid",
@@ -811,6 +869,11 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                 **(
                     {"unexpected_fields": unexpected_fields}
                     if unexpected_fields
+                    else {}
+                ),
+                **(
+                    {"integer_string_fields": integer_string_fields}
+                    if integer_string_fields
                     else {}
                 ),
             }

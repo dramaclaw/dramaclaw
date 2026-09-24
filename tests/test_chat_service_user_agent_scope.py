@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -2275,6 +2276,7 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         "argument_retry_same_target_moves_reordered",
         "argument_retry_correction_plus_data_change",
         "argument_retry_unreported_field_dropped",
+        "argument_retry_open_data_integer_changed",
     ],
 )
 async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
@@ -2417,15 +2419,27 @@ async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
             else [absolute, {"type": "select_nodes", "node_ids": ["node-a"]}, relative]
         )
     elif scenario == "argument_retry_projection_episode_corrected":
-        request = {"scope": "episode"}
-        rejected_input["commands"] = [
-            {
-                "type": "open_mainline_projection",
-                "request": {**request, "episode": "1"},
-            }
-        ]
+        # The single-step tool declares episode an integer; a batch command's
+        # request is an open object where "1" is never rejected at all.
+        tool = "freezone_open_mainline_projection"
+        rejected_input = {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "scope": "episode",
+            "episode": "1",
+        }
+        retry_input = {**rejected_input, "episode": 1}
+    elif scenario == "argument_retry_open_data_integer_changed":
+        # data is open: the server reports only bogus, so changing the type of
+        # data.episode is a different node, not a correction.
+        beat_context = {
+            "type": "create_node",
+            "node_type": "beatContextNode",
+            "data": {"projectId": "project-a", "episode": "1", "beat": 1},
+        }
+        rejected_input["commands"] = [{**beat_context, "bogus": 1}]
         retry_input["commands"] = [
-            {"type": "open_mainline_projection", "request": {**request, "episode": 1}}
+            {**beat_context, "data": {**beat_context["data"], "episode": 1}}
         ]
     elif scenario == "argument_retry_other_html_version":
         restore = {"type": "html_artifact", "action": "restore", "artifact_id": "a"}
@@ -2500,6 +2514,16 @@ async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
         ]
         if unexpected:
             rejection = {**rejection, "unexpected_fields": unexpected}
+        # Top-level fields these tools' schemas declare integer; nested open
+        # objects (node data, batch requests) declare nothing.
+        integer_strings = [
+            [field]
+            for field in ("revision", "episode", "beat")
+            if isinstance(rejected_input.get(field), str)
+            and re.fullmatch(r"-?[0-9]+", rejected_input[field], re.ASCII)
+        ]
+        if integer_strings:
+            rejection = {**rejection, "integer_string_fields": integer_strings}
 
     class FakeThread:
         async def stream(self, _prompt):

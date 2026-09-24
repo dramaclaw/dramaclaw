@@ -277,36 +277,39 @@ def _codex_freezone_generation_retry_key(event: Any) -> str | None:
     return None
 
 
-# Integer fields the agent may have sent as numeric strings: versions the user
-# reviewed or asked to restore, and the mainline episode/beat. Coercing "1" to
-# 1 is the one value correction accepted when a rejected call is retried.
-_ARGUMENT_RETRY_INTEGER_FIELDS = frozenset(
-    {"revision", "version", "base_version", "episode", "beat"}
-)
 # ASCII only: str.isdigit() also accepts characters such as "²" that int()
 # rejects, and those must stay distinct rather than raise.
 _ASCII_INTEGER = re.compile(r"-?[0-9]+", re.ASCII)
 
 
-def _normalize_argument_integers(value: Any) -> Any:
-    if isinstance(value, list):
-        return [_normalize_argument_integers(item) for item in value]
-    if not isinstance(value, dict):
-        return value
-    normalized = {}
-    for key, item in value.items():
-        if (
-            key in _ARGUMENT_RETRY_INTEGER_FIELDS
-            and isinstance(item, str)
-            and _ASCII_INTEGER.fullmatch(item.strip())
+def _argument_path_parent(root: Any, path: Any) -> tuple[Any, Any] | None:
+    """The container and key/index a server-reported argument path names."""
+    if not isinstance(path, list) or not path:
+        return None
+    target = root
+    for part in path[:-1]:
+        if isinstance(target, dict) and isinstance(part, str):
+            target = target.get(part)
+        elif (
+            isinstance(target, list)
+            and isinstance(part, int)
+            and not isinstance(part, bool)
+            and 0 <= part < len(target)
         ):
-            try:
-                item = int(item.strip())
-            except ValueError:
-                # Beyond the int conversion digit limit: keep it distinct.
-                pass
-        normalized[key] = _normalize_argument_integers(item)
-    return normalized
+            target = target[part]
+        else:
+            return None
+    key = path[-1]
+    if isinstance(target, dict) and isinstance(key, str) and key in target:
+        return target, key
+    if (
+        isinstance(target, list)
+        and isinstance(key, int)
+        and not isinstance(key, bool)
+        and 0 <= key < len(target)
+    ):
+        return target, key
+    return None
 
 
 def _codex_freezone_tool_arguments(event: Any) -> dict[str, Any] | None:
@@ -321,11 +324,7 @@ def _codex_freezone_tool_arguments(event: Any) -> dict[str, Any] | None:
 
 def _argument_retry_signature(name: str, arguments: dict[str, Any]) -> str | None:
     try:
-        return json.dumps(
-            [name, _normalize_argument_integers(arguments)],
-            sort_keys=True,
-            ensure_ascii=False,
-        )
+        return json.dumps([name, arguments], sort_keys=True, ensure_ascii=False)
     except (TypeError, ValueError):
         return None
 
@@ -347,8 +346,8 @@ def _codex_freezone_tool_argument_rejection(event: Any) -> dict[str, Any] | None
                 and payload.get("phase") == "tool_validation"
             ):
                 # structuredContent keeps only output-schema keys; prefer the
-                # raw copy that still carries unexpected_fields.
-                if "unexpected_fields" in payload:
+                # raw copy that still carries the reported corrections.
+                if "unexpected_fields" in payload or "integer_string_fields" in payload:
                     return payload
                 rejection = rejection or payload
     return rejection
@@ -363,10 +362,11 @@ def _codex_freezone_argument_retry_expectation(event: Any) -> str | None:
 
     A rejected call is superseded only by a successful call of the same tool
     whose complete, ordered arguments equal the rejected ones after the
-    corrections the MCP server can prove: dropping the fields it reported as
-    unexpected, and coercing numeric strings in known integer fields. Any
-    other change (coordinates, data, targets, count or order of commands) may
-    be a different operation, so the rejection stays failed (#686).
+    corrections the MCP server reported from its schema: dropping the fields
+    no variant allows, and coercing numeric strings at paths the schema
+    declares integer. Any other change (coordinates, open data, targets, count
+    or order of commands) may be a different operation, so the rejection
+    stays failed (#686).
     """
     rejection = _codex_freezone_tool_argument_rejection(event)
     arguments = _codex_freezone_tool_arguments(event)
@@ -376,28 +376,39 @@ def _codex_freezone_argument_retry_expectation(event: Any) -> str | None:
         expected = json.loads(json.dumps(arguments))
     except (TypeError, ValueError):
         return None
-    corrections = rejection.get("unexpected_fields") or []
-    if not isinstance(corrections, list):
+    coercions = rejection.get("integer_string_fields") or []
+    removals = rejection.get("unexpected_fields") or []
+    if not isinstance(coercions, list) or not isinstance(removals, list):
         return None
-    for correction in corrections:
+    # Coerce before removing: both are reported against the original arguments,
+    # and removal only deletes object keys, so list indices stay valid.
+    for path in coercions:
+        located = _argument_path_parent(expected, path)
+        if located is None:
+            return None
+        container, key = located
+        value = container[key]
+        if not isinstance(value, str) or not _ASCII_INTEGER.fullmatch(value):
+            return None
+        try:
+            container[key] = int(value)
+        except ValueError:
+            # Beyond the int conversion digit limit: not a provable correction.
+            return None
+    for correction in removals:
         if not isinstance(correction, dict):
             return None
         path, fields = correction.get("path"), correction.get("fields")
         if not isinstance(path, list) or not isinstance(fields, list):
             return None
-        target: Any = expected
-        for part in path:
-            if isinstance(target, dict) and isinstance(part, str):
-                target = target.get(part)
-            elif (
-                isinstance(target, list)
-                and isinstance(part, int)
-                and not isinstance(part, bool)
-                and 0 <= part < len(target)
-            ):
-                target = target[part]
-            else:
+        if path:
+            located = _argument_path_parent(expected, path)
+            if located is None:
                 return None
+            container, key = located
+            target = container[key]
+        else:
+            target = expected
         if not isinstance(target, dict):
             return None
         for field in fields:
