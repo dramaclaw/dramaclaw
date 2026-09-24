@@ -22,6 +22,8 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
+import portalocker
+
 from novelvideo.chat import display_fallback, media_presentation, message_repository, presentation, presentation_mapping, runtime_event_mapper, session_registry
 from novelvideo.chat.backend_sdk import (
     ClaudeSdkClient,
@@ -1528,6 +1530,15 @@ def _skill_sources() -> list[tuple[str, Path]]:
 
 def _sync_project_skills(skills_dir: Path, *, agent_profile: str = "main") -> None:
     skills_dir.mkdir(parents=True, exist_ok=True)
+    # Multiple Codex turns can initialize the same project/profile at once.
+    # Hold one cross-process lock across the digest, replacement and manifest
+    # write so neither turn sees or removes the other's half-published Skill.
+    lock_path = skills_dir / ".dramaclaw-managed-skills.lock"
+    with portalocker.Lock(str(lock_path), timeout=30):
+        _sync_project_skills_locked(skills_dir, agent_profile=agent_profile)
+
+
+def _sync_project_skills_locked(skills_dir: Path, *, agent_profile: str) -> None:
     profile = str(agent_profile or "main").strip() or "main"
     allowed = (
         {"freezone", "workflows", "dramaclaw-workflows"}

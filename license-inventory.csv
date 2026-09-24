@@ -2567,6 +2567,7 @@ tests/test_chat_runtime_event_mapper.py,Elastic-2.0,2026 SuperTale contributors,
 tests/test_chat_runtime_history.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_chat_service_user_agent_scope.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_chat_session_registry.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_chat_ws_dropped_frame_log.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_chat_ws_home_egress.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_chat_ws_project_egress.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_cli_cognee_commands.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

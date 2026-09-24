@@ -13,6 +13,9 @@ import math
 import re
 from typing import Any
 
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError, best_match
+
 from novelvideo.freezone.workflow_contract_generated import (
     WORKFLOW_INTENT_SCHEMA_VERSION,
     WORKFLOW_LINK_TYPES,
@@ -22,6 +25,11 @@ from novelvideo.freezone.workflow_contract_generated import (
 
 NODE_TYPE_VALUES = WORKFLOW_NODE_TYPES
 LINK_TYPE_VALUES = WORKFLOW_LINK_TYPES
+PLAN_TOOL_NAMES = frozenset({
+    "freezone_prepare_workflow",
+    "freezone_prepare_workflow_plan_draft",
+    "workflow_graph_compile",
+})
 
 
 def normalize_workflow_tool_arguments(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -32,6 +40,8 @@ def normalize_workflow_tool_arguments(name: str, arguments: dict[str, Any]) -> d
     are canonicalized when their JSON representation is unambiguous, so Agent hosts
     do not have to infer transport-level types such as ``"1"`` versus ``1``.
     """
+    if name in PLAN_TOOL_NAMES and isinstance(arguments.get("plan"), dict):
+        return _normalize_plan_node_stage(arguments)
     if name not in {"workflow_intent_compile", "freezone_prepare_workflow_draft"}:
         return arguments
     if not isinstance(arguments.get("intent"), dict):
@@ -85,32 +95,229 @@ def normalize_workflow_tool_arguments(name: str, arguments: dict[str, Any]) -> d
                     item.pop("duration_seconds", None)
     return result
 
-def workflow_plan_schema_diagnostics(arguments: dict[str, Any]) -> list[dict[str, str]]:
-    """Explain actionable HTML branch failures hidden by JSON Schema anyOf.
 
-    This only describes invalid arguments; it never fills values or changes a
-    node's requested deliverable type. The strict validator remains authoritative.
+def _normalize_plan_node_stage(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Move a node's ``data.stage`` label to its portable top-level ``stage``.
+
+    Plan readers already treat both locations as the same label and the compiler
+    strips it from emitted canvas data, so the move is lossless. A conflicting
+    top-level stage is left untouched for the validator to report.
     """
-    plan = arguments.get("plan")
-    if not isinstance(plan, dict) or not isinstance(plan.get("nodes"), list):
-        return []
-    issues: list[dict[str, str]] = []
-    for index, node in enumerate(plan["nodes"]):
-        if not isinstance(node, dict) or node.get("node_type") != "htmlArtifactNode":
+    nodes = arguments["plan"].get("nodes")
+    if not isinstance(nodes, list):
+        return arguments
+    result: dict[str, Any] | None = None
+    for index, node in enumerate(nodes):
+        data = node.get("data") if isinstance(node, dict) else None
+        stage = data.get("stage") if isinstance(data, dict) else None
+        if not isinstance(stage, str) or node.get("stage", stage) != stage:
             continue
-        data = node.get("data") if isinstance(node.get("data"), dict) else {}
-        if not any(isinstance(value, str) and value.strip() for value in (node.get("prompt"), data.get("prompt"))):
-            issues.append({
-                "path": f"plan.nodes[{index}].prompt",
-                "message": (
-                    "HTML workflow step requires a non-empty generation prompt. "
-                    f"Set plan.nodes[{index}].prompt or plan.nodes[{index}].data.prompt "
-                    "to the webpage's business requirements, not HTML source. "
-                    "Keep node_type=htmlArtifactNode and the existing Recipe and edges; "
-                    "correct this field and resubmit the same complete plan."
-                ),
-            })
+        if result is None:
+            result = deepcopy(arguments)
+        moved = result["plan"]["nodes"][index]
+        moved["stage"] = moved["data"].pop("stage")
+    return arguments if result is None else result
+
+
+def workflow_plan_schema_diagnostics(
+    arguments: dict[str, Any], input_schema: dict[str, Any]
+) -> list[dict[str, str]]:
+    """Explain node failures hidden by the JSON Schema ``anyOf`` over node shapes.
+
+    Each invalid node is checked against the branch its ``node_type`` selects, so
+    the Agent gets field-level paths instead of the whole node echoed back. Other
+    argument errors are kept beside them. Returns ``[]`` when no node is invalid,
+    leaving the caller's own error reporting unchanged. This only describes
+    invalid arguments; it never fills values or changes a node's requested
+    deliverable type. The strict validator remains authoritative.
+    """
+    errors = list(Draft202012Validator(input_schema).iter_errors(arguments))
+    if not any(_node_index(error) is not None for error in errors):
+        return []
+    branches = _node_branch_schemas()
+    nodes = arguments["plan"]["nodes"]
+    issues: list[dict[str, str]] = []
+    for error in errors:
+        index = _node_index(error)
+        found = (
+            _node_issues(f"plan.nodes[{index}]", nodes[index], branches)
+            if index is not None
+            else _argument_error_issues(error)
+        )
+        issues.extend(issue for issue in found if issue not in issues)
     return issues
+
+
+def _node_index(error: ValidationError) -> int | None:
+    path = list(error.absolute_path)
+    if len(path) == 3 and path[:2] == ["plan", "nodes"] and isinstance(path[2], int):
+        return path[2]
+    return None
+
+
+def _format_error_path(parts: Any) -> str:
+    path = "".join(
+        f"[{part}]" if isinstance(part, int) else f".{part}" for part in parts
+    )
+    return path.lstrip(".") or "arguments"
+
+
+def _argument_error_issues(error: ValidationError) -> list[dict[str, str]]:
+    if error.validator in {"anyOf", "oneOf"} and error.context:
+        return _argument_error_issues(best_match(error.context))
+    path = _format_error_path(error.absolute_path)
+    if error.validator == "required" and isinstance(error.instance, dict):
+        return [
+            {"path": _format_error_path([*error.absolute_path, key]),
+             "message": "field is required"}
+            for key in error.validator_value
+            if key not in error.instance
+        ]
+    return [{"path": path, "message": error.message[:300]}]
+
+
+def _node_branch_schemas() -> list[dict[str, Any]]:
+    return [
+        _recipe_node_schema(),
+        _resource_text_node_schema(),
+        _compose_node_schema(),
+        _html_node_schema(),
+    ]
+
+
+def _node_issues(
+    base: str, node: Any, branches: list[dict[str, Any]]
+) -> list[dict[str, str]]:
+    if not isinstance(node, dict):
+        return [{"path": base, "message": "node must be an object"}]
+    node_type = node.get("node_type")
+    candidates = [
+        branch for branch in branches
+        if node_type in branch["properties"]["node_type"]["enum"]
+    ]
+    if not candidates:
+        return [{
+            "path": f"{base}.node_type",
+            "message": (
+                f"unsupported node_type {str(node_type)[:80]!r}; "
+                f"allowed values: {', '.join(NODE_TYPE_VALUES)}"
+            ),
+        }]
+    # textAnnotationNode matches both the Recipe and resource branches; report
+    # the branch the node is closest to.
+    branch, errors = min(
+        (
+            (
+                branch,
+                sorted(
+                    Draft202012Validator(branch).iter_errors(node),
+                    key=lambda error: list(map(str, error.absolute_path)),
+                ),
+            )
+            for branch in candidates
+        ),
+        key=lambda candidate: len(candidate[1]),
+    )
+    issues: list[dict[str, str]] = []
+    for error in errors:
+        for issue in _node_error_issues(base, node, branch, error):
+            if issue not in issues:
+                issues.append(issue)
+    return issues
+
+
+def _node_error_issues(
+    base: str, node: dict[str, Any], branch: dict[str, Any], error: ValidationError
+) -> list[dict[str, str]]:
+    node_type = node.get("node_type")
+    path = base + "".join(
+        f"[{part}]" if isinstance(part, int) else f".{part}"
+        for part in error.absolute_path
+    )
+    if error.validator == "anyOf" and node_type == "htmlArtifactNode" and path == base:
+        return [{
+            "path": f"{base}.prompt",
+            "message": (
+                "HTML workflow step requires a non-empty generation prompt. "
+                f"Set {base}.prompt or {base}.data.prompt "
+                "to the webpage's business requirements, not HTML source. "
+                "Keep node_type=htmlArtifactNode and the existing Recipe and edges; "
+                "correct this field and resubmit the same complete plan."
+            ),
+        }]
+    if error.validator in {"anyOf", "oneOf"} and error.context:
+        return _node_error_issues(base, node, branch, best_match(error.context))
+    if error.validator == "required" and isinstance(error.instance, dict):
+        return [
+            {"path": f"{path}.{key}", "message": "field is required"}
+            for key in error.validator_value
+            if key not in error.instance
+        ]
+    if error.validator == "additionalProperties" and isinstance(error.instance, dict):
+        allowed = sorted(error.schema.get("properties", {}))
+        return [
+            {
+                "path": f"{path}.{key}",
+                "message": (
+                    f"field is not allowed for node_type {node_type}; "
+                    f"allowed keys: {', '.join(allowed)}"
+                ),
+            }
+            for key in sorted(set(error.instance) - set(allowed))
+        ]
+    if error.schema is False:
+        keys = _false_schema_keys(node, branch, error)
+        return [
+            {
+                "path": f"{path}.{key}",
+                "message": f"field is not allowed for node_type {node_type}" + (
+                    _data_stage_hint(base, node)
+                    if [*error.absolute_path, key] == ["data", "stage"]
+                    else ""
+                ),
+            }
+            for key in keys
+        ] or [{"path": path, "message": f"field is not allowed for node_type {node_type}"}]
+    return [{"path": path, "message": error.message[:300]}]
+
+
+def _data_stage_hint(base: str, node: dict[str, Any]) -> str:
+    value = node["data"]["stage"]
+    if not isinstance(value, str):
+        return f"; a stage label must be a string at {base}.stage"
+    if "stage" in node and node["stage"] != value:
+        return (
+            f"; {base}.stage is already set to a different value, "
+            "keep only the top-level stage"
+        )
+    return f"; move the stage label to {base}.stage"
+
+
+def _false_schema_keys(
+    node: dict[str, Any], branch: dict[str, Any], error: ValidationError
+) -> list[str]:
+    """Name the properties a ``False`` schema rejected.
+
+    jsonschema reports a ``False`` property schema at the parent object's path
+    and ``.../properties`` schema path without the property name, so resolve the
+    parent object and its property schemas to recover it.
+    """
+    schema_path = list(error.absolute_schema_path)
+    if not schema_path or schema_path[-1] != "properties":
+        return []
+    parent: Any = node
+    for part in error.absolute_path:
+        parent = parent[part]
+    properties: Any = branch
+    for part in schema_path:
+        properties = properties[part]
+    if not isinstance(parent, dict) or not isinstance(properties, dict):
+        return []
+    return [
+        key for key, subschema in properties.items()
+        if subschema is False and key in parent and parent[key] == error.instance
+    ]
+
 
 def _version_schema() -> dict[str, Any]:
     return {"oneOf": [{"type": "string"}, {"type": "integer"}]}

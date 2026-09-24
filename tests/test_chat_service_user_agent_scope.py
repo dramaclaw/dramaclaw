@@ -2,6 +2,8 @@ import asyncio
 import json
 import os
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -2952,6 +2954,51 @@ def test_freezone_skill_sync_refreshes_managed_skills_and_preserves_user_skills(
     manifest = json.loads(
         (skills_dir / ".dramaclaw-managed-skills.json").read_text(encoding="utf-8")
     )
+    assert set(manifest["skills"]) == {"dramaclaw-workflows"}
+
+
+def test_concurrent_codex_skill_sync_publishes_one_complete_copy(monkeypatch, tmp_path):
+    source = tmp_path / "sources" / "dramaclaw-workflows"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("# Workflow\n", encoding="utf-8")
+    monkeypatch.setattr(chat_service, "_skill_sources", lambda: [("dramaclaw-workflows", source)])
+    skills_dir = tmp_path / "project" / ".agents" / "skills"
+    copytree = chat_service.shutil.copytree
+    first_copy_started = threading.Event()
+    second_copy_started = threading.Event()
+    count_lock = threading.Lock()
+    copy_count = 0
+
+    def observed_copytree(src, dst, *args, **kwargs):
+        nonlocal copy_count
+        with count_lock:
+            copy_count += 1
+            call = copy_count
+        if call == 1:
+            first_copy_started.set()
+            second_copy_started.wait(timeout=1)
+            return copytree(src, dst, *args, **kwargs)
+        second_copy_started.set()
+        raise AssertionError("two turns tried to publish the same Skill directory")
+
+    monkeypatch.setattr(chat_service.shutil, "copytree", observed_copytree)
+    start = threading.Barrier(2)
+
+    def sync():
+        start.wait(timeout=3)
+        chat_service._sync_project_skills(skills_dir, agent_profile="freezone:main")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(sync) for _ in range(2)]
+        for future in futures:
+            future.result(timeout=5)
+
+    assert first_copy_started.is_set()
+    assert copy_count == 1
+    assert (skills_dir / "dramaclaw-workflows" / "SKILL.md").read_text(
+        encoding="utf-8"
+    ) == "# Workflow\n"
+    manifest = json.loads((skills_dir / ".dramaclaw-managed-skills.json").read_text())
     assert set(manifest["skills"]) == {"dramaclaw-workflows"}
 
 
