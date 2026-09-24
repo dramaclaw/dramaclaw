@@ -305,7 +305,14 @@ _ARGUMENT_RETRY_IDENTITY_FIELDS = (
     "episode",
     "beat",
     "character",
+    # Flags that change what executes, not just how it looks.
+    "connect",
+    "regenerate",
+    "force_regenerate",
 )
+# Versions the user reviewed or asked to restore. MCP validation rejects a
+# numeric string, so "1" and its corrected retry 1 must compare equal.
+_ARGUMENT_RETRY_VERSION_FIELDS = ("revision", "version", "base_version")
 # Maps keyed by the node ids they act on; the keys are the target, the values
 # (coordinates) are how.
 _ARGUMENT_RETRY_KEYED_TARGET_FIELDS = ("positions", "deltas")
@@ -315,6 +322,13 @@ def _argument_retry_identity(command: dict[str, Any]) -> str:
     identity: dict[str, Any] = {
         key: command[key] for key in _ARGUMENT_RETRY_IDENTITY_FIELDS if key in command
     }
+    for key in _ARGUMENT_RETRY_VERSION_FIELDS:
+        if key not in command:
+            continue
+        value = command[key]
+        if isinstance(value, str) and value.strip().isdigit():
+            value = int(value.strip())
+        identity[key] = value
     for key in _ARGUMENT_RETRY_KEYED_TARGET_FIELDS:
         if key not in command:
             continue

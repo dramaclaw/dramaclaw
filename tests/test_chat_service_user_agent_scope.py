@@ -2264,6 +2264,9 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         "argument_retry_other_html_artifact",
         "argument_retry_other_projection",
         "argument_retry_move_corrected",
+        "argument_retry_draft_revision_corrected",
+        "argument_retry_other_draft_revision",
+        "argument_retry_other_html_version",
     ],
 )
 async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
@@ -2339,6 +2342,29 @@ async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
             {**note, "data": {"text": "乙"}},
         ]
         retry_input["commands"] = [{**note, "data": {"text": "甲"}}]
+    elif scenario in {
+        "argument_retry_draft_revision_corrected",
+        "argument_retry_other_draft_revision",
+    }:
+        # A numeric-string revision is a schema error; retrying it as the same
+        # integer is the correction, a different revision is another version.
+        tool = "freezone_confirm_workflow_draft"
+        rejected_input = {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "draft_id": "draft-a",
+            "revision": "1",
+        }
+        retry_input = {
+            **rejected_input,
+            "revision": (
+                1 if scenario == "argument_retry_draft_revision_corrected" else 2
+            ),
+        }
+    elif scenario == "argument_retry_other_html_version":
+        restore = {"type": "html_artifact", "action": "restore", "artifact_id": "a"}
+        rejected_input["commands"] = [{**restore, "version": 1, "bogus": 1}]
+        retry_input["commands"] = [{**restore, "version": 2}]
     elif scenario == "argument_retry_other_draft":
         # Confirming draft B says nothing about the rejected draft A.
         tool = "freezone_confirm_workflow_draft"
@@ -2479,7 +2505,11 @@ async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
         route_prompt="把选中的图片转成水彩风格",
     )
 
-    if scenario in {"argument_retry", "argument_retry_move_corrected"}:
+    if scenario in {
+        "argument_retry",
+        "argument_retry_move_corrected",
+        "argument_retry_draft_revision_corrected",
+    }:
         assert result["content"] == "已创建水彩风格图片节点并提交生成。"
     elif scenario == "handler_failure_retry":
         # Only a pre-handler schema rejection is side-effect free; a business
