@@ -2267,6 +2267,8 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         "argument_retry_draft_revision_corrected",
         "argument_retry_other_draft_revision",
         "argument_retry_other_html_version",
+        "argument_retry_non_ascii_revision",
+        "argument_retry_projection_episode_corrected",
     ],
 )
 async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
@@ -2361,6 +2363,28 @@ async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
                 1 if scenario == "argument_retry_draft_revision_corrected" else 2
             ),
         }
+    elif scenario == "argument_retry_non_ascii_revision":
+        # "²".isdigit() is true but int("²") raises; the turn must still fail
+        # cleanly instead of aborting.
+        tool = "freezone_confirm_workflow_draft"
+        rejected_input = {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "draft_id": "draft-a",
+            "revision": "²",
+        }
+        retry_input = {**rejected_input, "revision": 2}
+    elif scenario == "argument_retry_projection_episode_corrected":
+        request = {"scope": "episode"}
+        rejected_input["commands"] = [
+            {
+                "type": "open_mainline_projection",
+                "request": {**request, "episode": "1"},
+            }
+        ]
+        retry_input["commands"] = [
+            {"type": "open_mainline_projection", "request": {**request, "episode": 1}}
+        ]
     elif scenario == "argument_retry_other_html_version":
         restore = {"type": "html_artifact", "action": "restore", "artifact_id": "a"}
         rejected_input["commands"] = [{**restore, "version": 1, "bogus": 1}]
@@ -2509,6 +2533,7 @@ async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
         "argument_retry",
         "argument_retry_move_corrected",
         "argument_retry_draft_revision_corrected",
+        "argument_retry_projection_episode_corrected",
     }:
         assert result["content"] == "已创建水彩风格图片节点并提交生成。"
     elif scenario == "handler_failure_retry":
