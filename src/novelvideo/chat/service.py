@@ -145,14 +145,13 @@ from novelvideo.chat.runtime_event_evidence import (
     _GENERATION_RETRY_DATA_FIELDS as _GENERATION_RETRY_DATA_FIELDS,
     _FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS as _FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS,
     _codex_freezone_clarification_answered as _codex_freezone_clarification_answered,
-    _codex_freezone_argument_retry_covers,
-    _codex_freezone_argument_retry_scope,
+    _codex_freezone_argument_retry_expectation,
+    _codex_freezone_argument_retry_signature,
     _codex_freezone_confirmed_execution_policy,
     _codex_freezone_execution_policy_requirement,
     _codex_freezone_generation_retry_key,
     _codex_freezone_is_execution_policy_rejection,
     _codex_freezone_is_generation_preflight_rejection,
-    _codex_freezone_is_tool_argument_rejection,
     _codex_freezone_is_write_event,
     _codex_freezone_ready_workflow_draft,
     _codex_freezone_tool_name,
@@ -4424,9 +4423,9 @@ async def _stream_assistant_reply_codex(
     # call_id -> run_after_create the agent requested when the draft policy
     # guard rejected it; only a receipt reporting that policy may supersede it.
     canvas_policy_requirements: dict[str, bool] = {}
-    # call_id -> (tool/canvas scope, command identities) of a write the MCP
-    # input schema rejected; a covering same-scope receipt supersedes it (#686).
-    canvas_argument_rejections: dict[str, tuple[str, tuple[str, ...]]] = {}
+    # call_id -> the exact corrected arguments that would prove a write the MCP
+    # input schema rejected was only a slip; a receipt for them supersedes it.
+    canvas_argument_rejections: dict[str, str] = {}
     ready_workflow_draft: dict[str, Any] | None = None
     authorization = await authorize_hermes_launch(
         egress_context=egress_context,
@@ -4684,17 +4683,14 @@ async def _stream_assistant_reply_codex(
                                     canvas_write_failures.pop(rejected_call, None)
                                     canvas_generation_preflights.pop(rejected_call, None)
                                     canvas_policy_requirements.pop(rejected_call, None)
-                            argument_scope = _codex_freezone_argument_retry_scope(event)
-                            for rejected_call, (scope, identities) in list(
+                            signature = _codex_freezone_argument_retry_signature(event)
+                            for rejected_call, expected in list(
                                 canvas_argument_rejections.items()
                             ):
                                 if (
-                                    argument_scope is None
+                                    signature is None
                                     or rejected_call == call_id
-                                    or scope != argument_scope[0]
-                                    or not _codex_freezone_argument_retry_covers(
-                                        identities, argument_scope[1]
-                                    )
+                                    or expected != signature
                                 ):
                                     continue
                                 canvas_write_attempts.pop(rejected_call, None)
@@ -4716,15 +4712,13 @@ async def _stream_assistant_reply_codex(
                                     canvas_policy_requirements[call_id] = required_policy
                             else:
                                 canvas_generation_preflights[call_id] = retry_key
-                        elif (
-                            canvas_write_attempts[call_id] == "failed"
-                            and _codex_freezone_is_tool_argument_rejection(event)
-                        ):
+                        elif canvas_write_attempts[call_id] == "failed":
                             # Rejected before the handler ran, so nothing was
-                            # written; only a corrected retry may supersede it.
-                            argument_scope = _codex_freezone_argument_retry_scope(event)
-                            if argument_scope is not None:
-                                canvas_argument_rejections[call_id] = argument_scope
+                            # written; only the provably corrected call may
+                            # supersede it.
+                            expected = _codex_freezone_argument_retry_expectation(event)
+                            if expected is not None:
+                                canvas_argument_rejections[call_id] = expected
                         failure = _codex_freezone_write_result_error(event)
                         if failure:
                             canvas_write_failures[call_id] = failure

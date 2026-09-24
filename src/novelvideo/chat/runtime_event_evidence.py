@@ -277,91 +277,64 @@ def _codex_freezone_generation_retry_key(event: Any) -> str | None:
     return None
 
 
-# Fields that name what a write command acts on, as opposed to how. A call the
-# MCP input schema rejected is matched to its corrected retry on these alone,
-# because the correction itself (e.g. dropping an unsupported position) is
-# exactly what differs between the two calls.
-_ARGUMENT_RETRY_IDENTITY_FIELDS = (
-    "type",
-    "action",
-    "client_id",
-    "node_type",
-    "node_id",
-    "node_ids",
-    "source_node_id",
-    "source",
-    "target",
-    "edge_ids",
-    "pairs",
-    "mode",
-    "scope",
-    "direction",
-    "project_id",
-    "artifact_id",
-    "draft_id",
-    "approval_id",
-    "asset_id",
-    "asset_kind",
-    "identity_id",
-    "primary_slot",
-    "character",
-    # Flags that change what executes, not just how it looks.
-    "connect",
-    "regenerate",
-    "force_regenerate",
-)
-# Integer targets: versions the user reviewed or asked to restore, and the
-# mainline episode/beat. MCP validation rejects a numeric string, so "1" and
-# its corrected retry 1 must compare equal.
-_ARGUMENT_RETRY_INTEGER_FIELDS = (
-    "revision",
-    "version",
-    "base_version",
-    "episode",
-    "beat",
+# Integer fields the agent may have sent as numeric strings: versions the user
+# reviewed or asked to restore, and the mainline episode/beat. Coercing "1" to
+# 1 is the one value correction accepted when a rejected call is retried.
+_ARGUMENT_RETRY_INTEGER_FIELDS = frozenset(
+    {"revision", "version", "base_version", "episode", "beat"}
 )
 # ASCII only: str.isdigit() also accepts characters such as "²" that int()
 # rejects, and those must stay distinct rather than raise.
 _ASCII_INTEGER = re.compile(r"-?[0-9]+", re.ASCII)
-# Maps keyed by the node ids they act on; the keys are the target, the values
-# (coordinates) are how.
-_ARGUMENT_RETRY_KEYED_TARGET_FIELDS = ("positions", "deltas")
 
 
-def _argument_retry_identity(command: dict[str, Any]) -> str:
-    identity: dict[str, Any] = {
-        key: command[key] for key in _ARGUMENT_RETRY_IDENTITY_FIELDS if key in command
-    }
-    for key in _ARGUMENT_RETRY_INTEGER_FIELDS:
-        if key not in command:
-            continue
-        value = command[key]
-        if isinstance(value, str) and _ASCII_INTEGER.fullmatch(value.strip()):
+def _normalize_argument_integers(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_normalize_argument_integers(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    normalized = {}
+    for key, item in value.items():
+        if (
+            key in _ARGUMENT_RETRY_INTEGER_FIELDS
+            and isinstance(item, str)
+            and _ASCII_INTEGER.fullmatch(item.strip())
+        ):
             try:
-                value = int(value.strip())
+                item = int(item.strip())
             except ValueError:
                 # Beyond the int conversion digit limit: keep it distinct.
                 pass
-        identity[key] = value
-    for key in _ARGUMENT_RETRY_KEYED_TARGET_FIELDS:
-        if key not in command:
-            continue
-        value = command[key]
-        # A malformed map keeps its raw value, so only an identical call matches.
-        identity[key] = sorted(value) if isinstance(value, dict) else value
-    request = command.get("request")
-    if isinstance(request, dict):
-        # open_mainline_projection names its target inside the request.
-        identity["request"] = json.loads(_argument_retry_identity(request))
-    elif "request" in command:
-        identity["request"] = request
-    return json.dumps(identity, sort_keys=True, ensure_ascii=False)
+        normalized[key] = _normalize_argument_integers(item)
+    return normalized
 
 
-def _codex_freezone_is_tool_argument_rejection(event: Any) -> bool:
-    """A write the MCP input schema refused before its handler ever ran (#686)."""
+def _codex_freezone_tool_arguments(event: Any) -> dict[str, Any] | None:
+    payload = getattr(event, "input", None)
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except (TypeError, ValueError):
+            return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _argument_retry_signature(name: str, arguments: dict[str, Any]) -> str | None:
+    try:
+        return json.dumps(
+            [name, _normalize_argument_integers(arguments)],
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _codex_freezone_tool_argument_rejection(event: Any) -> dict[str, Any] | None:
+    """The payload of a write the MCP input schema refused before its handler ran."""
     if _codex_freezone_tool_name(event) not in _FREEZONE_CANVAS_WRITE_TOOLS:
-        return False
+        return None
+    rejection = None
     for value in (
         getattr(event, "structured", None),
         getattr(event, "output", None),
@@ -373,67 +346,73 @@ def _codex_freezone_is_tool_argument_rejection(event: Any) -> bool:
                 and payload.get("error") == "tool_arguments_invalid"
                 and payload.get("phase") == "tool_validation"
             ):
-                return True
-    return False
+                # structuredContent keeps only output-schema keys; prefer the
+                # raw copy that still carries unexpected_fields.
+                if "unexpected_fields" in payload:
+                    return payload
+                rejection = rejection or payload
+    return rejection
 
 
-def _codex_freezone_argument_retry_scope(
-    event: Any,
-) -> tuple[str, tuple[str, ...]] | None:
-    """The target canvas and command identities of a write tool call.
+def _codex_freezone_is_tool_argument_rejection(event: Any) -> bool:
+    return _codex_freezone_tool_argument_rejection(event) is not None
 
-    A schema-rejected call is superseded only by a successful call of the same
-    tool on the same canvas that covers every command the rejected call named,
-    counted with multiplicity and in order (see
-    _codex_freezone_argument_retry_covers).
+
+def _codex_freezone_argument_retry_expectation(event: Any) -> str | None:
+    """The exact retry that would prove a schema rejection was a correctable slip.
+
+    A rejected call is superseded only by a successful call of the same tool
+    whose complete, ordered arguments equal the rejected ones after the
+    corrections the MCP server can prove: dropping the fields it reported as
+    unexpected, and coercing numeric strings in known integer fields. Any
+    other change (coordinates, data, targets, count or order of commands) may
+    be a different operation, so the rejection stays failed (#686).
     """
-    name = _codex_freezone_tool_name(event)
-    if name not in _FREEZONE_CANVAS_WRITE_TOOLS:
+    rejection = _codex_freezone_tool_argument_rejection(event)
+    arguments = _codex_freezone_tool_arguments(event)
+    if rejection is None or arguments is None:
         return None
-    payload = getattr(event, "input", None)
-    if isinstance(payload, str):
-        try:
-            payload = json.loads(payload)
-        except (TypeError, ValueError):
-            return None
-    if not isinstance(payload, dict):
-        return None
-    if name == "freezone_emit_canvas_command":
-        commands = payload.get("commands")
-        if (
-            not isinstance(commands, list)
-            or not commands
-            or not all(isinstance(command, dict) for command in commands)
-        ):
-            return None
-    else:
-        commands = [payload]
     try:
-        identities = tuple(_argument_retry_identity(command) for command in commands)
+        expected = json.loads(json.dumps(arguments))
     except (TypeError, ValueError):
-        # Unrepresentable arguments cannot be matched: a rejection stays failed
-        # and a success supersedes nothing.
         return None
-    scope = json.dumps(
-        [name, payload.get("project_id"), payload.get("canvas_id")],
-        sort_keys=True,
-        ensure_ascii=False,
-    )
-    return scope, identities
+    corrections = rejection.get("unexpected_fields") or []
+    if not isinstance(corrections, list):
+        return None
+    for correction in corrections:
+        if not isinstance(correction, dict):
+            return None
+        path, fields = correction.get("path"), correction.get("fields")
+        if not isinstance(path, list) or not isinstance(fields, list):
+            return None
+        target: Any = expected
+        for part in path:
+            if isinstance(target, dict) and isinstance(part, str):
+                target = target.get(part)
+            elif (
+                isinstance(target, list)
+                and isinstance(part, int)
+                and not isinstance(part, bool)
+                and 0 <= part < len(target)
+            ):
+                target = target[part]
+            else:
+                return None
+        if not isinstance(target, dict):
+            return None
+        for field in fields:
+            if not isinstance(field, str) or field not in target:
+                return None
+            del target[field]
+    return _argument_retry_signature(_codex_freezone_tool_name(event), expected)
 
 
-def _codex_freezone_argument_retry_covers(
-    rejected: tuple[str, ...], retry: tuple[str, ...]
-) -> bool:
-    """Whether a retry runs every rejected command, in the same relative order.
-
-    Commands execute in array order and are not commutative (an absolute move
-    followed by a relative one differs from the reverse), so the rejected
-    batch must be an ordered subsequence of the retry. Extra commands in the
-    retry are allowed; each one carries its own receipt.
-    """
-    remaining = iter(retry)
-    return all(identity in remaining for identity in rejected)
+def _codex_freezone_argument_retry_signature(event: Any) -> str | None:
+    """The normalized, ordered arguments of a write call, for exact comparison."""
+    arguments = _codex_freezone_tool_arguments(event)
+    if arguments is None:
+        return None
+    return _argument_retry_signature(_codex_freezone_tool_name(event), arguments)
 
 
 # Workflow draft confirmation guard that rejects before any claim or dispatch.

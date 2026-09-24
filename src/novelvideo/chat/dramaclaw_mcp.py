@@ -613,6 +613,66 @@ def _format_schema_path(parts: list[Any]) -> str:
     return path or "arguments"
 
 
+def _closed_object_fields(schema: Any, value: dict[str, Any]) -> set[str] | None:
+    """Fields a closed object schema allows for this value, or None if unknown.
+
+    A oneOf/anyOf union is narrowed by its type discriminator. Open schemas,
+    or unions with no matching variant, are never judged.
+    """
+    if not isinstance(schema, dict):
+        return None
+    variants = schema.get("oneOf") or schema.get("anyOf")
+    if not isinstance(variants, list):
+        variants = [schema]
+    matching = []
+    for variant in variants:
+        if not isinstance(variant, dict):
+            return None
+        discriminator = (variant.get("properties") or {}).get("type")
+        allowed = discriminator.get("enum") if isinstance(discriminator, dict) else None
+        if isinstance(allowed, list) and value.get("type") not in allowed:
+            continue
+        matching.append(variant)
+    if not matching or any(
+        variant.get("additionalProperties") is not False
+        or not isinstance(variant.get("properties"), dict)
+        for variant in matching
+    ):
+        return None
+    return {field for variant in matching for field in variant["properties"]}
+
+
+def _unexpected_argument_fields(
+    schema: dict[str, Any], arguments: Any
+) -> list[dict[str, Any]]:
+    """Fields no schema variant allows, by path, for a provable retry (#686).
+
+    Dropping exactly these fields is the only structural correction the chat
+    service accepts as the same call when the agent retries a rejection.
+    Covers the top-level arguments and objects inside top-level arrays.
+    """
+    if not isinstance(arguments, dict):
+        return []
+    found: list[dict[str, Any]] = []
+    allowed = _closed_object_fields(schema, arguments)
+    if allowed is not None and set(arguments) - allowed:
+        found.append({"path": [], "fields": sorted(set(arguments) - allowed)})
+    properties = schema.get("properties") if isinstance(schema, dict) else None
+    for key, value in arguments.items():
+        property_schema = (properties or {}).get(key)
+        if not isinstance(value, list) or not isinstance(property_schema, dict):
+            continue
+        for index, item in enumerate(value):
+            if not isinstance(item, dict):
+                continue
+            allowed = _closed_object_fields(property_schema.get("items"), item)
+            if allowed is not None and set(item) - allowed:
+                found.append(
+                    {"path": [key, index], "fields": sorted(set(item) - allowed)}
+                )
+    return found
+
+
 def _schema_validation_diagnostic(exc: SchemaError | ValidationError) -> tuple[str, str]:
     parts = list(getattr(exc, "absolute_path", ()))
     if isinstance(exc, ValidationError) and exc.validator in {"oneOf", "anyOf"}:
@@ -718,6 +778,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                     return _structured_tool_result(name, adapted)
             diagnostics = workflow_plan_schema_diagnostics(arguments)
             validation_path, validation_message = _schema_validation_diagnostic(exc)
+            unexpected_fields = _unexpected_argument_fields(input_schema, arguments)
             error_payload = {
                 "ok": False,
                 "error": "tool_arguments_invalid",
@@ -747,6 +808,11 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                 "retryable": name
                 in {"freezone_prepare_workflow_plan_draft", "workflow_graph_compile"},
                 **({"agent_instruction": recovery} if recovery else {}),
+                **(
+                    {"unexpected_fields": unexpected_fields}
+                    if unexpected_fields
+                    else {}
+                ),
             }
             _log_mcp_call_end(
                 scope=_scope_kind(),

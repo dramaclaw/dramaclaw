@@ -2272,6 +2272,9 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         "argument_retry_projection_episode_corrected",
         "argument_retry_reordered_batch",
         "argument_retry_with_extra_command",
+        "argument_retry_same_target_moves_reordered",
+        "argument_retry_correction_plus_data_change",
+        "argument_retry_unreported_field_dropped",
     ],
 )
 async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
@@ -2279,7 +2282,12 @@ async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
     tmp_path,
     scenario,
 ):
-    """#686: a schema-rejected write retried successfully is not a failed turn."""
+    """#686: a schema-rejected write retried successfully is not a failed turn.
+
+    Only the exact rejected call, minus the fields the MCP server reported as
+    unexpected and with numeric strings coerced in integer fields, supersedes
+    the rejection. Any other difference keeps the turn failed.
+    """
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
     events = []
@@ -2382,12 +2390,24 @@ async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
             ),
         }
         retry_input = {**rejected_input, "revision": 2}
+    elif scenario == "argument_retry_same_target_moves_reordered":
+        # Both commands target node-a; only their coordinates and order differ.
+        first = {"type": "move_nodes", "positions": {"node-a": {"x": 10, "y": 10}}}
+        second = {"type": "move_nodes", "positions": {"node-a": {"x": 20, "y": 20}}}
+        rejected_input["commands"] = [{**first, "bogus": 1}, second]
+        retry_input["commands"] = [second, first]
+    elif scenario == "argument_retry_correction_plus_data_change":
+        retry_input["commands"] = [
+            {**commands[0], "data": {"prompt": "油画风格"}},
+            commands[1],
+        ]
     elif scenario in {
         "argument_retry_reordered_batch",
         "argument_retry_with_extra_command",
     }:
         # Commands run in array order: set (10,10) then shift +5 gives (15,10),
-        # the reverse gives (10,10). Order matters; an extra command does not.
+        # the reverse gives (10,10). Neither reordering nor an extra command is
+        # a provable correction.
         absolute = {"type": "move_nodes", "positions": {"node-a": {"x": 10, "y": 10}}}
         relative = {"type": "move_nodes", "deltas": {"node-a": {"x": 5, "y": 0}}}
         rejected_input["commands"] = [{**absolute, "bogus": 1}, relative]
@@ -2462,6 +2482,24 @@ async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
         retry_input["commands"] = [retry_command]
     if tool != "freezone_emit_canvas_command":
         rejection = {**rejection, "tool_name": tool}
+    if rejection.get("error") == "tool_arguments_invalid" and (
+        scenario != "argument_retry_unreported_field_dropped"
+    ):
+        # What dramaclaw_mcp._unexpected_argument_fields reports for these inputs.
+        unexpected = [
+            {"path": ["commands", index], "fields": fields}
+            for index, command in enumerate(rejected_input.get("commands") or [])
+            if (
+                fields := [
+                    field
+                    for field in sorted(command)
+                    if field == "bogus"
+                    or (field == "position" and command["type"] == "add_next_node")
+                ]
+            )
+        ]
+        if unexpected:
+            rejection = {**rejection, "unexpected_fields": unexpected}
 
     class FakeThread:
         async def stream(self, _prompt):
@@ -2553,10 +2591,8 @@ async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
 
     if scenario in {
         "argument_retry",
-        "argument_retry_move_corrected",
         "argument_retry_draft_revision_corrected",
         "argument_retry_projection_episode_corrected",
-        "argument_retry_with_extra_command",
     }:
         assert result["content"] == "已创建水彩风格图片节点并提交生成。"
     elif scenario == "handler_failure_retry":
@@ -2564,7 +2600,9 @@ async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
         # failure from the handler keeps the turn failed.
         assert result["content"] == "画布操作未完成：源节点不存在"
     else:
-        # No retry, or a retry that silently dropped a rejected command.
+        # No retry, or a retry that differs beyond the provable corrections:
+        # dropped, added or reordered commands, other targets, coordinates or
+        # data, or a field the server never reported as unexpected.
         assert result["content"] == "画布操作未完成：tool_arguments_invalid"
     assistant_deltas = [
         event["text"] for event in events if event["type"] == "assistant_delta"
