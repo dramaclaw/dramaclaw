@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from novelvideo.freezone.workflow_schema import (
+    PORTABLE_VIDEO_GENERATION_MODES,
     WORKFLOW_INTENT_SCHEMA_VERSION,
     WORKFLOW_PLAN_SCHEMA_VERSION,
 )
@@ -1230,13 +1231,7 @@ _UNIVERSAL_GENERATION_INPUT_KEYS = {
 }
 
 _PORTABLE_GENERATION_VARIANT_COUNTS = {1, 2, 4}
-_PORTABLE_VIDEO_GENERATION_MODES = {
-    "allReference",
-    "firstLastFrame",
-    "imageReference",
-    "imageToVideo",
-    "textToVideo",
-}
+_PORTABLE_VIDEO_GENERATION_MODES = frozenset(PORTABLE_VIDEO_GENERATION_MODES)
 
 
 def _portable_generation_input_error(parameter_id: str, value: Any) -> str | None:

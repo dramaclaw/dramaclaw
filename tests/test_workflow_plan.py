@@ -522,6 +522,16 @@ def test_intent_video_item_carries_explicit_embedded_audio_requirement():
     assert node["data"]["workflowCatalog"]["requiresGeneratedAudio"] is True
 
 
+def test_workflow_intent_schema_accepts_first_frame_video_mode():
+    Draft202012Validator(workflow_intent_json_schema()).validate(
+        {
+            "skill_id": "text-to-image-video",
+            "user_goal": "根据首帧生成视频",
+            "inputs": {"video_generation_mode": "firstFrame"},
+        }
+    )
+
+
 def test_agent_authored_plan_backfills_model_and_generic_aspect_ratio(monkeypatch):
     """Raw plans that carry the model / universal ratio only in plan.inputs must
     not run on the runtime default model or shape."""
@@ -1932,6 +1942,28 @@ def test_compiler_defers_model_dependent_generation_values_to_live_schema(
     ]
     assert media_nodes
     assert all(node["data"][data_key] == value for node in media_nodes)
+
+
+def test_compiler_propagates_first_frame_video_mode(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+
+    compiled = catalog.compile_workflow_intent(
+        {
+            "skill_id": "text-to-image-video",
+            "user_goal": "根据首帧生成视频",
+            "inputs": {"video_generation_mode": "firstFrame"},
+        }
+    )
+
+    assert compiled["ok"] is True, compiled
+    video_nodes = [
+        node
+        for node in compiled["plan"]["nodes"]
+        if node["node_type"] == "videoNode"
+    ]
+    assert video_nodes
+    assert all(node["data"]["genMode"] == "firstFrame" for node in video_nodes)
 
 
 @pytest.mark.parametrize(
