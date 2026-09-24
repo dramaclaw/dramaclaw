@@ -1,0 +1,84 @@
+version = 1
+slug = "minimax-h3-liblib-parity"
+ledger = "docs/agent/tasks/minimax-h3-liblib-parity.md"
+baseline = "0bb2410b72cb2178b847c3e1a094ed036cea79aa"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Register lifecycle and shared hot spots."
+
+[[claims]]
+path = "docs/agent/tasks/minimax-h3-liblib-parity.md"
+mode = "coordination"
+reason = "This workstream's plan and handoff ledger."
+
+[[claims]]
+path = "docs/agent/claims/minimax-h3-liblib-parity.toml"
+mode = "coordination"
+reason = "Machine-readable scope for this workstream."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/shared/minimaxH3GenerationDecision.ts"
+mode = "read-only"
+reason = "MiniMax H3 four-mode decision engine."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/shared/videoModelCapabilities.ts"
+mode = "read-only"
+reason = "Wire H3 detection and defaults into existing capability helpers."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/VideoOperationsPanel.tsx"
+mode = "read-only"
+reason = "Render H3-specific mode ordering and disabled reasons."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/minimax-h3-generation-decision.test.ts"
+mode = "read-only"
+reason = "H3 decision matrix regression tests."
+
+[[claims]]
+path = "frontend/public/locales/zh/translation.json"
+mode = "read-only"
+reason = "Chinese H3 mode-disabled messages; merge by key."
+
+[[claims]]
+path = "frontend/public/locales/en/translation.json"
+mode = "read-only"
+reason = "English H3 mode-disabled messages; merge by key."
+
+[[claims]]
+path = "frontend/public/locales/vi/translation.json"
+mode = "read-only"
+reason = "Vietnamese H3 mode-disabled messages; merge by key."
+
+[[claims]]
+path = "src/novelvideo/official_media_models.json"
+mode = "read-only"
+reason = "Declare LibLib-aligned MiniMax H3 capabilities and advanced parameters."
+
+[[claims]]
+path = "tests/test_model_gateway_settings.py"
+mode = "read-only"
+reason = "Lock the official H3 catalog contract."
+
+[[claims]]
+path = "src/novelvideo/generators/minimax_h3_workbench.py"
+mode = "read-only"
+reason = "Stable local H3 workbench API adapter."
+
+[[claims]]
+path = "src/novelvideo/generators/video_generator.py"
+mode = "read-only"
+reason = "Select the H3 workbench adapter only when its local URL is configured."
+
+[[claims]]
+path = "tests/test_minimax_h3_workbench.py"
+mode = "read-only"
+reason = "Adapter request, ordering, polling, and error regressions."
+
+[[claims]]
+path = ".env.example"
+mode = "read-only"
+reason = "Document the optional H3 workbench URL without a machine-specific value."
