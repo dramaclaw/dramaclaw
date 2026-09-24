@@ -42,11 +42,16 @@ import {
 import { formatResolutionLabel } from "@/features/canvas/domain/mediaModelOptions";
 import {
   isHappyHorseVideoModel,
+  isMiniMaxH3VideoModel,
   isVideoModeSupportedByModel,
   videoModeForcesAutomaticAspectRatio,
   videoModelDefaultGenerateAudio,
   videoModelReferenceDisabledReason,
 } from "@/features/canvas/nodes/shared/videoModelCapabilities";
+import {
+  MINIMAX_H3_MODE_ORDER,
+  minimaxH3ModeAvailability,
+} from "@/features/canvas/nodes/shared/minimaxH3GenerationDecision";
 import { resolveImageDisplayUrl } from "@/features/canvas/application/imageData";
 import { VIDEO_FILE_ACCEPT } from "@/features/canvas/application/videoFileTypes";
 import { spawnExternalAssetNodes } from "@/features/canvas/application/spawnExternalAssets";
@@ -280,7 +285,7 @@ export function VideoOperationsPanel({
   videoInputPresent,
   videoInputBillingReady,
   inputVideoDurationSeconds,
-  submitDisabled,
+  submitDisabled: parentSubmitDisabled,
   selectedModelReferenceError,
   mediaRejectionReason,
   expanded,
@@ -321,6 +326,14 @@ export function VideoOperationsPanel({
     useEffect(() => {
       setReferenceLinkDraft(data.referenceLink ?? "");
     }, [data.referenceLink]);
+
+    const selectedModelApiId =
+      selectedVideoModel?.apiModel ?? selectedVideoModel?.id ?? modelId;
+    const h3PromptMissing =
+      isMiniMaxH3VideoModel(selectedModelApiId) &&
+      prompt.trim().length === 0 &&
+      upstreamTextJoined.trim().length === 0;
+    const submitDisabled = parentSubmitDisabled || h3PromptMissing;
 
     const supportsReferenceFile = (selectedVideoModel?.referenceFileMax ?? 0) > 0;
     const supportsReferenceLink = (selectedVideoModel?.referenceLinkMax ?? 0) > 0;
@@ -1108,7 +1121,9 @@ export function VideoOperationsPanel({
                     type="button"
                     disabled={submitDisabled || videoBillingRuleMissing}
                     title={
-                      selectedModelReferenceError ?? (isGenerating
+                      (h3PromptMissing
+                        ? t("node.videoOps.modeDisabled.h3PromptRequired")
+                        : selectedModelReferenceError) ?? (isGenerating
                         ? t("node.videoNode.submitBusy")
                         : (modelTaskAccess.message ?? mediaRejectionReason ??
                           t("node.videoNode.submit")))
@@ -1165,6 +1180,12 @@ export function videoModeDisabledReason(
   t: TFn,
   supportedModes?: string[],
 ): string | null {
+  if (isMiniMaxH3VideoModel(modelId)) {
+    const decision = minimaxH3ModeAvailability(mode, upstreamCounts);
+    return decision.reasonKey
+      ? t(decision.reasonKey, decision.reasonArgs)
+      : null;
+  }
   // HappyHorse 的模式可用性完全由上游节点类型决定（文档 4 大功能）：
   //   文生视频  — 仅无上游时可用
   //   首帧/图生视频 — 仅上游正好 1 张图片时可用
@@ -1267,6 +1288,11 @@ function GenModeSelect({ value, modelId, supportedModes, upstreamCounts, onChang
   //   - 上游接入视频后，图片类入口隐藏，只保留「文生视频」(禁用) 与「视频编辑」。
   // 非 HappyHorse 不暴露「视频编辑」(它是 HappyHorse 专属功能)。
   const visibleTabs = useMemo(() => {
+    if (isMiniMaxH3VideoModel(modelId)) {
+      return MINIMAX_H3_MODE_ORDER
+        .map((key) => MODE_TABS.find((tab) => tab.key === key))
+        .filter((tab): tab is (typeof MODE_TABS)[number] => Boolean(tab));
+    }
     if (supportedModes?.length) {
       const configuredModel = { apiModel: modelId ?? undefined, supportedModes };
       return MODE_TABS.filter((tab) => isVideoModeSupportedByModel(tab.key, configuredModel));

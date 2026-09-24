@@ -3431,6 +3431,7 @@ def test_official_media_model_catalog_uses_ce_export_shape():
     assert minimax["gatewayModel"] == "MiniMax-H3"
     assert minimax["resolutionOptions"] == ["768p", "2k"]
     assert minimax["ratioOptions"] == [
+        "auto",
         "21:9",
         "16:9",
         "4:3",
@@ -3438,16 +3439,28 @@ def test_official_media_model_catalog_uses_ce_export_shape():
         "3:4",
         "9:16",
     ]
-    assert minimax["minDuration"] == 4
+    assert minimax["minDuration"] == 5
     assert minimax["maxDuration"] == 15
     assert minimax["supportedModes"] == [
         "text_to_video",
-        "first_frame",
-        "first_last_frame",
-        "image_to_video",
-        "image_reference",
         "all_reference",
+        "image_to_video",
+        "first_last_frame",
     ]
+    assert minimax["supportsGenerateAudio"] is False
+    assert [item["key"] for item in minimax["request"]["parameters"]] == [
+        "quality_mode",
+        "inference_steps",
+        "model_mode",
+        "seed",
+    ]
+    model_mode = next(
+        item
+        for item in minimax["request"]["parameters"]
+        if item["key"] == "model_mode"
+    )
+    assert model_mode["modes"] == ["all_reference"]
+    assert model_mode["options"] == ["ref2va", "fl2va", "dual_pass"]
     assert minimax["referenceImageMax"] == 9
     assert minimax["referenceVideoMax"] == 3
     assert minimax["referenceAudioMax"] == 3
