@@ -53,6 +53,8 @@
 3. 后续同步 `origin/main` 时，在新版生成器上同时保留归档直拷与本地 multipart / 绕代理语义。
 4. 审计并移植 `13bc829c`、`e5bef904`：仅合入启动器、local gateway 健康身份、聚焦测试、说明和台账；
    不触碰已完成的 creative-intro 代码或三类受保护未跟踪资料。完成后重跑真实重复启动与四端健康检查。
+4. 修复一键启动的本机复用与端口预检——完成条件：已有 ComfyUI 时无需 `COMFYUI_DIR` 即可复用；
+   默认 API / gateway / 前端端口冲突时选择空闲备用端口，显式配置冲突则清晰失败；实际脚本能启动并通过四个健康检查。
 
 ## 风险与回退
 
@@ -70,6 +72,34 @@
 并发互斥、TIME_WAIT 处理和无关进程保护，而不是继续依赖隔离 worktree。
 
 怎么验证：隔离分支已完成 12 项测试、重复启动与无关端口占用实测；主线集成后重新执行相同聚焦门禁与真实启动。
+
+### 2026-09-24 · 已有 ComfyUI 复用与端口冲突修复通过实机验收
+
+做了什么：启动器改为先访问 `COMFYUI_BASE_URL/system_stats`，健康时直接复用，不再预先要求
+`COMFYUI_DIR`。gateway/API/前端的默认端口在启动前用 socket bind 校验；默认值冲突时在后续
+20 个端口中选择第一个空闲值，显式配置冲突则停止并指出具体变量。最终 API 端口同步到
+`VITE_API_URL`，避免前端仍代理旧端口。启动说明和聚焦测试同步更新。
+
+为什么这么改：本机 ComfyUI 已经健康运行，旧顺序却先报安装路径缺失；绕过后，Docker 占用默认
+API 端口又让旧就绪探测可能读到别的服务。两处都属于“真实依赖可用但启动器判断顺序错误”，不能
+靠用户反复试环境变量解决。
+
+怎么验证：`bash -n`、9 项 `test_local_gateway.py`、ruff、agent guard 与 diff 检查通过。实机原样
+启动时成功复用既有 ComfyUI，识别默认 API 端口被占并选择下一空闲端口；gateway health、API
+config、前端页面、前端到 API 的代理及 ComfyUI system stats 全部返回成功。退出隔离验收栈后，
+gateway/API/前端端口均释放，复用的 ComfyUI 保持运行；主检出目录另写入被忽略且不含密钥的本机
+配置后，用户原命令也已成功启动并保持运行。
+
+### 2026-09-24 · 一键启动错误复现并进入修复
+
+做什么：原样运行 `bash scripts/start-local-stack.sh`，再绕过首层检查继续验证 gateway、API 与前端。
+修复范围只含启动脚本及其聚焦测试，不修改 ComfyUI、网关业务或主工作区在途前端代码。
+
+为什么：本机 `127.0.0.1:8188` 的 ComfyUI 已健康运行，但脚本在健康检查前先要求 `COMFYUI_DIR`，
+误报缺配置；继续启动后发现 `8780` 被 Docker 占用，旧就绪探测又可能把占用者误认成本轮 API。
+
+怎么验证：修复前已稳定复现两层错误；修复后计划执行 shell 语法、聚焦 pytest、真实脚本启动、
+gateway/API/frontend/ComfyUI 健康检查及退出清理验证。
 
 ### 2026-09-19 · 补齐本地路由的目录排序与设置页表面
 
@@ -153,6 +183,7 @@ Depth、拉片和 LibTV endpoint 均未写入。
 ## 验收标准
 
 - 在一台干净的机器上照 `启动说明.md` 能起起来（待外部环境验收）。
+- [x] 当前机器不配置 `COMFYUI_DIR` 也能复用健康 ComfyUI，并在默认 API 端口冲突时完整启动。
 - `uv run pytest tests/test_local_gateway.py` 全绿。
 - `DRAMACLAW_LOCAL_MODELS_ONLY=1` 时设置面板里只出现本地两个图像选项。
 

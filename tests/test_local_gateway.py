@@ -276,3 +276,40 @@ def test_local_launcher_uses_an_ignored_machine_config_instead_of_author_paths()
     assert "/Users/" not in guide
     assert ".dramaclaw-local/local.env" in guide
     assert "COMFYUI_DIR" in launcher
+
+
+def test_local_launcher_reuses_comfy_before_requiring_its_install_path() -> None:
+    launcher = Path("scripts/start-local-stack.sh").read_text(encoding="utf-8")
+
+    reuse_probe = launcher.index(
+        'if curl -fsS --max-time 1 "${comfyui_base_url}/system_stats"'
+    )
+    missing_path_error = launcher.index(
+        'if [[ -z "$comfyui_dir" ]]',
+        reuse_probe,
+    )
+
+    assert reuse_probe < missing_path_error
+    assert 'echo "Reusing existing ComfyUI at $comfyui_base_url"' in launcher
+
+
+def test_local_launcher_resolves_default_port_conflicts_before_starting() -> None:
+    launcher = Path("scripts/start-local-stack.sh").read_text(encoding="utf-8")
+
+    assert (
+        'select_available_port NOVELVIDEO_API_PORT 8780 0.0.0.0 "API"'
+        in launcher
+    )
+    assert (
+        "select_available_port DRAMACLAW_LOCAL_GATEWAY_PORT 3001 "
+        '127.0.0.1 "Local gateway"'
+    ) in launcher
+    assert (
+        'select_available_port SUPERTALE_FE_PORT 5173 0.0.0.0 "Frontend"'
+        in launcher
+    )
+    assert (
+        'export VITE_API_URL="${VITE_API_URL:-http://127.0.0.1:'
+        '${NOVELVIDEO_API_PORT}}"'
+    ) in launcher
+    assert "was explicitly configured" in launcher
