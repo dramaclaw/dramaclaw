@@ -25,6 +25,14 @@ from novelvideo.freezone.workflow_contract_generated import (
 
 NODE_TYPE_VALUES = WORKFLOW_NODE_TYPES
 LINK_TYPE_VALUES = WORKFLOW_LINK_TYPES
+PORTABLE_VIDEO_GENERATION_MODES = (
+    "allReference",
+    "firstFrame",
+    "firstLastFrame",
+    "imageReference",
+    "imageToVideo",
+    "textToVideo",
+)
 PLAN_TOOL_NAMES = frozenset({
     "freezone_prepare_workflow",
     "freezone_prepare_workflow_plan_draft",
@@ -822,13 +830,7 @@ def workflow_intent_json_schema() -> dict[str, Any]:
                     "video_generate_audio": {"type": "boolean"},
                     "video_generation_mode": {
                         "type": "string",
-                        "enum": [
-                            "allReference",
-                            "firstLastFrame",
-                            "imageReference",
-                            "imageToVideo",
-                            "textToVideo",
-                        ],
+                        "enum": list(PORTABLE_VIDEO_GENERATION_MODES),
                     },
                     "video_model": {"type": "string", "minLength": 1},
                     "video_resolution": {"type": "string", "minLength": 1},
