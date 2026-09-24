@@ -461,6 +461,31 @@ def prepare_workflow_source(body: dict, *, username: str) -> dict:
         return {"intent": deepcopy(intent), "compiled": validated}
 
 
+def _confirm_revised_video_modes(plan: dict, updates: list) -> None:
+    """Record a revised per-node video mode as that node's confirmed mode.
+
+    Plan validation only accepts a genMode that equals the shared
+    video_generation_mode or the node's own confirmed one (issue #711); an
+    explicit step revision is how a single shot legitimately differs.
+    """
+    nodes = _node_index(plan)
+    for update in updates:
+        settings = update.get("settings") or {}
+        if "generation_mode" not in settings:
+            continue
+        node = nodes[update["node_id"]]
+        if node.get("node_type") != "videoNode":
+            continue
+        data = node["data"]
+        workflow_catalog = data.get("workflowCatalog")
+        if not isinstance(workflow_catalog, dict):
+            workflow_catalog = data["workflowCatalog"] = {}
+        confirmed = workflow_catalog.get("confirmedInputs")
+        if not isinstance(confirmed, dict):
+            confirmed = workflow_catalog["confirmedInputs"] = {}
+        confirmed["video_generation_mode"] = data["genMode"]
+
+
 def revise_workflow_source(payload: dict, changes: Any, *, username: str) -> dict:
     if not isinstance(changes, dict) or not changes:
         raise WorkflowOperationError("changes must be a non-empty object")
@@ -488,6 +513,7 @@ def revise_workflow_source(payload: dict, changes: Any, *, username: str) -> dic
         plan = deepcopy(payload["compiled"]["plan"])
         if "step_updates" in changes:
             plan = update_workflow_steps(plan, changes["step_updates"])
+            _confirm_revised_video_modes(plan, changes["step_updates"])
         if "bindings" in changes:
             plan = bind_workflow_inputs(plan, changes["bindings"])
         prepared = prepare_workflow_source({"plan": plan}, username=username)

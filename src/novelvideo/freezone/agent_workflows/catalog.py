@@ -3386,24 +3386,23 @@ _PLAN_RUNTIME_BACKFILL_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
 }
 
 
-def _video_generation_mode_conflicts(
+def _video_generation_mode_blockers(
     nodes: list[Any], resolved_inputs: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    """Video nodes whose own genMode contradicts the plan's shared mode.
+    """Video nodes whose genMode is not a mode the draft states as confirmed.
 
-    Issue #711: a node pin normally wins over a shared input, but the shared
-    ``video_generation_mode`` records the mode the user asked for, and modes
-    are not interchangeable (imageToVideo references the whole picture,
-    firstFrame locks the opening frame). A ready draft must not deliver a
-    different mode than the one it states, so the mismatch blocks instead.
+    Issue #711: modes are not interchangeable (imageToVideo references the
+    whole picture, firstFrame locks the opening frame), so unlike other node
+    pins a genMode never silently wins. It must equal the plan's shared
+    ``video_generation_mode`` or the node's own
+    ``workflowCatalog.confirmedInputs.video_generation_mode`` (a per-node
+    revision); otherwise the draft is blocked instead of becoming ready.
     """
     requested = (
         _text(resolved_inputs.get("video_generation_mode"))
         if isinstance(resolved_inputs, dict)
         else ""
     )
-    if not requested:
-        return []
     blockers: list[dict[str, Any]] = []
     for node in nodes:
         if not isinstance(node, dict) or _text(node.get("node_type")) != "videoNode":
@@ -3412,20 +3411,40 @@ def _video_generation_mode_conflicts(
         mode = _text(data.get("genMode"))
         if not mode or mode == requested:
             continue
-        node_id = _text(node.get("id")) or "videoNode"
-        blockers.append(
-            {
-                "path": f"runtime.models.{node_id}.genMode",
-                "code": "video_generation_mode_conflict",
-                "message": (
-                    f"genMode {mode!r} contradicts plan input video_generation_mode "
-                    f"{requested!r}; set the node to {requested!r} (choose a model that "
-                    "supports it) or ask the user before changing the mode."
-                ),
-                "allowed_values": [requested],
-                "recovery": "align_generation_mode",
-            }
+        workflow_catalog = (
+            data.get("workflowCatalog") if isinstance(data.get("workflowCatalog"), dict) else {}
         )
+        confirmed = workflow_catalog.get("confirmedInputs")
+        if isinstance(confirmed, dict) and _text(confirmed.get("video_generation_mode")) == mode:
+            continue
+        node_id = _text(node.get("id")) or "videoNode"
+        if requested:
+            blockers.append(
+                {
+                    "path": f"runtime.models.{node_id}.genMode",
+                    "code": "video_generation_mode_conflict",
+                    "message": (
+                        f"genMode {mode!r} contradicts plan input video_generation_mode "
+                        f"{requested!r}; set the node to {requested!r} (choose a model that "
+                        "supports it) or ask the user before changing the mode."
+                    ),
+                    "allowed_values": [requested],
+                    "recovery": "align_generation_mode",
+                }
+            )
+        else:
+            blockers.append(
+                {
+                    "path": f"runtime.models.{node_id}.genMode",
+                    "code": "video_generation_mode_unconfirmed",
+                    "message": (
+                        f"genMode {mode!r} is not a confirmed mode: state the mode the user "
+                        "asked for as plan input video_generation_mode (or ask the user) and "
+                        "keep every video node's genMode equal to it."
+                    ),
+                    "recovery": "state_generation_mode",
+                }
+            )
     return blockers
 
 
@@ -3667,7 +3686,7 @@ def validate_agent_workflow_plan(
             validated["preflight"] = _build_plan_preflight(validated_plan.get("nodes") or [])
     _attach_preflight_blockers(
         validated,
-        _video_generation_mode_conflicts(
+        _video_generation_mode_blockers(
             validated_plan.get("nodes") or [], input_contract["resolved"]
         ),
     )
