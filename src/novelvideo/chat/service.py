@@ -16,6 +16,7 @@ import stat
 import sys
 import threading
 import uuid
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -4425,7 +4426,7 @@ async def _stream_assistant_reply_codex(
     canvas_policy_requirements: dict[str, bool] = {}
     # call_id -> (tool/canvas scope, command identities) of a write the MCP
     # input schema rejected; a covering same-scope receipt supersedes it (#686).
-    canvas_argument_rejections: dict[str, tuple[str, frozenset[str]]] = {}
+    canvas_argument_rejections: dict[str, tuple[str, Counter[str]]] = {}
     ready_workflow_draft: dict[str, Any] | None = None
     authorization = await authorize_hermes_launch(
         egress_context=egress_context,
@@ -4691,7 +4692,7 @@ async def _stream_assistant_reply_codex(
                                     argument_scope is None
                                     or rejected_call == call_id
                                     or scope != argument_scope[0]
-                                    or not identities <= argument_scope[1]
+                                    or identities - argument_scope[1]
                                 ):
                                     continue
                                 canvas_write_attempts.pop(rejected_call, None)

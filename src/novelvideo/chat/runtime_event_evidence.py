@@ -8,6 +8,7 @@ at this boundary while callers migrate to provider-neutral event names.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from typing import Any
 
 from novelvideo.chat.tool_policy import (
@@ -282,12 +283,23 @@ _ARGUMENT_RETRY_IDENTITY_FIELDS = (
     "type",
     "action",
     "client_id",
+    "node_type",
     "node_id",
     "node_ids",
     "source_node_id",
     "source",
     "target",
     "edge_ids",
+    "pairs",
+    "mode",
+    "scope",
+    "draft_id",
+    "approval_id",
+    "asset_id",
+    "asset_kind",
+    "episode",
+    "beat",
+    "character",
 )
 
 
@@ -312,12 +324,13 @@ def _codex_freezone_is_tool_argument_rejection(event: Any) -> bool:
 
 def _codex_freezone_argument_retry_scope(
     event: Any,
-) -> tuple[str, frozenset[str]] | None:
+) -> tuple[str, Counter[str]] | None:
     """The target canvas and command identities of a write tool call.
 
     A schema-rejected call is superseded only by a successful call of the same
     tool on the same canvas that covers every command the rejected call named,
-    so a batch retried with a command silently dropped stays failed.
+    counted with multiplicity, so a batch retried with a command silently
+    dropped stays failed even when identical commands repeat.
     """
     name = _codex_freezone_tool_name(event)
     if name not in _FREEZONE_CANVAS_WRITE_TOOLS:
@@ -340,7 +353,7 @@ def _codex_freezone_argument_retry_scope(
             return None
     else:
         commands = [payload]
-    identities = frozenset(
+    identities = Counter(
         json.dumps(
             {
                 key: command[key]

@@ -2258,6 +2258,8 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         "argument_retry_dropped_command",
         "argument_only",
         "handler_failure_retry",
+        "argument_retry_duplicate_dropped",
+        "argument_retry_other_draft",
     ],
 )
 async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
@@ -2314,6 +2316,42 @@ async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
     retry_commands = (
         commands[:1] if scenario == "argument_retry_dropped_command" else commands
     )
+    tool = "freezone_emit_canvas_command"
+    rejected_input = {
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "commands": rejected_commands,
+    }
+    retry_input = {
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "commands": retry_commands,
+    }
+    if scenario == "argument_retry_duplicate_dropped":
+        # Two identical anonymous creates must not collapse into one identity.
+        note = {"type": "create_node", "node_type": "textAnnotationNode"}
+        rejected_input["commands"] = [
+            {**note, "data": {"text": "甲"}, "bogus": 1},
+            {**note, "data": {"text": "乙"}},
+        ]
+        retry_input["commands"] = [{**note, "data": {"text": "甲"}}]
+    elif scenario == "argument_retry_other_draft":
+        # Confirming draft B says nothing about the rejected draft A.
+        tool = "freezone_confirm_workflow_draft"
+        rejected_input = {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "draft_id": "draft-a",
+            "revision": "1",
+        }
+        retry_input = {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "draft_id": "draft-b",
+            "revision": 1,
+        }
+    if tool != "freezone_emit_canvas_command":
+        rejection = {**rejection, "tool_name": tool}
 
     class FakeThread:
         async def stream(self, _prompt):
@@ -2324,15 +2362,11 @@ async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
             )
             yield SimpleNamespace(
                 type="tool_updated",
-                text="[mcp:failed] dramaclaw.freezone_emit_canvas_command",
-                name="dramaclaw.freezone_emit_canvas_command",
+                text=f"[mcp:failed] dramaclaw.{tool}",
+                name=f"dramaclaw.{tool}",
                 call_id="call-rejected",
                 status="failed",
-                input={
-                    "project_id": "project-a",
-                    "canvas_id": "canvas-a",
-                    "commands": rejected_commands,
-                },
+                input=rejected_input,
                 output={
                     "content": [{"type": "text", "text": json.dumps(rejection)}]
                 },
@@ -2344,15 +2378,11 @@ async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
                 receipts.append({"bridge_key": "bridge-retry", "revision": None})
                 yield SimpleNamespace(
                     type="tool_updated",
-                    text="[mcp:completed] dramaclaw.freezone_emit_canvas_command",
-                    name="dramaclaw.freezone_emit_canvas_command",
+                    text=f"[mcp:completed] dramaclaw.{tool}",
+                    name=f"dramaclaw.{tool}",
                     call_id="call-retry",
                     status="completed",
-                    input={
-                        "project_id": "project-a",
-                        "canvas_id": "canvas-a",
-                        "commands": retry_commands,
-                    },
+                    input=retry_input,
                     output=None,
                     structured={
                         "ok": True,
