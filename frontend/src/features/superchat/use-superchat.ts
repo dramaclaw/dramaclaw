@@ -99,6 +99,13 @@ const MESSAGE_CACHE_LIMIT = 50;
 // blobs (one per conversation) can't accumulate forever and exhaust the quota.
 const MESSAGE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const ACTIVE_TURN_TTL_MS = 60 * 60 * 1000;
+// 点「停止生成」后等服务端终态帧的宽限期。取消在协议上是一个**请求**（codex
+// app-server 的 `turn_interrupt` 同样只回 ack），这一轮什么时候结束只有服务端的
+// 终态帧说得准，所以客户端必须等。服务端自己的打断宽限是
+// `CODEX_INTERRUPT_GRACE_TIMEOUT = 5s`（`chat/backend_sdk.py`），客户端等得比它
+// 短就等于在服务端还在正常收尾的时候把连接掐了，因此在 5s 上再留 3s 余量。
+const ABORT_TERMINAL_GRACE_MS = 8000;
+export const abortTerminalGraceMsForTest = () => ABORT_TERMINAL_GRACE_MS;
 
 type ActiveTurnSnapshot = {
   turnId: string;
@@ -1905,6 +1912,7 @@ export function useSuperChat({
   const pendingSkillStudioDraftChunksRef = useRef<Map<string, PendingSkillStudioDraftChunks>>(new Map());
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<number | null>(null);
+  const abortGraceRef = useRef<number | null>(null);
   const closedRef = useRef(false);
   const authRejectedRef = useRef(false);
   const connectionIdRef = useRef(0);
@@ -2168,6 +2176,13 @@ export function useSuperChat({
     // Post-done history refresh is intentionally disabled; final assistant
     // messages are now pushed through assistant.message.
   }, [markTurnInactive, persistAssistantMessageParts]);
+
+  const clearAbortGrace = useCallback(() => {
+    if (abortGraceRef.current !== null) {
+      window.clearTimeout(abortGraceRef.current);
+      abortGraceRef.current = null;
+    }
+  }, []);
 
   const handleFrame = useCallback((frame: ServerFrame) => {
     const placeRuntimePart = (turnId: string, part: ChatMessagePart) => {
@@ -2688,6 +2703,7 @@ export function useSuperChat({
           && cancelledTurnIdsRef.current.has(frame.turn_id)
         ) {
           cancelledTurnIdsRef.current.delete(frame.turn_id);
+          clearAbortGrace();
           markTurnInactive(frame.turn_id);
           break;
         }
@@ -2777,6 +2793,7 @@ export function useSuperChat({
         break;
     }
   }, [
+    clearAbortGrace,
     finalizeStream,
     markTurnActive,
     markTurnInactive,
@@ -2865,6 +2882,8 @@ export function useSuperChat({
     closedRef.current = true;
     connectionIdRef.current += 1;
     if (reconnectRef.current) window.clearTimeout(reconnectRef.current);
+    if (abortGraceRef.current) window.clearTimeout(abortGraceRef.current);
+    abortGraceRef.current = null;
     const ws = wsRef.current;
     if (ws) {
       ws.onopen = null;
@@ -3082,11 +3101,24 @@ export function useSuperChat({
       }).catch(() => undefined);
     }
     markTurnInactive(turnId);
+    // 刻意不在这里关连接。服务端在几十毫秒内就会把
+    // `agent.turn.completed disposition=cancelled` + `chat.done` 发到**这条**连接上，
+    // 立刻 close 会让这两帧打进一个已经关掉的 socket——后端
+    // `_send_json_best_effort` 把发送失败整个吞掉，于是终态对任何客户端都不可观测，
+    // 界面只能靠重连后的历史反推。留着连接让这一轮按正常终态收尾。
     const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.close(4000, "client abort");
-    }
-  }, [markTurnInactive]);
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    clearAbortGrace();
+    abortGraceRef.current = window.setTimeout(() => {
+      abortGraceRef.current = null;
+      const current = wsRef.current;
+      if (current && current.readyState === WebSocket.OPEN) {
+        // 兜底自救：服务端一直不给终态帧就关掉，`onclose` 会重连，再用
+        // `scope.changed` 带回的历史对账。
+        current.close(4000, "client abort");
+      }
+    }, ABORT_TERMINAL_GRACE_MS);
+  }, [clearAbortGrace, markTurnInactive]);
 
   const resolveApproval = useCallback((approval: ApprovalRequest, decision: ApprovalDecision) => {
     if (approval.kind !== "agent" || approval.requestId === undefined) {

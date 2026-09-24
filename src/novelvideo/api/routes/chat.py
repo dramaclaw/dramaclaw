@@ -2191,7 +2191,17 @@ async def _send_json_best_effort(
             async with send_lock:
                 await websocket.send_json(payload)
         return True
-    except Exception:
+    except Exception as exc:
+        # 发送失败必须留痕。这里以前是静默 `return False`，调用方也不看返回值，于是
+        # 「终态帧根本没送出去」在线上完全不可观测——CORE-INF-02 的排查有一整天花在
+        # 后端找一个不存在的缺口上，就是因为这条路径无声。
+        # 脱敏：只记帧类型与轮次标识，payload 里可能带用户内容，不入日志。
+        logger.warning(
+            "dropped chat ws frame type=%s turn_id=%s: %s",
+            payload.get("type"),
+            payload.get("turn_id"),
+            exc.__class__.__name__,
+        )
         return False
 
 
