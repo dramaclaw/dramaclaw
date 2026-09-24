@@ -4,6 +4,10 @@ import {
   CANVAS_NODE_TYPES,
   type CanvasNodeType,
 } from '@/features/canvas/domain/canvasNodes';
+import type {
+  CreativeIntroBlendCapability,
+  CreativeIntroBlendRange,
+} from '@/features/canvas/application/creativeIntroBlend';
 
 export const CREATIVE_INTRO_DESIGN_STYLES = [
   'minimal',
@@ -96,6 +100,12 @@ export interface SpawnCreativeIntroInput {
     keyframe: string;
     design: string;
     motion: string;
+    clip: string;
+  };
+  blend?: {
+    clipUrl: string;
+    range: CreativeIntroBlendRange;
+    capability: CreativeIntroBlendCapability;
   };
 }
 
@@ -109,12 +119,28 @@ export function spawnCreativeIntroWorkflow(
   input: SpawnCreativeIntroInput,
 ) {
   const prompts = buildCreativeIntroPrompts(input.plan);
+  const blendPrompt = input.blend
+    ? ` Use the five-second source-video reference as the exact shot timing, camera motion, ` +
+      `subject motion, scene continuity, and audio continuity. Integrate the supplied title-design ` +
+      `image naturally into that footage instead of replacing the scene. The selected title ` +
+      `keyframe occurs ${input.blend.range.keyframeOffsetSec.toFixed(2)} seconds after the source ` +
+      `clip begins.`
+    : '';
   const provenance = {
     sourceNodeId: input.sourceNodeId,
     title: input.plan.title.trim(),
     frameSec: input.plan.frameSec,
     designStyle: input.plan.designStyle,
     motionStyle: input.plan.motionStyle,
+    ...(input.blend
+      ? {
+          blend: {
+            ...input.blend.range,
+            modelId: input.blend.capability.modelId,
+            genMode: input.blend.capability.genMode,
+          },
+        }
+      : {}),
   };
 
   const keyframeNodeId = deps.addDerivedExportNode(
@@ -148,6 +174,24 @@ export function spawnCreativeIntroWorkflow(
   );
   deps.addEdge(keyframeNodeId, designNodeId);
 
+  const clipNodeId = input.blend
+    ? deps.addNode(
+        CANVAS_NODE_TYPES.video,
+        deps.findNodePosition(input.sourceNodeId, 580, 380),
+        {
+          displayName: input.labels.clip,
+          videoUrl: input.blend.clipUrl,
+          previewImageUrl: input.keyframeUrl,
+          aspectRatio: input.aspectRatio,
+          durationMs: 5_000,
+          referenceOnly: true,
+          creativeIntroPlan: { ...provenance, stage: 'sourceClip' },
+          user_spawned: true,
+        },
+      )
+    : null;
+  if (clipNodeId) deps.addEdge(input.sourceNodeId, clipNodeId);
+
   const motionNodeId = deps.addNode(
     CANVAS_NODE_TYPES.video,
     deps.findNodePosition(designNodeId, 580, 380),
@@ -156,16 +200,23 @@ export function spawnCreativeIntroWorkflow(
       videoUrl: null,
       previewImageUrl: input.keyframeUrl,
       aspectRatio: input.aspectRatio,
-      prompt: prompts.motionPrompt,
-      genMode: 'imageReference',
+      prompt: prompts.motionPrompt + blendPrompt,
+      genMode: input.blend?.capability.genMode ?? 'imageReference',
+      ...(input.blend
+        ? {
+            model: input.blend.capability.modelId,
+            referenceOrder: [designNodeId, clipNodeId],
+          }
+        : {}),
       durationSec: 5,
       creativeIntroPlan: { ...provenance, stage: 'motion' },
       user_spawned: true,
     },
   );
   deps.addEdge(designNodeId, motionNodeId);
+  if (clipNodeId) deps.addEdge(clipNodeId, motionNodeId);
   deps.setSelectedNode(designNodeId);
   deps.requestFocusNode(designNodeId);
 
-  return { keyframeNodeId, designNodeId, motionNodeId };
+  return { keyframeNodeId, designNodeId, clipNodeId, motionNodeId };
 }

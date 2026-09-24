@@ -42,5 +42,5 @@ reason = "Ignored, machine-local Playwright storage state supplied by the user; 
 [[claims]]
 path = "docs/guides/liblib-canvas-parity.md"
 mode = "shared"
-shared_with = ["liblib-canvas-parity", "canvas-audio-split", "creative-intro-implementation"]
+shared_with = ["liblib-canvas-parity", "canvas-audio-split", "creative-intro-blend", "creative-intro-implementation"]
 reason = "Record controlled runtime evidence and the resulting implementation recommendation."

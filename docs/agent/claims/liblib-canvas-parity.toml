@@ -27,7 +27,7 @@ reason = "Machine-readable scope for this workstream."
 [[claims]]
 path = "docs/guides/liblib-canvas-parity.md"
 mode = "shared"
-shared_with = ["canvas-audio-split", "creative-intro-discovery", "creative-intro-implementation"]
+shared_with = ["canvas-audio-split", "creative-intro-blend", "creative-intro-discovery", "creative-intro-implementation"]
 reason = "Evidence and long-form design for LibTV parity."
 
 [[claims]]

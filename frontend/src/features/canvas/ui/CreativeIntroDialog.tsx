@@ -1,12 +1,18 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, Sparkles } from 'lucide-react';
+import { Loader2, Play, Sparkles, Square } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
-import { uploadFreezoneImage } from '@/api/ops';
+import {
+  fetchFreezoneJobResult,
+  submitFreezoneVideoCompose,
+  uploadFreezoneImage,
+} from '@/api/ops';
+import { awaitTaskCompletion } from '@/api/tasks';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -23,9 +29,16 @@ import {
   type CreativeIntroDesignStyle,
   type CreativeIntroMotionStyle,
 } from '@/features/canvas/application/creativeIntroWorkflow';
+import {
+  creativeIntroBlendStartBounds,
+  normalizeCreativeIntroBlendRange,
+  renderCreativeIntroBlendClip,
+  resolveCreativeIntroBlendCapability,
+} from '@/features/canvas/application/creativeIntroBlend';
 import { captureVideoFrameBlob } from '@/features/canvas/application/videoFrameCapture';
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
 import { isVideoNode, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
+import { useFreezoneVideoModels } from '@/features/canvas/hooks/useFreezoneVideoModels';
 import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
 
@@ -43,7 +56,11 @@ export function CreativeIntroDialog({ open, onOpenChange, sourceNode }: Creative
   const [loadedDuration, setLoadedDuration] = useState(0);
   const [designStyle, setDesignStyle] = useState<CreativeIntroDesignStyle>('minimal');
   const [motionStyle, setMotionStyle] = useState<CreativeIntroMotionStyle>('blurFade');
-  const [creating, setCreating] = useState(false);
+  const [blendOriginal, setBlendOriginal] = useState(false);
+  const [blendStartSec, setBlendStartSec] = useState(0);
+  const [previewingBlend, setPreviewingBlend] = useState(false);
+  const [creatingStep, setCreatingStep] = useState<'idle' | 'clip' | 'workflow'>('idle');
+  const creating = creatingStep !== 'idle';
 
   const videoData = sourceNode && isVideoNode(sourceNode) ? sourceNode.data : null;
   const videoUrl = typeof videoData?.videoUrl === 'string' ? videoData.videoUrl : null;
@@ -58,6 +75,23 @@ export function CreativeIntroDialog({ open, onOpenChange, sourceNode }: Creative
     () => (videoUrl ? resolveImageDisplayUrl(videoUrl) : null),
     [videoUrl],
   );
+  const projectId = readUrl().project;
+  const canvasId = readUrl().canvas ?? 'default';
+  const { models: videoModels, isLoading: videoModelsLoading } =
+    useFreezoneVideoModels(projectId);
+  const blendCapability = useMemo(
+    () => resolveCreativeIntroBlendCapability(videoModels),
+    [videoModels],
+  );
+  const blendBounds = useMemo(
+    () => creativeIntroBlendStartBounds(frameSec, duration),
+    [duration, frameSec],
+  );
+  const blendRange = useMemo(
+    () => normalizeCreativeIntroBlendRange(blendStartSec, frameSec, duration),
+    [blendStartSec, duration, frameSec],
+  );
+  const canBlend = Boolean(blendCapability && blendRange);
 
   useEffect(() => {
     if (!open) return;
@@ -66,19 +100,83 @@ export function CreativeIntroDialog({ open, onOpenChange, sourceNode }: Creative
     setLoadedDuration(0);
     setDesignStyle('minimal');
     setMotionStyle('blurFade');
-    setCreating(false);
+    setBlendOriginal(false);
+    setBlendStartSec(0);
+    setPreviewingBlend(false);
+    setCreatingStep('idle');
   }, [open, sourceNode?.id]);
 
+  useEffect(() => {
+    if (canBlend || !blendOriginal) return;
+    setBlendOriginal(false);
+    setPreviewingBlend(false);
+    videoRef.current?.pause();
+  }, [blendOriginal, canBlend]);
+
   const seekPreview = (next: number) => {
+    videoRef.current?.pause();
+    setPreviewingBlend(false);
     setFrameSec(next);
     if (videoRef.current && Number.isFinite(next)) videoRef.current.currentTime = next;
   };
 
-  const handleCreate = async () => {
-    const projectId = readUrl().project;
-    if (!sourceNode || !videoUrl || !projectId || !title.trim() || creating) return;
-    setCreating(true);
+  const toggleBlendPreview = async () => {
+    const video = videoRef.current;
+    if (!video || !blendRange) return;
+    if (previewingBlend) {
+      video.pause();
+      setPreviewingBlend(false);
+      return;
+    }
+    video.currentTime = blendRange.startSec;
     try {
+      await video.play();
+      setPreviewingBlend(true);
+    } catch (error) {
+      console.warn('[creative-intro] source clip preview failed', error);
+      setPreviewingBlend(false);
+    }
+  };
+
+  const handleCreate = async () => {
+    if (!sourceNode || !videoUrl || !projectId || !title.trim() || creating) return;
+    setCreatingStep(blendOriginal ? 'clip' : 'workflow');
+    try {
+      let blend:
+        | {
+            clipUrl: string;
+            range: NonNullable<typeof blendRange>;
+            capability: NonNullable<typeof blendCapability>;
+          }
+        | undefined;
+      if (blendOriginal) {
+        if (!blendRange || !blendCapability) {
+          throw new Error('Creative-intro source blending is not available.');
+        }
+        const resolution =
+          (typeof videoData?.widthPx === 'number' && videoData.widthPx >= 1920) ||
+          String(videoData?.quality ?? '').toLowerCase() === '1080p'
+            ? '1080p'
+            : '720p';
+        const clipUrl = await renderCreativeIntroBlendClip(
+          {
+            submit: submitFreezoneVideoCompose,
+            awaitCompletion: (taskKey, activeProjectId, taskType) =>
+              awaitTaskCompletion(taskKey, activeProjectId, { taskType }),
+            fetchResult: fetchFreezoneJobResult,
+          },
+          {
+            projectId,
+            sourceNodeId: sourceNode.id,
+            sourceUrl: videoUrl,
+            range: blendRange,
+            resolution,
+            canvasId,
+          },
+        );
+        blend = { clipUrl, range: blendRange, capability: blendCapability };
+        setCreatingStep('workflow');
+      }
       const blob = await captureVideoFrameBlob(displayUrl ?? videoUrl, frameSec);
       const filename = `creative-intro-${Date.now()}.png`;
       const uploaded = await uploadFreezoneImage(
@@ -102,10 +200,12 @@ export function CreativeIntroDialog({ open, onOpenChange, sourceNode }: Creative
           keyframeUrl: uploaded.url,
           aspectRatio,
           plan: { title: title.trim(), frameSec, designStyle, motionStyle },
+          blend,
           labels: {
             keyframe: t('canvas.creativeIntro.keyframeNode'),
             design: t('canvas.creativeIntro.designNode'),
             motion: t('canvas.creativeIntro.motionNode'),
+            clip: t('canvas.creativeIntro.blendClipNode'),
           },
         },
       );
@@ -115,7 +215,7 @@ export function CreativeIntroDialog({ open, onOpenChange, sourceNode }: Creative
       console.error('[creative-intro] workflow creation failed', error);
       toast.error(t('canvas.creativeIntro.createFailed'));
     } finally {
-      setCreating(false);
+      setCreatingStep('idle');
     }
   };
 
@@ -141,6 +241,14 @@ export function CreativeIntroDialog({ open, onOpenChange, sourceNode }: Creative
                   const next = event.currentTarget.duration;
                   if (Number.isFinite(next)) setLoadedDuration(next);
                 }}
+                onTimeUpdate={(event) => {
+                  if (!previewingBlend || !blendRange) return;
+                  if (event.currentTarget.currentTime < blendRange.endSec) return;
+                  event.currentTarget.pause();
+                  event.currentTarget.currentTime = blendRange.endSec;
+                  setPreviewingBlend(false);
+                }}
+                onEnded={() => setPreviewingBlend(false)}
               />
             ) : null}
           </div>
@@ -185,8 +293,96 @@ export function CreativeIntroDialog({ open, onOpenChange, sourceNode }: Creative
             onSelect={(value) => setMotionStyle(value as CreativeIntroMotionStyle)}
           />
 
+          <div className="space-y-3 rounded-[var(--radius)] border border-white/10 bg-white/[0.03] p-3">
+            <div className="flex items-start gap-3">
+              <Checkbox
+                id="creative-intro-blend-original"
+                checked={blendOriginal}
+                disabled={!canBlend || creating}
+                onCheckedChange={(checked) => {
+                  const enabled = checked === true;
+                  setBlendOriginal(enabled);
+                  if (enabled && blendBounds) {
+                    setBlendStartSec(
+                      Math.min(Math.max(frameSec - 2.5, blendBounds.min), blendBounds.max),
+                    );
+                  }
+                }}
+              />
+              <label htmlFor="creative-intro-blend-original" className="min-w-0 flex-1 cursor-pointer">
+                <span className="block text-sm font-medium">
+                  {t('canvas.creativeIntro.blendOriginal')}
+                </span>
+                <span className="mt-1 block text-xs leading-5 text-[rgb(var(--text-muted-rgb))]">
+                  {videoModelsLoading
+                    ? t('canvas.creativeIntro.blendModelsLoading')
+                    : duration > 0 && duration < 5
+                      ? t('canvas.creativeIntro.blendTooShort')
+                      : !blendCapability
+                        ? t('canvas.creativeIntro.blendUnsupported')
+                        : t('canvas.creativeIntro.blendReady', {
+                            model: blendCapability.modelLabel,
+                          })}
+                </span>
+              </label>
+            </div>
+
+            {blendOriginal && blendRange && blendBounds ? (
+              <div className="space-y-2 border-t border-white/10 pt-3">
+                <div className="flex items-center justify-between gap-3 text-xs">
+                  <span>{t('canvas.creativeIntro.blendRange')}</span>
+                  <span className="text-[rgb(var(--text-muted-rgb))]">
+                    {t('canvas.creativeIntro.blendRangeValue', {
+                      start: blendRange.startSec.toFixed(2),
+                      end: blendRange.endSec.toFixed(2),
+                      offset: blendRange.keyframeOffsetSec.toFixed(2),
+                    })}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={blendBounds.min}
+                  max={blendBounds.max}
+                  step={0.05}
+                  value={blendRange.startSec}
+                  disabled={creating}
+                  onChange={(event) => {
+                    const next = Number(event.target.value);
+                    videoRef.current?.pause();
+                    setPreviewingBlend(false);
+                    setBlendStartSec(next);
+                    if (videoRef.current) videoRef.current.currentTime = next;
+                  }}
+                  className="w-full accent-[rgb(var(--accent-rgb))]"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={creating}
+                  onClick={() => void toggleBlendPreview()}
+                >
+                  {previewingBlend ? (
+                    <Square className="mr-2 h-3.5 w-3.5" />
+                  ) : (
+                    <Play className="mr-2 h-3.5 w-3.5" />
+                  )}
+                  {t(
+                    previewingBlend
+                      ? 'canvas.creativeIntro.stopBlendPreview'
+                      : 'canvas.creativeIntro.previewBlend',
+                  )}
+                </Button>
+              </div>
+            ) : null}
+          </div>
+
           <p className="rounded-[var(--radius)] bg-white/[0.04] p-3 text-xs leading-5 text-[rgb(var(--text-muted-rgb))]">
-            {t('canvas.creativeIntro.noChargeHint')}
+            {t(
+              blendOriginal
+                ? 'canvas.creativeIntro.blendNoChargeHint'
+                : 'canvas.creativeIntro.noChargeHint',
+            )}
           </p>
         </div>
 
@@ -196,7 +392,11 @@ export function CreativeIntroDialog({ open, onOpenChange, sourceNode }: Creative
           </Button>
           <Button disabled={!title.trim() || !videoUrl || creating} onClick={() => void handleCreate()}>
             {creating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-            {t('canvas.creativeIntro.createWorkflow')}
+            {t(
+              creatingStep === 'clip'
+                ? 'canvas.creativeIntro.creatingBlendClip'
+                : 'canvas.creativeIntro.createWorkflow',
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>

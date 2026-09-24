@@ -51,12 +51,14 @@ reason = "Register the stable creative-intro action."
 
 [[claims]]
 path = "frontend/src/features/canvas/application/creativeIntroWorkflow.ts"
-mode = "exclusive"
+mode = "shared"
+shared_with = ["creative-intro-blend"]
 reason = "Pure prompt and graph orchestration logic."
 
 [[claims]]
 path = "frontend/src/features/canvas/ui/CreativeIntroDialog.tsx"
-mode = "exclusive"
+mode = "shared"
+shared_with = ["creative-intro-blend"]
 reason = "Creative-intro configuration UI."
 
 [[claims]]
@@ -85,7 +87,8 @@ reason = "Vietnamese creative-intro strings; merge by key."
 
 [[claims]]
 path = "frontend/src/__tests__/features/canvas/creative-intro-workflow.test.ts"
-mode = "exclusive"
+mode = "shared"
+shared_with = ["creative-intro-blend"]
 reason = "Creative-intro prompt and graph regression coverage."
 
 [[claims]]
@@ -97,5 +100,5 @@ reason = "Assert the video creative-intro descriptor alongside audio actions."
 [[claims]]
 path = "docs/guides/liblib-canvas-parity.md"
 mode = "shared"
-shared_with = ["canvas-audio-split", "creative-intro-discovery", "liblib-canvas-parity"]
+shared_with = ["canvas-audio-split", "creative-intro-blend", "creative-intro-discovery", "liblib-canvas-parity"]
 reason = "Record that the basic explicit creative-intro chain is now implemented."
