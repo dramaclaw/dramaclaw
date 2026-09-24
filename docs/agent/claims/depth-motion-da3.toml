@@ -60,7 +60,7 @@ reason = "Depth and breakdown leaf classification share the runner."
 [[claims]]
 path = "frontend/src/features/canvas/nodes/VideoNode.tsx"
 mode = "shared"
-shared_with = ["liblib-canvas-parity", "shot-breakdown", "minimax-h3-reference-order"]
+shared_with = ["liblib-canvas-parity", "shot-breakdown", "minimax-h3-reference-order", "sync-main-remotes"]
 reason = "Depth-motion action and video recreation actions share one node."
 
 [[claims]]

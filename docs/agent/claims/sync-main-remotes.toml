@@ -1,0 +1,712 @@
+version = 1
+slug = "sync-main-remotes"
+ledger = "docs/agent/tasks/sync-main-remotes.md"
+baseline = "e7b1fbce"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Register the cross-remote integration lifecycle and conflict radar."
+
+[[claims]]
+path = "docs/agent/tasks/sync-main-remotes.md"
+mode = "coordination"
+reason = "Plan, verification, and handoff ledger for the final integrator."
+
+[[claims]]
+path = "docs/agent/claims/sync-main-remotes.toml"
+mode = "coordination"
+reason = "Exact machine-readable import and conflict-resolution scope."
+
+[[claims]]
+path = "frontend/public/locales/vi/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Resolve the only locale conflict by key while preserving both branches."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/VideoNode.tsx"
+mode = "shared"
+shared_with = ["*"]
+reason = "Final integration of H3/Mixed, LibTV/depth/shot, and upstream validation/extension behavior."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/shared/videoModelCapabilities.ts"
+mode = "exclusive"
+reason = "Resolve the H3 capability matrix with upstream reference-validation rules."
+
+[[claims]]
+path = "tests/test_freezone_canvas_route_home_node_guard.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Resolve the route-count and home-node guard contract against the merged route table."
+
+[[claims]]
+path = "README.md"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "assets/readme/ASSET-LAYOUT-REVISION.md"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "assets/readme/GENERATION.md"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "assets/readme/REVISION-NOTES.md"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "assets/readme/asset-library.jpg"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "assets/readme/director-world.jpg"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "assets/readme/storyboards.jpg"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "assets/readme/xia-director.jpg"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "docs/reference-media-validation.md"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/public/locales/en/translation.json"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/public/locales/zh/translation.json"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/api/client.test.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/api/freezone-video-extend.test.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/components/credits/credit-center-payment-visibility.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/components/credits/payment-order-lifecycle.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/components/episode/beat-workbench/render-section.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/components/layout/credit-balance-badge.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/components/login/login-card.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/reference-validation.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/video-mode-disabled-reason.test.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/video-model-capabilities.test.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/features/freezone/current-beat-context.test.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/hooks/use-task-controller-previous-run.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/lib/custom-recharge.test.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/lib/payment-return.test.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/lib/product-surfaces.test.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/lib/queries/credits.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/lib/queries/payments.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/routes/audio-indextts2-contract.test.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/routes/checkout-custom-recharge.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/routes/credits-org-scope.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/routes/credits-route.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/api/ops.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/api/referenceMediaLimits.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/api/skills.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/components/credits/CreditCenterDialog.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/components/episode/beat-workbench/audio-pane.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/components/episode/beat-workbench/batch-bar.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/components/episode/beat-workbench/batch-panel.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/components/episode/beat-workbench/render-section.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/components/layout/credit-balance-badge.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/components/login/login-card.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/components/settings/settings-dialog.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/components/themed-toaster.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/features/canvas/domain/canvasNodes.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/ImageGenNode.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/SkillNode.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/VideoOperationsPanel.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/shared/ReferenceValidationDialog.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/features/freezone/context/currentBeatContext.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/lib/api-errors.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/lib/audioTranscode.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/lib/custom-recharge.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/lib/payment-errors.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/lib/payment-navigation.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/lib/payment-return.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/lib/queries/credits.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/lib/queries/payments.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/lib/queries/product-surfaces.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/lib/query-keys.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/routeTree.gen.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/routes/_app/credits.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/routes/_app/payment-return.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/routes/checkout.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/routes/recharge.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "license-inventory.csv"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "pyproject.toml"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "readme/README_th.md"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "readme/README_vi.md"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "readme/README_zh.md"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "scripts/check_env_config.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/api/deps.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/api/gunicorn_worker.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/api/routes/files.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/api/routes/freezone.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/api/routes/generation.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/api/routes/tasks.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/api/schemas.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/api/sse_shutdown.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/director_world/scene_360_builder.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/freezone/audio_node.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/freezone/jobs.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/freezone/reference_validation.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/freezone/video_node.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/generators/indextts2_fal.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/generators/nanobanana_character.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/generators/nanobanana_grid.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/generators/nanobanana_prop.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/generators/pool_indexer.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/generators/render_identity_guard.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/generators/scene_reference_images.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/generators/video_generator.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/media_archive_copy.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/media_model_request_schema.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/official_media_models.json"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/ports/__init__.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/ports/project.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/ports/registry.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/ports/video_delivery.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/project_context.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/release-notes.md"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/task_backend/run_core.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/task_backend/runners/audio.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/task_backend/runners/render.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/task_backend/runners/video.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/utils/media_download.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/contract/test_m05_route_contracts.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/contract/test_m09_route_contracts.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_api_freezone_projection.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_api_grid_upload_transaction.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_api_gunicorn_worker.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_api_render_regenerate.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_freezone_audio_separate_runner.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_freezone_image_backend.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_freezone_mainline_enqueue_projection.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_freezone_reference_file_upload.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_freezone_video_route_modes.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_media_archive_copy.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_media_model_request_schema.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_media_read_authorization.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_media_thumbnails.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_model_gateway_settings.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_newapi_image_gateway.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_p0g4d_audio_egress.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_pool_indexer_concurrency.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_reference_media_routes.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_reference_media_validation.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_release_feed.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_render_identity_guard.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_render_runner_canvas_skill_inputs.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_task_video_runner_returned_last_frame.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_tasks_stream_list.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_video_archive_delivery.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "uv.lock"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."

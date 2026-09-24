@@ -61,5 +61,5 @@ reason = "Historical project-card work shares the LibTV import dialog."
 [[claims]]
 path = "tests/test_freezone_canvas_route_home_node_guard.py"
 mode = "shared"
-shared_with = ["liblib-canvas-parity"]
+shared_with = ["liblib-canvas-parity", "sync-main-remotes"]
 reason = "Historical route guard now shares the LibTV endpoint and missing-canvas contract."

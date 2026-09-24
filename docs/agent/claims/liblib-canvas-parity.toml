@@ -129,7 +129,7 @@ reason = "Imported-node fallbacks share the lazy registry with LOD heavy compone
 [[claims]]
 path = "frontend/src/features/canvas/nodes/VideoNode.tsx"
 mode = "shared"
-shared_with = ["depth-motion-da3", "shot-breakdown", "minimax-h3-reference-order"]
+shared_with = ["depth-motion-da3", "shot-breakdown", "minimax-h3-reference-order", "sync-main-remotes"]
 reason = "Video remake/continuation and depth-motion entry share the video node."
 
 [[claims]]
@@ -284,7 +284,7 @@ reason = "Canvas import regression tests."
 [[claims]]
 path = "tests/test_freezone_canvas_route_home_node_guard.py"
 mode = "shared"
-shared_with = ["legacy-unassigned-diff"]
+shared_with = ["legacy-unassigned-diff", "sync-main-remotes"]
 reason = "Route-count and missing-canvas contracts updated for LibTV endpoints."
 
 [[claims]]

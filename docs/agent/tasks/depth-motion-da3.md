@@ -43,6 +43,8 @@
 - `origin/feat/canvas-video-reshoot-breakdown` 已包含另一套前端 depth capture，并改同一批 API / runner / VideoNode。
   两者可能是浏览器端局部深度与服务端 DA3 视频的互补能力，也可能产品入口重复；未审计前不得互相替换。
 - `freezone.py` 还被 `origin/main` 修改。最终集成顺序：先同步 API 基线，再合 shot 公共契约，最后接 DA3 leaf。
+- `sync-main-remotes` 在上述提交均已落盘后作为唯一最终集成者；它只解决 `VideoNode.tsx` 的三方冲突，
+  必须同时保留 DA3 入口、拉片/LibTV 行为与上游引用校验，不重新定义本线领域契约。
 
 ## 实施方案（后续）
 

@@ -60,6 +60,8 @@ LibTV 画布导入不再丢节点语义，视频节点工具条按实测规格�
   `origin/main` 影响。不能以当前整文件作为最终提交内容。
 - 与 LOD 共享 `Canvas.tsx`、`index.css`、`LodShellNode.tsx`、`AssetCommitHandle.tsx` 等。
   顺序应为：先完成 LOD 4 文件来源审计，再由本线集成者处理工具条 / 节点行为。
+- `sync-main-remotes` 是双方 main 合流的最终集成者；只允许在隔离 worktree 解决 `VideoNode.tsx` 和
+  home-node guard 测试冲突，必须保留本线已提交的重拍/续写/导入行为并吸收上游新合同。
 
 ## 实施方案（已执行）
 
