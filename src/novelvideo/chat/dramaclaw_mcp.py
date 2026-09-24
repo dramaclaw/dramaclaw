@@ -423,7 +423,8 @@ def _workflow_schema_recovery_instruction(tool_name: str) -> str | None:
     }:
         return None
     return (
-        "WorkflowPlan 校验失败。不要提交单节点探测、空 edges 或 compact Intent。"
+        "WorkflowPlan 校验失败。先按 message/path 指出的字段逐项修正，不要逐个猜删其它字段。"
+        "不要提交单节点探测、空 edges 或 compact Intent。"
         "请保留同一份完整节点清单和所有边；每个可执行节点必须把"
         "workflowCatalog.recipeId 放在节点 data 内。确认所有 edge 的 source/target"
         "都对应 nodes[].id。提交前由 Agent 检查整图连通性；独立 Beat/镜头分支应通过"
@@ -716,7 +717,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                         result = await result
                     adapted = _adapt_external_agent_tool_result(name, result)
                     return _structured_tool_result(name, adapted)
-            diagnostics = workflow_plan_schema_diagnostics(arguments)
+            diagnostics = workflow_plan_schema_diagnostics(arguments, input_schema)
             validation_path, validation_message = _schema_validation_diagnostic(exc)
             error_payload = {
                 "ok": False,
