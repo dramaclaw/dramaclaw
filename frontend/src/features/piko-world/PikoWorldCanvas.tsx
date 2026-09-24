@@ -1,6 +1,6 @@
-import { mapPerspectiveScale } from './runtime/map-perspective';
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { mapPerspectiveScale } from "./runtime/map-perspective";
 import { PikoTaskLabel } from "./PikoTaskLabel";
 import type { PikoOwnTaskStatus } from "./use-piko-task-status";
 import { PIKO_MAP_TRAVEL_TIMING } from "./piko-map-timing";
@@ -20,11 +20,11 @@ import { pointInPolygon } from "./runtime/navigation-geometry";
 import { pikoSeatAction } from "./runtime/seat-actions";
 import { SEATED_POSE } from "./runtime/seated-pose";
 import exitMarkerStyles from "./piko-map-exit-marker.module.css";
-import { createCourtyardFish } from "./runtime/courtyard-fish";
+import { createMapRiverFish, LANTERN_CANAL_FISH } from "./runtime/map-river-fish";
 import { createEnvironmentEffectRuntime } from "./runtime/environment-effect-runtime";
 import { createCourtyardFoliageRuntime } from "./runtime/courtyard-foliage-runtime";
-import { createCourtyardAerialRuntime } from "./runtime/courtyard-aerial-runtime";
-import { createCourtyardLampRuntime } from "./runtime/courtyard-lamp";
+import { createMapAerialRuntime } from "./runtime/map-aerial-runtime";
+import { createCourtyardLampRuntime, createLanternCanalLampRuntime } from "./runtime/courtyard-lamp";
 import { createCourtyardAnimalRuntime } from "./runtime/courtyard-animal-runtime";
 import { createAnimalAudio } from "./runtime/animal-audio";
 import { createEnvironmentAudio } from "./runtime/environment-audio";
@@ -153,13 +153,13 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
     let mayorActor: ReturnType<typeof createMayorActor> | null = null;
     let environmentRuntime: Awaited<ReturnType<typeof createEnvironmentEffectRuntime>> = null;
     let courtyardFoliageRuntime: Awaited<ReturnType<typeof createCourtyardFoliageRuntime>> = null;
-    let courtyardAerialRuntime: Awaited<ReturnType<typeof createCourtyardAerialRuntime>> = null;
-    let courtyardLamp: ReturnType<typeof createCourtyardLampRuntime> | null = null;
+    let aerialRuntime: Awaited<ReturnType<typeof createMapAerialRuntime>> = null;
+    let lampRuntime: ReturnType<typeof createCourtyardLampRuntime> | null = null;
     let courtyardAnimalRuntime: Awaited<ReturnType<typeof createCourtyardAnimalRuntime>> = null;
     let animalAudio: ReturnType<typeof createAnimalAudio> | null = null;
     let worldDog: Awaited<ReturnType<typeof getWorldDog>> | null = null;
     let lastDogGreeting = "";
-    let courtyardFish: Awaited<ReturnType<typeof createCourtyardFish>> = null;
+    let riverFishRuntime: Awaited<ReturnType<typeof createMapRiverFish>> = null;
     let environmentAudio: ReturnType<typeof createEnvironmentAudio> | null = null;
     let interactions: Awaited<ReturnType<typeof loadPikoMapInteractions>> | null = null;
     let playerSitTexture: Texture | null = null;
@@ -198,9 +198,9 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
       animalAudio?.destroy();
       exitMarkers.forEach(marker => marker.destroy());
       courtyardAnimalRuntime?.destroy();
-      courtyardAerialRuntime?.destroy();
-      courtyardLamp?.destroy();
-      courtyardFish?.destroy();
+      aerialRuntime?.destroy();
+      lampRuntime?.destroy();
+      riverFishRuntime?.destroy();
       environmentRuntime?.destroy();
       environmentAudio?.destroy();
       courtyardFoliageRuntime?.destroy();
@@ -352,25 +352,31 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
         });
         if (!environmentRuntime) return;
         environmentRuntime.objects.forEach(object => world.addChild(object));
-        if (mapId === "welcome-courtyard") {
-          const surfaces = environment.effects.flatMap(definition => {
-            if (!definition.id.startsWith("river-water-") || !definition.region) return [];
-            const sprite = environmentRuntime?.objects.find(object => object.label === definition.id)?.children[0];
-            return sprite instanceof Sprite ? [{ points: definition.region.points, sprite }] : [];
-          });
-          courtyardFish = await createCourtyardFish({ ticker: nextApp.ticker, surfaces,
-            resolveAssetUrl: src => resolvePikoMapAssetUrl(mapId, src), isDisposed: () => disposed });
+        if (mapId === "welcome-courtyard" || mapId === "lantern-canal-street") {
+          riverFishRuntime = await createMapRiverFish({ ticker: nextApp.ticker, surfaces: environmentRuntime.waterSurfaces,
+            resolveAssetUrl: src => resolvePikoMapAssetUrl("welcome-courtyard", src), isDisposed: () => disposed,
+            placements: mapId === "lantern-canal-street" ? LANTERN_CANAL_FISH : undefined });
           if (disposed) return;
-          if (courtyardFish) courtyardFish.objects.forEach(object => world.addChild(object));
-          courtyardAerialRuntime = await createCourtyardAerialRuntime({
+          if (riverFishRuntime) riverFishRuntime.objects.forEach(object => world.addChild(object));
+        }
+        if (mapId === "welcome-courtyard") {
+          lampRuntime = createCourtyardLampRuntime(nextApp.ticker);
+          world.addChild(...lampRuntime.containers);
+        }
+        if (mapId === "lantern-canal-street") {
+          lampRuntime = createLanternCanalLampRuntime(nextApp.ticker);
+          world.addChild(...lampRuntime.containers);
+        }
+        if (mapId === "welcome-courtyard" || mapId === "artisan-market" || mapId === "lantern-canal-street") {
+          aerialRuntime = await createMapAerialRuntime({
+            mapId,
             ticker: nextApp.ticker,
-            resolveAssetUrl: src => resolvePikoMapAssetUrl(mapId, src),
+            // These maps use the same approved artwork and shared texture lease.
+            resolveAssetUrl: src => resolvePikoMapAssetUrl("welcome-courtyard", src),
             isDisposed: () => disposed,
           });
-          if (!courtyardAerialRuntime) return;
-          courtyardAerialRuntime.objects.forEach(object => world.addChild(object));
-          courtyardLamp = createCourtyardLampRuntime(nextApp.ticker);
-          world.addChild(...courtyardLamp.containers);
+          if (!aerialRuntime) return;
+          aerialRuntime.objects.forEach(object => world.addChild(object));
         }
         setPlayerHeadOccluded(false);
 

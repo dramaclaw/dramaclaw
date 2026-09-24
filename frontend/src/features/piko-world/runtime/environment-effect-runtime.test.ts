@@ -20,11 +20,13 @@ it("mounts data-authored sprites with one shared texture load and one owned life
     mapId: "test-map",
     globalLighting: { preset: "neutral-day", intensity: 1 },
     effects: [
-      { id: "foreground", kind: "sprite", src: "base.png", layer: "front-scenery", region,
+      { id: "foreground", kind: "sprite", src: "base.png", layer: "front-scenery", region, opacity: 0.4,
         reducedMotion: "keep" },
       { id: "flowers-a", kind: "sprite", src: "effects/flowers.png", layer: "front-scenery", region,
         animation: { columns: 2, rows: 1, frames: 2, fps: 1, inset: 0 }, reducedMotion: "simplify" },
-      { id: "flowers-b", kind: "sprite", src: "effects/flowers.png", layer: "behind-scenery", region,
+      { id: "flowers-b", kind: "sprite", src: "effects/flowers.png", layer: "behind-scenery", region, opacity: 0.35,
+        animation: { columns: 2, rows: 1, frames: 2, fps: 1, inset: 0 }, reducedMotion: "simplify" },
+      { id: "river", kind: "sprite", src: "effects/flowers.png", layer: "water", region,
         animation: { columns: 2, rows: 1, frames: 2, fps: 1, inset: 0 }, reducedMotion: "simplify" },
     ],
     audioZones: [],
@@ -42,10 +44,15 @@ it("mounts data-authored sprites with one shared texture load and one owned life
   expect(runtime).not.toBeNull();
   expect(load).toHaveBeenCalledTimes(1);
   expect(runtime!.objects.map(object => object.label)).toEqual([
-    "foreground", "flowers-a", "Graphics", "flowers-b", "Graphics",
+    "foreground", "flowers-a", "Graphics", "flowers-b", "Graphics", "river", "Graphics",
   ]);
   expect(environmentLayerZIndex("front-scenery")).toBe(-0.25);
   expect(environmentLayerZIndex("behind-scenery")).toBe(-0.75);
+  expect(runtime!.objects.find(object => object.label === "flowers-b")?.alpha).toBe(0.35);
+  expect(runtime!.objects.find(object => object.label === "foreground")?.alpha).toBe(0.4);
+  expect(runtime!.waterSurfaces).toHaveLength(1);
+  expect(runtime!.waterSurfaces[0]).toMatchObject({ id: "river", points: region.points });
+  expect(runtime!.waterSurfaces[0].sprite.parent?.label).toBe("river");
   const windAnimation = environmentSpriteAnimation(PikoEnvironmentSchema.parse({
     schemaVersion: 1, mapId: "test-map", globalLighting: { preset: "neutral-day", intensity: 1 }, audioZones: [],
     effects: [{ id: "flowers", kind: "sprite", reducedMotion: "simplify",
@@ -55,6 +62,7 @@ it("mounts data-authored sprites with one shared texture load and one owned life
   expect(windAnimation.sequence).toEqual([0, 1, 2, 3]);
   expect(windAnimation.stepAt?.(1200)).toBe(1);
   runtime!.destroy();
+  expect(runtime!.waterSurfaces).toEqual([]);
   await vi.waitFor(() => expect(unload).toHaveBeenCalledOnce());
   expect(ticker.count).toBe(0);
   ticker.destroy();

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { existsSync, readFileSync } from 'node:fs';
 import { expect, it } from 'vitest';
-import { ARTISAN_MARKET_ANIMALS, isAnimalPositionNavigable } from './courtyard-animals';
+import { ARTISAN_MARKET_ANIMALS, LANTERN_CANAL_ANIMALS, isAnimalPositionNavigable } from './courtyard-animals';
 import { PikoMapPackageSchema, PikoNavigationSchema } from './map-package-schema';
 import { navigationIssues } from './navigation-editor';
 
@@ -28,10 +28,13 @@ for (const map of maps) it(`${map}: authored geometry and environment assets are
   }
 });
 
-it('places market ground animals and their routes on navigable ground', () => {
+it.each([
+  ['artisan-market', ARTISAN_MARKET_ANIMALS],
+  ['lantern-canal-street', LANTERN_CANAL_ANIMALS],
+] as const)('places %s ground animals and their routes on navigable ground', (map, animals) => {
   const navigation = PikoNavigationSchema.parse(JSON.parse(readFileSync(
-    'public/piko/world/maps/artisan-market/data/navigation.json', 'utf8')));
-  for (const animal of ARTISAN_MARKET_ANIMALS.filter(a => a.kind !== 'butterfly')) {
+    `public/piko/world/maps/${map}/data/navigation.json`, 'utf8')));
+  for (const animal of animals.filter(a => a.kind !== 'butterfly')) {
     const route = [animal.position, ...(animal.route ?? []), animal.position];
     for (let i = 1; i < route.length; i++) {
       const a = route[i - 1], b = route[i];

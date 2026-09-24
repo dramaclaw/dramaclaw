@@ -45,7 +45,7 @@ export const MAP_EXIT_MARKERS: Record<PikoMapId, readonly PikoExitMarkerDefiniti
   ],
   "lantern-canal-street": [
     { exitId: "to-welcome-courtyard", targetMapId: "welcome-courtyard",
-      position: { x: 165, y: 435 }, direction: "north" },
+      position: { x: 440, y: 53 }, direction: "north" },
     { exitId: "to-starlight-dock", targetMapId: "starlight-dock",
       position: { x: 1990, y: 565 }, direction: "east" },
   ],

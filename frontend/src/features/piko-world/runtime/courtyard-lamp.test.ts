@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { afterEach, expect, it, vi } from "vitest";
 import { Ticker } from "pixi.js";
-import { COURTYARD_LAMPS, createCourtyardLampRuntime } from "./courtyard-lamp";
+import { COURTYARD_LAMPS, LANTERN_CANAL_LAMPS, createCourtyardLampRuntime, createLanternCanalLampRuntime } from "./courtyard-lamp";
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -50,5 +50,28 @@ it("bounds particles, pauses while hidden, and releases its ticker and listeners
   lamp.destroy(); lamp.destroy();
   expect(remove).toHaveBeenCalledTimes(1);
   expect(lamp.containers.every(container => container.destroyed)).toBe(true);
+  ticker.destroy();
+});
+
+it("places a light and bounded particles on each of the three canal bridge posts", () => {
+  vi.stubGlobal("matchMedia", () => ({ matches: false,
+    addEventListener: () => {}, removeEventListener: () => {} }));
+  const ticker = new Ticker(); ticker.autoStart = false;
+  const runtime = createLanternCanalLampRuntime(ticker, () => 0);
+  expect(runtime.containers).toHaveLength(3);
+  runtime.containers.forEach((container, index) => {
+    expect({ x: container.x, y: container.y, depth: container.zIndex }).toEqual({
+      x: LANTERN_CANAL_LAMPS[index].x,
+      y: LANTERN_CANAL_LAMPS[index].y,
+      depth: LANTERN_CANAL_LAMPS[index].baseY,
+    });
+    expect(container.getChildByLabel("lamp-halo")).toBeTruthy();
+    expect(container.getChildByLabel("lamp-particles")?.children).toHaveLength(4);
+  });
+  for (let time = 100; time <= 2000; time += 100) ticker.update(time);
+  expect(runtime.containers.every(container =>
+    container.getChildByLabel("lamp-particles")!.children.some(item => item.visible))).toBe(true);
+  runtime.destroy();
+  expect(ticker.count).toBe(0);
   ticker.destroy();
 });

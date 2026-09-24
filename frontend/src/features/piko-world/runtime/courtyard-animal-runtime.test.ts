@@ -152,7 +152,7 @@ it('renders the shared dog only on its current map and never advances it from a 
   runtime.destroy();ticker.destroy();sheet.destroy(true);
 });
 
-it.each(['artisan-market', 'lantern-canal-street'])('keeps the shared dog in %s without loading unused cat assets', async mapId => {
+it.each(['artisan-market', 'lantern-canal-street'])('keeps the shared dog and local animals in %s without loading unused cat assets', async mapId => {
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
   const sheets: Texture[] = [];
   const load = vi.spyOn(Assets, 'load').mockImplementation(async () => {
@@ -163,7 +163,11 @@ it.each(['artisan-market', 'lantern-canal-street'])('keeps the shared dog in %s 
   const runtime = (await createCourtyardAnimalRuntime({ ...options(ticker), mapId }))!;
   try {
     expect(runtime.actors.filter(actor => actor.placement.kind === 'dog')).toHaveLength(1);
-    expect(runtime.actors.some(actor => actor.placement.kind === 'hen')).toBe(mapId === 'artisan-market');
+    expect(runtime.actors.some(actor => actor.placement.kind === 'hen')).toBe(true);
+    if (mapId === 'lantern-canal-street') {
+      expect(runtime.actors.some(actor => actor.placement.kind === 'rabbit')).toBe(true);
+      expect(runtime.actors.some(actor => actor.placement.kind === 'squirrel')).toBe(true);
+    }
     expect(load.mock.calls.some(([url]) => String(url).includes('cat'))).toBe(false);
     runtime.actors.forEach(actor => {
       actor.render();

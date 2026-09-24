@@ -138,6 +138,7 @@ export const PikoEnvironmentSchema = z.strictObject({
       src: RelativePackagePathSchema.optional(),
       region: PikoPolygonSchema.optional(),
       layer: z.enum(["water", "behind-scenery", "front-scenery"]).optional(),
+      opacity: z.number().min(0).max(1).optional(),
       animation: z.strictObject({
         columns: z.number().int().positive(), rows: z.number().int().positive(),
         frames: z.number().int().positive(), fps: z.number().positive().max(60),

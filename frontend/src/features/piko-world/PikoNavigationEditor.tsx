@@ -112,7 +112,7 @@ export default function PikoNavigationEditor({ navigation, fit, player, onApply,
   const apply = () => {
     const issues = navigationIssues(draft);
     if(issues.length) { setMessage('请先修复轮廓问题，再试走。'); return; }
-    if(!canStand(player,draft)) { setMessage('当前角色位置被草稿阻挡。请撤销该处修改，或恢复原图试走到空地后再编辑。'); return; }
+    if(!canStand(player,draft)) { setMessage('当前角色位置被草稿阻挡。请移开或删除该处碰撞区后再试走。'); return; }
     onApply(copy(draft)); setEditing(false); onEditing(false); onPlay();
   };
 
@@ -120,10 +120,8 @@ export default function PikoNavigationEditor({ navigation, fit, player, onApply,
     drag.current = null;
     cancelDrawing();
     setPanelHidden(false);
-    onApply(copy(original.current));
-    onOcclusionApply?.(structuredClone(occlusion ?? { schemaVersion: 1, mapId: navigation.mapId, occluders: [] }));
+    cleanup.current();
     setOpen(false);
-    onEditing(false);
     onPlay();
     setMessage('');
   };
@@ -147,6 +145,14 @@ export default function PikoNavigationEditor({ navigation, fit, player, onApply,
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   const resumeEditing = () => { setEditing(true); onEditing(true); };
+  const openTools = () => {
+    setOpen(true);
+    resumeEditing();
+    // Closing restores the map, but retains drafts for this editor session.
+    // Restore both previews when reopening so outlines and runtime agree.
+    onApply(copy(draft));
+    onOcclusionApply?.({ schemaVersion: 1, mapId: navigation.mapId, occluders: structuredClone(occluders) });
+  };
   const startDrawing = () => {
     resumeEditing(); setDrawing(true); setPath([]); setCursor(null); setMessage(''); setPanelHidden(true);
   };
@@ -215,7 +221,7 @@ export default function PikoNavigationEditor({ navigation, fit, player, onApply,
   };
 
   return <>
-    {!open && <button className={styles.launch} onClick={()=>{setOpen(true);setEditing(true);onEditing(true);}}>场景调试</button>}
+    {!open && <button className={styles.launch} onClick={openTools}>场景调试</button>}
     {open && <>
       <svg ref={svgRef} className={styles.overlay} viewBox="0 0 2048 1152" aria-label="地图区域编辑层"
         style={{left:fit.x,top:fit.y,width:2048*fit.scale,height:1152*fit.scale,pointerEvents:editing?'auto':'none',cursor:drawing?'crosshair':undefined}}

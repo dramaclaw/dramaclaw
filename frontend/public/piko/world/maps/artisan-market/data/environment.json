@@ -164,15 +164,40 @@
       "id": "insects",
       "src": "audio/insects-v1.ogg",
       "region": {
-        "id": "insects-center",
-        "points": [{ "x": 850, "y": 450 }, { "x": 1150, "y": 450 }, { "x": 1150, "y": 700 }, { "x": 850, "y": 700 }]
+        "id": "insects-northwest-woods",
+        "points": [{ "x": 35, "y": 85 }, { "x": 305, "y": 85 }, { "x": 305, "y": 240 }, { "x": 35, "y": 240 }]
       },
       "additionalRegions": [
-        { "id": "insects-left-tree", "points": [{ "x": 480, "y": 500 }, { "x": 680, "y": 500 }, { "x": 680, "y": 680 }, { "x": 480, "y": 680 }] },
-        { "id": "insects-right-tree", "points": [{ "x": 1320, "y": 500 }, { "x": 1520, "y": 500 }, { "x": 1520, "y": 680 }, { "x": 1320, "y": 680 }] }
+        { "id": "insects-workshop-back-grove", "points": [{ "x": 345, "y": 110 }, { "x": 520, "y": 110 }, { "x": 520, "y": 270 }, { "x": 345, "y": 270 }] },
+        { "id": "insects-north-center-trees", "points": [{ "x": 940, "y": 125 }, { "x": 1100, "y": 125 }, { "x": 1100, "y": 275 }, { "x": 940, "y": 275 }] },
+        { "id": "insects-northeast-woods", "points": [{ "x": 1690, "y": 145 }, { "x": 1900, "y": 145 }, { "x": 1900, "y": 315 }, { "x": 1690, "y": 315 }] },
+        { "id": "insects-west-tree-undergrowth", "points": [{ "x": 315, "y": 545 }, { "x": 510, "y": 545 }, { "x": 510, "y": 730 }, { "x": 315, "y": 730 }] },
+        { "id": "insects-east-tree-undergrowth", "points": [{ "x": 1330, "y": 525 }, { "x": 1510, "y": 525 }, { "x": 1510, "y": 710 }, { "x": 1330, "y": 710 }] },
+        { "id": "insects-east-path-pines", "points": [{ "x": 1695, "y": 575 }, { "x": 1810, "y": 575 }, { "x": 1810, "y": 685 }, { "x": 1695, "y": 685 }] },
+        { "id": "insects-southwest-flowers", "points": [{ "x": 155, "y": 810 }, { "x": 375, "y": 810 }, { "x": 375, "y": 1010 }, { "x": 155, "y": 1010 }] },
+        { "id": "insects-southeast-flowers", "points": [{ "x": 1660, "y": 825 }, { "x": 1865, "y": 825 }, { "x": 1865, "y": 1010 }, { "x": 1660, "y": 1010 }] }
       ],
       "volume": 0.14,
-      "fadeDistance": 120,
+      "fadeDistance": 105,
+      "repeatDelay": 0
+    },
+    {
+      "id": "leaves",
+      "src": "audio/wind-v1.ogg",
+      "region": {
+        "id": "wind-northwest-woods",
+        "points": [{ "x": 20, "y": 5 }, { "x": 435, "y": 5 }, { "x": 435, "y": 295 }, { "x": 20, "y": 295 }]
+      },
+      "additionalRegions": [
+        { "id": "wind-north-center-trees", "points": [{ "x": 915, "y": 5 }, { "x": 1150, "y": 5 }, { "x": 1150, "y": 260 }, { "x": 915, "y": 260 }] },
+        { "id": "wind-northeast-woods", "points": [{ "x": 1510, "y": 45 }, { "x": 1950, "y": 45 }, { "x": 1950, "y": 325 }, { "x": 1510, "y": 325 }] },
+        { "id": "wind-west-main-tree", "points": [{ "x": 350, "y": 495 }, { "x": 705, "y": 495 }, { "x": 705, "y": 815 }, { "x": 350, "y": 815 }] },
+        { "id": "wind-east-main-tree", "points": [{ "x": 1305, "y": 490 }, { "x": 1680, "y": 490 }, { "x": 1680, "y": 820 }, { "x": 1305, "y": 820 }] },
+        { "id": "wind-southwest-grove", "points": [{ "x": 5, "y": 780 }, { "x": 425, "y": 780 }, { "x": 425, "y": 1115 }, { "x": 5, "y": 1115 }] },
+        { "id": "wind-southeast-grove", "points": [{ "x": 1655, "y": 770 }, { "x": 2043, "y": 770 }, { "x": 2043, "y": 1130 }, { "x": 1655, "y": 1130 }] }
+      ],
+      "volume": 0.14,
+      "fadeDistance": 180,
       "repeatDelay": 0
     }
   ]

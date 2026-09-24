@@ -26,143 +26,245 @@
   ],
   "colliders": [
     {
-      "id": "central-workbench",
+      "id": "market-workbench",
+      "kind": "prop",
       "points": [
         {
-          "x": 896,
-          "y": 482
+          "x": 906,
+          "y": 474
         },
         {
-          "x": 871,
-          "y": 480
+          "x": 1108,
+          "y": 474
         },
         {
-          "x": 865,
-          "y": 501
-        },
-        {
-          "x": 870,
-          "y": 528
+          "x": 1105,
+          "y": 526
         },
         {
           "x": 911,
-          "y": 522
+          "y": 526
+        }
+      ]
+    },
+    {
+      "id": "market-workbench-left-stool",
+      "kind": "prop",
+      "points": [
+        {
+          "x": 864,
+          "y": 497
         },
         {
-          "x": 1018,
-          "y": 521
+          "x": 902,
+          "y": 497
+        },
+        {
+          "x": 900,
+          "y": 527
+        },
+        {
+          "x": 868,
+          "y": 527
+        }
+      ]
+    },
+    {
+      "id": "market-workbench-front-stool",
+      "kind": "prop",
+      "points": [
+        {
+          "x": 1026,
+          "y": 524
+        },
+        {
+          "x": 1056,
+          "y": 524
+        },
+        {
+          "x": 1058,
+          "y": 551
         },
         {
           "x": 1025,
-          "y": 545
-        },
-        {
-          "x": 1051,
-          "y": 553
-        },
-        {
-          "x": 1066,
-          "y": 537
-        },
-        {
-          "x": 1095,
-          "y": 532
-        },
-        {
-          "x": 1112,
-          "y": 528
-        },
-        {
-          "x": 1125,
-          "y": 514
-        },
-        {
-          "x": 1108,
-          "y": 494
-        },
-        {
-          "x": 1108,
-          "y": 475
-        },
-        {
-          "x": 908,
-          "y": 458
+          "y": 554
         }
-      ],
-      "kind": "prop"
+      ]
     },
     {
-      "id": "big-tree-right",
+      "id": "market-workbench-containers",
+      "kind": "prop",
       "points": [
         {
-          "x": 1473,
-          "y": 788
+          "x": 1125,
+          "y": 489
         },
         {
-          "x": 1459,
-          "y": 826
+          "x": 1159,
+          "y": 489
         },
         {
-          "x": 1506,
-          "y": 837
+          "x": 1162,
+          "y": 512
         },
         {
-          "x": 1546,
-          "y": 820
+          "x": 1144,
+          "y": 520
         },
         {
-          "x": 1559,
-          "y": 800
+          "x": 1123,
+          "y": 512
+        }
+      ]
+    },
+    {
+      "id": "market-east-tree-root",
+      "kind": "vegetation",
+      "points": [
+        {
+          "x": 1443,
+          "y": 755
         },
         {
-          "x": 1608,
-          "y": 788
+          "x": 1458,
+          "y": 744
         },
         {
-          "x": 1631,
+          "x": 1483,
+          "y": 747
+        },
+        {
+          "x": 1495,
+          "y": 764
+        },
+        {
+          "x": 1508,
+          "y": 779
+        },
+        {
+          "x": 1476,
+          "y": 789
+        },
+        {
+          "x": 1434,
+          "y": 778
+        }
+      ]
+    },
+    {
+      "id": "market-east-bench",
+      "kind": "prop",
+      "points": [
+        {
+          "x": 1276,
+          "y": 707
+        },
+        {
+          "x": 1383,
+          "y": 707
+        },
+        {
+          "x": 1384,
+          "y": 721
+        },
+        {
+          "x": 1380,
+          "y": 735
+        },
+        {
+          "x": 1278,
+          "y": 735
+        }
+      ]
+    },
+    {
+      "id": "market-east-pine-root",
+      "kind": "vegetation",
+      "points": [
+        {
+          "x": 1626,
+          "y": 785
+        },
+        {
+          "x": 1647,
+          "y": 782
+        },
+        {
+          "x": 1661,
+          "y": 799
+        },
+        {
+          "x": 1641,
+          "y": 807
+        },
+        {
+          "x": 1618,
+          "y": 798
+        }
+      ]
+    },
+    {
+      "id": "market-east-rear-boulder",
+      "kind": "prop",
+      "points": [
+        {
+          "x": 1530,
+          "y": 777
+        },
+        {
+          "x": 1552,
+          "y": 767
+        },
+        {
+          "x": 1586,
+          "y": 777
+        },
+        {
+          "x": 1587,
           "y": 794
         },
         {
-          "x": 1678,
-          "y": 787
+          "x": 1564,
+          "y": 805
         },
         {
-          "x": 1664,
-          "y": 767
-        },
-        {
-          "x": 1614,
-          "y": 767
-        },
-        {
-          "x": 1579,
-          "y": 741
-        },
-        {
-          "x": 1534,
-          "y": 753
-        },
-        {
-          "x": 1516,
-          "y": 769
-        },
-        {
-          "x": 1471,
-          "y": 754
-        },
-        {
-          "x": 1431,
-          "y": 751
-        },
-        {
-          "x": 1429,
-          "y": 778
+          "x": 1535,
+          "y": 798
         }
-      ],
-      "kind": "vegetation"
+      ]
     },
     {
-      "id": "market-stall-right",
+      "id": "market-east-front-boulder",
+      "kind": "prop",
+      "points": [
+        {
+          "x": 1461,
+          "y": 823
+        },
+        {
+          "x": 1485,
+          "y": 812
+        },
+        {
+          "x": 1515,
+          "y": 817
+        },
+        {
+          "x": 1535,
+          "y": 833
+        },
+        {
+          "x": 1500,
+          "y": 847
+        },
+        {
+          "x": 1460,
+          "y": 839
+        }
+      ]
+    },
+    {
+      "id": "market-east-arch-west-wall",
       "points": [
         {
           "x": 1831,
@@ -192,7 +294,7 @@
       "kind": "prop"
     },
     {
-      "id": "east-arch-decor",
+      "id": "market-east-arch-east-wall",
       "points": [
         {
           "x": 1958,
@@ -222,7 +324,7 @@
       "kind": "prop"
     },
     {
-      "id": "main-house-right-lower",
+      "id": "market-striped-stall",
       "points": [
         {
           "x": 1536,
@@ -264,79 +366,221 @@
       "kind": "building"
     },
     {
-      "id": "bench-left",
+      "id": "market-west-tree-root",
+      "kind": "vegetation",
       "points": [
         {
-          "x": 355,
+          "x": 458,
+          "y": 726
+        },
+        {
+          "x": 477,
+          "y": 715
+        },
+        {
+          "x": 495,
+          "y": 719
+        },
+        {
+          "x": 502,
+          "y": 732
+        },
+        {
+          "x": 495,
+          "y": 746
+        },
+        {
+          "x": 473,
+          "y": 747
+        },
+        {
+          "x": 450,
+          "y": 748
+        }
+      ]
+    },
+    {
+      "id": "market-west-bench",
+      "kind": "prop",
+      "points": [
+        {
+          "x": 506,
           "y": 742
         },
         {
-          "x": 346,
-          "y": 710
+          "x": 612,
+          "y": 743
         },
         {
-          "x": 390,
-          "y": 692
+          "x": 616,
+          "y": 753
         },
         {
-          "x": 436,
-          "y": 727
+          "x": 612,
+          "y": 770
         },
         {
-          "x": 481,
-          "y": 707
+          "x": 501,
+          "y": 769
         },
         {
-          "x": 545,
-          "y": 713
-        },
-        {
-          "x": 546,
-          "y": 747
-        },
-        {
-          "x": 467,
-          "y": 747
+          "x": 498,
+          "y": 751
         }
-      ],
-      "kind": "prop"
+      ]
     },
     {
-      "id": "bench-left-stones",
+      "id": "market-west-front-boulder",
+      "kind": "prop",
       "points": [
         {
-          "x": 465,
-          "y": 764
+          "x": 361,
+          "y": 735
         },
         {
-          "x": 447,
-          "y": 804
+          "x": 374,
+          "y": 724
         },
         {
-          "x": 533,
+          "x": 399,
+          "y": 722
+        },
+        {
+          "x": 421,
+          "y": 735
+        },
+        {
+          "x": 419,
+          "y": 751
+        },
+        {
+          "x": 403,
+          "y": 757
+        },
+        {
+          "x": 365,
+          "y": 753
+        }
+      ]
+    },
+    {
+      "id": "market-west-stones-upper",
+      "kind": "prop",
+      "points": [
+        {
+          "x": 453,
+          "y": 789
+        },
+        {
+          "x": 473,
+          "y": 785
+        },
+        {
+          "x": 494,
+          "y": 784
+        },
+        {
+          "x": 512,
+          "y": 785
+        },
+        {
+          "x": 535,
+          "y": 788
+        },
+        {
+          "x": 548,
+          "y": 799
+        },
+        {
+          "x": 543,
           "y": 811
         },
         {
-          "x": 596,
-          "y": 845
+          "x": 522,
+          "y": 812
         },
         {
-          "x": 622,
-          "y": 863
-        },
-        {
-          "x": 664,
+          "x": 509,
           "y": 816
         },
         {
-          "x": 531,
-          "y": 764
+          "x": 484,
+          "y": 813
+        },
+        {
+          "x": 464,
+          "y": 810
+        },
+        {
+          "x": 451,
+          "y": 802
         }
-      ],
-      "kind": "prop"
+      ]
     },
     {
-      "id": "west-arch-area",
+      "id": "market-west-stones-lower",
+      "kind": "prop",
+      "points": [
+        {
+          "x": 550,
+          "y": 810
+        },
+        {
+          "x": 566,
+          "y": 810
+        },
+        {
+          "x": 581,
+          "y": 822
+        },
+        {
+          "x": 595,
+          "y": 820
+        },
+        {
+          "x": 609,
+          "y": 832
+        },
+        {
+          "x": 630,
+          "y": 840
+        },
+        {
+          "x": 643,
+          "y": 850
+        },
+        {
+          "x": 636,
+          "y": 860
+        },
+        {
+          "x": 621,
+          "y": 859
+        },
+        {
+          "x": 606,
+          "y": 851
+        },
+        {
+          "x": 592,
+          "y": 844
+        },
+        {
+          "x": 577,
+          "y": 836
+        },
+        {
+          "x": 562,
+          "y": 824
+        },
+        {
+          "x": 549,
+          "y": 823
+        }
+      ]
+    },
+    {
+      "id": "market-west-arch-west-wall",
       "points": [
         {
           "x": 4,
@@ -366,7 +610,7 @@
       "kind": "prop"
     },
     {
-      "id": "west-arch-pillar",
+      "id": "market-west-arch-east-wall",
       "points": [
         {
           "x": 202,
@@ -396,7 +640,7 @@
       "kind": "prop"
     },
     {
-      "id": "bush-northwest",
+      "id": "market-northwest-edge-tree-root",
       "points": [
         {
           "x": 32,
@@ -418,7 +662,7 @@
       "kind": "prop"
     },
     {
-      "id": "deco-northeast",
+      "id": "market-northeast-edge-root",
       "points": [
         {
           "x": 1985,
@@ -436,7 +680,7 @@
       "kind": "prop"
     },
     {
-      "id": "deco-northwest",
+      "id": "market-northwest-tree-root",
       "points": [
         {
           "x": 213,
@@ -470,7 +714,7 @@
       "kind": "prop"
     },
     {
-      "id": "deco-south-bottom",
+      "id": "market-south-border-prop",
       "points": [
         {
           "x": 870,
@@ -488,7 +732,7 @@
       "kind": "prop"
     },
     {
-      "id": "boundary-southeast",
+      "id": "market-southeast-boundary",
       "points": [
         {
           "x": 1218,
@@ -530,7 +774,7 @@
       "kind": "boundary"
     },
     {
-      "id": "boundary-southwest",
+      "id": "market-southwest-boundary",
       "points": [
         {
           "x": 847,
@@ -572,33 +816,37 @@
       "kind": "boundary"
     },
     {
-      "id": "bench-center-left",
+      "id": "market-west-rear-boulder",
+      "kind": "prop",
       "points": [
         {
-          "x": 676,
-          "y": 606
+          "x": 678,
+          "y": 615
         },
         {
-          "x": 666,
-          "y": 619
+          "x": 697,
+          "y": 608
         },
         {
-          "x": 720,
-          "y": 640
+          "x": 724,
+          "y": 614
         },
         {
-          "x": 731,
-          "y": 626
+          "x": 734,
+          "y": 629
         },
         {
-          "x": 715,
-          "y": 613
+          "x": 719,
+          "y": 642
+        },
+        {
+          "x": 690,
+          "y": 638
         }
-      ],
-      "kind": "prop"
+      ]
     },
     {
-      "id": "deco-right-house-side",
+      "id": "market-northeast-pine-root",
       "points": [
         {
           "x": 1708,
@@ -616,7 +864,7 @@
       "kind": "prop"
     },
     {
-      "id": "deco-stall-side",
+      "id": "market-northeast-small-pine-root",
       "points": [
         {
           "x": 1847,
@@ -634,7 +882,7 @@
       "kind": "prop"
     },
     {
-      "id": "prop-5d881e65-a179-41c9-b4ae-4390b8ce5681",
+      "id": "market-east-house",
       "points": [
         {
           "x": 1121,
@@ -696,7 +944,7 @@
       "kind": "prop"
     },
     {
-      "id": "prop-df7be1bc-238f-4a60-b119-b47c610f1985",
+      "id": "market-workshop",
       "points": [
         {
           "x": 943,
@@ -734,33 +982,37 @@
       "kind": "prop"
     },
     {
-      "id": "prop-3c4e426d-beac-417f-8070-31dc886543f6",
+      "id": "market-workshop-stall",
       "points": [
         {
-          "x": 453,
-          "y": 321
+          "x": 458,
+          "y": 339
         },
         {
-          "x": 456,
-          "y": 368
+          "x": 534,
+          "y": 339
+        },
+        {
+          "x": 566,
+          "y": 337
+        },
+        {
+          "x": 579,
+          "y": 347
         },
         {
           "x": 576,
-          "y": 367
+          "y": 373
         },
         {
-          "x": 577,
-          "y": 301
-        },
-        {
-          "x": 448,
-          "y": 299
+          "x": 458,
+          "y": 375
         }
       ],
       "kind": "prop"
     },
     {
-      "id": "prop-a487e004-b709-4195-87d3-08b6658b93ba",
+      "id": "market-west-path-post",
       "points": [
         {
           "x": 69,
@@ -782,7 +1034,7 @@
       "kind": "prop"
     },
     {
-      "id": "prop-647203c3-fdef-49f9-8e9d-6d93a16f891c",
+      "id": "market-southwest-post",
       "points": [
         {
           "x": 834,
@@ -804,7 +1056,7 @@
       "kind": "prop"
     },
     {
-      "id": "prop-959a169a-8189-4559-afe6-79d21f5b648c",
+      "id": "market-southeast-post",
       "points": [
         {
           "x": 1184,
@@ -826,7 +1078,7 @@
       "kind": "prop"
     },
     {
-      "id": "prop-4602886e-3398-48b9-971f-d12226378be5",
+      "id": "market-southwest-pine-root",
       "points": [
         {
           "x": 709,
@@ -848,7 +1100,7 @@
       "kind": "prop"
     },
     {
-      "id": "prop-4c0f0cc1-9f73-44bf-80c7-6919aab6c196",
+      "id": "market-south-stones",
       "points": [
         {
           "x": 1261,
@@ -890,7 +1142,7 @@
       "kind": "prop"
     },
     {
-      "id": "prop-419ad86a-6f73-4c46-9877-67807b818b1d",
+      "id": "market-east-edge-pine-root",
       "points": [
         {
           "x": 2007,
@@ -912,7 +1164,7 @@
       "kind": "prop"
     },
     {
-      "id": "prop-d48d4edd-fdc7-4cbc-bff7-1953c2e946f4",
+      "id": "market-east-path-west-post",
       "points": [
         {
           "x": 1823,
@@ -934,7 +1186,7 @@
       "kind": "prop"
     },
     {
-      "id": "prop-83e9f782-a883-4128-9731-efe0cf6b7b30",
+      "id": "market-east-path-east-post",
       "points": [
         {
           "x": 1959,
@@ -956,7 +1208,7 @@
       "kind": "prop"
     },
     {
-      "id": "prop-555d59ec-5d43-46b5-b83e-09d33d0d3f62",
+      "id": "market-northeast-edge-tree-root",
       "points": [
         {
           "x": 1867,
@@ -982,7 +1234,7 @@
       "kind": "prop"
     },
     {
-      "id": "prop-c7656e22-7dc3-4032-88a9-64ec61946aee",
+      "id": "market-northeast-tree-root",
       "points": [
         {
           "x": 1450,
@@ -1004,7 +1256,7 @@
       "kind": "prop"
     },
     {
-      "id": "prop-c7d867f4-8d40-4063-b9b8-bfed477c97fc",
+      "id": "market-north-tree-root",
       "points": [
         {
           "x": 1376,
@@ -1026,7 +1278,7 @@
       "kind": "prop"
     },
     {
-      "id": "prop-c2a3968a-5a77-4c7b-8ec6-fc69a2a0e16d",
+      "id": "market-workshop-side-tree-root",
       "points": [
         {
           "x": 953,
@@ -1050,6 +1302,102 @@
         }
       ],
       "kind": "prop"
+    },
+    {
+      "id": "market-west-path-pine-root",
+      "kind": "vegetation",
+      "points": [
+        {
+          "x": 302,
+          "y": 751
+        },
+        {
+          "x": 316,
+          "y": 752
+        },
+        {
+          "x": 325,
+          "y": 769
+        },
+        {
+          "x": 309,
+          "y": 773
+        },
+        {
+          "x": 297,
+          "y": 768
+        }
+      ]
+    },
+    {
+      "id": "market-east-path-pine-root",
+      "kind": "vegetation",
+      "points": [
+        {
+          "x": 1772,
+          "y": 630
+        },
+        {
+          "x": 1787,
+          "y": 630
+        },
+        {
+          "x": 1793,
+          "y": 641
+        },
+        {
+          "x": 1778,
+          "y": 647
+        },
+        {
+          "x": 1768,
+          "y": 641
+        }
+      ]
+    },
+    {
+      "id": "market-stall-banner-base",
+      "kind": "prop",
+      "points": [
+        {
+          "x": 1445,
+          "y": 379
+        },
+        {
+          "x": 1458,
+          "y": 379
+        },
+        {
+          "x": 1460,
+          "y": 391
+        },
+        {
+          "x": 1445,
+          "y": 393
+        }
+      ]
+    },
+    {
+      "id": "market-house-stone-post-base",
+      "kind": "prop",
+      "points": [
+        {
+          "x": 1422,
+          "y": 302
+        },
+        {
+          "x": 1444,
+          "y": 302
+        },
+        {
+          "x": 1445,
+          "y": 317
+        },
+        {
+          "x": 1421,
+          "y": 320
+        }
+      ]
     }
   ],
   "spawnPoints": [

@@ -14,6 +14,8 @@ function setup(occlusion?: PikoOcclusion) {
   const view = render(<Editor navigation={navigation} occlusion={occlusion} fit={{ x: 0, y: 0, scale: 1 }}
     player={{ x: 500, y: 500 }} onApply={onApply} onEditing={onEditing} onPlay={vi.fn()} onOcclusionApply={onOcclusionApply} />);
   fireEvent.click(screen.getByText('场景调试'));
+  onApply.mockClear();
+  onOcclusionApply.mockClear();
   const svg = screen.getByLabelText('地图区域编辑层');
   vi.spyOn(svg, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 2048, height: 1152, right: 2048, bottom: 1152, x: 0, y: 0, toJSON() {} });
   Object.defineProperty(svg, 'setPointerCapture', { value: vi.fn() });
@@ -34,6 +36,8 @@ it('previews a draft, restores the original on exit, and reopens the tools', () 
   expect(onApply).toHaveBeenLastCalledWith(navigation);
   fireEvent.click(screen.getByText('场景调试'));
   expect(screen.getByRole('button', { name: '开始画区域' })).toBeVisible();
+  expect(onApply.mock.lastCall?.[0].colliders).toHaveLength(1);
+  expect(screen.getByLabelText('地图区域编辑层').querySelectorAll('polygon')).toHaveLength(1);
   unmount(); expect(onEditing).toHaveBeenLastCalledWith(false);
 });
 
@@ -66,6 +70,9 @@ it('retains existing occluders and uses world position rather than atlas coordin
   expect(onOcclusionApply).toHaveBeenLastCalledWith({ ...occlusion, occluders: [] });
   fireEvent.click(screen.getByText('退出调试'));
   expect(onOcclusionApply).toHaveBeenLastCalledWith(occlusion);
+  fireEvent.click(screen.getByText('场景调试'));
+  expect(onOcclusionApply).toHaveBeenLastCalledWith({ ...occlusion, occluders: [] });
+  expect(screen.getByLabelText('地图区域编辑层').querySelector('polygon')).toBeNull();
 });
 
 it('rejects self-intersecting occlusion and reveals the error while retaining the editable path', () => {

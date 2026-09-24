@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { Container, Graphics, type Ticker } from "pixi.js";
 
+type LampConfig = { id: string; x: number; y: number; baseY: number;
+  width: number; height: number; haloScale: number; clipBottom: number };
+
 /** Coordinates and glass proportions are in the 2048 × 1152 master map. */
-export const COURTYARD_LAMPS = [
+export const COURTYARD_LAMPS: readonly LampConfig[] = [
   { id: "west-noticeboard", x: 257, y: 354, baseY: 440, width: 1, height: 1, haloScale: 1, clipBottom: 44 },
   { id: "west-tree", x: 547, y: 535, baseY: 570, width: 1, height: 1.1, haloScale: 0.9, clipBottom: 13 },
   { id: "west-fence", x: 375, y: 838, baseY: 893, width: 0.65, height: 0.75, haloScale: 0.85, clipBottom: 44 },
@@ -14,7 +17,17 @@ export const COURTYARD_LAMPS = [
   { id: "gate-east", x: 1217, y: 875, baseY: 977, width: 1, height: 1, haloScale: 0.9, clipBottom: 44 },
 ] as const;
 
-function createLamp(config: typeof COURTYARD_LAMPS[number], index: number, random: () => number) {
+/** The two west bridge posts and the east bridge post in lantern canal street. */
+export const LANTERN_CANAL_LAMPS: readonly LampConfig[] = [
+  { id: "canal-bridge-west-lantern", x: 819, y: 437, baseY: 510,
+    width: 0.95, height: 1, haloScale: 0.72, clipBottom: 25 },
+  { id: "canal-bridge-west-globe", x: 872, y: 438, baseY: 524,
+    width: 0.7, height: 0.8, haloScale: 0.62, clipBottom: 27 },
+  { id: "canal-bridge-east-lantern", x: 1277, y: 474, baseY: 568,
+    width: 0.95, height: 1, haloScale: 0.74, clipBottom: 30 },
+];
+
+function createLamp(config: LampConfig, index: number, random: () => number) {
   const container = new Container({ label: `${config.id}-lamp-light`, eventMode: "none", zIndex: config.baseY });
   container.position.set(config.x, config.y);
   // Nested translucent ellipses brighten the baked map without a hard halo edge.
@@ -91,9 +104,9 @@ function createLamp(config: typeof COURTYARD_LAMPS[number], index: number, rando
   } };
 }
 
-/** One ticker and lifecycle for courtyard lights; containers retain world depth sorting. */
-export function createCourtyardLampRuntime(ticker: Ticker, random: () => number = Math.random) {
-  const lamps = COURTYARD_LAMPS.map((config, index) => createLamp(config, index, random));
+/** One ticker and lifecycle for map lights; containers retain world depth sorting. */
+function createLampRuntime(ticker: Ticker, configs: readonly LampConfig[], random: () => number) {
+  const lamps = configs.map((config, index) => createLamp(config, index, random));
   let destroyed = false, attached = false;
   const update = (clock: Ticker) => {
     const delta = Math.max(0, Math.min(clock.deltaMS, 100)) / 1000;
@@ -120,4 +133,12 @@ export function createCourtyardLampRuntime(ticker: Ticker, random: () => number 
     document.removeEventListener("visibilitychange", sync);
     lamps.forEach(lamp => lamp.container.destroy({ children: true }));
   } };
+}
+
+export function createCourtyardLampRuntime(ticker: Ticker, random: () => number = Math.random) {
+  return createLampRuntime(ticker, COURTYARD_LAMPS, random);
+}
+
+export function createLanternCanalLampRuntime(ticker: Ticker, random: () => number = Math.random) {
+  return createLampRuntime(ticker, LANTERN_CANAL_LAMPS, random);
 }

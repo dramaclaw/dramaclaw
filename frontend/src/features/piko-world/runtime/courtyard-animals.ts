@@ -153,6 +153,34 @@ export const ARTISAN_MARKET_ANIMALS: readonly AnimalPlacement[] = [
   { id: "market-right-bench-butterfly", kind: "butterfly", position: { x: 1200, y: 560 }, scale: 0.016 },
 ];
 
+/** Canal street: hens forage by the two homes; rabbits and squirrels stay in the bank-side groves. */
+export const LANTERN_CANAL_ANIMALS: readonly AnimalPlacement[] = [
+  { id: "canal-west-cottage-hen-1", kind: "hen", position: { x: 560, y: 520 }, scale: 0.054,
+    facing: 1, initialPauseSeconds: 2.1,
+    route: [{ x: 585, y: 530 }, { x: 545, y: 540 }, { x: 560, y: 520 }] },
+  { id: "canal-west-cottage-hen-2", kind: "hen", position: { x: 680, y: 495 }, scale: 0.054,
+    facing: -1, initialPauseSeconds: 4.3, animationOffsetSeconds: 1.1,
+    route: [{ x: 700, y: 510 }, { x: 655, y: 510 }, { x: 680, y: 495 }] },
+  { id: "canal-east-cottage-hen-1", kind: "hen", position: { x: 1510, y: 485 }, scale: 0.054,
+    facing: 1, initialPauseSeconds: 3.4, animationOffsetSeconds: 0.7,
+    route: [{ x: 1535, y: 500 }, { x: 1480, y: 505 }, { x: 1510, y: 485 }] },
+  { id: "canal-east-cottage-hen-2", kind: "hen", position: { x: 1720, y: 550 }, scale: 0.054,
+    facing: -1, initialPauseSeconds: 5.0, animationOffsetSeconds: 1.9,
+    route: [{ x: 1750, y: 560 }, { x: 1695, y: 570 }, { x: 1720, y: 550 }] },
+  { id: "canal-southwest-rabbit", kind: "rabbit", position: { x: 490, y: 755 }, scale: 0.058,
+    facing: 1, animationOffsetSeconds: 1.5 },
+  { id: "canal-west-bank-rabbit", kind: "rabbit", position: { x: 705, y: 700 }, scale: 0.058,
+    facing: -1, animationOffsetSeconds: 3.1 },
+  { id: "canal-east-meadow-rabbit", kind: "rabbit", position: { x: 1640, y: 760 }, scale: 0.058,
+    facing: -1, animationOffsetSeconds: 4.2 },
+  { id: "canal-northwest-squirrel", kind: "squirrel", position: { x: 245, y: 185 }, scale: 0.059,
+    facing: 1, animationOffsetSeconds: 0.7 },
+  { id: "canal-north-grove-squirrel", kind: "squirrel", position: { x: 760, y: 90 }, scale: 0.059,
+    facing: -1, animationOffsetSeconds: 2.3 },
+  { id: "canal-east-grove-squirrel", kind: "squirrel", position: { x: 1810, y: 250 }, scale: 0.059,
+    facing: -1, animationOffsetSeconds: 3.5 },
+];
+
 export const ANIMAL_FRAME_SECONDS: Record<AnimalClip, readonly number[]> = {
   henWalk: [0.19, 0.19, 0.19, 0.19], henPeck: [0.55, 0.32, 0.14, 0.48],
   dogWalk: [0.18, 0.18, 0.18, 0.18], dogBark: [0.48, 0.16, 0.18, 0.42],

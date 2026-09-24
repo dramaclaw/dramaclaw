@@ -52,6 +52,37 @@ export const CLOUD_ROUTES: Record<AerialLane, Route> = {
   lower: { from: { x: -520, y: 700 }, to: { x: 2568, y: 910 }, arc: 12 },
 };
 
+export const MARKET_BIRD_ROUTES: Record<AerialLane, Route> = {
+  upper: { from: { x: -180, y: 95 }, to: { x: 2240, y: 210 }, arc: 14 },
+  middle: { from: { x: -190, y: 355 }, to: { x: 2250, y: 540 }, arc: 22 },
+  lower: { from: { x: -180, y: 740 }, to: { x: 2240, y: 890 }, arc: 16 },
+};
+
+export const MARKET_CLOUD_ROUTES: Record<AerialLane, Route> = {
+  upper: { from: { x: -520, y: 65 }, to: { x: 2568, y: 225 }, arc: 10 },
+  middle: { from: { x: -520, y: 255 }, to: { x: 2568, y: 500 }, arc: 14 },
+  lower: { from: { x: -520, y: 675 }, to: { x: 2568, y: 875 }, arc: 12 },
+};
+
+export const CANAL_BIRD_ROUTES: Record<AerialLane, Route> = {
+  upper: { from: { x: -180, y: 105 }, to: { x: 2240, y: 190 }, arc: 14 },
+  middle: { from: { x: -190, y: 360 }, to: { x: 2250, y: 475 }, arc: 20 },
+  lower: { from: { x: -180, y: 795 }, to: { x: 2240, y: 915 }, arc: 16 },
+};
+
+export const CANAL_CLOUD_ROUTES: Record<AerialLane, Route> = {
+  upper: { from: { x: -520, y: 95 }, to: { x: 2568, y: 230 }, arc: 10 },
+  middle: { from: { x: -520, y: 285 }, to: { x: 2568, y: 480 }, arc: 14 },
+  lower: { from: { x: -520, y: 705 }, to: { x: 2568, y: 905 }, arc: 12 },
+};
+
+export type AerialMapId = "welcome-courtyard" | "artisan-market" | "lantern-canal-street";
+const AERIAL_ROUTES: Record<AerialMapId, { birds: Record<AerialLane, Route>; clouds: Record<AerialLane, Route> }> = {
+  "welcome-courtyard": { birds: BIRD_ROUTES, clouds: CLOUD_ROUTES },
+  "artisan-market": { birds: MARKET_BIRD_ROUTES, clouds: MARKET_CLOUD_ROUTES },
+  "lantern-canal-street": { birds: CANAL_BIRD_ROUTES, clouds: CANAL_CLOUD_ROUTES },
+};
+
 const BIRD_FORMATION = [{ x: 0, y: 0 }, { x: -52, y: -26 }, { x: -92, y: 18 }, { x: -128, y: -44 }];
 const randomBetween = (random: Random, min: number, max: number) => min + random() * (max - min);
 const eventTransitSeconds = (event: { lane: AerialLane; duration: number }) =>
@@ -89,7 +120,7 @@ export function aerialCycleState(elapsed: number, transitSeconds: number, cycleS
 export function birdAtlasFrames(atlas: Texture) {
   const frameWidth = atlas.width / BIRD_FRAME_COUNT;
   if (!Number.isInteger(frameWidth) || atlas.height !== frameWidth) {
-    throw new Error("Courtyard bird atlas must contain four square horizontal frames");
+    throw new Error("Aerial bird atlas must contain four square horizontal frames");
   }
   return Array.from({ length: BIRD_FRAME_COUNT }, (_, index) => new Texture({
     source: atlas.source,
@@ -146,14 +177,16 @@ const pointOnRoute = (route: Route, progress: number) => ({
   y: lerp(route.from.y, route.to.y, progress) + Math.sin(progress * Math.PI) * route.arc,
 });
 
-/** Own the courtyard's sparse high-altitude bodies and their projected shadows. */
-export async function createCourtyardAerialRuntime({ ticker, resolveAssetUrl, isDisposed,
+/** Own sparse high-altitude bodies and projected shadows for one map. */
+export async function createMapAerialRuntime({ mapId, ticker, resolveAssetUrl, isDisposed,
   random = Math.random }: {
+  mapId: AerialMapId;
   ticker: Ticker;
   resolveAssetUrl: (src: string) => string;
   isDisposed: () => boolean;
   random?: Random;
 }) {
+  const routes = AERIAL_ROUTES[mapId];
   const sources = [COURTYARD_BIRD_ATLAS_SRC, COURTYARD_CLOUD_SRC] as const;
   const entries = sources.map(src => ({ src, url: resolveAssetUrl(src) }));
   const releases: (() => void)[] = [];
@@ -181,12 +214,12 @@ export async function createCourtyardAerialRuntime({ ticker, resolveAssetUrl, is
   let frames: Texture[];
   try { frames = birdAtlasFrames(birdAtlas); }
   catch (error) { unload(); throw error; }
-  const shadowLayer = new Container({ label: "courtyard-aerial-shadows", eventMode: "none",
+  const shadowLayer = new Container({ label: `${mapId}-aerial-shadows`, eventMode: "none",
     zIndex: AERIAL_SHADOW_Z_INDEX });
-  const bodyLayer = new Container({ label: "courtyard-aerial-bodies", eventMode: "none",
+  const bodyLayer = new Container({ label: `${mapId}-aerial-bodies`, eventMode: "none",
     zIndex: AERIAL_BODY_Z_INDEX });
-  const birdShadowFlock = new Container({ label: "courtyard-bird-shadow-flock", eventMode: "none" });
-  const birdFlock = new Container({ label: "courtyard-bird-flock", eventMode: "none" });
+  const birdShadowFlock = new Container({ label: `${mapId}-bird-shadow-flock`, eventMode: "none" });
+  const birdFlock = new Container({ label: `${mapId}-bird-flock`, eventMode: "none" });
 
   const cloudShadows = Array.from({ length: MAX_CLOUD_COUNT }, () => {
     const sprite = new Sprite({ texture: cloudTexture, anchor: 0.5, tint: 0x213040, alpha: 0 });
@@ -264,7 +297,7 @@ export async function createCourtyardAerialRuntime({ ticker, resolveAssetUrl, is
     const cloudDepth = AERIAL_LANE_DEPTH[cloudEvent.lane];
     const activeCloudTransit = eventTransitSeconds(cloudEvent);
     const cloudState = aerialCycleState(cloudElapsed, activeCloudTransit, activeCloudTransit + cloudEvent.gap);
-    const cloudPoint = pointOnRoute(CLOUD_ROUTES[cloudEvent.lane], cloudState.progress);
+    const cloudPoint = pointOnRoute(routes.clouds[cloudEvent.lane], cloudState.progress);
     cloudEvent.clouds.forEach((item, index) => {
       const enabled = index < cloudEvent.count && cloudState.visible;
       const drift = Math.sin(cloudState.progress * Math.PI * 2 + index) * item.drift * cloudDepth.scale;
@@ -281,7 +314,7 @@ export async function createCourtyardAerialRuntime({ ticker, resolveAssetUrl, is
     const birdDepth = AERIAL_LANE_DEPTH[birdEvent.lane];
     const activeBirdTransit = eventTransitSeconds(birdEvent);
     const birdState = aerialCycleState(birdElapsed, activeBirdTransit, activeBirdTransit + birdEvent.gap);
-    const birdPoint = pointOnRoute(BIRD_ROUTES[birdEvent.lane], birdState.progress);
+    const birdPoint = pointOnRoute(routes.birds[birdEvent.lane], birdState.progress);
     const frame = Math.floor((birdElapsed + 0.15) * 5.5) % frames.length;
     birds.forEach((sprite, index) => {
       sprite.texture = frames[frame];

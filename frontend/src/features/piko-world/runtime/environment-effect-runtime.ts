@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { acquireSharedTexture } from "./shared-texture";
-import { type Container, type Texture, type Ticker } from "pixi.js";
+import { type Container, type Sprite, type Texture, type Ticker } from "pixi.js";
 import { createEnvironmentSprite } from "./environment-sprite";
 import type { EnvironmentSpriteAnimation } from "./environment-sprite";
 import { createMapOccluder } from "./map-occlusion";
 import type { PikoEnvironment } from "./map-package-schema";
 import { courtyardWindStepAt } from "./courtyard-wind";
+import type { RiverWaterRegion } from "./river-fish-motion";
 
 type EnvironmentDefinition = PikoEnvironment["effects"][number];
 type Destroyable = { destroy(): void };
@@ -36,6 +37,7 @@ export async function createEnvironmentEffectRuntime({ definitions, baseTexture,
   isDisposed: () => boolean;
 }) {
   const objects: Container[] = [];
+  const waterSurfaces: (RiverWaterRegion & { sprite: Sprite })[] = [];
   const mounted: Destroyable[] = [];
   const textures = new Map<string, Texture>();
   const releases: (() => void)[] = [];
@@ -45,6 +47,7 @@ export async function createEnvironmentEffectRuntime({ definitions, baseTexture,
     releases.splice(0).forEach(release => release());
     textures.clear();
     objects.length = 0;
+    waterSurfaces.length = 0;
   };
 
   const loadTexture = async (src: string) => {
@@ -84,6 +87,7 @@ export async function createEnvironmentEffectRuntime({ definitions, baseTexture,
           },
           outline: points.map(point => ({ x: point.x - x, y: point.y - y })),
         });
+        foreground.container.alpha = definition.opacity ?? 1;
         objects.push(foreground.container);
         mounted.push(foreground);
         continue;
@@ -96,10 +100,14 @@ export async function createEnvironmentEffectRuntime({ definitions, baseTexture,
         environmentSpriteAnimation(definition.animation), ticker);
       effect.container.label = definition.id;
       effect.container.zIndex = environmentLayerZIndex(definition.layer);
+      effect.container.alpha = definition.opacity ?? 1;
       objects.push(effect.container, effect.mask);
       mounted.push(effect);
+      if (definition.layer === "water") {
+        waterSurfaces.push({ id: definition.id, points: definition.region.points, sprite: effect.sprite });
+      }
     }
-    return { objects, destroy };
+    return { objects, waterSurfaces, destroy };
   } catch (error) {
     destroy();
     throw error;

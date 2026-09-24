@@ -5,6 +5,152 @@
     "preset": "baked-daylight",
     "intensity": 0
   },
-  "effects": [],
-  "audioZones": []
+  "effects": [
+    {
+      "id": "canal-upper-river-water",
+      "kind": "sprite",
+      "src": "effects/river-water-v1.png",
+      "layer": "water",
+      "opacity": 0.3,
+      "region": {
+        "id": "canal-upper-river-surface",
+        "points": [
+          { "x": 930, "y": 0 }, { "x": 1120, "y": 0 }, { "x": 1150, "y": 80 },
+          { "x": 1145, "y": 130 }, { "x": 1160, "y": 180 }, { "x": 1190, "y": 230 },
+          { "x": 1205, "y": 280 }, { "x": 1220, "y": 330 }, { "x": 1215, "y": 380 },
+          { "x": 1235, "y": 420 }, { "x": 1245, "y": 458 }, { "x": 1210, "y": 458 },
+          { "x": 1160, "y": 450 }, { "x": 1100, "y": 445 }, { "x": 1040, "y": 445 },
+          { "x": 990, "y": 452 }, { "x": 970, "y": 452 }, { "x": 968, "y": 420 },
+          { "x": 1005, "y": 380 },
+          { "x": 1015, "y": 330 }, { "x": 1000, "y": 280 }, { "x": 975, "y": 230 },
+          { "x": 970, "y": 180 }, { "x": 955, "y": 130 }, { "x": 925, "y": 80 }
+        ]
+      },
+      "animation": { "columns": 4, "rows": 4, "frames": 16, "fps": 2, "inset": 3 },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "canal-lower-river-water",
+      "kind": "sprite",
+      "src": "effects/river-water-v1.png",
+      "layer": "water",
+      "opacity": 0.3,
+      "region": {
+        "id": "canal-lower-river-surface",
+        "points": [
+          { "x": 980, "y": 645 }, { "x": 1200, "y": 645 }, { "x": 1210, "y": 680 },
+          { "x": 1215, "y": 730 }, { "x": 1205, "y": 780 }, { "x": 1180, "y": 830 },
+          { "x": 1160, "y": 880 }, { "x": 1120, "y": 930 }, { "x": 1060, "y": 980 },
+          { "x": 1070, "y": 1030 }, { "x": 1055, "y": 1080 }, { "x": 988, "y": 1130 },
+          { "x": 970, "y": 1152 }, { "x": 680, "y": 1152 }, { "x": 705, "y": 1130 },
+          { "x": 735, "y": 1080 }, { "x": 760, "y": 1030 }, { "x": 845, "y": 980 },
+          { "x": 885, "y": 930 }, { "x": 925, "y": 880 }, { "x": 990, "y": 830 },
+          { "x": 995, "y": 780 }, { "x": 975, "y": 730 }, { "x": 955, "y": 680 }
+        ]
+      },
+      "animation": { "columns": 4, "rows": 4, "frames": 16, "fps": 2, "inset": 3, "startStep": 5 },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "canal-southeast-shallows-water",
+      "kind": "sprite",
+      "src": "effects/river-water-v1.png",
+      "layer": "water",
+      "opacity": 0.2,
+      "region": {
+        "id": "canal-southeast-shallows-surface",
+        "points": [
+          { "x": 2048, "y": 945 }, { "x": 2010, "y": 970 }, { "x": 1995, "y": 985 },
+          { "x": 1920, "y": 1010 }, { "x": 1810, "y": 1030 }, { "x": 1765, "y": 1050 },
+          { "x": 1750, "y": 1080 }, { "x": 1685, "y": 1100 }, { "x": 1635, "y": 1130 },
+          { "x": 1615, "y": 1152 }, { "x": 2048, "y": 1152 }
+        ]
+      },
+      "animation": { "columns": 4, "rows": 4, "frames": 16, "fps": 2, "inset": 3, "startStep": 10 },
+      "reducedMotion": "simplify"
+    }
+  ],
+  "audioZones": [
+    {
+      "id": "river",
+      "src": "audio/river-v1.ogg",
+      "region": {
+        "id": "canal-upper-water",
+        "points": [{ "x": 930, "y": 0 }, { "x": 1270, "y": 0 }, { "x": 1310, "y": 350 },
+          { "x": 1210, "y": 470 }, { "x": 990, "y": 460 }, { "x": 900, "y": 260 }]
+      },
+      "additionalRegions": [
+        { "id": "canal-lower-water", "points": [{ "x": 940, "y": 565 }, { "x": 1280, "y": 565 },
+          { "x": 1240, "y": 760 }, { "x": 1110, "y": 980 }, { "x": 1040, "y": 1152 },
+          { "x": 630, "y": 1152 }, { "x": 790, "y": 900 }] },
+        { "id": "canal-southeast-shore", "points": [{ "x": 1520, "y": 895 }, { "x": 2048, "y": 790 },
+          { "x": 2048, "y": 1152 }, { "x": 1530, "y": 1152 }] }
+      ],
+      "volume": 0.24,
+      "fadeDistance": 260,
+      "repeatDelay": 0
+    },
+    {
+      "id": "birds",
+      "src": "audio/birds-v1.ogg",
+      "region": {
+        "id": "canal-birds-sound-zone",
+        "points": [{ "x": 0, "y": 0 }, { "x": 2048, "y": 0 },
+          { "x": 2048, "y": 1152 }, { "x": 0, "y": 1152 }]
+      },
+      "volume": 0.11,
+      "fadeDistance": 900,
+      "repeatDelay": 60
+    },
+    {
+      "id": "leaves",
+      "src": "audio/wind-v1.ogg",
+      "region": {
+        "id": "canal-northwest-canopy",
+        "points": [{ "x": 0, "y": 0 }, { "x": 740, "y": 0 },
+          { "x": 740, "y": 280 }, { "x": 0, "y": 280 }]
+      },
+      "additionalRegions": [
+        { "id": "canal-northeast-canopy", "points": [{ "x": 1380, "y": 0 }, { "x": 2048, "y": 0 },
+          { "x": 2048, "y": 300 }, { "x": 1380, "y": 300 }] },
+        { "id": "canal-west-gate-trees", "points": [{ "x": 0, "y": 360 }, { "x": 370, "y": 360 },
+          { "x": 370, "y": 720 }, { "x": 0, "y": 720 }] },
+        { "id": "canal-southwest-grove", "points": [{ "x": 0, "y": 675 }, { "x": 740, "y": 675 },
+          { "x": 740, "y": 1152 }, { "x": 0, "y": 1152 }] },
+        { "id": "canal-southeast-grove", "points": [{ "x": 1320, "y": 640 }, { "x": 1760, "y": 640 },
+          { "x": 1760, "y": 990 }, { "x": 1320, "y": 990 }] },
+        { "id": "canal-east-edge-trees", "points": [{ "x": 1700, "y": 340 }, { "x": 2048, "y": 340 },
+          { "x": 2048, "y": 790 }, { "x": 1700, "y": 790 }] }
+      ],
+      "volume": 0.13,
+      "fadeDistance": 170,
+      "repeatDelay": 0
+    },
+    {
+      "id": "insects",
+      "src": "audio/insects-v1.ogg",
+      "region": {
+        "id": "canal-northwest-undergrowth",
+        "points": [{ "x": 40, "y": 90 }, { "x": 350, "y": 90 },
+          { "x": 350, "y": 300 }, { "x": 40, "y": 300 }]
+      },
+      "additionalRegions": [
+        { "id": "canal-greenhouse-back-grove", "points": [{ "x": 580, "y": 55 }, { "x": 815, "y": 55 },
+          { "x": 815, "y": 185 }, { "x": 580, "y": 185 }] },
+        { "id": "canal-northeast-undergrowth", "points": [{ "x": 1650, "y": 140 }, { "x": 1950, "y": 140 },
+          { "x": 1950, "y": 300 }, { "x": 1650, "y": 300 }] },
+        { "id": "canal-southwest-flowers", "points": [{ "x": 180, "y": 720 }, { "x": 580, "y": 720 },
+          { "x": 580, "y": 1020 }, { "x": 180, "y": 1020 }] },
+        { "id": "canal-west-bank-grass", "points": [{ "x": 610, "y": 700 }, { "x": 825, "y": 700 },
+          { "x": 825, "y": 930 }, { "x": 610, "y": 930 }] },
+        { "id": "canal-southeast-grass", "points": [{ "x": 1420, "y": 720 }, { "x": 1680, "y": 720 },
+          { "x": 1680, "y": 930 }, { "x": 1420, "y": 930 }] },
+        { "id": "canal-east-woodland", "points": [{ "x": 1800, "y": 500 }, { "x": 2040, "y": 500 },
+          { "x": 2040, "y": 790 }, { "x": 1800, "y": 790 }] }
+      ],
+      "volume": 0.13,
+      "fadeDistance": 110,
+      "repeatDelay": 0
+    }
+  ]
 }

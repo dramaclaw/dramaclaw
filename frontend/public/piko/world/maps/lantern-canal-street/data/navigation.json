@@ -26,7 +26,7 @@
   ],
   "colliders": [
     {
-      "id": "prop-664be06b-dd61-4766-bbd3-89f970674a6b",
+      "id": "canal-west-gate-east-foot",
       "kind": "prop",
       "points": [
         {
@@ -48,7 +48,7 @@
       ]
     },
     {
-      "id": "prop-8e62caa9-2ec8-4fb2-80cb-1bffab653a6a",
+      "id": "canal-west-gate-west-foot",
       "kind": "prop",
       "points": [
         {
@@ -70,7 +70,7 @@
       ]
     },
     {
-      "id": "prop-97ef6225-9db4-448d-8908-2888b92b9e88",
+      "id": "canal-northwest-tree-root",
       "kind": "prop",
       "points": [
         {
@@ -92,7 +92,7 @@
       ]
     },
     {
-      "id": "prop-a4244f08-7fc6-4daf-a0bd-22cbdf6b7e43",
+      "id": "canal-southwest-road-pine-root",
       "kind": "prop",
       "points": [
         {
@@ -114,7 +114,7 @@
       ]
     },
     {
-      "id": "prop-cef2defa-5745-4dbe-8570-dbbb382143fd",
+      "id": "canal-west-bank-post",
       "kind": "prop",
       "points": [
         {
@@ -140,7 +140,7 @@
       ]
     },
     {
-      "id": "prop-5c244b47-d328-41b0-acb0-74f6399ee8ca",
+      "id": "canal-bridge-front-arch-base",
       "kind": "prop",
       "points": [
         {
@@ -190,7 +190,7 @@
       ]
     },
     {
-      "id": "prop-e472abc8-a5e2-4204-9192-546e38e90d9c",
+      "id": "canal-bridge-back-rail-base",
       "kind": "prop",
       "points": [
         {
@@ -312,7 +312,7 @@
       ]
     },
     {
-      "id": "prop-367d6300-2af3-48c4-bef8-13e8d3dd3134",
+      "id": "canal-bridge-back-west-lamp-base",
       "kind": "prop",
       "points": [
         {
@@ -342,7 +342,7 @@
       ]
     },
     {
-      "id": "prop-39b230b4-e7fc-4edc-8e92-15c7e3538095",
+      "id": "canal-bridge-front-west-post-base",
       "kind": "prop",
       "points": [
         {
@@ -368,7 +368,7 @@
       ]
     },
     {
-      "id": "prop-b6d637ca-3f51-43b1-ab9e-8abbf7f7b1c2",
+      "id": "canal-bridge-front-east-post-base",
       "kind": "prop",
       "points": [
         {
@@ -394,7 +394,7 @@
       ]
     },
     {
-      "id": "prop-b2cde97e-7678-41d0-b8bc-d3eba3f558bb",
+      "id": "canal-bridge-front-east-foot",
       "kind": "prop",
       "points": [
         {
@@ -424,7 +424,7 @@
       ]
     },
     {
-      "id": "prop-5cd1a56f-b05b-4caa-86b9-2c2ed112ec12",
+      "id": "canal-bridge-front-west-foot",
       "kind": "prop",
       "points": [
         {
@@ -458,7 +458,7 @@
       ]
     },
     {
-      "id": "prop-c35a0427-80aa-4763-9276-403d9bb9421d",
+      "id": "canal-east-bank-fence",
       "kind": "prop",
       "points": [
         {
@@ -528,7 +528,7 @@
       ]
     },
     {
-      "id": "prop-580e84e4-16fc-472a-be4b-fc336a1797ba",
+      "id": "canal-dock-back-west-post-base",
       "kind": "prop",
       "points": [
         {
@@ -550,7 +550,7 @@
       ]
     },
     {
-      "id": "prop-9392ff0a-891a-4836-9899-8e62987bc122",
+      "id": "canal-dock-back-east-post-base",
       "kind": "prop",
       "points": [
         {
@@ -572,7 +572,7 @@
       ]
     },
     {
-      "id": "prop-0eaf7a2e-bde4-4371-b661-66489a4d4dd5",
+      "id": "canal-dock-west-rim",
       "kind": "prop",
       "points": [
         {
@@ -590,7 +590,7 @@
       ]
     },
     {
-      "id": "prop-4b8cb772-e95a-463f-b4ed-222222e0c861",
+      "id": "canal-dock-east-rim",
       "kind": "prop",
       "points": [
         {
@@ -608,7 +608,7 @@
       ]
     },
     {
-      "id": "prop-879bfdb2-8788-4fe6-aeaf-dbaa625eb544",
+      "id": "canal-dock-front-rim",
       "kind": "prop",
       "points": [
         {
@@ -658,8 +658,8 @@
       ]
     },
     {
-      "id": "prop-10d7185c-95f0-4562-8aaa-d2419800fd94",
-      "kind": "prop",
+      "id": "canal-southeast-water",
+      "kind": "water",
       "points": [
         {
           "x": 2039,
@@ -714,17 +714,21 @@
           "y": 1147
         },
         {
-          "x": 1948,
-          "y": 1055
+          "x": 1526,
+          "y": 1152
         },
         {
-          "x": 2022,
-          "y": 995
+          "x": 2048,
+          "y": 1152
+        },
+        {
+          "x": 2048,
+          "y": 912
         }
       ]
     },
     {
-      "id": "prop-41872536-8a1e-44e2-a321-77d2f7d0ea8e",
+      "id": "canal-southeast-tree-root",
       "kind": "prop",
       "points": [
         {
@@ -750,7 +754,7 @@
       ]
     },
     {
-      "id": "prop-6647f766-ab02-4c9c-9f63-240f62c264c3",
+      "id": "canal-southeast-pine-root",
       "kind": "prop",
       "points": [
         {
@@ -784,8 +788,8 @@
       ]
     },
     {
-      "id": "prop-50a2b9c1-cf17-40fb-b7a3-a1baf5ebe760",
-      "kind": "prop",
+      "id": "canal-north-river",
+      "kind": "water",
       "points": [
         {
           "x": 858,
@@ -902,8 +906,8 @@
       ]
     },
     {
-      "id": "prop-27543ef3-f749-41f9-a56b-12a548500325",
-      "kind": "prop",
+      "id": "canal-south-river",
+      "kind": "water",
       "points": [
         {
           "x": 926,
@@ -996,8 +1000,8 @@
       ]
     },
     {
-      "id": "prop-e77b709f-6144-43ac-9753-0c8edc21ad30",
-      "kind": "prop",
+      "id": "canal-west-house",
+      "kind": "building",
       "points": [
         {
           "x": 349,
@@ -1038,8 +1042,8 @@
       ]
     },
     {
-      "id": "prop-f11d9273-b036-4933-9e43-90b95da10720",
-      "kind": "prop",
+      "id": "canal-greenhouse",
+      "kind": "building",
       "points": [
         {
           "x": 726,
@@ -1072,8 +1076,8 @@
       ]
     },
     {
-      "id": "prop-3a05dfac-ca86-42c8-9239-a214e1dadeac",
-      "kind": "prop",
+      "id": "canal-east-house",
+      "kind": "building",
       "points": [
         {
           "x": 1312,
@@ -1126,7 +1130,7 @@
       ]
     },
     {
-      "id": "prop-cebead66-d68a-4332-ad2d-42e1b0b9a8a0",
+      "id": "canal-east-edge-tree-root",
       "kind": "prop",
       "points": [
         {
@@ -1164,7 +1168,7 @@
       ]
     },
     {
-      "id": "prop-0a5551b7-b5c2-4bcb-b4e3-a395e993b4f2",
+      "id": "canal-east-garden-fence",
       "kind": "prop",
       "points": [
         {
@@ -1194,7 +1198,7 @@
       ]
     },
     {
-      "id": "prop-8c3663ac-0d22-4538-b810-2c56b33b21b9",
+      "id": "canal-north-tree-root",
       "kind": "prop",
       "points": [
         {
@@ -1224,7 +1228,7 @@
       ]
     },
     {
-      "id": "prop-5d93fb06-4817-4212-a800-06ee05a6e089",
+      "id": "canal-northeast-tree-root",
       "kind": "prop",
       "points": [
         {
@@ -1282,7 +1286,7 @@
       ]
     },
     {
-      "id": "prop-86654413-21b3-4ef1-a0dc-f1c90cec8f21",
+      "id": "canal-northeast-small-tree-root",
       "kind": "prop",
       "points": [
         {
@@ -1304,7 +1308,7 @@
       ]
     },
     {
-      "id": "prop-de39af39-833c-48c5-9ffd-6ac12b0aac85",
+      "id": "canal-north-grove-roots",
       "kind": "prop",
       "points": [
         {
@@ -1340,6 +1344,204 @@
           "y": 83
         }
       ]
+    },
+    {
+      "id": "canal-west-house-side-tree-root",
+      "kind": "vegetation",
+      "points": [
+        {
+          "x": 630,
+          "y": 410
+        },
+        {
+          "x": 646,
+          "y": 408
+        },
+        {
+          "x": 654,
+          "y": 424
+        },
+        {
+          "x": 640,
+          "y": 434
+        },
+        {
+          "x": 625,
+          "y": 425
+        }
+      ]
+    },
+    {
+      "id": "canal-southwest-river-pine-root",
+      "kind": "vegetation",
+      "points": [
+        {
+          "x": 670,
+          "y": 970
+        },
+        {
+          "x": 687,
+          "y": 965
+        },
+        {
+          "x": 694,
+          "y": 981
+        },
+        {
+          "x": 680,
+          "y": 991
+        },
+        {
+          "x": 668,
+          "y": 987
+        }
+      ]
+    },
+    {
+      "id": "canal-west-bank-tree-root",
+      "kind": "vegetation",
+      "points": [
+        {
+          "x": 803,
+          "y": 792
+        },
+        {
+          "x": 826,
+          "y": 790
+        },
+        {
+          "x": 838,
+          "y": 810
+        },
+        {
+          "x": 825,
+          "y": 821
+        },
+        {
+          "x": 805,
+          "y": 816
+        }
+      ]
+    },
+    {
+      "id": "canal-east-bank-pine-root",
+      "kind": "vegetation",
+      "points": [
+        {
+          "x": 1495,
+          "y": 807
+        },
+        {
+          "x": 1514,
+          "y": 806
+        },
+        {
+          "x": 1520,
+          "y": 825
+        },
+        {
+          "x": 1505,
+          "y": 832
+        },
+        {
+          "x": 1494,
+          "y": 824
+        }
+      ]
+    },
+    {
+      "id": "canal-southwest-forest-boundary",
+      "kind": "boundary",
+      "points": [
+        {
+          "x": 0,
+          "y": 690
+        },
+        {
+          "x": 115,
+          "y": 740
+        },
+        {
+          "x": 234,
+          "y": 775
+        },
+        {
+          "x": 279,
+          "y": 858
+        },
+        {
+          "x": 323,
+          "y": 920
+        },
+        {
+          "x": 372,
+          "y": 1004
+        },
+        {
+          "x": 417,
+          "y": 1104
+        },
+        {
+          "x": 430,
+          "y": 1152
+        },
+        {
+          "x": 0,
+          "y": 1152
+        }
+      ]
+    },
+    {
+      "id": "canal-east-middle-tree-root",
+      "kind": "vegetation",
+      "points": [
+        {
+          "x": 1997,
+          "y": 479
+        },
+        {
+          "x": 2029,
+          "y": 479
+        },
+        {
+          "x": 2037,
+          "y": 495
+        },
+        {
+          "x": 2019,
+          "y": 505
+        },
+        {
+          "x": 1996,
+          "y": 499
+        }
+      ]
+    },
+    {
+      "id": "canal-west-middle-tree-root",
+      "kind": "vegetation",
+      "points": [
+        {
+          "x": 5,
+          "y": 390
+        },
+        {
+          "x": 22,
+          "y": 389
+        },
+        {
+          "x": 29,
+          "y": 410
+        },
+        {
+          "x": 17,
+          "y": 424
+        },
+        {
+          "x": 2,
+          "y": 418
+        }
+      ]
     }
   ],
   "spawnPoints": [
@@ -1367,20 +1569,20 @@
         "id": "to-welcome-courtyard-trigger",
         "points": [
           {
-            "x": 125,
-            "y": 395
+            "x": 395,
+            "y": 21
           },
           {
-            "x": 205,
-            "y": 395
+            "x": 485,
+            "y": 21
           },
           {
-            "x": 205,
-            "y": 465
+            "x": 485,
+            "y": 85
           },
           {
-            "x": 125,
-            "y": 465
+            "x": 395,
+            "y": 85
           }
         ]
       },
