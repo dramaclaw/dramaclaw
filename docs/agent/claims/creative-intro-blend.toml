@@ -1,7 +1,7 @@
 version = 1
 slug = "creative-intro-blend"
 ledger = "docs/agent/tasks/creative-intro-blend.md"
-baseline = "45130dfd"
+baseline = "dd8ac320"
 
 [[claims]]
 path = "docs/agent/STATE.md"
