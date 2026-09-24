@@ -223,6 +223,43 @@ def test_video_mode_must_match_live_model_capabilities():
     )["status"] == "ready"
 
 
+def _check_catalog(data, catalog):
+    return evaluate_workflow_preflight(
+        {"plan": {"nodes": [{"id": "video", "node_type": "videoNode", "data": data}]}},
+        model_responses={"videoNode": {"ok": True, "data": catalog}},
+        limits={"ok": True, "data": {"video": {"limit": 2, "remaining": 1}}},
+    )
+
+
+def test_unsupported_video_mode_recovers_by_model_not_by_mode():
+    """Issue #711: an explicit imageToVideo must not be recovered as firstFrame;
+    the blocker names the models that support the requested mode."""
+    catalog = [
+        {"id": "seedance-2.5", "supportedModes": ["text_to_video", "first_frame"]},
+        {"id": "seedance-2.0-fast", "supportedModes": ["first_frame", "image_to_video"]},
+    ]
+    blocked = _check_catalog(
+        {"model": "seedance-2.5", "genMode": "imageToVideo", "durationSec": 5}, catalog
+    )
+    blocker = next(b for b in blocked["blockers"] if b["path"].endswith(".genMode"))
+    assert blocker["compatible_models"] == ["seedance-2.0-fast"]
+    assert blocker["recovery"] == "choose_compatible_model"
+    assert "do not substitute another mode" in blocker["message"]
+    assert _check_catalog(
+        {"model": "seedance-2.0-fast", "genMode": "imageToVideo", "durationSec": 5}, catalog
+    )["status"] == "ready"
+
+
+def test_unsupported_video_mode_without_compatible_model_asks_user():
+    catalog = [{"id": "seedance-2.5", "supportedModes": ["text_to_video", "first_frame"]}]
+    blocked = _check_catalog(
+        {"model": "seedance-2.5", "genMode": "imageToVideo", "durationSec": 5}, catalog
+    )
+    blocker = next(b for b in blocked["blockers"] if b["path"].endswith(".genMode"))
+    assert blocker["compatible_models"] == []
+    assert blocker["recovery"] == "ask_user"
+
+
 def test_video_node_without_planned_duration_asks_for_clarification():
     """Issue #677: an agent-authored video node that pins a model but no
     durationSec would run as a 0-second shot; preflight blocks and names the

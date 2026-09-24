@@ -397,8 +397,15 @@ def _normalize_exact_plan_settings(plan: dict) -> dict:
     return normalized
 
 
-def prepare_workflow_source(body: dict, *, username: str) -> dict:
-    """Accept business intent or an exact plan; return server-owned compilation."""
+def prepare_workflow_source(
+    body: dict, *, username: str, mode_confirmations: dict[str, str] | None = None
+) -> dict:
+    """Accept business intent or an exact plan; return server-owned compilation.
+
+    ``mode_confirmations`` (per-node video modes recorded by server-side
+    revisions, issue #711) is passed only by ``revise_workflow_source``; it is
+    never read from ``body``.
+    """
     if "run_after_create" in body and not isinstance(body["run_after_create"], bool):
         raise WorkflowOperationError("run_after_create must be boolean")
     with workflow_catalog_scope(username):
@@ -435,7 +442,9 @@ def prepare_workflow_source(body: dict, *, username: str) -> dict:
         plan = _normalize_exact_plan_settings(plan)
         if isinstance(intent.get("plan"), dict):
             intent = {**deepcopy(intent), "plan": deepcopy(plan)}
-        validated = _require_result(validate_agent_workflow_plan(plan))
+        validated = _require_result(
+            validate_agent_workflow_plan(plan, mode_confirmations=mode_confirmations)
+        )
         if (
             isinstance(intent.get("plan"), dict)
             and (validated.get("planner") or {}).get("selected_by")
@@ -459,6 +468,24 @@ def prepare_workflow_source(body: dict, *, username: str) -> dict:
                 "workflow contains unresolved edges", errors=built["skipped_edges"]
             )
         return {"intent": deepcopy(intent), "compiled": validated}
+
+
+def _revised_video_modes(plan: dict, updates: list) -> dict[str, str]:
+    """Per-node video modes set by this revision's step updates (issue #711).
+
+    They are kept server-side in ``compiled.mode_confirmations``, never in the
+    caller-writable plan, so a later revision or claim can tell a mode the
+    server recorded from one a caller wrote into the plan.
+    """
+    nodes = _node_index(plan)
+    revised: dict[str, str] = {}
+    for update in updates:
+        if "generation_mode" not in (update.get("settings") or {}):
+            continue
+        node = nodes[update["node_id"]]
+        if node.get("node_type") == "videoNode":
+            revised[update["node_id"]] = node["data"]["genMode"]
+    return revised
 
 
 def revise_workflow_source(payload: dict, changes: Any, *, username: str) -> dict:
@@ -486,11 +513,16 @@ def revise_workflow_source(payload: dict, changes: Any, *, username: str) -> dic
                 "do not mix step/binding changes with compact intent fields"
             )
         plan = deepcopy(payload["compiled"]["plan"])
+        stored = payload["compiled"].get("mode_confirmations")
+        confirmations = dict(stored) if isinstance(stored, dict) else {}
         if "step_updates" in changes:
             plan = update_workflow_steps(plan, changes["step_updates"])
+            confirmations.update(_revised_video_modes(plan, changes["step_updates"]))
         if "bindings" in changes:
             plan = bind_workflow_inputs(plan, changes["bindings"])
-        prepared = prepare_workflow_source({"plan": plan}, username=username)
+        prepared = prepare_workflow_source(
+            {"plan": plan}, username=username, mode_confirmations=confirmations
+        )
         return {**prepared, "last_changes": deepcopy(changes)}
     if isinstance(payload.get("intent", {}).get("plan"), dict):
         raise WorkflowOperationError("exact plans accept step_updates or bindings")

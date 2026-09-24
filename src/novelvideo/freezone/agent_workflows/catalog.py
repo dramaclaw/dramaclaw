@@ -440,9 +440,13 @@ def skill_stage_blockers(
 def _attach_skill_stage_blockers(result: dict[str, Any], skill_id: str) -> None:
     """Fold stage blockers into ``result['preflight']`` (status → blocked)."""
     plan = result.get("plan") if isinstance(result.get("plan"), dict) else {}
-    blockers = skill_stage_blockers(
-        skill_id, plan.get("nodes") or [], plan.get("edges") or []
+    _attach_preflight_blockers(
+        result,
+        skill_stage_blockers(skill_id, plan.get("nodes") or [], plan.get("edges") or []),
     )
+
+
+def _attach_preflight_blockers(result: dict[str, Any], blockers: list[dict[str, Any]]) -> None:
     if not blockers:
         return
     preflight = result.get("preflight") if isinstance(result.get("preflight"), dict) else {}
@@ -3382,6 +3386,118 @@ _PLAN_RUNTIME_BACKFILL_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
 }
 
 
+def _drop_caller_mode_confirmations(
+    nodes: list[Any], resolved_inputs: dict[str, Any]
+) -> None:
+    """Discard per-node video mode confirmations carried inside a plan.
+
+    A plan is caller-writable (and a draft stored before #711 kept whatever the
+    caller wrote), so ``confirmedInputs.video_generation_mode`` there is never a
+    confirmation; a value that differs from the shared mode is removed (the
+    standard planner's copy equals it). Server-recorded per-node revisions
+    travel separately as ``mode_confirmations``.
+    """
+    requested = (
+        _text(resolved_inputs.get("video_generation_mode"))
+        if isinstance(resolved_inputs, dict)
+        else ""
+    )
+    for node in nodes:
+        if not isinstance(node, dict) or _text(node.get("node_type")) != "videoNode":
+            continue
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        workflow_catalog = data.get("workflowCatalog")
+        confirmed = (
+            workflow_catalog.get("confirmedInputs")
+            if isinstance(workflow_catalog, dict)
+            else None
+        )
+        if (
+            isinstance(confirmed, dict)
+            and "video_generation_mode" in confirmed
+            and _text(confirmed.get("video_generation_mode")) != requested
+        ):
+            confirmed.pop("video_generation_mode")
+
+
+def _effective_mode_confirmations(
+    nodes: list[Any], mode_confirmations: Any
+) -> dict[str, str]:
+    """Server-recorded per-node video modes that still name a video node."""
+    if not isinstance(mode_confirmations, dict):
+        return {}
+    video_ids = {
+        _text(node.get("id"))
+        for node in nodes
+        if isinstance(node, dict) and _text(node.get("node_type")) == "videoNode"
+    }
+    return {
+        node_id: _text(mode)
+        for node_id, mode in mode_confirmations.items()
+        if node_id in video_ids and _text(mode)
+    }
+
+
+def _video_generation_mode_blockers(
+    nodes: list[Any],
+    resolved_inputs: dict[str, Any],
+    mode_confirmations: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Video nodes whose genMode is not a mode the draft states as confirmed.
+
+    Issue #711: modes are not interchangeable (imageToVideo references the
+    whole picture, firstFrame locks the opening frame), so unlike other node
+    pins a genMode never silently wins. It must equal the plan's shared
+    ``video_generation_mode`` or the node's server-recorded per-node revision
+    in ``mode_confirmations``; otherwise the draft is blocked instead of
+    becoming ready.
+    """
+    requested = (
+        _text(resolved_inputs.get("video_generation_mode"))
+        if isinstance(resolved_inputs, dict)
+        else ""
+    )
+    blockers: list[dict[str, Any]] = []
+    for node in nodes:
+        if not isinstance(node, dict) or _text(node.get("node_type")) != "videoNode":
+            continue
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        mode = _text(data.get("genMode"))
+        if not mode or mode == requested:
+            continue
+        node_id = _text(node.get("id")) or "videoNode"
+        if _text(mode_confirmations.get(node_id)) == mode:
+            continue
+        if requested:
+            blockers.append(
+                {
+                    "path": f"runtime.models.{node_id}.genMode",
+                    "code": "video_generation_mode_conflict",
+                    "message": (
+                        f"genMode {mode!r} contradicts plan input video_generation_mode "
+                        f"{requested!r}; set the node to {requested!r} (choose a model that "
+                        "supports it) or ask the user before changing the mode."
+                    ),
+                    "allowed_values": [requested],
+                    "recovery": "align_generation_mode",
+                }
+            )
+        else:
+            blockers.append(
+                {
+                    "path": f"runtime.models.{node_id}.genMode",
+                    "code": "video_generation_mode_unconfirmed",
+                    "message": (
+                        f"genMode {mode!r} is not a confirmed mode: state the mode the user "
+                        "asked for as plan input video_generation_mode (or ask the user) and "
+                        "keep every video node's genMode equal to it."
+                    ),
+                    "recovery": "state_generation_mode",
+                }
+            )
+    return blockers
+
+
 def _backfill_plan_runtime_fields(
     nodes: list[Any], resolved_inputs: dict[str, Any]
 ) -> dict[str, list[str]]:
@@ -3454,7 +3570,11 @@ def _noncanonical_video_duration_blockers(nodes: list[Any]) -> list[dict[str, st
 
 
 def validate_agent_workflow_plan(
-    plan: Any, *, username: str | None = None, allow_template_reroute: bool = True
+    plan: Any,
+    *,
+    username: str | None = None,
+    allow_template_reroute: bool = True,
+    mode_confirmations: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Strictly validate an agent-authored plan against the live catalog.
 
@@ -3462,7 +3582,10 @@ def validate_agent_workflow_plan(
     compiled through the standard planner instead and returned in the same
     validated shape with ``planner.selected_by = template_isomorphic``;
     ``allow_template_reroute=False`` skips that (used when validating the
-    standard planner's own output).
+    standard planner's own output). ``mode_confirmations`` maps video node
+    ids to modes a server-side revision recorded (issue #711); only the server
+    passes it, from a stored draft's ``compiled`` payload, and the result
+    carries the ones still in effect for the next revision or claim.
     """
     if validate_workflow_plan is None:
         return {
@@ -3618,6 +3741,20 @@ def validate_agent_workflow_plan(
         if _build_plan_preflight is not None:
             # Planned duration and warnings must reflect the backfilled nodes.
             validated["preflight"] = _build_plan_preflight(validated_plan.get("nodes") or [])
+    _drop_caller_mode_confirmations(
+        validated_plan.get("nodes") or [], input_contract["resolved"]
+    )
+    confirmations = _effective_mode_confirmations(
+        validated_plan.get("nodes") or [], mode_confirmations
+    )
+    _attach_preflight_blockers(
+        validated,
+        _video_generation_mode_blockers(
+            validated_plan.get("nodes") or [], input_contract["resolved"], confirmations
+        ),
+    )
+    if confirmations:
+        validated["mode_confirmations"] = confirmations
     validated["resolved_inputs"] = input_contract["resolved"]
     validated["execution_mode"] = input_contract["execution_mode"]
     validated["recommended_run_after_create"] = input_contract[
@@ -3653,7 +3790,10 @@ def validate_agent_workflow_plan(
         )
         if compiled is not None:
             rerouted = validate_agent_workflow_plan(
-                compiled["plan"], username=username, allow_template_reroute=False
+                compiled["plan"],
+                username=username,
+                allow_template_reroute=False,
+                mode_confirmations=mode_confirmations,
             )
             if rerouted.get("ok"):
                 # Only when the standard planner reproduces the agent's plan node
@@ -3670,7 +3810,10 @@ def validate_agent_workflow_plan(
                     )
                 if merged is not None:
                     rerouted = validate_agent_workflow_plan(
-                        merged, username=username, allow_template_reroute=False
+                        merged,
+                        username=username,
+                        allow_template_reroute=False,
+                        mode_confirmations=mode_confirmations,
                     )
                 if merged is not None and rerouted.get("ok"):
                     rerouted["planner"] = _template_planner_metadata(
