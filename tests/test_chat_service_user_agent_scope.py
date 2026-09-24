@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -2250,6 +2251,389 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         assert result["content"] == ("未能创建工作流：找不到匹配的 Workflow Skill。")
         assert assistant_deltas == [result["content"]]
     assert revoked == ["agent-token"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "argument_retry",
+        "argument_retry_dropped_command",
+        "argument_only",
+        "handler_failure_retry",
+        "argument_retry_duplicate_dropped",
+        "argument_retry_other_draft",
+        "argument_retry_other_move_target",
+        "argument_retry_other_html_artifact",
+        "argument_retry_other_projection",
+        "argument_retry_move_corrected",
+        "argument_retry_draft_revision_corrected",
+        "argument_retry_other_draft_revision",
+        "argument_retry_other_html_version",
+        "argument_retry_non_ascii_revision",
+        "argument_retry_huge_revision",
+        "argument_retry_projection_episode_corrected",
+        "argument_retry_reordered_batch",
+        "argument_retry_with_extra_command",
+        "argument_retry_same_target_moves_reordered",
+        "argument_retry_correction_plus_data_change",
+        "argument_retry_unreported_field_dropped",
+        "argument_retry_open_data_integer_changed",
+    ],
+)
+async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
+    monkeypatch,
+    tmp_path,
+    scenario,
+):
+    """#686: a schema-rejected write retried successfully is not a failed turn.
+
+    Only the exact rejected call, minus the fields the MCP server reported as
+    unexpected and with numeric strings coerced in integer fields, supersedes
+    the rejection. Any other difference keeps the turn failed.
+    """
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    events = []
+
+    async def fake_authorize(**_kwargs):
+        return None
+
+    async def fake_create_token(*_args, **_kwargs):
+        return "agent-token"
+
+    class FakeAuthPort:
+        async def revoke_agent_session(self, token):
+            return None
+
+    commands = [
+        {
+            "type": "add_next_node",
+            "source_node_id": "upload-a",
+            "client_id": "watercolor",
+            "node_type": "imageGenNode",
+            "data": {"prompt": "水彩风格"},
+        },
+        {
+            "type": "run_node_action",
+            "node_id": "watercolor",
+            "action": "generate_image",
+        },
+    ]
+    rejected_commands = [dict(command) for command in commands]
+    rejected_commands[0]["position"] = {"x": 640, "y": 120}
+    if scenario == "handler_failure_retry":
+        rejected_commands = commands
+        rejection = {"ok": False, "error": "源节点不存在"}
+    else:
+        # Shape of dramaclaw_mcp._mcp_error_result for an input-schema failure.
+        rejection = {
+            "ok": False,
+            "error": "tool_arguments_invalid",
+            "tool_name": "freezone_emit_canvas_command",
+            "message": "{...} is not valid under any of the given schemas",
+            "path": "commands[0]",
+            "status": "tool_arguments_invalid",
+            "phase": "tool_validation",
+            "retryable": False,
+        }
+    retry_commands = (
+        commands[:1] if scenario == "argument_retry_dropped_command" else commands
+    )
+    tool = "freezone_emit_canvas_command"
+    rejected_input = {
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "commands": rejected_commands,
+    }
+    retry_input = {
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "commands": retry_commands,
+    }
+    if scenario == "argument_retry_duplicate_dropped":
+        # Two identical anonymous creates must not collapse into one identity.
+        note = {"type": "create_node", "node_type": "textAnnotationNode"}
+        rejected_input["commands"] = [
+            {**note, "data": {"text": "甲"}, "bogus": 1},
+            {**note, "data": {"text": "乙"}},
+        ]
+        retry_input["commands"] = [{**note, "data": {"text": "甲"}}]
+    elif scenario in {
+        "argument_retry_draft_revision_corrected",
+        "argument_retry_other_draft_revision",
+    }:
+        # A numeric-string revision is a schema error; retrying it as the same
+        # integer is the correction, a different revision is another version.
+        tool = "freezone_confirm_workflow_draft"
+        rejected_input = {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "draft_id": "draft-a",
+            "revision": "1",
+        }
+        retry_input = {
+            **rejected_input,
+            "revision": (
+                1 if scenario == "argument_retry_draft_revision_corrected" else 2
+            ),
+        }
+    elif scenario in {
+        "argument_retry_non_ascii_revision",
+        "argument_retry_huge_revision",
+    }:
+        # "²".isdigit() is true but int("²") raises, and int() refuses strings
+        # beyond its digit limit; the turn must still fail cleanly.
+        tool = "freezone_confirm_workflow_draft"
+        rejected_input = {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "draft_id": "draft-a",
+            "revision": (
+                "²" if scenario == "argument_retry_non_ascii_revision" else "9" * 5000
+            ),
+        }
+        retry_input = {**rejected_input, "revision": 2}
+    elif scenario == "argument_retry_same_target_moves_reordered":
+        # Both commands target node-a; only their coordinates and order differ.
+        first = {"type": "move_nodes", "positions": {"node-a": {"x": 10, "y": 10}}}
+        second = {"type": "move_nodes", "positions": {"node-a": {"x": 20, "y": 20}}}
+        rejected_input["commands"] = [{**first, "bogus": 1}, second]
+        retry_input["commands"] = [second, first]
+    elif scenario == "argument_retry_correction_plus_data_change":
+        retry_input["commands"] = [
+            {**commands[0], "data": {"prompt": "油画风格"}},
+            commands[1],
+        ]
+    elif scenario in {
+        "argument_retry_reordered_batch",
+        "argument_retry_with_extra_command",
+    }:
+        # Commands run in array order: set (10,10) then shift +5 gives (15,10),
+        # the reverse gives (10,10). Neither reordering nor an extra command is
+        # a provable correction.
+        absolute = {"type": "move_nodes", "positions": {"node-a": {"x": 10, "y": 10}}}
+        relative = {"type": "move_nodes", "deltas": {"node-a": {"x": 5, "y": 0}}}
+        rejected_input["commands"] = [{**absolute, "bogus": 1}, relative]
+        retry_input["commands"] = (
+            [relative, absolute]
+            if scenario == "argument_retry_reordered_batch"
+            else [absolute, {"type": "select_nodes", "node_ids": ["node-a"]}, relative]
+        )
+    elif scenario == "argument_retry_projection_episode_corrected":
+        # The single-step tool declares episode an integer; a batch command's
+        # request is an open object where "1" is never rejected at all.
+        tool = "freezone_open_mainline_projection"
+        rejected_input = {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "scope": "episode",
+            "episode": "1",
+        }
+        retry_input = {**rejected_input, "episode": 1}
+    elif scenario == "argument_retry_open_data_integer_changed":
+        # data is open: the server reports only bogus, so changing the type of
+        # data.episode is a different node, not a correction.
+        beat_context = {
+            "type": "create_node",
+            "node_type": "beatContextNode",
+            "data": {"projectId": "project-a", "episode": "1", "beat": 1},
+        }
+        rejected_input["commands"] = [{**beat_context, "bogus": 1}]
+        retry_input["commands"] = [
+            {**beat_context, "data": {**beat_context["data"], "episode": 1}}
+        ]
+    elif scenario == "argument_retry_other_html_version":
+        restore = {"type": "html_artifact", "action": "restore", "artifact_id": "a"}
+        rejected_input["commands"] = [{**restore, "version": 1, "bogus": 1}]
+        retry_input["commands"] = [{**restore, "version": 2}]
+    elif scenario == "argument_retry_other_draft":
+        # Confirming draft B says nothing about the rejected draft A.
+        tool = "freezone_confirm_workflow_draft"
+        rejected_input = {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "draft_id": "draft-a",
+            "revision": "1",
+        }
+        retry_input = {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "draft_id": "draft-b",
+            "revision": 1,
+        }
+    elif scenario in {
+        "argument_retry_other_move_target",
+        "argument_retry_other_html_artifact",
+        "argument_retry_other_projection",
+        "argument_retry_move_corrected",
+    }:
+        # The target lives in a map key, artifact_id, or a nested request
+        # rather than a plain id field; another target must not match.
+        rejected_command, retry_command = {
+            "argument_retry_other_move_target": (
+                {"type": "move_nodes", "positions": {"node-a": {"x": 1, "y": 2}}},
+                {"type": "move_nodes", "positions": {"node-b": {"x": 1, "y": 2}}},
+            ),
+            "argument_retry_other_html_artifact": (
+                {"type": "html_artifact", "action": "update", "artifact_id": "a"},
+                {"type": "html_artifact", "action": "update", "artifact_id": "b"},
+            ),
+            "argument_retry_move_corrected": (
+                {"type": "move_nodes", "positions": {"node-a": {"x": 1, "y": 2}}},
+                {"type": "move_nodes", "positions": {"node-a": {"x": 9, "y": 8}}},
+            ),
+            "argument_retry_other_projection": (
+                {
+                    "type": "open_mainline_projection",
+                    "request": {"scope": "beat", "episode": 1, "beat": 1},
+                },
+                {
+                    "type": "open_mainline_projection",
+                    "request": {"scope": "beat", "episode": 1, "beat": 2},
+                },
+            ),
+        }[scenario]
+        rejected_input["commands"] = [{**rejected_command, "bogus": 1}]
+        retry_input["commands"] = [retry_command]
+    if tool != "freezone_emit_canvas_command":
+        rejection = {**rejection, "tool_name": tool}
+    if rejection.get("error") == "tool_arguments_invalid" and (
+        scenario != "argument_retry_unreported_field_dropped"
+    ):
+        # What dramaclaw_mcp._unexpected_argument_fields reports for these inputs.
+        unexpected = [
+            {"path": ["commands", index], "fields": fields}
+            for index, command in enumerate(rejected_input.get("commands") or [])
+            if (
+                fields := [
+                    field
+                    for field in sorted(command)
+                    if field == "bogus"
+                    or (field == "position" and command["type"] == "add_next_node")
+                ]
+            )
+        ]
+        if unexpected:
+            rejection = {**rejection, "unexpected_fields": unexpected}
+        # Top-level fields these tools' schemas declare integer; nested open
+        # objects (node data, batch requests) declare nothing.
+        integer_strings = [
+            [field]
+            for field in ("revision", "episode", "beat")
+            if isinstance(rejected_input.get(field), str)
+            and re.fullmatch(r"-?[0-9]+", rejected_input[field], re.ASCII)
+        ]
+        if integer_strings:
+            rejection = {**rejection, "integer_string_fields": integer_strings}
+
+    class FakeThread:
+        async def stream(self, _prompt):
+            yield SimpleNamespace(
+                type="thread_started",
+                thread_id="codex-thread",
+                turn_id="codex-turn",
+            )
+            yield SimpleNamespace(
+                type="tool_updated",
+                text=f"[mcp:failed] dramaclaw.{tool}",
+                name=f"dramaclaw.{tool}",
+                call_id="call-rejected",
+                status="failed",
+                input=rejected_input,
+                output={
+                    "content": [{"type": "text", "text": json.dumps(rejection)}]
+                },
+                structured=rejection,
+                error=None,
+            )
+            receipts = []
+            if scenario != "argument_only":
+                receipts.append({"bridge_key": "bridge-retry", "revision": None})
+                yield SimpleNamespace(
+                    type="tool_updated",
+                    text=f"[mcp:completed] dramaclaw.{tool}",
+                    name=f"dramaclaw.{tool}",
+                    call_id="call-retry",
+                    status="completed",
+                    input=retry_input,
+                    output=None,
+                    structured={
+                        "ok": True,
+                        "canvas_apply_status": "accepted",
+                        "applied": True,
+                        "errors": [],
+                        "bridge_key": "bridge-retry",
+                        "project_id": "project-a",
+                        "canvas_id": "canvas-a",
+                    },
+                    error=None,
+                )
+            yield SimpleNamespace(
+                type="assistant_delta",
+                text=json.dumps(
+                    {
+                        "message": "已创建水彩风格图片节点并提交生成。",
+                        "mode": "mutation",
+                        "canvas_receipts": receipts,
+                    }
+                ),
+            )
+            yield SimpleNamespace(type="complete", thread_id="codex-thread", text="")
+
+    monkeypatch.setattr(chat_service, "authorize_hermes_launch", fake_authorize)
+    monkeypatch.setattr(
+        chat_service, "_create_page_agent_session_token", fake_create_token
+    )
+    monkeypatch.setattr(
+        chat_service, "_build_codex_thread", lambda *_args, **_kwargs: FakeThread()
+    )
+    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
+    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **_kwargs: None)
+
+    async def collect_event(event):
+        events.append(event)
+
+    scope = ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="main",
+        state_dir=str(tmp_path / "state" / "admin" / "project-a"),
+    )
+    result = await chat_service._stream_assistant_reply_codex(
+        "admin",
+        "project-a",
+        "把选中的图片转成水彩风格",
+        collect_event,
+        project_state_dir=tmp_path / "state" / "admin" / "project-a",
+        tool_mode="freezone_canvas",
+        surface_context={"freezone_canvas_id": "canvas-a"},
+        store_scope=scope,
+        turn_id="business-turn",
+        route_prompt="把选中的图片转成水彩风格",
+    )
+
+    if scenario in {
+        "argument_retry",
+        "argument_retry_draft_revision_corrected",
+        "argument_retry_projection_episode_corrected",
+    }:
+        assert result["content"] == "已创建水彩风格图片节点并提交生成。"
+    elif scenario == "handler_failure_retry":
+        # Only a pre-handler schema rejection is side-effect free; a business
+        # failure from the handler keeps the turn failed.
+        assert result["content"] == "画布操作未完成：源节点不存在"
+    else:
+        # No retry, or a retry that differs beyond the provable corrections:
+        # dropped, added or reordered commands, other targets, coordinates or
+        # data, or a field the server never reported as unexpected.
+        assert result["content"] == "画布操作未完成：tool_arguments_invalid"
+    assistant_deltas = [
+        event["text"] for event in events if event["type"] == "assistant_delta"
+    ]
+    assert assistant_deltas == [result["content"]]
 
 
 @pytest.mark.anyio

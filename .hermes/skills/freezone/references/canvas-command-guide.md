@@ -152,6 +152,8 @@ Plan id 不是画布节点 id。如果确认后的自定义方案需要变成多
 
 选择节点类型时，优先使用源节点的 `downstream_spawn_types`。
 
+`add_next_node` 没有 `position` 字段：新节点会自动放在源节点旁边。带 `position` 会被参数校验拒绝；需要指定坐标时改用 `create_node` + `create_edge`。
+
 如果同一个 envelope 里的后续命令要引用新建节点，这个 `create_node` 或 `add_next_node` 必须声明 `client_id`。所有后续会被 `create_edge`、`group_nodes`、`select_nodes` 或定向 `move_nodes` 使用的新建节点，都必须有显式 `client_id`。
 
 主题性批量创建时，把同一主题的一组节点放进一个普通组。适用场景包括：短片方案、广告创意包、分镜框架、工作流、素材准备包、同一目标下的规划/生成/合成节点。不要把“单独添加一个节点”或零散修改也包装成组。

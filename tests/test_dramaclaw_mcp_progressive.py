@@ -1175,6 +1175,150 @@ async def test_native_tool_call_does_not_block_mcp_event_loop(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_canvas_command_rejection_reports_unexpected_fields(monkeypatch):
+    """#686: the chat service may only drop exactly the fields reported here."""
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+
+    result = await dramaclaw_mcp.call_tool(
+        "freezone_emit_canvas_command",
+        {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "commands": [
+                {
+                    "type": "create_node",
+                    "node_type": "imageGenNode",
+                    "position": {"x": 0, "y": 0},
+                },
+                {
+                    "type": "add_next_node",
+                    "source_node_id": "upload-a",
+                    "node_type": "imageGenNode",
+                    "position": {"x": 640, "y": 120},
+                },
+            ],
+        },
+    )
+
+    payload = json.loads(result.content[0].text)
+    assert result.isError is True
+    assert payload["error"] == "tool_arguments_invalid"
+    # create_node allows position; only add_next_node's is unexpected.
+    assert payload["unexpected_fields"] == [
+        {"path": ["commands", 1], "fields": ["position"]}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_argument_rejection_reports_only_schema_declared_integer_strings(
+    monkeypatch,
+):
+    """#686: numeric strings are a provable correction only where the schema
+    declares an integer; open node data is never coerced."""
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+
+    confirm = await dramaclaw_mcp.call_tool(
+        "freezone_confirm_workflow_draft",
+        {"project_id": "project-a", "canvas_id": "canvas-a", "draft_id": "d", "revision": "1"},
+    )
+    confirm_payload = json.loads(confirm.content[0].text)
+    assert confirm_payload["error"] == "tool_arguments_invalid"
+    assert confirm_payload["integer_string_fields"] == [["revision"]]
+
+    create = await dramaclaw_mcp.call_tool(
+        "freezone_emit_canvas_command",
+        {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "commands": [
+                {
+                    "type": "create_node",
+                    "node_type": "beatContextNode",
+                    "data": {"projectId": "project-a", "episode": "1", "beat": 1},
+                    "bogus": 1,
+                }
+            ],
+        },
+    )
+    create_payload = json.loads(create.content[0].text)
+    assert create_payload["error"] == "tool_arguments_invalid"
+    assert create_payload["unexpected_fields"] == [
+        {"path": ["commands", 0], "fields": ["bogus"]}
+    ]
+    assert "integer_string_fields" not in create_payload
+
+
+def test_integer_string_argument_paths_follow_declared_integer_types():
+    schema = {
+        "type": "object",
+        "properties": {
+            "revision": {"type": "integer"},
+            "label": {"type": "string"},
+            "data": {"type": "object"},
+            "items": {
+                "type": "array",
+                "items": {
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "properties": {
+                                "type": {"enum": ["restore"]},
+                                "version": {"type": ["integer", "null"]},
+                            },
+                        }
+                    ]
+                },
+            },
+        },
+    }
+
+    assert dramaclaw_mcp._integer_string_argument_paths(
+        schema,
+        {
+            "revision": "3",
+            "label": "4",
+            "data": {"episode": "1"},
+            "items": [{"type": "restore", "version": "2"}, {"type": "other", "version": "5"}],
+        },
+    ) == [["revision"], ["items", 0, "version"]]
+    # Non-ASCII digits are not integers and are never reported.
+    assert dramaclaw_mcp._integer_string_argument_paths(schema, {"revision": "²"}) == []
+
+
+def test_unexpected_argument_fields_judges_only_closed_matching_schemas():
+    closed = {"type": "object", "properties": {"a": {}}, "additionalProperties": False}
+    union = {
+        "oneOf": [
+            {
+                "type": "object",
+                "properties": {"type": {"enum": ["x"]}, "a": {}},
+                "additionalProperties": False,
+            }
+        ]
+    }
+    schema = {
+        **closed,
+        "properties": {"a": {}, "items": {"type": "array", "items": union}},
+    }
+
+    assert dramaclaw_mcp._unexpected_argument_fields(
+        schema,
+        {"a": 1, "extra": 2, "items": [{"type": "x", "b": 1}, {"type": "y", "c": 1}]},
+    ) == [
+        {"path": [], "fields": ["extra"]},
+        {"path": ["items", 0], "fields": ["b"]},
+    ]
+    # Open schemas are never judged.
+    assert dramaclaw_mcp._unexpected_argument_fields(
+        {"type": "object", "properties": {"a": {}}}, {"b": 1}
+    ) == []
+
+
+@pytest.mark.asyncio
 async def test_canvas_command_union_error_names_missing_type_without_echoing_html(
     monkeypatch,
 ):

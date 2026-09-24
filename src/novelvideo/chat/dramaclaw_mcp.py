@@ -13,6 +13,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import sys
 import time
 import types as py_types
@@ -614,6 +615,120 @@ def _format_schema_path(parts: list[Any]) -> str:
     return path or "arguments"
 
 
+def _matching_object_variants(
+    schema: Any, value: dict[str, Any]
+) -> list[dict[str, Any]] | None:
+    """The object schemas that apply to this value, narrowing a oneOf/anyOf
+    union by its type discriminator; None when that cannot be decided."""
+    if not isinstance(schema, dict):
+        return None
+    variants = schema.get("oneOf") or schema.get("anyOf")
+    if not isinstance(variants, list):
+        variants = [schema]
+    matching = []
+    for variant in variants:
+        if not isinstance(variant, dict):
+            return None
+        discriminator = (variant.get("properties") or {}).get("type")
+        allowed = discriminator.get("enum") if isinstance(discriminator, dict) else None
+        if isinstance(allowed, list) and value.get("type") not in allowed:
+            continue
+        matching.append(variant)
+    return matching or None
+
+
+def _closed_object_fields(schema: Any, value: dict[str, Any]) -> set[str] | None:
+    """Fields a closed object schema allows for this value, or None if unknown.
+
+    Open schemas, or unions with no matching variant, are never judged.
+    """
+    matching = _matching_object_variants(schema, value)
+    if matching is None or any(
+        variant.get("additionalProperties") is not False
+        or not isinstance(variant.get("properties"), dict)
+        for variant in matching
+    ):
+        return None
+    return {field for variant in matching for field in variant["properties"]}
+
+
+def _unexpected_argument_fields(
+    schema: dict[str, Any], arguments: Any
+) -> list[dict[str, Any]]:
+    """Fields no schema variant allows, by path, for a provable retry (#686).
+
+    Dropping exactly these fields is the only structural correction the chat
+    service accepts as the same call when the agent retries a rejection.
+    Covers the top-level arguments and objects inside top-level arrays.
+    """
+    if not isinstance(arguments, dict):
+        return []
+    found: list[dict[str, Any]] = []
+    allowed = _closed_object_fields(schema, arguments)
+    if allowed is not None and set(arguments) - allowed:
+        found.append({"path": [], "fields": sorted(set(arguments) - allowed)})
+    properties = schema.get("properties") if isinstance(schema, dict) else None
+    for key, value in arguments.items():
+        property_schema = (properties or {}).get(key)
+        if not isinstance(value, list) or not isinstance(property_schema, dict):
+            continue
+        for index, item in enumerate(value):
+            if not isinstance(item, dict):
+                continue
+            allowed = _closed_object_fields(property_schema.get("items"), item)
+            if allowed is not None and set(item) - allowed:
+                found.append(
+                    {"path": [key, index], "fields": sorted(set(item) - allowed)}
+                )
+    return found
+
+
+_ASCII_INTEGER_STRING = re.compile(r"-?[0-9]+", re.ASCII)
+
+
+def _declares_integer(schema: Any) -> bool:
+    if not isinstance(schema, dict):
+        return False
+    declared = schema.get("type")
+    types = declared if isinstance(declared, list) else [declared]
+    return "integer" in types and "string" not in types
+
+
+def _integer_string_argument_paths(schema: Any, value: Any) -> list[list[Any]]:
+    """Paths the schema declares integer but that hold a numeric string (#686).
+
+    Coercing exactly these values is the only value correction the chat
+    service accepts as the same call on retry. Open objects such as node data
+    declare nothing, so their contents are never coerced.
+    """
+    found: list[list[Any]] = []
+    if isinstance(value, list) and isinstance(schema, dict):
+        for index, item in enumerate(value):
+            for path in _integer_string_argument_paths(schema.get("items"), item):
+                found.append([index, *path])
+        return found
+    if not isinstance(value, dict):
+        return found
+    matching = _matching_object_variants(schema, value)
+    if matching is None:
+        return found
+    for key, item in value.items():
+        property_schemas = [
+            (variant.get("properties") or {}).get(key) for variant in matching
+        ]
+        # Every applicable variant must agree, or the type is not provable.
+        if any(not isinstance(candidate, dict) for candidate in property_schemas):
+            continue
+        if all(_declares_integer(candidate) for candidate in property_schemas):
+            if isinstance(item, str) and _ASCII_INTEGER_STRING.fullmatch(item):
+                found.append([key])
+            continue
+        if len(property_schemas) == 1:
+            for path in _integer_string_argument_paths(property_schemas[0], item):
+                found.append([key, *path])
+    return found
+
+
 def _schema_validation_diagnostic(exc: SchemaError | ValidationError) -> tuple[str, str]:
     parts = list(getattr(exc, "absolute_path", ()))
     if isinstance(exc, ValidationError) and exc.validator in {"oneOf", "anyOf"}:
@@ -719,6 +834,10 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                     return _structured_tool_result(name, adapted)
             diagnostics = workflow_plan_schema_diagnostics(arguments, input_schema)
             validation_path, validation_message = _schema_validation_diagnostic(exc)
+            unexpected_fields = _unexpected_argument_fields(input_schema, arguments)
+            integer_string_fields = _integer_string_argument_paths(
+                input_schema, arguments
+            )
             error_payload = {
                 "ok": False,
                 "error": "tool_arguments_invalid",
@@ -748,6 +867,16 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
                 "retryable": name
                 in {"freezone_prepare_workflow_plan_draft", "workflow_graph_compile"},
                 **({"agent_instruction": recovery} if recovery else {}),
+                **(
+                    {"unexpected_fields": unexpected_fields}
+                    if unexpected_fields
+                    else {}
+                ),
+                **(
+                    {"integer_string_fields": integer_string_fields}
+                    if integer_string_fields
+                    else {}
+                ),
             }
             _log_mcp_call_end(
                 scope=_scope_kind(),
