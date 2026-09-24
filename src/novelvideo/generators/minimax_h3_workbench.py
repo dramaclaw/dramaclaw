@@ -9,8 +9,10 @@ reference may disappear silently while changing transports.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urljoin, urlparse
@@ -30,6 +32,41 @@ class MiniMaxH3WorkbenchError(RuntimeError):
     """Stable local-workbench failure that does not expose endpoint details."""
 
 
+_H3_RATIO_OPTIONS = {"auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}
+_H3_RESOLUTION_OPTIONS = {"768p", "2k"}
+_H3_QUALITY_VALUES = {"high": 1, "balanced": 2, "fast": 3}
+_H3_REFERENCE_MODEL_FILES = {
+    "ref2va": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+    "fl2va": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "dual_pass": "minimax_h3_hybrid_fl2va_ref2va_b25-49-int8_r.safetensors",
+}
+
+
+@dataclass(frozen=True)
+class MiniMaxH3SubmissionParameters:
+    """One validated source of truth for both H3 transport payloads."""
+
+    width: int
+    height: int
+    duration: float
+    quality_mode: str
+    inference_steps: int
+    model_mode: str
+    seed: int
+
+    def stable_api_dict(self) -> dict[str, Any]:
+        return {
+            "width": self.width,
+            "height": self.height,
+            "duration": self.duration,
+            "quality_mode": self.quality_mode,
+            "inference_steps": self.inference_steps,
+            "model_mode": self.model_mode,
+            "seed": self.seed,
+            "loras": [],
+        }
+
+
 def _multiple_of_32(value: float) -> int:
     return max(256, min(2048, int(round(value / 32.0)) * 32))
 
@@ -42,20 +79,22 @@ def minimax_h3_dimensions(
 ) -> tuple[int, int]:
     """Return valid workbench dimensions with the selected edge policy."""
 
-    ratio_text = str(aspect_ratio or "16:9").strip().lower()
+    ratio_text = str(aspect_ratio or "").strip().lower()
+    if ratio_text not in _H3_RATIO_OPTIONS:
+        raise MiniMaxH3WorkbenchError("Unsupported H3 aspect ratio")
+    resolution_text = str(resolution or "").strip().lower()
+    if resolution_text not in _H3_RESOLUTION_OPTIONS:
+        raise MiniMaxH3WorkbenchError("Unsupported H3 resolution")
     if ratio_text == "auto":
         if input_size and input_size[0] > 0 and input_size[1] > 0:
             ratio = input_size[0] / input_size[1]
         else:
             ratio = 16 / 9
     else:
-        try:
-            left, right = ratio_text.split(":", 1)
-            ratio = float(left) / float(right)
-        except (ValueError, ZeroDivisionError):
-            ratio = 16 / 9
+        left, right = ratio_text.split(":", 1)
+        ratio = float(left) / float(right)
 
-    is_2k = str(resolution or "").strip().lower() == "2k"
+    is_2k = resolution_text == "2k"
     if is_2k:
         if ratio >= 1:
             return 2048, _multiple_of_32(2048 / ratio)
@@ -63,6 +102,95 @@ def minimax_h3_dimensions(
     if ratio >= 1:
         return _multiple_of_32(768 * ratio), 768
     return 768, _multiple_of_32(768 / ratio)
+
+
+def _integer_parameter(
+    model_params: dict[str, Any],
+    key: str,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    value = model_params[key] if key in model_params else default
+    if type(value) is not int or value < minimum or value > maximum:
+        raise MiniMaxH3WorkbenchError(f"Invalid H3 parameter: {key}")
+    return value
+
+
+def minimax_h3_submission_parameters(
+    *,
+    mode: str,
+    aspect_ratio: str,
+    resolution: str,
+    duration: float,
+    model_params: dict[str, Any],
+    input_size: tuple[int, int] | None = None,
+) -> MiniMaxH3SubmissionParameters:
+    """Validate UI values once so stable and QuickUI payloads cannot drift."""
+
+    allowed_keys = {"quality_mode", "inference_steps", "seed"}
+    if mode == "all_reference":
+        allowed_keys.add("model_mode")
+    unknown = set(model_params) - allowed_keys
+    if unknown:
+        joined = ", ".join(sorted(unknown))
+        raise MiniMaxH3WorkbenchError(f"Unsupported H3 parameters: {joined}")
+
+    if (
+        isinstance(duration, bool)
+        or not isinstance(duration, (int, float))
+        or not math.isfinite(float(duration))
+        or float(duration) < 5
+        or float(duration) > 15
+    ):
+        raise MiniMaxH3WorkbenchError("Invalid H3 duration")
+
+    quality_mode = model_params.get("quality_mode", "fast")
+    if quality_mode not in _H3_QUALITY_VALUES:
+        raise MiniMaxH3WorkbenchError("Invalid H3 parameter: quality_mode")
+    inference_steps = _integer_parameter(
+        model_params,
+        "inference_steps",
+        4,
+        1,
+        50,
+    )
+    seed = _integer_parameter(
+        model_params,
+        "seed",
+        -1,
+        -1,
+        2_147_483_647,
+    )
+
+    if mode == "text_to_video":
+        model_mode = "high_quality"
+    elif mode == "first_last_frame":
+        model_mode = "fl2va"
+    elif mode == "image_reference":
+        model_mode = "ref2va"
+    elif mode == "all_reference":
+        requested_model_mode = model_params.get("model_mode", "ref2va")
+        if requested_model_mode not in _H3_REFERENCE_MODEL_FILES:
+            raise MiniMaxH3WorkbenchError("Invalid H3 parameter: model_mode")
+        model_mode = str(requested_model_mode)
+    else:
+        raise MiniMaxH3WorkbenchError("Unsupported H3 generation mode")
+
+    width, height = minimax_h3_dimensions(
+        aspect_ratio,
+        resolution,
+        input_size=input_size,
+    )
+    return MiniMaxH3SubmissionParameters(
+        width=width,
+        height=height,
+        duration=float(duration),
+        quality_mode=str(quality_mode),
+        inference_steps=inference_steps,
+        model_mode=model_mode,
+        seed=seed,
+    )
 
 
 def _image_size(path: str | None) -> tuple[int, int] | None:
@@ -295,8 +423,13 @@ class MiniMaxH3WorkbenchVideoGenerator(VideoGeneratorBase):
         grouped = {"image": [], "video": [], "audio": []}
         for reference in references:
             ref_type = str(reference.type or "").strip().lower()
-            if ref_type in grouped and str(reference.path or "").strip():
-                grouped[ref_type].append(reference)
+            if ref_type not in grouped:
+                raise MiniMaxH3WorkbenchError(
+                    "H3 only accepts image, video, or audio references"
+                )
+            if not str(reference.path or "").strip():
+                raise MiniMaxH3WorkbenchError("H3 reference asset is unavailable")
+            grouped[ref_type].append(reference)
 
         counts = {key: len(value) for key, value in grouped.items()}
         if mode == "text_to_video":
@@ -394,21 +527,9 @@ class MiniMaxH3WorkbenchVideoGenerator(VideoGeneratorBase):
             if on_progress and upload_total:
                 on_progress(min(0.2, 0.2 * upload_index / upload_total))
 
-        quality_value = {"high": 1, "balanced": 2, "fast": 3}.get(
-            quality_mode,
-            3,
-        )
-        if transport == "i2v" or model_mode == "fl2va":
-            quickui_model_mode = "fl2va"
-            main_model = "minimax_h3_fl2va_pruned_int8_convrot.safetensors"
-        elif model_mode == "dual_pass":
-            quickui_model_mode = "dual_pass"
-            main_model = (
-                "minimax_h3_hybrid_fl2va_ref2va_b25-49-int8_r.safetensors"
-            )
-        else:
-            quickui_model_mode = "ref2va"
-            main_model = "minimax_h3_ref2va_pruned_int8_convrot.safetensors"
+        quality_value = _H3_QUALITY_VALUES[quality_mode]
+        quickui_model_mode = "fl2va" if transport == "i2v" else model_mode
+        main_model = _H3_REFERENCE_MODEL_FILES[quickui_model_mode]
 
         job: dict[str, Any] = {
             "width": width,
@@ -550,6 +671,14 @@ class MiniMaxH3WorkbenchVideoGenerator(VideoGeneratorBase):
             clean_prompt = str(prompt or "").strip()
             if not clean_prompt:
                 raise MiniMaxH3WorkbenchError("MiniMax H3 requires a prompt")
+            if len(clean_prompt) > 7000:
+                raise MiniMaxH3WorkbenchError(
+                    "MiniMax H3 prompt exceeds 7000 characters"
+                )
+            if self.generate_audio:
+                raise MiniMaxH3WorkbenchError(
+                    "MiniMax H3 does not expose an audio-generation toggle"
+                )
             mode = self._normalized_mode(kwargs.get("gen_mode"))
             references = list(kwargs.get("references") or [])
             transport, grouped = self._validate_references(mode, references)
@@ -557,38 +686,14 @@ class MiniMaxH3WorkbenchVideoGenerator(VideoGeneratorBase):
             size_source = image_path or (
                 str(grouped["image"][0].path) if grouped["image"] else None
             )
-            width, height = minimax_h3_dimensions(
-                aspect_ratio,
-                self.resolution,
+            parameters = minimax_h3_submission_parameters(
+                mode=mode,
+                aspect_ratio=aspect_ratio,
+                resolution=self.resolution,
+                duration=duration,
+                model_params=self.model_params,
                 input_size=_image_size(size_source),
             )
-            requested_model_mode = str(
-                self.model_params.get("model_mode") or "ref2va"
-            )
-            if transport == "t2v":
-                model_mode = "high_quality"
-            elif transport == "i2v":
-                model_mode = "fl2va"
-            elif requested_model_mode in {"ref2va", "fl2va", "dual_pass"}:
-                model_mode = requested_model_mode
-            else:
-                model_mode = "ref2va"
-
-            parameters = {
-                "width": width,
-                "height": height,
-                "duration": max(2.0, min(15.0, float(duration))),
-                "quality_mode": str(
-                    self.model_params.get("quality_mode") or "fast"
-                ),
-                "inference_steps": max(
-                    1,
-                    min(50, int(self.model_params.get("inference_steps") or 4)),
-                ),
-                "model_mode": model_mode,
-                "seed": int(self.model_params.get("seed", -1)),
-                "loras": [],
-            }
             if transport != "t2v":
                 log("Submitting MiniMax H3 reference job")
                 return await self._generate_reference_job(
@@ -597,13 +702,13 @@ class MiniMaxH3WorkbenchVideoGenerator(VideoGeneratorBase):
                     grouped=grouped,
                     prompt=clean_prompt,
                     output_path=output_path,
-                    width=width,
-                    height=height,
-                    duration=float(parameters["duration"]),
-                    quality_mode=str(parameters["quality_mode"]),
-                    inference_steps=int(parameters["inference_steps"]),
-                    model_mode=model_mode,
-                    seed=int(parameters["seed"]),
+                    width=parameters.width,
+                    height=parameters.height,
+                    duration=parameters.duration,
+                    quality_mode=parameters.quality_mode,
+                    inference_steps=parameters.inference_steps,
+                    model_mode=parameters.model_mode,
+                    seed=parameters.seed,
                     poll_interval=poll_interval,
                     max_polls=max_polls,
                     on_progress=on_progress,
@@ -614,7 +719,7 @@ class MiniMaxH3WorkbenchVideoGenerator(VideoGeneratorBase):
                 "feature": "minimax-h3",
                 "mode": transport,
                 "inputs": inputs,
-                "parameters": parameters,
+                "parameters": parameters.stable_api_dict(),
             }
             fingerprint = hashlib.sha256(
                 json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
@@ -655,7 +760,7 @@ class MiniMaxH3WorkbenchVideoGenerator(VideoGeneratorBase):
                         video_path=output_path,
                         task_id=job_id,
                         provider_task_id=job_id,
-                        duration_seconds=float(parameters["duration"]),
+                        duration_seconds=parameters.duration,
                     )
                 if status in {"failed", "cancelled"}:
                     raise MiniMaxH3WorkbenchError(

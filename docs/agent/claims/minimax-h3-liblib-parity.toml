@@ -1,7 +1,7 @@
 version = 1
 slug = "minimax-h3-liblib-parity"
 ledger = "docs/agent/tasks/minimax-h3-liblib-parity.md"
-baseline = "45130dfd849d956cc6c3e2e7e0bbf25c6ea90f8d"
+baseline = "0bb2410b72cb2178b847c3e1a094ed036cea79aa"
 
 [[claims]]
 path = "docs/agent/STATE.md"
