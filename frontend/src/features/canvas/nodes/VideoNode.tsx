@@ -66,8 +66,6 @@ import {
 } from "@/features/canvas/domain/canvasNodes";
 import {
   audioReferenceDurationRejection,
-  formatAudioDurationClips,
-  formatAudioDurationSeconds,
   MAX_AUDIO_REFERENCE_DURATION_MS,
   MAX_AUDIO_REFERENCE_TOTAL_DURATION_MS,
   MIN_AUDIO_REFERENCE_DURATION_MS,
@@ -196,12 +194,14 @@ import {
 import { useFreezoneVideoCameraTemplates } from "@/features/canvas/hooks/useFreezoneVideoCameraTemplates";
 import { useFreezoneVideoModels } from "@/features/canvas/hooks/useFreezoneVideoModels";
 import { useCanvasStore, useIsBoxSelecting } from "@/stores/canvasStore";
+import { ReferenceValidationDialog, referenceDurationIssues, referenceIssues, matchesReference, referenceIssueName, type ReferenceIssue } from "./shared/ReferenceValidationDialog";
 import {
   fetchFreezoneJobResult,
   submitFreezoneVideoCompose,
   submitFreezoneDepthMotion,
   submitFreezoneVideoErase,
   submitFreezoneVideoEdit,
+  submitFreezoneVideoExtend,
   submitFreezoneVideoGen,
   submitFreezoneVideoI2v,
   submitFreezoneVideoKeyframes,
@@ -298,6 +298,7 @@ const REFERENCE_CAPS_BY_MODE: Partial<
   imageToVideo: { image: 1, video: 0, audio: 0 },
   imageReference: { image: 9, video: 0, audio: 0 },
   videoEdit: { image: 5, video: 1, audio: 0 },
+  videoExtend: { image: 0, video: 1, audio: 0 },
   allReference: { image: 9, video: 3, audio: 3 },
   firstLastFrame: { image: 2, video: 0, audio: 0 },
 };
@@ -441,6 +442,7 @@ function referenceCapsForMode(
 ): { image: number; video: number; audio: number } | null {
   const defaults = REFERENCE_CAPS_BY_MODE[mode];
   if (!defaults) return null;
+  if (mode === "videoExtend") return defaults;
   return {
     image: FIXED_IMAGE_CAP_BY_MODE[mode] ?? model?.referenceImageMax ?? defaults.image,
     video: model?.referenceVideoMax ?? defaults.video,
@@ -608,6 +610,8 @@ export const VideoNode = memo(
     const { t } = useTranslation();
     const updateNodeInternals = useUpdateNodeInternals();
     const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
+    const [referenceErrors, setReferenceErrors] = useState<ReferenceIssue[]>([]);
+    const [referenceErrorsOpen, setReferenceErrorsOpen] = useState(false);
     const isBoxSelecting = useIsBoxSelecting();
     const updateNodeData = useCanvasStore((state) => state.updateNodeData);
     const addDerivedUploadNode = useCanvasStore(
@@ -779,6 +783,10 @@ export const VideoNode = memo(
       "videoEdit",
       selectedVideoModel,
     );
+    const supportsVideoExtend = isVideoModeSupportedByModel(
+      "videoExtend",
+      selectedVideoModel,
+    );
     const videoEditAcceptsAudio =
       supportsVideoEdit &&
       (referenceCapsForMode(selectedVideoModel, "videoEdit")?.audio ?? 0) > 0;
@@ -786,7 +794,11 @@ export const VideoNode = memo(
     const humanReview = Boolean(data.humanReview);
     const count: VideoGenCount = (data.count ?? 1) as VideoGenCount;
     const videoInputBilling = useMemo(() => {
-      if (genMode !== "allReference" && genMode !== "videoEdit") {
+      if (
+        genMode !== "allReference" &&
+        genMode !== "videoEdit" &&
+        genMode !== "videoExtend"
+      ) {
         return { present: false, ready: true, durationSeconds: 0 };
       }
       const ordered = sortUpstreamByReferenceOrder(
@@ -794,7 +806,7 @@ export const VideoNode = memo(
         data.referenceOrder,
       ).filter((node) => Boolean(referenceVideoUrl(node)));
       const limit =
-        genMode === "videoEdit"
+        genMode === "videoEdit" || genMode === "videoExtend"
           ? 1
           : (selectedVideoModel?.referenceVideoMax ?? 3);
       const videos = ordered.slice(0, Math.max(limit, 0));
@@ -1739,8 +1751,8 @@ export const VideoNode = memo(
       videoModelsLoading,
     ]);
 
-    // 上游接入视频素材时，「全能参考」和目录声明的「视频编辑」都能消费；其它模式
-    // 会把视频丢弃。已经处于合法 videoEdit 时不要再强制改成 allReference。
+    // 上游接入视频素材时，全能参考、视频编辑和视频延长都能消费；其它模式会把视频
+    // 丢弃。已经处于合法的显式视频任务时不要再强制改成 allReference。
     // 与音频的「0→≥1 transition」不同，这里每次都纠正，确保视频在场期间无法切走。
     // 是否可消费视频由媒体目录的 all_reference 能力决定；未声明该能力的模型不强推，
     // 以免顶进提交必 400 的模式。
@@ -1748,6 +1760,7 @@ export const VideoNode = memo(
       if (upstreamCounts.videos === 0) return;
       if (isHappyHorseModel) return;
       if (genMode === "videoEdit" && supportsVideoEdit) return;
+      if (genMode === "videoExtend" && supportsVideoExtend) return;
       if (!supportsAllReference) return;
       if (genMode === "allReference") return;
       updateNodeData(id, { genMode: "allReference" });
@@ -1758,6 +1771,7 @@ export const VideoNode = memo(
       isHappyHorseModel,
       supportsAllReference,
       supportsVideoEdit,
+      supportsVideoExtend,
       updateNodeData,
     ]);
 
@@ -2281,7 +2295,7 @@ export const VideoNode = memo(
     const hasPromptText =
       prompt.trim().length > 0 || upstreamTextJoined.length > 0;
     const hasRequiredMediaForMode =
-      genMode === "videoEdit"
+      genMode === "videoEdit" || genMode === "videoExtend"
         ? upstreamCounts.videos > 0
         : genMode === "allReference"
           ? upstreamCounts.images + upstreamCounts.videos + upstreamCounts.audios > 0 ||
@@ -2392,6 +2406,8 @@ export const VideoNode = memo(
       // 会用过期的 completedUrls 覆写新批次的 generationBatch。
       if (submittingRef.current) return;
       submittingRef.current = true;
+      setReferenceErrors([]);
+      setReferenceErrorsOpen(false);
       try {
       const projectId = readUrl().project;
       if (!projectId) {
@@ -2469,7 +2485,7 @@ export const VideoNode = memo(
 
         const validateReferenceDurations = async (
           media: "audio" | "video",
-          refs: Array<{ url: string; label: string; durationMs: number | null }>,
+          refs: Array<{ url: string; label: string; durationMs: number | null; nodeId: string }>,
         ): Promise<boolean> => {
           const configured = referenceDurationLimitsMs(selectedVideoModel, media);
           const limits = {
@@ -2504,6 +2520,9 @@ export const VideoNode = memo(
           );
           const rejection = audioReferenceDurationRejection(
             refs.map((ref, index) => ({
+              url: ref.url,
+              nodeId: ref.nodeId,
+              index: index + 1,
               label: ref.label,
               durationMs: resolvedDurations[index] ?? null,
             })),
@@ -2517,43 +2536,14 @@ export const VideoNode = memo(
           );
           if (!rejection) return true;
 
-          const clips = formatAudioDurationClips(rejection.clips, (key, vars) =>
-            t(key, vars),
-          );
-          const prefix =
-            media === "audio" ? "node.videoNode.audio" : "node.videoNode.referenceDuration";
-          const message =
-            rejection.kind === "tooShort"
-              ? t(`${prefix}.${media === "audio" ? "durationTooShort" : "videoTooShort"}`, {
-                  min: formatAudioDurationSeconds(limits.minMs ?? 0),
-                  clips,
-                })
-              : rejection.kind === "tooLong"
-                ? t(`${prefix}.${media === "audio" ? "durationTooLong" : "videoTooLong"}`, {
-                    max: formatAudioDurationSeconds(limits.maxMs ?? 0),
-                    clips,
-                  })
-                : rejection.kind === "totalTooShort"
-                  ? t(
-                      `${prefix}.${media === "audio" ? "durationTotalTooShort" : "videoTotalTooShort"}`,
-                      {
-                        min: formatAudioDurationSeconds(rejection.limitMs),
-                        total: formatAudioDurationSeconds(rejection.totalMs),
-                        clips,
-                      },
-                    )
-                  : t(
-                      `${prefix}.${media === "audio" ? "durationTotalTooLong" : "videoTotalTooLong"}`,
-                      {
-                        max: formatAudioDurationSeconds(rejection.limitMs),
-                        total: formatAudioDurationSeconds(rejection.totalMs),
-                        clips,
-                      },
-                    );
-          toast.error(message, { duration: 5_000 });
+          setReferenceErrors(referenceDurationIssues(media, rejection, limits));
+          setReferenceErrorsOpen(true);
           updateNodeData(id, {
             isGenerating: false,
             generationStartedAt: null,
+            generationError: t("referenceValidation.title"),
+            generationErrorDetails: null,
+            generationErrorRequestId: null,
           });
           return false;
         };
@@ -2672,6 +2662,7 @@ export const VideoNode = memo(
                   : "");
               return {
                 url,
+                nodeId: node.id,
                 label:
                   rawLabel ||
                   t("node.videoNode.audio.clipFallbackLabel", { index: index + 1 }),
@@ -2694,6 +2685,7 @@ export const VideoNode = memo(
             !(await validateReferenceDurations("video", [
               {
                 url: videoUrl,
+                nodeId: sourceVideoNode?.id ?? id,
                 label:
                   (typeof sourceVideoNode?.data.displayName === "string"
                     ? sourceVideoNode.data.displayName
@@ -2789,6 +2781,36 @@ export const VideoNode = memo(
               model: selectedVideoModel?.catalogId ?? modelId,
               genMode,
               modelParams: data.modelParams,
+              humanReview: supportsHumanReview && humanReview,
+              canvasId,
+              nodeId: targetId,
+            });
+        } else if (genMode === "videoExtend") {
+          const upstream = collectUpstream();
+          const videoUrl =
+            upstream
+              .map((node) => referenceVideoUrl(node) ?? "")
+              .find((url) => url.length > 0) ?? "";
+          if (!videoUrl) {
+            console.warn("[video-node] videoExtend submit without upstream video");
+            updateNodeData(id, {
+              isGenerating: false,
+              generationStartedAt: null,
+            });
+            return;
+          }
+          doSubmit = (targetId) =>
+            submitFreezoneVideoExtend(projectId, {
+              videoUrl,
+              prompt: composedPrompt,
+              cameraTemplateId,
+              resolution: qualityToResolution(quality),
+              durationSeconds: durationClamped,
+              generateAudio,
+              model: selectedVideoModel?.catalogId ?? modelId,
+              genMode,
+              modelParams: data.modelParams,
+              humanReview: supportsHumanReview && humanReview,
               canvasId,
               nodeId: targetId,
             });
@@ -2822,11 +2844,13 @@ export const VideoNode = memo(
             url: string;
             label: string;
             durationMs: number | null;
+            nodeId: string;
           }[] = [];
           const videoRefs: {
             url: string;
             label: string;
             durationMs: number | null;
+            nodeId: string;
           }[] = [];
           let imageCount = 0;
           let videoCount = 0;
@@ -2845,6 +2869,7 @@ export const VideoNode = memo(
                 });
                 videoRefs.push({
                   url: videoRefUrl,
+                  nodeId: node.id,
                   label: t("node.videoNode.referenceDuration.videoFallbackLabel", {
                     index: videoCount + 1,
                   }),
@@ -2878,6 +2903,7 @@ export const VideoNode = memo(
                 });
                 audioRefs.push({
                   url,
+                  nodeId: node.id,
                   // 时长超限时要指名道姓是哪条，所以这里连标签一起留着；没有文件名
                   // 的（TTS 直出等）退回「音频N」。序号按音频自身 1-based 计，与后端
                   // pipeline.py 的 enumerate(audio_paths, start=1) 同口径；标签本身
@@ -2963,6 +2989,7 @@ export const VideoNode = memo(
             });
         }
 
+        const referenceSnapshot = collectUpstream();
         if (!doSubmit) {
           updateNodeData(id, { isGenerating: false, generationStartedAt: null });
           return;
@@ -3092,6 +3119,25 @@ export const VideoNode = memo(
         // 「先弹上限报错、节点却又冒出加载动画」的矛盾观感。
         if (completedUrls.length === 0 && runErrors.length > 0) {
           const firstError = runErrors[0];
+          const issues = referenceIssues(firstError);
+          if (issues.length) {
+            const upstream = referenceSnapshot;
+            setReferenceErrors(issues.map((issue) => {
+              const matching = upstream.filter((node) => {
+                const values = [submittableImageUrl(node),
+                  "audioUrl" in node.data ? node.data.audioUrl : null,
+                  "videoUrl" in node.data ? node.data.videoUrl : null];
+                return values.some((url) => typeof url === "string" && matchesReference(url, issue.reference_key));
+              });
+              const node = matching.length === 1 ? matching[0] : undefined;
+              return { ...issue, nodeId: node?.id,
+                label: referenceIssueName(issue, node?.data.sourceFileName) };
+            }));
+            setReferenceErrorsOpen(true);
+            updateNodeData(id, { generationError: t("referenceValidation.title"),
+              generationErrorDetails: null, generationErrorRequestId: null });
+            return;
+          }
           // 整批都只是「前端不等了」时走中性提示：后端仍在生成，节点保持生成中
           // 状态等待刷新续接，不该按报错呈现。真有失败混在里面则仍按失败处理。
           if (runErrors.every((error) => isTaskPollTimeoutError(error))) {
@@ -3298,6 +3344,10 @@ export const VideoNode = memo(
         onDrop={handleDrop}
         onDragOver={handleDragOver}
       >
+        <ReferenceValidationDialog issues={referenceErrors} open={referenceErrorsOpen} onClose={() => setReferenceErrorsOpen(false)} />
+        {referenceErrors.length > 0 && <button type="button" className="tap-button nodrag absolute -top-10 left-0" onClick={(event) => {
+          event.stopPropagation(); setReferenceErrorsOpen(true);
+        }}>{t("referenceValidation.title")}</button>}
         {/* 叠卡画册的卡片边：从主视频右侧探出（与图片节点同款），点卡边也能展开画册。 */}
         {hasAlbum && !albumExpanded && videoSource && (
           <>

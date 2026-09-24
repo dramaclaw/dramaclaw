@@ -108,7 +108,8 @@ export type VideoGenMode =
   | 'imageToVideo'
   | 'firstLastFrame'
   | 'imageReference'
-  | 'videoEdit';
+  | 'videoEdit'
+  | 'videoExtend';
 
 export type VideoGenQuality = string;
 export type VideoGenCount = 1 | 2 | 4;

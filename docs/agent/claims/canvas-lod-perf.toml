@@ -205,7 +205,7 @@ reason = "Local and remote media variant selection."
 [[claims]]
 path = "src/novelvideo/freezone/history.py"
 mode = "shared"
-shared_with = ["liblib-canvas-parity"]
+shared_with = ["liblib-canvas-parity", "sync-main-remotes"]
 reason = "Prewarm all image variants used by canvas nodes."
 
 [[claims]]

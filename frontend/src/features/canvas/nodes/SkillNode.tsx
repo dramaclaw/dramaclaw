@@ -12,6 +12,7 @@ import {
 import { Handle, Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react';
 import { Boxes, Camera, Crop, FileText, Loader2, Play } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 
 import { uploadFreezoneImage } from '@/api/ops';
 import {
@@ -28,6 +29,7 @@ import {
   type SkillRunResult,
 } from '@/api/skills';
 import { awaitTaskCompletion } from '@/api/tasks';
+import { backendErrorToastMessage } from '@/lib/api-errors';
 import {
   stageSelectedBackgroundOutputForSkill,
 } from '@/features/canvas/application/selectedBackgroundSlot';
@@ -280,6 +282,11 @@ async function awaitSkillRunResult(projectId: string, runId: string): Promise<Sk
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isClientRejection(error: unknown): boolean {
+  const status = error instanceof Error ? (error as { status?: unknown }).status : undefined;
+  return typeof status === 'number' && status >= 400 && status < 500 && status !== 401;
 }
 
 function skillErrorMessage(error: SkillRunResult['error']): string | null {
@@ -1302,6 +1309,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
 
     let startedAt = 0;
     let activeRunKey: string | null = null;
+    let runAccepted = false;
     try {
       const state = useCanvasStore.getState();
       const latestNodeById = new Map(state.nodes.map((node) => [node.id, node] as const));
@@ -1354,6 +1362,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
         resolved_inputs: resolvedInputs,
         parameters: currentParameters,
       });
+      runAccepted = true;
       const runKey = `${projectId}:${canvasId}:${id}:${response.run_id}`;
       activeRunKey = runKey;
       resumeRunRef.current = runKey;
@@ -1400,11 +1409,17 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
       }
       const currentNode = useCanvasStore.getState().nodes.find((node) => node.id === id);
       const currentStartedAt = (currentNode?.data as { generationStartedAt?: unknown } | undefined)?.generationStartedAt;
+      // 提交即被后端拒绝（4xx，任务未创建）属于「先去补操作」的提示，用 toast；
+      // 任务跑起来之后的失败仍挂在节点上，离开再回来也看得到。
+      const rejectedOnSubmit = !runAccepted && isClientRejection(error);
+      if (rejectedOnSubmit) {
+        toast.error(backendErrorToastMessage(error, t), { duration: 8_000 });
+      }
       if (currentNode && (currentStartedAt === startedAt || !activeRunKey)) {
         updateNodeData(id, {
           isGenerating: false,
           generationStartedAt: null,
-          generationError: errorMessage(error),
+          generationError: rejectedOnSubmit ? null : errorMessage(error),
           generationTaskKey: null,
           generationTaskType: null,
           generationTaskJobId: null,

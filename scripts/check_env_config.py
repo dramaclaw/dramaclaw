@@ -66,6 +66,36 @@ COMMON_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^(?:ST_API_COVERAGE_FILE|PYTEST_ADDOPTS|PYTEST_CURRENT_TEST)$"), "Pytest runner env."),
     (re.compile(r"^(?:LANG|LC_ALL)$"), "Process locale env, not app configuration."),
     (
+        re.compile(r"^VITE_API_URL$"),
+        "Frontend dev/build input documented by frontend/.env.example, not a backend operator key.",
+    ),
+    (
+        re.compile(r"^LIBLIB_COOKIE_FILE$"),
+        "Local browser credential-file selector; credentials and their machine-local path must not enter public templates.",
+    ),
+    (
+        re.compile(r"^PYTORCH_ENABLE_MPS_FALLBACK$"),
+        "Local PyTorch accelerator compatibility switch with a code default.",
+    ),
+    (
+        re.compile(r"^ST_(?:DA3_MODEL_DIR|DA3_PYTHON|DEMUCS_PYTHON)$"),
+        "Optional local media-tool interpreter/model paths with runtime discovery or degraded fallbacks.",
+    ),
+    (
+        re.compile(
+            r"^(?:LOCAL_(?:KREA|QWEN)_IMAGE_MODEL|KREA_T2I_STEPS|"
+            r"QWEN_(?:COMFY_TIMEOUT_SECONDS|T2I_STEPS))$"
+        ),
+        "Optional local ComfyUI model and tuning overrides with code defaults.",
+    ),
+    (
+        re.compile(
+            r"^(?:SILICONFLOW_(?:BASE_URL|EMBEDDING_MODEL|TEXT_MODEL|TTS_MODEL)|"
+            r"STORY_WRITER_MODEL)$"
+        ),
+        "Optional local gateway/provider model overrides outside the curated public NewAPI template.",
+    ),
+    (
         re.compile(r"^(?:BASH_SOURCE|ROOT_DIR)$"),
         "Shell-local variable in startup/dev scripts (start-ce.sh etc.), not external env config.",
     ),
@@ -120,6 +150,7 @@ COMMON_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(
             r"^(?:NOVELVIDEO_API_HOST|NOVELVIDEO_API_PORT|NOVELVIDEO_API_URL|NOVELVIDEO_DATA_ROOT|"
             r"NOVELVIDEO_API_WORKERS|NOVELVIDEO_API_TIMEOUT|NOVELVIDEO_API_READY_TIMEOUT|"
+            r"NOVELVIDEO_API_GRACEFUL_SHUTDOWN_TIMEOUT|"
             r"NOVELVIDEO_TIMEOUT|"
             r"NOVELVIDEO_RUNTIME_DIR|NOVELVIDEO_STATE_DIR|NOVELVIDEO_TASK_STARTING_TIMEOUT|"
             r"NOVELVIDEO_UI_HOST|NOVELVIDEO_UI_PORT|NOVELVIDEO_WORKERS|"
@@ -132,6 +163,11 @@ COMMON_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
 )
 CE_REVERSE_ENV_ALLOWLIST: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"^ST_MEDIA_ARCHIVE_COPY_ENABLED$"),
+        "EE-only archive copy switch checked by shared CE delivery code; "
+        "CE does not expose it as operator configuration.",
+    ),
     (
         re.compile(r"^NEWAPI_(?:API_KEY|BASE_URL)$"),
         "EE deployment credentials read by shared CE/EE gateway code; CE dynamic "

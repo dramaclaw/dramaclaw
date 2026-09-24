@@ -89,7 +89,7 @@ reason = "DA3 and breakdown local leaves extend the global audited table."
 [[claims]]
 path = "tests/test_task_runner_home_node_placement.py"
 mode = "shared"
-shared_with = ["shot-breakdown"]
+shared_with = ["shot-breakdown", "sync-main-remotes"]
 reason = "Depth and breakdown tasks extend the placement-free task contract."
 
 [[claims]]

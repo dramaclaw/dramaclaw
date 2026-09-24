@@ -3,8 +3,9 @@
 // In-browser audio format conversion for the canvas audio-node download menu.
 //
 // The backend serves the separated/generated audio in whatever container it
-// produced (currently AAC-in-`.m4a`). When the user downloads, we let them pick
-// a target format. Conversions run entirely client-side:
+// produced (audio separate now emits `.mp3`; older results are AAC-in-`.m4a`).
+// When the user downloads, we let them pick a target format. Conversions run
+// entirely client-side:
 //
 // - WAV  — decode → 16-bit PCM → RIFF header. Pure JS, no deps, lossless re-wrap.
 // - MP3  — decode → 16-bit PCM → lamejs encoder.

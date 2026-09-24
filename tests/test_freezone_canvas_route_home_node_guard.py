@@ -1,4 +1,4 @@
-"""B2 步 11 · 只撤画布 14 条路由的 home node 守卫，别的 64 条一行不动。
+"""B2 步 11 · 只撤画布 16 条路由的 home node 守卫，非画布路由保持默认守卫。
 
 方案文档（`B2-canvas-placement-free.md` §6.4 步 11）的原话是「撤掉
 `api/routes/freezone.py:326` 的 home node 守卫」。**照字面删是错的**，
@@ -7,14 +7,14 @@
 - 那一行（集成线上已漂到 `:331`，在 `_resolve_freezone_project` 内）
   **不是画布路由的守卫，是 freezone 全部路由的守卫** —— 本文件
   `test_only_canvas_routes_opt_out_of_the_home_node_guard` 现场点数：
-  `@router.` 78 条 ≡ `_resolve_freezone_project` 77 处调用，
-  其中 `tags=[TAG_FREEZONE_CANVAS]` 只有 14 条。
-- 删那一行 ＝ 一次性放开另外 ~64 条读写 `Path(ctx.output_dir)` 本地项目文件、
+  合并后 `@router.` 87 条 ≡ `_resolve_freezone_project` 86 处调用，
+  其中 `tags=[TAG_FREEZONE_CANVAS]` 只有 16 条。
+- 删那一行 ＝ 一次性放开其余读写 `Path(ctx.output_dir)` 本地项目文件、
   **既没有租约也没有共享存储交代**的路由，与 §6.3 的「逐个撤、不批量撤」直接冲突。
 
 故落地形态是给 `_resolve_freezone_project` 加一个**带默认值 `True` 的关键字参数**
 `require_home_node`（形制照它自己签名里已有的 `*, required_role: str = "editor"`），
-只在 14 条画布路由的调用点显式传 `False`。
+只在 16 条画布路由的调用点显式传 `False`。
 
 四条用例分工：
 
@@ -25,9 +25,9 @@
    在非 home node 上**过得了这道守卫**。只断言这一件：真正落盘还依赖共享存储，
    那是 `dispatch-and-branching.md` §11 第 4 行的交接项，不在本 EU 内。
 3. `test_non_canvas_freezone_routes_are_still_blocked_on_a_non_home_node` ——
-   另外 64 条挑 3 条，**仍然被拦**且错误体逐字相同。
+   其余非画布路由挑 3 条，**仍然被拦**且错误体逐字相同。
 4. `test_only_canvas_routes_opt_out_of_the_home_node_guard` —— AST 静态护栏（双向）：
-   传 `require_home_node=False` 的调用点必须都在画布路由里，且 14 条画布路由必须全传了。
+   传 `require_home_node=False` 的调用点必须都在画布路由里，且 16 条画布路由必须全传了。
    形制照同目录 `tests/test_freezone_canvas_route_to_thread.py:180` 的 AST 不变量。
 """
 
@@ -108,7 +108,7 @@ def _assert_not_a_home_node_rejection(exc: BaseException | None) -> None:
 async def test_default_still_rejects_a_non_home_node_project(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """不传新参数 ＝ 今天的行为，逐字不变（64 条非画布路由靠这个默认值不改一行）。"""
+    """不传新参数 ＝ 今天的行为，逐字不变（非画布路由继续依赖该默认值）。"""
 
     ctx = _patch_remote_project(monkeypatch, tmp_path)
 
@@ -173,7 +173,7 @@ async def test_canvas_write_route_passes_the_home_node_guard(
 async def test_non_canvas_freezone_routes_are_still_blocked_on_a_non_home_node(
     handler_name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """另外 64 条一行不改：仍然被拦，错误体逐字相同。"""
+    """其余非画布路由仍然被拦，错误体逐字相同。"""
 
     ctx = _patch_remote_project(monkeypatch, tmp_path)
     handler = getattr(freezone_routes, handler_name)
@@ -217,7 +217,7 @@ def _opts_out_of_the_guard(call: ast.Call) -> bool:
 
 
 def test_only_canvas_routes_opt_out_of_the_home_node_guard() -> None:
-    """双向棘轮：opt-out 只许出现在画布路由里，且 15 条必须全部 opt-out。
+    """双向棘轮：opt-out 只许出现在画布路由里，且 16 条必须全部 opt-out。
 
     这条防的是「以后有人顺手多传一个 `require_home_node=False`」——
     `TCP-P60` 的整个论证建立在「撤除面恰好是画布路由」上。
@@ -263,8 +263,9 @@ def test_only_canvas_routes_opt_out_of_the_home_node_guard() -> None:
         and _opts_out_of_the_guard(call)
     }
 
-    # 原 80 条再加 depth、shot 与两个 LibTV 导入/本地化端点。
-    assert router_decorators == 84
+    # fork 的 depth/shot/LibTV 路由与上游的素材拷贝/视频延长合流后共 87 个装饰器；
+    # 只有 16 条画布路由允许显式绕过 home-node 守卫。
+    assert router_decorators == 87
     assert len(canvas_routes) == 16
 
     # 正向：画布路由必须全部、且每一处调用都 opt-out。

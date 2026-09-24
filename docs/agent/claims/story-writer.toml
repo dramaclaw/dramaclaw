@@ -20,8 +20,9 @@ reason = "Machine-readable scope for this workstream."
 
 [[claims]]
 path = "src/novelvideo/agents/story_writer.py"
-mode = "exclusive"
-reason = "Story-writing agent and structured screenplay rendering."
+mode = "shared"
+shared_with = ["sync-main-remotes"]
+reason = "Story-writing agent; sync-main-remotes may only align its gateway capability with upstream policy."
 
 [[claims]]
 path = "src/novelvideo/api/routes/story.py"

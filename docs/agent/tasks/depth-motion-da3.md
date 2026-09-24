@@ -45,6 +45,8 @@
 - `freezone.py` 还被 `origin/main` 修改。最终集成顺序：先同步 API 基线，再合 shot 公共契约，最后接 DA3 leaf。
 - `sync-main-remotes` 在上述提交均已落盘后作为唯一最终集成者；它只解决 `VideoNode.tsx` 的三方冲突，
   必须同时保留 DA3 入口、拉片/LibTV 行为与上游引用校验，不重新定义本线领域契约。
+- `sync-main-remotes` 可同步更新共享的 home-node placement 测试，把合并后新增的自包含任务加入既有全集断言；
+  不改变 Depth runner 的 placement 决策。
 
 ## 实施方案（后续）
 

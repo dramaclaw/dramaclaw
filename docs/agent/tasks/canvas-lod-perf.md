@@ -43,6 +43,8 @@
   `origin/feat/canvas-video-reshoot-breakdown` 触及，且本地 LibTV 线也改画布热点。
 - 下一步必须先按函数 / 测试比较本地与远端 LOD，不以提交时间或整文件 diff 直接选一份。
   审计完成前，这条线只允许只读分析和性能测量，不再写共享热点。
+- `sync-main-remotes` 可在最终合流时只修正 `freezone/history.py` 的旧 docstring，并同步上游测试断言为
+  本线已经交付的全档位预热；不得改变 LOD 档位或队列策略。
 
 ## 实施方案（后续）
 

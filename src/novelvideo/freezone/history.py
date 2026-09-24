@@ -130,13 +130,12 @@ _IMAGE_OUTPUT_KEYS = ("output_url", "image_url", "master_url", "url")
 
 
 def prewarm_history_thumbnail(project_dir: Path, record: dict[str, Any]) -> int:
-    """Queue one 320px thumbnail for a newly written history record.
+    """Queue every canvas image size for one newly written history record.
 
     This is intentionally narrow: one record produces at most one background
-    job and only the ``thumb`` variant. Existing records are never scanned or
+    prewarm call for its displayed image. Existing records are never scanned or
     backfilled while being read, so opening a large history cannot fan out into
-    CPU-bound image decodes. Best-effort and never allowed to break the history
-    write.
+    unrelated image decodes. Best-effort and never allowed to break the history write.
     """
 
     if (

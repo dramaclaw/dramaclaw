@@ -1,7 +1,7 @@
 version = 1
 slug = "sync-main-remotes"
 ledger = "docs/agent/tasks/sync-main-remotes.md"
-baseline = "e7b1fbce"
+baseline = "79171bc6"
 
 [[claims]]
 path = "docs/agent/STATE.md"
@@ -42,6 +42,34 @@ shared_with = ["*"]
 reason = "Resolve the route-count and home-node guard contract against the merged route table."
 
 [[claims]]
+path = "src/novelvideo/agents/story_writer.py"
+mode = "shared"
+shared_with = ["story-writer"]
+reason = "Adopt the upstream agent-specific text capability without changing story behavior."
+
+[[claims]]
+path = "src/novelvideo/freezone/history.py"
+mode = "shared"
+shared_with = ["canvas-lod-perf", "liblib-canvas-parity"]
+reason = "Align the thumbnail prewarm docstring with the fork's all-variant implementation."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/PromptMentionEditor.tsx"
+mode = "exclusive"
+reason = "Preserve the pending material-replacement chip while H3 candidate signatures update."
+
+[[claims]]
+path = "tests/test_task_payload_projection.py"
+mode = "exclusive"
+reason = "Update the complete runner-count sentinel for the merged freezone registry."
+
+[[claims]]
+path = "tests/test_task_runner_home_node_placement.py"
+mode = "shared"
+shared_with = ["depth-motion-da3", "shot-breakdown"]
+reason = "Add the fork's self-contained audio transform to the merged placement contract."
+
+[[claims]]
 path = "README.md"
 mode = "read-only"
 reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
@@ -53,13 +81,13 @@ reason = "Import the exact origin/main result through Git's automatic three-way 
 
 [[claims]]
 path = "assets/readme/GENERATION.md"
-mode = "read-only"
-reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+mode = "exclusive"
+reason = "Normalize the upstream file's extra EOF blank line for repository format gates."
 
 [[claims]]
 path = "assets/readme/REVISION-NOTES.md"
-mode = "read-only"
-reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+mode = "exclusive"
+reason = "Normalize the upstream file's extra EOF blank line for repository format gates."
 
 [[claims]]
 path = "assets/readme/asset-library.jpg"
@@ -368,8 +396,8 @@ reason = "Import the exact origin/main result through Git's automatic three-way 
 
 [[claims]]
 path = "license-inventory.csv"
-mode = "read-only"
-reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+mode = "exclusive"
+reason = "Regenerate the license path inventory against the merged Git index."
 
 [[claims]]
 path = "pyproject.toml"
@@ -393,8 +421,8 @@ reason = "Import the exact origin/main result through Git's automatic three-way 
 
 [[claims]]
 path = "scripts/check_env_config.py"
-mode = "read-only"
-reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+mode = "exclusive"
+reason = "Register fork-local optional runtime env reads in the merged ratchet."
 
 [[claims]]
 path = "src/novelvideo/api/deps.py"
@@ -503,8 +531,8 @@ reason = "Import the exact origin/main result through Git's automatic three-way 
 
 [[claims]]
 path = "src/novelvideo/media_archive_copy.py"
-mode = "read-only"
-reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+mode = "exclusive"
+reason = "Make the optional delivery-port fallback survive registry module reloads like the other optional ports."
 
 [[claims]]
 path = "src/novelvideo/media_model_request_schema.py"
@@ -643,8 +671,8 @@ reason = "Import the exact origin/main result through Git's automatic three-way 
 
 [[claims]]
 path = "tests/test_media_thumbnails.py"
-mode = "read-only"
-reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+mode = "exclusive"
+reason = "Align upstream thumbnail expectations with the fork's all-variant prewarm contract."
 
 [[claims]]
 path = "tests/test_model_gateway_settings.py"

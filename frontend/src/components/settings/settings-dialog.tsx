@@ -4369,6 +4369,7 @@ function LocalMediaModelEditor({
                     ["image_reference", "node.videoNode.tabs.imageReference"],
                     ["all_reference", "node.videoNode.tabs.allReference"],
                     ["video_edit", "node.videoNode.tabs.videoEdit"],
+                    ["video_extend", "node.videoNode.tabs.videoExtend"],
                   ].map(([value, labelKey]) => {
                     const selected = stringOptions("supportedModes");
                     return (

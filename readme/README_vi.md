@@ -151,17 +151,9 @@ DramaClaw là một **dây chuyền sản xuất phim drama AI với mã nguồn
 
 Nó được xây cho người sáng tạo, studio độc lập và kỹ sư sáng tạo — chạy trọn "nhà máy phim drama" trên chính máy của bạn, không cần chắp vá hàng chục công cụ rời rạc hay giao tài liệu của mình cho một dịch vụ đám mây hộp đen. Dù được xây quanh phim drama, cùng một canvas và pipeline này vẫn áp dụng cho quảng cáo ngắn, video sản phẩm thương mại điện tử và các định dạng hình ảnh khác.
 
-<p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/dual-mode-workflow.jpg?v=2" width="600" alt="双模式工作流 · Quy trình hai chế độ"/>
-</p>
-
 <br/>
 
 ## Năng lực cốt lõi
-
-<p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/oss-launch.jpg?v=2" width="760" alt="DramaClaw 源码发布 · ra mắt mã nguồn công khai"/>
-</p>
 
 ### XiaHua — bảng vẽ vô hạn
 
@@ -177,8 +169,14 @@ Nó được xây cho người sáng tạo, studio độc lập và kỹ sư sá
 - **Skill trên canvas** &mdash; các skill một chạm như phác thảo từ ngữ cảnh, khung hình từ ngữ cảnh, đặt nền, cảnh 360, review khung hình và lập kế hoạch beat-graph
 - **Xây cho canvas lớn** &mdash; tab canvas, dàn ý phần tử, minimap và bookmark vùng nhìn, căn chỉnh bám lưới, render theo mức chi tiết (level-of-detail), chọn nhiều và nhóm node, phím tắt, lịch sử phiên bản có khôi phục, khóa theo từng canvas
 - **Commit vào series** &mdash; xem trước tác động, rồi đưa một node hoặc cả một lô vào thư viện tài sản hoặc một tập; chiếu series ngược lại lên canvas từ các preset
-- **Director World — bối cảnh nhất quán về không gian** &mdash; ảnh → bối cảnh 3D Gaussian Splat và toàn cảnh scene-360 dưới dạng node trên canvas: một phim trường ảo có thể lấy khung hình, khóa cấu trúc không gian, vị trí nhân vật và vị trí đặt camera, để cùng một địa điểm giữ nhất quán qua các cảnh quay; lấy khung trong trình xem 3D, chụp lại, rồi dùng làm nền cho lần sinh nội dung tiếp theo<br/>
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/world-model.jpg?v=2" width="600" alt="世界模型 · World Model (3GS)"/>
+- **Director World — bối cảnh nhất quán về không gian** &mdash; ảnh → bối cảnh 3D Gaussian Splat và toàn cảnh scene-360 dưới dạng node trên canvas: một phim trường ảo có thể lấy khung hình, khóa cấu trúc không gian, vị trí nhân vật và vị trí đặt camera, để cùng một địa điểm giữ nhất quán qua các cảnh quay; lấy khung trong trình xem 3D, chụp lại, rồi dùng làm nền cho lần sinh nội dung tiếp theo
+
+#### Director World — trường quay 3D
+
+<p align="center">
+  <img src="../assets/readme/director-world.jpg" width="900" alt="Director World — trường quay 3D"/>
+</p>
+<p align="center"><sub>Minh họa tính năng dựa trên ảnh chụp có sẵn; giao diện có thể khác phiên bản hiện tại.</sub></p>
 
 ### Series (XiaJi) — pipeline
 
@@ -191,17 +189,31 @@ Mỗi bước có giao diện riêng — chạy theo thứ tự, bỏ qua bướ
 - **Nạp vào có cấu trúc** &mdash; dự án mới dựng thẳng các tập, nhân vật và bối cảnh từ bản thảo hoặc kịch bản (hỗ trợ Fountain), không cần knowledge graph hay embedding; đường story-graph bằng Cognee vẫn giữ cho các dự án cũ
 - **Thư viện tài sản & nhất quán danh tính** &mdash; nhân vật, bối cảnh, đạo cụ và giọng nói được sắp xếp theo mục đích và thư mục; danh tính ổn định xuyên suốt các tập, chân dung nhân vật và biến thể theo từng tập
 - **Lên kế hoạch tập & sinh kịch bản** &mdash; phân đoạn chương, lập kế hoạch beat, cung truyện đa tập; các chế độ kịch bản chuyển thể / bám sát / dàn dựng với vòng lặp review-và-sửa
-- **Storyboard & khung hình đầu** &mdash; sinh nội dung cách điệu theo beat, chia lưới, chọn từ kho ảnh<br/>
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/storyboard-sketch.jpg?v=2" width="600" alt="独家线稿草图系统 · Hệ thống storyboard nét vẽ"/>
+- **Storyboard & khung hình đầu** &mdash; sinh nội dung cách điệu theo beat, chia lưới, chọn từ kho ảnh
 - **Lồng tiếng, ghép video & xuất** &mdash; giọng nói nhận biết cảm xúc, lắp ráp tập, xuất video + phụ đề và trọn bộ gói tài sản
 - **Phong cách hình ảnh** &mdash; upload một ảnh tham chiếu để trích xuất tham số phong cách và áp dụng cho toàn bộ dự án
 - **Trung tâm tác vụ** &mdash; trạng thái, tiến độ, log, hủy / thử lại, tiếp tục từ checkpoint cho các lần chạy dài; điều kiện tiên quyết được kiểm tra trước khi tác vụ vào hàng đợi
 
+#### XiaTang — thư viện tài sản
+
+<p align="center">
+  <img src="../assets/readme/asset-library.jpg" width="900" alt="XiaTang — thư viện tài sản"/>
+</p>
+<p align="center"><sub>Minh họa tính năng dựa trên ảnh chụp có sẵn; giao diện có thể khác phiên bản hiện tại.</sub></p>
+
+#### Storyboard & khung hình đầu
+
+<p align="center">
+  <img src="../assets/readme/storyboards.jpg" width="900" alt="Storyboard & khung hình đầu"/>
+</p>
+<p align="center"><sub>Minh họa tính năng dựa trên ảnh chụp có sẵn; giao diện có thể khác phiên bản hiện tại.</sub></p>
+
 ### Xia Director — agent
 
 <p align="center">
-  <img src="https://nfg-web-assets.cdnfg.com/dramaclaw/readme/director-agent.jpg?v=2" width="600" alt="导演智能体 · Agent đạo diễn"/>
+  <img src="../assets/readme/xia-director.jpg" width="900" alt="Xia Director — project context and reviewed actions"/>
 </p>
+<p align="center"><sub>Minh họa tính năng dựa trên ảnh chụp có sẵn; giao diện có thể khác phiên bản hiện tại.</sub></p>
 
 **Hiện tại**
 
@@ -419,6 +431,11 @@ Những người đang xây dựng DramaClaw — cảm ơn các bạn. 💜
     <td align="center"><a href="https://github.com/vkiki"><img src="https://github.com/vkiki.png?size=100" width="72" alt="vkiki"/><br/><sub>vkiki</sub></a></td>
     <td align="center"><a href="https://github.com/wangwenqq"><img src="https://github.com/wangwenqq.png?size=100" width="72" alt="wangwenqq"/><br/><sub>wangwenqq</sub></a></td>
     <td align="center"><a href="https://github.com/zhen2025109"><img src="https://github.com/zhen2025109.png?size=100" width="72" alt="zhen2025109"/><br/><sub>zhen2025109</sub></a></td>
+    <td align="center"><a href="https://github.com/revolutionarybukhari"><img src="https://github.com/revolutionarybukhari.png?size=100" width="72" alt="revolutionarybukhari"/><br/><sub>revolutionarybukhari</sub></a></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://github.com/yhay81"><img src="https://github.com/yhay81.png?size=100" width="72" alt="yhay81"/><br/><sub>yhay81</sub></a></td>
+    <td align="center"><a href="https://github.com/hoanglongggggggggg"><img src="https://github.com/hoanglongggggggggg.png?size=100" width="72" alt="hoanglongggggggggg"/><br/><sub>hoanglongggggggggg</sub></a></td>
   </tr>
 </table>
 

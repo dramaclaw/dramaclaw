@@ -38,6 +38,9 @@
 
 ## 协调与冲突
 
+- `sync-main-remotes` 可在最终合流时把 `story_writer.py` 的网关能力从通用文本标签改为上游规定的
+  `text.generate.agent`；只改能力归类，不改提示词、模型别名或文档格式。
+
 - `frontend/src/routeTree.gen.ts` 已被 `origin/main` 修改，它是生成物，不应手工选择本地或远端整份。
   最终在最新基线上保留 story 路由源文件后重新运行 TanStack Router 生成流程。
 - `superchat-panel.tsx` 当前还有其他本地改动来源未在本台账中解释；补测试前先用 diff 确认 story 实际改动块，

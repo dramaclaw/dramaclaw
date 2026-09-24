@@ -45,6 +45,8 @@
   不把旧基线上的共享文件整段提交。
 - `sync-main-remotes` 在本线提交之后串行处理 `VideoNode.tsx` 的最终三方合并；本线的流式拉片生命周期
   与产物落点必须保留，上游引用校验/续写和 H3 Mixed 行为由集成测试共同约束。
+- `sync-main-remotes` 可同步更新共享的 home-node placement 全集断言，接纳合并后的自包含音频变换任务；
+  不改写拉片任务的 placement 语义。
 
 ## 实施方案
 

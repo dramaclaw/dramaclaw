@@ -181,6 +181,7 @@ def test_newapi_sketch_config_defaults_to_dc_image2_low_quality(monkeypatch):
             trace=trace,
         )
     )
+    assert posted["json"]["response_format"] == "url"
 
     assert image_bytes == b"sketch"
     assert error == ""
@@ -1380,6 +1381,35 @@ def test_newapi_scene_master_uses_text_only_nanobanana2(monkeypatch, tmp_path):
     }
     assert "SCENE NAME: 古董店" in captured["prompt"]
     assert "从店门可以直接看到收银台" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_newapi_scene_reference_accepts_copied_file_without_image_bytes(
+    monkeypatch, tmp_path
+):
+    from pathlib import Path
+
+    from novelvideo.generators import scene_reference_images
+    from novelvideo.models import NovelScene
+
+    async def copied_image(**kwargs):
+        assert kwargs["read_copied_bytes"] is False
+        Path(kwargs["delivery_path"]).write_bytes(b"copied-scene")
+        kwargs["delivery_state"]["copied"] = True
+        return None, "", ""
+
+    _patch_scene_newapi_gateway(monkeypatch)
+    monkeypatch.setattr(scene_reference_images, "SCENE_MASTER_IMAGE_PROVIDER", "newapi")
+    monkeypatch.setattr(scene_reference_images, "SCENE_MASTER_IMAGE_MODEL", "LingShan-NB-2")
+    monkeypatch.setattr(scene_reference_images, "_call_newapi_image_api", copied_image)
+    scene = NovelScene(name="古董店", scene_type="interior", environment_prompt="古董店室内")
+
+    output = await scene_reference_images.generate_scene_reference_image(
+        project_dir=tmp_path,
+        scene=scene,
+        kind="master",
+    )
+    assert output.read_bytes() == b"copied-scene"
 
 
 def test_newapi_scene_time_plate_master_injects_time_and_base_reference(monkeypatch, tmp_path):

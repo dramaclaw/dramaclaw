@@ -3428,7 +3428,7 @@ wheels = [
 
 [[package]]
 name = "supertale-ce"
-version = "2.0.4"
+version = "2.0.5"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
@@ -3541,7 +3541,7 @@ requires-dist = [
     { name = "safetensors", marker = "extra == 'world'", specifier = ">=0.6.0" },
     { name = "scipy", marker = "extra == 'world'", specifier = ">=1.16.0" },
     { name = "sharp", marker = "extra == 'world'", git = "https://github.com/apple/ml-sharp.git" },
-    { name = "sse-starlette", specifier = ">=2.0.0" },
+    { name = "sse-starlette", specifier = ">=3.3.0" },
     { name = "timm", marker = "extra == 'world'", specifier = ">=1.0.20" },
     { name = "torch", marker = "extra == 'world'", specifier = ">=2.8.0" },
     { name = "torchvision", marker = "extra == 'world'", specifier = ">=0.23.0" },

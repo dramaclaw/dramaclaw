@@ -426,6 +426,15 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
       if (!el) return;
       const candidatesChanged =
         candidatesSignature !== lastCandidatesSignatureRef.current;
+      const pending = pendingAttachRef.current;
+      // A newly attached canvas material enters candidates before the passive
+      // replacement effect runs. Rebuilding here would detach pending.el, so
+      // preserve that chip for one commit and let the effect replace it first.
+      if (
+        candidatesChanged
+        && pending
+        && candidates.some((candidate) => candidate.key === pending.key)
+      ) return;
       if (value === lastSerializedRef.current && !candidatesChanged) return;
       rebuildDOM(el, value, candidates);
       lastSerializedRef.current = value;

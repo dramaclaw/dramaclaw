@@ -1304,6 +1304,39 @@ class FreezoneVideoEditRequest(BaseModel):
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 
+class FreezoneVideoExtendRequest(BaseModel):
+    """视频延长请求。输入一个源视频，并从其结尾继续生成指定时长。"""
+
+    video_url: str = Field(description="待延长的源视频静态地址，必填")
+    prompt: str = Field(description="源视频结束后要继续生成的内容")
+    camera_template_id: Optional[str] = Field(
+        default=None,
+        description="运镜模板 id，例如 locked_off / follow_tracking / pedestal_up",
+    )
+    resolution: str = Field(default="720p", description="输出清晰度档位")
+    duration_seconds: int = Field(
+        default=5,
+        ge=1,
+        description="新生成延长片段的时长；不同模型支持的范围可能不同",
+    )
+    generate_audio: bool = Field(default=False, description="是否生成原生音频")
+    human_review: bool = Field(
+        default=False,
+        description="是否开启真人素材审核/加白流程",
+    )
+    model: str = Field(
+        default="newapi_seedance-2.5",
+        description="视频模型或模型选项 id。请传 /freezone/video/models 返回值之一",
+    )
+    canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
+    node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
+    gen_mode: Literal["videoExtend"] = Field(
+        default="videoExtend",
+        description="视频延长入口的固定业务模式",
+    )
+    model_params: dict[str, Any] = Field(default_factory=dict)
+
+
 class FreezoneVideoReferenceItem(BaseModel):
     """全能参考单条素材。"""
 

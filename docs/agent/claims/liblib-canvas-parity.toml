@@ -262,7 +262,7 @@ reason = "Remote asset localization."
 [[claims]]
 path = "src/novelvideo/freezone/history.py"
 mode = "shared"
-shared_with = ["canvas-lod-perf"]
+shared_with = ["canvas-lod-perf", "sync-main-remotes"]
 reason = "Persist imported canvas semantics and prewarm the LOD image ladder."
 
 [[claims]]

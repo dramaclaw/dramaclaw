@@ -1266,6 +1266,8 @@ STRICT REQUIREMENTS (MUST AVOID):
                         ),
                     },
                     base_url=self.base_url,
+                    delivery_path=output_path,
+                    delivery_state=(image_delivery_state := {}),
                 )
                 if not image_bytes and error_detail:
                     print(f"[NanoBanana Character] DramaClawAPI 失败详情: {error_detail}")
@@ -1335,8 +1337,9 @@ STRICT REQUIREMENTS (MUST AVOID):
                 output_dir = os.path.dirname(output_path)
                 if output_dir:
                     os.makedirs(output_dir, exist_ok=True)
-                with open(output_path, "wb") as f:
-                    f.write(image_bytes)
+                if not (self.provider == "newapi" and image_delivery_state.get("copied")):
+                    with open(output_path, "wb") as f:
+                        f.write(image_bytes)
 
             return image_bytes
 
@@ -1533,6 +1536,8 @@ STRICT REQUIREMENTS (MUST AVOID):
                         ),
                     },
                     base_url=self.base_url,
+                    delivery_path=output_path,
+                    delivery_state=(image_delivery_state := {}),
                 )
                 if not image_bytes and error_detail:
                     print(f"[NanoBanana Character] DramaClawAPI 失败详情: {error_detail}")
@@ -1609,8 +1614,9 @@ STRICT REQUIREMENTS (MUST AVOID):
                 output_dir = os.path.dirname(output_path)
                 if output_dir:
                     os.makedirs(output_dir, exist_ok=True)
-                with open(output_path, "wb") as f:
-                    f.write(image_bytes)
+                if not (self.provider == "newapi" and image_delivery_state.get("copied")):
+                    with open(output_path, "wb") as f:
+                        f.write(image_bytes)
 
             return image_bytes
 

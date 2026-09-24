@@ -26,7 +26,7 @@
 
 | 台账 | 主题 | 状态 | 卡在哪 / 下一步 |
 |---|---|---|---|
-| [sync-main-remotes](tasks/sync-main-remotes.md) | 让 origin/main 与 zhonggwv/main 合流并最终同 SHA | 执行中 | 隔离 worktree 已完成 138/229 路径审计；下一步取得 guard 锁并解决 4 个真实冲突 |
+| [sync-main-remotes](tasks/sync-main-remotes.md) | 让 origin/main 与 zhonggwv/main 合流并最终同 SHA | 执行中 | 后端 4710、前端 3251 项全绿且门禁通过；下一步提交后依次推送两个 main |
 | [agent-collaboration-protocol](tasks/agent-collaboration-protocol.md) | 多模型协作、方案门与冲突治理 | 已完成 | 独立提交、测试与真实交接闭环已完成；后续变更另开工作线 |
 | [legacy-unassigned-diff](tasks/legacy-unassigned-diff.md) | 历史未归属改动隔离区 | 已阻塞 | 只读审计来源；未归属前禁止覆盖或删除 |
 | [asset-replacement-picker](tasks/asset-replacement-picker.md) | 画布素材替换：拖拽与点选双入口 | 待验收 | 独立实现与 5 项聚焦测试已通过；待真实画布手工走一遍点选替换 |
@@ -51,10 +51,10 @@
 
 | 路径 / 区域 | 本地工作线 | 外部重叠 | 当前处理规则 |
 |---|---|---|---|
-| `vi/translation.json`、`VideoNode.tsx`、`videoModelCapabilities.ts`、home-node guard 测试 | sync-main-remotes 最终集成 | `origin/main` 29 个独有提交与 fork 50 个独有提交 | 只在隔离 worktree 由本线解决 merge-tree 报告的 4 个冲突；保留两边语义，验证后同一 SHA 依次推两个 main |
+| 视频冲突文件、环境变量/许可证清单、story 能力与 runner 合同测试 | sync-main-remotes 最终集成 | `origin/main` 29 个独有提交与 fork 50 个独有提交 | 隔离 worktree 保留两边语义；文本冲突外仅修完整回归证明的窄语义缺口，验证后同一 SHA 依次推两个 main |
 | `Canvas.tsx`、`index.css`、`imageData.ts`、`useCanvasSync.ts` | LOD + LibTV 画布 | `origin/perf/canvas-pan-lod-culling` | LOD 来源审计完成前不再写这 4 个文件 |
 | `VideoNode.tsx`、`canvasNodes.ts`、`nodeRegistry.ts`、`NodeActionToolbar.tsx` 等 | LibTV + depth / 拉片接入 | `origin/feat/canvas-video-reshoot-breakdown` | 先做行为与测试的三方差异，不按文件新旧直接取舍 |
-| `VideoOperationsPanel.tsx`、`PromptMentionEditor.tsx`、H3 工作台适配器 | MiniMax H3 引用顺序 | `codex/minimax-h3-liblib-parity`、旧 CTA 分支 | 已验收 H3 分支已集成；本线仅追加底部模式入口与 Mixed 协议，非 H3 mention 行为保持不变 |
+| `VideoOperationsPanel.tsx`、`PromptMentionEditor.tsx`、H3 工作台适配器 | MiniMax H3 引用顺序 | `codex/minimax-h3-liblib-parity`、旧 CTA 分支 | H3 已集成；sync-main-remotes 只修候选签名刷新与既有素材替换等待态的 effect 顺序，不改 Mixed 协议 |
 | `freezone.py`、`tasks.py`、`schemas.py`、`jobs.py`、`runners/freezone.py` | shot + depth + LibTV | 远端重拍分支；部分还在 `origin/main` | 按 API schema → job → runner 串行集成，禁止并行写 |
 | 音频工具条、动作注册表、Freezone 音频适配层 | canvas-audio-actions + canvas-audio-split + 上述画布线 | 无同类远端分支；共享文件已有已提交功能 | audio actions 提供单段任务合同，audio split 串行追加预览与扇出，禁止整文件覆盖 |
 | 三语 `translation.json` | LibTV 与其他前端改动 | `origin/main` + 远端重拍分支 | 合并键，不整文件覆盖；三语同时验证 |

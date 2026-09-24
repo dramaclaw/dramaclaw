@@ -96,6 +96,14 @@ class ProjectRegistry(Protocol):
 
 
 class ProjectAccess(Protocol):
+    """Authoritative project authorization.
+
+    Providers may additionally expose ``effective_media_read_role(project,
+    principals)`` returning only viewer/None. Media handlers opt into that
+    optional cached capability; older providers fall back to the methods here.
+    It must never be used to authorize mutations or background work.
+    """
+
     async def resolve_requester_principals(self, user_id: str) -> list[Principal]: ...
 
     async def effective_project_role(

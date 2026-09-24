@@ -29,6 +29,7 @@ PLACEMENT_FREE_TASKS = {
     "freezone_audio_eleven_music",
     "freezone_audio_separate",
     "freezone_audio_speech",
+    "freezone_audio_transform",
     "freezone_edit",
     "freezone_extract",
     "freezone_gen",

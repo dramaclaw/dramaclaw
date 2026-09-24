@@ -71,6 +71,7 @@ export const GEN_MODE_TO_CATALOG_MODE: Record<VideoGenMode, string> = {
   imageReference: "image_reference",
   allReference: "all_reference",
   videoEdit: "video_edit",
+  videoExtend: "video_extend",
 };
 
 /**
@@ -78,7 +79,12 @@ export const GEN_MODE_TO_CATALOG_MODE: Record<VideoGenMode, string> = {
  * 只计算本次请求的有效值，不覆盖节点中的比例，切回其它模式时可恢复用户选择。
  */
 export function videoModeForcesAutomaticAspectRatio(mode: VideoGenMode): boolean {
-  return mode === "firstFrame" || mode === "firstLastFrame" || mode === "videoEdit";
+  return (
+    mode === "firstFrame" ||
+    mode === "firstLastFrame" ||
+    mode === "videoEdit" ||
+    mode === "videoExtend"
+  );
 }
 
 export interface VideoKeyframeCandidate {
@@ -161,9 +167,8 @@ function videoModelIdOf(model: VideoModelRef): string | null | undefined {
 /**
  * 指定模型是否支持某 genMode（与可见 tab / 切模型时是否重置残留模式口径一致）。
  * - HappyHorse：文生 / 首帧(i2v) / 图片参考(r2v) / 视频编辑。
- * - 非 HappyHorse：视频编辑是 HappyHorse 专属；全能参考与「真尾帧」首尾帧只有
- *   Seedance 2.0 后端支持（非 2.0 打 omni→400、首尾帧静默丢尾帧）；文生 / 首帧 /
- *   图片参考其余视频模型均支持。
+ * - 目录未返回 supportedModes 时沿用旧启发式；视频延长没有旧默认，只有后台显式配置后
+ *   才开放。
  */
 export function isVideoModeSupportedByModel(
   mode: VideoGenMode,
@@ -188,7 +193,7 @@ export function isVideoModeSupportedByModel(
   if (isSeedance1xVideoModel(modelId)) {
     return mode === "textToVideo" || mode === "firstFrame";
   }
-  if (mode === "videoEdit") return false;
+  if (mode === "videoEdit" || mode === "videoExtend") return false;
   if (mode === "allReference" || mode === "firstLastFrame") {
     return isSeedance2VideoModel(modelId);
   }
@@ -269,7 +274,7 @@ export function videoUpstreamImageDefaultMode(
  * 首帧 / 图生视频 / 图片参考 / 首尾帧 / 视频编辑允许空提示词（只要素材齐备即可提交）。
  */
 export function videoModeRequiresPrompt(mode: VideoGenMode): boolean {
-  return mode === "textToVideo" || mode === "allReference";
+  return mode === "textToVideo" || mode === "allReference" || mode === "videoExtend";
 }
 
 /**
@@ -464,18 +469,28 @@ export function audioReferenceTotalDurationLimitMs(
  * TS 无法靠 `kind !== "tooLong"` 把整个分支从联合里剔掉，调用点的三元链就取不到
  * totalTooLong 独有的 totalMs / limitMs。
  */
+export interface ReferenceDurationClip {
+  label: string;
+  durationMs: number | null;
+  nodeId?: string;
+  url?: string;
+  index?: number;
+}
+
+type MeasuredReferenceDurationClip = ReferenceDurationClip & { durationMs: number };
+
 export type AudioDurationRejection =
-  | { kind: "tooShort"; clips: { label: string; durationMs: number }[] }
-  | { kind: "tooLong"; clips: { label: string; durationMs: number }[] }
+  | { kind: "tooShort"; clips: MeasuredReferenceDurationClip[] }
+  | { kind: "tooLong"; clips: MeasuredReferenceDurationClip[] }
   | {
       kind: "totalTooShort";
-      clips: { label: string; durationMs: number }[];
+      clips: MeasuredReferenceDurationClip[];
       totalMs: number;
       limitMs: number;
     }
   | {
       kind: "totalTooLong";
-      clips: { label: string; durationMs: number }[];
+      clips: MeasuredReferenceDurationClip[];
       totalMs: number;
       limitMs: number;
     };
@@ -499,7 +514,7 @@ export type AudioDurationRejection =
  * 混在一起列用户不知道先动哪个。
  */
 export function audioReferenceDurationRejection(
-  clips: readonly { label: string; durationMs: number | null }[],
+  clips: readonly ReferenceDurationClip[],
   options: {
     totalLimitMs?: number | null;
     totalMinMs?: number;
@@ -516,7 +531,7 @@ export function audioReferenceDurationRejection(
     perClipLimits = true,
   } = options;
   const measured = clips.filter(
-    (clip): clip is { label: string; durationMs: number } =>
+    (clip): clip is MeasuredReferenceDurationClip =>
       typeof clip.durationMs === "number" && clip.durationMs > 0,
   );
   if (perClipLimits) {
@@ -580,16 +595,13 @@ export function formatAudioDurationClips(
  * 返回非空理由则应禁用提交、并把理由显示到按钮 tooltip 上，替代「静默丢素材 / 提交 400」。
  *
  * 规则对齐后端 freezone i2v / omni-gen 端点（src/novelvideo/api/routes/freezone.py）：
- * - 视频素材：仅「全能参考」(omni，Seedance 2.0) 与「视频编辑」(HappyHorse) 消费，
- *   其余模式静默丢弃 → 拦；
+ * - 视频素材：「全能参考」「视频编辑」「视频延长」消费，其余模式静默丢弃 → 拦；
  * - 音频素材：「全能参考」消费；「视频编辑」仅在媒体目录显式配置音频上限时消费；
  *   其余模式静默丢弃 → 拦；
  * - 多图(>1)：i2v 端点仅 Seedance 2.0 / HappyHorse 放行，非 2.0 非 HappyHorse
  *   （Seedance 1.x）传 >1 图后端直接 400 → 拦。
  *
- * 非 2.0 / 非 HappyHorse 一接入视频/音频就无模式可消费（allReference / videoEdit 均
- * 不受支持），因此这三条只会在真正会丢素材 / 400 的场景触发；2.0 / HappyHorse 的自动
- * 推导 effect 会先把模式导到能消费素材的模式，不会误伤。
+ * 未配置相应视频模式的模型接入视频/音频后，这些规则会阻止素材被静默丢弃。
  */
 /** 返回 i18n key（非 null 时由调用方 `t()` 出文案），不是可直接展示的句子。 */
 export function videoSubmitMediaRejectionReason(
@@ -600,7 +612,24 @@ export function videoSubmitMediaRejectionReason(
   if (isMiniMaxH3VideoModel(videoModelIdOf(model))) {
     return minimaxH3ModeAvailability(mode, counts).reasonKey;
   }
-  if (counts.videos > 0 && mode !== "allReference" && mode !== "videoEdit") {
+  if (
+    mode === "videoExtend" &&
+    !isVideoModeSupportedByModel("videoExtend", model)
+  ) {
+    return "node.videoOps.modeDisabled.modelNoVideoExtend";
+  }
+  if (
+    mode === "videoExtend" &&
+    (counts.videos !== 1 || counts.images > 0 || counts.audios > 0)
+  ) {
+    return "node.videoModel.reason.videoExtendSourceOnly";
+  }
+  if (
+    counts.videos > 0 &&
+    mode !== "allReference" &&
+    mode !== "videoEdit" &&
+    mode !== "videoExtend"
+  ) {
     return "node.videoModel.reason.videoUnsupported";
   }
   const videoEditAcceptsAudio =
@@ -656,7 +685,13 @@ export function videoModelReferenceDisabledReason(
   if (typeof model === "object" && model !== null && (model.supportedModes?.length ?? 0) > 0) {
     const supportsAllReference = isVideoModeSupportedByModel("allReference", model);
     const supportsVideoEdit = isVideoModeSupportedByModel("videoEdit", model);
-    if (counts.videos > 0 && !supportsAllReference && !supportsVideoEdit) {
+    const supportsVideoExtend = isVideoModeSupportedByModel("videoExtend", model);
+    if (
+      counts.videos > 0 &&
+      !supportsAllReference &&
+      !supportsVideoEdit &&
+      !supportsVideoExtend
+    ) {
       return "node.videoModel.reason.videoUnsupported";
     }
     const supportsVideoEditAudio =

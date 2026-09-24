@@ -1,0 +1,308 @@
+// SPDX-License-Identifier: Elastic-2.0
+// Copyright (c) 2026 ClaymoreLab
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { http, HttpResponse } from "msw";
+import { setupServer } from "msw/node";
+import ky from "ky";
+import type { ReactNode } from "react";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/api", () => ({
+  api: ky.create({ baseUrl: "http://localhost:3000/" }),
+  uploadApi: ky.create({ baseUrl: "http://localhost:3000/" }),
+}));
+
+import {
+  rechargeOrderNeedsPolling,
+  submitPaymentCheckout,
+  useCreateRechargeOrder,
+  useCreateRechargeLinkOrder,
+  useRechargeLinkPackages,
+  useCustomRechargeConfig,
+  usePaymentQuote,
+} from "@/lib/queries/payments";
+import { BackendStatusError } from "@/lib/api-errors";
+import { paymentErrorToastMessage, paymentQuoteNeedsRefresh } from "@/lib/payment-errors";
+
+const server = setupServer();
+
+beforeAll(() => server.listen());
+afterEach(() => {
+  server.resetHandlers();
+  document.querySelectorAll("form").forEach((form) => form.remove());
+  vi.restoreAllMocks();
+});
+afterAll(() => server.close());
+
+function wrapper(queryClient: QueryClient) {
+  return function QueryWrapper({ children }: { children: ReactNode }) {
+    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  };
+}
+
+describe("recharge checkout", () => {
+  it.each([
+    ["pending", "pending", true],
+    ["paid", "processing", true],
+    ["paid", "credited", false],
+    ["paid", "failed", false],
+    ["failed", "pending", false],
+    ["refunded", "credited", false],
+  ] as const)(
+    "polls payment %s with fulfillment %s only while confirmation can progress",
+    (paymentStatus, fulfillmentStatus, expected) => {
+      expect(rechargeOrderNeedsPolling({
+        payment_status: paymentStatus,
+        fulfillment_status: fulfillmentStatus,
+      } as import("@/lib/queries/payments").RechargeOrder)).toBe(expected);
+    },
+  );
+
+  it.each([
+    ["PAYMENT_QUOTE_CHANGED", true],
+    ["PAYMENT_QUOTE_REQUIRED", true],
+    ["DODO_CREATE_UNCONFIRMED", false],
+    ["Failed to fetch", false],
+  ])("refreshes quotes only after a definite quote rejection: %s", (code, refresh) => {
+    expect(paymentQuoteNeedsRefresh(new BackendStatusError(code, 409))).toBe(refresh);
+  });
+  it.each([
+    "http://checkout.dodopayments.com/session/test",
+    "https://checkout.dodopayments.com.attacker.test/session/test",
+    "https://attacker.test/session/test",
+    "https://secret@checkout.dodopayments.com/session/test",
+    "https://checkout.dodopayments.com:8443/session/test",
+    "https://checkout.dodopayments.com/session/test#fragment",
+  ])("rejects an unsafe Dodo redirect: %s", (url) => {
+    expect(() => submitPaymentCheckout({ kind: "redirect", url })).toThrow("unsafe checkout URL");
+    expect(document.querySelector("form")).toBeNull();
+  });
+
+  it("loads one CNY custom recharge rule without a currency selector", async () => {
+    server.use(http.get("http://localhost:3000/api/v1/payments/custom-recharge", ({ request }) => {
+      expect(new URL(request.url).searchParams.has("currency")).toBe(false);
+      return HttpResponse.json({ ok: true, data: { credits_per_cny: 100 } });
+    }));
+    const client = new QueryClient();
+    const { result, unmount } = renderHook(() => useCustomRechargeConfig(), { wrapper: wrapper(client) });
+    await waitFor(() => expect(result.current.data?.data.credits_per_cny).toBe(100));
+    unmount();
+    client.clear();
+  });
+
+  it("quotes USD from the CNY amount and refreshes explicitly", async () => {
+    let amount = 1389;
+    server.use(http.post("http://localhost:3000/api/v1/payments/quote", async ({ request }) => {
+      expect(await request.clone().json()).toEqual({ base_amount_cents: 10000, payment_method: "dodo" });
+      return HttpResponse.json({ ok: true, data: { base_amount_cents: 10000, payment_amount_cents: amount, currency: "USD", cny_per_usd: "7.2" } });
+    }));
+    const client = new QueryClient();
+    const { result, unmount } = renderHook(() => usePaymentQuote(10000, true), { wrapper: wrapper(client) });
+    await waitFor(() => expect(result.current.data?.data.payment_amount_cents).toBe(1389));
+    amount = 1250;
+    await act(async () => { await result.current.refetch(); });
+    await waitFor(() => expect(result.current.data?.data.payment_amount_cents).toBe(1250));
+    unmount();
+    client.clear();
+  });
+
+  it.each([
+    [409, { detail: "PAYMENT_ORG_CREDITS_INSUFFICIENT" }, "credits.recharge.errors.orgCreditsInsufficient"],
+    [409, { ok: false, error: "PAYMENT_ORG_CREDITS_INSUFFICIENT" }, "credits.recharge.errors.orgCreditsInsufficient"],
+    [422, { detail: "DODO_AMOUNT_BELOW_MINIMUM" }, "credits.recharge.errors.belowMinimum"],
+    [503, { detail: "payment service unavailable" }, "credits.recharge.errors.serviceUnavailable"],
+    [409, { detail: "unrecognized internal error" }, "credits.recharge.createFailed"],
+  ])("shows the expected message for an HTTP %s checkout failure", async (status, body, expectedKey) => {
+    server.use(
+      http.post("http://localhost:3000/api/v1/payments/orders", () => {
+        return HttpResponse.json(body, { status });
+      }),
+    );
+    const queryClient = new QueryClient();
+    const { result, unmount } = renderHook(() => useCreateRechargeOrder(), {
+      wrapper: wrapper(queryClient),
+    });
+    let failure: unknown;
+    await act(async () => {
+      try {
+        await result.current.mutateAsync({
+          packageId: "paypkg-org-1",
+          paymentMethod: "alipay",
+          idempotencyKey: "error-request-0001",
+        });
+      } catch (error) {
+        failure = error;
+      }
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(paymentErrorToastMessage(failure, ((key: string) => key) as never,
+      "credits.recharge.createFailed")).toBe(expectedKey);
+    unmount();
+    queryClient.clear();
+  });
+
+  it("maps structured payment failures to actionable messages", () => {
+    const t = ((key: string) => key) as never;
+
+    expect(
+      paymentErrorToastMessage(
+        new BackendStatusError("PAYMENT_TOO_MANY_PENDING", 429),
+        t,
+        "credits.recharge.createFailed",
+      ),
+    ).toBe("credits.recharge.errors.tooManyPending");
+    expect(
+      paymentErrorToastMessage(
+        new BackendStatusError("payment service unavailable", 503),
+        t,
+        "credits.recharge.createFailed",
+      ),
+    ).toBe("credits.recharge.errors.serviceUnavailable");
+  });
+
+  it("posts the selected package with an explicit idempotency key", async () => {
+    let capturedHeader = "";
+    let capturedBody: unknown;
+    server.use(
+      http.post("http://localhost:3000/api/v1/payments/orders", async ({ request }) => {
+        capturedHeader = request.headers.get("idempotency-key") ?? "";
+        capturedBody = await request.json();
+        return HttpResponse.json({
+          ok: true,
+          data: {
+            order: { order_id: "pay-1" },
+            checkout: null,
+          },
+        });
+      }),
+    );
+    const queryClient = new QueryClient();
+    const { result } = renderHook(() => useCreateRechargeOrder(), {
+      wrapper: wrapper(queryClient),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        packageId: "paypkg-1",
+        paymentMethod: "wxpay",
+        idempotencyKey: "web-request-0001",
+      });
+    });
+
+    expect(capturedHeader).toBe("web-request-0001");
+    expect(capturedBody).toEqual({
+      package_id: "paypkg-1",
+      payment_method: "wxpay",
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+
+  it("sends a recharge link token only in the request header", async () => {
+    const token = "abcdefghijklmnopqrstuvwxyz_0123456789-ABCDE";
+    let capturedToken = "";
+    let capturedUrl = "";
+    server.use(
+      http.get(
+        "http://localhost:3000/api/v1/payments/recharge-link/packages",
+        ({ request }) => {
+          capturedToken = request.headers.get("x-recharge-token") ?? "";
+          capturedUrl = request.url;
+          return HttpResponse.json({
+            ok: true,
+            data: {
+              link: { subject_type: "personal_user", expires_at: null },
+              items: [],
+            },
+          });
+        },
+      ),
+    );
+    const queryClient = new QueryClient();
+    const { result } = renderHook(() => useRechargeLinkPackages(token, true), {
+      wrapper: wrapper(queryClient),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(capturedToken).toBe(token);
+    expect(new URL(capturedUrl).search).toBe("");
+    expect(capturedUrl).not.toContain(token);
+  });
+
+  it("creates a linked recharge order with token and idempotency headers", async () => {
+    const token = "abcdefghijklmnopqrstuvwxyz_0123456789-ABCDE";
+    let capturedToken = "";
+    let capturedIdempotency = "";
+    let capturedBody: unknown;
+    server.use(
+      http.post(
+        "http://localhost:3000/api/v1/payments/recharge-link/orders",
+        async ({ request }) => {
+          capturedToken = request.headers.get("x-recharge-token") ?? "";
+          capturedIdempotency = request.headers.get("idempotency-key") ?? "";
+          capturedBody = await request.json();
+          return HttpResponse.json({
+            ok: true,
+            data: { order: { order_id: "pay-linked-1" }, checkout: null },
+          });
+        },
+      ),
+    );
+    const queryClient = new QueryClient();
+    const { result } = renderHook(() => useCreateRechargeLinkOrder(token), {
+      wrapper: wrapper(queryClient),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        packageId: "paypkg-org-1",
+        paymentMethod: "alipay",
+        idempotencyKey: "link-request-0001",
+      });
+    });
+
+    expect(capturedToken).toBe(token);
+    expect(capturedIdempotency).toBe("link-request-0001");
+    expect(capturedBody).toEqual({
+      package_id: "paypkg-org-1",
+      payment_method: "alipay",
+    });
+  });
+
+  it("submits only an HTTPS checkout with the exact signed fields", () => {
+    const submit = vi
+      .spyOn(HTMLFormElement.prototype, "submit")
+      .mockImplementation(() => undefined);
+
+    submitPaymentCheckout({
+      action: "https://pay.example.test/submit.php",
+      method: "POST",
+      fields: { pid: "pid-1", money: "1.00", sign: "signed-value" },
+    });
+
+    const form = document.querySelector("form");
+    expect(submit).toHaveBeenCalledOnce();
+    expect(form?.method).toBe("post");
+    expect(form?.action).toBe("https://pay.example.test/submit.php");
+    expect(
+      Object.fromEntries(
+        [...(form?.querySelectorAll("input") ?? [])].map((input) => [
+          input.name,
+          input.value,
+        ]),
+      ),
+    ).toEqual({ pid: "pid-1", money: "1.00", sign: "signed-value" });
+  });
+
+  it("rejects a public plaintext checkout before creating a form", () => {
+    expect(() =>
+      submitPaymentCheckout({
+        action: "http://pay.example.test/submit.php",
+        method: "POST",
+        fields: { pid: "pid-1" },
+      }),
+    ).toThrow("unsafe checkout URL");
+    expect(document.querySelector("form")).toBeNull();
+  });
+});

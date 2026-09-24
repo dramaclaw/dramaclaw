@@ -116,7 +116,7 @@ def build_episode_agent() -> Agent[None, EpisodeOutput]:
         get_newapi_text_pydantic_model(
             "STORY_WRITER_MODEL",
             STORY_WRITER_DEFAULT_MODEL,
-            capability="text.generate",
+            capability="text.generate.agent",
         ),
         system_prompt=EPISODE_SYSTEM_PROMPT,
         output_type=EpisodeOutput,
@@ -130,7 +130,7 @@ def build_prose_agent() -> Agent[None, str]:
         get_newapi_text_pydantic_model(
             "STORY_WRITER_MODEL",
             STORY_WRITER_DEFAULT_MODEL,
-            capability="text.generate",
+            capability="text.generate.agent",
         ),
         system_prompt=PROSE_SYSTEM_PROMPT,
         output_retries=model_gateway_output_retries(2),
