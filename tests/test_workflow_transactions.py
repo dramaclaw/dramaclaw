@@ -609,7 +609,7 @@ def test_stated_video_mode_keeps_input_and_node_consistent(mode):
 
 def test_revised_node_mode_is_recorded_as_that_nodes_confirmed_mode():
     """A step revision is how one shot legitimately differs from the shared
-    mode; it is recorded on the node instead of tripping the #711 check."""
+    mode; the server records it instead of tripping the #711 check."""
     plan = _exact_media_plan()
     plan["nodes"][1]["data"].pop("generation_mode")
     plan["inputs"] = {"video_generation_mode": "imageToVideo"}
@@ -625,9 +625,9 @@ def test_revised_node_mode_is_recorded_as_that_nodes_confirmed_mode():
 
     video = revised["compiled"]["plan"]["nodes"][1]["data"]
     assert video["genMode"] == "firstLastFrame"
-    assert video["workflowCatalog"]["confirmedInputs"]["video_generation_mode"] == (
-        "firstLastFrame"
-    )
+    # Recorded server-side, outside the caller-writable plan.
+    assert revised["compiled"]["mode_confirmations"] == {"video": "firstLastFrame"}
+    assert "video_generation_mode" not in video["workflowCatalog"].get("confirmedInputs", {})
     assert _mode_codes(revised["compiled"]) == []
 
 

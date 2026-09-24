@@ -3619,3 +3619,91 @@ def test_caller_written_video_mode_confirmation_is_rejected_at_the_route(
         "video_generation_mode_conflict"
     ]
     assert workflow_run_client.enqueued_tasks == []
+
+
+def _store_legacy_plan(client, draft_id: str, plan: dict) -> None:
+    """Rewrite a stored draft's plan the way code before #711 could store it."""
+    from novelvideo.freezone.workflow_drafts import workflow_drafts_db_path
+
+    conn = sqlite3.connect(workflow_drafts_db_path(client.state_dir))
+    try:
+        intent_json, compiled_json = conn.execute(
+            "SELECT intent_json, compiled_json FROM workflow_drafts WHERE draft_id = ?",
+            (draft_id,),
+        ).fetchone()
+        intent, compiled = json.loads(intent_json), json.loads(compiled_json)
+        intent["plan"] = plan
+        compiled["plan"] = plan
+        compiled.pop("mode_confirmations", None)
+        conn.execute(
+            "UPDATE workflow_drafts SET intent_json = ?, compiled_json = ? WHERE draft_id = ?",
+            (json.dumps(intent), json.dumps(compiled), draft_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("legacy_swap", [True, False], ids=["self_confirmed_swap", "control"])
+def test_legacy_draft_self_confirmed_video_mode_cannot_be_claimed(
+    workflow_run_client, legacy_swap
+):
+    """Review of #714: a draft stored before #711 may carry a caller-written
+    confirmedInputs.video_generation_mode; claiming must revalidate it as
+    untrusted instead of admitting the swapped mode."""
+    base = "/api/v1/projects/proj_demo/freezone/canvases/canvas_demo/workflow-drafts"
+    created = workflow_run_client.post(base, json={"plan": _mode_revision_plan()})
+    assert created.status_code == 200, created.text
+    draft = created.json()["data"]
+    target = f"{base}/{draft['draft_id']}"
+    stored = workflow_run_client.get(target).json()["data"]
+    plan = stored["compiled"]["plan"]
+    if legacy_swap:
+        video = _video_node(plan)["data"]
+        video["genMode"] = "firstFrame"
+        video["workflowCatalog"]["confirmedInputs"] = {
+            **video["workflowCatalog"].get("confirmedInputs", {}),
+            "video_generation_mode": "firstFrame",
+        }
+    _store_legacy_plan(workflow_run_client, draft["draft_id"], plan)
+
+    claimed = workflow_run_client.post(
+        f"{target}/claim", json={"revision": stored["revision"]}
+    )
+
+    if not legacy_swap:
+        assert claimed.status_code == 200, claimed.text
+        return
+    assert claimed.status_code == 400, claimed.text
+    detail = claimed.json()["detail"]
+    assert _genmode_blockers(detail.get("preflight") or {}) == [
+        "video_generation_mode_conflict"
+    ], detail
+    assert workflow_run_client.enqueued_tasks == []
+
+
+def test_caller_supplied_compiled_mode_confirmations_are_ignored(workflow_run_client):
+    """mode_confirmations is server-owned: one sent in a create request's
+    compiled payload does not confirm a swapped per-node mode."""
+    plan = _mode_revision_plan()
+    video = _video_node(plan)
+    video["data"]["genMode"] = "firstFrame"
+    base = "/api/v1/projects/proj_demo/freezone/canvases/canvas_demo/workflow-drafts"
+
+    created = workflow_run_client.post(
+        base,
+        json={
+            "intent": {"schema_version": "freezone_workflow_plan_draft.v1", "plan": plan},
+            "compiled": {
+                "ok": True,
+                "skill_id": "text-to-image-video",
+                "plan": plan,
+                "mode_confirmations": {video["id"]: "firstFrame"},
+            },
+        },
+    )
+
+    assert created.status_code == 400, created.text
+    assert _genmode_blockers(created.json()["detail"]["preflight"]) == [
+        "video_generation_mode_conflict"
+    ]

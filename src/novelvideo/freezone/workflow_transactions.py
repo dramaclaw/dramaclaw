@@ -398,12 +398,13 @@ def _normalize_exact_plan_settings(plan: dict) -> dict:
 
 
 def prepare_workflow_source(
-    body: dict, *, username: str, trusted_mode_confirmations: bool = False
+    body: dict, *, username: str, mode_confirmations: dict[str, str] | None = None
 ) -> dict:
     """Accept business intent or an exact plan; return server-owned compilation.
 
-    ``trusted_mode_confirmations`` is set only when revising a stored draft, whose
-    per-node video mode confirmations were recorded by the server (issue #711).
+    ``mode_confirmations`` (per-node video modes recorded by server-side
+    revisions, issue #711) is passed only by ``revise_workflow_source``; it is
+    never read from ``body``.
     """
     if "run_after_create" in body and not isinstance(body["run_after_create"], bool):
         raise WorkflowOperationError("run_after_create must be boolean")
@@ -442,9 +443,7 @@ def prepare_workflow_source(
         if isinstance(intent.get("plan"), dict):
             intent = {**deepcopy(intent), "plan": deepcopy(plan)}
         validated = _require_result(
-            validate_agent_workflow_plan(
-                plan, trusted_mode_confirmations=trusted_mode_confirmations
-            )
+            validate_agent_workflow_plan(plan, mode_confirmations=mode_confirmations)
         )
         if (
             isinstance(intent.get("plan"), dict)
@@ -471,32 +470,22 @@ def prepare_workflow_source(
         return {"intent": deepcopy(intent), "compiled": validated}
 
 
-def _confirm_revised_video_modes(plan: dict, updates: list) -> None:
-    """Record a revised per-node video mode as that node's confirmed mode.
+def _revised_video_modes(plan: dict, updates: list) -> dict[str, str]:
+    """Per-node video modes set by this revision's step updates (issue #711).
 
-    Plan validation only accepts a genMode that equals the shared
-    video_generation_mode or the node's own confirmed one (issue #711); an
-    explicit step revision is how a single shot legitimately differs.
+    They are kept server-side in ``compiled.mode_confirmations``, never in the
+    caller-writable plan, so a later revision or claim can tell a mode the
+    server recorded from one a caller wrote into the plan.
     """
     nodes = _node_index(plan)
+    revised: dict[str, str] = {}
     for update in updates:
-        settings = update.get("settings") or {}
-        if "generation_mode" not in settings:
+        if "generation_mode" not in (update.get("settings") or {}):
             continue
         node = nodes[update["node_id"]]
-        if node.get("node_type") != "videoNode":
-            continue
-        data = node["data"]
-        workflow_catalog = data.get("workflowCatalog")
-        if not isinstance(workflow_catalog, dict):
-            workflow_catalog = data["workflowCatalog"] = {}
-        confirmed = workflow_catalog.get("confirmedInputs")
-        # A new dict: the standard planner shares one confirmedInputs object
-        # between every node and plan.inputs, which must not change here.
-        workflow_catalog["confirmedInputs"] = {
-            **(confirmed if isinstance(confirmed, dict) else {}),
-            "video_generation_mode": data["genMode"],
-        }
+        if node.get("node_type") == "videoNode":
+            revised[update["node_id"]] = node["data"]["genMode"]
+    return revised
 
 
 def revise_workflow_source(payload: dict, changes: Any, *, username: str) -> dict:
@@ -524,15 +513,15 @@ def revise_workflow_source(payload: dict, changes: Any, *, username: str) -> dic
                 "do not mix step/binding changes with compact intent fields"
             )
         plan = deepcopy(payload["compiled"]["plan"])
+        stored = payload["compiled"].get("mode_confirmations")
+        confirmations = dict(stored) if isinstance(stored, dict) else {}
         if "step_updates" in changes:
             plan = update_workflow_steps(plan, changes["step_updates"])
-            _confirm_revised_video_modes(plan, changes["step_updates"])
+            confirmations.update(_revised_video_modes(plan, changes["step_updates"]))
         if "bindings" in changes:
             plan = bind_workflow_inputs(plan, changes["bindings"])
-        # The plan is the stored draft plus this revision, so its per-node
-        # mode confirmations are the server's own.
         prepared = prepare_workflow_source(
-            {"plan": plan}, username=username, trusted_mode_confirmations=True
+            {"plan": plan}, username=username, mode_confirmations=confirmations
         )
         return {**prepared, "last_changes": deepcopy(changes)}
     if isinstance(payload.get("intent", {}).get("plan"), dict):

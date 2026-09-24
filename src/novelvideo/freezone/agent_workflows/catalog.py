@@ -3389,12 +3389,13 @@ _PLAN_RUNTIME_BACKFILL_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
 def _drop_caller_mode_confirmations(
     nodes: list[Any], resolved_inputs: dict[str, Any]
 ) -> None:
-    """Discard per-node video mode confirmations a submitted plan claims.
+    """Discard per-node video mode confirmations carried inside a plan.
 
-    Only ``freezone_revise_workflow`` may record a node's confirmed mode, on a
-    draft the server stored. The same field in a submitted plan is written by
-    the caller and would bypass the #711 check, so a value that differs from
-    the shared mode is removed (the standard planner's copy equals it).
+    A plan is caller-writable (and a draft stored before #711 kept whatever the
+    caller wrote), so ``confirmedInputs.video_generation_mode`` there is never a
+    confirmation; a value that differs from the shared mode is removed (the
+    standard planner's copy equals it). Server-recorded per-node revisions
+    travel separately as ``mode_confirmations``.
     """
     requested = (
         _text(resolved_inputs.get("video_generation_mode"))
@@ -3419,17 +3420,37 @@ def _drop_caller_mode_confirmations(
             confirmed.pop("video_generation_mode")
 
 
+def _effective_mode_confirmations(
+    nodes: list[Any], mode_confirmations: Any
+) -> dict[str, str]:
+    """Server-recorded per-node video modes that still name a video node."""
+    if not isinstance(mode_confirmations, dict):
+        return {}
+    video_ids = {
+        _text(node.get("id"))
+        for node in nodes
+        if isinstance(node, dict) and _text(node.get("node_type")) == "videoNode"
+    }
+    return {
+        node_id: _text(mode)
+        for node_id, mode in mode_confirmations.items()
+        if node_id in video_ids and _text(mode)
+    }
+
+
 def _video_generation_mode_blockers(
-    nodes: list[Any], resolved_inputs: dict[str, Any]
+    nodes: list[Any],
+    resolved_inputs: dict[str, Any],
+    mode_confirmations: dict[str, str],
 ) -> list[dict[str, Any]]:
     """Video nodes whose genMode is not a mode the draft states as confirmed.
 
     Issue #711: modes are not interchangeable (imageToVideo references the
     whole picture, firstFrame locks the opening frame), so unlike other node
     pins a genMode never silently wins. It must equal the plan's shared
-    ``video_generation_mode`` or the node's own
-    ``workflowCatalog.confirmedInputs.video_generation_mode`` (a per-node
-    revision); otherwise the draft is blocked instead of becoming ready.
+    ``video_generation_mode`` or the node's server-recorded per-node revision
+    in ``mode_confirmations``; otherwise the draft is blocked instead of
+    becoming ready.
     """
     requested = (
         _text(resolved_inputs.get("video_generation_mode"))
@@ -3444,13 +3465,9 @@ def _video_generation_mode_blockers(
         mode = _text(data.get("genMode"))
         if not mode or mode == requested:
             continue
-        workflow_catalog = (
-            data.get("workflowCatalog") if isinstance(data.get("workflowCatalog"), dict) else {}
-        )
-        confirmed = workflow_catalog.get("confirmedInputs")
-        if isinstance(confirmed, dict) and _text(confirmed.get("video_generation_mode")) == mode:
-            continue
         node_id = _text(node.get("id")) or "videoNode"
+        if _text(mode_confirmations.get(node_id)) == mode:
+            continue
         if requested:
             blockers.append(
                 {
@@ -3557,7 +3574,7 @@ def validate_agent_workflow_plan(
     *,
     username: str | None = None,
     allow_template_reroute: bool = True,
-    trusted_mode_confirmations: bool = False,
+    mode_confirmations: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Strictly validate an agent-authored plan against the live catalog.
 
@@ -3565,9 +3582,10 @@ def validate_agent_workflow_plan(
     compiled through the standard planner instead and returned in the same
     validated shape with ``planner.selected_by = template_isomorphic``;
     ``allow_template_reroute=False`` skips that (used when validating the
-    standard planner's own output). ``trusted_mode_confirmations`` is only
-    for a stored draft being revised: per-node video mode confirmations in
-    any other plan were written by its caller and are discarded (issue #711).
+    standard planner's own output). ``mode_confirmations`` maps video node
+    ids to modes a server-side revision recorded (issue #711); only the server
+    passes it, from a stored draft's ``compiled`` payload, and the result
+    carries the ones still in effect for the next revision or claim.
     """
     if validate_workflow_plan is None:
         return {
@@ -3723,16 +3741,20 @@ def validate_agent_workflow_plan(
         if _build_plan_preflight is not None:
             # Planned duration and warnings must reflect the backfilled nodes.
             validated["preflight"] = _build_plan_preflight(validated_plan.get("nodes") or [])
-    if not trusted_mode_confirmations:
-        _drop_caller_mode_confirmations(
-            validated_plan.get("nodes") or [], input_contract["resolved"]
-        )
+    _drop_caller_mode_confirmations(
+        validated_plan.get("nodes") or [], input_contract["resolved"]
+    )
+    confirmations = _effective_mode_confirmations(
+        validated_plan.get("nodes") or [], mode_confirmations
+    )
     _attach_preflight_blockers(
         validated,
         _video_generation_mode_blockers(
-            validated_plan.get("nodes") or [], input_contract["resolved"]
+            validated_plan.get("nodes") or [], input_contract["resolved"], confirmations
         ),
     )
+    if confirmations:
+        validated["mode_confirmations"] = confirmations
     validated["resolved_inputs"] = input_contract["resolved"]
     validated["execution_mode"] = input_contract["execution_mode"]
     validated["recommended_run_after_create"] = input_contract[
@@ -3771,7 +3793,7 @@ def validate_agent_workflow_plan(
                 compiled["plan"],
                 username=username,
                 allow_template_reroute=False,
-                trusted_mode_confirmations=trusted_mode_confirmations,
+                mode_confirmations=mode_confirmations,
             )
             if rerouted.get("ok"):
                 # Only when the standard planner reproduces the agent's plan node
@@ -3791,7 +3813,7 @@ def validate_agent_workflow_plan(
                         merged,
                         username=username,
                         allow_template_reroute=False,
-                        trusted_mode_confirmations=trusted_mode_confirmations,
+                        mode_confirmations=mode_confirmations,
                     )
                 if merged is not None and rerouted.get("ok"):
                     rerouted["planner"] = _template_planner_metadata(
