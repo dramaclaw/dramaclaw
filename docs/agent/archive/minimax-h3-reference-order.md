@@ -1,6 +1,6 @@
 # MiniMax H3 模式选择与 Mixed 引用顺序
 
-**状态**：已完成
+**状态**：已归档
 **最后更新**：2026-09-24
 **基线**：`92c1d991`；已将 `codex/minimax-h3-liblib-parity` 的两个已验收提交合入 `main`；后续业务路径无未解释 diff，仅有 3 类受保护未跟踪资料
 **认领者**：`codex/minimax-h3-reference-order-20260924`

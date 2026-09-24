@@ -41,7 +41,6 @@
 | [depth-motion-da3](tasks/depth-motion-da3.md) | 拉片动态维度：Depth Anything 3 深度视频 | 待验收 | 任务中心名称与 20 项聚焦回归已补齐；待 CUDA 真机 720p 硬切样片验收 |
 | [story-writer](tasks/story-writer.md) | 创作阶段（虾本）：写手 agent + 通用文档存储 + 前端路由 | 待验收 | 14 项后端契约测试与前端 build 已通过；待真实模型四阶段流程和导入链路验收 |
 | [local-stack](tasks/local-stack.md) | 命令行 CE 本地栈：local_gateway + ComfyUI Qwen/Krea | 待验收 | main 已通过首次/重复启动和四端健康验收；仅剩第二台干净环境与 Krea 基准 |
-| [minimax-h3-reference-order](tasks/minimax-h3-reference-order.md) | MiniMax H3 分支集成、模式选择与 Mixed 引用顺序 | 已完成 | 四模式入口、Mixed 全局编号、H3 类型标签转换和真实 Ref2VA 出片均已验收；待本次提交后归档 |
 | [canvas-lod-perf](tasks/canvas-lod-perf.md) | 画布 LOD 剔除、低缩放交互、视频抽帧封面 | 待验收 | ImageGenNode 懒加载接点和发布容错已回归；待大画布量化帧率 |
 
 已完成或放弃的线移到 `docs/agent/archive/`，不要在上表里留尸体。状态只用
