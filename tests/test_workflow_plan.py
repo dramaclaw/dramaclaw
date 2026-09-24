@@ -460,6 +460,46 @@ def test_agent_authored_plan_backfills_runtime_fields_from_skill_inputs(monkeypa
     assert validated["preflight"]["planned_video_duration_seconds"] == 3 + 6 * (len(filled) - 1)
 
 
+def test_agent_authored_per_shot_duration_alias_cannot_be_masked_by_global_default(monkeypatch):
+    """A noncanonical per-shot 7 s value must not become a ready 8 s runtime shot."""
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    plan = _raw_plan_from_standard(
+        catalog, {"skill_id": "text-to-image-video", "user_goal": "两镜头依次 8 秒和 7 秒"}
+    )
+    videos = [node for node in plan["nodes"] if node["node_type"] == "videoNode"]
+    assert len(videos) >= 2
+    videos[0]["data"]["durationSec"] = 8
+    videos[1]["data"].pop("durationSec", None)
+    videos[1]["data"]["durationSeconds"] = 7
+    plan["inputs"] = {"video_duration_seconds": 8}
+
+    validated = catalog.validate_agent_workflow_plan(copy.deepcopy(plan))
+
+    assert validated["ok"] is True, validated
+    assert validated["preflight"]["status"] == "blocked"
+    assert validated["preflight"]["blockers"] == [{
+        "path": f"nodes[{plan['nodes'].index(videos[1])}].data.durationSeconds",
+        "code": "noncanonical_video_duration",
+        "message": "durationSeconds is ignored by workflow runtime; set data.durationSec explicitly",
+    }]
+    second = next(node for node in validated["plan"]["nodes"] if node["id"] == videos[1]["id"])
+    assert "durationSec" not in second["data"]
+
+    videos[1]["data"]["durationSec"] = 8
+    conflicting = catalog.validate_agent_workflow_plan(plan)
+    assert conflicting["ok"] is True, conflicting
+    assert conflicting["preflight"]["status"] == "blocked"
+    assert conflicting["preflight"]["blockers"][0]["code"] == "noncanonical_video_duration"
+
+    videos[1]["data"]["durationSec"] = 7
+    explicit = catalog.validate_agent_workflow_plan(plan)
+    assert explicit["ok"] is True, explicit
+    assert explicit["preflight"]["status"] == "ready"
+    second = next(node for node in explicit["plan"]["nodes"] if node["id"] == videos[1]["id"])
+    assert second["data"]["durationSec"] == 7
+
+
 def test_intent_video_item_carries_explicit_embedded_audio_requirement():
     item = {
         "id": "shot-1", "title": "对白镜头", "recipe_id": "general-video",

@@ -26,6 +26,7 @@ try:
     from novelvideo.freezone.workflow_plan import (
         ALLOWED_LINK_TYPES,
         ALLOWED_NODE_TYPES,
+        _IGNORED_VIDEO_DURATION_KEYS,
         _build_plan_preflight,
         validate_workflow_plan,
     )
@@ -34,6 +35,7 @@ except Exception:  # pragma: no cover - Hermes can run before app imports are av
     _build_plan_preflight = None
     ALLOWED_LINK_TYPES = set()
     ALLOWED_NODE_TYPES = set()
+    _IGNORED_VIDEO_DURATION_KEYS = ()
 
 _REQUEST_CATALOG: ContextVar[dict[str, list[dict[str, Any]]] | None] = ContextVar(
     "workflow_request_catalog", default=None
@@ -3410,6 +3412,13 @@ def _backfill_plan_runtime_fields(
         for input_key, field in fields:
             if data.get(field) is not None:
                 continue
+            if field == "durationSec" and any(
+                alias in data for alias in _IGNORED_VIDEO_DURATION_KEYS
+            ):
+                # An apparent per-node duration must not be shadowed by a
+                # different global default. Leave the runtime field absent so
+                # the plan is blocked with an actionable field diagnostic.
+                continue
             raw = resolved_inputs.get(input_key)
             if field == "aspectRatio" and not _text(raw):
                 # Same precedence as _intent_item_node: the media-specific
@@ -3429,6 +3438,24 @@ def _backfill_plan_runtime_fields(
             data[field] = value
             filled.setdefault(_text(node.get("id")) or node_type, []).append(field)
     return filled
+
+
+def _noncanonical_video_duration_blockers(nodes: list[Any]) -> list[dict[str, str]]:
+    blockers: list[dict[str, str]] = []
+    for index, node in enumerate(nodes):
+        if not isinstance(node, dict) or node.get("node_type") != "videoNode":
+            continue
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        canonical = data.get("durationSec")
+        for alias in _IGNORED_VIDEO_DURATION_KEYS:
+            if alias not in data or (canonical is not None and data[alias] == canonical):
+                continue
+            blockers.append({
+                "path": f"nodes[{index}].data.{alias}",
+                "code": "noncanonical_video_duration",
+                "message": f"{alias} is ignored by workflow runtime; set data.durationSec explicitly",
+            })
+    return blockers
 
 
 def validate_agent_workflow_plan(
@@ -3605,6 +3632,16 @@ def validate_agent_workflow_plan(
     # (e.g. a short drama without shot planning) is a preflight blocker, not a
     # schema error: the draft can be revised or re-planned (issue #677).
     _attach_skill_stage_blockers(validated, skill_id)
+    duration_blockers = _noncanonical_video_duration_blockers(
+        validated_plan.get("nodes") or []
+    )
+    if duration_blockers:
+        preflight = validated.get("preflight") or {}
+        validated["preflight"] = {
+            **preflight,
+            "status": "blocked",
+            "blockers": [*(preflight.get("blockers") or []), *duration_blockers],
+        }
     stamped = plan.get("planner") if isinstance(plan.get("planner"), dict) else None
     if stamped and _text(stamped.get("mode")) == "deterministic_standard":
         # The standard planner's own output keeps its audit record.
