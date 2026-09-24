@@ -7,7 +7,7 @@ import os
 import threading
 import tomllib
 from pathlib import Path
-from typing import Any, AsyncIterator, Literal
+from typing import Any, AsyncIterator, Callable, Literal
 
 from novelvideo.chat.runtime_port import (
     AgentRuntimeThreadPort,
@@ -53,6 +53,14 @@ CODEX_STREAM_FIRST_PROGRESS_TIMEOUT = _positive_timeout_from_env(
 CODEX_STREAM_IDLE_TIMEOUT = 300.0
 CODEX_STREAM_TOTAL_TIMEOUT = max(1800.0, CODEX_STREAM_IDLE_TIMEOUT)
 CODEX_INTERRUPT_GRACE_TIMEOUT = 5.0
+# A cancel request can be served by a different Gunicorn worker than the
+# streaming request. That worker interrupts the turn through the shared App
+# Server, so this process sees neither a local interrupt mark nor a
+# turn/completed notification on its own connection. Wake up this often while
+# the stream is waiting and ask the runtime how the turn actually ended.
+CODEX_TURN_STATUS_PROBE_INTERVAL = _positive_timeout_from_env(
+    "DRAMACLAW_CODEX_TURN_STATUS_PROBE_SECONDS", 2.0
+)
 
 _CODEX_LIFECYCLE_ONLY_EVENTS = {
     "thread_started",
@@ -154,6 +162,62 @@ def control_codex_runtime(
                 response_model=ThreadDeleteResponse,
             )
     return True
+
+
+def _codex_thread_is_active(client: Any, thread_id: str) -> bool:
+    """Report whether the runtime still calls this thread active.
+
+    An unreadable status counts as inactive: one wasted read costs less than a
+    missed interrupt.
+    """
+
+    response = client.thread_read(thread_id)
+    status = getattr(getattr(response, "thread", None), "status", None)
+    status = getattr(status, "root", status)
+    return str(getattr(status, "type", "") or "") == "active"
+
+
+def read_codex_turn_status(client: Any, thread_id: str, turn_id: str) -> str | None:
+    """Return the App Server's own status for one turn, or None when unsettled.
+
+    The runtime is the only authority this process can consult about a turn it
+    did not interrupt itself: turn history is omitted from thread/read unless it
+    is requested explicitly. That history grows with the thread and this runs on
+    a timer, so ask for it only once the thread is no longer active.
+    """
+
+    if _codex_thread_is_active(client, thread_id):
+        return None
+    response = client.thread_read(thread_id, include_turns=True)
+    turns = getattr(getattr(response, "thread", None), "turns", None) or ()
+    for turn in turns:
+        if str(getattr(turn, "id", "")) != str(turn_id):
+            continue
+        status = getattr(turn, "status", None)
+        return str(getattr(status, "value", status) or "") or None
+    return None
+
+
+async def _codex_turn_interrupted(
+    probe: Callable[[], str | None] | None,
+    thread_id: str | None,
+    turn_id: str | None,
+) -> bool:
+    """Report whether the runtime already recorded this turn as interrupted."""
+
+    if probe is None:
+        return False
+    try:
+        status = await asyncio.to_thread(probe)
+    except Exception:  # noqa: BLE001 - a failed probe must not end the stream
+        _log.warning(
+            "Failed to read Codex turn status: thread=%s turn=%s",
+            thread_id,
+            turn_id,
+            exc_info=True,
+        )
+        return False
+    return status == "interrupted"
 
 
 def consume_interrupted_codex_turn(thread_id: str, turn_id: str) -> bool:
@@ -1310,6 +1374,7 @@ class CodexThread:
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
         current_turn_id: str | None = None
+        status_probe: Callable[[], str | None] | None = None
 
         def emit(kind: str, payload: Any) -> None:
             loop.call_soon_threadsafe(queue.put_nowait, (kind, payload))
@@ -1386,6 +1451,15 @@ class CodexThread:
                 nonlocal current_turn_id
                 current_turn_id = turn.id
                 register_live_codex_turn(self.id, turn.id, turn)
+
+                def probe_turn_status(
+                    thread_id: str = self.id,
+                    turn_id: str = turn.id,
+                ) -> str | None:
+                    return read_codex_turn_status(codex._client, thread_id, turn_id)
+
+                nonlocal status_probe
+                status_probe = probe_turn_status
                 emit(
                     "event",
                     ChatBackendEvent(
@@ -1825,6 +1899,7 @@ class CodexThread:
         saw_runtime_progress = False
         user_input_calls: set[str] = set()
         timed_out = False
+        cancelled_elsewhere = False
 
         try:
             while True:
@@ -1840,13 +1915,49 @@ class CodexThread:
                         ),
                     )
                 remaining = deadline - loop.time()
+                probe_timeout = (
+                    min(remaining, CODEX_TURN_STATUS_PROBE_INTERVAL)
+                    if status_probe is not None
+                    else remaining
+                )
                 try:
                     if remaining <= 0:
                         raise asyncio.TimeoutError
                     kind, payload = await asyncio.wait_for(
-                        queue.get(), timeout=remaining
+                        queue.get(), timeout=probe_timeout
                     )
                 except asyncio.TimeoutError:
+                    if probe_timeout < remaining:
+                        # Nothing arrived on this connection, and an interrupt
+                        # served by another Gunicorn worker leaves no trace in
+                        # this process. Only the runtime knows, so ask it before
+                        # waiting again.
+                        if await _codex_turn_interrupted(
+                            status_probe, self.id, current_turn_id
+                        ):
+                            cancelled_elsewhere = True
+                            yield ChatBackendEvent(
+                                type="turn_completed",
+                                thread_id=self.id,
+                                turn_id=current_turn_id,
+                                status="interrupted",
+                                disposition="cancelled",
+                            )
+                            yield ChatBackendEvent(
+                                type="egress_disposition",
+                                thread_id=self.id,
+                                turn_id=current_turn_id,
+                                disposition="cancelled",
+                            )
+                            yield ChatBackendEvent(
+                                type="complete",
+                                thread_id=self.id,
+                                turn_id=current_turn_id,
+                                disposition="cancelled",
+                                text="已中断。",
+                            )
+                            break
+                        continue
                     timed_out = True
                     now = loop.time()
                     if user_input_calls:
@@ -1949,7 +2060,7 @@ class CodexThread:
                 await asyncio.to_thread(
                     interrupt_live_codex_turn, self.id, current_turn_id
                 )
-            if timed_out:
+            if timed_out or cancelled_elsewhere:
                 try:
                     await asyncio.wait_for(
                         asyncio.shield(worker_task),

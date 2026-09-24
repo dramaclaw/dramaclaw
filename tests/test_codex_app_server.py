@@ -7,6 +7,7 @@ import json
 import os
 import sqlite3
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -1401,3 +1402,235 @@ async def test_codex_stream_enforces_total_deadline_despite_continuous_progress(
     assert events[-2].disposition == "timeout"
     assert events[-1].type == "complete"
     assert events[-1].disposition == "timeout"
+
+
+def _thread_read_payload(thread_id, turns):
+    return {
+        "thread": {
+            "cliVersion": "0.0.0",
+            "createdAt": 0,
+            "cwd": "/tmp",
+            "ephemeral": True,
+            "id": thread_id,
+            "modelProvider": "dramaclaw_gateway",
+            "preview": "",
+            "sessionId": "session-cross-worker",
+            "source": "appServer",
+            "status": {"type": "idle"},
+            "updatedAt": 0,
+            "turns": turns,
+        }
+    }
+
+
+def test_turn_status_reads_the_runtime_turn_record():
+    from openai_codex.generated import v2_all as v2
+
+    reads = []
+
+    class FakeClient:
+        def thread_read(self, thread_id, include_turns=False):
+            reads.append((thread_id, include_turns))
+            return v2.ThreadReadResponse.model_validate(
+                _thread_read_payload(
+                    thread_id,
+                    [
+                        {"id": "turn-old", "items": [], "status": "completed"},
+                        {"id": "turn-live", "items": [], "status": "interrupted"},
+                    ],
+                )
+            )
+
+    client = FakeClient()
+    assert (
+        backend_sdk.read_codex_turn_status(client, "thread-cross-worker", "turn-live")
+        == "interrupted"
+    )
+    assert (
+        backend_sdk.read_codex_turn_status(client, "thread-cross-worker", "turn-old")
+        == "completed"
+    )
+    assert (
+        backend_sdk.read_codex_turn_status(client, "thread-cross-worker", "turn-gone")
+        is None
+    )
+    # Turn history is omitted from thread/read unless it is requested, and it is
+    # requested only after a cheap read shows the thread is no longer active.
+    assert reads == [("thread-cross-worker", False), ("thread-cross-worker", True)] * 3
+
+
+def test_turn_status_skips_turn_history_while_the_thread_is_active():
+    from openai_codex.generated import v2_all as v2
+
+    reads = []
+
+    class FakeClient:
+        def thread_read(self, thread_id, include_turns=False):
+            reads.append((thread_id, include_turns))
+            payload = _thread_read_payload(
+                thread_id,
+                [{"id": "turn-live", "items": [], "status": "inProgress"}],
+            )
+            payload["thread"]["status"] = {"type": "active", "activeFlags": []}
+            return v2.ThreadReadResponse.model_validate(payload)
+
+    client = FakeClient()
+    assert (
+        backend_sdk.read_codex_turn_status(client, "thread-busy", "turn-live") is None
+    )
+    # A turn that is still running is the common case, and it is probed
+    # repeatedly: it must not pay for the whole turn history every time.
+    assert reads == [("thread-busy", False)]
+
+
+def test_turn_status_reads_turn_history_when_the_thread_status_is_unreadable():
+    reads = []
+
+    class FakeTurn:
+        id = "turn-live"
+        status = "interrupted"
+
+    class FakeThread:
+        status = None
+        turns = (FakeTurn(),)
+
+    class FakeResponse:
+        thread = FakeThread()
+
+    class FakeClient:
+        def thread_read(self, thread_id, include_turns=False):
+            reads.append((thread_id, include_turns))
+            return FakeResponse()
+
+    client = FakeClient()
+    # An unrecognisable thread status must not hide an interrupt: fall back to
+    # the authoritative read instead of assuming the turn is still running.
+    assert (
+        backend_sdk.read_codex_turn_status(client, "thread-odd", "turn-live")
+        == "interrupted"
+    )
+    assert reads == [("thread-odd", False), ("thread-odd", True)]
+
+
+@pytest.mark.asyncio
+async def test_codex_stream_closes_a_turn_cancelled_on_another_worker(
+    monkeypatch, tmp_path
+):
+    # POST /api/v1/chat/cancel can land on a different Gunicorn worker than the
+    # streaming request. That worker interrupts the turn through the shared App
+    # Server, so this process neither marks the turn as interrupted locally nor
+    # receives turn/completed on its own connection. The stream must still close
+    # the turn as cancelled instead of spinning until its deadline.
+    from openai_codex.generated import v2_all as v2
+    from openai_codex.models import Notification
+
+    stuck = threading.Event()
+    turn_started = Notification(
+        method="turn/started",
+        payload=v2.TurnStartedNotification.model_validate(
+            {
+                "threadId": "thread-cross-worker",
+                "turn": {
+                    "id": "turn-cross-worker",
+                    "items": [],
+                    "status": "inProgress",
+                },
+            }
+        ),
+    )
+
+    class FakeTurn:
+        id = "turn-cross-worker"
+
+        def stream(self):
+            yield turn_started
+            stuck.wait(timeout=1.5)
+
+        def interrupt(self):
+            stuck.set()
+
+    class FakeThread:
+        id = "thread-cross-worker"
+
+    class FakeClient:
+        def __init__(self):
+            self.reads = 0
+
+        def thread_read(self, thread_id, include_turns=False):
+            self.reads += 1
+            return v2.ThreadReadResponse.model_validate(
+                _thread_read_payload(
+                    thread_id,
+                    [
+                        {
+                            "id": "turn-cross-worker",
+                            "items": [],
+                            "status": "interrupted",
+                        }
+                    ],
+                )
+            )
+
+    client = FakeClient()
+
+    @contextmanager
+    def fake_shared_codex(_config):
+        yield SimpleNamespace(_client=client)
+
+    monkeypatch.setattr(codex_app_server, "shared_codex", fake_shared_codex)
+    monkeypatch.setattr(
+        backend_sdk,
+        "_start_or_resume_codex_thread",
+        lambda *_args, **_kwargs: FakeThread(),
+    )
+    monkeypatch.setattr(
+        backend_sdk,
+        "_start_codex_turn",
+        lambda *_args, **_kwargs: FakeTurn(),
+    )
+    # Deadlines stay far away: closing the turn must come from the runtime's own
+    # turn record, never from a stream deadline expiring.
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_FIRST_PROGRESS_TIMEOUT", 30.0)
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_IDLE_TIMEOUT", 30.0)
+    monkeypatch.setattr(backend_sdk, "CODEX_STREAM_TOTAL_TIMEOUT", 30.0)
+    monkeypatch.setattr(backend_sdk, "CODEX_INTERRUPT_GRACE_TIMEOUT", 0.2)
+    monkeypatch.setattr(backend_sdk, "CODEX_TURN_STATUS_PROBE_INTERVAL", 0.05)
+
+    thread = CodexThread(
+        codex_bin=None,
+        cwd=tmp_path,
+        env={},
+        model="DC-codex-agent-LLM",
+        model_provider="dramaclaw_gateway",
+        developer_instructions="Use DramaClaw MCP only.",
+        config_overrides=(),
+        thread_config={},
+        turn_metadata={},
+        thread_id=None,
+    )
+    started = time.monotonic()
+    events = [event async for event in thread.stream("Create workflow")]
+    elapsed = time.monotonic() - started
+
+    assert client.reads > 0
+    assert [event.type for event in events[-3:]] == [
+        "turn_completed",
+        "egress_disposition",
+        "complete",
+    ]
+    assert events[-3].status == "interrupted"
+    assert events[-3].disposition == "cancelled"
+    assert events[-3].error is None
+    assert events[-2].disposition == "cancelled"
+    assert events[-1].disposition == "cancelled"
+    assert events[-1].text == "已中断。"
+    assert not any(str(event.disposition or "") == "timeout" for event in events)
+    # No local interrupt mark exists in this process, and waiting for the stuck
+    # worker thread must not delay the terminal frame.
+    assert (
+        backend_sdk.consume_interrupted_codex_turn(
+            "thread-cross-worker", "turn-cross-worker"
+        )
+        is False
+    )
+    assert elapsed < 1.0
