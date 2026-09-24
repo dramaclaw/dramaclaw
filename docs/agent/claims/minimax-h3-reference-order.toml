@@ -1,7 +1,7 @@
 version = 1
 slug = "minimax-h3-reference-order"
 ledger = "docs/agent/tasks/minimax-h3-reference-order.md"
-baseline = "46e88b1df6404716fc258e992a49c935a506b2bf"
+baseline = "92c1d991"
 
 [[claims]]
 path = "docs/agent/STATE.md"
@@ -49,6 +49,11 @@ reason = "Add this workstream to the mutual VideoNode shared claim."
 path = ".env.example"
 mode = "exclusive"
 reason = "Integrate the optional local H3 workbench URL documentation."
+
+[[claims]]
+path = ".dramaclaw-local/local.env"
+mode = "exclusive"
+reason = "Configure the ignored machine-local H3 workbench endpoint for live verification."
 
 [[claims]]
 path = "src/novelvideo/official_media_models.json"

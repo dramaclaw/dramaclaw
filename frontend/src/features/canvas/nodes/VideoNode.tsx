@@ -73,6 +73,7 @@ import {
   MIN_AUDIO_REFERENCE_DURATION_MS,
   referenceDurationLimitsMs,
   isHappyHorseVideoModel,
+  isMiniMaxH3VideoModel,
   isSeedance2VideoModel,
   isVideoModeSupportedByModel,
   resolveVideoKeyframeUrls,
@@ -695,6 +696,7 @@ export const VideoNode = memo(
     const modelId = selectedVideoModel?.id ?? "";
     const selectedVideoModelId = selectedVideoModel?.apiModel ?? selectedVideoModel?.id ?? modelId;
     const isHappyHorseModel = isHappyHorseVideoModel(selectedVideoModelId);
+    const isMiniMaxH3Model = isMiniMaxH3VideoModel(selectedVideoModelId);
     const configuredAspectRatios = useMemo(
       () => (selectedVideoModel?.ratioOptions ?? []).map((ratio) => ratio.trim()).filter(Boolean),
       [selectedVideoModel],
@@ -1008,19 +1010,29 @@ export const VideoNode = memo(
           .map((item) => item.nodeId),
       [referenceMedia],
     );
+    const orderedMixedIds = useMemo(
+      () => referenceMedia.map((item) => item.nodeId),
+      [referenceMedia],
+    );
     const applyPromptRemap = useCallback(
       (next: string) => updateNodeData(id, { prompt: next }),
       [id, updateNodeData],
     );
     useReferenceMentionSync(
       prompt,
-      [
-        // 这三个前缀是提示词里 `@图片1` 这类引用记号的**协议**，会随 prompt 原样发给
-        // 后端，不是界面文案，翻了就对不上。
-        { prefix: "图片", ids: orderedImageIds }, // i18n-exempt
-        { prefix: "视频", ids: orderedVideoIds }, // i18n-exempt
-        { prefix: "音频", ids: orderedAudioIds }, // i18n-exempt
-      ],
+      isMiniMaxH3Model
+        ? [
+            // MiniMax H3 对齐 LibLib：图片/视频/音频共用一条从左到右的 Mixed 序列。
+            // 这份 id 列表与 referenceMedia 和提交 references[] 同源，拖动、删除后
+            // `{{Mixed N}}` 才不会继续指向旧素材。
+            { prefix: "Mixed", syntax: "mixed" as const, ids: orderedMixedIds },
+          ]
+        : [
+            // 其它模型继续沿用分媒体编号协议，避免改变既有供应商入参。
+            { prefix: "图片", ids: orderedImageIds }, // i18n-exempt
+            { prefix: "视频", ids: orderedVideoIds }, // i18n-exempt
+            { prefix: "音频", ids: orderedAudioIds }, // i18n-exempt
+          ],
       applyPromptRemap,
     );
 

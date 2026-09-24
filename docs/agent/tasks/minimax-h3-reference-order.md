@@ -1,8 +1,8 @@
 # MiniMax H3 模式选择与 Mixed 引用顺序
 
-**状态**：执行中
+**状态**：已完成
 **最后更新**：2026-09-24
-**基线**：`46e88b1df6404716fc258e992a49c935a506b2bf`；`main` 相对 `zhonggwv/main` ahead 4；相关业务路径无本地 diff，仅有 3 类受保护未跟踪资料
+**基线**：`92c1d991`；已将 `codex/minimax-h3-liblib-parity` 的两个已验收提交合入 `main`；后续业务路径无未解释 diff，仅有 3 类受保护未跟踪资料
 **认领者**：`codex/minimax-h3-reference-order-20260924`
 **相关文档**：`docs/guides/liblib-canvas-parity.md`、`docs/agent/tasks/minimax-h3-liblib-parity.md`（待从已完成分支集成）
 **相关分支 / PR**：`main`；复用 `codex/minimax-h3-liblib-parity` 的提交 `0bb2410b`、`51573f75`
@@ -38,6 +38,7 @@
 | `docs/agent/claims/minimax-h3-liblib-parity.toml` | 共享 | 保留原分支范围并关闭执行态冲突 |
 | `docs/agent/claims/{liblib-canvas-parity,depth-motion-da3,shot-breakdown}.toml` | 协调 | 为 `VideoNode.tsx` 补齐 mutual shared 关系 |
 | `.env.example` | 独占 | 集成 H3 工作台环境变量说明 |
+| `.dramaclaw-local/local.env` | 独占（忽略文件） | 配置本机 H3 工作台地址，仅用于真实联调；值不写进台账或 Git |
 | `src/novelvideo/official_media_models.json` | 独占 | 集成 H3 四模式与真实参数目录 |
 | `src/novelvideo/generators/minimax_h3_workbench.py` | 独占 | H3 工作台适配及 Mixed→typed tag 转换 |
 | `src/novelvideo/generators/video_generator.py` | 独占 | 集成 H3 专用生成器选择 |
@@ -78,13 +79,21 @@
 
 ## 验收标准
 
-- [ ] H3/引用/提示词前端聚焦测试全绿。
-- [ ] `uv run pytest tests/test_minimax_h3_workbench.py tests/test_model_gateway_settings.py` 全绿。
-- [ ] `pnpm build`、前后端 i18n、ruff、agent guard 与 `git diff --check` 全绿。
-- [ ] 真实画布中四模式可选，Mixed 1/2/3 与缩略图顺序一致；拖动后 prompt 和 H3 请求同步重排。
-- [ ] 本轮改动全部在写入边界内，无未解释 diff；不记录真实局域网地址或凭据。
+- [x] H3/引用/提示词前端聚焦测试全绿。
+- [x] `uv run pytest tests/test_minimax_h3_workbench.py tests/test_model_gateway_settings.py` 全绿。
+- [x] `pnpm build`、前后端 i18n、ruff、agent guard 与 `git diff --check` 全绿。
+- [x] 真实画布中四模式可选，Mixed 1/2/3 与缩略图顺序一致；拖动后 prompt 和 H3 请求同步重排。
+- [x] 本轮改动全部在写入边界内，无未解释 diff；不记录真实局域网地址或凭据。
 
 ## 进展记录
+
+### 2026-09-24 · 实现、真实出片与验收完成
+
+做了什么：把 MiniMax H3 的四模式选择移到视频节点底部模型旁；引用缩略图、提示词 chip 和提交数组统一使用画布从左到右的 `{{Mixed N}}`；在 H3 适配器内按原始混排顺序转换为分类型 `<Picture N>` / `<Video N>` / `<Audio N>`，并拒绝越界引用。补齐自定义 token、延迟素材加载、跨媒体重排/删除和 QuickUI 上传次序回归。
+
+为什么这么做：LibLib 的 Mixed 是全媒体共用序号，而 H3 工作台按媒体类型分槽。只有前端始终保留节点显示顺序、后端在分组前转换，才能确保模式参数、提示词占位符和实际上传素材一一对应。
+
+怎么验证的：前端 3 个聚焦文件 33 项测试通过；后端 H3/模型设置 144 项测试通过；生产构建、TypeScript、ruff、前后端 i18n、CE 端口闭合、agent guard、`git diff --check` 全部通过。真实画布显示四模式和 Mixed 1/2/3；以全能参考提交真实 H3 任务，工作台收到 Ref2VA、1376×768、5 秒、4 步参数并完成生成；落盘 MP4 经 ffprobe 确认为 H.264 + AAC、1376×768、5.167 秒。工作台地址只保存在被忽略的本机配置中。
 
 ### 2026-09-24 · 方案门完成
 
@@ -103,9 +112,9 @@
 
 ## 待办
 
-- [ ] 获取 guard 锁并集成 H3 分支。
-- [ ] 实现底部模式与 Mixed 顺序协议。
-- [ ] 完成聚焦/构建/真实画布验证并记录结果。
+- [x] 获取 guard 锁并集成 H3 分支。
+- [x] 实现底部模式与 Mixed 顺序协议。
+- [x] 完成聚焦/构建/真实画布验证并记录结果。
 
 ## 阻塞
 
@@ -113,7 +122,7 @@
 
 ## 交接摘要
 
-- **最后完成到**：方案门与分支差异审计完成，尚未写业务代码。
-- **下一步唯一动作**：更新 claims 后 acquire/preflight，再合入 H3 分支。
-- **先读这些文件**：本台账、原 H3 台账、`VideoOperationsPanel.tsx`、`VideoNode.tsx`、`minimax_h3_workbench.py`。
+- **最后完成到**：模式入口、Mixed 顺序合同、后端标签转换、自动测试和真实 H3 出片均已完成。
+- **下一步唯一动作**：无；新需求另开工作线，不在本线继续扩范围。
+- **先读这些文件**：本台账、`VideoOperationsPanel.tsx`、`VideoNode.tsx`、`minimax_h3_workbench.py`。
 - **不要动这些文件 / 决策**：不改 Freezone 路由；不泄露工作台地址；非 H3 token 行为必须保持不变。
