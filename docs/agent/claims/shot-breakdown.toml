@@ -76,7 +76,7 @@ reason = "Breakdown operation endpoint client."
 [[claims]]
 path = "frontend/src/features/canvas/nodes/VideoNode.tsx"
 mode = "shared"
-shared_with = ["depth-motion-da3", "liblib-canvas-parity"]
+shared_with = ["depth-motion-da3", "liblib-canvas-parity", "minimax-h3-reference-order"]
 reason = "Breakdown, depth, and video recreation actions share one node."
 
 [[claims]]
