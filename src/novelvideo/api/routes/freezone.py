@@ -6862,6 +6862,7 @@ def _start_freezone_video_upscale_task(
     job_id: str,
     source_path: Path,
     body: FreezoneVideoUpscaleRequest,
+    processing_models: dict[str, Any],
 ) -> None:
     task_type = "freezone_video_upscale"
     task_manager = get_task_manager()
@@ -6893,8 +6894,12 @@ def _start_freezone_video_upscale_task(
                 job_id=job_id,
                 source_path=str(source_path),
                 resolution=body.resolution,
-                frame_interpolation=body.frame_interpolation,
-                denoise_strength=body.denoise_strength,
+                target_fps=body.target_fps,
+                smart_interpolation=body.smart_interpolation,
+                slowdown=body.slowdown,
+                scene=body.scene,
+                face_enhance=body.face_enhance,
+                **processing_models,
             )
             rel = output_path.relative_to(project_dir).as_posix()
             task_manager.complete_task(
@@ -8254,6 +8259,79 @@ def _catalog_duration_bounds(
     return _bound("minDuration"), _bound("maxDuration")
 
 
+VIDEO_PROCESSING_MODES = frozenset({"video_upscale", "video_frame_rate"})
+
+
+def _is_processing_only_video_model(entry: dict[str, Any]) -> bool:
+    modes = entry.get("supportedModes")
+    return isinstance(modes, list) and bool(modes) and set(modes).issubset(VIDEO_PROCESSING_MODES)
+
+
+async def _resolve_video_processing_model(
+    mode: str,
+    *,
+    requester_user_id: str,
+) -> dict[str, Any]:
+    catalog = await _scoped_media_model_catalog(
+        "video",
+        requester_user_id=requester_user_id,
+    )
+    entry = next(
+        (item for item in catalog or [] if mode in (item.get("supportedModes") or [])),
+        None,
+    )
+    if entry is None:
+        label = "视频超分" if mode == "video_upscale" else "视频帧率调整"
+        raise HTTPException(409, f"当前没有可用的{label}模型，请联系管理员配置")
+    identifier = _catalog_entry_id(entry)
+    schema, params, resolved = await _resolve_catalog_request(
+        "video",
+        identifier,
+        {},
+        mode=mode,
+        requester_user_id=requester_user_id,
+    )
+    selected = resolved or entry
+    return {
+        "catalog_id": identifier,
+        "backend": str(selected.get("apiModel") or selected.get("api_model") or ""),
+        "request_schema": schema,
+        "model_params": params,
+    }
+
+
+def _video_enhance_billing(
+    body: FreezoneVideoUpscaleRequest,
+    source_meta: dict[str, Any],
+    upscale: dict[str, Any],
+    frame_rate: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build the same trusted feature price input for quote and task submission."""
+    from novelvideo.freezone.video_slowdown import slowdown_factor
+
+    factor = slowdown_factor(body.slowdown)
+    source_seconds = max(1, math.ceil(float(source_meta["duration"])))
+    stages = [{
+        "mode": "video_upscale",
+        "catalog_id": upscale["catalog_id"],
+        "resolution": body.resolution,
+        "duration_seconds": source_seconds,
+    }]
+    if frame_rate is not None:
+        source_fps = float(source_meta["fps"])
+        stages.append({
+            "mode": "video_frame_rate",
+            "catalog_id": frame_rate["catalog_id"],
+            "resolution": body.resolution,
+            "duration_seconds": max(1, math.ceil(float(source_meta["duration"]) * factor)),
+            "source_fps": source_fps,
+            "target_fps": body.target_fps or max(1, round(source_fps, 3)),
+            "smart_interpolation": body.smart_interpolation,
+            "slowdown": body.slowdown,
+        })
+    return {"feature_key": "freezone.video_enhance", "pricing_stages": stages}
+
+
 async def _resolve_catalog_video_backend(
     model: str | None,
     *,
@@ -8300,7 +8378,11 @@ async def freezone_video_models(
     )
     return {
         "ok": True,
-        "data": get_freezone_video_model_options() if catalog is None else catalog,
+        "data": (
+            get_freezone_video_model_options()
+            if catalog is None
+            else [item for item in catalog if not _is_processing_only_video_model(item)]
+        ),
     }
 
 
@@ -9723,6 +9805,83 @@ async def freezone_video_erase(
     )
 
 
+async def _prepare_video_upscale(
+    *,
+    body: FreezoneVideoUpscaleRequest,
+    project_dir: Path,
+    requester_user_id: str,
+) -> tuple[Path, dict[str, Any], dict[str, Any], dict[str, Any]]:
+    try:
+        source_path = resolve_static_url_to_path(body.source_url, project_dir)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not source_path.exists():
+        raise HTTPException(404, f"video source not found: {source_path}")
+
+    from novelvideo.freezone.jobs import probe_video_stream
+
+    try:
+        source_meta = await probe_video_stream(str(source_path))
+    except RuntimeError as exc:
+        raise HTTPException(400, f"无法读取源视频信息: {exc}") from exc
+    target_long_edge = {"1080p": 1920, "2k": 2560, "4k": 3840}[body.resolution]
+    if max(int(source_meta["width"]), int(source_meta["height"])) >= target_long_edge:
+        raise HTTPException(400, "目标分辨率必须高于源视频分辨率")
+
+    upscale = await _resolve_video_processing_model(
+        "video_upscale",
+        requester_user_id=requester_user_id,
+    )
+    frame_rate: dict[str, Any] | None = None
+    if body.target_fps is not None or body.slowdown != "auto":
+        frame_rate = await _resolve_video_processing_model(
+            "video_frame_rate",
+            requester_user_id=requester_user_id,
+        )
+    processing_models = {
+        "upscale_backend": upscale["backend"],
+        "upscale_model_params": upscale["model_params"],
+        "upscale_request_schema": upscale["request_schema"],
+        "frame_rate_backend": frame_rate["backend"] if frame_rate else None,
+        "frame_rate_model_params": frame_rate["model_params"] if frame_rate else None,
+        "frame_rate_request_schema": (frame_rate["request_schema"] if frame_rate else None),
+    }
+    billing = _video_enhance_billing(body, source_meta, upscale, frame_rate)
+    return source_path, source_meta, processing_models, billing
+
+
+@router.post(
+    "/projects/{project}/freezone/video/upscale/quote",
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_video_upscale_quote(
+    project: str,
+    body: FreezoneVideoUpscaleRequest,
+    user: dict = Depends(get_api_user),
+):
+    from novelvideo.ports import get_credit_quote
+
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user, required_role="viewer"
+    )
+    _source_path, _source_meta, _processing_models, billing = await _prepare_video_upscale(
+        body=body, project_dir=project_dir, requester_user_id=ctx.requester_user_id,
+    )
+    quote = await get_credit_quote().generation_credit_quote(
+        kind="feature", model="freezone.video_enhance", params=billing,
+        quantity=1, product_surface="freezone",
+        user_id=str(user.get("id") or user.get("user_id") or ""),
+    )
+    original_cost = quote.original_total_cost
+    display = quote.display
+    if quote.discount_amount > 0 and original_cost is not None:
+        display = f"{original_cost}→{quote.total_cost}"
+    data = {"cost": quote.total_cost, "display": display}
+    if quote.promotion:
+        data["promotion"] = quote.promotion
+    return {"ok": True, "data": data}
+
+
 @router.post(
     "/projects/{project}/freezone/video/upscale",
     response_model=FreezoneJobAcceptedResponse,
@@ -9733,23 +9892,13 @@ async def freezone_video_upscale(
     body: FreezoneVideoUpscaleRequest,
     user: dict = Depends(get_api_user),
 ):
-    """视频处理：基础版高清增强。
-
-    当前实现使用 ffmpeg 做传统缩放、轻度降噪和锐化：
-    - 保持原始画面比例
-    - 按 `resolution` 对长边缩放
-    - 保留原视频音轨
-    """
+    """视频处理：目录驱动的视频超分、慢放与补帧流水线。"""
     ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
         project, user
     )
-
-    try:
-        source_path = resolve_static_url_to_path(body.source_url, project_dir)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    if not source_path.exists():
-        raise HTTPException(404, f"video source not found: {source_path}")
+    source_path, source_meta, processing_models, billing = await _prepare_video_upscale(
+        body=body, project_dir=project_dir, requester_user_id=ctx.requester_user_id,
+    )
 
     try:
         job_id = _new_job_id()
@@ -9764,8 +9913,14 @@ async def freezone_video_upscale(
                 payload={
                     "source_path": source_path.as_posix(),
                     "resolution": body.resolution,
-                    "frame_interpolation": body.frame_interpolation,
-                    "denoise_strength": body.denoise_strength,
+                    "target_fps": body.target_fps,
+                    "smart_interpolation": body.smart_interpolation,
+                    "slowdown": body.slowdown,
+                    "scene": body.scene,
+                    "face_enhance": body.face_enhance,
+                    "source_meta": source_meta,
+                    "billing": billing,
+                    **processing_models,
                 },
             )
         _start_freezone_video_upscale_task(
@@ -9776,6 +9931,7 @@ async def freezone_video_upscale(
             job_id=job_id,
             source_path=source_path,
             body=body,
+            processing_models=processing_models,
         )
     except RuntimeError as exc:
         _handle_task_start_runtime_error("failed to start freezone video upscale task", exc)
@@ -9790,6 +9946,34 @@ async def freezone_video_upscale(
         project=project_name,
         job_id=job_id,
     )
+
+
+@router.get(
+    "/projects/{project}/freezone/video/upscale/probe",
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_video_upscale_probe(
+    project: str,
+    source_url: str = Query(...),
+    user: dict = Depends(get_api_user),
+):
+    """读取源视频参数，供增强面板过滤无效的目标档位。"""
+    _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user, required_role="viewer"
+    )
+    try:
+        source_path = resolve_static_url_to_path(source_url, project_dir)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not source_path.exists():
+        raise HTTPException(404, "video source not found")
+    from novelvideo.freezone.jobs import probe_video_stream
+
+    try:
+        metadata = await probe_video_stream(str(source_path))
+    except RuntimeError as exc:
+        raise HTTPException(400, f"无法读取源视频信息: {exc}") from exc
+    return {"ok": True, "data": metadata}
 
 
 @router.post(

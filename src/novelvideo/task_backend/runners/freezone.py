@@ -81,9 +81,6 @@ FREEZONE_LEAF_EGRESS: dict[str, LeafEgressRule] = {
     "run_freezone_extract_frames": LeafEgressRule(
         "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
     ),
-    "run_freezone_video_upscale": LeafEgressRule(
-        "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
-    ),
     "run_freezone_video_compose": LeafEgressRule(
         "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
     ),
@@ -94,6 +91,10 @@ FREEZONE_LEAF_EGRESS: dict[str, LeafEgressRule] = {
         "novelvideo.freezone.jobs", LeafEgress.LOCAL, "EG-20a"
     ),
     # EG-18b `freezone.image.generate`（:52，`gateway-routed`）
+    # 视频增强也通过媒体模型网关出网；leaf 内部的慢放阶段仍由受限 ffmpeg 执行。
+    "run_freezone_video_upscale": LeafEgressRule(
+        "novelvideo.freezone.jobs", LeafEgress.NETWORK, "EG-18b"
+    ),
     "run_freezone_gen": LeafEgressRule(
         "novelvideo.freezone.jobs", LeafEgress.NETWORK, "EG-18b"
     ),
@@ -849,8 +850,17 @@ async def _run_freezone_video_upscale_async(
         job_id=job_id,
         source_path=str(payload["source_path"]),
         resolution=str(payload.get("resolution") or "1080p"),
-        frame_interpolation=str(payload.get("frame_interpolation") or "none"),
-        denoise_strength=str(payload.get("denoise_strength") or "1x"),
+        target_fps=payload.get("target_fps"),
+        smart_interpolation=bool(payload.get("smart_interpolation", True)),
+        slowdown=str(payload.get("slowdown") or "auto"),
+        scene=str(payload.get("scene") or "realistic"),
+        face_enhance=bool(payload.get("face_enhance", False)),
+        upscale_backend=payload.get("upscale_backend"),
+        upscale_model_params=payload.get("upscale_model_params"),
+        upscale_request_schema=payload.get("upscale_request_schema"),
+        frame_rate_backend=payload.get("frame_rate_backend"),
+        frame_rate_model_params=payload.get("frame_rate_model_params"),
+        frame_rate_request_schema=payload.get("frame_rate_request_schema"),
     )
     rel = output_path.relative_to(project_dir).as_posix()
     return {
