@@ -2260,6 +2260,10 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         "handler_failure_retry",
         "argument_retry_duplicate_dropped",
         "argument_retry_other_draft",
+        "argument_retry_other_move_target",
+        "argument_retry_other_html_artifact",
+        "argument_retry_other_projection",
+        "argument_retry_move_corrected",
     ],
 )
 async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
@@ -2350,6 +2354,40 @@ async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
             "draft_id": "draft-b",
             "revision": 1,
         }
+    elif scenario in {
+        "argument_retry_other_move_target",
+        "argument_retry_other_html_artifact",
+        "argument_retry_other_projection",
+        "argument_retry_move_corrected",
+    }:
+        # The target lives in a map key, artifact_id, or a nested request
+        # rather than a plain id field; another target must not match.
+        rejected_command, retry_command = {
+            "argument_retry_other_move_target": (
+                {"type": "move_nodes", "positions": {"node-a": {"x": 1, "y": 2}}},
+                {"type": "move_nodes", "positions": {"node-b": {"x": 1, "y": 2}}},
+            ),
+            "argument_retry_other_html_artifact": (
+                {"type": "html_artifact", "action": "update", "artifact_id": "a"},
+                {"type": "html_artifact", "action": "update", "artifact_id": "b"},
+            ),
+            "argument_retry_move_corrected": (
+                {"type": "move_nodes", "positions": {"node-a": {"x": 1, "y": 2}}},
+                {"type": "move_nodes", "positions": {"node-a": {"x": 9, "y": 8}}},
+            ),
+            "argument_retry_other_projection": (
+                {
+                    "type": "open_mainline_projection",
+                    "request": {"scope": "beat", "episode": 1, "beat": 1},
+                },
+                {
+                    "type": "open_mainline_projection",
+                    "request": {"scope": "beat", "episode": 1, "beat": 2},
+                },
+            ),
+        }[scenario]
+        rejected_input["commands"] = [{**rejected_command, "bogus": 1}]
+        retry_input["commands"] = [retry_command]
     if tool != "freezone_emit_canvas_command":
         rejection = {**rejection, "tool_name": tool}
 
@@ -2441,7 +2479,7 @@ async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
         route_prompt="把选中的图片转成水彩风格",
     )
 
-    if scenario == "argument_retry":
+    if scenario in {"argument_retry", "argument_retry_move_corrected"}:
         assert result["content"] == "已创建水彩风格图片节点并提交生成。"
     elif scenario == "handler_failure_retry":
         # Only a pre-handler schema rejection is side-effect free; a business

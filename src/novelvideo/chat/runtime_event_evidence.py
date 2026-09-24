@@ -293,14 +293,41 @@ _ARGUMENT_RETRY_IDENTITY_FIELDS = (
     "pairs",
     "mode",
     "scope",
+    "direction",
+    "project_id",
+    "artifact_id",
     "draft_id",
     "approval_id",
     "asset_id",
     "asset_kind",
+    "identity_id",
+    "primary_slot",
     "episode",
     "beat",
     "character",
 )
+# Maps keyed by the node ids they act on; the keys are the target, the values
+# (coordinates) are how.
+_ARGUMENT_RETRY_KEYED_TARGET_FIELDS = ("positions", "deltas")
+
+
+def _argument_retry_identity(command: dict[str, Any]) -> str:
+    identity: dict[str, Any] = {
+        key: command[key] for key in _ARGUMENT_RETRY_IDENTITY_FIELDS if key in command
+    }
+    for key in _ARGUMENT_RETRY_KEYED_TARGET_FIELDS:
+        if key not in command:
+            continue
+        value = command[key]
+        # A malformed map keeps its raw value, so only an identical call matches.
+        identity[key] = sorted(value) if isinstance(value, dict) else value
+    request = command.get("request")
+    if isinstance(request, dict):
+        # open_mainline_projection names its target inside the request.
+        identity["request"] = json.loads(_argument_retry_identity(request))
+    elif "request" in command:
+        identity["request"] = request
+    return json.dumps(identity, sort_keys=True, ensure_ascii=False)
 
 
 def _codex_freezone_is_tool_argument_rejection(event: Any) -> bool:
@@ -353,18 +380,7 @@ def _codex_freezone_argument_retry_scope(
             return None
     else:
         commands = [payload]
-    identities = Counter(
-        json.dumps(
-            {
-                key: command[key]
-                for key in _ARGUMENT_RETRY_IDENTITY_FIELDS
-                if key in command
-            },
-            sort_keys=True,
-            ensure_ascii=False,
-        )
-        for command in commands
-    )
+    identities = Counter(_argument_retry_identity(command) for command in commands)
     scope = json.dumps(
         [name, payload.get("project_id"), payload.get("canvas_id")],
         sort_keys=True,
