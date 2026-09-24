@@ -26,7 +26,7 @@
 
 | 台账 | 主题 | 状态 | 卡在哪 / 下一步 |
 |---|---|---|---|
-| [sync-main-remotes](tasks/sync-main-remotes.md) | 让 origin/main 与 zhonggwv/main 合流并最终同 SHA | 执行中 | 后端 4710、前端 3251 项全绿且门禁通过；下一步提交后依次推送两个 main |
+| [sync-main-remotes](tasks/sync-main-remotes.md) | 让 origin/main 与 zhonggwv/main 合流并最终同 SHA | 已阻塞 | 合并提交 `a2418a65` 全量验证通过；upstream PR #717 可合并但要求上游 review，合入后再快进 fork main |
 | [agent-collaboration-protocol](tasks/agent-collaboration-protocol.md) | 多模型协作、方案门与冲突治理 | 已完成 | 独立提交、测试与真实交接闭环已完成；后续变更另开工作线 |
 | [legacy-unassigned-diff](tasks/legacy-unassigned-diff.md) | 历史未归属改动隔离区 | 已阻塞 | 只读审计来源；未归属前禁止覆盖或删除 |
 | [asset-replacement-picker](tasks/asset-replacement-picker.md) | 画布素材替换：拖拽与点选双入口 | 待验收 | 独立实现与 5 项聚焦测试已通过；待真实画布手工走一遍点选替换 |

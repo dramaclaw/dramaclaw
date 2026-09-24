@@ -1,11 +1,11 @@
 # 同步 origin/main 与 zhonggwv/main
 
-**状态**：执行中
+**状态**：已阻塞
 **最后更新**：2026-09-24
-**基线**：`79171bc6`（方案锚点）；集成分支 `codex/sync-main-remotes` 正在合并 `origin/main`；4 个文本冲突已解决，完整回归正在收敛语义合并缺口
+**基线**：`a2418a65`（已验证合并提交）；原两个 main 均为其祖先，上游 review 前不提前移动 fork main
 **认领者**：`codex/sync-main-remotes-20260924`
 **相关文档**：`docs/agent/README.md`
-**相关分支 / PR**：`codex/sync-main-remotes`；PR 待创建（仅当上游 main 禁止直接推送）
+**相关分支 / PR**：`codex/sync-main-remotes`；[upstream PR #717](https://github.com/dramaclaw/dramaclaw/pull/717)
 
 ## 目标
 
@@ -77,11 +77,26 @@
 - [x] H3/Mixed、引用校验、视频能力和 home-node 聚焦测试全绿。
 - [x] `cd frontend && pnpm build`、`uv run ruff check .`、前后端 i18n、CE 端口闭合与 agent guard 全绿。
 - [x] `uv run pytest` 默认测试集通过；前端完整 Vitest 也在声明的 Node 22 运行时全绿。
-- [ ] `git merge-base --is-ancestor` 证明原两个 main 均为最终提交祖先。
+- [x] `git merge-base --is-ancestor` 证明原两个 main 均为已验证集成提交祖先。
 - [ ] 两次远端 `ls-remote` 返回相同 main SHA。
-- [x] 本轮改动全部在写入边界内，无未解释 diff；提交前 diff 格式与 guard 已通过。
+- [x] 本轮改动全部在写入边界内，无未解释 diff；合并提交带 DCO，diff 格式与 guard 已通过。
 
 ## 进展记录
+
+### 2026-09-24 · 上游 PR 可合并但等待必需审核
+
+做了什么：生成带 DCO 的非快进合并提交 `a2418a65`；刷新两个远端后确认 `origin/main=f51c2e44`、
+`zhonggwv/main=e7b1fbce` 均为该提交祖先。直接推 `origin/main` 被 GitHub 以 403 拒绝；现有
+`ZhongGWV/dramaclaw` 又是独立仓库、不是 GitHub fork，不能发跨仓库 PR，因此创建标准 fork
+`ZhongGWV/dramaclaw-upstream` 并提交 upstream PR #717。
+
+为什么停在这里：PR 状态为 `MERGEABLE`，但 `REVIEW_REQUIRED` / `BLOCKED`；当前两个已登录账号对
+`dramaclaw/dramaclaw` 都只有 pull 权限，无法直接合并或开启 auto-merge。提前把独立仓库的 main 移到
+集成提交只会让两个 main 在审核期间继续不同步，所以保留现状，等 origin 产生最终提交后再单次快进。
+
+怎么验证的：`git merge-base --is-ancestor origin/main a2418a65` 与 fork 对应命令均成功；
+`scripts/check_dco.py`、pre-commit 和全部代码/测试门禁均通过；GitHub PR API 返回
+`mergeable=MERGEABLE`、`reviewDecision=REVIEW_REQUIRED`。
 
 ### 2026-09-24 · 合并实现与全量验证完成，等待双远端推送
 
@@ -149,15 +164,17 @@ placement-free 白名单。首次修复后完整套件只剩 2 个顺序相关�
 
 - [x] 完成 claim 与共享互认后 acquire/preflight。
 - [x] 执行合并、解决文本与语义冲突并完成全量验证。
-- [ ] 推送 origin/main，再把同一 SHA 推送到 zhonggwv/main。
+- [ ] 上游维护者审核并合入 PR #717；随后 fetch `origin/main`，把它的最终 SHA 快进推到 `zhonggwv/main`。
 
 ## 阻塞
 
-无；若上游 main 分支保护拒绝直接推送，按方案改走 PR。
+`dramaclaw/dramaclaw` 对当前账号只读；PR #717 虽可合并但必须由上游维护者审核，且当前账号无权开启
+auto-merge。阻塞解除条件：PR 合入；不要在此之前单独移动 `zhonggwv/main`。
 
 ## 交接摘要
 
-- **最后完成到**：双远端与冲突审计完成，隔离分支已建立，尚未真实合并。
-- **下一步唯一动作**：生成精确 claim、补共享互认，运行 guard acquire/preflight。
-- **先读这些文件**：本台账、`docs/agent/STATE.md`、merge-tree 报告的 4 个冲突文件。
-- **不要动这些文件 / 决策**：不强推、不 rebase、不把主工作区未跟踪资料复制进来；只手工解决 4 个冲突。
+- **最后完成到**：合并提交 `a2418a65` 全量验证通过并已推送到两个 PR 集成分支；upstream PR #717 等审核。
+- **下一步唯一动作**：确认 PR #717 已合入，fetch origin，验证其最终 main 含 `a2418a65`，再执行
+  `git push zhonggwv origin/main:main` 并用两次 `ls-remote` 核对同 SHA。
+- **先读这些文件**：本台账、`docs/agent/STATE.md`、PR #717 状态。
+- **不要动这些文件 / 决策**：不强推、不 rebase、不提前移动 fork main，不把主工作区未跟踪资料复制进来。
