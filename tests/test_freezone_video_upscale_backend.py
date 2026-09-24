@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -103,6 +104,8 @@ async def test_model_video_enhancement_runs_upscale_slowdown_and_frame_rate(
     )
 
     assert output.exists()
+    output_dir = freezone_jobs.outputs_dir(tmp_path, "freezone_video_upscale")
+    assert not (output_dir / "enhance-1_stages").exists()
     assert calls == [
         (
             "video_upscale",
@@ -121,6 +124,45 @@ async def test_model_video_enhancement_runs_upscale_slowdown_and_frame_rate(
     ]
     assert metadata["target_fps"] == (target_fps or source_fps)
     assert metadata["stages"] == 3
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, asyncio.CancelledError])
+@pytest.mark.asyncio
+async def test_model_video_enhancement_removes_stages_when_task_stops(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[BaseException],
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+
+    async def fake_probe(_source_path: str, **_kwargs):
+        return {"width": 854, "height": 480, "fps": 24.0, "duration": 10.0}
+
+    async def fake_model(**kwargs):
+        output = Path(kwargs["output_path"])
+        output.write_bytes(b"stage")
+        if kwargs["mode"] == "video_frame_rate":
+            raise error_type("task stopped")
+
+    monkeypatch.setattr(freezone_jobs, "probe_video_stream", fake_probe)
+    monkeypatch.setattr(freezone_jobs, "_run_video_processing_model", fake_model)
+
+    with pytest.raises(error_type):
+        await freezone_jobs.run_freezone_video_upscale(
+            project_dir=tmp_path,
+            job_id="stopped",
+            source_path=str(source),
+            resolution="1080p",
+            target_fps=60,
+            smart_interpolation=True,
+            upscale_backend="newapi_video-super-resolution",
+            frame_rate_backend="newapi_video-frame-rate",
+        )
+
+    output_dir = freezone_jobs.outputs_dir(tmp_path, "freezone_video_upscale")
+    assert not (output_dir / "stopped_stages").exists()
+    assert not (output_dir / "stopped.mp4").exists()
 
 
 @pytest.mark.asyncio

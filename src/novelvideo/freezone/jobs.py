@@ -719,80 +719,86 @@ async def _run_model_video_enhancement(
     probe = await probe_video_stream(str(src), cwd=project_dir, egress_context=egress_context)
     work_dir = outputs_dir(project_dir, "freezone_video_upscale") / f"{job_id}_stages"
     work_dir.mkdir(parents=True, exist_ok=True)
-    current = work_dir / "01_upscaled.mp4"
-    await _run_video_processing_model(
-        project_dir=project_dir,
-        job_id=f"{job_id}_upscale",
-        source_path=src,
-        output_path=current,
-        backend=upscale_backend,
-        mode="video_upscale",
-        duration=float(probe["duration"]),
-        resolution=resolution,
-        processing_metadata={
-            "scene": scene,
-            "face_enhance": bool(face_enhance),
-        },
-        model_params=upscale_model_params,
-        request_schema=upscale_request_schema,
-        egress_context=egress_context,
-    )
-
-    if factor > 1:
-        slowed = work_dir / "02_slowed.mp4"
-        await _slow_video(
-            current,
-            slowed,
-            factor=factor,
-            project_dir=project_dir,
-            egress_context=egress_context,
-        )
-        current = slowed
-
-    effective_target_fps = target_fps
-    if factor > 1 and effective_target_fps is None:
-        effective_target_fps = max(1, round(float(probe["fps"]), 3))
-    if effective_target_fps is not None:
-        if not frame_rate_backend:
-            raise RuntimeError("video frame-rate model is not configured")
-        framed = work_dir / "03_frame_rate.mp4"
+    try:
+        current = work_dir / "01_upscaled.mp4"
         await _run_video_processing_model(
             project_dir=project_dir,
-            job_id=f"{job_id}_frame_rate",
-            source_path=current,
-            output_path=framed,
-            backend=frame_rate_backend,
-            mode="video_frame_rate",
-            duration=float(probe["duration"]) * factor,
+            job_id=f"{job_id}_upscale",
+            source_path=src,
+            output_path=current,
+            backend=upscale_backend,
+            mode="video_upscale",
+            duration=float(probe["duration"]),
             resolution=resolution,
             processing_metadata={
-                "target_fps": effective_target_fps,
-                "smart_interpolation": smart_interpolation,
-                "resolution_tier": {
-                    "1080p": "fhd",
-                    "2k": "2k",
-                    "4k": "4k",
-                }.get(resolution, resolution),
+                "scene": scene,
+                "face_enhance": bool(face_enhance),
             },
-            model_params=frame_rate_model_params,
-            request_schema=frame_rate_request_schema,
+            model_params=upscale_model_params,
+            request_schema=upscale_request_schema,
             egress_context=egress_context,
         )
-        current = framed
 
-    out = outputs_dir(project_dir, "freezone_video_upscale") / f"{job_id}.mp4"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(current), str(out))
-    return out, {
-        "backend": "gateway",
-        "resolution": resolution,
-        "target_fps": effective_target_fps,
-        "slowdown": slowdown,
-        "scene": scene,
-        "face_enhance": bool(face_enhance),
-        "source": probe,
-        "stages": 1 + int(factor > 1) + int(effective_target_fps is not None),
-    }
+        if factor > 1:
+            slowed = work_dir / "02_slowed.mp4"
+            await _slow_video(
+                current,
+                slowed,
+                factor=factor,
+                project_dir=project_dir,
+                egress_context=egress_context,
+            )
+            current = slowed
+
+        effective_target_fps = target_fps
+        if factor > 1 and effective_target_fps is None:
+            effective_target_fps = max(1, round(float(probe["fps"]), 3))
+        if effective_target_fps is not None:
+            if not frame_rate_backend:
+                raise RuntimeError("video frame-rate model is not configured")
+            framed = work_dir / "03_frame_rate.mp4"
+            await _run_video_processing_model(
+                project_dir=project_dir,
+                job_id=f"{job_id}_frame_rate",
+                source_path=current,
+                output_path=framed,
+                backend=frame_rate_backend,
+                mode="video_frame_rate",
+                duration=float(probe["duration"]) * factor,
+                resolution=resolution,
+                processing_metadata={
+                    "target_fps": effective_target_fps,
+                    "smart_interpolation": smart_interpolation,
+                    "resolution_tier": {
+                        "1080p": "fhd",
+                        "2k": "2k",
+                        "4k": "4k",
+                    }.get(resolution, resolution),
+                },
+                model_params=frame_rate_model_params,
+                request_schema=frame_rate_request_schema,
+                egress_context=egress_context,
+            )
+            current = framed
+
+        out = outputs_dir(project_dir, "freezone_video_upscale") / f"{job_id}.mp4"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(current), str(out))
+        return out, {
+            "backend": "gateway",
+            "resolution": resolution,
+            "target_fps": effective_target_fps,
+            "slowdown": slowdown,
+            "scene": scene,
+            "face_enhance": bool(face_enhance),
+            "source": probe,
+            "stages": 1 + int(factor > 1) + int(effective_target_fps is not None),
+        }
+    finally:
+        try:
+            shutil.rmtree(work_dir)
+        except OSError:
+            logger.warning("failed to remove video enhancement stages: %s", work_dir, exc_info=True)
 
 
 async def _run_cmd(
