@@ -42,11 +42,16 @@ import {
 import { formatResolutionLabel } from "@/features/canvas/domain/mediaModelOptions";
 import {
   isHappyHorseVideoModel,
+  isMiniMaxH3VideoModel,
   isVideoModeSupportedByModel,
   videoModeForcesAutomaticAspectRatio,
   videoModelDefaultGenerateAudio,
   videoModelReferenceDisabledReason,
 } from "@/features/canvas/nodes/shared/videoModelCapabilities";
+import {
+  MINIMAX_H3_MODE_ORDER,
+  minimaxH3ModeAvailability,
+} from "@/features/canvas/nodes/shared/minimaxH3GenerationDecision";
 import { resolveImageDisplayUrl } from "@/features/canvas/application/imageData";
 import { VIDEO_FILE_ACCEPT } from "@/features/canvas/application/videoFileTypes";
 import { spawnExternalAssetNodes } from "@/features/canvas/application/spawnExternalAssets";
@@ -280,7 +285,7 @@ export function VideoOperationsPanel({
   videoInputPresent,
   videoInputBillingReady,
   inputVideoDurationSeconds,
-  submitDisabled,
+  submitDisabled: parentSubmitDisabled,
   selectedModelReferenceError,
   mediaRejectionReason,
   expanded,
@@ -321,6 +326,15 @@ export function VideoOperationsPanel({
     useEffect(() => {
       setReferenceLinkDraft(data.referenceLink ?? "");
     }, [data.referenceLink]);
+
+    const selectedModelApiId =
+      selectedVideoModel?.apiModel ?? selectedVideoModel?.id ?? modelId;
+    const usesMixedReferenceTokens = isMiniMaxH3VideoModel(selectedModelApiId);
+    const h3PromptMissing =
+      usesMixedReferenceTokens &&
+      prompt.trim().length === 0 &&
+      upstreamTextJoined.trim().length === 0;
+    const submitDisabled = parentSubmitDisabled || h3PromptMissing;
 
     const supportsReferenceFile = (selectedVideoModel?.referenceFileMax ?? 0) > 0;
     const supportsReferenceLink = (selectedVideoModel?.referenceLinkMax ?? 0) > 0;
@@ -462,18 +476,22 @@ export function VideoOperationsPanel({
     // mention 候选会决定是否消费 within。
     const referenceMediaCapInfo = useMemo(() => {
       const counts = { image: 0, video: 0, audio: 0 };
-      return referenceMedia.map((item) => {
+      return referenceMedia.map((item, index) => {
         counts[item.kind] += 1;
         const cap = referenceCaps?.[item.kind];
         const withinCap = cap == null || counts[item.kind] <= cap;
-        return { item, typeIndex: counts[item.kind], withinCap };
+        return {
+          item,
+          typeIndex: counts[item.kind],
+          mixedIndex: index + 1,
+          withinCap,
+        };
       });
     }, [referenceCaps, referenceMedia]);
 
-    // @ 提及候选 —— 图片、音频都可引用，但编号按 *各自类型* 的序号走，
-    // *不* 按行内混合位置。后端按上传的图片数量来对应 图片N，若用混合位置编号
-    // （音频排第一时图片就成了「图片2」），后端只看到 1 张图却被要求引用图片2
-    // 会报错。所以图片用图片序号、音频用音频序号，各自独立计数。
+    // 引用候选有两套协议：H3 按这一行从左到右共用 Mixed N；其它模型继续按
+    // 图片 / 视频 / 音频各自编号。H3 提交侧使用同一 referenceOrder 生成 references[]，
+    // 后端才可以把 Mixed N 无歧义地转换成分类型标签。
     //
     // 在 REFERENCE_CAPS_BY_MODE 表里有条目的模式，超过 cap 的条目不能进
     // @ 候选 —— 服务端会直接丢弃，留在候选里只会让用户选了之后被静默忽略。
@@ -492,35 +510,44 @@ export function VideoOperationsPanel({
           if (enforceCap && !info.withinCap) continue;
           out.push({
             key: item.nodeId,
-            name: `图片${imageIdx}`,
+            name: usesMixedReferenceTokens ? `Mixed ${info.mixedIndex}` : `图片${imageIdx}`,
+            ...(usesMixedReferenceTokens
+              ? { serializedToken: `{{Mixed ${info.mixedIndex}}}` }
+              : {}),
             imageUrl: resolveImageDisplayUrl(item.imageUrl),
-            index: imageIdx,
+            index: usesMixedReferenceTokens ? info.mixedIndex : imageIdx,
           });
         } else if (item.kind === "video") {
           videoIdx += 1;
           if (enforceCap && !info.withinCap) continue;
           out.push({
             key: item.nodeId,
-            name: `视频${videoIdx}`,
+            name: usesMixedReferenceTokens ? `Mixed ${info.mixedIndex}` : `视频${videoIdx}`,
+            ...(usesMixedReferenceTokens
+              ? { serializedToken: `{{Mixed ${info.mixedIndex}}}` }
+              : {}),
             imageUrl: item.thumbUrl ? resolveImageDisplayUrl(item.thumbUrl) : "",
             videoUrl: resolveImageDisplayUrl(item.videoUrl),
-            index: videoIdx,
+            index: usesMixedReferenceTokens ? info.mixedIndex : videoIdx,
           });
         } else if (item.kind === "audio") {
           audioIdx += 1;
           if (enforceCap && !info.withinCap) continue;
           out.push({
             key: item.nodeId,
-            name: `音频${audioIdx}`,
+            name: usesMixedReferenceTokens ? `Mixed ${info.mixedIndex}` : `音频${audioIdx}`,
+            ...(usesMixedReferenceTokens
+              ? { serializedToken: `{{Mixed ${info.mixedIndex}}}` }
+              : {}),
             imageUrl: "",
-            index: audioIdx,
+            index: usesMixedReferenceTokens ? info.mixedIndex : audioIdx,
             audioUrl: resolveImageDisplayUrl(item.audioUrl),
             displayName: audioReferenceFileName(item),
           });
         }
       }
       return out;
-    }, [referenceCaps, referenceMediaCapInfo]);
+    }, [referenceCaps, referenceMediaCapInfo, usesMixedReferenceTokens]);
     // i18n-exempt-end
 
     // 取消关联某个上游素材：删掉「该上游节点 → 本节点」的连线。collectInputContents
@@ -539,7 +566,9 @@ export function VideoOperationsPanel({
     // mentionCandidates 算好的（图片 / 视频 / 音频各自计数），用户不必自己数。
     const mentionNameByNodeId = useMemo(() => {
       const map = new Map<string, string>();
-      for (const candidate of mentionCandidates) map.set(candidate.key, candidate.name);
+      for (const candidate of mentionCandidates) {
+        map.set(candidate.key, candidate.serializedToken ?? candidate.name);
+      }
       return map;
     }, [mentionCandidates]);
     const handleMentionReference = useCallback(
@@ -807,26 +836,28 @@ export function VideoOperationsPanel({
                   />
                 </div>
                 <div className="ml-3 flex shrink-0 items-center gap-3">
-                  <GenModeSelect
-                    value={genMode}
-                    modelId={selectedVideoModel?.apiModel ?? selectedVideoModel?.id ?? modelId}
-                    supportedModes={selectedVideoModel?.supportedModes}
-                    // HappyHorse 的可选模式由上游节点类型（含未填图的空节点）决定，
-                    // 其余模型仍按已解析素材 URL 计数。
-                    upstreamCounts={
-                      isHappyHorseModel ? upstreamTypeCounts : upstreamCounts
-                    }
-                    onChange={(nextMode) =>
-                      updateNodeData(id, {
-                        genMode: nextMode,
-                        modelParams: filterMediaModelParamsForMode(
-                          selectedVideoModel?.request?.parameters,
-                          data.modelParams,
-                          nextMode,
-                        ),
-                      })
-                    }
-                  />
+                  {!usesMixedReferenceTokens && (
+                    <GenModeSelect
+                      value={genMode}
+                      modelId={selectedModelApiId}
+                      supportedModes={selectedVideoModel?.supportedModes}
+                      // HappyHorse 的可选模式由上游节点类型（含未填图的空节点）决定，
+                      // 其余模型仍按已解析素材 URL 计数。
+                      upstreamCounts={
+                        isHappyHorseModel ? upstreamTypeCounts : upstreamCounts
+                      }
+                      onChange={(nextMode) =>
+                        updateNodeData(id, {
+                          genMode: nextMode,
+                          modelParams: filterMediaModelParamsForMode(
+                            selectedVideoModel?.request?.parameters,
+                            data.modelParams,
+                            nextMode,
+                          ),
+                        })
+                      }
+                    />
+                  )}
                   <NodeContextPromptPaletteButton
                     nodeId={id}
                     onInsert={insertContextPaletteEntry}
@@ -924,6 +955,7 @@ export function VideoOperationsPanel({
                       items={referenceMediaCapInfo}
                       caps={referenceCaps}
                       genMode={genMode}
+                      showMixedIndex={usesMixedReferenceTokens}
                       mentionNames={mentionNameByNodeId}
                       onFocus={(nodeId) => setSelectedNode(nodeId)}
                       onMention={handleMentionReference}
@@ -1013,6 +1045,25 @@ export function VideoOperationsPanel({
                       }))
                     }
                   />
+                  {usesMixedReferenceTokens && (
+                    <GenModeSelect
+                      value={genMode}
+                      modelId={selectedModelApiId}
+                      supportedModes={selectedVideoModel?.supportedModes}
+                      upstreamCounts={upstreamCounts}
+                      popoverPlacement="top"
+                      onChange={(nextMode) =>
+                        updateNodeData(id, {
+                          genMode: nextMode,
+                          modelParams: filterMediaModelParamsForMode(
+                            selectedVideoModel?.request?.parameters,
+                            data.modelParams,
+                            nextMode,
+                          ),
+                        })
+                      }
+                    />
+                  )}
                   <VideoConfigChip
                     followInputAspectRatio={videoModeForcesAutomaticAspectRatio(genMode)}
                     followInputDuration={genMode === "videoEdit"}
@@ -1108,7 +1159,9 @@ export function VideoOperationsPanel({
                     type="button"
                     disabled={submitDisabled || videoBillingRuleMissing}
                     title={
-                      selectedModelReferenceError ?? (isGenerating
+                      (h3PromptMissing
+                        ? t("node.videoOps.modeDisabled.h3PromptRequired")
+                        : selectedModelReferenceError) ?? (isGenerating
                         ? t("node.videoNode.submitBusy")
                         : (modelTaskAccess.message ?? mediaRejectionReason ??
                           t("node.videoNode.submit")))
@@ -1155,6 +1208,7 @@ interface GenModeSelectProps {
   modelId: string | null | undefined;
   supportedModes?: string[];
   upstreamCounts: { videos: number; images: number; audios: number };
+  popoverPlacement?: "top" | "bottom";
   onChange: (next: VideoGenMode) => void;
 }
 
@@ -1165,6 +1219,12 @@ export function videoModeDisabledReason(
   t: TFn,
   supportedModes?: string[],
 ): string | null {
+  if (isMiniMaxH3VideoModel(modelId)) {
+    const decision = minimaxH3ModeAvailability(mode, upstreamCounts);
+    return decision.reasonKey
+      ? t(decision.reasonKey, decision.reasonArgs)
+      : null;
+  }
   // HappyHorse 的模式可用性完全由上游节点类型决定（文档 4 大功能）：
   //   文生视频  — 仅无上游时可用
   //   首帧/图生视频 — 仅上游正好 1 张图片时可用
@@ -1251,7 +1311,14 @@ export function videoModeDisabledReason(
   return null;
 }
 
-function GenModeSelect({ value, modelId, supportedModes, upstreamCounts, onChange }: GenModeSelectProps) {
+function GenModeSelect({
+  value,
+  modelId,
+  supportedModes,
+  upstreamCounts,
+  popoverPlacement = "bottom",
+  onChange,
+}: GenModeSelectProps) {
   const { t } = useTranslation();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -1267,6 +1334,11 @@ function GenModeSelect({ value, modelId, supportedModes, upstreamCounts, onChang
   //   - 上游接入视频后，图片类入口隐藏，只保留「文生视频」(禁用) 与「视频编辑」。
   // 非 HappyHorse 不暴露「视频编辑」(它是 HappyHorse 专属功能)。
   const visibleTabs = useMemo(() => {
+    if (isMiniMaxH3VideoModel(modelId)) {
+      return MINIMAX_H3_MODE_ORDER
+        .map((key) => MODE_TABS.find((tab) => tab.key === key))
+        .filter((tab): tab is (typeof MODE_TABS)[number] => Boolean(tab));
+    }
     if (supportedModes?.length) {
       const configuredModel = { apiModel: modelId ?? undefined, supportedModes };
       return MODE_TABS.filter((tab) => isVideoModeSupportedByModel(tab.key, configuredModel));
@@ -1293,9 +1365,12 @@ function GenModeSelect({ value, modelId, supportedModes, upstreamCounts, onChang
     const margin = 8;
     setPopoverPosition({
       left: Math.min(Math.max(margin, rect.left), window.innerWidth - 132 - margin),
-      top: rect.bottom + 8,
+      top:
+        popoverPlacement === "top"
+          ? Math.max(margin, rect.top - visibleTabs.length * 32 - 8)
+          : rect.bottom + 8,
     });
-  }, []);
+  }, [popoverPlacement, visibleTabs.length]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -1923,6 +1998,8 @@ interface ReferenceMediaCapEntry {
   item: ReferenceMediaItem;
   /** 1-based 同类型序号（图片/视频/音频 各自累加），与 chip 角标 + @ 提及对齐。 */
   typeIndex: number;
+  /** 1-based 混合序号；MiniMax H3 的 {{Mixed N}} 与提交 references[] 共用。 */
+  mixedIndex: number;
   /** 是否在当前模式的引用上限内；表里没有的模式默认 true。 */
   withinCap: boolean;
 }
@@ -1932,6 +2009,8 @@ interface ReferenceMediaRowProps {
   caps: { image: number; video: number; audio: number } | null;
   /** 当前 genMode；用来决定 firstLastFrame 模式下给前两张图片打 首帧/尾帧 角标。 */
   genMode: VideoGenMode;
+  /** MiniMax H3 像 LibLib 一样在所有媒体 chip 左上角显示全局混合序号。 */
+  showMixedIndex: boolean;
   /**
    * nodeId → 这条引用在提示词里的名字（图片1 / 视频2 …）。不在表里的没有 @ 按钮
    * ——超出当前模式上限的素材本来就进不了 @ 候选，给它一个按钮只会插进一个后端
@@ -1952,6 +2031,7 @@ function ReferenceMediaRow({
   items,
   caps,
   genMode,
+  showMixedIndex,
   mentionNames,
   onFocus,
   onMention,
@@ -1993,7 +2073,7 @@ function ReferenceMediaRow({
   return (
     <div className="flex shrink-0 items-center gap-1.5">
       {items.map((entry) => {
-        const { item, typeIndex, withinCap } = entry;
+        const { item, typeIndex, mixedIndex, withinCap } = entry;
         // 「超出当前模式上限」只在 REFERENCE_CAPS_BY_MODE 里登记过的模式生效。
         const overCap = caps != null && !withinCap;
         const modeCap = caps?.[item.kind] ?? 0;
@@ -2112,6 +2192,11 @@ function ReferenceMediaRow({
             }`}
           >
             {chip}
+            {showMixedIndex && (
+              <span className="pointer-events-none absolute -left-1 -top-1 z-20 flex h-4 min-w-4 items-center justify-center rounded-full border border-white/15 bg-bg-dark/90 px-1 text-[10px] font-semibold leading-none text-text-dark shadow-sm">
+                {mixedIndex}
+              </span>
+            )}
             {overCap && (
               <span className="pointer-events-none absolute -bottom-1 -left-1 z-10 flex h-4 w-4 items-center justify-center rounded-full bg-amber-500/90 text-[10px] font-bold leading-none text-surface-dark shadow ring-1 ring-surface-dark">
                 !

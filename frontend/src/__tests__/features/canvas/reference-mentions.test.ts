@@ -77,6 +77,33 @@ describe("remapReferenceMentions", () => {
     ]);
     expect(out).toBe("@图片1 @图片2");
   });
+
+  it("keeps MiniMax H3 Mixed placeholders bound through a cross-media reorder", () => {
+    const out = remapReferenceMentions(
+      "场景 {{Mixed 2}}，角色 {{Mixed 1}}，声音 {{Mixed 3}}",
+      [
+        {
+          prefix: "Mixed",
+          syntax: "mixed",
+          prevIds: ["frog", "scene", "audio"],
+          nextIds: ["scene", "audio", "frog"],
+        },
+      ],
+    );
+    expect(out).toBe("场景 {{Mixed 1}}，角色 {{Mixed 3}}，声音 {{Mixed 2}}");
+  });
+
+  it("removes an H3 Mixed placeholder when its reference node is detached", () => {
+    const out = remapReferenceMentions("保留 {{Mixed 2}}，删除 {{Mixed 1}} 后继续", [
+      {
+        prefix: "Mixed",
+        syntax: "mixed",
+        prevIds: ["removed", "kept"],
+        nextIds: ["kept"],
+      },
+    ]);
+    expect(out).toBe("保留 {{Mixed 1}}，删除 后继续");
+  });
 });
 
 describe("sameOrder", () => {

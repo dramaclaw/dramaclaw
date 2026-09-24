@@ -4726,6 +4726,24 @@ def create_video_generator(
     backend_str = _coerce_video_backend_value(backend)
     newapi_model = parse_newapi_video_backend(backend_str)
     if newapi_model:
+        h3_workbench_url = os.environ.get("MINIMAX_H3_WORKBENCH_URL", "").strip()
+        normalized_newapi_model = re.sub(r"[\s._-]", "", newapi_model).lower()
+        if normalized_newapi_model == "minimaxh3" and h3_workbench_url:
+            direct_context = egress_context or ambient_egress_context()
+            if (
+                direct_context is not None
+                and direct_context.billing_principal.kind == "organization"
+            ):
+                raise VideoEgressError("ORG_EGRESS_DENIED")
+            kwargs.pop("egress_context", None)
+            from novelvideo.generators.minimax_h3_workbench import (
+                MiniMaxH3WorkbenchVideoGenerator,
+            )
+
+            return MiniMaxH3WorkbenchVideoGenerator(
+                base_url=h3_workbench_url,
+                **kwargs,
+            )
         return NewApiVideoGenerator(model=newapi_model, **kwargs)
 
     from novelvideo.generators.huimengi import parse_huimeng_video_backend
