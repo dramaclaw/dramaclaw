@@ -24,7 +24,7 @@ reference, `firstFrame` locks it as the opening frame). State the mode as the sh
 `video_generation_mode_conflict`, and a node `genMode` with no shared mode blocks it with
 `video_generation_mode_unconfirmed`. A single shot may differ only through a
 `freezone_revise_workflow` step update of `generation_mode`, which records that node's confirmed
-mode. When a
+mode; a `confirmedInputs.video_generation_mode` written into a submitted plan is ignored. When a
 model rejects the mode (`model_capability_unsupported` on `genMode`), keep the mode and switch to
 one of the returned `compatible_models`; if there are none, ask the user.
 

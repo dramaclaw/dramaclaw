@@ -541,6 +541,28 @@ def test_plan_video_mode_without_stated_mode_blocks_draft(monkeypatch, deviate):
     assert len(_mode_conflicts(validated, "video_generation_mode_unconfirmed")) == video_count
 
 
+@pytest.mark.parametrize("deviate", [True, False], ids=["agent_authored", "template_reroute"])
+def test_plan_cannot_confirm_its_own_swapped_video_mode(monkeypatch, deviate):
+    """Review of #714: confirmedInputs written into a submitted plan is not a
+    per-node confirmation; the swapped node still blocks the draft."""
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    plan = _mode_plan(catalog, None, deviate=deviate)
+    video = next(node for node in plan["nodes"] if node["node_type"] == "videoNode")
+    video["data"]["genMode"] = "firstFrame"
+    video["data"]["workflowCatalog"].setdefault("confirmedInputs", {})[
+        "video_generation_mode"
+    ] = "firstFrame"
+
+    validated = catalog.validate_agent_workflow_plan(plan)
+
+    assert validated["ok"] is True, validated
+    conflicts = _mode_conflicts(validated)
+    assert [blocker["path"] for blocker in conflicts] == [
+        f"runtime.models.{video['id']}.genMode"
+    ]
+
+
 def test_plan_first_frame_stated_as_shared_mode_is_consistent(monkeypatch):
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)

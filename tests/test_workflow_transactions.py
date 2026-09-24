@@ -629,3 +629,60 @@ def test_revised_node_mode_is_recorded_as_that_nodes_confirmed_mode():
         "firstLastFrame"
     )
     assert _mode_codes(revised["compiled"]) == []
+
+
+@pytest.mark.parametrize(
+    ("shared", "code"),
+    [
+        ("imageToVideo", "video_generation_mode_conflict"),
+        (None, "video_generation_mode_unconfirmed"),
+    ],
+)
+def test_caller_written_node_mode_confirmation_is_not_trusted(shared, code):
+    """Review of #714: a submitted plan cannot confirm its own swapped mode by
+    filling workflowCatalog.confirmedInputs; only a stored-draft revision can."""
+    plan = _exact_media_plan()
+    video = plan["nodes"][1]["data"]
+    video["generation_mode"] = "firstFrame"
+    video["workflowCatalog"]["confirmedInputs"] = {"video_generation_mode": "firstFrame"}
+    if shared:
+        plan["inputs"] = {"video_generation_mode": shared}
+
+    prepared = prepare_workflow_source({"plan": plan}, username="tester")
+
+    compiled = prepared["compiled"]
+    node = compiled["plan"]["nodes"][1]["data"]
+    assert node["genMode"] == "firstFrame"
+    assert "video_generation_mode" not in node["workflowCatalog"].get("confirmedInputs", {})
+    assert _mode_codes(compiled) == [code]
+    runtime = evaluate_workflow_preflight(
+        compiled,
+        model_responses=_video_runtime_models(),
+        limits={"ok": True, "data": {"video": {"limit": 2, "remaining": 2}}},
+    )
+    assert runtime["status"] == "blocked"
+    assert code in [b["code"] for b in runtime["blockers"]]
+
+
+def test_revised_node_mode_confirmation_survives_later_revisions():
+    plan = _exact_media_plan()
+    plan["nodes"][1]["data"].pop("generation_mode")
+    plan["inputs"] = {"video_generation_mode": "imageToVideo"}
+    prepared = prepare_workflow_source({"plan": plan}, username="tester")
+    revised = revise_workflow_source(
+        prepared,
+        {"step_updates": [
+            {"node_id": "video", "settings": {"generation_mode": "firstLastFrame"}}
+        ]},
+        username="tester",
+    )
+
+    again = revise_workflow_source(
+        revised,
+        {"step_updates": [{"node_id": "video", "prompt": "make a calmer video"}]},
+        username="tester",
+    )
+
+    video = again["compiled"]["plan"]["nodes"][1]["data"]
+    assert video["genMode"] == "firstLastFrame"
+    assert _mode_codes(again["compiled"]) == []

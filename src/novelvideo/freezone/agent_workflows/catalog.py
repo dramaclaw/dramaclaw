@@ -3386,6 +3386,39 @@ _PLAN_RUNTIME_BACKFILL_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
 }
 
 
+def _drop_caller_mode_confirmations(
+    nodes: list[Any], resolved_inputs: dict[str, Any]
+) -> None:
+    """Discard per-node video mode confirmations a submitted plan claims.
+
+    Only ``freezone_revise_workflow`` may record a node's confirmed mode, on a
+    draft the server stored. The same field in a submitted plan is written by
+    the caller and would bypass the #711 check, so a value that differs from
+    the shared mode is removed (the standard planner's copy equals it).
+    """
+    requested = (
+        _text(resolved_inputs.get("video_generation_mode"))
+        if isinstance(resolved_inputs, dict)
+        else ""
+    )
+    for node in nodes:
+        if not isinstance(node, dict) or _text(node.get("node_type")) != "videoNode":
+            continue
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        workflow_catalog = data.get("workflowCatalog")
+        confirmed = (
+            workflow_catalog.get("confirmedInputs")
+            if isinstance(workflow_catalog, dict)
+            else None
+        )
+        if (
+            isinstance(confirmed, dict)
+            and "video_generation_mode" in confirmed
+            and _text(confirmed.get("video_generation_mode")) != requested
+        ):
+            confirmed.pop("video_generation_mode")
+
+
 def _video_generation_mode_blockers(
     nodes: list[Any], resolved_inputs: dict[str, Any]
 ) -> list[dict[str, Any]]:
@@ -3520,7 +3553,11 @@ def _noncanonical_video_duration_blockers(nodes: list[Any]) -> list[dict[str, st
 
 
 def validate_agent_workflow_plan(
-    plan: Any, *, username: str | None = None, allow_template_reroute: bool = True
+    plan: Any,
+    *,
+    username: str | None = None,
+    allow_template_reroute: bool = True,
+    trusted_mode_confirmations: bool = False,
 ) -> dict[str, Any]:
     """Strictly validate an agent-authored plan against the live catalog.
 
@@ -3528,7 +3565,9 @@ def validate_agent_workflow_plan(
     compiled through the standard planner instead and returned in the same
     validated shape with ``planner.selected_by = template_isomorphic``;
     ``allow_template_reroute=False`` skips that (used when validating the
-    standard planner's own output).
+    standard planner's own output). ``trusted_mode_confirmations`` is only
+    for a stored draft being revised: per-node video mode confirmations in
+    any other plan were written by its caller and are discarded (issue #711).
     """
     if validate_workflow_plan is None:
         return {
@@ -3684,6 +3723,10 @@ def validate_agent_workflow_plan(
         if _build_plan_preflight is not None:
             # Planned duration and warnings must reflect the backfilled nodes.
             validated["preflight"] = _build_plan_preflight(validated_plan.get("nodes") or [])
+    if not trusted_mode_confirmations:
+        _drop_caller_mode_confirmations(
+            validated_plan.get("nodes") or [], input_contract["resolved"]
+        )
     _attach_preflight_blockers(
         validated,
         _video_generation_mode_blockers(
@@ -3725,7 +3768,10 @@ def validate_agent_workflow_plan(
         )
         if compiled is not None:
             rerouted = validate_agent_workflow_plan(
-                compiled["plan"], username=username, allow_template_reroute=False
+                compiled["plan"],
+                username=username,
+                allow_template_reroute=False,
+                trusted_mode_confirmations=trusted_mode_confirmations,
             )
             if rerouted.get("ok"):
                 # Only when the standard planner reproduces the agent's plan node
@@ -3742,7 +3788,10 @@ def validate_agent_workflow_plan(
                     )
                 if merged is not None:
                     rerouted = validate_agent_workflow_plan(
-                        merged, username=username, allow_template_reroute=False
+                        merged,
+                        username=username,
+                        allow_template_reroute=False,
+                        trusted_mode_confirmations=trusted_mode_confirmations,
                     )
                 if merged is not None and rerouted.get("ok"):
                     rerouted["planner"] = _template_planner_metadata(

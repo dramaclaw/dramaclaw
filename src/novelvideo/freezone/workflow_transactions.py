@@ -397,8 +397,14 @@ def _normalize_exact_plan_settings(plan: dict) -> dict:
     return normalized
 
 
-def prepare_workflow_source(body: dict, *, username: str) -> dict:
-    """Accept business intent or an exact plan; return server-owned compilation."""
+def prepare_workflow_source(
+    body: dict, *, username: str, trusted_mode_confirmations: bool = False
+) -> dict:
+    """Accept business intent or an exact plan; return server-owned compilation.
+
+    ``trusted_mode_confirmations`` is set only when revising a stored draft, whose
+    per-node video mode confirmations were recorded by the server (issue #711).
+    """
     if "run_after_create" in body and not isinstance(body["run_after_create"], bool):
         raise WorkflowOperationError("run_after_create must be boolean")
     with workflow_catalog_scope(username):
@@ -435,7 +441,11 @@ def prepare_workflow_source(body: dict, *, username: str) -> dict:
         plan = _normalize_exact_plan_settings(plan)
         if isinstance(intent.get("plan"), dict):
             intent = {**deepcopy(intent), "plan": deepcopy(plan)}
-        validated = _require_result(validate_agent_workflow_plan(plan))
+        validated = _require_result(
+            validate_agent_workflow_plan(
+                plan, trusted_mode_confirmations=trusted_mode_confirmations
+            )
+        )
         if (
             isinstance(intent.get("plan"), dict)
             and (validated.get("planner") or {}).get("selected_by")
@@ -516,7 +526,11 @@ def revise_workflow_source(payload: dict, changes: Any, *, username: str) -> dic
             _confirm_revised_video_modes(plan, changes["step_updates"])
         if "bindings" in changes:
             plan = bind_workflow_inputs(plan, changes["bindings"])
-        prepared = prepare_workflow_source({"plan": plan}, username=username)
+        # The plan is the stored draft plus this revision, so its per-node
+        # mode confirmations are the server's own.
+        prepared = prepare_workflow_source(
+            {"plan": plan}, username=username, trusted_mode_confirmations=True
+        )
         return {**prepared, "last_changes": deepcopy(changes)}
     if isinstance(payload.get("intent", {}).get("plan"), dict):
         raise WorkflowOperationError("exact plans accept step_updates or bindings")
