@@ -1,104 +1,43 @@
 ---
 name: interactive-story
-description: "在 DramaClaw 中规划、创建、检查或增量编辑互动影游和互动广告；只做互动广告方案也适用，提案前须读取 references/interactive-ads.md。适用于 interactive film、FMV、branching narrative、interactive ad、interactive video ad，以及互动短剧、互动剧、互动电影、互动故事、交互式视频广告、剧情画布、分支剧情、剧情树、多结局、互动剧片段制作准备、占位素材试玩。故事持久化必须使用专用 story tools，不得替换为通用 canvas 或 workflow 操作。不适用于普通线性广告、线性 novel-to-video 剧集或普通剧本上传。"
+description: "在 DramaClaw 中策划、创建、检查或编辑互动影游、互动短剧和互动广告，并引导阶段进度与下一步（interactive film、FMV、branching narrative、剧情画布、分支剧情、多结局、占位素材试玩、互动剧片段制作准备、交互式视频广告、interactive ad、interactive video ad）。故事写入使用专用 story tools，不用通用 canvas/workflow 代替；不适用于普通线性广告或线性 novel-to-video。"
 ---
 
-# 互动故事创作
+# 互动故事
 
-把自然语言创意变成画布上可试玩的分支故事。使用用户的语言讨论故事、梗概、选择和结局。不要要求用户提供 JSON、Ink、节点 ID、revision 或 idempotency key。
-
-若宿主要求结构化最终回复，自然语言方案写在 `message` 字段，方案阶段使用 `mode=read_only` 和空 `canvas_receipts`；不要将 Markdown 作为顶层最终回复。此格式只约束 Agent 输出，不要求用户提供 JSON。
+把创意变成画布上可试玩的分支故事。按用户当前请求工作：只要方案就交付方案，局部修改就只改目标片段；不把每次对话变成完整制作向导。不要让用户提供 JSON、Ink、节点 ID 或 revision。若宿主要求结构化回复，将自然语言写入 `message`；只读方案用 `mode=read_only` 和空 `canvas_receipts`。
 
 ## 面向用户的引导
 
-默认使用普通用户能理解的创作语言：Choice 称“互动选项”，choice_loop 称“等待选择时播放的循环画面”，Segment／节点称“剧情片段”，CTA 称“行动按钮”（如“预约试驾”），placeholder 称“占位画面，尚未制作视频”。使用片段标题定位结果，不主动展示字段名、工具名、ID、revision 或原始状态码；仅在用户询问技术细节或排错需要时补充。工具参数和技术文档中的标识符保持原样。
+用“剧情片段、互动选项、占位画面”等创作语言说明结果，技术标识只在排错时展示。端到端创作可按“定故事 → 审制作 → 看成品”推进，阶段不等于逐步审批。已明确的偏好不重复询问；缺失且影响方向的偏好用一次澄清收集。用户要求先看方案、稍后确认时，直接给完整方案并自然询问一次；不要仅为收集该确认而打开结构化澄清卡片。
 
-交付时区分“方案已确定”“配置已保存”“视频已制作”和“实际试玩已验证”，只报告有结果支持的状态；不把设计描述说成当前可见效果。用一句话说明本次改了什么、目前能看到什么及尚缺什么，不要求用户理解内部数据结构。
+大纲说明分支与结局，并分别估算每条可玩路径的观看时长；互斥分支不能相加，选择等待时间单列。影游没有规模偏好时可从约七个片段、两个主要选择点和两个结局起草，并明示默认值；广告使用自己的时长和规模规则。仅请求方案时不保存大纲、不写画布、不生成媒体。
 
-互动广告按下方广告文档入口先读后提案；其创作默认值优先于通用影游。仅要求方案时在对话中交付，不写入画布或生成媒体。
+交付时分别说明方案、画布配置、媒体生成和实际试玩的状态。`accepted`、`running` 或 Validate 通过都不等于成片已完成或试玩已验证。
 
-端到端互动短剧按 **定故事 → 审制作 → 看成品** 三个阶段引导（使用用户的语言）。这些是对话里程碑，不是八个独立审批步骤，也不是每次请求都必须走完的向导。
+用户问“下一步”或完成某阶段后，回读画布阶段进度，以 `current_stage_id` 指向最早未完成项，给出该项的具体待办和需要用户做的决定；按 [阶段引导](references/stage-guidance.md) 处理人工确认，不只报阶段名称或自动勾选。
 
-用户明确要求先给方案、稍后确认，且上下文已经充分时，在对话中给出完整方案，最后自然地询问一次确认。不要仅为收集该确认而打开结构化澄清卡片。
+画布已有试玩、HTML 导出和版本发布入口；用户请求交付时使用当前可用入口并核实结果，不把故事创建或 Validate 当成已发布。
 
-- **定故事**：提出创作方向、分支、结局和单次游玩的目标观看时长。用户没有时长偏好时主动给出估算，不要求其逐片段分配秒数。统计实际片段并分别汇总每条可玩路径；互斥分支和结局不能计入同一次游玩。选择等待时间单独报告，并在展示大纲前让路径总时长与用户目标一致。大纲获批后创建并校验故事。占位素材试玩是可选的修订方式，不是强制检查点。
-- **审制作**：故事创建后，简要说明制作准备是下一阶段。形成制作方案或写入逐片段视频提示词前，先用 `dramaclaw_get_interactive_story_progress` 回读当前阶段与证据：剧本阶段未达「完成」（片段文案未齐或存在结构错误）时，先补齐剧本或报告缺口，不抢先产出制作方案，除非用户明确要求先行规划。`evidence.character_count` 只证明剧本里有角色定义，不证明角色卡、设定图或参考素材已经创建；角色等 `manual` 阶段不得根据图片节点、文件名或后续产物猜测完成。用户明确说某个人工阶段已经完成，或明确要求越过该阶段继续时，调用 `dramaclaw_confirm_interactive_story_stages` 记录确认后再继续；用户要求返工时以 `action=reopen` 撤销对应确认。用户要求完整视频工作时继续形成可审核的制作方案，方案默认包含逐段推荐时长（对齐模型实际时长档位）与镜头承接建议（自动承接／独立开场），不等用户开口要求。互动故事的时长是片段级分镜决策：不得在生成参数澄清卡中询问一个共享 `video_duration_seconds`，也不得把一个固定时长应用到全部片段；应根据每段对白、动作和节奏估算，再适配当前模型能力并分别写入各视频节点的 `durationSec`。共享确认只包含模型、画幅、清晰度、声音和生成数量。只要求故事或占位原型时，只提供下一步选项，不预先填写所有制作字段。先给摘要，逐段细节按需展开；允许用户一次提出多个例外，不要求逐节点配置。
-- **看成品**：制作方案获批且用户明确授权生成后，应用已确认的准备，并按依赖分批生成。真实尾帧可用后完善下游提示词。在授权范围不变时连续完成常规工作；遇到缺少输入或创作方向、设置、费用范围的实质变化时再说明。邀请用户试玩并定点修订；仅在用户请求且能力支持时导出，不宣称自动发布。
+## 职责与文档
 
-根据用户意图和模型实际能力推荐一致的默认方案。Agent 负责逐片段分析，用户审核创作选择和例外。不要分别追问每项资产、模型、时长或参考。仅确认方案不授权付费生成；范围不变时已有授权继续有效。局部编辑、检查或只改文案的请求只完成该任务，不重新启动完整三阶段。
+故事结构和文案由专用 story tools 持久化并校验；视频节点参数与素材连线由 canvas tools 维护；新角色、场景参考图和分镜图使用图片工作流；媒体由现有 runner 生成。以实时工具契约和回执为准，不推断 ID、素材编号或成功状态。
 
-## 创作偏好确认
+- 互动广告，包括只做方案：先读 [互动广告规则](references/interactive-ads.md)。
+- Create/Patch 故事：读 [故事契约](references/story-contract.md)；特殊选择、长按、循环或 CTA 再读 [交互选项](references/interaction-options.md)。
+- Validate 或解释结果：读 [校验说明](references/validation.md)。
+- 询问下一步、阶段交接或人工阶段确认：读 [阶段引导](references/stage-guidance.md)。
+- 制作方案、参数、参考或镜头承接：读 [制作规划](references/production-planning.md)；写视频提示词再读 [提示词保真](references/prompt-fidelity.md)。
+- 提交图片或视频生成：读 [生成执行](references/generation-execution.md)。写入失败且考虑恢复时读 [失败恢复](references/error-recovery.md)。
 
-产出大纲前，用现有 `freezone_request_user_clarification` 把缺失且会实质改变方案的信息集中一次询问；用户描述中已明确的信息不重复询问，不为每项偏好分别弹卡。选项可跳过、可自由填写。
+## 故事工作流
 
-- 互动影游/短剧：画风、互动强度（选择频率与交互类型）、规模或期望单次游玩时长、主题；改编项目再问必须保留的关系、转折或结局。
-- 互动广告：产品与受众、核心卖点、目标时长、期望的用户动作、可选 CTA；按广告文档把未经核实的卖点标为待核实，不套用影游默认规模。
+1. **方案与确认**：影游集中了解画风、互动强度、主题、规模或单次游玩时长；改编时确认必须保留的内容。给出可审核的大纲和路径时长。用户要进入画布创作时，用 `dramaclaw_save_interactive_story_outline` 保存待确认大纲；用户在画布方案卡确认前，不创建正式故事。改稿后重新保存并等待再次确认。
+2. **创建**：回读 `dramaclaw_get_interactive_story_outline` 的确认状态和 `dramaclaw_get_freezone_canvas` 的 revision；用 `dramaclaw_create_interactive_story` 写完整 StoryDraftV2，再调用 `dramaclaw_validate_interactive_story`。写入和校验成功后立即读取 `dramaclaw_get_interactive_story_progress`，按最早未完成阶段引导下一步；通常先处理角色，再处理场景，不直接建议分镜或视频。占位媒体可用于试玩，不要求先有视频。若结构校验失败，先 Get 最新故事；仅在修法由获批大纲唯一确定时 Patch 并重验，否则指出断开的片段。
+3. **编辑或检查**：从故事组的 `data.interactiveStoryId` 定位故事，不把组节点 ID 当故事 ID；先 Get 最新故事和 revision。范围明确就直接改，同一意图合并一次 Patch，成功后 Validate。仅润色文案时保留结构、媒体与参数；增删分支按用户要求处理。只读检查直接 Get/Validate。
+4. **阶段进度**：制作前回读 `dramaclaw_get_interactive_story_progress`。剧本未完成时先处理缺口，除非用户明确要求先规划。角色、场景、分镜和完成属于人工阶段；用户明确确认完成或要求越过时，用 `dramaclaw_confirm_interactive_story_stages` 记录，返工时用 `action=reopen`。用户说“创建场景/角色”是制作请求，不是完成确认；先按 [阶段引导](references/stage-guidance.md) 制作并核实产物，不能调用确认工具代替创建。角色定义或图片节点不能证明阶段完成。
+5. **制作与生成**：逐片段推荐时长、模式、参考和承接；时长写各视频节点的 `durationSec`，不向所有片段套一个共享时长。制作方案或参数写入不授权付费生成；获批并明确授权后，按 [制作规划](references/production-planning.md) 核验就绪镜头，再按 [生成执行](references/generation-execution.md) 提交。分镜图片、视频提交和最终成片分别核实。
 
-未回答的偏好采用本 Skill 默认值，并在大纲中把默认值明示出来供确认，不静默替用户决定方向。用户只要方案时止于对话中的方案：不保存待确认大纲、不写画布、不生成媒体。
+## 写入边界
 
-## 职责
-
-Agent 规划故事语义、片段时长、资产和提示词；story tools 负责故事持久化和校验；canvas tools 负责制作设置和参考；现有 runner 执行媒体生成。使用工具返回的 ID、revision 和结果，不重建这些职责，也不模拟成功结果。
-
-## 按任务加载文档
-
-- 所有互动广告请求（包括只做方案）在提出创意、交互承诺或方案前读取 [references/interactive-ads.md](references/interactive-ads.md)，不依赖用户是否提到 CTA、长按或热点。当前上下文没有正文时先发现并读取资源，不能只凭 description 或延迟到创建时再读；读取失败时说明限制，不承诺未经核实的互动能力。
-- 构造 Create 或 Patch 参数前，完整读取 [references/story-contract.md](references/story-contract.md)。
-- 涉及选择反馈、choice loop、锚点或烘焙视频选择、长按手势、广告 CTA 时，读取 [references/interaction-options.md](references/interaction-options.md)。
-- 校验故事或解释校验结果前，读取 [references/validation.md](references/validation.md)。
-- 涉及制作方案、节点参数、资产、参考、镜头承接、尾帧或就绪状态时，读取 [references/production-planning.md](references/production-planning.md)。
-- 准备或修正视频提示词时，额外读取 [references/prompt-fidelity.md](references/prompt-fidelity.md)。
-- 生成、继续或重做视频前，读取 [references/generation-execution.md](references/generation-execution.md)。
-- Create 或 Patch 失败后，仅在准备执行允许的恢复操作前读取 [references/error-recovery.md](references/error-recovery.md)。
-
-## 边界
-
-- 处理互动故事和互动广告；普通线性广告不因包含“广告”而触发本 Skill，不把互动请求路由到线性 novel-to-video 管线。
-- 互动短剧/互动剧即使被用户称为“剧情画布”，也使用本 Skill。专用 story tools（含大纲、阶段进度与创建/读取/编辑/校验七个工具）优先于通用 workflow 或 canvas 操作。工具发现后仍不可用时，报告故事创建受阻，不降级为普通节点或连线。
-- Create 和 Patch 是原子故事写入。每个已授权阶段开始前 Get 最新故事，每次成功写入后 Validate。不得重放成功或结果不明的写入。
-- 仅用于生产的节点参数使用现有 Freezone 节点编辑工具，不属于 StoryDraft 字段。不得通过直接 canvas JSON 或通用 REST 工具持久化故事。
-- 缺少最终视频不阻塞故事创建。先使用占位媒体，之后再导入或生成视频。
-- 会话没有绑定项目时停止并请用户打开项目。
-
-## 创建
-
-1. 按“创作偏好确认”补齐缺失信息后，收敛题材、主角目标、分支预算和结局方向。只询问会实质改变故事的信息。
-2. 先给自然语言大纲：标题、梗概、主角和冲突、片段/选择/结局数量、关键分支、变量、限时选择，以及主要路径的预计观看时长；玩家选择等待时间单列。
-3. 用户同意进入画布创作时，用 `dramaclaw_save_interactive_story_outline` 把该大纲保存为画布上的待确认大纲（kind 区分影游/广告，含标题、背景或创意、情节摘要、互动点与结局方向、单条路径时长预算、待确认事项）。待确认大纲不是正式故事：不虚构片段节点，不直接改写画布 JSON。
-4. 请用户在画布方案卡上审阅，确认或要求修改；确认状态以画布为准，对话文字不算已保存的确认。用户要求修改时重新保存大纲，确认状态随之重置。
-5. 创建前用 `dramaclaw_get_interactive_story_outline` 回读状态；仅在已确认后调用 Create（工具入口与后端 create 路径均硬校验：画布存在未确认大纲时 Create 被拒绝并返回 `outline_not_confirmed`，此时不得重试，请用户在方案卡确认后再来）。故事创建不授权付费媒体生成。
-6. 用 `dramaclaw_get_freezone_canvas` 读取当前画布 revision。
-7. 用完整 StoryDraftV2 调用一次 `dramaclaw_create_interactive_story`。
-8. 成功后调用 `dramaclaw_validate_interactive_story`，报告故事标题、片段和主要选择数量，以及用户可理解的检查结果；版本号留在内部操作中。创建成功会自动把已确认大纲关联到正式故事；此后故事以 Get/Patch 维护，大纲只是确认记录，不作为第二事实源。
-
-如果校验返回 `valid=false`，或出现 `unreachable` 这类结构性不可达问题，不得称为“校验通过”或把问题解释成校验器误报。先读取最新故事；如果缺失的自动转场能够根据已确认大纲和片段顺序唯一确定，则用一次 Patch 补齐并重新校验，直到结构性问题消失；不能安全推断时，明确指出哪一段剧情断开并请用户决定，不要让用户先靠试玩自行发现。`missing_video` 等占位素材提示仍可作为非阻塞 warning。
-
-Create 成功后若校验发现的修复仍属于已批准大纲，先 Get 再 Patch。不要复用 Create 回执中的 revision，因为画布刷新或其他写入方可能已经推进版本。
-
-用户没有偏好时，默认约七个故事片段、两个主要选择点和两个结局。优先汇合分支，用 boolean flag 表示简单事实，并从占位媒体开始。默认使用没有出边的可达结局，由播放器的重新开始功能负责重玩。明确要求的叙事循环必须保留可达出口，循环片段本身不是结局。
-
-## 编辑
-
-1. 确认 story ID。未知时读取画布，查找 `data.storyGroup` 为 `true` 的分组，按 `data.label` 或 `data.displayName` 匹配，并使用 `data.interactiveStoryId`。不得把分组节点的 `id` 当作 `story_id`；多个分组匹配时请用户指定。
-2. 调用 `dramaclaw_get_interactive_story`，把返回的故事和 revision 视为权威状态。
-3. 目标和范围清楚时直接应用用户要求；只有意图含糊或操作会对请求范围外产生实质影响时才询问。优先使用明确指定或当前选中的片段；“丰富一点／润色”默认在现有片段内改写，不新增片段、连线、选择或改变时长预算。目标无法唯一确定时只询问要改哪个片段。结构扩写需先提出差异并取得确认；用户明确要求增删分支时按该范围执行。
-4. 同一用户意图的全部操作合并到一次 `dramaclaw_patch_interactive_story` 调用。 提交前核对非空 `operations`，并按契约表检查每项载荷：只有 `update_*` 使用 `changes`；`upsert_character` / `upsert_variable` / `upsert_flag` 分别使用完整的 `character` / `variable` / `flag`。
-5. 成功后 Validate，并用面向故事的名称解释结果。
-
-若 Validate 发现结构性断链，按创建后的同一规则先 Get、再 Patch 修复并重新 Validate；只有重新校验没有阻塞问题时，才能向用户报告故事已连通。
-
-既有故事编辑使用 Patch，不用 Create 重建。写入前对照本次目标检查操作集合，省略不需改动的字段；仅改提示词时只更新目标片段的 `video_prompt`，保留剧情、选项、媒体和制作参数。
-
-`remove_segment` 会级联删除直接连接的 Choice。删除起点片段时，在同一个 Patch 中设置新起点。删除被条件引用的实体时，在同一个 Patch 中更新该条件。
-
-## 制作与执行
-
-制作工作开始前先 Get 当前故事。`script` 保持剧情叙述，`production_notes` 保存制作说明，最终面向模型的描述通过 `update_segment` 写入 `video_prompt`。保留现有媒体和分支规则。普通占位故事创建期间，除非用户要求视频准备，否则不要预先准备全部提示词。
-
-制作规划或提示词准备不授权视频生成。只有制作方案获批且用户明确授权生成后才能执行。`accepted` 或 `running` 不代表视频已经完成。
-
-## 读取与失败处理
-
-- 解释已有故事前先 Get；只读校验直接使用 Validate。
-- Create 或 Patch 失败后停止并报告，除非 `error-recovery.md` 明确允许一次恢复尝试。
-- `missing_video` 是制作任务，不是故事创建失败。
+故事持久化只用专用 story tools；不得用通用节点、连线或直接 canvas JSON 冒充故事。Create/Patch 前读取最新状态，成功后 Validate；结果不明时先回读，不重放。生产参数不属于 StoryDraft。没有绑定项目或专用工具不可用时，说明阻塞。`outline_not_confirmed` 时请用户在画布方案卡确认，不绕过门禁。

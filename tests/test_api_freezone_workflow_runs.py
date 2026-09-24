@@ -2623,6 +2623,77 @@ def test_server_workflow_prepare_revise_and_compact_query(workflow_run_client):
     assert not {"plan", "intent", "compiled"} & summary.keys()
 
 
+def test_story_frame_draft_rejects_invalid_target_before_confirmation(
+    workflow_run_client, monkeypatch
+):
+    from novelvideo.api.routes import freezone
+
+    monkeypatch.setattr(freezone.canvas_store, "read_canvas", lambda *_args: {
+        "nodes": [
+            {"id": "story-group", "type": "groupNode", "data": {
+                "storyGroup": True, "interactiveStoryId": "story-1"}},
+            {"id": "video-opening", "type": "videoNode", "parentId": "story-group",
+             "data": {"storySegmentId": "opening"}},
+        ],
+    })
+    plan = deepcopy(_valid_draft_compiled()["plan"])
+    plan["source_context"] = {
+        "story_id": "story-1",
+        "targets": [{"plan_node_id": "missing-frame", "story_segment_id": "opening",
+                     "video_node_id": "missing-video"}],
+    }
+    response = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/canvases/canvas_demo/workflow-drafts",
+        json={"plan": plan},
+    )
+    assert response.status_code == 409
+    assert "unknown or duplicate image" in response.text
+
+
+def test_workflow_claim_rechecks_story_targets_before_task_admission(
+    workflow_run_client, monkeypatch
+):
+    from novelvideo.api.routes import freezone
+
+    canvas = {"nodes": [
+        {"id": "story-group", "type": "groupNode", "data": {
+            "storyGroup": True, "interactiveStoryId": "story-1"}},
+        {"id": "video-opening", "type": "videoNode", "parentId": "story-group",
+         "data": {"storySegmentId": "opening"}},
+    ]}
+    monkeypatch.setattr(freezone.canvas_store, "read_canvas", lambda *_args: canvas)
+    plan = {
+        "schema_version": "freezone_workflow_plan.v1",
+        "skill": {"id": "text-to-image-video"},
+        "source_context": {"story_id": "story-1", "targets": [
+            {"plan_node_id": "frame-opening", "story_segment_id": "opening",
+             "video_node_id": "video-opening"},
+        ]},
+        "nodes": [{"id": "frame-opening", "node_type": "imageGenNode",
+                   "stage": "image", "data": {"prompt": "开场分镜",
+                   "workflowCatalog": {"skillId": "text-to-image-video",
+                                       "recipeId": "general-image"}}}],
+        "edges": [],
+    }
+    base = "/api/v1/projects/proj_demo/freezone/canvases/canvas_demo/workflow-drafts"
+    created = workflow_run_client.post(
+        base, json={"plan": plan, "run_after_create": False}
+    )
+    assert created.status_code == 200, created.text
+    draft_id = created.json()["data"]["draft_id"]
+    canvas["nodes"][1]["data"]["storySegmentId"] = "rewritten"
+    patched = workflow_run_client.patch(
+        f"{base}/{draft_id}", json={"expected_revision": 1, "plan": plan}
+    )
+    assert patched.status_code == 409
+    claimed = workflow_run_client.post(
+        f"{base}/{draft_id}/claim", json={"revision": 1}
+    )
+    assert claimed.status_code == 409
+    assert "story frame target" in claimed.text
+    assert workflow_run_client.get(f"{base}/{draft_id}").json()["data"]["status"] == "ready"
+
+
 def test_workflow_capabilities_do_not_advertise_headless_execution(workflow_run_client):
     response = workflow_run_client.get(
         "/api/v1/projects/proj_demo/freezone/workflow-capabilities"

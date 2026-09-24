@@ -74,7 +74,13 @@ import {
   captureVideoFrameToNode,
   resolveCaptureSeekSec,
 } from "@/features/canvas/application/videoCaptureFrame";
-import { ensureVideoContinuity, isFmvVideoNode, videoContinuitySources } from "@/features/canvas/application/videoContinuity";
+import {
+  attachCompletedStoryFrame,
+  ensureVideoContinuity,
+  isFmvVideoNode,
+  syncStoryVideoReferencePrompt,
+  videoContinuitySources,
+} from "@/features/canvas/application/videoContinuity";
 import { dedupeGenerationErrors } from "@/features/canvas/application/generationErrorReport";
 
 export const CANVAS_CHAT_COMMANDS_SCHEMA_VERSION = "canvas_chat_commands.v1";
@@ -216,6 +222,7 @@ export type CanvasChatCommandApplyResult = {
   openedUiActions: number;
   createdNodeIds: string[];
   errors: string[];
+  warnings?: string[];
   commandResults: CanvasChatCommandApplyStep[];
 };
 
@@ -2815,6 +2822,22 @@ function workflowRunDedupKey(
   return `${canvasId || "default"}::${actionFingerprint}`;
 }
 
+function syncCompletedStoryFrames(
+  imageNodeIds: Iterable<string>,
+  result: CanvasChatCommandApplyResult,
+): void {
+  for (const imageNodeId of imageNodeIds) {
+    const attachmentError = attachCompletedStoryFrame(imageNodeId);
+    if (attachmentError) {
+      result.warnings = [...(result.warnings ?? []), attachmentError];
+    }
+    const state = useCanvasStore.getState();
+    for (const edge of state.edges.filter((item) => item.source === imageNodeId)) {
+      syncStoryVideoReferencePrompt(edge.target);
+    }
+  }
+}
+
 async function executeQueuedNodeActions(
   pendingActions: PendingNodeAction[],
   result: CanvasChatCommandApplyResult,
@@ -2853,6 +2876,10 @@ async function executeQueuedNodeActions(
       action.executionMode === "workflow"
       && !action.invalidationReason
       && hasGeneratedResult(action.nodeId, action.action));
+    const completedImageNodeIds = new Set(
+      completedWhileQueued.filter((action) => action.action === "generate_image")
+        .map((action) => action.nodeId),
+    );
     if (completedWhileQueued.length > 0) {
       const completedKeys = new Set(
         completedWhileQueued.map((action) => `${action.nodeId}:${action.action}`),
@@ -2875,7 +2902,10 @@ async function executeQueuedNodeActions(
         });
       }
     }
-    if (pendingActions.length === 0) return;
+    if (pendingActions.length === 0) {
+      syncCompletedStoryFrames(completedImageNodeIds, result);
+      return;
+    }
     const projectId = options.projectId?.trim();
     const canvasId = options.canvasId?.trim();
     let workflowRunId: string | null = null;
@@ -3638,6 +3668,7 @@ async function executeQueuedNodeActions(
 
         selectAndFocusNode(action.nodeId);
         markWorkflowActionResultCurrent(action.nodeId, action.action);
+        if (action.action === "generate_image") completedImageNodeIds.add(action.nodeId);
         result.openedUiActions += 1;
         result.commandResults.push({
           commandIndex: action.commandIndex,
@@ -3665,6 +3696,9 @@ async function executeQueuedNodeActions(
           error,
         });
       }
+      // The image batch ends before story video generation. Connect only real
+      // finished frames, then rebuild prompt references from the live edge order.
+      syncCompletedStoryFrames(completedImageNodeIds, result);
       stopWorkflowHeartbeat();
       await workflowHeartbeatQueue;
       await persistRunUpdate(
@@ -4072,6 +4106,43 @@ function workflowEnvelopeAlreadyApplied(envelope: CanvasChatCommandEnvelope): bo
   );
 }
 
+function isStoryImageReferenceEnvelope(envelope: CanvasChatCommandEnvelope): boolean {
+  const creates = envelope.commands.filter((command) => command.type === "create_node");
+  const edges = envelope.commands.filter((command) => command.type === "create_edge");
+  if (!creates.length || !edges.length || creates.some((command) =>
+    command.node_type !== CANVAS_NODE_TYPES.imageGen || !command.client_id
+  )) return false;
+  const aliases = new Set(creates.map((command) => command.client_id));
+  if (aliases.size !== creates.length) return false;
+  const nodes = useCanvasStore.getState().nodes;
+  const storyIds = new Set<string>();
+  for (const edge of edges) {
+    if (edge.link_type !== "media_input_for" || !aliases.has(edge.source)) return false;
+    const target = nodes.find((node) => node.id === edge.target);
+    if (target?.type !== CANVAS_NODE_TYPES.video ||
+      typeof target.data.storySegmentId !== "string" || !target.data.storySegmentId.trim()
+    ) return false;
+    const group = nodes.find((node) => node.id === target.parentId);
+    if (group?.data.storyGroup !== true ||
+      typeof group.data.interactiveStoryId !== "string" || !group.data.interactiveStoryId.trim()
+    ) return false;
+    storyIds.add(group.data.interactiveStoryId);
+  }
+  for (const command of envelope.commands) {
+    if (command.type !== "update_node_data") continue;
+    const target = nodes.find((node) => node.id === command.node_id);
+    const group = nodes.find((node) => node.id === target?.parentId);
+    if (target?.type !== CANVAS_NODE_TYPES.video ||
+      typeof target.data.storySegmentId !== "string" ||
+      group?.data.storyGroup !== true ||
+      !storyIds.has(String(group.data.interactiveStoryId ?? ""))
+    ) return false;
+  }
+  return storyIds.size === 1 && creates.every((command) =>
+    edges.some((edge) => edge.source === command.client_id)
+  );
+}
+
 function* applyCanvasChatCommandsInternal(
   envelopes: CanvasChatCommandEnvelope[],
   options: ApplyCanvasChatCommandsOptions & { queueNodeActions: boolean },
@@ -4127,6 +4198,7 @@ function* applyCanvasChatCommandsInternal(
       continue;
     }
     const envelopeCreatedNodeIds: string[] = [];
+    const storyImageReferenceEnvelope = isStoryImageReferenceEnvelope(envelope);
     const envelopeSourceNodeIds = new Set<string>();
     const envelopeErrorStart = result.errors.length;
     let envelopeHasAddNextNode = false;
@@ -4550,6 +4622,11 @@ function* applyCanvasChatCommandsInternal(
               if (allActions.length === 0) {
                 throw new Error("工作流中没有可执行的生成节点。");
               }
+              syncCompletedStoryFrames(
+                allActions.filter((action) => action.action === "generate_image" &&
+                  hasGeneratedResult(action.nodeId, action.action)).map((action) => action.nodeId),
+                result,
+              );
               result.commandResults.push({
                 commandIndex: currentCommandIndex,
                 type: command.type,
@@ -4659,6 +4736,7 @@ function* applyCanvasChatCommandsInternal(
     if (
       !envelopeHasExplicitGroupNodes &&
       !envelopeHasAddNextNode &&
+      !storyImageReferenceEnvelope &&
       result.errors.length === envelopeErrorStart &&
       envelopeCreatedNodeIds.length >= 2 &&
       envelope.commands.some((command) =>

@@ -9,7 +9,7 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
 
 ## Required behavior
 
-- For interactive short dramas, branching stories, choices or multiple endings, route story structure to the `interactive-story` Skill and its dedicated tools first. This workflow Skill applies only to the requested media production. Never replace an unavailable story tool with ordinary canvas commands or a WorkflowPlan.
+- For interactive short dramas, branching stories, choices or multiple endings, route story structure to the `interactive-story` Skill and its dedicated tools first. This workflow Skill applies only to the requested media production. For new storyboard reference images in an approved production plan, use the existing `text-to-image-video` catalog Skill with `general-image` in one image-only WorkflowPlan; keep existing story video nodes outside that Plan and connect images after its run finishes. Never replace an unavailable story tool with ordinary canvas commands or a WorkflowPlan.
 - Planning authors topology, Recipe selection, dependencies, confirmed parameters, and short
   node task briefs. Each node prompt should state its task, scope, upstream outputs, and reference
   roles in one or two concise sentences. Preserve user-provided story facts and source material.
@@ -175,8 +175,9 @@ including `480P` whenever the schema lists it.
 6. After explicit user confirmation, call `freezone_confirm_workflow_draft` once with the exact
    `draft_id` and `revision`.
 
-When the user explicitly names the required nodes and their dependency order, use the exact topology
-path in [references/custom-topology.md](references/custom-topology.md), preparing the complete Plan
+When the user explicitly names the required nodes and their dependency order, or has confirmed
+an interactive-story production plan with an exact shot-to-existing-video mapping, use the exact
+topology path in [references/custom-topology.md](references/custom-topology.md), preparing the complete Plan
 as a persisted draft even when a production Skill
 also matches. For error recovery, read
 [references/error-recovery.md](references/error-recovery.md).

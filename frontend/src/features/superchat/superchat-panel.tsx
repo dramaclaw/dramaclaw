@@ -2677,8 +2677,10 @@ function videoApprovalParamGroups(
     const nodeData = approvalNodeData(approval, canvasNodes, nodeId);
     if (nodeData.isUpscaleNode === true) continue;
     const rawModel = textValue(nodeData?.model, fallbackModel);
+    const isStorySegment = typeof nodeData.storySegmentId === "string"
+      && Boolean(nodeData.storySegmentId.trim());
     const selectedModel = models.find((item) => item.id === rawModel) ?? models[0];
-    const model = selectedModel?.id ?? rawModel;
+    const model = isStorySegment ? rawModel : selectedModel?.id ?? rawModel;
     const qualityOptions = videoQualityOptionsForApproval(selectedModel);
     const durationBounds = videoDurationBoundsForApproval(selectedModel);
     const aspectOptions = clarificationCapabilityOptions(
@@ -2690,8 +2692,6 @@ function videoApprovalParamGroups(
       && approvalVideoHasImageInput(approval, canvasNodes, canvasEdges, nodeId, nodeData)
       && nodeData.humanReview !== true
     );
-    const isStorySegment = typeof nodeData.storySegmentId === "string"
-      && Boolean(nodeData.storySegmentId.trim());
     const continuityMode = isStorySegment
       ? nodeData.storyRole === "start"
         ? "independent"
@@ -2706,12 +2706,22 @@ function videoApprovalParamGroups(
       nodeId,
       nodeIds: [nodeId],
       model,
-      aspectRatio: normalizeApprovalStringOption(nodeData?.aspectRatio, aspectOptions, "16:9"),
-      quality: normalizeVideoQualityForApproval(nodeData?.quality, qualityOptions),
-      durationSec: clampVideoDurationForApproval(nodeData?.durationSec, durationBounds),
-      generateAudio: selectedModel?.supportsGenerateAudio === false
-        ? false
-        : Boolean(nodeData?.generateAudio),
+      aspectRatio: isStorySegment
+        ? textValue(nodeData?.aspectRatio, "")
+        : normalizeApprovalStringOption(nodeData?.aspectRatio, aspectOptions, "16:9"),
+      quality: isStorySegment
+        ? textValue(nodeData?.quality, "")
+        : normalizeVideoQualityForApproval(nodeData?.quality, qualityOptions),
+      durationSec: isStorySegment
+        ? typeof nodeData.durationSec === "number" && nodeData.durationSec > 0
+          ? nodeData.durationSec
+          : Number.NaN
+        : clampVideoDurationForApproval(nodeData?.durationSec, durationBounds),
+      generateAudio: isStorySegment
+        ? Boolean(nodeData?.generateAudio)
+        : selectedModel?.supportsGenerateAudio === false
+          ? false
+          : Boolean(nodeData?.generateAudio),
       humanReview: requiresHumanReviewConfirmation || Boolean(nodeData?.humanReview),
       requiresHumanReviewConfirmation,
       count: isCanvasApprovalVideoCount(nodeData?.count) ? nodeData.count : 1,
@@ -3451,7 +3461,9 @@ function CanvasCommandApprovalCard({
       approval,
     );
     const withVideoParams = videoParams.reduce(
-      (current, params) => amendCanvasApprovalWithVideoParams(current, params),
+      (current, params) => params.storySegmentLabels?.length
+        ? current
+        : amendCanvasApprovalWithVideoParams(current, params),
       withImageParams,
     );
     const withVideoUpscaleParams = amendCanvasApprovalWithVideoUpscaleParams(
@@ -3574,7 +3586,9 @@ function CanvasCommandApprovalCard({
         <div className="flex items-center gap-2 border-t border-amber-400/10 bg-white/[0.025] px-3 py-1.5 text-[11px] font-medium text-foreground/90">
           <SlidersHorizontal className="size-3.5 text-muted-foreground" />
           生成设置
-          <span className="ml-auto text-[10px] font-normal text-muted-foreground">确认后统一写入节点</span>
+          <span className="ml-auto text-[10px] font-normal text-muted-foreground">
+            {videoParams.some((params) => params.storySegmentLabels?.length) ? "影游参数按镜头规划" : "确认后统一写入节点"}
+          </span>
         </div>
       )}
       {humanReviewNodeIds.length > 0 && (
@@ -3691,6 +3705,13 @@ function CanvasCommandApprovalCard({
         const continuityLabel = videoParam.continuityMode
           ? t(`freezone.story.continuity.${videoParam.continuityMode}`)
           : null;
+        const storyDurationLabel = Number.isFinite(videoParam.durationSec)
+          ? `${videoParam.durationSec}s`
+          : "时长未规划";
+        const storyParamLabel = [
+          videoParam.model, videoParam.aspectRatio, videoParam.quality,
+          storyDurationLabel, `${videoParam.count} 个`,
+        ].filter(Boolean).join(" · ");
         return (
         <div key={`${videoParam.nodeId}:${videoParam.model}`} className="border-t border-amber-400/10 px-3 py-1">
           {storySegmentLabels.length > 0 && (
@@ -3714,6 +3735,14 @@ function CanvasCommandApprovalCard({
               {(videoParam.nodeIds?.length ?? 1) > 1 ? ` ×${videoParam.nodeIds?.length}` : ""}
             </span>
             <span className="h-3.5 w-px bg-white/[0.12]" />
+            {storySegmentLabels.length > 0 ? (
+              <span
+                className="text-[11px] text-foreground/90"
+                aria-label={`镜头参数：${storyParamLabel}`}
+              >
+                {storyParamLabel}
+              </span>
+            ) : (<>
             <CanvasApprovalImageParamSelect
               ariaLabel="视频模型"
               disabled={isExecuting}
@@ -3739,6 +3768,7 @@ function CanvasCommandApprovalCard({
               onChange={(value) => updateVideoParams(videoParamIndex, { count: Number(value) as 1 | 2 | 4 })}
               options={CANVAS_APPROVAL_VIDEO_COUNT_OPTIONS.map((option) => ({ value: String(option), label: `${option} 个` }))}
             />
+            </>)}
           </div>
         </div>
         );
@@ -3901,7 +3931,7 @@ export const canvasContextActivityVisualToneForTest = canvasContextActivityVisua
 
 function canvasCommandFeedbackVisualTone(feedback: CanvasCommandFeedback): CanvasFeedbackVisualTone {
   const failed = canvasCommandFeedbackHasFailure(feedback);
-  if (!failed) return "success";
+  if (!failed) return feedback.warnings?.length ? "warning" : "success";
   if (canvasCommandFeedbackIsUserCancelled(feedback)) return "muted";
   if (canvasCommandFeedbackIsTimeoutCancelled(feedback)) return "warning";
   return canvasCommandFeedbackIsValidationOnly(feedback) ? "muted" : "destructive";
@@ -3958,15 +3988,17 @@ function CanvasCommandFeedbackCard({
   // so the user can see and retry the operation without an extra click.
   const [expanded, setExpanded] = useState(() => canvasCommandFeedbackIsTimeoutCancelled(feedback));
   const steps = feedback.commandResults ?? [];
+  const warnings = feedback.warnings ?? [];
   const successfulCount = feedback.applied + feedback.openedUiActions;
-  if (steps.length === 0 && successfulCount === 0 && feedback.errors.length === 0) return null;
+  if (steps.length === 0 && successfulCount === 0 && feedback.errors.length === 0 && warnings.length === 0) return null;
   const failed = canvasCommandFeedbackHasFailure(feedback);
   const invalidCommand = canvasCommandFeedbackIsInvalidCommand(feedback);
   const visualTone = canvasCommandFeedbackVisualTone(feedback);
   const mutedFailure = failed && visualTone === "muted";
   const warningFailure = failed && visualTone === "warning";
+  const warningOnly = !failed && warnings.length > 0;
   const initiallyCompact = failed && successfulCount === 0;
-  const collapseSuccessfulDetails = !failed && steps.length > 2 && !steps.some(step => step.output?.html_artifact);
+  const collapseSuccessfulDetails = !failed && !warningOnly && steps.length > 2 && !steps.some(step => step.output?.html_artifact);
   const compactTitle = canvasCommandFeedbackCompactTitle(feedback);
   const canRetry = feedback.cancelled && feedback.envelopes && feedback.envelopes.length > 0;
   const cancellationMessage = canvasCommandFeedbackIsTimeoutCancelled(feedback)
@@ -4015,7 +4047,7 @@ function CanvasCommandFeedbackCard({
         "mt-3 w-full min-w-0 overflow-hidden rounded-xl border text-xs text-muted-foreground",
         mutedFailure
           ? "border-white/[0.10] bg-background/80 backdrop-blur-sm"
-          : invalidCommand || warningFailure
+          : invalidCommand || warningFailure || warningOnly
             ? "border-amber-400/20 bg-amber-400/[0.035]"
             : failed
               ? "border-destructive/20 bg-destructive/[0.035]"
@@ -4034,6 +4066,11 @@ function CanvasCommandFeedbackCard({
       </div>
       {expanded && <CanvasCommandPlanList plans={feedback.plans} />}
       <div className="space-y-1 px-3 py-2">
+        {warnings.length > 0 && (
+          <div className="rounded-md bg-warning/[0.06] px-2 py-1.5 leading-5 text-foreground/90">
+            图片生成已完成，素材回接待处理：{warnings.join("；")}
+          </div>
+        )}
         {userFailureMessage && (
           <div className={cn(
             "mb-1 rounded-md px-2 py-1.5 leading-5",
@@ -10789,6 +10826,7 @@ type CanvasCommandFeedbackStep = {
 };
 
 type CanvasCommandFeedback = Pick<CanvasChatCommandApplyResult, "applied" | "openedUiActions" | "errors"> & {
+  warnings?: string[];
   commandResults: CanvasCommandFeedbackStep[];
   key: string;
   plans?: CanvasCommandPlan[];
@@ -10853,7 +10891,7 @@ type CanvasApprovalVideoParams = {
   nodeIds?: string[];
   model: string;
   aspectRatio: string;
-  quality: VideoGenQuality;
+  quality: string;
   durationSec: number;
   generateAudio: boolean;
   humanReview: boolean;
@@ -11507,6 +11545,7 @@ function canvasCommandFeedbackDedupeKey(feedback: CanvasCommandFeedback): string
     applied: feedback.applied,
     openedUiActions: feedback.openedUiActions,
     errors: feedback.errors,
+    warnings: feedback.warnings,
     commandResults: (feedback.commandResults ?? []).map((step) => ({
       commandIndex: step.commandIndex,
       type: step.type,
@@ -11681,6 +11720,7 @@ function mergeCanvasCommandFeedbackValue(
   previous: CanvasCommandFeedback | undefined,
   key: string,
   result: Pick<CanvasChatCommandApplyResult, "applied" | "openedUiActions" | "errors"> & {
+    warnings?: string[];
     commandResults: CanvasCommandFeedbackStep[];
   },
   plans: CanvasCommandPlan[] = [],
@@ -11693,6 +11733,7 @@ function mergeCanvasCommandFeedbackValue(
     applied: (previous?.applied ?? 0) + result.applied,
     openedUiActions: (previous?.openedUiActions ?? 0) + result.openedUiActions,
     errors: dedupeGenerationErrors([...(previous?.errors ?? []), ...result.errors]),
+    warnings: dedupeGenerationErrors([...(previous?.warnings ?? []), ...(result.warnings ?? [])]),
     commandResults: mergeCanvasCommandResults(previous?.commandResults, result.commandResults),
     plans: [...(previous?.plans ?? []), ...plans],
     anchorTextPrefix: previous?.anchorTextPrefix ?? nextAnchorTextPrefix,
@@ -11704,6 +11745,7 @@ function appendCanvasCommandFeedbackCard(
   current: CanvasCommandFeedback[] | undefined,
   key: string,
   result: Pick<CanvasChatCommandApplyResult, "applied" | "openedUiActions" | "errors"> & {
+    warnings?: string[];
     commandResults: CanvasCommandFeedbackStep[];
   },
   plans: CanvasCommandPlan[] = [],
@@ -11736,6 +11778,9 @@ function canvasCommandApplyResultFromUnknown(value: unknown): CanvasChatCommandA
       : [],
     errors: Array.isArray(result.errors)
       ? dedupeGenerationErrors(result.errors.map((item) => String(item)))
+      : [],
+    warnings: Array.isArray(result.warnings)
+      ? dedupeGenerationErrors(result.warnings.map((item) => String(item)))
       : [],
     commandResults: commandResults.filter(
       (item): item is CanvasChatCommandApplyStep =>

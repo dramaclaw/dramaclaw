@@ -6009,8 +6009,189 @@ def test_freezone_canvas_command_slim_result_omits_large_details():
         },
     ]
     assert "copy every non-empty displayName" in summary["agent_instruction"]
-    assert "created_node_ids" not in summary
-    assert "command_results" not in summary
+    assert summary["created_node_ids"] == ["node-a", "node-b"]
+    assert summary["command_results"] == []
+
+
+def test_story_image_reference_batch_only_allows_existing_story_clips(monkeypatch):
+    plugin = _load_plugin_module()
+    canvas = {
+        "nodes": [
+            {"id": "story", "type": "groupNode", "data": {
+                "storyGroup": True, "interactiveStoryId": "story-a"}},
+            *[
+                {"id": f"video-{index}", "type": "videoNode", "parentId": "story",
+                 "data": {"storySegmentId": f"segment-{index}"}}
+                for index in range(4)
+            ],
+        ]
+    }
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: {"ok": True, "data": canvas})
+    commands = [
+        {"type": "create_node", "client_id": f"image-{index}",
+         "node_type": "imageGenNode", "data": {"prompt": f"故事分镜 {index}"}}
+        for index in range(3)
+    ] + [
+        {"type": "create_edge", "source": f"image-{index}",
+         "target": f"video-{index}", "link_type": "media_input_for"}
+        for index in range(3)
+    ]
+
+    assert plugin._looks_like_handwritten_workflow_batch(commands)
+    assert plugin._is_story_image_reference_batch("project-a", "canvas-a", commands)
+    assert plugin._is_story_image_reference_batch("project-a", "canvas-a", [
+        *commands, {"type": "update_node_data", "node_id": "video-3",
+                    "data": {"durationSec": 8, "continuityMode": "auto"}},
+    ])
+    assert not plugin._is_story_image_reference_batch(
+        "project-a", "canvas-a", [*commands, {"type": "run_workflow", "scope": "canvas"}]
+    )
+    canvas["nodes"][-2]["data"].pop("storySegmentId")
+    assert not plugin._is_story_image_reference_batch("project-a", "canvas-a", commands)
+
+
+def test_story_video_preflight_blocks_unready_image_and_unsupported_duration(monkeypatch):
+    plugin = _load_plugin_module()
+    canvas = {"nodes": [
+        {"id": "video-a", "type": "videoNode", "data": {
+            "storySegmentId": "segment-a", "model": "video-model", "genMode": "imageToVideo",
+            "durationSec": 20, "aspectRatio": "16:9", "quality": "720P",
+            "generateAudio": False, "count": 1}},
+        {"id": "image-a", "type": "imageGenNode", "data": {"imageUrl": ""}},
+        {"id": "video-b", "type": "videoNode", "data": {
+            "storySegmentId": "segment-b", "model": "video-model", "genMode": "textToVideo",
+            "durationSec": 10, "aspectRatio": "16:9", "quality": "720P",
+            "generateAudio": False, "count": 1}},
+    ], "edges": [{"source": "image-a", "target": "video-a",
+                  "data": {"link_type": "media_input_for"}}]}
+
+    def request(_method, path, **_kwargs):
+        if path.endswith("/video/models"):
+            return {"ok": True, "data": [{"id": "video-model", "minDuration": 3,
+                "maxDuration": 15, "supportedModes": ["image_to_video", "text_to_video"],
+                "referenceImageMax": 1, "resolutionOptions": ["720P"],
+                "ratioOptions": ["16:9"]}]}
+        return {"ok": True, "data": canvas}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = plugin._external_generation_parameter_preflight(
+        "project-a", "canvas-a", [{"type": "run_workflow", "scope": "nodes",
+            "node_ids": ["video-a", "video-b"], "direction": "node"}]
+    )
+    assert result["status"] == "interactive_story_generation_not_ready"
+    assert {item["code"] for item in result["blockers"]} == {
+        "model_capability_unsupported", "story_reference_not_ready"}
+    assert all(item["node_id"] == "video-a" for item in result["blockers"])
+    assert result["ready_node_ids"] == ["video-b"]
+    _assert_real_mcp_output(plugin, "freezone_run_workflow", result)
+    canvas["nodes"][1]["data"] = {"imageUrl": "/static/previous.png", "isGenerating": True}
+    pending = plugin._external_generation_parameter_preflight(
+        "project-a", "canvas-a", [{"type": "run_workflow", "scope": "nodes",
+            "node_ids": ["video-a"], "direction": "node"}]
+    )
+    assert "story_reference_not_ready" in {item["code"] for item in pending["blockers"]}
+
+
+@pytest.mark.parametrize("image_type,image_data", [
+    ("imageNode", {"imageUrl": "/static/reference.png"}),
+    ("storyboardGenNode", {"imageUrl": "/static/reference.png"}),
+    ("imageGenNode", {"referenceImageUrl": "/static/reference.png"}),
+])
+def test_story_video_preflight_accepts_submittable_image_sources(
+    monkeypatch, image_type, image_data
+):
+    plugin = _load_plugin_module()
+    canvas = {"nodes": [
+        {"id": "video-a", "type": "videoNode", "data": {
+            "storySegmentId": "segment-a", "model": "video-model",
+            "genMode": "imageToVideo", "durationSec": 5,
+            "aspectRatio": "16:9", "quality": "720P", "generateAudio": False,
+            "count": 1}},
+        {"id": "image-a", "type": image_type, "data": image_data},
+    ], "edges": [{"source": "image-a", "target": "video-a",
+                  "data": {"link_type": "media_input_for"}}]}
+
+    def request(_method, path, **_kwargs):
+        if path.endswith("/video/models"):
+            return {"ok": True, "data": [{"id": "video-model", "minDuration": 3,
+                "maxDuration": 15, "supportedModes": ["image_to_video"],
+                "referenceImageMax": 1, "resolutionOptions": ["720P"],
+                "ratioOptions": ["16:9"]}]}
+        return {"ok": True, "data": canvas}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    assert plugin._external_generation_parameter_preflight(
+        "project-a", "canvas-a", [{"type": "run_node_action", "node_id": "video-a",
+                                   "action": "generate_video"}]
+    ) is None
+
+
+@pytest.mark.parametrize("existing_image", [False, True])
+def test_story_video_preflight_sees_same_batch_reference_edges(monkeypatch, existing_image):
+    plugin = _load_plugin_module()
+    image = {"id": "image-a", "type": "imageGenNode",
+             "data": {"imageUrl": "/static/reference.png"}}
+    canvas = {"nodes": [image] if existing_image else [], "edges": []}
+
+    def request(_method, path, **_kwargs):
+        if path.endswith("/video/models"):
+            return {"ok": True, "data": [{"id": "video-model", "minDuration": 3,
+                "maxDuration": 15, "supportedModes": ["image_to_video"],
+                "referenceImageMax": 1, "resolutionOptions": ["720P"],
+                "ratioOptions": ["16:9"]}]}
+        return {"ok": True, "data": canvas}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    commands = [] if existing_image else [
+        {"type": "create_node", "client_id": "image-a", "node_type": "imageGenNode",
+         "data": image["data"]},
+    ]
+    commands.extend([
+        {"type": "create_node", "client_id": "video-a", "node_type": "videoNode",
+         "data": {"storySegmentId": "segment-a", "model": "video-model",
+                  "genMode": "imageToVideo", "durationSec": 5,
+                  "aspectRatio": "16:9", "quality": "720P", "generateAudio": False,
+                  "count": 1}},
+        {"type": "create_edge", "source": "image-a", "target": "video-a",
+         "link_type": "media_input_for"},
+        {"type": "run_node_action", "node_id": "video-a", "action": "generate_video"},
+    ])
+    assert plugin._external_generation_parameter_preflight(
+        "project-a", "canvas-a", commands
+    ) is None
+
+
+def test_canvas_command_slim_result_preserves_partial_command_outcomes():
+    plugin = _load_plugin_module()
+    summary = plugin._summarize_canvas_command_result(
+        {"ok": False, "canvas_apply_status": "failed", "code": "canvas_revision_conflict",
+         "current_revision": 8, "created_node_ids": ["image-a"],
+         "command_results": [
+             {"commandIndex": 0, "type": "create_node", "status": "success",
+              "createdNodeId": "image-a"},
+             {"commandIndex": 1, "type": "create_edge", "status": "error",
+              "error": "Conflict"},
+         ], "errors": ["Conflict"]},
+        bridge_key="bridge-a",
+        commands=[{"type": "create_node"}, {"type": "create_edge"}],
+    )
+    assert summary["created_node_ids"] == ["image-a"]
+    assert [item["status"] for item in summary["command_results"]] == ["success", "error"]
+    assert summary["current_revision"] == 8
+    assert summary["code"] == "canvas_revision_conflict"
+    assert "Read the latest canvas" in summary["agent_instruction"]
+
+
+def test_canvas_command_slim_result_keeps_attachment_warning_separate():
+    plugin = _load_plugin_module()
+    summary = plugin._summarize_canvas_command_result(
+        {"ok": True, "canvas_apply_status": "applied", "applied_count": 1,
+         "warnings": ["story frame target changed"], "errors": []},
+        bridge_key="bridge-a",
+        commands=[{"type": "run_workflow"}],
+    )
+    assert summary["warnings"] == ["story frame target changed"]
+    assert "Media generation completed" in summary["agent_instruction"]
 
 
 def test_freezone_canvas_command_slim_result_reports_background_acceptance():
@@ -7007,6 +7188,44 @@ def test_direct_apply_resolves_add_next_client_alias_for_later_commands(monkeypa
         node for node in saved[0]["nodes"] if node["type"] == "imageGenNode"
     )
     assert created["data"] == {"prompt": "水彩", "count": 1}
+
+
+def test_direct_apply_conflict_reports_no_persisted_commands(monkeypatch):
+    plugin = _load_plugin_module()
+    calls = []
+
+    def request(method, _path, **_kwargs):
+        calls.append(method)
+        if method == "GET":
+            return {"ok": True, "data": {"revision": 4, "nodes": [], "edges": []}}
+        return {"ok": False, "code": "canvas_revision_conflict",
+                "current_revision": 5, "error": "Conflict"}
+
+    monkeypatch.setattr(plugin, "_request", request)
+    result = plugin._direct_apply_canvas_commands(
+        "project-a", "canvas-a",
+        [{"type": "create_node", "client_id": "image-a",
+          "node_type": "imageGenNode", "data": {"prompt": "开场"}}],
+        slim_result=False,
+    )
+    assert calls == ["GET", "PUT"]
+    assert result["code"] == "canvas_revision_conflict"
+    assert result["current_revision"] == 5
+    assert result["command_results"][0]["status"] == "not_applied"
+    assert result.get("created_node_ids") is None
+
+
+def test_canvas_http_revision_conflict_preserves_current_revision():
+    plugin = _load_plugin_module()
+    result = plugin._http_error_result(
+        409,
+        json.dumps({"detail": {"code": "canvas_revision_conflict",
+                               "error": "canvas revision conflict",
+                               "current_revision": 5, "base_revision": 4}}),
+        "Conflict",
+    )
+    assert result["code"] == "canvas_revision_conflict"
+    assert result["current_revision"] == 5
 
 
 @pytest.mark.parametrize(

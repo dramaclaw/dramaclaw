@@ -144,6 +144,17 @@ def test_interactive_story_reference_links_are_local_and_reachable() -> None:
     assert visited == documents, f"Unreachable references: {documents - visited}"
 
 
+def test_interactive_story_next_step_guide_covers_live_stage_order() -> None:
+    from novelvideo.interactive_story.stage_progress import STORY_STAGE_ORDER
+
+    guide = (
+        CE_ROOT
+        / "src/novelvideo/agent_skills/interactive-story/references/stage-guidance.md"
+    ).read_text(encoding="utf-8")
+    guided_stages = tuple(re.findall(r"^\| `(\w+)`", guide, flags=re.MULTILINE))
+    assert guided_stages == STORY_STAGE_ORDER
+
+
 @pytest.mark.parametrize("host", ["claude-code", "openclaw", "workbuddy", "generic"])
 def test_json_host_templates_render_valid_mcp_config(host: str) -> None:
     payload = json.loads(_render(host))

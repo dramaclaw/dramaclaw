@@ -770,11 +770,11 @@ def _render_workflow_skill(item: dict) -> tuple[str, dict[str, object]]:
 ## 执行规则
 
 1. 本 Skill 已由用户明确选择。只调用一次 `freezone_get_workflow_skill`，固定传入 `skill_id=\"{skill_id}\"`；不要再次选择或替换 Skill。只补充 `input_contract.missing_required`，不要重复询问已经推断或有默认值的参数。
-2. 生成精简 `freezone_workflow_intent.v1`，以结构化 JSON 对象（不是字符串）调用 `freezone_prepare_workflow_draft`，并显式传入 `run_after_create`：创建并生成/运行时为 `true`，仅创建时为 `false`；“可以”“确认”等简短回复沿用上一轮方案的执行策略。不要传 `draft_id` 或调用 `execute_code`。
+2. 先用 `freezone_begin_agent_product_generation(product_kind="workflow_result", generation_session_id=本次会话ID, skill_id="{skill_id}", skill_version=规划包版本, normalized_inputs=已确认输入)` 取得本次 `operation_id`；`skill_version` 使用第 1 步返回值，不猜版本。普通需求生成精简 `freezone_workflow_intent.v1` 并调用 `freezone_prepare_workflow_draft`；用户已确认逐镜头清单或指定精确拓扑时，按已加载 Skill 的可用 Recipe 编写完整 `freezone_workflow_plan.v1`，调用 `freezone_prepare_workflow_plan_draft`。两者都以结构化 JSON 对象（不是字符串）提交 `operation_id`，并显式传入 `run_after_create`：创建并生成/运行时为 `true`，仅创建时为 `false`；“可以”“确认”等简短回复沿用上一轮方案的执行策略。不要传 `draft_id` 或调用 `execute_code`。
 3. 返回草稿后，严格按预览向用户确认。
 4. 用户调整方案时调用 `freezone_patch_workflow_draft`，只提交发生变化的字段。
 5. 用户确认方案后调用 `freezone_confirm_workflow_draft`，始终使用已确认的 draft_id 和 revision。
-6. Recipe 选择、节点展开、稳定 ID、连线、布局和合成全部交给工具；不要手写 WorkflowPlan 或逐节点创建。
+6. 普通 Intent 的节点展开、稳定 ID、连线、布局和合成由工具完成；精确拓扑只填写完整 Plan 的语义节点、依赖和分组，最终画布命令仍由工具编译。不得手写画布命令或逐节点创建。
 
 ## 业务说明
 

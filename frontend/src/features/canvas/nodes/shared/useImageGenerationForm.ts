@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 
 import type {
   ImageGenCameraSelection,
@@ -57,6 +58,7 @@ import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
 import { hasImageGenPromptOverride } from '@/features/canvas/nodes/imageGenPrompt';
 import { orderedReferenceUrlsWithOwnFirst } from '@/features/canvas/nodes/referenceOrdering';
 import { useReferenceMentionSync } from '@/features/canvas/nodes/useReferenceMentionSync';
+import { attachCompletedStoryFrame } from '@/features/canvas/application/videoContinuity';
 import type { ImageGenerationFormProps } from '@/features/canvas/nodes/shared/ImageGenerationForm';
 
 const DEFAULT_IMAGE_QUALITY: ImageQuality = 'medium';
@@ -114,7 +116,7 @@ export interface UseImageGenerationFormResult {
    * 回填（工作流配方按单节点执行时用）；默认 'completed' 等产物落地后再返回。
    */
   submit: (
-    options?: { completionMode?: 'submitted' | 'completed' },
+    options?: { completionMode?: 'submitted' | 'completed'; attachStoryFrame?: boolean },
   ) => Promise<Record<string, unknown> | undefined>;
   canAutoCommitOnGenerate: boolean;
   referenceImageUrl: string | null;
@@ -468,7 +470,7 @@ export function useImageGenerationForm(
   }, []);
 
   const handleSubmit = useCallback(async (
-    options: { completionMode?: 'submitted' | 'completed' } = {},
+    options: { completionMode?: 'submitted' | 'completed'; attachStoryFrame?: boolean } = {},
   ) => {
     const completionMode = options.completionMode ?? 'completed';
     if (submittingRef.current) {
@@ -636,6 +638,10 @@ export function useImageGenerationForm(
               ...(isFirstCompleted ? buildImageGenerationSuccessPatch(url) : {}),
               ...(total > 1 ? { generationBatch: [...completedUrls] } : {}),
             });
+            if (isFirstCompleted && options.attachStoryFrame !== false) {
+              const attachmentError = attachCompletedStoryFrame(id);
+              if (attachmentError) toast.warning(attachmentError);
+            }
             if (canAutoCommitOnGenerate && isFirstCompleted) {
               canvasEventBus.publish('freezone/commit-node', {
                 nodeId: id,

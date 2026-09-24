@@ -1070,7 +1070,7 @@ def build_tools(
             "dramaclaw_confirm_interactive_story_stages",
             schema(
                 "dramaclaw_confirm_interactive_story_stages",
-                "Confirm or reopen manual interactive-story stages on the persisted canvas. Call action=confirm only when the user explicitly says the listed stages are complete or asks to continue past them; never infer confirmation from image nodes, filenames, generated assets, or later-stage content. Call action=reopen when the user explicitly asks to redo a previously confirmed stage.",
+                "Confirm or reopen manual interactive-story stages on the persisted canvas. Call action=confirm only when the user explicitly says the listed stages are complete or asks to continue past them. 'Create scenes/characters' asks for actual assets and never authorizes this confirmation tool; this tool creates no scenes or images. Never infer confirmation from image nodes, filenames, generated assets, or later-stage content. Call action=reopen when the user explicitly asks to redo a previously confirmed stage.",
                 {
                     "project_id": {
                         "type": "string",

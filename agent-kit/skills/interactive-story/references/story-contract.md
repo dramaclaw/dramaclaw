@@ -4,7 +4,7 @@
 
 ## 工具与写入
 
-Codex MCP 和 Hermes adapter 中的四个业务工具名称和语义一致：
+Codex MCP 和 Hermes adapter 中，核心故事读写与校验工具的名称和语义一致：
 
 - `dramaclaw_create_interactive_story`：`base_revision`、`idempotency_key` 和完整 `story`。
 - `dramaclaw_get_interactive_story`：`story_id`。
@@ -219,55 +219,7 @@ Flag 条件：
 
 增加分支时，在同一个 Patch 中同时增加目标 Segment 和对应 Choice。不要把 Get 返回的完整 Story 作为 Patch 发送。
 
-### 示例：新增角色并在已有路径中插入片段
-
-假设 Get 已确认故事 `stealth_offtime` 的版本为 214，既有选项 `stairs_auto_end` 从 `stairs` 指向 `ending_ontime`，且角色 `hero` 已存在。一次 Patch 加入小美、插入相遇片段、重定向原有选项并连接回原结局。ID 和版本须替换为当前 Get 的真实结果，不得直接重放示例。
-
-```json
-{
-  "story_id":"stealth_offtime",
-  "base_revision":214,
-  "idempotency_key":"insert-meimei-scene-r214",
-  "operations":[
-    {
-      "op":"upsert_character",
-      "character":{
-        "id":"meimei",
-        "name":"同事小美",
-        "description":"机灵的同事，撞见主角悄悄下班。",
-        "visual_description":"扎马尾，穿浅色针织开衫。"
-      }
-    },
-    {
-      "op":"add_segment",
-      "segment":{
-        "id":"meet_meimei",
-        "title":"楼梯间偶遇小美",
-        "script":"主角下楼时撞见小美，两人会心一笑。",
-        "kind":"scene",
-        "character_ids":["hero","meimei"]
-      }
-    },
-    {
-      "op":"update_choice",
-      "choice_id":"stairs_auto_end",
-      "changes":{"target_segment_id":"meet_meimei"}
-    },
-    {
-      "op":"add_choice",
-      "choice":{
-        "id":"meimei_leave",
-        "source_segment_id":"meet_meimei",
-        "target_segment_id":"ending_ontime",
-        "mode":"visible",
-        "text":"和小美一起离开",
-        "order":0,
-        "is_default":false
-      }
-    }
-  ]
-}
-```
+插入已有路径时，在一次 Patch 中加入片段、重定向原 Choice，再增加通向原目标的 Choice；涉及新角色时同批 `upsert_character`。ID 与 revision 必须来自当前 Get，不复用示例值。
 
 ### 省略、空值和 null
 

@@ -1,4 +1,4 @@
-import { ensureVideoContinuity } from "@/features/canvas/application/videoContinuity";
+import { attachCompletedStoryFrame, ensureVideoContinuity, syncStoryVideoReferencePrompt } from "@/features/canvas/application/videoContinuity";
 import { getOrCaptureVideoFrame } from "@/features/canvas/application/videoCaptureFrame";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -1780,6 +1780,44 @@ describe("canvas chat commands", () => {
     expect(group?.data.displayName).toBe("工作流组");
     expect(members).toHaveLength(4);
     expect(result.commandResults.some((step) => step.type === "group_nodes")).toBe(true);
+  });
+
+  it("does not auto-group storyboard images connected to existing story clips", () => {
+    const store = useCanvasStore.getState();
+    const videos = Array.from({ length: 3 }, (_, index) => store.addNode(
+      CANVAS_NODE_TYPES.video,
+      { x: index * 300, y: 0 },
+      { storySegmentId: `segment-${index}`, prompt: `镜头 ${index}` },
+    ));
+    const storyGroupId = store.createStoryGroup(videos);
+    expect(storyGroupId).toBeTruthy();
+    const envelopes = extractCanvasChatCommandEnvelopes([{
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: [
+        ...videos.map((_, index) => ({
+          type: "create_node" as const,
+          client_id: `image-${index}`,
+          node_type: CANVAS_NODE_TYPES.imageGen,
+          data: { prompt: `故事分镜 ${index}` },
+        })),
+        ...videos.map((videoId, index) => ({
+          type: "create_edge" as const,
+          source: `image-${index}`,
+          target: videoId,
+          link_type: "media_input_for" as const,
+        })),
+      ],
+    }]);
+
+    const result = applyCanvasChatCommands(envelopes);
+    const state = useCanvasStore.getState();
+    expect(result.errors).toEqual([]);
+    expect(result.createdNodeIds).toHaveLength(3);
+    expect(result.commandResults.some((step) => step.type === "group_nodes")).toBe(false);
+    expect(state.nodes.filter((node) => node.type === CANVAS_NODE_TYPES.group)).toHaveLength(1);
+    expect(result.createdNodeIds.every((id) => !state.nodes.find((node) => node.id === id)?.parentId)).toBe(true);
+    expect(videos.every((videoId) => state.edges.some((edge) => edge.target === videoId &&
+      result.createdNodeIds.includes(edge.source) && edge.data?.link_type === "media_input_for"))).toBe(true);
   });
 
   it("does not infer connections from grouped nodes", () => {
@@ -7399,7 +7437,198 @@ describe("canvas chat commands", () => {
     // 已即时清理后，生成入口的兑底分支保持幂等。
     store.updateNodeData(target, { continuityMode: "independent" });
     await ensureVideoContinuity(target, "project-a");
-    expect(useCanvasStore.getState().nodes.find((node) => node.id === target)?.data.prompt).toBe("继续动作");
+    expect(String(useCanvasStore.getState().nodes.find((node) => node.id === target)?.data.prompt))
+      .toContain("@图片1（主角小林） 是人物身份参考");
+  });
+
+  it("connects a finished independent story frame and binds character, scene, and frame references once", async () => {
+    const store = useCanvasStore.getState();
+    const group = store.addNode(CANVAS_NODE_TYPES.group, { x: 0, y: 0 }, {
+      storyGroup: true, interactiveStoryId: "story-a",
+    });
+    const video = store.addNode(CANVAS_NODE_TYPES.video, { x: 400, y: 0 }, {
+      storySegmentId: "opening", continuityMode: "independent", genMode: "allReference",
+      prompt: "主角走进车站。",
+    });
+    const character = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 200 }, {
+      displayName: "主角", imageUrl: "/static/character.png", keyElementCategory: "character",
+    });
+    const scene = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 400 }, {
+      displayName: "车站", imageUrl: "/static/station.png", keyElementCategory: "scene",
+    });
+    const frame = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 600 }, {
+      displayName: "开场分镜", imageUrl: "/static/frame.png",
+      storyFrameTarget: {
+        storyId: "story-a", segmentId: "opening", videoNodeId: video,
+        referenceNodeIds: [character, scene],
+      },
+    });
+    store.setCanvasData(useCanvasStore.getState().nodes.map((node) => node.id === video ? { ...node, parentId: group } : node), []);
+
+    expect(attachCompletedStoryFrame(frame)).toBeNull();
+    await ensureVideoContinuity(video, "project-a");
+    expect(attachCompletedStoryFrame(frame)).toBeNull();
+    const state = useCanvasStore.getState();
+    expect(state.edges.filter((edge) => edge.source === frame && edge.target === video)).toHaveLength(1);
+    const prompt = String(state.nodes.find((node) => node.id === video)?.data.prompt);
+    expect(prompt).toContain("@图片1（主角） 是人物身份参考");
+    expect(prompt).toContain("@图片2（车站） 是场景参考");
+    expect(prompt).toContain("@图片3（开场分镜） 是本镜头独立开场的构图参考");
+    expect((prompt.match(/\[FMV素材参考\]/g) ?? [])).toHaveLength(1);
+  });
+
+  it("keeps material mentions separate from the auto-continuity tail-frame mention", () => {
+    const store = useCanvasStore.getState();
+    const target = store.addNode(CANVAS_NODE_TYPES.video, { x: 400, y: 0 }, {
+      storySegmentId: "follow-up", continuityMode: "auto",
+      prompt: "[FMV自动承接]从 @图片1 的尾帧继续。[/FMV自动承接]\n\n主角走进车站。",
+    });
+    const character = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 0 }, {
+      displayName: "主角", imageUrl: "/static/character.png", keyElementCategory: "character",
+    });
+    store.addEdgeWithData(character, target, { link_type: "media_input_for" });
+
+    syncStoryVideoReferencePrompt(target);
+
+    const prompt = String(useCanvasStore.getState().nodes.find((node) => node.id === target)?.data.prompt);
+    expect(prompt).toContain("@图片1（主角） 是人物身份参考");
+    expect(prompt).toContain("[FMV自动承接]从 @图片1 的尾帧继续");
+  });
+
+  it("syncs the connected subset of references when a later story edge fails", () => {
+    const store = useCanvasStore.getState();
+    const group = store.addNode(CANVAS_NODE_TYPES.group, { x: 0, y: 0 }, {
+      storyGroup: true, interactiveStoryId: "story-a",
+    });
+    const video = store.addNode(CANVAS_NODE_TYPES.video, { x: 400, y: 0 }, {
+      storySegmentId: "opening", continuityMode: "independent", prompt: "开场。",
+    });
+    const first = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 100 }, {
+      imageUrl: "/static/first.png", keyElementCategory: "character",
+    });
+    const second = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 200 }, {
+      imageUrl: "/static/second.png", keyElementCategory: "scene",
+    });
+    const frame = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 300 }, {
+      imageUrl: "/static/frame.png", storyFrameTarget: {
+        storyId: "story-a", segmentId: "opening", videoNodeId: video,
+        referenceNodeIds: [first, second],
+      },
+    });
+    store.setCanvasData(useCanvasStore.getState().nodes.map((node) =>
+      node.id === video ? { ...node, parentId: group } : node), []);
+    const realAddEdge = useCanvasStore.getState().addEdgeWithData;
+    const edgeSpy = vi.spyOn(useCanvasStore.getState(), "addEdgeWithData")
+      .mockImplementation((source, target, data) => source === second ? null : realAddEdge(source, target, data));
+    try {
+      expect(attachCompletedStoryFrame(frame)).toContain("无法接入目标视频");
+      const prompt = String(useCanvasStore.getState().nodes.find((node) => node.id === video)?.data.prompt);
+      expect(prompt).toMatch(/@图片1.* 是人物身份参考/);
+      expect(prompt).not.toMatch(/@图片2.* 是场景参考/);
+    } finally {
+      edgeSpy.mockRestore();
+    }
+  });
+
+  it("does not attach a redundant frame to an auto-continuity story segment", () => {
+    const store = useCanvasStore.getState();
+    const group = store.addNode(CANVAS_NODE_TYPES.group, { x: 0, y: 0 }, {
+      storyGroup: true, interactiveStoryId: "story-a",
+    });
+    const video = store.addNode(CANVAS_NODE_TYPES.video, { x: 400, y: 0 }, {
+      storySegmentId: "follow-up", continuityMode: "auto", genMode: "allReference",
+    });
+    const character = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 100 }, {
+      imageUrl: "/static/character.png", keyElementCategory: "character",
+    });
+    const frame = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 200 }, {
+      imageUrl: "/static/redundant.png",
+      storyFrameTarget: {
+        storyId: "story-a", segmentId: "follow-up", videoNodeId: video,
+        referenceNodeIds: [character],
+      },
+    });
+    store.setCanvasData(useCanvasStore.getState().nodes.map((node) => node.id === video ? { ...node, parentId: group } : node), []);
+    expect(attachCompletedStoryFrame(frame)).toBeNull();
+    expect(useCanvasStore.getState().edges).toContainEqual(expect.objectContaining({
+      source: character, target: video,
+    }));
+    expect(useCanvasStore.getState().edges.some((edge) => edge.source === frame)).toBe(false);
+    expect(useCanvasStore.getState().nodes.find((node) => node.id === video)?.data.prompt)
+      .toBeFalsy();
+  });
+
+  it("attaches a storyboard result when its image workflow finishes", async () => {
+    const store = useCanvasStore.getState();
+    const group = store.addNode(CANVAS_NODE_TYPES.group, { x: 0, y: 0 }, {
+      storyGroup: true, interactiveStoryId: "story-a",
+    });
+    const video = store.addNode(CANVAS_NODE_TYPES.video, { x: 400, y: 0 }, {
+      storySegmentId: "opening", continuityMode: "independent", genMode: "allReference",
+      prompt: "主角走进车站。",
+    });
+    const frame = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 200 }, {
+      prompt: "开场分镜", storyFrameTarget: {
+        storyId: "story-a", segmentId: "opening", videoNodeId: video,
+      },
+    });
+    store.setCanvasData(useCanvasStore.getState().nodes.map((node) =>
+      node.id === video ? { ...node, parentId: group } : node), []);
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      if (!payload.requestId) return;
+      store.updateNodeData(frame, { imageUrl: "/static/frame.png", isGenerating: false });
+      canvasEventBus.publish("freezone/node-action-result", {
+        requestId: payload.requestId, nodeId: frame, action: "generate_image", status: "success",
+      });
+    });
+    try {
+      const result = await applyCanvasChatCommandsAsync([{
+        schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+        commands: [{ type: "run_workflow", node_ids: [frame], direction: "node" }],
+      }], { projectId: "project-a", canvasId: "canvas-a", actionTimeoutMs: 500 });
+      expect(result.errors).toEqual([]);
+      expect(useCanvasStore.getState().edges).toContainEqual(expect.objectContaining({
+        source: frame, target: video,
+      }));
+      expect(String(useCanvasStore.getState().nodes.find((node) => node.id === video)?.data.prompt))
+        .toContain("@图片1");
+      const resumed = await applyCanvasChatCommandsAsync([{
+        schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+        commands: [{ type: "run_workflow", node_ids: [frame], direction: "node" }],
+      }], { projectId: "project-a", canvasId: "canvas-a" });
+      expect(resumed.errors).toEqual([]);
+      expect(useCanvasStore.getState().edges.filter((edge) =>
+        edge.source === frame && edge.target === video)).toHaveLength(1);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("reports a completed image with a stale story target as an attachment warning", async () => {
+    const store = useCanvasStore.getState();
+    const frame = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 0 }, {
+      prompt: "开场分镜", storyFrameTarget: {
+        storyId: "story-a", segmentId: "opening", videoNodeId: "deleted-video",
+      },
+    });
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      if (!payload.requestId) return;
+      store.updateNodeData(frame, { imageUrl: "/static/frame.png", isGenerating: false });
+      canvasEventBus.publish("freezone/node-action-result", {
+        requestId: payload.requestId, nodeId: frame, action: "generate_image", status: "success",
+      });
+    });
+    try {
+      const result = await applyCanvasChatCommandsAsync([{
+        schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+        commands: [{ type: "run_workflow", node_ids: [frame], direction: "node" }],
+      }], { projectId: "project-a", canvasId: "canvas-a", actionTimeoutMs: 500 });
+      expect(result.errors).toEqual([]);
+      expect(result.warnings).toContain("分镜目标已变化，未自动连接到故事视频节点。");
+      expect(result.commandResults.some((step) => step.status === "success" && step.action === "generate_image")).toBe(true);
+    } finally {
+      unsubscribe();
+    }
   });
 
   it("leaves legacy story clips without an explicit continuity mode on their old path", async () => {

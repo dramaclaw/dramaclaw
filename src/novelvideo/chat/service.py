@@ -292,8 +292,13 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "FREEZONE_CANVAS_EXECUTION_MODE contract for whether a fresh preliminary parameter selection is "
     "required; do not infer that policy from conversation history. When that contract requires a "
     "selection, call freezone_request_user_clarification once for the current request "
-    "with generation_media_types listing image and/or video. Do not hand-build the "
-    "generation questions; the tool includes every required field. Pass the returned "
+    "with generation_media_types listing image and/or video for ordinary media tasks. "
+    "Do not hand-build the generation questions; the tool includes every required field. "
+    "Interactive-story video segments are different: the approved story production plan "
+    "selects each segment's parameters, so do not call generic generation_media_types for "
+    "video or ask for one shared video_duration_seconds. Keep each segment's own durationSec. "
+    "If preflight returns required_choices for other missing fields, pass exactly those "
+    "choices as generation_required_choices without adding duration. Pass the returned "
     "answers object unchanged as generation_answers to the workflow prepare tool; "
     "the server maps it into node parameters. If a draft already exists, instead pass "
     "workflow_draft_id and workflow_expected_revision to the clarification tool so "
@@ -353,7 +358,18 @@ _CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS = (
     "read_mcp_resource with that server and URI; tool search discovers operations, not skill "
     "documents. Read referenced documents through read_mcp_resource only when needed. This "
     "Agent Skill takes precedence over generic workflow planning for stories and is not a "
-    "Workflow catalog skill_id."
+    "Workflow catalog skill_id. After its production plan is approved, make missing storyboard "
+    "images with the existing text-to-image-video Workflow Skill, the general-image Recipe, and one validated image-only "
+    "WorkflowPlan. Map every frame to its existing story segment and video node in "
+    "source_context.targets so completed images and upstream character/scene references "
+    "can attach automatically; do not replace dedicated story writes or video nodes. "
+    "For a next-step question on the current interactive story, read live story progress and "
+    "the Skill's stage-guidance reference; guide the first unfinished stage, including manual "
+    "confirmation, without treating 'next step' alone as confirmation or media authorization. "
+    "During the characters/scenes production stages, a request to create character/scene "
+    "reference assets is not stage completion: prepare the relevant image workflow and verify "
+    "its canvas result. Do not call stage "
+    "confirmation or claim creation solely because a description or plan was written."
 )
 
 # A resumed App Server thread retains the MCP tool catalog and environment from
@@ -361,7 +377,7 @@ _CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS = (
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
 _CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v2"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v25"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v26"
 
 
 def _codex_developer_instructions(tool_mode: str | None) -> str:
@@ -571,7 +587,11 @@ Canvas write contract:
   revision, save the approved outline with dramaclaw_save_interactive_story_outline and wait for the
   user to confirm it on the canvas before creating the story, then create or patch with the story
   tools and validate. Placeholder media is supported.
-  Characters, scenes, storyboard, and complete are manual progress stages. When the user explicitly
+  Characters, scenes, storyboard, and complete are manual progress stages. During the character
+  or scene production stage, a request to create reference assets is not a request to confirm the
+  stage or move past it.
+  Use the image workflow and verify its canvas result; if only a draft exists or generation is
+  running, say so. When the user explicitly
   says one of these stages is complete, or explicitly asks to continue past it, this is a canvas
   write request: read the current story/revision as needed, then call
   dramaclaw_confirm_interactive_story_stages in that same turn before discussing the next stage.
@@ -579,10 +599,23 @@ Canvas write contract:
   clarification. Never merely say a manual stage is confirmed: without a successful persisted
   stage-confirmation receipt, report that its progress was not changed. When the user explicitly
   asks to redo a confirmed stage, call the same tool with action=reopen.
+  For a next-step question on the current interactive story, read
+  dramaclaw_get_interactive_story_progress and the Skill's stage-guidance reference. Explain the
+  first unfinished stage and its concrete next action; "下一步" alone does not confirm a manual
+  stage or authorize media generation.
+  After a successful story Create and Validate, also read the progress tool before proposing what
+  to do next. Follow its first unfinished stage: characters and scenes precede storyboard and video.
+  A failed Create is not a completed story; do not claim creation or suggest production from it.
   Never substitute ordinary nodes, text annotations, generic edges or freezone_emit_canvas_command
   for an interactive story. If the story tools are unavailable, report the blocker; do not downgrade
   the request. Report story creation only after a successful story write and report validation
-  separately from video generation and playback verification.
+  separately from video generation and playback verification. Once a production plan is approved,
+  missing storyboard images are a media-production workflow, not story structure: use the
+  existing text-to-image-video Workflow Skill, the general-image Recipe, and one validated image-only WorkflowPlan for the batch.
+  Map each frame in source_context.targets to its existing story segment and video node so
+  completed frames and their upstream character/scene images can attach automatically.
+  Keep existing story video nodes outside that Plan; link finished images back to them only after
+  the image workflow has stopped, and never substitute repeated canvas create/generate commands.
 - Before writing, ground the operation in the current canvas summary/context. Read command catalog,
   node create schema, link type catalog, node detail, or action catalog only when needed. Validate
   multi-step or edge-creating commands before writing.

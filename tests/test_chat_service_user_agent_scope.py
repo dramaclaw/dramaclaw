@@ -1548,6 +1548,8 @@ def test_codex_freezone_instructions_forbid_invented_resource_uris():
     assert "do not read node detail before starting it" in canvas_instructions
     assert "freezone_run_node_action" in canvas_instructions
     assert "dramaclaw_confirm_interactive_story_stages" in canvas_instructions
+    assert "dramaclaw_get_interactive_story_progress" in canvas_instructions
+    assert "stage-guidance" in canvas_instructions
     assert "Stage confirmation itself does not generate media" in canvas_instructions
     assert "without a successful persisted" in canvas_instructions
 
@@ -6709,4 +6711,6 @@ def test_fmv_skill_guidance_is_only_appended_to_canvas_instructions():
         assert chat_service._codex_developer_instructions(mode) == chat_service._CODEX_DEVELOPER_INSTRUCTIONS
     assert "list_mcp_resources" in guidance
     assert "read_mcp_resource" in guidance
+    assert "stage-guidance" in guidance
+    assert "without treating 'next step' alone as confirmation" in guidance
     assert "proposal-only" not in guidance.lower()

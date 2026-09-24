@@ -499,6 +499,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       publishNodeActionAccepted(requestId, id, action);
       void handleSubmit({
         completionMode: executionMode === 'single' ? 'submitted' : 'completed',
+        attachStoryFrame: executionMode !== 'workflow',
       })
         .then((output) => publishNodeActionSuccess(requestId, id, action, output))
         .catch((error) => publishNodeActionError(requestId, id, action, error));

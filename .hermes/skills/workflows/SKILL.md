@@ -16,7 +16,7 @@ compatibility: Requires Freezone/虾画 chat surface and preferably injected can
 
 ## 互动影游边界
 
-涉及分支故事、选择、结局或互动广告剧情时，先读取 `interactive-story` Skill。故事结构使用其业务工具；普通工作流只负责素材生产，不替代故事创建或修改。剧情选择线表示播放路由，不是素材输入依赖。恢复已准备的生成任务仍复用现有执行器；仅在制作备注中写明等待上一镜头尾帧而尚未绑定真实尾帧素材或已支持的依赖时，先准备该输入，不能直接把该片段当作就绪任务运行。不要擅自为此重建整套工作流。
+涉及分支故事、选择、结局或互动广告剧情时，先读取 `interactive-story` Skill。故事结构使用其业务工具；普通工作流只负责素材生产，不替代故事创建或修改。用户在制作阶段要求创建角色或场景参考图时，按实际缺少的图片准备工作流，创建结果以画布上的图片节点和生成状态为准，不能用阶段确认工具代替。已确认制作方案中的新分镜图复用 `text-to-image-video` Workflow Skill 的 `general-image` Recipe，以一份仅含图片生成节点的 Plan 成组创建；现有视频节点保持在 Plan 外，图片工作流结束后再接引用。剧情选择线表示播放路由，不是素材输入依赖。恢复已准备的生成任务仍复用现有执行器；仅在制作备注中写明等待上一镜头尾帧而尚未绑定真实尾帧素材或已支持的依赖时，先准备该输入，不能直接把该片段当作就绪任务运行。不要擅自为此重建整套工作流。
 
 用户未指定内部媒体参数或要求推荐时，在对应图片／视频节点的 `model` 中写 `recommended`，直接准备草稿；服务端用当前用户可见的同一 Catalog 快照解析具体模型和兼容参数，返回的预览供用户确认。不得把 `recommended` 写进 size、quality 或 resolution，也不得按 Catalog 列表顺序取第一个模型。推荐模型不可用或用户明确要求选择参数时，调用 `freezone_request_user_clarification(generation_media_types=[...])`，只列出本次涉及的 `image`/`video` 类型；工具负责生成完整字段问题和实时选项，不手写生成参数问题列表。首次准备草稿时，把问题卡返回的 `answers` 原样作为 `generation_answers` 传给准备工具，由工具映射到节点参数。已有草稿需要补问时，把 `draft_id`、`revision` 分别作为 `workflow_draft_id`、`workflow_expected_revision` 传给澄清工具；它校验答案并修订同一草稿，返回新的预览和 revision。若确认入口或画布写入返回 `generation_parameters_required`，还应将返回的 `required_choices` 原样传入 `generation_required_choices`，并把已确认的模型等选择放进 `answers`，服务端据此从同一 Catalog 条目给出推荐值。澄清结果里的 `node_data.<节点类型>` 就是可直接写入节点 `data` 的具体字段（如 `node_data.imageGenNode.aspectRatio`），逐字复制到重试的节点或 Plan 中，不要自行翻译问题 id，也不要漏字段。修订后必须展示新预览、等待用户确认。
 
@@ -36,7 +36,7 @@ compatibility: Requires Freezone/虾画 chat surface and preferably injected can
 并在目标 item 的 `reference_inputs` 或 Plan 的 `media_input_for` 边中引用 `source_image`。
 不要把已有图片写进 `nodes`、复制源节点或手填图片 URL；服务端在准备和确认时校验源图。
 
-如果用户只是咨询或分析，只展示一般性说明，不创建草稿或写画布。用户提出具体创建需求后，先读取当前已选的唯一 Skill 紧凑规划包并生成结构化 `intent`，再调用 `freezone_prepare_workflow_draft`。只有用户明确要求 Skill 蓝图无法表达的自定义拓扑时，才使用 `freezone_prepare_workflow_plan_draft(plan=...)`，并继续走同一草稿确认入口。
+如果用户只是咨询或分析，只展示一般性说明，不创建草稿或写画布。用户提出具体创建需求后，先读取当前已选的唯一 Skill 紧凑规划包并生成结构化 `intent`，再调用 `freezone_prepare_workflow_draft`。只有用户明确要求 Skill 蓝图无法表达的自定义拓扑，或互动故事制作方案已确认逐镜头与现有视频节点的一一映射时，才使用 `freezone_prepare_workflow_plan_draft(plan=...)`，并继续走同一草稿确认入口；后一种 Plan 只生成图片，不把现有视频节点纳入图中。
 
 “再创建一个 / 再来一个 / 再添加一个 / 重新建一个 / 复制一个同类型工作流”都属于创建请求。当前画布已经存在相同工作流时，不要改为查询列表、解释已有工作流、复用旧节点或等待用户重新选择，仍然创建一个新的工作流实例并走确认流程；不要复用旧 `draft_id`，也不要调用 `freezone_emit_canvas_command`。
 

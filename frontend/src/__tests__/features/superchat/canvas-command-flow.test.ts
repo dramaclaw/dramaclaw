@@ -477,6 +477,20 @@ describe("canvas command flow placement", () => {
         },
       ],
     })).toBe("destructive");
+
+    expect(canvasCommandFeedbackVisualToneForTest({
+      key: "bridge:attachment-warning",
+      applied: 0,
+      openedUiActions: 1,
+      errors: [],
+      warnings: ["图片已生成，但分镜目标已变化"],
+      commandResults: [{
+        commandIndex: 0,
+        type: "run_node_action",
+        status: "success",
+        label: "生成图片",
+      }],
+    })).toBe("warning");
   });
 
   it("dedupes the same pending approval when one event resolves the turn later", () => {

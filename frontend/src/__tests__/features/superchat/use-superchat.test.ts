@@ -3938,6 +3938,27 @@ describe("Canvas command approval image params", () => {
     ]);
   });
 
+  it("shows an unsupported story duration verbatim instead of silently clamping it", () => {
+    const approval = {
+      id: "story-long-shot", key: "story-long-shot", messageId: "assistant",
+      receivedAt: 1, commandCount: 1, plans: [],
+      envelopes: [{ schema_version: "canvas_chat_commands.v1" as const, commands: [
+        { type: "run_node_action" as const, node_id: "story-a", action: "generate_video" },
+      ] }],
+    };
+    const canvasNodes = [{ id: "story-a", type: "videoNode" as const,
+      position: { x: 0, y: 0 }, data: {
+        storySegmentId: "a", displayName: "长镜头", model: "video-model",
+        durationSec: 30, aspectRatio: "16:9", quality: "720P",
+      } }];
+    const groups = videoApprovalParamGroupsForTest(
+      approval as never, canvasNodes as never, [],
+      [{ id: "video-model", minDuration: 5, maxDuration: 15 }], "video-model",
+    );
+    expect(groups[0].durationSec).toBe(30);
+    expect(groups[0].storySegmentLabels).toEqual(["长镜头"]);
+  });
+
   it("keeps equal-duration interactive-story segments independently editable", () => {
     const approval = {
       id: "story-independent-rows", key: "story-independent-rows", messageId: "assistant",

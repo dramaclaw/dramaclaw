@@ -460,6 +460,14 @@ def _http_error_result(status_code: int, text: str, reason: str) -> dict[str, An
         value = _safe_error_string(source.get(field), 300)
         if value:
             result[field] = value
+    if result.get("code") in {"revision_conflict", "canvas_revision_conflict"}:
+        revision = source.get("current_revision")
+        if type(revision) is int and revision >= 0:
+            result["current_revision"] = revision
+        if result.get("code") == "revision_conflict":
+            story_id = _safe_error_string(source.get("story_id"), 128)
+            if story_id and re.fullmatch(r"[A-Za-z0-9_.:-]+", story_id):
+                result["story_id"] = story_id
     if isinstance(detail, str):
         result["error"] = _safe_error_string(detail, 300) or result["error"]
     if isinstance(source.get("retryable"), bool):
@@ -3096,6 +3104,87 @@ def _looks_like_handwritten_workflow_batch(commands: list[Any]) -> bool:
     return (not has_dependency_shape) or has_workflow_hint
 
 
+def _story_image_reference_batch_candidate(commands: list[Any]) -> bool:
+    if not commands or any(
+        not isinstance(command, dict)
+        or command.get("type") not in {"create_node", "create_edge", "update_node_data"}
+        for command in commands
+    ):
+        return False
+    creates = [command for command in commands if command["type"] == "create_node"]
+    edges = [command for command in commands if command["type"] == "create_edge"]
+    if not creates or not edges or any(
+        command.get("node_type") != "imageGenNode"
+        or not isinstance(command.get("client_id"), str)
+        or not command["client_id"].strip()
+        for command in creates
+    ):
+        return False
+    aliases = {command["client_id"] for command in creates}
+    if len(aliases) != len(creates) or any(
+        command.get("source") not in aliases
+        or command.get("link_type") != "media_input_for"
+        for command in edges
+    ):
+        return False
+    if {command["source"] for command in edges} != aliases:
+        return False
+    return True
+
+
+def _is_story_image_reference_batch(
+    project: str, canvas: str, commands: list[Any]
+) -> bool:
+    """Allow only image references attached to existing clips of one story."""
+    if not _story_image_reference_batch_candidate(commands):
+        return False
+    edges = [command for command in commands if command["type"] == "create_edge"]
+    edge_target_ids = {str(command.get("target") or "") for command in edges}
+    updates = [command for command in commands if command["type"] == "update_node_data"]
+    allowed_video_fields = {
+        "model", "genMode", "durationSec", "aspectRatio", "quality",
+        "generateAudio", "count", "continuityMode", "continuitySourceNodeId",
+    }
+    if any(
+        not isinstance(command.get("data"), dict)
+        or not set(command["data"]).issubset(allowed_video_fields)
+        for command in updates
+    ):
+        return False
+    target_ids = edge_target_ids | {
+        str(command.get("node_id") or "") for command in updates
+    }
+    response = _request(
+        "GET",
+        f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/{quote(canvas, safe='')}",
+    )
+    data = response.get("data") if response.get("ok", True) else None
+    if not isinstance(data, dict):
+        return False
+    nodes = {
+        str(node.get("id") or ""): node
+        for node in data.get("nodes") or []
+        if isinstance(node, dict)
+    }
+    story_ids = set()
+    for target_id in target_ids:
+        target = nodes.get(target_id)
+        if not isinstance(target, dict) or target.get("type") != "videoNode":
+            return False
+        target_data = target.get("data")
+        if not isinstance(target_data, dict) or not str(
+            target_data.get("storySegmentId") or ""
+        ).strip():
+            return False
+        group = nodes.get(str(target.get("parentId") or ""))
+        group_data = group.get("data") if isinstance(group, dict) else None
+        story_id = group_data.get("interactiveStoryId") if isinstance(group_data, dict) else None
+        if not group_data or group_data.get("storyGroup") is not True or not story_id:
+            return False
+        story_ids.add(str(story_id))
+    return len(story_ids) == 1
+
+
 def _validate_html_artifact_write(
     command: dict[str, Any], *, allow_workflow_prepare: bool = False
 ) -> None:
@@ -3986,6 +4075,17 @@ def _external_generation_parameter_preflight(
         or command.get("type") == "run_node_action"
         and str(command.get("node_id") or "").strip() not in created_ids
         for command in execution_commands
+    ) or any(
+        isinstance(command, dict) and (
+            command.get("type") == "create_edge"
+            and (
+                str(command.get("source") or "").strip() not in created_ids
+                or str(command.get("target") or "").strip() not in created_ids
+            )
+            or command.get("type") == "add_next_node"
+            and str(command.get("source_node_id") or "").strip() not in created_ids
+        )
+        for command in commands
     )
     if needs_canvas_read:
         nodes, edges, read_error = _canvas_generation_preflight_state(project, canvas)
@@ -3994,6 +4094,7 @@ def _external_generation_parameter_preflight(
     else:
         nodes, edges = {}, []
     missing_by_node: dict[str, dict[str, Any]] = {}
+    story_video_ids: set[str] = set()
     catalog_cache: dict[str, list[dict[str, Any]] | None] = {}
     for raw_command in commands:
         if not isinstance(raw_command, dict):
@@ -4011,9 +4112,13 @@ def _external_generation_parameter_preflight(
                     source_node_id = str(
                         raw_command.get("source_node_id") or ""
                     ).strip()
-                    if source_node_id:
+                    if source_node_id and raw_command.get("connect"):
                         edges.append(
-                            {"source": source_node_id, "target": node_id}
+                            {"source": source_node_id, "target": node_id,
+                             "data": {"link_type": _default_link_type(
+                                 str((nodes.get(source_node_id) or {}).get("type") or ""),
+                                 str(raw_command.get("node_type") or ""),
+                             )}}
                         )
         elif command_type == "update_node_data":
             node_id = str(raw_command.get("node_id") or "").strip()
@@ -4027,6 +4132,7 @@ def _external_generation_parameter_preflight(
                 {
                     "source": str(raw_command.get("source") or "").strip(),
                     "target": str(raw_command.get("target") or "").strip(),
+                    "data": {"link_type": raw_command.get("link_type")},
                 }
             )
         if command_type == "run_node_action":
@@ -4061,6 +4167,12 @@ def _external_generation_parameter_preflight(
                 output_key = "imageUrl" if node_type == "imageGenNode" else "videoUrl"
                 if isinstance(data.get(output_key), str) and data[output_key].strip():
                     continue
+            if (
+                node_type == "videoNode"
+                and isinstance(data.get("storySegmentId"), str)
+                and data["storySegmentId"].strip()
+            ):
+                story_video_ids.add(node_id)
             missing_fields = [
                 field
                 for field in required_fields
@@ -4083,6 +4195,91 @@ def _external_generation_parameter_preflight(
                     ),
                 }
     if not missing_by_node:
+        from novelvideo.freezone.workflow_preflight import _workflow_node_capability_blockers
+
+        blockers: list[dict[str, Any]] = []
+        for node_id in sorted(story_video_ids):
+            node = nodes[node_id]
+            data = node.get("data") if isinstance(node.get("data"), dict) else {}
+            entry = _generation_catalog_entry(
+                project, "videoNode", data.get("model"), catalog_cache
+            )
+            if entry is None:
+                blockers.append({
+                    "node_id": node_id,
+                    "code": "model_catalog_unavailable",
+                    "message": "Cannot verify this story clip's selected video model.",
+                })
+                continue
+            for issue in _workflow_node_capability_blockers(
+                {"id": node_id, "node_type": "videoNode", "data": data}, entry
+            ):
+                blockers.append({"node_id": node_id, **issue})
+            incoming_images = [
+                nodes.get(str(edge.get("source") or ""))
+                for edge in edges
+                if str(edge.get("target") or "") == node_id
+                and (not isinstance(edge.get("data"), dict)
+                     or edge["data"].get("link_type") != "dependency_for")
+            ]
+            incoming_images = [
+                source for source in incoming_images
+                if isinstance(source, dict)
+                and source.get("type") in {
+                    "imageGenNode", "uploadNode", "imageNode",
+                    "exportImageNode", "storyboardGenNode",
+                }
+            ]
+            if (
+                data.get("genMode") in {
+                    "firstFrame", "firstLastFrame", "imageToVideo",
+                    "imageReference", "allReference",
+                }
+                and not incoming_images
+                and data.get("continuityMode") != "auto"
+            ):
+                blockers.append({
+                    "node_id": node_id,
+                    "code": "story_reference_missing",
+                    "message": "This story clip's generation mode requires a linked image reference.",
+                })
+            maximum = entry.get("referenceImageMax")
+            if type(maximum) is int and len(incoming_images) > maximum:
+                blockers.append({
+                    "node_id": node_id,
+                    "code": "reference_image_limit_exceeded",
+                    "message": f"Model accepts at most {maximum} image references; found {len(incoming_images)}.",
+                })
+            for source in incoming_images:
+                source_data = source.get("data") if isinstance(source.get("data"), dict) else {}
+                source_running = source_data.get("isGenerating") is True or str(
+                    source_data.get("execution_state") or ""
+                ).lower() in {"queued", "pending", "running"}
+                image_url = source_data.get("imageUrl")
+                if source.get("type") == "imageGenNode":
+                    image_url = image_url or source_data.get("referenceImageUrl")
+                if source_running or not isinstance(image_url, str) or not image_url.strip():
+                    blockers.append({
+                        "node_id": node_id,
+                        "source_node_id": str(source.get("id") or ""),
+                        "code": "story_reference_not_ready",
+                        "message": "A linked storyboard image has no generated image yet.",
+                    })
+        if blockers:
+            blocked_ids = {str(item.get("node_id") or "") for item in blockers}
+            return {
+                "ok": False,
+                "status": "interactive_story_generation_not_ready",
+                "code": "interactive_story_generation_not_ready",
+                "error": blockers[0]["message"],
+                "blockers": blockers,
+                "ready_node_ids": sorted(story_video_ids - blocked_ids),
+                "agent_instruction": (
+                    "Keep each blocked story clip pending. Fix its model capability or wait for "
+                    "the linked image result, then read the current canvas before submitting "
+                    "only ready video nodes. Do not replay an accepted generation command."
+                ),
+            }
         return None
     return _generation_parameters_required_result(list(missing_by_node.values()))
 
@@ -4959,6 +5156,9 @@ def _direct_apply_canvas_commands(
             break
 
     if errors:
+        for outcome in command_results:
+            if outcome.get("status") == "applied":
+                outcome["status"] = "not_applied"
         return tool_result(
             {
                 "ok": False,
@@ -4993,6 +5193,9 @@ def _direct_apply_canvas_commands(
         body=payload,
     )
     if not saved.get("ok", True):
+        for outcome in command_results:
+            if outcome.get("status") == "applied":
+                outcome["status"] = "not_applied"
         return tool_result(
             {
                 "ok": False,
@@ -5004,6 +5207,11 @@ def _direct_apply_canvas_commands(
                 "canvas_id": canvas,
                 "errors": [saved.get("error") or "failed to save canvas"],
                 "command_results": command_results,
+                **({"code": saved["code"]}
+                   if saved.get("code") in {"revision_conflict", "canvas_revision_conflict"}
+                   else {}),
+                **({"current_revision": saved["current_revision"]}
+                   if type(saved.get("current_revision")) is int else {}),
             }
         )
     resolved = {
@@ -5051,9 +5259,12 @@ def _emit_canvas_commands(
         return _emit_command_error(
             project, canvas, "empty_commands", "commands must be a non-empty array"
         )
-    if not allow_dynamic_workflow_batch and _looks_like_handwritten_workflow_batch(
-        commands
-    ):
+    handwritten_batch = (
+        not allow_dynamic_workflow_batch
+        and _looks_like_handwritten_workflow_batch(commands)
+    )
+    story_candidate = _story_image_reference_batch_candidate(commands) if handwritten_batch else False
+    if handwritten_batch and not story_candidate:
         return _emit_command_error(
             project,
             canvas,
@@ -5069,6 +5280,12 @@ def _emit_canvas_commands(
     project, canvas, scope_error = _resolve_canvas_scope_for_write(project, canvas)
     if scope_error:
         return scope_error
+    if handwritten_batch and not _is_story_image_reference_batch(project, canvas, commands):
+        return _emit_command_error(
+            project, canvas, "wrong_tool_dynamic_workflow",
+            "Only storyboard image references for existing clips of one interactive story "
+            "may use this canvas batch. Use the validated WorkflowPlan for other workflows.",
+        )
     shape_error = (
         _validate_write_commands_shape(project, canvas, commands, allow_workflow_prepare=True)
         if allow_dynamic_workflow_batch and any(
@@ -5135,6 +5352,29 @@ def _summarize_canvas_command_result(
 ) -> dict[str, Any]:
     command_summary = _command_summary(commands)
     errors = resolved.get("errors") if isinstance(resolved.get("errors"), list) else []
+    warnings = resolved.get("warnings") if isinstance(resolved.get("warnings"), list) else []
+    raw_outcomes = (
+        resolved.get("command_results")
+        if isinstance(resolved.get("command_results"), list)
+        else []
+    )
+    command_outcomes = []
+    for outcome in raw_outcomes[:100]:
+        if not isinstance(outcome, dict):
+            continue
+        summary = {
+            key: value[:240] if key == "error" and isinstance(value, str) else value
+            for key, value in outcome.items()
+            if key in {"commandIndex", "type", "status", "nodeId", "createdNodeId", "error"}
+            and isinstance(value, (str, int))
+        }
+        if summary:
+            command_outcomes.append(summary)
+    raw_created_ids = resolved.get("created_node_ids")
+    created_ids = [
+        node_id for node_id in (raw_created_ids if isinstance(raw_created_ids, list) else [])
+        if isinstance(node_id, str) and node_id.strip()
+    ][:100]
     agent_instruction = resolved.get("agent_instruction") or (
         "Canvas command result has been summarized. Do not ask for or print the full commands."
     )
@@ -5153,6 +5393,18 @@ def _summarize_canvas_command_result(
                 "claim generation is complete, do not report a timeout, do not say a tool was opened, "
                 "and do not ask the user to operate it manually."
             )
+    elif errors or any(outcome.get("status") == "error" for outcome in command_outcomes):
+        agent_instruction = (
+            "The canvas batch did not fully apply. Report the successful and failed command "
+            "outcomes separately. Read the latest canvas before retrying only missing writes; "
+            "never replay a generation command after an uncertain result."
+        )
+    elif warnings:
+        agent_instruction = (
+            "Media generation completed, but a story-frame attachment needs attention. "
+            "Report the warning separately from generation status. Read the latest canvas "
+            "before linking only the missing references; do not regenerate completed media."
+        )
     elif resolved.get("ok"):
         if _commands_include_open_node_action(commands):
             agent_instruction = (
@@ -5176,9 +5428,15 @@ def _summarize_canvas_command_result(
         "bridge_key": bridge_key,
         "project_id": resolved.get("project_id"),
         "canvas_id": resolved.get("canvas_id"),
+        **({"code": resolved["code"]} if isinstance(resolved.get("code"), str) else {}),
+        **({"current_revision": resolved["current_revision"]}
+           if type(resolved.get("current_revision")) is int else {}),
         "applied_count": resolved.get("applied_count"),
         "opened_ui_actions": resolved.get("opened_ui_actions"),
-        "created_node_count": len(resolved.get("created_node_ids") or []),
+        "created_node_count": len(created_ids),
+        "created_node_ids": created_ids,
+        "command_results": command_outcomes,
+        "warnings": [str(item)[:240] for item in warnings[:20] if isinstance(item, str)],
         "command_count": len(commands),
         "command_counts": command_summary["command_counts"],
         "created_nodes": command_summary["created_nodes"],
@@ -7204,6 +7462,13 @@ _CANVAS_RESULT_FIELDS = (
     "receipt",
     "durable_receipt",
     "errors",
+    "warnings",
+    "code",
+    "current_revision",
+    "created_node_ids",
+    "command_results",
+    "blockers",
+    "ready_node_ids",
     "summary",
 )
 
@@ -7222,6 +7487,8 @@ _WORKFLOW_RESULT_FIELDS = (
     "skipped_edges",
     "media_types",
     "missing_parameters",
+    "blockers",
+    "ready_node_ids",
     "required_choices",
     "clarification",
 )
@@ -7233,10 +7500,13 @@ _RESULT_ARRAY_FIELDS = frozenset(
         "problems",
         "actions",
         "assets",
+        "blockers",
         "available_ids",
         "candidates",
         "commands",
+        "command_results",
         "confirmed_stages",
+        "created_node_ids",
         "edge_ids",
         "edges",
         "errors",
@@ -7248,6 +7518,7 @@ _RESULT_ARRAY_FIELDS = frozenset(
         "nodes",
         "questions",
         "recipes",
+        "ready_node_ids",
         "saved_recipe_ids",
         "saved_skill_ids",
         "skipped_edges",

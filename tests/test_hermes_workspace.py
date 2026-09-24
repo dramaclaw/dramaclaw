@@ -385,7 +385,11 @@ def test_freezone_profile_materializes_native_workflow_skills(
 
     assert "name: ecommerce-ad" in content
     assert 'skill_id="ecommerce-ad"' in content
+    assert 'freezone_begin_agent_product_generation(product_kind="workflow_result"' in content
+    assert 'skill_id="ecommerce-ad"' in content
+    assert "skill_version=规划包版本" in content
     assert "freezone_prepare_workflow_draft" in content
+    assert "freezone_prepare_workflow_plan_draft" in content
     assert "显式传入 `run_after_create`" in content
     assert "freezone_patch_workflow_draft" in content
     assert "freezone_confirm_workflow_draft" in content

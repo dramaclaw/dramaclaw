@@ -40,6 +40,103 @@ function fmvSupplementalReference(node: CanvasNode, index: number): string {
   }
 }
 
+const FMV_REFERENCE_NOTE = /\n?\[FMV素材参考\][\s\S]*?\[\/FMV素材参考\]/g;
+
+function withoutFmvReferenceNote(prompt: unknown): string {
+  return String(prompt || '').replace(FMV_REFERENCE_NOTE, '').trim();
+}
+
+function orderedStoryImages(targetId: string): CanvasNode[] {
+  const state = useCanvasStore.getState();
+  const target = state.nodes.find((node) => node.id === targetId);
+  if (!target) return [];
+  return sortUpstreamByReferenceOrder(
+    videoReferenceNodesInEdgeOrder(state.nodes, state.edges, targetId),
+    target.data.referenceOrder as string[] | undefined,
+  ).filter((node) => !node.data.videoUrl && !node.data.audioUrl && Boolean(submittableContinuityImage(node)));
+}
+
+/** Keep visible story prompts in sync with actual connected image references. */
+export function syncStoryVideoReferencePrompt(targetId: string): void {
+  const state = useCanvasStore.getState();
+  const target = state.nodes.find((node) => node.id === targetId);
+  if (!target || !isFmvVideoNode(target, state.edges)) return;
+  const base = withoutFmvReferenceNote(target.data.prompt);
+  const authoredPrompt = withoutFmvContinuityNote(base);
+  // A reference list cannot stand in for the segment's actual shot prompt.
+  if (!authoredPrompt) {
+    if (base !== target.data.prompt) state.updateNodeData(targetId, { prompt: base });
+    return;
+  }
+  const references = orderedStoryImages(targetId).flatMap((node, index) => {
+    const mention = `@图片${index + 1}`;
+    if (new RegExp(`${mention}(?!\\d)`).test(authoredPrompt)) return [];
+    const name = typeof node.data.displayName === 'string' && node.data.displayName.trim()
+      ? `（${node.data.displayName.trim().replace(/\s+/g, ' ').slice(0, 80)}）` : '';
+    const frame = node.data.storyFrameTarget as { videoNodeId?: unknown } | undefined;
+    if (frame?.videoNodeId === targetId) {
+      return [`${mention}${name} 是本镜头独立开场的构图参考，保持主体和场景一致。`];
+    }
+    switch (readKeyElementCategory(node.data)) {
+      case 'character': return [`${mention}${name} 是人物身份参考，保持面容、发型和服装一致。`];
+      case 'scene': return [`${mention}${name} 是场景参考，保持环境和空间关系一致。`];
+      case 'object': return [`${mention}${name} 是物品外观参考，保持形状、材质和细节一致。`];
+      default: return [`${mention}${name} 是补充图片参考，按该素材的实际内容使用。`];
+    }
+  });
+  const note = references.length ? `[FMV素材参考]\n${references.join('\n')}\n[/FMV素材参考]` : '';
+  const prompt = [note, base].filter(Boolean).join('\n\n');
+  if (prompt !== target.data.prompt) state.updateNodeData(targetId, { prompt });
+}
+
+/** Attach an approved storyboard result only to its original story segment. */
+export function attachCompletedStoryFrame(imageNodeId: string): string | null {
+  const state = useCanvasStore.getState();
+  const image = state.nodes.find((node) => node.id === imageNodeId);
+  if (!image || image.type !== CANVAS_NODE_TYPES.imageGen) return null;
+  const frame = image.data.storyFrameTarget as {
+    storyId?: unknown; segmentId?: unknown; videoNodeId?: unknown; referenceNodeIds?: unknown;
+  } | undefined;
+  if (!frame) return null;
+  if (typeof image.data.imageUrl !== 'string' || !image.data.imageUrl || image.data.isGenerating) return null;
+  const target = state.nodes.find((node) => node.id === frame.videoNodeId);
+  const group = state.nodes.find((node) => node.id === target?.parentId);
+  if (target?.type !== CANVAS_NODE_TYPES.video || target.data.storySegmentId !== frame.segmentId ||
+      group?.type !== CANVAS_NODE_TYPES.group || group.data.storyGroup !== true ||
+      group.data.interactiveStoryId !== frame.storyId) {
+    return '分镜目标已变化，未自动连接到故事视频节点。';
+  }
+  const referenceIds = Array.isArray(frame.referenceNodeIds)
+    ? frame.referenceNodeIds.filter((id): id is string => typeof id === 'string' && !!id)
+    : [];
+  if (referenceIds.some((id) => {
+    const reference = state.nodes.find((node) => node.id === id);
+    return !reference || !submittableContinuityImage(reference);
+  })) return '分镜已生成，但人物或场景参考图尚不可用，未完成视频素材连接。';
+  for (const referenceId of referenceIds) {
+    if (!useCanvasStore.getState().edges.some((edge) => edge.source === referenceId &&
+        edge.target === target.id && edge.data?.link_type === 'media_input_for') &&
+        !state.addEdgeWithData(referenceId, target.id, {
+          link_type: 'media_input_for', edgeKind: 'story_visual_reference',
+        })) {
+      syncStoryVideoReferencePrompt(target.id);
+      return '分镜已生成，但人物或场景参考图无法接入目标视频。';
+    }
+  }
+  if (target.data.continuityMode !== 'auto' &&
+      !useCanvasStore.getState().edges.some((edge) => edge.source === imageNodeId &&
+        edge.target === target.id && edge.data?.link_type === 'media_input_for')) {
+    if (!state.addEdgeWithData(imageNodeId, target.id, {
+      link_type: 'media_input_for', edgeKind: 'story_frame_reference',
+    })) {
+      syncStoryVideoReferencePrompt(target.id);
+      return '分镜图片已生成，但目标视频无法接入该图片参考。';
+    }
+  }
+  syncStoryVideoReferencePrompt(target.id);
+  return null;
+}
+
 /** Playback edges become production dependencies only after continuity is enabled. */
 export function videoContinuitySources(targetId: string, nodes: CanvasNode[], edges: CanvasEdge[]): CanvasNode[] {
   const target = nodes.find((node) => node.id === targetId);
@@ -64,6 +161,7 @@ export async function ensureVideoContinuity(targetId: string, projectId?: string
     }
     const prompt = withoutFmvContinuityNote(target.data.prompt);
     if (prompt !== target.data.prompt) state.updateNodeData(targetId, { prompt });
+    syncStoryVideoReferencePrompt(targetId);
     return;
   }
   const sources = videoContinuitySources(targetId, state.nodes, state.edges);
@@ -108,13 +206,10 @@ export async function ensureVideoContinuity(targetId: string, projectId?: string
       : edge));
   }
   state = useCanvasStore.getState();
-  const ordered = sortUpstreamByReferenceOrder(
-    videoReferenceNodesInEdgeOrder(state.nodes, state.edges, targetId),
-    currentTarget.data.referenceOrder as string[] | undefined,
-  ).filter((node) => !node.data.videoUrl && !node.data.audioUrl && Boolean(submittableContinuityImage(node)));
+  const ordered = orderedStoryImages(targetId);
   const index = ordered.findIndex((node) => node.id === captured.nodeId) + 1;
   if (index === 0) throw new Error('尾帧参考未进入图片列表，已停止视频生成。');
-  const prompt = withoutFmvContinuityNote(currentTarget.data.prompt);
+  const prompt = withoutFmvReferenceNote(withoutFmvContinuityNote(currentTarget.data.prompt));
   const extraReferences = currentTarget.data.genMode === 'allReference' || currentTarget.data.genMode === 'imageReference'
     ? ordered.flatMap((node, imageIndex) => node.id === captured.nodeId
       ? [] : [fmvSupplementalReference(node, imageIndex + 1)])

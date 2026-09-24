@@ -123,6 +123,26 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
     skipped_edges: list[dict[str, Any]] = []
     commands: list[dict[str, Any]] = []
     workflow_instance_id = _workflow_instance_id(args, payload)
+    source_context = payload.get("source_context")
+    story_frame_targets: dict[str, dict[str, str]] = {}
+    if isinstance(source_context, dict):
+        story_id = source_context.get("story_id")
+        targets = source_context.get("targets")
+        if isinstance(story_id, str) and story_id.strip() and isinstance(targets, list):
+            for target in targets:
+                if not isinstance(target, dict):
+                    continue
+                plan_node_id = target.get("plan_node_id")
+                segment_id = target.get("story_segment_id")
+                video_node_id = target.get("video_node_id")
+                if all(isinstance(value, str) and value.strip() for value in (
+                    plan_node_id, segment_id, video_node_id,
+                )):
+                    story_frame_targets[plan_node_id] = {
+                        "storyId": story_id,
+                        "segmentId": segment_id,
+                        "videoNodeId": video_node_id,
+                    }
     node_by_plan_id: dict[str, dict[str, Any]] = {}
     used_client_ids: set[str] = set()
 
@@ -165,6 +185,7 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
     external_node_ids = args.get("external_node_ids") or {}
     if not isinstance(external_node_ids, dict):
         external_node_ids = {}
+    external_input_aliases: set[str] = set()
     for source in payload.get("external_inputs") or []:
         if not isinstance(source, dict):
             continue
@@ -177,10 +198,18 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
             "plan_id": alias, "client_id": node_id, "node_type": "imageGenNode",
             "raw": source, "external": True,
         }
+        external_input_aliases.add(alias)
 
+    edge_pairs = _edge_pairs(payload.get("edges"))
+    external_references_by_target: dict[str, list[str]] = {}
+    for source_ref, target_ref, link_type in edge_pairs:
+        if source_ref in external_input_aliases and link_type == "media_input_for":
+            external_references_by_target.setdefault(target_ref, []).append(
+                node_by_plan_id[source_ref]["client_id"]
+            )
     edge_records: list[dict[str, Any]] = []
     audio_prompt_target_plan_ids: set[str] = set()
-    for edge_index, edge in enumerate(_edge_pairs(payload.get("edges"))):
+    for edge_index, edge in enumerate(edge_pairs):
         source_ref, target_ref, requested_link_type = edge
         source = node_by_plan_id.get(source_ref)
         target = node_by_plan_id.get(target_ref)
@@ -262,6 +291,12 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
         # Do not rewrite explicit roles (including the legacy ioRole alias).
         data.setdefault("workflowInstanceId", workflow_instance_id)
         data.setdefault("workflowPlanNodeId", node["plan_id"])
+        if node["node_type"] == "imageGenNode" and node["plan_id"] in story_frame_targets:
+            references = _dedupe(external_references_by_target.get(node["plan_id"], []))
+            data["storyFrameTarget"] = {
+                **story_frame_targets[node["plan_id"]],
+                "referenceNodeIds": references,
+            }
         # The graph approval is the single parameter confirmation point for a
         # workflow. Persist this marker on executable nodes so the later DAG
         # runner and Agent action catalog can reuse the approved model/size/
