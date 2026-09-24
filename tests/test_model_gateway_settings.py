@@ -3448,19 +3448,52 @@ def test_official_media_model_catalog_uses_ce_export_shape():
         "first_last_frame",
     ]
     assert minimax["supportsGenerateAudio"] is False
-    assert [item["key"] for item in minimax["request"]["parameters"]] == [
+    parameters = {
+        item["key"]: item for item in minimax["request"]["parameters"]
+    }
+    assert list(parameters) == [
         "quality_mode",
         "inference_steps",
         "model_mode",
         "seed",
     ]
-    model_mode = next(
-        item
-        for item in minimax["request"]["parameters"]
-        if item["key"] == "model_mode"
-    )
-    assert model_mode["modes"] == ["all_reference"]
-    assert model_mode["options"] == ["ref2va", "fl2va", "dual_pass"]
+    assert parameters["quality_mode"] == {
+        "key": "quality_mode",
+        "label": "质量模式",
+        "control": "select",
+        "default": "fast",
+        "options": ["high", "balanced", "fast"],
+        "requestPath": "metadata.quality_mode",
+    }
+    assert parameters["inference_steps"] == {
+        "key": "inference_steps",
+        "label": "推理步数",
+        "control": "number",
+        "default": 4,
+        "min": 1,
+        "max": 50,
+        "step": 1,
+        "requestPath": "metadata.inference_steps",
+    }
+    assert parameters["model_mode"] == {
+        "key": "model_mode",
+        "label": "参考策略",
+        "control": "select",
+        "default": "ref2va",
+        "options": ["ref2va", "fl2va", "dual_pass"],
+        "requestPath": "metadata.model_mode",
+        "modes": ["all_reference"],
+    }
+    assert parameters["seed"] == {
+        "key": "seed",
+        "label": "随机种子",
+        "control": "number",
+        "default": -1,
+        "min": -1,
+        "max": 2147483647,
+        "step": 1,
+        "requestPath": "metadata.seed",
+    }
     assert minimax["referenceImageMax"] == 9
     assert minimax["referenceVideoMax"] == 3
     assert minimax["referenceAudioMax"] == 3
