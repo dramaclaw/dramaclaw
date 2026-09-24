@@ -12,6 +12,7 @@ import { normalizeMessage } from "@/features/superchat/message";
 import { buildCanvasCommandToolResultPayloadForTest } from "@/features/freezone/canvasCommandToolResult";
 import {
   SUPERCHAT_CANVAS_COMMAND_EVENT,
+  abortTerminalGraceMsForTest,
   approvalOptionIdForTest,
   canvasContextToolResultFrameForTest,
   dedupeMessagesByIdForTest,
@@ -5151,7 +5152,170 @@ describe("useSuperChat websocket lifecycle", () => {
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith("api/v1/chat/cancel", {
       json: { scope, turn_id: chatFrame?.turn_id },
     }));
-    expect(closeCalls).toContainEqual([4000, "client abort"]);
+    // 取消是请求而不是终态，连接要留着等服务端的终态帧。这里只断言"取消发给了正确的
+    // 业务轮次"（本测试的主题），关连接的时机由下面两条专门的测试管。
+    expect(closeCalls).toEqual([]);
+  });
+
+  it("keeps the websocket open after abort until the server terminal frame arrives", async () => {
+    apiPostMock.mockClear();
+    const sentFrames: string[] = [];
+    const closeCalls: Array<[number | undefined, string | undefined]> = [];
+    class TestWebSocket {
+      static OPEN = 1;
+      readyState = 1;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: ((event: CloseEvent) => void) | null = null;
+
+      constructor() {
+        sockets.push(this);
+      }
+
+      send(frame: string) {
+        sentFrames.push(frame);
+      }
+
+      close(code?: number, reason?: string) {
+        closeCalls.push([code, reason]);
+        this.readyState = 3;
+      }
+    }
+    const sockets: TestWebSocket[] = [];
+    Object.defineProperty(globalThis, "WebSocket", {
+      value: TestWebSocket,
+      writable: true,
+      configurable: true,
+    });
+    const scope = {
+      kind: "project" as const,
+      id: "project-a",
+      surface: "freezone" as const,
+      canvasId: "canvas-a",
+      agentId: "agent-2",
+    };
+    const hook = renderHook(() => useSuperChat({
+      project: "project-a",
+      displayName: "Tester",
+      surface: "freezone",
+      freezoneCanvasId: "canvas-a",
+      freezoneAgentId: "agent-2",
+    }));
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    await act(async () => {
+      sockets[0]?.onopen?.();
+      sockets[0]?.onmessage?.({
+        data: JSON.stringify({ type: "scope.changed", scope, history: [], busy: false }),
+      } as MessageEvent);
+    });
+    await waitFor(() => expect(hook.result.current.connected).toBe(true));
+    act(() => {
+      expect(hook.result.current.send("cancel me", [])).toBe(true);
+    });
+    const turnId = sentFrames
+      .map((frame) => JSON.parse(frame) as Record<string, unknown>)
+      .find((frame) => frame.type === "chat.message")?.turn_id as string;
+
+    act(() => hook.result.current.abort());
+
+    // 服务端要在几十毫秒内把 `agent.turn.completed disposition=cancelled` 发到这条
+    // 连接上；abort 立刻 close 的话这一帧对任何客户端都不可观测。
+    expect(closeCalls).toEqual([]);
+    expect(sockets[0]?.readyState).toBe(1);
+
+    await act(async () => {
+      sockets[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: "agent.turn.completed",
+          scope,
+          turn_id: turnId,
+          status: "cancelled",
+          disposition: "cancelled",
+        }),
+      } as MessageEvent);
+      sockets[0]?.onmessage?.({
+        data: JSON.stringify({ type: "chat.done", scope, turn_id: turnId }),
+      } as MessageEvent);
+    });
+
+    // 正常收到终态帧就不需要关连接了，也不该触发重连。
+    expect(closeCalls).toEqual([]);
+    expect(sockets).toHaveLength(1);
+    expect(hook.result.current.busy).toBe(false);
+  });
+
+  it("closes the websocket when no terminal frame arrives within the abort grace window", async () => {
+    apiPostMock.mockClear();
+    const sentFrames: string[] = [];
+    const closeCalls: Array<[number | undefined, string | undefined]> = [];
+    class TestWebSocket {
+      static OPEN = 1;
+      readyState = 1;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: ((event: CloseEvent) => void) | null = null;
+
+      constructor() {
+        sockets.push(this);
+      }
+
+      send(frame: string) {
+        sentFrames.push(frame);
+      }
+
+      close(code?: number, reason?: string) {
+        closeCalls.push([code, reason]);
+        this.readyState = 3;
+      }
+    }
+    const sockets: TestWebSocket[] = [];
+    Object.defineProperty(globalThis, "WebSocket", {
+      value: TestWebSocket,
+      writable: true,
+      configurable: true,
+    });
+    const scope = {
+      kind: "project" as const,
+      id: "project-a",
+      surface: "freezone" as const,
+      canvasId: "canvas-a",
+      agentId: "agent-2",
+    };
+    const hook = renderHook(() => useSuperChat({
+      project: "project-a",
+      displayName: "Tester",
+      surface: "freezone",
+      freezoneCanvasId: "canvas-a",
+      freezoneAgentId: "agent-2",
+    }));
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    await act(async () => {
+      sockets[0]?.onopen?.();
+      sockets[0]?.onmessage?.({
+        data: JSON.stringify({ type: "scope.changed", scope, history: [], busy: false }),
+      } as MessageEvent);
+    });
+    await waitFor(() => expect(hook.result.current.connected).toBe(true));
+    act(() => {
+      expect(hook.result.current.send("cancel me", [])).toBe(true);
+    });
+
+    vi.useFakeTimers();
+    act(() => hook.result.current.abort());
+    expect(closeCalls).toEqual([]);
+
+    act(() => {
+      vi.advanceTimersByTime(abortTerminalGraceMsForTest() - 1);
+    });
+    expect(closeCalls).toEqual([]);
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    // 服务端一直不给终态帧时才自救：关掉并让 onclose 重连，用历史对账。
+    expect(closeCalls).toEqual([[4000, "client abort"]]);
   });
 
   it("defaults freezone canvas execution context to manual confirmation", () => {
