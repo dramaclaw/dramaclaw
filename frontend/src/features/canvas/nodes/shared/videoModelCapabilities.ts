@@ -4,6 +4,10 @@ import type {
   VideoGenMode,
   VideoKeyframeSlot,
 } from "@/features/canvas/domain/canvasNodes";
+import {
+  MINIMAX_H3_MODE_ORDER,
+  minimaxH3ModeAvailability,
+} from "@/features/canvas/nodes/shared/minimaxH3GenerationDecision";
 
 /**
  * Freezone 画布视频模型的**能力口径**——与后端 `freezone.py` 各视频端点的模型门禁
@@ -33,6 +37,11 @@ export function isHappyHorseVideoModel(modelId: string | null | undefined): bool
 
 export function isGrokVideoChannelModel(modelId: string | null | undefined): boolean {
   return normalizeVideoModelId(modelId).includes("grokvideochannel");
+}
+
+export function isMiniMaxH3VideoModel(modelId: string | null | undefined): boolean {
+  const normalized = normalizeVideoModelId(modelId);
+  return normalized === "minimaxh3" || normalized === "newapiminimaxh3";
 }
 
 // Seedance 1 全系列（1.0 Pro Fast / 1.5 Pro / …）：版本号 `1.x` → `1x`，匹配
@@ -127,6 +136,8 @@ export type VideoModelRef =
       id?: string;
       apiModel?: string;
       supportedModes?: string[];
+      referenceImageMax?: number | null;
+      referenceVideoMax?: number | null;
       referenceAudioMax?: number | null;
       supportsGenerateAudio?: boolean;
     }
@@ -162,6 +173,9 @@ export function isVideoModeSupportedByModel(
     return model.supportedModes?.includes(GEN_MODE_TO_CATALOG_MODE[mode]) ?? false;
   }
   const modelId = videoModelIdOf(model);
+  if (isMiniMaxH3VideoModel(modelId)) {
+    return MINIMAX_H3_MODE_ORDER.includes(mode);
+  }
   if (isHappyHorseVideoModel(modelId)) {
     return (
       mode === "textToVideo" ||
@@ -213,6 +227,9 @@ export function videoEmptyStateCtaModes(
     return order.filter((mode) => isVideoModeSupportedByModel(mode, model));
   }
   const modelId = videoModelIdOf(model);
+  if (isMiniMaxH3VideoModel(modelId)) {
+    return ["allReference", "imageToVideo", "firstLastFrame"];
+  }
   if (isHappyHorseVideoModel(modelId)) {
     return ["imageToVideo", "firstFrame", "imageReference"];
   }
@@ -242,6 +259,7 @@ export function videoUpstreamImageDefaultMode(
     return null;
   }
   const modelId = videoModelIdOf(model);
+  if (isMiniMaxH3VideoModel(modelId)) return "imageToVideo";
   if (isHappyHorseVideoModel(modelId)) return "imageToVideo";
   return isSeedance2VideoModel(modelId) ? "allReference" : "firstFrame";
 }
@@ -306,7 +324,11 @@ export function videoModelAcceptsMultipleImages(
     );
   }
   const modelId = videoModelIdOf(model);
-  return isSeedance2VideoModel(modelId) || isHappyHorseVideoModel(modelId);
+  return (
+    isSeedance2VideoModel(modelId) ||
+    isHappyHorseVideoModel(modelId) ||
+    isMiniMaxH3VideoModel(modelId)
+  );
 }
 
 /**
@@ -333,6 +355,9 @@ export function videoMultiImageAutoSwitchMode(
 ): VideoGenMode | null {
   if (mode !== "imageToVideo" || imageCount <= 1) return null;
   const modelId = videoModelIdOf(model);
+  if (isMiniMaxH3VideoModel(modelId)) {
+    return imageCount === 2 ? "firstLastFrame" : "allReference";
+  }
   if (isHappyHorseVideoModel(modelId)) return null;
   if (!videoModelAcceptsMultipleImages(model)) return null;
   const candidates: VideoGenMode[] = ["allReference", "imageReference"];
@@ -572,6 +597,9 @@ export function videoSubmitMediaRejectionReason(
   model: VideoModelRef,
   counts: { images: number; videos: number; audios: number },
 ): string | null {
+  if (isMiniMaxH3VideoModel(videoModelIdOf(model))) {
+    return minimaxH3ModeAvailability(mode, counts).reasonKey;
+  }
   if (counts.videos > 0 && mode !== "allReference" && mode !== "videoEdit") {
     return "node.videoModel.reason.videoUnsupported";
   }
@@ -618,6 +646,13 @@ export function videoModelReferenceDisabledReason(
   model: VideoModelRef,
   counts: { images: number; videos: number; audios: number },
 ): string | null {
+  if (isMiniMaxH3VideoModel(videoModelIdOf(model))) {
+    const available = MINIMAX_H3_MODE_ORDER.some(
+      (mode) => minimaxH3ModeAvailability(mode, counts).enabled,
+    );
+    if (available) return null;
+    return minimaxH3ModeAvailability("allReference", counts).reasonKey;
+  }
   if (typeof model === "object" && model !== null && (model.supportedModes?.length ?? 0) > 0) {
     const supportsAllReference = isVideoModeSupportedByModel("allReference", model);
     const supportsVideoEdit = isVideoModeSupportedByModel("videoEdit", model);

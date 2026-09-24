@@ -6422,7 +6422,17 @@
         "videoUpstreamAllRefOrEdit": "上游含视频素材时只能用「全能参考」或「视频编辑」",
         "videoUpstreamAllRefOnly": "上游含视频素材时只能用「全能参考」",
         "hasImageOrAudioRefs": "已引用图片/音频素材时不可用",
-        "moreThanTwoImages": "上游图片超过 2 张时不可用"
+        "moreThanTwoImages": "上游图片超过 2 张时不可用",
+        "h3MediaConnected": "已连接素材，请选择对应的 H3 参考模式",
+        "h3UseAllReferenceForMixed": "图片与视频/音频混合时请使用「全能参考」",
+        "h3ImageExactlyOne": "H3「图生视频」需要且仅支持 1 张图片",
+        "h3FirstLastExactlyTwo": "H3「首尾帧」需要且仅支持 2 张图片",
+        "h3NeedReference": "H3「全能参考」至少需要 1 个引用素材",
+        "h3MaxImages": "H3「全能参考」最多支持 {{count}} 张图片",
+        "h3MaxVideos": "H3「全能参考」最多支持 {{count}} 个视频",
+        "h3MaxAudios": "H3「全能参考」最多支持 {{count}} 个音频",
+        "h3UnsupportedMode": "MiniMax H3 不支持该模式",
+        "h3PromptRequired": "MiniMax H3 的所有模式都需要提示词"
       }
     },
     "threeDWorld": {

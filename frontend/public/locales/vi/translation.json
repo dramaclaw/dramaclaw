@@ -6422,7 +6422,17 @@
         "videoUpstreamAllRefOrEdit": "Khi phía trên là video, chỉ dùng được “Tham chiếu đa năng” hoặc “Sửa video”",
         "videoUpstreamAllRefOnly": "Khi phía trên là video, chỉ dùng được “Tham chiếu đa năng”",
         "hasImageOrAudioRefs": "Không dùng được khi đang tham chiếu asset ảnh/âm thanh",
-        "moreThanTwoImages": "Không dùng được khi phía trên có hơn 2 ảnh"
+        "moreThanTwoImages": "Không dùng được khi phía trên có hơn 2 ảnh",
+        "h3MediaConnected": "Đã nối asset; hãy chọn chế độ tham chiếu H3 phù hợp",
+        "h3UseAllReferenceForMixed": "Dùng “Tham chiếu đa năng” khi kết hợp ảnh với video hoặc âm thanh",
+        "h3ImageExactlyOne": "H3 “Ảnh sang video” yêu cầu đúng 1 ảnh",
+        "h3FirstLastExactlyTwo": "H3 “Khung đầu/cuối” yêu cầu đúng 2 ảnh",
+        "h3NeedReference": "H3 “Tham chiếu đa năng” cần ít nhất 1 asset tham chiếu",
+        "h3MaxImages": "H3 “Tham chiếu đa năng” hỗ trợ tối đa {{count}} ảnh",
+        "h3MaxVideos": "H3 “Tham chiếu đa năng” hỗ trợ tối đa {{count}} video",
+        "h3MaxAudios": "H3 “Tham chiếu đa năng” hỗ trợ tối đa {{count}} đoạn âm thanh",
+        "h3UnsupportedMode": "MiniMax H3 không hỗ trợ chế độ này",
+        "h3PromptRequired": "Mọi chế độ MiniMax H3 đều cần câu lệnh"
       }
     },
     "threeDWorld": {

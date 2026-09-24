@@ -6422,7 +6422,17 @@
         "videoUpstreamAllRefOrEdit": "With video upstream, only “All reference” or “Video edit” are available",
         "videoUpstreamAllRefOnly": "With video upstream, only “All reference” is available",
         "hasImageOrAudioRefs": "Unavailable while image/audio assets are referenced",
-        "moreThanTwoImages": "Unavailable with more than 2 upstream images"
+        "moreThanTwoImages": "Unavailable with more than 2 upstream images",
+        "h3MediaConnected": "Assets are connected; choose the matching H3 reference mode",
+        "h3UseAllReferenceForMixed": "Use “All reference” when mixing images with video or audio",
+        "h3ImageExactlyOne": "H3 “Image to video” requires exactly 1 image",
+        "h3FirstLastExactlyTwo": "H3 “First/last frame” requires exactly 2 images",
+        "h3NeedReference": "H3 “All reference” requires at least 1 reference asset",
+        "h3MaxImages": "H3 “All reference” supports at most {{count}} images",
+        "h3MaxVideos": "H3 “All reference” supports at most {{count}} videos",
+        "h3MaxAudios": "H3 “All reference” supports at most {{count}} audio clips",
+        "h3UnsupportedMode": "MiniMax H3 does not support this mode",
+        "h3PromptRequired": "Every MiniMax H3 mode requires a prompt"
       }
     },
     "threeDWorld": {
