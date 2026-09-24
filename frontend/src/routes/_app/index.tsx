@@ -15,6 +15,7 @@ import {
   Loader2,
   MoreHorizontal,
   Plus,
+  RefreshCw,
   Search,
   Share2,
   Trash2,
@@ -67,13 +68,14 @@ import {
 import { ProjectFolder } from "@/components/projects/project-folder";
 import { ShareProjectDialog } from "@/components/projects/share-project-dialog";
 import { getProjectCover, NOISE_DATA_URI } from "@/lib/project-cover";
-import { openFreezoneProject } from "@/lib/freezone-url";
+import { buildFreezoneCanvasUrl, openFreezoneProject } from "@/lib/freezone-url";
 import { formatRelativeTime } from "@/lib/relative-time";
 import {
   canDeleteProject,
   canManageProjectGrants,
   isSharedProject,
   projectRole,
+  roleAllows,
 } from "@/lib/project-permissions";
 import { useAppStore } from "@/stores/app-store";
 import { cn } from "@/lib/utils";
@@ -86,6 +88,15 @@ import {
 } from "@/stores/episode-workbench-store";
 import { useProjectNavStore } from "@/stores/project-nav-store";
 import { surfaceAccess, useProductSurfaces } from "@/lib/queries/product-surfaces";
+import { useAuthStore } from "@/stores/auth-store";
+import {
+  describeLiblibCanvasImportError,
+  parseLiblibShareUrl,
+} from "@/features/freezone/liblibCanvasImport";
+import {
+  importLiblibCanvasIntoProject,
+  suggestedProjectNameForLiblibShare,
+} from "@/features/freezone/createProjectLiblibImport";
 
 type PendingAction =
   | { kind: "archive"; project: string; name: string }
@@ -168,6 +179,7 @@ function ProjectCard({
   onOpen,
   onPreload,
   onShare,
+  onImportLiblib,
   onAction,
 }: {
   summary: ProjectSummary;
@@ -175,6 +187,7 @@ function ProjectCard({
   onOpen: () => void;
   onPreload?: () => void;
   onShare: () => void;
+  onImportLiblib: () => void;
   onAction: (
     action: "archive" | "unarchive" | "delete" | "restore" | "purge",
   ) => void;
@@ -189,6 +202,7 @@ function ProjectCard({
   const isDeleted = summary.status === "deleted";
   const canManageGrants = canManageProjectGrants(summary);
   const canLifecycle = canDeleteProject(summary);
+  const canEdit = roleAllows(projectRole(summary), "editor");
   const isShared = isSharedProject(summary);
   const roleLabel = t(`project.roleLabel.${projectRole(summary)}`);
   const sourceLabel = isShared
@@ -308,6 +322,12 @@ function ProjectCard({
                         <Brush className="size-4" />
                         {t("project.actions.openFreezone")}
                       </DropdownMenuItem>
+                      {canEdit && (
+                        <DropdownMenuItem onClick={onImportLiblib}>
+                          <RefreshCw className="size-4" />
+                          {t("project.actions.importLiblib")}
+                        </DropdownMenuItem>
+                      )}
                       {canLifecycle && (
                         <>
                           <DropdownMenuItem onClick={() => onAction("archive")}>
@@ -419,21 +439,37 @@ function ProjectCard({
               <span className="min-w-0 truncate">{visibleOwnershipLabel}</span>
               {!isShared ? <span className="sr-only">{roleLabel}</span> : null}
             </div>
-            {isActive && canManageGrants ? (
-              <button
-                type="button"
-                data-project-menu
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onShare();
-                }}
-                className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-                aria-label={t("project.actions.share")}
-              >
-                <Share2 className="size-3" />
-                <span>{t("project.actions.share")}</span>
-              </button>
-            ) : null}
+            <div className="flex shrink-0 items-center gap-2">
+              {isActive && canEdit ? (
+                <button
+                  type="button"
+                  data-project-menu
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onImportLiblib();
+                  }}
+                  className="inline-flex items-center gap-0.5 text-[10px] font-medium text-primary/85 transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                >
+                  <RefreshCw className="size-3" />
+                  <span>{t("project.actions.importLiblibShort")}</span>
+                </button>
+              ) : null}
+              {isActive && canManageGrants ? (
+                <button
+                  type="button"
+                  data-project-menu
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onShare();
+                  }}
+                  className="inline-flex items-center gap-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                  aria-label={t("project.actions.share")}
+                >
+                  <Share2 className="size-3" />
+                  <span>{t("project.actions.share")}</span>
+                </button>
+              ) : null}
+            </div>
           </div>
         )}
       </div>
@@ -461,6 +497,157 @@ function CreateProjectCard({ onCreate }: { onCreate: () => void }) {
         {t("project.createCard")}
       </span>
     </button>
+  );
+}
+
+function liblibImportErrorMessage(
+  error: unknown,
+  t: (key: string, values?: Record<string, unknown>) => string,
+): string {
+  const descriptor = describeLiblibCanvasImportError(error);
+  if (!descriptor) return t("project.liblibErrors.unexpected");
+  return t(`project.liblibErrors.${descriptor.code}`, {
+    ...descriptor.values,
+    defaultValue: t("project.liblibErrors.unexpected"),
+  });
+}
+
+function ProjectLiblibImportDialog({
+  project,
+  onOpenChange,
+}: {
+  project: ProjectSummary | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  const username = useAuthStore((state) => state.username);
+  const [shareUrl, setShareUrl] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const trimmedShareUrl = shareUrl.trim();
+  const validShare = useMemo(() => {
+    if (!trimmedShareUrl) return null;
+    try {
+      return parseLiblibShareUrl(trimmedShareUrl);
+    } catch {
+      return null;
+    }
+  }, [trimmedShareUrl]);
+  const validationError = trimmedShareUrl && !validShare
+    ? t("project.liblibLinkInvalid")
+    : null;
+
+  useEffect(() => {
+    setShareUrl("");
+    setError(null);
+  }, [project?.id]);
+
+  const close = () => {
+    if (importing) return;
+    setShareUrl("");
+    setError(null);
+    onOpenChange(false);
+  };
+
+  const handleImport = async () => {
+    if (!project || !validShare || validationError) return;
+    setImporting(true);
+    setError(null);
+    try {
+      const projectId = projectRouteParam(project);
+      const { canvasId, skippedMediaCount } = await importLiblibCanvasIntoProject({
+        projectId,
+        shareUrl: validShare.shareUrl,
+        creatorUsername: username,
+        viewportSize: {
+          width: Math.max(window.innerWidth, 320),
+          height: Math.max(window.innerHeight, 240),
+        },
+      });
+      toast.success(t("project.toasts.liblibImportSucceeded", { name: project.name }));
+      // 有素材没能本地保存时单独提示：画布可用，但这些图仍从 LibTV 加载，
+      // 对方撤下就会失效。
+      if (skippedMediaCount > 0) {
+        toast.warning(t("project.toasts.liblibImportSkippedMedia", { count: skippedMediaCount }));
+      }
+      setShareUrl("");
+      onOpenChange(false);
+      const target = buildFreezoneCanvasUrl(projectId, canvasId);
+      if (target) window.location.assign(target);
+    } catch (importError) {
+      setError(liblibImportErrorMessage(importError, t));
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  return (
+    <Dialog open={!!project} onOpenChange={(open) => !open && close()}>
+      <DialogContent className="gap-4 overflow-hidden rounded-2xl border border-white/8 bg-background/68 p-7 shadow-none backdrop-blur-3xl sm:max-w-md">
+        <DialogHeader className="gap-2">
+          <DialogTitle className="flex items-center gap-2 text-lg font-medium tracking-tight">
+            <RefreshCw className="size-4 text-primary" aria-hidden="true" />
+            <span>{t("project.liblibReimportTitle")}</span>
+          </DialogTitle>
+          <p className="text-xs leading-5 text-muted-foreground">
+            {t("project.liblibReimportDescription", { name: project?.name ?? "" })}
+          </p>
+        </DialogHeader>
+        <div className="flex flex-col gap-1.5">
+          <label
+            htmlFor="project-reimport-liblib-url"
+            className="text-xs font-medium text-foreground/85"
+          >
+            {t("project.liblibLinkRequired")}
+          </label>
+          <Input
+            id="project-reimport-liblib-url"
+            value={shareUrl}
+            onChange={(event) => {
+              setShareUrl(event.target.value);
+              setError(null);
+            }}
+            placeholder={t("project.liblibLinkPlaceholder")}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void handleImport();
+              }
+            }}
+            aria-invalid={!!validationError || !!error || undefined}
+            autoFocus
+            className="h-11 rounded-[8px] border-white/12 bg-white/[0.04] px-3 text-sm placeholder:text-muted-foreground/70 focus-visible:border-white/25 focus-visible:ring-2 focus-visible:ring-white/8 dark:bg-white/[0.04]"
+          />
+          {(validationError || error) ? (
+            <p className="text-xs leading-5 text-destructive">
+              {validationError || error}
+            </p>
+          ) : (
+            <p className="text-xs leading-5 text-muted-foreground">
+              {t("project.liblibReimportHint")}
+            </p>
+          )}
+        </div>
+        <DialogFooter className="-mx-7 -mb-7 border-t-0 bg-transparent p-7 pt-3 sm:flex-row sm:justify-end">
+          <Button
+            variant="outline"
+            onClick={close}
+            disabled={importing}
+            className="h-10 rounded-md border-white/18 bg-white/[0.06] px-4 text-sm font-normal text-foreground/80 hover:border-white/28 hover:bg-white/[0.1] hover:text-foreground"
+          >
+            {t("common.cancel")}
+          </Button>
+          <Button
+            onClick={() => void handleImport()}
+            disabled={importing || !validShare || !!validationError}
+            className="h-10 rounded-md bg-primary px-4 text-sm font-normal text-primary-foreground shadow-lg shadow-primary/15 hover:bg-primary/90"
+          >
+            {importing && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
+            {importing ? t("project.liblibImporting") : t("project.liblibReimportSubmit")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -518,12 +705,14 @@ function ProjectRow({
   onOpen,
   onPreload,
   onShare,
+  onImportLiblib,
   onAction,
 }: {
   summary: ProjectSummary;
   onOpen: () => void;
   onPreload?: () => void;
   onShare: () => void;
+  onImportLiblib: () => void;
   onAction: (
     action: "archive" | "unarchive" | "delete" | "restore" | "purge",
   ) => void;
@@ -538,6 +727,7 @@ function ProjectRow({
   const isDeleted = summary.status === "deleted";
   const canManageGrants = canManageProjectGrants(summary);
   const canLifecycle = canDeleteProject(summary);
+  const canEdit = roleAllows(projectRole(summary), "editor");
   const roleLabel = t(`project.roleLabel.${projectRole(summary)}`);
   const sourceLabel = isSharedProject(summary)
     ? t("project.ownership.from", {
@@ -649,6 +839,21 @@ function ProjectRow({
         </div>
       </div>
 
+      {isActive && canEdit && (
+        <button
+          type="button"
+          data-project-menu
+          onClick={(event) => {
+            event.stopPropagation();
+            onImportLiblib();
+          }}
+          className="flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+        >
+          <RefreshCw className="size-3.5" />
+          <span className="hidden sm:inline">{t("project.actions.importLiblibShort")}</span>
+        </button>
+      )}
+
       {isActive && canManageGrants && (
         <button
           type="button"
@@ -699,6 +904,12 @@ function ProjectRow({
                     <Brush className="size-4" />
                     {t("project.actions.openFreezone")}
                   </DropdownMenuItem>
+                  {canEdit && (
+                    <DropdownMenuItem onClick={onImportLiblib}>
+                      <RefreshCw className="size-4" />
+                      {t("project.actions.importLiblib")}
+                    </DropdownMenuItem>
+                  )}
                   {canLifecycle && (
                     <>
                       <DropdownMenuItem onClick={() => onAction("archive")}>
@@ -1084,13 +1295,24 @@ function ProjectDashboard() {
   const [sort, setSort] = useState<SortKey>("updated-desc");
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");
+  const [liblibShareUrl, setLiblibShareUrl] = useState("");
+  const [importingLiblib, setImportingLiblib] = useState(false);
+  // 项目已创建但导入失败时的善后上下文。留着它，创建对话框就不用关，
+  // 用户可以复用这个项目重试，而不是换名字重建、或撞上「已存在」。
+  const [pendingImportRecovery, setPendingImportRecovery] = useState<{
+    projectId: string;
+    projectName: string;
+    message: string;
+  } | null>(null);
   const [recentlyCreatedProject, setRecentlyCreatedProject] = useState<
     string | null
   >(() => readRecentlyCreatedProject());
   const [pending, setPending] = useState<PendingAction | null>(null);
   // Project pending the "open in Freezone?" prompt after creation.
   const [shareProject, setShareProject] = useState<ProjectSummary | null>(null);
+  const [liblibImportProject, setLiblibImportProject] = useState<ProjectSummary | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const username = useAuthStore((state) => state.username);
 
   const statusCounts = useProjectCounts();
   const allSummaries = useAllProjectSummaries();
@@ -1186,19 +1408,131 @@ function ProjectDashboard() {
         : existingProject?.status === "deleted"
           ? t("project.nameExistsDeleted")
           : null;
+  const trimmedLiblibShareUrl = liblibShareUrl.trim();
+  const parsedLiblibShare = useMemo(() => {
+    if (!trimmedLiblibShareUrl) return null;
+    try {
+      return parseLiblibShareUrl(trimmedLiblibShareUrl);
+    } catch {
+      return null;
+    }
+  }, [trimmedLiblibShareUrl]);
+  const liblibLinkError = trimmedLiblibShareUrl && !parsedLiblibShare
+    ? t("project.liblibLinkInvalid")
+    : null;
+  const createBusy = createProject.isPending || importingLiblib;
+
+  const resetCreateForm = () => {
+    setNewName("");
+    setLiblibShareUrl("");
+  };
+
+  const handleLiblibShareUrlChange = (value: string) => {
+    setLiblibShareUrl(value);
+    if (newName.trim()) return;
+    try {
+      setNewName(suggestedProjectNameForLiblibShare(value));
+    } catch {
+      // The user may still be typing. Validation is shown below the field.
+    }
+  };
+
   const handleCreate = async () => {
     const name = trimmedNewName;
-    if (!name || createNameError) return;
+    if (!name || createNameError || liblibLinkError) return;
+    const share = parsedLiblibShare;
+    let createdProjectId: string | null = null;
     try {
       const res = await createProject.mutateAsync(name);
       const createdName = res.data.name || name;
+      createdProjectId = res.data.id ?? res.data.project_id ?? null;
       setRecentlyCreatedProject(createdName);
       window.localStorage.setItem(RECENTLY_CREATED_PROJECT_KEY, createdName);
-      setNewName("");
+      if (share) {
+        if (!createdProjectId) throw new Error(t("project.missingCreatedProjectId"));
+        setImportingLiblib(true);
+        const { canvasId, skippedMediaCount } = await importLiblibCanvasIntoProject({
+          projectId: createdProjectId,
+          shareUrl: share.shareUrl,
+          creatorUsername: username,
+          viewportSize: {
+            width: Math.max(window.innerWidth, 320),
+            height: Math.max(window.innerHeight, 240),
+          },
+        });
+        if (skippedMediaCount > 0) {
+          toast.warning(t("project.toasts.liblibImportSkippedMedia", { count: skippedMediaCount }));
+        }
+        const target = buildFreezoneCanvasUrl(createdProjectId, canvasId);
+        resetCreateForm();
+        setCreateOpen(false);
+        if (target) window.location.assign(target);
+        return;
+      }
+      resetCreateForm();
       setCreateOpen(false);
-    } catch {
-      toast.error(t("project.toasts.createFailed"));
+    } catch (error) {
+      const message = liblibImportErrorMessage(error, t);
+      if (createdProjectId) {
+        // 项目已经建好了，只是导入失败。**不要**关掉对话框：关掉后用户看不到任何
+        // 上下文（toast 几秒就没），只会换个名字或用同名再建一次 —— 而同名会撞上
+        // 刚刚留下的这个空项目，报「已存在」，看起来就像"不存在的名字说存在"。
+        // 留在原地转成善后态：复用已建好的项目重试，或直接进去。
+        setPendingImportRecovery({
+          projectId: createdProjectId,
+          projectName: name,
+          message,
+        });
+        toast.error(t("project.toasts.liblibImportFailed", { message }));
+      } else {
+        toast.error(t("project.toasts.createFailed"));
+      }
+    } finally {
+      setImportingLiblib(false);
     }
+  };
+
+  /** 善后态下重试导入：项目已存在，只重跑导入这一步。 */
+  const handleRetryImport = async () => {
+    const recovery = pendingImportRecovery;
+    const share = parsedLiblibShare;
+    if (!recovery || !share) return;
+    setImportingLiblib(true);
+    try {
+      const { canvasId, skippedMediaCount } = await importLiblibCanvasIntoProject({
+        projectId: recovery.projectId,
+        shareUrl: share.shareUrl,
+        creatorUsername: username,
+        viewportSize: {
+          width: Math.max(window.innerWidth, 320),
+          height: Math.max(window.innerHeight, 240),
+        },
+      });
+      if (skippedMediaCount > 0) {
+        toast.warning(t("project.toasts.liblibImportSkippedMedia", { count: skippedMediaCount }));
+      }
+      const target = buildFreezoneCanvasUrl(recovery.projectId, canvasId);
+      setPendingImportRecovery(null);
+      resetCreateForm();
+      setCreateOpen(false);
+      if (target) window.location.assign(target);
+    } catch (error) {
+      const message = liblibImportErrorMessage(error, t);
+      setPendingImportRecovery({ ...recovery, message });
+      toast.error(t("project.toasts.liblibImportFailed", { message }));
+    } finally {
+      setImportingLiblib(false);
+    }
+  };
+
+  /** 善后态下直接进入那个已创建的项目。 */
+  const handleOpenRecoveredProject = () => {
+    const recovery = pendingImportRecovery;
+    if (!recovery) return;
+    setPendingImportRecovery(null);
+    resetCreateForm();
+    setCreateOpen(false);
+    window.location.assign(`/projects/${encodeURIComponent(recovery.projectId)}/freezone`);
   };
 
   // 进项目恢复上次停留的区块（虾画 / 虾集子页，默认虾画）；上次在虾镜且
@@ -1322,7 +1656,17 @@ function ProjectDashboard() {
               />
             </div>
           )}
-          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+          <Dialog
+            open={createOpen}
+            onOpenChange={(open) => {
+              if (createBusy) return;
+              setCreateOpen(open);
+              if (!open) {
+                setPendingImportRecovery(null);
+                resetCreateForm();
+              }
+            }}
+          >
             <DialogContent className="gap-4 overflow-hidden rounded-2xl border border-white/8 bg-background/68 p-7 shadow-none backdrop-blur-3xl sm:max-w-md">
               <DialogHeader className="gap-2">
                 <DialogTitle className="flex items-center gap-2 text-lg font-medium tracking-tight">
@@ -1330,7 +1674,7 @@ function ProjectDashboard() {
                   <span>{t("project.create")}</span>
                 </DialogTitle>
                 <p className="text-xs leading-5 text-muted-foreground">
-                  {t("project.emptyDescription")}
+                  {t("project.createDescription")}
                 </p>
               </DialogHeader>
               <div className="mt-2 flex flex-col gap-2">
@@ -1370,29 +1714,100 @@ function ProjectDashboard() {
                     {createNameError}
                   </p>
                 )}
+                <div className="mt-3 flex flex-col gap-1.5">
+                  <label
+                    htmlFor="project-liblib-share-url"
+                    className="text-xs font-medium text-foreground/85"
+                  >
+                    {t("project.liblibLink")}
+                  </label>
+                  <Input
+                    id="project-liblib-share-url"
+                    value={liblibShareUrl}
+                    onChange={(event) => handleLiblibShareUrlChange(event.target.value)}
+                    placeholder={t("project.liblibLinkPlaceholder")}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        handleCreate();
+                      }
+                    }}
+                    aria-invalid={!!liblibLinkError || undefined}
+                    aria-describedby={liblibLinkError ? "project-liblib-link-error" : "project-liblib-link-hint"}
+                    className="h-11 rounded-[8px] border-white/12 bg-white/[0.04] px-3 text-sm placeholder:text-muted-foreground/70 focus-visible:border-white/25 focus-visible:ring-2 focus-visible:ring-white/8 dark:bg-white/[0.04]"
+                  />
+                  {liblibLinkError ? (
+                    <p id="project-liblib-link-error" className="text-xs text-destructive">
+                      {liblibLinkError}
+                    </p>
+                  ) : (
+                    <p id="project-liblib-link-hint" className="text-xs leading-5 text-muted-foreground">
+                      {t("project.liblibLinkHint")}
+                    </p>
+                  )}
+                </div>
               </div>
+              {pendingImportRecovery && (
+                <div className="rounded-lg border border-amber-400/30 bg-amber-400/[0.08] px-3 py-2.5">
+                  <p className="text-xs font-medium leading-5 text-amber-200">
+                    {t("project.liblibImportRecoveryTitle", {
+                      name: pendingImportRecovery.projectName,
+                    })}
+                  </p>
+                  <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                    {pendingImportRecovery.message}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    {t("project.liblibImportRecoveryHint")}
+                  </p>
+                </div>
+              )}
               <DialogFooter className="-mx-7 -mb-7 border-t-0 bg-transparent p-7 pt-3 sm:flex-row sm:justify-end">
                 <Button
                   variant="outline"
-                  onClick={() => setCreateOpen(false)}
+                  onClick={() => {
+                    setPendingImportRecovery(null);
+                    setCreateOpen(false);
+                    resetCreateForm();
+                  }}
+                  disabled={createBusy}
                   className="h-10 w-18 rounded-md border-white/18 bg-white/[0.06] px-0 text-sm font-normal text-foreground/80 hover:border-white/28 hover:bg-white/[0.1] hover:text-foreground"
                 >
                   {t("common.cancel")}
                 </Button>
+                {pendingImportRecovery && (
+                  <Button
+                    variant="outline"
+                    onClick={handleOpenRecoveredProject}
+                    disabled={createBusy}
+                    className="h-10 rounded-md border-white/18 bg-white/[0.06] px-4 text-sm font-normal text-foreground/80 hover:border-white/28 hover:bg-white/[0.1] hover:text-foreground"
+                  >
+                    {t("project.liblibImportRecoveryOpen")}
+                  </Button>
+                )}
                 <Button
-                  onClick={handleCreate}
+                  onClick={pendingImportRecovery ? handleRetryImport : handleCreate}
                   disabled={
-                    createProject.isPending || !trimmedNewName || !!createNameError
+                    pendingImportRecovery
+                      ? createBusy || !parsedLiblibShare
+                      : createBusy || !trimmedNewName || !!createNameError || !!liblibLinkError
                   }
-                  className="h-10 w-18 rounded-md bg-primary px-0 text-sm font-normal text-primary-foreground shadow-lg shadow-primary/15 hover:bg-primary/90"
+                  className={cn(
+                    "h-10 rounded-md bg-primary text-sm font-normal text-primary-foreground shadow-lg shadow-primary/15 hover:bg-primary/90",
+                    importingLiblib ? "w-auto px-4" : "w-18 px-0",
+                  )}
                 >
-                  {createProject.isPending && (
+                  {createBusy && (
                     <Loader2
                       className="size-4 animate-spin"
                       aria-hidden="true"
                     />
                   )}
-                  {t("common.confirm")}
+                  {importingLiblib
+                    ? t("project.liblibImporting")
+                    : pendingImportRecovery
+                      ? t("project.liblibImportRecoveryRetry")
+                      : t("common.confirm")}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -1532,6 +1947,7 @@ function ProjectDashboard() {
                       onOpen={() => openProject(projectRouteParam(summary))}
                       onPreload={() => preloadProject(projectRouteParam(summary))}
                       onShare={() => setShareProject(summary)}
+                      onImportLiblib={() => setLiblibImportProject(summary)}
                       onAction={(action) => onAction(summary, action)}
                     />
                   ) : (
@@ -1541,6 +1957,7 @@ function ProjectDashboard() {
                       onOpen={() => openProject(projectRouteParam(summary))}
                       onPreload={() => preloadProject(projectRouteParam(summary))}
                       onShare={() => setShareProject(summary)}
+                      onImportLiblib={() => setLiblibImportProject(summary)}
                       onAction={(action) => onAction(summary, action)}
                     />
                   )}
@@ -1556,6 +1973,7 @@ function ProjectDashboard() {
                       onOpen={() => openProject(projectRouteParam(summary))}
                       onPreload={() => preloadProject(projectRouteParam(summary))}
                       onShare={() => setShareProject(summary)}
+                      onImportLiblib={() => setLiblibImportProject(summary)}
                       onAction={(action) => onAction(summary, action)}
                     />
                   ) : (
@@ -1566,6 +1984,7 @@ function ProjectDashboard() {
                       onOpen={() => openProject(projectRouteParam(summary))}
                       onPreload={() => preloadProject(projectRouteParam(summary))}
                       onShare={() => setShareProject(summary)}
+                      onImportLiblib={() => setLiblibImportProject(summary)}
                       onAction={(action) => onAction(summary, action)}
                     />
                   ),
@@ -1599,6 +2018,12 @@ function ProjectDashboard() {
         open={!!shareProject}
         onOpenChange={(open) => {
           if (!open) setShareProject(null);
+        }}
+      />
+      <ProjectLiblibImportDialog
+        project={liblibImportProject}
+        onOpenChange={(open) => {
+          if (!open) setLiblibImportProject(null);
         }}
       />
     </div>

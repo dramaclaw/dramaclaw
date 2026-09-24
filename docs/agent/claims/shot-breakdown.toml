@@ -1,0 +1,167 @@
+version = 1
+slug = "shot-breakdown"
+ledger = "docs/agent/tasks/shot-breakdown.md"
+baseline = "38c1f057bca1"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Update lifecycle and conflict radar."
+
+[[claims]]
+path = "docs/agent/tasks/shot-breakdown.md"
+mode = "coordination"
+reason = "Workstream plan and handoff ledger."
+
+[[claims]]
+path = "docs/agent/claims/shot-breakdown.toml"
+mode = "coordination"
+reason = "Machine-readable scope for this workstream."
+
+[[claims]]
+path = "output/local/liblib_canvas_import_review/liblib-shot-breakdown-teardown.md"
+mode = "read-only"
+reason = "Untracked evidence source to migrate into a tracked guide."
+
+[[claims]]
+path = "docs/guides/shot-breakdown.md"
+mode = "exclusive"
+reason = "Tracked destination for teardown evidence."
+
+[[claims]]
+path = "src/novelvideo/freezone/shot_breakdown.py"
+mode = "exclusive"
+reason = "Deterministic shot-language aggregation."
+
+[[claims]]
+path = "src/novelvideo/freezone/bgm_separate.py"
+mode = "exclusive"
+reason = "BGM separation and explicit degradation mode."
+
+[[claims]]
+path = "src/novelvideo/freezone/jobs.py"
+mode = "exclusive"
+reason = "Breakdown task definitions."
+
+[[claims]]
+path = "src/novelvideo/api/routes/freezone.py"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "canvas-audio-split", "depth-motion-da3", "liblib-canvas-parity", "local-stack"]
+reason = "Breakdown, depth, and LibTV endpoints share the freezone adapter."
+
+[[claims]]
+path = "src/novelvideo/task_backend/runners/freezone.py"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "canvas-audio-split", "depth-motion-da3"]
+reason = "Breakdown and depth leaf classification share the runner."
+
+[[claims]]
+path = "src/novelvideo/api/routes/tasks.py"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "canvas-audio-split", "depth-motion-da3"]
+reason = "Expose breakdown task lifecycle."
+
+[[claims]]
+path = "src/novelvideo/api/schemas.py"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "canvas-audio-split", "depth-motion-da3"]
+reason = "Breakdown request and result schemas."
+
+[[claims]]
+path = "frontend/src/api/ops.ts"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "canvas-audio-split", "depth-motion-da3"]
+reason = "Breakdown operation endpoint client."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/VideoNode.tsx"
+mode = "shared"
+shared_with = ["depth-motion-da3", "liblib-canvas-parity", "minimax-h3-reference-order", "sync-main-remotes"]
+reason = "Breakdown, depth, and video recreation actions share one node."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/NodeActionToolbar.tsx"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "canvas-audio-split", "creative-intro-implementation", "liblib-canvas-parity"]
+reason = "Breakdown entry and LibTV-compatible video actions share the toolbar."
+
+[[claims]]
+path = "frontend/src/features/canvas/domain/canvasNodes.ts"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "depth-motion-da3", "liblib-canvas-parity"]
+reason = "Breakdown flags share the canvas node contract with depth and imports."
+
+[[claims]]
+path = "frontend/src/api/tasks.ts"
+mode = "exclusive"
+reason = "Breakdown task projections."
+
+[[claims]]
+path = "frontend/src/__tests__/session-expiry-streams.test.tsx"
+mode = "exclusive"
+reason = "Snapshot replay and non-terminal metadata delivery for streamed breakdown."
+
+[[claims]]
+path = "frontend/src/stores/canvasStore.ts"
+mode = "exclusive"
+reason = "Reset unrecoverable breakdown activity during canvas hydration."
+
+[[claims]]
+path = "frontend/public/locales/zh/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Shot-breakdown UI strings; merge by key only."
+
+[[claims]]
+path = "frontend/public/locales/en/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Shot-breakdown UI strings; merge by key only."
+
+[[claims]]
+path = "frontend/public/locales/vi/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Shot-breakdown UI strings; merge by key only."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/shotBreakdownNodes.ts"
+mode = "exclusive"
+reason = "Project breakdown outputs into canvas nodes."
+
+[[claims]]
+path = "tests/test_shot_breakdown.py"
+mode = "exclusive"
+reason = "Shot aggregation regression tests."
+
+[[claims]]
+path = "tests/test_bgm_separate.py"
+mode = "exclusive"
+reason = "BGM normal and degraded path tests."
+
+[[claims]]
+path = "tests/test_freezone_shot_breakdown_backend.py"
+mode = "exclusive"
+reason = "Shot-breakdown route, billing, and queue contract tests."
+
+[[claims]]
+path = "tests/test_p0g4i_freezone_leaf_classification.py"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "depth-motion-da3"]
+reason = "Breakdown local leaves extend the global audited egress table."
+
+[[claims]]
+path = "tests/test_task_runner_home_node_placement.py"
+mode = "shared"
+shared_with = ["depth-motion-da3", "sync-main-remotes"]
+reason = "Breakdown extends the audited placement-free task contract."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/shot-breakdown-nodes.test.ts"
+mode = "exclusive"
+reason = "Canvas output projection tests."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/shot-breakdown-lifecycle.test.ts"
+mode = "exclusive"
+reason = "Hydration reset and billing UI lifecycle contract tests."

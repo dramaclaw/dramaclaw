@@ -12,8 +12,12 @@ import {
   type GlobalErrorDialogDetail,
 } from "@/features/app/errorDialogEvents";
 import { FreezoneShell } from "@/features/freezone/FreezoneShell";
-import { canvasIdForFreezoneEntry } from "@/features/freezone/projections";
+import {
+  canvasIdForFreezoneEntry,
+  personalCanvasIdForUsername,
+} from "@/features/freezone/projections";
 import { useAllProjectSummaries } from "@/lib/queries/projects";
+import { useFreezoneCanvases } from "@/lib/queries/freezone";
 import { readLastCanvas, writeUrl } from "@/lib/url-params";
 import { useAuthStore } from "@/stores/auth-store";
 
@@ -57,6 +61,15 @@ function FreezoneProjectRoute() {
     [freezoneProjects, project],
   );
 
+  // 没有 ?canvas= 时要按「本项目实际有哪些画布」挑落点，而不是闭着眼用个人画布
+  // id（它只由用户名推出、跨项目相同，在没建过的项目里指向不存在的画布）。
+  // 查询键与 CanvasesTab 共用，react-query 会去重。
+  const needsCanvasList = Boolean(matchedProject);
+  const { data: projectCanvases, isLoading: canvasesLoading } = useFreezoneCanvases(
+    matchedProject?.id,
+    needsCanvasList,
+  );
+
   if (isLoading || !projects) {
     return (
       <div className="-m-6 flex h-[calc(100%+3rem)] items-center justify-center bg-bg-dark text-text-muted">
@@ -85,10 +98,61 @@ function FreezoneProjectRoute() {
     );
   }
 
+  // 列表还在路上就先等：先用错的 id 挂载、拿到列表再换，会让画布白挂载一次
+  // （整套 hydrate + 节点重挂）。深链同样要等——不先知道这张画布在不在本项目，
+  // 就只能把「不存在」渲染成一张白板，那正是要修掉的问题。
+  if (needsCanvasList && canvasesLoading) {
+    return (
+      <div className="-m-6 flex h-[calc(100%+3rem)] items-center justify-center bg-bg-dark text-text-muted">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-accent border-t-transparent" />
+      </div>
+    );
+  }
+
+  // 「上次打开的画布」要和本项目的画布列表核对：跨项目残留 / 已删除的 id 不能再
+  // 生效，否则一次错误落点会被 FreezoneShell 记回 localStorage，从此每次都错。
+  const remembered = readLastCanvas(matchedProject.id);
+  const rememberedExists =
+    remembered != null &&
+    (projectCanvases == null || projectCanvases.some((canvas) => canvas.id === remembered));
+
   const canvasId = canvasIdForFreezoneEntry({
-    explicitCanvasId: canvasParam ?? readLastCanvas(matchedProject.id),
+    explicitCanvasId: canvasParam ?? (rememberedExists ? remembered : null),
     username,
+    availableCanvases: projectCanvases,
   });
+
+  // 深链指向本项目没有的画布：直说，别渲染一张会让人以为数据丢了的白板。
+  // 个人画布例外——它是按需创建的，首次打开时本来就还没落盘。
+  const personalCanvasId = personalCanvasIdForUsername(username?.trim() || "user");
+  const canvasMissing =
+    Boolean(canvasParam) &&
+    canvasId !== personalCanvasId &&
+    canvasId !== "default" &&
+    projectCanvases != null &&
+    !projectCanvases.some((canvas) => canvas.id === canvasId);
+
+  if (canvasMissing) {
+    return (
+      <div className="-m-6 flex h-[calc(100%+3rem)] items-center justify-center bg-bg-dark">
+        <div className="max-w-md rounded-2xl border border-border-default bg-surface px-6 py-8 text-center">
+          <div className="mb-2 text-base font-medium text-text">{t("canvas.notFound")}</div>
+          <div className="mb-6 text-sm text-text-muted">
+            {t("canvas.notFoundDescriptionPrefix")}{" "}
+            <code className="rounded bg-bg-dark px-1 py-0.5">{canvasId}</code>
+            {t("canvas.notFoundDescriptionSuffix")}
+          </div>
+          <button
+            type="button"
+            onClick={() => writeUrl({ canvas: null }, { replace: true })}
+            className="rounded-lg bg-accent/90 px-4 py-2 text-sm text-white transition hover:bg-accent"
+          >
+            {t("canvas.backToProjectCanvas")}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <ReactFlowProvider>

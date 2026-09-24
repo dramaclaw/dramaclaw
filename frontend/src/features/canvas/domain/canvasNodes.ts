@@ -26,6 +26,7 @@ export const CANVAS_NODE_TYPES = {
   threeDWorld: 'threeDWorldNode',
   skill: 'skillNode',
   style: 'styleNode',
+  liblibMedia: 'liblibMediaNode',
 } as const;
 
 export type CanvasNodeType = (typeof CANVAS_NODE_TYPES)[keyof typeof CANVAS_NODE_TYPES];
@@ -74,6 +75,8 @@ export interface NodeDisplayData {
    * URL 不会出现在 store 或落库数据里；填回目标项目地址后字段即摘除。
    */
   assetMigration?: 'copying' | 'failed';
+  /** Original LibTV source facts; native media fields always point at local assets. */
+  liblibImport?: LiblibImportMetadata;
   [key: string]: unknown;
 }
 
@@ -132,6 +135,15 @@ export interface VideoNodeData extends NodeDisplayData {
   analysisResult?: string | null;
   analysisError?: string | null;
   isSeparatingAv?: boolean;
+  /** 逐帧拉片进行中。和 isAnalyzing 分开：两件事可以各跑各的。 */
+  isBreakingDown?: boolean;
+  breakdownError?: string | null;
+  /** DA3-derived grayscale depth reference video; not an RGB generation result. */
+  depthMotionRole?: 'depth_motion';
+  depthManifestUrl?: string | null;
+  depthSourceNodeId?: string | null;
+  /** Persisted job pointer so an in-flight capture can resume after canvas reload. */
+  depthPending?: { jobId: string; taskKey: string; taskType: 'freezone_depth_motion' } | null;
   // clip editor (libtv-style) ------------------------------------------------
   isClipMode?: boolean;
   clipStartMs?: number | null;
@@ -193,6 +205,44 @@ export interface VideoNodeData extends NodeDisplayData {
   upscaleResolution?: '1080p' | '2k' | '4k';
   /** 降噪强度。 */
   upscaleDenoise?: 'none' | '1x' | '2x';
+  // 片段重拍（libtv-style 片段重拍）------------------------------------------
+  // 重拍节点是「视频编辑」的一种专用形态：源视频从上游连线来，节点自己额外记着
+  // 用户在源视频时间轴上圈出的若干段，提交时把这些段展开成提示词。生成仍走
+  // videoEdit 那条路，不新增端点。
+  /** 标记此视频节点是「片段重拍」节点：额外展示区间选择条。 */
+  isRemakeNode?: boolean;
+  /** 待重拍的上游视频静态地址。结果回填前，胶片条靠它渲染。 */
+  remakeSourceUrl?: string;
+  /** 源视频时长（秒）。区间的每一条规则都以它为界，取不到就不该进重拍模式。 */
+  remakeSourceDurationSec?: number;
+  /** 圈出的重拍区间；空数组表示整段重拍。 */
+  remakeRanges?: {
+    id: string;
+    startSec: number;
+    endSec: number;
+    intent?: string;
+  }[];
+  // 智能续写（libtv-style 智能续写）----------------------------------------
+  // 续写和重拍不同：模型要的是一段**真的裁出来**的前置视频，不是一个时间区间。
+  // 所以源节点上先选区间、走剪辑管线裁出片段节点，再由片段节点连到续写节点。
+  /** 源视频节点正处于「选续写前置片段」状态。 */
+  continuationMode?: boolean;
+  /** 选区（秒）。模型接受 4–30 秒。 */
+  continuationRange?: { startSec: number; endSec: number };
+  /** 标记此节点是「智能续写」节点。 */
+  isContinuationNode?: boolean;
+  /**
+   * 续写绑定：这条续写续的是谁的哪一段。
+   *
+   * 存 id 不存快照——前置片段节点被删、连线被断、片段被换成别的视频之后，这份
+   * 绑定必须失效并要求重选，否则会拿着一个已经不存在的前提去生成。
+   */
+  continuationBinding?: {
+    sourceNodeId: string;
+    sourceEdgeId: string;
+    range: { startSec: number; endSec: number };
+    sourceVideoUrl: string;
+  };
   [key: string]: unknown;
 }
 
@@ -479,6 +529,16 @@ export interface AudioVoiceRef {
   voiceId?: string;
 }
 
+/** 音频截取/变速节点回指源节点的持久化契约。 */
+export interface AudioTransformBinding {
+  version: 1;
+  sourceNodeId: string;
+  sourceAudioUrl: string;
+  startMs: number;
+  endMs: number;
+  speed: number;
+}
+
 export interface AudioNodeData extends NodeDisplayData {
   audioUrl: string | null;
   sourceFileName?: string | null;
@@ -521,6 +581,8 @@ export interface AudioNodeData extends NodeDisplayData {
    * 卸载/重挂后仍能展示错误 + 重试，不会因组件重建而丢失。成功/开始时清空。
    */
   generationError?: string | null;
+  /** 本节点由哪条音频、哪个区间和速度派生；源被替换时仍可识别旧绑定。 */
+  audioTransform?: AudioTransformBinding | null;
   /** Transient: which format the download menu is currently transcoding to. */
   convertingAudioFormat?: 'mp3' | 'm4a' | 'wav' | null;
   [key: string]: unknown;
@@ -698,6 +760,84 @@ export interface StyleNodeData extends NodeDisplayData {
   styleTemplateId: string | null;
 }
 
+/** Import metadata retained beside a project-local native media node. */
+/**
+ * A LibTV node kind, keyed off `nodeList[].type` (1 text / 2 image / 3 video /
+ * 4 audio / 5 group) with `data.type` as the fallback. `other` is the forward
+ * compatible bucket for kinds LibTV adds later.
+ */
+export type LiblibNodeKind = 'image' | 'video' | 'audio' | 'text' | 'group' | 'other';
+
+export interface LiblibReference {
+  nodeId: string | null;
+  url: string | null;
+  thumbnailUrl?: string | null;
+  label: string;
+  /**
+   * `text` references carry no URL — they are upstream text nodes LibTV fed
+   * into a generation (`params.textList`). They are kept so the imported node
+   * still knows its full upstream order, which is what edge ordering reads.
+   */
+  mediaKind: 'image' | 'video' | 'audio' | 'text';
+  /** Body of a `text` reference. Unset for media references. */
+  text?: string;
+  durationSec?: number;
+}
+
+/**
+ * 一条没能本地保存、仍指向 LibTV 的素材。
+ *
+ * 这类素材在画布上**看着是正常的**（图能显示），但它喂不进本地模型、也不能当作
+ * 编辑的参考图，而且 LibTV 撤下就失效。不把它和本地素材区分开，用户只会以为是
+ * 随机故障，所以 reason 要一直带到界面上。
+ */
+export interface RemoteMediaRef {
+  url: string;
+  /** 后端给的原因码，见 canvasRemoteMedia.ts 的 REMOTE_MEDIA_REASON_KEYS。 */
+  reason: string;
+}
+
+export interface LiblibImportMetadata {
+  nodeKey: string;
+  sourceUrl: string | null;
+  importedLocalUrl: string | null;
+  importedPrompt: string;
+  originalModel: string;
+  /** Local catalog model assigned when this import was last refreshed. */
+  importedModel?: string | null;
+  references: LiblibReference[];
+  /** LibTV node kind this node was converted from. */
+  liblibKind?: LiblibNodeKind;
+  /** LibTV `data.action`, e.g. `text_generate` / `image_resource`. */
+  liblibAction?: string;
+  /** LibTV `parentKey` — the group this node belonged to, '' when top level. */
+  parentKey?: string | null;
+  /** Text body imported for a text node (`data.content`), so edits survive a refresh. */
+  importedContent?: string;
+  /** Node title imported from LibTV, so a local rename survives a refresh. */
+  importedDisplayName?: string;
+  /** 本节点里没能本地保存、仍走 LibTV 远端地址的素材。 */
+  remoteMedia?: RemoteMediaRef[];
+}
+
+export interface LiblibMediaNodeData extends NodeDisplayData {
+  mediaKind: 'image' | 'video' | 'audio' | 'other';
+  sourceUrl: string | null;
+  localUrl?: string | null;
+  imageUrl?: string | null;
+  previewImageUrl?: string | null;
+  videoUrl?: string | null;
+  posterUrl?: string | null;
+  audioUrl?: string | null;
+  prompt?: string;
+  model?: string;
+  references?: LiblibReference[];
+  liblibAction?: string;
+  liblibNodeKey?: string;
+  /** 兜底类型的节点同样要带导入元数据,否则「网络素材」标识对它们永远不亮。 */
+  liblibImport?: LiblibImportMetadata;
+}
+
 export type CanvasNodeData =
   | UploadImageNodeData
   | ExportImageNodeData
@@ -716,7 +856,8 @@ export type CanvasNodeData =
   | Pano360ViewerNodeData
   | ThreeDWorldNodeData
   | SkillNodeData
-  | StyleNodeData;
+  | StyleNodeData
+  | LiblibMediaNodeData;
 
 export type CanvasNode = Node<CanvasNodeData, CanvasNodeType>;
 export type VideoKeyframeSlot = 'first' | 'last';

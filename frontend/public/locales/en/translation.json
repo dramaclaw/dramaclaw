@@ -906,9 +906,16 @@
       "createTitle": "Create project canvas",
       "createBusy": "Creating",
       "createPlaceholder": "New canvas name",
+      "importTitle": "Import LibTV share canvas",
+      "import": "Import",
+      "importBusy": "Importing",
+      "importPlaceholder": "Paste a LibTV share canvas link",
+      "importCookieHint": "Login is read from {{file}} in the repository root and is not saved in the canvas",
       "createNameRequired": "Enter a canvas name.",
       "createDuplicate": "A canvas named \"{{name}}\" already exists.",
       "createFailed": "Failed to create canvas: {{message}}",
+      "currentSaveFailed": "The current canvas could not be saved. Try again shortly.",
+      "notFound": "Canvas not found.",
       "createLimitTitle": "Canvas limit reached",
       "createLimitReached": "You can create up to {{limit}} canvases per project. Delete one to make room.",
       "createQuotaUnknownTitle": "Canvas count not available yet",
@@ -977,7 +984,8 @@
         "audio": "Audio",
         "script": "Script",
         "world": "3D / Pano",
-        "skill": "Skill"
+        "skill": "Skill",
+        "liblib": "LibTV media"
       }
     },
     "projections": {
@@ -1099,7 +1107,11 @@
           "label": "Custom world",
           "title": "3D director world (custom)"
         }
-      }
+      },
+      "pickTitle": "Pick the asset to replace with “{{label}}”",
+      "pickHint": "Click a same-type asset to replace it, or press Esc to cancel",
+      "pickUnavailable": "This project has no mainline assets to replace",
+      "pickEmpty": "No same-type asset in this category to replace"
     },
     "nodeContext": {
       "mainlineAsset": "Mainline asset",
@@ -1755,7 +1767,8 @@
     "tasks": "Task Center",
     "taskCenter": "Task Center",
     "aiAssistant": "Xia Director",
-    "freezone": "Freezone"
+    "freezone": "Freezone",
+    "story": "Story"
   },
   "characters": {
     "title": "Characters",
@@ -2252,6 +2265,41 @@
     "name": "Project Name",
     "namePlaceholder": "Enter your project name",
     "clearName": "Clear project name",
+    "createDescription": "Create an empty project, or paste a LibTV shared-canvas link to import editable nodes",
+    "liblibLink": "LibTV shared-canvas link (optional)",
+    "liblibLinkRequired": "LibTV shared-canvas link",
+    "liblibLinkPlaceholder": "https://www.liblib.tv/canvas/share?...",
+    "liblibLinkHint": "The import downloads images, videos, and audio locally and preserves prompts and references.",
+    "liblibLinkInvalid": "Enter a valid LibTV shared-canvas link",
+    "liblibErrors": {
+      "invalid_share_url": "Enter a valid LibTV shared-canvas link.",
+      "response_mismatch": "The LibTV response does not match the shared canvas.",
+      "response_missing_graph": "The LibTV canvas is missing node or connection data.",
+      "empty_graph": "The LibTV canvas has no importable nodes.",
+      "canvas_conflict": "Canvas {{canvasId}} already exists and was not imported from LibTV.",
+      "invalid_liblib_share_url": "Enter a valid LibTV shared-canvas link.",
+      "liblib_cookie_missing": "Add the local LibTV login file before importing.",
+      "liblib_cookie_invalid": "The local LibTV login file is invalid.",
+      "liblib_unavailable": "LibTV could not be reached. Try again shortly.",
+      "liblib_detail_too_large": "This LibTV canvas exceeds the import size limit.",
+      "liblib_invalid_response": "LibTV returned canvas data that could not be read.",
+      "liblib_unauthorized": "The local LibTV login has expired. Update it and retry.",
+      "liblib_remote_error": "LibTV could not read this shared canvas.",
+      "liblib_project_mismatch": "The LibTV response does not match the shared canvas.",
+      "liblib_not_copyable": "This LibTV canvas does not allow copying.",
+      "invalid_localize_request": "No remote assets were supplied for localization.",
+      "liblib_media_too_large": "A LibTV asset exceeds the local import limit.",
+      "liblib_media_empty": "LibTV returned an empty asset.",
+      "liblib_media_type_invalid": "A LibTV asset is not a supported image, video, or audio file.",
+      "liblib_media_unavailable": "A LibTV asset could not be downloaded. Try again shortly.",
+      "unexpected": "The LibTV canvas could not be imported. Check the link and local login, then retry."
+    },
+    "liblibImporting": "Creating and importing media…",
+    "liblibReimportTitle": "Import or update a LibTV canvas",
+    "liblibReimportDescription": "Import a shared canvas into “{{name}}”. The same link updates its existing canvas; a new link creates another canvas.",
+    "liblibReimportHint": "Media is downloaded into this project. Locally edited prompts, model choices, and generated results are preserved.",
+    "liblibReimportSubmit": "Import and open",
+    "missingCreatedProjectId": "The server did not return the new project ID",
     "nameNoChinese": "Project name cannot contain Chinese characters.",
     "nameTooLong": "Project name must be at most 64 characters long.",
     "nameInvalid": "Project name can only contain letters, numbers, and underscores.",
@@ -2325,6 +2373,8 @@
     "actions": {
       "open": "Open",
       "openFreezone": "Open in Freezone",
+      "importLiblib": "Import or update LibTV",
+      "importLiblibShort": "Update LibTV",
       "share": "Share",
       "archive": "Archive…",
       "unarchive": "Unarchive",
@@ -2350,12 +2400,15 @@
     },
     "toasts": {
       "createFailed": "Failed to create project. Check the name or try again later.",
+      "liblibImportSucceeded": "Imported the LibTV canvas into “{{name}}”",
+      "liblibImportFailed": "The project was created, but the LibTV canvas import failed: {{message}}. You can retry from the canvas menu inside the project.",
       "archived": "Archived \"{{name}}\"",
       "unarchived": "Unarchived \"{{name}}\"",
       "deleted": "Moved \"{{name}}\" to Trash",
       "restored": "Restored \"{{name}}\"",
       "purged": "Permanently deleted \"{{name}}\"",
-      "undo": "Undo"
+      "undo": "Undo",
+      "liblibImportSkippedMedia": "{{count}} asset(s) could not be saved locally and still load from LibTV; they break if LibTV removes them."
     },
     "title": "Projects",
     "newProject": "New Project",
@@ -2425,7 +2478,11 @@
       "editor": "Editor",
       "admin": "Admin",
       "owner": "Owner"
-    }
+    },
+    "liblibImportRecoveryTitle": "Project \"{{name}}\" was created, but the canvas import failed:",
+    "liblibImportRecoveryHint": "No need to create another project — retry into this one, or open it and continue manually.",
+    "liblibImportRecoveryRetry": "Retry import",
+    "liblibImportRecoveryOpen": "Open project"
   },
   "assets": {
     "common": {
@@ -3027,6 +3084,7 @@
       "freezone_video_erase": "Erase from video",
       "freezone_video_upscale": "Upscale video",
       "freezone_audio_separate": "Separate audio",
+      "freezone_audio_transform": "Trim / change audio speed",
       "freezone_video_compose": "Compose video",
       "freezone_text_translate": "Translate subtitles",
       "freezone_text_generate": "AI text generation",
@@ -3117,6 +3175,10 @@
       "props": {
         "perEpisode": "Props are generated per episode"
       },
+      "audioTransform": {
+        "start": "Processing audio",
+        "complete": "Audio processing complete"
+      },
       "started": "Task started",
       "cancelled": "Task cancelled"
     },
@@ -3132,6 +3194,9 @@
       "source": {
         "loading": "Loading source text from file...",
         "loaded": "Source text loaded: {{charCount}} characters"
+      },
+      "audioTransform": {
+        "failed": "Error: {{error}}"
       },
       "pipeline": {
         "legacyRecall": "Rule-based recall sanity check found {{sceneCount}} scene blocks: {{sceneNames}}"
@@ -4668,7 +4733,8 @@
       "addNode": "Add Node",
       "undo": "Undo",
       "redo": "Redo",
-      "paste": "Paste"
+      "paste": "Paste",
+      "replaceAsset": "Replace asset…"
     },
     "assetLibrary": {
       "title": "Asset Library",
@@ -5189,6 +5255,49 @@
       "arrangeVertical": "Vertical",
       "commitHint": "Write this node's content back to the mainline asset"
     },
+    "creativeIntro": {
+      "title": "Creative intro",
+      "description": "Pick a frame and title style. Confirming creates an inspectable workflow without spending compute.",
+      "frame": "Opening frame",
+      "frameTime": "{{current}}s / {{duration}}s",
+      "workTitle": "Title",
+      "titlePlaceholder": "Enter the exact title that should appear on screen",
+      "designStyle": "Title design",
+      "motionStyle": "Text motion",
+      "blendOriginal": "Blend into a 5-second source clip",
+      "blendModelsLoading": "Checking for a model that accepts both image and video references…",
+      "blendTooShort": "The source video is shorter than five seconds, so a fixed blend clip cannot be created.",
+      "blendUnsupported": "No model in the current catalog explicitly accepts both image and video references. Blending is disabled.",
+      "blendReady": "Uses {{model}} in all-reference mode. You still confirm final generation on the motion node.",
+      "blendRange": "Source range (fixed at 5 seconds)",
+      "blendRangeValue": "{{start}}s–{{end}}s · keyframe at {{offset}}s inside the clip",
+      "previewBlend": "Preview these 5 seconds",
+      "stopBlendPreview": "Stop preview",
+      "blendNoChargeHint": "Confirming first renders a real five-second excerpt with the local editing task, then creates a motion node with both title-image and source-video references. Clipping has no provider generation charge; title-image and final-video generation remain explicit actions.",
+      "creatingBlendClip": "Rendering 5-second source clip…",
+      "noChargeHint": "This creates downstream keyframe, title-design, and five-second motion nodes. Generate the title image first, then explicitly submit the motion node.",
+      "createWorkflow": "Create intro workflow",
+      "created": "Intro workflow created; no generation has started",
+      "createFailed": "Could not create the intro workflow",
+      "keyframeNode": "Intro keyframe",
+      "designNode": "Title design",
+      "motionNode": "Opening motion · 5s",
+      "blendClipNode": "Opening source clip · 5s",
+      "styles": {
+        "minimal": "Minimal premium",
+        "chineseCalligraphy": "Chinese calligraphy",
+        "literaryHandwriting": "Literary handwriting",
+        "anime": "High-energy anime",
+        "cyberpunk": "Cyber sci-fi",
+        "gothicFantasy": "Gothic fantasy",
+        "blurFade": "Blur fade-in",
+        "particles": "Dynamic particles",
+        "glitch": "Glitch reveal",
+        "handwriting": "Written strokes",
+        "assemble": "Animated assembly",
+        "impact": "Impact entrance"
+      }
+    },
     "style": {
       "chip": "Style",
       "chipLoading": "Style · loading",
@@ -5366,7 +5475,7 @@
     "assetReplace": {
       "dropToReplace": "Release to replace this asset",
       "dragHint": "Drag onto a same-type asset on the left to replace it",
-      "handleHint": "Hold and drag onto the asset library to replace a same-type asset",
+      "handleHint": "Click, or drag to the asset library, to replace a same-type asset",
       "handleLabel": "Replace asset"
     },
     "reference": {
@@ -5414,6 +5523,39 @@
     },
     "assetDrop": {
       "fallbackNodeLabel": "Node"
+    },
+    "notFound": "Canvas not found",
+    "notFoundDescriptionPrefix": "This project has no canvas",
+    "notFoundDescriptionSuffix": ". It may belong to another project, or it was deleted.",
+    "backToProjectCanvas": "Go to this project's canvas",
+    "remoteMedia": {
+      "badge": "Remote asset",
+      "title": "{{count}} asset(s) not saved locally, still loaded from LibTV:",
+      "consequence": "Remote assets cannot be fed to local models or used as reference images, and break if LibTV removes them.",
+      "reason": {
+        "internalHost": "The asset URL points to an internal address; not downloaded for safety.",
+        "notHttps": "The asset URL is not HTTPS; not downloaded.",
+        "hasCredentials": "The asset URL carries credentials; not downloaded.",
+        "badUrl": "The asset URL is malformed.",
+        "unsupportedFileType": "This file type cannot be saved locally yet.",
+        "tooManyAssets": "The canvas exceeds the local asset count limit.",
+        "totalSizeLimit": "The canvas exceeds the total local asset size limit.",
+        "mediaTooLarge": "A single asset exceeds the local size limit.",
+        "mediaEmpty": "The origin returned an empty file.",
+        "mediaTypeInvalid": "The origin did not return an image/video/audio file.",
+        "mediaUnavailable": "Download from the origin failed (timeout, rate limit, or removed).",
+        "unknown": "Could not be saved locally (reason unknown)."
+      },
+      "localize": {
+        "label": "Localize assets",
+        "pending": "{{count}} assets not localized",
+        "running": "Localizing…",
+        "done": "Localized {{count}} assets",
+        "partial": "Localized {{done}}, {{failed}} still could not be saved",
+        "none": "No assets need localizing",
+        "failed": "Localizing failed: {{message}}",
+        "hint": "Download assets still served from LibTV so they can feed local models or act as references."
+      }
     }
   },
   "tool": {
@@ -5503,10 +5645,59 @@
       "subtitleRemovalBox": "Box-select erase",
       "fullscreen": "Fullscreen",
       "notImplementedYet": "Coming soon",
-      "requiresVideo": "Upload a video first"
+      "requiresVideo": "Upload a video first",
+      "shotBreakdown": "Shot Breakdown",
+      "breakdownEmpty": "The breakdown produced no usable assets",
+      "segmentRemake": "Segment remake",
+      "continuation": "Continue video",
+      "recreate": "Recreate",
+      "creativeIntro": "Creative intro",
+      "creativeIntroHint": "Pick a keyframe and create title-design and five-second motion nodes",
+      "remoteMediaBlocked": "This asset still lives on LibTV — localize it first"
     },
     "audio": {
       "requiresAudio": "No audio to download yet",
+      "trim": "Trim audio",
+      "speed": "Change speed",
+      "smartSplit": "Smart split",
+      "customSplit": "Custom split",
+      "derivedHint": "The source stays unchanged. Confirming creates a downstream audio node.",
+      "splitDerivedHint": "Review the plan first. Confirming creates one independent downstream node per segment and keeps the source unchanged.",
+      "silenceThreshold": "Silence (dB)",
+      "minSilence": "Min silence (s)",
+      "minSegment": "Min segment (s)",
+      "analyzeSplit": "Analyze segments",
+      "customCutPoints": "Cut points (seconds)",
+      "customCutPointsPlaceholder": "Example: 12.5, 30, 48.2",
+      "analysisFailed": "Split analysis failed. Adjust the settings and try again.",
+      "splitLimited": "Too many cuts were found; the preview was evenly merged to at most 24 segments.",
+      "noSplitDetected": "No usable cut point was found. Lower the threshold or minimum silence.",
+      "segmentCount": "{{count}} segments",
+      "createSegments": "Create {{count}} segments",
+      "splitStarted": "Creating {{count}} split segments in order",
+      "splitPartialFailed": "{{count}} segments could not be submitted; the others are still processing.",
+      "splitSubmitFailed": "No split task could be submitted",
+      "splitValidation": {
+        "duration-unknown": "Audio duration is not available yet",
+        "points-required": "Enter at least one cut point",
+        "invalid-point": "Cut points must be greater than 0 and shorter than the audio duration",
+        "range-too-short": "Adjacent cut points must be at least 0.1 seconds apart",
+        "too-many-segments": "You can create up to 24 segments"
+      },
+      "startTime": "Start time (sec)",
+      "endTime": "End time (sec)",
+      "speedValue": "Playback speed",
+      "createDerived": "Create audio",
+      "remoteMediaBlocked": "Localize this remote audio before processing it",
+      "busy": "This audio is already being processed",
+      "durationRequired": "Load the audio duration before processing",
+      "transformFailed": "Audio processing failed",
+      "validation": {
+        "duration-unknown": "Audio duration is not available yet",
+        "invalid-range": "Enter a valid start and end time",
+        "range-too-short": "The selected range must be at least 0.1 seconds",
+        "invalid-speed": "Speed must be between 0.5× and 2×"
+      },
       "downloadAs": "Download as {{format}}",
       "m4aSourceOnlyHint": "m4a source only",
       "m4aSourceOnly": "Source isn't m4a, so it can't be converted to m4a",
@@ -5987,6 +6178,16 @@
       }
     },
     "videoNode": {
+      "depth": {
+        "open": "Frame analysis",
+        "title": "Depth motion capture · Depth Anything 3",
+        "description": "Derive a near-white/far-black relative depth video at the source frame rate. Creates a separate canvas reference node. The server needs a configured DA3-Small model.",
+        "submit": "Extract depth",
+        "busy": "Capturing frame depth…",
+        "badge": "Depth reference · DA3",
+        "resultName": "Depth motion reference",
+        "noUrl": "Depth capture completed without a video URL"
+      },
       "uploading": "Uploading...",
       "generating": "Generating...",
       "noVideo": "No video",
@@ -6113,7 +6314,8 @@
         "failed": "Clip failed: {{detail}}"
       },
       "videoEdit": {
-        "imageLimit": "Video editing supports at most {{limit}} reference images; the first {{limit}} were used ({{ignored}} ignored)"
+        "imageLimit": "Video editing supports at most {{limit}} reference images; the first {{limit}} were used ({{ignored}} ignored)",
+        "sourceFallbackLabel": "source video"
       },
       "allReference": {
         "happyHorseUnsupported": "HappyHorse doesn’t support omni reference. Switch to text-to-video or image-to-video.",
@@ -6415,7 +6617,8 @@
       "pano360ViewerNode": "360° panorama viewer",
       "threeDWorldNode": "3D world",
       "skillNode": "Skill",
-      "styleNode": "Style"
+      "styleNode": "Style",
+      "liblibMediaNode": "LibTV media"
     },
     "exportResult": {
       "generic": "Result image",
@@ -6520,7 +6723,17 @@
         "videoUpstreamAllRefOrEdit": "With video upstream, only “All reference” or “Video edit” are available",
         "videoUpstreamAllRefOnly": "With video upstream, only “All reference” is available",
         "hasImageOrAudioRefs": "Unavailable while image/audio assets are referenced",
-        "moreThanTwoImages": "Unavailable with more than 2 upstream images"
+        "moreThanTwoImages": "Unavailable with more than 2 upstream images",
+        "h3MediaConnected": "Assets are connected; choose the matching H3 reference mode",
+        "h3UseAllReferenceForMixed": "Use “All reference” when mixing images with video or audio",
+        "h3ImageExactlyOne": "H3 “Image to video” requires exactly 1 image",
+        "h3FirstLastExactlyTwo": "H3 “First/last frame” requires exactly 2 images",
+        "h3NeedReference": "H3 “All reference” requires at least 1 reference asset",
+        "h3MaxImages": "H3 “All reference” supports at most {{count}} images",
+        "h3MaxVideos": "H3 “All reference” supports at most {{count}} videos",
+        "h3MaxAudios": "H3 “All reference” supports at most {{count}} audio clips",
+        "h3UnsupportedMode": "MiniMax H3 does not support this mode",
+        "h3PromptRequired": "Every MiniMax H3 mode requires a prompt"
       }
     },
     "threeDWorld": {
@@ -6553,6 +6766,45 @@
       "directorCaptureSizeFailed": "Could not read the director world capture dimensions",
       "directorElement": "Director element",
       "directorExportLabel": "Director world export"
+    },
+    "videoRemake": {
+      "nodeTitle": "Segment remake",
+      "title": "Segment remake",
+      "exit": "Exit remake",
+      "rangeCount": "{{selected}}/{{max}} selected",
+      "intentPlaceholder": "Describe how this segment should change",
+      "wholeHint": "Click the timeline to mark a segment to remake. With none marked the whole video is remade — leave the prompt empty to simply run it again.",
+      "selectHint": "Pick a segment to describe it, or click an empty stretch to mark another",
+      "remove": "Remove this segment",
+      "dragStart": "Drag to move the start",
+      "dragEnd": "Drag to move the end",
+      "framesLoading": "Extracting frames…",
+      "framesFailed": "Frame extraction failed (likely CORS); you can still mark segments",
+      "durationLimit": "Segment remake needs a source video of at least 4 seconds",
+      "submitBlocked": "These segments cannot be submitted yet — fix what the panel flags first",
+      "sourceToken": "this video",
+      "error": {
+        "sourceTooShort": "The source video is under {{min}}s, too short to remake",
+        "tooManyRanges": "At most {{max}} segments",
+        "outOfBounds": "A segment falls outside the video",
+        "rangeTooShort": "A segment cannot be shorter than {{min}}s",
+        "rangeTooLong": "A segment cannot be longer than {{max}}s",
+        "overlap": "Segments cannot overlap",
+        "gapTooShort": "What is left between segments is under {{min}}s and cannot stand on its own"
+      },
+      "modelUnsupported": "None of the available models support video editing, so remake and continuation are unavailable",
+      "clearAll": "Clear selected segments"
+    },
+    "videoContinuation": {
+      "nodeTitle": "Continuation",
+      "clipDisplayName": "Continuation prefix",
+      "selectSegment": "Pick the segment to continue from",
+      "selectedDuration": "{{seconds}}s",
+      "exit": "Exit continuation",
+      "confirm": "Confirm",
+      "hint": "Confirming cuts this segment as the premise, then generates what follows it",
+      "durationHint": "The segment must be between {{min}} and {{max}} seconds",
+      "bindingBroken": "The prefix clip changed or was deleted — pick the segment again"
     }
   },
   "viewer": {
@@ -7018,6 +7270,21 @@
       "statusActive": "Active",
       "gatewayWarningIconLabel": "Model gateway is not configured",
       "gatewayNotConfiguredImpact": "The active model gateway is not configured. Text, image, video, and audio model calls will fail; configure the official channel or initialize Local NewAPI before generating content.",
+      "localRouter": {
+        "title": "Local model router is enabled",
+        "description": "This setup does not need a local NewAPI database. Keys and workflows live outside the source tree, so project updates do not replace them.",
+        "running": "Running",
+        "image": "Images",
+        "imageDescription": "Local ComfyUI · text to image, image to image",
+        "text": "Text",
+        "textDescription": "SiliconFlow · DeepSeek-V4-Flash",
+        "embedding": "Embedding",
+        "embeddingDescription": "SiliconFlow · BAAI/bge-m3",
+        "voice": "Speech synthesis",
+        "voiceDescription": "SiliconFlow · CosyVoice2-0.5B",
+        "address": "Router address: {{address}}",
+        "disconnected": "Not connected"
+      },
       "modes": {
         "official": "Official",
         "custom": "Custom",
@@ -7754,5 +8021,121 @@
     "reload": "Reload",
     "statusUnknown": "Can't confirm feature availability right now. Please try again later.",
     "unavailableTitle": "Feature unavailable"
+  },
+  "story": {
+    "save": "Save",
+    "saved": "Saved",
+    "unsaved": "Unsaved",
+    "errors": {
+      "invalidDocId": "The document ID is invalid.",
+      "missingContent": "Document content is required.",
+      "docTooLarge": "The document exceeds the size limit.",
+      "docConflict": "This document changed elsewhere. Refresh and try again.",
+      "missingPrompt": "A prompt is required.",
+      "promptTooLong": "The prompt exceeds the length limit.",
+      "writeFailedDetail": "Model generation failed: {{detail}}"
+    },
+    "step": {
+      "bible": {
+        "title": "Story Bible",
+        "hint": "Series-wide constraints. Everything set here is injected into every later step."
+      },
+      "plan": {
+        "title": "Creative Plan",
+        "hint": "Title, three-act structure, rhythm curve, paywall beats, satisfaction spread.",
+        "placeholder": "Three-act structure, rhythm curve, paywall planning…"
+      },
+      "characters": {
+        "title": "Characters",
+        "hint": "Profiles, relationships, arcs and the four-tier villain system. Cast locks take priority.",
+        "placeholder": "Character profiles, relationship map, arcs, villain tiers…"
+      },
+      "outline": {
+        "title": "Episode Outline",
+        "hint": "One line per episode. Structure locks take priority.",
+        "placeholder": "Ep 1: Title — core conflict in one line"
+      },
+      "episodes": {
+        "title": "Episode Drafts",
+        "hint": "Write in the hand-off format; each episode is validated as you go."
+      },
+      "compile": {
+        "title": "Compile",
+        "hint": "Assemble the importable screenplay and validate its format."
+      }
+    },
+    "bible": {
+      "locks": {
+        "title": "Global Locks",
+        "hint": "Injected into every generation. Principles, not plot.",
+        "positioning": "Core positioning",
+        "era": "Era and texture",
+        "dialogueStyle": "Dialogue style",
+        "toneRules": "Tone rules, one per line"
+      },
+      "blacklist": {
+        "title": "Blacklist",
+        "hint": "One per line. Injected into generation and used for self-checks.",
+        "placeholder": "No lovesick protagonist\nNo idol-drama tropes"
+      },
+      "cast": {
+        "title": "Cast Locks",
+        "hint": "When filled, generation follows these instead of inventing.",
+        "name": "Name",
+        "bind": "Bound stage",
+        "arc": "Arc in one line",
+        "mustHave": "Required signature scenes",
+        "add": "Add cast lock"
+      },
+      "structure": {
+        "title": "Structure Locks",
+        "hint": "Drives how the outline is ordered.",
+        "stage": "Stage",
+        "plot": "Main event",
+        "bind": "Bound character",
+        "tone": "Emotional tone",
+        "add": "Add structure lock",
+        "notes": "Extra requirements for this stage (follows the stage, survives re-ordering)"
+      }
+    },
+    "episodes": {
+      "item": "Episode {{number}}",
+      "add": "Add episode",
+      "title": "Episode title",
+      "empty": "No drafts yet — add an episode",
+      "bodyPlaceholder": "1-1  Location  NIGHT  INT\nCharacters: …",
+      "noStage": "No stage"
+    },
+    "compile": {
+      "status": {
+        "standard": "Format valid — ready to import",
+        "repairable": "Repairable — import will downgrade",
+        "missing": "No scene headers — import will be rejected"
+      },
+      "summary": "{{episodes}} episodes · {{standard}}/{{total}} scenes valid",
+      "sceneCount": "{{standard}}/{{total}} scenes valid",
+      "issue": {
+        "missingTimeOfDay": "missing time of day",
+        "missingInteriorExterior": "missing INT/EXT",
+        "missingLocation": "missing location",
+        "missingCharacterLine": "missing character line"
+      },
+      "issueLine": "Line {{line}}: {{reason}}",
+      "moreIssues": "{{count}} more not shown",
+      "preview": "Preview",
+      "hidePreview": "Hide preview",
+      "copy": "Copy screenplay",
+      "copied": "Copied",
+      "copyFailed": "Copy failed",
+      "emptyPreview": "Nothing to compile yet",
+      "import": "Import to pipeline",
+      "imported": "Import started",
+      "importFailed": "Import failed",
+      "importHint": "Importing writes the project source text and starts indexing. You can also copy and import it from Ingest."
+    },
+    "askAssistant": "Polish with AI",
+    "write": "Generate",
+    "written": "Generated — remember to save",
+    "writeFailed": "Generation failed"
   }
 }

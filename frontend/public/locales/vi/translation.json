@@ -906,9 +906,16 @@
       "createTitle": "Tạo canvas cho dự án",
       "createBusy": "Đang tạo",
       "createPlaceholder": "Tên canvas mới",
+      "importTitle": "Nhập canvas chia sẻ LibTV",
+      "import": "Nhập",
+      "importBusy": "Đang nhập",
+      "importPlaceholder": "Dán liên kết canvas chia sẻ LibTV",
+      "importCookieHint": "Thông tin đăng nhập được đọc từ {{file}} ở thư mục gốc và không lưu trong canvas",
       "createNameRequired": "Hãy nhập tên canvas.",
       "createDuplicate": "Đã có canvas tên \"{{name}}\".",
       "createFailed": "Tạo canvas thất bại: {{message}}",
+      "currentSaveFailed": "Không thể lưu canvas hiện tại. Hãy thử lại sau.",
+      "notFound": "Không tìm thấy canvas.",
       "createLimitTitle": "Đã chạm giới hạn canvas",
       "createLimitReached": "Mỗi dự án tạo được tối đa {{limit}} canvas. Xoá bớt một cái để có chỗ.",
       "createQuotaUnknownTitle": "Chưa đếm được số canvas",
@@ -977,7 +984,8 @@
         "audio": "Âm thanh",
         "script": "Kịch bản",
         "world": "3D / Panorama",
-        "skill": "Kỹ năng"
+        "skill": "Kỹ năng",
+        "liblib": "Tài nguyên LibTV"
       }
     },
     "projections": {
@@ -1099,7 +1107,11 @@
           "label": "Thế giới tuỳ chỉnh",
           "title": "Thế giới đạo diễn 3D (tuỳ chỉnh)"
         }
-      }
+      },
+      "pickTitle": "Chọn tài nguyên để thay bằng “{{label}}”",
+      "pickHint": "Nhấp vào một tài nguyên cùng loại để thay thế, hoặc nhấn Esc để hủy",
+      "pickUnavailable": "Dự án này không có tài nguyên mainline để thay thế",
+      "pickEmpty": "Không có tài nguyên cùng loại trong danh mục này để thay thế"
     },
     "nodeContext": {
       "mainlineAsset": "Asset luồng chính",
@@ -1659,7 +1671,8 @@
     "tasks": "Trung tâm tác vụ",
     "taskCenter": "Trung tâm tác vụ",
     "aiAssistant": "Xia Director",
-    "freezone": "Freezone"
+    "freezone": "Freezone",
+    "story": "Story"
   },
   "characters": {
     "title": "Nhân vật",
@@ -2156,6 +2169,41 @@
     "name": "Tên dự án",
     "namePlaceholder": "Nhập tên dự án của bạn",
     "clearName": "Xoá tên dự án",
+    "createDescription": "Tạo dự án trống hoặc dán liên kết canvas được chia sẻ từ LibTV để nhập các nút có thể chỉnh sửa",
+    "liblibLink": "Liên kết canvas LibTV được chia sẻ (không bắt buộc)",
+    "liblibLinkRequired": "Liên kết canvas LibTV được chia sẻ",
+    "liblibLinkPlaceholder": "https://www.liblib.tv/canvas/share?...",
+    "liblibLinkHint": "Quá trình nhập sẽ tải hình ảnh, video và âm thanh về máy, đồng thời giữ lại câu lệnh và quan hệ tham chiếu.",
+    "liblibLinkInvalid": "Nhập liên kết canvas LibTV được chia sẻ hợp lệ",
+    "liblibErrors": {
+      "invalid_share_url": "Nhập liên kết canvas LibTV được chia sẻ hợp lệ.",
+      "response_mismatch": "Dữ liệu LibTV không khớp với canvas được chia sẻ.",
+      "response_missing_graph": "Canvas LibTV thiếu dữ liệu nút hoặc kết nối.",
+      "empty_graph": "Canvas LibTV không có nút nào có thể nhập.",
+      "canvas_conflict": "Canvas {{canvasId}} đã tồn tại và không được nhập từ LibTV.",
+      "invalid_liblib_share_url": "Nhập liên kết canvas LibTV được chia sẻ hợp lệ.",
+      "liblib_cookie_missing": "Hãy thêm tệp đăng nhập LibTV cục bộ trước khi nhập.",
+      "liblib_cookie_invalid": "Tệp đăng nhập LibTV cục bộ không hợp lệ.",
+      "liblib_unavailable": "Không thể kết nối LibTV. Hãy thử lại sau.",
+      "liblib_detail_too_large": "Canvas LibTV này vượt quá giới hạn kích thước nhập.",
+      "liblib_invalid_response": "LibTV trả về dữ liệu canvas không thể đọc.",
+      "liblib_unauthorized": "Phiên đăng nhập LibTV cục bộ đã hết hạn. Hãy cập nhật rồi thử lại.",
+      "liblib_remote_error": "LibTV không thể đọc canvas được chia sẻ này.",
+      "liblib_project_mismatch": "Dữ liệu LibTV không khớp với canvas được chia sẻ.",
+      "liblib_not_copyable": "Canvas LibTV này không cho phép sao chép.",
+      "invalid_localize_request": "Không có tài nguyên từ xa nào để tải về máy.",
+      "liblib_media_too_large": "Một tài nguyên LibTV vượt quá giới hạn nhập cục bộ.",
+      "liblib_media_empty": "LibTV trả về một tài nguyên trống.",
+      "liblib_media_type_invalid": "Một tài nguyên LibTV không phải ảnh, video hoặc âm thanh được hỗ trợ.",
+      "liblib_media_unavailable": "Không thể tải một tài nguyên LibTV. Hãy thử lại sau.",
+      "unexpected": "Không thể nhập canvas LibTV. Hãy kiểm tra liên kết và đăng nhập cục bộ rồi thử lại."
+    },
+    "liblibImporting": "Đang tạo và nhập nội dung…",
+    "liblibReimportTitle": "Nhập hoặc cập nhật canvas LibTV",
+    "liblibReimportDescription": "Nhập canvas được chia sẻ vào “{{name}}”. Cùng một liên kết sẽ cập nhật canvas hiện có; liên kết mới sẽ tạo canvas khác.",
+    "liblibReimportHint": "Nội dung sẽ được tải vào dự án này. Câu lệnh, lựa chọn mô hình và kết quả đã chỉnh sửa cục bộ sẽ được giữ lại.",
+    "liblibReimportSubmit": "Nhập và mở",
+    "missingCreatedProjectId": "Máy chủ không trả về ID dự án mới",
     "nameNoChinese": "Tên dự án không được chứa ký tự tiếng Trung.",
     "nameTooLong": "Tên dự án dài tối đa 64 ký tự.",
     "nameInvalid": "Tên dự án chỉ được chứa chữ cái, chữ số và dấu gạch dưới.",
@@ -2229,6 +2277,8 @@
     "actions": {
       "open": "Mở",
       "openFreezone": "Mở trong Freezone",
+      "importLiblib": "Nhập hoặc cập nhật LibTV",
+      "importLiblibShort": "Cập nhật LibTV",
       "share": "Chia sẻ",
       "archive": "Lưu trữ…",
       "unarchive": "Bỏ lưu trữ",
@@ -2254,12 +2304,15 @@
     },
     "toasts": {
       "createFailed": "Tạo dự án thất bại. Kiểm tra lại tên hoặc thử lại sau.",
+      "liblibImportSucceeded": "Đã nhập canvas LibTV vào “{{name}}”",
+      "liblibImportFailed": "Dự án đã được tạo nhưng không thể nhập canvas LibTV: {{message}}. Bạn có thể thử lại từ menu canvas trong dự án.",
       "archived": "Đã lưu trữ \"{{name}}\"",
       "unarchived": "Đã bỏ lưu trữ \"{{name}}\"",
       "deleted": "Đã chuyển \"{{name}}\" vào Thùng rác",
       "restored": "Đã khôi phục \"{{name}}\"",
       "purged": "Đã xoá vĩnh viễn \"{{name}}\"",
-      "undo": "Hoàn tác"
+      "undo": "Hoàn tác",
+      "liblibImportSkippedMedia": "{{count}} tài nguyên không thể lưu cục bộ và vẫn tải từ LibTV; chúng sẽ hỏng nếu LibTV gỡ bỏ."
     },
     "title": "Dự án",
     "newProject": "Dự án mới",
@@ -2329,7 +2382,11 @@
       "editor": "Người sửa",
       "admin": "Quản trị",
       "owner": "Chủ sở hữu"
-    }
+    },
+    "liblibImportRecoveryTitle": "Dự án \"{{name}}\" đã được tạo, nhưng nhập canvas thất bại:",
+    "liblibImportRecoveryHint": "Không cần tạo dự án khác — thử lại vào dự án này, hoặc mở nó và xử lý thủ công.",
+    "liblibImportRecoveryRetry": "Thử nhập lại",
+    "liblibImportRecoveryOpen": "Mở dự án"
   },
   "assets": {
     "common": {
@@ -2931,6 +2988,7 @@
       "freezone_video_erase": "Xoá vật thể khỏi video",
       "freezone_video_upscale": "Upscale video",
       "freezone_audio_separate": "Tách âm thanh",
+      "freezone_audio_transform": "Cắt / đổi tốc độ âm thanh",
       "freezone_video_compose": "Dựng video",
       "freezone_text_translate": "Dịch phụ đề",
       "freezone_text_generate": "AI tạo văn bản",
@@ -3021,6 +3079,10 @@
       "props": {
         "perEpisode": "Đạo cụ được tạo theo từng tập"
       },
+      "audioTransform": {
+        "start": "Đang xử lý âm thanh",
+        "complete": "Xử lý âm thanh hoàn tất"
+      },
       "started": "Tác vụ đã bắt đầu",
       "cancelled": "Tác vụ đã huỷ"
     },
@@ -3036,6 +3098,9 @@
       "source": {
         "loading": "Đang nạp văn bản gốc từ file...",
         "loaded": "Đã nạp văn bản gốc: {{charCount}} ký tự"
+      },
+      "audioTransform": {
+        "failed": "Lỗi: {{error}}"
       },
       "pipeline": {
         "legacyRecall": "Kiểm tra đối chứng theo luật tìm được {{sceneCount}} khối cảnh: {{sceneNames}}"
@@ -4572,7 +4637,8 @@
       "addNode": "Thêm node",
       "undo": "Hoàn tác",
       "redo": "Làm lại",
-      "paste": "Dán"
+      "paste": "Dán",
+      "replaceAsset": "Thay tài nguyên…"
     },
     "assetLibrary": {
       "title": "Thư viện asset",
@@ -5093,6 +5159,49 @@
       "arrangeVertical": "Dọc",
       "commitHint": "Ghi nội dung của node này về asset trong luồng chính"
     },
+    "creativeIntro": {
+      "title": "Mở đầu sáng tạo",
+      "description": "Chọn một khung hình và phong cách tiêu đề. Xác nhận chỉ tạo workflow để kiểm tra, chưa tiêu tốn tài nguyên tạo nội dung.",
+      "frame": "Khung hình mở đầu",
+      "frameTime": "{{current}}s / {{duration}}s",
+      "workTitle": "Tiêu đề",
+      "titlePlaceholder": "Nhập chính xác tiêu đề cần xuất hiện trên màn hình",
+      "designStyle": "Thiết kế tiêu đề",
+      "motionStyle": "Chuyển động chữ",
+      "blendOriginal": "Hòa vào đoạn gốc 5 giây",
+      "blendModelsLoading": "Đang kiểm tra model nhận đồng thời tham chiếu ảnh và video…",
+      "blendTooShort": "Video nguồn ngắn hơn 5 giây nên không thể tạo đoạn hòa trộn cố định.",
+      "blendUnsupported": "Danh mục hiện tại không có model xác nhận hỗ trợ đồng thời tham chiếu ảnh và video. Tính năng hòa trộn đã bị tắt.",
+      "blendReady": "Dùng {{model}} ở chế độ tham chiếu tổng hợp. Bạn vẫn phải xác nhận lượt tạo cuối tại node chuyển động.",
+      "blendRange": "Đoạn nguồn (cố định 5 giây)",
+      "blendRangeValue": "{{start}}s–{{end}}s · khung chính ở giây {{offset}} trong đoạn",
+      "previewBlend": "Xem trước 5 giây này",
+      "stopBlendPreview": "Dừng xem trước",
+      "blendNoChargeHint": "Sau khi xác nhận, tác vụ dựng cục bộ sẽ cắt một đoạn thật dài 5 giây rồi tạo node chuyển động nhận cả ảnh tiêu đề và video nguồn. Việc cắt không phát sinh phí tạo nội dung từ nhà cung cấp; ảnh tiêu đề và video cuối vẫn phải được gửi riêng.",
+      "creatingBlendClip": "Đang cắt đoạn nguồn 5 giây…",
+      "noChargeHint": "Thao tác này tạo các node khung hình, thiết kế tiêu đề và chuyển động 5 giây ở phía sau. Hãy tạo ảnh tiêu đề trước, rồi gửi node chuyển động một cách rõ ràng.",
+      "createWorkflow": "Tạo workflow mở đầu",
+      "created": "Đã tạo workflow mở đầu; chưa bắt đầu tạo nội dung",
+      "createFailed": "Không thể tạo workflow mở đầu",
+      "keyframeNode": "Khung hình mở đầu",
+      "designNode": "Thiết kế tiêu đề",
+      "motionNode": "Chuyển động mở đầu · 5 giây",
+      "blendClipNode": "Đoạn nguồn mở đầu · 5 giây",
+      "styles": {
+        "minimal": "Tối giản cao cấp",
+        "chineseCalligraphy": "Thư pháp Trung Hoa",
+        "literaryHandwriting": "Chữ viết tay văn học",
+        "anime": "Anime nhiệt huyết",
+        "cyberpunk": "Khoa học viễn tưởng cyber",
+        "gothicFantasy": "Kỳ ảo Gothic",
+        "blurFade": "Rõ dần từ mờ",
+        "particles": "Hạt chuyển động",
+        "glitch": "Hiện qua nhiễu",
+        "handwriting": "Nét chữ viết tay",
+        "assemble": "Lắp ghép chuyển động",
+        "impact": "Xuất hiện mạnh"
+      }
+    },
     "style": {
       "chip": "Phong cách",
       "chipLoading": "Phong cách · đang tải",
@@ -5270,7 +5379,7 @@
     "assetReplace": {
       "dropToReplace": "Thả để thay asset này",
       "dragHint": "Kéo vào một asset cùng loại bên trái để thay thế",
-      "handleHint": "Giữ và kéo vào thư viện asset để thay một asset cùng loại",
+      "handleHint": "Nhấp, hoặc kéo sang thư viện tài nguyên, để thay thế tài nguyên cùng loại",
       "handleLabel": "Thay asset"
     },
     "reference": {
@@ -5318,6 +5427,39 @@
     },
     "assetDrop": {
       "fallbackNodeLabel": "Node"
+    },
+    "notFound": "Không tìm thấy canvas",
+    "notFoundDescriptionPrefix": "Dự án này không có canvas",
+    "notFoundDescriptionSuffix": ". Nó có thể thuộc về dự án khác, hoặc đã bị xóa.",
+    "backToProjectCanvas": "Về canvas của dự án này",
+    "remoteMedia": {
+      "badge": "Tài nguyên từ xa",
+      "title": "{{count}} tài nguyên chưa lưu cục bộ, vẫn tải từ LibTV:",
+      "consequence": "Tài nguyên từ xa không thể đưa vào mô hình cục bộ hay dùng làm ảnh tham chiếu, và sẽ hỏng nếu LibTV gỡ bỏ.",
+      "reason": {
+        "internalHost": "Địa chỉ tài nguyên trỏ vào mạng nội bộ; không tải vì lý do an toàn.",
+        "notHttps": "Địa chỉ tài nguyên không phải HTTPS; không tải.",
+        "hasCredentials": "Địa chỉ tài nguyên có chứa thông tin đăng nhập; không tải.",
+        "badUrl": "Địa chỉ tài nguyên không hợp lệ.",
+        "unsupportedFileType": "Loại tệp này chưa hỗ trợ lưu cục bộ.",
+        "tooManyAssets": "Canvas vượt quá giới hạn số lượng tài nguyên cục bộ.",
+        "totalSizeLimit": "Canvas vượt quá giới hạn tổng dung lượng tài nguyên cục bộ.",
+        "mediaTooLarge": "Một tài nguyên vượt quá giới hạn dung lượng cục bộ.",
+        "mediaEmpty": "Máy chủ nguồn trả về tệp rỗng.",
+        "mediaTypeInvalid": "Máy chủ nguồn không trả về ảnh/video/âm thanh.",
+        "mediaUnavailable": "Tải từ máy chủ nguồn thất bại (hết giờ, giới hạn, hoặc đã xóa).",
+        "unknown": "Không thể lưu cục bộ (không rõ lý do)."
+      },
+      "localize": {
+        "label": "Tải về máy",
+        "pending": "{{count}} tài nguyên chưa lưu cục bộ",
+        "running": "Đang tải về…",
+        "done": "Đã lưu {{count}} tài nguyên",
+        "partial": "Đã lưu {{done}}, còn {{failed}} chưa lưu được",
+        "none": "Không có tài nguyên cần tải",
+        "failed": "Tải về thất bại: {{message}}",
+        "hint": "Tải các tài nguyên còn lấy từ LibTV về máy để dùng cho mô hình cục bộ hoặc làm ảnh tham chiếu."
+      }
     }
   },
   "tool": {
@@ -5407,10 +5549,59 @@
       "subtitleRemovalBox": "Xoá theo vùng chọn",
       "fullscreen": "Toàn màn hình",
       "notImplementedYet": "Sắp có",
-      "requiresVideo": "Hãy tải video lên trước"
+      "requiresVideo": "Hãy tải video lên trước",
+      "shotBreakdown": "Phân tích cảnh quay",
+      "breakdownEmpty": "Phân tích không tạo ra tài nguyên nào dùng được",
+      "segmentRemake": "Quay lại đoạn",
+      "continuation": "Viết tiếp video",
+      "recreate": "Tạo lại",
+      "creativeIntro": "Mở đầu sáng tạo",
+      "creativeIntroHint": "Chọn khung hình và tạo node thiết kế tiêu đề cùng chuyển động 5 giây",
+      "remoteMediaBlocked": "Tư liệu này vẫn nằm trên LibTV — hãy nội địa hoá trước"
     },
     "audio": {
       "requiresAudio": "Chưa có âm thanh nào để tải về",
+      "trim": "Cắt âm thanh",
+      "speed": "Đổi tốc độ",
+      "smartSplit": "Tách thông minh",
+      "customSplit": "Tách tuỳ chỉnh",
+      "derivedHint": "Âm thanh nguồn được giữ nguyên. Xác nhận sẽ tạo một nút âm thanh ở phía sau.",
+      "splitDerivedHint": "Xem trước các đoạn; sau khi xác nhận, mỗi đoạn sẽ tạo một nút độc lập và giữ nguyên âm thanh nguồn.",
+      "silenceThreshold": "Ngưỡng im lặng (dB)",
+      "minSilence": "Im lặng tối thiểu (s)",
+      "minSegment": "Đoạn tối thiểu (s)",
+      "analyzeSplit": "Phân tích đoạn",
+      "customCutPoints": "Điểm cắt (giây)",
+      "customCutPointsPlaceholder": "Ví dụ: 12.5, 30, 48.2",
+      "analysisFailed": "Phân tích tách thất bại. Hãy chỉnh tham số và thử lại.",
+      "splitLimited": "Có quá nhiều điểm cắt; bản xem trước đã được gộp đều còn tối đa 24 đoạn.",
+      "noSplitDetected": "Không tìm thấy điểm cắt phù hợp. Hãy giảm ngưỡng hoặc thời gian im lặng tối thiểu.",
+      "segmentCount": "{{count}} đoạn",
+      "createSegments": "Tạo {{count}} đoạn",
+      "splitStarted": "Đang lần lượt tạo {{count}} đoạn tách",
+      "splitPartialFailed": "Không thể gửi {{count}} đoạn; các đoạn còn lại vẫn đang xử lý.",
+      "splitSubmitFailed": "Không gửi được tác vụ tách nào",
+      "splitValidation": {
+        "duration-unknown": "Chưa có thời lượng âm thanh",
+        "points-required": "Hãy nhập ít nhất một điểm cắt",
+        "invalid-point": "Điểm cắt phải lớn hơn 0 và nhỏ hơn tổng thời lượng",
+        "range-too-short": "Các điểm cắt liền nhau phải cách ít nhất 0,1 giây",
+        "too-many-segments": "Có thể tạo tối đa 24 đoạn"
+      },
+      "startTime": "Thời gian bắt đầu (giây)",
+      "endTime": "Thời gian kết thúc (giây)",
+      "speedValue": "Tốc độ phát",
+      "createDerived": "Tạo âm thanh",
+      "remoteMediaBlocked": "Hãy nội địa hoá âm thanh từ xa trước khi xử lý",
+      "busy": "Âm thanh này đang được xử lý",
+      "durationRequired": "Cần đọc thời lượng âm thanh trước khi xử lý",
+      "transformFailed": "Xử lý âm thanh thất bại",
+      "validation": {
+        "duration-unknown": "Chưa có thời lượng âm thanh",
+        "invalid-range": "Hãy nhập thời gian bắt đầu và kết thúc hợp lệ",
+        "range-too-short": "Đoạn đã chọn phải dài ít nhất 0,1 giây",
+        "invalid-speed": "Tốc độ phải nằm trong khoảng 0,5× đến 2×"
+      },
       "downloadAs": "Tải về dạng {{format}}",
       "m4aSourceOnlyHint": "chỉ khi nguồn là m4a",
       "m4aSourceOnly": "Nguồn không phải m4a nên không chuyển sang m4a được",
@@ -5891,6 +6082,16 @@
       }
     },
     "videoNode": {
+      "depth": {
+        "open": "Phân tích khung hình",
+        "title": "Trích xuất chuyển động sâu · Depth Anything 3",
+        "description": "Tạo video độ sâu tương đối gần trắng/xa đen với tốc độ khung hình gốc; tạo nút tham chiếu riêng. Máy chủ cần cấu hình mô hình DA3-Small.",
+        "submit": "Trích xuất độ sâu",
+        "busy": "Đang trích xuất độ sâu…",
+        "badge": "Tham chiếu độ sâu · DA3",
+        "resultName": "Tham chiếu chuyển động sâu",
+        "noUrl": "Trích xuất xong nhưng không có URL video"
+      },
       "uploading": "Đang tải lên...",
       "generating": "Đang tạo...",
       "noVideo": "Chưa có video",
@@ -6017,7 +6218,8 @@
         "failed": "Cắt thất bại: {{detail}}"
       },
       "videoEdit": {
-        "imageLimit": "Sửa video hỗ trợ tối đa {{limit}} ảnh tham chiếu; đã dùng {{limit}} ảnh đầu ({{ignored}} ảnh bị bỏ qua)"
+        "imageLimit": "Sửa video hỗ trợ tối đa {{limit}} ảnh tham chiếu; đã dùng {{limit}} ảnh đầu ({{ignored}} ảnh bị bỏ qua)",
+        "sourceFallbackLabel": "video nguồn"
       },
       "allReference": {
         "happyHorseUnsupported": "HappyHorse không hỗ trợ tham chiếu đa năng. Chuyển sang chữ-sang-video hoặc ảnh-sang-video.",
@@ -6319,7 +6521,8 @@
       "pano360ViewerNode": "Trình xem toàn cảnh 360°",
       "threeDWorldNode": "Thế giới 3D",
       "skillNode": "Kỹ năng",
-      "styleNode": "Phong cách"
+      "styleNode": "Phong cách",
+      "liblibMediaNode": "Tài nguyên LibTV"
     },
     "exportResult": {
       "generic": "Ảnh kết quả",
@@ -6424,7 +6627,17 @@
         "videoUpstreamAllRefOrEdit": "Khi phía trên là video, chỉ dùng được “Tham chiếu đa năng” hoặc “Sửa video”",
         "videoUpstreamAllRefOnly": "Khi phía trên là video, chỉ dùng được “Tham chiếu đa năng”",
         "hasImageOrAudioRefs": "Không dùng được khi đang tham chiếu asset ảnh/âm thanh",
-        "moreThanTwoImages": "Không dùng được khi phía trên có hơn 2 ảnh"
+        "moreThanTwoImages": "Không dùng được khi phía trên có hơn 2 ảnh",
+        "h3MediaConnected": "Đã nối asset; hãy chọn chế độ tham chiếu H3 phù hợp",
+        "h3UseAllReferenceForMixed": "Dùng “Tham chiếu đa năng” khi kết hợp ảnh với video hoặc âm thanh",
+        "h3ImageExactlyOne": "H3 “Ảnh sang video” yêu cầu đúng 1 ảnh",
+        "h3FirstLastExactlyTwo": "H3 “Khung đầu/cuối” yêu cầu đúng 2 ảnh",
+        "h3NeedReference": "H3 “Tham chiếu đa năng” cần ít nhất 1 asset tham chiếu",
+        "h3MaxImages": "H3 “Tham chiếu đa năng” hỗ trợ tối đa {{count}} ảnh",
+        "h3MaxVideos": "H3 “Tham chiếu đa năng” hỗ trợ tối đa {{count}} video",
+        "h3MaxAudios": "H3 “Tham chiếu đa năng” hỗ trợ tối đa {{count}} đoạn âm thanh",
+        "h3UnsupportedMode": "MiniMax H3 không hỗ trợ chế độ này",
+        "h3PromptRequired": "Mọi chế độ MiniMax H3 đều cần câu lệnh"
       }
     },
     "threeDWorld": {
@@ -6457,6 +6670,45 @@
       "directorCaptureSizeFailed": "Không đọc được kích thước ảnh chụp thế giới đạo diễn",
       "directorElement": "Phần tử đạo diễn",
       "directorExportLabel": "Xuất thế giới đạo diễn"
+    },
+    "videoRemake": {
+      "nodeTitle": "Quay lại đoạn",
+      "title": "Quay lại đoạn",
+      "exit": "Thoát chế độ quay lại",
+      "rangeCount": "Đã chọn {{selected}}/{{max}} đoạn",
+      "intentPlaceholder": "Mô tả đoạn này cần thay đổi thế nào",
+      "wholeHint": "Nhấp vào dòng thời gian để chọn đoạn cần quay lại. Không chọn đoạn nào nghĩa là quay lại toàn bộ — để trống lời nhắc là chạy lại nguyên trạng.",
+      "selectHint": "Chọn một đoạn để mô tả, hoặc nhấp vào khoảng trống để thêm đoạn nữa",
+      "remove": "Xoá đoạn này",
+      "dragStart": "Kéo để chỉnh điểm đầu",
+      "dragEnd": "Kéo để chỉnh điểm cuối",
+      "framesLoading": "Đang trích khung hình…",
+      "framesFailed": "Trích khung hình thất bại (có thể do CORS); bạn vẫn chọn đoạn được",
+      "durationLimit": "Chỉ hỗ trợ video dài từ 4 giây trở lên",
+      "submitBlocked": "Các đoạn này chưa gửi được — hãy sửa theo cảnh báo trong bảng",
+      "sourceToken": "video này",
+      "error": {
+        "sourceTooShort": "Video nguồn ngắn hơn {{min}} giây, không quay lại được",
+        "tooManyRanges": "Tối đa {{max}} đoạn",
+        "outOfBounds": "Có đoạn nằm ngoài phạm vi video",
+        "rangeTooShort": "Mỗi đoạn không được ngắn hơn {{min}} giây",
+        "rangeTooLong": "Mỗi đoạn không được dài hơn {{max}} giây",
+        "overlap": "Các đoạn không được chồng nhau",
+        "gapTooShort": "Phần còn lại giữa các đoạn dưới {{min}} giây, không nối lại được"
+      },
+      "modelUnsupported": "Không mô hình khả dụng nào hỗ trợ chỉnh sửa video, nên không thể quay lại đoạn hoặc viết tiếp",
+      "clearAll": "Xoá các đoạn đã chọn"
+    },
+    "videoContinuation": {
+      "nodeTitle": "Viết tiếp",
+      "clipDisplayName": "Đoạn mở đầu",
+      "selectSegment": "Chọn đoạn để viết tiếp",
+      "selectedDuration": "{{seconds}} giây",
+      "exit": "Thoát chế độ viết tiếp",
+      "confirm": "Xác nhận",
+      "hint": "Xác nhận sẽ cắt đoạn này làm tiền đề, rồi tạo phần tiếp theo",
+      "durationHint": "Đoạn đã chọn phải từ {{min}} đến {{max}} giây",
+      "bindingBroken": "Đoạn mở đầu đã thay đổi hoặc bị xoá — hãy chọn lại"
     }
   },
   "viewer": {
@@ -6922,6 +7174,21 @@
       "statusActive": "Đang dùng",
       "gatewayWarningIconLabel": "Chưa cấu hình model gateway",
       "gatewayNotConfiguredImpact": "Model gateway đang dùng chưa được cấu hình. Mọi lệnh gọi model văn bản, ảnh, video và âm thanh đều sẽ thất bại; hãy cấu hình kênh chính thức hoặc khởi tạo Local NewAPI trước khi tạo nội dung.",
+      "localRouter": {
+        "title": "Đã bật bộ định tuyến model cục bộ",
+        "description": "Cấu hình này không cần cơ sở dữ liệu NewAPI cục bộ. Khóa và workflow nằm ngoài mã nguồn nên cập nhật dự án không ghi đè chúng.",
+        "running": "Đang chạy",
+        "image": "Hình ảnh",
+        "imageDescription": "ComfyUI cục bộ · văn bản sang ảnh, ảnh sang ảnh",
+        "text": "Văn bản",
+        "textDescription": "SiliconFlow · DeepSeek-V4-Flash",
+        "embedding": "Embedding",
+        "embeddingDescription": "SiliconFlow · BAAI/bge-m3",
+        "voice": "Tổng hợp giọng nói",
+        "voiceDescription": "SiliconFlow · CosyVoice2-0.5B",
+        "address": "Địa chỉ bộ định tuyến: {{address}}",
+        "disconnected": "Chưa kết nối"
+      },
       "modes": {
         "official": "Chính thức",
         "custom": "Tuỳ chỉnh",
@@ -7658,6 +7925,122 @@
     "reload": "Tải lại",
     "statusUnknown": "Chưa xác nhận được tính năng nào đang dùng được. Vui lòng thử lại sau.",
     "unavailableTitle": "Tính năng không dùng được"
+  },
+  "story": {
+    "save": "Save",
+    "saved": "Saved",
+    "unsaved": "Unsaved",
+    "errors": {
+      "invalidDocId": "Mã tài liệu không hợp lệ.",
+      "missingContent": "Cần có nội dung tài liệu.",
+      "docTooLarge": "Tài liệu vượt quá giới hạn kích thước.",
+      "docConflict": "Tài liệu đã được sửa ở nơi khác. Hãy tải lại và thử lại.",
+      "missingPrompt": "Cần có câu lệnh.",
+      "promptTooLong": "Câu lệnh vượt quá giới hạn độ dài.",
+      "writeFailedDetail": "Tạo nội dung bằng mô hình thất bại: {{detail}}"
+    },
+    "step": {
+      "bible": {
+        "title": "Story Bible",
+        "hint": "Series-wide constraints. Everything set here is injected into every later step."
+      },
+      "plan": {
+        "title": "Creative Plan",
+        "hint": "Title, three-act structure, rhythm curve, paywall beats, satisfaction spread.",
+        "placeholder": "Three-act structure, rhythm curve, paywall planning…"
+      },
+      "characters": {
+        "title": "Characters",
+        "hint": "Profiles, relationships, arcs and the four-tier villain system. Cast locks take priority.",
+        "placeholder": "Character profiles, relationship map, arcs, villain tiers…"
+      },
+      "outline": {
+        "title": "Episode Outline",
+        "hint": "One line per episode. Structure locks take priority.",
+        "placeholder": "Ep 1: Title — core conflict in one line"
+      },
+      "episodes": {
+        "title": "Episode Drafts",
+        "hint": "Write in the hand-off format; each episode is validated as you go."
+      },
+      "compile": {
+        "title": "Compile",
+        "hint": "Assemble the importable screenplay and validate its format."
+      }
+    },
+    "bible": {
+      "locks": {
+        "title": "Global Locks",
+        "hint": "Injected into every generation. Principles, not plot.",
+        "positioning": "Core positioning",
+        "era": "Era and texture",
+        "dialogueStyle": "Dialogue style",
+        "toneRules": "Tone rules, one per line"
+      },
+      "blacklist": {
+        "title": "Blacklist",
+        "hint": "One per line. Injected into generation and used for self-checks.",
+        "placeholder": "No lovesick protagonist\nNo idol-drama tropes"
+      },
+      "cast": {
+        "title": "Cast Locks",
+        "hint": "When filled, generation follows these instead of inventing.",
+        "name": "Name",
+        "bind": "Bound stage",
+        "arc": "Arc in one line",
+        "mustHave": "Required signature scenes",
+        "add": "Add cast lock"
+      },
+      "structure": {
+        "title": "Structure Locks",
+        "hint": "Drives how the outline is ordered.",
+        "stage": "Stage",
+        "plot": "Main event",
+        "bind": "Bound character",
+        "tone": "Emotional tone",
+        "add": "Add structure lock",
+        "notes": "Extra requirements for this stage (follows the stage, survives re-ordering)"
+      }
+    },
+    "episodes": {
+      "item": "Episode {{number}}",
+      "add": "Add episode",
+      "title": "Episode title",
+      "empty": "No drafts yet — add an episode",
+      "bodyPlaceholder": "1-1  Location  NIGHT  INT\nCharacters: …",
+      "noStage": "No stage"
+    },
+    "compile": {
+      "status": {
+        "standard": "Format valid — ready to import",
+        "repairable": "Repairable — import will downgrade",
+        "missing": "No scene headers — import will be rejected"
+      },
+      "summary": "{{episodes}} episodes · {{standard}}/{{total}} scenes valid",
+      "sceneCount": "{{standard}}/{{total}} scenes valid",
+      "issue": {
+        "missingTimeOfDay": "missing time of day",
+        "missingInteriorExterior": "missing INT/EXT",
+        "missingLocation": "missing location",
+        "missingCharacterLine": "missing character line"
+      },
+      "issueLine": "Line {{line}}: {{reason}}",
+      "moreIssues": "{{count}} more not shown",
+      "preview": "Preview",
+      "hidePreview": "Hide preview",
+      "copy": "Copy screenplay",
+      "copied": "Copied",
+      "copyFailed": "Copy failed",
+      "emptyPreview": "Nothing to compile yet",
+      "import": "Import to pipeline",
+      "imported": "Import started",
+      "importFailed": "Import failed",
+      "importHint": "Importing writes the project source text and starts indexing. You can also copy and import it from Ingest."
+    },
+    "askAssistant": "Polish with AI",
+    "write": "Generate",
+    "written": "Generated — remember to save",
+    "writeFailed": "Generation failed"
   },
   "checkout": {
     "account": "Tài khoản hiện tại",

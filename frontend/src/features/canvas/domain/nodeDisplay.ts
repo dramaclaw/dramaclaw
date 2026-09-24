@@ -38,6 +38,7 @@ export const DEFAULT_NODE_DISPLAY_NAME: Record<CanvasNodeType, string> = {
   [CANVAS_NODE_TYPES.threeDWorld]: '3D 世界',
   [CANVAS_NODE_TYPES.skill]: '技能',
   [CANVAS_NODE_TYPES.style]: '风格',
+  [CANVAS_NODE_TYPES.liblibMedia]: 'LibTV 素材',
 };
 
 // i18n-exempt: 同上，会写进画布 JSON；显示用 EXPORT_RESULT_DISPLAY_NAME_KEYS

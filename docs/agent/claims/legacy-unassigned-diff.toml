@@ -1,0 +1,65 @@
+version = 1
+slug = "legacy-unassigned-diff"
+ledger = "docs/agent/tasks/legacy-unassigned-diff.md"
+baseline = "38484897"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Update quarantine status and migrations."
+
+[[claims]]
+path = "docs/agent/tasks/legacy-unassigned-diff.md"
+mode = "coordination"
+reason = "Quarantine evidence and migration ledger."
+
+[[claims]]
+path = "docs/agent/claims/legacy-unassigned-diff.toml"
+mode = "coordination"
+reason = "Machine-readable quarantine list."
+
+[[claims]]
+path = ".playwright-cli/**"
+mode = "read-only"
+reason = "Unknown local browser artifact; do not delete or commit before audit."
+
+[[claims]]
+path = "_to_delete/**"
+mode = "read-only"
+reason = "Directory name is not authorization to delete unknown user data."
+
+[[claims]]
+path = "frontend/src/api/canvas.ts"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Historical API client now shares explicit LibTV import endpoints."
+
+[[claims]]
+path = "frontend/src/features/freezone/CanvasOutlineList.tsx"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Historical outline work shares LibTV fallback-node display and filters."
+
+[[claims]]
+path = "frontend/src/features/freezone/CanvasesTab.tsx"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Historical canvas-selector work shares the LibTV import entry."
+
+[[claims]]
+path = "frontend/src/lib/freezone-url.ts"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Historical URL helper shares direct navigation to imported canvases."
+
+[[claims]]
+path = "frontend/src/routes/_app/index.tsx"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Historical project-card work shares the LibTV import dialog."
+
+[[claims]]
+path = "tests/test_freezone_canvas_route_home_node_guard.py"
+mode = "shared"
+shared_with = ["liblib-canvas-parity", "sync-main-remotes"]
+reason = "Historical route guard now shares the LibTV endpoint and missing-canvas contract."

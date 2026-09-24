@@ -5,6 +5,8 @@ import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { Canvas } from "@/features/canvas/Canvas";
 import { NodeReplaceDragPreview } from "@/features/canvas/ui/NodeReplaceDragPreview";
+import { useAssetDropStore } from "@/stores/assetDropStore";
+import { useFreezoneCanvases } from "@/lib/queries/freezone";
 import type { SupertaleProjectSummary } from "@/api/projects";
 import {
   buildProjectionFromPreset,
@@ -41,6 +43,7 @@ import { CompareDialog } from "@/pipeline-import/CompareDialog";
 import { MaskEditor } from "@/pipeline-import/MaskEditor";
 import { AssetLibraryPanel } from "./AssetLibraryPanel";
 import { CanvasDebugPanel } from "./CanvasDebugPanel";
+import { CanvasLocalizeAssetsButton } from "./CanvasLocalizeAssetsButton";
 import type { PushResult, PushTarget, PushTargetKind } from "@/api/push";
 import { coerceSlotTarget } from "@/features/canvas/domain/mainlineNodeTypes";
 import { canvasEventBus } from "@/features/canvas/application/canvasServices";
@@ -429,6 +432,12 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
   const [toast, setToast] = useState<string | null>(null);
   const [assetLibraryReloadToken, setAssetLibraryReloadToken] = useState(0);
   const [assetPanelCollapsed, setAssetPanelCollapsed] = useState(true);
+  // 「替换素材」的挑选态一旦开始,素材库就是唯一的落点 —— 面板默认收起,不展开
+  // 的话用户点完什么都看不到。只负责展开,不负责收回(替换完让用户自己决定)。
+  const assetReplacePick = useAssetDropStore((state) => state.pendingPick);
+  useEffect(() => {
+    if (assetReplacePick) setAssetPanelCollapsed(false);
+  }, [assetReplacePick]);
   const [debugPanelOpen, setDebugPanelOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const productSurfaces = useProductSurfaces();
@@ -529,12 +538,20 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
     prefetchFreezoneVideoCameraTemplates(projectId);
   }, [projectId]);
 
+  // 画布要跟着项目走：只有当这张画布在**本项目**的画布列表里真的存在时，才把它
+  // 记成「上次打开」。否则一次错误落点（例如个人画布 id 跨项目相同、在本项目里
+  // 从未创建，后端又对不存在的画布返回 200+空图）会被记进 localStorage 固化下来，
+  // 此后每次进这个项目都是同一张白板。查询键与画布列表面板共用，react-query 去重。
+  const { data: projectCanvasSummaries } = useFreezoneCanvases(projectId);
+  const canvasExistsInProject = projectCanvasSummaries?.some(
+    (summary) => summary.id === canvasId,
+  );
   useEffect(() => {
-    rememberLastCanvas(projectId, canvasId);
+    if (canvasExistsInProject) rememberLastCanvas(projectId, canvasId);
     if (canvasId !== "default" && currentCanvasParam() !== canvasId) {
       writeUrl({ canvas: canvasId }, { replace: true, notify: false });
     }
-  }, [canvasId, projectId]);
+  }, [canvasId, projectId, canvasExistsInProject]);
 
   useEffect(() => {
     // 必须连 hydratedProject 一起比：个人画布 id 由用户名推出，跨项目是同一个
@@ -926,6 +943,7 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
           <Canvas
             onBlankPaneClick={handleBlankPaneClick}
             controlsPlacement="bottom-right"
+            liblibImported={Boolean(sync.metadata?.liblib_import)}
           />
           {showBlockingLoading && <CanvasLoadingScreen />}
           {showLoadingOverlay && <CanvasLoadingOverlay />}
@@ -945,6 +963,13 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
               readConflictSnapshot={sync.readConflictSnapshot}
             />
           )}
+          <CanvasLocalizeAssetsButton
+            project={projectId}
+            sourceProjectId={
+              (sync.metadata?.liblib_import as { source_project_id?: string } | undefined)
+                ?.source_project_id ?? null
+            }
+          />
           <BackupStatusIndicator status={sync.backupStatus} />
           {/* 调试面板暂时隐藏，恢复时去掉 `false &&` 即可 */}
           {false && import.meta.env.DEV && (
@@ -966,6 +991,8 @@ export function FreezoneShell({ project, canvasId }: FreezoneShellProps) {
             collapsed={assetPanelCollapsed}
             onCollapsedChange={setAssetPanelCollapsed}
             currentCanvasId={canvasId}
+            onSaveCurrentCanvas={sync.flush}
+            onReloadCurrentCanvas={sync.retry}
             reloadToken={assetLibraryReloadToken}
             onRestoreMainlineDefault={async () => {
               try {

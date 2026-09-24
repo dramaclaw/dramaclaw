@@ -813,6 +813,35 @@ class FreezoneExtractFramesRequest(BaseModel):
     scene_threshold: float = 0.3
 
 
+class FreezoneDepthMotionCaptureRequest(BaseModel):
+    """Derive a near-white/far-black depth video from a project-local video."""
+
+    source_url: str = Field(description="当前项目的视频静态地址")
+    resolution: Literal["480p", "720p"] = "720p"
+
+
+class FreezoneShotBreakdownRequest(BaseModel):
+    """逐帧拉片：把参考视频反编译成可复用的运镜素材。"""
+
+    video_url: str = Field(description="当前项目的视频静态地址")
+    max_frames: int = Field(default=20, ge=2, le=60, description="最多切分多少个镜头")
+    scene_threshold: float = Field(
+        # 0.2 是实测出来的默认值：0.3 会漏掉真实剪辑点，导致一个「镜头」的首帧
+        # 和尾帧分属两场戏，而这对首尾帧正是要拿去当图生视频输入的。
+        default=0.2,
+        ge=0.05,
+        le=0.95,
+        description="镜头切分灵敏度，越小切得越碎",
+    )
+    dimensions: Optional[list[Literal["storyboard", "cameraMoves", "musicRef"]]] = Field(
+        default=None,
+        description="拆解维度；留空表示全做。分镜=首尾帧，动态=镜头片段，音乐=参考音轨",
+    )
+    duration_sec: Optional[float] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+
+
 class FreezoneAnalyzeShotsRequest(BaseModel):
     frame_urls: list[str]
     provider: Optional[str] = None
@@ -1551,6 +1580,48 @@ class FreezoneAudioSeparateRequest(BaseModel):
         ge=1,
         description="可选：目标主线 beat。提供后，任务结果会返回 beat_audio 推送目标",
     )
+
+
+class FreezoneAudioTransformRequest(BaseModel):
+    """画布音频节点的非破坏性截取 / 变速请求。"""
+
+    source_url: str = Field(description="项目内待处理音频静态地址")
+    start_sec: float = Field(default=0.0, ge=0.0, description="源音频截取起点（秒）")
+    end_sec: float = Field(gt=0.0, description="源音频截取终点（秒）")
+    speed: float = Field(default=1.0, ge=0.5, le=2.0, description="播放速度；处理时保持音高")
+
+
+class FreezoneAudioSplitPreviewRequest(BaseModel):
+    """画布音频智能切分的只读预览参数。"""
+
+    source_url: str = Field(description="项目内待分析音频静态地址")
+    silence_threshold_db: float = Field(
+        default=-35.0, ge=-80.0, le=-10.0, description="静音阈值（dB）"
+    )
+    min_silence_sec: float = Field(
+        default=0.45, ge=0.1, le=10.0, description="形成切点所需的最短静音（秒）"
+    )
+    min_segment_sec: float = Field(
+        default=0.75, ge=0.1, le=60.0, description="建议片段的最短时长（秒）"
+    )
+    max_segments: int = Field(default=24, ge=2, le=24, description="预览最多片段数")
+
+
+class FreezoneAudioSplitSegment(BaseModel):
+    start_sec: float
+    end_sec: float
+
+
+class FreezoneAudioSplitPreviewData(BaseModel):
+    duration_sec: float
+    segments: list[FreezoneAudioSplitSegment]
+    detected_silence_count: int
+    limited: bool
+
+
+class FreezoneAudioSplitPreviewResponse(BaseModel):
+    ok: Literal[True] = True
+    data: FreezoneAudioSplitPreviewData
 
 
 class FreezoneAudioVoiceRef(BaseModel):

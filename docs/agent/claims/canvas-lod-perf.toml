@@ -1,0 +1,215 @@
+version = 1
+slug = "canvas-lod-perf"
+ledger = "docs/agent/tasks/canvas-lod-perf.md"
+baseline = "a5695267"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Update lifecycle and conflict radar."
+
+[[claims]]
+path = "docs/agent/tasks/canvas-lod-perf.md"
+mode = "coordination"
+reason = "Workstream plan and handoff ledger."
+
+[[claims]]
+path = "docs/agent/claims/canvas-lod-perf.toml"
+mode = "coordination"
+reason = "Machine-readable scope for this workstream."
+
+[[claims]]
+path = "frontend/src/features/canvas/Canvas.tsx"
+mode = "shared"
+shared_with = ["asset-replacement-picker", "liblib-canvas-parity"]
+reason = "LOD mounting and downstream-node focus both integrate at the canvas root."
+
+[[claims]]
+path = "frontend/src/index.css"
+mode = "exclusive"
+reason = "LOD presentation styles; remote branch overlap still requires source audit."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/canvasLod.ts"
+mode = "exclusive"
+reason = "LOD policy."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/imageData.ts"
+mode = "exclusive"
+reason = "LOD image projection."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/graphImageResolver.ts"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "LOD-safe graph image resolution also preserves imported LibTV media."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/graphContentResolver.ts"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "LOD-safe graph content resolution also preserves imported LibTV text."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/videoFrameCapture.ts"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Video poster extraction also consumes trusted LibTV poster transforms."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/videoTranscode.ts"
+mode = "exclusive"
+reason = "Video normalization used by poster extraction."
+
+[[claims]]
+path = "frontend/src/features/viewer-kit/three-d/ThreeDDirectorDialogLazy.tsx"
+mode = "exclusive"
+reason = "Lazy-load heavy 3D UI outside low-zoom rendering."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/GroupNode.tsx"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "LOD node body also exposes imported remote-media state."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/ImageGenNode.tsx"
+mode = "exclusive"
+reason = "LOD node body."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/LodShellNode.tsx"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Lightweight node shell also wraps imported LibTV fallback nodes."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/SkillNode.tsx"
+mode = "exclusive"
+reason = "LOD node body."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/ThreeDWorldNode.tsx"
+mode = "exclusive"
+reason = "LOD node body."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/UploadNode.tsx"
+mode = "exclusive"
+reason = "LOD node body."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/index.ts"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Stable node registry combines lazy heavy components with imported-media registration."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/lazyNodeComponents.tsx"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Lazy 3D/panorama loaders share the registry with imported node fallbacks."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/CanvasNodeImage.tsx"
+mode = "exclusive"
+reason = "Lightweight media rendering."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/nodeFrameStyles.ts"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Shared frame styles also carry measured LibTV parity values."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/NodeHeader.tsx"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Lightweight header rendering also exposes imported remote-media state."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/NodeGenerationOverlay.tsx"
+mode = "exclusive"
+reason = "Low-zoom generation state."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/NodeToolDialog.tsx"
+mode = "exclusive"
+reason = "Lazy tool UI."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/AssetCommitHandle.tsx"
+mode = "shared"
+shared_with = ["asset-replacement-picker"]
+reason = "Low-zoom asset behavior shares the click-versus-drag replacement entry."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/CanvasHistoryAssetsModal.tsx"
+mode = "exclusive"
+reason = "Lazy history asset UI."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/canvas-lod.test.ts"
+mode = "exclusive"
+reason = "LOD regression coverage."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/lod-audio-playback.test.tsx"
+mode = "exclusive"
+reason = "Low-zoom audio regression coverage."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/external-file-handoff-low-zoom.test.tsx"
+mode = "exclusive"
+reason = "Low-zoom file handoff coverage."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/node-body-image-variant.test.ts"
+mode = "exclusive"
+reason = "Image variant coverage."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/video-frame-capture-poster.test.ts"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Poster extraction coverage includes imported LibTV sources."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/canvas-manual-connect.test.tsx"
+mode = "exclusive"
+reason = "Canvas registry preload mock."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/canvas-minimap-pan-mount.test.tsx"
+mode = "exclusive"
+reason = "Canvas registry preload mock."
+
+[[claims]]
+path = "frontend/src/__tests__/features/viewer-kit/freezone-viewer-contract.test.ts"
+mode = "exclusive"
+reason = "Lazy viewer-node registry contract."
+
+[[claims]]
+path = "frontend/src/__tests__/lib/media-url.test.ts"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Remote image scaling ladder coverage."
+
+[[claims]]
+path = "frontend/src/lib/media-url.ts"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Local and remote media variant selection."
+
+[[claims]]
+path = "src/novelvideo/freezone/history.py"
+mode = "shared"
+shared_with = ["liblib-canvas-parity", "sync-main-remotes"]
+reason = "Prewarm all image variants used by canvas nodes."
+
+[[claims]]
+path = "frontend/vite.config.ts"
+mode = "shared"
+shared_with = ["local-stack"]
+reason = "Canvas heavy dependency chunking shares the frontend build boundary with local-stack."

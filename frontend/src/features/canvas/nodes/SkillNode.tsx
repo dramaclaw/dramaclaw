@@ -51,7 +51,7 @@ import {
 import {
   ThreeDDirectorDialog,
   type ThreeDDirectorCaptureMeta,
-} from '@/features/viewer-kit/three-d/ThreeDDirectorDialog';
+} from '@/features/viewer-kit/three-d/ThreeDDirectorDialogLazy';
 import type {
   DirectorControlFrameBundle,
   DirectorStageManifest,

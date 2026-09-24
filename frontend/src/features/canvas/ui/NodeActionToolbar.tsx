@@ -113,14 +113,38 @@ import { resolveImageDisplayUrl } from "@/features/canvas/application/imageData"
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useCanvasStore } from "@/stores/canvasStore";
 import {
+  fetchFreezoneJobResult,
   fetchFreezoneAudioSeparateResult,
+  previewFreezoneAudioSplit,
   submitFreezoneAnalyzeVideoStory,
+  submitFreezoneAudioTransform,
+  submitFreezoneShotBreakdown,
   submitFreezoneAudioSeparate,
   uploadFreezoneImage,
 } from "@/api/ops";
 import { openPresetProjectionInMyCanvas } from "@/features/freezone/openPresetProjection";
 import { awaitTaskCompletion, isTaskPollTimeoutError } from "@/api/tasks";
+import {
+  createShotBreakdownSink,
+  normalizeShotBreakdownGroups,
+  readStreamedGroups,
+} from "@/features/canvas/application/shotBreakdownNodes";
 import { notifyTaskStillRunning } from "@/features/canvas/application/errorDialog";
+import { generationTaskDescriptor } from "@/features/canvas/application/resumeGeneration";
+import {
+  buildAudioTransformNodeData,
+  type AudioTransformDraft,
+} from "@/features/canvas/application/audioTransform";
+import {
+  analysisFromSeconds,
+  type AudioSplitSegment,
+} from "@/features/canvas/application/audioSplit";
+import {
+  CANVAS_ACTION_IDS,
+  getCanvasActionDescriptor,
+  resolveCanvasActionAvailability,
+} from "@/features/canvas/application/canvasActionRegistry";
+import { isRemakeSourceDurationSupported } from "@/features/canvas/application/videoRangePrompt";
 import { normalizeVideoStoryRows } from "@/features/canvas/application/videoStoryNormalizer";
 import { readUrl } from "@/lib/url-params";
 import { sanitizeStoryboardText } from "@/features/canvas/application/storyboardText";
@@ -138,6 +162,9 @@ import type {
   GridActionKey,
   GridActionRequest,
 } from "./GridActionConfirmOverlay";
+import { AudioTransformMenu } from "./AudioTransformMenu";
+import { AudioSplitMenu, type SmartAudioSplitOptions } from "./AudioSplitMenu";
+import { CreativeIntroDialog } from "./CreativeIntroDialog";
 
 interface NodeActionToolbarProps {
   node: CanvasNode;
@@ -158,12 +185,13 @@ const toolIconMap: Record<ToolIconKey, typeof Crop> = {
   split: Scissors,
 };
 
-const TOOLBAR_BUTTON_RADIUS_CLASS = "rounded-[12px]";
+// 8px 圆角、32px 高、13px 字：全部取自 LibTV 视频节点工具条的实测计算样式。
+const TOOLBAR_BUTTON_RADIUS_CLASS = "!rounded-[8px]";
 // 扁平菜单项：去掉独立边框与胶囊背景，融入工具栏整条；仅靠 hover 高亮区分。
 const TOOLBAR_NEUTRAL_BUTTON_CLASS =
   "!border-transparent !bg-transparent text-text-dark hover:!bg-[rgba(255,255,255,0.075)] focus:!border-transparent focus:!bg-transparent focus:!shadow-none focus-visible:!outline-none focus-visible:!ring-0 data-[state=open]:!border-transparent data-[state=open]:!shadow-none";
 const TOOLBAR_TEXT_BUTTON_CLASS =
-  `h-9 ${TOOLBAR_BUTTON_RADIUS_CLASS} px-3 text-sm ${TOOLBAR_NEUTRAL_BUTTON_CLASS}`;
+  `!h-8 ${TOOLBAR_BUTTON_RADIUS_CLASS} px-3 text-[13px] font-normal ${TOOLBAR_NEUTRAL_BUTTON_CLASS}`;
 const TOOLBAR_MENU_CONTENT_CLASS =
   "z-[120] border-white/10 bg-[#242426]/50 text-text-dark shadow-none backdrop-blur-3xl";
 const TOOLBAR_MENU_ITEM_CLASS =
@@ -486,6 +514,21 @@ export const NodeActionToolbar = memo(
       (videoAnalyzeBillingRuleMissing
         ? t("common.billingRuleNotConfiguredShort")
         : null);
+    const shotBreakdownCreditCost = useGenerationCreditCost(
+      "feature",
+      isVideoNode(node) ? "freezone.video_analyze" : null,
+      {
+        surface: "canvas",
+        params: { operation: "video_breakdown" },
+      },
+    );
+    const shotBreakdownBillingRuleMissing =
+      shotBreakdownCreditCost.error instanceof BillingRuleNotConfiguredError;
+    const shotBreakdownCreditCostDisplay =
+      shotBreakdownCreditCost.data?.data.display ??
+      (shotBreakdownBillingRuleMissing
+        ? t("common.billingRuleNotConfiguredShort")
+        : null);
     const isImageEdit = isImageEditNode(node);
     // Plain (non-protected) group → eligible for ungroup. Captured up here as a
     // boolean + a plain id while `node` still has its full type: over-broad node
@@ -512,6 +555,7 @@ export const NodeActionToolbar = memo(
     const onNodesChange = useCanvasStore((state) => state.onNodesChange);
     const requestFocusNode = useCanvasStore((state) => state.requestFocusNode);
     const ungroupNode = useCanvasStore((state) => state.ungroupNode);
+    const groupNodes = useCanvasStore((state) => state.groupNodes);
     const arrangeGroupChildren = useCanvasStore(
       (state) => state.arrangeGroupChildren,
     );
@@ -553,6 +597,7 @@ export const NodeActionToolbar = memo(
       return null;
     }, [node.data]);
     const [openingWorkbench, setOpeningWorkbench] = useState(false);
+    const [creativeIntroOpen, setCreativeIntroOpen] = useState(false);
     // 用统一 helper 解析节点当前图片源，避免每种图片节点各写一套判断。
     const imageSource = useMemo(() => resolveNodeSourceImageUrl(node), [node]);
     const canHandleImage = Boolean(imageSource);
@@ -1105,7 +1150,7 @@ export const NodeActionToolbar = memo(
           <ZoomScaledToolbar origin="bottom center" mode="counter" counterMax={1}>
           {/* 节点激活时，顶部菜单从节点上沿淡入+轻微上滑浮现（而非生硬地直接出现），
               与下方操作区的入场动画呼应。motion-reduce 下退化为无动画。 */}
-          <UiPanel className="flex animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2 items-center gap-1.5 rounded-[18px] !border-white/10 !bg-[#242426]/95 px-2 py-1.5 text-sm shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-2xl duration-200 ease-out motion-reduce:animate-none [&_svg]:h-4 [&_svg]:w-4">
+          <UiPanel className="flex max-w-[calc(100vw-32px)] flex-nowrap overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0 [&_button]:whitespace-nowrap animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2 items-center gap-1 !rounded-[12px] !border-[0.5px] !border-[#363636] !bg-[#262626] p-1 text-[13px] shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-[16px] duration-200 ease-out motion-reduce:animate-none [&_svg]:h-4 [&_svg]:w-4">
             {/* Mainline lock indicator — shown as a leading pill when the
                 node is preset-managed (or canvas-level fallback applies).
                 The chips below remain visible for spawn-style edits; the
@@ -1697,6 +1742,114 @@ export const NodeActionToolbar = memo(
                   }
                 };
 
+                const isBreakingDown = Boolean(videoData.isBreakingDown);
+
+                /**
+                 * 逐帧拉片：把这段视频反编译成可以直接再用的素材。
+                 *
+                 * 产物落成普通的图片/视频/音频节点（首尾帧、镜头片段、参考音轨），
+                 * 按维度编成三个组，从本节点各连一条边。不新增节点类型，所以下游
+                 * 任何生成节点都能直接连过去。
+                 */
+                const handleShotBreakdown = async () => {
+                  if (!hasVideo || !videoUrl || isBreakingDown) return;
+                  const projectId = readUrl().project;
+                  if (!projectId) {
+                    console.error("[shot-breakdown] no project in URL");
+                    return;
+                  }
+                  updateNodeData(node.id, {
+                    isBreakingDown: true,
+                    breakdownError: null,
+                  });
+                  try {
+                    const durationSec =
+                      typeof videoData.durationMs === "number" && videoData.durationMs > 0
+                        ? videoData.durationMs / 1000
+                        : undefined;
+                    const ref = await submitFreezoneShotBreakdown(projectId, {
+                      videoUrl,
+                      durationSec,
+                    });
+
+                    // 落位以**提交后第一次用到时**的 store 为准，不用闭包里的旧
+                    // 快照——拉片要跑一两分钟，用户很可能已经把节点拖走了。
+                    let sink: ReturnType<typeof createShotBreakdownSink> | null = null;
+                    const ensureSink = () => {
+                      if (sink) return sink;
+                      const latest = useCanvasStore
+                        .getState()
+                        .nodes.find((candidate) => candidate.id === node.id);
+                      sink = createShotBreakdownSink(
+                        {
+                          id: node.id,
+                          position: latest?.position ?? node.position,
+                          width: latest?.width ?? undefined,
+                        },
+                        {
+                          addNode,
+                          addEdge,
+                          groupNodes,
+                          targetExists: (targetId) =>
+                            useCanvasStore
+                              .getState()
+                              .nodes.some((candidate) => candidate.id === targetId),
+                        },
+                      );
+                      return sink;
+                    };
+
+                    const completed = await awaitTaskCompletion(
+                      ref.task_key,
+                      projectId,
+                      {
+                        taskType: ref.task_type,
+                        // 三个维度各自跑完各自落：分镜先到，动态其次，音乐最后。
+                        onProgress: (task) => {
+                          const partial = readStreamedGroups(task);
+                          if (partial.length > 0) ensureSink().accept(partial);
+                        },
+                      },
+                    );
+                    const groups = normalizeShotBreakdownGroups(completed.result);
+                    // 用户可能在几分钟的任务期间删掉源节点。这是明确的取消关注，
+                    // 不是“零产出”；不落孤儿素材，也不弹错误。
+                    if (
+                      !useCanvasStore
+                        .getState()
+                        .nodes.some((candidate) => candidate.id === node.id)
+                    ) {
+                      return;
+                    }
+                    // 补齐：流式没收到的（SSE 掉事件、或任务太快没来得及推）在这里落。
+                    // sink 按 key 去重，已经落过的不会再落一遍。
+                    const spawned = ensureSink().accept(groups);
+                    if (groups.length === 0 && spawned.nodeIds.length === 0) {
+                      throw new Error(t("nodeToolbar.video.breakdownEmpty"));
+                    }
+                    updateNodeData(node.id, {
+                      isBreakingDown: false,
+                      breakdownError: null,
+                    });
+                  } catch (error) {
+                    if (
+                      !useCanvasStore
+                        .getState()
+                        .nodes.some((candidate) => candidate.id === node.id)
+                    ) {
+                      return;
+                    }
+                    const message =
+                      error instanceof Error ? error.message : String(error);
+                    console.error("[shot-breakdown] failed", error);
+                    toast.error(message);
+                    updateNodeData(node.id, {
+                      isBreakingDown: false,
+                      breakdownError: message,
+                    });
+                  }
+                };
+
                 const handleVideoDownload = async () => {
                   if (!hasVideo || !videoUrl) {
                     return;
@@ -1765,6 +1918,93 @@ export const NodeActionToolbar = memo(
                     { id: upscaleNodeId, type: "select", selected: true },
                   ]);
                   setSelectedNode(upscaleNodeId);
+                };
+
+                /**
+                 * 这条素材还挂在 LibTV 远端吗？
+                 *
+                 * 后端的视频端点只接受**同源静态路径**（`/static/...`），LibTV 导入
+                 * 但没本地化的节点 videoUrl 还是 `https://libtv-res...` 的绝对地址，
+                 * 任何服务端操作都会被 400 掉（`url must be a same-origin path`）。
+                 * 之前的表现是：点了像没反应，只在角落闪一条看不懂的报错。所以把它
+                 * 提到入口来——按钮置灰，并直接说要先「一键本地化」。
+                 */
+                const videoIsRemote = hasVideo && !videoUrl!.startsWith("/");
+                const remoteBlockedTitle = videoIsRemote
+                  ? t("nodeToolbar.video.remoteMediaBlocked")
+                  : null;
+                const serverOpBlocked = !hasVideo || videoIsRemote;
+                const serverOpTitle = (base?: string) =>
+                  !hasVideo
+                    ? t("nodeToolbar.video.requiresVideo")
+                    : (remoteBlockedTitle ?? base);
+
+                const remakeSourceDurationSec =
+                  typeof videoData.durationMs === "number" && videoData.durationMs > 0
+                    ? videoData.durationMs / 1000
+                    : 0;
+                const canSegmentRemake =
+                  !serverOpBlocked && isRemakeSourceDurationSupported(remakeSourceDurationSec);
+
+                /**
+                 * 片段重拍：在下游派生一个「重拍」节点，源视频靠连线带过去。
+                 *
+                 * 不在源节点上就地改：重拍产出的是一条新视频，覆盖掉用户手里这条
+                 * 没道理，而且派生出来之后两条可以并排比。生成本身仍走视频编辑
+                 * （videoEdit）那条路，这里只负责把节点摆好、连好。
+                 */
+                const handleSegmentRemake = () => {
+                  if (!canSegmentRemake || !videoUrl) return;
+                  const position = findNodePosition(node.id, 580, 380);
+                  const remakeNodeId = addNode(
+                    CANVAS_NODE_TYPES.video,
+                    position,
+                    {
+                      displayName: t("node.videoRemake.nodeTitle"),
+                      videoUrl: null,
+                      previewImageUrl:
+                        typeof videoData.previewImageUrl === "string"
+                          ? videoData.previewImageUrl
+                          : null,
+                      aspectRatio:
+                        typeof videoData.aspectRatio === "string"
+                          ? videoData.aspectRatio
+                          : "16:9",
+                      genMode: "videoEdit",
+                      isRemakeNode: true,
+                      remakeSourceUrl: videoUrl,
+                      remakeSourceDurationSec,
+                      remakeRanges: [],
+                      isGenerating: false,
+                    } as unknown as Parameters<typeof addNode>[2],
+                  );
+                  addEdge(node.id, remakeNodeId);
+                  onNodesChange([
+                    { id: node.id, type: "select", selected: false },
+                    { id: remakeNodeId, type: "select", selected: true },
+                  ]);
+                  setSelectedNode(remakeNodeId);
+                  // 落位是找空地，找到的空地可能在视口外好几百像素——不把镜头带过去，
+                  // 用户看到的就是「点了没反应」。实测新节点落到了源节点左边 658px。
+                  useCanvasStore.getState().requestFocusNode(remakeNodeId);
+                };
+
+                /**
+                 * 智能续写：在源节点上开「选前置片段」模式。
+                 *
+                 * 入口只负责开模式，裁片和建节点都在 VideoNode 里做——裁片要等任务
+                 * 跑完，工具栏不是待在那儿等结果的地方。门槛与重拍同源（≥4 秒），
+                 * 续写模型本身还会限定选区 4–30 秒。
+                 */
+                const handleVideoContinuation = () => {
+                  if (!canSegmentRemake) return;
+                  updateNodeData(node.id, {
+                    continuationMode: true,
+                    continuationRange: null,
+                    isClipMode: false,
+                    subtitleEraseMode: null,
+                  });
+                  setSelectedNode(node.id);
                 };
 
                 const isSeparatingAv = Boolean(videoData.isSeparatingAv);
@@ -2012,35 +2252,20 @@ export const NodeActionToolbar = memo(
 
                 return (
                   <>
-                    <UiChipButton
-                      key="video-clip"
-                      className={`${stubButtonClass} ${!hasVideo ? "opacity-50 cursor-not-allowed" : ""}`}
-                      title={
-                        !hasVideo
-                          ? t("nodeToolbar.video.requiresVideo")
-                          : undefined
-                      }
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        if (!hasVideo) return;
-                        updateNodeData(node.id, {
-                          isClipMode: !videoData.isClipMode,
-                        });
-                      }}
-                    >
-                      <Scissors className="h-3.5 w-3.5" />
-                      {t("nodeToolbar.video.clip")}
-                    </UiChipButton>
+                    {/*
+                      顺序照 LibTV 的视频节点工具条实测：高清 | 片段重拍 | 逐帧拉片 |
+                      智能去字幕 | 音视频分离（他们还有主体消除、创意片头，我们没有）。
+                      片段重拍在他们那儿是**平铺的第二个按钮**，不是藏在下拉里，所以这里
+                      也平铺；智能续写他们放在生成流程里而非工具条，我们暂时挨着重拍放，
+                      免得再多一层菜单。剪辑 / 解析 / 下载 / 全屏是我们多出来的，排在后面。
+                    */}
                     <UiChipButton
                       key="video-hd"
-                      className={`${stubButtonClass} ${!hasVideo ? "opacity-50 cursor-not-allowed" : ""}`}
-                      title={
-                        !hasVideo
-                          ? t("nodeToolbar.video.requiresVideo")
-                          : undefined
-                      }
+                      className={`${stubButtonClass} ${serverOpBlocked ? "opacity-50 cursor-not-allowed" : ""}`}
+                      title={serverOpTitle()}
                       onClick={(event) => {
                         event.stopPropagation();
+                        if (serverOpBlocked) return;
                         handleVideoUpscale();
                       }}
                     >
@@ -2048,35 +2273,70 @@ export const NodeActionToolbar = memo(
                       {t("nodeToolbar.video.hd")}
                     </UiChipButton>
                     <UiChipButton
-                      key="video-analyze"
+                      key="video-segment-remake"
                       className={`${stubButtonClass} ${
-                        !hasVideo || videoAnalyzeBillingRuleMissing
+                        !canSegmentRemake ? "opacity-50 cursor-not-allowed" : ""
+                      }`}
+                      title={serverOpTitle(
+                        !canSegmentRemake ? t("node.videoRemake.durationLimit") : undefined,
+                      )}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleSegmentRemake();
+                      }}
+                    >
+                      <Film className="h-3.5 w-3.5" />
+                      {t("nodeToolbar.video.segmentRemake")}
+                    </UiChipButton>
+                    <UiChipButton
+                      key="video-continuation"
+                      className={`${stubButtonClass} ${
+                        !canSegmentRemake ? "opacity-50 cursor-not-allowed" : ""
+                      }`}
+                      title={serverOpTitle(
+                        !canSegmentRemake ? t("node.videoRemake.durationLimit") : undefined,
+                      )}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleVideoContinuation();
+                      }}
+                    >
+                      <FastForward className="h-3.5 w-3.5" />
+                      {t("nodeToolbar.video.continuation")}
+                    </UiChipButton>
+                    <UiChipButton
+                      key="video-shot-breakdown"
+                      className={`${stubButtonClass} ${
+                        serverOpBlocked || isBreakingDown || shotBreakdownBillingRuleMissing
                           ? "opacity-50 cursor-not-allowed"
                           : ""
                       }`}
-                      title={
-                        !hasVideo
-                          ? t("nodeToolbar.video.requiresVideo")
-                          : videoAnalyzeBillingRuleMissing
-                            ? t("common.billingRuleNotConfiguredShort")
-                          : undefined
+                      disabled={
+                        serverOpBlocked || isBreakingDown || shotBreakdownBillingRuleMissing
                       }
+                      title={serverOpTitle(
+                        shotBreakdownBillingRuleMissing
+                          ? t("common.billingRuleNotConfiguredShort")
+                          : undefined,
+                      )}
                       onClick={(event) => {
                         event.stopPropagation();
-                        if (videoAnalyzeBillingRuleMissing) return;
-                        void handleVideoAnalyze();
+                        if (serverOpBlocked || shotBreakdownBillingRuleMissing) return;
+                        void handleShotBreakdown();
                       }}
                     >
-                      {isAnalyzing ? (
+                      {isBreakingDown ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : (
-                        <Wand2 className="h-3.5 w-3.5" />
+                        <Scissors className="h-3.5 w-3.5" />
                       )}
-                      {t("nodeToolbar.video.analyze")}
+                      {t("nodeToolbar.video.shotBreakdown")}
                       <CreditCostPill
-                        display={videoAnalyzeCreditCostDisplay}
-                        promotion={videoAnalyzeCreditCost.data?.data.promotion}
-                        disabled={!hasVideo || isAnalyzing || videoAnalyzeBillingRuleMissing}
+                        display={shotBreakdownCreditCostDisplay}
+                        promotion={shotBreakdownCreditCost.data?.data.promotion}
+                        disabled={
+                          serverOpBlocked || isBreakingDown || shotBreakdownBillingRuleMissing
+                        }
                       />
                     </UiChipButton>
                     <DropdownMenu
@@ -2087,8 +2347,10 @@ export const NodeActionToolbar = memo(
                       <DropdownMenuTrigger asChild>
                         <UiChipButton
                           key="video-subtitle-removal"
-                          className={stubButtonClass}
-                          title={t("nodeToolbar.video.subtitleRemovalTip")}
+                          className={`${stubButtonClass} ${
+                            serverOpBlocked ? "opacity-50 cursor-not-allowed" : ""
+                          }`}
+                          title={serverOpTitle(t("nodeToolbar.video.subtitleRemovalTip"))}
                           onClick={(event) => event.stopPropagation()}
                         >
                           <Eraser className="h-3.5 w-3.5" />
@@ -2105,7 +2367,7 @@ export const NodeActionToolbar = memo(
                         <DropdownMenuItem
                           className={TOOLBAR_MENU_ITEM_CLASS}
                           onSelect={() => {
-                            if (!hasVideo) {
+                            if (serverOpBlocked) {
                               handleVideoStub("subtitle-smart-erase");
                               return;
                             }
@@ -2123,7 +2385,7 @@ export const NodeActionToolbar = memo(
                         <DropdownMenuItem
                           className={TOOLBAR_MENU_ITEM_CLASS}
                           onSelect={() => {
-                            if (!hasVideo) {
+                            if (serverOpBlocked) {
                               handleVideoStub("subtitle-box-erase");
                               return;
                             }
@@ -2143,17 +2405,14 @@ export const NodeActionToolbar = memo(
                     <UiChipButton
                       key="video-separate-av"
                       className={`${stubButtonClass} ${
-                        !hasVideo || isSeparatingAv
+                        serverOpBlocked || isSeparatingAv
                           ? "opacity-50 cursor-not-allowed"
                           : ""
                       }`}
-                      title={
-                        !hasVideo
-                          ? t("nodeToolbar.video.requiresVideo")
-                          : undefined
-                      }
+                      title={serverOpTitle()}
                       onClick={(event) => {
                         event.stopPropagation();
+                        if (serverOpBlocked) return;
                         void handleAudioSeparate();
                       }}
                     >
@@ -2163,6 +2422,64 @@ export const NodeActionToolbar = memo(
                         <VideoIcon className="h-3.5 w-3.5" />
                       )}
                       {t("nodeToolbar.video.separateAudioVideo")}
+                    </UiChipButton>
+                    <UiChipButton
+                      key="video-creative-intro"
+                      className={`${stubButtonClass} ${serverOpBlocked ? "opacity-50 cursor-not-allowed" : ""}`}
+                      title={serverOpTitle(t("nodeToolbar.video.creativeIntroHint"))}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (serverOpBlocked) return;
+                        setCreativeIntroOpen(true);
+                      }}
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />
+                      {t("nodeToolbar.video.creativeIntro")}
+                    </UiChipButton>
+                    <UiChipButton
+                      key="video-clip"
+                      className={`${stubButtonClass} ${serverOpBlocked ? "opacity-50 cursor-not-allowed" : ""}`}
+                      title={serverOpTitle()}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (serverOpBlocked) return;
+                        updateNodeData(node.id, {
+                          isClipMode: !videoData.isClipMode,
+                        });
+                      }}
+                    >
+                      <Scissors className="h-3.5 w-3.5" />
+                      {t("nodeToolbar.video.clip")}
+                    </UiChipButton>
+                    <UiChipButton
+                      key="video-analyze"
+                      className={`${stubButtonClass} ${
+                        serverOpBlocked || videoAnalyzeBillingRuleMissing
+                          ? "opacity-50 cursor-not-allowed"
+                          : ""
+                      }`}
+                      title={serverOpTitle(
+                        videoAnalyzeBillingRuleMissing
+                          ? t("common.billingRuleNotConfiguredShort")
+                          : undefined,
+                      )}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (serverOpBlocked || videoAnalyzeBillingRuleMissing) return;
+                        void handleVideoAnalyze();
+                      }}
+                    >
+                      {isAnalyzing ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Wand2 className="h-3.5 w-3.5" />
+                      )}
+                      {t("nodeToolbar.video.analyze")}
+                      <CreditCostPill
+                        display={videoAnalyzeCreditCostDisplay}
+                        promotion={videoAnalyzeCreditCost.data?.data.promotion}
+                        disabled={!hasVideo || isAnalyzing || videoAnalyzeBillingRuleMissing}
+                      />
                     </UiChipButton>
                     <UiChipButton
                       key="video-download"
@@ -2212,6 +2529,63 @@ export const NodeActionToolbar = memo(
                     ? (audioData.convertingAudioFormat as AudioDownloadFormat)
                     : null;
                 const isConverting = Boolean(convertingFormat);
+                const isAudioBusy = Boolean(audioData.isGenerating);
+                const durationMs =
+                  typeof audioData.durationMs === "number" &&
+                  Number.isFinite(audioData.durationMs) &&
+                  audioData.durationMs > 0
+                    ? audioData.durationMs
+                    : null;
+                const mediaIsLocal = Boolean(audioUrl?.startsWith("/"));
+                const actionContext = {
+                  nodeType: CANVAS_NODE_TYPES.audio,
+                  hasMedia: hasAudio,
+                  mediaIsLocal,
+                  busy: isAudioBusy,
+                } as const;
+                const trimDescriptor = getCanvasActionDescriptor(
+                  CANVAS_ACTION_IDS.audioTrim,
+                );
+                const speedDescriptor = getCanvasActionDescriptor(
+                  CANVAS_ACTION_IDS.audioSpeed,
+                );
+                const smartSplitDescriptor = getCanvasActionDescriptor(
+                  CANVAS_ACTION_IDS.audioSmartSplit,
+                );
+                const customSplitDescriptor = getCanvasActionDescriptor(
+                  CANVAS_ACTION_IDS.audioCustomSplit,
+                );
+                const trimAvailability = trimDescriptor
+                  ? resolveCanvasActionAvailability(trimDescriptor, actionContext)
+                  : { available: false as const, reason: "wrong-node-type" as const };
+                const speedAvailability = speedDescriptor
+                  ? resolveCanvasActionAvailability(speedDescriptor, actionContext)
+                  : { available: false as const, reason: "wrong-node-type" as const };
+                const smartSplitAvailability = smartSplitDescriptor
+                  ? resolveCanvasActionAvailability(smartSplitDescriptor, actionContext)
+                  : { available: false as const, reason: "wrong-node-type" as const };
+                const customSplitAvailability = customSplitDescriptor
+                  ? resolveCanvasActionAvailability(customSplitDescriptor, actionContext)
+                  : { available: false as const, reason: "wrong-node-type" as const };
+
+                const disabledReasonFor = (
+                  availability: typeof trimAvailability,
+                ): string | undefined => {
+                  if (availability.available && durationMs) return undefined;
+                  const reason = availability.available
+                    ? "duration-unknown"
+                    : availability.reason;
+                  switch (reason) {
+                    case "remote-media":
+                      return t("nodeToolbar.audio.remoteMediaBlocked");
+                    case "busy":
+                      return t("nodeToolbar.audio.busy");
+                    case "duration-unknown":
+                      return t("nodeToolbar.audio.durationRequired");
+                    default:
+                      return t("nodeToolbar.audio.requiresAudio");
+                  }
+                };
 
                 // The separated-audio node stores `sourceFileName` WITHOUT an
                 // extension (e.g. `xxx_背景音`), which previously produced an
@@ -2280,71 +2654,291 @@ export const NodeActionToolbar = memo(
                   }
                 };
 
+                type SubmittedAudioTransform = {
+                  ref: Awaited<ReturnType<typeof submitFreezoneAudioTransform>>;
+                  derivedNodeId: string;
+                  projectId: string;
+                };
+
+                const submitAudioDerivedNode = async (
+                  projectId: string,
+                  draft: AudioTransformDraft,
+                  displayName: string,
+                ): Promise<SubmittedAudioTransform> => {
+                  if (!audioUrl) throw new Error("audio source is unavailable");
+                  const ref = await submitFreezoneAudioTransform(projectId, {
+                    sourceUrl: audioUrl,
+                    startSec: draft.startMs / 1000,
+                    endSec: draft.endMs / 1000,
+                    speed: draft.speed,
+                  });
+                  const derivedNodeId = addNode(
+                    CANVAS_NODE_TYPES.audio,
+                    findNodePosition(node.id, 480, 210),
+                    {
+                      ...buildAudioTransformNodeData({
+                        sourceNodeId: node.id,
+                        sourceAudioUrl: audioUrl,
+                        sourceData: audioData,
+                        draft,
+                        displayName,
+                      }),
+                      ...generationTaskDescriptor(ref),
+                    },
+                  );
+                  addEdge(node.id, derivedNodeId);
+                  return { ref, derivedNodeId, projectId };
+                };
+
+                const completeAudioDerivedNode = async ({
+                  ref,
+                  derivedNodeId,
+                  projectId,
+                }: SubmittedAudioTransform): Promise<boolean> => {
+                  try {
+                    await awaitTaskCompletion(ref.task_key, projectId, {
+                      taskType: ref.task_type,
+                    });
+                    const result = await fetchFreezoneJobResult(
+                      projectId,
+                      "freezone_audio_transform",
+                      ref.job_id,
+                    );
+                    updateNodeData(derivedNodeId, {
+                      audioUrl: result.url,
+                      isGenerating: false,
+                      generationStartedAt: null,
+                      generationError: null,
+                      generationTaskKey: null,
+                      generationTaskType: null,
+                      generationTaskJobId: null,
+                    });
+                    return true;
+                  } catch (error) {
+                    if (isTaskPollTimeoutError(error)) {
+                      notifyTaskStillRunning(t);
+                      return false;
+                    }
+                    console.error("[audio-transform] failed", error);
+                    const message =
+                      error instanceof Error && error.message.trim()
+                        ? error.message
+                        : t("nodeToolbar.audio.transformFailed");
+                    updateNodeData(derivedNodeId, {
+                      isGenerating: false,
+                      generationStartedAt: null,
+                      generationError: message,
+                      generationTaskKey: null,
+                      generationTaskType: null,
+                      generationTaskJobId: null,
+                    });
+                    return true;
+                  }
+                };
+
+                const handleAudioTransform = async (
+                  mode: "trim" | "speed",
+                  draft: AudioTransformDraft,
+                ) => {
+                  if (!audioUrl || !durationMs || isAudioBusy) return;
+                  const projectId = readUrl().project;
+                  if (!projectId) {
+                    toast.error(t("nodeToolbar.audio.transformFailed"));
+                    return;
+                  }
+                  try {
+                    const suffix =
+                      mode === "speed"
+                        ? `${t("nodeToolbar.audio.speed")}_${draft.speed}x`
+                        : t("nodeToolbar.audio.trim");
+                    const submitted = await submitAudioDerivedNode(
+                      projectId,
+                      draft,
+                      `${baseFileName}_${suffix}`,
+                    );
+                    setSelectedNode(submitted.derivedNodeId);
+                    requestFocusNode(submitted.derivedNodeId);
+                    await completeAudioDerivedNode(submitted);
+                  } catch (error) {
+                    console.error("[audio-transform] submit failed", error);
+                    toast.error(t("nodeToolbar.audio.transformFailed"));
+                  }
+                };
+
+                const analyzeAudioSplit = async (options: SmartAudioSplitOptions) => {
+                  if (!audioUrl) throw new Error("audio source is unavailable");
+                  const projectId = readUrl().project;
+                  if (!projectId) throw new Error("project is unavailable");
+                  const result = await previewFreezoneAudioSplit(projectId, {
+                    sourceUrl: audioUrl,
+                    ...options,
+                  });
+                  const analysis = analysisFromSeconds({
+                    durationSec: result.duration_sec,
+                    segments: result.segments.map((segment) => ({
+                      startSec: segment.start_sec,
+                      endSec: segment.end_sec,
+                    })),
+                    detectedSilenceCount: result.detected_silence_count,
+                    limited: result.limited,
+                  });
+                  if (!analysis) throw new Error("invalid audio split preview");
+                  return analysis;
+                };
+
+                const handleAudioSplit = async (
+                  mode: "smart" | "custom",
+                  segments: AudioSplitSegment[],
+                ) => {
+                  if (!audioUrl || !durationMs || isAudioBusy || segments.length < 2) return;
+                  const projectId = readUrl().project;
+                  if (!projectId) {
+                    toast.error(t("nodeToolbar.audio.transformFailed"));
+                    return;
+                  }
+                  let submittedCount = 0;
+                  let failedSubmissions = 0;
+                  toast.success(
+                    t("nodeToolbar.audio.splitStarted", { count: segments.length }),
+                  );
+                  for (const [index, segment] of segments.entries()) {
+                    const suffix = t(`nodeToolbar.audio.${mode}Split`);
+                    const displayName = `${baseFileName}_${suffix}_${String(index + 1).padStart(2, "0")}`;
+                    try {
+                      const submitted = await submitAudioDerivedNode(
+                        projectId,
+                        { ...segment, speed: 1 },
+                        displayName,
+                      );
+                      submittedCount += 1;
+                      if (submittedCount === 1) {
+                        setSelectedNode(submitted.derivedNodeId);
+                        requestFocusNode(submitted.derivedNodeId);
+                      }
+                      const reachedTerminalState = await completeAudioDerivedNode(submitted);
+                      if (!reachedTerminalState) {
+                        failedSubmissions += segments.length - index - 1;
+                        break;
+                      }
+                    } catch (error) {
+                      failedSubmissions += 1;
+                      console.error("[audio-split] submit failed", error);
+                    }
+                  }
+                  if (submittedCount === 0) {
+                    toast.error(t("nodeToolbar.audio.splitSubmitFailed"));
+                    return;
+                  }
+                  if (failedSubmissions > 0) {
+                    toast.error(
+                      t("nodeToolbar.audio.splitPartialFailed", { count: failedSubmissions }),
+                    );
+                  }
+                };
+
                 return (
-                  <DropdownMenu
-                    onOpenChange={(open) => {
-                      if (open) closeDownloadMenu();
-                    }}
-                  >
-                    <DropdownMenuTrigger asChild>
-                      <UiChipButton
-                        key="audio-download"
-                        className={`${audioButtonClass} ${
-                          !hasAudio ? "opacity-50 cursor-not-allowed" : ""
-                        }`}
-                        title={
-                          !hasAudio
-                            ? t("nodeToolbar.audio.requiresAudio")
-                            : t("nodeToolbar.download")
-                        }
+                  <>
+                    <AudioTransformMenu
+                      mode="trim"
+                      durationMs={durationMs}
+                      disabled={!trimAvailability.available || !durationMs}
+                      disabledReason={disabledReasonFor(trimAvailability)}
+                      busy={isAudioBusy}
+                      buttonClassName={audioButtonClass}
+                      onSubmit={(draft) => handleAudioTransform("trim", draft)}
+                    />
+                    <AudioTransformMenu
+                      mode="speed"
+                      durationMs={durationMs}
+                      disabled={!speedAvailability.available || !durationMs}
+                      disabledReason={disabledReasonFor(speedAvailability)}
+                      busy={isAudioBusy}
+                      buttonClassName={audioButtonClass}
+                      onSubmit={(draft) => handleAudioTransform("speed", draft)}
+                    />
+                    <AudioSplitMenu
+                      mode="smart"
+                      durationMs={durationMs}
+                      disabled={!smartSplitAvailability.available || !durationMs}
+                      disabledReason={disabledReasonFor(smartSplitAvailability)}
+                      buttonClassName={audioButtonClass}
+                      onAnalyze={analyzeAudioSplit}
+                      onSubmit={(segments) => handleAudioSplit("smart", segments)}
+                    />
+                    <AudioSplitMenu
+                      mode="custom"
+                      durationMs={durationMs}
+                      disabled={!customSplitAvailability.available || !durationMs}
+                      disabledReason={disabledReasonFor(customSplitAvailability)}
+                      buttonClassName={audioButtonClass}
+                      onAnalyze={analyzeAudioSplit}
+                      onSubmit={(segments) => handleAudioSplit("custom", segments)}
+                    />
+                    <DropdownMenu
+                      onOpenChange={(open) => {
+                        if (open) closeDownloadMenu();
+                      }}
+                    >
+                      <DropdownMenuTrigger asChild>
+                        <UiChipButton
+                          key="audio-download"
+                          className={`${audioButtonClass} ${
+                            !hasAudio ? "opacity-50 cursor-not-allowed" : ""
+                          }`}
+                          title={
+                            !hasAudio
+                              ? t("nodeToolbar.audio.requiresAudio")
+                              : t("nodeToolbar.download")
+                          }
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          {isConverting ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Download className="h-3.5 w-3.5" />
+                          )}
+                          {t("nodeToolbar.download")}
+                          <ChevronDown className="h-3 w-3" />
+                        </UiChipButton>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        align="start"
+                        sideOffset={6}
+                        className={`${TOOLBAR_MENU_CONTENT_CLASS} min-w-[170px]`}
                         onClick={(event) => event.stopPropagation()}
                       >
-                        {isConverting ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Download className="h-3.5 w-3.5" />
-                        )}
-                        {t("nodeToolbar.download")}
-                        <ChevronDown className="h-3 w-3" />
-                      </UiChipButton>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent
-                      align="start"
-                      sideOffset={6}
-                      className={`${TOOLBAR_MENU_CONTENT_CLASS} min-w-[170px]`}
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      {AUDIO_DOWNLOAD_FORMATS.map((format) => {
-                        const available = canProduceFormat(format, sourceExt);
-                        return (
-                          <DropdownMenuItem
-                            key={format}
-                            disabled={!hasAudio || !available || isConverting}
-                            className={TOOLBAR_MENU_ITEM_CLASS}
-                            onSelect={() => {
-                              void handleAudioDownload(format);
-                            }}
-                          >
-                            {convertingFormat === format ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Download className="h-4 w-4" />
-                            )}
-                            <span className="flex-1">
-                              {t("nodeToolbar.audio.downloadAs", {
-                                format: format.toUpperCase(),
-                              })}
-                            </span>
-                            {!available ? (
-                              <span className="text-[10px] opacity-60">
-                                {t("nodeToolbar.audio.m4aSourceOnlyHint")}
+                        {AUDIO_DOWNLOAD_FORMATS.map((format) => {
+                          const available = canProduceFormat(format, sourceExt);
+                          return (
+                            <DropdownMenuItem
+                              key={format}
+                              disabled={!hasAudio || !available || isConverting}
+                              className={TOOLBAR_MENU_ITEM_CLASS}
+                              onSelect={() => {
+                                void handleAudioDownload(format);
+                              }}
+                            >
+                              {convertingFormat === format ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Download className="h-4 w-4" />
+                              )}
+                              <span className="flex-1">
+                                {t("nodeToolbar.audio.downloadAs", {
+                                  format: format.toUpperCase(),
+                                })}
                               </span>
-                            ) : null}
-                          </DropdownMenuItem>
-                        );
-                      })}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                              {!available ? (
+                                <span className="text-[10px] opacity-60">
+                                  {t("nodeToolbar.audio.m4aSourceOnlyHint")}
+                                </span>
+                              ) : null}
+                            </DropdownMenuItem>
+                          );
+                        })}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </>
                 );
               })()}
             {!isImageEdit && isAdjustableGroup && (() => {
@@ -2532,6 +3126,11 @@ export const NodeActionToolbar = memo(
           </UiPanel>
           </ZoomScaledToolbar>
         </ReactFlowNodeToolbar>
+        <CreativeIntroDialog
+          open={creativeIntroOpen}
+          onOpenChange={setCreativeIntroOpen}
+          sourceNode={isVideoNode(node) ? node : null}
+        />
       </>
     );
   },

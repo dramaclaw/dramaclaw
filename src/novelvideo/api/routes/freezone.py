@@ -40,6 +40,7 @@ from novelvideo.api.schemas import (
     CanvasPayload,
     CreateIdentityAssetRequest,
     FreezoneAnalyzeShotsRequest,
+    FreezoneShotBreakdownRequest,
     FreezoneAnalyzeVideoStoryRequest,
     FreezoneAssetCopyRequest,
     FreezoneAssetLibraryFolderPatchRequest,
@@ -47,9 +48,13 @@ from novelvideo.api.schemas import (
     FreezoneAssetLibraryItemPatchRequest,
     FreezoneAudioMusicRequest,
     FreezoneAudioSeparateRequest,
+    FreezoneAudioSplitPreviewRequest,
+    FreezoneAudioSplitPreviewResponse,
+    FreezoneAudioTransformRequest,
     FreezoneAudioSpeechRequest,
     FreezoneCharacterMultiViewRequest,
     FreezoneEditRequest,
+    FreezoneDepthMotionCaptureRequest,
     FreezoneExtractFramesRequest,
     FreezoneFrameFromContextRequest,
     FreezoneGenRequest,
@@ -101,6 +106,12 @@ from novelvideo.director_world import DirectorWorldService
 from novelvideo.director_world.staging_prop_ai import generate_ai_staging_prop
 from novelvideo.generators.render_identity_guard import render_ai_detection_error
 from novelvideo.freezone import canvas_store
+from novelvideo.freezone.liblib_import import (
+    LiblibImportError,
+    fetch_liblib_canvas_detail,
+    parse_liblib_share_url,
+)
+from novelvideo.freezone.liblib_assets import localize_media_urls, mirror_liblib_canvas_assets
 from novelvideo.freezone.asset_copy import (
     AssetCopyError,
     allocate_target_path,
@@ -108,7 +119,7 @@ from novelvideo.freezone.asset_copy import (
     parse_project_asset_url,
     resolve_source_file,
 )
-from novelvideo.i18n_message import log_lines_text
+from novelvideo.i18n_message import lmsg, log_lines_text
 from novelvideo.media_model_request_schema import (
     MediaModelSchemaError,
     media_request_schema_for_mode,
@@ -129,6 +140,7 @@ from novelvideo.freezone.audio_node import (
     resolve_speech_voice,
     resolve_user_audio_voice,
 )
+from novelvideo.freezone.audio_transform import audio_transform_output_path
 from novelvideo.freezone.canvas_lock import CanvasLockBusy
 from novelvideo.freezone.canvas_media_scope import (
     CanvasMediaScopeError,
@@ -2698,21 +2710,24 @@ async def _enqueue_or_start_freezone_video_analysis(
     project: str,
     project_dir: Path,
     output_dir: str,
-    task_type: Literal["freezone_extract", "freezone_analyze", "freezone_video_story"],
+    task_type: Literal[
+        "freezone_extract",
+        "freezone_analyze",
+        "freezone_video_story",
+        "freezone_shot_breakdown",
+    ],
     job_id: str,
     payload: dict,
 ) -> dict:
     if ctx is not None:
+        billing_operation = {
+            "freezone_analyze": "shots",
+            "freezone_video_story": "video_story",
+            "freezone_shot_breakdown": "video_breakdown",
+        }.get(task_type)
         billing = (
-            {
-                "feature_key": "freezone.video_analyze",
-                "operation": (
-                    "video_story"
-                    if task_type == "freezone_video_story"
-                    else "shots"
-                ),
-            }
-            if task_type in {"freezone_analyze", "freezone_video_story"}
+            {"feature_key": "freezone.video_analyze", "operation": billing_operation}
+            if billing_operation
             else {}
         )
         queued = await get_task_backend().enqueue_project_task(
@@ -2751,6 +2766,7 @@ async def _enqueue_or_start_freezone_media_job(
         "freezone_video_erase",
         "freezone_video_upscale",
         "freezone_audio_separate",
+        "freezone_audio_transform",
         "freezone_video_compose",
         "freezone_audio_eleven_music",
     ],
@@ -6093,6 +6109,81 @@ async def freezone_redraw(
 # ============================================================
 
 
+@router.post(
+    "/projects/{project}/freezone/video/depth-motion",
+    response_model=FreezoneJobAcceptedResponse,
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_depth_motion_capture(
+    project: str,
+    body: FreezoneDepthMotionCaptureRequest,
+    user: dict = Depends(get_api_user),
+):
+    """Queue project-local DA3 depth capture on the GPU/world lane."""
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
+    )
+    try:
+        source_path = resolve_static_url_to_path(body.source_url, project_dir)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not source_path.is_file():
+        raise HTTPException(404, "video source not found")
+    if ctx is None:
+        _raise_project_context_required("freezone_depth_motion")
+    return await _enqueue_freezone_background_job(
+        ctx=ctx,
+        project_dir=project_dir,
+        task_type="freezone_depth_motion",
+        job_id=_new_job_id(),
+        payload={"source_path": source_path.as_posix(), "resolution": body.resolution},
+        queue_kind="world",
+    )
+
+
+@router.post("/projects/{project}/freezone/shot-breakdown", tags=[TAG_FREEZONE_VIDEO])
+async def freezone_shot_breakdown(
+    project: str,
+    body: FreezoneShotBreakdownRequest,
+    user: dict = Depends(get_api_user),
+):
+    """逐帧拉片：切分镜头 → 解析镜头语言 → 产出可复用的运镜素材。
+
+    复用现成的抽帧与逐帧分析，本身只多了一层归纳，所以走普通队列而不是 world 队列
+    （不需要 GPU）。
+    """
+    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
+        project, user
+    )
+    try:
+        video_path = resolve_static_url_to_path(body.video_url, project_dir)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not video_path.is_file():
+        raise HTTPException(404, "video source not found")
+    if ctx is None:
+        _raise_project_context_required("freezone_shot_breakdown")
+    return await _enqueue_or_start_freezone_video_analysis(
+        ctx=ctx,
+        username=username,
+        project=project_name,
+        project_dir=project_dir,
+        output_dir=output_dir,
+        task_type="freezone_shot_breakdown",
+        job_id=_new_job_id(),
+        payload={
+            "video_path": video_path.as_posix(),
+            "source_url": body.video_url,
+            "max_frames": body.max_frames,
+            "scene_threshold": body.scene_threshold,
+            "duration_sec": body.duration_sec,
+            "provider": body.provider,
+            "model": body.model,
+            "dimensions": body.dimensions,
+        },
+    )
+
+
 @router.post("/projects/{project}/freezone/extract-frames", tags=[TAG_FREEZONE_VIDEO])
 async def freezone_extract_frames(
     project: str,
@@ -6989,6 +7080,78 @@ def _start_freezone_audio_separate_task(
                 error=str(exc),
                 current_task="failed",
                 logs=[f"错误: {exc}"],
+            )
+
+    asyncio.create_task(_runner())
+
+
+def _start_freezone_audio_transform_task(
+    *,
+    username: str,
+    project: str,
+    project_dir: Path,
+    job_id: str,
+    source_path: Path,
+    body: FreezoneAudioTransformRequest,
+) -> None:
+    task_type = "freezone_audio_transform"
+    task_manager = get_task_manager()
+    task_manager.create_task(
+        task_type, username, project, episode=0, scope=job_id, status="starting"
+    )
+
+    async def _runner() -> None:
+        try:
+            task_manager.update_progress(
+                task_type,
+                username,
+                project,
+                episode=0,
+                scope=job_id,
+                progress=0.05,
+                current_task="transforming_audio",
+                logs=[lmsg("tasks.progress.audioTransform.start", "开始处理音频")],
+            )
+            from novelvideo.freezone.audio_transform import run_freezone_audio_transform
+
+            output_path = await run_freezone_audio_transform(
+                project_dir=project_dir,
+                job_id=job_id,
+                source_path=source_path.as_posix(),
+                start_sec=body.start_sec,
+                end_sec=body.end_sec,
+                speed=body.speed,
+            )
+            task_manager.complete_task(
+                task_type,
+                username,
+                project,
+                episode=0,
+                scope=job_id,
+                result={
+                    "job_id": job_id,
+                    "output_path": output_path.as_posix(),
+                    "duration_sec": (body.end_sec - body.start_sec) / body.speed,
+                },
+                current_task="completed",
+                logs=[lmsg("tasks.progress.audioTransform.complete", "音频处理完成")],
+            )
+        except Exception as exc:
+            task_manager.fail_task(
+                task_type,
+                username,
+                project,
+                episode=0,
+                scope=job_id,
+                error=str(exc),
+                current_task="failed",
+                logs=[
+                    lmsg(
+                        "tasks.log.audioTransform.failed",
+                        f"错误: {exc}",
+                        error=str(exc),
+                    )
+                ],
             )
 
     asyncio.create_task(_runner())
@@ -7979,7 +8142,20 @@ def _merge_media_model_catalog_defaults(
         for index, item in enumerate(configured)
         if index not in consumed and item.get("enabled") is not False
     )
-    return merged
+
+    # The UI resolves a newly created node to the first live catalog entry.
+    # Keep the documented ``sortOrder`` meaningful after the CE defaults and
+    # local mappings have been merged, so a local model with sortOrder=1 is
+    # both shown and selected before bundled remote catalog suggestions.
+    def sort_key(index_and_entry: tuple[int, dict[str, Any]]) -> tuple[int, int]:
+        index, entry = index_and_entry
+        try:
+            sort_order = int(entry.get("sortOrder", 100))
+        except (TypeError, ValueError):
+            sort_order = 100
+        return sort_order, index
+
+    return [entry for _index, entry in sorted(enumerate(merged), key=sort_key)]
 
 
 def _catalog_entry_identifiers(entry: dict[str, Any]) -> set[str]:
@@ -9857,6 +10033,121 @@ async def freezone_audio_separate(
 
 
 @router.post(
+    "/projects/{project}/freezone/audio/split-preview",
+    response_model=FreezoneAudioSplitPreviewResponse,
+    tags=[TAG_FREEZONE_AUDIO],
+)
+async def freezone_audio_split_preview(
+    project: str,
+    body: FreezoneAudioSplitPreviewRequest,
+    user: dict = Depends(get_api_user),
+):
+    """Analyze silence and return a reviewable split plan without writing media."""
+    _ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    try:
+        source_path = resolve_static_url_to_path(body.source_url, project_dir)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not source_path.is_file():
+        raise HTTPException(404, f"audio source not found: {source_path}")
+
+    from novelvideo.freezone.audio_split import analyze_audio_split
+
+    try:
+        preview = await analyze_audio_split(
+            source_path=source_path.as_posix(),
+            silence_threshold_db=body.silence_threshold_db,
+            min_silence_sec=body.min_silence_sec,
+            min_segment_sec=body.min_segment_sec,
+            max_segments=body.max_segments,
+        )
+    except TimeoutError as exc:
+        raise HTTPException(504, "audio split analysis timed out") from exc
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        logger.warning("audio split analysis failed: %s", exc)
+        raise HTTPException(503, str(exc)) from exc
+
+    return {
+        "ok": True,
+        "data": {
+            "duration_sec": preview.duration_sec,
+            "segments": [
+                {"start_sec": segment.start_sec, "end_sec": segment.end_sec}
+                for segment in preview.segments
+            ],
+            "detected_silence_count": preview.detected_silence_count,
+            "limited": preview.limited,
+        },
+    }
+
+
+@router.post(
+    "/projects/{project}/freezone/audio/transform",
+    response_model=FreezoneJobAcceptedResponse,
+    tags=[TAG_FREEZONE_AUDIO],
+)
+async def freezone_audio_transform(
+    project: str,
+    body: FreezoneAudioTransformRequest,
+    user: dict = Depends(get_api_user),
+):
+    """Create a derived M4A clip without mutating the source audio."""
+    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
+    )
+    if body.end_sec <= body.start_sec:
+        raise HTTPException(400, "end_sec must be greater than start_sec")
+    if body.end_sec - body.start_sec < 0.1:
+        raise HTTPException(400, "audio transform range must be at least 0.1 seconds")
+    try:
+        source_path = resolve_static_url_to_path(body.source_url, project_dir)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not source_path.is_file():
+        raise HTTPException(404, f"audio source not found: {source_path}")
+
+    try:
+        job_id = _new_job_id()
+        if ctx is not None:
+            return await _enqueue_or_start_freezone_media_job(
+                ctx=ctx,
+                username=username,
+                project=project_name,
+                project_dir=project_dir,
+                task_type="freezone_audio_transform",
+                job_id=job_id,
+                payload={
+                    "source_path": source_path.as_posix(),
+                    "start_sec": body.start_sec,
+                    "end_sec": body.end_sec,
+                    "speed": body.speed,
+                },
+            )
+        _start_freezone_audio_transform_task(
+            username=username,
+            project=project_name,
+            project_dir=project_dir,
+            job_id=job_id,
+            source_path=source_path,
+            body=body,
+        )
+    except RuntimeError as exc:
+        _handle_task_start_runtime_error("failed to start freezone audio transform task", exc)
+        raise HTTPException(503, f"failed to start freezone audio transform task: {exc}") from exc
+
+    return _accepted_job_response(
+        task_type="freezone_audio_transform",
+        username=username,
+        project=project_name,
+        job_id=job_id,
+    )
+
+
+@router.post(
     "/projects/{project}/freezone/audio/speech",
     response_model=FreezoneJobAcceptedResponse,
     tags=[TAG_FREEZONE_AUDIO],
@@ -10220,7 +10511,9 @@ async def freezone_job_result(
         "freezone_mask_edit",
         "freezone_video_erase",
         "freezone_video_upscale",
+        "freezone_depth_motion",
         "freezone_audio_separate",
+        "freezone_audio_transform",
         "freezone_audio_speech",
         "freezone_audio_eleven_music",
         "freezone_video_compose",
@@ -10330,6 +10623,26 @@ async def freezone_job_result(
             }
         return {"ok": False, "info": "job result not yet on disk", "status": "unknown"}
 
+    if task_type == "freezone_depth_motion":
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", job_id):
+            raise HTTPException(400, "invalid job id")
+        if task is not None and task.status == "failed":
+            return {"ok": False, "error": task.error or "job failed", "status": "failed"}
+        if task is not None and task.status != "completed":
+            return {"ok": False, "info": "job result not yet available", "status": task.status}
+        output = outputs_dir(project_dir, task_type) / f"{job_id}.mp4"
+        metadata = output.with_suffix(".json")
+        if not output.is_file() or not metadata.is_file():
+            return {"ok": False, "info": "job result not yet on disk", "status": "unknown"}
+        relative = output.relative_to(project_dir).as_posix()
+        metadata_relative = metadata.relative_to(project_dir).as_posix()
+        return {"ok": True, "data": {
+            "url": make_static_url_for_context(ctx, relative),
+            "size": output.stat().st_size,
+            "manifest_url": make_static_url_for_context(ctx, metadata_relative),
+            "meta": json.loads(metadata.read_text(encoding="utf-8")),
+        }}
+
     out = output_path_for_job(project_dir, task_type, job_id)
     if task_type == "freezone_image_reverse_prompt":
         out = _image_reverse_prompt_output_path(project_dir, job_id)
@@ -10380,6 +10693,8 @@ async def freezone_job_result(
         out = freezone_audio_speech_output_path(project_dir, job_id)
     if task_type == "freezone_audio_eleven_music":
         out = freezone_audio_eleven_music_output_path(project_dir, job_id)
+    if task_type == "freezone_audio_transform":
+        out = audio_transform_output_path(project_dir, job_id)
     if task_type == "freezone_video_compose":
         out = _video_compose_output_path(project_dir, job_id)
     if task_type == "freezone_text_translate":
@@ -12630,6 +12945,89 @@ async def list_canvases(project: str, user: dict = Depends(get_api_user)):
         _raise_canvas_store_http(exc)
 
 
+def _liblib_error_detail(code: str, fallback: str) -> dict[str, str]:
+    """Preserve the legacy message while exposing the frontend translation key."""
+    message = lmsg(f"project.liblibErrors.{code}", fallback)
+    return {"code": code, "message": message.text, "message_code": message.code}
+
+
+@router.post("/projects/{project}/freezone/liblib:detail", tags=[TAG_FREEZONE_CANVAS])
+async def get_liblib_share_canvas_detail(
+    project: str,
+    body: dict = Body(...),
+    user: dict = Depends(get_api_user),
+):
+    # The host cookie is only used to read links whose LibTV access policy
+    # explicitly allows copying. Require local edit access before returning a graph.
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project,
+        user,
+        required_role="editor",
+        require_home_node=False,
+    )
+    share_url = body.get("share_url")
+    if not isinstance(share_url, str):
+        raise HTTPException(
+            400,
+            _liblib_error_detail("invalid_liblib_share_url", "缺少 LibTV 分享链接"),
+        )
+    try:
+        share = parse_liblib_share_url(share_url)
+        detail = await fetch_liblib_canvas_detail(share)
+        if body.get("download_assets") is True:
+            asset_map, skipped_media = await mirror_liblib_canvas_assets(
+                detail, share, project_dir, ctx.project_id
+            )
+            detail["assetMap"] = asset_map
+            # 未能本地保存的素材(陌生域名、源站取不到、超限…)。画布照常导入,这些
+            # 素材走远端地址显示;把清单交给前端提示用户,而不是整张画布导入失败。
+            if skipped_media:
+                detail["skippedMedia"] = skipped_media
+    except LiblibImportError as exc:
+        raise HTTPException(exc.status_code, _liblib_error_detail(exc.code, str(exc))) from exc
+    return {"ok": True, "data": detail}
+
+
+@router.post("/projects/{project}/freezone/liblib:localize", tags=[TAG_FREEZONE_CANVAS])
+async def localize_liblib_canvas_assets(
+    project: str,
+    body: dict = Body(...),
+    user: dict = Depends(get_api_user),
+):
+    """把画布上仍指向远端的素材补下载到本地(画布右上角「一键本地化」)。
+
+    导入当时没能存下来的素材,原因往往是环境性的(代理 fake-IP 把 CDN 域名解析进私有段、
+    源站限流、单文件超限…)。环境修好之后不该逼用户重新导入整张画布——那会丢掉他在画布上
+    已经做的一切改动。这里只按地址补下载,落盘目录和导入时完全一致。
+    """
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project,
+        user,
+        required_role="editor",
+        require_home_node=False,
+    )
+    raw_urls = body.get("urls")
+    if not isinstance(raw_urls, list):
+        raise HTTPException(
+            400,
+            _liblib_error_detail("invalid_localize_request", "缺少待本地化的素材地址"),
+        )
+    source_project_id = body.get("source_project_id")
+    if not isinstance(source_project_id, str) or not re.fullmatch(r"[0-9a-zA-Z_-]{1,128}", source_project_id):
+        # 没有来源画布 id(非 LibTV 导入的画布)也要能用,落到一个固定目录即可。
+        source_project_id = "localized"
+    try:
+        asset_map, skipped_media = await localize_media_urls(
+            [value for value in raw_urls if isinstance(value, str)],
+            project_dir,
+            ctx.project_id,
+            source_project_id,
+        )
+    except LiblibImportError as exc:
+        raise HTTPException(exc.status_code, _liblib_error_detail(exc.code, str(exc))) from exc
+    return {"ok": True, "data": {"assetMap": asset_map, "skippedMedia": skipped_media}}
+
+
 @router.get("/projects/{project}/freezone/canvases/{canvas_id}", tags=[TAG_FREEZONE_CANVAS])
 async def get_canvas(project: str, canvas_id: str, user: dict = Depends(get_api_user)):
     if not CANVAS_ID_RE.match(canvas_id):
@@ -12652,10 +13050,16 @@ async def get_canvas(project: str, canvas_id: str, user: dict = Depends(get_api_
     except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
         _raise_canvas_store_http(exc)
     if payload is None:
-        return {
-            "ok": True,
-            "data": {"nodes": [], "edges": [], "viewport": None},
-        }
+        # 画布不存在就说不存在。此前这里返回 200 + 空图,调用方无从区分「一张空画布」
+        # 和「这个项目里没有这张画布」——进项目时若落到一个跨项目的个人画布 id,
+        # 用户看到的是一张合法白板,像是导入的数据丢了。
+        # `default` 在上面已经 ensure 过,不会走到这里;个人画布按需创建的行为也不变:
+        # 前端 hydrate 把 404 当作「一张还没落盘的新画布」,首次保存时再建文件。
+        message = lmsg("freezone.canvases.notFound", "画布不存在")
+        raise HTTPException(
+            404,
+            {"code": "canvas_not_found", "message": message.text, "message_code": message.code},
+        )
     refreshed_payload = await _refresh_preset_canvas_payload_on_read(
         ctx=ctx,
         username=username,

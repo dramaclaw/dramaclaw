@@ -35,10 +35,14 @@ describe("freezone viewer contracts", () => {
     expect(registry).toContain("node.menu.pano360Viewer");
     expect(nodeSelectionMenu).toContain("CANVAS_NODE_TYPES.pano360Viewer");
     expect(spawnOverlay).toContain("CANVAS_NODE_TYPES.pano360Viewer");
+    // 组件改成按需加载（photo-sphere-viewer 1.37MB，不该跟着画布一起进模块图），
+    // 但这条契约的本意不变：类型仍然注册在 nodeTypes 表里，且 lazy 确实指向本模块。
     expect(nodesIndex).toContain(
-      "pano360ViewerNode: withLodShell('pano360ViewerNode', Pano360ViewerNode)"
+      "pano360ViewerNode: withLodShell('pano360ViewerNode', Pano360ViewerNodeLazy)"
     );
-    expect(nodesIndex).toContain("Pano360ViewerNode");
+    expect(read("src/features/canvas/nodes/lazyNodeComponents.tsx")).toContain(
+      "import('./Pano360ViewerNode')"
+    );
   });
 
   it("keeps the asset pano viewer on the legacy pano capture dialog", () => {

@@ -167,6 +167,8 @@ export interface FreezoneJobRef {
     | "freezone_video_erase"
     | "freezone_video_compose"
     | "freezone_video_upscale"
+    | "freezone_depth_motion"
+    | "freezone_audio_transform"
     | "freezone_audio_separate"
     | "freezone_audio_speech"
     | "freezone_audio_eleven_music"
@@ -293,6 +295,43 @@ export async function submitFreezoneVideoUpscale(
         ...nodeContextBody(payload),
       },
     },
+  );
+}
+
+/** 逐帧拉片：把参考视频反编译成可复用的素材（首尾帧 / 镜头片段 / 参考音轨）。 */
+export async function submitFreezoneShotBreakdown(
+  project: string,
+  payload: {
+    videoUrl: string;
+    durationSec?: number;
+    /** 留空表示三个维度全做。 */
+    dimensions?: ("storyboard" | "cameraMoves" | "musicRef")[];
+  },
+): Promise<FreezoneJobRef> {
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/shot-breakdown`,
+    {
+      method: "POST",
+      json: {
+        video_url: payload.videoUrl,
+        ...(payload.durationSec ? { duration_sec: payload.durationSec } : {}),
+        ...(payload.dimensions ? { dimensions: payload.dimensions } : {}),
+      },
+    },
+  );
+}
+
+/** Depth Anything 3 project-local capture; model/runtime configuration is server-side. */
+export async function submitFreezoneDepthMotion(
+  project: string,
+  payload: { sourceUrl: string; resolution: "480p" | "720p" },
+): Promise<FreezoneJobRef> {
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/video/depth-motion`,
+    { method: "POST", json: {
+      source_url: payload.sourceUrl,
+      resolution: payload.resolution,
+    } },
   );
 }
 
@@ -802,6 +841,37 @@ export async function fetchFreezoneAudioSeparateResult(
 ): Promise<Record<string, unknown>> {
   return await apiCall<Record<string, unknown>>(
     `projects/${encodeURIComponent(project)}/freezone/jobs/freezone_audio_separate/${encodeURIComponent(jobId)}/result`,
+  );
+}
+
+// /freezone/audio/transform ---------------------------------------------- //
+
+export interface FreezoneAudioTransformPayload {
+  sourceUrl: string;
+  startSec: number;
+  endSec: number;
+  speed: number;
+}
+
+/**
+ * Create a derived audio asset without mutating the source node. The backend
+ * keeps pitch stable while applying speed through ffmpeg's `atempo` filter.
+ */
+export async function submitFreezoneAudioTransform(
+  project: string,
+  payload: FreezoneAudioTransformPayload,
+): Promise<FreezoneJobRef> {
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/audio/transform`,
+    {
+      method: "POST",
+      json: {
+        source_url: payload.sourceUrl,
+        start_sec: payload.startSec,
+        end_sec: payload.endSec,
+        speed: payload.speed,
+      },
+    },
   );
 }
 
@@ -1977,6 +2047,15 @@ export async function submitFreezoneTemplateEdit(
 export interface FreezoneJobResult {
   url: string;
   size: number;
+  manifest_url?: string;
+  meta?: {
+    model?: string;
+    frame_count?: number;
+    fps?: string;
+    width?: number;
+    height?: number;
+    [key: string]: unknown;
+  };
 }
 
 export async function fetchFreezoneJobResult(
@@ -1999,6 +2078,8 @@ export async function fetchFreezoneJobResult(
     | "freezone_video_erase"
     | "freezone_video_compose"
     | "freezone_video_upscale"
+    | "freezone_depth_motion"
+    | "freezone_audio_transform"
     | "freezone_audio_separate"
     | "freezone_audio_speech"
     | "freezone_audio_eleven_music"
@@ -2012,6 +2093,42 @@ export async function fetchFreezoneJobResult(
 ): Promise<FreezoneJobResult> {
   return await apiCall<FreezoneJobResult>(
     `projects/${encodeURIComponent(project)}/freezone/jobs/${encodeURIComponent(taskType)}/${encodeURIComponent(jobId)}/result`,
+  );
+}
+
+export interface FreezoneAudioSplitPreviewPayload {
+  sourceUrl: string;
+  silenceThresholdDb?: number;
+  minSilenceSec?: number;
+  minSegmentSec?: number;
+  maxSegments?: number;
+}
+
+export interface FreezoneAudioSplitPreviewResult {
+  duration_sec: number;
+  segments: Array<{ start_sec: number; end_sec: number }>;
+  detected_silence_count: number;
+  limited: boolean;
+}
+
+/** Analyze local audio without creating files or mutating the canvas graph. */
+export async function previewFreezoneAudioSplit(
+  project: string,
+  payload: FreezoneAudioSplitPreviewPayload,
+): Promise<FreezoneAudioSplitPreviewResult> {
+  return await apiCall<FreezoneAudioSplitPreviewResult>(
+    `projects/${encodeURIComponent(project)}/freezone/audio/split-preview`,
+    {
+      method: "POST",
+      timeout: 130_000,
+      json: {
+        source_url: payload.sourceUrl,
+        silence_threshold_db: payload.silenceThresholdDb ?? -35,
+        min_silence_sec: payload.minSilenceSec ?? 0.45,
+        min_segment_sec: payload.minSegmentSec ?? 0.75,
+        max_segments: payload.maxSegments ?? 24,
+      },
+    },
   );
 }
 

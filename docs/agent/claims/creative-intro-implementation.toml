@@ -1,0 +1,104 @@
+version = 1
+slug = "creative-intro-implementation"
+ledger = "docs/agent/tasks/creative-intro-implementation.md"
+baseline = "093ca016"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Register implementation lifecycle and handoff."
+
+[[claims]]
+path = "docs/agent/tasks/creative-intro-implementation.md"
+mode = "coordination"
+reason = "Plan, decisions, progress, and handoff."
+
+[[claims]]
+path = "docs/agent/claims/creative-intro-implementation.toml"
+mode = "coordination"
+reason = "Machine-readable scope."
+
+[[claims]]
+path = "docs/agent/claims/canvas-audio-actions.toml"
+mode = "coordination"
+reason = "Reciprocal shared action-registry and toolbar declaration."
+
+[[claims]]
+path = "docs/agent/claims/canvas-audio-split.toml"
+mode = "coordination"
+reason = "Reciprocal shared action-registry and toolbar declaration."
+
+[[claims]]
+path = "docs/agent/claims/liblib-canvas-parity.toml"
+mode = "coordination"
+reason = "Reciprocal shared toolbar declaration."
+
+[[claims]]
+path = "docs/agent/claims/shot-breakdown.toml"
+mode = "coordination"
+reason = "Reciprocal shared toolbar declaration."
+
+[[claims]]
+path = "docs/agent/claims/creative-intro-discovery.toml"
+mode = "coordination"
+reason = "Reciprocal shared evidence-guide declaration."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/canvasActionRegistry.ts"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "canvas-audio-split"]
+reason = "Register the stable creative-intro action."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/creativeIntroWorkflow.ts"
+mode = "shared"
+shared_with = ["creative-intro-blend"]
+reason = "Pure prompt and graph orchestration logic."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/CreativeIntroDialog.tsx"
+mode = "shared"
+shared_with = ["creative-intro-blend"]
+reason = "Creative-intro configuration UI."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/NodeActionToolbar.tsx"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "canvas-audio-split", "liblib-canvas-parity", "shot-breakdown"]
+reason = "Mount the creative-intro action without replacing other actions."
+
+[[claims]]
+path = "frontend/public/locales/zh/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Chinese creative-intro strings; merge by key."
+
+[[claims]]
+path = "frontend/public/locales/en/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "English creative-intro strings; merge by key."
+
+[[claims]]
+path = "frontend/public/locales/vi/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Vietnamese creative-intro strings; merge by key."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/creative-intro-workflow.test.ts"
+mode = "shared"
+shared_with = ["creative-intro-blend"]
+reason = "Creative-intro prompt and graph regression coverage."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/canvas-action-registry.test.ts"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "canvas-audio-split"]
+reason = "Assert the video creative-intro descriptor alongside audio actions."
+
+[[claims]]
+path = "docs/guides/liblib-canvas-parity.md"
+mode = "shared"
+shared_with = ["canvas-audio-split", "creative-intro-blend", "creative-intro-discovery", "liblib-canvas-parity"]
+reason = "Record that the basic explicit creative-intro chain is now implemented."

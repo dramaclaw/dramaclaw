@@ -80,7 +80,7 @@ vi.mock("@/api/skills", () => ({
   getSkillRegistry: vi.fn().mockResolvedValue([]),
 }));
 
-vi.mock("@/features/canvas/nodes", () => ({ nodeTypes: {} }));
+vi.mock("@/features/canvas/nodes", () => ({ nodeTypes: {}, preloadCanvasNodeComponents: () => {} }));
 vi.mock("@/features/canvas/edges", () => ({ edgeTypes: {} }));
 vi.mock("@/features/canvas/NodeSelectionMenu", () => ({ NodeSelectionMenu: () => null }));
 vi.mock("@/features/canvas/ui/SelectedNodeOverlay", () => ({ SelectedNodeOverlay: () => null }));

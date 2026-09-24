@@ -30,6 +30,8 @@ import { SlidingTabs, type SlidingTabItem } from "@/components/nav/sliding-tabs"
 const XIAJI_DEFAULT_ROUTE = PROJECT_SECTION_ROUTES.ingest;
 
 const xiajiMenuItems = [
+  // 虾本排在虾料之前：创作在导入之前，顺序即流程。
+  { labelKey: "nav.story", to: PROJECT_SECTION_ROUTES.story },
   { labelKey: "nav.ingest", to: PROJECT_SECTION_ROUTES.ingest },
   { labelKey: "nav.assets", to: PROJECT_SECTION_ROUTES.characters },
   {

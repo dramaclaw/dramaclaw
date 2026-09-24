@@ -12,7 +12,7 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
-import { openTaskStream } from "@/api/tasks";
+import { awaitTaskCompletion, openTaskStream } from "@/api/tasks";
 import { useTaskStream } from "@/hooks/use-task-stream";
 import { SESSION_EXPIRED_EVENT } from "@/lib/session-expiry";
 import { useAuthStore } from "@/stores/auth-store";
@@ -62,6 +62,44 @@ beforeEach(() => {
 });
 
 describe("session-expired stream teardown", () => {
+  it("can request a current task snapshot for completion awaiters", () => {
+    const handle = openTaskStream({
+      projectId: "demo",
+      snapshot: true,
+      onTask: vi.fn(),
+    });
+
+    expect(MockEventSource.instances[0].url).toContain("snapshot=true");
+    handle.close();
+  });
+
+  it("delivers non-terminal task metadata to a completion awaiter", async () => {
+    const onProgress = vi.fn();
+    const completion = awaitTaskCompletion("shot-key", "demo", { onProgress });
+    const stream = MockEventSource.instances[0];
+    const emit = (payload: Record<string, unknown>) => {
+      const event = new MessageEvent("task_updated", { data: JSON.stringify(payload) });
+      for (const listener of stream.listeners.get("task_updated") ?? []) listener(event);
+    };
+
+    emit({
+      task_key: "shot-key",
+      task_type: "freezone_shot_breakdown",
+      status: "running",
+      metadata: { shot_breakdown_groups: [{ key: "storyboard" }] },
+    });
+    expect(onProgress).toHaveBeenCalledOnce();
+
+    emit({
+      task_key: "shot-key",
+      task_type: "freezone_shot_breakdown",
+      status: "completed",
+      result: { groups: [] },
+    });
+    await expect(completion).resolves.toMatchObject({ status: "completed" });
+    expect(onProgress).toHaveBeenCalledOnce();
+  });
+
   it("closes the freezone task stream immediately", () => {
     const handle = openTaskStream({
       projectId: "demo",

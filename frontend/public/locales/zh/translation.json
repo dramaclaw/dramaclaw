@@ -906,9 +906,16 @@
       "createTitle": "新建项目画布",
       "createBusy": "新建中",
       "createPlaceholder": "新画布名称",
+      "importTitle": "导入 LibTV 分享画布",
+      "import": "导入",
+      "importBusy": "导入中",
+      "importPlaceholder": "粘贴 LibTV 分享画布链接",
+      "importCookieHint": "登录信息从仓库根目录的 {{file}} 读取，不会保存在画布中",
       "createNameRequired": "请输入画布名称",
       "createDuplicate": "已存在名为「{{name}}」的画布",
       "createFailed": "新建画布失败：{{message}}",
+      "currentSaveFailed": "当前画布未能保存，请稍后再试",
+      "notFound": "画布不存在",
       "createLimitTitle": "画布已达上限",
       "createLimitReached": "每人在一个项目里最多创建 {{limit}} 张画布，删掉一些再新建",
       "createQuotaUnknownTitle": "还确认不了画布数量",
@@ -977,7 +984,8 @@
         "audio": "音频",
         "script": "脚本",
         "world": "3D / 全景",
-        "skill": "技能"
+        "skill": "技能",
+        "liblib": "LibTV 素材"
       }
     },
     "projections": {
@@ -1099,7 +1107,11 @@
           "label": "自定义世界",
           "title": "3D 导演世界（自定义）"
         }
-      }
+      },
+      "pickTitle": "选择要被「{{label}}」替换的素材",
+      "pickHint": "点一条同类型素材完成替换，按 Esc 取消",
+      "pickUnavailable": "当前项目没有可替换的主线资产",
+      "pickEmpty": "这个分类下没有可替换的同类型素材"
     },
     "nodeContext": {
       "mainlineAsset": "主线资产",
@@ -1755,7 +1767,8 @@
     "tasks": "虾条",
     "taskCenter": "任务中心",
     "aiAssistant": "虾导",
-    "freezone": "虾画"
+    "freezone": "虾画",
+    "story": "虾本"
   },
   "characters": {
     "title": "角色",
@@ -2252,6 +2265,41 @@
     "name": "项目名称",
     "namePlaceholder": "请输入你的项目名称",
     "clearName": "清空项目名称",
+    "createDescription": "创建空项目，或粘贴 LibTV 分享画布链接并导入为可编辑节点",
+    "liblibLink": "LibTV 分享画布链接（可选）",
+    "liblibLinkRequired": "LibTV 分享画布链接",
+    "liblibLinkPlaceholder": "https://www.liblib.tv/canvas/share?...",
+    "liblibLinkHint": "导入时会把图片、视频和音频下载到本地，并保留提示词与引用关系。",
+    "liblibLinkInvalid": "请输入有效的 LibTV 分享画布链接",
+    "liblibErrors": {
+      "invalid_share_url": "请输入有效的 LibTV 分享画布链接。",
+      "response_mismatch": "LibTV 返回的画布与分享链接不一致。",
+      "response_missing_graph": "LibTV 画布缺少节点或连线数据。",
+      "empty_graph": "LibTV 画布没有可导入的节点。",
+      "canvas_conflict": "画布 {{canvasId}} 已存在且不是 LibTV 导入画布。",
+      "invalid_liblib_share_url": "请输入有效的 LibTV 分享画布链接。",
+      "liblib_cookie_missing": "请先配置本地 LibTV 登录文件再导入。",
+      "liblib_cookie_invalid": "本地 LibTV 登录文件无效。",
+      "liblib_unavailable": "暂时无法连接 LibTV，请稍后重试。",
+      "liblib_detail_too_large": "这张 LibTV 画布超过导入大小上限。",
+      "liblib_invalid_response": "LibTV 返回了无法读取的画布数据。",
+      "liblib_unauthorized": "本地 LibTV 登录已失效，请更新后重试。",
+      "liblib_remote_error": "LibTV 未能读取这张分享画布。",
+      "liblib_project_mismatch": "LibTV 返回的画布与分享链接不一致。",
+      "liblib_not_copyable": "这张 LibTV 画布未开放复制。",
+      "invalid_localize_request": "没有提供需要本地化的远端素材。",
+      "liblib_media_too_large": "某个 LibTV 素材超过本地导入上限。",
+      "liblib_media_empty": "LibTV 返回了空素材。",
+      "liblib_media_type_invalid": "某个 LibTV 素材不是支持的图片、视频或音频。",
+      "liblib_media_unavailable": "无法下载某个 LibTV 素材，请稍后重试。",
+      "unexpected": "LibTV 画布导入失败，请检查链接和本地登录后重试。"
+    },
+    "liblibImporting": "正在创建并导入素材…",
+    "liblibReimportTitle": "导入或更新 LibTV 画布",
+    "liblibReimportDescription": "把分享画布导入「{{name}}」。同一链接会更新已有画布，新的链接会创建另一张画布。",
+    "liblibReimportHint": "素材会下载到当前项目；已在本地修改过的提示词、模型和生成结果会保留。",
+    "liblibReimportSubmit": "导入并打开",
+    "missingCreatedProjectId": "服务器未返回新项目 ID",
     "nameNoChinese": "项目名称不能包含中文字符",
     "nameTooLong": "项目名称最多 64 个字符",
     "nameInvalid": "项目名称只能包含英文字母、数字和下划线",
@@ -2325,6 +2373,8 @@
     "actions": {
       "open": "打开",
       "openFreezone": "打开虾画",
+      "importLiblib": "导入或更新 LibTV",
+      "importLiblibShort": "更新 LibTV",
       "share": "共享",
       "archive": "归档…",
       "unarchive": "取消归档",
@@ -2350,12 +2400,15 @@
     },
     "toasts": {
       "createFailed": "创建项目失败，请检查项目名称或稍后重试",
+      "liblibImportSucceeded": "已将 LibTV 画布导入「{{name}}」",
+      "liblibImportFailed": "项目已创建，但 LibTV 画布导入失败：{{message}}。可进入项目后从画布菜单重试。",
       "archived": "已归档「{{name}}」",
       "unarchived": "已取消归档「{{name}}」",
       "deleted": "已将「{{name}}」移至回收站",
       "restored": "已恢复「{{name}}」",
       "purged": "已永久删除「{{name}}」",
-      "undo": "撤销"
+      "undo": "撤销",
+      "liblibImportSkippedMedia": "{{count}} 个素材未能本地保存，仍从 LibTV 加载；对方撤下后会失效。"
     },
     "title": "项目管理",
     "newProject": "新建项目",
@@ -2425,7 +2478,11 @@
       "editor": "编辑者",
       "admin": "管理员",
       "owner": "所有者"
-    }
+    },
+    "liblibImportRecoveryTitle": "项目「{{name}}」已创建，但画布导入失败：",
+    "liblibImportRecoveryHint": "不用再新建项目——直接用它重试，或先进去手动处理。",
+    "liblibImportRecoveryRetry": "重试导入",
+    "liblibImportRecoveryOpen": "进入项目"
   },
   "assets": {
     "common": {
@@ -3027,6 +3084,7 @@
       "freezone_video_erase": "视频擦除",
       "freezone_video_upscale": "视频放大",
       "freezone_audio_separate": "音频分离",
+      "freezone_audio_transform": "音频截取与变速",
       "freezone_video_compose": "视频合成",
       "freezone_text_translate": "字幕翻译",
       "freezone_text_generate": "AI 文本生成",
@@ -3117,6 +3175,10 @@
       "props": {
         "perEpisode": "道具按分集生成"
       },
+      "audioTransform": {
+        "start": "开始处理音频",
+        "complete": "音频处理完成"
+      },
       "started": "任务已开始",
       "cancelled": "任务已取消"
     },
@@ -3132,6 +3194,9 @@
       "source": {
         "loading": "从文件加载原文...",
         "loaded": "原文加载完成: {{charCount}} 字符"
+      },
+      "audioTransform": {
+        "failed": "错误: {{error}}"
       },
       "pipeline": {
         "legacyRecall": "程序召回 sanity check 得到 {{sceneCount}} 个场景块: {{sceneNames}}"
@@ -4668,7 +4733,8 @@
       "addNode": "添加节点",
       "undo": "撤销",
       "redo": "重做",
-      "paste": "粘贴"
+      "paste": "粘贴",
+      "replaceAsset": "替换素材…"
     },
     "assetLibrary": {
       "title": "资产库",
@@ -5189,6 +5255,49 @@
       "arrangeVertical": "纵向排列",
       "commitHint": "把当前节点的内容写回主流程资产"
     },
+    "creativeIntro": {
+      "title": "创意片头",
+      "description": "选择一帧并配置片名样式。确认只会创建可检查的工作流，不会立即消耗算力。",
+      "frame": "片头画面",
+      "frameTime": "{{current}}s / {{duration}}s",
+      "workTitle": "片名",
+      "titlePlaceholder": "输入要出现在画面中的准确片名",
+      "designStyle": "片名设计",
+      "motionStyle": "文字动效",
+      "blendOriginal": "融入原片 5 秒",
+      "blendModelsLoading": "正在检查可同时读取图片和视频的模型能力…",
+      "blendTooShort": "源视频不足 5 秒，不能创建固定长度的融合片段。",
+      "blendUnsupported": "当前模型目录没有明确支持图片+视频引用的模型，融合已禁用。",
+      "blendReady": "将使用 {{model}} 的全能参考模式；最终生成仍需你在动效节点确认。",
+      "blendRange": "原片区间（固定 5 秒）",
+      "blendRangeValue": "{{start}}s–{{end}}s · 关键帧位于片段内 {{offset}}s",
+      "previewBlend": "预览这 5 秒",
+      "stopBlendPreview": "停止预览",
+      "blendNoChargeHint": "确认后会先通过本地剪辑任务裁出真实 5 秒片段，再创建片名图+原片双引用动效节点。裁片不产生供应商生成费用；片名图和最终视频仍需分别显式提交。",
+      "creatingBlendClip": "正在裁出 5 秒原片…",
+      "noChargeHint": "将创建关键帧、片名设计图和 5 秒片头动效三个下游节点。请先在片名设计节点生成图片，再在动效节点显式提交视频生成。",
+      "createWorkflow": "创建片头工作流",
+      "created": "片头工作流已创建，尚未发起生成",
+      "createFailed": "片头工作流创建失败",
+      "keyframeNode": "片头关键帧",
+      "designNode": "片名设计",
+      "motionNode": "片头动效 · 5秒",
+      "blendClipNode": "片头原片 · 5秒",
+      "styles": {
+        "minimal": "简约高级",
+        "chineseCalligraphy": "中式书法",
+        "literaryHandwriting": "文艺手写",
+        "anime": "热血动漫",
+        "cyberpunk": "赛博科幻",
+        "gothicFantasy": "哥特玄幻",
+        "blurFade": "模糊渐入",
+        "particles": "动态粒子",
+        "glitch": "故障闪现",
+        "handwriting": "手写笔画",
+        "assemble": "动画拼合",
+        "impact": "震击入场"
+      }
+    },
     "style": {
       "chip": "风格",
       "chipLoading": "风格 · 加载中",
@@ -5366,7 +5475,7 @@
     "assetReplace": {
       "dropToReplace": "松开替换该素材",
       "dragHint": "拖到左侧同类型素材上替换",
-      "handleHint": "按住拖到左侧素材库,替换同类型素材",
+      "handleHint": "点击或拖到左侧素材库，替换同类型素材",
       "handleLabel": "替换素材"
     },
     "reference": {
@@ -5414,6 +5523,39 @@
     },
     "assetDrop": {
       "fallbackNodeLabel": "节点"
+    },
+    "notFound": "画布不存在",
+    "notFoundDescriptionPrefix": "当前项目里找不到画布",
+    "notFoundDescriptionSuffix": "。它可能属于别的项目，或者已被删除。",
+    "backToProjectCanvas": "回到本项目的画布",
+    "remoteMedia": {
+      "badge": "网络素材",
+      "title": "{{count}} 个素材未存到本地，仍从 LibTV 加载：",
+      "consequence": "远端素材无法作为本地模型的输入或参考图，且 LibTV 撤下后会失效。",
+      "reason": {
+        "internalHost": "素材地址指向内网，出于安全未下载。",
+        "notHttps": "素材地址不是 HTTPS，未下载。",
+        "hasCredentials": "素材地址带有账号口令，未下载。",
+        "badUrl": "素材地址格式无效。",
+        "unsupportedFileType": "该文件类型暂不支持本地保存。",
+        "tooManyAssets": "画布素材数量超出本地保存上限。",
+        "totalSizeLimit": "画布素材总体积超出本地保存上限。",
+        "mediaTooLarge": "单个素材超过本地保存上限。",
+        "mediaEmpty": "源站返回了空文件。",
+        "mediaTypeInvalid": "源站返回的不是图片/视频/音频。",
+        "mediaUnavailable": "源站下载失败（超时、限流或已删除）。",
+        "unknown": "未能本地保存（原因未知）。"
+      },
+      "localize": {
+        "label": "一键本地化",
+        "pending": "{{count}} 个素材未本地化",
+        "running": "正在本地化…",
+        "done": "已本地化 {{count}} 个素材",
+        "partial": "已本地化 {{done}} 个，仍有 {{failed}} 个未能保存",
+        "none": "没有素材需要本地化",
+        "failed": "本地化失败：{{message}}",
+        "hint": "把仍从 LibTV 加载的素材下载到本地，之后才能喂给本地模型或当参考图。"
+      }
     }
   },
   "tool": {
@@ -5503,10 +5645,59 @@
       "subtitleRemovalBox": "框选擦除",
       "fullscreen": "全屏播放",
       "notImplementedYet": "该功能暂未上线",
-      "requiresVideo": "请先上传视频"
+      "requiresVideo": "请先上传视频",
+      "shotBreakdown": "逐帧拉片",
+      "breakdownEmpty": "拉片没有产出可用素材",
+      "segmentRemake": "片段重拍",
+      "continuation": "智能续写",
+      "recreate": "再创作",
+      "creativeIntro": "创意片头",
+      "creativeIntroHint": "选择关键帧并创建片名设计与 5 秒动效工作流",
+      "remoteMediaBlocked": "这条素材还在 LibTV 远端，请先「一键本地化」再使用"
     },
     "audio": {
       "requiresAudio": "请先准备音频",
+      "trim": "音频截取",
+      "speed": "音频变速",
+      "smartSplit": "智能切分",
+      "customSplit": "自定义切分",
+      "derivedHint": "源音频保持不变，确认后会创建一个下游音频节点。",
+      "splitDerivedHint": "先预览分段；确认后每段创建独立下游节点，源音频保持不变。",
+      "silenceThreshold": "静音阈值 (dB)",
+      "minSilence": "最短静音 (s)",
+      "minSegment": "最短片段 (s)",
+      "analyzeSplit": "分析分段",
+      "customCutPoints": "切点（秒）",
+      "customCutPointsPlaceholder": "例如：12.5, 30, 48.2",
+      "analysisFailed": "分段分析失败，请调整参数后重试",
+      "splitLimited": "切点过多，预览已均匀合并到最多 24 段",
+      "noSplitDetected": "没有检测到可用切点，请降低阈值或缩短最短静音",
+      "segmentCount": "共 {{count}} 个片段",
+      "createSegments": "创建 {{count}} 个片段",
+      "splitStarted": "开始依次创建 {{count}} 个切分片段",
+      "splitPartialFailed": "有 {{count}} 个片段未能提交，其他片段继续处理",
+      "splitSubmitFailed": "没有成功提交任何切分任务",
+      "splitValidation": {
+        "duration-unknown": "尚未读取到音频时长",
+        "points-required": "请输入至少一个切点",
+        "invalid-point": "切点必须大于 0 且小于音频总时长",
+        "range-too-short": "相邻切点之间不能短于 0.1 秒",
+        "too-many-segments": "最多创建 24 个片段"
+      },
+      "startTime": "开始时间（秒）",
+      "endTime": "结束时间（秒）",
+      "speedValue": "播放速度",
+      "createDerived": "创建新音频",
+      "remoteMediaBlocked": "远端音频需先本地化后才能处理",
+      "busy": "该音频正在处理中",
+      "durationRequired": "需要先读取到音频时长",
+      "transformFailed": "音频处理失败",
+      "validation": {
+        "duration-unknown": "尚未读取到音频时长",
+        "invalid-range": "请填写有效的起止时间",
+        "range-too-short": "所选区间不能短于 0.1 秒",
+        "invalid-speed": "速度必须在 0.5× 到 2× 之间"
+      },
       "downloadAs": "下载为 {{format}}",
       "m4aSourceOnlyHint": "仅 m4a 源",
       "m4aSourceOnly": "源文件不是 m4a，无法转换为 m4a 格式",
@@ -5987,6 +6178,16 @@
       }
     },
     "videoNode": {
+      "depth": {
+        "open": "逐帧拉片",
+        "title": "深度动作捕捉 · Depth Anything 3",
+        "description": "从原视频提取近白远黑的相对深度视频，保留原帧率；结果生成独立的画布参考节点。需要服务器预先配置 DA3-Small 模型。",
+        "submit": "确认提取",
+        "busy": "逐帧捕捉中…",
+        "badge": "深度参考 · DA3",
+        "resultName": "深度动作参考",
+        "noUrl": "深度捕捉完成但未返回视频地址"
+      },
       "uploading": "上传中...",
       "generating": "生成中...",
       "noVideo": "暂无视频",
@@ -6113,7 +6314,8 @@
         "failed": "剪辑失败：{{detail}}"
       },
       "videoEdit": {
-        "imageLimit": "视频编辑最多支持 {{limit}} 张参考图，已使用前 {{limit}} 张（忽略其余 {{ignored}} 张）"
+        "imageLimit": "视频编辑最多支持 {{limit}} 张参考图，已使用前 {{limit}} 张（忽略其余 {{ignored}} 张）",
+        "sourceFallbackLabel": "源视频"
       },
       "allReference": {
         "happyHorseUnsupported": "HappyHorse 不支持全能参考模式，请切换为文生视频或图生视频。",
@@ -6415,7 +6617,8 @@
       "pano360ViewerNode": "360° 全景查看器",
       "threeDWorldNode": "3D 世界",
       "skillNode": "技能",
-      "styleNode": "风格"
+      "styleNode": "风格",
+      "liblibMediaNode": "LibTV 素材"
     },
     "exportResult": {
       "generic": "结果图片",
@@ -6520,7 +6723,17 @@
         "videoUpstreamAllRefOrEdit": "上游含视频素材时只能用「全能参考」或「视频编辑」",
         "videoUpstreamAllRefOnly": "上游含视频素材时只能用「全能参考」",
         "hasImageOrAudioRefs": "已引用图片/音频素材时不可用",
-        "moreThanTwoImages": "上游图片超过 2 张时不可用"
+        "moreThanTwoImages": "上游图片超过 2 张时不可用",
+        "h3MediaConnected": "已连接素材，请选择对应的 H3 参考模式",
+        "h3UseAllReferenceForMixed": "图片与视频/音频混合时请使用「全能参考」",
+        "h3ImageExactlyOne": "H3「图生视频」需要且仅支持 1 张图片",
+        "h3FirstLastExactlyTwo": "H3「首尾帧」需要且仅支持 2 张图片",
+        "h3NeedReference": "H3「全能参考」至少需要 1 个引用素材",
+        "h3MaxImages": "H3「全能参考」最多支持 {{count}} 张图片",
+        "h3MaxVideos": "H3「全能参考」最多支持 {{count}} 个视频",
+        "h3MaxAudios": "H3「全能参考」最多支持 {{count}} 个音频",
+        "h3UnsupportedMode": "MiniMax H3 不支持该模式",
+        "h3PromptRequired": "MiniMax H3 的所有模式都需要提示词"
       }
     },
     "threeDWorld": {
@@ -6553,6 +6766,45 @@
       "directorCaptureSizeFailed": "无法解析导演世界截图尺寸",
       "directorElement": "导演元素",
       "directorExportLabel": "导演世界导出"
+    },
+    "videoRemake": {
+      "nodeTitle": "片段重拍",
+      "title": "片段重拍",
+      "exit": "退出重拍",
+      "rangeCount": "已选 {{selected}}/{{max}} 段",
+      "intentPlaceholder": "描述这段视频要如何修改",
+      "wholeHint": "在时间轴上点一下截取要重拍的片段；不选则整段重拍，提示词留空即原样重跑一次",
+      "selectHint": "点选一段写它要怎么改，或在空白处再截一段",
+      "remove": "删除这一段",
+      "dragStart": "拖动调整起点",
+      "dragEnd": "拖动调整终点",
+      "framesLoading": "正在抽帧…",
+      "framesFailed": "抽帧失败（可能是跨域限制），仍可正常框选",
+      "durationLimit": "当前仅支持时长不少于 4 秒的视频进行片段重拍",
+      "submitBlocked": "所选片段还不能提交，请先按面板里的提示调整",
+      "sourceToken": "这段视频",
+      "error": {
+        "sourceTooShort": "源视频不足 {{min}} 秒，无法片段重拍",
+        "tooManyRanges": "最多只能选 {{max}} 段",
+        "outOfBounds": "有片段超出了视频范围",
+        "rangeTooShort": "每段不能短于 {{min}} 秒",
+        "rangeTooLong": "每段不能长于 {{max}} 秒",
+        "overlap": "片段之间不能重叠",
+        "gapTooShort": "片段之间剩下的部分不足 {{min}} 秒，接不回去"
+      },
+      "modelUnsupported": "当前可用的模型都不支持「视频编辑」，无法进行片段重拍或智能续写",
+      "clearAll": "清空所选片段"
+    },
+    "videoContinuation": {
+      "nodeTitle": "智能续写",
+      "clipDisplayName": "续写前置片段",
+      "selectSegment": "请截取续写前置视频",
+      "selectedDuration": "{{seconds}} 秒",
+      "exit": "退出续写模式",
+      "confirm": "确认续写",
+      "hint": "确认后会先裁出这段作为前提，再生成它之后的内容",
+      "durationHint": "所选片段需在 {{min}}–{{max}} 秒之间",
+      "bindingBroken": "续写的前置片段已变更或被删除，请重新选择片段"
     }
   },
   "viewer": {
@@ -7018,6 +7270,21 @@
       "statusActive": "当前生效",
       "gatewayWarningIconLabel": "模型网关未配置",
       "gatewayNotConfiguredImpact": "当前生效的模型网关未配置。文本、图片、视频、音频等模型调用会失败；请配置官方渠道或初始化本地 NewAPI 后再生成内容。",
+      "localRouter": {
+        "title": "本地模型路由已启用",
+        "description": "此配置不需要本地 NewAPI 数据库。密钥和工作流保存在源码目录之外，更新项目不会覆盖它们。",
+        "running": "运行中",
+        "image": "图片",
+        "imageDescription": "本地 ComfyUI · 文生图、图生图",
+        "text": "文本",
+        "textDescription": "硅基流动 · DeepSeek-V4-Flash",
+        "embedding": "Embedding",
+        "embeddingDescription": "硅基流动 · BAAI/bge-m3",
+        "voice": "语音合成",
+        "voiceDescription": "硅基流动 · CosyVoice2-0.5B",
+        "address": "路由地址：{{address}}",
+        "disconnected": "未连接"
+      },
       "modes": {
         "official": "官方",
         "custom": "自定义",
@@ -7754,5 +8021,121 @@
     "reload": "重新加载",
     "statusUnknown": "暂时无法确认功能开放状态，请稍后重试。",
     "unavailableTitle": "功能未开放"
+  },
+  "story": {
+    "save": "保存",
+    "saved": "已保存",
+    "unsaved": "未保存",
+    "errors": {
+      "invalidDocId": "文档标识不合法",
+      "missingContent": "缺少文档内容",
+      "docTooLarge": "文档超出大小上限",
+      "docConflict": "文档已被其它地方修改，请刷新后重试",
+      "missingPrompt": "缺少提示词",
+      "promptTooLong": "提示词超出上限",
+      "writeFailedDetail": "模型生成失败：{{detail}}"
+    },
+    "step": {
+      "bible": {
+        "title": "故事圣经",
+        "hint": "通篇约束。这里定下的规则，后面每一步生成都会带上。"
+      },
+      "plan": {
+        "title": "创作方案",
+        "hint": "剧名、三幕结构、节奏曲线、付费卡点、爽点分布。",
+        "placeholder": "三幕结构、节奏曲线、付费卡点规划…"
+      },
+      "characters": {
+        "title": "角色体系",
+        "hint": "主要角色档案、关系、弧线与四层反派。角色锁里已填的会被优先遵守。",
+        "placeholder": "角色档案、关系图、角色弧线、反派体系…"
+      },
+      "outline": {
+        "title": "分集目录",
+        "hint": "每集一行。结构锁里已填的阶段会被优先遵守。",
+        "placeholder": "第1集：标题 —— 核心冲突一句话"
+      },
+      "episodes": {
+        "title": "分集剧本",
+        "hint": "按交接格式写正文，每集实时校验，不必等到导入才发现问题。"
+      },
+      "compile": {
+        "title": "编译交接",
+        "hint": "拼成可导入的全文并校验格式，通过后进入虾料导入。"
+      }
+    },
+    "bible": {
+      "locks": {
+        "title": "全局锁",
+        "hint": "每一次生成都会注入。写通篇原则，不写具体剧情。",
+        "positioning": "核心定位，例：霸业永远第一，情爱只是转瞬软肋",
+        "era": "时代与质感，例：纯正东汉末年，服饰建筑称谓全程贴合",
+        "dialogueStyle": "台词风格，例：汉末古风、沉稳霸气，无现代口语",
+        "toneRules": "基调铁律，一行一条"
+      },
+      "blacklist": {
+        "title": "禁止清单",
+        "hint": "一行一条。既会注入生成，也用于成稿自检。",
+        "placeholder": "绝不恋爱脑\n绝不古偶套路\n不得错乱朝代服饰称谓"
+      },
+      "cast": {
+        "title": "角色锁",
+        "hint": "填了就按锁生成，不填才由 AI 自由发挥。",
+        "name": "角色名",
+        "bind": "绑定阶段",
+        "arc": "人物弧线一句话",
+        "mustHave": "必须出现的名场面，顿号分隔",
+        "add": "添加角色锁"
+      },
+      "structure": {
+        "title": "结构锁",
+        "hint": "决定分集目录怎么排。填了就按这个时间线走。",
+        "stage": "阶段名",
+        "plot": "主线事件",
+        "bind": "绑定角色",
+        "tone": "情感基调",
+        "add": "添加结构锁",
+        "notes": "本阶段额外要求（跟着阶段走，重排分集也不会丢）"
+      }
+    },
+    "episodes": {
+      "item": "第 {{number}} 集",
+      "add": "新增一集",
+      "title": "本集标题",
+      "empty": "还没有分集草稿，先新增一集",
+      "bodyPlaceholder": "1-1  洛阳·司空府正堂  夜  内\n人物：曹操、荀彧\n曹操负手立于舆图前。\n曹操：「文若，你说这仗打不打得？」",
+      "noStage": "未绑定阶段"
+    },
+    "compile": {
+      "status": {
+        "standard": "格式达标，可以导入",
+        "repairable": "格式可修复，导入时会降级处理",
+        "missing": "缺少场次头，导入会被拒绝"
+      },
+      "summary": "共 {{episodes}} 集 · {{standard}}/{{total}} 个场次达标",
+      "sceneCount": "{{standard}}/{{total}} 个场次达标",
+      "issue": {
+        "missingTimeOfDay": "缺时间（日/夜）",
+        "missingInteriorExterior": "缺内外景（内/外）",
+        "missingLocation": "缺地点",
+        "missingCharacterLine": "缺「人物：」行"
+      },
+      "issueLine": "第 {{line}} 行：{{reason}}",
+      "moreIssues": "另有 {{count}} 处未列出",
+      "preview": "预览全文",
+      "hidePreview": "收起预览",
+      "copy": "复制全文",
+      "copied": "已复制到剪贴板",
+      "copyFailed": "复制失败",
+      "emptyPreview": "还没有可编译的内容",
+      "import": "导入主线",
+      "imported": "已提交导入，正在建索引",
+      "importFailed": "导入失败",
+      "importHint": "导入后会写入本项目原文并启动建索引；也可以复制全文自行到「虾料」导入。"
+    },
+    "askAssistant": "找虾导打磨",
+    "write": "AI 生成",
+    "written": "已生成，记得保存",
+    "writeFailed": "生成失败"
   }
 }

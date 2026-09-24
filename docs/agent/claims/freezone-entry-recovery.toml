@@ -1,0 +1,44 @@
+version = 1
+slug = "freezone-entry-recovery"
+ledger = "docs/agent/tasks/freezone-entry-recovery.md"
+baseline = "b795415b"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Update lifecycle table."
+
+[[claims]]
+path = "docs/agent/tasks/freezone-entry-recovery.md"
+mode = "coordination"
+reason = "Entry recovery handoff ledger."
+
+[[claims]]
+path = "docs/agent/claims/freezone-entry-recovery.toml"
+mode = "coordination"
+reason = "Machine-readable entry-recovery scope."
+
+[[claims]]
+path = "frontend/src/features/freezone/projections.ts"
+mode = "exclusive"
+reason = "Choose a real canvas for project entry."
+
+[[claims]]
+path = "frontend/src/features/freezone/useCanvasSync.ts"
+mode = "exclusive"
+reason = "Preserve first-use canvas hydration semantics."
+
+[[claims]]
+path = "frontend/src/routes/_app/projects.$project/freezone.lazy.tsx"
+mode = "exclusive"
+reason = "Validate entry canvas before mounting the editor."
+
+[[claims]]
+path = "frontend/src/__tests__/features/freezone/projections.test.ts"
+mode = "exclusive"
+reason = "Entry-canvas selection regression coverage."
+
+[[claims]]
+path = "frontend/src/__tests__/lib/freezone-url.test.ts"
+mode = "exclusive"
+reason = "Project-canvas URL contract."

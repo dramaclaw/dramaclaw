@@ -4,6 +4,14 @@ __pycache__/
 .DS_Store
 .env
 .env1
+# User-managed local router configuration.  It remains beside the project for
+# simple machine migration, but must never be committed or replaced by updates.
+/.dramaclaw-local/
+/config/local/community/
+
+# User-provided local API-key attachment.  Runtime secrets belong in
+# .dramaclaw-local/secrets, never in tracked source.
+/硅基流动
 /.venv/
 /.playwright-mcp
 /.nicegui
@@ -41,6 +49,7 @@ node_modules/
 /.pnpm-store/
 /docs/issues
 scripts/incident_drills/.drill.local.env
+liblib.cookie.local.json
 .obsidian/
 
 # 验收日志（证据归档在本地/CI 工件，不进 git）
@@ -55,6 +64,8 @@ docs/superpowers/
 
 # git worktree 统一目录(主目录永远 main)
 /.worktrees/
+# 多模型协作的本机原子锁，只防并发写入，不承载项目状态。
+/.agent-locks/
 /frontend/bun.lock
 
 # 风格图墙的图片改由 OSS 提供(后端配 STYLE_GALLERY_ASSET_BASE),不再随仓库

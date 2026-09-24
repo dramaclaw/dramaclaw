@@ -39,6 +39,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { CreditDisplayHiddenProvider } from '@/components/credits/credit-visual';
 import { isCeRuntime } from '@/lib/runtime-config';
 import { resolveAbsolutePosition, useCanvasStore } from '@/stores/canvasStore';
+import { deriveNodeDropInfo, useAssetDropStore } from '@/stores/assetDropStore';
 import { useAppStore } from '@/stores/app-store';
 import { getSkillRegistry } from '@/api/skills';
 import { SKILL_SCHEMA_VERSION, type SkillDefinition } from '@/features/freezone/context/skillRoles';
@@ -76,10 +77,12 @@ import {
   CANVAS_LOW_DETAIL_CLASS,
   CANVAS_PANNING_CLASS,
   PANNING_CLASS_RELEASE_DELAY_MS,
+  isLowDetailActive,
   isLowDetailZoom,
   onCanvasHydrateViewport,
   setCanvasGestureActive,
   setCanvasLowDetail,
+  updateLowDetailFromZoom,
 } from '@/features/canvas/application/canvasLod';
 import { isSupportedMediaFile } from '@/features/canvas/application/videoFileTypes';
 import { uploadLocalImageToBackend } from '@/features/canvas/application/uploadToolOutput';
@@ -113,7 +116,7 @@ import { applySkillRoleBindingConnection } from '@/features/canvas/domain/skillC
 import { videoReferenceConnectionRejection } from '@/features/canvas/domain/videoReferenceLimits';
 import { videoReferenceEnvelopeForNode } from '@/features/canvas/application/videoReferenceEnvelope';
 import { embedStoryboardImageMetadata } from '@/commands/image';
-import { nodeTypes as canvasNodeTypes } from './nodes';
+import { nodeTypes as canvasNodeTypes, preloadCanvasNodeComponents } from './nodes';
 import { edgeTypes as canvasEdgeTypes } from './edges';
 import { NodeSelectionMenu } from './NodeSelectionMenu';
 import { SelectedNodeOverlay } from './ui/SelectedNodeOverlay';
@@ -725,11 +728,13 @@ interface PendingNodePlacement {
 interface CanvasProps {
   onBlankPaneClick?: () => void;
   controlsPlacement?: 'bottom-right' | 'top-right';
+  liblibImported?: boolean;
 }
 
 export function Canvas({
   onBlankPaneClick,
   controlsPlacement = 'bottom-right',
+  liblibImported = false,
 }: CanvasProps = {}) {
   const { t } = useTranslation();
   const reactFlowInstance = useReactFlow();
@@ -847,6 +852,13 @@ export function Canvas({
     canUndo: boolean;
     canRedo: boolean;
     canPaste: boolean;
+  } | null>(null);
+  // 右键单个节点的菜单。与上面的画布空白处菜单分开：两者的条目集完全不同，
+  // 合在一起只会让每一条都要先判断「这次是点在节点上还是空白处」。
+  const [nodeContextMenu, setNodeContextMenu] = useState<{
+    x: number;
+    y: number;
+    nodeId: string;
   } | null>(null);
   const [previewConnectionVisual, setPreviewConnectionVisual] =
     useState<PreviewConnectionVisual | null>(null);
@@ -1009,6 +1021,20 @@ export function Canvas({
   const spacePanActiveRef = useRef(false);
 
   const nodes = useCanvasStore((state) => state.nodes);
+  // 画布里出现了哪些节点类型 —— 返回排好序的字符串，zustand 按值比较，拖动时每帧
+  // 求值但结果不变，不会触发重渲染。
+  const presentNodeTypes = useCanvasStore((state) => {
+    const seen = new Set<string>();
+    for (const node of state.nodes) if (node.type) seen.add(node.type);
+    return [...seen].sort().join(',');
+  });
+  // 重型节点（3D 世界 / 360 查看器）的 chunk 按「画布里真的有这个类型」预热，而不是
+  // 等它渲染到 —— 后者会让用户先看到一个可见的空盒子。参照 liblib.tv：画布数据到位
+  // 后才拉第二批按需 chunk。没有这些类型的画布一个字节都不会下载。
+  useEffect(() => {
+    if (!presentNodeTypes) return;
+    preloadCanvasNodeComponents(presentNodeTypes.split(','));
+  }, [presentNodeTypes]);
   const edges = useCanvasStore((state) => state.edges);
   // 连线可见性：隐藏时只给 ReactFlow 的边打 `hidden`，真实 edges 一动不动（见
   // edgeVisibilityStore）。持久化/自动布局/导出全部照用 store 里的真实连线。
@@ -1914,11 +1940,16 @@ export function Canvas({
   // React state。setState 有值守卫，平移中每帧调用但值不变，不触发重渲染；只有
   // 缩放跨过阈值那一次会让 Canvas 重渲染一遍。
   const panningReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [lowDetailActive, setLowDetailActive] = useState(() =>
-    isLowDetailZoom(initialViewportRef.current.zoom)
-  );
+  const [lowDetailActive, setLowDetailActive] = useState(() => {
+    // 首屏就把低细节档的单一真值按初始缩放定下来，节点（订阅 subscribeLowDetail）
+    // 才能在第一帧就渲染对；否则真值默认 false，低缩放首屏会先全量渲染再翻成 shell。
+    updateLowDetailFromZoom(initialViewportRef.current.zoom);
+    return isLowDetailActive();
+  });
   const applyLowDetailClass = useCallback((zoom: number) => {
-    const lowDetail = isLowDetailZoom(zoom);
+    // 唯一的写入口：先更新带滞回的单一真值，再读回来驱动 CSS 类与裁剪开关。
+    updateLowDetailFromZoom(zoom);
+    const lowDetail = isLowDetailActive();
     wrapperRef.current?.classList.toggle(CANVAS_LOW_DETAIL_CLASS, lowDetail);
     setCanvasLowDetail(lowDetail);
     // 升档（退出低缩放）必须与 withLodShell 的 shell→full 交换落在同一次提交：
@@ -1948,7 +1979,8 @@ export function Canvas({
       // 波放在缩放手势中途会有可感知的顿挫，推迟到松手后手势保持流畅；中途已跨档
       // 的可见节点由 withLodShell 的 selector 先行换成 shell，不受此影响。升档方向
       // 不能等到这里——见 applyLowDetailClass 的注释。
-      setLowDetailActive(isLowDetailZoom(viewport.zoom));
+      // 真值已在上一行 applyLowDetailClass 里按滞回更新，这里读回即可。
+      setLowDetailActive(isLowDetailActive());
       if (panningReleaseTimerRef.current) {
         clearTimeout(panningReleaseTimerRef.current);
       }
@@ -2014,7 +2046,7 @@ export function Canvas({
     () =>
       onCanvasHydrateViewport((zoom) => {
         applyLowDetailClass(zoom);
-        setLowDetailActive(isLowDetailZoom(zoom));
+        setLowDetailActive(isLowDetailActive());
       }),
     [applyLowDetailClass]
   );
@@ -2022,7 +2054,7 @@ export function Canvas({
   // 首屏恢复的视口不会触发 onMove/onMoveEnd，低缩放档要在这里补一次。
   useEffect(() => {
     applyLowDetailClass(initialViewportRef.current.zoom);
-    setLowDetailActive(isLowDetailZoom(initialViewportRef.current.zoom));
+    setLowDetailActive(isLowDetailActive());
     return () => {
       if (panningReleaseTimerRef.current) {
         clearTimeout(panningReleaseTimerRef.current);
@@ -2032,6 +2064,10 @@ export function Canvas({
       // 一直以为「还在平移」而永远不测量。
       setCanvasGestureActive(false);
       setCanvasLowDetail(false);
+      // 低细节档真值也复位成「非低细节」：否则卸载时若停在滞回带内（0.35–0.38），
+      // 下次以带内缩放挂载会沿用上一张画布的档，而不是按 ENTER 阈值重新判定。
+      // 喂一个明确的高缩放值即可确定性地复位为 false。
+      updateLowDetailFromZoom(1);
     };
   }, [applyLowDetailClass]);
 
@@ -2596,6 +2632,33 @@ export function Canvas({
     };
 
     const handleContextMenu = (event: MouseEvent) => {
+      const target = event.target as Element | null;
+      // 节点里的输入框和控件保留浏览器原生菜单：文本节点里右键就是为了复制/粘贴，
+      // 操作面板里的按钮/下拉右键弹出我们的节点菜单也只会挡住用户要点的东西。
+      const onNodeControl = Boolean(
+        target?.closest?.(
+          'input, textarea, select, button, a, [contenteditable="true"], [role="menu"], [role="dialog"], [role="listbox"]',
+        ),
+      );
+      const nodeElement = onNodeControl
+        ? null
+        : (target?.closest?.('.react-flow__node') as HTMLElement | null);
+      const nodeId = nodeElement?.dataset.id;
+      if (nodeId) {
+        if (pendingNodePlacement) {
+          event.preventDefault();
+          return;
+        }
+        event.preventDefault();
+        const nodeRect = wrapperElement.getBoundingClientRect();
+        setContextMenu(null);
+        setNodeContextMenu({
+          x: event.clientX - nodeRect.left,
+          y: event.clientY - nodeRect.top,
+          nodeId,
+        });
+        return;
+      }
       if (!isCanvasPaneTarget(event.target, wrapperElement)) {
         return;
       }
@@ -2603,6 +2666,7 @@ export function Canvas({
         event.preventDefault();
         return;
       }
+      setNodeContextMenu(null);
       // Right-click on the empty canvas opens the canvas context menu (undo/redo/paste).
       event.preventDefault();
       const containerRect = wrapperElement.getBoundingClientRect();
@@ -4842,7 +4906,7 @@ export function Canvas({
       ref={wrapperRef}
       data-canvas-tool={handToolActive ? 'hand' : 'move'}
       data-node-drag-focus={isNodeDragFocusActive ? 'true' : undefined}
-      className="dc-canvas relative h-full w-full bg-background"
+      className={`dc-canvas relative h-full w-full ${liblibImported ? 'bg-surface-dark' : 'bg-background'}`}
       onDragEnter={handleCanvasDragEnter}
       onDragOver={handleCanvasDragOver}
       onDragLeave={handleCanvasDragLeave}
@@ -4900,9 +4964,9 @@ export function Canvas({
         onlyRenderVisibleElements={!lowDetailActive}
         zoomOnDoubleClick={false}
         proOptions={REACT_FLOW_PRO_OPTIONS}
-        className="bg-background"
+        className={liblibImported ? 'bg-surface-dark' : 'bg-background'}
       >
-        <Background variant={BackgroundVariant.Dots} gap={20} size={2} color="#4a4a4a" />
+        {!liblibImported && <Background variant={BackgroundVariant.Dots} gap={20} size={2} color="#4a4a4a" />}
         {minimapVisible && (
           <MiniMap
             position={controlsPlacement === 'top-right' ? 'top-right' : 'bottom-right'}
@@ -5062,6 +5126,41 @@ export function Canvas({
           ]}
         />
       )}
+
+      {nodeContextMenu && (() => {
+        const node = nodes.find((item) => item.id === nodeContextMenu.nodeId);
+        const dropInfo = node ? deriveNodeDropInfo(node) : null;
+        // 素材还没生成/上传完的节点没有可提交的地址，条目置灰而不是藏掉——
+        // 藏掉会让菜单在同类节点上时有时无。
+        const canReplace = Boolean(dropInfo?.sourceUrl);
+        return (
+          <CanvasContextMenu
+            position={{ x: nodeContextMenu.x, y: nodeContextMenu.y }}
+            onClose={() => setNodeContextMenu(null)}
+            sections={[
+              [
+                {
+                  key: 'replace-asset',
+                  label: t('canvas.contextMenu.replaceAsset'),
+                  disabled: !canReplace,
+                  onSelect: () => {
+                    if (!node || !dropInfo?.sourceUrl) return;
+                    setSelectedNode(node.id);
+                    useAssetDropStore.getState().beginPick({
+                      nodeId: node.id,
+                      mediaType: dropInfo.mediaType,
+                      sourceUrl: dropInfo.sourceUrl,
+                      thumbUrl: dropInfo.thumbUrl,
+                      label: dropInfo.label,
+                      directorControlBundle: dropInfo.directorControlBundle,
+                    });
+                  },
+                },
+              ],
+            ]}
+          />
+        );
+      })()}
 
       {nodes.length === 0 && emptyHint}
 

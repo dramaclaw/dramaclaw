@@ -34,6 +34,60 @@ export function isLowDetailZoom(zoom: number): boolean {
   return Number.isFinite(zoom) && zoom < LOW_DETAIL_ZOOM_THRESHOLD;
 }
 
+/* ------------------------------------------------------------------------- *
+ * 低缩放档的单一真值源（带滞回）
+ *
+ * `isLowDetailZoom` 是纯函数，直接喂进节点的 useStore selector 时有个硬伤：
+ * 结果只由当前 zoom 决定，一旦相机停在阈值附近（实测存过 0.352942，就压在
+ * 0.35 边界上），平移带来的每帧微小抖动会让它反复在 true/false 之间跳，节点
+ * 跟着反复 shell 化/还原，正是最刺眼的那种抖动。
+ *
+ * 滞回需要「上一次的状态」，而带状态的 selector 会破坏 React Flow 的 memo 比较，
+ * 六个调用点各自演化出自己的滞回状态还会让「一半节点降级、一半没降」——只在阈值
+ * 附近偶发、极难复现。所以把真值提升成模块级单一状态，节点改为订阅：
+ *
+ *   - 进入低细节档：zoom 低于 ENTER（0.35，与历史阈值一致，进入语义不变）；
+ *   - 退出低细节档：要 zoom 高于更高的 EXIT（0.38）才行。
+ *
+ * 0.03 的滞回带只覆盖 0.35–0.38 这一小段；常用工作缩放区间（0.5–1）行为完全不变。
+ * 全画布只有这一个真值，物理上不可能出现「一半节点降级」。
+ * ------------------------------------------------------------------------- */
+
+/** 低于它进入低细节档。等于历史阈值，进入语义未变。 */
+const ENTER_LOW_DETAIL = LOW_DETAIL_ZOOM_THRESHOLD;
+/** 高于它才退出低细节档。滞回带 = EXIT - ENTER = 0.03。 */
+const EXIT_LOW_DETAIL = 0.38;
+
+let lowDetailZoomActive = false;
+const lowDetailListeners = new Set<() => void>();
+
+/**
+ * 唯一的写入口，由 Canvas 在 viewport 变化时调用（onMove/onMoveEnd/hydrate/首屏）。
+ * 只有真值翻转时才通知订阅者——带内的抖动不会触发任何节点重渲染。
+ */
+export function updateLowDetailFromZoom(zoom: number): void {
+  if (!Number.isFinite(zoom)) return;
+  const next = lowDetailZoomActive
+    ? zoom < EXIT_LOW_DETAIL // 已在低细节档：要退出得越过更高的线
+    : zoom < ENTER_LOW_DETAIL; // 不在：按原阈值进入
+  if (next === lowDetailZoomActive) return;
+  lowDetailZoomActive = next;
+  for (const listener of lowDetailListeners) listener();
+}
+
+/** 读当前低细节档真值。可直接用作 useSyncExternalStore 的 getSnapshot。 */
+export function isLowDetailActive(): boolean {
+  return lowDetailZoomActive;
+}
+
+/** 真值翻转时回调；返回取消订阅函数。 */
+export function subscribeLowDetail(listener: () => void): () => void {
+  lowDetailListeners.add(listener);
+  return () => {
+    lowDetailListeners.delete(listener);
+  };
+}
+
 /**
  * 低缩放档下不做 shell 替换的节点类型。
  *

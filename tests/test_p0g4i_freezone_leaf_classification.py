@@ -6,7 +6,8 @@
 
 - **误拦**：5 个纯本地 ffmpeg leaf（`run_freezone_extract_frames` /
   `run_freezone_video_upscale` / `run_freezone_video_compose` /
-  `run_freezone_video_erase` / `run_freezone_audio_separate`，均为
+  `run_freezone_video_erase` / `run_freezone_audio_separate` /
+  `run_freezone_audio_transform`，均为
   `egress-inventory.md:54` 的 EG-20a `service/local`，不出网、不取凭证）没有
   该形参，组织成员一律撞 `invalid task envelope`——用户报的「上传视频接脚本
   生成器、任务停在 ffmpeg 抽取关键帧」就是这条。
@@ -45,10 +46,19 @@ from novelvideo.task_backend.envelope import InvalidTaskEnvelope
 AUDITED_LOCAL_LEAVES = frozenset(
     {
         "run_freezone_audio_separate",
+        "run_freezone_audio_transform",
         "run_freezone_extract_frames",
         "run_freezone_video_compose",
         "run_freezone_video_erase",
         "run_freezone_video_upscale",
+    }
+)
+DA3_LOCAL_LEAVES = frozenset({"run_freezone_depth_motion_capture"})
+SHOT_BREAKDOWN_LOCAL_LEAVES = frozenset(
+    {
+        "run_freezone_detect_shot_spans",
+        "run_freezone_extract_shot_assets",
+        "run_freezone_bgm_separate",
     }
 )
 
@@ -352,10 +362,11 @@ async def test_analyze_shots_leaf_receives_the_organization_egress_context(
     assert seen[0] is not None and seen[0].is_organization
 
 
-def test_local_table_is_exactly_the_five_audited_leaves() -> None:
-    """本地表严格 5 个，不得凭「看起来像本地」扩表（护栏 b）。
+def test_local_table_is_audited_leaves_plus_explicit_local_workers() -> None:
+    """本地表严格限于原 5 条、DA3 和拉片的本地处理进程（护栏 b）。
 
-    每一条都对到 EG-20a，且与 EE 计费豁免集 `feature_billing.py:389-399` 同源。
+    原 5 条与 EE 计费豁免集同源；DA3 不下载权重、仅加载本地路径；拉片三条
+    分别只跑 ffmpeg 或显式配置的本地 demucs 解释器。
     """
 
     from novelvideo.task_backend.runners.freezone import (
@@ -369,9 +380,11 @@ def test_local_table_is_exactly_the_five_audited_leaves() -> None:
         if rule.egress is LeafEgress.LOCAL
     }
 
-    assert local == AUDITED_LOCAL_LEAVES
+    audited = AUDITED_LOCAL_LEAVES | DA3_LOCAL_LEAVES | SHOT_BREAKDOWN_LOCAL_LEAVES
+    assert local == audited
     assert all(
-        FREEZONE_LEAF_EGRESS[name].eg_id == "EG-20a" for name in AUDITED_LOCAL_LEAVES
+        FREEZONE_LEAF_EGRESS[name].eg_id == "EG-20a"
+        for name in audited
     )
 
     # DENIED 桶同样锁死：它不是「待办清单」，往里塞新名字等于悄悄扩大拒绝面。
@@ -441,7 +454,7 @@ def test_classification_matches_the_real_leaf_signatures() -> None:
 
 
 def test_every_dispatch_site_names_a_classified_leaf() -> None:
-    """20 个调用点逐个对到表里；新增未分类的调用点即红。
+    """27 个调用点逐个对到表里；新增未分类的调用点即红。
 
     `leaf_name` 是必填位置参数，不是可选项——漏传是 `TypeError`，不是静默放行。
     """
@@ -469,14 +482,23 @@ def test_every_dispatch_site_names_a_classified_leaf() -> None:
 
     # 19 → 20：`origin/staging` 的 f33ac189（#279）带进来的
     # `generate_freezone_text`，正是上一条用例点名预言的那个形状。
-    assert len(named) == 20
+    # DA3 增加 1 个；拉片增加 scene detect、两次素材提取、视觉分析和 BGM 共 5 个；
+    # 音频非破坏性截取 / 变速增加 1 个本地 ffmpeg leaf。
+    assert len(named) == 27
     assert set(named) <= set(FREEZONE_LEAF_EGRESS)
 
 
 # `novelvideo.freezone.jobs` / `.text_node` 里唯二被 runner 直接调用的非 leaf：
 # `ensure_freezone_dirs`（`jobs.py:358-378`，只 mkdir）与 `bind_story_script_assets`
 # （`text_node.py:606-`，只回填 URL 字符串）。两个都不出网、不取凭证，逐个核过。
-NON_LEAF_HELPERS = frozenset({"ensure_freezone_dirs", "bind_story_script_assets"})
+NON_LEAF_HELPERS = frozenset(
+    {
+        "ensure_freezone_dirs",
+        "bind_story_script_assets",
+        # 只参与节点命名分支，不执行 IO，也不读取凭据。
+        "MODE_BGM_ONLY",
+    }
+)
 
 
 def test_no_leaf_module_import_reaches_the_network_around_the_dispatcher() -> None:

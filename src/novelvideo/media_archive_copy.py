@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Callable
 
 from novelvideo import ports
-from novelvideo.ports.registry import PortNotRegistered
 from novelvideo.ports.video_delivery import ArchivedVideoSource, VideoDeliveryError
 
 
@@ -19,7 +18,12 @@ async def copy_archived_result(
 ) -> bool:
     try:
         delivery = ports.get_video_result_delivery()
-    except PortNotRegistered as exc:
+    except Exception as exc:
+        # Contract tests and development reloads can replace the registry module,
+        # so an imported exception class may no longer be identical to the one
+        # raised by get_port(). Other optional ports use the same reload-safe check.
+        if exc.__class__.__name__ != "PortNotRegistered":
+            raise
         if (
             os.environ.get("ST_MEDIA_ARCHIVE_COPY_ENABLED", "").strip().lower()
             == "true"

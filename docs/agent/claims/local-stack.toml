@@ -1,0 +1,126 @@
+version = 1
+slug = "local-stack"
+ledger = "docs/agent/tasks/local-stack.md"
+baseline = "051d3081"
+
+[[claims]]
+path = ".gitignore"
+mode = "shared"
+shared_with = ["*"]
+reason = "Ignore local secrets and non-runtime workflow source exports by exact path."
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Update lifecycle and conflict radar."
+
+[[claims]]
+path = "docs/agent/tasks/local-stack.md"
+mode = "coordination"
+reason = "Workstream plan and handoff ledger."
+
+[[claims]]
+path = "docs/agent/claims/local-stack.toml"
+mode = "coordination"
+reason = "Machine-readable scope for this workstream."
+
+[[claims]]
+path = "src/novelvideo/local_gateway.py"
+mode = "exclusive"
+reason = "Local provider routing gateway."
+
+[[claims]]
+path = "scripts/start-local-stack.sh"
+mode = "exclusive"
+reason = "Portable local-stack launcher."
+
+[[claims]]
+path = "config/local/**"
+mode = "exclusive"
+reason = "Reviewed public ComfyUI workflow templates only."
+
+[[claims]]
+path = "src/novelvideo/config.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Global runtime settings; add only local-stack options."
+
+[[claims]]
+path = "src/novelvideo/generators/nanobanana_grid.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Generator shared with upstream fixes; port only loopback proxy and local multipart handling."
+
+[[claims]]
+path = "scripts/start-ce.sh"
+mode = "shared"
+shared_with = ["*"]
+reason = "Shared CE launcher."
+
+[[claims]]
+path = "frontend/vite.config.ts"
+mode = "shared"
+shared_with = ["*"]
+reason = "Protect existing LOD bundle-splitting diff; explicitly excluded from local-stack commits."
+
+[[claims]]
+path = "frontend/src/components/layout/header.tsx"
+mode = "exclusive"
+reason = "Suppress the irrelevant media-relay warning for the documented local router."
+
+[[claims]]
+path = "frontend/src/components/settings/settings-dialog.tsx"
+mode = "exclusive"
+reason = "Present the local-router configuration without NewAPI setup controls."
+
+[[claims]]
+path = "frontend/public/locales/zh/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Localized local-router status copy; merge by key only."
+
+[[claims]]
+path = "frontend/public/locales/en/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Localized local-router status copy; merge by key only."
+
+[[claims]]
+path = "frontend/public/locales/vi/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Localized local-router status copy; merge by key only."
+
+[[claims]]
+path = "src/novelvideo/api/routes/freezone.py"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "canvas-audio-split", "depth-motion-da3", "shot-breakdown", "liblib-canvas-parity"]
+reason = "Local media catalog ordering is independent of neighboring Freezone endpoints."
+
+[[claims]]
+path = "tests/test_local_gateway.py"
+mode = "exclusive"
+reason = "Local gateway regression tests."
+
+[[claims]]
+path = "tests/test_freezone_image_backend.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Shared image backend behavior."
+
+[[claims]]
+path = "tests/test_newapi_image_gateway.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Shared NewAPI image gateway behavior."
+
+[[claims]]
+path = "tests/test_image_generation_selection.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Shared model selection behavior."
+
+[[claims]]
+path = "启动说明.md"
+mode = "exclusive"
+reason = "Portable setup guide; remove machine-specific paths."

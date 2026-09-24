@@ -8,6 +8,7 @@ import {
   MEDIA_VARIANT_MAX_EDGE,
   pickMediaVariant,
   withMediaVariant,
+  withRemoteImageVariant,
 } from '@/lib/media-url';
 
 export function parseAspectRatio(value: string): number {
@@ -323,10 +324,15 @@ export function nodeBodyImageSrc(
   const maxEdge = MEDIA_VARIANT_MAX_EDGE[variant];
   // 本来就不比变体大：换成变体只是重编码一遍，白白多一个文件。
   if (Math.max(natural.width, natural.height) <= maxEdge) return asOriginal;
-  // 变体只对受保护的项目静态图片生效；不适用时原样返回（blob:/data: 的上传预览、
+  // 本地阶梯只对受保护的项目静态图片生效；不适用时原样返回（blob:/data: 的上传预览、
   // 遗留路径、非图片后缀都会走到这里），downscaled 随之为 false。
   const src = withMediaVariant(url, variant);
-  return src === url ? asOriginal : { src, original: url, downscaled: true, maxEdge };
+  if (src !== url) return { src, original: url, downscaled: true, maxEdge };
+  // 远端素材(导入的画布在本地化之前全是这种)没有本地阶梯可用,改走对象存储的
+  // 服务端缩放。不适用时同样原样返回。
+  const remote = withRemoteImageVariant(url, maxEdge);
+  if (remote !== url) return { src: remote, original: url, downscaled: true, maxEdge };
+  return asOriginal;
 }
 
 /**

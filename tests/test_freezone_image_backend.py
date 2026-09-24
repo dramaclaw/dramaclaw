@@ -8372,6 +8372,29 @@ def test_ce_media_catalog_overlay_returns_defaults_without_local_models() -> Non
     assert freezone_routes._merge_media_model_catalog_defaults(defaults, []) == defaults
 
 
+def test_ce_media_catalog_overlay_honors_local_sort_order() -> None:
+    defaults = [
+        {
+            "catalogId": "official-image",
+            "id": "official-image",
+            "apiModel": "official-image",
+            "sortOrder": 10,
+        }
+    ]
+    configured = [
+        {
+            "catalogId": "local-image",
+            "id": "local-image",
+            "apiModel": "local-image",
+            "sortOrder": 1,
+        }
+    ]
+
+    result = freezone_routes._merge_media_model_catalog_defaults(defaults, configured)
+
+    assert [entry["id"] for entry in result] == ["local-image", "official-image"]
+
+
 def test_ce_media_catalog_does_not_match_custom_upstream_model_as_catalog_id() -> None:
     defaults = [
         {

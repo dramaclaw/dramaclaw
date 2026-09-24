@@ -710,6 +710,12 @@ function normalizeNodes(rawNodes: CanvasNode[]): CanvasNode[] {
         }
       }
 
+      // 拉片没有持久化 task key，刷新后无法恢复监听。把保存下来的进行态复位，
+      // 否则按钮会永久禁用；任务本身仍在任务中心执行，不把复位误写成失败。
+      if ('isBreakingDown' in mergedData && mergedData.isBreakingDown) {
+        mergedData.isBreakingDown = false;
+      }
+
       const normalizedNode = {
         ...node,
         type: node.type as CanvasNodeType,
