@@ -1,0 +1,24 @@
+version = 1
+slug = "minimax-h3-liblib-request-contract"
+ledger = "docs/agent/tasks/minimax-h3-liblib-request-contract.md"
+baseline = "b4ace7e9"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Archived lifecycle entry has been removed from the active index."
+
+[[claims]]
+path = "docs/agent/tasks/minimax-h3-liblib-request-contract.md"
+mode = "coordination"
+reason = "Completed plan, evidence provenance, validation, and handoff ledger."
+
+[[claims]]
+path = "docs/agent/claims/minimax-h3-liblib-request-contract.toml"
+mode = "coordination"
+reason = "Keep uncommitted documentation attributable until it is committed."
+
+[[claims]]
+path = "docs/guides/minimax-h3-liblib-request-contract.md"
+mode = "exclusive"
+reason = "Redacted real-request, response, billing, and ordering evidence."
