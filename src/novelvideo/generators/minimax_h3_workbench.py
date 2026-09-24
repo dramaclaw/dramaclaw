@@ -14,6 +14,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import re
 from typing import Any, Callable
 from urllib.parse import urljoin, urlparse
 
@@ -40,6 +41,15 @@ _H3_REFERENCE_MODEL_FILES = {
     "fl2va": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
     "dual_pass": "minimax_h3_hybrid_fl2va_ref2va_b25-49-int8_r.safetensors",
 }
+_H3_MIXED_REFERENCE_PATTERN = re.compile(
+    r"\{\{\s*Mixed\s+(\d+)\s*\}\}",
+    re.IGNORECASE,
+)
+_H3_REFERENCE_LABELS = {
+    "image": "Picture",
+    "video": "Video",
+    "audio": "Audio",
+}
 
 
 @dataclass(frozen=True)
@@ -65,6 +75,40 @@ class MiniMaxH3SubmissionParameters:
             "seed": self.seed,
             "loras": [],
         }
+
+
+def resolve_minimax_h3_mixed_references(
+    prompt: str,
+    references: list[ShotReference],
+) -> str:
+    """Bind global canvas placeholders to H3's per-media reference labels.
+
+    The canvas and ``references`` share one left-to-right mixed order, while
+    H3 numbers images, videos, and audio in separate namespaces. Resolving
+    before QuickUI groups its upload slots preserves the user's exact binding.
+    """
+
+    type_indexes = {reference_type: 0 for reference_type in _H3_REFERENCE_LABELS}
+    labels: list[str] = []
+    for reference in references:
+        reference_type = str(reference.type or "").strip().lower()
+        label = _H3_REFERENCE_LABELS.get(reference_type)
+        if label is None:
+            raise MiniMaxH3WorkbenchError(
+                "H3 only accepts image, video, or audio references"
+            )
+        type_indexes[reference_type] += 1
+        labels.append(f"<{label} {type_indexes[reference_type]}>")
+
+    def replace(match: re.Match[str]) -> str:
+        mixed_index = int(match.group(1))
+        if mixed_index < 1 or mixed_index > len(labels):
+            raise MiniMaxH3WorkbenchError(
+                f"H3 Mixed reference {mixed_index} is out of range"
+            )
+        return labels[mixed_index - 1]
+
+    return _H3_MIXED_REFERENCE_PATTERN.sub(replace, str(prompt))
 
 
 def _multiple_of_32(value: float) -> int:
@@ -682,6 +726,10 @@ class MiniMaxH3WorkbenchVideoGenerator(VideoGeneratorBase):
             mode = self._normalized_mode(kwargs.get("gen_mode"))
             references = list(kwargs.get("references") or [])
             transport, grouped = self._validate_references(mode, references)
+            clean_prompt = resolve_minimax_h3_mixed_references(
+                clean_prompt,
+                references,
+            )
 
             size_source = image_path or (
                 str(grouped["image"][0].path) if grouped["image"] else None

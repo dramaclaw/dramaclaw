@@ -11,6 +11,8 @@ import {
 export interface ReferenceMentionFamilyInput {
   /** mention 前缀，如 "图片"（视频 / ImageGen）/ "图"（ImageEdit）/ "音频"。 */
   prefix: string;
+  /** 缺省 `at`；MiniMax H3 的全局占位符使用 `mixed`。 */
+  syntax?: "at" | "mixed";
   /**
    * 当前帧的有序引用 id 列表，下标 +1 即该引用在 prompt 里的序号（@<前缀>N）。
    * 必须与节点给「角色库 / 引用行」编号时用的有序列表一致（去重后、连接顺序）。
@@ -39,7 +41,14 @@ export function useReferenceMentionSync(
   const prevRef = useRef<Map<string, string[]> | null>(null);
   // 结构签名作为 effect 依赖：只有某个 family 的 ids 真的变化时才重新运行。
   const signature = families
-    .map((family) => family.prefix + FIELD_SEP + family.ids.join(FIELD_SEP))
+    .map(
+      (family) =>
+        family.prefix +
+        FIELD_SEP +
+        (family.syntax ?? "at") +
+        FIELD_SEP +
+        family.ids.join(FIELD_SEP),
+    )
     .join(FAMILY_SEP);
 
   useEffect(() => {
@@ -54,7 +63,12 @@ export function useReferenceMentionSync(
     const remapFamilies: MentionFamily[] = families.map((family) => {
       const prevIds = prev.get(family.prefix) ?? [];
       if (!sameOrder(prevIds, family.ids)) changed = true;
-      return { prefix: family.prefix, prevIds, nextIds: family.ids };
+      return {
+        prefix: family.prefix,
+        syntax: family.syntax,
+        prevIds,
+        nextIds: family.ids,
+      };
     });
     if (!changed) return;
 

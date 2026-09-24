@@ -8,6 +8,7 @@ from novelvideo.generators.minimax_h3_workbench import (
     _output_location,
     minimax_h3_dimensions,
     minimax_h3_submission_parameters,
+    resolve_minimax_h3_mixed_references,
 )
 from novelvideo.generators.video_generator import (
     ShotReference,
@@ -75,6 +76,31 @@ def test_output_location_prefers_download_url_over_internal_path():
     }
 
     assert _output_location(output) == output["url"]
+
+
+def test_mixed_references_resolve_from_global_order_to_h3_type_labels():
+    references = [
+        ShotReference("image", "/assets/scene.png", "scene"),
+        ShotReference("audio", "/assets/voice.wav", "voice"),
+        ShotReference("image", "/assets/character.png", "character"),
+        ShotReference("video", "/assets/motion.mp4", "motion"),
+    ]
+
+    resolved = resolve_minimax_h3_mixed_references(
+        "场景 {{Mixed 1}}，声音 {{Mixed 2}}，角色 {{Mixed 3}}，运镜 {{Mixed 4}}",
+        references,
+    )
+
+    assert resolved == (
+        "场景 <Picture 1>，声音 <Audio 1>，角色 <Picture 2>，运镜 <Video 1>"
+    )
+
+
+def test_mixed_reference_out_of_range_is_rejected():
+    references = [ShotReference("image", "/assets/scene.png", "scene")]
+
+    with pytest.raises(MiniMaxH3WorkbenchError, match="Mixed reference 2"):
+        resolve_minimax_h3_mixed_references("使用 {{Mixed 2}}", references)
 
 
 @pytest.mark.parametrize(
@@ -175,7 +201,10 @@ async def test_all_reference_uploads_every_asset_in_reference_order(tmp_path):
 
     result = await generator.generate(
         image_path=references[0].path,
-        prompt="A character crosses the bridge",
+        prompt=(
+            "Scene {{Mixed 1}}, voice {{Mixed 2}}, character {{Mixed 3}}, "
+            "motion {{Mixed 4}}"
+        ),
         output_path=str(output),
         aspect_ratio="16:9",
         duration=15,
@@ -198,7 +227,10 @@ async def test_all_reference_uploads_every_asset_in_reference_order(tmp_path):
     )
     submitted = request[2]["jobs"][0]
     assert submitted["mode"] == "r2v"
-    assert submitted["prompt"] == "A character crosses the bridge"
+    assert submitted["prompt"] == (
+        "Scene <Picture 1>, voice <Audio 1>, character <Picture 2>, "
+        "motion <Video 1>"
+    )
     assert submitted["referenceImages"] == [
         "image-1-scene",
         "image-2-character",
