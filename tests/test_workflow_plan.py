@@ -499,6 +499,74 @@ def test_agent_authored_per_shot_duration_alias_cannot_be_masked_by_global_defau
     second = next(node for node in explicit["plan"]["nodes"] if node["id"] == videos[1]["id"])
     assert second["data"]["durationSec"] == 7
 
+def _mode_plan(catalog, node_mode, *, deviate=True):
+    plan = _raw_plan_from_standard(
+        catalog,
+        {"skill_id": "text-to-image-video", "user_goal": "两段图生视频"},
+        deviate=deviate,
+    )
+    for node in plan["nodes"]:
+        if node["node_type"] == "videoNode":
+            node["data"].pop("genMode", None)
+            if node_mode:
+                node["data"]["genMode"] = node_mode
+    plan["inputs"] = {"video_generation_mode": "imageToVideo"}
+    return plan
+
+
+def _mode_conflicts(validated):
+    return [
+        blocker
+        for blocker in (validated.get("preflight") or {}).get("blockers") or []
+        if blocker.get("code") == "video_generation_mode_conflict"
+    ]
+
+
+@pytest.mark.parametrize("deviate", [True, False], ids=["agent_authored", "template_reroute"])
+def test_plan_video_mode_contradicting_requested_mode_blocks_draft(monkeypatch, deviate):
+    """Issue #711: the user asked for imageToVideo; nodes pinned to firstFrame
+    must not produce a ready draft that silently delivers another mode."""
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+
+    validated = catalog.validate_agent_workflow_plan(
+        _mode_plan(catalog, "firstFrame", deviate=deviate)
+    )
+
+    assert validated["ok"] is True, validated
+    assert validated["preflight"]["status"] == "blocked"
+    conflicts = _mode_conflicts(validated)
+    video_ids = [
+        node["id"] for node in validated["plan"]["nodes"] if node["node_type"] == "videoNode"
+    ]
+    assert [blocker["path"] for blocker in conflicts] == [
+        f"runtime.models.{node_id}.genMode" for node_id in video_ids
+    ]
+    assert all(blocker["allowed_values"] == ["imageToVideo"] for blocker in conflicts)
+    # The node value is reported, never rewritten behind the user's back.
+    assert {
+        node["data"]["genMode"]
+        for node in validated["plan"]["nodes"]
+        if node["node_type"] == "videoNode"
+    } == {"firstFrame"}
+
+
+@pytest.mark.parametrize("node_mode", [None, "imageToVideo"])
+def test_plan_video_mode_matching_requested_mode_stays_consistent(monkeypatch, node_mode):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+
+    validated = catalog.validate_agent_workflow_plan(_mode_plan(catalog, node_mode))
+
+    assert validated["ok"] is True, validated
+    assert _mode_conflicts(validated) == []
+    assert validated["resolved_inputs"]["video_generation_mode"] == "imageToVideo"
+    assert {
+        node["data"]["genMode"]
+        for node in validated["plan"]["nodes"]
+        if node["node_type"] == "videoNode"
+    } == {"imageToVideo"}
+
 
 def test_intent_video_item_carries_explicit_embedded_audio_requirement():
     item = {

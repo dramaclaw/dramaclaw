@@ -475,6 +475,7 @@ def workflow_parameter_type_blockers(node: dict[str, Any]) -> list[dict[str, Any
 def _workflow_node_capability_blockers(
     node: dict[str, Any],
     catalog_entry: dict[str, Any],
+    catalog: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     node_type = str(node.get("node_type") or "").strip()
     data = node.get("data") if isinstance(node.get("data"), dict) else {}
@@ -546,15 +547,34 @@ def _workflow_node_capability_blockers(
                 mode for mode, catalog_mode in _VIDEO_CATALOG_MODES.items()
                 if catalog_mode in supported_modes
             ]
+            # The mode is what the user asked for (issue #711): imageToVideo and
+            # firstFrame consume the same single image differently, so recovery
+            # keeps the mode and switches to a model that supports it.
+            compatible = [
+                str(entry.get("id") or "").strip()
+                for entry in catalog or []
+                if isinstance(entry, dict)
+                and str(entry.get("id") or "").strip()
+                and isinstance(entry.get("supportedModes"), list)
+                and catalog_mode in entry["supportedModes"]
+            ]
             blockers.append({
                 "path": f"runtime.models.{node_id}.genMode",
                 "message": (
                     f"genMode value {selected_mode!r} is not supported by model "
-                    f"{model_id}; supported values: {allowed!r}"
+                    f"{model_id}; supported values: {allowed!r}. "
+                    + (
+                        f"Keep genMode {selected_mode!r} and select one of the "
+                        f"compatible_models; do not substitute another mode."
+                        if compatible
+                        else "No available model supports this mode; ask the user "
+                        "instead of substituting another mode."
+                    )
                 ),
                 "code": "model_capability_unsupported",
                 "allowed_values": allowed,
-                "recovery": "choose_supported_value",
+                "compatible_models": compatible,
+                "recovery": "choose_compatible_model" if compatible else "ask_user",
             })
     duration_value = data.get("durationSec")
     invalid_duration = any(
@@ -715,6 +735,7 @@ def evaluate_workflow_preflight(
                                     "minDuration",
                                     "maxDuration",
                                     "supportsGenerateAudio",
+                                    "supportedModes",
                                 )
                                 if key in entry
                             },
@@ -729,7 +750,7 @@ def evaluate_workflow_preflight(
                 catalog_entry = _catalog_entry_for_model(catalog, model)
                 if catalog_entry is not None:
                     blockers.extend(
-                        _workflow_node_capability_blockers(node, catalog_entry)
+                        _workflow_node_capability_blockers(node, catalog_entry, catalog)
                     )
                     if node_type == "videoNode":
                         blockers.extend(

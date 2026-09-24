@@ -17,6 +17,13 @@ unset: an explicit node pin (either spelling) wins over the shared value. Two al
 setting with different values on one node are still rejected; the server never silently chooses
 between them.
 
+`video_generation_mode` is the exception to "the node wins": it records the mode the user asked
+for, and modes are not interchangeable (`imageToVideo` uses the image as a whole-picture
+reference, `firstFrame` locks it as the opening frame). A video node whose `genMode` differs from
+the shared `video_generation_mode` blocks the draft with `video_generation_mode_conflict`. When a
+model rejects the mode (`model_capability_unsupported` on `genMode`), keep the mode and switch to
+one of the returned `compatible_models`; if there are none, ask the user.
+
 Bindings refer to existing plan node IDs:
 
 ```json

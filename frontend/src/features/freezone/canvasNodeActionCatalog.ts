@@ -693,7 +693,7 @@ function videoGenModeSchema(node: CanvasNode): CanvasEditableFieldSchema {
     loading: snapshot.isLoading,
     current_value: (node.data as { genMode?: unknown }).genMode ?? "textToVideo",
     description:
-      "仅可使用当前节点所选模型的 options；切换模型后必须重新查询模式选项，不得套用其他节点的模式。决定视频节点如何消费上游输入。textToVideo=只用当前提示词；imageToVideo=以图片作为主要输入；firstLastFrame=需要首帧和尾帧；allReference=可同时参考图片/视频/音频；imageReference=以图片作为参考约束。改视频模式时更新 genMode，不要把“模式”误改成 model。",
+      "仅可使用当前节点所选模型的 options；切换模型后必须重新查询模式选项，不得套用其他节点的模式。决定视频节点如何消费上游输入。textToVideo=只用当前提示词；imageToVideo=以单张图片作为整体画面参考；firstFrame=以单张图片锁定首帧（与 imageToVideo 不等价，用户指定哪种就保持哪种，不要互相替换）；firstLastFrame=需要首帧和尾帧；allReference=可同时参考图片/视频/音频；imageReference=以图片作为参考约束。改视频模式时更新 genMode，不要把“模式”误改成 model。",
   };
 }
 

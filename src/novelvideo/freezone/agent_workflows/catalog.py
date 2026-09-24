@@ -440,9 +440,13 @@ def skill_stage_blockers(
 def _attach_skill_stage_blockers(result: dict[str, Any], skill_id: str) -> None:
     """Fold stage blockers into ``result['preflight']`` (status → blocked)."""
     plan = result.get("plan") if isinstance(result.get("plan"), dict) else {}
-    blockers = skill_stage_blockers(
-        skill_id, plan.get("nodes") or [], plan.get("edges") or []
+    _attach_preflight_blockers(
+        result,
+        skill_stage_blockers(skill_id, plan.get("nodes") or [], plan.get("edges") or []),
     )
+
+
+def _attach_preflight_blockers(result: dict[str, Any], blockers: list[dict[str, Any]]) -> None:
     if not blockers:
         return
     preflight = result.get("preflight") if isinstance(result.get("preflight"), dict) else {}
@@ -3382,6 +3386,49 @@ _PLAN_RUNTIME_BACKFILL_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
 }
 
 
+def _video_generation_mode_conflicts(
+    nodes: list[Any], resolved_inputs: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Video nodes whose own genMode contradicts the plan's shared mode.
+
+    Issue #711: a node pin normally wins over a shared input, but the shared
+    ``video_generation_mode`` records the mode the user asked for, and modes
+    are not interchangeable (imageToVideo references the whole picture,
+    firstFrame locks the opening frame). A ready draft must not deliver a
+    different mode than the one it states, so the mismatch blocks instead.
+    """
+    requested = (
+        _text(resolved_inputs.get("video_generation_mode"))
+        if isinstance(resolved_inputs, dict)
+        else ""
+    )
+    if not requested:
+        return []
+    blockers: list[dict[str, Any]] = []
+    for node in nodes:
+        if not isinstance(node, dict) or _text(node.get("node_type")) != "videoNode":
+            continue
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        mode = _text(data.get("genMode"))
+        if not mode or mode == requested:
+            continue
+        node_id = _text(node.get("id")) or "videoNode"
+        blockers.append(
+            {
+                "path": f"runtime.models.{node_id}.genMode",
+                "code": "video_generation_mode_conflict",
+                "message": (
+                    f"genMode {mode!r} contradicts plan input video_generation_mode "
+                    f"{requested!r}; set the node to {requested!r} (choose a model that "
+                    "supports it) or ask the user before changing the mode."
+                ),
+                "allowed_values": [requested],
+                "recovery": "align_generation_mode",
+            }
+        )
+    return blockers
+
+
 def _backfill_plan_runtime_fields(
     nodes: list[Any], resolved_inputs: dict[str, Any]
 ) -> dict[str, list[str]]:
@@ -3618,6 +3665,12 @@ def validate_agent_workflow_plan(
         if _build_plan_preflight is not None:
             # Planned duration and warnings must reflect the backfilled nodes.
             validated["preflight"] = _build_plan_preflight(validated_plan.get("nodes") or [])
+    _attach_preflight_blockers(
+        validated,
+        _video_generation_mode_conflicts(
+            validated_plan.get("nodes") or [], input_contract["resolved"]
+        ),
+    )
     validated["resolved_inputs"] = input_contract["resolved"]
     validated["execution_mode"] = input_contract["execution_mode"]
     validated["recommended_run_after_create"] = input_contract[
