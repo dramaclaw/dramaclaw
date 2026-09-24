@@ -32,6 +32,16 @@ def _authorization() -> dict[str, str]:
     return {"Authorization": "Bearer test-router-token"}
 
 
+def test_health_identifies_the_configured_gateway_instance(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    health = TestClient(local_gateway.create_app(config)).get("/healthz").json()
+
+    assert health["ok"] is True
+    assert health["service"] == "dramaclaw-local-gateway"
+    assert len(health["instanceId"]) == 16
+    assert health["instanceId"].isalnum()
+
+
 def test_chat_and_embedding_force_local_models(tmp_path: Path, monkeypatch) -> None:
     config = _config(tmp_path)
     seen: list[tuple[str, str | None]] = []
@@ -313,3 +323,35 @@ def test_local_launcher_resolves_default_port_conflicts_before_starting() -> Non
         '${NOVELVIDEO_API_PORT}}"'
     ) in launcher
     assert "was explicitly configured" in launcher
+    assert "socket.SO_REUSEADDR" in launcher
+
+
+def test_local_launcher_reuses_or_safely_restarts_its_gateway() -> None:
+    launcher = Path("scripts/start-local-stack.sh").read_text(encoding="utf-8")
+
+    select_gateway = launcher.index(
+        'select_available_port DRAMACLAW_LOCAL_GATEWAY_PORT 3001 '
+    )
+    launch_gateway = launcher.index(
+        'uv run python -m novelvideo.local_gateway serve &'
+    )
+
+    assert select_gateway < launch_gateway
+    assert 'if local_gateway_is_healthy "$selected_port"' in launcher
+    assert 'if restart_owned_local_gateway "$selected_port"' in launcher
+    assert 'if [[ "$gateway_reused" != true ]]' in launcher
+    assert '"$process_cwd" != "$root_dir"' in launcher
+    assert "It was left untouched." in launcher
+
+
+def test_local_launcher_serializes_concurrent_starts() -> None:
+    launcher = Path("scripts/start-local-stack.sh").read_text(encoding="utf-8")
+
+    acquire_lock = launcher.index("acquire_launcher_lock")
+    select_api = launcher.index("select_available_port NOVELVIDEO_API_PORT")
+
+    assert acquire_lock < select_api
+    assert 'launcher_lock_dir="$config_dir/.start-local-stack.lock"' in launcher
+    assert "Another DramaClaw local-stack launcher" in launcher
+    assert "if existing_stack_is_healthy" in launcher
+    assert 'release_launcher_lock' in launcher

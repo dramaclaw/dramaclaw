@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import copy
+import hashlib
 import hmac
 import json
 import logging
@@ -479,6 +480,12 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
     async def healthz() -> dict[str, Any]:
         return {
             "ok": True,
+            "service": "dramaclaw-local-gateway",
+            # The launcher uses this one-way identifier to avoid reusing a
+            # healthy gateway owned by another checkout or config directory.
+            "instanceId": hashlib.sha256(
+                str(config.root.resolve()).encode("utf-8")
+            ).hexdigest()[:16],
             "qwenEditWorkflow": config.qwen_edit_workflow.is_file(),
             "qwenT2iWorkflow": config.qwen_t2i_workflow.is_file(),
             "kreaT2iWorkflow": config.krea_t2i_workflow.is_file(),

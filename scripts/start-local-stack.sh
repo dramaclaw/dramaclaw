@@ -50,6 +50,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
 fi
 
 mkdir -p "$data_dir"
+mkdir -p "$config_dir"
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "python3 is required to select safe local service ports." >&2
@@ -66,8 +67,177 @@ import sys
 host = sys.argv[1]
 port = int(sys.argv[2])
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+    # Match normal development servers: a recently stopped listener can leave
+    # connections in TIME_WAIT, which is not an active port owner.
+    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     probe.bind((host, port))
 PY
+}
+
+gateway_instance_id="$(python3 - "$config_dir" <<'PY'
+import hashlib
+from pathlib import Path
+import sys
+
+print(hashlib.sha256(str(Path(sys.argv[1]).expanduser().resolve()).encode()).hexdigest()[:16])
+PY
+)"
+gateway_reused=false
+launcher_lock_dir="$config_dir/.start-local-stack.lock"
+launcher_lock_acquired=false
+
+release_launcher_lock() {
+  if [[ "$launcher_lock_acquired" != true ]]; then
+    return
+  fi
+  local recorded_pid=""
+  if [[ -f "$launcher_lock_dir/pid" ]]; then
+    recorded_pid="$(<"$launcher_lock_dir/pid")"
+  fi
+  if [[ "$recorded_pid" == "$$" ]]; then
+    rm -f "$launcher_lock_dir/pid" "$launcher_lock_dir/ports"
+    rmdir "$launcher_lock_dir" 2>/dev/null || true
+  fi
+  launcher_lock_acquired=false
+}
+
+existing_stack_is_healthy() {
+  local ports_file="$launcher_lock_dir/ports"
+  local gateway_port
+  local api_port
+  local frontend_port
+
+  [[ -f "$ports_file" ]] || return 1
+  gateway_port="$(sed -n 's/^gateway=//p' "$ports_file")"
+  api_port="$(sed -n 's/^api=//p' "$ports_file")"
+  frontend_port="$(sed -n 's/^frontend=//p' "$ports_file")"
+  [[ "$gateway_port" =~ ^[0-9]+$ \
+    && "$api_port" =~ ^[0-9]+$ \
+    && "$frontend_port" =~ ^[0-9]+$ ]] || return 1
+  local_gateway_is_healthy "$gateway_port" \
+    && curl -fsS --max-time 1 "http://127.0.0.1:${api_port}/api/v1/config" >/dev/null 2>&1 \
+    && curl -fsS --max-time 1 "http://127.0.0.1:${frontend_port}/" >/dev/null 2>&1
+}
+
+wait_for_existing_stack() {
+  local owner_pid="$1"
+  local owner_command
+  local ports
+  echo "Another DramaClaw local-stack launcher (PID $owner_pid) is active; waiting to reuse it."
+  for _attempt in {1..120}; do
+    if existing_stack_is_healthy; then
+      ports="$(tr '\n' ' ' < "$launcher_lock_dir/ports" | xargs)"
+      echo "Reusing the running local stack ($ports)."
+      return 0
+    fi
+    if ! kill -0 "$owner_pid" >/dev/null 2>&1; then
+      return 1
+    fi
+    owner_command="$(ps -p "$owner_pid" -o command= 2>/dev/null || true)"
+    if [[ "$owner_command" != *"start-local-stack.sh"* ]]; then
+      return 1
+    fi
+    sleep 0.25
+  done
+  echo "The existing local-stack launcher did not become healthy within 30 seconds." >&2
+  exit 1
+}
+
+acquire_launcher_lock() {
+  local owner_pid
+  local owner_command
+  while ! mkdir "$launcher_lock_dir" 2>/dev/null; do
+    owner_pid="$(sed -n '1p' "$launcher_lock_dir/pid" 2>/dev/null || true)"
+    owner_command=""
+    if [[ "$owner_pid" =~ ^[0-9]+$ ]]; then
+      owner_command="$(ps -p "$owner_pid" -o command= 2>/dev/null || true)"
+    fi
+    if [[ -n "$owner_command" && "$owner_command" == *"start-local-stack.sh"* ]]; then
+      if wait_for_existing_stack "$owner_pid"; then
+        exit 0
+      fi
+    fi
+    # Only a dead or unrelated PID reaches this point. Remove the two known
+    # ephemeral files, then use rmdir so an unexpected payload is preserved.
+    rm -f "$launcher_lock_dir/pid" "$launcher_lock_dir/ports"
+    if ! rmdir "$launcher_lock_dir" 2>/dev/null; then
+      echo "Cannot recover stale launcher lock: $launcher_lock_dir" >&2
+      exit 1
+    fi
+  done
+  printf '%s\n' "$$" > "$launcher_lock_dir/pid"
+  launcher_lock_acquired=true
+  trap release_launcher_lock EXIT
+}
+
+local_gateway_is_healthy() {
+  local port="$1"
+  local base_url="${DRAMACLAW_LOCAL_GATEWAY_PUBLIC_URL:-http://127.0.0.1:${port}}"
+  base_url="${base_url%/}"
+  curl -fsS --max-time 1 "${base_url}/healthz" 2>/dev/null \
+    | python3 -c '
+import json
+import sys
+
+try:
+    data = json.load(sys.stdin)
+except (json.JSONDecodeError, OSError):
+    raise SystemExit(1)
+expected = sys.argv[1]
+required = {
+    "qwenEditWorkflow",
+    "qwenT2iWorkflow",
+    "kreaT2iWorkflow",
+    "kreaEditWorkflow",
+    "siliconflowKey",
+}
+valid = (
+    data.get("ok") is True
+    and data.get("service") == "dramaclaw-local-gateway"
+    and data.get("instanceId") == expected
+    and required.issubset(data)
+)
+raise SystemExit(0 if valid else 1)
+' "$gateway_instance_id"
+}
+
+restart_owned_local_gateway() {
+  local port="$1"
+  local current_user
+  local pid
+  local owner
+  local command
+  local process_cwd
+  local -a gateway_pids=()
+
+  command -v lsof >/dev/null 2>&1 || return 1
+  current_user="$(id -un)"
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] && gateway_pids+=("$pid")
+  done < <(lsof -nP -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
+  ((${#gateway_pids[@]} > 0)) || return 1
+
+  for pid in "${gateway_pids[@]}"; do
+    owner="$(ps -p "$pid" -o user= 2>/dev/null | xargs)"
+    command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    process_cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)"
+    if [[ "$owner" != "$current_user" \
+      || "$command" != *"novelvideo.local_gateway serve"* \
+      || "$process_cwd" != "$root_dir" ]]; then
+      return 1
+    fi
+  done
+
+  echo "Restarting stale DramaClaw local gateway on port $port."
+  kill "${gateway_pids[@]}"
+  for _attempt in {1..20}; do
+    if port_is_available 127.0.0.1 "$port"; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "The previous local gateway did not release port $port." >&2
+  exit 1
 }
 
 select_available_port() {
@@ -91,6 +261,21 @@ select_available_port() {
     export "$variable_name=$selected_port"
     return
   fi
+  if [[ "$variable_name" == "DRAMACLAW_LOCAL_GATEWAY_PORT" ]]; then
+    if local_gateway_is_healthy "$selected_port"; then
+      gateway_reused=true
+      export "$variable_name=$selected_port"
+      echo "Reusing existing DramaClaw local gateway at http://127.0.0.1:${selected_port}"
+      return
+    fi
+    if restart_owned_local_gateway "$selected_port"; then
+      export "$variable_name=$selected_port"
+      return
+    fi
+    echo "Local gateway port $selected_port is occupied by a process that is not a reusable DramaClaw gateway." >&2
+    echo "It was left untouched. Stop it, or set DRAMACLAW_LOCAL_GATEWAY_PORT to another port." >&2
+    exit 1
+  fi
   if [[ -n "$configured_port" ]]; then
     echo "$service_name port $selected_port is already in use ($variable_name was explicitly configured)." >&2
     exit 1
@@ -108,6 +293,8 @@ select_available_port() {
   exit 1
 }
 
+acquire_launcher_lock
+
 # A concurrently running Docker stack commonly owns 8780.  Defaults may move
 # to the first free neighboring port, while explicit operator choices fail
 # loudly instead of making the readiness probe mistake another service for the
@@ -116,6 +303,10 @@ select_available_port NOVELVIDEO_API_PORT 8780 0.0.0.0 "API"
 select_available_port DRAMACLAW_LOCAL_GATEWAY_PORT 3001 127.0.0.1 "Local gateway"
 select_available_port SUPERTALE_FE_PORT 5173 0.0.0.0 "Frontend"
 export VITE_API_URL="${VITE_API_URL:-http://127.0.0.1:${NOVELVIDEO_API_PORT}}"
+printf 'gateway=%s\napi=%s\nfrontend=%s\n' \
+  "$DRAMACLAW_LOCAL_GATEWAY_PORT" \
+  "$NOVELVIDEO_API_PORT" \
+  "$SUPERTALE_FE_PORT" > "$launcher_lock_dir/ports"
 echo "Local stack ports: gateway=${DRAMACLAW_LOCAL_GATEWAY_PORT}, API=${NOVELVIDEO_API_PORT}, frontend=${SUPERTALE_FE_PORT}"
 
 comfyui_dir="${COMFYUI_DIR:-}"
@@ -151,6 +342,7 @@ cleanup() {
     kill "$comfyui_pid" >/dev/null 2>&1 || true
     wait "$comfyui_pid" 2>/dev/null || true
   fi
+  release_launcher_lock
 }
 trap cleanup INT TERM EXIT
 
@@ -200,8 +392,10 @@ if [[ "${DRAMACLAW_START_COMFYUI:-1}" == "1" ]]; then
 fi
 
 uv run python -m novelvideo.local_gateway configure
-uv run python -m novelvideo.local_gateway serve &
-gateway_pid=$!
+if [[ "$gateway_reused" != true ]]; then
+  uv run python -m novelvideo.local_gateway serve &
+  gateway_pid=$!
+fi
 
 scripts/start-ce.sh &
 app_pid=$!
