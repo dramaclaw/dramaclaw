@@ -2270,6 +2270,8 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         "argument_retry_non_ascii_revision",
         "argument_retry_huge_revision",
         "argument_retry_projection_episode_corrected",
+        "argument_retry_reordered_batch",
+        "argument_retry_with_extra_command",
     ],
 )
 async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
@@ -2380,6 +2382,20 @@ async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
             ),
         }
         retry_input = {**rejected_input, "revision": 2}
+    elif scenario in {
+        "argument_retry_reordered_batch",
+        "argument_retry_with_extra_command",
+    }:
+        # Commands run in array order: set (10,10) then shift +5 gives (15,10),
+        # the reverse gives (10,10). Order matters; an extra command does not.
+        absolute = {"type": "move_nodes", "positions": {"node-a": {"x": 10, "y": 10}}}
+        relative = {"type": "move_nodes", "deltas": {"node-a": {"x": 5, "y": 0}}}
+        rejected_input["commands"] = [{**absolute, "bogus": 1}, relative]
+        retry_input["commands"] = (
+            [relative, absolute]
+            if scenario == "argument_retry_reordered_batch"
+            else [absolute, {"type": "select_nodes", "node_ids": ["node-a"]}, relative]
+        )
     elif scenario == "argument_retry_projection_episode_corrected":
         request = {"scope": "episode"}
         rejected_input["commands"] = [
@@ -2540,6 +2556,7 @@ async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
         "argument_retry_move_corrected",
         "argument_retry_draft_revision_corrected",
         "argument_retry_projection_episode_corrected",
+        "argument_retry_with_extra_command",
     }:
         assert result["content"] == "已创建水彩风格图片节点并提交生成。"
     elif scenario == "handler_failure_retry":

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import re
-from collections import Counter
 from typing import Any
 
 from novelvideo.chat.tool_policy import (
@@ -380,13 +379,13 @@ def _codex_freezone_is_tool_argument_rejection(event: Any) -> bool:
 
 def _codex_freezone_argument_retry_scope(
     event: Any,
-) -> tuple[str, Counter[str]] | None:
+) -> tuple[str, tuple[str, ...]] | None:
     """The target canvas and command identities of a write tool call.
 
     A schema-rejected call is superseded only by a successful call of the same
     tool on the same canvas that covers every command the rejected call named,
-    counted with multiplicity, so a batch retried with a command silently
-    dropped stays failed even when identical commands repeat.
+    counted with multiplicity and in order (see
+    _codex_freezone_argument_retry_covers).
     """
     name = _codex_freezone_tool_name(event)
     if name not in _FREEZONE_CANVAS_WRITE_TOOLS:
@@ -410,7 +409,7 @@ def _codex_freezone_argument_retry_scope(
     else:
         commands = [payload]
     try:
-        identities = Counter(_argument_retry_identity(command) for command in commands)
+        identities = tuple(_argument_retry_identity(command) for command in commands)
     except (TypeError, ValueError):
         # Unrepresentable arguments cannot be matched: a rejection stays failed
         # and a success supersedes nothing.
@@ -421,6 +420,20 @@ def _codex_freezone_argument_retry_scope(
         ensure_ascii=False,
     )
     return scope, identities
+
+
+def _codex_freezone_argument_retry_covers(
+    rejected: tuple[str, ...], retry: tuple[str, ...]
+) -> bool:
+    """Whether a retry runs every rejected command, in the same relative order.
+
+    Commands execute in array order and are not commutative (an absolute move
+    followed by a relative one differs from the reverse), so the rejected
+    batch must be an ordered subsequence of the retry. Extra commands in the
+    retry are allowed; each one carries its own receipt.
+    """
+    remaining = iter(retry)
+    return all(identity in remaining for identity in rejected)
 
 
 # Workflow draft confirmation guard that rejects before any claim or dispatch.
