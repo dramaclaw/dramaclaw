@@ -98,6 +98,15 @@ class InlineTaskBackend:
         payload: dict[str, Any] | None = None,
     ) -> QueuedTask:
         require_project_home_node(ctx, operation="enqueue project task")
+        from fastapi import HTTPException
+        from novelvideo.ports import get_project_registry
+
+        project_record = await get_project_registry().get_project(ctx.project_id)
+        if project_record is not None and (
+            project_record.status == "deleted" or project_record.purged_at
+            or getattr(project_record, "purge_started_at", None)
+        ):
+            raise HTTPException(status_code=409, detail="Deleted project cannot accept tasks")
         manager = get_task_manager()
         payload = payload or {}
         lane_name = normalize_queue_kind(queue_kind)

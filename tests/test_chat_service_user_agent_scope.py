@@ -1041,6 +1041,38 @@ async def test_codex_project_delete_covers_unique_threads(monkeypatch, tmp_path)
         ("delete", "thread-freezone", None),
         ("delete", "thread-mainline", None),
     ]
+    assert chat_service._load_codex_session_state(
+        "admin", "project-a", project_state_dir=project_state
+    ) == {}
+
+
+@pytest.mark.anyio
+async def test_delete_codex_project_threads_retries_only_remaining(monkeypatch, tmp_path):
+    from novelvideo.chat import service as chat_service
+
+    state_dir = tmp_path / "state"
+    chat_service._save_codex_session_state(
+        "alice", "demo", {"a": "thread-a", "b": "thread-b"},
+        project_state_dir=state_dir,
+    )
+    calls = []
+
+    def delete_thread(operation, thread_id, turn_id=None):
+        calls.append(thread_id)
+        return thread_id != "thread-b" or calls.count("thread-b") > 1
+
+    monkeypatch.setattr(chat_service, "_control_codex_thread", delete_thread)
+    with pytest.raises(RuntimeError, match="thread-b"):
+        await chat_service.delete_codex_project_threads(
+            "alice", "demo", project_state_dir=state_dir
+        )
+    assert chat_service._load_codex_session_state(
+        "alice", "demo", project_state_dir=state_dir
+    ) == {"b": "thread-b"}
+    assert await chat_service.delete_codex_project_threads(
+        "alice", "demo", project_state_dir=state_dir
+    ) == 1
+    assert calls == ["thread-a", "thread-b", "thread-b"]
 
 
 @pytest.mark.anyio
