@@ -335,6 +335,13 @@ def m06_client_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(freezone, "compute_slot_impact", compute_impact)
     monkeypatch.setattr(freezone, "build_beat_preset_context", build_beat_context)
 
+    async def prepare_video_upscale(**_kwargs):
+        # This route-contract fixture uses placeholder media bytes; stream probing is
+        # covered by the video-upscale tests rather than this task-response test.
+        return video_file, {}, {}, {}
+
+    monkeypatch.setattr(freezone, "_prepare_video_upscale", prepare_video_upscale)
+
     assets = SimpleNamespace(
         image_url=f"/static/{_USER}/{_PROJECT}/freezone/_uploads/source.png",
         mask_url=f"/static/{_USER}/{_PROJECT}/freezone/_uploads/mask.png",
