@@ -24,6 +24,23 @@ const NON_SPEECH_LABELS = new Set([
   '是否纯音乐',
   '内容约束',
 ]);
+const SPEECH_LABELS = new Set([
+  '朗读文本',
+  '配音文本',
+  '旁白文本',
+  '对白文本',
+  '台词文本',
+  '旁白',
+  '对白',
+  '台词',
+  '解说',
+  'narration',
+  'narrationtext',
+  'voiceover',
+  'voiceovertext',
+  'speechtext',
+]);
+const UNLABELLED_SPEECH_RECIPE_IDS = new Set(['drama-shot-voice']);
 
 const BRACKETED_LABEL = /^\s*[【\[]\s*([^】\]]+?)\s*[】\]]\s*(.*)$/;
 const CONTROL_LINE =
@@ -32,6 +49,8 @@ const STRONG_SPEECH_FIELD =
   /(?:【|\[)?(?:朗读文本|配音文本|旁白文本|对白文本|台词文本|narration\s+text|voiceover\s+text|speech\s+text)(?:】|\])?\s*[:：]\s*/i;
 const PLAIN_SPEECH_FIELD =
   /^\s*(?:[-*#]\s*)?(?:旁白|对白|台词|解说|narration|voiceover)\s*[:：]\s*(.*)$/i;
+const GENERIC_FIELD_LINE =
+  /^\s*(?:[-*#]\s*)?(?:[【\[]\s*[^\u3011\]]+?\s*[】\]]\s*|[^\s，。！？,!?;；:：]{1,24}\s*[:：]\s*).*$/;
 const TRAILING_CONTROL_FIELD =
   /[。；;]\s*(?:时长|持续时间|情绪|节奏|语气|语速|语言|声音质感|是否纯音乐|内容约束|音频类型|负向约束)\s*[:：]/i;
 // i18n-exempt-end
@@ -179,18 +198,10 @@ export function extractExplicitSpeakableAudioText(value: string): string {
     const line = rawLine.trim();
     if (!line) continue;
 
-    const strongField = line.match(STRONG_SPEECH_FIELD);
-    if (strongField?.index != null) {
-      section = 'speech';
-      const spoken = cleanExplicitSpeech(line.slice(strongField.index + strongField[0].length));
-      if (spoken) output.push(spoken);
-      continue;
-    }
-
     const labelled = line.match(BRACKETED_LABEL);
     if (labelled) {
       const label = normalizeLabel(labelled[1]);
-      if (NON_SPEECH_LABELS.has(label)) {
+      if (!SPEECH_LABELS.has(label)) {
         section = 'skip';
         continue;
       }
@@ -199,6 +210,19 @@ export function extractExplicitSpeakableAudioText(value: string): string {
       if (spoken && !CONTROL_LINE.test(spoken) && !BARE_DURATION.test(spoken)) {
         output.push(spoken);
       }
+      continue;
+    }
+
+    const strongField = line.match(STRONG_SPEECH_FIELD);
+    const strongFieldPrefix = strongField?.index == null
+      ? null
+      : line.slice(0, strongField.index);
+    if (strongField && /^\s*(?:[-*#]\s*)?$/.test(strongFieldPrefix ?? '')) {
+      section = 'speech';
+      const spoken = cleanExplicitSpeech(
+        line.slice((strongField.index ?? 0) + strongField[0].length),
+      );
+      if (spoken) output.push(spoken);
       continue;
     }
 
@@ -214,6 +238,16 @@ export function extractExplicitSpeakableAudioText(value: string): string {
       section = 'skip';
       continue;
     }
+    if (GENERIC_FIELD_LINE.test(line)) {
+      section = 'skip';
+      continue;
+    }
+    if (strongField?.index != null) {
+      section = 'speech';
+      const spoken = cleanExplicitSpeech(line.slice(strongField.index + strongField[0].length));
+      if (spoken) output.push(spoken);
+      continue;
+    }
     if (section === 'speech') {
       const spoken = cleanExplicitSpeech(line);
       if (spoken) output.push(spoken);
@@ -223,22 +257,38 @@ export function extractExplicitSpeakableAudioText(value: string): string {
   return output.join('\n\n');
 }
 
+function extractUnlabelledRecipeSpeech(value: string): string {
+  const lines = String(value || '').split(/\r?\n/).filter((line) => line.trim());
+  if (lines.some((line) => BRACKETED_LABEL.test(line) || GENERIC_FIELD_LINE.test(line))) {
+    return '';
+  }
+  return extractSpeakableAudioText(value);
+}
+
 /**
  * A timeout fallback can contain Recipe production instructions. Never send
  * that compiler output to TTS; use only the already-filtered source fallback.
+ * Successful direct-speech Recipes may return unlabelled prose, while general
+ * audio Recipes must mark their speakable field explicitly.
  */
 export function resolveSafeSpeechSubmissionText({
   compileMode,
   compiledPrompt,
+  recipeIds = [],
   safeFallbackPrompt,
 }: {
   compileMode: string | null;
   compiledPrompt: string;
+  recipeIds?: readonly string[];
   safeFallbackPrompt: string;
 }): string {
   if (compileMode === 'timeout_fallback') {
     return extractSpeakableAudioText(safeFallbackPrompt);
   }
-  return extractExplicitSpeakableAudioText(compiledPrompt)
+  const explicitSpeech = extractExplicitSpeakableAudioText(compiledPrompt);
+  if (explicitSpeech) return explicitSpeech;
+  const acceptsUnlabelledSpeech = recipeIds.some((recipeId) =>
+    UNLABELLED_SPEECH_RECIPE_IDS.has(recipeId));
+  return (acceptsUnlabelledSpeech ? extractUnlabelledRecipeSpeech(compiledPrompt) : '')
     || extractSpeakableAudioText(safeFallbackPrompt);
 }

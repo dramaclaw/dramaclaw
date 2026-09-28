@@ -200,7 +200,7 @@ describe('AssetBoard 音频进主从详情', () => {
 
   it('general-audio 正常编译后只提交标记的朗读正文', async () => {
     vi.mocked(compileFreezoneRecipePrompt).mockImplementation(async (payload) => {
-      const prompt = '女声普通话旁白，情绪温柔，时长 3 秒。朗读文本：欢迎使用。';
+      const prompt = '朗读文本：欢迎使用。\n【音色】温柔女声\n制作要求：句尾自然收音。';
       payload.onCompileMetadata?.({
         mode: 'model',
         prompt,
@@ -227,6 +227,37 @@ describe('AssetBoard 音频进主从详情', () => {
     const [, payload] = vi.mocked(submitFreezoneAudioSpeech).mock.calls[0];
     expect(payload.text).toBe('欢迎使用。');
     expect(useCanvasStore.getState().nodes[0]?.data.text).toBe('欢迎使用。');
+  });
+
+  it('drama-shot-voice 正常编译后提交无标签纯正文', async () => {
+    vi.mocked(compileFreezoneRecipePrompt).mockImplementation(async (payload) => {
+      const prompt = '润色后的旁白。';
+      payload.onCompileMetadata?.({
+        mode: 'model',
+        prompt,
+        recipeIds: ['drama-shot-voice'],
+      });
+      return prompt;
+    });
+    seed([audioNode({
+      displayName: '旁白',
+      audioKind: 'speech',
+      audioUrl: null,
+      text: '原始旁白。',
+      speechMode: 'clone',
+      voiceAvailable: true,
+      voiceRef: { scope: 'user_custom', voiceId: 'voice-1' },
+      workflowCatalog: { recipeId: 'drama-shot-voice' },
+    })]);
+    render(<AssetBoardView visible onLocateNode={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: '旁白' }));
+
+    fireEvent.click(within(detailPanel()).getByRole('button', { name: /^生成$/ }));
+
+    await waitFor(() => expect(submitFreezoneAudioSpeech).toHaveBeenCalled());
+    const [, payload] = vi.mocked(submitFreezoneAudioSpeech).mock.calls[0];
+    expect(payload.text).toBe('润色后的旁白。');
+    expect(useCanvasStore.getState().nodes[0]?.data.text).toBe('润色后的旁白。');
   });
 
   it('故事板隐藏（visible=false）→ 命令波形播放器暂停内部 <audio>', () => {

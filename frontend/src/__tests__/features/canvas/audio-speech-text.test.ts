@@ -103,6 +103,48 @@ describe('extractSpeakableAudioText', () => {
     })).toBe('欢迎使用。');
   });
 
+  it('stops explicit speech collection when another production field starts', () => {
+    const compiled = [
+      '朗读文本：欢迎使用。',
+      '【音色】温柔女声',
+      '制作要求：句尾自然收音。',
+    ].join('\n');
+    expect(extractExplicitSpeakableAudioText(compiled)).toBe('欢迎使用。');
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'model',
+      compiledPrompt: compiled,
+      recipeIds: ['general-audio'],
+      safeFallbackPrompt: '原始文本。',
+    })).toBe('欢迎使用。');
+  });
+
+  it('accepts an unlabelled model result from the direct-speech Recipe', () => {
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'model',
+      compiledPrompt: '润色后的旁白。',
+      recipeIds: ['drama-shot-voice'],
+      safeFallbackPrompt: '原始旁白。',
+    })).toBe('润色后的旁白。');
+  });
+
+  it('rejects labelled production output from the direct-speech Recipe', () => {
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'model',
+      compiledPrompt: '【音色】温柔女声',
+      recipeIds: ['drama-shot-voice'],
+      safeFallbackPrompt: '原始旁白。',
+    })).toBe('原始旁白。');
+  });
+
+  it('does not accept unlabelled production output from a general audio Recipe', () => {
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'model',
+      compiledPrompt: '温柔女声，节奏舒缓。',
+      recipeIds: ['general-audio'],
+      safeFallbackPrompt: '原始旁白。',
+    })).toBe('原始旁白。');
+  });
+
   it('falls back to source speech when a model result has no explicit speech field', () => {
     expect(resolveSafeSpeechSubmissionText({
       compileMode: 'model',

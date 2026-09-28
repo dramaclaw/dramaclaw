@@ -201,6 +201,7 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
           || extractExplicitSpeakableAudioText(selectedUpstreamText)
           || extractSpeakableAudioText(selectedUpstreamText);
       let workflowRecipeCompileMode: string | null = null;
+      let workflowRecipeIds: string[] = [];
       const compiledPrompt = await compileWorkflowNodePrompt({
         nodeId,
         nodeData: runtimeData,
@@ -215,11 +216,13 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
         fallbackPrompt: speechFallbackPrompt,
         onCompileMetadata: ({ mode, prompt: compiledPrompt, recipeIds }) => {
           workflowRecipeCompileMode = mode;
+          workflowRecipeIds = recipeIds;
           const persistedPrompt = runtimeIsMusic
             ? compiledPrompt
             : resolveSafeSpeechSubmissionText({
                 compileMode: mode,
                 compiledPrompt,
+                recipeIds,
                 safeFallbackPrompt: speechFallbackPrompt,
               });
           updateNodeData(nodeId, {
@@ -236,6 +239,7 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
         : resolveSafeSpeechSubmissionText({
             compileMode: workflowRecipeCompileMode,
             compiledPrompt,
+            recipeIds: workflowRecipeIds,
             safeFallbackPrompt: speechFallbackPrompt,
           });
       if (!trimmed) {
