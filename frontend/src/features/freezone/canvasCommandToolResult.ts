@@ -1,3 +1,4 @@
+import i18next from "i18next";
 import type { CanvasChatCommandApplyResult } from "@/features/freezone/canvasChatCommands";
 import {
   canvasCommandAgentHintFromResult,
@@ -7,7 +8,10 @@ import { api } from "@/lib/api";
 
 type CanvasApplyStatus = "accepted" | "applied" | "pending" | "partially_applied" | "failed" | "cancelled_by_user";
 
-const WORKFLOW_RESULT_SYNC_PENDING_MESSAGE = "工作流已完成，画布节点产物待同步；请稍后刷新画布查看结果。";
+const workflowResultSyncPendingMessage = () => i18next.t(
+  "freezone.chat.workflowOutputSyncPendingMessage",
+  { defaultValue: "工作流已完成，画布节点产物待同步；请稍后刷新画布核对结果，暂勿重复生成。" },
+);
 const WORKFLOW_RESULT_SYNC_PENDING_HINT =
   "The server workflow completed, but the canvas node output is not visible yet. " +
   "Do not claim the artifact is ready. Do not rerun generation. Ask the user to wait and refresh the canvas.";
@@ -201,7 +205,7 @@ function buildCanvasCommandToolResultPayload({
     : cancelled
     ? "画布操作已取消，没有应用到画布。"
     : canvasApplyStatus === "pending"
-      ? WORKFLOW_RESULT_SYNC_PENDING_MESSAGE
+      ? workflowResultSyncPendingMessage()
     : canvasApplyStatus === "failed"
       ? canvasCommandUserMessageFromResult(result?.errors, result?.commandResults)
       : undefined;
@@ -238,7 +242,7 @@ function buildCanvasCommandToolResultPayload({
       : cancelled
       ? "画布操作已取消，没有应用到画布。"
       : canvasApplyStatus === "pending"
-        ? WORKFLOW_RESULT_SYNC_PENDING_MESSAGE
+        ? workflowResultSyncPendingMessage()
       : canvasApplyStatus === "failed"
         ? userMessage ?? "画布操作没有完成，我会换一种方式再试。"
         : "Frontend executor reported the canvas command result.",

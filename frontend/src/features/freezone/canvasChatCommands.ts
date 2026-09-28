@@ -3638,7 +3638,9 @@ async function executeQueuedNodeActions(
             commandIndex: action.commandIndex,
             type: "run_node_action",
             status: "pending",
-            label: `${action.label}（产物待同步）`,
+            label: `${action.label}（${i18next.t("freezone.chat.workflowOutputSyncPendingLabel", {
+              defaultValue: "产物待同步",
+            })}）`,
             nodeId: action.nodeId,
             action: action.action,
             output: { pending: true, reason: "workflow_result_sync_pending" },

@@ -928,6 +928,8 @@
       "canvasConfirmExecution": "Confirm execution",
       "canvasTimeoutCancelled": "The canvas operation timed out and was cancelled without being applied.",
       "canvasManuallyCancelled": "The canvas operation was manually cancelled without being applied.",
+      "workflowOutputSyncPendingLabel": "Output syncing",
+      "workflowOutputSyncPendingMessage": "The workflow finished, but the canvas output is still syncing. Refresh the canvas later to check the result; do not generate it again yet.",
       "canvasRetryPrompt": "Recheck and continue the unfinished canvas operation. Preserve completed results, verify existing nodes and run state, then complete generation parameters before requesting approval again.",
       "canvasRetryDisplay": "Recheck and continue the unfinished canvas operation",
       "generationParams": {

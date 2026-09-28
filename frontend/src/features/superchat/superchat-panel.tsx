@@ -3928,12 +3928,14 @@ function canvasCommandFeedbackVisualTone(feedback: CanvasCommandFeedback): Canva
 
 export const canvasCommandFeedbackVisualToneForTest = canvasCommandFeedbackVisualTone;
 
-function canvasCommandFeedbackCompactTitle(feedback: CanvasCommandFeedback): string {
+function canvasCommandFeedbackCompactTitle(feedback: CanvasCommandFeedback, t: TFunction): string {
   const firstFailedStep = (feedback.commandResults ?? []).find((step) => step.status !== "success");
   const firstPlan = feedback.plans?.[0];
   if (canvasCommandFeedbackIsTimeoutCancelled(feedback)) return "画布操作已过期";
   if (firstFailedStep?.label === "已取消" || canvasCommandFeedbackIsUserCancelled(feedback)) return "画布操作已取消";
-  if (canvasCommandFeedbackHasPending(feedback)) return "产物待同步";
+  if (canvasCommandFeedbackHasPending(feedback)) return t("freezone.chat.workflowOutputSyncPendingLabel", {
+    defaultValue: "产物待同步",
+  });
   if (firstPlan?.type === "run_node_action" && firstPlan.label.includes("生成图片")) return "生成图片失败";
   if (firstPlan?.type === "run_node_action" && firstPlan.label.includes("生成视频")) return "生成视频失败";
   if (firstFailedStep?.label) return firstFailedStep.label;
@@ -3988,7 +3990,7 @@ function CanvasCommandFeedbackCard({
   const warningFailure = failed && visualTone === "warning";
   const initiallyCompact = failed && successfulCount === 0;
   const collapseSuccessfulDetails = !failed && steps.length > 2 && !steps.some(step => step.output?.html_artifact);
-  const compactTitle = canvasCommandFeedbackCompactTitle(feedback);
+  const compactTitle = canvasCommandFeedbackCompactTitle(feedback, t);
   const canRetry = feedback.cancelled && feedback.envelopes && feedback.envelopes.length > 0;
   const cancellationMessage = canvasCommandFeedbackIsTimeoutCancelled(feedback)
     ? t("freezone.chat.canvasTimeoutCancelled", {
@@ -4000,7 +4002,9 @@ function CanvasCommandFeedbackCard({
         })
       : null;
   const userFailureMessage = pending
-    ? "工作流已完成，画布节点产物待同步；请稍后刷新画布查看结果。"
+    ? t("freezone.chat.workflowOutputSyncPendingMessage", {
+        defaultValue: "工作流已完成，画布节点产物待同步；请稍后刷新画布核对结果，暂勿重复生成。",
+      })
     : failed
     ? cancellationMessage ?? canvasCommandUserMessageFromResult(
         feedback.errors,
