@@ -181,6 +181,13 @@ async def _run_freezone_agent_product_async(
                 operation_id=operation_id,
                 status="awaiting_delivery",
             )
+        if product_kind == "workflow_result":
+            # Draft delivery reconciles this operation independently. Waiting
+            # here can occupy every default-lane slot before media work runs.
+            raise AgentProductSettlementPending(
+                operation_id=operation_id,
+                status="awaiting_delivery",
+            )
         await asyncio.sleep(0.2)
 
 

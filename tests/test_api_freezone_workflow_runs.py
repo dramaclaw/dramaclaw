@@ -2046,8 +2046,23 @@ def test_generation_session_rejects_wrong_operation_identity(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("settlement_status", ["pending", "completed"])
+@pytest.mark.parametrize(
+    ("task_type", "product_kind", "result_ref"),
+    [
+        (
+            "freezone_agent_recipe_result",
+            "recipe_result",
+            {"kind": "recipe_result", "id": "asset-a"},
+        ),
+        (
+            "freezone_agent_workflow_result",
+            "workflow_result",
+            {"kind": "workflow_draft", "id": "draft-a"},
+        ),
+    ],
+)
 async def test_late_agent_product_delivery_confirms_reserved_credit(
-    monkeypatch, settlement_status
+    monkeypatch, settlement_status, task_type, product_kind, result_ref
 ) -> None:
     from novelvideo.api.routes import freezone
 
@@ -2089,11 +2104,11 @@ async def test_late_agent_product_delivery_confirms_reserved_credit(
             "operation_id": "agent_product_a",
             "project_id": "proj_demo",
             "task_id": "product-task-a",
-            "task_type": "freezone_agent_recipe_result",
-            "product_kind": "recipe_result",
+            "task_type": task_type,
+            "product_kind": product_kind,
             "status": "delivered",
             "model_evidence": {"model_call_id": "provider-job-a"},
-            "result_ref": {"kind": "recipe_result", "id": "asset-a"},
+            "result_ref": result_ref,
         },
     )
 

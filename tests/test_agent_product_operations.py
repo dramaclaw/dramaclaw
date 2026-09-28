@@ -568,7 +568,7 @@ async def test_catalog_result_tool_binds_its_generation_operation(
 
 
 @pytest.mark.asyncio
-async def test_product_task_waits_for_durable_delivery_before_success(
+async def test_workflow_result_waiter_releases_slot_before_late_delivery(
     tmp_path, monkeypatch
 ):
     from novelvideo.task_backend.runners import freezone as freezone_runner
@@ -580,40 +580,48 @@ async def test_product_task_waits_for_durable_delivery_before_success(
         task_id="task-a",
         root_task_id="task-a",
     )
-    sleep_calls = 0
 
-    async def deliver_after_wait(_seconds):
-        nonlocal sleep_calls
-        sleep_calls += 1
-        bind_agent_product_model_execution(
-            project_dir=tmp_path,
-            operation_id=operation["operation_id"],
-            model_call_id="response-a",
-            executed_at=1.0,
-            source="server_observed_agent_turn",
-        )
-        finish_agent_product_operation(
-            project_dir=tmp_path,
-            operation_id=operation["operation_id"],
-            outcome="delivered",
-            expected_task_id="task-a",
-            result_ref={"kind": "workflow_draft", "id": "draft-a"},
-        )
+    async def must_not_wait(_seconds):
+        raise AssertionError("workflow result waiter held the default worker slot")
 
-    monkeypatch.setattr(freezone_runner.asyncio, "sleep", deliver_after_wait)
-    result = await freezone_runner._run_freezone_agent_product_async(
-        {
-            "task_type": "freezone_agent_workflow_result",
-            "__run_task_id": "task-a",
-            "payload": {
-                "operation_id": operation["operation_id"],
-                "product_kind": "workflow_result",
-            },
+    monkeypatch.setattr(freezone_runner.asyncio, "sleep", must_not_wait)
+    envelope = {
+        "task_type": "freezone_agent_workflow_result",
+        "__run_task_id": "task-a",
+        "payload": {
+            "operation_id": operation["operation_id"],
+            "product_kind": "workflow_result",
         },
-        SimpleNamespace(state_dir=tmp_path),
+    }
+    with pytest.raises(AgentProductSettlementPending) as exc_info:
+        await freezone_runner._run_freezone_agent_product_async(
+            envelope, SimpleNamespace(state_dir=tmp_path)
+        )
+    assert exc_info.value.status == "awaiting_delivery"
+    assert (
+        read_agent_product_operation(
+            project_dir=tmp_path, operation_id=operation["operation_id"]
+        )["status"]
+        == "reserved"
     )
 
-    assert sleep_calls == 1
+    bind_agent_product_model_execution(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        model_call_id="response-a",
+        executed_at=1.0,
+        source="server_observed_agent_turn",
+    )
+    finish_agent_product_operation(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        outcome="delivered",
+        expected_task_id="task-a",
+        result_ref={"kind": "workflow_draft", "id": "draft-a"},
+    )
+    result = await freezone_runner._run_freezone_agent_product_async(
+        envelope, SimpleNamespace(state_dir=tmp_path)
+    )
     assert result["delivery_status"] == "delivered"
     assert result["result_ref"]["id"] == "draft-a"
 
