@@ -7286,6 +7286,70 @@ describe("canvas chat commands", () => {
     }
   });
 
+  it("does not dispatch when the pre-dispatch run confirmation fails", async () => {
+    const store = useCanvasStore.getState();
+    const imageNodeId = store.addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { prompt: "商品主图" },
+    );
+    const events: string[] = [];
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      events.push(payload.nodeId);
+    });
+    // The "preparing" action update succeeds; only the bare confirmation
+    // heartbeat that follows it fails (issue #730 re-review).
+    vi.mocked(updateFreezoneWorkflowRun).mockImplementation(async (
+      _projectId,
+      _canvasId,
+      _runId,
+      body,
+    ) => {
+      if (body.status === "running" && !body.action_updates) {
+        throw new ApiError("database unavailable", 503);
+      }
+      return {
+        run_id: "run-test",
+        status: "running",
+        actions: [],
+      } as unknown as Awaited<ReturnType<typeof updateFreezoneWorkflowRun>>;
+    });
+
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_workflow", node_ids: [imageNodeId] }],
+        }]),
+        { projectId: "project-a", canvasId: "canvas-a", actionTimeoutMs: 100 },
+      );
+
+      expect(updateFreezoneWorkflowRun).toHaveBeenCalledWith(
+        "project-a",
+        "canvas-a",
+        "run-test",
+        expect.objectContaining({
+          action_updates: [expect.objectContaining({
+            node_id: imageNodeId,
+            status: "running",
+            phase: "preparing",
+          })],
+        }),
+      );
+      expect(events).toEqual([]);
+      expect(result.errors).toContain(
+        "工作流状态保存失败，已停止启动后续节点：database unavailable",
+      );
+    } finally {
+      unsubscribe();
+      vi.mocked(updateFreezoneWorkflowRun).mockImplementation(async () => ({
+        run_id: "run-test",
+        status: "running",
+        actions: [],
+      }) as unknown as Awaited<ReturnType<typeof updateFreezoneWorkflowRun>>);
+    }
+  });
+
   it("waits through non-generating intermediate nodes when following workflow edges", async () => {
     const store = useCanvasStore.getState();
     const imageNodeId = store.addNode(

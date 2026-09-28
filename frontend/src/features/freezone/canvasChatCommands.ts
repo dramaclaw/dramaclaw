@@ -3319,9 +3319,10 @@ async function executeQueuedNodeActions(
 
             // Tail-frame capture and input hydration await, and the page may have
             // been frozen past the lease meanwhile. Wait for a server-confirmed
-            // status (queued behind any in-flight heartbeat) before dispatch.
+            // status (queued behind any in-flight heartbeat) before dispatch; a
+            // failed confirmation is not a confirmation, so it blocks dispatch too.
             await confirmWorkflowRunActive();
-            if (workflowLeaseLost || workflowCancelled()) {
+            if (workflowLeaseLost || workflowPersistenceError || workflowCancelled()) {
               return {
                 action,
                 failed: workflowCancelled()
