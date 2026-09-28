@@ -8243,6 +8243,115 @@ describe("canvas chat commands", () => {
     }
   });
 
+  it("stops before dispatch when the run update returns an interrupted run", async () => {
+    const store = useCanvasStore.getState();
+    const imageNodeId = store.addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { prompt: "商品主图" },
+    );
+    const events: string[] = [];
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      events.push(payload.nodeId);
+    });
+    // A terminal run PATCH returns 200 with the unchanged record (issue #730).
+    vi.mocked(updateFreezoneWorkflowRun).mockResolvedValueOnce({
+      run_id: "run-test",
+      status: "interrupted",
+      actions: [],
+    } as unknown as Awaited<ReturnType<typeof updateFreezoneWorkflowRun>>);
+
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_workflow", node_ids: [imageNodeId] }],
+        }]),
+        { projectId: "project-a", canvasId: "canvas-a", actionTimeoutMs: 100 },
+      );
+
+      expect(result.errors).toEqual([
+        "工作流运行已结束（interrupted），已停止启动后续节点；请继续工作流以完成未完成的部分。",
+      ]);
+      expect(events).toEqual([]);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("renews the run when the page becomes visible and stops if it was interrupted", async () => {
+    const store = useCanvasStore.getState();
+    const firstNodeId = store.addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { prompt: "首帧" },
+    );
+    const secondNodeId = store.addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 300, y: 0 },
+      { prompt: "尾帧" },
+    );
+    store.addEdge(firstNodeId, secondNodeId);
+    const events: string[] = [];
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      events.push(payload.nodeId);
+      if (!payload.requestId) return;
+      canvasEventBus.publish("freezone/node-action-accepted", {
+        requestId: payload.requestId,
+        nodeId: payload.nodeId,
+        action: payload.action,
+      });
+      vi.mocked(updateFreezoneWorkflowRun).mockImplementation(async (
+        _projectId,
+        _canvasId,
+        _runId,
+        body,
+      ) => ({
+        run_id: "run-test",
+        status: body.status && body.status !== "running" ? body.status : "interrupted",
+        actions: [],
+      }) as unknown as Awaited<ReturnType<typeof updateFreezoneWorkflowRun>>);
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.setTimeout(() => {
+        store.updateNodeData(payload.nodeId, { imageUrl: "/static/project/first.png" });
+        canvasEventBus.publish("freezone/node-action-result", {
+          requestId: payload.requestId!,
+          nodeId: payload.nodeId,
+          action: payload.action,
+          status: "success",
+        });
+      }, 10);
+    });
+
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_workflow", node_ids: [firstNodeId, secondNodeId] }],
+        }]),
+        { projectId: "project-a", canvasId: "canvas-a", actionTimeoutMs: 100 },
+      );
+
+      expect(updateFreezoneWorkflowRun).toHaveBeenCalledWith(
+        "project-a",
+        "canvas-a",
+        "run-test",
+        { status: "running", runner_id: expect.stringMatching(/^canvas-runner:/) },
+      );
+      expect(events).toEqual([firstNodeId]);
+      expect(result.errors).toContain(
+        "工作流运行已结束（interrupted），已停止启动后续节点；请继续工作流以完成未完成的部分。",
+      );
+    } finally {
+      unsubscribe();
+      vi.mocked(updateFreezoneWorkflowRun).mockImplementation(async () => ({
+        run_id: "run-test",
+        status: "running",
+        actions: [],
+      }) as unknown as Awaited<ReturnType<typeof updateFreezoneWorkflowRun>>);
+    }
+  });
+
   it("associates a submitted generation task with its workflow action", async () => {
     const store = useCanvasStore.getState();
     const imageNodeId = store.addNode(

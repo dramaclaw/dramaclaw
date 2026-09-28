@@ -37,7 +37,9 @@ NODE_PHASES = {
 RESUMABLE_RUN_STATUSES = {"running", "failed", "interrupted"}
 RESUMABLE_ACTION_STATUSES = {"pending", "running", "failed", "blocked"}
 TERMINAL_RUN_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
-WORKFLOW_RUN_LEASE_SECONDS = 45
+# Browsers throttle background-tab timers to about once per minute, so the
+# lease must outlive several missed 15s heartbeats (issue #730).
+WORKFLOW_RUN_LEASE_SECONDS = 180
 ACTIVE_TASK_STATUSES = {"pending", "starting", "submitting", "queued", "running"}
 TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
 # Mirrors the canvas runner's WORKFLOW_ACTION_MAX_RETRIES (canvasChatCommands.ts).
@@ -809,11 +811,15 @@ def claim_workflow_media_action(
             and bool(evidence.get("model_call_id"))
             and bool(evidence.get("executed_at"))
         )
-        if (
-            run["status"] != "running"
-            or action["status"] not in {"pending", "running"}
-            or not (compiled and operation["status"] == "delivered" or modeled)
-        ):
+        if run["status"] != "running":
+            raise ValueError(
+                f"workflow run is {run['status']}; continue the workflow to submit media"
+            )
+        if action["status"] not in {"pending", "running"}:
+            raise ValueError(
+                f"workflow action is {action['status']} and cannot submit media"
+            )
+        if not (compiled and operation["status"] == "delivered" or modeled):
             raise ValueError("Recipe compilation is not ready for media submission")
         job_id = uuid.uuid4().hex[:16]
         task_key = project_task_state_key(task_type, project_id, 0, scope=job_id)

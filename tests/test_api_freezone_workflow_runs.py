@@ -5,6 +5,7 @@ import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -200,6 +201,156 @@ def test_workflow_run_api_lifecycle(workflow_run_client: TestClient) -> None:
         workflow_run_client.get(base).json()["data"]["runs"][0]["run_id"]
         == created["run_id"]
     )
+
+
+def test_recipe_media_claim_reports_interrupted_run_before_enqueue(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.agent_product_operations import (
+        finish_agent_product_operation,
+        read_agent_product_operation,
+    )
+    from novelvideo.freezone.workflow_runs import (
+        claim_workflow_media_action,
+        interrupt_stale_workflow_runs,
+        read_workflow_run,
+    )
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    created = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs",
+        json={
+            "actions": [
+                {
+                    "node_id": "video-1",
+                    "action": "generate_video",
+                    "recipe_id": "product-video",
+                    "recipe_version": "1.0.0",
+                    "generation_attempt_id": "attempt-video",
+                }
+            ],
+            "runner_id": "runner-a",
+        },
+    ).json()["data"]
+    operation_id = created["actions"][0]["product_operation_id"]
+    operation = read_agent_product_operation(
+        project_dir=workflow_run_client.state_dir,
+        operation_id=operation_id,
+    )
+    finish_agent_product_operation(
+        project_dir=workflow_run_client.state_dir,
+        operation_id=operation_id,
+        outcome="delivered",
+        expected_task_id=operation["task_id"],
+        result_ref={
+            "kind": "recipe_compile_result",
+            "id": operation_id,
+            "reason": "timeout_fallback",
+            "content": "compiled prompt",
+        },
+        server_recipe_compile=True,
+    )
+    assert interrupt_stale_workflow_runs(
+        project_dir=workflow_run_client.state_dir,
+        canvas_id="default",
+        stale_after_seconds=60,
+        now=datetime.now(timezone.utc) + timedelta(seconds=181),
+    ) == [created["run_id"]]
+
+    with pytest.raises(ValueError, match="workflow run is interrupted"):
+        claim_workflow_media_action(
+            project_dir=workflow_run_client.state_dir,
+            project_id="proj_demo",
+            canvas_id="default",
+            node_id="video-1",
+            operation_id=operation_id,
+            attempt_id="attempt-video",
+            task_type="freezone_video_gen",
+            fingerprint="a" * 64,
+        )
+    run = read_workflow_run(
+        project_dir=workflow_run_client.state_dir,
+        canvas_id="default",
+        run_id=created["run_id"],
+    )
+    assert run is not None
+    assert run["actions"][0].get("job_id") in (None, "")
+
+
+def test_recipe_media_claim_replay_after_interrupt_reuses_admitted_job(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.agent_product_operations import (
+        finish_agent_product_operation,
+        read_agent_product_operation,
+    )
+    from novelvideo.freezone.workflow_runs import (
+        claim_workflow_media_action,
+        interrupt_stale_workflow_runs,
+    )
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    created = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs",
+        json={
+            "actions": [
+                {
+                    "node_id": "video-1",
+                    "action": "generate_video",
+                    "recipe_id": "product-video",
+                    "recipe_version": "1.0.0",
+                    "generation_attempt_id": "attempt-video",
+                }
+            ],
+            "runner_id": "runner-a",
+        },
+    ).json()["data"]
+    operation_id = created["actions"][0]["product_operation_id"]
+    operation = read_agent_product_operation(
+        project_dir=workflow_run_client.state_dir,
+        operation_id=operation_id,
+    )
+    finish_agent_product_operation(
+        project_dir=workflow_run_client.state_dir,
+        operation_id=operation_id,
+        outcome="delivered",
+        expected_task_id=operation["task_id"],
+        result_ref={
+            "kind": "recipe_compile_result",
+            "id": operation_id,
+            "reason": "timeout_fallback",
+            "content": "compiled prompt",
+        },
+        server_recipe_compile=True,
+    )
+    request = dict(
+        project_dir=workflow_run_client.state_dir,
+        project_id="proj_demo",
+        canvas_id="default",
+        node_id="video-1",
+        operation_id=operation_id,
+        attempt_id="attempt-video",
+        task_type="freezone_video_gen",
+        fingerprint="a" * 64,
+    )
+    admitted = claim_workflow_media_action(**request)
+    assert admitted["created"] is True
+    assert interrupt_stale_workflow_runs(
+        project_dir=workflow_run_client.state_dir,
+        canvas_id="default",
+        stale_after_seconds=60,
+        now=datetime.now(timezone.utc) + timedelta(seconds=181),
+    ) == [created["run_id"]]
+
+    # A request admitted before the lease expired replays to the same job
+    # instead of enqueueing (and charging for) a second media task (issue #730).
+    replayed = claim_workflow_media_action(**request)
+    assert replayed["created"] is False
+    assert replayed["job_id"] == admitted["job_id"]
+    with pytest.raises(ValueError, match="already claimed"):
+        claim_workflow_media_action(**{**request, "fingerprint": "b" * 64})
 
 
 @pytest.mark.parametrize(

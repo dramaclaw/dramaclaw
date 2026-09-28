@@ -1012,6 +1012,37 @@ def test_stale_running_workflow_is_marked_interrupted(tmp_path: Path) -> None:
     assert recovered["metadata"]["interrupt_reason"] == "runner_heartbeat_expired"
 
 
+def test_runner_lease_survives_background_timer_throttling(tmp_path: Path) -> None:
+    run = create_workflow_run(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        actions=[{"node_id": "video-1", "action": "generate_video"}],
+        runner_id="runner-a",
+    )
+    last_heartbeat = datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00"))
+
+    # Background tabs fire the 15s heartbeat about once per minute (issue #730).
+    assert (
+        interrupt_stale_workflow_runs(
+            project_dir=tmp_path,
+            canvas_id="default",
+            stale_after_seconds=60,
+            now=last_heartbeat + timedelta(seconds=60),
+        )
+        == []
+    )
+    assert (
+        interrupt_stale_workflow_runs(
+            project_dir=tmp_path,
+            canvas_id="default",
+            stale_after_seconds=60,
+            now=last_heartbeat + timedelta(seconds=181),
+        )
+        == [run["run_id"]]
+    )
+
+
 def test_cancelled_run_skips_unfinished_actions_without_runner_lease(
     tmp_path: Path,
 ) -> None:
