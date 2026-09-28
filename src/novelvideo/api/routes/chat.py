@@ -239,6 +239,9 @@ async def clear_chat_scope(
             409, "当前对话仍在进行，请等待完成或先停止后再清空"
         ) from exc
 
+    heartbeat_task = asyncio.create_task(
+        chat_service._chat_run_lock_heartbeat_loop(username, lock_project, lock_id)
+    )
     try:
         project_state_dir = project_ctx.state_dir if project_ctx is not None else None
         execution_context = (
@@ -246,7 +249,7 @@ async def clear_chat_scope(
             if project_ctx is not None
             else None
         )
-        chat_service.reset_codex_scope_thread(
+        archived_threads = await chat_service.archive_codex_scope_thread(
             username,
             project,
             agent_profile=(
@@ -255,14 +258,20 @@ async def clear_chat_scope(
             canvas_id=execution_context.canvas_id if execution_context else None,
             project_state_dir=project_state_dir,
         )
+        if not chat_service._heartbeat_chat_run_lock(username, lock_project, lock_id):
+            raise HTTPException(409, "清空操作已失去对话锁，请刷新后重试")
         storage_scope = _chat_store_scope_for_project_context(scope, project_ctx)
         if project_ctx is not None and not _is_freezone_scope(scope):
             storage_scope = replace(storage_scope, state_dir=str(project_state_dir))
         cleared = await chat_store.clear_messages_async(username, storage_scope)
     finally:
+        heartbeat_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await heartbeat_task
         chat_service._release_chat_run_lock(username, lock_project, lock_id)
     logger.info(
-        "chat scope cleared user=%s kind=%s project=%s surface=%s canvas=%s agent=%s messages=%d",
+        "chat scope cleared user=%s kind=%s project=%s surface=%s canvas=%s agent=%s "
+        "messages=%d archived_threads=%d",
         username,
         scope.kind,
         project or "<home>",
@@ -270,8 +279,15 @@ async def clear_chat_scope(
         scope.canvas_id or "-",
         scope.agent_id or "-",
         cleared,
+        archived_threads,
     )
-    return {"ok": True, "data": {"cleared_messages": cleared}}
+    return {
+        "ok": True,
+        "data": {
+            "cleared_messages": cleared,
+            "archived_threads": archived_threads,
+        },
+    }
 
 
 class ChatAttachmentIn(BaseModel):

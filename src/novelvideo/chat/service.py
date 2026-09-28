@@ -2475,6 +2475,61 @@ def reset_codex_scope_thread(
     _set_active_codex_turn(username, scope_key, None)
 
 
+async def archive_codex_scope_thread(
+    username: str,
+    project: str,
+    *,
+    agent_profile: str = "main",
+    canvas_id: str | None = None,
+    project_state_dir: str | Path | None = None,
+) -> int:
+    """Archive one scope's thread before forgetting its local binding.
+
+    A plain index reset leaves the App Server free to retain thread-owned MCP
+    processes and tool state for the same project workspace.  Archiving first
+    gives the runtime an explicit lifecycle boundary while preserving managed
+    Skills and other durable workspace files.
+    """
+
+    from novelvideo.utils.state_index_files import index_file_lock, write_json_atomic
+
+    scope_key = _codex_scope_key(
+        project, agent_profile=agent_profile, canvas_id=canvas_id
+    )
+    state_path = _codex_session_state_path(
+        username, project, project_state_dir=project_state_dir
+    )
+    thread_id = session_registry.get_codex_thread_id(state_path, scope_key)
+    if thread_id:
+        archived = await asyncio.to_thread(_control_codex_thread, "archive", thread_id)
+        if not archived:
+            raise RuntimeError(f"Codex thread could not be archived: {thread_id}")
+
+    with index_file_lock(state_path):
+        latest = _load_codex_session_state(
+            username, project, project_state_dir=project_state_dir
+        )
+        if thread_id is None or latest.get(scope_key) == thread_id:
+            latest.pop(scope_key, None)
+            _save_codex_session_state(
+                username, project, latest, project_state_dir=project_state_dir
+            )
+    if thread_id is not None:
+        active_turn_key = (username, scope_key)
+        with _ACTIVE_CODEX_TURNS_LOCK:
+            active_turn = _ACTIVE_CODEX_TURNS.get(active_turn_key)
+            if active_turn is not None and active_turn[0] == thread_id:
+                _ACTIVE_CODEX_TURNS.pop(active_turn_key, None)
+        session_registry.clear_active_codex_turn_if_thread(
+            _active_codex_turns_path(username),
+            scope_key,
+            thread_id,
+            index_file_lock=index_file_lock,
+            write_json_atomic=write_json_atomic,
+        )
+    return int(thread_id is not None)
+
+
 def _active_codex_turns_path(username: str) -> Path:
     return _user_state_dir(username) / "active_codex_turns.json"
 

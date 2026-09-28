@@ -433,3 +433,24 @@ def set_active_codex_turn(
             if len(value) >= 3 and str(value[2]).strip():
                 payload[scope_key]["business_turn_id"] = str(value[2]).strip()
         write_json_atomic(path, payload)
+
+
+def clear_active_codex_turn_if_thread(
+    path: Path,
+    scope_key: str,
+    thread_id: str,
+    *,
+    load_state: Callable[[Path], dict[str, dict[str, str]]] = load_active_codex_turns,
+    index_file_lock: Callable[[Path], ContextManager[Any]],
+    write_json_atomic: Callable[[Path, dict[str, dict[str, str]]], None],
+) -> bool:
+    """Remove an active turn only when it still belongs to ``thread_id``."""
+
+    with index_file_lock(path):
+        payload = load_state(path)
+        active = payload.get(scope_key)
+        if not isinstance(active, dict) or active.get("thread_id") != thread_id:
+            return False
+        payload.pop(scope_key, None)
+        write_json_atomic(path, payload)
+        return True
