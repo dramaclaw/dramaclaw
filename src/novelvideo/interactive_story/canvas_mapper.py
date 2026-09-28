@@ -19,6 +19,7 @@ from novelvideo.interactive_story.models import (
     StoryFlagCondition,
     StoryMediaRef,
     StorySegment,
+    StoryScene,
     StoryVariable,
     StoryVariableCondition,
     StoryVisitCondition,
@@ -146,6 +147,7 @@ def project_story_to_canvas(
                 "narration": segment.script,
                 "storySegmentId": segment.id,
                 "storyCharacterIds": list(segment.character_ids),
+                "storySceneRefs": [item.model_dump() for item in segment.scene_refs],
                 "storyProductionNotes": segment.production_notes,
                 "prompt": segment.video_prompt,
                 "storyMedia": segment.media.model_dump(exclude_none=True),
@@ -201,6 +203,7 @@ def project_story_to_canvas(
             "interactiveStorySchemaVersion": story.schema_version,
             "storySynopsis": story.synopsis,
             "storyCharacters": [item.model_dump() for item in story.characters],
+            "storyScenes": [item.model_dump() for item in story.scenes],
             "storyVariableDefinitions": [item.model_dump(exclude_none=True) for item in story.variables],
             "storyFlags": [item.model_dump() for item in story.flags],
             "backgroundColor": group_data.get("backgroundColor") or GROUP_COLOR,
@@ -314,6 +317,7 @@ def story_from_canvas(canvas: dict[str, Any], story_id: str) -> StoryDraftV2:
                 ending_label=ending_label,
                 cta=data.get("storyCta"),
                 character_ids=_string_list(data.get("storyCharacterIds")),
+                scene_refs=data.get("storySceneRefs") or [],
                 choice_time_limit_sec=_positive_int(data.get("choiceTimeLimitSec")),
                 production_notes=str(data.get("storyProductionNotes") or ""),
                 video_prompt=str(data.get("prompt") or ""),
@@ -358,6 +362,7 @@ def story_from_canvas(canvas: dict[str, Any], story_id: str) -> StoryDraftV2:
         )
 
     characters = [StoryCharacter.model_validate(item) for item in _dict_list(group_data.get("storyCharacters"))]
+    scenes = [StoryScene.model_validate(item) for item in _dict_list(group_data.get("storyScenes"))]
     variable_source = group_data.get("storyVariableDefinitions")
     variables = [StoryVariable.model_validate(item) for item in _dict_list(variable_source)]
     flags = [StoryFlag.model_validate(item) for item in _dict_list(group_data.get("storyFlags"))]
@@ -369,6 +374,7 @@ def story_from_canvas(canvas: dict[str, Any], story_id: str) -> StoryDraftV2:
         synopsis=str(group_data.get("storySynopsis") or ""),
         start_segment_id=starts[0],
         characters=characters,
+        scenes=scenes,
         variables=variables,
         flags=flags,
         segments=segments,

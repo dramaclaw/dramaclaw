@@ -9,6 +9,7 @@ import {
 import { getOrCaptureVideoFrame } from './videoCaptureFrame';
 import { sortUpstreamByReferenceOrder, videoReferenceNodesInEdgeOrder } from '../nodes/referenceOrdering';
 import { readKeyElementCategory } from '../domain/keyElements';
+import { videoReferenceEnvelopeForNode } from './videoReferenceEnvelope';
 
 export { isFmvVideoNode } from '../domain/fmvContinuity';
 
@@ -28,18 +29,6 @@ function submittableContinuityImage(node: CanvasNode): string | null {
   return null;
 }
 
-function fmvSupplementalReference(node: CanvasNode, index: number): string {
-  const reference = `@图片${index}`;
-  const name = typeof node.data.displayName === 'string' && node.data.displayName.trim()
-    ? `（${node.data.displayName.trim().replace(/\s+/g, ' ').slice(0, 80)}）` : '';
-  switch (readKeyElementCategory(node.data)) {
-    case 'character': return `${reference}${name} 是人物身份参考，保持人物面容、发型和服装一致，不替代开场帧。`;
-    case 'object': return `${reference}${name} 是物品外观参考，保持物品形状、材质和细节一致，不替代开场帧。`;
-    case 'scene': return `${reference}${name} 是场景参考，只用于对应场景的环境细节，不替代开场帧。`;
-    default: return `${reference}${name} 是补充图片参考，按该素材的实际内容使用，不替代开场帧。`;
-  }
-}
-
 const FMV_REFERENCE_NOTE = /\n?\[FMV素材参考\][\s\S]*?\[\/FMV素材参考\]/g;
 
 function withoutFmvReferenceNote(prompt: unknown): string {
@@ -56,26 +45,87 @@ function orderedStoryImages(targetId: string): CanvasNode[] {
   ).filter((node) => !node.data.videoUrl && !node.data.audioUrl && Boolean(submittableContinuityImage(node)));
 }
 
+function storyReferenceSignature(images: CanvasNode[]): string {
+  return JSON.stringify(images.map((node) => {
+    const data = node.data as { storyAssetTarget?: { storyId?: string; kind?: string; entityId?: string };
+      storyFrameTarget?: { storyId?: string; segmentId?: string } };
+    const identity = data.storyAssetTarget
+      ? [data.storyAssetTarget.storyId, data.storyAssetTarget.kind, data.storyAssetTarget.entityId]
+      : data.storyFrameTarget
+        ? [data.storyFrameTarget.storyId, 'frame', data.storyFrameTarget.segmentId]
+        : submittableContinuityImage(node);
+    return [node.id, identity];
+  }));
+}
+
 /** Keep visible story prompts in sync with actual connected image references. */
 export function syncStoryVideoReferencePrompt(targetId: string): void {
   const state = useCanvasStore.getState();
   const target = state.nodes.find((node) => node.id === targetId);
   if (!target || !isFmvVideoNode(target, state.edges)) return;
+  const ordered = orderedStoryImages(targetId);
+  // The captured tail frame belongs to continuity, not to the material list.
+  const images = ordered.filter((node) => !state.edges.some((edge) => edge.source === node.id &&
+    edge.target === targetId && isWorkflowContinuityTailFrameEdge(edge)));
+  const imageIndex = (node: CanvasNode): number => ordered.findIndex((item) => item.id === node.id) + 1;
+  const existingNote = String(target.data.prompt || '').match(FMV_REFERENCE_NOTE)?.[0];
+  const positions = images.map(imageIndex);
+  const sceneRefs = (target.data as { storySceneRefs?: Array<{ scene_id?: string; usage?: string }> }).storySceneRefs;
+  const styleSceneIds = images.flatMap((node) => {
+    const binding = (node.data as { storyAssetTarget?: { kind?: string; entityId?: string } }).storyAssetTarget;
+    return binding?.kind === 'scene' && sceneRefs?.some((ref) =>
+      ref.scene_id === binding.entityId && ref.usage === 'style') ? [node.id] : [];
+  });
+  const signature = storyReferenceSignature(images) +
+    (positions.some((position, index) => position !== index + 1) ? JSON.stringify(positions) : '') +
+    (styleSceneIds.length ? JSON.stringify(styleSceneIds) : '');
+  const savedSignature = (target.data as { storyReferenceSignature?: unknown }).storyReferenceSignature;
+  if (existingNote && savedSignature === signature) return;
+  if (existingNote && images.length > 0) {
+    const mentions = [...existingNote.matchAll(/@图片(\d+)(?!\d)/g)].map((match) => Number(match[1]));
+    // A complete note may have been written by the user or Agent with precise
+    // character and scene roles. Do not replace it with generic descriptions
+    // merely because the canvas hydrated or autosaved.
+    if (savedSignature === undefined && mentions.length === images.length && images.every((image) => {
+      const index = imageIndex(image);
+      if (!mentions.includes(index)) return false;
+      const namedMention = existingNote.match(new RegExp(`@图片${index}（([^）]+)）`));
+      return !namedMention || namedMention[1] === image.data.displayName?.trim();
+    })) {
+      state.updateNodeData(targetId, { storyReferenceSignature: signature });
+      return;
+    }
+  }
   const base = withoutFmvReferenceNote(target.data.prompt);
   const authoredPrompt = withoutFmvContinuityNote(base);
   // A reference list cannot stand in for the segment's actual shot prompt.
   if (!authoredPrompt) {
-    if (base !== target.data.prompt) state.updateNodeData(targetId, { prompt: base });
+    if (base !== target.data.prompt || savedSignature !== signature) {
+      state.updateNodeData(targetId, { prompt: base, storyReferenceSignature: signature });
+    }
     return;
   }
-  const references = orderedStoryImages(targetId).flatMap((node, index) => {
-    const mention = `@图片${index + 1}`;
+  const references = images.flatMap((node) => {
+    const mention = `@图片${imageIndex(node)}`;
     if (new RegExp(`${mention}(?!\\d)`).test(authoredPrompt)) return [];
     const name = typeof node.data.displayName === 'string' && node.data.displayName.trim()
       ? `（${node.data.displayName.trim().replace(/\s+/g, ' ').slice(0, 80)}）` : '';
     const frame = node.data.storyFrameTarget as { videoNodeId?: unknown } | undefined;
     if (frame?.videoNodeId === targetId) {
       return [`${mention}${name} 是本镜头独立开场的构图参考，保持主体和场景一致。`];
+    }
+    const binding = (node.data as { storyAssetTarget?: { kind?: string; entityId?: string } }).storyAssetTarget;
+    if (binding?.kind === 'subject') {
+      const group = state.nodes.find((item) => item.id === target.parentId);
+      const subjects = (group?.data as { storyCharacters?: Array<{ id?: string; kind?: string }> } | undefined)?.storyCharacters;
+      const subject = subjects?.find((item) => item.id === binding.entityId);
+      return [`${mention}${name} 是${subject?.kind === 'product' ? '产品主角的外观' : subject?.kind === 'object' ? '物品主体的外观' : '人物身份'}参考，保持主体视觉特征一致。`];
+    }
+    if (binding?.kind === 'scene') {
+      const usage = sceneRefs?.find((ref) => ref.scene_id === binding.entityId)?.usage;
+      return [usage === 'style'
+        ? `${mention}${name} 是本镜头已规划的视觉风格参考，只借用色彩、光线和美术风格，不改变镜头所在场所或空间关系。`
+        : `${mention}${name} 是本镜头已规划的场景参考，保持环境和空间关系一致。`];
     }
     switch (readKeyElementCategory(node.data)) {
       case 'character': return [`${mention}${name} 是人物身份参考，保持面容、发型和服装一致。`];
@@ -86,7 +136,69 @@ export function syncStoryVideoReferencePrompt(targetId: string): void {
   });
   const note = references.length ? `[FMV素材参考]\n${references.join('\n')}\n[/FMV素材参考]` : '';
   const prompt = [note, base].filter(Boolean).join('\n\n');
-  if (prompt !== target.data.prompt) state.updateNodeData(targetId, { prompt });
+  if (prompt !== target.data.prompt || savedSignature !== signature) {
+    state.updateNodeData(targetId, { prompt, storyReferenceSignature: signature });
+  }
+}
+
+/** Link a completed subject/scene only to clips that still request its stable story ID. */
+export function attachCompletedStoryAsset(imageNodeId: string): string | null {
+  const state = useCanvasStore.getState();
+  const image = state.nodes.find((node) => node.id === imageNodeId);
+  if (!image || image.type !== CANVAS_NODE_TYPES.imageGen) return null;
+  const binding = (image.data as { storyAssetTarget?: {
+    storyId?: unknown; kind?: unknown; entityId?: unknown; segmentIds?: unknown;
+  } }).storyAssetTarget;
+  if (!binding) return null;
+  if (!submittableContinuityImage(image) || image.data.isGenerating) return null;
+  const group = state.nodes.find((node) => node.type === CANVAS_NODE_TYPES.group &&
+    node.data.storyGroup === true && node.data.interactiveStoryId === binding.storyId);
+  const groupData = group?.data as { storyCharacters?: Array<{ id?: string }>;
+    storyScenes?: Array<{ id?: string }> } | undefined;
+  const entityList = binding.kind === 'subject' ? groupData?.storyCharacters :
+    binding.kind === 'scene' ? groupData?.storyScenes : undefined;
+  if (!group || !entityList?.some((item) => item.id === binding.entityId) ||
+      !Array.isArray(binding.segmentIds) || !binding.segmentIds.length) {
+    return '影游素材的主体或场景规划已变化，未自动连接。';
+  }
+  const targets: CanvasNode[] = [];
+  for (const segmentId of binding.segmentIds) {
+    const target = state.nodes.find((node) => node.type === CANVAS_NODE_TYPES.video &&
+      node.parentId === group.id && node.data.storySegmentId === segmentId);
+    const data = target?.data as { storyCharacterIds?: string[];
+      storySceneRefs?: Array<{ scene_id?: string }> } | undefined;
+    const matches = binding.kind === 'subject'
+      ? data?.storyCharacterIds?.includes(String(binding.entityId))
+      : data?.storySceneRefs?.some((ref) => ref.scene_id === binding.entityId);
+    if (!target || !matches) return `影游素材与片段 ${String(segmentId)} 的当前规划不符，未自动连接。`;
+    const currentImages = orderedStoryImages(target.id);
+    const hasTail = state.edges.some((edge) => edge.target === target.id &&
+      isWorkflowContinuityTailFrameEdge(edge));
+    const imageLimit = Math.max(0, videoReferenceEnvelopeForNode(target).image -
+      (target.data.continuityMode === 'auto' && !hasTail ? 1 : 0));
+    if (currentImages.length >= imageLimit && !currentImages.some((node) => node.id === imageNodeId)) {
+      return `片段 ${String(segmentId)} 的图片参考已达上限，未自动连接。`;
+    }
+    targets.push(target);
+  }
+  const createdEdges: string[] = [];
+  for (const target of targets) {
+    if (!useCanvasStore.getState().edges.some((edge) => edge.source === imageNodeId &&
+        edge.target === target.id && edge.data?.link_type === 'media_input_for')) {
+      const edgeId = state.addEdgeWithData(imageNodeId, target.id, {
+        link_type: 'media_input_for', edgeKind: 'story_visual_reference',
+      });
+      if (!edgeId) {
+        for (const createdId of createdEdges) state.deleteEdge(createdId);
+        return `素材已生成，但无法连接到片段 ${String(target.data.storySegmentId)}。`;
+      }
+      createdEdges.push(edgeId);
+    }
+  }
+  for (const target of targets) {
+    syncStoryVideoReferencePrompt(target.id);
+  }
+  return null;
 }
 
 /** Attach an approved storyboard result only to its original story segment. */
@@ -209,14 +321,10 @@ export async function ensureVideoContinuity(targetId: string, projectId?: string
   const ordered = orderedStoryImages(targetId);
   const index = ordered.findIndex((node) => node.id === captured.nodeId) + 1;
   if (index === 0) throw new Error('尾帧参考未进入图片列表，已停止视频生成。');
-  const prompt = withoutFmvReferenceNote(withoutFmvContinuityNote(currentTarget.data.prompt));
-  const extraReferences = currentTarget.data.genMode === 'allReference' || currentTarget.data.genMode === 'imageReference'
-    ? ordered.flatMap((node, imageIndex) => node.id === captured.nodeId
-      ? [] : [fmvSupplementalReference(node, imageIndex + 1)])
-    : [];
+  syncStoryVideoReferencePrompt(targetId);
+  const prompt = withoutFmvContinuityNote(useCanvasStore.getState().nodes.find((node) => node.id === targetId)?.data.prompt);
   const continuityNote = [
     `[FMV自动承接]本镜头的首帧必须从 @图片${index}（上一镜视频截取的尾帧）开始；先保持截图中的人物、物品、姿态和构图，再按本镜剧情继续动作。若下文要求换场或跳时间，先呈现该截图，再通过可见转场进入新场景，不要直接以新场景开场。没有单独的人物或物品参考图时，继续沿用该尾帧中的身份和外观。`,
-    ...extraReferences,
     '[/FMV自动承接]',
   ].join('\n');
   state.updateNodeData(targetId, {

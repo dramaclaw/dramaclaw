@@ -125,6 +125,7 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
     workflow_instance_id = _workflow_instance_id(args, payload)
     source_context = payload.get("source_context")
     story_frame_targets: dict[str, dict[str, str]] = {}
+    story_asset_targets: dict[str, dict[str, Any]] = {}
     if isinstance(source_context, dict):
         story_id = source_context.get("story_id")
         targets = source_context.get("targets")
@@ -142,6 +143,19 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
                         "storyId": story_id,
                         "segmentId": segment_id,
                         "videoNodeId": video_node_id,
+                    }
+        asset_targets = source_context.get("asset_targets")
+        if isinstance(story_id, str) and story_id.strip() and isinstance(asset_targets, list):
+            for target in asset_targets:
+                if not isinstance(target, dict):
+                    continue
+                plan_node_id = target.get("plan_node_id")
+                if isinstance(plan_node_id, str) and plan_node_id.strip():
+                    story_asset_targets[plan_node_id] = {
+                        "storyId": story_id,
+                        "kind": target.get("kind"),
+                        "entityId": target.get("entity_id"),
+                        "segmentIds": target.get("segment_ids"),
                     }
     node_by_plan_id: dict[str, dict[str, Any]] = {}
     used_client_ids: set[str] = set()
@@ -297,6 +311,8 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
                 **story_frame_targets[node["plan_id"]],
                 "referenceNodeIds": references,
             }
+        if node["node_type"] == "imageGenNode" and node["plan_id"] in story_asset_targets:
+            data["storyAssetTarget"] = story_asset_targets[node["plan_id"]]
         # The graph approval is the single parameter confirmation point for a
         # workflow. Persist this marker on executable nodes so the later DAG
         # runner and Agent action catalog can reuse the approved model/size/
@@ -392,13 +408,16 @@ def build_workflow_graph_commands(args: dict[str, Any]) -> dict[str, Any]:
     raw_run_after_create = args.get("run_after_create")
     run_after_create = _bool_value(raw_run_after_create, False)
     if run_after_create:
-        commands.append(
-            {
-                "type": "run_workflow",
-                "node_ids": [node["client_id"] for node in normalized_nodes],
-                "scope": "selection",
-            }
-        )
+        run_command = {
+            "type": "run_workflow",
+            "node_ids": [node["client_id"] for node in normalized_nodes],
+            "scope": "selection",
+        }
+        if story_frame_targets or story_asset_targets:
+            # Story images may reuse references already connected to videos.
+            # Run only this plan's nodes, not the surrounding canvas graph.
+            run_command["direction"] = "node"
+        commands.append(run_command)
 
     command_errors = validate_workflow_graph_commands(
         commands,

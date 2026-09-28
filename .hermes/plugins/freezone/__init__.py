@@ -1029,6 +1029,28 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     answers = args.get("answers")
     if not isinstance(answers, dict):
         answers = {}
+    question_ids = {
+        str(question.get("id") or "").strip().lower()
+        for question in questions
+        if isinstance(question, dict)
+    }
+    if "video_generate_audio" in question_ids and "video_model" not in question_ids:
+        try:
+            selected_model = _generation_answer_value("video_model", answers.get("video_model"))
+        except ValueError:
+            selected_model = None
+        if selected_model is None:
+            return tool_result({
+                "ok": False,
+                "status": "generation_model_context_required",
+                "error": "video_model is required to show video audio choices",
+                "agent_instruction": (
+                    "No clarification card was shown. If the user requested only storyboard "
+                    "images, continue with an image-only workflow and do not ask video "
+                    "generation questions. Otherwise include the model question or pass "
+                    "the user's confirmed model in answers before retrying."
+                ),
+            })
     if not questions:
         return tool_result(
             {

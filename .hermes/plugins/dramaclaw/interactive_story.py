@@ -52,11 +52,38 @@ def _story_character_schema() -> dict[str, Any]:
         {
             "id": dict(_ENTITY_ID_SCHEMA),
             "name": {"type": "string", "minLength": 1, "maxLength": 120},
+            "kind": {"enum": ["person", "product", "object"]},
             "description": {"type": "string", "maxLength": 2_000},
             "visual_description": {"type": "string", "maxLength": 4_000},
         },
         ["id", "name"],
     )
+
+
+def _story_scene_schema() -> dict[str, Any]:
+    return _strict_object(
+        {
+            "id": dict(_ENTITY_ID_SCHEMA),
+            "name": {"type": "string", "minLength": 1, "maxLength": 120},
+            "description": {"type": "string", "maxLength": 2_000},
+            "visual_description": {"type": "string", "maxLength": 4_000},
+        },
+        ["id", "name"],
+    )
+
+
+def _story_scene_refs_schema() -> dict[str, Any]:
+    return {
+        "type": "array",
+        "maxItems": 32,
+        "items": _strict_object(
+            {
+                "scene_id": dict(_ENTITY_ID_SCHEMA),
+                "usage": {"enum": ["setting", "style"]},
+            },
+            ["scene_id"],
+        ),
+    }
 
 
 def _story_variable_schema() -> dict[str, Any]:
@@ -150,6 +177,7 @@ def _story_segment_schema() -> dict[str, Any]:
                 "uniqueItems": True,
                 "items": dict(_ENTITY_ID_SCHEMA),
             },
+            "scene_refs": _story_scene_refs_schema(),
             "choice_time_limit_sec": _nullable(
                 {"type": "integer", "minimum": 1, "maximum": 300}
             ),
@@ -425,6 +453,11 @@ def _story_draft_schema() -> dict[str, Any]:
                 "maxItems": 100,
                 "items": _story_character_schema(),
             },
+            "scenes": {
+                "type": "array",
+                "maxItems": 100,
+                "items": _story_scene_schema(),
+            },
             "variables": {
                 "type": "array",
                 "maxItems": 100,
@@ -476,6 +509,7 @@ def _story_segment_changes_schema() -> dict[str, Any]:
                 "uniqueItems": True,
                 "items": dict(_ENTITY_ID_SCHEMA),
             },
+            "scene_refs": _story_scene_refs_schema(),
             "choice_time_limit_sec": _nullable(
                 {"type": "integer", "minimum": 1, "maximum": 300}
             ),
@@ -649,6 +683,16 @@ def _story_patch_operations_schema() -> dict[str, Any]:
                 "remove_character",
                 {"character_id": dict(_ENTITY_ID_SCHEMA)},
                 ["character_id"],
+            ),
+            operation(
+                "upsert_scene",
+                {"scene": _story_scene_schema()},
+                ["scene"],
+            ),
+            operation(
+                "remove_scene",
+                {"scene_id": dict(_ENTITY_ID_SCHEMA)},
+                ["scene_id"],
             ),
         ]
     }

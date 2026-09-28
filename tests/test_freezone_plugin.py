@@ -3411,6 +3411,29 @@ def test_generation_clarification_partial_card_without_model_hides_recommendatio
     assert "recommended_answers" not in captured[0]
 
 
+@pytest.mark.parametrize("question_args", [
+    {"generation_required_choices": {"video": ["generate_audio"]}},
+    {"questions": [{"id": "video_generate_audio"}]},
+])
+def test_storyboard_video_audio_question_without_model_never_shows_empty_card(
+    monkeypatch, question_args,
+):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    captured = []
+    monkeypatch.setattr(plugin, "_emit_clarification_event",
+                        lambda _project, _canvas, event: captured.append(event) or "shown")
+
+    result = handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a",
+        **question_args,
+    })
+
+    assert result["status"] == "generation_model_context_required"
+    assert "storyboard images" in result["agent_instruction"]
+    assert captured == []
+
+
 def test_generation_clarification_canonical_questions_offer_recommendation(monkeypatch):
     """CORE-PLAN-09: hand-listed canonical questions still get a concrete recommendation."""
     plugin = _load_plugin_module()

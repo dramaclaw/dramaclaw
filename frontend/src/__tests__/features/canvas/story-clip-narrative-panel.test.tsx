@@ -36,6 +36,22 @@ vi.mock('react-i18next', () => ({
 }));
 
 describe('StoryClipNarrativePanel', () => {
+  it('does not show automatic continuity as selected from a dependency edge alone', () => {
+    const previous = useCanvasStore.getState();
+    const clip = { id: 'clip', type: CANVAS_NODE_TYPES.video, position: { x: 400, y: 0 },
+      data: { storySegmentId: 'second' } } as CanvasNode;
+    const source = { id: 'source', type: CANVAS_NODE_TYPES.video, position: { x: 0, y: 0 },
+      data: { storySegmentId: 'first' } } as CanvasNode;
+    useCanvasStore.setState({ nodes: [clip, source], edges: [
+      { id: 'incoming', source: 'source', target: 'clip', data: { link_type: 'dependency_for' } } as CanvasEdge,
+    ] });
+    try {
+      render(<StoryClipNarrativePanel nodeId="clip" mediaState="missing" onChange={vi.fn()} />);
+      expect(screen.getByRole('button', { name: '自动承接' })).toHaveAttribute('aria-pressed', 'false');
+      expect(screen.getByRole('button', { name: '独立开场' })).toHaveAttribute('aria-pressed', 'true');
+    } finally { useCanvasStore.setState({ nodes: previous.nodes, edges: previous.edges }); }
+  });
+
   it('allows independent and automatic openings without changing loop playback', () => {
     const previous = useCanvasStore.getState();
     const clip = { id: 'clip', type: CANVAS_NODE_TYPES.video, position: { x: 400, y: 0 },

@@ -65,9 +65,7 @@ export const StoryClipNarrativePanel = memo(function StoryClipNarrativePanel({
       .map((edge) => edge.source));
     return nodes.filter((node) => sourceIds.has(node.id) && node.type === CANVAS_NODE_TYPES.video);
   }, [nodes, edges, nodeId, nodeData?.storyRole]);
-  const autoContinuity = nodeData?.storyRole !== 'start' && (nodeData?.continuityMode === 'auto' ||
-    (nodeData?.continuityMode !== 'independent' && continuityCandidates.some((node) =>
-      edges.some((edge) => edge.source === node.id && edge.target === nodeId && edge.data?.link_type === 'dependency_for'))));
+  const autoContinuity = nodeData?.storyRole !== 'start' && nodeData?.continuityMode === 'auto';
   const continuitySource = continuityCandidates.find((node) => node.id === nodeData?.continuitySourceNodeId)
     ?? (continuityCandidates.length === 1 ? continuityCandidates[0] : undefined);
   const [ctaUrlDraft, setCtaUrlDraft] = useState(nodeData?.storyCta?.url ?? '');

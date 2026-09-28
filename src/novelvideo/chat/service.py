@@ -34,6 +34,7 @@ from novelvideo.chat.canvas_outcome import (
     CANVAS_REPLY_SCHEMA,
     CANVAS_FINAL_RESPONSE_INSTRUCTIONS,
     finalize_canvas_reply,
+    recover_unstructured_canvas_message,
     receipt_reference,
 )
 from novelvideo.chat.display_fallback import (
@@ -363,6 +364,11 @@ _CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS = (
     "WorkflowPlan. Map every frame to its existing story segment and video node in "
     "source_context.targets so completed images and upstream character/scene references "
     "can attach automatically; do not replace dedicated story writes or video nodes. "
+    "When the user asks for storyboard images only, ask only for missing image generation "
+    "parameters. Do not ask for video model, duration, resolution, or audio before submitting "
+    "the image-only plan; video settings belong to a separate video planning or generation "
+    "request. If a preflight mentions video parameters for this image-only plan, correct the "
+    "plan's execution scope rather than asking the user to configure video. "
     "For a next-step question on the current interactive story, read live story progress and "
     "the Skill's stage-guidance reference; guide the first unfinished stage, including manual "
     "confirmation, without treating 'next step' alone as confirmation or media authorization. "
@@ -377,7 +383,7 @@ _CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS = (
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
 _CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v2"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v26"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v28"
 
 
 def _codex_developer_instructions(tool_mode: str | None) -> str:
@@ -882,7 +888,7 @@ def _interactive_story_stage_confirmation_requested(prompt: str | None) -> bool:
     )
 
 
-def _codex_story_preflight_rejection(event: Any) -> tuple[str, str] | None:
+def _codex_story_preflight_rejection(event: Any) -> tuple[str, str | None] | None:
     """Identify story calls rejected by tool schema validation before execution."""
     name = _codex_freezone_tool_name(event)
     if name not in {
@@ -906,6 +912,11 @@ def _codex_story_preflight_rejection(event: Any) -> tuple[str, str] | None:
             story_id = story.get("story_id") if isinstance(story, dict) else None
         if isinstance(story_id, str) and story_id.strip():
             return name, story_id.strip()
+    # A Create call may be rejected precisely because story_id is missing.
+    # The canvas can hold only one story, so its successful Create retry can
+    # resolve this otherwise unidentifiable preflight error.
+    if name == "dramaclaw_create_interactive_story":
+        return name, None
     return None
 
 
@@ -942,6 +953,20 @@ def _codex_story_write_intent(
             and args.get("canvas_id", canvas_id) == canvas_id
         ):
             return name, story_id.strip(), base, key.strip()
+    return None
+
+
+def _codex_story_write_payload_signature(event: Any) -> str | None:
+    """Match retries of the same story edit without revision or save-key noise."""
+    for args in _json_objects_from_codex_tool_value(getattr(event, "input", None)):
+        payload = {
+            key: value for key, value in args.items()
+            if key not in {"base_revision", "idempotency_key"}
+        }
+        try:
+            return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        except (TypeError, ValueError):
+            return None
     return None
 
 
@@ -4613,8 +4638,8 @@ async def _stream_assistant_reply_codex(
     tool_text = ""
     structured_canvas_reply = str(tool_mode or "").strip() == "freezone_canvas"
     canvas_write_attempts: dict[str, str] = {}
-    preflight_rejections: dict[str, tuple[str, str]] = {}
-    story_conflicts: dict[str, tuple[str, str, int, str]] = {}
+    preflight_rejections: dict[str, tuple[str, str | None]] = {}
+    story_conflicts: dict[str, tuple[tuple[str, str, int, str], str]] = {}
     canvas_receipts: set[tuple[str, int | None]] = set()
     story_receipts: dict[str, tuple[str, int | None]] = {}
     canvas_receipt_aliases: dict[
@@ -4853,10 +4878,15 @@ async def _stream_assistant_reply_codex(
                                     # A server 409 rejected this exact story write
                                     # before saving. Only its verified rebased
                                     # successor can settle that failed attempt.
-                                    for rejected_call, conflict in list(story_conflicts.items()):
+                                    signature = _codex_story_write_payload_signature(event)
+                                    for rejected_call, (conflict, rejected_signature) in list(
+                                        story_conflicts.items()
+                                    ):
                                         if (
                                             intent[:2] == conflict[:2]
-                                            and intent[2] == conflict[2]
+                                            and signature is not None
+                                            and signature == rejected_signature
+                                            and intent[2] >= conflict[2]
                                         ):
                                             canvas_write_attempts.pop(rejected_call, None)
                                             canvas_write_failures.pop(rejected_call, None)
@@ -4865,8 +4895,9 @@ async def _stream_assistant_reply_codex(
                                 conflict = _codex_story_revision_conflict(
                                     event, project=project, canvas_id=canvas_id or "default"
                                 )
-                                if conflict is not None:
-                                    story_conflicts[call_id] = conflict
+                                signature = _codex_story_write_payload_signature(event)
+                                if conflict is not None and signature is not None:
+                                    story_conflicts[call_id] = conflict, signature
                             canvas_write_attempts[call_id] = (
                                 "succeeded"
                                 if receipt is not None and identifiable_call
@@ -4888,6 +4919,11 @@ async def _stream_assistant_reply_codex(
                                     rejected_call: rejected_target
                                     for rejected_call, rejected_target in preflight_rejections.items()
                                     if rejected_target != target
+                                    and not (
+                                        rejected_target
+                                        == ("dramaclaw_create_interactive_story", None)
+                                        and target[0] == "dramaclaw_create_interactive_story"
+                                    )
                                 }
                                 if retry_key is not None:
                                     for rejected_call, rejected_key in list(
@@ -5034,6 +5070,13 @@ async def _stream_assistant_reply_codex(
             "回复未通过操作结果校验："
         ):
             # A hidden unstructured proposal must not be resumed as approval.
+            logger.warning(
+                "freezone canvas reply format rejected turn_id=%s chars=%d json_like=%s reason=%s",
+                turn_id,
+                len(raw_assistant_text),
+                raw_assistant_text.startswith(("{", "[")),
+                assistant_text,
+            )
             reset_codex_scope_thread(
                 username,
                 project,
@@ -5041,11 +5084,14 @@ async def _stream_assistant_reply_codex(
                 canvas_id=canvas_id,
                 project_state_dir=project_state_dir,
             )
-            if raw_assistant_text and not raw_assistant_text.startswith(("{", "[")):
+            if raw_assistant_text:
+                recovered_message = recover_unstructured_canvas_message(
+                    raw_assistant_text
+                )
                 assistant_text = (
-                    "本轮未执行画布写入。以下是未通过格式校验的模型原文，"
+                    "本轮未执行画布写入。以下是未通过格式校验的回复内容，"
                     "供你审核；其中的完成表述不代表实际操作结果：\n\n"
-                    + raw_assistant_text[:12000]
+                    + (recovered_message or raw_assistant_text)[:12000]
                 )
     assistant_text = assistant_text.strip() or "已执行，但没有返回正文。"
     assistant_text = _bounded_workflow_planning_reply(

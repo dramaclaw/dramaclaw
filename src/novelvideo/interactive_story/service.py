@@ -34,6 +34,7 @@ from novelvideo.interactive_story.models import (
     InteractiveStoryValidationResult,
     PendingStoryOutline,
     RemoveStoryCharacter,
+    RemoveStoryScene,
     RemoveStoryChoice,
     RemoveStorySegment,
     RemoveStoryFlag,
@@ -49,6 +50,7 @@ from novelvideo.interactive_story.models import (
     UpdateStoryMetadata,
     UpdateStorySegment,
     UpsertStoryCharacter,
+    UpsertStoryScene,
     UpsertStoryFlag,
     UpsertStoryVariable,
     ValidateInteractiveStoryRequest,
@@ -667,6 +669,7 @@ def apply_story_patch(story: StoryDraftV2, patch: StoryPatchV2) -> StoryDraftV2:
     synopsis = story.synopsis
     start_segment_id = story.start_segment_id
     characters = list(story.characters)
+    scenes = list(story.scenes)
     variables = list(story.variables)
     flags = list(story.flags)
     segments = list(story.segments)
@@ -735,6 +738,11 @@ def apply_story_patch(story: StoryDraftV2, patch: StoryPatchV2) -> StoryDraftV2:
         elif isinstance(operation, RemoveStoryCharacter):
             index = _index_by(characters, "id", operation.character_id, "character")
             characters.pop(index)
+        elif isinstance(operation, UpsertStoryScene):
+            scenes = _upsert(scenes, "id", operation.scene.id, operation.scene)
+        elif isinstance(operation, RemoveStoryScene):
+            index = _index_by(scenes, "id", operation.scene_id, "scene")
+            scenes.pop(index)
 
     return StoryDraftV2(
         story_id=story.story_id,
@@ -743,6 +751,7 @@ def apply_story_patch(story: StoryDraftV2, patch: StoryPatchV2) -> StoryDraftV2:
         synopsis=synopsis,
         start_segment_id=start_segment_id,
         characters=characters,
+        scenes=scenes,
         variables=variables,
         flags=flags,
         segments=segments,

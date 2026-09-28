@@ -111,6 +111,37 @@ def test_mapper_keeps_group_display_name_in_sync_with_story_title(
     assert updated_group["data"]["label"] == renamed.title
 
 
+def test_story_scene_and_product_plan_survives_canvas_projection_and_patch(
+    story: StoryDraftV2,
+) -> None:
+    from novelvideo.interactive_story.service import apply_story_patch
+
+    segment_id = story.segments[0].id
+    patch = StoryPatchV2.model_validate({
+        "canvas_id": "default", "story_id": story.story_id,
+        "base_revision": 0, "idempotency_key": "plan-assets-0001",
+        "operations": [
+            {"op": "upsert_character", "character": {
+                "id": "headphones", "name": "耳机", "kind": "product",
+            }},
+            {"op": "upsert_scene", "scene": {
+                "id": "autumn_street", "name": "银杏道",
+            }},
+            {"op": "update_segment", "segment_id": segment_id, "changes": {
+                "character_ids": [*story.segments[0].character_ids, "headphones"],
+                "scene_refs": [{"scene_id": "autumn_street", "usage": "setting"}],
+            }},
+        ],
+    })
+    planned = apply_story_patch(story, patch)
+    projection = project_story_to_canvas(planned)
+    restored = story_from_canvas({"nodes": projection.nodes, "edges": projection.edges,
+                                  "revision": planned.revision}, story.story_id)
+    assert restored.characters[-1].kind == "product"
+    assert restored.scenes == planned.scenes
+    assert restored.segments[0].scene_refs == planned.segments[0].scene_refs
+
+
 def test_mapper_round_trip_preserves_domain_ids_conditions_and_effects(
     story: StoryDraftV2,
 ) -> None:

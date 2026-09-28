@@ -76,6 +76,7 @@ import {
 } from "@/features/canvas/application/videoCaptureFrame";
 import {
   attachCompletedStoryFrame,
+  attachCompletedStoryAsset,
   ensureVideoContinuity,
   isFmvVideoNode,
   syncStoryVideoReferencePrompt,
@@ -1446,6 +1447,24 @@ function invalidConnectionReason(source: string, target: string): string | null 
   if (!isUpstreamConnectionAllowed(sourceNode.type, targetNode.type)) {
     return `${sourceNode.type} cannot directly connect to ${targetNode.type}`;
   }
+  const binding = (sourceNode.data as { storyAssetTarget?: {
+    storyId?: unknown; kind?: unknown; entityId?: unknown; segmentIds?: unknown;
+  } }).storyAssetTarget;
+  if (binding && targetNode.type === CANVAS_NODE_TYPES.video && targetNode.data.storySegmentId) {
+    const group = useCanvasStore.getState().nodes.find((node) => node.id === targetNode.parentId);
+    const segmentId = targetNode.data.storySegmentId;
+    const planned = binding.kind === 'subject'
+      ? Array.isArray(targetNode.data.storyCharacterIds) &&
+        targetNode.data.storyCharacterIds.includes(binding.entityId as string)
+      : binding.kind === 'scene' &&
+        Array.isArray((targetNode.data as { storySceneRefs?: unknown }).storySceneRefs) &&
+        ((targetNode.data as { storySceneRefs?: Array<{ scene_id?: string }> }).storySceneRefs ?? [])
+          .some((ref) => ref.scene_id === binding.entityId);
+    if (group?.data.interactiveStoryId !== binding.storyId ||
+        !Array.isArray(binding.segmentIds) || !binding.segmentIds.includes(segmentId) || !planned) {
+      return `story asset ${source} is not planned for segment ${segmentId}`;
+    }
+  }
   return null;
 }
 
@@ -1453,6 +1472,7 @@ function isMissingOrFatalConnectionReason(reason: string | null): boolean {
   return Boolean(
     reason?.startsWith("source node not found:") ||
     reason?.startsWith("target node not found:") ||
+    reason?.startsWith("story asset ") ||
     reason === "connection requires two different nodes",
   );
 }
@@ -2828,9 +2848,11 @@ function syncCompletedStoryFrames(
 ): void {
   for (const imageNodeId of imageNodeIds) {
     const attachmentError = attachCompletedStoryFrame(imageNodeId);
+    const assetError = attachCompletedStoryAsset(imageNodeId);
     if (attachmentError) {
       result.warnings = [...(result.warnings ?? []), attachmentError];
     }
+    if (assetError) result.warnings = [...(result.warnings ?? []), assetError];
     const state = useCanvasStore.getState();
     for (const edge of state.edges.filter((item) => item.source === imageNodeId)) {
       syncStoryVideoReferencePrompt(edge.target);
@@ -4322,6 +4344,9 @@ function* applyCanvasChatCommandsInternal(
             } else {
               useCanvasStore.getState().updateNodeData(targetId, data);
             }
+            if (targetNode.type === CANVAS_NODE_TYPES.video) {
+              syncStoryVideoReferencePrompt(targetId);
+            }
             invalidateWorkflowResultsAfterNodeUpdate(targetId, data);
             selectAndFocusNode(targetId);
             result.applied += 1;
@@ -4335,10 +4360,16 @@ function* applyCanvasChatCommandsInternal(
             break;
           }
           case "delete_nodes": {
+            const previousEdges = useCanvasStore.getState().edges;
             const deletion = deleteNodesOrEdges(
               command.node_ids.map((nodeId) => resolveNodeId(nodeId, clientIdMap)),
               clientIdMap,
             );
+            const remainingIds = new Set(useCanvasStore.getState().edges.map((edge) => edge.id));
+            for (const targetId of new Set(previousEdges
+              .filter((edge) => !remainingIds.has(edge.id)).map((edge) => edge.target))) {
+              syncStoryVideoReferencePrompt(targetId);
+            }
             result.applied += 1;
             result.commandResults.push({
               commandIndex: currentCommandIndex,
@@ -4374,7 +4405,13 @@ function* applyCanvasChatCommandsInternal(
             break;
           }
           case "delete_edges": {
+            const previousEdges = useCanvasStore.getState().edges;
             deleteEdges(command, clientIdMap);
+            const remainingIds = new Set(useCanvasStore.getState().edges.map((edge) => edge.id));
+            for (const targetId of new Set(previousEdges
+              .filter((edge) => !remainingIds.has(edge.id)).map((edge) => edge.target))) {
+              syncStoryVideoReferencePrompt(targetId);
+            }
             result.applied += 1;
             result.commandResults.push({
               commandIndex: currentCommandIndex,
@@ -4413,6 +4450,7 @@ function* applyCanvasChatCommandsInternal(
               external_input_image_url: command.expected_source_image_url,
             });
             if (!edgeId) throw new Error(`edge rejected: ${command.source} -> ${command.target}`);
+            syncStoryVideoReferencePrompt(target);
             envelopeConnectionCount += 1;
             result.applied += 1;
             result.commandResults.push({

@@ -1650,12 +1650,16 @@ def test_codex_clarification_requires_successful_answer(container, outcome):
         "mixed",
         "wrong_scope",
         "story_retry",
+        "story_create_missing_id_retry",
         "story_wrong_retry",
         "story_conflict_retry",
         "story_conflict_wrong_retry",
+        "story_conflict_chain_retry",
+        "story_conflict_changed_payload",
         "story_validate_after_create",
         "outline_conflict_retry",
         "unstructured_proposal",
+        "unstructured_json_proposal",
         "preflight_retry",
         "video_preflight_retry",
         "video_preflight_other_failure",
@@ -1793,6 +1797,31 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                         structured=payload,
                         error=None,
                     )
+            elif tool_outcome == "story_create_missing_id_retry":
+                for call_id, story, payload in (
+                    (
+                        "rejected",
+                        {"title": "耳机广告"},
+                        {"ok": False, "error": "tool_arguments_invalid", "phase": "tool_validation"},
+                    ),
+                    (
+                        "corrected",
+                        {"story_id": "story-a", "title": "耳机广告"},
+                        {"ok": True, "project_id": "project-a", "canvas_id": "canvas-a",
+                         "story_id": "story-a", "revision": 4, "refresh_canvas": True},
+                    ),
+                ):
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        text="[mcp:completed] dramaclaw.dramaclaw_create_interactive_story",
+                        name="dramaclaw.dramaclaw_create_interactive_story",
+                        call_id=call_id,
+                        status="completed",
+                        input={"story": story, "base_revision": 3},
+                        output={"content": [{"type": "text", "text": json.dumps(payload)}]},
+                        structured=payload,
+                        error=None,
+                    )
             elif tool_outcome in {"story_conflict_retry", "story_conflict_wrong_retry"}:
                 for call_id, story_id, base, key, payload in (
                     ("conflict", "story-a", 23, "original-key", {
@@ -1810,6 +1839,31 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                         name="dramaclaw.dramaclaw_patch_interactive_story",
                         call_id=call_id, status="completed",
                         input={"story_id": story_id, "base_revision": base, "idempotency_key": key},
+                        output={"content": [{"type": "text", "text": json.dumps(payload)}]},
+                        structured=payload, error=None,
+                    )
+            elif tool_outcome in {"story_conflict_chain_retry", "story_conflict_changed_payload"}:
+                for call_id, base, current, action in (
+                    ("first-conflict", 95, 96, "confirm"),
+                    ("second-conflict", 96, 97, "confirm"),
+                    ("saved", 97, None,
+                     "reopen" if tool_outcome == "story_conflict_changed_payload" else "confirm"),
+                ):
+                    payload = (
+                        {"ok": False, "code": "revision_conflict", "story_id": "story-a",
+                         "current_revision": current, "error": "Conflict"}
+                        if current is not None else
+                        {"ok": True, "project_id": "project-a", "canvas_id": "canvas-a",
+                         "story_id": "story-a", "revision": 98, "refresh_canvas": True}
+                    )
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        text="[mcp:completed] dramaclaw.dramaclaw_confirm_interactive_story_stages",
+                        name="dramaclaw.dramaclaw_confirm_interactive_story_stages",
+                        call_id=call_id, status="completed",
+                        input={"story_id": "story-a", "stages": ["storyboard"],
+                               "action": action, "base_revision": base,
+                               "idempotency_key": f"save-{call_id}"},
                         output={"content": [{"type": "text", "text": json.dumps(payload)}]},
                         structured=payload, error=None,
                     )
@@ -2148,6 +2202,7 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 "blocked",
                 "read_only",
                 "unstructured_proposal",
+                "unstructured_json_proposal",
             }:
                 result_payload = (
                     {
@@ -2212,9 +2267,12 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 assistant_reply = "参数已确认，尚未执行画布操作。"
             if tool_outcome in {
                 "story_retry",
+                "story_create_missing_id_retry",
                 "story_wrong_retry",
                 "story_conflict_retry",
                 "story_conflict_wrong_retry",
+                "story_conflict_chain_retry",
+                "story_conflict_changed_payload",
                 "story_validate_after_create",
                 "outline_conflict_retry",
             }:
@@ -2244,10 +2302,12 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 "draft_confirm_other_success",
             }:
                 receipts.append({"bridge_key": "bridge-call-1", "revision": None})
-            if tool_outcome in {"story_retry", "story_wrong_retry"}:
+            if tool_outcome in {"story_retry", "story_create_missing_id_retry", "story_wrong_retry"}:
                 receipts.append({"bridge_key": None, "revision": 4})
             if tool_outcome in {"story_conflict_retry", "story_conflict_wrong_retry"}:
                 receipts.append({"bridge_key": None, "revision": 36})
+            if tool_outcome in {"story_conflict_chain_retry", "story_conflict_changed_payload"}:
+                receipts.append({"bridge_key": None, "revision": 98})
             if tool_outcome == "story_validate_after_create":
                 receipts.append({"bridge_key": None, "revision": 5})
             if tool_outcome == "outline_conflict_retry":
@@ -2266,6 +2326,8 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
             )
             if tool_outcome == "unstructured_proposal":
                 structured_reply = "## 互动广告方案\n先展示口香糖，再让用户选择。"
+            if tool_outcome == "unstructured_json_proposal":
+                structured_reply = '{"message":"视频按九段规划。","mode":"read_only","canvas_receipts":[]'
             yield SimpleNamespace(type="assistant_delta", text=structured_reply)
             yield SimpleNamespace(
                 type="complete",
@@ -2375,7 +2437,7 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
     elif tool_outcome == "wrong_scope":
         assert "成功画布写入回执" in result["content"]
         assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "story_retry":
+    elif tool_outcome in {"story_retry", "story_create_missing_id_retry"}:
         assert result["content"] == "互动故事已更新。"
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "story_wrong_retry":
@@ -2383,6 +2445,12 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         assert assistant_deltas == [result["content"]]
     elif tool_outcome == "story_conflict_retry":
         assert result["content"] == "互动故事已更新。"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "story_conflict_chain_retry":
+        assert result["content"] == "互动故事已更新。"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "story_conflict_changed_payload":
+        assert result["content"] == "画布操作未完成：Conflict"
         assert assistant_deltas == [result["content"]]
     elif tool_outcome in {"story_validate_after_create", "outline_conflict_retry"}:
         assert result["content"] == "互动故事已更新。"
@@ -2397,6 +2465,10 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
             "admin", "project-a", agent_profile="freezone:main", canvas_id="canvas-a",
             project_state_dir=tmp_path / "state" / "admin" / "project-a",
         ) is None
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome == "unstructured_json_proposal":
+        assert result["content"].startswith("本轮未执行画布写入。")
+        assert result["content"].endswith("视频按九段规划。")
         assert assistant_deltas == [result["content"]]
     else:
         assert result["content"] == ("未能创建工作流：找不到匹配的 Workflow Skill。")
@@ -6711,6 +6783,7 @@ def test_fmv_skill_guidance_is_only_appended_to_canvas_instructions():
         assert chat_service._codex_developer_instructions(mode) == chat_service._CODEX_DEVELOPER_INSTRUCTIONS
     assert "list_mcp_resources" in guidance
     assert "read_mcp_resource" in guidance
+    assert "Do not ask for video model, duration, resolution, or audio" in guidance
     assert "stage-guidance" in guidance
     assert "without treating 'next step' alone as confirmation" in guidance
     assert "proposal-only" not in guidance.lower()

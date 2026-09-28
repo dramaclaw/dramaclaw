@@ -10,6 +10,8 @@ import {
   type CanvasHistoryState,
   type CanvasNode,
 } from "@/stores/canvasStore";
+import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
+import { syncStoryVideoReferencePrompt } from "@/features/canvas/application/videoContinuity";
 import {
   applyForeignMediaRepairToNodes,
   publishForeignMediaRefs,
@@ -77,6 +79,15 @@ import {
 
 const DEBOUNCE_MS = 800;
 const DRAFT_DEBOUNCE_MS = 300;
+
+function syncHydratedStoryReferencePrompts(): void {
+  for (const node of useCanvasStore.getState().nodes) {
+    if (node.type === CANVAS_NODE_TYPES.video && node.data.storySegmentId) {
+      syncStoryVideoReferencePrompt(node.id);
+    }
+  }
+}
+
 /** Extra app-level retry attempts when ky surfaces a 503 canvas_lock_busy. */
 const LOCK_BUSY_MAX_RETRIES = 1;
 export const FREEZONE_HYDRATE_RELEASE_GRACE_MS = 50;
@@ -1092,6 +1103,7 @@ export function useCanvasSync(
       switchingRef.current = false;
       setHydratedCanvasId(canvasId);
       setHydratedProject(project);
+      syncHydratedStoryReferencePrompts();
       if (mergedLocalWork) {
         window.setTimeout(() => {
           if (!hydratedRef.current || switchingRef.current) return;
@@ -1388,6 +1400,7 @@ export function useCanvasSync(
         } else {
           setSyncStatus("ready");
           consumeQueuedLocalFreezoneProjections(project, canvasId);
+          syncHydratedStoryReferencePrompts();
         }
       } catch (err) {
         if (cancelled) return;

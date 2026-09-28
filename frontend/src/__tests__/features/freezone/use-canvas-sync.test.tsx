@@ -61,6 +61,27 @@ describe("useCanvasSync hydrate lifecycle", () => {
     useShotMetadataStore.getState().hydrate({});
   });
 
+  it("repairs story prompt mentions for image links saved before prompt synchronization", async () => {
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({
+      revision: 1,
+      nodes: [
+        { id: "image", type: CANVAS_NODE_TYPES.imageGen, position: { x: 0, y: 0 },
+          data: { displayName: "主角", imageUrl: "/static/character.png", keyElementCategory: "character" } },
+        { id: "video", type: CANVAS_NODE_TYPES.video, position: { x: 400, y: 0 },
+          data: { storySegmentId: "opening", prompt: "主角走进车站。" } },
+      ],
+      edges: [{ id: "reference", source: "image", target: "video", data: { link_type: "media_input_for" } }],
+      viewport: null,
+    } as unknown as Awaited<ReturnType<typeof getFreezoneCanvas>>);
+
+    renderHook(() => useCanvasSync("project-a", "story_reference_repair"));
+
+    await waitFor(() => {
+      const prompt = useCanvasStore.getState().nodes.find((node) => node.id === "video")?.data.prompt;
+      expect(prompt).toContain("@图片1（主角） 是人物身份参考");
+    });
+  });
+
   // Canvas 现在跨项目常驻（_app.tsx 不再按项目重挂 freezone），所以 hydrate 必须
   // 显式落相机 —— 新建画布存的就是 viewport: null，不落位就沿用上一张画布的坐标
   // 和缩放，节点可能整个飘出屏幕，lowDetail 档也是错的。

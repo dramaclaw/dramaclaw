@@ -10,7 +10,54 @@ from novelvideo.freezone.agent_workflows.catalog import (
 )
 from novelvideo.freezone.agent_workflows.graph import build_workflow_graph_commands
 from novelvideo.freezone.workflow_external_inputs import resolve_external_image_inputs
-from novelvideo.freezone.workflow_story_targets import validate_story_frame_targets
+from novelvideo.freezone.workflow_story_targets import validate_story_asset_targets, validate_story_frame_targets
+
+
+def test_story_asset_targets_require_saved_plan_and_map_generated_image() -> None:
+    plan = {
+        "schema_version": "freezone_workflow_plan.v1",
+        "skill": {"id": SKILL_ID},
+        "title": "影游场景素材",
+        "source_context": {"story_id": "story-1", "asset_targets": [{
+            "plan_node_id": "scene_image", "kind": "scene", "entity_id": "street",
+            "segment_ids": ["opening", "return"],
+        }]},
+        "expected_node_count": 1,
+        "expected_node_counts": {"imageGenNode": 1},
+        "nodes": [{**_frame_node("street"), "id": "scene_image"}],
+        "edges": [],
+        "group": {"label": "场景", "node_ids": ["scene_image"]},
+    }
+    canvas = {"nodes": [
+        {"id": "group", "type": "groupNode", "data": {
+            "storyGroup": True, "interactiveStoryId": "story-1",
+            "storyCharacters": [{"id": "headphones", "kind": "product"}],
+            "storyScenes": [{"id": "street"}],
+        }},
+        *({"id": f"video-{segment_id}", "type": "videoNode", "parentId": "group",
+           "data": {"storySegmentId": segment_id, "storyCharacterIds": ["headphones"],
+                    "storySceneRefs": [{"scene_id": "street", "usage": "setting"}]}}
+          for segment_id in ("opening", "return")),
+    ]}
+    validated = validate_agent_workflow_plan(plan)
+    assert validated["ok"] is True, validated
+    assert validated["plan"]["source_context"] == plan["source_context"]
+    validate_story_asset_targets(validated["plan"], canvas)
+    graph = build_workflow_graph_commands({"plan": validated["plan"]})
+    assert graph["ok"] is True
+    image = next(item for item in graph["commands"] if item["type"] == "create_node")
+    assert image["data"]["storyAssetTarget"] == {
+        "storyId": "story-1", "kind": "scene", "entityId": "street",
+        "segmentIds": ["opening", "return"],
+    }
+    run_graph = build_workflow_graph_commands({"plan": validated["plan"], "run_after_create": True})
+    assert next(item for item in run_graph["commands"] if item["type"] == "run_workflow")["direction"] == "node"
+    canvas["nodes"][2]["data"]["storySceneRefs"] = []
+    with pytest.raises(ValueError, match="not planned"):
+        validate_story_asset_targets(plan, canvas)
+    plan["source_context"]["asset_targets"][0]["kind"] = "subject"
+    plan["source_context"]["asset_targets"][0]["entity_id"] = "headphones"
+    validate_story_asset_targets(plan, canvas)
 
 
 SKILL_ID = "text-to-image-video"
@@ -110,6 +157,7 @@ def test_story_frames_compile_as_one_group_and_one_run() -> None:
     assert group["node_ids"] == frame_ids
     run = next(item for item in commands if item["type"] == "run_workflow")
     assert run["node_ids"] == frame_ids
+    assert run["direction"] == "node"
     assert [
         (item["source"], item["target"])
         for item in commands
@@ -194,6 +242,46 @@ def test_story_frame_targets_match_live_story_video_nodes() -> None:
         validate_story_frame_targets(plan, canvas)
 
 
+def test_story_frame_targets_report_incorrect_identifier_keys() -> None:
+    plan = {
+        "source_context": {"story_id": "story-1", "targets": [
+            {"frame_id": "frame_opening", "segment_id": "opening",
+             "video_node_id": "video-opening"},
+        ]},
+        "nodes": [_frame_node("opening")],
+    }
+
+    with pytest.raises(ValueError) as exc_info:
+        validate_story_frame_targets(plan, {"nodes": []})
+
+    message = str(exc_info.value)
+    assert "source_context.targets[0]" in message
+    assert "plan_node_id, story_segment_id" in message
+    assert "required keys: plan_node_id, story_segment_id, video_node_id" in message
+    assert "received keys: frame_id, segment_id, video_node_id" in message
+
+
+def test_story_frame_targets_report_empty_identifier_at_target_index() -> None:
+    plan = {
+        "source_context": {"story_id": "story-1", "targets": [
+            {"plan_node_id": "frame_opening", "story_segment_id": "opening",
+             "video_node_id": "video-opening"},
+            {"plan_node_id": "frame_ending", "story_segment_id": " ",
+             "video_node_id": "video-ending"},
+        ]},
+        "nodes": [_frame_node("opening"), _frame_node("ending")],
+    }
+    canvas = {"nodes": [
+        {"id": "story-group", "type": "groupNode", "data": {
+            "storyGroup": True, "interactiveStoryId": "story-1"}},
+        {"id": "video-opening", "type": "videoNode", "parentId": "story-group",
+         "data": {"storySegmentId": "opening"}},
+    ]}
+
+    with pytest.raises(ValueError, match=r"source_context\.targets\[1\].*story_segment_id"):
+        validate_story_frame_targets(plan, canvas)
+
+
 def test_story_frame_targets_require_every_generated_frame_to_be_mapped() -> None:
     plan = {
         "source_context": {"story_id": "story-1", "targets": [
@@ -209,4 +297,24 @@ def test_story_frame_targets_require_every_generated_frame_to_be_mapped() -> Non
          "data": {"storySegmentId": "opening"}},
     ]}
     with pytest.raises(ValueError, match="frame_ending"):
+        validate_story_frame_targets(plan, canvas)
+
+
+def test_malformed_asset_targets_in_mixed_story_plan_raise_validation_error() -> None:
+    plan = {
+        "source_context": {
+            "story_id": "story-1",
+            "targets": [{"plan_node_id": "frame_opening", "story_segment_id": "opening",
+                         "video_node_id": "video-opening"}],
+            "asset_targets": 7,
+        },
+        "nodes": [_frame_node("opening")],
+    }
+    canvas = {"nodes": [
+        {"id": "story-group", "type": "groupNode", "data": {
+            "storyGroup": True, "interactiveStoryId": "story-1"}},
+        {"id": "video-opening", "type": "videoNode", "parentId": "story-group",
+         "data": {"storySegmentId": "opening"}},
+    ]}
+    with pytest.raises(ValueError, match="source_context.asset_targets must be a list"):
         validate_story_frame_targets(plan, canvas)

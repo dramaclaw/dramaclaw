@@ -14,8 +14,53 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from novelvideo.chat import dramaclaw_mcp
+from novelvideo.interactive_story.models import StoryDraftV2, StoryPatchV2
 
 CE_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_interactive_story_mcp_schema_accepts_product_scenes_and_scene_refs(monkeypatch):
+    monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
+    tools = dramaclaw_mcp._agent_tools()
+    story = {
+        "story_id": "earbuds-ad",
+        "title": "耳机互动广告",
+        "start_segment_id": "intro",
+        "characters": [{"id": "earbuds", "name": "耳机", "kind": "product"}],
+        "scenes": [{"id": "subway", "name": "地铁车厢"}],
+        "segments": [{
+            "id": "intro",
+            "title": "开场",
+            "script": "耳机出现在地铁车厢。",
+            "character_ids": ["earbuds"],
+            "scene_refs": [{"scene_id": "subway", "usage": "setting"}],
+            "kind": "ending",
+            "ending_label": "通勤",
+        }],
+    }
+    Draft202012Validator(
+        tools["dramaclaw_create_interactive_story"][0]["parameters"]
+    ).validate({"base_revision": 0, "idempotency_key": "earbuds-ad-001", "story": story})
+    StoryDraftV2.model_validate(story)
+
+    operations = [
+        {"op": "upsert_scene", "scene": {"id": "park", "name": "跑道"}},
+        {"op": "update_segment", "segment_id": "intro", "changes": {
+            "scene_refs": [{"scene_id": "park", "usage": "style"}],
+        }},
+        {"op": "remove_scene", "scene_id": "subway"},
+    ]
+    Draft202012Validator(
+        tools["dramaclaw_patch_interactive_story"][0]["parameters"]
+    ).validate({
+        "story_id": "earbuds-ad", "base_revision": 1,
+        "idempotency_key": "earbuds-patch-001", "operations": operations,
+    })
+    StoryPatchV2.model_validate({
+        "canvas_id": "canvas-a", "story_id": "earbuds-ad", "base_revision": 1,
+        "idempotency_key": "earbuds-patch-001", "operations": operations,
+    })
 
 
 def test_plugin_path_uses_explicit_runtime_root_from_site_packages(monkeypatch, tmp_path):

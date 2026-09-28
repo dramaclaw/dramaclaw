@@ -3,7 +3,11 @@ import json
 import pytest
 from jsonschema import Draft202012Validator
 
-from novelvideo.chat.canvas_outcome import CANVAS_REPLY_SCHEMA, finalize_canvas_reply
+from novelvideo.chat.canvas_outcome import (
+    CANVAS_REPLY_SCHEMA,
+    finalize_canvas_reply,
+    recover_unstructured_canvas_message,
+)
 
 
 def reply(mode="read_only", claims=None, message="建议保持当前布局。"):
@@ -25,6 +29,18 @@ def test_read_only_answer_needs_no_canvas_receipt():
         finalize_canvas_reply(reply(), attempts={}, receipts=set())
         == "建议保持当前布局。"
     )
+
+
+def test_fenced_read_only_json_is_recovered_without_write_receipt():
+    fenced = "```json\n" + reply(message="视频按九段规划。") + "\n```"
+    assert finalize_canvas_reply(fenced, attempts={}, receipts=set()) == "视频按九段规划。"
+
+
+def test_complete_message_can_be_recovered_from_truncated_reply():
+    assert recover_unstructured_canvas_message(
+        '{"message":"视频按九段规划。","mode":"read_only","canvas_receipts":[]'
+    ) == "视频按九段规划。"
+    assert recover_unstructured_canvas_message('{"message":"视频规划') is None
 
 
 def test_freezone_instructions_embed_schema_and_valid_greeting_example():

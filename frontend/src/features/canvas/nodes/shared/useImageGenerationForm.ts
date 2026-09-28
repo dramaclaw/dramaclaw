@@ -58,7 +58,7 @@ import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
 import { hasImageGenPromptOverride } from '@/features/canvas/nodes/imageGenPrompt';
 import { orderedReferenceUrlsWithOwnFirst } from '@/features/canvas/nodes/referenceOrdering';
 import { useReferenceMentionSync } from '@/features/canvas/nodes/useReferenceMentionSync';
-import { attachCompletedStoryFrame } from '@/features/canvas/application/videoContinuity';
+import { attachCompletedStoryAsset, attachCompletedStoryFrame } from '@/features/canvas/application/videoContinuity';
 import type { ImageGenerationFormProps } from '@/features/canvas/nodes/shared/ImageGenerationForm';
 
 const DEFAULT_IMAGE_QUALITY: ImageQuality = 'medium';
@@ -641,6 +641,8 @@ export function useImageGenerationForm(
             if (isFirstCompleted && options.attachStoryFrame !== false) {
               const attachmentError = attachCompletedStoryFrame(id);
               if (attachmentError) toast.warning(attachmentError);
+              const assetError = attachCompletedStoryAsset(id);
+              if (assetError) toast.warning(assetError);
             }
             if (canAutoCommitOnGenerate && isFirstCompleted) {
               canvasEventBus.publish('freezone/commit-node', {

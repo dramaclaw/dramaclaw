@@ -14429,15 +14429,19 @@ async def _resolve_workflow_draft_external_inputs(
 async def _validate_workflow_draft_story_targets(
     compiled: dict, *, state_dir: Path, canvas_id: str
 ) -> None:
-    from novelvideo.freezone.workflow_story_targets import validate_story_frame_targets
+    from novelvideo.freezone.workflow_story_targets import (
+        validate_story_asset_targets,
+        validate_story_frame_targets,
+    )
 
     plan = compiled.get("plan") or {}
     context = plan.get("source_context")
-    if not isinstance(context, dict) or not ({"story_id", "targets"} & context.keys()):
+    if not isinstance(context, dict) or not ({"story_id", "targets", "asset_targets"} & context.keys()):
         return
     canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id)
     try:
         validate_story_frame_targets(plan, canvas)
+        validate_story_asset_targets(plan, canvas)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
 

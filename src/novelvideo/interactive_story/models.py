@@ -36,8 +36,21 @@ class StoryContractModel(BaseModel):
 class StoryCharacter(StoryContractModel):
     id: EntityId
     name: str = Field(min_length=1, max_length=120)
+    kind: Literal["person", "product", "object"] = "person"
     description: str = Field(default="", max_length=2_000)
     visual_description: str = Field(default="", max_length=4_000)
+
+
+class StoryScene(StoryContractModel):
+    id: EntityId
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=2_000)
+    visual_description: str = Field(default="", max_length=4_000)
+
+
+class StorySceneRef(StoryContractModel):
+    scene_id: EntityId
+    usage: Literal["setting", "style"] = "setting"
 
 
 class StoryVariable(StoryContractModel):
@@ -111,6 +124,7 @@ class StorySegment(StoryContractModel):
     kind: Literal["scene", "ending"] = "scene"
     ending_label: str | None = Field(default=None, min_length=1, max_length=40)
     character_ids: list[EntityId] = Field(default_factory=list, max_length=64)
+    scene_refs: list[StorySceneRef] = Field(default_factory=list, max_length=32)
     choice_time_limit_sec: int | None = Field(default=None, gt=0, le=300)
     production_notes: str = Field(default="", max_length=8_000)
     video_prompt: str = Field(default="", max_length=20_000)
@@ -128,6 +142,8 @@ class StorySegment(StoryContractModel):
             raise ValueError("scene segment must not define ending_label")
         if len(set(self.character_ids)) != len(self.character_ids):
             raise ValueError("segment character_ids must be unique")
+        if len({item.scene_id for item in self.scene_refs}) != len(self.scene_refs):
+            raise ValueError("segment scene_refs must have unique scene IDs")
         return self
 
 
@@ -284,6 +300,7 @@ class StoryDraftV2(StoryContractModel):
     synopsis: str = Field(default="", max_length=4_000)
     start_segment_id: EntityId
     characters: list[StoryCharacter] = Field(default_factory=list, max_length=100)
+    scenes: list[StoryScene] = Field(default_factory=list, max_length=100)
     variables: list[StoryVariable] = Field(default_factory=list, max_length=100)
     flags: list[StoryFlag] = Field(default_factory=list, max_length=100)
     segments: list[StorySegment] = Field(min_length=1, max_length=2_000)
@@ -292,6 +309,7 @@ class StoryDraftV2(StoryContractModel):
     @model_validator(mode="after")
     def validate_references(self) -> "StoryDraftV2":
         character_ids = self._unique_values("character", [item.id for item in self.characters])
+        scene_ids = self._unique_values("scene", [item.id for item in self.scenes])
         variable_names = self._unique_values("variable", [item.name for item in self.variables])
         flag_names = self._unique_values("flag", [item.name for item in self.flags])
         if variable_names & flag_names:
@@ -309,6 +327,11 @@ class StoryDraftV2(StoryContractModel):
                 raise ValueError(
                     f"segment {segment.id!r} references unknown characters: "
                     f"{sorted(unknown_characters)!r}"
+                )
+            unknown_scenes = {item.scene_id for item in segment.scene_refs} - scene_ids
+            if unknown_scenes:
+                raise ValueError(
+                    f"segment {segment.id!r} references unknown scenes: {sorted(unknown_scenes)!r}"
                 )
 
         seen_orders: set[tuple[str, int]] = set()
@@ -394,6 +417,7 @@ class StorySegmentChanges(StoryContractModel):
     kind: Literal["scene", "ending"] | None = None
     ending_label: str | None = Field(default=None, min_length=1, max_length=40)
     character_ids: list[EntityId] | None = Field(default=None, max_length=64)
+    scene_refs: list[StorySceneRef] | None = Field(default=None, max_length=32)
     choice_time_limit_sec: int | None = Field(default=None, gt=0, le=300)
     production_notes: str | None = Field(default=None, max_length=8_000)
     video_prompt: str | None = Field(default=None, max_length=20_000)
@@ -498,6 +522,16 @@ class RemoveStoryCharacter(StoryContractModel):
     character_id: EntityId
 
 
+class UpsertStoryScene(StoryContractModel):
+    op: Literal["upsert_scene"] = "upsert_scene"
+    scene: StoryScene
+
+
+class RemoveStoryScene(StoryContractModel):
+    op: Literal["remove_scene"] = "remove_scene"
+    scene_id: EntityId
+
+
 StoryPatchOperation = Annotated[
     UpdateStoryMetadata
     | SetStoryStart
@@ -512,7 +546,9 @@ StoryPatchOperation = Annotated[
     | UpsertStoryFlag
     | RemoveStoryFlag
     | UpsertStoryCharacter
-    | RemoveStoryCharacter,
+    | RemoveStoryCharacter
+    | UpsertStoryScene
+    | RemoveStoryScene,
     Field(discriminator="op"),
 ]
 

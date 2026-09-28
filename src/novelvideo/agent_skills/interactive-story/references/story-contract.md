@@ -30,6 +30,7 @@ Agent 生成 StoryDraftV2 和 Patch 数据对象，不生成 Ink 源码。前端
   "synopsis": "一句话梗概",
   "start_segment_id": "arrival",
   "characters": [],
+  "scenes": [],
   "variables": [],
   "flags": [],
   "segments": [],
@@ -41,13 +42,23 @@ Agent 生成 StoryDraftV2 和 Patch 数据对象，不生成 Ink 源码。前端
 - Story、Segment、Choice、Character 的 ID 可包含字母、数字、`_`、`-`，且必须以字母或数字开头。
 - Variable 的 `name` 必须兼容 Ink：以字母或 `_` 开头，之后只能包含字母、数字、`_`。
 - 创建时 story revision 设为 `0`；服务返回持久化后的画布 revision。
-- 提交前检查内部引用闭合：片段的 `character_ids` 必须存在于 `characters`，起点及选项两端必须存在于 `segments`，条件与效果引用的变量或开关必须已声明。局部编辑保留 Get 返回的现有实体，不用删掉人物定义的完整故事重建。
+- 提交前检查内部引用闭合：片段的 `character_ids` 必须存在于 `characters`，`scene_refs[].scene_id` 必须存在于 `scenes`，起点及选项两端必须存在于 `segments`，条件与效果引用的变量或开关必须已声明。局部编辑保留 Get 返回的现有实体。
 
 ### Character
 
 ```json
-{"id":"traveler","name":"旅人","description":"身份、目标和性格","visual_description":"稳定外观"}
+{"id":"traveler","name":"旅人","kind":"person","description":"身份、目标和性格","visual_description":"稳定外观"}
 ```
+
+`characters` 是镜头中的稳定主体清单。`kind` 可为 `person`、`product`、`object`；广告主角如耳机用 `kind: "product"`，仍通过片段 `character_ids` 分配。旧故事省略 `kind` 时按 `person` 读取。
+
+### Scene
+
+```json
+{"id":"autumn_street","name":"秋日银杏道","visual_description":"金黄银杏、暖色午后自然光"}
+```
+
+场景 ID 表示同一视觉场所，不以图片节点名或出现顺序代替。旧故事可省略 `scenes` 和片段 `scene_refs`。
 
 ### Variable 与 Flag
 
@@ -73,6 +84,7 @@ Flag 表示是/否剧情事实。Variable 和 Flag 的名称共用一个命名�
   "kind": "scene",
   "ending_label": null,
   "character_ids": ["traveler"],
+  "scene_refs": [{"scene_id":"autumn_street","usage":"setting"}],
   "choice_time_limit_sec": null,
   "production_notes": "镜头与连续性提示",
   "video_prompt": "夜间站台，中景镜头缓慢推进；旅人停在站牌前。",
@@ -81,6 +93,8 @@ Flag 表示是/否剧情事实。Variable 和 Flag 的名称共用一个命名�
 ```
 
 `kind=ending` 必须有 `ending_label` 且没有出边 Choice；scene 使用 null `ending_label`。限时选择为 1–300 秒，同一来源的可见 Choice 应恰有一个默认项。
+
+`scene_refs` 把片段分配到场景。`usage: "setting"` 表示镜头所在场所，`usage: "style"` 表示只借用视觉风格；同一场景可以分配给多个片段，片段也可引用多个不同场景。不要仅凭标题相似分配素材。
 
 Segment 的可选 `choice_loop` 字段、必填说明及媒体语义见 [interaction-options.md](interaction-options.md)。
 
@@ -210,6 +224,8 @@ Flag 条件：
 | `remove_choice` | `choice_id` | 删除选项 |
 | `upsert_character` | `character` | 新增或整体替换角色 |
 | `remove_character` | `character_id` | 删除角色 |
+| `upsert_scene` | `scene` | 新增或整体替换场景 |
+| `remove_scene` | `scene_id` | 删除场景 |
 | `upsert_variable` | `variable` | 新增或整体替换变量 |
 | `remove_variable` | `variable_name` | 删除变量 |
 | `upsert_flag` | `flag` | 新增或整体替换 Flag |

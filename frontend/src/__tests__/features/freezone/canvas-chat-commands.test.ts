@@ -1,5 +1,6 @@
-import { attachCompletedStoryFrame, ensureVideoContinuity, syncStoryVideoReferencePrompt } from "@/features/canvas/application/videoContinuity";
+import { attachCompletedStoryAsset, attachCompletedStoryFrame, ensureVideoContinuity, syncStoryVideoReferencePrompt } from "@/features/canvas/application/videoContinuity";
 import { getOrCaptureVideoFrame } from "@/features/canvas/application/videoCaptureFrame";
+import * as videoReferenceEnvelope from "@/features/canvas/application/videoReferenceEnvelope";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -641,6 +642,27 @@ describe("canvas chat commands", () => {
     } finally {
       unsubscribe();
     }
+  });
+
+  it("does not include an existing story video in image workflow preflight through a reused reference", () => {
+    const store = useCanvasStore.getState();
+    const reference = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 0 }, {
+      imageUrl: "/static/project/reference.png",
+    });
+    const oldVideo = store.addNode(CANVAS_NODE_TYPES.video, { x: 360, y: 0 }, {
+      storySegmentId: "existing", prompt: "旧视频镜头",
+    });
+    const newImage = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 360, y: 300 }, {
+      prompt: "制作新的场景图",
+    });
+    store.addEdgeWithData(reference, oldVideo, { link_type: "media_input_for" });
+    store.addEdgeWithData(reference, newImage, {
+      link_type: "media_input_for",
+      workflowExternalInputImageUrl: "/static/project/reference.png",
+    });
+
+    expect(workflowGenerationTargetsForPreflight({ type: "run_workflow", node_ids: [newImage] }))
+      .toEqual([{ nodeId: newImage, action: "generate_image" }]);
   });
 
   it("rejects an external input edge after its source image changes", async () => {
@@ -7371,7 +7393,7 @@ describe("canvas chat commands", () => {
     expect(prompt).not.toContain("请以它作为本镜头开场");
   });
 
-  it("puts the captured tail first in the FMV prompt and binds connected character and object images by their submitted order", async () => {
+  it("keeps material references separate from the captured tail and preserves their submitted order", async () => {
     const store = useCanvasStore.getState();
     const source = store.addNode(CANVAS_NODE_TYPES.video, { x: 0, y: 0 }, {
       videoUrl: "/static/project/shot-1.mp4",
@@ -7395,12 +7417,45 @@ describe("canvas chat commands", () => {
 
     const prompt = String(useCanvasStore.getState().nodes.find((node) => node.id === target)?.data.prompt);
     expect(prompt).toMatch(/^\[FMV自动承接\]本镜头的首帧必须从 @图片3/);
+    expect((prompt.match(/\[FMV素材参考\]/g) ?? [])).toHaveLength(1);
     expect(prompt).toContain("@图片1（手表） 是物品外观参考");
     expect(prompt).toContain("@图片2（主角小林） 是人物身份参考");
-    expect(prompt).toMatch(/\[\/FMV自动承接\]\n\n人物按剧情走进办公室。$/);
+    expect(prompt).toMatch(/\[\/FMV素材参考\]\n\n人物按剧情走进办公室。$/);
     await ensureVideoContinuity(target, "project-a");
     expect(String(useCanvasStore.getState().nodes.find((node) => node.id === target)?.data.prompt)
       .match(/\[FMV自动承接\]/g)).toHaveLength(1);
+    expect(String(useCanvasStore.getState().nodes.find((node) => node.id === target)?.data.prompt)
+      .match(/\[FMV素材参考\]/g)).toHaveLength(1);
+  });
+
+  it("does not replace planned product and character roles with generic auto-continuity references", async () => {
+    const store = useCanvasStore.getState();
+    const source = store.addNode(CANVAS_NODE_TYPES.video, { x: 0, y: 0 }, {
+      videoUrl: "/static/project/shot-1.mp4",
+    });
+    const target = store.addNode(CANVAS_NODE_TYPES.video, { x: 360, y: 0 }, {
+      storySegmentId: "choice", continuityMode: "auto", genMode: "allReference",
+      prompt: "[FMV素材参考]\n@图片1（耳机） 是产品主角的外观参考。\n@图片2（主角） 是人物身份参考。\n[/FMV素材参考]\n\n镜头从耳边拉远。",
+    });
+    const product = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 200 }, {
+      displayName: "耳机", imageUrl: "/static/product.png",
+    });
+    const character = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 400 }, {
+      displayName: "主角", imageUrl: "/static/character.png",
+    });
+    store.addEdgeWithData(source, target, { link_type: "dependency_for" });
+    store.addEdgeWithData(product, target, { link_type: "media_input_for" });
+    store.addEdgeWithData(character, target, { link_type: "media_input_for" });
+
+    await ensureVideoContinuity(target, "project-a");
+
+    const prompt = String(useCanvasStore.getState().nodes.find((node) => node.id === target)?.data.prompt);
+    expect(prompt).toContain("@图片3（上一镜视频截取的尾帧）");
+    expect(prompt).toContain("@图片1（耳机） 是产品主角的外观参考。");
+    expect(prompt).toContain("@图片2（主角） 是人物身份参考。");
+    expect(prompt).toContain("镜头从耳边拉远。");
+    expect(prompt).not.toContain("补充图片参考");
+    expect((prompt.match(/\[FMV素材参考\]/g) ?? [])).toHaveLength(1);
   });
 
   it("clears auto-continuity residue the moment a clip switches to independent opening", async () => {
@@ -7428,12 +7483,15 @@ describe("canvas chat commands", () => {
     expect(state.edges.some((edge) => edge.target === target
       && (edge.data as { edgeKind?: unknown } | undefined)?.edgeKind === "workflow_continuity_tail_frame")).toBe(false);
     expect(state.edges.some((edge) => edge.target === target && edge.source === character)).toBe(true);
-    expect(state.nodes.find((node) => node.id === target)?.data.prompt).toBe("继续动作");
+    expect(String(state.nodes.find((node) => node.id === target)?.data.prompt)).toContain("[FMV素材参考]");
+    expect(String(state.nodes.find((node) => node.id === target)?.data.prompt)).toContain("继续动作");
+    expect(String(state.nodes.find((node) => node.id === target)?.data.prompt)).not.toContain("[FMV自动承接]");
     expect(state.nodes.some((node) => node.data.videoFrameSource)).toBe(true);
 
     // 再切回自动承接不会预先写入提示词；生成入口仍按旧规则惰性重建。
     store.updateNodeData(target, { continuityMode: "auto" });
-    expect(useCanvasStore.getState().nodes.find((node) => node.id === target)?.data.prompt).toBe("继续动作");
+    expect(String(useCanvasStore.getState().nodes.find((node) => node.id === target)?.data.prompt)).toContain("[FMV素材参考]");
+    expect(String(useCanvasStore.getState().nodes.find((node) => node.id === target)?.data.prompt)).not.toContain("[FMV自动承接]");
     // 已即时清理后，生成入口的兑底分支保持幂等。
     store.updateNodeData(target, { continuityMode: "independent" });
     await ensureVideoContinuity(target, "project-a");
@@ -7477,6 +7535,125 @@ describe("canvas chat commands", () => {
     expect((prompt.match(/\[FMV素材参考\]/g) ?? [])).toHaveLength(1);
   });
 
+  it("connects a planned product and shared scene only to their live story segments", () => {
+    const store = useCanvasStore.getState();
+    const group = store.addNode(CANVAS_NODE_TYPES.group, { x: 0, y: 0 }, {
+      storyGroup: true, interactiveStoryId: "story-a",
+      storyCharacters: [{ id: "headphones", name: "耳机", kind: "product" }],
+      storyScenes: [{ id: "street", name: "银杏道" }],
+    });
+    const opening = store.addNode(CANVAS_NODE_TYPES.video, { x: 300, y: 0 }, {
+      storySegmentId: "opening", storyCharacterIds: ["headphones"],
+      storySceneRefs: [{ scene_id: "street", usage: "setting" }],
+      prompt: "耳机登场。",
+    });
+    const returnVideo = store.addNode(CANVAS_NODE_TYPES.video, { x: 300, y: 400 }, {
+      storySegmentId: "return", storyCharacterIds: [],
+      storySceneRefs: [{ scene_id: "street", usage: "setting" }],
+      prompt: "回到街上。",
+    });
+    const product = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 400 }, {
+      displayName: "耳机", imageUrl: "",
+      storyAssetTarget: { storyId: "story-a", kind: "subject", entityId: "headphones", segmentIds: ["opening"] },
+    });
+    const scene = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 600 }, {
+      displayName: "银杏道", imageUrl: "/static/street.png",
+      storyAssetTarget: { storyId: "story-a", kind: "scene", entityId: "street", segmentIds: ["opening", "return"] },
+    });
+    store.setCanvasData(useCanvasStore.getState().nodes.map((node) =>
+      node.id === opening || node.id === returnVideo ? { ...node, parentId: group } : node), []);
+    expect(attachCompletedStoryAsset(product)).toBeNull();
+    expect(useCanvasStore.getState().edges).toHaveLength(0);
+    store.updateNodeData(product, { imageUrl: "/static/product.png" });
+    expect(attachCompletedStoryAsset(product)).toBeNull();
+    expect(attachCompletedStoryAsset(scene)).toBeNull();
+    expect(attachCompletedStoryAsset(scene)).toBeNull();
+    const state = useCanvasStore.getState();
+    expect(state.edges.filter((edge) => edge.source === scene)).toHaveLength(2);
+    expect(state.edges.filter((edge) => edge.source === product)).toHaveLength(1);
+    expect(String(state.nodes.find((node) => node.id === opening)?.data.prompt))
+      .toContain("@图片1（耳机） 是产品主角的外观参考");
+    expect(String(state.nodes.find((node) => node.id === returnVideo)?.data.prompt))
+      .toContain("@图片1（银杏道） 是本镜头已规划的场景参考");
+    store.updateNodeData(opening, { referenceOrder: [scene, product] });
+    syncStoryVideoReferencePrompt(opening);
+    const reordered = String(useCanvasStore.getState().nodes.find((node) => node.id === opening)?.data.prompt);
+    expect(reordered).toContain("@图片1（银杏道） 是本镜头已规划的场景参考");
+    expect(reordered).toContain("@图片2（耳机） 是产品主角的外观参考");
+    store.updateNodeData(returnVideo, { storySceneRefs: [] });
+    expect(attachCompletedStoryAsset(scene)).toContain("规划不符");
+    const oldEdge = useCanvasStore.getState().edges.find((edge) => edge.source === scene && edge.target === returnVideo);
+    if (!oldEdge) throw new Error("planned scene edge missing");
+    store.deleteEdge(oldEdge.id);
+    const rejected = applyCanvasChatCommands(extractCanvasChatCommandEnvelopes([{
+      schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+      commands: [{ type: "create_edge", source: scene, target: returnVideo, link_type: "media_input_for" }],
+    }]));
+    expect(rejected.errors.join(" ")).toContain("not planned for segment return");
+  });
+
+  it("uses a style scene only for visual style in the material note", () => {
+    const store = useCanvasStore.getState();
+    const group = store.addNode(CANVAS_NODE_TYPES.group, { x: 0, y: 0 }, {
+      storyGroup: true, interactiveStoryId: "story-style",
+      storyScenes: [{ id: "palette", name: "霓虹风格" }],
+    });
+    const video = store.addNode(CANVAS_NODE_TYPES.video, { x: 400, y: 0 }, {
+      storySegmentId: "shot", storySceneRefs: [{ scene_id: "palette", usage: "style" }],
+      prompt: "主角在室内走动。",
+    });
+    const scene = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 200 }, {
+      imageUrl: "/static/palette.png",
+      storyAssetTarget: { storyId: "story-style", kind: "scene", entityId: "palette", segmentIds: ["shot"] },
+    });
+    store.setCanvasData(useCanvasStore.getState().nodes.map((node) =>
+      node.id === video ? { ...node, parentId: group } : node), []);
+
+    expect(attachCompletedStoryAsset(scene)).toBeNull();
+    const prompt = String(useCanvasStore.getState().nodes.find((node) => node.id === video)?.data.prompt);
+    expect(prompt).toContain("只借用色彩、光线和美术风格");
+    expect(prompt).toContain("不改变镜头所在场所或空间关系");
+    expect(prompt).not.toContain("保持环境和空间关系一致");
+
+    store.updateNodeData(video, { storySceneRefs: [{ scene_id: "palette", usage: "setting" }] });
+    syncStoryVideoReferencePrompt(video);
+    const updated = String(useCanvasStore.getState().nodes.find((node) => node.id === video)?.data.prompt);
+    expect(updated).toContain("保持环境和空间关系一致");
+    expect(updated).not.toContain("只借用色彩、光线和美术风格");
+  });
+
+  it("allows the tenth planned asset image when the selected model allows ten", () => {
+    const envelope = vi.spyOn(videoReferenceEnvelope, "videoReferenceEnvelopeForNode")
+      .mockReturnValue({ image: 10, video: 3, audio: 3, total: 16 });
+    try {
+      const store = useCanvasStore.getState();
+      const group = store.addNode(CANVAS_NODE_TYPES.group, { x: 0, y: 0 }, {
+        storyGroup: true, interactiveStoryId: "story-ten",
+        storyCharacters: [{ id: "headphones", kind: "product" }],
+      });
+      const video = store.addNode(CANVAS_NODE_TYPES.video, { x: 400, y: 0 }, {
+        storySegmentId: "shot", storyCharacterIds: ["headphones"], prompt: "耳机特写。",
+      });
+      store.setCanvasData(useCanvasStore.getState().nodes.map((node) =>
+        node.id === video ? { ...node, parentId: group } : node), []);
+      for (let index = 0; index < 9; index += 1) {
+        const reference = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: index * 100 }, {
+          imageUrl: `/static/reference-${index}.png`,
+        });
+        expect(store.addEdgeWithData(reference, video, { link_type: "media_input_for" })).toBeTruthy();
+      }
+      const product = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 1000 }, {
+        imageUrl: "/static/headphones.png",
+        storyAssetTarget: { storyId: "story-ten", kind: "subject", entityId: "headphones", segmentIds: ["shot"] },
+      });
+
+      expect(attachCompletedStoryAsset(product)).toBeNull();
+      expect(useCanvasStore.getState().edges.some((edge) => edge.source === product && edge.target === video)).toBe(true);
+    } finally {
+      envelope.mockRestore();
+    }
+  });
+
   it("keeps material mentions separate from the auto-continuity tail-frame mention", () => {
     const store = useCanvasStore.getState();
     const target = store.addNode(CANVAS_NODE_TYPES.video, { x: 400, y: 0 }, {
@@ -7493,6 +7670,64 @@ describe("canvas chat commands", () => {
     const prompt = String(useCanvasStore.getState().nodes.find((node) => node.id === target)?.data.prompt);
     expect(prompt).toContain("@图片1（主角） 是人物身份参考");
     expect(prompt).toContain("[FMV自动承接]从 @图片1 的尾帧继续");
+  });
+
+  it("preserves authored character roles in a complete connected-image note", () => {
+    const store = useCanvasStore.getState();
+    const target = store.addNode(CANVAS_NODE_TYPES.video, { x: 400, y: 0 }, {
+      storySegmentId: "opening",
+      prompt: "[FMV素材参考]\n@图片1（图片节点1） 是林晚的人物外观参考。\n@图片2（图片节点2） 是沈屿的人物外观参考。\n[/FMV素材参考]\n\n两人并肩走在银杏道。",
+    });
+    const first = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 0 }, {
+      displayName: "图片节点1", imageUrl: "/static/linwan.png",
+    });
+    const second = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 200 }, {
+      displayName: "图片节点2", imageUrl: "/static/shenyu.png",
+    });
+    store.addEdgeWithData(first, target, { link_type: "media_input_for" });
+    store.addEdgeWithData(second, target, { link_type: "media_input_for" });
+
+    syncStoryVideoReferencePrompt(target);
+
+    const prompt = String(useCanvasStore.getState().nodes.find((node) => node.id === target)?.data.prompt);
+    expect(prompt).toContain("@图片1（图片节点1） 是林晚的人物外观参考。");
+    expect(prompt).toContain("@图片2（图片节点2） 是沈屿的人物外观参考。");
+    expect(prompt).not.toContain("补充图片参考");
+
+    const replacement = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 400 }, {
+      displayName: "图片节点3", imageUrl: "/static/street.png", keyElementCategory: "scene",
+    });
+    const oldEdge = useCanvasStore.getState().edges.find((edge) => edge.source === second && edge.target === target);
+    if (!oldEdge) throw new Error("test reference edge was not created");
+    store.deleteEdge(oldEdge.id);
+    store.addEdgeWithData(replacement, target, { link_type: "media_input_for" });
+    syncStoryVideoReferencePrompt(target);
+    const updated = String(useCanvasStore.getState().nodes.find((node) => node.id === target)?.data.prompt);
+    expect(updated).toContain("@图片2（图片节点3） 是场景参考");
+    expect(updated).not.toContain("@图片2（图片节点2）");
+  });
+
+  it("keeps story video image mentions in sync with agent edge and prompt commands", () => {
+    const store = useCanvasStore.getState();
+    const video = store.addNode(CANVAS_NODE_TYPES.video, { x: 400, y: 0 }, {
+      storySegmentId: "opening", prompt: "主角走进车站。",
+    });
+    const image = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 0 }, {
+      displayName: "主角", imageUrl: "/static/character.png", keyElementCategory: "character",
+    });
+    const apply = (commands: CanvasChatCommandEnvelope["commands"]) =>
+      applyCanvasChatCommands(extractCanvasChatCommandEnvelopes([{
+        schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION, commands,
+      }]));
+    const prompt = () => String(useCanvasStore.getState().nodes.find((node) => node.id === video)?.data.prompt);
+
+    expect(apply([{ type: "create_edge", source: image, target: video, link_type: "media_input_for" }]).errors).toEqual([]);
+    expect(prompt()).toContain("@图片1（主角） 是人物身份参考");
+    expect(apply([{ type: "update_node_data", node_id: video, data: { prompt: "主角转身。" } }]).errors).toEqual([]);
+    expect(prompt()).toContain("@图片1（主角） 是人物身份参考");
+    expect(prompt()).toContain("主角转身。");
+    expect(apply([{ type: "delete_edges", pairs: [{ source: image, target: video }] }]).errors).toEqual([]);
+    expect(prompt()).not.toContain("[FMV素材参考]");
   });
 
   it("syncs the connected subset of references when a later story edge fails", () => {

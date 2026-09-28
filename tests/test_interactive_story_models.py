@@ -43,6 +43,27 @@ def test_video_prompt_is_independent_and_bounded(example_payload: dict) -> None:
         StoryDraftV2.model_validate(example_payload)
 
 
+def test_story_plans_product_subjects_and_scenes_by_stable_id(example_payload: dict) -> None:
+    example_payload["characters"].append({
+        "id": "headphones", "name": "广告耳机", "kind": "product",
+        "visual_description": "银色头梁，黑色耳罩",
+    })
+    example_payload["scenes"] = [{
+        "id": "autumn_street", "name": "银杏道", "visual_description": "秋日暖光",
+    }]
+    example_payload["segments"][0]["character_ids"].append("headphones")
+    example_payload["segments"][0]["scene_refs"] = [
+        {"scene_id": "autumn_street", "usage": "setting"},
+    ]
+    story = StoryDraftV2.model_validate(example_payload)
+    assert story.characters[-1].kind == "product"
+    assert story.segments[0].scene_refs[0].scene_id == "autumn_street"
+    assert StoryDraftV2.model_validate(story.model_dump()).model_dump() == story.model_dump()
+    example_payload["segments"][0]["scene_refs"][0]["scene_id"] = "unknown"
+    with pytest.raises(ValidationError, match="unknown scenes"):
+        StoryDraftV2.model_validate(example_payload)
+
+
 def test_example_story_round_trips_and_expresses_four_decision_points_two_endings(
     example_payload: dict,
 ) -> None:

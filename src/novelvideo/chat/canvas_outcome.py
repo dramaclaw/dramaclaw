@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 CANVAS_FINAL_RESPONSE_INSTRUCTIONS = (
@@ -74,6 +75,18 @@ def _claim_reference(value: Any) -> tuple[str, int | None] | None:
     return None
 
 
+def recover_unstructured_canvas_message(text: str) -> str | None:
+    """Recover only a complete JSON message string from a malformed reply."""
+    match = re.search(r'"message"\s*:\s*', text)
+    if match is None:
+        return None
+    try:
+        message, _ = json.JSONDecoder().raw_decode(text, match.end())
+    except ValueError:
+        return None
+    return message.strip() if isinstance(message, str) and message.strip() else None
+
+
 def finalize_canvas_reply(
     text: str,
     *,
@@ -104,8 +117,12 @@ def finalize_canvas_reply(
         return "画布操作等待确认或执行回执，尚未完成。"
     if draft_ready and not attempts:
         return "工作流草稿已准备完成，等待你确认后创建画布节点；尚未执行生成。"
+    candidate = text.strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*\n(.*?)\n```", candidate, re.I | re.S)
+    if fenced is not None:
+        candidate = fenced.group(1).strip()
     try:
-        reply = json.loads(text)
+        reply = json.loads(candidate)
     except (TypeError, ValueError):
         return "回复未通过操作结果校验：未返回结构化结果，请重试。"
     if not isinstance(reply, dict):
