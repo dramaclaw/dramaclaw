@@ -54,8 +54,8 @@ const PLAIN_SPEECH_FIELD =
   /^\s*(?:[-*#]\s*)?(?:旁白|对白|台词|解说|narration|voiceover)\s*[:：]\s*(.*)$/i;
 const PLAIN_FIELD_LINE =
   /^\s*(?:[-*#]\s*)?([^，。！？,!?;；:：\n]{1,24})\s*[:：]\s*.*$/;
-const SPEECH_BLOCK_START = /^\s*<speech_text>\s*$/i;
-const SPEECH_BLOCK_END = /^\s*<\/speech_text>\s*$/i;
+const SPEECH_BLOCK = /<speech_text>\s*([\s\S]*?)\s*<\/speech_text>/i;
+const SPEECH_BLOCK_MARKER = /<\/?speech_text>/i;
 const TRAILING_CONTROL_FIELD =
   /[。；;]\s*(?:时长|持续时间|情绪|节奏|语气|语速|语言|声音质感|是否纯音乐|内容约束|音频类型|负向约束)\s*[:：]/i;
 // i18n-exempt-end
@@ -268,13 +268,11 @@ export function extractExplicitSpeakableAudioText(value: string): string {
 }
 
 function extractStructuredSpeechBlock(value: string): string | null {
-  const lines = String(value || '').split(/\r?\n/);
-  const start = lines.findIndex((line) => SPEECH_BLOCK_START.test(line));
-  if (start < 0) return null;
-  const relativeEnd = lines.slice(start + 1).findIndex((line) => SPEECH_BLOCK_END.test(line));
-  if (relativeEnd < 0) return '';
-  return lines
-    .slice(start + 1, start + 1 + relativeEnd)
+  const text = String(value || '');
+  const block = text.match(SPEECH_BLOCK);
+  if (!block) return SPEECH_BLOCK_MARKER.test(text) ? '' : null;
+  return block[1]
+    .split(/\r?\n/)
     .map(cleanSpeakableLine)
     .filter(Boolean)
     .join('\n\n');

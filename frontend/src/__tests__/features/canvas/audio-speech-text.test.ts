@@ -131,6 +131,24 @@ describe('extractSpeakableAudioText', () => {
     })).toBe('原始旁白。');
   });
 
+  it('accepts a speech start marker on the same line as its label', () => {
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'model',
+      compiledPrompt: '朗读文本：<speech_text>\n欢迎使用。\n</speech_text>\n情感：温柔',
+      recipeIds: ['general-audio'],
+      safeFallbackPrompt: '原始旁白。',
+    })).toBe('欢迎使用。');
+  });
+
+  it('rejects incomplete speech markers before legacy fallback', () => {
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'model',
+      compiledPrompt: '朗读文本：<speech_text>\n欢迎使用。',
+      recipeIds: ['general-audio'],
+      safeFallbackPrompt: '原始旁白。',
+    })).toBe('原始旁白。');
+  });
+
   it('accepts an unlabelled model result from the direct-speech Recipe', () => {
     expect(resolveSafeSpeechSubmissionText({
       compileMode: 'model',
