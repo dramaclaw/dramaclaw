@@ -1744,8 +1744,9 @@ def test_generation_session_rejects_wrong_operation_identity(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("settlement_status", ["pending", "completed"])
 async def test_late_agent_product_delivery_confirms_reserved_credit(
-    monkeypatch,
+    monkeypatch, settlement_status
 ) -> None:
     from novelvideo.api.routes import freezone
 
@@ -1767,7 +1768,7 @@ async def test_late_agent_product_delivery_confirms_reserved_credit(
         ):
             settlements.append((reservation_id, action))
             assert metadata["source"] == "agent_product_late_delivery"
-            return {"status": "completed"}
+            return {"status": settlement_status}
 
     class Manager:
         def get_task_for_project(self, *_args, **_kwargs):
@@ -1801,6 +1802,70 @@ async def test_late_agent_product_delivery_confirms_reserved_credit(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "settlement_result",
+    [
+        {
+            "status": "awaiting",
+            "action": "confirm",
+            "error_code": "durable_settlement_update_failed",
+        },
+        {"status": "completed", "action": "refund"},
+    ],
+)
+async def test_late_agent_product_delivery_waits_for_durable_confirmation(
+    monkeypatch, caplog, settlement_result
+) -> None:
+    from novelvideo.api.routes import freezone
+
+    completions: list[dict] = []
+    observed_metrics: list[str] = []
+    task = SimpleNamespace(
+        task_id="product-task-a",
+        status="failed",
+        metadata={
+            "feature_credit_reservation_id": "reservation-a",
+            "error_code": "AGENT_PRODUCT_SETTLEMENT_PENDING",
+        },
+    )
+
+    class UsageMeter:
+        async def settle_feature_credit_reservation(self, *_args, **_kwargs):
+            return settlement_result
+
+    class Manager:
+        def get_task_for_project(self, *_args, **_kwargs):
+            return task
+
+        def complete_task_for_project(self, *_args, **kwargs):
+            completions.append(kwargs)
+            return True
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: UsageMeter())
+    monkeypatch.setattr(freezone, "get_task_manager", lambda: Manager())
+    monkeypatch.setattr(freezone.evidence_metrics, "observe", observed_metrics.append)
+
+    with pytest.raises(RuntimeError, match="credit confirmation unavailable"):
+        await freezone._settle_delivered_agent_product_task(
+            ctx=SimpleNamespace(project_id="proj_demo"),
+            operation={
+                "operation_id": "agent_product_a",
+                "project_id": "proj_demo",
+                "task_id": "product-task-a",
+                "task_type": "freezone_agent_recipe_result",
+                "product_kind": "recipe_result",
+                "status": "delivered",
+                "model_evidence": {"model_call_id": "provider-job-a"},
+                "result_ref": {"kind": "recipe_result", "id": "asset-a"},
+            },
+        )
+
+    assert completions == []
+    assert observed_metrics == ["agent_product_awaiting_reconciliation"]
+    assert "Agent product late delivery credit confirmation unavailable" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_late_agent_product_delivery_does_not_claim_failed_task_reconciled(
     monkeypatch,
 ) -> None:
@@ -1818,8 +1883,11 @@ async def test_late_agent_product_delivery_does_not_claim_failed_task_reconciled
     )
 
     class UsageMeter:
-        async def settle_feature_credit_reservation(self, reservation_id, *, action, metadata):
+        async def settle_feature_credit_reservation(
+            self, reservation_id, *, action, metadata
+        ):
             settlements.append(reservation_id)
+            return {"status": "completed"}
 
     class Manager:
         def get_task_for_project(self, *_args, **_kwargs):

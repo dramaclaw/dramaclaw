@@ -15045,7 +15045,7 @@ async def _settle_delivered_agent_product_task(
         or ""
     ).strip()
     if reservation_id:
-        await get_usage_meter().settle_feature_credit_reservation(
+        settlement = await get_usage_meter().settle_feature_credit_reservation(
             reservation_id,
             action="confirm",
             metadata={
@@ -15054,6 +15054,24 @@ async def _settle_delivered_agent_product_task(
                 "operation_id": operation_id,
             },
         )
+        if (
+            not isinstance(settlement, dict)
+            or settlement.get("status") not in {"pending", "completed"}
+            or settlement.get("action") not in {None, "confirm"}
+        ):
+            logger.error(
+                "Agent product late delivery credit confirmation unavailable: "
+                "operation_id=%s reservation_id=%s status=%s action=%s error_code=%s",
+                operation_id,
+                reservation_id,
+                settlement.get("status") if isinstance(settlement, dict) else None,
+                settlement.get("action") if isinstance(settlement, dict) else None,
+                settlement.get("error_code") if isinstance(settlement, dict) else None,
+            )
+            evidence_metrics.observe("agent_product_awaiting_reconciliation")
+            raise RuntimeError(
+                "delivered agent product credit confirmation unavailable"
+            )
     if (
         task.status == "failed"
         and metadata.get("error_code") == "AGENT_PRODUCT_SETTLEMENT_PENDING"
