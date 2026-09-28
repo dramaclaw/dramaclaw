@@ -15014,7 +15014,10 @@ async def get_agent_product_operation(
     )
     if operation is None:
         raise HTTPException(404, "agent product operation not found")
-    await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
+    if operation.get("product_kind") == "recipe_result":
+        await _reconcile_recipe_delivery(ctx=ctx, operation=operation)
+    else:
+        await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
     return {"ok": True, "data": operation}
 
 

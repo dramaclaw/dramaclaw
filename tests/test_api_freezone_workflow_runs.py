@@ -1213,6 +1213,7 @@ async def test_late_recipe_compile_receipt_reconciles_timed_out_task(
             if settlement_fails_once and len(attempts) == 1:
                 raise RuntimeError("temporary settlement failure")
             settlements.add((reservation_id, action))
+            return {"status": "completed", "action": action}
 
     class Manager:
         def get_task_for_project(self, *_args, **_kwargs):
@@ -1326,6 +1327,7 @@ async def test_settlement_failure_preserves_successful_recipe_response(
             attempts.append((reservation_id, action))
             if len(attempts) <= failure_limit:
                 raise RuntimeError("billing service unavailable")
+            return {"status": "completed", "action": action}
 
         async def mark_feature_credit_settlement_for_review(
             self, reservation_id, *, metadata=None
@@ -1387,6 +1389,18 @@ async def test_settlement_failure_preserves_successful_recipe_response(
                     await asyncio.wait_for(pending, timeout=5)
                 assert not completed.is_set()
                 assert len(attempts) == 4
+                monkeypatch.setattr(
+                    freezone,
+                    "_schedule_recipe_settlement_retry",
+                    lambda **_kwargs: None,
+                )
+                pending_view = await client.get(
+                    f"/api/v1/projects/proj_demo/freezone/agent-product-operations/{operation['operation_id']}"
+                )
+                assert pending_view.status_code == 200
+                assert pending_view.json()["data"]["status"] == "delivered"
+                assert not completed.is_set()
+                assert len(attempts) == 5
                 failure_limit = 0
                 recovered = await client.get(
                     f"/api/v1/projects/proj_demo/freezone/agent-product-operations/{operation['operation_id']}"
@@ -1403,7 +1417,7 @@ async def test_settlement_failure_preserves_successful_recipe_response(
         assert stored["result_ref"]["content"] == content
         assert generated == [mode]
         assert attempts == [("original-reservation", "confirm")] * (
-            5 if persistent_outage else 2
+            6 if persistent_outage else 2
         )
         assert reviews[0][0] == "original-reservation"
         assert reviews[0][1]["settlement_status"] == "awaiting_reconciliation"
