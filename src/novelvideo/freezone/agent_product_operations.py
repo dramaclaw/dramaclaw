@@ -53,6 +53,19 @@ RECIPE_COMPILE_MESSAGES = {
     "deterministic": "Recipe 已使用模板提示词；本次 Recipe 正常计费",
 }
 
+DIRECT_VOICE_RECIPE_ID = "drama-shot-voice"
+
+
+def is_direct_voice_recipe_action(
+    *, recipe_id: str, action: str, task_type: str
+) -> bool:
+    """The built-in voice Recipe sends literal text to TTS without an LLM compile."""
+    return (
+        recipe_id == DIRECT_VOICE_RECIPE_ID
+        and action == "generate_audio"
+        and task_type == "freezone_audio_speech"
+    )
+
 
 def is_recipe_compile_receipt(
     product_kind: str, operation_id: str, result: dict[str, Any]
@@ -450,6 +463,7 @@ def finish_agent_product_operation(
     expected_task_id: str,
     result_ref: dict[str, Any] | None = None,
     server_recipe_compile: bool = False,
+    server_recipe_direct_audio: bool = False,
 ) -> dict[str, Any]:
     status = str(outcome or "").strip()
     if status not in PENDING_STATUSES | TERMINAL_STATUSES:
@@ -469,6 +483,36 @@ def finish_agent_product_operation(
         recipe_delivery = is_recipe_compile_receipt(
             payload["product_kind"], operation_id, result
         )
+        direct_audio_delivery = (
+            server_recipe_direct_audio
+            and payload["product_kind"] == "recipe_result"
+            and payload["metadata"].get("recipe_id") == DIRECT_VOICE_RECIPE_ID
+            and result.get("kind") == "recipe_result"
+            and result.get("workflow_run_id")
+            == payload["metadata"].get("workflow_run_id")
+            and result.get("node_id") == payload["metadata"].get("node_id")
+            and result.get("recipe_id") == DIRECT_VOICE_RECIPE_ID
+            and bool(result.get("id"))
+        )
+        if direct_audio_delivery:
+            linked_action = conn.execute(
+                """SELECT job_id, task_type, recipe_id, recipe_version
+                   FROM workflow_run_actions
+                   WHERE run_id = ? AND node_id = ? AND product_operation_id = ?""",
+                (
+                    result["workflow_run_id"],
+                    result["node_id"],
+                    operation_id,
+                ),
+            ).fetchone()
+            direct_audio_delivery = bool(
+                linked_action
+                and linked_action["job_id"] == result["id"]
+                and linked_action["task_type"] == "freezone_audio_speech"
+                and linked_action["recipe_id"] == DIRECT_VOICE_RECIPE_ID
+                and linked_action["recipe_version"]
+                == payload["metadata"].get("recipe_version")
+            )
         if result.get("kind") == "recipe_compile_result" and (
             not server_recipe_compile or not recipe_delivery or status != "delivered"
         ):
@@ -485,8 +529,12 @@ def finish_agent_product_operation(
             return payload
         evidence = payload["model_evidence"]
         if status == "delivered":
-            if not recipe_delivery and (
-                not evidence.get("model_call_id") or not evidence.get("executed_at")
+            if (
+                not recipe_delivery
+                and not direct_audio_delivery
+                and (
+                    not evidence.get("model_call_id") or not evidence.get("executed_at")
+                )
             ):
                 raise ValueError(
                     "delivered result requires trusted model execution evidence"
@@ -494,6 +542,7 @@ def finish_agent_product_operation(
             if (
                 payload["product_kind"] == "recipe_result"
                 and not recipe_delivery
+                and not direct_audio_delivery
                 and evidence.get("compile_mode") != "model"
             ):
                 raise ValueError(

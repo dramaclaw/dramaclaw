@@ -353,6 +353,142 @@ def test_recipe_media_claim_replay_after_interrupt_reuses_admitted_job(
         claim_workflow_media_action(**{**request, "fingerprint": "b" * 64})
 
 
+def test_direct_voice_recipe_claim_requires_bound_audio_action_and_settles_from_media(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.agent_product_operations import (
+        finish_agent_product_operation,
+        read_agent_product_operation,
+    )
+    from novelvideo.freezone.workflow_runs import claim_workflow_media_action
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    created = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs",
+        json={
+            "actions": [
+                {
+                    "node_id": "voice-1",
+                    "action": "generate_audio",
+                    "recipe_id": "drama-shot-voice",
+                    "recipe_version": "1.0.0",
+                    "generation_attempt_id": "attempt-voice",
+                }
+            ],
+            "runner_id": "runner-voice",
+        },
+    ).json()["data"]
+    operation_id = created["actions"][0]["product_operation_id"]
+    request = {
+        "project_dir": workflow_run_client.state_dir,
+        "project_id": "proj_demo",
+        "canvas_id": "default",
+        "node_id": "voice-1",
+        "operation_id": operation_id,
+        "attempt_id": "attempt-voice",
+        "task_type": "freezone_audio_speech",
+        "fingerprint": "a" * 64,
+    }
+    with pytest.raises(ValueError, match="does not match"):
+        claim_workflow_media_action(**{**request, "node_id": "other-node"})
+    with pytest.raises(ValueError, match="does not match"):
+        claim_workflow_media_action(**{**request, "attempt_id": "other-attempt"})
+    with pytest.raises(ValueError, match="Recipe compilation is not ready"):
+        claim_workflow_media_action(**{**request, "task_type": "freezone_audio_eleven_music"})
+
+    admitted = claim_workflow_media_action(**request)
+    assert admitted["created"] is True
+    replayed = claim_workflow_media_action(**request)
+    assert replayed["created"] is False
+    assert replayed["job_id"] == admitted["job_id"]
+    with pytest.raises(ValueError, match="already claimed"):
+        claim_workflow_media_action(**{**request, "fingerprint": "b" * 64})
+
+    operation = read_agent_product_operation(
+        project_dir=workflow_run_client.state_dir, operation_id=operation_id
+    )
+    receipt = {
+        "kind": "recipe_result",
+        "id": admitted["job_id"],
+        "workflow_run_id": created["run_id"],
+        "node_id": "voice-1",
+        "recipe_id": "drama-shot-voice",
+    }
+    forged = workflow_run_client.post(
+        f"/api/v1/projects/proj_demo/freezone/agent-product-operations/{operation_id}/finish",
+        json={
+            "task_id": operation["task_id"],
+            "outcome": "delivered",
+            "result_ref": receipt,
+            "server_recipe_direct_audio": True,
+        },
+    )
+    assert forged.status_code == 400
+    with pytest.raises(ValueError, match="trusted model execution evidence"):
+        finish_agent_product_operation(
+            project_dir=workflow_run_client.state_dir,
+            operation_id=operation_id,
+            outcome="delivered",
+            expected_task_id=operation["task_id"],
+            result_ref={**receipt, "id": "unclaimed-job"},
+            server_recipe_direct_audio=True,
+        )
+    with pytest.raises(ValueError, match="trusted model execution evidence"):
+        finish_agent_product_operation(
+            project_dir=workflow_run_client.state_dir,
+            operation_id=operation_id,
+            outcome="delivered",
+            expected_task_id=operation["task_id"],
+            result_ref=receipt,
+        )
+    finished = finish_agent_product_operation(
+        project_dir=workflow_run_client.state_dir,
+        operation_id=operation_id,
+        outcome="delivered",
+        expected_task_id=operation["task_id"],
+        result_ref=receipt,
+        server_recipe_direct_audio=True,
+    )
+    assert finished["status"] == "delivered"
+    assert finished["model_evidence"] == {}
+    assert finished["result_ref"] == receipt
+
+
+def test_other_audio_recipe_cannot_use_direct_voice_admission(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.workflow_runs import claim_workflow_media_action
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    created = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs",
+        json={
+            "actions": [
+                {
+                    "node_id": "voice-1",
+                    "action": "generate_audio",
+                    "recipe_id": "general-audio",
+                    "recipe_version": "1.0.0",
+                    "generation_attempt_id": "attempt-other-voice",
+                }
+            ]
+        },
+    ).json()["data"]
+    with pytest.raises(ValueError, match="Recipe compilation is not ready"):
+        claim_workflow_media_action(
+            project_dir=workflow_run_client.state_dir,
+            project_id="proj_demo",
+            canvas_id="default",
+            node_id="voice-1",
+            operation_id=created["actions"][0]["product_operation_id"],
+            attempt_id="attempt-other-voice",
+            task_type="freezone_audio_speech",
+            fingerprint="a" * 64,
+        )
+
+
 @pytest.mark.parametrize(
     "compile_mode",
     ["memory_cache", "persistent_cache", "deterministic", "timeout_fallback", "model"],
@@ -2906,6 +3042,79 @@ def test_recipe_result_does_not_use_media_task_id_as_model_evidence(
         operation_id=operation_id,
     )
     assert operation["status"] == "failed"
+    assert operation["model_evidence"] == {}
+
+
+def test_direct_voice_recipe_result_is_delivered_from_completed_audio_task(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.agent_product_operations import read_agent_product_operation
+    from novelvideo.freezone.workflow_runs import claim_workflow_media_action
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    created = workflow_run_client.post(
+        base,
+        json={"actions": [{
+            "node_id": "voice-1",
+            "action": "generate_audio",
+            "recipe_id": "drama-shot-voice",
+            "recipe_version": "1.0.0",
+            "generation_attempt_id": "attempt-voice",
+        }]},
+    ).json()["data"]
+    operation_id = created["actions"][0]["product_operation_id"]
+    claimed = claim_workflow_media_action(
+        project_dir=workflow_run_client.state_dir,
+        project_id="proj_demo",
+        canvas_id="default",
+        node_id="voice-1",
+        operation_id=operation_id,
+        attempt_id="attempt-voice",
+        task_type="freezone_audio_speech",
+        fingerprint="a" * 64,
+    )
+    job_id = claimed["job_id"]
+    task_key = f"task:freezone_audio_speech:project:proj_demo:0:{job_id}"
+    workflow_run_client.patch(
+        f"{base}/{created['run_id']}",
+        json={"action_updates": [{
+            "node_id": "voice-1",
+            "action": "generate_audio",
+            "status": "running",
+            "task_key": task_key,
+            "job_id": job_id,
+        }]},
+    )
+    media_task = SimpleNamespace(
+        task_type="freezone_audio_speech",
+        status="completed",
+        progress=1.0,
+        current_task="completed",
+        episode=0,
+        beat_num=None,
+        scope=job_id,
+        result={"audio_url": "https://cdn.example.test/voice.wav"},
+        error=None,
+    )
+    monkeypatch.setattr(
+        freezone,
+        "get_task_manager",
+        lambda: SimpleNamespace(
+            list_tasks_for_project=lambda _ctx: [media_task],
+            get_task_for_project=lambda *_args, **_kwargs: None,
+        ),
+    )
+
+    response = workflow_run_client.get(base)
+
+    assert response.status_code == 200
+    operation = read_agent_product_operation(
+        project_dir=workflow_run_client.state_dir, operation_id=operation_id
+    )
+    assert operation["status"] == "delivered"
+    assert operation["result_ref"]["id"] == job_id
     assert operation["model_evidence"] == {}
 
 

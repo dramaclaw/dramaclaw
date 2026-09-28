@@ -192,6 +192,7 @@ from novelvideo.freezone.agent_product_operations import (
     bind_agent_product_task,
     create_agent_product_operation,
     finish_agent_product_operation,
+    is_direct_voice_recipe_action,
     list_agent_product_operations_for_session,
     is_recipe_compile_receipt,
     read_agent_generation_session,
@@ -15872,11 +15873,23 @@ async def get_canvas_workflow_runs(
             }:
                 continue
             evidence = operation.get("model_evidence") or {}
+            operation_metadata = operation.get("metadata") or {}
+            direct_voice = (
+                is_direct_voice_recipe_action(
+                    recipe_id=str(action.get("recipe_id") or ""),
+                    action=str(action.get("action") or ""),
+                    task_type=str(action.get("task_type") or ""),
+                )
+                and operation_metadata.get("recipe_id") == action.get("recipe_id")
+                and operation_metadata.get("recipe_version") == action.get("recipe_version")
+            )
             if (
                 task_status == "completed"
                 and artifact_status == "valid"
-                and evidence.get("compile_mode") == "model"
-                and evidence.get("model_call_id")
+                and (
+                    direct_voice
+                    or (evidence.get("compile_mode") == "model" and evidence.get("model_call_id"))
+                )
             ):
                 outcome = "delivered"
                 result_ref = {
@@ -15913,6 +15926,7 @@ async def get_canvas_workflow_runs(
                 outcome=outcome,
                 expected_task_id=str(operation.get("task_id") or ""),
                 result_ref=result_ref,
+                server_recipe_direct_audio=direct_voice and outcome == "delivered",
             )
             await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
     return {"ok": True, "data": {"runs": runs}}

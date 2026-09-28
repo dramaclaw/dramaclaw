@@ -727,6 +727,7 @@ def claim_workflow_media_action(
     """Atomically admit one media request for a trusted Recipe operation."""
     from novelvideo.freezone.agent_product_operations import (
         PENDING_STATUSES,
+        is_direct_voice_recipe_action,
         is_recipe_compile_receipt,
     )
     from novelvideo.task_state import project_task_state_key
@@ -811,6 +812,16 @@ def claim_workflow_media_action(
             and bool(evidence.get("model_call_id"))
             and bool(evidence.get("executed_at"))
         )
+        direct_voice = (
+            operation["status"] in PENDING_STATUSES
+            and is_direct_voice_recipe_action(
+                recipe_id=str(action["recipe_id"] or ""),
+                action=str(action["action"] or ""),
+                task_type=task_type,
+            )
+            and metadata.get("recipe_id") == action["recipe_id"]
+            and metadata.get("recipe_version") == action["recipe_version"]
+        )
         if run["status"] != "running":
             raise ValueError(
                 f"workflow run is {run['status']}; continue the workflow to submit media"
@@ -819,7 +830,7 @@ def claim_workflow_media_action(
             raise ValueError(
                 f"workflow action is {action['status']} and cannot submit media"
             )
-        if not (compiled and operation["status"] == "delivered" or modeled):
+        if not (compiled and operation["status"] == "delivered" or modeled or direct_voice):
             raise ValueError("Recipe compilation is not ready for media submission")
         job_id = uuid.uuid4().hex[:16]
         task_key = project_task_state_key(task_type, project_id, 0, scope=job_id)
