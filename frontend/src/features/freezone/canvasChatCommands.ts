@@ -2852,6 +2852,8 @@ async function executeQueuedNodeActions(
       workflowPersistenceError = workflowRunEndedMessage(run.status);
     };
     let workflowVisibilityListener: (() => void) | null = null;
+    // Renews the lease and resolves once the server's run status is observed.
+    let confirmWorkflowRunActive: () => Promise<void> = async () => undefined;
     const stopWorkflowHeartbeat = () => {
       if (workflowHeartbeat !== null) clearInterval(workflowHeartbeat);
       workflowHeartbeat = null;
@@ -2917,9 +2919,9 @@ async function executeQueuedNodeActions(
           }));
         }
         const runId = workflowRunId;
-        const sendWorkflowHeartbeat = () => {
+        const sendWorkflowHeartbeat = async (): Promise<void> => {
           if (workflowLeaseLost) return;
-          void enqueueWorkflowHeartbeat(async () => {
+          await enqueueWorkflowHeartbeat(async () => {
             const heartbeatRun = await updateFreezoneWorkflowRun(projectId, canvasId, runId, {
               status: "running",
               runner_id: workflowRunnerId,
@@ -2932,11 +2934,12 @@ async function executeQueuedNodeActions(
               : workflowPersistenceFailureMessage(error);
           });
         };
-        workflowHeartbeat = setInterval(sendWorkflowHeartbeat, 15_000);
+        confirmWorkflowRunActive = sendWorkflowHeartbeat;
+        workflowHeartbeat = setInterval(() => void sendWorkflowHeartbeat(), 15_000);
         if (typeof document !== "undefined") {
           // Background tabs throttle or freeze timers; renew as soon as the page is back.
           workflowVisibilityListener = () => {
-            if (document.visibilityState === "visible") sendWorkflowHeartbeat();
+            if (document.visibilityState === "visible") void sendWorkflowHeartbeat();
           };
           document.addEventListener("visibilitychange", workflowVisibilityListener);
         }
@@ -3314,8 +3317,10 @@ async function executeQueuedNodeActions(
               };
             }
 
-            // Tail-frame capture and input hydration await; a heartbeat may have
-            // seen the run end meanwhile, so re-check right before dispatch.
+            // Tail-frame capture and input hydration await, and the page may have
+            // been frozen past the lease meanwhile. Wait for a server-confirmed
+            // status (queued behind any in-flight heartbeat) before dispatch.
+            await confirmWorkflowRunActive();
             if (workflowLeaseLost || workflowCancelled()) {
               return {
                 action,
