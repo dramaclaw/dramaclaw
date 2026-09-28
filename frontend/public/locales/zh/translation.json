@@ -5995,6 +5995,7 @@
         "faceEnhance": "人脸修复增强",
         "sourceInfo": "源视频 {{width}}×{{height}} · {{fps}}fps",
         "noHigherResolution": "源视频已达到 4K，暂无更高可选分辨率",
+        "noConfiguredResolution": "当前可用模型不支持更高的目标分辨率，请联系管理员检查模型配置",
         "probeError": "无法读取源视频参数：{{error}}",
         "submit": "生成高清视频"
       }

@@ -21,6 +21,7 @@ import {
 import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
 import { notifyTaskStillRunning } from '@/features/canvas/application/errorDialog';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
+import { availableVideoUpscaleResolutions } from '@/features/canvas/domain/videoUpscaleResolutions';
 import { readUrl } from '@/lib/url-params';
 import { CreditCostPill, type CreditPromotionDisplay } from '@/components/credits/credit-visual';
 import { NODE_TOOLBAR_CLASS } from './nodeToolbarConfig';
@@ -33,17 +34,11 @@ import {
   NODE_CREDIT_PILL_FLAT_CLASS,
 } from './nodeControlStyles';
 
-const RESOLUTION_LONG_EDGE: Record<FreezoneVideoUpscaleResolution, number> = {
-  '1080p': 1920,
-  '2k': 2560,
-  '4k': 3840,
-};
 const RESOLUTION_LABEL: Record<FreezoneVideoUpscaleResolution, string> = {
   '1080p': '1080P',
   '2k': '2K',
   '4k': '4K',
 };
-const ALL_RESOLUTIONS = Object.keys(RESOLUTION_LONG_EDGE) as FreezoneVideoUpscaleResolution[];
 const TARGET_FPS_PRESETS = [10, 12, 20, 23.976, 24, 25, 29.97, 30, 50, 59.94, 60, 90, 119.88, 120];
 
 interface PersistedFields {
@@ -76,6 +71,7 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
   const smartInterpolation = persisted.upscaleSmartInterpolation !== false;
   const scene = persisted.upscaleScene ?? 'realistic';
   const faceEnhance = persisted.upscaleFaceEnhance === true;
+  const needsFrameRate = targetFps !== 'auto' || slowdown !== 'auto';
 
   useEffect(() => {
     let active = true;
@@ -90,11 +86,10 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
     return () => { active = false; };
   }, [project, sourceUrl]);
 
-  const availableResolutions = useMemo(() => {
-    if (!probe) return ALL_RESOLUTIONS;
-    const sourceLongEdge = Math.max(probe.width, probe.height);
-    return ALL_RESOLUTIONS.filter((value) => RESOLUTION_LONG_EDGE[value] > sourceLongEdge);
-  }, [probe]);
+  const availableResolutions = useMemo(
+    () => availableVideoUpscaleResolutions(probe, needsFrameRate),
+    [needsFrameRate, probe],
+  );
 
   useEffect(() => {
     let active = true;
@@ -224,7 +219,7 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
               ]}
               onChange={(value) => updateNodeData(node.id, { upscaleScene: value as FreezoneVideoScene })}
             />
-            {(targetFps !== 'auto' || slowdown !== 'auto') && (
+            {needsFrameRate && (
               <ToggleRow
                 label={t('node.videoUpscale.panel.smartInterpolation')}
                 checked={smartInterpolation}
@@ -238,7 +233,13 @@ export const VideoUpscaleEditorOverlay = memo(({ node }: { node: CanvasNode }) =
             />
           </div>
           {probe && <p className="mt-3 text-[11px] text-text-muted">{t('node.videoUpscale.panel.sourceInfo', { width: probe.width, height: probe.height, fps: probe.fps.toFixed(2) })}</p>}
-          {availableResolutions.length === 0 && <p className="mt-3 text-xs text-red-400">{t('node.videoUpscale.panel.noHigherResolution')}</p>}
+          {probe && availableResolutions.length === 0 && (
+            <p className="mt-3 text-xs text-red-400">
+              {t(Math.max(probe.width, probe.height) >= 3840
+                ? 'node.videoUpscale.panel.noHigherResolution'
+                : 'node.videoUpscale.panel.noConfiguredResolution')}
+            </p>
+          )}
           {probeError && <p className="mt-3 text-xs text-red-400">{t('node.videoUpscale.panel.probeError', { error: probeError })}</p>}
           {quoteError && <p className="mt-3 text-xs text-red-400">{quoteError}</p>}
           <div className="mt-4 flex justify-end items-center gap-2">

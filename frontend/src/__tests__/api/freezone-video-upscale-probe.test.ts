@@ -10,7 +10,11 @@ vi.mock("@/api/client", () => ({
 
 describe("probeFreezoneVideoUpscale", () => {
   it("returns the video metadata already unwrapped by apiCall", async () => {
-    const probe = { width: 854, height: 480, fps: 30, duration: 5 };
+    const probe = {
+      width: 854, height: 480, fps: 30, duration: 5,
+      upscale_resolutions: ["1080p", "2k", "4k"],
+      frame_rate_resolutions: ["1080p", "2k"],
+    };
     vi.mocked(apiCall).mockResolvedValueOnce(probe);
 
     await expect(

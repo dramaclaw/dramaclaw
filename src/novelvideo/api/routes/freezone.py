@@ -8260,11 +8260,27 @@ def _catalog_duration_bounds(
 
 
 VIDEO_PROCESSING_MODES = frozenset({"video_upscale", "video_frame_rate"})
+VIDEO_UPSCALE_TARGET_LONG_EDGES = {"1080p": 1920, "2k": 2560, "4k": 3840}
 
 
 def _is_processing_only_video_model(entry: dict[str, Any]) -> bool:
     modes = entry.get("supportedModes")
     return isinstance(modes, list) and bool(modes) and set(modes).issubset(VIDEO_PROCESSING_MODES)
+
+
+def _video_processing_entry(
+    catalog: list[dict[str, Any]] | None,
+    mode: str,
+) -> dict[str, Any] | None:
+    return next(
+        (item for item in catalog or [] if mode in (item.get("supportedModes") or [])),
+        None,
+    )
+
+
+def _video_processing_resolutions(entry: dict[str, Any] | None) -> list[str]:
+    options = _catalog_resolution_options(entry)
+    return [value for value in VIDEO_UPSCALE_TARGET_LONG_EDGES if value in (options or [])]
 
 
 async def _resolve_video_processing_model(
@@ -8276,10 +8292,7 @@ async def _resolve_video_processing_model(
         "video",
         requester_user_id=requester_user_id,
     )
-    entry = next(
-        (item for item in catalog or [] if mode in (item.get("supportedModes") or [])),
-        None,
-    )
+    entry = _video_processing_entry(catalog, mode)
     if entry is None:
         label = "视频超分" if mode == "video_upscale" else "视频帧率调整"
         raise HTTPException(409, f"当前没有可用的{label}模型，请联系管理员配置")
@@ -8297,6 +8310,7 @@ async def _resolve_video_processing_model(
         "backend": str(selected.get("apiModel") or selected.get("api_model") or ""),
         "request_schema": schema,
         "model_params": params,
+        "resolution_options": _video_processing_resolutions(selected),
     }
 
 
@@ -9824,7 +9838,7 @@ async def _prepare_video_upscale(
         source_meta = await probe_video_stream(str(source_path))
     except RuntimeError as exc:
         raise HTTPException(400, f"无法读取源视频信息: {exc}") from exc
-    target_long_edge = {"1080p": 1920, "2k": 2560, "4k": 3840}[body.resolution]
+    target_long_edge = VIDEO_UPSCALE_TARGET_LONG_EDGES[body.resolution]
     if max(int(source_meta["width"]), int(source_meta["height"])) >= target_long_edge:
         raise HTTPException(400, "目标分辨率必须高于源视频分辨率")
 
@@ -9838,6 +9852,9 @@ async def _prepare_video_upscale(
             "video_frame_rate",
             requester_user_id=requester_user_id,
         )
+    for label, model in (("视频超分", upscale), ("视频帧率调整", frame_rate)):
+        if model is not None and body.resolution not in model["resolution_options"]:
+            raise HTTPException(400, f"当前{label}模型不支持 {body.resolution} 分辨率")
     processing_models = {
         "upscale_backend": upscale["backend"],
         "upscale_model_params": upscale["model_params"],
@@ -9958,7 +9975,7 @@ async def freezone_video_upscale_probe(
     user: dict = Depends(get_api_user),
 ):
     """读取源视频参数，供增强面板过滤无效的目标档位。"""
-    _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
         project, user, required_role="viewer"
     )
     try:
@@ -9973,6 +9990,15 @@ async def freezone_video_upscale_probe(
         metadata = await probe_video_stream(str(source_path))
     except RuntimeError as exc:
         raise HTTPException(400, f"无法读取源视频信息: {exc}") from exc
+    catalog = await _scoped_media_model_catalog(
+        "video", requester_user_id=ctx.requester_user_id,
+    )
+    metadata["upscale_resolutions"] = _video_processing_resolutions(
+        _video_processing_entry(catalog, "video_upscale")
+    )
+    metadata["frame_rate_resolutions"] = _video_processing_resolutions(
+        _video_processing_entry(catalog, "video_frame_rate")
+    )
     return {"ok": True, "data": metadata}
 
 

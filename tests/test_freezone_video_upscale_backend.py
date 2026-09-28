@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 from novelvideo.api.routes import freezone as freezone_routes
 from novelvideo.freezone import jobs as freezone_jobs
@@ -206,6 +207,7 @@ async def test_freezone_video_upscale_route_starts_task(
             "backend": f"newapi_{mode}",
             "model_params": {},
             "request_schema": {},
+            "resolution_options": ["1080p", "2k", "4k"],
         }
 
     monkeypatch.setattr(freezone_jobs, "probe_video_stream", fake_probe)
@@ -310,3 +312,98 @@ async def test_freezone_video_upscale_route_starts_task(
     )
     assert quote_result["data"]["cost"] == 24
     assert captured["quote_args"]["params"] == captured["payload"]["billing"]
+
+
+@pytest.mark.asyncio
+async def test_video_upscale_probe_returns_user_scoped_model_resolutions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+
+    async def fake_project(_project: str, _user: dict, *, required_role: str):
+        assert required_role == "viewer"
+        ctx = SimpleNamespace(requester_user_id="member-1")
+        return ctx, "admin", "project", tmp_path, str(tmp_path)
+
+    async def fake_catalog(media_type: str, *, requester_user_id: str):
+        assert (media_type, requester_user_id) == ("video", "member-1")
+        return [
+            {"supportedModes": ["video_upscale"],
+             "resolutionOptions": ["1080p", "4k"]},
+            {"supportedModes": ["video_frame_rate"],
+             "resolutionOptions": ["1080p", "2k"]},
+        ]
+
+    async def fake_probe(_source_path: str):
+        return {"width": 1280, "height": 720, "fps": 24.0, "duration": 8.0}
+
+    monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", fake_project)
+    monkeypatch.setattr(freezone_routes, "resolve_static_url_to_path", lambda *_: source)
+    monkeypatch.setattr(freezone_routes, "_scoped_media_model_catalog", fake_catalog)
+    monkeypatch.setattr(freezone_jobs, "probe_video_stream", fake_probe)
+
+    result = await freezone_routes.freezone_video_upscale_probe(
+        project="project", source_url="/static/source.mp4", user={"id": "member-1"},
+    )
+
+    assert result["data"]["upscale_resolutions"] == ["1080p", "4k"]
+    assert result["data"]["frame_rate_resolutions"] == ["1080p", "2k"]
+
+
+@pytest.mark.parametrize(
+    ("target_fps", "upscale_options", "frame_rate_options", "expected_model"),
+    [
+        (None, ["1080p", "2k"], ["1080p", "2k", "4k"], "视频超分"),
+        (60, ["1080p", "2k", "4k"], ["1080p", "2k"], "视频帧率调整"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_video_upscale_quote_rejects_unavailable_model_resolution_before_billing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target_fps: float | None,
+    upscale_options: list[str],
+    frame_rate_options: list[str],
+    expected_model: str,
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+
+    async def fake_project(_project: str, _user: dict, *, required_role: str):
+        assert required_role == "viewer"
+        ctx = SimpleNamespace(requester_user_id="member-1")
+        return ctx, "admin", "project", tmp_path, str(tmp_path)
+
+    async def fake_probe(_source_path: str):
+        return {"width": 1280, "height": 720, "fps": 24.0, "duration": 8.0}
+
+    async def fake_model(mode: str, *, requester_user_id: str):
+        assert requester_user_id == "member-1"
+        options = upscale_options if mode == "video_upscale" else frame_rate_options
+        return {"catalog_id": mode, "backend": mode, "model_params": {},
+                "request_schema": {}, "resolution_options": options}
+
+    async def unexpected_quote(**_kwargs):
+        pytest.fail("unsupported resolution must be rejected before billing")
+
+    from novelvideo import ports
+
+    monkeypatch.setattr(freezone_routes, "_resolve_freezone_project", fake_project)
+    monkeypatch.setattr(freezone_routes, "resolve_static_url_to_path", lambda *_: source)
+    monkeypatch.setattr(freezone_routes, "_resolve_video_processing_model", fake_model)
+    monkeypatch.setattr(freezone_jobs, "probe_video_stream", fake_probe)
+    monkeypatch.setattr(
+        ports, "get_credit_quote",
+        lambda: SimpleNamespace(generation_credit_quote=unexpected_quote),
+    )
+
+    with pytest.raises(HTTPException, match=f"当前{expected_model}模型不支持 4k 分辨率"):
+        await freezone_routes.freezone_video_upscale_quote(
+            project="project",
+            body=freezone_routes.FreezoneVideoUpscaleRequest(
+                source_url="/static/source.mp4", resolution="4k", target_fps=target_fps,
+            ),
+            user={"id": "member-1"},
+        )

@@ -5899,6 +5899,7 @@
         "faceEnhance": "Tăng cường khuôn mặt",
         "sourceInfo": "Nguồn {{width}}×{{height}} · {{fps}}fps",
         "noHigherResolution": "Video nguồn đã là 4K; không có độ phân giải cao hơn",
+        "noConfiguredResolution": "Mô hình hiện có không hỗ trợ độ phân giải cao hơn; hãy liên hệ quản trị viên để kiểm tra cấu hình",
         "probeError": "Không thể đọc thông số video nguồn: {{error}}",
         "submit": "Tạo video HD"
       }

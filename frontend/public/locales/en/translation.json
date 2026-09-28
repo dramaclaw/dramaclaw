@@ -5995,6 +5995,7 @@
         "faceEnhance": "Face enhancement",
         "sourceInfo": "Source {{width}}×{{height}} · {{fps}}fps",
         "noHigherResolution": "The source is already 4K; no higher resolution is available",
+        "noConfiguredResolution": "The available model does not support a higher resolution; ask an administrator to check its settings",
         "probeError": "Unable to inspect source video: {{error}}",
         "submit": "Generate HD video"
       }

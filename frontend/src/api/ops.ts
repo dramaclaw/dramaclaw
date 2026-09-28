@@ -274,6 +274,8 @@ export interface FreezoneVideoProbe {
   height: number;
   fps: number;
   duration: number;
+  upscale_resolutions: FreezoneVideoUpscaleResolution[];
+  frame_rate_resolutions: FreezoneVideoUpscaleResolution[];
 }
 
 export interface FreezoneVideoUpscalePayload extends FreezoneNodeContext {
