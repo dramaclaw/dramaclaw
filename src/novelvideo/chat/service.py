@@ -888,6 +888,20 @@ def _interactive_story_stage_confirmation_requested(prompt: str | None) -> bool:
     )
 
 
+def _stage_confirmation_not_written_message(prompt: str | None) -> str:
+    """Keep a blocked chat reply in the language of the user's request."""
+
+    if re.search(r"[\u4e00-\u9fff]", prompt or ""):
+        return (
+            "阶段确认未写入：虾导没有执行阶段确认工具，"
+            "因此画布进度没有改变。请重试本次确认。"
+        )
+    return (
+        "Stage confirmation was not saved because the assistant did not run the "
+        "confirmation tool. Canvas progress has not changed. Please try again."
+    )
+
+
 def _codex_story_preflight_rejection(event: Any) -> tuple[str, str | None] | None:
     """Identify story calls rejected by tool schema validation before execution."""
     name = _codex_freezone_tool_name(event)
@@ -5041,10 +5055,7 @@ async def _stream_assistant_reply_codex(
             )
             assistant_text = json.dumps(
                 {
-                    "message": (
-                        "阶段确认未写入：虾导没有执行阶段确认工具，"
-                        "因此画布进度没有改变。请重试本次确认。"
-                    ),
+                    "message": _stage_confirmation_not_written_message(prompt),
                     "mode": "blocked",
                     "canvas_receipts": [],
                 },

@@ -219,6 +219,8 @@ def test_patch_nested_schemas_match_domain_change_fields(monkeypatch):
         "remove_flag",
         "upsert_character",
         "remove_character",
+        "upsert_scene",
+        "remove_scene",
     }
     assert set(variants["update_segment"]["properties"]["changes"]["properties"]) == set(
         StorySegmentChanges.model_fields

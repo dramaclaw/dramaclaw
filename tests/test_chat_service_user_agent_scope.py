@@ -1573,6 +1573,17 @@ def test_interactive_story_manual_stage_confirmation_intent(prompt, expected):
     )
 
 
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        ("角色和场景确认完成", "阶段确认未写入"),
+        ("Confirm the character and scene stages", "Stage confirmation was not saved"),
+    ],
+)
+def test_stage_confirmation_failure_uses_prompt_language(prompt, expected):
+    assert chat_service._stage_confirmation_not_written_message(prompt).startswith(expected)
+
+
 def test_codex_freezone_write_result_error_preserves_canvas_validation_reason():
     event = SimpleNamespace(
         name="dramaclaw.freezone_confirm_workflow_draft",

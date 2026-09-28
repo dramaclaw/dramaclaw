@@ -210,6 +210,22 @@ Flag 条件：
 
 每次调用必须包含 `story_id`、`base_revision`、`idempotency_key` 和非空 `operations` 数组。不能只发送故事 ID、版本和幂等键。以下示例可直接作为 MCP 工具参数；`schema_version` 属于领域模型，不是 MCP Patch 工具的顶层参数。
 
+要在已有的 `stairs → ending_ontime` 路径中插入一段相遇剧情，并保留通向原结局的出口，可在一次 Patch 中同时添加角色和片段、重定向原选项，再补上新片段的出边：
+
+```json
+{
+  "story_id":"stealth_offtime",
+  "base_revision":214,
+  "idempotency_key":"patch-stealth-r214-meet-meimei",
+  "operations":[
+    {"op":"upsert_character","character":{"id":"meimei","name":"美美"}},
+    {"op":"add_segment","segment":{"id":"meet_meimei","title":"遇见美美","script":"主角在楼梯间遇见美美。","kind":"scene","character_ids":["hero","meimei"]}},
+    {"op":"update_choice","choice_id":"stairs_auto_end","changes":{"target_segment_id":"meet_meimei"}},
+    {"op":"add_choice","choice":{"id":"meet_meimei_end","source_segment_id":"meet_meimei","target_segment_id":"ending_ontime","mode":"automatic","order":0}}
+  ]
+}
+```
+
 每项操作必须带 `op`，其余字段按下表传入：
 
 | op | 必填载荷字段 | 语义 |
