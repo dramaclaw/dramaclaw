@@ -238,6 +238,18 @@ export function errorFromBackendBody(status: number, body: unknown, fallback: st
   if (typeof detail === "string" && detail.trim()) {
     return new BackendStatusError(detail, status, body);
   }
+  // FastAPI HTTPException 带结构化 detail（如技能接口的 SkillErrorEnvelope）。
+  if (detail && typeof detail === "object") {
+    const { message: detailMessage, user_action_hint: hint } = detail as {
+      message?: unknown;
+      user_action_hint?: unknown;
+    };
+    if (typeof detailMessage === "string" && detailMessage.trim()) {
+      const text =
+        typeof hint === "string" && hint.trim() ? `${detailMessage} ${hint}` : detailMessage;
+      return new BackendStatusError(text, status, body);
+    }
+  }
   return null;
 }
 
@@ -255,7 +267,9 @@ async function safeJsonFromResponse(response: Response): Promise<unknown> {
 
 async function backendError(error: unknown): Promise<Error | null> {
   if (!(error instanceof HTTPError)) return null;
-  const body = await safeJsonFromResponse(error.response);
+  // ky 2 会先把错误响应体解析到 error.data（此时 response 已读完），与 api/client 的 beforeError 一致。
+  const data = (error as HTTPError & { data?: unknown }).data;
+  const body = data !== undefined ? data : await safeJsonFromResponse(error.response);
   return errorFromBackendBody(error.response.status, body, error.message);
 }
 

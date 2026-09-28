@@ -3380,7 +3380,7 @@ def test_official_media_model_catalog_uses_ce_export_shape():
     images = get_official_media_model_catalog("image")
     videos = get_official_media_model_catalog("video")
 
-    assert len(images) == 6
+    assert len(images) == 8
     assert len(videos) == 11
     assert [entry["id"] for entry in videos[:2]] == [
         "wan3.0-video-prime",

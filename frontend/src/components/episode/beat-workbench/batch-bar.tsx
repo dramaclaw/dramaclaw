@@ -200,7 +200,7 @@ export function BatchBar({
         showError(t("episode.workbench.batch.genAudioTitle"), res.error || t("common.error"));
         return;
       }
-      audioTask.start({ scope: res.scope });
+      audioTask.start({ scope: res.scope, taskId: res.task_id });
     } catch (error) {
       toast.error(backendErrorToastMessage(error, t));
     }

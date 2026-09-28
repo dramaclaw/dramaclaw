@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from novelvideo.ports.registry import get_port
+from novelvideo.shared import runtime_env
 
 
 def get_auth_port():
@@ -145,6 +146,13 @@ def get_egress_operation_port():
     return get_port("egress_operations")
 
 
+def get_video_result_delivery():
+    """Return the EE archive-copy port; CE keeps its result_url download path."""
+    if runtime_env.edition() == "ce":
+        return None
+    return get_port("video_result_delivery")
+
+
 __all__ = [
     "get_audit_sink",
     "get_auth_port",
@@ -166,4 +174,5 @@ __all__ = [
     "get_task_envelope_consumer",
     "get_task_projection",
     "get_usage_meter",
+    "get_video_result_delivery",
 ]

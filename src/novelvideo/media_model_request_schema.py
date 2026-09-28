@@ -31,6 +31,7 @@ MODE_ALIASES = {
     "imageReference": "image_reference",
     "allReference": "all_reference",
     "videoEdit": "video_edit",
+    "videoExtend": "video_extend",
 }
 MEDIA_MODEL_MODES = {
     "text_to_video",
@@ -40,6 +41,7 @@ MEDIA_MODEL_MODES = {
     "image_reference",
     "all_reference",
     "video_edit",
+    "video_extend",
 }
 PARAMETER_MODES = MEDIA_MODEL_MODES | {
     "text_to_image",
@@ -86,6 +88,16 @@ def normalize_media_model_catalog_config(config: object) -> dict[str, Any]:
     if not isinstance(config, dict):
         raise MediaModelSchemaError("media model config must be an object")
     normalized = copy.deepcopy(config)
+    from novelvideo.freezone.reference_validation import PREFIXES, normalize_format
+
+    for prefix in PREFIXES.values():
+        key = prefix + "Formats"
+        if isinstance(normalized.get(key), list):
+            if any(not isinstance(value, str) for value in normalized[key]):
+                raise MediaModelSchemaError(f"{key} must contain format names")
+            normalized[key] = list(dict.fromkeys(
+                normalize_format(value) for value in normalized[key] if value.strip().lstrip(".")
+            ))
     # Briefly introduced during development, then removed when native-audio
     # defaults were fixed by product policy (supported => on by default).
     # Drop it on save/import so previewed local configs do not retain dead data.
@@ -213,7 +225,19 @@ def enforce_newapi_video_mode_contract(
     """Apply product-level invariants that model parameters may not override."""
 
     result = copy.deepcopy(payload)
-    if normalize_media_model_mode(mode) != "video_edit":
+    normalized_mode = normalize_media_model_mode(mode)
+    raw_metadata = result.get("metadata")
+    metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+    metadata.pop("omni_reference_task_type", None)
+    omni_task_type = {
+        "all_reference": "reference",
+        "video_edit": "edit",
+        "video_extend": "extend",
+    }.get(normalized_mode)
+    if omni_task_type:
+        metadata["omni_reference_task_type"] = omni_task_type
+
+    if normalized_mode != "video_edit":
         if (
             str(result.get("duration") or result.get("seconds") or "")
             .strip()
@@ -223,10 +247,17 @@ def enforce_newapi_video_mode_contract(
         ):
             result["duration"] = fixed_duration
             result.pop("seconds", None)
+        if normalized_mode == "video_extend":
+            metadata["ratio"] = "auto"
+            metadata.pop("aspect_ratio", None)
+            for key in ("ratio", "aspect_ratio", "size", "width", "height"):
+                result.pop(key, None)
+        if metadata:
+            result["metadata"] = metadata
+        else:
+            result.pop("metadata", None)
         return result
 
-    raw_metadata = result.get("metadata")
-    metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
     metadata["ratio"] = "auto"
     metadata.pop("aspect_ratio", None)
     result["metadata"] = metadata
@@ -390,6 +421,12 @@ def validate_media_model_catalog_config(
         raise MediaModelSchemaError(
             "media model config contains reserved fields: " + ", ".join(reserved_fields)
         )
+    from novelvideo.freezone.reference_validation import validate_reference_config
+
+    try:
+        validate_reference_config(config)
+    except ValueError as exc:
+        raise MediaModelSchemaError(str(exc)) from exc
     request_schema = validate_media_request_schema(config.get("request"))
     expected_endpoint = (
         "images/generations" if media_type == "image" else "video/generations"
@@ -526,12 +563,22 @@ def validate_media_model_catalog_config(
         video_limit = config.get("referenceVideoMax")
         configured_modes = set(modes or [])
         if (
-            type(video_limit) is int
-            and video_limit > 0
-            and not configured_modes.intersection({"all_reference", "video_edit"})
+            "video_extend" in configured_modes
+            and type(video_limit) is int
+            and video_limit == 0
         ):
             raise MediaModelSchemaError(
-                "referenceVideoMax requires all_reference or video_edit mode"
+                "video_extend requires referenceVideoMax to be omitted or at least 1"
+            )
+        if (
+            type(video_limit) is int
+            and video_limit > 0
+            and not configured_modes.intersection(
+                {"all_reference", "video_edit", "video_extend"}
+            )
+        ):
+            raise MediaModelSchemaError(
+                "referenceVideoMax requires all_reference, video_edit, or video_extend mode"
             )
         for field in ("referenceFileMax", "referenceLinkMax"):
             limit = config.get(field)

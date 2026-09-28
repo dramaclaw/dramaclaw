@@ -30,9 +30,16 @@ class _RenderRegenStore:
 
 
 def _client(monkeypatch, tmp_path):
+    from PIL import Image
     from novelvideo.api.routes import generation
 
     calls: list[dict] = []
+    sketch_dir = tmp_path / "sketches" / "ep002"
+    sketch_dir.mkdir(parents=True, exist_ok=True)
+    for beat_number in (1, 2, 3):
+        sketch_path = sketch_dir / f"beat_{beat_number:02d}.png"
+        if not sketch_path.exists():
+            Image.new("RGB", (2, 3)).save(sketch_path)
 
     async def fake_make_sqlite_store(username: str, project: str):
         assert username == "alice"
@@ -105,9 +112,16 @@ def _client(monkeypatch, tmp_path):
 
 
 def _client_with_real_detection_guard(monkeypatch, tmp_path, beats: list[dict]):
+    from PIL import Image
     from novelvideo.api.routes import generation
 
     calls: list[dict] = []
+    sketch_dir = tmp_path / "sketches" / "ep002"
+    sketch_dir.mkdir(parents=True, exist_ok=True)
+    for beat in beats:
+        Image.new("RGB", (2, 3)).save(
+            sketch_dir / f"beat_{beat['beat_number']:02d}.png"
+        )
     seen_character_map_beats: list[list[int]] = []
     store = _RenderRegenStore(beats)
 
@@ -201,6 +215,21 @@ def test_render_selected_regen_returns_scope_and_passes_render_settings(
     assert billing["pricing_kind"] == "image"
     assert billing["pricing_model"]
     assert billing["pricing_params"]
+
+
+def test_render_regen_rejects_missing_selected_sketch_before_enqueue(monkeypatch, tmp_path):
+    client, calls = _client(monkeypatch, tmp_path)
+    (tmp_path / "sketches" / "ep002" / "beat_02.png").unlink()
+
+    response = client.post(
+        "/api/v1/projects/demo/episodes/2/beats/regenerate",
+        json={"beat_indices": [1, 2], "mode_key": "1x1_2-3"},
+    )
+
+    assert response.status_code == 422
+    assert "#2" in response.json()["detail"]
+    assert "草图" in response.json()["detail"]
+    assert calls == []
 
 
 @pytest.mark.parametrize(

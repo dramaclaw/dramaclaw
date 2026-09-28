@@ -820,6 +820,33 @@ def run_global_optimize_video(
 register_project_task_runner("global_optimize_video", run_global_optimize_video)
 
 
+def _omni_video_edit_hint(payload: dict[str, Any], error: Exception) -> str | None:
+    mode = str(payload.get("gen_mode") or "").strip()
+    if mode not in {"all_reference", "allReference"}:
+        return None
+    if not any(
+        str(item.get("type") or "").lower() == "video"
+        for item in payload.get("reference_items") or []
+        if isinstance(item, dict)
+    ):
+        return None
+    message = str(error).lower().replace("`", "")
+    if not all(
+        marker in message
+        for marker in (
+            "seedance identified your task as video editing",
+            "ratio must be adaptive",
+            "duration must be -1",
+        )
+    ):
+        return None
+    return (
+        "Seedance 将该提示词判定为视频编辑，输出比例和时长需跟随源视频。"
+        "请改用「视频编辑」模式，或改写提示词以明确生成新视频。"
+        "用于编辑的源视频需为 4–30 秒。"
+    )
+
+
 async def _run_freezone_video_gen_async(
     envelope: dict[str, Any], ctx: ProjectContext
 ) -> dict[str, Any]:
@@ -881,13 +908,16 @@ async def _run_freezone_video_gen_async(
             **trusted_kwargs,
         )
     except Exception as exc:
+        user_hint = _omni_video_edit_hint(payload, exc)
         _append_freezone_video_node_history(
             ctx=ctx,
             project_dir=project_dir,
             payload=payload,
             job_id=job_id,
-            error=str(exc),
+            error=user_hint or str(exc),
         )
+        if user_hint:
+            raise RuntimeError(user_hint) from exc
         raise
 
     rel = out_path.relative_to(project_dir).as_posix()
