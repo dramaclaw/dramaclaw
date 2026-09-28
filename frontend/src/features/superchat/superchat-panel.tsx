@@ -3888,6 +3888,10 @@ function canvasCommandFeedbackHasFailure(feedback: CanvasCommandFeedback): boole
   return feedback.errors.length > 0 || (feedback.commandResults ?? []).some((step) => step.status !== "success");
 }
 
+function canvasCommandFeedbackHasPending(feedback: CanvasCommandFeedback): boolean {
+  return (feedback.commandResults ?? []).some((step) => step.status === "pending");
+}
+
 function canvasCommandFeedbackIsInvalidCommand(feedback: CanvasCommandFeedback): boolean {
   return (feedback.commandResults ?? []).some((step) => step.label === "画布命令无效");
 }
@@ -3916,6 +3920,7 @@ export const canvasContextActivityVisualToneForTest = canvasContextActivityVisua
 function canvasCommandFeedbackVisualTone(feedback: CanvasCommandFeedback): CanvasFeedbackVisualTone {
   const failed = canvasCommandFeedbackHasFailure(feedback);
   if (!failed) return "success";
+  if (canvasCommandFeedbackHasPending(feedback)) return "warning";
   if (canvasCommandFeedbackIsUserCancelled(feedback)) return "muted";
   if (canvasCommandFeedbackIsTimeoutCancelled(feedback)) return "warning";
   return canvasCommandFeedbackIsValidationOnly(feedback) ? "muted" : "destructive";
@@ -3928,6 +3933,7 @@ function canvasCommandFeedbackCompactTitle(feedback: CanvasCommandFeedback): str
   const firstPlan = feedback.plans?.[0];
   if (canvasCommandFeedbackIsTimeoutCancelled(feedback)) return "画布操作已过期";
   if (firstFailedStep?.label === "已取消" || canvasCommandFeedbackIsUserCancelled(feedback)) return "画布操作已取消";
+  if (canvasCommandFeedbackHasPending(feedback)) return "产物待同步";
   if (firstPlan?.type === "run_node_action" && firstPlan.label.includes("生成图片")) return "生成图片失败";
   if (firstPlan?.type === "run_node_action" && firstPlan.label.includes("生成视频")) return "生成视频失败";
   if (firstFailedStep?.label) return firstFailedStep.label;
@@ -3975,6 +3981,7 @@ function CanvasCommandFeedbackCard({
   const successfulCount = feedback.applied + feedback.openedUiActions;
   if (steps.length === 0 && successfulCount === 0 && feedback.errors.length === 0) return null;
   const failed = canvasCommandFeedbackHasFailure(feedback);
+  const pending = canvasCommandFeedbackHasPending(feedback);
   const invalidCommand = canvasCommandFeedbackIsInvalidCommand(feedback);
   const visualTone = canvasCommandFeedbackVisualTone(feedback);
   const mutedFailure = failed && visualTone === "muted";
@@ -3992,7 +3999,9 @@ function CanvasCommandFeedbackCard({
           defaultValue: "画布操作已手动取消，没有应用到画布。",
         })
       : null;
-  const userFailureMessage = failed
+  const userFailureMessage = pending
+    ? "工作流已完成，画布节点产物待同步；请稍后刷新画布查看结果。"
+    : failed
     ? cancellationMessage ?? canvasCommandUserMessageFromResult(
         feedback.errors,
         feedback.commandResults.map((step) => ({ error: step.error })),
@@ -4044,7 +4053,7 @@ function CanvasCommandFeedbackCard({
         {(initiallyCompact || collapseSuccessfulDetails) && (
           <button type="button" onClick={() => setExpanded(false)} className="ml-auto rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-white/[0.06] hover:text-foreground">收起</button>
         )}
-        {successfulCount > 0 && <span className={cn("text-[11px] text-muted-foreground", !initiallyCompact && "ml-auto")}>已执行 {successfulCount} 项</span>}
+        {successfulCount > 0 && !pending && <span className={cn("text-[11px] text-muted-foreground", !initiallyCompact && "ml-auto")}>已执行 {successfulCount} 项</span>}
       </div>
       {expanded && <CanvasCommandPlanList plans={feedback.plans} />}
       <div className="space-y-1 px-3 py-2">

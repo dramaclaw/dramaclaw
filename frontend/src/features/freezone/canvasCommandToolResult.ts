@@ -5,7 +5,12 @@ import {
 } from "@/features/freezone/canvasCommandUserMessages";
 import { api } from "@/lib/api";
 
-type CanvasApplyStatus = "accepted" | "applied" | "partially_applied" | "failed" | "cancelled_by_user";
+type CanvasApplyStatus = "accepted" | "applied" | "pending" | "partially_applied" | "failed" | "cancelled_by_user";
+
+const WORKFLOW_RESULT_SYNC_PENDING_MESSAGE = "工作流已完成，画布节点产物待同步；请稍后刷新画布查看结果。";
+const WORKFLOW_RESULT_SYNC_PENDING_HINT =
+  "The server workflow completed, but the canvas node output is not visible yet. " +
+  "Do not claim the artifact is ready. Do not rerun generation. Ask the user to wait and refresh the canvas.";
 
 export const FREEZONE_CANVAS_COMMAND_TOOL_RESULT_EVENT = "freezone/canvas-command-tool-result";
 const CANVAS_COMMAND_RECEIPTS_STORAGE_KEY = "dramaclaw.canvas-command-receipts.v1";
@@ -121,6 +126,7 @@ function canvasApplyStatusFromResult(result: CanvasChatCommandApplyResult): Canv
   const errorCount = result.commandResults.filter((step) => step.status === "error").length;
   if (successCount > 0 && errorCount > 0) return "partially_applied";
   if (errorCount > 0 || result.errors.length > 0) return "failed";
+  if (result.commandResults.some((step) => step.status === "pending")) return "pending";
   return "applied";
 }
 
@@ -194,6 +200,8 @@ function buildCanvasCommandToolResultPayload({
     ? undefined
     : cancelled
     ? "画布操作已取消，没有应用到画布。"
+    : canvasApplyStatus === "pending"
+      ? WORKFLOW_RESULT_SYNC_PENDING_MESSAGE
     : canvasApplyStatus === "failed"
       ? canvasCommandUserMessageFromResult(result?.errors, result?.commandResults)
       : undefined;
@@ -201,6 +209,8 @@ function buildCanvasCommandToolResultPayload({
     ? "The canvas command has been submitted to the canvas. Reply briefly that it has been submitted; do not say a tool was opened or ask the user to operate it manually."
     : cancelled
     ? "Do not claim the canvas change was applied; ask the user before retrying."
+    : canvasApplyStatus === "pending"
+      ? WORKFLOW_RESULT_SYNC_PENDING_HINT
     : canvasApplyStatus === "failed"
       ? canvasCommandAgentHintFromResult(result?.errors, result?.commandResults)
       : undefined;
@@ -215,7 +225,7 @@ function buildCanvasCommandToolResultPayload({
     agent_id: agentId ?? null,
     tool_call_status: cancelled ? "cancelled" : canvasApplyStatus === "failed" ? "failed" : "completed",
     canvas_apply_status: canvasApplyStatus,
-    applied: accepted || (!cancelled && !workflowFailed
+    applied: accepted || (!cancelled && !workflowFailed && canvasApplyStatus !== "pending"
       && Boolean(result && (result.applied > 0 || result.openedUiActions > 0))),
     cancelled,
     errors: result?.errors ?? [],
@@ -227,6 +237,8 @@ function buildCanvasCommandToolResultPayload({
       ? "Canvas command was submitted to the canvas."
       : cancelled
       ? "画布操作已取消，没有应用到画布。"
+      : canvasApplyStatus === "pending"
+        ? WORKFLOW_RESULT_SYNC_PENDING_MESSAGE
       : canvasApplyStatus === "failed"
         ? userMessage ?? "画布操作没有完成，我会换一种方式再试。"
         : "Frontend executor reported the canvas command result.",

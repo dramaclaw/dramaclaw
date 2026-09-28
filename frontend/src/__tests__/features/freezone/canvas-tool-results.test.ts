@@ -69,6 +69,42 @@ describe("Freezone canvas tool result reporting", () => {
     });
   });
 
+  it("reports a completed run with an unsynced canvas artifact as pending", () => {
+    reportCanvasCommandToolResult({
+      bridgeKey: "bridge-unsynced",
+      turnId: "turn-a",
+      projectId: "project-a",
+      canvasId: "canvas-a",
+      result: {
+        applied: 1,
+        openedUiActions: 0,
+        createdNodeIds: [],
+        errors: [],
+        commandResults: [
+          { commandIndex: 0, type: "run_workflow", status: "success", label: "运行工作流" },
+          {
+            commandIndex: 0,
+            type: "run_node_action",
+            status: "pending",
+            label: "生成图片（产物待同步）",
+            nodeId: "image-a",
+            action: "generate_image",
+          },
+        ],
+      },
+    });
+
+    expect(api.post).toHaveBeenCalledWith("api/v1/chat/canvas-command-tool-result", {
+      json: expect.objectContaining({
+        canvas_apply_status: "pending",
+        applied: false,
+        message: expect.stringContaining("待同步"),
+        agent_hint: expect.stringContaining("Do not rerun generation"),
+      }),
+      timeout: 30_000,
+    });
+  });
+
   it("reports canvas context results with the originating agent id", () => {
     reportCanvasContextToolResult({
       bridgeKey: "bridge-a",

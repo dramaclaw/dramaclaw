@@ -221,7 +221,7 @@ export type CanvasChatCommandApplyResult = {
 export type CanvasChatCommandApplyStep = {
   commandIndex: number;
   type: CanvasChatCommand["type"] | "validate";
-  status: "success" | "error";
+  status: "success" | "pending" | "error";
   label: string;
   nodeId?: string;
   action?: string;
@@ -3117,6 +3117,26 @@ async function executeQueuedNodeActions(
     }
     const generationActions = pendingActions.filter((action) =>
       GENERATION_NODE_ACTIONS.has(action.action));
+    const completedServerActionOutcome = (action: PendingNodeAction, retryCount: number) => {
+      const output = generatedResultOutputFromNode(action.nodeId, action.action);
+      if (
+        action.action !== "run_skill" &&
+        GENERATION_NODE_ACTIONS.has(action.action) &&
+        (!hasGeneratedResult(action.nodeId, action.action) || !output)
+      ) {
+        return { action, failed: null, pending: true, retryCount };
+      }
+      return {
+        action,
+        failed: null,
+        output: {
+          skipped: true,
+          reason: "workflow_run_already_completed",
+          ...(output ?? {}),
+        },
+        retryCount,
+      };
+    };
     const generationCountByLane = generationActions.reduce<Record<WorkflowActionLane, number>>(
       (counts, action) => {
         const lane = workflowActionLane(action.action);
@@ -3274,12 +3294,7 @@ async function executeQueuedNodeActions(
               );
               if (!capacityReady) {
                 if (workflowServerCompleted) {
-                  return {
-                    action,
-                    failed: null,
-                    output: { skipped: true, reason: "workflow_run_already_completed" },
-                    retryCount,
-                  };
+                  return completedServerActionOutcome(action, retryCount);
                 }
                 return {
                   action,
@@ -3308,12 +3323,7 @@ async function executeQueuedNodeActions(
             }]);
 
             if (workflowServerCompleted) {
-              return {
-                action,
-                failed: null,
-                output: { skipped: true, reason: "workflow_run_already_completed" },
-                retryCount,
-              };
+              return completedServerActionOutcome(action, retryCount);
             }
 
             if (action.action === "generate_html") {
@@ -3348,12 +3358,7 @@ async function executeQueuedNodeActions(
             // failed confirmation is not a confirmation, so it blocks dispatch too.
             await confirmWorkflowRunActive();
             if (workflowServerCompleted) {
-              return {
-                action,
-                failed: null,
-                output: { skipped: true, reason: "workflow_run_already_completed" },
-                retryCount,
-              };
+              return completedServerActionOutcome(action, retryCount);
             }
             if (workflowLeaseLost || workflowPersistenceError || workflowCancelled()) {
               return {
@@ -3607,24 +3612,39 @@ async function executeQueuedNodeActions(
           releaseActionSlot();
         }
         })();
-        await persistRunUpdate([{
-          node_id: settled.action.nodeId,
-          action: settled.action.action,
-          status: settled.failed
-            ? settled.failed === WORKFLOW_STOPPED_MESSAGE
-              ? "skipped"
-              : settled.failed.startsWith("跳过 ") ? "blocked" : "failed"
-            : isRecord(settled.output) && settled.output.skipped === true
-              ? "skipped"
-              : "completed",
-          ...(settled.failed ? { error: settled.failed } : {}),
-          retry_count: settled.retryCount ?? 0,
-          ...workflowTaskReference(settled.output),
-        }]);
+        if (!("pending" in settled && settled.pending)) {
+          await persistRunUpdate([{
+            node_id: settled.action.nodeId,
+            action: settled.action.action,
+            status: settled.failed
+              ? settled.failed === WORKFLOW_STOPPED_MESSAGE
+                ? "skipped"
+                : settled.failed.startsWith("跳过 ") ? "blocked" : "failed"
+              : isRecord(settled.output) && settled.output.skipped === true
+                ? "skipped"
+                : "completed",
+            ...(settled.failed ? { error: settled.failed } : {}),
+            retry_count: settled.retryCount ?? 0,
+            ...workflowTaskReference(settled.output),
+          }]);
+        }
         return settled;
       }));
 
-      for (const { action, failed, output } of levelResults) {
+      for (const settled of levelResults) {
+        const { action, failed, output } = settled;
+        if ("pending" in settled && settled.pending) {
+          result.commandResults.push({
+            commandIndex: action.commandIndex,
+            type: "run_node_action",
+            status: "pending",
+            label: `${action.label}（产物待同步）`,
+            nodeId: action.nodeId,
+            action: action.action,
+            output: { pending: true, reason: "workflow_result_sync_pending" },
+          });
+          continue;
+        }
         if (failed === WORKFLOW_STOPPED_MESSAGE) {
           runCancelled = true;
           continue;
