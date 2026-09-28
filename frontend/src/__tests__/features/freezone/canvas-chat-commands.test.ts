@@ -7149,6 +7149,75 @@ describe("canvas chat commands", () => {
     }
   });
 
+  it("does not dispatch a video when the run ends while its tail frame is captured", async () => {
+    const store = useCanvasStore.getState();
+    const firstVideoId = store.addNode(
+      CANVAS_NODE_TYPES.video,
+      { x: 0, y: 0 },
+      { prompt: "镜头 1", durationMs: 8000, videoUrl: "/static/project/shot-1.mp4" },
+    );
+    const secondVideoId = store.addNode(
+      CANVAS_NODE_TYPES.video,
+      { x: 360, y: 0 },
+      { prompt: "镜头 2" },
+    );
+    store.addEdgeWithData(firstVideoId, secondVideoId, {
+      link_type: "dependency_for",
+    });
+    const events: string[] = [];
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      events.push(payload.nodeId);
+    });
+    // Issue #730 review: the heartbeat observes the interrupted run during the
+    // tail-frame await that follows the "preparing" update.
+    captureVideoFrameBlob.mockImplementationOnce(async () => {
+      vi.mocked(updateFreezoneWorkflowRun).mockImplementation(async (
+        _projectId,
+        _canvasId,
+        _runId,
+        body,
+      ) => ({
+        run_id: "run-test",
+        status: body.status && body.status !== "running" ? body.status : "interrupted",
+        actions: [],
+      }) as unknown as Awaited<ReturnType<typeof updateFreezoneWorkflowRun>>);
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.waitFor(() => {
+        expect(updateFreezoneWorkflowRun).toHaveBeenCalledWith(
+          "project-a",
+          "canvas-a",
+          "run-test",
+          { status: "running", runner_id: expect.stringMatching(/^canvas-runner:/) },
+        );
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return new Blob(["tail"], { type: "image/png" });
+    });
+
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_workflow", node_ids: [secondVideoId], direction: "node" }],
+        }]),
+        { projectId: "project-a", canvasId: "canvas-a", actionTimeoutMs: 100 },
+      );
+
+      expect(captureVideoFrameBlob).toHaveBeenCalled();
+      expect(events).toEqual([]);
+      expect(result.errors).toContain(
+        "工作流运行已结束（interrupted），已停止启动后续节点；请继续工作流以完成未完成的部分。",
+      );
+    } finally {
+      unsubscribe();
+      vi.mocked(updateFreezoneWorkflowRun).mockImplementation(async () => ({
+        run_id: "run-test",
+        status: "running",
+        actions: [],
+      }) as unknown as Awaited<ReturnType<typeof updateFreezoneWorkflowRun>>);
+    }
+  });
+
   it("waits through non-generating intermediate nodes when following workflow edges", async () => {
     const store = useCanvasStore.getState();
     const imageNodeId = store.addNode(

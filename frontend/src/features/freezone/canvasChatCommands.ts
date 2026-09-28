@@ -518,6 +518,12 @@ const WORKFLOW_ACTION_CONCURRENCY = 3;
 const WORKFLOW_ACTION_MAX_RETRIES = 2;
 const WORKFLOW_STOPPED_MESSAGE = "工作流已停止，未启动后续节点。";
 const WORKFLOW_LEASE_LOST_MESSAGE = "工作流执行租约已失效，已停止启动后续节点。"; // i18n-exempt
+const TERMINAL_WORKFLOW_RUN_STATUSES = new Set<string>([
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+]);
 const workflowRunEndedMessage = (status: string) =>
   `工作流运行已结束（${status}），已停止启动后续节点；请继续工作流以完成未完成的部分。`; // i18n-exempt
 const workflowPersistenceFailureMessage = (error: unknown) =>
@@ -2841,7 +2847,7 @@ async function executeQueuedNodeActions(
     // runner must read the status back instead of treating 200 as a renewed
     // lease (issue #730).
     const observeWorkflowRunStatus = (run: FreezoneWorkflowRun) => {
-      if (run.status === "running") return;
+      if (!TERMINAL_WORKFLOW_RUN_STATUSES.has(run.status)) return;
       workflowLeaseLost = true;
       workflowPersistenceError = workflowRunEndedMessage(run.status);
     };
@@ -3304,6 +3310,18 @@ async function executeQueuedNodeActions(
               return {
                 action,
           failed: "旁白节点缺少上游生成的文本，已停止提交 TTS 请求；请先完成剧本/Beat 文本生成后重试。", // i18n-exempt -- workflow error payload
+                retryCount,
+              };
+            }
+
+            // Tail-frame capture and input hydration await; a heartbeat may have
+            // seen the run end meanwhile, so re-check right before dispatch.
+            if (workflowLeaseLost || workflowCancelled()) {
+              return {
+                action,
+                failed: workflowCancelled()
+                  ? WORKFLOW_STOPPED_MESSAGE
+                  : workflowPersistenceError ?? WORKFLOW_LEASE_LOST_MESSAGE,
                 retryCount,
               };
             }
