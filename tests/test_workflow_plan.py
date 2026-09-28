@@ -415,6 +415,44 @@ def test_text_to_image_video_standard_plan_feeds_outline_into_each_image(monkeyp
     assert catalog.skill_stage_blockers("text-to-image-video", plan["nodes"], plan["edges"]) == []
 
 
+def test_ecommerce_standard_plan_feeds_creative_outline_into_product_reference(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    result = catalog.compile_workflow_intent(
+        {
+            "skill_id": "ecommerce-ad",
+            "user_goal": "规划一条商品广告，再生成参考图、场景图和视频",
+            "planner": {"mode": "standard", "item_count": 1},
+            "include_audio": False,
+        }
+    )
+
+    assert result["ok"] is True, result
+    plan = result["plan"]
+    edges = {
+        (edge["source"], edge["target"]): edge["link_type"]
+        for edge in plan["edges"]
+    }
+    assert edges[("creative_outline", "product_reference")] == "prompt_for"
+    product_reference = next(node for node in plan["nodes"] if node["id"] == "product_reference")
+    assert product_reference["data"]["workflowCatalog"]["promptBuilder"]["planItem"][
+        "reference_inputs"
+    ] == ["creative_outline"]
+    assert catalog.skill_stage_blockers("ecommerce-ad", plan["nodes"], plan["edges"]) == []
+
+    order_only = copy.deepcopy(plan)
+    next(
+        edge for edge in order_only["edges"]
+        if edge["source"] == "creative_outline" and edge["target"] == "product_reference"
+    )["link_type"] = "dependency_for"
+    assert any(
+        blocker["code"] == "skill_stage_unused"
+        for blocker in catalog.skill_stage_blockers(
+            "ecommerce-ad", order_only["nodes"], order_only["edges"]
+        )
+    )
+
+
 def _raw_plan_from_standard(catalog, intent: dict, *, deviate: bool = True) -> dict:
     """A raw plan derived from the standard planner output.
 

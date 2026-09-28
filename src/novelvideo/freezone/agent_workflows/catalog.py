@@ -200,7 +200,7 @@ _DETERMINISTIC_SKILL_PLANNERS = {
             _stage("video", "videoNode", ["video-clip-generation"], required=False),
             _stage("audio", "audioNode", ["general-audio"], required=False),
         ],
-        "edges": [["assets", "images"], ["images", "video"]],
+        "edges": [["planning", "assets"], ["assets", "images"], ["images", "video"]],
     },
     "text-to-image-video": {
         "default_item_count": 3,
@@ -1925,6 +1925,7 @@ def _standard_skill_items(
                 prompt=f"{user_goal}，生成稳定一致的商品主体参考图",
                 recipe_id="general-image",
                 depends_on=["creative_outline"],
+                reference_inputs=["creative_outline"],
                 stage="assets",
             )
         )
