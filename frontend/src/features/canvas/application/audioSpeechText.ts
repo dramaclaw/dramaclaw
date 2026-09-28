@@ -53,6 +53,8 @@ const PLAIN_SPEECH_FIELD =
   /^\s*(?:[-*#]\s*)?(?:旁白|对白|台词|解说|narration|voiceover)\s*[:：]\s*(.*)$/i;
 const PLAIN_FIELD_LINE =
   /^\s*(?:[-*#]\s*)?([^，。！？,!?;；:：\n]{1,24})\s*[:：]\s*.*$/;
+const PRODUCTION_FIELD_HINT =
+  /(?:bgm|sfx|audio|voice|tone|emotion|pace|speed|language|duration|style|instruction|音色|声音|声线|情绪|节奏|语气|语速|语言|时长|持续时间|制作|风格|音频|音效|配乐|环境音|负向|约束|音量|口音|重音|停顿|发音|说话人)/i;
 const TRAILING_CONTROL_FIELD =
   /[。；;]\s*(?:时长|持续时间|情绪|节奏|语气|语速|语言|声音质感|是否纯音乐|内容约束|音频类型|负向约束)\s*[:：]/i;
 // i18n-exempt-end
@@ -133,7 +135,9 @@ function normalizeLabel(value: string): string {
 
 function isProductionFieldLine(value: string): boolean {
   const field = value.match(PLAIN_FIELD_LINE);
-  return field ? NON_SPEECH_LABELS.has(normalizeLabel(field[1])) : false;
+  if (!field) return false;
+  const label = normalizeLabel(field[1]);
+  return NON_SPEECH_LABELS.has(label) || PRODUCTION_FIELD_HINT.test(label);
 }
 
 function cleanSpeakableLine(value: string): string {
@@ -245,10 +249,7 @@ export function extractExplicitSpeakableAudioText(value: string): string {
       section = 'skip';
       continue;
     }
-    if (
-      isProductionFieldLine(line)
-      || (section === 'speech' && PLAIN_FIELD_LINE.test(line))
-    ) {
+    if (isProductionFieldLine(line)) {
       section = 'skip';
       continue;
     }

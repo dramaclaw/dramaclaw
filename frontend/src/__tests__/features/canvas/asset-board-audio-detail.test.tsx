@@ -200,7 +200,7 @@ describe('AssetBoard 音频进主从详情', () => {
 
   it('general-audio 正常编译后只提交标记的朗读正文', async () => {
     vi.mocked(compileFreezoneRecipePrompt).mockImplementation(async (payload) => {
-      const prompt = '朗读文本：欢迎使用。\n音色描述：温柔女声';
+      const prompt = '朗读文本：\n欢迎使用。\n他说：快跑。\n音色描述：温柔女声';
       payload.onCompileMetadata?.({
         mode: 'model',
         prompt,
@@ -225,8 +225,8 @@ describe('AssetBoard 音频进主从详情', () => {
 
     await waitFor(() => expect(submitFreezoneAudioSpeech).toHaveBeenCalled());
     const [, payload] = vi.mocked(submitFreezoneAudioSpeech).mock.calls[0];
-    expect(payload.text).toBe('欢迎使用。');
-    expect(useCanvasStore.getState().nodes[0]?.data.text).toBe('欢迎使用。');
+    expect(payload.text).toBe('欢迎使用。\n\n他说：快跑。');
+    expect(useCanvasStore.getState().nodes[0]?.data.text).toBe('欢迎使用。\n\n他说：快跑。');
   });
 
   it('drama-shot-voice 正常编译后提交带中文冒号的纯正文', async () => {
