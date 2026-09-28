@@ -393,6 +393,28 @@ def test_standard_skill_planners_expand_without_agent_authored_topology(monkeypa
         assert catalog.validate_agent_workflow_plan(plan)["ok"] is True
 
 
+def test_text_to_image_video_standard_plan_feeds_outline_into_each_image(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    result = catalog.compile_workflow_intent(
+        {
+            "skill_id": "text-to-image-video",
+            "user_goal": "先规划两幅画面，再依次生成图片和视频",
+            "planner": {"mode": "standard", "item_count": 2},
+        }
+    )
+
+    assert result["ok"] is True, result
+    plan = result["plan"]
+    edges = {
+        (edge["source"], edge["target"]): edge["link_type"]
+        for edge in plan["edges"]
+    }
+    assert edges[("outline", "frame_1")] == "prompt_for"
+    assert edges[("outline", "frame_2")] == "prompt_for"
+    assert catalog.skill_stage_blockers("text-to-image-video", plan["nodes"], plan["edges"]) == []
+
+
 def _raw_plan_from_standard(catalog, intent: dict, *, deviate: bool = True) -> dict:
     """A raw plan derived from the standard planner output.
 
@@ -1235,7 +1257,8 @@ def test_intent_items_with_a_custom_recipe_stay_agent_authored(monkeypatch):
             {"id": "outline", "title": "大纲", "prompt": "赛博城市",
              "recipe_id": "video-creative-outline"},
             {"id": "frame_1", "title": "分镜格", "prompt": "霓虹街道",
-             "recipe_id": "video-storyboard-grid", "depends_on": ["outline"]},
+             "recipe_id": "video-storyboard-grid", "depends_on": ["outline"],
+             "reference_inputs": ["outline"]},
             {"id": "clip_1", "title": "镜头", "prompt": "霓虹街道",
              "recipe_id": "general-video", "depends_on": ["frame_1"], "duration_seconds": 5},
         ],
@@ -1759,10 +1782,18 @@ def test_skill_stage_blockers_tolerance():
     ]
     chain = [
         {"source": "brief", "target": "outline", "link_type": "context_for"},
-        {"source": "outline", "target": "frame", "link_type": "dependency_for"},
+        {"source": "outline", "target": "frame", "link_type": "prompt_for"},
         {"source": "frame", "target": "clip", "link_type": "media_input_for"},
     ]
     assert catalog.skill_stage_blockers("text-to-image-video", ok_plan, chain) == []
+    planning_gate = chain[:1] + [
+        {"source": "outline", "target": "frame", "link_type": "dependency_for"},
+        chain[2],
+    ]
+    assert [
+        (b["code"], b["stage"], b["downstream_stage"])
+        for b in catalog.skill_stage_blockers("text-to-image-video", ok_plan, planning_gate)
+    ] == [("skill_stage_unused", "planning", "images")]
     # A clip that only waits for the frame (dependency_for) does not consume it.
     gated = chain[:2] + [{"source": "frame", "target": "clip", "link_type": "dependency_for"}]
     assert [
@@ -1776,8 +1807,9 @@ def test_skill_stage_blockers_tolerance():
         {"source": "extra", "target": "clip", "link_type": "media_input_for"},
     ]
     assert catalog.skill_stage_blockers("text-to-image-video", extra, via_extra) == []
-    # Without edges at all the feeding pair is unmet and reported once.
+    # Without edges, both required feeding pairs are unmet.
     assert [b["path"] for b in catalog.skill_stage_blockers("text-to-image-video", ok_plan)] == [
+        "plan.stages.planning.feeds.images",
         "plan.stages.images.feeds.video",
     ]
     # Only user material of the text kind: the planning stage is still missing.
