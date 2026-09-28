@@ -77,7 +77,9 @@ order) stays an agent-authored draft with the difference recorded in
    whose task brief says it uses, follows, continues, adapts, or is based on actual upstream output
    must not use dependency_for for that input. Use `context_for` when a text node consumes upstream
    text as context, `prompt_for` when an image/video/audio/HTML or compatible text step consumes
-   upstream text, and `media_input_for` when a target consumes upstream image/video/audio. Before
+   upstream text, and `media_input_for` when a target consumes upstream image/video/audio. In
+   particular, `textAnnotationNode`/`scriptNode` → `audioNode` must use `prompt_for`, never
+   `context_for`. Before
    submission, self-check every claimed upstream input against a consuming edge; preserve
    dependency_for only for a genuine wait where the target remains independent of the source
    output.

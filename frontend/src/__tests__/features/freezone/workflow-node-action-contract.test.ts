@@ -65,12 +65,24 @@ describe("dynamic workflow node action contract", () => {
     expect(source).toContain("workflowRecipeCompiledPrompt: compiledPrompt");
   });
 
+  it("compiles catalog-backed speech workflow prompts before TTS submission", () => {
+    const source = readSource("src/features/canvas/nodes/useAudioGeneration.ts");
+    const speechTextSource = readSource("src/features/canvas/application/audioSpeechText.ts");
+    const compile = source.indexOf("const compiledPrompt = await compileWorkflowNodePrompt");
+    const submitSpeech = source.indexOf("submitFreezoneAudioSpeech(project");
+
+    expect(compile).toBeGreaterThan(-1);
+    expect(submitSpeech).toBeGreaterThan(compile);
+    expect(source).toContain("resolveSafeSpeechSubmissionText");
+    expect(speechTextSource).toContain("compileMode === 'timeout_fallback'");
+    expect(speechTextSource).toContain("extractExplicitSpeakableAudioText(compiledPrompt)");
+  });
+
   it.each([
     ["image generation", "src/features/canvas/nodes/shared/useImageGenerationForm.ts", "prompt"],
     ["image edit", "src/features/canvas/nodes/ImageEditNode.tsx", "prompt"],
     ["video generation", "src/features/canvas/nodes/shared/useVideoGenerationForm.ts", "prompt"],
     ["canvas video generation", "src/features/canvas/nodes/VideoNode.tsx", "prompt"],
-    ["audio generation", "src/features/canvas/nodes/useAudioGeneration.ts", "text"],
   ])("persists compiled workflow prompts back to %s node prompts", (_label, path, field) => {
     const source = readSource(path);
 
@@ -78,5 +90,13 @@ describe("dynamic workflow node action contract", () => {
     expect(source).toMatch(
       new RegExp(`workflowRecipeCompiledPrompt:\\s*compiledPrompt,\\s*\\n\\s*${field}:\\s*compiledPrompt`),
     );
+  });
+
+  it("does not persist timeout fallback production instructions as speech text", () => {
+    const source = readSource("src/features/canvas/nodes/useAudioGeneration.ts");
+
+    expect(source).toContain("workflowRecipeCompiledPrompt: compiledPrompt");
+    expect(source).toContain("text: persistedPrompt");
+    expect(source).toContain("safeFallbackPrompt: speechFallbackPrompt");
   });
 });

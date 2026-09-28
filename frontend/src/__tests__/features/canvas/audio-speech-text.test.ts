@@ -3,10 +3,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  extractExplicitSpeakableAudioText,
   extractSpeakableAudioText,
   isSpeechGenerationInstruction,
   resolveAudioKind,
   resolveMusicLengthMs,
+  resolveSafeSpeechSubmissionText,
 } from '@/features/canvas/application/audioSpeechText';
 
 describe('extractSpeakableAudioText', () => {
@@ -65,6 +67,48 @@ describe('extractSpeakableAudioText', () => {
   it('rejects workflow narration placeholders instead of speaking them literally', () => {
     expect(extractSpeakableAudioText('这是短剧的第一段旁白')).toBe('');
     expect(extractSpeakableAudioText('This is the second narration')).toBe('');
+  });
+
+  it('uses only the pre-filtered narration when Recipe compilation times out', () => {
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'timeout_fallback',
+      compiledPrompt: '你是短剧配音导演。请根据脚本生成旁白。\n\n真正的旁白。',
+      safeFallbackPrompt: '真正的旁白。',
+    })).toBe('真正的旁白。');
+  });
+
+  it('stops timeout fallback submission when no safe narration exists', () => {
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'timeout_fallback',
+      compiledPrompt: '你是短剧配音导演。请根据脚本生成旁白。',
+      safeFallbackPrompt: '',
+    })).toBe('');
+  });
+
+  it('uses a successful Recipe compilation result for speech', () => {
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'model',
+      compiledPrompt: '【旁白】编译后的安全旁白。',
+      safeFallbackPrompt: '原始旁白。',
+    })).toBe('编译后的安全旁白。');
+  });
+
+  it('extracts only explicitly labelled speech from a general-audio production brief', () => {
+    const compiled = '女声普通话旁白，情绪温柔，时长 3 秒。朗读文本：欢迎使用。';
+    expect(extractExplicitSpeakableAudioText(compiled)).toBe('欢迎使用。');
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'model',
+      compiledPrompt: compiled,
+      safeFallbackPrompt: '原始文本。',
+    })).toBe('欢迎使用。');
+  });
+
+  it('falls back to source speech when a model result has no explicit speech field', () => {
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'model',
+      compiledPrompt: '女声普通话旁白，情绪温柔，时长 3 秒。',
+      safeFallbackPrompt: '欢迎使用。',
+    })).toBe('欢迎使用。');
   });
 
   it('sets BGM one second longer than the requested video duration', () => {

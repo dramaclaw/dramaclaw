@@ -340,10 +340,29 @@ def validate_workflow_plan(
             if role_error:
                 errors.append(_issue(path, role_error))
             if not _link_allowed(link_type, node_types[source], node_types[target]):
+                compatible_link_types = _compatible_link_types(
+                    node_types[source], node_types[target]
+                )
+                compatibility_hint = (
+                    f"; allowed link types: {', '.join(compatible_link_types)}"
+                    if compatible_link_types
+                    else ""
+                )
+                if (
+                    _OBJECT_TYPE_BY_NODE_TYPE.get(node_types[source])
+                    in {"TextNode", "ScriptNode"}
+                    and node_types[target] == "audioNode"
+                    and "prompt_for" in compatible_link_types
+                ):
+                    compatibility_hint += (
+                        "; use prompt_for when the audio node consumes the source text"
+                    )
                 errors.append(
                     _issue(
                         path,
-                        f"{link_type} is incompatible with {node_types[source]} -> {node_types[target]}",
+                        f"{link_type} is incompatible with "
+                        f"{node_types[source]} -> {node_types[target]}"
+                        f"{compatibility_hint}",
                     )
                 )
             else:
@@ -879,6 +898,14 @@ def _link_allowed(link_type: str, source_type: str, target_type: str) -> bool:
     return (
         _OBJECT_TYPE_BY_NODE_TYPE.get(source_type) in source_objects
         and _OBJECT_TYPE_BY_NODE_TYPE.get(target_type) in target_objects
+    )
+
+
+def _compatible_link_types(source_type: str, target_type: str) -> list[str]:
+    return sorted(
+        link_type
+        for link_type in ALLOWED_LINK_TYPES
+        if _link_allowed(link_type, source_type, target_type)
     )
 
 

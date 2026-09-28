@@ -4355,6 +4355,9 @@ def test_freezone_prompt_allows_creative_ideation_canvas_framework_without_mainl
     assert "command catalog" in prompt
     assert "node create schema" in prompt
     assert "link type catalog" in prompt
+    assert (
+        "feeding an audioNode must\n  use prompt_for, never context_for" in prompt
+    )
     assert "call a Freezone write tool" in prompt
     assert "first assistant output MUST be that" in prompt
     assert "Skill/catalog reads required by the next rule" in prompt

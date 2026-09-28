@@ -11,7 +11,8 @@
   compile the corrected complete Plan once. Do not ask the user to describe this internal topology.
 - Incompatible edge type: read `freezone_get_link_type_catalog` once and select a listed type for the
   exact source/target node kinds. Do not guess alternatives through repeated compiler calls. A
-  successful recovery compile is not completion: immediately submit the exact same corrected Plan to
+  text/script node feeding an audio node uses `prompt_for`, never `context_for`. Successful recovery
+  compilation is not completion: immediately submit the exact same corrected Plan to
   `freezone_prepare_workflow_plan_draft`.
 - Revision conflict: call `freezone_get_workflow`, inspect the updated preview and requested changes,
   and obtain authorization for the resulting revision before confirmation. Never silently adopt a

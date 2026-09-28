@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 
+// i18n-exempt-start -- parser protocol vocabulary, never rendered as UI copy
 const NON_SPEECH_LABELS = new Set([
   'bgm',
   'sfx',
@@ -18,11 +19,22 @@ const NON_SPEECH_LABELS = new Set([
   '音效',
   '语气',
   '语速',
+  '语言',
+  '声音质感',
+  '是否纯音乐',
+  '内容约束',
 ]);
 
 const BRACKETED_LABEL = /^\s*[【\[]\s*([^】\]]+?)\s*[】\]]\s*(.*)$/;
 const CONTROL_LINE =
-  /^\s*(?:[-*#]\s*)?(?:目标)?(?:时长|持续时间|情绪|节奏|语气|语速|音频类型|负向约束)\s*[:：]\s*.*$/i;
+  /^\s*(?:[-*#]\s*)?(?:目标)?(?:时长|持续时间|情绪|节奏|语气|语速|语言|声音质感|是否纯音乐|内容约束|音频类型|负向约束)\s*[:：]\s*.*$/i;
+const STRONG_SPEECH_FIELD =
+  /(?:【|\[)?(?:朗读文本|配音文本|旁白文本|对白文本|台词文本|narration\s+text|voiceover\s+text|speech\s+text)(?:】|\])?\s*[:：]\s*/i;
+const PLAIN_SPEECH_FIELD =
+  /^\s*(?:[-*#]\s*)?(?:旁白|对白|台词|解说|narration|voiceover)\s*[:：]\s*(.*)$/i;
+const TRAILING_CONTROL_FIELD =
+  /[。；;]\s*(?:时长|持续时间|情绪|节奏|语气|语速|语言|声音质感|是否纯音乐|内容约束|音频类型|负向约束)\s*[:：]/i;
+// i18n-exempt-end
 const BARE_DURATION = /^\s*\d+(?:\.\d+)?\s*(?:s|秒|seconds?)\s*$/i;
 const TIMELINE_PREFIX =
   /^\s*(?:\[\s*)?(?:(?:\d{1,2}:)?\d{1,2}(?:\.\d+)?)\s*(?:-|–|—|~|至|→)\s*(?:(?:\d{1,2}:)?\d{1,2}(?:\.\d+)?)\s*(?:s|秒)?(?:\s*\])?\s*[:：-]?\s*/i;
@@ -144,4 +156,89 @@ export function extractSpeakableAudioText(value: string): string {
   }
 
   return output.join('\n\n');
+}
+
+function cleanExplicitSpeech(value: string): string {
+  const controlIndex = value.search(TRAILING_CONTROL_FIELD);
+  const bounded = controlIndex >= 0 ? value.slice(0, controlIndex) : value;
+  return cleanSpeakableLine(bounded);
+}
+
+/**
+ * Extract only text that a compiled Recipe explicitly marks as speech.
+ * A successful audio Recipe may also return language, voice, emotion and
+ * duration controls on the same line; unlabelled compiler prose is therefore
+ * not safe to send to TTS.
+ */
+export function extractExplicitSpeakableAudioText(value: string): string {
+  const lines = String(value || '').split(/\r?\n/);
+  let section: 'speech' | 'skip' | null = null;
+  const output: string[] = [];
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    const strongField = line.match(STRONG_SPEECH_FIELD);
+    if (strongField?.index != null) {
+      section = 'speech';
+      const spoken = cleanExplicitSpeech(line.slice(strongField.index + strongField[0].length));
+      if (spoken) output.push(spoken);
+      continue;
+    }
+
+    const labelled = line.match(BRACKETED_LABEL);
+    if (labelled) {
+      const label = normalizeLabel(labelled[1]);
+      if (NON_SPEECH_LABELS.has(label)) {
+        section = 'skip';
+        continue;
+      }
+      section = 'speech';
+      const spoken = cleanExplicitSpeech(labelled[2]);
+      if (spoken && !CONTROL_LINE.test(spoken) && !BARE_DURATION.test(spoken)) {
+        output.push(spoken);
+      }
+      continue;
+    }
+
+    const plainField = line.match(PLAIN_SPEECH_FIELD);
+    if (plainField) {
+      section = 'speech';
+      const spoken = cleanExplicitSpeech(plainField[1]);
+      if (spoken) output.push(spoken);
+      continue;
+    }
+
+    if (CONTROL_LINE.test(line) || BARE_DURATION.test(line)) {
+      section = 'skip';
+      continue;
+    }
+    if (section === 'speech') {
+      const spoken = cleanExplicitSpeech(line);
+      if (spoken) output.push(spoken);
+    }
+  }
+
+  return output.join('\n\n');
+}
+
+/**
+ * A timeout fallback can contain Recipe production instructions. Never send
+ * that compiler output to TTS; use only the already-filtered source fallback.
+ */
+export function resolveSafeSpeechSubmissionText({
+  compileMode,
+  compiledPrompt,
+  safeFallbackPrompt,
+}: {
+  compileMode: string | null;
+  compiledPrompt: string;
+  safeFallbackPrompt: string;
+}): string {
+  if (compileMode === 'timeout_fallback') {
+    return extractSpeakableAudioText(safeFallbackPrompt);
+  }
+  return extractExplicitSpeakableAudioText(compiledPrompt)
+    || extractSpeakableAudioText(safeFallbackPrompt);
 }

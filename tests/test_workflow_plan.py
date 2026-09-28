@@ -3570,6 +3570,36 @@ def test_strict_workflow_plan_rejects_unknown_node_bad_edge_and_cycle():
     assert any("cycle" in error["message"] for error in result["errors"])
 
 
+def test_incompatible_text_to_audio_edge_reports_safe_replacement():
+    plan = _dynamic_plan()
+    plan["nodes"][1] = {
+        "id": "voiceover",
+        "node_type": "audioNode",
+        "stage": "audio",
+        "data": {
+            "audioKind": "speech",
+            "workflowCatalog": {"recipeId": "drama-shot-voice"},
+        },
+    }
+    plan["edges"][0] = {
+        "source": "brief",
+        "target": "voiceover",
+        "link_type": "context_for",
+    }
+
+    result = validate_workflow_plan(plan)
+
+    assert result["ok"] is False
+    assert result["errors"][0] == {
+        "path": "edges[0]",
+        "message": (
+            "context_for is incompatible with textAnnotationNode -> audioNode; "
+            "allowed link types: dependency_for, prompt_for; "
+            "use prompt_for when the audio node consumes the source text"
+        ),
+    }
+
+
 def test_catalog_validation_rejects_unknown_recipe_and_version_mismatch(monkeypatch):
     catalog = _load_catalog_module()
     _install_minimal_builtin_catalog(monkeypatch, catalog)

@@ -267,7 +267,9 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "types through repeated compiler calls. dependency_for only controls execution order and never "
     "consumes source output. A target that uses actual upstream output must not use dependency_for: "
     "use context_for for consumed text context, prompt_for for consumed text prompts, and "
-    "media_input_for for consumed media. Self-check every claimed upstream input before submission. "
+    "media_input_for for consumed media. A textAnnotationNode or scriptNode feeding an audioNode "
+    "must use prompt_for, never context_for. Self-check every claimed upstream input before "
+    "submission. "
     "Do not use workflow_graph_compile as routine preflight "
     "before the first graph write. After a recovery compile succeeds, immediately submit that exact "
     "corrected Plan with freezone_prepare_workflow_plan_draft instead of stopping at compile success. "
@@ -596,7 +598,8 @@ Canvas write contract:
   link types through repeated compiler calls. dependency_for only controls execution order and never
   consumes source output. A target that uses actual upstream output must not use dependency_for:
   use context_for for consumed text context, prompt_for for consumed text prompts, and
-  media_input_for for consumed media. Self-check every claimed upstream input before submission.
+  media_input_for for consumed media. A textAnnotationNode or scriptNode feeding an audioNode must
+  use prompt_for, never context_for. Self-check every claimed upstream input before submission.
   The graph write already validates, so do not use
   workflow_graph_compile as a routine preflight before the first write. After a recovery compile
   succeeds, immediately prepare the exact same Plan with freezone_prepare_workflow_plan_draft.
