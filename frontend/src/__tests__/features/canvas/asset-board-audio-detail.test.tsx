@@ -200,7 +200,14 @@ describe('AssetBoard 音频进主从详情', () => {
 
   it('general-audio 正常编译后只提交标记的朗读正文', async () => {
     vi.mocked(compileFreezoneRecipePrompt).mockImplementation(async (payload) => {
-      const prompt = '朗读文本：\n欢迎使用。\n他说：快跑。\n音色描述：温柔女声';
+      const prompt = [
+        '朗读文本：',
+        '<speech_text>',
+        '欢迎使用。',
+        '他说：快跑。',
+        '</speech_text>',
+        '情感：温柔',
+      ].join('\n');
       payload.onCompileMetadata?.({
         mode: 'model',
         prompt,

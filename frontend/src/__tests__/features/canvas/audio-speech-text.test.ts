@@ -99,6 +99,7 @@ describe('extractSpeakableAudioText', () => {
     expect(resolveSafeSpeechSubmissionText({
       compileMode: 'model',
       compiledPrompt: compiled,
+      recipeIds: ['general-audio'],
       safeFallbackPrompt: '原始文本。',
     })).toBe('欢迎使用。');
   });
@@ -106,18 +107,28 @@ describe('extractSpeakableAudioText', () => {
   it('stops explicit speech collection when another production field starts', () => {
     const compiled = [
       '朗读文本：',
+      '<speech_text>',
       '欢迎使用。',
       '他说：快跑。',
+      '</speech_text>',
+      '情感：温柔',
       '音色描述：温柔女声',
-      '未列出的制作字段：句尾自然收音。',
     ].join('\n');
-    expect(extractExplicitSpeakableAudioText(compiled)).toBe('欢迎使用。\n\n他说：快跑。');
     expect(resolveSafeSpeechSubmissionText({
       compileMode: 'model',
       compiledPrompt: compiled,
       recipeIds: ['general-audio'],
       safeFallbackPrompt: '原始文本。',
     })).toBe('欢迎使用。\n\n他说：快跑。');
+  });
+
+  it('falls back safely when structured speech markers are missing', () => {
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'model',
+      compiledPrompt: '朗读文本：\n他说：快跑。\n情感：温柔',
+      recipeIds: ['general-audio'],
+      safeFallbackPrompt: '原始旁白。',
+    })).toBe('原始旁白。');
   });
 
   it('accepts an unlabelled model result from the direct-speech Recipe', () => {

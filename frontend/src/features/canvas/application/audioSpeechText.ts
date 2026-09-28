@@ -43,6 +43,7 @@ const SPEECH_LABELS = new Set([
   'speechtext',
 ]);
 const UNLABELLED_SPEECH_RECIPE_IDS = new Set(['drama-shot-voice']);
+const STRUCTURED_SPEECH_RECIPE_IDS = new Set(['general-audio']);
 
 const BRACKETED_LABEL = /^\s*[【\[]\s*([^】\]]+?)\s*[】\]]\s*(.*)$/;
 const CONTROL_LINE =
@@ -53,8 +54,8 @@ const PLAIN_SPEECH_FIELD =
   /^\s*(?:[-*#]\s*)?(?:旁白|对白|台词|解说|narration|voiceover)\s*[:：]\s*(.*)$/i;
 const PLAIN_FIELD_LINE =
   /^\s*(?:[-*#]\s*)?([^，。！？,!?;；:：\n]{1,24})\s*[:：]\s*.*$/;
-const PRODUCTION_FIELD_HINT =
-  /(?:bgm|sfx|audio|voice|tone|emotion|pace|speed|language|duration|style|instruction|音色|声音|声线|情绪|节奏|语气|语速|语言|时长|持续时间|制作|风格|音频|音效|配乐|环境音|负向|约束|音量|口音|重音|停顿|发音|说话人)/i;
+const SPEECH_BLOCK_START = /^\s*<speech_text>\s*$/i;
+const SPEECH_BLOCK_END = /^\s*<\/speech_text>\s*$/i;
 const TRAILING_CONTROL_FIELD =
   /[。；;]\s*(?:时长|持续时间|情绪|节奏|语气|语速|语言|声音质感|是否纯音乐|内容约束|音频类型|负向约束)\s*[:：]/i;
 // i18n-exempt-end
@@ -135,9 +136,7 @@ function normalizeLabel(value: string): string {
 
 function isProductionFieldLine(value: string): boolean {
   const field = value.match(PLAIN_FIELD_LINE);
-  if (!field) return false;
-  const label = normalizeLabel(field[1]);
-  return NON_SPEECH_LABELS.has(label) || PRODUCTION_FIELD_HINT.test(label);
+  return field ? NON_SPEECH_LABELS.has(normalizeLabel(field[1])) : false;
 }
 
 function cleanSpeakableLine(value: string): string {
@@ -268,6 +267,27 @@ export function extractExplicitSpeakableAudioText(value: string): string {
   return output.join('\n\n');
 }
 
+function extractStructuredSpeechBlock(value: string): string | null {
+  const lines = String(value || '').split(/\r?\n/);
+  const start = lines.findIndex((line) => SPEECH_BLOCK_START.test(line));
+  if (start < 0) return null;
+  const relativeEnd = lines.slice(start + 1).findIndex((line) => SPEECH_BLOCK_END.test(line));
+  if (relativeEnd < 0) return '';
+  return lines
+    .slice(start + 1, start + 1 + relativeEnd)
+    .map(cleanSpeakableLine)
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function extractInlineExplicitSpeechFields(value: string): string {
+  return String(value || '')
+    .split(/\r?\n/)
+    .map((line) => extractExplicitSpeakableAudioText(line))
+    .filter(Boolean)
+    .join('\n\n');
+}
+
 function extractUnlabelledRecipeSpeech(value: string): string {
   const lines = String(value || '').split(/\r?\n/).filter((line) => line.trim());
   if (lines.some((line) => (
@@ -284,8 +304,9 @@ function extractUnlabelledRecipeSpeech(value: string): string {
 /**
  * A timeout fallback can contain Recipe production instructions. Never send
  * that compiler output to TTS; use only the already-filtered source fallback.
- * Successful direct-speech Recipes may return unlabelled prose, while general
- * audio Recipes must mark their speakable field explicitly.
+ * Successful direct-speech Recipes may return unlabelled prose. General audio
+ * Recipes use an explicit speech block; legacy single-line speech fields stay
+ * supported, but ambiguous unbounded multiline output falls back safely.
  */
 export function resolveSafeSpeechSubmissionText({
   compileMode,
@@ -300,6 +321,13 @@ export function resolveSafeSpeechSubmissionText({
 }): string {
   if (compileMode === 'timeout_fallback') {
     return extractSpeakableAudioText(safeFallbackPrompt);
+  }
+  const requiresStructuredSpeech = recipeIds.some((recipeId) =>
+    STRUCTURED_SPEECH_RECIPE_IDS.has(recipeId));
+  if (requiresStructuredSpeech) {
+    const structuredSpeech = extractStructuredSpeechBlock(compiledPrompt);
+    return (structuredSpeech ?? extractInlineExplicitSpeechFields(compiledPrompt))
+      || extractSpeakableAudioText(safeFallbackPrompt);
   }
   const explicitSpeech = extractExplicitSpeakableAudioText(compiledPrompt);
   if (explicitSpeech) return explicitSpeech;
