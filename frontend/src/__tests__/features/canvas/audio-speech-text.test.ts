@@ -106,8 +106,8 @@ describe('extractSpeakableAudioText', () => {
   it('stops explicit speech collection when another production field starts', () => {
     const compiled = [
       '朗读文本：欢迎使用。',
-      '【音色】温柔女声',
-      '制作要求：句尾自然收音。',
+      '音色描述：温柔女声',
+      '未列出的制作字段：句尾自然收音。',
     ].join('\n');
     expect(extractExplicitSpeakableAudioText(compiled)).toBe('欢迎使用。');
     expect(resolveSafeSpeechSubmissionText({

@@ -245,7 +245,10 @@ export function extractExplicitSpeakableAudioText(value: string): string {
       section = 'skip';
       continue;
     }
-    if (isProductionFieldLine(line)) {
+    if (
+      isProductionFieldLine(line)
+      || (section === 'speech' && PLAIN_FIELD_LINE.test(line))
+    ) {
       section = 'skip';
       continue;
     }
