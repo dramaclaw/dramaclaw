@@ -6,5 +6,48 @@
     "intensity": 0
   },
   "effects": [],
-  "audioZones": []
+  "audioZones": [
+    {
+      "id": "ridge-wind",
+      "src": "audio/wind-v1.ogg",
+      "region": {
+        "id": "cloudtop-exposed-slope",
+        "points": [{ "x": 0, "y": 0 }, { "x": 2048, "y": 0 },
+          { "x": 2048, "y": 1152 }, { "x": 0, "y": 1152 }]
+      },
+      "volume": 0.18,
+      "fadeDistance": 300,
+      "repeatDelay": 0
+    },
+    {
+      "id": "distant-birds",
+      "src": "audio/birds-v1.ogg",
+      "region": {
+        "id": "cloudtop-open-sky",
+        "points": [{ "x": 0, "y": 0 }, { "x": 2048, "y": 0 },
+          { "x": 2048, "y": 1152 }, { "x": 0, "y": 1152 }]
+      },
+      "volume": 0.09,
+      "fadeDistance": 900,
+      "repeatDelay": 70
+    },
+    {
+      "id": "sheltered-insects",
+      "src": "audio/insects-v1.ogg",
+      "region": {
+        "id": "cloudtop-west-flower-bank",
+        "points": [{ "x": 230, "y": 570 }, { "x": 630, "y": 570 },
+          { "x": 630, "y": 860 }, { "x": 230, "y": 860 }]
+      },
+      "additionalRegions": [
+        { "id": "cloudtop-east-flower-bank", "points": [{ "x": 1310, "y": 590 }, { "x": 1650, "y": 590 },
+          { "x": 1650, "y": 850 }, { "x": 1310, "y": 850 }] },
+        { "id": "cloudtop-south-grove", "points": [{ "x": 560, "y": 830 }, { "x": 950, "y": 830 },
+          { "x": 950, "y": 1060 }, { "x": 560, "y": 1060 }] }
+      ],
+      "volume": 0.07,
+      "fadeDistance": 110,
+      "repeatDelay": 0
+    }
+  ]
 }

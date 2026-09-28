@@ -36,6 +36,38 @@ it("unlocks on input, spaces bird recordings, pauses in background and releases 
   expect(audio.removeAttribute).toHaveBeenCalledWith("src"); expect(vi.getTimerCount()).toBe(0);
   document.dispatchEvent(new Event("pointerdown")); expect(audio.play).toHaveBeenCalledTimes(3);
 });
+it("starts ambience when a gesture occurred before the map finished loading", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("navigator", { userActivation: { hasBeenActive: true } });
+  vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+  const audio = { volume: 0, paused: true, play: vi.fn(async () => { audio.paused = false; }),
+    pause: vi.fn(() => { audio.paused = true; }), removeAttribute: vi.fn(), load: vi.fn() };
+  vi.stubGlobal("Audio", class { constructor() { return audio; } });
+  const controller = createEnvironmentAudio([zone], src => src);
+  controller.update({ x: 50, y: 50 });
+  await vi.advanceTimersByTimeAsync(200);
+  expect(audio.play).toHaveBeenCalledTimes(1);
+  controller.destroy();
+});
+it("waits for the actual spawn position before playing already-unlocked ambience", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("navigator", { userActivation: { hasBeenActive: true } });
+  vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+  const audio = { volume: 0, paused: true, play: vi.fn(async () => { audio.paused = false; }),
+    pause: vi.fn(() => { audio.paused = true; }), removeAttribute: vi.fn(), load: vi.fn() };
+  vi.stubGlobal("Audio", class { constructor() { return audio; } });
+  const controller = createEnvironmentAudio([{ ...zone, region: { points: [
+    { x: 0, y: 0 }, { x: 2048, y: 0 }, { x: 2048, y: 1152 }, { x: 0, y: 1152 },
+  ] } }], src => src);
+  try {
+    await vi.advanceTimersByTimeAsync(500);
+    document.dispatchEvent(new Event("pointerdown"));
+    expect(audio.play).not.toHaveBeenCalled();
+    controller.update({ x: 50, y: 50 });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(audio.play).toHaveBeenCalledTimes(1);
+  } finally { controller.destroy(); }
+});
 it("covers separated wind regions without adding overlapping gain", () => {
   const expanded = { ...zone, additionalRegions: [zone.region, { points: zone.region.points.map(p => ({ x: p.x + 400, y: p.y })) }] };
   expect(zoneVolume({ x: 50, y: 50 }, expanded)).toBe(0.4);

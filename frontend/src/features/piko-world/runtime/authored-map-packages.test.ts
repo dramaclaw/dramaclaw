@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { existsSync, readFileSync } from 'node:fs';
 import { expect, it } from 'vitest';
-import { ARTISAN_MARKET_ANIMALS, LANTERN_CANAL_ANIMALS, isAnimalPositionNavigable } from './courtyard-animals';
+import { AMBER_WILDS_ANIMALS, ARTISAN_MARKET_ANIMALS, CLOUDTOP_SLOPE_ANIMALS,
+  LANTERN_CANAL_ANIMALS, isAnimalPositionNavigable } from './courtyard-animals';
 import { PikoMapPackageSchema, PikoNavigationSchema } from './map-package-schema';
 import { navigationIssues } from './navigation-editor';
 
@@ -31,6 +32,8 @@ for (const map of maps) it(`${map}: authored geometry and environment assets are
 it.each([
   ['artisan-market', ARTISAN_MARKET_ANIMALS],
   ['lantern-canal-street', LANTERN_CANAL_ANIMALS],
+  ['cloudtop-slope', CLOUDTOP_SLOPE_ANIMALS],
+  ['amber-wilds', AMBER_WILDS_ANIMALS],
 ] as const)('places %s ground animals and their routes on navigable ground', (map, animals) => {
   const navigation = PikoNavigationSchema.parse(JSON.parse(readFileSync(
     `public/piko/world/maps/${map}/data/navigation.json`, 'utf8')));

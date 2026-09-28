@@ -177,3 +177,27 @@ it.each(['artisan-market', 'lantern-canal-street'])('keeps the shared dog and lo
     runtime.destroy(); ticker.destroy(); sheets.forEach(sheet => sheet.destroy(true));
   }
 });
+
+it.each([
+  ['cloudtop-slope', 8, 2, 3],
+  ['amber-wilds', 10, 3, 4],
+] as const)('renders %s wildlife without a roaming dog or unused pet atlases', async (mapId, count, calves, rabbits) => {
+  vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+  const sheets: Texture[] = [];
+  const load = vi.spyOn(Assets, 'load').mockImplementation(async () => {
+    const sheet = atlas(); sheets.push(sheet); return sheet as never;
+  });
+  vi.spyOn(Assets, 'unload').mockResolvedValue(undefined);
+  const ticker = new Ticker(); ticker.autoStart = false;
+  const runtime = (await createCourtyardAnimalRuntime({ ...options(ticker), mapId }))!;
+  try {
+    expect(runtime.actors).toHaveLength(count);
+    expect(runtime.actors.filter(actor => actor.placement.kind === 'calf')).toHaveLength(calves);
+    expect(runtime.actors.filter(actor => actor.placement.kind === 'rabbit')).toHaveLength(rabbits);
+    expect(runtime.actors.filter(actor => actor.placement.kind === 'butterfly')).toHaveLength(3);
+    expect(load.mock.calls.some(([url]) => /\b(?:dog|cat|hen|squirrel)\b/.test(String(url)))).toBe(false);
+    runtime.actors.forEach(actor => { actor.render(); expect(actor.body.texture).toBeDefined(); });
+  } finally {
+    runtime.destroy(); ticker.destroy(); sheets.forEach(sheet => sheet.destroy(true));
+  }
+});

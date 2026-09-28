@@ -76,12 +76,41 @@ export const CANAL_CLOUD_ROUTES: Record<AerialLane, Route> = {
   lower: { from: { x: -520, y: 705 }, to: { x: 2568, y: 905 }, arc: 12 },
 };
 
-export type AerialMapId = "welcome-courtyard" | "artisan-market" | "lantern-canal-street";
-const AERIAL_ROUTES: Record<AerialMapId, { birds: Record<AerialLane, Route>; clouds: Record<AerialLane, Route> }> = {
+export const CLOUDTOP_BIRD_ROUTES: Record<AerialLane, Route> = {
+  upper: { from: { x: -180, y: 75 }, to: { x: 2240, y: 185 }, arc: 14 },
+  middle: { from: { x: -190, y: 285 }, to: { x: 2250, y: 465 }, arc: 20 },
+  lower: { from: { x: -180, y: 675 }, to: { x: 2240, y: 865 }, arc: 16 },
+};
+export const CLOUDTOP_CLOUD_ROUTES: Record<AerialLane, Route> = {
+  upper: { from: { x: -520, y: 115 }, to: { x: 2568, y: 215 }, arc: 10 },
+  middle: { from: { x: -520, y: 305 }, to: { x: 2568, y: 495 }, arc: 14 },
+  lower: { from: { x: -520, y: 715 }, to: { x: 2568, y: 900 }, arc: 12 },
+};
+export const AMBER_BIRD_ROUTES: Record<AerialLane, Route> = {
+  upper: { from: { x: -180, y: 65 }, to: { x: 2240, y: 155 }, arc: 12 },
+  middle: { from: { x: -190, y: 175 }, to: { x: 2250, y: 310 }, arc: 18 },
+  lower: { from: { x: -180, y: 325 }, to: { x: 2240, y: 475 }, arc: 14 },
+};
+export const AMBER_CLOUD_ROUTES: Record<AerialLane, Route> = {
+  upper: { from: { x: -520, y: 30 }, to: { x: 2568, y: 115 }, arc: 8 },
+  middle: { from: { x: -520, y: 125 }, to: { x: 2568, y: 280 }, arc: 10 },
+  lower: { from: { x: -520, y: 255 }, to: { x: 2568, y: 430 }, arc: 12 },
+};
+
+export type AerialMapId = "welcome-courtyard" | "artisan-market" | "lantern-canal-street"
+  | "cloudtop-slope" | "amber-wilds";
+const AERIAL_ROUTES: Record<AerialMapId, { birds: Record<AerialLane, Route>; clouds: Record<AerialLane, Route>;
+  cloudOpacity?: number }> = {
   "welcome-courtyard": { birds: BIRD_ROUTES, clouds: CLOUD_ROUTES },
   "artisan-market": { birds: MARKET_BIRD_ROUTES, clouds: MARKET_CLOUD_ROUTES },
   "lantern-canal-street": { birds: CANAL_BIRD_ROUTES, clouds: CANAL_CLOUD_ROUTES },
+  "cloudtop-slope": { birds: CLOUDTOP_BIRD_ROUTES, clouds: CLOUDTOP_CLOUD_ROUTES, cloudOpacity: 0.8 },
+  "amber-wilds": { birds: AMBER_BIRD_ROUTES, clouds: AMBER_CLOUD_ROUTES, cloudOpacity: 0.55 },
 };
+
+export function isAerialMap(mapId: string): mapId is AerialMapId {
+  return Object.prototype.hasOwnProperty.call(AERIAL_ROUTES, mapId);
+}
 
 const BIRD_FORMATION = [{ x: 0, y: 0 }, { x: -52, y: -26 }, { x: -92, y: 18 }, { x: -128, y: -44 }];
 const randomBetween = (random: Random, min: number, max: number) => min + random() * (max - min);
@@ -306,8 +335,8 @@ export async function createMapAerialRuntime({ mapId, ticker, resolveAssetUrl, i
       clouds[index].position.set(x, y);
       cloudShadows[index].position.set(x + item.shadowOffset.x * cloudDepth.scale,
         y + item.shadowOffset.y * cloudDepth.scale);
-      clouds[index].alpha = item.alpha * cloudDepth.alpha * cloudState.fade;
-      cloudShadows[index].alpha = item.shadowAlpha * cloudDepth.shadowAlpha * cloudState.fade;
+      clouds[index].alpha = item.alpha * cloudDepth.alpha * cloudState.fade * (routes.cloudOpacity ?? 1);
+      cloudShadows[index].alpha = item.shadowAlpha * cloudDepth.shadowAlpha * cloudState.fade * (routes.cloudOpacity ?? 1);
       clouds[index].visible = cloudShadows[index].visible = enabled;
     });
 

@@ -11,6 +11,8 @@ import {
   BIRD_ROUTES,
   birdAtlasFrames,
   CLOUD_ROUTES,
+  CLOUDTOP_BIRD_ROUTES,
+  CLOUDTOP_CLOUD_ROUTES,
   COURTYARD_BIRD_ATLAS_SRC,
   COURTYARD_CLOUD_SRC,
   createBirdEvent,
@@ -19,6 +21,8 @@ import {
   createLaneShuffle,
   MARKET_BIRD_ROUTES,
   MARKET_CLOUD_ROUTES,
+  AMBER_BIRD_ROUTES,
+  AMBER_CLOUD_ROUTES,
   MAX_BIRD_COUNT,
   MAX_CLOUD_COUNT,
 } from "./map-aerial-runtime";
@@ -76,6 +80,38 @@ it("routes market flocks over the rooftops, plaza and southern tree line", () =>
   expect(MARKET_BIRD_ROUTES.lower.from.y).toBeGreaterThan(700);
   expect(MARKET_CLOUD_ROUTES.lower.to.y).toBeLessThan(900);
   expect(MARKET_CLOUD_ROUTES.middle.from.y).toBeLessThan(MARKET_BIRD_ROUTES.middle.from.y);
+});
+
+it("places cloudtop routes across the ridge and amber routes above the open field", () => {
+  expect(CLOUDTOP_BIRD_ROUTES.lower.to.y).toBeGreaterThan(AMBER_BIRD_ROUTES.lower.to.y);
+  expect(CLOUDTOP_CLOUD_ROUTES.lower.to.y).toBeGreaterThan(AMBER_CLOUD_ROUTES.lower.to.y);
+  expect(AMBER_CLOUD_ROUTES.lower.to.y).toBeLessThan(500);
+});
+
+it.each([
+  ["cloudtop-slope", 300, 500],
+  ["amber-wilds", 100, 300],
+] as const)("uses shared aerial textures with %s's authored sky height", async (mapId, minY, maxY) => {
+  vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+  vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+  const atlas = new Texture({ source: new TextureSource({ width: 2048, height: 512 }) });
+  const cloud = new Texture({ source: new TextureSource({ width: 1856, height: 528 }) });
+  const { Assets } = await import("pixi.js");
+  vi.spyOn(Assets, "load").mockResolvedValueOnce(atlas as never).mockResolvedValueOnce(cloud as never);
+  const unload = vi.spyOn(Assets, "unload").mockResolvedValue(undefined);
+  const resolved: string[] = [];
+  const ticker = new Ticker(); ticker.autoStart = false;
+  const runtime = (await createMapAerialRuntime({ mapId, ticker,
+    resolveAssetUrl: src => { resolved.push(src); return `/welcome-courtyard/${src}`; },
+    isDisposed: () => false, random: () => 0 }))!;
+  expect(resolved).toEqual([COURTYARD_BIRD_ATLAS_SRC, COURTYARD_CLOUD_SRC]);
+  expect(runtime.bodyLayer.label).toBe(`${mapId}-aerial-bodies`);
+  ticker.update(1000); ticker.update(1100);
+  expect(runtime.clouds[0].y).toBeGreaterThan(minY);
+  expect(runtime.clouds[0].y).toBeLessThan(maxY);
+  expect(runtime.clouds[0].alpha).toBeGreaterThan(0);
+  runtime.destroy(); ticker.destroy();
+  await vi.waitFor(() => expect(unload).toHaveBeenCalledTimes(2));
 });
 
 it("bounds the randomized distant flock and cloud-group presets", () => {

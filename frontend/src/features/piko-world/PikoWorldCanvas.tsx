@@ -23,10 +23,11 @@ import exitMarkerStyles from "./piko-map-exit-marker.module.css";
 import { createMapRiverFish, LANTERN_CANAL_FISH } from "./runtime/map-river-fish";
 import { createEnvironmentEffectRuntime } from "./runtime/environment-effect-runtime";
 import { createCourtyardFoliageRuntime } from "./runtime/courtyard-foliage-runtime";
-import { createMapAerialRuntime } from "./runtime/map-aerial-runtime";
+import { createMapAerialRuntime, isAerialMap } from "./runtime/map-aerial-runtime";
 import { createCourtyardLampRuntime, createLanternCanalLampRuntime } from "./runtime/courtyard-lamp";
 import { createCourtyardAnimalRuntime } from "./runtime/courtyard-animal-runtime";
-import { createAnimalAudio } from "./runtime/animal-audio";
+import { localAnimalsForMap } from "./runtime/courtyard-animals";
+import { CANAL_HEN_AUDIO, createAnimalAudio } from "./runtime/animal-audio";
 import { createEnvironmentAudio } from "./runtime/environment-audio";
 import { createResidentOcclusionSilhouette } from "./runtime/resident-occlusion-silhouette";
 import { containWorldInViewport, type PikoSize } from "./runtime/viewport-fit";
@@ -367,7 +368,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
           lampRuntime = createLanternCanalLampRuntime(nextApp.ticker);
           world.addChild(...lampRuntime.containers);
         }
-        if (mapId === "welcome-courtyard" || mapId === "artisan-market" || mapId === "lantern-canal-street") {
+        if (isAerialMap(mapId)) {
           aerialRuntime = await createMapAerialRuntime({
             mapId,
             ticker: nextApp.ticker,
@@ -400,11 +401,14 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
             mayorHoverRef.current = addCharacterPresentation(mayorActor.container);
             world.addChild(mayorActor.container);
           }
-          if ((DOG_MAPS as readonly string[]).includes(mapId)) {
-            worldDog = await getWorldDog();
-            if (disposed) return;
+          const dogMap = (DOG_MAPS as readonly string[]).includes(mapId);
+          if (dogMap || localAnimalsForMap(mapId).length > 0) {
+            if (dogMap) {
+              worldDog = await getWorldDog();
+              if (disposed) return;
+            }
             courtyardAnimalRuntime = await createCourtyardAnimalRuntime({
-              worldDog, mapId,
+              worldDog: worldDog ?? undefined, mapId,
               ticker: nextApp.ticker, navigation, bakedOccluders, size: manifest.size,
               resolveAssetUrl: src => resolvePikoMapAssetUrl("welcome-courtyard", src),
               isDisposed: () => disposed,
@@ -414,7 +418,8 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
             animalAudio = createAnimalAudio(() => courtyardAnimalRuntime?.actors.map(actor => ({
               id: actor.placement.id, kind: actor.placement.kind, ...actor.motion.state,
               position: actor.container.visible ? actor.motion.state.position : { x: -100000, y: -100000 },
-            })) ?? [], src => resolvePikoMapAssetUrl("welcome-courtyard", src));
+            })) ?? [], src => resolvePikoMapAssetUrl("welcome-courtyard", src), Math.random,
+              mapId === "lantern-canal-street" ? { hen: CANAL_HEN_AUDIO } : undefined);
           }
           for (const id of Object.keys(PIKO_PLAYABLE_RESIDENTS) as PlayablePikoResidentId[]) {
             const src = PIKO_PLAYABLE_RESIDENTS[id];

@@ -9,7 +9,9 @@ import { createCharacterName } from "./character-presentation";
 import { Container, Rectangle, Sprite, Texture, type Ticker } from "pixi.js";
 import type { PikoNavigation, PikoOccluder } from "./map-package-schema";
 import { createBakedActorOcclusion } from "./map-occlusion";
-import { CAT_HEART_FRAME, CAT_HEART_SRC, isAnimalPositionNavigable, ANIMAL_SHEETS, COURTYARD_ANIMALS, ARTISAN_MARKET_ANIMALS, LANTERN_CANAL_ANIMALS, createAnimalMotion, type AnimalClip } from "./courtyard-animals";
+import { CAT_HEART_FRAME, CAT_HEART_SRC, isAnimalPositionNavigable, ANIMAL_SHEETS,
+  COURTYARD_ANIMALS, localAnimalsForMap, createAnimalMotion, type AnimalClip } from "./courtyard-animals";
+import { DOG_MAPS } from "./dog-world-routes";
 
 export function animalAtlasFrames(atlas: Texture) {
   if (atlas.width !== 2048 || atlas.height !== 2048) {
@@ -34,10 +36,8 @@ export async function createCourtyardAnimalRuntime({ ticker, navigation, bakedOc
   worldDog?: ReturnType<typeof createDogWorld>;
   mapId?: string;
 }) {
-  const localAnimals = mapId === "welcome-courtyard" ? COURTYARD_ANIMALS.filter(p => p.kind !== "dog")
-    : mapId === "artisan-market" ? ARTISAN_MARKET_ANIMALS
-    : mapId === "lantern-canal-street" ? LANTERN_CANAL_ANIMALS : [];
-  const placements = [...localAnimals, ...COURTYARD_ANIMALS.filter(p => p.kind === "dog")];
+  const placements = [...localAnimalsForMap(mapId),
+    ...((DOG_MAPS as readonly string[]).includes(mapId) ? COURTYARD_ANIMALS.filter(p => p.kind === "dog") : [])];
   const kinds = new Set<string>(placements.map(p => p.kind));
   const requiredClip = (clip: string) => kinds.has(clip.match(/^[a-z]+/)?.[0] ?? "");
   const replacedClips: ReadonlySet<AnimalClip> = new Set(["dogWalk", "dogBark", "catIdle"]);

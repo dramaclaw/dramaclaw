@@ -177,9 +177,60 @@ export const LANTERN_CANAL_ANIMALS: readonly AnimalPlacement[] = [
     facing: 1, animationOffsetSeconds: 0.7 },
   { id: "canal-north-grove-squirrel", kind: "squirrel", position: { x: 760, y: 90 }, scale: 0.059,
     facing: -1, animationOffsetSeconds: 2.3 },
-  { id: "canal-east-grove-squirrel", kind: "squirrel", position: { x: 1810, y: 250 }, scale: 0.059,
+  { id: "canal-east-grove-squirrel", kind: "squirrel", position: { x: 1730, y: 260 }, scale: 0.059,
     facing: -1, animationOffsetSeconds: 3.5 },
 ];
+
+/** Sparse grazing and small wildlife on the sheltered grass, away from the ridge edge and paths. */
+export const CLOUDTOP_SLOPE_ANIMALS: readonly AnimalPlacement[] = [
+  { id: "cloudtop-west-meadow-calf", kind: "calf", position: { x: 610, y: 550 }, scale: 0.092,
+    facing: 1 },
+  { id: "cloudtop-center-meadow-calf", kind: "calf", position: { x: 835, y: 680 }, scale: 0.098,
+    facing: -1, animationOffsetSeconds: 2.4 },
+  { id: "cloudtop-upper-shrub-rabbit", kind: "rabbit", position: { x: 910, y: 300 }, scale: 0.052,
+    facing: -1, animationOffsetSeconds: 1.2 },
+  { id: "cloudtop-west-flower-rabbit", kind: "rabbit", position: { x: 470, y: 775 }, scale: 0.058,
+    facing: 1, animationOffsetSeconds: 3.1 },
+  { id: "cloudtop-east-rock-rabbit", kind: "rabbit", position: { x: 1370, y: 560 }, scale: 0.055,
+    facing: -1, animationOffsetSeconds: 4.5 },
+  { id: "cloudtop-west-flowers-butterfly", kind: "butterfly", position: { x: 450, y: 440 }, scale: 0.017 },
+  { id: "cloudtop-observatory-flowers-butterfly", kind: "butterfly", position: { x: 1320, y: 370 }, scale: 0.016 },
+  { id: "cloudtop-east-flowers-butterfly", kind: "butterfly", position: { x: 1480, y: 730 }, scale: 0.018 },
+];
+
+/** Grazers and rabbits occupy the golden grass on either side of the road; butterflies stay near flowers. */
+export const AMBER_WILDS_ANIMALS: readonly AnimalPlacement[] = [
+  { id: "amber-upper-grass-calf", kind: "calf", position: { x: 760, y: 330 }, scale: 0.082,
+    facing: -1, animationOffsetSeconds: 1.1 },
+  { id: "amber-west-grass-calf", kind: "calf", position: { x: 390, y: 610 }, scale: 0.09,
+    facing: 1, animationOffsetSeconds: 2.8 },
+  { id: "amber-east-grass-calf", kind: "calf", position: { x: 1620, y: 700 }, scale: 0.095,
+    facing: -1, animationOffsetSeconds: 4.0 },
+  { id: "amber-southwest-grass-rabbit", kind: "rabbit", position: { x: 280, y: 850 }, scale: 0.058,
+    facing: 1, animationOffsetSeconds: 1.5 },
+  { id: "amber-south-grass-rabbit", kind: "rabbit", position: { x: 650, y: 780 }, scale: 0.057,
+    facing: -1, animationOffsetSeconds: 2.6 },
+  { id: "amber-east-shrub-rabbit", kind: "rabbit", position: { x: 1380, y: 420 }, scale: 0.053,
+    facing: 1, animationOffsetSeconds: 3.3 },
+  { id: "amber-far-east-rock-rabbit", kind: "rabbit", position: { x: 1830, y: 530 }, scale: 0.055,
+    facing: -1, animationOffsetSeconds: 4.2 },
+  { id: "amber-ruins-flowers-butterfly", kind: "butterfly", position: { x: 575, y: 610 }, scale: 0.017 },
+  { id: "amber-center-flowers-butterfly", kind: "butterfly", position: { x: 1010, y: 700 }, scale: 0.016 },
+  { id: "amber-east-flowers-butterfly", kind: "butterfly", position: { x: 1600, y: 870 }, scale: 0.018 },
+];
+
+const LOCAL_ANIMALS = new Map<string, readonly AnimalPlacement[]>([
+  ["welcome-courtyard", COURTYARD_ANIMALS.filter(placement => placement.kind !== "dog")],
+  ["artisan-market", ARTISAN_MARKET_ANIMALS],
+  ["lantern-canal-street", LANTERN_CANAL_ANIMALS],
+  ["cloudtop-slope", CLOUDTOP_SLOPE_ANIMALS],
+  ["amber-wilds", AMBER_WILDS_ANIMALS],
+]);
+
+/** The roaming dog is supplied separately by its cross-map route. */
+export function localAnimalsForMap(mapId: string): readonly AnimalPlacement[] {
+  return LOCAL_ANIMALS.get(mapId) ?? [];
+}
 
 export const ANIMAL_FRAME_SECONDS: Record<AnimalClip, readonly number[]> = {
   henWalk: [0.19, 0.19, 0.19, 0.19], henPeck: [0.55, 0.32, 0.14, 0.48],

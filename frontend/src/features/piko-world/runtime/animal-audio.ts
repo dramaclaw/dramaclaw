@@ -9,23 +9,31 @@ export const ANIMAL_AUDIO = {
   dog: { radius: 300, core: 80, volume: 0.22, cooldown: [20, 35] },
 } as const;
 type VoicedKind = keyof typeof ANIMAL_AUDIO;
+export type AnimalAudioProfile = { radius: number; core: number; volume: number;
+  cooldown: readonly [number, number]; initialDelay?: readonly [number, number] };
+export const CANAL_HEN_AUDIO: AnimalAudioProfile = {
+  radius: 320, core: 95, volume: 0.24, cooldown: [16, 28], initialDelay: [2, 6],
+};
 export type AnimalAudioSource = { id: string; kind: AnimalKind; position: PikoPoint; clip: AnimalClip; frame: number };
-export function animalVolume(kind: VoicedKind, distance: number): number {
-  const spec = ANIMAL_AUDIO[kind];
+export function animalVolume(kind: VoicedKind, distance: number,
+  spec: AnimalAudioProfile = ANIMAL_AUDIO[kind]): number {
   const gain = Math.max(0, Math.min(1, (spec.radius - distance) / (spec.radius - spec.core)));
   return spec.volume * gain * gain * (3 - 2 * gain);
 }
 
 /** One nearby voice at a time. Actor positions are sampled even while the listener stands still. */
 export function createAnimalAudio(sources: () => AnimalAudioSource[], resolve: (src: string) => string,
-  random: () => number = Math.random) {
-  let listener: PikoPoint | undefined, disposed = false, unlocked = false, quiet = 0;
+  random: () => number = Math.random, overrides: Partial<Record<VoicedKind, AnimalAudioProfile>> = {}) {
+  const profiles: Record<VoicedKind, AnimalAudioProfile> = { ...ANIMAL_AUDIO, ...overrides };
+  let listener: PikoPoint | undefined, disposed = false, quiet = 0;
+  let unlocked = navigator.userActivation?.hasBeenActive ?? false;
   let greetingPending = false;
   const clips = sources().filter(source => source.kind in ANIMAL_AUDIO).map(source => {
     const kind = source.kind as VoicedKind;
+    const initialDelay = profiles[kind].initialDelay ?? [8, 18];
     const audio = new Audio(resolve(`animals/${kind}-call-v1.mp3`));
     audio.preload = "none"; audio.loop = false; audio.volume = 0;
-    return { id: source.id, kind, audio, waiting: 8 + random() * 10, eligible: false,
+    return { id: source.id, kind, audio, waiting: initialDelay[0] + random() * (initialDelay[1] - initialDelay[0]), eligible: false,
       active: false, pending: false, blocked: false, failed: false, generation: 0 };
   });
   type Clip = typeof clips[number];
@@ -50,7 +58,7 @@ export function createAnimalAudio(sources: () => AnimalAudioSource[], resolve: (
       clip.waiting = Math.max(0, clip.waiting - 0.1);
       const source = current.get(clip.id);
       const target = source ? animalVolume(clip.kind,
-        Math.hypot(source.position.x - listener.x, source.position.y - listener.y)) : 0;
+        Math.hypot(source.position.x - listener.x, source.position.y - listener.y), profiles[clip.kind]) : 0;
       const eligible = Boolean(source && (clip.kind === "dog" ? source.clip === "dogBark"
         : clip.kind === "cat" ? source.clip === "catIdle" && source.frame === CAT_HEART_FRAME : true));
       const entered = eligible && !clip.eligible;
@@ -63,7 +71,7 @@ export function createAnimalAudio(sources: () => AnimalAudioSource[], resolve: (
       if (target <= 0.005 || !eligible || ((clip.kind === "cat" || clip.kind === "dog") && !entered)
         || clip.waiting > 0 || quiet > 0 || clip.pending || clip.failed || clip.blocked
         || clips.some(other => other.active || other.pending)) continue;
-      const spec = ANIMAL_AUDIO[clip.kind];
+      const spec = profiles[clip.kind];
       clip.waiting = spec.cooldown[0] + random() * (spec.cooldown[1] - spec.cooldown[0]);
       clip.audio.currentTime = 0; clip.audio.volume = target;
       clip.active = true; clip.pending = true;
@@ -75,7 +83,7 @@ export function createAnimalAudio(sources: () => AnimalAudioSource[], resolve: (
         }
         const source = sources().find(source => source.id === clip.id);
         if (disposed || !focused || document.hidden || !source || !listener || animalVolume(clip.kind,
-          Math.hypot(source.position.x - listener.x, source.position.y - listener.y)) <= 0) stop(clip);
+          Math.hypot(source.position.x - listener.x, source.position.y - listener.y), profiles[clip.kind]) <= 0) stop(clip);
       }).catch(() => {
         if (!disposed && generation === clip.generation) { clip.blocked = true; stop(clip); }
       }).finally(() => { if (generation === clip.generation) clip.pending = false; });

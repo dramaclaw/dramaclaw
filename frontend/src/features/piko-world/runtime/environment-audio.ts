@@ -22,7 +22,10 @@ function regionVolume(point: PikoPoint, zone: Zone, region: { points: PikoPoint[
 
 /** Quiet spatial ambience, unlocked by input; independent of map loading success. */
 export function createEnvironmentAudio(zones: Zone[], resolve: (src: string) => string) {
-  let position = { x: 1190, y: 485 }, disposed = false, unlocked = false;
+  // Entering a map is already a user gesture; the listeners below are installed
+  // after the asynchronous map load and would otherwise miss that gesture.
+  let position: PikoPoint | undefined, disposed = false;
+  let unlocked = navigator.userActivation?.hasBeenActive ?? false;
   const clips = zones.map(zone => {
     const audio = new Audio(resolve(zone.src));
     audio.preload = "none"; audio.loop = !zone.repeatDelay; audio.volume = 0;
@@ -33,17 +36,18 @@ export function createEnvironmentAudio(zones: Zone[], resolve: (src: string) => 
   });
   let focused = document.hasFocus();
   const tick = () => {
-    if (disposed || !focused || document.hidden || !unlocked) return;
+    if (disposed || !focused || document.hidden || !unlocked || !position) return;
+    const listener = position;
     clips.forEach(clip => {
       const { audio, zone } = clip;
       clip.waiting = Math.max(0, clip.waiting - 0.1);
-      const target = zoneVolume(position, zone); // Full base gain; preserve spatial zone balance and distance falloff.
+      const target = zoneVolume(listener, zone); // Full base gain; preserve spatial zone balance and distance falloff.
       audio.volume += (target - audio.volume) * 0.12;
       if (target < 0.001 && audio.volume < 0.002) { audio.volume = 0; audio.pause(); return; }
       if (target <= 0 || !audio.paused || clip.pending || clip.failed || clip.blocked || clip.waiting > 0) return;
       clip.pending = true;
       void audio.play().then(() => {
-        if (disposed || !focused || document.hidden || zoneVolume(position, zone) <= 0) audio.pause();
+        if (disposed || !focused || document.hidden || !position || zoneVolume(position, zone) <= 0) audio.pause();
       }).catch(() => { /* Retry this channel on a gesture; other channels remain independent. */ clip.blocked = true; })
         .finally(() => { clip.pending = false; });
     });
@@ -62,7 +66,7 @@ export function createEnvironmentAudio(zones: Zone[], resolve: (src: string) => 
   document.addEventListener("visibilitychange", visibility);
   const timer = window.setInterval(tick, 100);
   return {
-    update(point: PikoPoint) { position = point; },
+    update(point: PikoPoint) { position = { ...point }; },
     destroy() {
       disposed = true; window.clearInterval(timer);
       window.removeEventListener("blur", blur);

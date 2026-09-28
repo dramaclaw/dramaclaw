@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "mapId": "cloudtop-slope",
-  "revision": 4,
+  "revision": 5,
   "coordinateSpace": "map-pixels-top-left",
   "size": {
     "width": 2048,

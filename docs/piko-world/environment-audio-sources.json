@@ -43,5 +43,13 @@
     "asset": "insects-v1.ogg",
     "assetSha256": "efb479ce3a480b96509f41e746da223ed7a3941ed98868476ba80c99f4e6b0b8",
     "provenance": "User-supplied local audio; external source and license not supplied."
+  },
+  {
+    "sourceFile": "freesound_community-sea-wave-34088.mp3",
+    "sourceSha256": "b19277d276ff682d9c42f968d94a53ecb04ee86efca237ca29a1a99f1e695c41",
+    "asset": "sea-waves-v1.mp3",
+    "mapId": "lantern-canal-street",
+    "assetSha256": "b19277d276ff682d9c42f968d94a53ecb04ee86efca237ca29a1a99f1e695c41",
+    "provenance": "User-supplied local audio; external source and license not supplied."
   }
 ]

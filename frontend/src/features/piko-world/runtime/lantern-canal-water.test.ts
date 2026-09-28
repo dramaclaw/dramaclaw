@@ -26,7 +26,10 @@ it("animates both sides of the bridge and the southeast shallows without paintin
   expect(covers(1900, 1080)).toBe(true); // Shallow water below the dock.
   expect(covers(960, 90)).toBe(true); // West bank water near the greenhouse.
   expect(covers(1115, 40)).toBe(true); // East edge of the upstream river.
+  expect(covers(1144, 80)).toBe(false); // Exposed rock on the upper east bank.
   expect(covers(1110, 440)).toBe(true); // River immediately before the bridge rail.
+  expect(covers(1130, 680)).toBe(true); // Water remains beneath the bridge.
+  expect(covers(1190, 680)).toBe(false); // Stone arch on the lower east side.
   expect(covers(1190, 720)).toBe(true); // East edge below the bridge.
   expect(covers(720, 1115)).toBe(true); // West edge near the downstream exit.
   expect(covers(1100, 510)).toBe(false); // Stone bridge deck.

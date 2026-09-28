@@ -6,5 +6,52 @@
     "intensity": 0
   },
   "effects": [],
-  "audioZones": []
+  "audioZones": [
+    {
+      "id": "grassland-wind",
+      "src": "audio/wind-v1.ogg",
+      "region": {
+        "id": "amber-open-grassland",
+        "points": [{ "x": 0, "y": 0 }, { "x": 2048, "y": 0 },
+          { "x": 2048, "y": 1152 }, { "x": 0, "y": 1152 }]
+      },
+      "volume": 0.15,
+      "fadeDistance": 300,
+      "repeatDelay": 0
+    },
+    {
+      "id": "field-birds",
+      "src": "audio/birds-v1.ogg",
+      "region": {
+        "id": "amber-open-sky",
+        "points": [{ "x": 0, "y": 0 }, { "x": 2048, "y": 0 },
+          { "x": 2048, "y": 1152 }, { "x": 0, "y": 1152 }]
+      },
+      "volume": 0.1,
+      "fadeDistance": 900,
+      "repeatDelay": 55
+    },
+    {
+      "id": "grass-insects",
+      "src": "audio/insects-v1.ogg",
+      "region": {
+        "id": "amber-west-upper-grass",
+        "points": [{ "x": 0, "y": 180 }, { "x": 510, "y": 180 },
+          { "x": 510, "y": 450 }, { "x": 0, "y": 450 }]
+      },
+      "additionalRegions": [
+        { "id": "amber-southwest-grass", "points": [{ "x": 0, "y": 560 }, { "x": 720, "y": 560 },
+          { "x": 720, "y": 1152 }, { "x": 0, "y": 1152 }] },
+        { "id": "amber-ruins-grass", "points": [{ "x": 440, "y": 470 }, { "x": 790, "y": 470 },
+          { "x": 790, "y": 720 }, { "x": 440, "y": 720 }] },
+        { "id": "amber-east-upper-grass", "points": [{ "x": 1190, "y": 210 }, { "x": 2048, "y": 210 },
+          { "x": 2048, "y": 510 }, { "x": 1190, "y": 510 }] },
+        { "id": "amber-east-lower-grass", "points": [{ "x": 1480, "y": 510 }, { "x": 2048, "y": 510 },
+          { "x": 2048, "y": 1060 }, { "x": 1480, "y": 1060 }] }
+      ],
+      "volume": 0.13,
+      "fadeDistance": 130,
+      "repeatDelay": 0
+    }
+  ]
 }

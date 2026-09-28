@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
-import { ANIMAL_AUDIO, animalVolume, createAnimalAudio, type AnimalAudioSource } from "./animal-audio";
+import { ANIMAL_AUDIO, CANAL_HEN_AUDIO, animalVolume, createAnimalAudio, type AnimalAudioSource } from "./animal-audio";
 
 class FakeAudio {
   static all: FakeAudio[] = [];
@@ -26,6 +26,21 @@ it("fades to silence at each species radius and keeps the cat quieter in a small
     expect(animalVolume(kind, spec.radius)).toBe(0);
     expect(animalVolume(kind, spec.radius + 100)).toBe(0);
   }
+});
+it("plays a nearby canal hen after the map-entry gesture has already happened", async () => {
+  vi.useFakeTimers(); vi.stubGlobal("Audio", FakeAudio);
+  vi.stubGlobal("navigator", { userActivation: { hasBeenActive: true } });
+  vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+  const hen: AnimalAudioSource = { id: "canal-hen", kind: "hen", clip: "henPeck", frame: 0,
+    position: { x: 260, y: 0 } };
+  const runtime = createAnimalAudio(() => [hen], src => src, () => 0, { hen: CANAL_HEN_AUDIO });
+  runtime.update({ x: 0, y: 0 });
+  await vi.advanceTimersByTimeAsync(2200);
+  expect(FakeAudio.all[0].play).toHaveBeenCalledTimes(1);
+  expect(FakeAudio.all[0].volume).toBeCloseTo(animalVolume("hen", 260, CANAL_HEN_AUDIO));
+  expect(FakeAudio.all[0].volume).toBeGreaterThan(0);
+  expect(FakeAudio.all[0].pause).not.toHaveBeenCalled();
+  runtime.destroy();
 });
 it("requires a gesture, serializes nearby voices, respects cooldown and releases media", async () => {
   const runtime = setup([
