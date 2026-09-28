@@ -121,16 +121,22 @@ describe('extractSpeakableAudioText', () => {
   it('accepts an unlabelled model result from the direct-speech Recipe', () => {
     expect(resolveSafeSpeechSubmissionText({
       compileMode: 'model',
-      compiledPrompt: '润色后的旁白。',
+      compiledPrompt: '他说：快跑。',
       recipeIds: ['drama-shot-voice'],
       safeFallbackPrompt: '原始旁白。',
-    })).toBe('润色后的旁白。');
+    })).toBe('他说：快跑。');
   });
 
   it('rejects labelled production output from the direct-speech Recipe', () => {
     expect(resolveSafeSpeechSubmissionText({
       compileMode: 'model',
       compiledPrompt: '【音色】温柔女声',
+      recipeIds: ['drama-shot-voice'],
+      safeFallbackPrompt: '原始旁白。',
+    })).toBe('原始旁白。');
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'model',
+      compiledPrompt: '制作要求：句尾自然收音。',
       recipeIds: ['drama-shot-voice'],
       safeFallbackPrompt: '原始旁白。',
     })).toBe('原始旁白。');

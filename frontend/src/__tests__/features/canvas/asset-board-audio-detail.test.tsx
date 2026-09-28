@@ -229,9 +229,9 @@ describe('AssetBoard 音频进主从详情', () => {
     expect(useCanvasStore.getState().nodes[0]?.data.text).toBe('欢迎使用。');
   });
 
-  it('drama-shot-voice 正常编译后提交无标签纯正文', async () => {
+  it('drama-shot-voice 正常编译后提交带中文冒号的纯正文', async () => {
     vi.mocked(compileFreezoneRecipePrompt).mockImplementation(async (payload) => {
-      const prompt = '润色后的旁白。';
+      const prompt = '他说：快跑。';
       payload.onCompileMetadata?.({
         mode: 'model',
         prompt,
@@ -256,8 +256,8 @@ describe('AssetBoard 音频进主从详情', () => {
 
     await waitFor(() => expect(submitFreezoneAudioSpeech).toHaveBeenCalled());
     const [, payload] = vi.mocked(submitFreezoneAudioSpeech).mock.calls[0];
-    expect(payload.text).toBe('润色后的旁白。');
-    expect(useCanvasStore.getState().nodes[0]?.data.text).toBe('润色后的旁白。');
+    expect(payload.text).toBe('他说：快跑。');
+    expect(useCanvasStore.getState().nodes[0]?.data.text).toBe('他说：快跑。');
   });
 
   it('故事板隐藏（visible=false）→ 命令波形播放器暂停内部 <audio>', () => {

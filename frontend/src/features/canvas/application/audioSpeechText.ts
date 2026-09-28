@@ -11,12 +11,14 @@ const NON_SPEECH_LABELS = new Set([
   '节奏',
   '配乐',
   '情绪',
+  '制作要求',
   '时长',
   '时长匹配',
   '说明',
   '音乐',
   '音频类型',
   '音效',
+  '音色',
   '语气',
   '语速',
   '语言',
@@ -49,8 +51,8 @@ const STRONG_SPEECH_FIELD =
   /(?:【|\[)?(?:朗读文本|配音文本|旁白文本|对白文本|台词文本|narration\s+text|voiceover\s+text|speech\s+text)(?:】|\])?\s*[:：]\s*/i;
 const PLAIN_SPEECH_FIELD =
   /^\s*(?:[-*#]\s*)?(?:旁白|对白|台词|解说|narration|voiceover)\s*[:：]\s*(.*)$/i;
-const GENERIC_FIELD_LINE =
-  /^\s*(?:[-*#]\s*)?(?:[【\[]\s*[^\u3011\]]+?\s*[】\]]\s*|[^\s，。！？,!?;；:：]{1,24}\s*[:：]\s*).*$/;
+const PLAIN_FIELD_LINE =
+  /^\s*(?:[-*#]\s*)?([^，。！？,!?;；:：\n]{1,24})\s*[:：]\s*.*$/;
 const TRAILING_CONTROL_FIELD =
   /[。；;]\s*(?:时长|持续时间|情绪|节奏|语气|语速|语言|声音质感|是否纯音乐|内容约束|音频类型|负向约束)\s*[:：]/i;
 // i18n-exempt-end
@@ -127,6 +129,11 @@ export function resolveMusicLengthMs(data: AudioKindSource): number | undefined 
 
 function normalizeLabel(value: string): string {
   return value.trim().replace(/\s+/g, '').toLowerCase();
+}
+
+function isProductionFieldLine(value: string): boolean {
+  const field = value.match(PLAIN_FIELD_LINE);
+  return field ? NON_SPEECH_LABELS.has(normalizeLabel(field[1])) : false;
 }
 
 function cleanSpeakableLine(value: string): string {
@@ -238,7 +245,7 @@ export function extractExplicitSpeakableAudioText(value: string): string {
       section = 'skip';
       continue;
     }
-    if (GENERIC_FIELD_LINE.test(line)) {
+    if (isProductionFieldLine(line)) {
       section = 'skip';
       continue;
     }
@@ -259,7 +266,12 @@ export function extractExplicitSpeakableAudioText(value: string): string {
 
 function extractUnlabelledRecipeSpeech(value: string): string {
   const lines = String(value || '').split(/\r?\n/).filter((line) => line.trim());
-  if (lines.some((line) => BRACKETED_LABEL.test(line) || GENERIC_FIELD_LINE.test(line))) {
+  if (lines.some((line) => (
+    BRACKETED_LABEL.test(line)
+    || CONTROL_LINE.test(line)
+    || BARE_DURATION.test(line)
+    || isProductionFieldLine(line)
+  ))) {
     return '';
   }
   return extractSpeakableAudioText(value);
