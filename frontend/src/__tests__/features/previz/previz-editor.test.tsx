@@ -196,6 +196,48 @@ vi.mock("@/api/ops", () => ({
   uploadFreezoneImage: vi.fn(async () => ({ url: "/static/shot.png" })),
   uploadFreezoneVideo: () => uploadFreezoneVideo(),
   uploadFreezoneAudio: vi.fn(async () => ({ url: "/static/take.mp3" })),
+  submitFreezoneImageToBlockout: vi.fn(async () => ({
+    task_type: "freezone_image_to_blockout",
+    job_id: "job-1",
+    task_key: "freezone_image_to_blockout:job-1",
+  })),
+  fetchFreezoneImageToBlockoutResult: (...args: unknown[]) =>
+    fetchFreezoneImageToBlockoutResult(...args),
+}));
+
+// 「从参考图生成」那条线：任务等待与取结果都换成桩，编辑器这层只验接线。
+// 生成流程本身（顺序、失败、丢弃迟到结果）归 use-blockout-generation 那组用例管。
+const awaitTaskCompletion = vi.fn(async (..._args: unknown[]): Promise<unknown> => ({
+  status: "completed",
+}));
+const defaultBlockoutResult = async (..._args: unknown[]): Promise<unknown> => ({
+  objects: [
+    {
+      id: "blockout-table",
+      kind: "prop",
+      name: "table",
+      visible: true,
+      locked: false,
+      transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [2, 0.75, 1] },
+      assetUrl: "cube",
+      assetFormat: "primitive",
+      blockout: { id: "table", semanticType: "table" },
+    },
+  ],
+  reference_camera_id: null,
+  warnings: [],
+});
+const fetchFreezoneImageToBlockoutResult = vi.fn(defaultBlockoutResult);
+
+// 只换掉等待那一个函数：错误类要用真的，生成流程拿 instanceof 认它们。
+vi.mock("@/api/tasks", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/api/tasks")>()),
+  awaitTaskCompletion: (...args: unknown[]) => awaitTaskCompletion(...args),
+}));
+
+// 本文件不挂 QueryClientProvider，真的报价 hook 一调用就抛。
+vi.mock("@/lib/queries/generation-credit-cost", () => ({
+  useGenerationCreditCost: () => ({ data: { data: { display: "12" } } }),
 }));
 
 // 这两个都是 vi.fn 而不是匿名箭头：混音那条线唯一的出口就是「录制器收到了什么
@@ -262,6 +304,7 @@ vi.mock("sonner", () => ({
     error: vi.fn(),
     success: vi.fn(),
     warning: vi.fn(),
+    info: vi.fn(),
     loading: vi.fn(() => "pending"),
     dismiss: vi.fn(),
   },
@@ -282,6 +325,8 @@ beforeEach(() => {
   pickRecordMimeType.mockReset().mockImplementation(defaultRecordMimeType);
   createCanvasRecorder.mockReset().mockImplementation(defaultCanvasRecorder);
   audioPlayback.load.mockReset().mockImplementation(async () => {});
+  awaitTaskCompletion.mockReset().mockImplementation(async () => ({ status: "completed" }));
+  fetchFreezoneImageToBlockoutResult.mockReset().mockImplementation(defaultBlockoutResult);
   usePrevizStore.getState().loadScene(createDefaultScene());
 });
 
@@ -3458,6 +3503,206 @@ describe("PrevizEditor autosave failure", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("PrevizEditor reference-image blockout", () => {
+  const blockoutButton = () => screen.getByRole("button", { name: "previz.toolbar.blockout" });
+  const blockoutDialog = () => screen.queryByRole("dialog", { name: "previz.blockout.title" });
+
+  async function openBlockout(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(blockoutButton());
+    expect(blockoutDialog()).toBeInTheDocument();
+  }
+
+  async function pickImage() {
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("previz.blockout.pick"), {
+        target: { files: [new File([new Uint8Array(2048)], "room.png", { type: "image/png" })] },
+      });
+    });
+  }
+
+  function primitives(count: number, tagged: boolean): PrevizScene {
+    const scene = createDefaultScene();
+    for (let index = 0; index < count; index += 1) {
+      scene.objects.push({
+        id: `cube-${index}`,
+        kind: "prop",
+        name: `cube ${index}`,
+        transform: { position: [index, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        visible: true,
+        locked: false,
+        assetUrl: "cube",
+        assetFormat: "primitive",
+        ...(tagged ? { blockout: { id: `cube_${index}`, semanticType: "prop" } } : {}),
+      });
+    }
+    return scene;
+  }
+
+  it("opens the blockout dialog without touching the scene", async () => {
+    const user = userEvent.setup();
+    await renderEditor();
+
+    await openBlockout(user);
+
+    expect(usePrevizStore.getState().scene.objects).toHaveLength(0);
+    expect(awaitTaskCompletion).not.toHaveBeenCalled();
+  });
+
+  it("closes the blockout dialog from its own close button", async () => {
+    const user = userEvent.setup();
+    await renderEditor();
+
+    await openBlockout(user);
+    await user.click(screen.getByRole("button", { name: "previz.blockout.close" }));
+
+    expect(blockoutDialog()).toBeNull();
+  });
+
+  // 同 "PrevizEditor overlay escape handling"：这层浮层不是嵌套 Dialog，Esc 只有编辑器
+  // 最外层收得到，不拦的话选到一半图按一下 Esc 会把整个预演台带走。
+  it("closes the blockout dialog on Escape instead of the whole editor", async () => {
+    const onOpenChange = vi.fn();
+    const user = userEvent.setup();
+    await renderEditor({ onOpenChange });
+
+    await openBlockout(user);
+    fireEvent.keyDown(document.body, { key: "Escape" });
+
+    expect(blockoutDialog()).toBeNull();
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  // 工具栏在浮层之上照样能点，两个方向都得互斥：一次最多留一层。
+  it("gives way to the model library and takes over from it", async () => {
+    const user = userEvent.setup();
+    await renderEditor();
+
+    await openBlockout(user);
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.prop" }));
+    expect(blockoutDialog()).toBeNull();
+    expect(screen.getByRole("dialog", { name: "previz.library.title" })).toBeInTheDocument();
+
+    await user.click(blockoutButton());
+    expect(screen.queryByRole("dialog", { name: "previz.library.title" })).toBeNull();
+    expect(blockoutDialog()).toBeInTheDocument();
+  });
+
+  it("takes over from the camera and character dialogs", async () => {
+    const user = userEvent.setup();
+    await renderEditor();
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.character" }));
+    await user.click(blockoutButton());
+    expect(screen.queryByRole("dialog", { name: "previz.characterCreate.title" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.camera" }));
+    expect(blockoutDialog()).toBeNull();
+    expect(screen.getByRole("dialog", { name: "previz.cameraCreate.title" })).toBeInTheDocument();
+    await user.click(blockoutButton());
+    expect(screen.queryByRole("dialog", { name: "previz.cameraCreate.title" })).toBeNull();
+    expect(blockoutDialog()).toBeInTheDocument();
+  });
+
+  it("lands the generated pieces in the scene and closes the dialog", async () => {
+    const user = userEvent.setup();
+    await renderEditor();
+
+    await openBlockout(user);
+    await pickImage();
+    await user.click(screen.getByRole("button", { name: "previz.blockout.submit" }));
+
+    await waitFor(() => expect(usePrevizStore.getState().scene.objects).toHaveLength(1));
+    expect(usePrevizStore.getState().scene.objects[0]).toMatchObject({
+      kind: "prop",
+      assetFormat: "primitive",
+      blockout: { id: "table", semanticType: "table" },
+    });
+    await waitFor(() => expect(blockoutDialog()).toBeNull());
+    // 编辑器开着的这个节点就是任务记在账上的那个节点。
+    expect(awaitTaskCompletion).toHaveBeenCalledWith(
+      "freezone_image_to_blockout:job-1",
+      "demo",
+      { taskType: "freezone_image_to_blockout" },
+    );
+  });
+
+  it("keeps the dialog open when the generation fails", async () => {
+    const user = userEvent.setup();
+    awaitTaskCompletion.mockRejectedValueOnce(new Error("model unavailable"));
+    await renderEditor();
+
+    await openBlockout(user);
+    await pickImage();
+    await user.click(screen.getByRole("button", { name: "previz.blockout.submit" }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(blockoutDialog()).toBeInTheDocument();
+    expect(usePrevizStore.getState().scene.objects).toHaveLength(0);
+  });
+
+  // 关掉 = 这一次的结果不要了。任务在后端照跑，回来的东西不能再落进场景：用户关掉
+  // 对话框之后多半已经在手摆别的了，凭空冒出一套白模会盖在人家刚摆的东西上。
+  it.each([
+    ["the close button", async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(screen.getByRole("button", { name: "previz.blockout.close" }));
+    }],
+    ["Escape", async () => {
+      fireEvent.keyDown(document.body, { key: "Escape" });
+    }],
+    ["another add button", async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(screen.getByRole("button", { name: "previz.toolbar.add.prop" }));
+    }],
+  ])("drops a result that arrives after closing with %s", async (_label, close) => {
+    const user = userEvent.setup();
+    let finish!: (value: unknown) => void;
+    awaitTaskCompletion.mockImplementationOnce(
+      () => new Promise((resolve) => { finish = resolve; }),
+    );
+    await renderEditor();
+
+    await openBlockout(user);
+    await pickImage();
+    await user.click(screen.getByRole("button", { name: "previz.blockout.submit" }));
+    await waitFor(() => expect(awaitTaskCompletion).toHaveBeenCalled());
+    await close(user);
+    expect(blockoutDialog()).toBeNull();
+
+    await act(async () => {
+      finish({ status: "completed" });
+      await Promise.resolve();
+    });
+
+    expect(fetchFreezoneImageToBlockoutResult).not.toHaveBeenCalled();
+    expect(usePrevizStore.getState().scene.objects).toHaveLength(0);
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("disables the toolbar button once primitives are full and nothing can be replaced", async () => {
+    await renderEditor({ initialScene: primitives(150, false) });
+
+    expect(blockoutButton()).toBeDisabled();
+  });
+
+  // 满了但里面有上一次生成的白模：还能「替换」，按钮得亮着。
+  it("keeps the toolbar button enabled when a previous blockout can be replaced", async () => {
+    const user = userEvent.setup();
+    await renderEditor({ initialScene: primitives(150, true) });
+
+    expect(blockoutButton()).toBeEnabled();
+    await openBlockout(user);
+    expect(screen.getByRole("group", { name: "previz.blockout.mode.title" })).toBeInTheDocument();
+  });
+
+  it("offers no replace/append choice in a scene without a blockout", async () => {
+    const user = userEvent.setup();
+    await renderEditor({ initialScene: primitives(2, false) });
+
+    await openBlockout(user);
+
+    expect(screen.queryByRole("group", { name: "previz.blockout.mode.title" })).toBeNull();
   });
 });
 
