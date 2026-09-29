@@ -7845,7 +7845,61 @@
       },
       "collapseTimeline": "Collapse timeline panel",
       "expandTimeline": "Expand timeline panel",
-      "markHint": "Mark path: click in the viewport to place points one by one, each joined to the last (Esc to finish)"
+      "markHint": "Mark path: click in the viewport to place points one by one, each joined to the last (Esc to finish)",
+      "blockout": "Generate scene from reference image",
+      "blockoutFull": "Primitive limit reached ({{count}}); remove some before generating"
+    },
+    "blockout": {
+      "title": "Generate scene from reference image",
+      "close": "Close",
+      "pick": "Choose reference image",
+      "submit": "Generate blockout",
+      "description": "Notes (optional)",
+      "descriptionPlaceholder": "e.g. ceiling about 3 m high, table 2.4 m long, door on the right of the back wall",
+      "badExtension": "Only png / jpg / jpeg / webp files are supported",
+      "tooLarge": "Reference images must be 20 MB or smaller",
+      "noProject": "This page has no project context, so nothing can be generated",
+      "noRoom": "The scene already holds {{limit}} primitives; remove some before generating",
+      "failed": "Generation failed: {{message}}",
+      "cancelled": "Generation cancelled",
+      "detached": "Timed out waiting: the task is still running in the background and this result will not be added to the scene",
+      "done": "Generated {{count}} primitives",
+      "warnings": "{{count}} spots may need manual adjustment",
+      "closeDiscards": "Closing this window while generating discards this result; the task still runs to the end and is billed",
+      "guide": {
+        "title": "Images that work well",
+        "space": "A scene whose layout is readable: a room, a street, a courtyard",
+        "floor": "The floor is visible, along with at least one wall or clear boundary",
+        "framing": "A wide shot at eye level or slightly above; avoid close-ups and extreme low angles",
+        "occlusion": "People or foreground objects do not cover the main pieces"
+      },
+      "hint": {
+        "title": "This image may affect the result; you can still continue",
+        "small": "The image is small (short edge under 512 px), so details may be hard to read",
+        "wide": "The image is very wide, so content at the sides may be ignored",
+        "tall": "The image is very tall, so content at the top and bottom may be ignored",
+        "unreadable": "The browser could not read this image; the file may be damaged or not really an image, so generation will probably fail"
+      },
+      "mode": {
+        "title": "The scene already has a blockout",
+        "replace": "Replace",
+        "append": "Append"
+      },
+      "stage": {
+        "uploading": "Uploading reference image…",
+        "generating": "Generating blockout, this may take a few minutes…"
+      },
+      "rejected": {
+        "empty": "Nothing usable was generated this time; try another image or add notes",
+        "primitiveLimit": "Not enough room: {{missing}} more slots needed (primitive limit {{limit}})",
+        "cameraLimit": "No room for the reference camera: {{missing}} more slots needed (camera limit {{limit}})",
+        "tooLarge": "The scene data is too large for this node; remove some objects before importing"
+      },
+      "held": {
+        "title": "The blockout is ready but not in the scene yet",
+        "free": "Once there is room you can import it again without being charged",
+        "retry": "Import again"
+      }
     },
     "library": {
       "title": "Model library",
