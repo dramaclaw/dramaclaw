@@ -6424,6 +6424,40 @@ describe("tool status parts", () => {
     ]);
   });
 
+  it("shows the delivered plan draft and hides a duplicate failure for the same operation", () => {
+    const failedDuplicate = {
+      ...toolStatusPartForTest("agent.tool.updated", {
+        type: "agent.tool.updated",
+        turn_id: "turn-a",
+        call_id: "call-failed",
+        name: "dramaclaw.freezone_prepare_workflow_plan_draft",
+        status: "failed",
+        input: { operation_id: "operation-a" },
+        error: "aggregate workflow planning text exceeds 4000 characters",
+      }, "turn-a"),
+      seq: 1,
+    };
+    const deliveredDraft = {
+      ...toolStatusPartForTest("agent.tool.updated", {
+        type: "agent.tool.updated",
+        turn_id: "turn-a",
+        call_id: "call-completed",
+        name: "dramaclaw.freezone_prepare_workflow_plan_draft",
+        status: "completed",
+        input: { operation_id: "operation-a" },
+        output: { ok: true, status: "workflow_draft_ready", draft_id: "draft-a" },
+      }, "turn-a"),
+      seq: 2,
+    };
+
+    expect(agentRuntimeDisplayPartsForTest(
+      [failedDuplicate, deliveredDraft],
+      { streaming: false },
+    ).map((part) => part.id)).toEqual([
+      "tool_status:turn-a:call-completed",
+    ]);
+  });
+
   it("hides settled tool status once a Skill Studio surface is present", () => {
     const skillStudioPart: ChatMessagePart = {
       id: "skill-studio-draft",

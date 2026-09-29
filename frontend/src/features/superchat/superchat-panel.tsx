@@ -490,6 +490,7 @@ const AGENT_TOOL_TITLE_OVERRIDES: Record<string, string> = {
   get_workflow_skill: "加载 Workflow Skill",
   "get workflow skill": "加载 Workflow Skill",
   freezone_prepare_workflow_draft: "生成工作流草稿",
+  freezone_prepare_workflow_plan_draft: "生成工作流草稿",
   freezone_confirm_workflow_draft: "提交到画布",
   freezone_list_agent_catalog: "读取 Skill / Recipe 列表",
   freezone_get_saved_skill: "读取 Skill 配置",
@@ -1726,7 +1727,8 @@ function FreezoneToolActivityCard({ message }: { message: ChatMessage }) {
 function genericToolTitle(message: ChatMessage): string {
   const raw = toolRawRecord(message);
   const name = typeof raw?.name === "string" ? raw.name.trim() : "";
-  const override = AGENT_TOOL_TITLE_OVERRIDES[name.toLowerCase()];
+  const normalizedName = name.toLowerCase().split(".").pop() ?? "";
+  const override = AGENT_TOOL_TITLE_OVERRIDES[normalizedName];
   if (override) return override;
   if (!name) return "执行工具";
   return name
@@ -1997,6 +1999,7 @@ const PERSISTENT_SETTLED_TOOL_STATUS_NAMES = new Set<string>([
   "skill",
   "freezone_get_workflow_skill",
   "freezone_prepare_workflow_draft",
+  "freezone_prepare_workflow_plan_draft",
   "freezone_confirm_workflow_draft",
   "freezone_list_agent_catalog",
   "freezone_get_saved_skill",
@@ -2014,8 +2017,22 @@ function shouldPersistSettledToolStatus(toolMessage: ChatMessage): boolean {
     raw?.functionName,
   ];
   return candidates.some((candidate) =>
-    typeof candidate === "string" && PERSISTENT_SETTLED_TOOL_STATUS_NAMES.has(candidate),
+    typeof candidate === "string" && PERSISTENT_SETTLED_TOOL_STATUS_NAMES.has(
+      candidate.toLowerCase().split(".").pop() ?? "",
+    ),
   );
+}
+
+function workflowPlanDraftOperationId(toolMessage: ChatMessage): string {
+  const raw = toolRawRecord(toolMessage);
+  const name = typeof raw?.name === "string"
+    ? raw.name.toLowerCase().split(".").pop() ?? ""
+    : "";
+  if (name !== "freezone_prepare_workflow_plan_draft") return "";
+  const input = raw?.input && typeof raw.input === "object"
+    ? raw.input as Record<string, unknown>
+    : null;
+  return typeof input?.operation_id === "string" ? input.operation_id.trim() : "";
 }
 
 function toolStatusRuntimeText(params: {
@@ -2107,6 +2124,15 @@ function agentRuntimeDisplayParts(
   parts: ChatMessagePart[],
   options: { streaming: boolean; hideSettledToolStatus?: boolean },
 ): RuntimeDisplayPart[] {
+  const deliveredWorkflowDraftOperations = new Set<string>();
+  for (const part of parts) {
+    if (part.type !== "tool_status") continue;
+    const toolMessage = part.event as ChatMessage;
+    const operationId = workflowPlanDraftOperationId(toolMessage);
+    if (operationId && freezoneToolStatus(toolMessage) === "done") {
+      deliveredWorkflowDraftOperations.add(operationId);
+    }
+  }
   return mergeAdjacentToolStatusParts(
     mergeAdjacentAgentThoughtParts(
       [...parts]
@@ -2116,6 +2142,14 @@ function agentRuntimeDisplayParts(
           const toolMessage = part.event as ChatMessage;
           if (shouldHideInternalToolMessage(toolMessage)) return false;
           const status = freezoneToolStatus(toolMessage);
+          const operationId = workflowPlanDraftOperationId(toolMessage);
+          if (
+            status === "failed" &&
+            operationId &&
+            deliveredWorkflowDraftOperations.has(operationId)
+          ) {
+            return false;
+          }
           if (
             (options.hideSettledToolStatus || !options.streaming)
             && status !== "failed"

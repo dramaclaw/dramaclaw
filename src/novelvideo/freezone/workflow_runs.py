@@ -56,6 +56,7 @@ NON_RETRYABLE_ERROR_MARKERS = {
 RETRYABLE_ERROR_MARKERS = {
     "timed out",
     "timeout",
+    "超时",
     "econnreset",
     "connection reset",
     "bad_response_body",
