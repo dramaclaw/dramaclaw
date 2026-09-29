@@ -23,6 +23,7 @@ import type { PrevizRange } from '../domain/camera';
 import { liveCameraAt } from '../domain/program';
 import type { PrevizObjectKind } from '../domain/scene';
 import { PREVIZ_FPS } from '../domain/scene';
+import { playbackEndFrame } from '../domain/timeline';
 import { PREVIZ_PLAYBACK_RATES, usePrevizStore } from '../store';
 import { PrevizActionRow } from './PrevizActionRow';
 import { PrevizAudioTrack } from './PrevizAudioTrack';
@@ -32,6 +33,7 @@ import { PrevizTimeRuler } from './PrevizTimeRuler';
 import { PREVIZ_TRACK_HEADER_PX, PrevizTimelineTrack } from './PrevizTimelineTrack';
 import { useAudioImport, type PrevizUpstreamAudio } from './useAudioImport';
 import { useCutToCamera } from './useCutToCamera';
+import { PrevizSelect } from './PrevizSelect';
 
 /** 传输条上每个图标按钮的样式。 */
 const BUTTON_CLASS =
@@ -304,7 +306,7 @@ export function PrevizTimeline({
               type="button"
               className={BUTTON_CLASS}
               aria-label={t('previz.timeline.goToEnd')}
-              onClick={() => setTimelineFrame(durationFrames)}
+              onClick={() => setTimelineFrame(playbackEndFrame(scene, soloObjectIds))}
             >
               <ChevronLast className="h-4 w-4" />
             </button>
@@ -321,18 +323,16 @@ export function PrevizTimeline({
 
           <label className="ml-3 flex items-center gap-1 text-xs text-[#8b93a3]">
             {t('previz.timeline.rate')}
-            <select
+            <PrevizSelect
               aria-label={t('previz.timeline.rate')}
               className="rounded bg-[#1d222b] px-1 py-0.5 text-[#c7cedb]"
-              value={rate}
-              onChange={(event) => setTimelineRate(Number(event.target.value))}
-            >
-              {PREVIZ_PLAYBACK_RATES.map((option) => (
-                <option key={option} value={option}>
-                  {option}×
-                </option>
-              ))}
-            </select>
+              value={String(rate)}
+              options={PREVIZ_PLAYBACK_RATES.map((option) => ({
+                value: String(option),
+                label: `${option}×`,
+              }))}
+              onChange={(next) => setTimelineRate(Number(next))}
+            />
           </label>
 
           <label className="flex items-center gap-1 text-xs text-[#8b93a3]">
@@ -350,20 +350,15 @@ export function PrevizTimeline({
           <label className="flex items-center gap-1 text-xs text-[#8b93a3]">
             <Plus className="h-3.5 w-3.5" />
             <span className="sr-only">{t('previz.timeline.addObject')}</span>
-            <select
+            {/* 已经有轨道的对象不列：一个对象一条轨道，再加一次只会加到原来那条上。 */}
+            <PrevizSelect
               aria-label={t('previz.timeline.addObject')}
+              placeholder={t('previz.timeline.addObject')}
               className="rounded bg-[#1d222b] px-1 py-0.5 text-[#c7cedb]"
-              value=""
-              onChange={(event) => event.target.value && addObjectToTimeline(event.target.value)}
-            >
-              <option value="">{t('previz.timeline.addObject')}</option>
-              {/* 已经有轨道的对象不列：一个对象一条轨道，再加一次只会加到原来那条上。 */}
-              {untracked.map((object) => (
-                <option key={object.id} value={object.id}>
-                  {object.name}
-                </option>
-              ))}
-            </select>
+              value={null}
+              options={untracked.map((object) => ({ value: object.id, label: object.name }))}
+              onChange={addObjectToTimeline}
+            />
           </label>
 
           <div className="ml-auto flex items-center gap-1">

@@ -26,6 +26,7 @@ import {
 import { clipById, isActionClip, isPathClip, isRigClip } from '../domain/timeline';
 import { usePrevizStore } from '../store';
 import { motionErrorText, motionLabel } from './motionLabel';
+import { PrevizSelect } from './PrevizSelect';
 
 /*
   版式：一行一件事，左边一列定宽标签，右边把剩下的宽度让给控件。
@@ -92,18 +93,7 @@ function SelectField<T extends string>({
 }) {
   return (
     <Row label={label}>
-      <select
-        aria-label={label}
-        className={FIELD}
-        value={value}
-        onChange={(event) => onCommit(event.target.value as T)}
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+      <PrevizSelect aria-label={label} className={FIELD} value={value} options={options} onChange={onCommit} />
     </Row>
   );
 }

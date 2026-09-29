@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+
 import type { CloseupTarget } from '../domain/closeupClip';
 import type { PrevizClip, PrevizObjectKind, PrevizTrack } from '../domain/scene';
 import { isActionClip, isPathClip, pathClipAt, uToFrame } from '../domain/timeline';
@@ -157,33 +159,6 @@ export function PrevizTimelineTrack({
           className="sticky left-0 z-30 flex shrink-0 items-center gap-1 bg-[#15181f] pl-1 pr-2"
           style={{ width: PREVIZ_TRACK_HEADER_PX }}
         >
-          {picking && closeupTargets.length > 0 && (
-            <div
-              data-testid="previz-closeup-menu"
-              className="absolute left-6 top-7 z-40 flex min-w-40 flex-col rounded border border-[#2f3542] bg-[#1d222b] py-1 shadow-lg"
-            >
-              <span className="px-2 py-0.5 text-[10px] text-[#6d7585]">
-                {t('previz.timeline.closeupTarget')}
-              </span>
-              {closeupTargets.map((target) => (
-                <button
-                  key={target.objectId}
-                  type="button"
-                  className="px-2 py-1 text-left text-xs text-[#c7cedb] hover:bg-[#2a2f3a]"
-                  onClick={() => {
-                    setPicking(false);
-                    onAddCloseup(target);
-                  }}
-                >
-                  {/*
-                    名字加它在时间轴上占到的那一段——同一个人物身上可能有好几段戏，
-                    只报名字的话选完才知道特写覆盖到哪儿。这里没有可翻译的词。
-                  */}
-                  {target.name} · {target.startFrame}~{target.endFrame}
-                </button>
-              ))}
-            </div>
-          )}
           <PrevizHoverTip label={expanded ? t('previz.timeline.collapseTrack') : t('previz.timeline.expandTrack')}>
             <button
               type="button"
@@ -216,18 +191,53 @@ export function PrevizTimelineTrack({
                   </button>
                 </PrevizHoverTip>
               )}
-              <PrevizHoverTip label={t('previz.timeline.addCloseup')}>
-                <button
-                  type="button"
-                  className={ICON_BUTTON}
-                  aria-label={t('previz.timeline.addCloseup')}
-                  // 场景里只有这台机位时没得跟。摆一个按下去没反应的按钮比没有更糟。
-                  disabled={closeupTargets.length === 0}
-                  onClick={() => setPicking((open) => !open)}
+              {/*
+                选单走 Popover 挂到 body 上：留在头列里的话，它被后面几行的 sticky 头列盖住，
+                又被时间轴的滚动区裁掉。时间轴贴着屏幕底边，下面放不下时 Popover 自己翻到上方。
+              */}
+              <Popover open={picking && closeupTargets.length > 0} onOpenChange={setPicking}>
+                <PrevizHoverTip label={t('previz.timeline.addCloseup')}>
+                  <PopoverTrigger
+                    render={
+                      <button
+                        type="button"
+                        className={ICON_BUTTON}
+                        aria-label={t('previz.timeline.addCloseup')}
+                        // 场景里只有这台机位时没得跟。摆一个按下去没反应的按钮比没有更糟。
+                        disabled={closeupTargets.length === 0}
+                      />
+                    }
+                  >
+                    <Link2 className="h-3.5 w-3.5" />
+                  </PopoverTrigger>
+                </PrevizHoverTip>
+                <PopoverContent
+                  data-testid="previz-closeup-menu"
+                  sideOffset={4}
+                  className="flex max-h-64 w-auto min-w-40 flex-col overflow-y-auto rounded border border-[#2f3542] bg-[#1d222b] p-0 py-1 shadow-lg ring-0"
                 >
-                  <Link2 className="h-3.5 w-3.5" />
-                </button>
-              </PrevizHoverTip>
+                  <span className="px-2 py-0.5 text-[10px] text-[#6d7585]">
+                    {t('previz.timeline.closeupTarget')}
+                  </span>
+                  {closeupTargets.map((target) => (
+                    <button
+                      key={target.objectId}
+                      type="button"
+                      className="px-2 py-1 text-left text-xs text-[#c7cedb] hover:bg-[#2a2f3a]"
+                      onClick={() => {
+                        setPicking(false);
+                        onAddCloseup(target);
+                      }}
+                    >
+                      {/*
+                        名字加它在时间轴上占到的那一段——同一个人物身上可能有好几段戏，
+                        只报名字的话选完才知道特写覆盖到哪儿。这里没有可翻译的词。
+                      */}
+                      {target.name} · {target.startFrame}~{target.endFrame}
+                    </button>
+                  ))}
+                </PopoverContent>
+              </Popover>
             </>
           )}
           {kind !== 'camera' && onToggleSolo && (
