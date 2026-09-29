@@ -3239,6 +3239,11 @@ def _intent_item_node(
         ),
         recipe_id,
     )
+    recipe_requires_audio = (
+        node_type == "videoNode"
+        and isinstance(recipe, dict)
+        and recipe.get("requires_generated_audio") is True
+    )
     data: dict[str, Any] = {
         "displayName": label,
         "title": label,
@@ -3252,10 +3257,14 @@ def _intent_item_node(
             "stepId": item_id,
             **({"timelineRole": timeline_role} if timeline_role else {}),
             **(
-                {"requiresGeneratedAudio": item["requires_generated_audio"]}
-                if node_type == "videoNode"
-                and isinstance(item.get("requires_generated_audio"), bool)
-                else {}
+                {"requiresGeneratedAudio": True}
+                if recipe_requires_audio
+                else (
+                    {"requiresGeneratedAudio": item["requires_generated_audio"]}
+                    if node_type == "videoNode"
+                    and isinstance(item.get("requires_generated_audio"), bool)
+                    else {}
+                )
             ),
             "operationType": operation_type,
             "recipeId": recipe_id,
@@ -3557,6 +3566,30 @@ def _backfill_plan_runtime_fields(
     return filled
 
 
+def _bind_recipe_audio_requirements(
+    nodes: list[Any], recipes: dict[str, dict[str, Any]]
+) -> bool:
+    """Apply trusted Recipe audio requirements to agent-authored video nodes."""
+    changed = False
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("node_type") != "videoNode":
+            continue
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        workflow_catalog = data.get("workflowCatalog")
+        if not isinstance(workflow_catalog, dict):
+            continue
+        recipe = recipes.get(_text(workflow_catalog.get("recipeId")))
+        if (
+            not isinstance(recipe, dict)
+            or recipe.get("requires_generated_audio") is not True
+        ):
+            continue
+        if workflow_catalog.get("requiresGeneratedAudio") is not True:
+            workflow_catalog["requiresGeneratedAudio"] = True
+            changed = True
+    return changed
+
+
 def _noncanonical_video_duration_blockers(nodes: list[Any]) -> list[dict[str, str]]:
     blockers: list[dict[str, str]] = []
     for index, node in enumerate(nodes):
@@ -3738,15 +3771,22 @@ def validate_agent_workflow_plan(
             "error": errors[0]["message"],
             "errors": errors,
         }
-    validated_plan = validated.get("plan") if isinstance(validated.get("plan"), dict) else {}
+    validated_plan = (
+        validated.get("plan") if isinstance(validated.get("plan"), dict) else {}
+    )
     backfilled = _backfill_plan_runtime_fields(
         validated_plan.get("nodes") or [], input_contract["resolved"]
     )
+    audio_requirements_bound = _bind_recipe_audio_requirements(
+        validated_plan.get("nodes") or [], recipes
+    )
     if backfilled:
         validated["backfilled_runtime_fields"] = backfilled
-        if _build_plan_preflight is not None:
-            # Planned duration and warnings must reflect the backfilled nodes.
-            validated["preflight"] = _build_plan_preflight(validated_plan.get("nodes") or [])
+    if (backfilled or audio_requirements_bound) and _build_plan_preflight is not None:
+        # Runtime fields and trusted Recipe audio requirements both affect preflight.
+        validated["preflight"] = _build_plan_preflight(
+            validated_plan.get("nodes") or []
+        )
     _drop_caller_mode_confirmations(
         validated_plan.get("nodes") or [], input_contract["resolved"]
     )
@@ -3967,7 +4007,11 @@ def _recipe_planning_summary(recipe: dict[str, Any]) -> dict[str, Any]:
         "id": _text(recipe.get("id")),
         "name": _text(recipe.get("name") or recipe.get("label")),
         "version": recipe.get("version"),
-        **({"output_format": recipe["output_format"]} if recipe.get("output_format") else {}),
+        **(
+            {"output_format": recipe["output_format"]}
+            if recipe.get("output_format")
+            else {}
+        ),
         "node_type": _recipe_node_type(recipe),
         "output_kind": _text(
             recipe.get("output_kind")
@@ -3996,6 +4040,7 @@ def _recipe_planning_summary(recipe: dict[str, Any]) -> dict[str, Any]:
         "requires_source_media": bool(
             recipe.get("requires_source_media") or recipe.get("requiresSourceMedia")
         ),
+        "requires_generated_audio": recipe.get("requires_generated_audio") is True,
         "conflicts_with": [
             _text(item) for item in recipe.get("conflicts_with") or [] if _text(item)
         ],

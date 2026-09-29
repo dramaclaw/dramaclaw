@@ -26,6 +26,7 @@
   "planning_prompt": "根据关键元素、分镜和引用限制生成生存探索/动作危机类单镜视频提示词。",
   "result_summary": "生存探索/动作危机类单镜视频生成提示词。",
   "requires_source_media": false,
+  "requires_generated_audio": true,
   "force_enhancement": false,
   "skip_detail_check": false
 }
