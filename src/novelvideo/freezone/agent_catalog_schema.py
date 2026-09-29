@@ -230,6 +230,7 @@ class AgentCatalogRecipeConfig(_CatalogBaseModel):
     planning_prompt: str
     result_summary: str
     requires_source_media: bool = False
+    requires_generated_audio: bool = False
     force_enhancement: bool = False
     skip_detail_check: bool = False
 
@@ -262,6 +263,8 @@ class AgentCatalogRecipeConfig(_CatalogBaseModel):
 
     @model_validator(mode="after")
     def validate_pipeline_contract(self) -> "AgentCatalogRecipeConfig":
+        if self.requires_generated_audio and self.output_kind != "video":
+            raise ValueError("requires_generated_audio requires output_kind=video")
         if self.output_format == "html" and self.output_kind != "text":
             raise ValueError("HTML output_format requires output_kind=text")
         if self.id in self.conflicts_with:

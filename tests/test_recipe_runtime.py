@@ -33,6 +33,38 @@ def test_builtin_text_recipes_produce_final_deliverables():
     assert "ecommerce-text-plan" in text_recipe_ids
 
 
+@pytest.mark.parametrize(
+    "recipe_id",
+    ["sci-fi-survival-shot-video", "anthropomorphic-kungfu-shot-video"],
+)
+def test_voiced_builtin_video_recipes_pass_strict_catalog_validation(recipe_id):
+    recipe_path = (
+        Path(__file__).resolve().parents[1]
+        / "src/novelvideo/freezone/agent_catalog/builtins/recipes"
+        / f"{recipe_id}.json"
+    )
+    payload = json.loads(recipe_path.read_text(encoding="utf-8"))
+
+    validated = validate_agent_recipe_config(payload)
+
+    assert validated["id"] == recipe_id
+    assert validated["requires_generated_audio"] is True
+
+
+def test_generated_audio_requirement_cannot_be_attached_to_text_recipe():
+    recipe_path = (
+        Path(__file__).resolve().parents[1]
+        / "src/novelvideo/freezone/agent_catalog/builtins/recipes/general-text.json"
+    )
+    payload = json.loads(recipe_path.read_text(encoding="utf-8"))
+    payload["requires_generated_audio"] = True
+
+    with pytest.raises(
+        ValueError, match="requires_generated_audio requires output_kind=video"
+    ):
+        validate_agent_recipe_config(payload)
+
+
 def test_text_recipe_rejects_second_stage_model_instruction():
     with pytest.raises(ValueError, match="must produce the final deliverable"):
         validate_agent_recipe_config(
