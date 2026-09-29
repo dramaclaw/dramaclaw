@@ -191,8 +191,16 @@ export interface VideoNodeData extends NodeDisplayData {
   upscaleSourceUrl?: string;
   /** 目标清晰度档位。 */
   upscaleResolution?: '1080p' | '2k' | '4k';
-  /** 降噪强度。 */
-  upscaleDenoise?: 'none' | '1x' | '2x';
+  /** 目标帧率；auto 保持源帧率。 */
+  upscaleTargetFps?: 'auto' | 30 | 60 | 90;
+  /** 慢放倍率；auto 保持原速。 */
+  upscaleSlowdown?: 'auto' | '2x';
+  /** 帧率调整时是否启用智能插帧。 */
+  upscaleSmartInterpolation?: boolean;
+  /** 源视频场景类型。 */
+  upscaleScene?: 'realistic' | 'anime';
+  /** 是否启用人脸专项增强。 */
+  upscaleFaceEnhance?: boolean;
   [key: string]: unknown;
 }
 

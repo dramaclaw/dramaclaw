@@ -527,6 +527,22 @@ def test_video_extend_requires_a_usable_source_video_limit():
         )
 
 
+@pytest.mark.parametrize("mode", ["video_upscale", "video_frame_rate"])
+def test_video_processing_modes_require_a_usable_source_video_limit(mode):
+    base = {
+        "supportedModes": [mode],
+        "request": {"endpoint": "video/generations", "parameters": []},
+    }
+
+    assert validate_media_model_catalog_config(base, "video") is base
+    assert validate_media_model_catalog_config({**base, "referenceVideoMax": 1}, "video")
+    with pytest.raises(MediaModelSchemaError, match="video processing modes require"):
+        validate_media_model_catalog_config(
+            {**base, "referenceVideoMax": 0},
+            "video",
+        )
+
+
 def test_validates_file_and_link_reference_capabilities():
     base = {
         "supportedModes": ["all_reference"],
