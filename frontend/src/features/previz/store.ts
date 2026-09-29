@@ -18,6 +18,12 @@ import {
   type PrevizAudioSource,
 } from './domain/audioTrack';
 import { clampToRange } from './domain/camera';
+import {
+  planBlockoutImport,
+  type PrevizBlockoutImportMode,
+  type PrevizBlockoutPayload,
+  type PrevizBlockoutRejection,
+} from './domain/blockout';
 import { canAddObject, canAddPrimitive } from './domain/limits';
 import type { PrevizMotionStatus } from './domain/motionLibrary';
 import {
@@ -304,6 +310,14 @@ interface PrevizStoreState {
   ) => string | null;
   updateObject: (id: string, patch: PrevizObjectPatch) => void;
   removeObject: (id: string) => void;
+  /**
+   * 把一次「参考图转白模」的结果整份写进场景，算一步撤销。写不进去时返回理由且不动场景。
+   * 写进去之后选中参考机位并把监看切过去。
+   */
+  importBlockout: (
+    payload: PrevizBlockoutPayload,
+    mode: PrevizBlockoutImportMode,
+  ) => PrevizBlockoutRejection | null;
   setDisplayMode: (mode: DisplayMode) => void;
   setOutputAspect: (aspect: OutputAspect) => void;
   setDurationFrames: (frames: number) => void;
@@ -448,6 +462,28 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
       monitorFollowsProgram: activeCameraId === id ? true : monitorFollowsProgram,
       soloObjectIds: soloObjectIds.filter((soloId) => soloId !== id),
     });
+  },
+
+  importBlockout: (payload, mode) => {
+    const { scene, applyScene, selectedObjectId, activeCameraId, monitorFollowsProgram, soloObjectIds } =
+      get();
+    const plan = planBlockoutImport(scene, payload, mode);
+    if (!plan.ok) return plan.rejection;
+
+    // 一次 `applyScene`：上百个方块是一次生成的结果，撤销也该一次退干净。
+    applyScene(plan.scene);
+    const removed = new Set(plan.removedIds);
+    const activeRemoved = activeCameraId !== null && removed.has(activeCameraId);
+    const reference = plan.referenceCameraId;
+    set({
+      selectedObjectId:
+        reference ?? (selectedObjectId !== null && removed.has(selectedObjectId) ? null : selectedObjectId),
+      // 参考机位就是拍参考图的那台：监看切过去，右下角看到的画面才能跟参考图对着比。
+      activeCameraId: reference ?? (activeRemoved ? null : activeCameraId),
+      monitorFollowsProgram: reference !== null ? false : activeRemoved ? true : monitorFollowsProgram,
+      soloObjectIds: soloObjectIds.filter((id) => !removed.has(id)),
+    });
+    return null;
   },
 
   setDisplayMode: (mode) => {
