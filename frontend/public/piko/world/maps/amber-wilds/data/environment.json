@@ -5,7 +5,440 @@
     "preset": "baked-daylight",
     "intensity": 0
   },
-  "effects": [],
+  "effects": [
+    {
+      "id": "amber-grass-west-open-slope",
+      "kind": "sprite",
+      "src": "effects/golden-grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "west-open-slope",
+        "points": [
+          {
+            "x": 474,
+            "y": 245
+          },
+          {
+            "x": 586,
+            "y": 245
+          },
+          {
+            "x": 586,
+            "y": 357
+          },
+          {
+            "x": 474,
+            "y": 357
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 2,
+        "frames": 8,
+        "fps": 2,
+        "inset": 0,
+        "startStep": 0
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "amber-grass-east-open-slope",
+      "kind": "sprite",
+      "src": "effects/golden-grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "east-open-slope",
+        "points": [
+          {
+            "x": 1220,
+            "y": 258
+          },
+          {
+            "x": 1332,
+            "y": 258
+          },
+          {
+            "x": 1332,
+            "y": 370
+          },
+          {
+            "x": 1220,
+            "y": 370
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 2,
+        "frames": 8,
+        "fps": 2,
+        "inset": 0,
+        "startStep": 3
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "amber-grass-southeast-open-grass",
+      "kind": "sprite",
+      "src": "effects/golden-grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "southeast-open-grass",
+        "points": [
+          {
+            "x": 1768,
+            "y": 690
+          },
+          {
+            "x": 1904,
+            "y": 690
+          },
+          {
+            "x": 1904,
+            "y": 826
+          },
+          {
+            "x": 1768,
+            "y": 826
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 2,
+        "frames": 8,
+        "fps": 2,
+        "inset": 0,
+        "startStep": 6
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "amber-grass-northwest-open",
+      "kind": "sprite",
+      "src": "effects/golden-grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "northwest-open",
+        "points": [
+          {
+            "x": 240,
+            "y": 116
+          },
+          {
+            "x": 320,
+            "y": 116
+          },
+          {
+            "x": 320,
+            "y": 196
+          },
+          {
+            "x": 240,
+            "y": 196
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 2,
+        "frames": 8,
+        "fps": 2,
+        "inset": 0,
+        "startStep": 5
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "amber-grass-northwest-middle",
+      "kind": "sprite",
+      "src": "effects/golden-grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "northwest-middle",
+        "points": [
+          {
+            "x": 441,
+            "y": 159
+          },
+          {
+            "x": 529,
+            "y": 159
+          },
+          {
+            "x": 529,
+            "y": 247
+          },
+          {
+            "x": 441,
+            "y": 247
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 2,
+        "frames": 8,
+        "fps": 2,
+        "inset": 0,
+        "startStep": 2
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "amber-grass-north-open",
+      "kind": "sprite",
+      "src": "effects/golden-grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "north-open",
+        "points": [
+          {
+            "x": 996,
+            "y": 129
+          },
+          {
+            "x": 1084,
+            "y": 129
+          },
+          {
+            "x": 1084,
+            "y": 217
+          },
+          {
+            "x": 996,
+            "y": 217
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 2,
+        "frames": 8,
+        "fps": 2,
+        "inset": 0,
+        "startStep": 7
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "amber-grass-upper-east",
+      "kind": "sprite",
+      "src": "effects/golden-grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "upper-east",
+        "points": [
+          {
+            "x": 1562,
+            "y": 237
+          },
+          {
+            "x": 1658,
+            "y": 237
+          },
+          {
+            "x": 1658,
+            "y": 333
+          },
+          {
+            "x": 1562,
+            "y": 333
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 2,
+        "frames": 8,
+        "fps": 2,
+        "inset": 0,
+        "startStep": 1
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "amber-grass-west-middle",
+      "kind": "sprite",
+      "src": "effects/golden-grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "west-middle",
+        "points": [
+          {
+            "x": 174,
+            "y": 384
+          },
+          {
+            "x": 286,
+            "y": 384
+          },
+          {
+            "x": 286,
+            "y": 496
+          },
+          {
+            "x": 174,
+            "y": 496
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 2,
+        "frames": 8,
+        "fps": 2,
+        "inset": 0,
+        "startStep": 4
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "amber-grass-ruin-east",
+      "kind": "sprite",
+      "src": "effects/golden-grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "ruin-east",
+        "points": [
+          {
+            "x": 894,
+            "y": 424
+          },
+          {
+            "x": 1006,
+            "y": 424
+          },
+          {
+            "x": 1006,
+            "y": 536
+          },
+          {
+            "x": 894,
+            "y": 536
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 2,
+        "frames": 8,
+        "fps": 2,
+        "inset": 0,
+        "startStep": 6
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "amber-grass-south-open",
+      "kind": "sprite",
+      "src": "effects/golden-grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "south-open",
+        "points": [
+          {
+            "x": 1086,
+            "y": 725
+          },
+          {
+            "x": 1214,
+            "y": 725
+          },
+          {
+            "x": 1214,
+            "y": 853
+          },
+          {
+            "x": 1086,
+            "y": 853
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 2,
+        "frames": 8,
+        "fps": 2,
+        "inset": 0,
+        "startStep": 2
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "amber-grass-east-middle",
+      "kind": "sprite",
+      "src": "effects/golden-grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "east-middle",
+        "points": [
+          {
+            "x": 1670,
+            "y": 537
+          },
+          {
+            "x": 1790,
+            "y": 537
+          },
+          {
+            "x": 1790,
+            "y": 657
+          },
+          {
+            "x": 1670,
+            "y": 657
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 2,
+        "frames": 8,
+        "fps": 2,
+        "inset": 0,
+        "startStep": 0
+      },
+      "reducedMotion": "simplify"
+    },
+    {
+      "id": "amber-grass-east-lower",
+      "kind": "sprite",
+      "src": "effects/golden-grass-breeze-v1.png",
+      "layer": "front-scenery",
+      "region": {
+        "id": "east-lower",
+        "points": [
+          {
+            "x": 1916,
+            "y": 760
+          },
+          {
+            "x": 2044,
+            "y": 760
+          },
+          {
+            "x": 2044,
+            "y": 888
+          },
+          {
+            "x": 1916,
+            "y": 888
+          }
+        ]
+      },
+      "animation": {
+        "columns": 4,
+        "rows": 2,
+        "frames": 8,
+        "fps": 2,
+        "inset": 0,
+        "startStep": 5
+      },
+      "reducedMotion": "simplify"
+    }
+  ],
   "audioZones": [
     {
       "id": "grassland-wind",

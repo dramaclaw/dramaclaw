@@ -1,5 +1,38 @@
 {
   "schemaVersion": 1,
   "mapId": "artisan-market",
-  "interactions": []
+  "interactions": [
+    {
+      "id": "west-bench-seat",
+      "kind": "seat",
+      "trigger": {
+        "id": "west-bench-seat-hitbox",
+        "points": [
+          { "x": 505, "y": 710 },
+          { "x": 615, "y": 710 },
+          { "x": 619, "y": 748 },
+          { "x": 614, "y": 773 },
+          { "x": 500, "y": 770 },
+          { "x": 499, "y": 740 }
+        ]
+      },
+      "actionId": "market-west-bench"
+    },
+    {
+      "id": "east-bench-seat",
+      "kind": "seat",
+      "trigger": {
+        "id": "east-bench-seat-hitbox",
+        "points": [
+          { "x": 1275, "y": 673 },
+          { "x": 1375, "y": 678 },
+          { "x": 1386, "y": 706 },
+          { "x": 1382, "y": 736 },
+          { "x": 1277, "y": 736 },
+          { "x": 1270, "y": 707 }
+        ]
+      },
+      "actionId": "market-east-bench"
+    }
+  ]
 }

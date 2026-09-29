@@ -84,6 +84,5 @@
   .panel.panel[data-open], .panel.panel[data-closed] { animation: none; }
 }
 
-.pikoWordmark { display: block; width: 60px; height: auto; opacity: .88; transition: opacity var(--duration-fast); }
-.trigger:hover .pikoWordmark, .trigger:focus-visible .pikoWordmark { opacity: 1; }
-:global(.light) .pikoWordmark { filter: brightness(0); }
+.pikoLabel { display: block; width: 60px; white-space: nowrap; font-weight: 400; }
+:global(.light) .pikoLabel { color: var(--foreground); }

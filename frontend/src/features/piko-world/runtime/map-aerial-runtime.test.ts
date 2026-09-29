@@ -17,6 +17,7 @@ import {
   COURTYARD_CLOUD_SRC,
   createBirdEvent,
   createCloudEvent,
+  createCloudtopCloudEvent,
   createMapAerialRuntime,
   createLaneShuffle,
   MARKET_BIRD_ROUTES,
@@ -89,7 +90,7 @@ it("places cloudtop routes across the ridge and amber routes above the open fiel
 });
 
 it.each([
-  ["cloudtop-slope", 300, 500],
+  ["cloudtop-slope", 500, 700],
   ["amber-wilds", 100, 300],
 ] as const)("uses shared aerial textures with %s's authored sky height", async (mapId, minY, maxY) => {
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
@@ -127,6 +128,110 @@ it("bounds the randomized distant flock and cloud-group presets", () => {
     expect(clouds.clouds.every(item => item.shadowAlpha < item.alpha)).toBe(true);
   }
 });
+
+it("enlarges cliff clouds while reducing travel speed, opacity and the quiet gap", () => {
+  for (const random of [() => 0, () => 0.5, () => 0.999]) {
+    for (const lane of AERIAL_LANES) {
+      const original = createCloudEvent(lane, random);
+      const cliff = createCloudtopCloudEvent(lane, random);
+      expect(cliff.clouds[0].width / original.clouds[0].width).toBeCloseTo(1.75);
+      expect(cliff.duration).toBeCloseTo(lane === "upper" ? original.duration / 0.7
+        : original.duration * 2 / AERIAL_LANE_DEPTH[lane].duration);
+      expect(Math.abs(cliff.clouds[0].drift)).toBeLessThanOrEqual(2.16);
+      const route = CLOUDTOP_CLOUD_ROUTES[lane];
+      expect(route.to.x).toBeGreaterThan(route.from.x);
+      expect(route.to.y).toBe(route.from.y);
+      expect(route.arc).toBe(0);
+      expect(aerialCycleState(cliff.duration * 0.07, cliff.duration, cliff.duration + cliff.gap, cliff.fadeFraction).fade).toBeCloseTo(0.5);
+      expect(cliff.clouds[0].alpha).toBeLessThan(original.clouds[0].alpha);
+      expect(cliff.clouds[0].shadowAlpha).toBeLessThan(original.clouds[0].shadowAlpha / 2);
+      expect(cliff.gap).toBeLessThan(original.gap);
+    }
+  }
+});
+
+it("staggers independent clouds, covers central and lower terrain and pauses all passes together", async () => {
+  let reduced = false, change = () => {};
+  vi.stubGlobal("matchMedia", () => ({ get matches() { return reduced; },
+    addEventListener: (_: string, fn: () => void) => { change = fn; }, removeEventListener: vi.fn() }));
+  const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+  const atlas = new Texture({ source: new TextureSource({ width: 2048, height: 512 }) });
+  const cloud = new Texture({ source: new TextureSource({ width: 1856, height: 528 }) });
+  const { Assets } = await import("pixi.js");
+  vi.spyOn(Assets, "load").mockResolvedValueOnce(atlas as never).mockResolvedValueOnce(cloud as never);
+  vi.spyOn(Assets, "unload").mockResolvedValue(undefined);
+  const ticker = new Ticker(); ticker.autoStart = false;
+  const runtime = (await createMapAerialRuntime({ mapId: "cloudtop-slope", ticker,
+    resolveAssetUrl: src => src, isDisposed: () => false, random: () => 0.5 }))!;
+  try {
+    expect(runtime.clouds.filter(sprite => sprite.visible)).toHaveLength(3);
+    const patterns = new Set<string>();
+    const coveredHeights = new Set<number>();
+    ticker.update(1000);
+    for (let time = 1100; time <= 121000; time += 100) {
+      ticker.update(time);
+      patterns.add(runtime.clouds.map(sprite => Number(sprite.visible)).join(""));
+      for (const sprite of runtime.clouds.filter(sprite => sprite.visible)) {
+        if (sprite.x > 700 && sprite.x < 1450 && sprite.alpha > 0.1) {
+          coveredHeights.add(Math.round(sprite.y / 100) * 100);
+        }
+      }
+    }
+    expect(coveredHeights.has(500)).toBe(true);
+    expect(coveredHeights.has(900)).toBe(true);
+    expect(patterns.has("111")).toBe(true);
+    expect(patterns.has("101") || patterns.has("011")).toBe(true);
+    const positions = runtime.clouds.map(sprite => ({ x: sprite.x, y: sprite.y }));
+    hidden.mockReturnValue(true); document.dispatchEvent(new Event("visibilitychange"));
+    ticker.update(121100);
+    expect(ticker.count).toBe(0);
+    expect(runtime.clouds.map(sprite => ({ x: sprite.x, y: sprite.y }))).toEqual(positions);
+    hidden.mockReturnValue(false); document.dispatchEvent(new Event("visibilitychange"));
+    expect(ticker.count).toBe(1);
+    reduced = true; change();
+    expect(ticker.count).toBe(0);
+    expect(runtime.bodyLayer.visible).toBe(false);
+  } finally { runtime.destroy(); ticker.destroy(); }
+});
+
+it.each(["welcome-courtyard", "artisan-market", "lantern-canal-street", "amber-wilds", "cloudtop-slope"] as const)(
+  "%s starts with visible clouds and keeps visible gaps short over five minutes", async mapId => {
+    vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    const { Assets } = await import("pixi.js");
+    vi.spyOn(Assets, "unload").mockResolvedValue(undefined);
+    const load = vi.spyOn(Assets, "load");
+    for (const initialSeed of [17, 29, 103]) {
+      let seed = initialSeed;
+      const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+      load.mockResolvedValueOnce(new Texture({ source: new TextureSource({ width: 2048, height: 512 }) }) as never)
+        .mockResolvedValueOnce(new Texture({ source: new TextureSource({ width: 1856, height: 528 }) }) as never);
+      const ticker = new Ticker(); ticker.autoStart = false;
+      const runtime = (await createMapAerialRuntime({ mapId, ticker, resolveAssetUrl: src => src,
+        isDisposed: () => false, random }))!;
+      // A visible flag alone does not count: require opacity and at least 60px of the cloud onscreen.
+      const visibleCount = () => runtime.clouds.filter(sprite => sprite.visible && sprite.alpha >= 0.06
+        && Math.min(2048, sprite.x + Math.abs(sprite.width) / 2)
+          - Math.max(0, sprite.x - Math.abs(sprite.width) / 2) >= 60
+        && sprite.y + sprite.height / 2 > 0 && sprite.y - sprite.height / 2 < 1152).length;
+      try {
+        expect(visibleCount()).toBeGreaterThan(0);
+        let gap = 0, longestGap = 0, peak = 0;
+        ticker.update(1000);
+        for (let time = 1100; time <= 301000; time += 100) {
+          ticker.update(time);
+          const count = visibleCount();
+          peak = Math.max(peak, count);
+          gap = count ? 0 : gap + 0.1;
+          longestGap = Math.max(longestGap, gap);
+        }
+        expect(longestGap, `seed ${initialSeed}`).toBeLessThan(18);
+        expect(peak).toBeLessThanOrEqual(mapId === "cloudtop-slope" ? 3 : 2);
+      } finally { runtime.destroy(); ticker.destroy(); }
+      await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+      load.mockClear();
+    }
+  });
 
 it("pairs visible bodies with projected shadows and pauses for reduced motion", async () => {
   let reduced = false, change = () => {};

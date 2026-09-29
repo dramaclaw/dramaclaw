@@ -408,7 +408,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger openOnHover delay={100} closeDelay={180}
               render={<Button id="piko-hub-entry" variant="ghost" size="sm" className={`${entryStyles.trigger} px-2 text-xs font-medium`} />}>
-              <img src="/brand/piko-piko-wordmark.png" alt="Piko Piko" width={3240} height={520} className={entryStyles.pikoWordmark} draggable={false} />
+              <span className={entryStyles.pikoLabel}>Piko Piko</span>
             </DropdownMenuTrigger>
             <HeaderMenuPanel dropdown>
               <HeaderMenuRow menuItem

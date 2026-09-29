@@ -2,6 +2,7 @@
 import type { Texture, Ticker } from "pixi.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { createResidentActor } from "./resident-actor";
+import { PIKO_PLAYER_SPEED, PIKO_PLAYER_GAIT_CYCLE_SOURCE_PIXELS, PIKO_PLAYER_MOTION_COLUMNS, PIKO_PLAYER_WALK_COLUMNS } from "../piko-player";
 import type { PikoNavigation } from "./map-package-schema";
 const mock=vi.hoisted(()=>({setFrame:vi.fn(),setStaticTexture:vi.fn(),destroy:vi.fn(),step:vi.fn(),stop:vi.fn(),unlock:vi.fn(),audioDestroy:vi.fn()}));
 vi.mock("./footstep-audio",()=>({createGrassFootsteps:()=>({step:mock.step,stop:mock.stop,unlock:mock.unlock,destroy:mock.audioDestroy})}));
@@ -66,17 +67,18 @@ it("drives a simulated resident independently of the player's keyboard and pause
   expect(ticker.remove).toHaveBeenCalledWith(tick);
 });
 
-it("uses the player's slower travel speed and distance-based gait without changing residents", () => {
+it("uses the configured player travel speed with distance-based walking and footsteps", () => {
   const host = document.createElement("div"); host.tabIndex = 0; document.body.append(host); host.focus();
   const navigation = { walkableAreas: [{ id: "ground", points: [{x:0,y:0},{x:2000,y:0},{x:2000,y:1200},{x:0,y:1200}] }], colliders: [] } as unknown as PikoNavigation;
   const ticker = { add: vi.fn(), remove: vi.fn() };
   const actor = createResidentActor({} as Texture, ticker as unknown as Ticker, () => true,
-    { host, navigation, speed: 135, gaitCycleSourcePixels: 48 });
+    { host, navigation, speed: PIKO_PLAYER_SPEED, gaitCycleSourcePixels: PIKO_PLAYER_GAIT_CYCLE_SOURCE_PIXELS,
+      motionColumns: PIKO_PLAYER_MOTION_COLUMNS, walkColumns: PIKO_PLAYER_WALK_COLUMNS });
   window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyD" }));
   const tick = ticker.add.mock.calls[0][0];
   for (let i = 0; i < 30; i++) tick({ deltaMS: 16 });
-  expect(actor.container.position.x - 1190).toBeCloseTo(64.8);
-  expect(mock.setFrame).toHaveBeenLastCalledWith(30);
+  expect(actor.container.position.x - 1190).toBeCloseTo(73.872);
+  expect(mock.setFrame).toHaveBeenLastCalledWith(17);
   expect(mock.step).toHaveBeenCalledTimes(2);
   actor.destroy();
 });
@@ -90,7 +92,7 @@ it("lets the player idle cycle run past the resident's 4800 ms loop", () => {
     { host, navigation, idleFrameAt, idleCycleMs: 8000 });
   const tick = ticker.add.mock.calls[0][0];
   for (let i = 0; i < 100; i++) tick({ deltaMS: 50 });
-  expect(idleFrameAt).toHaveBeenLastCalledWith(5000);
+  expect(idleFrameAt).toHaveBeenLastCalledWith(5000, "south");
   expect(mock.setFrame).toHaveBeenLastCalledWith(1);
   actor.destroy();
 });
@@ -101,7 +103,7 @@ it("walks to a click without overshoot and lets keyboard and pause cancel the ro
   const navigation = { walkableAreas: [{ id: "ground", points: [{x:0,y:0},{x:2000,y:0},{x:2000,y:1200},{x:0,y:1200}] }], colliders: [] } as unknown as PikoNavigation;
   const ticker = { add: vi.fn(), remove: vi.fn() };
   let active = true;
-  const actor = createResidentActor({} as Texture, ticker as unknown as Ticker, () => active, { host, navigation });
+  const actor = createResidentActor({} as Texture, ticker as unknown as Ticker, () => active, { host, navigation, speed: PIKO_PLAYER_SPEED });
   const tick = ticker.add.mock.calls[0][0];
   const arrived = vi.fn();
   actor.walkTo({ x: 1200, y: 485 }, arrived);
@@ -160,6 +162,29 @@ it("reports the same idle clock used by raised-hand poses and resets it after wa
   actor.destroy();
 });
 
+it("uses a seat's authored depth only while seated and restores normal depth on exit", () => {
+  const host = document.createElement("div"); host.tabIndex = 0; document.body.append(host); host.focus();
+  const navigation = { walkableAreas: [{ id: "ground", points: [{x:0,y:0},{x:2000,y:0},{x:2000,y:1200},{x:0,y:1200}] }], colliders: [] } as unknown as PikoNavigation;
+  const ticker = { add: vi.fn(), remove: vi.fn() };
+  const actor = createResidentActor({} as Texture, ticker as unknown as Ticker, () => true, { host, navigation });
+  const tick = ticker.add.mock.calls[0][0];
+  actor.sit({} as Texture, { x: 1330, y: 757 }, null, 784);
+  actor.container.position.set(1330, 694);
+  tick({ deltaMS: 16 });
+  expect(actor.container.zIndex).toBe(784);
+  expect(actor.container.position).toMatchObject({ x: 1330, y: 694 });
+  actor.walkTo({ x: 1400, y: 757 });
+  tick({ deltaMS: 16 });
+  expect(actor.isSeated()).toBe(false);
+  expect(actor.container.zIndex).toBe(actor.container.position.y);
+  actor.sit({} as Texture, { x: 1400, y: 757 });
+  actor.container.position.set(560, 730);
+  tick({ deltaMS: 16 });
+  expect(actor.container.zIndex).toBeGreaterThan(770);
+  expect(actor.container.zIndex).toBeLessThan(780);
+  actor.destroy();
+});
+
 it("animates seated idle without moving its anchor and restores standing on exit", () => {
   const host=document.createElement('div');host.tabIndex=0;document.body.append(host);host.focus();
   const motion={matches:false};vi.stubGlobal('matchMedia',()=>motion);
@@ -169,17 +194,44 @@ it("animates seated idle without moving its anchor and restores standing on exit
   const base={label:'base'} as Texture,idle={label:'idle'} as Texture;
   actor.sit(base,{x:1210,y:490},idle);
   const tick=ticker.add.mock.calls[0][0],position={x:actor.container.position.x,y:actor.container.position.y};
-  for(let i=0;i<64;i++)tick({deltaMS:50});
+  for(let i=0;i<36;i++)tick({deltaMS:50});
   expect(mock.setStaticTexture).toHaveBeenLastCalledWith(idle,{x:32,y:32});
   expect(actor.container.position).toMatchObject(position);
   active=false;for(let i=0;i<200;i++)tick({deltaMS:50});
   expect(mock.setStaticTexture).toHaveBeenLastCalledWith(idle,{x:32,y:32});
-  active=true;for(let i=0;i<24;i++)tick({deltaMS:50});
+  active=true;for(let i=0;i<3;i++)tick({deltaMS:50});
+  expect(mock.setStaticTexture).toHaveBeenLastCalledWith(idle,{x:32,y:32});
+  tick({deltaMS:30});
   expect(mock.setStaticTexture).toHaveBeenLastCalledWith(base,{x:32,y:32});
+  for(let i=0;i<76;i++)tick({deltaMS:50});
+  tick({deltaMS:20});
+  expect(mock.setStaticTexture).toHaveBeenLastCalledWith(idle,{x:32,y:32});
   motion.matches=true;for(let i=0;i<160;i++)tick({deltaMS:50});
   expect(mock.setStaticTexture).toHaveBeenLastCalledWith(base,{x:32,y:32});
   window.dispatchEvent(new KeyboardEvent('keydown',{code:'KeyD'}));tick({deltaMS:16});
   expect(actor.isSeated()).toBe(false);
   expect(mock.setStaticTexture).toHaveBeenLastCalledWith(null);
+  actor.destroy();
+});
+
+it("uses compact player rows while retaining facing on stopping", () => {
+  const host = document.createElement("div"); host.tabIndex = 0; document.body.append(host); host.focus();
+  vi.stubGlobal("matchMedia", () => ({ matches: false }));
+  const navigation = { walkableAreas: [{ id: "ground", points: [{ x: 0, y: 0 }, { x: 2000, y: 0 }, { x: 2000, y: 1200 }, { x: 0, y: 1200 }] }], colliders: [] } as unknown as PikoNavigation;
+  const ticker = { add: vi.fn(), remove: vi.fn() };
+  const actor = createResidentActor({} as Texture, ticker as unknown as Ticker, () => true, {
+    host, navigation, facing: "east", motionColumns: 6, walkColumns: [3, 4, 5, 4], idleFrameAt: () => 0,
+  });
+  expect(mock.setFrame).toHaveBeenLastCalledWith(12);
+  const tick = ticker.add.mock.calls[0][0];
+  window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyD" }));
+  tick({ deltaMS: 16 });
+  expect(mock.setFrame).toHaveBeenLastCalledWith(15);
+  window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyD" }));
+  tick({ deltaMS: 16 });
+  expect(mock.setFrame).toHaveBeenLastCalledWith(12);
+  window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyW" }));
+  tick({ deltaMS: 16 });
+  expect(mock.setFrame).toHaveBeenLastCalledWith(21);
   actor.destroy();
 });

@@ -52,7 +52,7 @@ describe("Piko World 项目中心入口", () => {
     expect(worldShell).toContain("piko-world-page-background-day-v1.png");
     expect(worldShell).toContain('className="size-full object-cover"');
     expect(worldShell).toContain('className="absolute inset-0 bg-black/35"');
-    expect(worldShell).toContain('className="absolute right-4 top-4 z-20"');
+    expect(worldShell).toMatch(/className="absolute right-4 top-4 z-20(?: [^"]*)?"/);
     expect(worldShell).toContain("<PikoWardrobeDialog");
     expect(worldShell).not.toContain("<PikoResidentSelectorDialog");
     expect(worldShell).toContain("piko-world-public-chat-panel-top-v3.png");
@@ -136,7 +136,7 @@ describe("Piko World 项目中心入口", () => {
     expect(worldShell).not.toMatch(/#[0-9a-f]{3,8}/i);
     expect(worldShell).not.toContain("text-[11px]");
     expect(worldCanvas).not.toContain("onWheel");
-    expect(worldCanvas).not.toContain("pointermove");
+    // Seat hover now uses pointermove; viewport-fit tests cover map positioning.
     expect(worldCanvas).toContain('t("pikoWorld.mapLoading", { mapName:');
     expect(worldCanvas).not.toContain("正在加载初遇庭院");
   });

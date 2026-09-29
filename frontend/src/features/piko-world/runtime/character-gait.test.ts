@@ -16,3 +16,9 @@ it("does not step while blocked and is independent of frame subdivision", () => 
   expect(advanceGait(20,NaN,80)).toBe(20);
   expect(advanceGait(advanceGait(0,15,80),15,80)).toBe(advanceGait(0,30,80));
 });
+
+it("reuses the neutral pose in a symmetric three-artwork player cycle", () => {
+  const columns = [2, 3, 4, 3];
+  expect([0, 20, 40, 60, 80].map(distance => gaitColumn(distance, 80, columns))).toEqual([2, 3, 4, 3, 2]);
+  expect(gaitColumn(advanceGait(70, 30, 80), 80, columns)).toBe(3);
+});

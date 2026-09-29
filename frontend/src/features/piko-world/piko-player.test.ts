@@ -17,6 +17,8 @@ it("rejects invalid records and invalid nicknames", () => {
   expect(readPikoPlayer("alice")).toBeNull(); spy.mockRestore();
 });
 it("plays the player's body-action idle cycle and returns to the neutral pose", () => {
-  expect([0, 2199, 2200, 2549, 2550, 6049, 6050, 6399, 6400, 7999, 8000, NaN]
-    .map(pikoPlayerIdleFrameAt)).toEqual([0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0]);
+  expect([0, 1799, 1800, 1979, 1980, 2799, 2800, 4399, 4400, 6099, 6100, 6279, 6280, 7999, 8000, NaN]
+    .map(ms => pikoPlayerIdleFrameAt(ms, "south"))).toEqual([0, 0, 2, 2, 0, 0, 1, 1, 0, 0, 2, 2, 0, 0, 0, 0]);
+  expect([1800, 2800, 4400, 6100].map(ms => pikoPlayerIdleFrameAt(ms, "north")))
+    .toEqual([0, 1, 0, 0]);
 });

@@ -149,3 +149,5 @@ Wardrobe: same profile dialog title16px, description12px, section labels14px, ex
 
 
 2026-09-15 尺寸回调：用户最终要求入口恢复60px宽，高度继续auto等比例缩放；此前59px验收记录为历史状态。
+
+2026-09-28：顶部 Piko Piko 入口已改为代码文字，字重400，与菜单文字一致；旧字图已移除，菜单行为保留。

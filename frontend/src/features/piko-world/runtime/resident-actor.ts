@@ -31,25 +31,29 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
     label?: string; position?: Point; facing?: Facing;
     simulatedInput?: () => Point;
     footsteps?: boolean;
-    idleFrameAt?: (elapsedMs: number) => number;
+    idleFrameAt?: (elapsedMs: number, facing?: Facing) => number;
     idleCycleMs?: number;
     onPose?: (facing: Facing, column: number, idleElapsedMs: number | null) => void;
     speed?: number;
     gaitCycleSourcePixels?: number;
+    motionColumns?: number;
+    walkColumns?: readonly number[];
   }) {
+  const columns = controls.motionColumns ?? 11;
   const idleCycleMs = controls.idleCycleMs ?? 4800;
   const actor = createCharacterActor(sheet, ticker, isActive, {
-    label: controls.label ?? "piko-player", frameSize: 64, frameCount: 44, columns: 11, manual: true, pivot: { x: 32, y: 57 },
+    label: controls.label ?? "piko-player", frameSize: 64, frameCount: columns * FACINGS.length, columns, manual: true, pivot: { x: 32, y: 57 },
     position: controls.position ?? { x: 1190, y: 485 }, scale: RESIDENT_WORLD_SCALE,
     shadow: { width: 24, height: 8 }, durationMs: idleCycleMs, frameAt: residentFrameAt,
   });
   const keyboardControlled = !controls.simulatedInput;
   let facing: Facing = controls.facing ?? "south";
-  actor.setFrame(FACINGS.indexOf(facing) * 11);
+  actor.setFrame(FACINGS.indexOf(facing) * columns);
   const footsteps = keyboardControlled && controls.footsteps !== false ? createGrassFootsteps() : { unlock() {}, step() {}, stop() {}, destroy() {} };
   let elapsed = 0, wasMoving = false;
   let gaitDistance = 0;
   let seated = false;
+  let seatDepthY: number | undefined;
   let seatedElapsed = 0;
   let seatedTextures: readonly Texture[] = [];
   let seatedFrame = 0;
@@ -63,7 +67,7 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
   const clear = () => { keys.clear(); path = []; arrival = undefined; elapsed = 0; wasMoving = false; gaitDistance = 0; footsteps.stop(); };
   const leaveSeat = () => {
     if (!seated) return;
-    seated = false; seatedTextures = []; seatedElapsed = 0; actor.setStaticTexture(null);
+    seated = false; seatDepthY = undefined; seatedTextures = []; seatedElapsed = 0; actor.setStaticTexture(null);
     if (seatExit) actor.container.position.set(seatExit.x, seatExit.y);
     seatExit = null;
   };
@@ -99,14 +103,16 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
       else if (time.deltaMS > 0 && !moving) { path = []; arrival = undefined; }
     }
     // Sitting is anchored at the hips; scenery depth still follows ground contact.
-    actor.container.zIndex = next.y + (seated ? SEATED_FOOT_OFFSET * RESIDENT_WORLD_SCALE * SEATED_POSE.scale : 0);
+    actor.container.zIndex = seated
+      ? seatDepthY ?? next.y + SEATED_FOOT_OFFSET * RESIDENT_WORLD_SCALE * SEATED_POSE.scale
+      : next.y;
     if(moving!==wasMoving) elapsed=0;
     if (keyboardControlled && crossesFootContact(gaitDistance, travelled, cycleDistance, wasMoving)) footsteps.step();
     if (!moving && wasMoving) footsteps.stop();
     wasMoving=moving;
     gaitDistance = moving ? advanceGait(gaitDistance, travelled, cycleDistance) : 0;
     if(!document.hidden && isActive()) elapsed=(elapsed+Math.min(time.deltaMS,50))%idleCycleMs;
-    const column = seated || motion?.matches ? 0 : moving ? gaitColumn(gaitDistance, cycleDistance) : (controls.idleFrameAt ?? residentFrameAt)(elapsed);
+    const column = seated || motion?.matches ? 0 : moving ? gaitColumn(gaitDistance, cycleDistance, controls.walkColumns) : (controls.idleFrameAt ?? residentFrameAt)(elapsed, facing);
     if (seated) {
       if (isActive() && !document.hidden && !motion?.matches) seatedElapsed = (seatedElapsed + Math.min(time.deltaMS, 50)) % SEATED_POSE.idleCycleMs;
       const frame = !motion?.matches && seatedTextures.length > 1
@@ -116,7 +122,7 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
         actor.setStaticTexture(seatedTextures[frame], SEATED_POSE.pivot);
       }
     }
-    actor.setFrame(FACINGS.indexOf(facing)*11+column);
+    actor.setFrame(FACINGS.indexOf(facing)*columns+column);
     controls.onPose?.(facing, column, moving || !canMove ? null : elapsed);
     if (destination && path.length === 0 && arrival) {
       const complete = arrival;
@@ -132,12 +138,12 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
   controls.host.addEventListener("pointerdown",focus);
   }
   ticker.add(tick);
-  return { ...actor, stop: clear, sit(texture: Texture, exit: Point, idleTexture?: Texture | null) {
+  return { ...actor, stop: clear, sit(texture: Texture, exit: Point, idleTexture?: Texture | null, depthY?: number) {
     if (!keyboardControlled || !isActive() || document.hidden) return false;
-    focus(); clear(); seated = true; seatExit = { ...exit }; facing = "south";
+    focus(); clear(); seated = true; seatDepthY = depthY; seatExit = { ...exit }; facing = "south";
     seatedTextures = idleTexture ? [texture, idleTexture] : [texture]; seatedElapsed = 0; seatedFrame = 0;
     // A seated body's map anchor is its hips, not the feet used while walking.
-    actor.setStaticTexture(texture, SEATED_POSE.pivot); actor.setFrame(FACINGS.indexOf(facing) * 11);
+    actor.setStaticTexture(texture, SEATED_POSE.pivot); actor.setFrame(FACINGS.indexOf(facing) * columns);
     return true;
   }, isSeated: () => seated, walkTo(target: Point, onArrival?: () => void) {
     arrival = undefined;

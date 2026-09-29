@@ -32,6 +32,7 @@ export type BirdEvent = {
 };
 
 export type CloudEvent = {
+  fadeFraction?: number;
   lane: AerialLane;
   count: number;
   duration: number;
@@ -47,9 +48,9 @@ export const BIRD_ROUTES: Record<AerialLane, Route> = {
 };
 
 export const CLOUD_ROUTES: Record<AerialLane, Route> = {
-  upper: { from: { x: -520, y: 135 }, to: { x: 2568, y: 275 }, arc: 10 },
-  middle: { from: { x: -520, y: 250 }, to: { x: 2568, y: 455 }, arc: 14 },
-  lower: { from: { x: -520, y: 700 }, to: { x: 2568, y: 910 }, arc: 12 },
+  upper: { from: { x: -360, y: 135 }, to: { x: 2408, y: 275 }, arc: 10 },
+  middle: { from: { x: -360, y: 250 }, to: { x: 2408, y: 455 }, arc: 14 },
+  lower: { from: { x: -360, y: 700 }, to: { x: 2408, y: 910 }, arc: 12 },
 };
 
 export const MARKET_BIRD_ROUTES: Record<AerialLane, Route> = {
@@ -59,9 +60,9 @@ export const MARKET_BIRD_ROUTES: Record<AerialLane, Route> = {
 };
 
 export const MARKET_CLOUD_ROUTES: Record<AerialLane, Route> = {
-  upper: { from: { x: -520, y: 65 }, to: { x: 2568, y: 225 }, arc: 10 },
-  middle: { from: { x: -520, y: 255 }, to: { x: 2568, y: 500 }, arc: 14 },
-  lower: { from: { x: -520, y: 675 }, to: { x: 2568, y: 875 }, arc: 12 },
+  upper: { from: { x: -360, y: 65 }, to: { x: 2408, y: 225 }, arc: 10 },
+  middle: { from: { x: -360, y: 255 }, to: { x: 2408, y: 500 }, arc: 14 },
+  lower: { from: { x: -360, y: 675 }, to: { x: 2408, y: 875 }, arc: 12 },
 };
 
 export const CANAL_BIRD_ROUTES: Record<AerialLane, Route> = {
@@ -71,9 +72,9 @@ export const CANAL_BIRD_ROUTES: Record<AerialLane, Route> = {
 };
 
 export const CANAL_CLOUD_ROUTES: Record<AerialLane, Route> = {
-  upper: { from: { x: -520, y: 95 }, to: { x: 2568, y: 230 }, arc: 10 },
-  middle: { from: { x: -520, y: 285 }, to: { x: 2568, y: 480 }, arc: 14 },
-  lower: { from: { x: -520, y: 705 }, to: { x: 2568, y: 905 }, arc: 12 },
+  upper: { from: { x: -360, y: 95 }, to: { x: 2408, y: 230 }, arc: 10 },
+  middle: { from: { x: -360, y: 285 }, to: { x: 2408, y: 480 }, arc: 14 },
+  lower: { from: { x: -360, y: 705 }, to: { x: 2408, y: 905 }, arc: 12 },
 };
 
 export const CLOUDTOP_BIRD_ROUTES: Record<AerialLane, Route> = {
@@ -82,9 +83,9 @@ export const CLOUDTOP_BIRD_ROUTES: Record<AerialLane, Route> = {
   lower: { from: { x: -180, y: 675 }, to: { x: 2240, y: 865 }, arc: 16 },
 };
 export const CLOUDTOP_CLOUD_ROUTES: Record<AerialLane, Route> = {
-  upper: { from: { x: -520, y: 115 }, to: { x: 2568, y: 215 }, arc: 10 },
-  middle: { from: { x: -520, y: 305 }, to: { x: 2568, y: 495 }, arc: 14 },
-  lower: { from: { x: -520, y: 715 }, to: { x: 2568, y: 900 }, arc: 12 },
+  upper: { from: { x: -650, y: 80 }, to: { x: 2700, y: 80 }, arc: 0 },
+  middle: { from: { x: -500, y: 520 }, to: { x: 2548, y: 520 }, arc: 0 },
+  lower: { from: { x: -500, y: 900 }, to: { x: 2548, y: 900 }, arc: 0 },
 };
 export const AMBER_BIRD_ROUTES: Record<AerialLane, Route> = {
   upper: { from: { x: -180, y: 65 }, to: { x: 2240, y: 155 }, arc: 12 },
@@ -92,16 +93,16 @@ export const AMBER_BIRD_ROUTES: Record<AerialLane, Route> = {
   lower: { from: { x: -180, y: 325 }, to: { x: 2240, y: 475 }, arc: 14 },
 };
 export const AMBER_CLOUD_ROUTES: Record<AerialLane, Route> = {
-  upper: { from: { x: -520, y: 30 }, to: { x: 2568, y: 115 }, arc: 8 },
-  middle: { from: { x: -520, y: 125 }, to: { x: 2568, y: 280 }, arc: 10 },
-  lower: { from: { x: -520, y: 255 }, to: { x: 2568, y: 430 }, arc: 12 },
+  upper: { from: { x: -360, y: 30 }, to: { x: 2408, y: 115 }, arc: 8 },
+  middle: { from: { x: -360, y: 125 }, to: { x: 2408, y: 280 }, arc: 10 },
+  lower: { from: { x: -360, y: 255 }, to: { x: 2408, y: 430 }, arc: 12 },
 };
 
 export type AerialMapId = "welcome-courtyard" | "artisan-market" | "lantern-canal-street"
   | "cloudtop-slope" | "amber-wilds";
 const AERIAL_ROUTES: Record<AerialMapId, { birds: Record<AerialLane, Route>; clouds: Record<AerialLane, Route>;
-  cloudOpacity?: number }> = {
-  "welcome-courtyard": { birds: BIRD_ROUTES, clouds: CLOUD_ROUTES },
+  cloudOpacity?: number; cloudGap?: readonly [number, number] }> = {
+  "welcome-courtyard": { birds: BIRD_ROUTES, clouds: CLOUD_ROUTES, cloudGap: [8, 12] },
   "artisan-market": { birds: MARKET_BIRD_ROUTES, clouds: MARKET_CLOUD_ROUTES },
   "lantern-canal-street": { birds: CANAL_BIRD_ROUTES, clouds: CANAL_CLOUD_ROUTES },
   "cloudtop-slope": { birds: CLOUDTOP_BIRD_ROUTES, clouds: CLOUDTOP_CLOUD_ROUTES, cloudOpacity: 0.8 },
@@ -139,11 +140,11 @@ export function createLaneShuffle(random: Random = Math.random, initialLast?: Ae
 }
 
 /** A bounded transit with a quiet gap and soft entry/exit. */
-export function aerialCycleState(elapsed: number, transitSeconds: number, cycleSeconds: number): CycleState {
+export function aerialCycleState(elapsed: number, transitSeconds: number, cycleSeconds: number, fadeFraction = 0.08): CycleState {
   const phase = ((elapsed % cycleSeconds) + cycleSeconds) % cycleSeconds;
   if (phase >= transitSeconds) return { visible: false, progress: 1, fade: 0 };
   const progress = phase / transitSeconds;
-  return { visible: true, progress, fade: Math.min(1, progress / 0.08, (1 - progress) / 0.08) };
+  return { visible: true, progress, fade: Math.min(1, progress / fadeFraction, (1 - progress) / fadeFraction) };
 }
 
 export function birdAtlasFrames(atlas: Texture) {
@@ -197,6 +198,21 @@ export function createCloudEvent(lane: AerialLane, random: Random = Math.random)
       flipped: random() >= 0.5,
       drift: randomBetween(random, -18, 18),
     })),
+  };
+}
+
+/** Independent horizontal passes cover the ridge, central slope and lower foreground. */
+export function createCloudtopCloudEvent(lane: AerialLane, random: Random = Math.random): CloudEvent {
+  const event = createCloudEvent(lane, random);
+  return {
+    ...event,
+    count: 1,
+    // Longer mid/lower routes take 64–96 seconds, independent of lane depth.
+    duration: lane === "upper" ? event.duration / 0.7 : event.duration * 2 / AERIAL_LANE_DEPTH[lane].duration,
+    fadeFraction: 0.14,
+    gap: lane === "upper" ? randomBetween(random, 12, 20) : randomBetween(random, 3, 6),
+    clouds: [{ ...event.clouds[0], x: 0, y: 0, drift: event.clouds[0].drift * 0.12, width: event.clouds[0].width * 1.75,
+      alpha: event.clouds[0].alpha * 0.72, shadowAlpha: event.clouds[0].shadowAlpha * 0.28 }],
   };
 }
 
@@ -277,11 +293,30 @@ export async function createMapAerialRuntime({ mapId, ticker, resolveAssetUrl, i
   });
 
   const nextBirdLane = createLaneShuffle(random, "middle");
-  const nextCloudLane = createLaneShuffle(random, "middle");
+  const nextCloudLane = createLaneShuffle(random, "upper");
   let birdEvent = { ...createBirdEvent("middle", random), duration: 12 };
-  let cloudEvent = createCloudEvent("middle", random);
   let birdElapsed = 0;
-  let cloudElapsed = 0;
+  const createTransitCloud = (lane: AerialLane): CloudEvent => {
+    const event = createCloudEvent(lane, random);
+    const [minGap, maxGap] = routes.cloudGap ?? [6, 10];
+    return { ...event, count: 1, gap: randomBetween(random, minGap, maxGap),
+      clouds: [{ ...event.clouds[0], x: 0, y: 0 }] };
+  };
+  // Each sprite owns its cycle; one cloud can enter while another leaves.
+  const cloudTracks = mapId === "cloudtop-slope"
+    ? (["middle", "lower", "upper"] as const).map((lane, offset) => {
+      const event = createCloudtopCloudEvent(lane, random);
+      return { event, offset,
+        elapsed: eventTransitSeconds(event) * [0.4, 0.62, 0.18][offset],
+        next: () => createCloudtopCloudEvent(lane, random) };
+    })
+    : (["middle", "upper"] as const).map((lane, offset) => {
+      const event = createTransitCloud(lane);
+      return { event, offset, elapsed: eventTransitSeconds(event) * (offset === 0 ? 0.28 : 0.68),
+        next: () => createTransitCloud(nextCloudLane()) };
+    });
+  clouds.forEach(sprite => { sprite.visible = false; });
+  cloudShadows.forEach(sprite => { sprite.visible = false; });
 
   const applyBirdEvent = () => {
     const depth = AERIAL_LANE_DEPTH[birdEvent.lane];
@@ -294,50 +329,52 @@ export async function createMapAerialRuntime({ mapId, ticker, resolveAssetUrl, i
       shadow.scale.set(item.scale * depth.scale * 1.04, item.scale * depth.scale * 0.62);
     });
   };
-  const applyCloudEvent = () => {
-    const depth = AERIAL_LANE_DEPTH[cloudEvent.lane];
-    cloudEvent.clouds.forEach((item, index) => {
-      const body = clouds[index], shadow = cloudShadows[index];
+  const applyCloudEvent = ({ event, offset }: typeof cloudTracks[number]) => {
+    const depth = AERIAL_LANE_DEPTH[event.lane];
+    event.clouds.forEach((item, index) => {
+      const body = clouds[offset + index], shadow = cloudShadows[offset + index];
       const scale = item.width * depth.scale / cloudTexture.width;
       body.scale.set((item.flipped ? -1 : 1) * scale, scale);
       shadow.scale.set((item.flipped ? -1 : 1) * scale * 1.06, scale * 0.76);
     });
   };
   applyBirdEvent();
-  applyCloudEvent();
+  cloudTracks.forEach(applyCloudEvent);
 
   const step = (deltaMS: number) => {
     const delta = Math.max(0, Math.min(deltaMS, 100)) / 1000;
     birdElapsed += delta;
-    cloudElapsed += delta;
     const birdTransit = eventTransitSeconds(birdEvent);
-    const cloudTransit = eventTransitSeconds(cloudEvent);
     if (birdElapsed >= birdTransit + birdEvent.gap) {
       birdElapsed %= birdTransit + birdEvent.gap;
       birdEvent = createBirdEvent(nextBirdLane(), random);
       applyBirdEvent();
     }
-    if (cloudElapsed >= cloudTransit + cloudEvent.gap) {
-      cloudElapsed %= cloudTransit + cloudEvent.gap;
-      cloudEvent = createCloudEvent(nextCloudLane(), random);
-      applyCloudEvent();
-    }
-
-    const cloudDepth = AERIAL_LANE_DEPTH[cloudEvent.lane];
-    const activeCloudTransit = eventTransitSeconds(cloudEvent);
-    const cloudState = aerialCycleState(cloudElapsed, activeCloudTransit, activeCloudTransit + cloudEvent.gap);
-    const cloudPoint = pointOnRoute(routes.clouds[cloudEvent.lane], cloudState.progress);
-    cloudEvent.clouds.forEach((item, index) => {
-      const enabled = index < cloudEvent.count && cloudState.visible;
-      const drift = Math.sin(cloudState.progress * Math.PI * 2 + index) * item.drift * cloudDepth.scale;
-      const x = cloudPoint.x + item.x * cloudDepth.scale;
-      const y = cloudPoint.y + item.y * cloudDepth.scale + drift;
-      clouds[index].position.set(x, y);
-      cloudShadows[index].position.set(x + item.shadowOffset.x * cloudDepth.scale,
-        y + item.shadowOffset.y * cloudDepth.scale);
-      clouds[index].alpha = item.alpha * cloudDepth.alpha * cloudState.fade * (routes.cloudOpacity ?? 1);
-      cloudShadows[index].alpha = item.shadowAlpha * cloudDepth.shadowAlpha * cloudState.fade * (routes.cloudOpacity ?? 1);
-      clouds[index].visible = cloudShadows[index].visible = enabled;
+    cloudTracks.forEach(track => {
+      track.elapsed += delta;
+      const cycle = eventTransitSeconds(track.event) + track.event.gap;
+      if (track.elapsed >= cycle) {
+        track.elapsed %= cycle;
+        track.event = track.next();
+        applyCloudEvent(track);
+      }
+      const { event, elapsed, offset } = track;
+      const depth = AERIAL_LANE_DEPTH[event.lane];
+      const transit = eventTransitSeconds(event);
+      const state = elapsed < 0 ? { visible: false, progress: 0, fade: 0 }
+        : aerialCycleState(elapsed, transit, transit + event.gap, event.fadeFraction);
+      const point = pointOnRoute(routes.clouds[event.lane], state.progress);
+      event.clouds.forEach((item, index) => {
+        const body = clouds[offset + index], shadow = cloudShadows[offset + index];
+        const drift = Math.sin(state.progress * Math.PI * 2 + index) * item.drift * depth.scale;
+        const x = point.x + item.x * depth.scale;
+        const y = point.y + item.y * depth.scale + drift;
+        body.position.set(x, y);
+        shadow.position.set(x + item.shadowOffset.x * depth.scale, y + item.shadowOffset.y * depth.scale);
+        body.alpha = item.alpha * depth.alpha * state.fade * (routes.cloudOpacity ?? 1);
+        shadow.alpha = item.shadowAlpha * depth.shadowAlpha * state.fade * (routes.cloudOpacity ?? 1);
+        body.visible = shadow.visible = index < event.count && state.visible;
+      });
     });
 
     const birdDepth = AERIAL_LANE_DEPTH[birdEvent.lane];

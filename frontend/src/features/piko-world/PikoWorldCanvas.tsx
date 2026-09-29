@@ -17,7 +17,7 @@ import { useTranslation } from "react-i18next";
 import { loadPikoMapEnvironment, loadPikoMapInteractions, loadPikoMapManifest, loadPikoMapNavigation, loadPikoMapOcclusion, resolvePikoMapAssetUrl } from "./runtime/map-package-loader";
 import { createMapOccluder, createBakedActorOcclusion, isBakedOccluder, isResidentHeadOccluded } from "./runtime/map-occlusion";
 import { pointInPolygon } from "./runtime/navigation-geometry";
-import { pikoSeatAction } from "./runtime/seat-actions";
+import { pikoSeatAction, type PikoSeatAction } from "./runtime/seat-actions";
 import { SEATED_POSE } from "./runtime/seated-pose";
 import exitMarkerStyles from "./piko-map-exit-marker.module.css";
 import { createMapRiverFish, LANTERN_CANAL_FISH } from "./runtime/map-river-fish";
@@ -35,18 +35,19 @@ import { PikoMayor } from "./PikoMayor";
 import { PIKO_MAYOR_IDLE_SRC, PIKO_MAYOR_POSITION } from "./runtime/mayor-idle";
 import { createMayorActor } from "./runtime/mayor-actor";
 import { createResidentActor, RESIDENT_WORLD_SCALE } from "./runtime/resident-actor";
-import { PikoResidentInteraction } from "./PikoResidentInteraction";
+import { PikoTownNpcInteraction } from "./PikoTownNpcInteraction";
+import { townNpcsForMap, townNpcIdleSrc } from "./piko-town-npcs";
+import { createTownNpcActor } from "./runtime/town-npc-actor";
 import { DOG_MAPS } from "./runtime/dog-world-routes";
 import { getWorldDog } from "./runtime/dog-world-session";
 import { PikoWelcomeDialog } from "./PikoWelcomeDialog";
 import { addCharacterPresentation } from "./runtime/character-presentation";
 import { PIKO_CHARACTER_CURSOR, PIKO_DEFAULT_CURSOR } from "./piko-cursors";
 import { createClickFeedback } from "./runtime/click-feedback";
-import { PIKO_FEMALE_PLAYER_MOTION_SRC, PIKO_MALE_PLAYER_MOTION_SRC, PIKO_PLAYER_SEATED_ART, PIKO_PLAYER_GAIT_CYCLE_SOURCE_PIXELS, PIKO_PLAYER_IDLE_CYCLE_MS, PIKO_PLAYER_SPEED, pikoPlayerIdleFrameAt, pikoPlayerPoseHeightScale, type PikoPlayerGender } from "./piko-player";
+import { PIKO_PLAYER_MOTION_COLUMNS, PIKO_PLAYER_WALK_COLUMNS, PIKO_FEMALE_PLAYER_MOTION_SRC, PIKO_MALE_PLAYER_MOTION_SRC, PIKO_PLAYER_SEATED_ART, PIKO_PLAYER_GAIT_CYCLE_SOURCE_PIXELS, PIKO_PLAYER_IDLE_CYCLE_MS, PIKO_PLAYER_SPEED, pikoPlayerIdleFrameAt, type PikoPlayerGender } from "./piko-player";
 import { PIKO_PLAYABLE_RESIDENTS, type PlayablePikoResidentId } from "./piko-residents";
 import { PLAYER_ACCESSORIES, accessoryDefinition, accessorySrc, type PlayerAccessoryId, type PlayerAccessorySelection } from "./piko-player-accessories";
 import { createPlayerAccessory } from "./runtime/player-accessory";
-import { PIKO_SIMULATED_RESIDENT } from "./piko-simulated-resident";
 import { playPikoUiSound } from "./piko-audio";
 
 import { canStand } from "./runtime/character-movement";
@@ -86,21 +87,20 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
   const mayorActiveRef = useRef(showMayorHint);
   const [welcomeOpen, setWelcomeOpen] = useState(false);
   const blockedRef = useRef(movementBlocked);
-  const socialBusyRef = useRef(false);
   const stopPlayerRef = useRef(() => {});
   const activateTransportRef = useRef<(exitId: string) => void>(() => {});
-  const simulatedHoverRef = useRef<(hovered: boolean) => void>(() => {});
+  const npcHoverRef = useRef(new Map<string, (hovered: boolean) => void>());
   const [playerPosition, setPlayerPosition] = useState({ x: 1190, y: 485 });
   const [dogGreeting, setDogGreeting] = useState<{ mapId: string; x: number; y: number; headOffset: number } | null>(null);
   const [playerSeated, setPlayerSeated] = useState(false);
-  const [seatHovered, setSeatHovered] = useState(false);
+  const [seatHovered, setSeatHovered] = useState<string | null>(null);
+  const [seatHints, setSeatHints] = useState<{ id: string; action: PikoSeatAction }[]>([]);
   const [playerHeadOccluded, setPlayerHeadOccluded] = useState(false);
-  const [simulatedPosition, setSimulatedPosition] = useState<{ x: number; y: number }>(PIKO_SIMULATED_RESIDENT.position);
-  const onSocialBusyChange = useCallback((busy: boolean) => {
-    socialBusyRef.current = busy;
-    if (busy) stopPlayerRef.current();
+  const onNpcInteract = useCallback(() => {
+    stopPlayerRef.current();
+    hostRef.current?.focus({ preventScroll: true });
   }, []);
-  const onSimulatedHover = useCallback((hovered: boolean) => simulatedHoverRef.current(hovered), []);
+  const onNpcHover = useCallback((id: string, hovered: boolean) => npcHoverRef.current.get(id)?.(hovered), []);
   const welcomeOpenRef = useRef(false);
   const interactRef = useRef<()=>void>(()=>{});
   const nicknameRef = useRef(nickname);
@@ -148,7 +148,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
     const actorOcclusion: ReturnType<typeof createBakedActorOcclusion>[] = [];
     let residentSilhouette: ReturnType<typeof createResidentOcclusionSilhouette> | null = null;
     let clickFeedback: ReturnType<typeof createClickFeedback> | null = null;
-    let simulatedActor: ReturnType<typeof createResidentActor> | null = null;
+    const npcActors: ReturnType<typeof createTownNpcActor>[] = [];
     let playerAccessory: ReturnType<typeof createPlayerAccessory> | null = null;
     let residentActor: ReturnType<typeof createResidentActor> | null = null;
     let mayorActor: ReturnType<typeof createMayorActor> | null = null;
@@ -168,7 +168,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
     let playerWasSeated = false;
     const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     const canInteract = () => mayorActiveRef.current && !blockedRef.current && !welcomeOpenRef.current
-      && !socialBusyRef.current && !debugEditingRef.current;
+      && !debugEditingRef.current;
     const exitMarkers: NonNullable<Awaited<ReturnType<typeof createMapExitMarker>>>[] = [];
     let disposed = false;
     let disconnectPosition = () => {};
@@ -207,14 +207,14 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
       courtyardFoliageRuntime?.destroy();
       stopPlayerRef.current = () => {};
       activateTransportRef.current = () => {};
-      simulatedHoverRef.current = () => {};
+      npcHoverRef.current.clear();
       clickFeedback?.destroy();
       residentSilhouette?.destroy();
       actorOcclusion.forEach(item => item.destroy());
       mayorActor?.destroy();
       playerAccessory?.destroy();
       residentActor?.destroy();
-      simulatedActor?.destroy();
+      npcActors.forEach(actor => actor.destroy());
       changeResidentRef.current = () => {};
       residentPresentationRef.current = null;
       interactRef.current=()=>{};
@@ -227,7 +227,8 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
     async function mountMap() {
       setLoadState("loading");
       setPlayerSeated(false);
-      setSeatHovered(false);
+      setSeatHovered(null);
+      setSeatHints([]);
       try {
         const manifest = await loadPikoMapManifest(mapId, abortController.signal);
         if (disposed) return;
@@ -273,7 +274,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
           const seatAction = seat ? pikoSeatAction(seat.actionId) : null;
           if (seatAction && residentActor && playerSitTexture) {
             const sitDown = () => {
-              if (!disposed && residentActor && playerSitTexture && residentActor.sit(playerSitTexture, seatAction.approach, playerSitIdleTexture)) {
+              if (!disposed && residentActor && playerSitTexture && residentActor.sit(playerSitTexture, seatAction.approach, playerSitIdleTexture, seatAction.depthY)) {
                 residentActor.container.position.set(seatAction.seat.x, seatAction.seat.y);
               }
             };
@@ -289,13 +290,13 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
         });
         ground.on("pointermove", event => {
           const target = world.toLocal(event.global);
-          const interactive = canInteract() && playerSitTexture && interactions?.interactions.some(item =>
-            item.kind === "seat" && pikoSeatAction(item.actionId) && pointInPolygon(target, item.trigger.points));
+          const interactive = canInteract() && playerSitTexture ? interactions?.interactions.find(item =>
+            item.kind === "seat" && pikoSeatAction(item.actionId) && pointInPolygon(target, item.trigger.points)) : undefined;
           nextApp.canvas.style.cursor = interactive ? PIKO_CHARACTER_CURSOR : PIKO_DEFAULT_CURSOR;
           ground.cursor = interactive ? PIKO_CHARACTER_CURSOR : PIKO_DEFAULT_CURSOR;
-          setSeatHovered(Boolean(interactive));
+          setSeatHovered(interactive?.actionId ?? null);
         });
-        ground.on("pointerout", () => { setSeatHovered(false); nextApp.canvas.style.cursor = PIKO_DEFAULT_CURSOR; });
+        ground.on("pointerout", () => { setSeatHovered(null); nextApp.canvas.style.cursor = PIKO_DEFAULT_CURSOR; });
         ground.zIndex = -Infinity;
         world.addChild(ground);
         nextApp.stage.addChild(world);
@@ -421,7 +422,8 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
             })) ?? [], src => resolvePikoMapAssetUrl("welcome-courtyard", src), Math.random,
               mapId === "lantern-canal-street" ? { hen: CANAL_HEN_AUDIO } : undefined);
           }
-          for (const id of Object.keys(PIKO_PLAYABLE_RESIDENTS) as PlayablePikoResidentId[]) {
+          const legacyResidentIds = playerGender ? [] : Object.keys(PIKO_PLAYABLE_RESIDENTS) as PlayablePikoResidentId[];
+          for (const id of legacyResidentIds) {
             const src = PIKO_PLAYABLE_RESIDENTS[id];
             const residentTexture = await loadTexture(src);
             if (!residentTexture) return;
@@ -442,6 +444,10 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
           if (seatedArt) {
             [playerSitTexture, playerSitIdleTexture] = await Promise.all([loadTexture(seatedArt.base), loadTexture(seatedArt.idle)]);
             if (disposed || !playerSitTexture || !playerSitIdleTexture) return;
+            setSeatHints(interactions.interactions.flatMap(item => {
+              const action = item.kind === "seat" ? pikoSeatAction(item.actionId) : null;
+              return action ? [{ id: item.actionId, action }] : [];
+            }));
           }
           residentActor = createResidentActor(playerMotionTexture ?? residentTextures.get(residentIdRef.current)!, nextApp.ticker,
             canInteract,
@@ -451,7 +457,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
                   const seated = residentActor.isSeated();
                   const perspectiveScale = mapPerspectiveScale(mapId, residentActor.container.y);
                   const scaleX = RESIDENT_WORLD_SCALE * (seated ? SEATED_POSE.scale : 1) * perspectiveScale;
-                  const scaleY = RESIDENT_WORLD_SCALE * (seated ? SEATED_POSE.scale : pikoPlayerPoseHeightScale(playerGender, facing, column)) * perspectiveScale;
+                  const scaleY = RESIDENT_WORLD_SCALE * (seated ? SEATED_POSE.scale : 1) * perspectiveScale;
                   residentActor.body.scale.x = scaleX;
                   // Also scale the shadow to match perspective
                   residentActor.shadow.scale.set(scaleX);
@@ -468,12 +474,14 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
                 playerAccessory?.update(facing, column, residentActor?.isSeated());
                 playerAccessory?.animate(idleElapsedMs);
               },
+              motionColumns: playerGender ? PIKO_PLAYER_MOTION_COLUMNS : undefined,
+              walkColumns: playerGender ? PIKO_PLAYER_WALK_COLUMNS : undefined,
               idleFrameAt: playerGender ? pikoPlayerIdleFrameAt : undefined,
               idleCycleMs: playerGender ? PIKO_PLAYER_IDLE_CYCLE_MS : undefined,
               speed: playerGender ? PIKO_PLAYER_SPEED : undefined,
               gaitCycleSourcePixels: playerGender ? PIKO_PLAYER_GAIT_CYCLE_SOURCE_PIXELS : undefined});
           const initialPerspectiveScale = mapPerspectiveScale(mapId, residentActor.container.y);
-          residentActor.body.scale.y = RESIDENT_WORLD_SCALE * pikoPlayerPoseHeightScale(playerGender, spawn?.facing ?? "south", 0) * initialPerspectiveScale;
+          residentActor.body.scale.y = RESIDENT_WORLD_SCALE * initialPerspectiveScale;
           residentActor.body.scale.x = RESIDENT_WORLD_SCALE * initialPerspectiveScale;
           residentActor.shadow.scale.set(RESIDENT_WORLD_SCALE * initialPerspectiveScale);
           if (playerGender) {
@@ -494,7 +502,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
             const definition = exitDefinitions.find(marker => marker.exitId === exitId);
             if (!residentActor || disposed || !definition || !canActivateTransport(definition, residentActor.container,
               mayorActiveRef.current && !blockedRef.current && !welcomeOpenRef.current
-              && !socialBusyRef.current && !debugEditingRef.current)) return;
+              && !debugEditingRef.current)) return;
             const exit = enabledMapExits(navigation).find(candidate => candidate.id === exitId);
             if (!exit) return;
             residentActor.stop();
@@ -509,16 +517,15 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
             residentActor?.stop();
             residentActor?.setSheet(residentTextures.get(id)!);
           };
-          if (mapId === "welcome-courtyard") {
-            simulatedActor = createResidentActor(residentTextures.get(PIKO_SIMULATED_RESIDENT.residentId)!, nextApp.ticker,
-              () => mayorActiveRef.current && !blockedRef.current && !welcomeOpenRef.current && !socialBusyRef.current && !debugEditingRef.current,
-              { host, navigation, label: PIKO_SIMULATED_RESIDENT.id,
-                position: PIKO_SIMULATED_RESIDENT.position, simulatedInput: () => ({ x: 0, y: 0 }) });
-            simulatedHoverRef.current = addCharacterPresentation(simulatedActor.container, PIKO_SIMULATED_RESIDENT.nickname);
-            world.addChild(simulatedActor.container);
+          for (const npc of townNpcsForMap(mapId)) {
+            const sheet = await loadTexture(townNpcIdleSrc(npc));
+            if (!sheet) return;
+            const actor = createTownNpcActor(sheet, nextApp.ticker,
+              () => mayorActiveRef.current && !blockedRef.current && !welcomeOpenRef.current && !debugEditingRef.current, npc);
+            npcActors.push(actor);
+            npcHoverRef.current.set(npc.id, addCharacterPresentation(actor.container, npc.nickname));
+            world.addChild(actor.container);
           }
-          let lastX = simulatedActor?.container.x ?? 0, lastY = simulatedActor?.container.y ?? 0;
-          setSimulatedPosition({ x: lastX, y: lastY });
           let playerX = residentActor.container.x, playerY = residentActor.container.y;
           setPlayerPosition({ x: playerX, y: playerY });
           environmentAudio?.update({ x: playerX, y: playerY });
@@ -558,20 +565,15 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
               ));
             }
             const exit = checkExit({ x: playerX, y: playerY }, mayorActiveRef.current
-              && !blockedRef.current && !welcomeOpenRef.current && !socialBusyRef.current && !debugEditingRef.current);
+              && !blockedRef.current && !welcomeOpenRef.current && !debugEditingRef.current);
             if (exit) {
               residentActor?.stop();
               onExitRef.current?.(exit);
             }
-            if (!simulatedActor) return;
-            const { x, y } = simulatedActor.container;
-            if (x === lastX && y === lastY) return;
-            lastX = x; lastY = y;
-            setSimulatedPosition({ x, y });
           };
           nextApp.ticker.add(syncPosition);
           disconnectPosition = () => nextApp.ticker.remove(syncPosition);
-          for (const actor of [mayorActor, residentActor, simulatedActor]) {
+          for (const actor of [mayorActor, residentActor, ...npcActors]) {
             if (!actor) continue;
             const masked = createBakedActorOcclusion(actor.container, bakedOccluders, manifest.size, () => actor.container.zIndex);
             actorOcclusion.push(masked);
@@ -633,20 +635,19 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
           onHover={hovered=>mayorHoverRef.current(hovered)}
           onInteract={showMayorHint && !movementBlocked ? ()=>interactRef.current() : undefined} />
       )}
-      {loadState === "ready" && mapId === "welcome-courtyard" && showMayorHint && !movementBlocked && !welcomeOpen && !playerSeated && worldFit.scale > 0 && (() => {
-        const seat = pikoSeatAction("welcome-east-bench")!;
-        const near = seatHovered || Math.hypot(playerPosition.x - seat.approach.x, playerPosition.y - seat.approach.y) <= 120;
-        return <div className={exitMarkerStyles.anchor} data-near={near} aria-hidden="true"
+      {loadState === "ready" && showMayorHint && !movementBlocked && !welcomeOpen && !playerSeated && worldFit.scale > 0 && seatHints.map(({ id, action: seat }) => {
+        const near = seatHovered === id || Math.hypot(playerPosition.x - seat.approach.x, playerPosition.y - seat.approach.y) <= 120;
+        return <div key={id} className={exitMarkerStyles.anchor} data-seat-id={id} data-near={near} aria-hidden="true"
           style={{ left: worldFit.x + seat.seat.x * worldFit.scale,
             top: worldFit.y + seat.seat.y * worldFit.scale,
             transform: `translate(-50%, -50%) scale(${worldFit.scale})` }}>
           <span className={exitMarkerStyles.name} style={{ top: 56 }}>{t("pikoWorld.sitDown")}</span>
         </div>;
-      })()}
-      {loadState === "ready" && mapId === "welcome-courtyard" && showMayorHint && !movementBlocked && !welcomeOpen && (
-        <PikoResidentInteraction key={PIKO_SIMULATED_RESIDENT.id} target={PIKO_SIMULATED_RESIDENT}
-          position={simulatedPosition} fit={worldFit} onBusyChange={onSocialBusyChange} onHover={onSimulatedHover} />
-      )}
+      })}
+      {loadState === "ready" && showMayorHint && !movementBlocked && !welcomeOpen && townNpcsForMap(mapId).map(npc => (
+        <PikoTownNpcInteraction key={npc.id} npc={npc} fit={worldFit}
+          onInteract={onNpcInteract} onHover={onNpcHover} />
+      ))}
       {taskStatus && <PikoTaskLabel task={taskStatus} position={playerPosition} fit={worldFit} headOffset={(playerSeated ? 81 : 136) * mapPerspectiveScale(mapId, playerPosition.y) + playerNameGap}
         available={loadState === "ready" && showMayorHint && !movementBlocked && !welcomeOpen && !speech}
         onInteract={() => stopPlayerRef.current()} />}

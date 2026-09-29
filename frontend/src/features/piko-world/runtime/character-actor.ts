@@ -18,15 +18,22 @@ export interface CharacterActorProfile {
 
 export function createCharacterActor(sheet: Texture, ticker: Ticker, isActive: () => boolean, profile: CharacterActorProfile) {
   const columns = profile.columns ?? profile.frameCount;
-  if (sheet.width !== columns * profile.frameSize || sheet.height !== Math.ceil(profile.frameCount / columns) * profile.frameSize) {
-    throw new Error("Invalid character idle sheet dimensions");
-  }
-  sheet.source.scaleMode = "nearest";
+  // Keep actor coordinates in logical pixels while sampling the full-size artwork.
+  const sliceSheet = (atlas: Texture) => {
+    const size = atlas.width / columns;
+    const resolution = size / profile.frameSize;
+    if (!Number.isInteger(resolution) || resolution < 1 || atlas.height !== Math.ceil(profile.frameCount / columns) * size) {
+      throw new Error("Invalid character motion sheet dimensions");
+    }
+    atlas.source.scaleMode = resolution > 1 ? "linear" : "nearest";
+    return Array.from({ length: profile.frameCount }, (_, index) => new Texture({
+      source: atlas.source,
+      frame: new Rectangle((index % columns) * size, Math.floor(index / columns) * size, size, size),
+      orig: new Rectangle(0, 0, profile.frameSize, profile.frameSize),
+    }));
+  };
+  let frames = sliceSheet(sheet);
   const shadowTexture = createContactShadow(profile.shadow);
-  let frames = Array.from({ length: profile.frameCount }, (_, index) => new Texture({
-    source: sheet.source,
-    frame: new Rectangle((index % columns) * profile.frameSize, Math.floor(index / columns) * profile.frameSize, profile.frameSize, profile.frameSize),
-  }));
   const container = new Container({ label: profile.label });
   container.position.set(profile.position.x, profile.position.y);
   const shadow = new Sprite({ texture: shadowTexture, roundPixels: true });
@@ -47,6 +54,7 @@ export function createCharacterActor(sheet: Texture, ticker: Ticker, isActive: (
   let elapsed = 0;
   let frame = 0;
   let staticTexture: Texture | null = null;
+  const staticFrames = new Map<Texture, Texture>();
   const reset = () => { elapsed = 0; frame = 0; body.texture = staticTexture ?? frames[0]; };
   const tick = (time: Ticker) => {
     if (profile.manual) return;
@@ -67,24 +75,31 @@ export function createCharacterActor(sheet: Texture, ticker: Ticker, isActive: (
       frame = index; body.texture = staticTexture ?? frames[index];
     },
     setSheet(nextSheet: Texture) {
-      if (nextSheet.width !== columns * profile.frameSize || nextSheet.height !== Math.ceil(profile.frameCount / columns) * profile.frameSize) {
-        throw new Error("Invalid character motion sheet dimensions");
-      }
-      nextSheet.source.scaleMode = "nearest";
+      const nextFrames = sliceSheet(nextSheet);
       const previous = frames;
-      frames = Array.from({ length: profile.frameCount }, (_, index) => new Texture({
-        source: nextSheet.source,
-        frame: new Rectangle((index % columns) * profile.frameSize, Math.floor(index / columns) * profile.frameSize, profile.frameSize, profile.frameSize),
-      }));
+      frames = nextFrames;
       body.texture = staticTexture ?? frames[frame];
       previous.forEach(texture => texture.destroy(false));
     },
     setStaticTexture(texture: Texture | null, pivot?: { x: number; y: number }) {
-      staticTexture = texture;
       if (texture) {
-        texture.source.scaleMode = "nearest";
-        body.anchor.set((pivot?.x ?? profile.pivot.x) / texture.width, (pivot?.y ?? profile.pivot.y) / texture.height);
-      } else body.anchor.set(profile.pivot.x / profile.frameSize, profile.pivot.y / profile.frameSize);
+        const resolution = texture.width / profile.frameSize;
+        if (!Number.isInteger(resolution) || resolution < 1 || texture.height !== texture.width) {
+          throw new Error("Invalid character static texture dimensions");
+        }
+        texture.source.scaleMode = resolution > 1 ? "linear" : "nearest";
+        let logical = staticFrames.get(texture);
+        if (!logical) {
+          logical = new Texture({ source: texture.source, frame: texture.frame.clone(),
+            orig: new Rectangle(0, 0, profile.frameSize, profile.frameSize) });
+          staticFrames.set(texture, logical);
+        }
+        staticTexture = logical;
+        body.anchor.set((pivot?.x ?? profile.pivot.x) / profile.frameSize, (pivot?.y ?? profile.pivot.y) / profile.frameSize);
+      } else {
+        staticTexture = null;
+        body.anchor.set(profile.pivot.x / profile.frameSize, profile.pivot.y / profile.frameSize);
+      }
       const sittingScale = profile.scale * SEATED_POSE.scale;
       const footOffset = SEATED_POSE.footY - (pivot?.y ?? profile.pivot.y);
       shadow.scale.set(texture ? sittingScale : profile.scale);
@@ -99,6 +114,8 @@ export function createCharacterActor(sheet: Texture, ticker: Ticker, isActive: (
       motion?.removeEventListener("change", reset);
       container.destroy({ children: true });
       frames.forEach(texture => texture.destroy(false));
+      staticFrames.forEach(texture => texture.destroy(false));
+      staticFrames.clear();
       shadowTexture.destroy(true);
     },
   };

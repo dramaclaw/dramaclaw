@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "mapId": "artisan-market",
-  "revision": 6,
+  "revision": 7,
   "coordinateSpace": "map-pixels-top-left",
   "size": {
     "width": 2048,

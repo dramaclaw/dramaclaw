@@ -2,7 +2,7 @@
 import { Graphics, Rectangle, Sprite, Texture } from "pixi.js";
 import { PLAYER_ACCESSORIES, accessoryPose, type PlayerAccessoryId, type PlayerAccessorySelection } from "../piko-player-accessories";
 import { FACINGS, type Facing } from "./character-movement";
-import { PIKO_PLAYER_IDLE_CYCLE_MS, type PikoPlayerGender } from "../piko-player";
+import { PIKO_PLAYER_MOTION_COLUMNS, PIKO_PLAYER_IDLE_CYCLE_MS, type PikoPlayerGender } from "../piko-player";
 import headAnchors from "./player-head-anchors.json";
 import { SEATED_POSE } from "./seated-pose";
 
@@ -47,7 +47,7 @@ export function createPlayerAccessory(body: Sprite, sources: Map<PlayerAccessory
   return {
     update(facing: Facing, column: number, seated = false) {
       const id = selected();
-      const frame = FACINGS.indexOf(facing) * 11 + column;
+      const frame = FACINGS.indexOf(facing) * PIKO_PLAYER_MOTION_COLUMNS + column;
       if (id === lastId && frame === lastFrame && seated === lastSeated) return;
       lastSeated = seated;
       lastId = id;
@@ -65,7 +65,7 @@ export function createPlayerAccessory(body: Sprite, sources: Map<PlayerAccessory
     animate(idleElapsedMs: number | null) {
       for (const { star, x, y, delay } of sparkles) {
         const elapsed = (((idleElapsedMs ?? 0) - SPARKLE_START_MS - delay) % SPARKLE_CYCLE_MS + SPARKLE_CYCLE_MS) % SPARKLE_CYCLE_MS;
-        star.visible = idleElapsedMs !== null && lastFrame % 11 === 0 && sprite.visible && !reducedMotion.matches && elapsed < 480;
+        star.visible = idleElapsedMs !== null && lastFrame % PIKO_PLAYER_MOTION_COLUMNS === 0 && sprite.visible && !reducedMotion.matches && elapsed < 480;
         if (!star.visible) continue;
         star.alpha = elapsed < 240 ? 1 : 0.65;
         star.position.set(sprite.x + sprite.width * x,

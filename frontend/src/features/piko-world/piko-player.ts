@@ -3,30 +3,31 @@ import { safeLocalStorageSet } from "@/lib/localStorageQuota";
 import { isValidPikoProfile, normalizePikoProfile } from "./piko-profile";
 
 export type PikoPlayerGender = "male" | "female";
-export const PIKO_MALE_PLAYER_MOTION_SRC = "/piko/world/characters/player-male-motion-v2.png";
-export const PIKO_FEMALE_PLAYER_MOTION_SRC = "/piko/world/characters/player-female-motion-v3.png";
+export const PIKO_MALE_PLAYER_MOTION_SRC = "/piko/world/characters/player-male-motion-v5.png";
+export const PIKO_FEMALE_PLAYER_MOTION_SRC = "/piko/world/characters/player-female-motion-v6.png";
+export const PIKO_PLAYER_MOTION_COLUMNS = 6;
+export const PIKO_PLAYER_WALK_COLUMNS = [3, 4, 5, 4] as const;
 export const PIKO_PLAYER_SEATED_ART = {
-  male: { base: "/piko/world/characters/player-male-sit-front-v1.png", idle: "/piko/world/characters/player-male-sit-idle-v1.png" },
-  female: { base: "/piko/world/characters/player-female-sit-front-v1.png", idle: "/piko/world/characters/player-female-sit-idle-v1.png" },
+  male: { base: "/piko/world/characters/player-male-sit-front-v2.png", idle: "/piko/world/characters/player-male-sit-idle-v2.png" },
+  female: { base: "/piko/world/characters/player-female-sit-front-v2.png", idle: "/piko/world/characters/player-female-sit-idle-v2.png" },
 } as const;
-// Visual trial: shorten male front/back idle poses without changing atlas pixels or foot anchors.
-export function pikoPlayerPoseHeightScale(gender: PikoPlayerGender | undefined, facing: string, column: number): number {
-  return gender === "male" && (facing === "south" || facing === "north") && column < 3 ? 53 / 56 : 1;
-}
-export const PIKO_PLAYER_SPEED = 135;
-export const PIKO_PLAYER_GAIT_CYCLE_SOURCE_PIXELS = 48;
+// Shared 2048px maps: a typical 1800px crossing takes about 11.7 seconds.
+export const PIKO_PLAYER_SPEED = 153.9;
+export const PIKO_PLAYER_GAIT_CYCLE_SOURCE_PIXELS = 56;
 export const PIKO_PLAYER_IDLE_CYCLE_MS = 8000;
 const PLAYER_IDLE_TIMELINE = [
-  { frame: 0, durationMs: 2200 },
-  { frame: 1, durationMs: 350 },
-  { frame: 0, durationMs: 3500 },
-  { frame: 1, durationMs: 350 },
-  { frame: 0, durationMs: 1600 },
+  { frame: 0, durationMs: 1800 },
+  { frame: 2, durationMs: 180 },
+  { frame: 0, durationMs: 820 },
+  { frame: 1, durationMs: 1600 },
+  { frame: 0, durationMs: 1700 },
+  { frame: 2, durationMs: 180 },
+  { frame: 0, durationMs: 1720 },
 ] as const;
-export function pikoPlayerIdleFrameAt(elapsedMs: number): number {
+export function pikoPlayerIdleFrameAt(elapsedMs: number, facing?: string): number {
   let remaining = Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) % PIKO_PLAYER_IDLE_CYCLE_MS : 0;
   for (const step of PLAYER_IDLE_TIMELINE) {
-    if (remaining < step.durationMs) return step.frame;
+    if (remaining < step.durationMs) return facing === "north" && step.frame === 2 ? 0 : step.frame;
     remaining -= step.durationMs;
   }
   return 0;

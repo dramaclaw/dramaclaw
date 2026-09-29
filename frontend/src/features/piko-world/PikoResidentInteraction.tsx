@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { type PlayablePikoResidentId } from "./piko-residents";
+import { type PikoResidentId } from "./piko-residents";
 import { RESIDENT_WORLD_SCALE } from "./runtime/resident-actor";
 import type { PikoViewportFit } from "./runtime/viewport-fit";
 import type { Point } from "./runtime/character-movement";
@@ -12,7 +12,7 @@ import popupStyles from "./piko-popup.module.css";
 import iconStyles from "./piko-icon-button.module.css";
 
 export type PikoInteractionTarget = {
-  id: string; nickname: string; bio: string; residentId: PlayablePikoResidentId;
+  id: string; nickname: string; bio: string; residentId: PikoResidentId;
 };
 
 /** Local resident interaction; no network request is sent by the chat preview. */

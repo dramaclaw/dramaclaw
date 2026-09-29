@@ -57,15 +57,15 @@ export function createResidentOcclusionSilhouette(actor: Container, body: Sprite
     const key = `${texture.source.uid}:${frame.x}:${frame.y}:${frame.width}:${frame.height}`;
     const cached = contexts.get(key);
     if (cached) return cached;
-    canvas.width = frame.width;
-    canvas.height = frame.height;
+    canvas.width = texture.orig.width;
+    canvas.height = texture.orig.height;
     const context = canvas.getContext("2d", { willReadFrequently: true });
     if (!context) return emptyContext;
     context.drawImage(texture.source.resource as CanvasImageSource,
-      frame.x, frame.y, frame.width, frame.height, 0, 0, frame.width, frame.height);
-    const pixels = context.getImageData(0, 0, frame.width, frame.height).data;
+      frame.x, frame.y, frame.width, frame.height, 0, 0, canvas.width, canvas.height);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
     const result = new GraphicsContext();
-    for (const [x, y, width] of alphaSilhouetteRuns(pixels, frame.width, frame.height)) {
+    for (const [x, y, width] of alphaSilhouetteRuns(pixels, canvas.width, canvas.height)) {
       result.rect(x, y, width, 1);
     }
     result.fill({ color: 0x080c0c });

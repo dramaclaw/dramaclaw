@@ -1,0 +1,16 @@
+{
+  "residents": [
+    "m01",
+    "f01",
+    "m02"
+  ],
+  "frameSize": 256,
+  "logicalFrameSize": 64,
+  "columns": 3,
+  "bodyHeight": 224,
+  "footBottom": 232,
+  "pivot": [
+    128,
+    228
+  ]
+}

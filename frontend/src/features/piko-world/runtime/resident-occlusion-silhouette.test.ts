@@ -17,7 +17,7 @@ it("ignores transparent padding and preserves holes between limbs", () => {
   expect(alphaSilhouetteRuns(new Uint8ClampedArray(16), 2, 2)).toEqual([]);
 });
 
-it("clips the player, reuses frame pixels after re-entry, and releases cached graphics", () => {
+it.each([1, 4])("clips a %ix texture in logical coordinates and reuses its cached silhouette", (resolution) => {
   const readPixels = vi.fn(() => ({ data: new Uint8ClampedArray([0, 0, 0, 255]) }));
   const context = {
     drawImage: vi.fn(), getImageData: readPixels,
@@ -27,7 +27,7 @@ it("clips the player, reuses frame pixels after re-entry, and releases cached gr
   );
   const actor = new Container();
   actor.position.set(11, 20);
-  const texture = new Texture({ source: Texture.WHITE.source, frame: new Rectangle(0, 0, 1, 1) });
+  const texture = new Texture({ source: Texture.WHITE.source, frame: new Rectangle(0, 0, resolution, resolution), orig: new Rectangle(0, 0, 1, 1) });
   const body = new Sprite(texture);
   const locator = createResidentOcclusionSilhouette(actor, body, [{
     id: "wall", src: "wall.png", depthY: 15, position: { x: 10, y: 10 },
@@ -51,6 +51,8 @@ it("clips the player, reuses frame pixels after re-entry, and releases cached gr
   expect(locator.container.visible).toBe(true);
   expect(shape.context).toBe(cachedContext);
   expect(readPixels).toHaveBeenCalledTimes(1);
+  expect(readPixels).toHaveBeenCalledWith(0, 0, 1, 1);
+  expect(context.drawImage).toHaveBeenCalledWith(Texture.WHITE.source.resource, 0, 0, resolution, resolution, 0, 0, 1, 1);
   locator.destroy();
   expect(emptyContext.destroyed).toBe(true);
   expect(cachedContext.destroyed).toBe(true);

@@ -65,6 +65,6 @@ it("plays only after entry, respects reduced motion, and releases its resources"
 
 it("rejects an invalid atlas before creating scene resources", () => {
   const sheet = new Texture({ source: new TextureSource({ width: 64, height: 64 }) });
-  expect(() => createMayorActor(sheet, {} as Ticker, () => true)).toThrow("Invalid character idle sheet dimensions");
+  expect(() => createMayorActor(sheet, {} as Ticker, () => true)).toThrow("Invalid character motion sheet dimensions");
   sheet.destroy(true);
 });
