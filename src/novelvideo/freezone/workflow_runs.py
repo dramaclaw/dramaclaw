@@ -1515,25 +1515,40 @@ def update_workflow_run(
 
 
 def workflow_media_failure_awaits_retry(
-    *, run: dict[str, Any], action: dict[str, Any], error: str | None
+    *, project_dir: Path, run: dict[str, Any], action: dict[str, Any], error: str | None
 ) -> bool:
     """Whether a failed media task still belongs to its live runner's retry loop.
 
     The runner either resubmits or records the final outcome itself, so
     reconciliation and product settlement must not end the action or its
     Recipe operation first (issue #681). An expired lease, a non-retryable
-    error or exhausted retries all fall through to the usual failure.
+    error or exhausted media claims all fall through to the usual failure.
     """
     lease_expires_at = _parse_timestamp(run.get("lease_expires_at"))
-    return (
+    if not (
         run.get("status") == "running"
         and bool(str(run.get("runner_id") or "").strip())
         and lease_expires_at is not None
         and lease_expires_at > datetime.now(timezone.utc)
         and action.get("status") in {"pending", "running"}
-        and int(action.get("retry_count") or 0) < WORKFLOW_ACTION_MAX_RETRIES
         and bool(workflow_error_diagnostics(error)["retryable"])
-    )
+    ):
+        return False
+    retry_count = int(action.get("retry_count") or 0)
+    if retry_count < WORKFLOW_ACTION_MAX_RETRIES:
+        return True
+    if retry_count != WORKFLOW_ACTION_MAX_RETRIES:
+        return False
+    # The runner records the final retry before compiling/submitting media.
+    # Read the internal claim counter only at this boundary; it is not part
+    # of the public workflow action response.
+    with _connect(project_dir) as conn:
+        claim = conn.execute(
+            "SELECT media_claim_retry_count FROM workflow_run_actions "
+            "WHERE run_id = ? AND node_id = ?",
+            (run["run_id"], action["node_id"]),
+        ).fetchone()
+    return claim is not None and claim["media_claim_retry_count"] == retry_count - 1
 
 
 def reconcile_workflow_runs_with_tasks(
@@ -1590,7 +1605,7 @@ def reconcile_workflow_runs_with_tasks(
                 if task_status in {"failed", "cancelled"}:
                     error = str(task.get("error") or "生成任务失败").strip()
                     if task_status == "failed" and workflow_media_failure_awaits_retry(
-                        run=payload, action=item, error=error
+                        project_dir=project_dir, run=payload, action=item, error=error
                     ):
                         continue
                     updates = {

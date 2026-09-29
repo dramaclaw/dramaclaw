@@ -1158,6 +1158,131 @@ async def test_model_recipe_media_retry_survives_status_poll(
 
 
 @pytest.mark.asyncio
+async def test_model_recipe_third_media_retry_waits_for_its_claim(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    """A scheduled third try must not be settled as an exhausted second try (#757)."""
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.agent_product_operations import read_agent_product_operation
+    from novelvideo.freezone.recipe_runtime import RecipeCompileResult
+    from novelvideo.freezone.workflow_runs import read_workflow_run
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    created = workflow_run_client.post(
+        base,
+        json={"actions": [{
+            "node_id": "image-1", "action": "generate_image",
+            "recipe_id": "product-image", "recipe_version": "1.0.0",
+            "generation_attempt_id": "attempt-image",
+        }], "runner_id": "runner-one"},
+    ).json()["data"]
+    operation_id = created["actions"][0]["product_operation_id"]
+    compile_calls = []
+
+    async def model_compile(**_kwargs):
+        compile_calls.append(1)
+        return RecipeCompileResult(
+            "model castle prompt", "model", ("product-image",),
+            model_call_id=f"recipe-compiler:{len(compile_calls)}", executed_at=1.0,
+        )
+
+    monkeypatch.setattr(freezone, "compile_recipe_prompt_result", model_compile)
+    compile_request = {
+        "project_id": "proj_demo", "product_operation_id": operation_id,
+        "recipe_id": "product-image", "node_kind": "image",
+    }
+
+    def compile_prompt():
+        return workflow_run_client.post("/api/v1/freezone/recipes/compile", json=compile_request)
+
+    def claimed_retry_count():
+        with sqlite3.connect(workflow_run_client.state_dir / "data.db") as conn:
+            row = conn.execute(
+                "SELECT media_claim_retry_count FROM workflow_run_actions "
+                "WHERE run_id = ? AND node_id = ?",
+                (created["run_id"], "image-1"),
+            ).fetchone()
+        assert row is not None
+        return row[0]
+
+    assert compile_prompt().status_code == 200
+    media = _MediaTasks(monkeypatch, workflow_run_client, operation_id)
+    media.payload["prompt"] = "model castle prompt"
+    first = await media.enqueue()
+    first_task = media.tasks[first["data"]["job_id"]]
+    first_task.status = "failed"
+    first_task.error = "HTTP 503: upstream service unavailable"
+    assert workflow_run_client.get(base).status_code == 200
+
+    _record_workflow_retry(
+        workflow_run_client, created["run_id"], 1, runner_id="runner-one"
+    )
+    assert compile_prompt().status_code == 200
+    second = await media.enqueue()
+    assert second["data"]["job_id"] != first["data"]["job_id"]
+    second_task = media.tasks[second["data"]["job_id"]]
+    second_task.status = "failed"
+    second_task.error = "HTTP 503: upstream service unavailable"
+    _record_workflow_retry(
+        workflow_run_client, created["run_id"], 2, runner_id="runner-one"
+    )
+    before_third = read_workflow_run(
+        project_dir=workflow_run_client.state_dir,
+        canvas_id="default", run_id=created["run_id"],
+    )
+    assert before_third["actions"][0]["retry_count"] == 2
+    assert claimed_retry_count() == 1
+
+    assert workflow_run_client.get(base).status_code == 200
+    waiting = read_workflow_run(
+        project_dir=workflow_run_client.state_dir,
+        canvas_id="default", run_id=created["run_id"],
+    )
+    public_action = workflow_run_client.get(base).json()["data"]["runs"][0]["actions"][0]
+    assert "media_claim_retry_count" not in public_action
+    detail_action = workflow_run_client.get(
+        f"{base}/{created['run_id']}"
+    ).json()["data"]["actions"][0]
+    assert "media_claim_retry_count" not in detail_action
+    assert waiting["status"] == "running"
+    assert waiting["actions"][0]["status"] == "running"
+    assert read_agent_product_operation(
+        project_dir=workflow_run_client.state_dir, operation_id=operation_id
+    )["status"] not in {"failed", "cancelled", "delivered"}
+    assert compile_prompt().status_code == 200
+    assert len(compile_calls) == 1
+
+    third = await media.enqueue()
+    assert third["data"]["job_id"] not in {
+        first["data"]["job_id"], second["data"]["job_id"],
+    }
+    assert (await media.enqueue())["data"]["job_id"] == third["data"]["job_id"]
+    assert len(media.enqueued) == 3
+    claimed = read_workflow_run(
+        project_dir=workflow_run_client.state_dir,
+        canvas_id="default", run_id=created["run_id"],
+    )
+    assert claimed["actions"][0]["retry_count"] == 2
+    assert claimed_retry_count() == 2
+
+    third_task = media.tasks[third["data"]["job_id"]]
+    third_task.status = "failed"
+    third_task.error = "HTTP 503: upstream service unavailable"
+    assert workflow_run_client.get(base).status_code == 200
+    exhausted = read_workflow_run(
+        project_dir=workflow_run_client.state_dir,
+        canvas_id="default", run_id=created["run_id"],
+    )
+    assert exhausted["status"] == "failed"
+    assert exhausted["actions"][0]["status"] == "failed"
+    assert read_agent_product_operation(
+        project_dir=workflow_run_client.state_dir, operation_id=operation_id
+    )["status"] == "failed"
+    assert compile_prompt().status_code == 409
+
+
+@pytest.mark.asyncio
 async def test_recipe_media_retry_follows_concurrent_reclaim(
     workflow_run_client: TestClient, monkeypatch
 ) -> None:

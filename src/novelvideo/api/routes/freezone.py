@@ -15904,7 +15904,10 @@ async def get_canvas_workflow_runs(
                     "recipe_id": action.get("recipe_id"),
                 }
             elif task_status == "failed" and workflow_media_failure_awaits_retry(
-                run=run, action=action, error=task.get("error")
+                project_dir=canvas_project_dir,
+                run=run,
+                action=action,
+                error=task.get("error"),
             ):
                 # The runner is about to resubmit this attempt (issue #681).
                 continue
