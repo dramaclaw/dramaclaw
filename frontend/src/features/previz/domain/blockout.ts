@@ -58,6 +58,29 @@ export type PrevizBlockoutPlan =
 
 type BlockoutObject = PrevizProp | PrevizCamera;
 
+/**
+ * 白模物件的明暗档。`structure` 是布景本身（墙、地面），`piece` 是摆在布景里的东西。
+ *
+ * 只分两档、不按类别分：白模出的图是给生成模型当参考的，参考图里的颜色会被当成要
+ * 保留的内容；两档灰只是让物件能从墙和地面上读出来。
+ */
+export type PrevizBlockoutTone = 'structure' | 'piece';
+
+/** 后端给墙和地面写的语义类别（`scene.wall` / `scene.floor` 的默认值）。 */
+const STRUCTURE_SEMANTIC_TYPES: ReadonlySet<string> = new Set(['wall', 'floor']);
+
+/**
+ * 这件物件该用哪一档灰；不是白模物件时为 null，颜色照旧由别处管。
+ *
+ * 语义类别是模型写的，列不完，所以只认布景那两个，其余一律算 `piece`。模型给一面墙
+ * 另起了类别名时它会落到 `piece`，只是浅一档，不影响别的。参考机位也带白模标记，但
+ * 它是一台摄影机，不归这里管。
+ */
+export function blockoutTone(object: PrevizObject): PrevizBlockoutTone | null {
+  if (object.kind !== 'prop' || object.blockout === undefined) return null;
+  return STRUCTURE_SEMANTIC_TYPES.has(object.blockout.semanticType) ? 'structure' : 'piece';
+}
+
 export function isBlockoutObject(object: PrevizObject): boolean {
   return (object.kind === 'prop' || object.kind === 'camera') && object.blockout !== undefined;
 }

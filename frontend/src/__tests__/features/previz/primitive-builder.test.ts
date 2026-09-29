@@ -8,7 +8,7 @@ import {
   type PrevizPrimitiveShape,
 } from "@/features/previz/domain/primitives";
 import { buildPrimitive } from "@/features/previz/engine/primitiveBuilder";
-import { KIND_COLOR } from "@/features/previz/engine/sceneGraph";
+import { BLOCKOUT_COLOR, KIND_COLOR } from "@/features/previz/engine/sceneGraph";
 
 /**
  * 用真 three：面数、包围盒、法线朝向都得是 three 真算出来的，假 three 只会把前提烤进去。
@@ -50,6 +50,12 @@ describe.each(SHAPES)("buildPrimitive(%s)", (shape) => {
 
     expect(material).toBeInstanceOf(THREE.MeshStandardMaterial);
     expect((material as THREE.MeshStandardMaterial).color.getHex()).toBe(KIND_COLOR.prop);
+  });
+
+  it.each(["structure", "piece"] as const)("wears the %s grey when built for a blockout", (tone) => {
+    const material = meshOf(buildPrimitive(THREE, shape, tone)).material;
+
+    expect((material as THREE.MeshStandardMaterial).color.getHex()).toBe(BLOCKOUT_COLOR[tone]);
   });
 });
 

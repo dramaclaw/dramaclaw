@@ -2,8 +2,9 @@
 // Copyright (c) 2026 ClaymoreLab
 import type * as THREE from 'three';
 
+import type { PrevizBlockoutTone } from '../domain/blockout';
 import type { PrevizPrimitiveShape } from '../domain/primitives';
-import { KIND_COLOR, type ThreeModule } from './sceneGraph';
+import { propToneColor, type ThreeModule } from './sceneGraph';
 
 /**
  * 按形状名现造一件基础几何体，交给 `PropLoader` 当「加载回来的模型」用。
@@ -13,12 +14,18 @@ import { KIND_COLOR, type ThreeModule } from './sceneGraph';
  *
  * 尺寸与分段数只写在这里；面数写在 `domain/primitives.ts` 的清单里，两边是否一致由
  * `primitive-builder.test.ts` 拿真 three 核对。改分段数时两边一起改。
+ *
+ * `tone` 是白模物件的明暗档，手摆的道具为 null。
  */
-export function buildPrimitive(three: ThreeModule, shape: PrevizPrimitiveShape): THREE.Group {
+export function buildPrimitive(
+  three: ThreeModule,
+  shape: PrevizPrimitiveShape,
+  tone: PrevizBlockoutTone | null = null,
+): THREE.Group {
   const mesh = new three.Mesh(
     primitiveGeometry(three, shape),
     // 与占位方块同色：模型换进来时颜色不跳，用户认得出这还是「那件物件」。
-    new three.MeshStandardMaterial({ color: KIND_COLOR.prop }),
+    new three.MeshStandardMaterial({ color: propToneColor(tone) }),
   );
   // 包一层 Group，与 GLB 的 `scene` 同形：场景图与落地范围的量法都按「模型根下挂 mesh」写。
   const root = new three.Group();
