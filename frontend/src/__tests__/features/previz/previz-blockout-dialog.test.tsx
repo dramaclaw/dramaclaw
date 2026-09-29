@@ -72,6 +72,22 @@ async function pick(file: File) {
   });
 }
 
+const dialog = () => screen.getByRole("dialog", { name: "previz.blockout.title" });
+const dropZone = () => screen.getByTestId("previz-blockout-drop-zone");
+
+/** 浏览器拖文件时 `types` 里有一项 "Files"；拖一段文字、一个链接时没有。 */
+function dragged(files: File[], types: string[] = ["Files"]) {
+  return { dataTransfer: { files, types } };
+}
+
+async function drop(files: File[], types?: string[]) {
+  let notCancelled = true;
+  await act(async () => {
+    notCancelled = fireEvent.drop(dialog(), dragged(files, types));
+  });
+  return { cancelled: !notCancelled };
+}
+
 beforeEach(() => {
   useGenerationCreditCost.mockReset().mockReturnValue({ data: { data: { display: "12" } } });
 });
@@ -408,5 +424,148 @@ describe("PrevizBlockoutDialog with a result that did not fit", () => {
     expect(screen.getByRole("region", { name: "previz.blockout.held.title" })).toHaveTextContent(
       message,
     );
+  });
+});
+
+describe("PrevizBlockoutDialog drag and drop", () => {
+  it("says a picture can be dragged in", () => {
+    setup();
+
+    expect(dropZone()).toHaveTextContent("previz.blockout.dropHint");
+  });
+
+  it("starts with a picture dropped anywhere on the dialog", async () => {
+    const user = userEvent.setup();
+    const { onStart } = setup();
+    const file = image("dropped.png");
+
+    await drop([file]);
+
+    expect(screen.getByText("dropped.png")).toBeInTheDocument();
+    await user.click(submit());
+    expect(onStart.mock.calls[0]![0].file).toBe(file);
+  });
+
+  it("measures a dropped picture like a picked one", async () => {
+    setup({ measureImage: async () => ({ width: 400, height: 300 }) });
+
+    await drop([image()]);
+
+    const hints = await screen.findByRole("list", { name: "previz.blockout.hint.title" });
+    expect(within(hints).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "previz.blockout.hint.small",
+    ]);
+  });
+
+  it("turns away a dropped file the backend would not take", async () => {
+    setup();
+
+    await drop([image("room.gif")]);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("previz.blockout.badExtension");
+    expect(submit()).toBeDisabled();
+  });
+
+  it("takes the first picture when several are dropped at once", async () => {
+    setup();
+
+    await drop([image("first.png"), image("second.png")]);
+
+    expect(screen.getByText("first.png")).toBeInTheDocument();
+    expect(screen.queryByText("second.png")).toBeNull();
+  });
+
+  it("lights up while a file hovers and goes dark when it leaves", () => {
+    setup();
+    expect(dropZone()).toHaveAttribute("data-dragging", "false");
+
+    fireEvent.dragEnter(dialog(), dragged([]));
+    expect(dropZone()).toHaveAttribute("data-dragging", "true");
+    expect(dropZone()).toHaveTextContent("previz.blockout.dropNow");
+
+    fireEvent.dragLeave(dialog(), dragged([]));
+    expect(dropZone()).toHaveAttribute("data-dragging", "false");
+  });
+
+  // 从对话框的一个子元素拖到另一个子元素上，浏览器先发 enter 再发 leave；
+  // 只认最后一次 leave 的话高亮会在对话框里头一路闪。
+  it("stays lit while the file moves between parts of the dialog", () => {
+    setup();
+
+    fireEvent.dragEnter(dialog(), dragged([]));
+    fireEvent.dragEnter(screen.getByLabelText("previz.blockout.description"), dragged([]));
+    fireEvent.dragLeave(dialog(), dragged([]));
+
+    expect(dropZone()).toHaveAttribute("data-dragging", "true");
+  });
+
+  it("goes dark once the file is dropped", async () => {
+    setup();
+    fireEvent.dragEnter(dialog(), dragged([]));
+
+    await drop([image()]);
+
+    expect(dropZone()).toHaveAttribute("data-dragging", "false");
+  });
+
+  it("does not light up for dragged text", async () => {
+    setup();
+
+    fireEvent.dragEnter(dialog(), dragged([], ["text/plain"]));
+    expect(dropZone()).toHaveAttribute("data-dragging", "false");
+
+    await drop([], ["text/plain"]);
+    expect(submit()).toBeDisabled();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  // 不拦的话浏览器会直接打开拖进来的图，整个编辑器连同没保存的场景一起没了。
+  it.each(["dragOver", "drop"] as const)("keeps the browser from opening the file on %s", (name) => {
+    setup();
+
+    const notCancelled = fireEvent[name](dialog(), dragged([image()]));
+
+    expect(notCancelled).toBe(false);
+  });
+
+  it.each(["uploading", "generating"] as const)(
+    "leaves the picture alone when one is dropped while %s",
+    async (stage) => {
+      const { rerender, props } = setup();
+      await pick(image("room.png"));
+      rerender(<PrevizBlockoutDialog {...props} stage={stage} />);
+
+      fireEvent.dragEnter(dialog(), dragged([]));
+      expect(dropZone()).toHaveAttribute("data-dragging", "false");
+      const { cancelled } = await drop([image("other.png")]);
+
+      expect(cancelled).toBe(true);
+      expect(screen.getByText("room.png")).toBeInTheDocument();
+      expect(screen.queryByText("other.png")).toBeNull();
+    },
+  );
+
+  // 编辑器挂在画布节点底下，React 的合成事件顺着组件树冒泡、不看 DOM 在哪：
+  // 不截住的话画布会把这张图当成新节点收走，还会亮起它自己的「释放以添加」蒙层。
+  it("keeps the drag from reaching whatever the editor is mounted in", async () => {
+    const outer = {
+      onDragEnter: vi.fn(),
+      onDragOver: vi.fn(),
+      onDragLeave: vi.fn(),
+      onDrop: vi.fn(),
+    };
+    const handlers = { onStart: vi.fn(), onRetryImport: vi.fn(), onClose: vi.fn() };
+    render(
+      <div {...outer}>
+        <PrevizBlockoutDialog open stage="idle" held={null} hasExisting={false} {...handlers} />
+      </div>,
+    );
+
+    fireEvent.dragEnter(dialog(), dragged([]));
+    fireEvent.dragOver(dialog(), dragged([]));
+    fireEvent.dragLeave(dialog(), dragged([]));
+    await drop([image()]);
+
+    for (const handler of Object.values(outer)) expect(handler).not.toHaveBeenCalled();
   });
 });

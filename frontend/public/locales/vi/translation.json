@@ -7757,6 +7757,8 @@
       "title": "Generate scene from reference image",
       "close": "Close",
       "pick": "Choose reference image",
+      "dropHint": "or drag a picture here",
+      "dropNow": "Drop to use this picture",
       "submit": "Generate blockout",
       "description": "Notes (optional)",
       "descriptionPlaceholder": "e.g. ceiling about 3 m high, table 2.4 m long, door on the right of the back wall",

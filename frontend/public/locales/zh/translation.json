@@ -7853,6 +7853,8 @@
       "title": "从参考图生成场景",
       "close": "关闭",
       "pick": "选择参考图",
+      "dropHint": "或把图片拖到这里",
+      "dropNow": "松开鼠标，用这张图",
       "submit": "生成白模",
       "description": "补充说明（可选）",
       "descriptionPlaceholder": "例如：层高约 3 米，餐桌长 2.4 米，门在后墙右侧",

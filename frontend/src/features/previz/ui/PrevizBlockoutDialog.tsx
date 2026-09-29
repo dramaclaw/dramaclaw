@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useId, useRef, useState } from "react";
+import { useId, useRef, useState, type DragEvent } from "react";
 import { ImageUp, Loader2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -45,6 +45,11 @@ export interface PrevizBlockoutDialogProps {
   onClose: () => void;
   /** 读图片的像素尺寸；读不出来给 null。测试里换掉它——jsdom 不解码图片。 */
   measureImage?: (file: File) => Promise<PrevizImageSize | null>;
+}
+
+/** 拖的是文件才算数：拖一段文字、一个链接时 `types` 里没有这一项。 */
+function carriesFiles(event: DragEvent<HTMLElement>): boolean {
+  return Array.from(event.dataTransfer?.types ?? []).includes("Files");
 }
 
 /** 用一个不挂进文档的 `<img>` 读尺寸，做法同 `engine/audioProbe.ts`。 */
@@ -106,8 +111,14 @@ function BlockoutPanel({
   const [hints, setHints] = useState<PrevizBlockoutImageHint[]>([]);
   const [description, setDescription] = useState("");
   const [mode, setMode] = useState<PrevizBlockoutImportMode>("replace");
+  const [dragging, setDragging] = useState(false);
   /** 量尺寸是异步的：连着选两张图时，先选那张的结果不能盖到后选那张头上。 */
   const measureSerial = useRef(0);
+  /**
+   * 文件在对话框的子元素之间移动时，浏览器先发 enter 再发 leave；
+   * 数层数而不是看最后一个事件，高亮才不会一路闪。做法同画布的文件拖放。
+   */
+  const dragDepth = useRef(0);
 
   const cost = useGenerationCreditCost("feature", PREVIZ_BLOCKOUT_FEATURE_KEY, {
     surface: "canvas",
@@ -145,6 +156,41 @@ function BlockoutPanel({
       });
   };
 
+  // 编辑器挂在画布节点底下，合成事件顺着组件树冒泡：四个事件都要截住，
+  // 不然画布会亮起它自己的蒙层，还会把这张图当成新节点收走。
+  const handleDragEnter = (event: DragEvent<HTMLElement>) => {
+    event.stopPropagation();
+    if (!carriesFiles(event)) return;
+    event.preventDefault();
+    if (busy) return;
+    dragDepth.current += 1;
+    setDragging(true);
+  };
+  const handleDragOver = (event: DragEvent<HTMLElement>) => {
+    event.stopPropagation();
+    if (!carriesFiles(event)) return;
+    // 不 preventDefault 的话浏览器不认这里能放，松手就直接打开那张图、把整页换掉。
+    event.preventDefault();
+    event.dataTransfer.dropEffect = busy ? "none" : "copy";
+  };
+  const handleDragLeave = (event: DragEvent<HTMLElement>) => {
+    event.stopPropagation();
+    if (!carriesFiles(event)) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
+  };
+  const handleDrop = (event: DragEvent<HTMLElement>) => {
+    event.stopPropagation();
+    if (!carriesFiles(event)) return;
+    event.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    if (busy) return;
+    // 一次只用一张：拖进来好几张就取第一张，取了哪张看文件名。
+    const dropped = event.dataTransfer.files?.[0];
+    if (dropped) handlePick(dropped);
+  };
+
   return (
     <section
       role="dialog"
@@ -154,6 +200,11 @@ function BlockoutPanel({
       tabIndex={-1}
       aria-label={t("previz.blockout.title")}
       className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 p-6"
+      // 整个对话框都接：放偏了一点也算数，不至于掉到浏览器手里。
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
     >
       <div className="flex max-h-full w-full max-w-[520px] flex-col gap-3 overflow-y-auto rounded-xl border border-white/10 bg-[#14161b] p-4 shadow-2xl">
         <header className="flex items-center justify-between">
@@ -177,7 +228,14 @@ function BlockoutPanel({
           </ul>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div
+          data-testid="previz-blockout-drop-zone"
+          data-dragging={dragging}
+          className={cn(
+            "flex flex-wrap items-center gap-2 rounded-md border border-dashed border-white/15 p-3 transition-colors",
+            dragging && "border-white/60 bg-white/[0.06]",
+          )}
+        >
           {/* sr-only + label 的理由见 PrevizModelLibraryDialog 的导入按钮。 */}
           <input
             id={fileInputId}
@@ -204,6 +262,9 @@ function BlockoutPanel({
             {t("previz.blockout.pick")}
           </label>
           {file && <span className="min-w-0 truncate text-[12px] text-white/70">{file.name}</span>}
+          <span className={cn("text-[12px]", dragging ? "text-white/90" : "text-white/40")}>
+            {t(dragging ? "previz.blockout.dropNow" : "previz.blockout.dropHint")}
+          </span>
         </div>
 
         {refusal && (
