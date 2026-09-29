@@ -133,7 +133,7 @@ def test_example_shows_labels_and_the_layout_notes():
 
 
 def test_prompt_version_moves_with_the_wording():
-    assert BLOCKOUT_PROMPT_VERSION == 4
+    assert BLOCKOUT_PROMPT_VERSION == 5
 
 
 def test_prompt_asks_for_relations_instead_of_coordinates_where_it_can():
@@ -154,3 +154,54 @@ def test_example_places_pieces_by_relation():
         'on="table"',
     ):
         assert placement in BLOCKOUT_EXAMPLE_PROGRAM
+
+
+def test_prompt_asks_for_footprints_as_shares_of_the_room_before_any_geometry():
+    prompt = build_blockout_prompt()
+
+    assert prompt.index("占地：") < prompt.index("搭大结构")
+    assert "用房间来量，不要凭感觉写米数" in prompt
+    assert "占这面墙的几分之几" in prompt
+    assert "从墙面伸进房间多远" in prompt
+    assert "占比乘以房间的宽和深" in prompt
+
+
+def test_prompt_warns_that_lengths_along_the_view_look_shorter_than_they_are():
+    prompt = build_blockout_prompt()
+
+    assert "沿着视线方向的长度在图里被压短了" in prompt
+    assert "它就和这面墙一样长" in prompt
+
+
+def test_prompt_treats_a_platform_that_carries_furniture_as_one_large_piece():
+    prompt = build_blockout_prompt()
+
+    assert "平台本身是一件大家具" in prompt
+    assert "不要把它们摆到地上" in prompt
+
+
+def test_prompt_gives_footprints_of_common_furniture_not_only_heights():
+    prompt = build_blockout_prompt()
+
+    for anchor in ("双人床", "三人沙发", "餐桌", "书桌", "炕桌"):
+        assert anchor in prompt.split("定尺度")[1].split("定相机")[0]
+
+
+def test_self_check_compares_sizes_with_the_shares_written_first():
+    prompt = build_blockout_prompt()
+
+    assert "和第 1 步写的占比对得上" in prompt.split("自查")[1]
+
+
+def test_footprints_stated_in_the_example_match_its_geometry():
+    assert (
+        "# 占地：文件柜占左墙约四分之一；会议桌长占房间宽度的四成，宽占进深的两成"
+        in BLOCKOUT_EXAMPLE_PROGRAM
+    )
+    scene = parse_blockout_program(BLOCKOUT_EXAMPLE_PROGRAM)
+    room = scene.rooms[0]
+    pieces = {solid.id: solid for solid in scene.solids}
+
+    assert round(pieces["cabinet"].size[0] / room.size[1], 2) == 0.24
+    assert round(pieces["table"].size[0] / room.size[0], 2) == 0.4
+    assert round(pieces["table"].size[2] / room.size[1], 2) == 0.2
