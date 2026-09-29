@@ -2,7 +2,11 @@
 // Copyright (c) 2026 ClaymoreLab
 import { describe, expect, it, vi } from 'vitest';
 
-import { prepareImportedMaterials } from '@/features/previz/engine/importedMaterials';
+import {
+  applyClayMaterial,
+  CLAY_COLOR,
+  prepareImportedMaterials,
+} from '@/features/previz/engine/importedMaterials';
 import type { ThreeModule } from '@/features/previz/engine/sceneGraph';
 
 /**
@@ -191,5 +195,44 @@ describe('prepareImportedMaterials', () => {
     const root = { traverse: (visit: (node: unknown) => void) => meshes.forEach(visit) };
 
     expect(() => prepareImportedMaterials(fakeThree(), root as never)).not.toThrow();
+  });
+});
+
+describe('applyClayMaterial', () => {
+  function sceneOf(meshes: { material: unknown }[]) {
+    return { traverse: (visit: (node: unknown) => void) => meshes.forEach(visit) };
+  }
+
+  it('paints every mesh with one untextured clay material', () => {
+    const red = fakePhong({ color: { hex: 0xff0000 } });
+    const blue = fakePhong({ color: { hex: 0x0000ff } });
+    const meshes: { material: unknown }[] = [{ material: red }, { material: [blue, red] }];
+
+    applyClayMaterial(fakeThree(), sceneOf(meshes) as never);
+
+    const clay = meshes[0]!.material as FakeStandard;
+    expect(clay).toBeInstanceOf(FakeStandard);
+    expect(clay.params).toMatchObject({ color: CLAY_COLOR, side: 2 });
+    expect(clay.params).not.toHaveProperty('map');
+    // 多材质 mesh 保留槽位数：几何体的 group 还按下标找材质。
+    expect(meshes[1]!.material).toEqual([clay, clay]);
+  });
+
+  it('disposes the replaced materials and their textures, once each', () => {
+    const texture = { isTexture: true, dispose: vi.fn() };
+    const textured = fakePhong({ map: texture });
+    const meshes = [{ material: textured }, { material: textured }];
+
+    applyClayMaterial(fakeThree(), sceneOf(meshes) as never);
+
+    expect(textured.dispose).toHaveBeenCalledTimes(1);
+    expect(texture.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('walks past a node that has no material at all', () => {
+    const meshes = [{ material: undefined }];
+
+    expect(() => applyClayMaterial(fakeThree(), sceneOf(meshes) as never)).not.toThrow();
+    expect(meshes[0]!.material).toBeUndefined();
   });
 });

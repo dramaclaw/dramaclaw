@@ -123,6 +123,14 @@ function identityTransform(): PrevizTransform {
 }
 
 /**
+ * 新物件落在俯视图点定的那一处（世界 XZ）。y 取 0：物件与人物一样落在地面层，
+ * 要搁到桌面上靠手柄松手时的落地吸附。
+ */
+export function propSpawnTransform(spot: readonly [number, number]): PrevizTransform {
+  return { ...identityTransform(), position: [spot[0], 0, spot[1]] };
+}
+
+/**
  * 同类对象里取「基名 + 空格 + 数字」的最大编号加一。用户改过名的对象匹配不上这个
  * 模式，自然不参与编号——这正是想要的行为，见测试里的说明。
  */

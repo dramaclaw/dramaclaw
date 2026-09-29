@@ -52,6 +52,7 @@ import {
 } from "./domain/characterDraft";
 import type { EvaluatedMotion } from "./domain/evaluate";
 import { canAddObject } from "./domain/limits";
+import { propSpawnTransform } from "./domain/objects";
 import type { PrevizLibraryEntry } from "./domain/modelLibrary";
 import { drawPlaneHeight } from "./domain/pathDraw";
 import { liveCameraAt } from "./domain/program";
@@ -483,7 +484,7 @@ export function PrevizEditor({
   const quadCameraId = quadCamera?.id ?? null;
 
   /**
-   * 道具在地面上占的那几块地，只在创建人物对话框开着时量。
+   * 道具在地面上占的那几块地，只在创建人物对话框或模型库（选落点那一步）开着时量。
    *
    * 量的时机是「打开那一刻」：对话框是模态的，开着的时候场景不会变，而每渲染一次量
    * 一遍要对整个布景重跑 `Box3.setFromObject`（遍历每棵子树的全部几何体）。交出来的
@@ -492,9 +493,9 @@ export function PrevizEditor({
    * 依赖里只有这两个：`renderer` 是因为首帧它还是 null（异步建出来的），关掉时回到
    * 空数组则是顺手把这份快照丢掉，免得下次打开先闪一帧旧数据。
    */
-  const characterFootprints = useMemo(
-    () => (characterCreateOpen ? (renderer?.propFootprints() ?? []) : []),
-    [characterCreateOpen, renderer],
+  const topDownFootprints = useMemo(
+    () => (characterCreateOpen || libraryOpen ? (renderer?.propFootprints() ?? []) : []),
+    [characterCreateOpen, libraryOpen, renderer],
   );
 
   const canAdd = useMemo(
@@ -879,7 +880,7 @@ export function PrevizEditor({
    * 把真布景从上往下画进选位图那块画布。渲染器没就绪、或正在录制时回 `null`，
    * 选位图自己回落到那张 2D 示意图。引用要稳的理由同下面那个预览回调。
    */
-  const handleRenderCharacterTopDown = useCallback(
+  const handleRenderTopDown = useCallback(
     (mapCanvas: HTMLCanvasElement) => renderer?.renderTopDownMap(mapCanvas) ?? null,
     [renderer],
   );
@@ -939,7 +940,7 @@ export function PrevizEditor({
   );
 
   const handleImportProp = useCallback(
-    async (file: File) => {
+    async (file: File, spot: [number, number]) => {
       const project = readUrl().project;
       if (!project) {
         toast.error(t("previz.editor.noProject"));
@@ -997,6 +998,7 @@ export function PrevizEditor({
         name: result.name,
         assetUrl: result.assetUrl,
         assetFormat: result.assetFormat,
+        transform: propSpawnTransform(spot),
       });
       if (!id) {
         toast.error(t("previz.editor.limitReached"));
@@ -1010,13 +1012,14 @@ export function PrevizEditor({
     [addObject, renderer, t],
   );
 
-  const handlePickLibraryEntry = useCallback(
-    (entry: PrevizLibraryEntry) => {
+  const handlePlaceLibraryEntry = useCallback(
+    (entry: PrevizLibraryEntry, spot: [number, number]) => {
       setLibraryOpen(false);
       const id = addObject("prop", {
         name: t(entry.nameKey),
         assetUrl: entry.assetUrl,
         assetFormat: entry.assetFormat,
+        transform: propSpawnTransform(spot),
       });
       if (!id) {
         toast.error(t("previz.editor.limitReached"));
@@ -1846,8 +1849,8 @@ export function PrevizEditor({
               <PrevizCharacterCreateDialog
                 open={characterCreateOpen}
                 objects={scene.objects}
-                footprints={characterFootprints}
-                onRenderTopDown={handleRenderCharacterTopDown}
+                footprints={topDownFootprints}
+                onRenderTopDown={handleRenderTopDown}
                 onRenderPreview={handleRenderCharacterPreview}
                 onCreate={handleCreateCharacter}
                 onClose={() => setCharacterCreateOpen(false)}
@@ -1855,10 +1858,13 @@ export function PrevizEditor({
 
               <PrevizModelLibraryDialog
                 open={libraryOpen}
-                onPick={handlePickLibraryEntry}
-                onImportFile={(file) => {
+                objects={scene.objects}
+                footprints={topDownFootprints}
+                onRenderTopDown={handleRenderTopDown}
+                onPlace={handlePlaceLibraryEntry}
+                onImportFile={(file, spot) => {
                   setLibraryOpen(false);
-                  void handleImportProp(file);
+                  void handleImportProp(file, spot);
                 }}
                 onClose={() => setLibraryOpen(false)}
               />
