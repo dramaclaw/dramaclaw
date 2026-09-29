@@ -1974,11 +1974,19 @@ def _standard_skill_items(
         "video-tutorial": "general-text",
         "short-drama-quick": "drama-plot-outline",
     }[skill_id]
+    outline_prompt = user_goal
+    if skill_id == "video-tutorial":
+        # The outline is the shared source for all tutorial frames. The Agent
+        # may put step quantities in units while shortening user_goal; keep
+        # those supplied facts in the generated outline task as well.
+        outline_prompt = f"{user_goal}；分段任务：" + "；".join(
+            f"{unit['title']}：{unit['prompt']}" for unit in units
+        )
     items.append(
         _planned_item(
             item_id="outline",
             title="内容规划",
-            prompt=user_goal,
+            prompt=outline_prompt,
             recipe_id=outline_recipe,
             depends_on=["workflow_input"],
             stage="planning",
@@ -2323,6 +2331,13 @@ def _expand_standard_skill_intent(
         units=units,
         user_goal=user_goal,
     )
+    if skill_id == "video-tutorial" and deliverable != "images":
+        # The standard tutorial always needs a video model. A recommendation is
+        # resolved against the caller's live catalog during preflight; never use
+        # an unverified implicit model or silently substitute a requested mode.
+        for item in items:
+            if item.get("recipe_id") == "general-video" and not _text(item.get("model")):
+                item["model"] = "recommended"
     expanded = {
         **intent,
         "items": items,
@@ -3676,6 +3691,18 @@ def validate_agent_workflow_plan(
         data = node.get("data") if isinstance(node, dict) else None
         catalog = data.get("workflowCatalog") if isinstance(data, dict) else None
         recipe_id = _text(catalog.get("recipeId")) if isinstance(catalog, dict) else ""
+        if skill_id == "short-drama-quick" and node_type == "videoNode" and recipe_id == "general-video":
+            shot_title = next((
+                _text(value) for value in (
+                    node.get("title"), node.get("name"), node.get("label"),
+                    data.get("title"), data.get("displayName"), data.get("label"),
+                ) if _text(value)
+            ), "")
+            if not shot_title:
+                errors.append({
+                    "path": f"nodes[{index}].data.title",
+                    "message": "short-drama-quick video shot requires a non-empty title",
+                })
         recipe_pipeline = (
             (catalog.get("recipePipeline") or []) if isinstance(catalog, dict) else []
         )

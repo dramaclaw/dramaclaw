@@ -956,14 +956,21 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     generation_media_types = args.get("generation_media_types")
     generation_required_choices = args.get("generation_required_choices")
     if generation_media_types is not None or generation_required_choices is not None:
-        if questions or (
-            generation_media_types is not None
-            and generation_required_choices is not None
-        ):
+        if questions:
             return tool_result({
                 "ok": False,
                 "status": "generation_clarification_args_invalid",
                 "error": "Pass exactly one generation mode without questions",
+            })
+        if generation_media_types is not None and generation_required_choices is not None:
+            return tool_result({
+                "ok": False,
+                "status": "generation_clarification_args_invalid",
+                "error": (
+                    "generation_media_types and generation_required_choices are mutually "
+                    "exclusive; when retrying with generation_required_choices, "
+                    "omit generation_media_types"
+                ),
             })
         if generation_required_choices is not None:
             if not isinstance(generation_required_choices, dict) or not generation_required_choices:
@@ -6459,7 +6466,23 @@ def _generation_choices_from_answers(
     try:
         for question_id, selection in answers.items():
             if question_id not in _GENERATION_ANSWER_DATA_FIELDS:
-                raise ValueError(f"unsupported generation answer: {question_id}")
+                instruction = (
+                    "Remove video_generation_mode from generation_answers. Keep the selected "
+                    "mode in plan.inputs.video_generation_mode and each video node's "
+                    "data.genMode, with the same value. Pass only the answers returned by "
+                    "freezone_request_user_clarification as generation_answers."
+                    if question_id == "video_generation_mode"
+                    else "Remove the unsupported field from generation_answers; pass only "
+                    "the answers returned by freezone_request_user_clarification."
+                )
+                return {}, {
+                    "ok": False,
+                    "status": "generation_answers_incomplete",
+                    "error": f"unsupported generation answer: {question_id}",
+                    "unsupported_answer": question_id,
+                    "allowed_answer_ids": sorted(_GENERATION_ANSWER_DATA_FIELDS),
+                    "agent_instruction": instruction,
+                }
             choices[question_id] = _generation_answer_value(question_id, selection)
         if receipt_choices is not None:
             if not isinstance(receipt_choices, dict):

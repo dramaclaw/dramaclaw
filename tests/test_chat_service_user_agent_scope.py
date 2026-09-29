@@ -1231,6 +1231,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "applies only to image and video for now" in developer_instructions
         assert "run_after_create=true" in developer_instructions
         assert "video_generation_mode" in developer_instructions
+        assert "omit generation_media_types" in developer_instructions
     else:
         assert "[FREEZONE_CANVAS_ASSISTANT]" not in captured["prompt"]
         assert "scope-filtered concrete MCP tools" in (
