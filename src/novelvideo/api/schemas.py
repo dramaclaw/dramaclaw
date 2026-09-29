@@ -1,9 +1,11 @@
 """API 请求/响应 Pydantic 模型。"""
 
+from decimal import Decimal
+
 from typing import Annotated, Any, Literal, Optional
 
 from fastapi import HTTPException
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from novelvideo.models import SceneRef
 from novelvideo.freezone.asset_copy import MAX_SOURCE_URL_LENGTH, MAX_SOURCES_PER_REQUEST
@@ -1512,23 +1514,42 @@ class FreezoneVideoEraseRequest(BaseModel):
 
 
 class FreezoneVideoUpscaleRequest(BaseModel):
-    """视频高清请求。
-
-    基础版使用 ffmpeg 做传统缩放、降噪和锐化，不调用 AI 超分模型。
-    """
+    """视频增强请求。模型由媒体目录能力动态选择。"""
 
     source_url: str = Field(description="待高清处理视频的静态地址")
     resolution: Literal["1080p", "2k", "4k"] = Field(
         default="1080p",
         description="目标清晰度档位。按长边缩放：1080p=1920，2k=2560，4k=3840",
     )
-    frame_interpolation: Literal["none"] = Field(
-        default="none",
-        description="补帧模式。基础版仅支持 none，不改变原视频帧率",
+    target_fps: Optional[float] = Field(
+        default=None,
+        ge=1,
+        le=120,
+        allow_inf_nan=False,
+        description="目标帧率 1–120，最多 3 位小数；None 表示保持原帧率",
     )
-    denoise_strength: Literal["none", "1x", "2x"] = Field(
-        default="1x",
-        description="降噪强度。none 不降噪；1x 轻度降噪；2x 中等降噪",
+
+    @field_validator("target_fps")
+    @classmethod
+    def validate_target_fps_precision(cls, value: float | None) -> float | None:
+        if value is not None and Decimal(str(value)).as_tuple().exponent < -3:
+            raise ValueError("target_fps supports at most 3 decimal places")
+        return value
+    smart_interpolation: bool = Field(
+        default=True,
+        description="调整帧率时是否启用智能插帧；默认保留既有行为",
+    )
+    slowdown: Literal["auto", "2x", "3x", "4x", "5x"] = Field(
+        default="auto",
+        description="慢放倍率；auto 表示保持原速",
+    )
+    scene: Literal["realistic", "anime"] = Field(
+        default="realistic",
+        description="源视频场景类型",
+    )
+    face_enhance: bool = Field(
+        default=False,
+        description="是否启用人脸专项增强",
     )
 
 

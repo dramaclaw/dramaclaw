@@ -35,10 +35,7 @@ import {
   CURRENT_RUNTIME_SESSION_ID,
   extractRequestId,
 } from '@/features/canvas/application/generationErrorReport';
-import {
-  isStaleGenerationTask,
-  shouldWriteGenerationError,
-} from '@/features/canvas/application/generationTaskArbitration';
+import { shouldWriteGenerationError } from '@/features/canvas/application/generationTaskArbitration';
 
 type FreezoneTaskType = FreezoneJobRef['task_type'];
 
@@ -396,6 +393,7 @@ export async function resumeNodeGeneration(params: {
   const readLatestNodeData = () =>
     getNodeData?.(node.id)
     ?? (node.data as Record<string, unknown>);
+  const stillOwnsTask = () => readLatestNodeData().generationTaskKey === taskKey;
 
   // Quick pre-check: if the task no longer exists server-side (expired/cleaned),
   // avoid hanging on the full poll budget — clear the stuck 生成中 state now.
@@ -407,8 +405,7 @@ export async function resumeNodeGeneration(params: {
   // 连续 miss 才算数:确认窗口约 10 秒,相对 20~35 分钟的完整预算可以忽略,
   // 却足以盖住瞬时漏项。
   if (await confirmTaskMissing(projectId, taskKey)) {
-    const latestNodeData = readLatestNodeData();
-    if (isStaleGenerationTask({ nodeData: latestNodeData, taskKey })) {
+    if (!stillOwnsTask()) {
       return;
     }
 
@@ -419,7 +416,9 @@ export async function resumeNodeGeneration(params: {
   try {
     // 按任务类型取预算，跟提交侧同一份口径（见 pollTimeoutForTaskType）。
     const completed = await awaitTaskCompletion(taskKey, projectId, { taskType });
-    updateNodeData(node.id, await buildSuccessPatch(kind, completed, taskType, jobId, projectId));
+    const patch = await buildSuccessPatch(kind, completed, taskType, jobId, projectId);
+    if (!stillOwnsTask()) return;
+    updateNodeData(node.id, patch);
   } catch (error) {
     console.warn('[resume-generation] task resume failed', { nodeId: node.id, taskKey, error });
     // 轮询超时只说明这一轮不再等了，任务还在后端跑：保留 isGenerating 与句柄，
@@ -427,11 +426,9 @@ export async function resumeNodeGeneration(params: {
     if (isTaskPollTimeoutError(error)) {
       return;
     }
+    if (!stillOwnsTask()) return;
     if (kind === 'image' || kind === 'video') {
       const latestNodeData = readLatestNodeData();
-      if (isStaleGenerationTask({ nodeData: latestNodeData, taskKey })) {
-        return;
-      }
       if (!shouldWriteGenerationError({ nodeData: latestNodeData, taskKey, error })) {
         updateNodeData(node.id, { ...CLEARED_TASK_FIELDS });
         return;

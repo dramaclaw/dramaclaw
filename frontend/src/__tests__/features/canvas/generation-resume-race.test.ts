@@ -247,3 +247,47 @@ describe("恢复路径：旧会话的 generationJobId 不许抢跑", () => {
     expect(staleGenerationJobPatch(node)).toBeNull();
   });
 });
+
+describe("恢复路径：旧任务不能覆盖同一节点的新任务", () => {
+  it("旧视频结果晚到时保留新任务的生成态和句柄", async () => {
+    const oldTaskKey = "freezone_video_upscale:old-job";
+    const newTaskKey = "freezone_video_upscale:new-job";
+    const node = {
+      ...resumableNode(),
+      type: CANVAS_NODE_TYPES.video,
+      data: {
+        isGenerating: true,
+        generationTaskKey: oldTaskKey,
+        generationTaskType: "freezone_video_upscale",
+        generationTaskJobId: "old-job",
+        videoUrl: "previous.mp4",
+      },
+    } as unknown as CanvasNode;
+    const currentData = { ...node.data } as Record<string, unknown>;
+    listTasks.mockResolvedValue([{ task_key: oldTaskKey, status: "running" }]);
+    let finishOldTask!: (value: unknown) => void;
+    awaitTaskCompletion.mockImplementation(() => new Promise((resolve) => {
+      finishOldTask = resolve;
+    }));
+    const updateNodeData = vi.fn();
+
+    const pending = resumeNodeGeneration({
+      node,
+      projectId: "demo",
+      updateNodeData,
+      getNodeData: () => currentData,
+    });
+    await vi.waitFor(() => expect(awaitTaskCompletion).toHaveBeenCalledOnce());
+    currentData.generationTaskKey = newTaskKey;
+    finishOldTask({
+      task_key: oldTaskKey,
+      status: "completed",
+      result: { output_url: "previous.mp4" },
+    });
+    await pending;
+
+    expect(updateNodeData).not.toHaveBeenCalled();
+    expect(currentData.generationTaskKey).toBe(newTaskKey);
+    expect(currentData.isGenerating).toBe(true);
+  });
+});
