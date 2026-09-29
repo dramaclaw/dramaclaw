@@ -247,6 +247,11 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "continue, or resume an existing workflow, call freezone_run_workflow directly even when it "
     "contains only one executable node; do not read node detail before starting it and never "
     "substitute freezone_run_node_action. "
+    "If the user asks to generate content through a named Recipe on one existing standalone "
+    "node, call freezone_run_node_action with the node's catalog action; never substitute "
+    "freezone_update_node_data, even if the requested content could be written directly. "
+    "If the user asks only to edit fields on one existing standalone node without generating, "
+    "use freezone_update_node_data; do not call freezone_run_node_action. "
     "For a normal workflow request, follow that Skill's discovery, draft, preview, and confirmation "
     "sequence. When the user explicitly specifies exact nodes and dependencies, follow the Skill's "
     "custom-topology reference and call freezone_prepare_workflow_plan_draft once instead; do not "
@@ -369,7 +374,7 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
 _CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v2"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v24"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v25"
 
 
 def _codex_developer_instructions(tool_mode: str | None) -> str:
@@ -610,6 +615,11 @@ Canvas write contract:
   or resume an existing workflow, call freezone_run_workflow directly even when it contains only
   one executable node; do not read node detail before starting it and never substitute
   freezone_run_node_action.
+- If the user asks to generate content through a named Recipe on one existing standalone node,
+  call freezone_run_node_action with the node's catalog action; never substitute freezone_update_node_data,
+  even if the requested content could be written directly.
+- If the user asks only to edit fields on one existing standalone node without generating, use
+  freezone_update_node_data; do not call freezone_run_node_action.
 - `dramaclaw-workflows` is the Agent Skill package name, not a Workflow catalog `skill_id`. Never
   pass it to workflow_skill_get/freezone_get_workflow_skill or use it as intent.skill_id. Select the
   matching production Workflow Skill returned by the catalog, such as text-to-image-video for a

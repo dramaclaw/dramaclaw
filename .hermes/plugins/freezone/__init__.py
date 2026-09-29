@@ -10524,7 +10524,13 @@ TOOLS = (
         "freezone_update_node_data",
         _schema(
             "freezone_update_node_data",
-            "Single-operation tool only: update editable data fields on exactly one existing Freezone node when the user explicitly asks for one node edit. For multi-node edits or mixed edit+layout/link workflows, use one freezone_emit_canvas_command batch. Inspect freezone_get_node_detail first when editable parameters or enum options are unclear.",
+            "Single-operation tool only: edit fields without generating on exactly one existing "
+            "Freezone node when the user explicitly asks for a node edit. This tool is not a "
+            "substitute for Recipe generation; use freezone_run_node_action when the user asks "
+            "to generate through a named Recipe on an existing standalone node. For multi-node "
+            "edits or mixed edit+layout/link workflows, use one freezone_emit_canvas_command "
+            "batch. Inspect freezone_get_node_detail first when editable parameters or enum "
+            "options are unclear.",
             {
                 **_SCOPE_PROPS,
                 "node_id": {
@@ -10768,7 +10774,17 @@ TOOLS = (
         "freezone_run_node_action",
         _schema(
             "freezone_run_node_action",
-            "Single-operation tool only: run or open exactly one standalone frontend node action listed by node_detail action_summary. A one-node workflow is still a workflow: never use this tool to run, continue, or resume a target the user identifies as a workflow; use freezone_run_workflow instead. If the standalone node has workflowConfigConfirmed=true, reuse its persisted generation parameters and do not ask the user to choose them again unless a required field is missing or the user changed it. For non-default action parameters, inspect freezone_get_node_action_catalog with the specific action first. For multiple standalone actions use one freezone_emit_canvas_command batch; never use that batch as a workflow runner.",
+            "Single-operation tool only: run or open exactly one standalone frontend node action "
+            "listed by node_detail action_summary. A one-node workflow is still a workflow: never "
+            "use this tool to run, continue, or resume a target the user identifies as a workflow; "
+            "use freezone_run_workflow instead. When the user asks to generate content through a "
+            "named Recipe on an existing standalone node, use its catalog action here; never "
+            "substitute freezone_update_node_data. If the standalone node has "
+            "workflowConfigConfirmed=true, reuse its persisted generation parameters and do not "
+            "ask the user to choose them again unless a required field is missing or the user "
+            "changed it. For non-default action parameters, inspect freezone_get_node_action_catalog "
+            "with the specific action first. For multiple standalone actions use one "
+            "freezone_emit_canvas_command batch; never use that batch as a workflow runner.",
             {
                 **_SCOPE_PROPS,
                 "node_id": {

@@ -1529,6 +1529,26 @@ def test_codex_freezone_instructions_forbid_invented_resource_uris():
     assert "freezone_run_node_action" in canvas_instructions
 
 
+def test_recipe_generation_on_an_existing_standalone_node_routes_to_node_action():
+    for instructions in (
+        chat_service._codex_developer_instructions("freezone_canvas"),
+        chat_service._FREEZONE_CANVAS_ASSISTANT_INSTRUCTIONS,
+    ):
+        assert "generate content through a named Recipe" in instructions
+        assert "freezone_run_node_action" in instructions
+        assert "never substitute freezone_update_node_data" in instructions
+
+
+def test_explicit_standalone_node_edit_does_not_trigger_recipe_generation():
+    for instructions in (
+        chat_service._codex_developer_instructions("freezone_canvas"),
+        chat_service._FREEZONE_CANVAS_ASSISTANT_INSTRUCTIONS,
+    ):
+        assert "edit fields on one existing standalone node without generating" in instructions
+        assert "freezone_update_node_data" in instructions
+        assert "do not call freezone_run_node_action" in instructions
+
+
 def test_codex_freezone_write_result_error_preserves_canvas_validation_reason():
     event = SimpleNamespace(
         name="dramaclaw.freezone_confirm_workflow_draft",

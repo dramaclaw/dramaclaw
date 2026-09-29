@@ -370,6 +370,17 @@ def _install_workflow_draft_api(monkeypatch, plugin, project_dir: Path) -> None:
     monkeypatch.setattr(plugin, "_request", fake_request)
 
 
+def test_recipe_generation_and_plain_edit_tool_descriptions_remain_distinct():
+    schemas = {name: schema for name, schema, _handler in _load_plugin_module().TOOLS}
+    run_action = schemas["freezone_run_node_action"]["description"]
+    update_data = schemas["freezone_update_node_data"]["description"]
+
+    assert "generate content through a named Recipe" in run_action
+    assert "never substitute freezone_update_node_data" in run_action
+    assert "edit fields without generating" in update_data
+    assert "not a substitute for Recipe generation" in update_data
+
+
 def test_freezone_plugin_registers_canvas_command_tools():
     from novelvideo.freezone.workflow_plan import (
         ALLOWED_LINK_TYPES,
