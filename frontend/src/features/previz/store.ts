@@ -18,7 +18,7 @@ import {
   type PrevizAudioSource,
 } from './domain/audioTrack';
 import { clampToRange } from './domain/camera';
-import { canAddObject } from './domain/limits';
+import { canAddObject, canAddPrimitive } from './domain/limits';
 import type { PrevizMotionStatus } from './domain/motionLibrary';
 import {
   createPrevizObject,
@@ -392,7 +392,10 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   addObject: (kind, overrides) => {
     const { scene, applyScene } = get();
     // 越界时连新场景都不建：建了就等于往 undo 栈里塞一步什么都没干的操作。
-    if (!canAddObject(scene, kind)) return null;
+    // 基础几何体有自己的 150 个名额，不占导入模型那 20 个（见 `PREVIZ_PRIMITIVE_LIMIT`）。
+    const primitive =
+      kind === 'prop' && (overrides as { assetFormat?: unknown } | undefined)?.assetFormat === 'primitive';
+    if (primitive ? !canAddPrimitive(scene) : !canAddObject(scene, kind)) return null;
 
     // overrides 会从导入路径带进脏数值，所以新建这一步也收敛一次；
     // 不带 overrides 时 `createPrevizObject` 的默认值本就合法，这一步是幂等的。
