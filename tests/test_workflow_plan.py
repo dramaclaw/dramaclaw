@@ -9,6 +9,7 @@ from jsonschema import Draft202012Validator, ValidationError
 
 from novelvideo.freezone.agent_workflows.graph import build_workflow_graph_commands
 from novelvideo.freezone.workflow_plan import validate_workflow_plan
+from novelvideo.freezone.workflow_preflight import evaluate_workflow_preflight
 from novelvideo.freezone.workflow_schema import (
     workflow_intent_json_schema,
     workflow_plan_json_schema,
@@ -703,6 +704,83 @@ def test_intent_video_item_carries_explicit_embedded_audio_requirement():
     )
 
     assert node["data"]["workflowCatalog"]["requiresGeneratedAudio"] is True
+
+
+@pytest.mark.parametrize(
+    ("skill_id", "shot_recipe_id", "anchor_recipe_id"),
+    [
+        ("ling-cage-cinematic-video", "sci-fi-survival-shot-video", None),
+        (
+            "retro-hong-kong-kungfu-comedy-video",
+            "anthropomorphic-kungfu-shot-video",
+            "anthropomorphic-kungfu-key-elements",
+        ),
+    ],
+)
+def test_builtin_voiced_shot_recipe_blocks_silent_agent_plan(
+    monkeypatch, skill_id, shot_recipe_id, anchor_recipe_id
+):
+    """No-BGM must not silently disable dialogue and sound in these two Skills."""
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    items = []
+    if anchor_recipe_id:
+        items.append(
+            {
+                "id": "anchor",
+                "title": "角色参考",
+                "recipe_id": anchor_recipe_id,
+                "prompt": "角色参考图",
+            }
+        )
+    items.append(
+        {
+            "id": "shot",
+            "title": "对白镜头",
+            "recipe_id": shot_recipe_id,
+            "prompt": "有对白和环境声的单镜",
+            "duration_seconds": 5,
+            **({"depends_on": ["anchor"]} if anchor_recipe_id else {}),
+        }
+    )
+    compiled = catalog.compile_workflow_intent(
+        {
+            "skill_id": skill_id,
+            "user_goal": "制作有对白且不生成 BGM 的短片",
+            "items": items,
+        }
+    )
+    assert compiled["ok"] is True, compiled
+    plan = copy.deepcopy(compiled["plan"])
+    plan.pop("planner", None)
+    shot = next(node for node in plan["nodes"] if node["node_type"] == "videoNode")
+    shot["data"]["generateAudio"] = False
+    shot["data"]["workflowCatalog"]["requiresGeneratedAudio"] = False
+
+    silent = catalog.validate_agent_workflow_plan(plan, allow_template_reroute=False)
+
+    assert silent["ok"] is True, silent
+    actual_shot = next(
+        n for n in silent["plan"]["nodes"] if n["node_type"] == "videoNode"
+    )
+    assert actual_shot["data"]["workflowCatalog"]["requiresGeneratedAudio"] is True
+    silent_preflight = evaluate_workflow_preflight(
+        silent, model_responses={}, limits={}, runtime_available=False
+    )
+    assert any(
+        blocker["code"] == "generation_parameter_conflict"
+        and blocker["path"].endswith(".generateAudio")
+        for blocker in silent_preflight["blockers"]
+    )
+    shot["data"]["generateAudio"] = True
+    audible = catalog.validate_agent_workflow_plan(plan, allow_template_reroute=False)
+    audible_preflight = evaluate_workflow_preflight(
+        audible, model_responses={}, limits={}, runtime_available=False
+    )
+    assert not any(
+        blocker["code"] == "generation_parameter_conflict"
+        for blocker in audible_preflight["blockers"]
+    )
 
 
 def test_workflow_intent_schema_accepts_first_frame_video_mode():

@@ -29,6 +29,7 @@
   "planning_prompt": "根据拟人功夫关键元素、当前分镜和音效说明，生成单段动作喜剧视频提示词。",
   "result_summary": "拟人功夫动作喜剧单段视频提示词",
   "requires_source_media": true,
+  "requires_generated_audio": true,
   "force_enhancement": true,
   "skip_detail_check": true
 }
