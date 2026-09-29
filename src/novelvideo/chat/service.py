@@ -3698,6 +3698,35 @@ async def authorize_hermes_launch(
     )
 
 
+def _canvas_background_result_context(previous_trace: list[str]) -> str:
+    notes = [
+        item
+        for item in previous_trace
+        if item.startswith("[CANVAS_BACKGROUND_RESULT]")
+        and item.endswith("[/CANVAS_BACKGROUND_RESULT]")
+    ]
+    if not notes:
+        return ""
+    return (
+        "\n\n[PRIOR_CANVAS_BACKGROUND_RESULTS]\n"
+        "These are asynchronous results from earlier canvas commands. "
+        "Check current canvas and workflow state before acting.\n"
+        + "\n".join(notes[-5:])
+        + "\n[/PRIOR_CANVAS_BACKGROUND_RESULTS]"
+    )
+
+
+async def _canvas_background_result_context_for_scope(
+    username: str, store_scope: Any | None
+) -> str:
+    if store_scope is None:
+        return ""
+    notifications = await _store_history_contents_async(
+        username, store_scope, "agent_notification"
+    )
+    return _canvas_background_result_context(notifications)
+
+
 async def _stream_assistant_reply_hermes(
     username: str,
     project: str,
@@ -3796,6 +3825,10 @@ async def _stream_assistant_reply_hermes(
     else:
         previous_assistant = []
         previous_trace = []
+    if tool_mode == "freezone_canvas":
+        agent_prompt += await _canvas_background_result_context_for_scope(
+            username, store_scope
+        )
     assistant_prefix_candidates = _assistant_prefix_candidates(previous_assistant)
     trace_prefix_candidates = _assistant_prefix_candidates(previous_trace)
     assistant_text = ""
@@ -4583,6 +4616,10 @@ async def _stream_assistant_reply_codex(
             turn_id=business_turn_id,
             require_generation_parameter_preflight=tool_mode == "freezone_canvas",
         )
+        if tool_mode == "freezone_canvas":
+            agent_prompt += await _canvas_background_result_context_for_scope(
+                username, store_scope
+            )
 
         async def turn_events():
             nonlocal assistant_text, turn_disposition

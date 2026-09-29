@@ -33,6 +33,7 @@ import {
 } from "@/features/canvas/application/nodeActionResult";
 import {
   createFreezoneWorkflowRun,
+  getFreezoneWorkflowRun,
   updateFreezoneWorkflowRun,
   type FreezonePresetCanvasRequest,
   type FreezoneWorkflowRun,
@@ -2824,6 +2825,7 @@ async function executeQueuedNodeActions(
         : `canvas-runner:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 10)}`;
     let workflowLeaseLost = false;
     let workflowServerCompleted = false;
+    let workflowServerReconciliationPending = false;
     let workflowPersistenceError: string | null = null;
     let workflowHeartbeat: ReturnType<typeof setInterval> | null = null;
     let workflowHeartbeatQueue: Promise<void> = Promise.resolve();
@@ -2996,10 +2998,20 @@ async function executeQueuedNodeActions(
               ...(status ? { status } : {}),
               runner_id: workflowRunnerId,
             });
-            observeWorkflowRunStatus(updatedRun);
-            if (status && updatedRun.status !== status && !workflowPersistenceError) {
+            let confirmedRun = updatedRun;
+            if (status === "completed" && updatedRun.status === "running") {
+              // PATCH records browser progress; GET also reconciles durable task artifacts.
+              confirmedRun = await getFreezoneWorkflowRun(projectId, canvasId, runId, 10);
+            }
+            observeWorkflowRunStatus(confirmedRun);
+            if (status === "completed") {
+              workflowServerReconciliationPending = confirmedRun.status === "running";
+            }
+            if (status && confirmedRun.status !== status
+              && !(status === "completed" && confirmedRun.status === "running")
+              && !workflowPersistenceError) {
               workflowPersistenceError =
-                `工作流最终状态未确认（请求 ${status}，服务端返回 ${updatedRun.status}）。`;
+                `工作流最终状态未确认（请求 ${status}，服务端返回 ${confirmedRun.status}）。`;
             }
             if (typeof window !== "undefined") {
               window.dispatchEvent(new CustomEvent(FREEZONE_WORKFLOW_RUN_UPDATED_EVENT, {
@@ -3007,8 +3019,8 @@ async function executeQueuedNodeActions(
                   projectId,
                   canvasId,
                   runId,
-                  status: updatedRun.status,
-                  run: updatedRun,
+                  status: confirmedRun.status,
+                  run: confirmedRun,
                 },
               }));
             }
@@ -3692,6 +3704,15 @@ async function executeQueuedNodeActions(
         [],
         runCancelled ? "cancelled" : runFailed || blockedNodeIds.size > 0 ? "failed" : "completed",
       );
+      if (workflowServerReconciliationPending) {
+        for (const step of result.commandResults) {
+          if (step.type !== "run_node_action" || step.status !== "success") continue;
+          if (!pendingActions.some((action) => action.nodeId === step.nodeId && action.action === step.action)) continue;
+          step.status = "pending";
+          step.output = { pending: true, reason: "workflow_server_reconciliation_pending" };
+          result.openedUiActions = Math.max(0, result.openedUiActions - 1);
+        }
+      }
     } catch (error) {
       if (!workflowPersistenceError) throw error;
       runFailed = true;

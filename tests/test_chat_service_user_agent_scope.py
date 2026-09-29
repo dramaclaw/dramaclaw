@@ -17,6 +17,46 @@ from novelvideo.chat import service as chat_service
 from novelvideo.chat.store import ChatScope, chat_store
 
 
+def test_background_canvas_result_is_added_to_next_agent_prompt() -> None:
+    note = (
+        "[CANVAS_BACKGROUND_RESULT] The workflow is pending. "
+        "Do not rerun generation. [/CANVAS_BACKGROUND_RESULT]"
+    )
+    prompt = chat_service._canvas_background_result_context(
+        ["ordinary trace", note],
+    )
+    assert "Do not rerun generation" in prompt
+    assert "ordinary trace" not in prompt
+    assert chat_service._canvas_background_result_context(["ordinary trace"]) == ""
+
+
+def test_background_canvas_agent_notification_is_hidden_from_chat_history(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path))
+    scope = ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="agent-1",
+    )
+    chat_store.append_message(
+        "admin", scope, "user", "Generate an image", turn_id="turn-a"
+    )
+    chat_store.append_message(
+        "admin",
+        scope,
+        "agent_notification",
+        "Do not rerun generation.",
+        turn_id="turn-a",
+        idempotency_key="canvas-background-result:bridge-a",
+    )
+
+    assert [item["role"] for item in chat_store.list_messages("admin", scope)] == ["user"]
+
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
@@ -1080,6 +1120,12 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
     history_sentinel = "CHATDB_HISTORY_MUST_NOT_REACH_CODEX"
     if store_scope is not None:
         chat_store.append_message("admin", store_scope, "assistant", history_sentinel)
+        chat_store.append_message(
+            "admin",
+            store_scope,
+            "agent_notification",
+            "[CANVAS_BACKGROUND_RESULT] Do not rerun generation. [/CANVAS_BACKGROUND_RESULT]",
+        )
 
     class FakeAuthPort:
         async def revoke_agent_session(self, token):
@@ -1198,6 +1244,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
     assert not Path(captured["agent_token_file"]).exists()
     assert revoked == ["agent-token"]
     if tool_mode == "freezone_canvas":
+        assert "Do not rerun generation" in captured["prompt"]
         assert "[FREEZONE_CANVAS_ASSISTANT]" in captured["prompt"]
         assert "[FREEZONE_CANVAS_CONTEXT]" in captured["prompt"]
         assert "canvas_id: canvas-a" in captured["prompt"]

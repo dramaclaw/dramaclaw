@@ -3892,6 +3892,11 @@ function canvasCommandFeedbackHasPending(feedback: CanvasCommandFeedback): boole
   return (feedback.commandResults ?? []).some((step) => step.status === "pending");
 }
 
+function canvasCommandFeedbackReconciliationPending(feedback: CanvasCommandFeedback): boolean {
+  return (feedback.commandResults ?? []).some((step) =>
+    step.status === "pending" && step.output?.reason === "workflow_server_reconciliation_pending");
+}
+
 function canvasCommandFeedbackIsInvalidCommand(feedback: CanvasCommandFeedback): boolean {
   return (feedback.commandResults ?? []).some((step) => step.label === "画布命令无效");
 }
@@ -3933,9 +3938,9 @@ function canvasCommandFeedbackCompactTitle(feedback: CanvasCommandFeedback, t: T
   const firstPlan = feedback.plans?.[0];
   if (canvasCommandFeedbackIsTimeoutCancelled(feedback)) return "画布操作已过期";
   if (firstFailedStep?.label === "已取消" || canvasCommandFeedbackIsUserCancelled(feedback)) return "画布操作已取消";
-  if (canvasCommandFeedbackHasPending(feedback)) return t("freezone.chat.workflowOutputSyncPendingLabel", {
-    defaultValue: "产物待同步",
-  });
+  if (canvasCommandFeedbackHasPending(feedback)) return canvasCommandFeedbackReconciliationPending(feedback)
+    ? t("freezone.chat.workflowReconciliationPendingLabel", { defaultValue: "对账中" })
+    : t("freezone.chat.workflowOutputSyncPendingLabel", { defaultValue: "产物待同步" });
   if (firstPlan?.type === "run_node_action" && firstPlan.label.includes("生成图片")) return "生成图片失败";
   if (firstPlan?.type === "run_node_action" && firstPlan.label.includes("生成视频")) return "生成视频失败";
   if (firstFailedStep?.label) return firstFailedStep.label;
@@ -4002,9 +4007,13 @@ function CanvasCommandFeedbackCard({
         })
       : null;
   const userFailureMessage = pending
-    ? t("freezone.chat.workflowOutputSyncPendingMessage", {
-        defaultValue: "工作流已完成，画布节点产物待同步；请稍后刷新画布核对结果，暂勿重复生成。",
-      })
+    ? canvasCommandFeedbackReconciliationPending(feedback)
+      ? t("freezone.chat.workflowReconciliationPendingMessage", {
+          defaultValue: "画布产物已生成，服务端仍在核对任务产物；请稍后检查运行状态，暂勿重复生成。",
+        })
+      : t("freezone.chat.workflowOutputSyncPendingMessage", {
+          defaultValue: "工作流已完成，画布节点产物待同步；请稍后刷新画布核对结果，暂勿重复生成。",
+        })
     : failed
     ? cancellationMessage ?? canvasCommandUserMessageFromResult(
         feedback.errors,
@@ -13510,17 +13519,16 @@ export function SuperChatPanel({
           await flushFreezoneCanvasRuntime(params.project, effectiveFreezoneCanvasId);
         }
 
-        if (!backgroundAccepted) {
-          reportCanvasCommandToolResult({
-            bridgeKey: approval.bridgeKey,
-            turnId: approval.turnId,
-            anchorTextPrefix: approval.anchorTextPrefix,
-            projectId: params.project,
-            canvasId: effectiveFreezoneCanvasId,
-            agentId: approval.agentId ?? effectiveFreezoneAgentId,
-            result,
-          });
-        }
+        reportCanvasCommandToolResult({
+          bridgeKey: approval.bridgeKey,
+          turnId: approval.turnId,
+          anchorTextPrefix: approval.anchorTextPrefix,
+          projectId: params.project,
+          canvasId: effectiveFreezoneCanvasId,
+          agentId: approval.agentId ?? effectiveFreezoneAgentId,
+          result,
+          followup: backgroundAccepted,
+        });
         const feedbackKey = canvasCommandFeedbackKey(approval.bridgeKey, approval.turnId, undefined, approval.key);
         appendCanvasCommandFeedback(
           approval.messageId,

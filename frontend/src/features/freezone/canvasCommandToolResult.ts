@@ -15,6 +15,13 @@ const workflowResultSyncPendingMessage = () => i18next.t(
 const WORKFLOW_RESULT_SYNC_PENDING_HINT =
   "The server workflow completed, but the canvas node output is not visible yet. " +
   "Do not claim the artifact is ready. Do not rerun generation. Ask the user to wait and refresh the canvas.";
+const workflowReconciliationPendingMessage = () => i18next.t(
+  "freezone.chat.workflowReconciliationPendingMessage",
+  { defaultValue: "画布产物已生成，服务端仍在核对任务产物；请稍后检查运行状态，暂勿重复生成。" },
+);
+const WORKFLOW_RECONCILIATION_PENDING_HINT =
+  "The canvas output is visible, but the server is still verifying the task artifact. " +
+  "Do not claim the workflow finished. Do not rerun generation. Ask the user to check the run status later.";
 
 export const FREEZONE_CANVAS_COMMAND_TOOL_RESULT_EVENT = "freezone/canvas-command-tool-result";
 const CANVAS_COMMAND_RECEIPTS_STORAGE_KEY = "dramaclaw.canvas-command-receipts.v1";
@@ -27,6 +34,7 @@ export type CanvasCommandToolResultPayload = {
   turn_id?: string | null;
   anchor_text_prefix?: string | null;
   bridge_key: string;
+  followup?: boolean;
   project_id: string | null;
   canvas_id: string | null;
   agent_id?: string | null;
@@ -69,7 +77,7 @@ function storeCanvasCommandReceipt(payload: CanvasCommandToolResultPayload) {
     .sort(([, left], [, right]) => left.storedAt - right.storedAt)
     .slice(-(CANVAS_COMMAND_RECEIPT_LIMIT - 1));
   const next = Object.fromEntries(receipts);
-  next[payload.bridge_key] = { storedAt: now, payload };
+  next[receiptStorageKey(payload)] = { storedAt: now, payload };
   try {
     window.localStorage.setItem(CANVAS_COMMAND_RECEIPTS_STORAGE_KEY, JSON.stringify(next));
   } catch {
@@ -77,11 +85,16 @@ function storeCanvasCommandReceipt(payload: CanvasCommandToolResultPayload) {
   }
 }
 
-function removeCanvasCommandReceipt(bridgeKey: string) {
-  if (typeof window === "undefined" || !bridgeKey) return;
+function receiptStorageKey(payload: CanvasCommandToolResultPayload): string {
+  return payload.followup ? `${payload.bridge_key}:followup` : payload.bridge_key;
+}
+
+function removeCanvasCommandReceipt(payload: CanvasCommandToolResultPayload) {
+  if (typeof window === "undefined" || !payload.bridge_key) return;
   const receipts = loadCanvasCommandReceipts();
-  if (!(bridgeKey in receipts)) return;
-  delete receipts[bridgeKey];
+  const key = receiptStorageKey(payload);
+  if (!(key in receipts)) return;
+  delete receipts[key];
   try {
     window.localStorage.setItem(CANVAS_COMMAND_RECEIPTS_STORAGE_KEY, JSON.stringify(receipts));
   } catch {
@@ -104,7 +117,7 @@ function emitCanvasCommandToolResult(payload: CanvasCommandToolResultPayload) {
     json: body,
     timeout: 30_000,
   }).then(() => {
-    removeCanvasCommandReceipt(payload.bridge_key);
+    removeCanvasCommandReceipt(payload);
   }).catch((error) => {
     console.warn("[freezone-canvas-command] failed to report canvas command result", error);
   });
@@ -112,6 +125,15 @@ function emitCanvasCommandToolResult(payload: CanvasCommandToolResultPayload) {
 
 export function replayCanvasCommandToolResult(payload: CanvasCommandToolResultPayload) {
   emitCanvasCommandToolResult(payload);
+}
+
+export function replayPendingCanvasCommandFollowups() {
+  const now = Date.now();
+  for (const receipt of Object.values(loadCanvasCommandReceipts())) {
+    if (receipt?.payload?.followup && receipt.storedAt >= now - CANVAS_COMMAND_RECEIPT_TTL_MS) {
+      emitCanvasCommandToolResult(receipt.payload);
+    }
+  }
 }
 
 function workflowExecutionFailed(result: CanvasChatCommandApplyResult): boolean {
@@ -144,6 +166,7 @@ export function reportCanvasCommandToolResult({
   result,
   cancelled = false,
   accepted = false,
+  followup = false,
 }: {
   bridgeKey?: string | null;
   turnId?: string | null;
@@ -154,6 +177,7 @@ export function reportCanvasCommandToolResult({
   result?: CanvasChatCommandApplyResult;
   cancelled?: boolean;
   accepted?: boolean;
+  followup?: boolean;
 }) {
   if (!bridgeKey) return;
   const payload = buildCanvasCommandToolResultPayload({
@@ -166,6 +190,7 @@ export function reportCanvasCommandToolResult({
     result,
     cancelled,
     accepted,
+    followup,
   });
   storeCanvasCommandReceipt(payload);
   emitCanvasCommandToolResult(payload);
@@ -181,6 +206,7 @@ function buildCanvasCommandToolResultPayload({
   result,
   cancelled = false,
   accepted = false,
+  followup = false,
 }: {
   bridgeKey?: string | null;
   turnId?: string | null;
@@ -191,6 +217,7 @@ function buildCanvasCommandToolResultPayload({
   result?: CanvasChatCommandApplyResult;
   cancelled?: boolean;
   accepted?: boolean;
+  followup?: boolean;
 }): CanvasCommandToolResultPayload {
   const workflowFailed = result ? workflowExecutionFailed(result) : false;
   const canvasApplyStatus: CanvasApplyStatus = accepted
@@ -200,12 +227,14 @@ function buildCanvasCommandToolResultPayload({
     : result
       ? canvasApplyStatusFromResult(result)
       : "failed";
+  const reconciliationPending = result?.commandResults.some((step) =>
+    step.status === "pending" && step.output?.reason === "workflow_server_reconciliation_pending") ?? false;
   const userMessage = accepted
     ? undefined
     : cancelled
     ? "画布操作已取消，没有应用到画布。"
     : canvasApplyStatus === "pending"
-      ? workflowResultSyncPendingMessage()
+      ? reconciliationPending ? workflowReconciliationPendingMessage() : workflowResultSyncPendingMessage()
     : canvasApplyStatus === "failed"
       ? canvasCommandUserMessageFromResult(result?.errors, result?.commandResults)
       : undefined;
@@ -214,7 +243,7 @@ function buildCanvasCommandToolResultPayload({
     : cancelled
     ? "Do not claim the canvas change was applied; ask the user before retrying."
     : canvasApplyStatus === "pending"
-      ? WORKFLOW_RESULT_SYNC_PENDING_HINT
+      ? reconciliationPending ? WORKFLOW_RECONCILIATION_PENDING_HINT : WORKFLOW_RESULT_SYNC_PENDING_HINT
     : canvasApplyStatus === "failed"
       ? canvasCommandAgentHintFromResult(result?.errors, result?.commandResults)
       : undefined;
@@ -224,6 +253,7 @@ function buildCanvasCommandToolResultPayload({
     turn_id: turnId ?? null,
     anchor_text_prefix: anchorTextPrefix ?? null,
     bridge_key: bridgeKey ?? "",
+    ...(followup ? { followup: true } : {}),
     project_id: projectId ?? null,
     canvas_id: canvasId ?? null,
     agent_id: agentId ?? null,
@@ -242,7 +272,7 @@ function buildCanvasCommandToolResultPayload({
       : cancelled
       ? "画布操作已取消，没有应用到画布。"
       : canvasApplyStatus === "pending"
-        ? workflowResultSyncPendingMessage()
+        ? userMessage ?? workflowResultSyncPendingMessage()
       : canvasApplyStatus === "failed"
         ? userMessage ?? "画布操作没有完成，我会换一种方式再试。"
         : "Frontend executor reported the canvas command result.",

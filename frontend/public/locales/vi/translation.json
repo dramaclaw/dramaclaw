@@ -910,6 +910,10 @@
       "canvasConfirmExecution": "Xác nhận thực hiện",
       "canvasTimeoutCancelled": "Thao tác trên canvas đã hết thời gian chờ và bị huỷ, chưa áp dụng thay đổi.",
       "canvasManuallyCancelled": "Thao tác trên canvas đã bị huỷ thủ công, chưa áp dụng thay đổi.",
+      "workflowOutputSyncPendingLabel": "Đang đồng bộ kết quả",
+      "workflowOutputSyncPendingMessage": "Quy trình đã hoàn tất nhưng kết quả trên canvas vẫn đang đồng bộ. Hãy tải lại canvas sau để kiểm tra; tạm thời đừng tạo lại.",
+      "workflowReconciliationPendingLabel": "Đang đối soát",
+      "workflowReconciliationPendingMessage": "Kết quả đã xuất hiện trên canvas nhưng máy chủ vẫn đang xác minh tác vụ. Hãy kiểm tra trạng thái chạy sau; tạm thời đừng tạo lại.",
       "canvasRetryPrompt": "Kiểm tra lại và tiếp tục thao tác chưa hoàn tất trên canvas. Giữ các kết quả đã hoàn thành, kiểm tra các node hiện có và trạng thái chạy, sau đó bổ sung đầy đủ tham số tạo trước khi yêu cầu phê duyệt lại.",
       "canvasRetryDisplay": "Kiểm tra lại và tiếp tục thao tác chưa hoàn tất trên canvas",
       "generationParams": {

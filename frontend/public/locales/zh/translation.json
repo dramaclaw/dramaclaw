@@ -930,6 +930,8 @@
       "canvasManuallyCancelled": "画布操作已手动取消，没有应用到画布。",
       "workflowOutputSyncPendingLabel": "产物待同步",
       "workflowOutputSyncPendingMessage": "工作流已完成，画布节点产物待同步；请稍后刷新画布核对结果，暂勿重复生成。",
+      "workflowReconciliationPendingLabel": "对账中",
+      "workflowReconciliationPendingMessage": "画布产物已生成，服务端仍在核对任务产物；请稍后检查运行状态，暂勿重复生成。",
       "canvasRetryPrompt": "请重新检查并继续刚才未完成的画布操作。先核对已有节点和运行状态，保留已完成结果；补齐生成参数后再提交新的审批。",
       "canvasRetryDisplay": "重新检查并继续未完成的画布操作",
       "generationParams": {

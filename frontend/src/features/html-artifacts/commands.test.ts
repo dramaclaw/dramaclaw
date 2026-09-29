@@ -8,7 +8,7 @@ import {subscribeNodeAction,publishNodeActionAccepted,publishNodeActionSuccess} 
 import {executeWorkflowHtmlNode} from '@/features/canvas/application/workflowHtmlRuntime';
 vi.mock('@/features/canvas/application/workflowHtmlRuntime',()=>({executeWorkflowHtmlNode:vi.fn()}));
 vi.mock('@/api/tasks',()=>({getProjectTaskLimits:vi.fn(async()=>({}))}));
-vi.mock('@/api/canvas',async(importOriginal)=>({...await importOriginal<typeof import('@/api/canvas')>(),createFreezoneWorkflowRun:vi.fn(async()=>({run_id:'run-html',status:'running',actions:[]})),updateFreezoneWorkflowRun:vi.fn(async()=>({run_id:'run-html',status:'running',actions:[]}))}));
+vi.mock('@/api/canvas',async(importOriginal)=>({...await importOriginal<typeof import('@/api/canvas')>(),createFreezoneWorkflowRun:vi.fn(async()=>({run_id:'run-html',status:'running',actions:[]})),updateFreezoneWorkflowRun:vi.fn(async(_project,_canvas,_run,body)=>({run_id:'run-html',status:body.status==='completed'?'completed':'running',actions:[]})),getFreezoneWorkflowRun:vi.fn(async()=>({run_id:'run-html',status:'completed',actions:[]}))}));
 vi.mock('./api',()=>({createHtmlArtifact:vi.fn(),saveHtmlArtifact:vi.fn(),restoreHtmlVersion:vi.fn(),readHtmlArtifact:vi.fn(),announceHtmlArtifact:vi.fn(),recordHtmlNodeHistory:vi.fn()}));
 const artifact = {id:'a1',title:'Hello',html:'<h1>Hello</h1>',version:1,created_at:'now',updated_at:'now'};
 const envelope=(command:unknown)=>({schema_version:'canvas_chat_commands.v1',project_id:'p',canvas_id:'c',commands:[command]});
