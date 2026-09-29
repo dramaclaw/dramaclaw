@@ -22,6 +22,7 @@ import { readUrl } from '@/lib/url-params';
 import { CanvasHistoryAssetsModal } from '@/features/canvas/ui/CanvasHistoryAssetsModal';
 import type { CanvasAsset } from '@/features/canvas/domain/canvasAssets';
 import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canvas/ui/NodeHeader';
+import { GroupNodeHeader } from '@/features/canvas/ui/GroupNodeHeader';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { canvasNodeFrameClass } from '@/features/canvas/ui/nodeFrameStyles';
 import {
@@ -403,19 +404,20 @@ export const GroupNode = memo(({ id, data, selected }: GroupNodeProps) => {
 
   return (
     <div
-      className={`group relative h-full w-full overflow-visible rounded-[18px] border ${canvasNodeFrameClass({ selected })} ${projectionFrameClass}`}
+      className={`group relative h-full w-full overflow-visible rounded-[var(--group-node-radius)] border ${canvasNodeFrameClass({ selected })} ${projectionFrameClass}`}
       style={{
         backgroundColor:
           (!isStoryboard && groupColorBackground(data.backgroundColor)) ||
           'var(--group-node-bg)',
-        // 选中时让选中高亮边框生效，未选中时用组配色描边。
+        // 选中时让选中高亮边框生效，未选中时用组配色描边；没选配色则回到
+        // liblib 的组描边(与底色同值的 10% 白)，而不是媒体卡那档更亮的描边。
         borderColor:
           !isStoryboard && !selected
-            ? groupColorBorder(data.backgroundColor)
+            ? groupColorBorder(data.backgroundColor) || 'var(--group-node-border)'
             : undefined,
       }}
     >
-      <NodeHeader
+      {isStoryboard ? <NodeHeader
         // Storyboard groups only drag by this header (dragHandle on the node), so
         // dragging a thumbnail reorders instead of moving the whole board.
         className={`${NODE_HEADER_FLOATING_POSITION_CLASS}${
@@ -428,7 +430,14 @@ export const GroupNode = memo(({ id, data, selected }: GroupNodeProps) => {
           displayName: nextTitle,
           label: nextTitle,
         })}
-      />
+      /> : <GroupNodeHeader
+        title={headerTitle}
+        color={data.backgroundColor}
+        onTitleChange={(nextTitle) => updateNodeData(id, {
+          displayName: nextTitle,
+          label: nextTitle,
+        })}
+      />}
 
       {isStoryboard
         ? emptyCells.map((rect, index) => (

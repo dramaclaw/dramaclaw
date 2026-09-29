@@ -1,0 +1,155 @@
+{
+  "$defs": {
+    "ClaimCheck": {
+      "additionalProperties": false,
+      "properties": {
+        "claimId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Claimid",
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "supported",
+            "violated",
+            "uncertain"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Reason",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceQuote"
+          },
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        }
+      },
+      "required": [
+        "claimId",
+        "verdict",
+        "reason",
+        "evidence"
+      ],
+      "title": "ClaimCheck",
+      "type": "object"
+    },
+    "SourceObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "assertion": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Assertion",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceQuote"
+          },
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "matchingClaimIds": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Matchingclaimids",
+          "type": "array"
+        },
+        "critical": {
+          "title": "Critical",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "assertion",
+        "evidence",
+        "matchingClaimIds",
+        "critical"
+      ],
+      "title": "SourceObservation",
+      "type": "object"
+    },
+    "SourceQuote": {
+      "additionalProperties": false,
+      "properties": {
+        "unitId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Unitid",
+          "type": "string"
+        },
+        "quote": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Quote",
+          "type": "string"
+        }
+      },
+      "required": [
+        "unitId",
+        "quote"
+      ],
+      "title": "SourceQuote",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract": {
+      "const": "outline-source-audit/1.0.0",
+      "title": "Contract",
+      "type": "string"
+    },
+    "readUnitIds": {
+      "items": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Readunitids",
+      "type": "array"
+    },
+    "observations": {
+      "items": {
+        "$ref": "#/$defs/SourceObservation"
+      },
+      "minItems": 1,
+      "title": "Observations",
+      "type": "array"
+    },
+    "checks": {
+      "items": {
+        "$ref": "#/$defs/ClaimCheck"
+      },
+      "minItems": 1,
+      "title": "Checks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "contract",
+    "readUnitIds",
+    "observations",
+    "checks"
+  ],
+  "title": "SourceAudit",
+  "type": "object"
+}

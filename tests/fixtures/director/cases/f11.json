@@ -1,0 +1,173 @@
+{
+  "schemaVersion": 1,
+  "caseId": "F11",
+  "source": "synthetic",
+  "scope": "foundation_guard_only_not_full_ui_or_workflow_acceptance",
+  "variants": [
+    {
+      "id": "atomic-group-complete",
+      "operation": "change_selection",
+      "input": {
+        "baseVersions": {
+          "characters": 1,
+          "episode": 2
+        },
+        "latestVersions": {
+          "characters": 1,
+          "episode": 2
+        },
+        "groups": [
+          {
+            "id": "rename",
+            "hunkIds": [
+              "name-heading",
+              "name-dialogue"
+            ],
+            "targetDocumentIds": [
+              "characters",
+              "episode"
+            ],
+            "requiresGroupIds": []
+          }
+        ],
+        "acceptedHunkIds": [
+          "name-heading",
+          "name-dialogue"
+        ]
+      },
+      "expected": [
+        "name-heading",
+        "name-dialogue"
+      ]
+    },
+    {
+      "id": "half-rename",
+      "operation": "change_selection",
+      "input": {
+        "baseVersions": {
+          "characters": 1,
+          "episode": 2
+        },
+        "latestVersions": {
+          "characters": 1,
+          "episode": 2
+        },
+        "groups": [
+          {
+            "id": "rename",
+            "hunkIds": [
+              "name-heading",
+              "name-dialogue"
+            ],
+            "targetDocumentIds": [
+              "characters",
+              "episode"
+            ],
+            "requiresGroupIds": []
+          }
+        ],
+        "acceptedHunkIds": [
+          "name-heading"
+        ]
+      },
+      "expectedError": "PARTIAL_ATOMIC_GROUP"
+    },
+    {
+      "id": "other-document-stale",
+      "operation": "change_selection",
+      "input": {
+        "baseVersions": {
+          "characters": 1,
+          "episode": 2
+        },
+        "latestVersions": {
+          "characters": 1,
+          "episode": 3
+        },
+        "groups": [
+          {
+            "id": "rename",
+            "hunkIds": [
+              "name-heading",
+              "name-dialogue"
+            ],
+            "targetDocumentIds": [
+              "characters",
+              "episode"
+            ],
+            "requiresGroupIds": []
+          }
+        ],
+        "acceptedHunkIds": [
+          "name-heading",
+          "name-dialogue"
+        ]
+      },
+      "expectedError": "VERSION_CONFLICT"
+    },
+    {
+      "id": "missing-base-document",
+      "operation": "change_selection",
+      "input": {
+        "baseVersions": {
+          "characters": 1
+        },
+        "latestVersions": {
+          "characters": 1,
+          "episode": 2
+        },
+        "groups": [
+          {
+            "id": "rename",
+            "hunkIds": [
+              "name-heading",
+              "name-dialogue"
+            ],
+            "targetDocumentIds": [
+              "characters",
+              "episode"
+            ],
+            "requiresGroupIds": []
+          }
+        ],
+        "acceptedHunkIds": [
+          "name-heading",
+          "name-dialogue"
+        ]
+      },
+      "expectedError": "INCOMPLETE_BASE_VERSIONS"
+    },
+    {
+      "id": "unknown-hunk",
+      "operation": "change_selection",
+      "input": {
+        "baseVersions": {
+          "characters": 1,
+          "episode": 2
+        },
+        "latestVersions": {
+          "characters": 1,
+          "episode": 2
+        },
+        "groups": [
+          {
+            "id": "rename",
+            "hunkIds": [
+              "name-heading",
+              "name-dialogue"
+            ],
+            "targetDocumentIds": [
+              "characters",
+              "episode"
+            ],
+            "requiresGroupIds": []
+          }
+        ],
+        "acceptedHunkIds": [
+          "not-present"
+        ]
+      },
+      "expectedError": "UNKNOWN_HUNK"
+    }
+  ]
+}

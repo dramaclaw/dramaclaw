@@ -1,3 +1,5 @@
+import { textModelAccepts } from '@/lib/local-model-catalog';
+import { OperationPanelShell } from "@/features/canvas/ui/OperationPanelShell";
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
@@ -28,6 +30,8 @@ import {
   type VideoNodeData,
 } from '@/features/canvas/domain/canvasNodes';
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
+import { useUpstreamContents } from '@/features/canvas/application/useUpstreamGraph';
+import type { UpstreamContent } from '@/features/canvas/application/ports';
 import { isSystemManagedNodeData } from '@/features/canvas/domain/mainlineNodeFlags';
 import { localizeNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canvas/ui/NodeHeader';
@@ -43,6 +47,7 @@ import {
 import { useCanvasStore, useIsBoxSelecting } from '@/stores/canvasStore';
 import {
   ensureBackendImageUrl,
+  fetchFreezoneTextModels,
   fetchFreezoneReversePromptResult,
   fetchFreezoneTextGenerateResult,
   fetchFreezoneTextTranslateResult,
@@ -69,6 +74,8 @@ import { CreditCostInline } from '@/components/credit-cost-inline';
 import type { CreditPromotionDisplay } from '@/components/credits/credit-visual';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
 import { useModelTaskAccess } from '@/lib/model-task-access';
+import { ReferenceDetachButton } from '@/features/canvas/nodes/shared/ReferenceDetachButton';
+import { TextModelPicker } from '@/features/canvas/nodes/shared/TextModelPicker';
 import {
   BillingRuleNotConfiguredError,
   backendErrorToastMessage,
@@ -96,6 +103,9 @@ const PICKER_INSET = 32;
 const COMPACT_OPS_PANEL_HEIGHT = 140;
 const COMPACT_OPS_PANEL_GAP = 12;
 const COMPACT_OPS_PANEL_MIN_WIDTH = 480;
+const WRITING_OPS_PANEL_MIN_WIDTH = 900;
+const WRITING_OPS_PANEL_MAX_WIDTH = 1200;
+const WRITING_OPS_PANEL_MIN_HEIGHT = 320;
 
 const COMPACT_MODES = new Set<TextNodeMode>(['textToVideo', 'imageToPrompt']);
 
@@ -172,6 +182,7 @@ export const TextAnnotationNode = memo(({
   const isBoxSelecting = useIsBoxSelecting();
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const deleteEdge = useCanvasStore((state) => state.deleteEdge);
+  const upstreamContents = useUpstreamContents(id);
   const addNode = useCanvasStore((state) => state.addNode);
   const addEdge = useCanvasStore((state) => state.addEdge);
   const findNodePosition = useCanvasStore((state) => state.findNodePosition);
@@ -183,6 +194,50 @@ export const TextAnnotationNode = memo(({
   const modelId = typeof data.model === 'string' && data.model.length > 0
     ? data.model
     : DEFAULT_SHARED_MODEL_ID;
+  const selectedTextModel = typeof data.textModel === 'string' ? data.textModel : '';
+  const [availableTextModels, setAvailableTextModels] = useState<string[]>([]);
+  const [defaultTextModel, setDefaultTextModel] = useState('');
+  const referenceKind = upstreamContents.some((item) => Boolean(item.videoUrl))
+    ? 'video'
+    : upstreamContents.some((item) => Boolean(item.imageUrl)) ? 'image' : 'text';
+  const compatibleTextModels = availableTextModels.filter(model => textModelAccepts(model, referenceKind));
+  const canonicalSelectedModel = availableTextModels.includes(`siliconflow::${selectedTextModel}`)
+    ? `siliconflow::${selectedTextModel}` : selectedTextModel;
+  const preferredVisionModel = referenceKind === 'video'
+    ? 'Qwen/Qwen3-VL-32B-Instruct'
+    : 'zai-org/GLM-4.5V';
+  const effectiveTextModel = referenceKind === 'text'
+    ? canonicalSelectedModel
+    : compatibleTextModels.includes(canonicalSelectedModel)
+      ? canonicalSelectedModel
+      : compatibleTextModels.includes(defaultTextModel)
+        ? defaultTextModel
+        : compatibleTextModels.includes(`siliconflow::${preferredVisionModel}`)
+          ? `siliconflow::${preferredVisionModel}`
+          : compatibleTextModels.includes(preferredVisionModel)
+            ? preferredVisionModel
+        : compatibleTextModels[0] ?? '';
+  useEffect(() => {
+    if (!selected || mode !== 'writing') return;
+    const projectId = readUrl().project;
+    if (!projectId) return;
+    let cancelled = false;
+    const refresh = () => { void fetchFreezoneTextModels(projectId)
+      .then((catalog) => {
+        if (cancelled) return;
+        setAvailableTextModels(catalog.models);
+        setDefaultTextModel(catalog.defaultModel);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAvailableTextModels([]);
+        setDefaultTextModel('');
+      });
+    };
+    refresh();
+    window.addEventListener('media-model-catalog-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('media-model-catalog-updated', refresh); };
+  }, [mode, selected]);
   const reversePromptInstruction =
     instruction.trim() || IMAGE_TO_PROMPT_DEFAULT_CONTENT;
   const reversePromptBillableChars = countBillableTextChars(
@@ -264,6 +319,12 @@ export const TextAnnotationNode = memo(({
     if (edge) {
       deleteEdge(edge.id);
     }
+  }, [id, deleteEdge]);
+
+  const handleDetachUpstream = useCallback((sourceNodeId: string) => {
+    useCanvasStore.getState().edges
+      .filter((edge) => edge.source === sourceNodeId && edge.target === id)
+      .forEach((edge) => deleteEdge(edge.id));
   }, [id, deleteEdge]);
 
   // libtv-style edit mode: dbl-click the preview card → zoom canvas to 200%
@@ -430,6 +491,10 @@ export const TextAnnotationNode = memo(({
   const runTextGenerate = useCallback(async (promptOverride?: string) => {
     const prompt = (promptOverride ?? instruction).trim();
     if (modelTaskAccess.blocked || !prompt || textGenerateBillingRuleMissing) return;
+    if (referenceKind !== 'text' && !effectiveTextModel) {
+      toast.error(t('node.textNode.modelPickerHint'));
+      return;
+    }
     const projectId = readUrl().project;
     if (!projectId) {
       console.error('[text-node] text generation: no project in URL');
@@ -438,8 +503,16 @@ export const TextAnnotationNode = memo(({
 
     updateNodeData(id, { isGenerating: true, generationStartedAt: Date.now() });
     try {
+      const references = await Promise.all(upstreamContents.map(async (item) => ({
+        node_id: item.nodeId,
+        ...(item.text ? { text: item.text } : {}),
+        ...(item.imageUrl ? { image_url: await ensureBackendImageUrl(projectId, item.imageUrl) } : {}),
+        ...(item.videoUrl ? { video_url: item.videoUrl } : {}),
+      })));
       const ref = await submitFreezoneTextGenerate(projectId, {
         prompt,
+        model: effectiveTextModel,
+        references,
         canvasId: readUrl().canvas ?? 'default',
         nodeId: id,
       });
@@ -451,7 +524,7 @@ export const TextAnnotationNode = memo(({
       }
       updateNodeData(id, {
         content: result.generated_text,
-        model: result.model || TEXT_WRITER_MODEL_ID,
+        lastGeneratedTextModel: result.model || TEXT_WRITER_MODEL_ID,
         isGenerating: false,
         generationStartedAt: null,
       });
@@ -460,7 +533,7 @@ export const TextAnnotationNode = memo(({
       toast.error(backendErrorToastMessage(error, t));
       updateNodeData(id, { isGenerating: false, generationStartedAt: null });
     }
-  }, [id, instruction, modelTaskAccess.blocked, t, textGenerateBillingRuleMissing, updateNodeData]);
+  }, [effectiveTextModel, id, instruction, modelTaskAccess.blocked, referenceKind, t, textGenerateBillingRuleMissing, updateNodeData, upstreamContents]);
 
   const runInstructionTranslate = useCallback(async () => {
     if (modelTaskAccess.blocked || isGenerating || isTranslating) return;
@@ -550,6 +623,7 @@ export const TextAnnotationNode = memo(({
 
   const submitDisabled = isGenerating
     || modelTaskAccess.blocked
+    || (mode === 'writing' && referenceKind !== 'text' && !effectiveTextModel)
     || (mode === 'writing' && (textGenerateBillingRuleMissing || instruction.trim().length === 0))
     || (
       mode === 'textToVideo'
@@ -612,6 +686,12 @@ export const TextAnnotationNode = memo(({
           isGenerating={isGenerating}
           isTranslating={isTranslating}
           width={resolvedWidth}
+          height={resolvedHeight}
+          references={upstreamContents}
+          selectedModel={effectiveTextModel}
+          availableModels={compatibleTextModels}
+          defaultModel={defaultTextModel}
+          requiresVisionModel={referenceKind !== 'text'}
           costDisplay={textGenerateCostDisplay}
           promotion={textGenerateCost.data?.data.promotion}
           submitDisabled={submitDisabled}
@@ -623,6 +703,8 @@ export const TextAnnotationNode = memo(({
           }
           onGenerate={handleSubmit}
           onTranslate={runInstructionTranslate}
+          onDetachReference={handleDetachUpstream}
+          onSelectReference={setSelectedNode}
         />
       )}
 
@@ -961,12 +1043,20 @@ interface WritingOpsPanelProps {
   isGenerating: boolean;
   isTranslating: boolean;
   width: number;
+  height: number;
+  references: UpstreamContent[];
+  selectedModel: string;
+  availableModels: string[];
+  defaultModel: string;
+  requiresVisionModel: boolean;
   costDisplay: string | null;
   promotion?: CreditPromotionDisplay | null;
   submitDisabled: boolean;
   translateDisabled: boolean;
   onGenerate: () => void;
   onTranslate: () => void;
+  onDetachReference: (nodeId: string) => void;
+  onSelectReference: (nodeId: string) => void;
 }
 
 function WritingOpsPanel({
@@ -975,27 +1065,108 @@ function WritingOpsPanel({
   isGenerating,
   isTranslating,
   width,
+  height,
+  references,
+  selectedModel,
+  availableModels,
+  defaultModel,
+  requiresVisionModel,
   costDisplay,
   promotion,
   submitDisabled,
   translateDisabled,
   onGenerate,
   onTranslate,
+  onDetachReference,
+  onSelectReference,
 }: WritingOpsPanelProps) {
   const { t } = useTranslation();
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const generatePlaceholder = t('node.textNode.generatePlaceholder');
+  const textReferences = references.filter((item) =>
+    item.nodeType === CANVAS_NODE_TYPES.textAnnotation || typeof item.text === 'string'
+  );
+  const imageReferences = references.filter((item) => typeof item.imageUrl === 'string' && item.imageUrl.length > 0);
+  const videoReferences = references.filter((item) => typeof item.videoUrl === 'string' && item.videoUrl.length > 0);
 
   return (
-    <div
-      className={`nodrag absolute left-1/2 z-[300] flex -translate-x-1/2 flex-col rounded-[var(--node-radius)] border ${CANVAS_NODE_INPUT_SURFACE_CLASS} ${CANVAS_NODE_INPUT_FRAME_CLASS}`}
-      style={{
+    <OperationPanelShell expanded={false} onCollapse={() => {}}
+      inlineClassName={`nodrag absolute left-1/2 z-[300] flex -translate-x-1/2 flex-col rounded-[var(--node-radius)] border ${CANVAS_NODE_INPUT_SURFACE_CLASS} ${CANVAS_NODE_INPUT_FRAME_CLASS}`}
+      inlineStyle={{
         top: `calc(100% + ${COMPACT_OPS_PANEL_GAP}px)`,
-        height: COMPACT_OPS_PANEL_HEIGHT,
-        width: Math.max(width, COMPACT_OPS_PANEL_MIN_WIDTH),
+        height: Math.max(height, WRITING_OPS_PANEL_MIN_HEIGHT),
+        width: Math.min(
+          WRITING_OPS_PANEL_MAX_WIDTH,
+          Math.max(width * 1.5, WRITING_OPS_PANEL_MIN_WIDTH),
+        ),
       }}
-      onClick={(event) => event.stopPropagation()}
     >
+      {(textReferences.length > 0 || imageReferences.length > 0 || videoReferences.length > 0) && (
+        <div className="ui-scrollbar nowheel flex shrink-0 items-center gap-3 overflow-x-auto px-6 pb-2 pt-5">
+          {textReferences.map((item, index) => (
+            <button
+              key={`text-${item.nodeId}`}
+              type="button"
+              title={item.text || item.displayName || item.nodeType}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                onSelectReference(item.nodeId);
+              }}
+              className="group nodrag relative flex h-20 w-20 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-[#505050] text-white transition-colors hover:border-white/40"
+            >
+              <AlignJustify className="h-7 w-7" />
+              <span className="absolute -left-1 -top-1 flex h-6 w-6 items-center justify-center rounded-full border border-white/20 bg-[#171717] text-xs font-semibold">
+                {index + 1}
+              </span>
+              <ReferenceDetachButton nodeId={item.nodeId} onDetach={onDetachReference} />
+            </button>
+          ))}
+          {imageReferences.map((item, index) => (
+            <button
+              key={`image-${item.nodeId}`}
+              type="button"
+              title={item.displayName || item.nodeType}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                onSelectReference(item.nodeId);
+              }}
+              className="group nodrag relative h-20 w-20 shrink-0 overflow-visible rounded-xl border border-white/10 bg-[#303030] transition-colors hover:border-white/40"
+            >
+              <img
+                src={resolveImageDisplayUrl(item.imageUrl!)}
+                alt=""
+                className="h-full w-full rounded-xl object-cover"
+                draggable={false}
+              />
+              <span className="absolute -left-1 -top-1 flex h-6 w-6 items-center justify-center rounded-full border border-white/20 bg-[#171717] text-xs font-semibold text-white">
+                {index + 1}
+              </span>
+              <ReferenceDetachButton nodeId={item.nodeId} onDetach={onDetachReference} />
+            </button>
+          ))}
+          {videoReferences.map((item, index) => (
+            <button
+              key={`video-${item.nodeId}`}
+              type="button"
+              title={item.displayName || item.nodeType}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                onSelectReference(item.nodeId);
+              }}
+              className="group nodrag relative flex h-20 w-20 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-[#303030] text-white transition-colors hover:border-white/40"
+            >
+              <PlaySquare className="h-7 w-7" />
+              <span className="absolute -left-1 -top-1 flex h-6 w-6 items-center justify-center rounded-full border border-white/20 bg-[#171717] text-xs font-semibold">
+                {index + 1}
+              </span>
+              <ReferenceDetachButton nodeId={item.nodeId} onDetach={onDetachReference} />
+            </button>
+          ))}
+        </div>
+      )}
       <textarea
         value={instruction}
         onChange={(event) => updateNodeData(nodeId, { instruction: event.target.value })}
@@ -1003,10 +1174,21 @@ function WritingOpsPanel({
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => event.stopPropagation()}
         placeholder={generatePlaceholder}
-        className={`ui-scrollbar nodrag nowheel min-h-0 w-full flex-1 resize-none border-none bg-transparent px-3 pt-3 text-sm leading-6 text-text-dark outline-none ${CANVAS_NODE_INPUT_PLACEHOLDER_CLASS}`}
+        className={`ui-scrollbar nodrag nowheel min-h-0 w-full flex-1 resize-none border-none bg-transparent px-6 pt-4 text-xl leading-8 text-text-dark outline-none ${CANVAS_NODE_INPUT_PLACEHOLDER_CLASS}`}
         disabled={isGenerating}
       />
-      <div className="flex shrink-0 items-center justify-end gap-2 px-3 py-2">
+      <div className="flex shrink-0 items-center justify-between gap-3 px-6 pb-4 pt-2">
+        <div className="flex min-w-0 max-w-[65%] items-center gap-2 text-lg font-medium text-text-dark">
+          <TextModelPicker
+            selectedModel={selectedModel}
+            models={availableModels}
+            defaultModel={defaultModel}
+            fallbackModel={TEXT_WRITER_MODEL_ID}
+            requiresVisionModel={requiresVisionModel}
+            disabled={isGenerating}
+            onChange={(model) => updateNodeData(nodeId, { textModel: model })}
+          />
+        </div>
         <div className="flex items-center gap-1.5">
           <button
             type="button"
@@ -1049,7 +1231,7 @@ function WritingOpsPanel({
           </button>
         </div>
       </div>
-    </div>
+    </OperationPanelShell>
   );
 }
 

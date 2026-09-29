@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { useStoryboardMetadata } from "@/features/storyboard/storyboardStore";
 import { useEffect, useRef, useState } from "react";
 import { useReactFlow, type Viewport } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
@@ -26,6 +27,7 @@ import {
   type FreezonePresetCanvasRequest,
 } from "@/api/canvas";
 import { ApiError } from "@/api/client";
+import { BackendStatusError } from "@/lib/api-errors";
 import type { TFn } from "@/lib/i18n-types";
 import {
   buildSavePayload,
@@ -201,8 +203,17 @@ function acquireHydrateFlight(
     const controller = new AbortController();
     const createdFlight: HydrateFlight = {
       controller,
+      // 后端现在对不存在的画布返回 404（而不是 200+空图，那样调用方分不清「空画布」
+      // 和「没有这张画布」）。hydrate 这一层把 404 当作「一张还没落盘的新画布」：
+      // 个人画布是按需创建的，首次进入时文件确实还不存在，首次保存才落盘。
+      // 「画布不在本项目」的判断放在进入路由那一层用画布列表做，不靠这里。
       promise: getFreezoneCanvas(project, canvasId, {
         signal: controller.signal,
+      }).catch((error: unknown) => {
+        if ((error instanceof ApiError || error instanceof BackendStatusError) && error.status === 404) {
+          return { nodes: [], edges: [], viewport: null } as FreezoneCanvasPayload;
+        }
+        throw error;
       }),
       consumers: 0,
       settled: false,
@@ -824,6 +835,8 @@ export function useCanvasSync(
   const buildPersistMetadata = (shot: ShotMetadata) => ({
     ...(metadataRef.current ?? {}),
     shotMetadata: shot,
+    storyboardView: useStoryboardMetadata.getState().scope === `${project}::${canvasId}`
+      ? useStoryboardMetadata.getState().metadata : metadataRef.current?.storyboardView,
     viewportBookmarks: useCanvasStore.getState().viewportBookmarks,
   });
   const currentDraftSignature = () => {
@@ -1029,6 +1042,7 @@ export function useCanvasSync(
       metadataRef.current = meta;
       setMetadata(meta);
       setFreezoneCanvasMetadata(meta);
+      useStoryboardMetadata.getState().hydrate(`${project}::${canvasId}`, meta?.storyboardView);
       useCanvasStore.getState().hydrateViewportBookmarks(meta?.viewportBookmarks);
       useShotMetadataStore
         .getState()
@@ -1177,6 +1191,7 @@ export function useCanvasSync(
           metadataRef.current = draftMeta;
           setMetadata(draftMeta);
           setFreezoneCanvasMetadata(draftMeta);
+          useStoryboardMetadata.getState().hydrate(`${project}::${canvasId}`, draftMeta?.storyboardView);
           useShotMetadataStore
             .getState()
             .hydrate(draftMeta?.shotMetadata ?? EMPTY_SHOT_METADATA);
@@ -1313,6 +1328,7 @@ export function useCanvasSync(
         metadataRef.current = meta;
         setMetadata(meta);
         setFreezoneCanvasMetadata(meta);
+        useStoryboardMetadata.getState().hydrate(`${project}::${canvasId}`, meta?.storyboardView);
         useCanvasStore.getState().hydrateViewportBookmarks(meta?.viewportBookmarks);
         const hydrate = useShotMetadataStore.getState().hydrate;
         hydrate(meta?.shotMetadata ?? EMPTY_SHOT_METADATA);
@@ -1462,10 +1478,14 @@ export function useCanvasSync(
     // shotMetadataStore holds only persisted business metadata, so any change
     // there is save-worthy.
     const unsubscribeShot = useShotMetadataStore.subscribe(triggerSave);
+    const unsubscribeStoryboard = useStoryboardMetadata.subscribe((next, prev) => {
+      if (next.scope === `${project}::${canvasId}` && next.revision > prev.revision) triggerSave();
+    });
     return () => {
       unsubscribeHold();
       unsubscribeCanvas();
       unsubscribeShot();
+      unsubscribeStoryboard();
       if (draftTimerRef.current != null) {
         window.clearTimeout(draftTimerRef.current);
         draftTimerRef.current = null;

@@ -21,12 +21,11 @@ import { useCanvasStore } from '@/stores/canvasStore';
 import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { buildOrthogonalRoute } from './edgeRouting';
-
-function recordValue(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
+import { isCanvasGestureActive } from '../application/canvasLod';
+import { useCanvasToolStore } from '../ui/canvasToolStore';
+import { CanvasEdgeFlow, CANVAS_EDGE_STROKE, CANVAS_EDGE_HOVER_STROKE,
+  CANVAS_EDGE_IDLE_WIDTH, CANVAS_EDGE_ACTIVE_WIDTH } from './CanvasEdgeFlow';
+import styles from './CanvasEdgeFlow.module.css';
 
 // 稳定的空数组引用 —— 非 smartOrthogonal 模式下边不需要订阅 nodes,返回它即可让
 // selector 永远「相等」,从而拖动任意节点都不会触发边重渲染。
@@ -75,6 +74,7 @@ export const DisconnectableEdge = memo(function DisconnectableEdge(props: EdgePr
   const { t } = useTranslation();
   const deleteEdge = useCanvasStore((state) => state.deleteEdge);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
+  const handTool = useCanvasToolStore((state) => state.tool === 'hand');
   const canvasEdgeRoutingMode = useSettingsStore((state) => state.canvasEdgeRoutingMode);
   // 仅 smartOrthogonal 避障需要全量 nodes(算障碍矩形)。spline/普通正交模式下边的路径
   // 完全由 xyflow 提供的 source/target 端点坐标决定,无需订阅 nodes —— 拖动无关节点
@@ -103,6 +103,7 @@ export const DisconnectableEdge = memo(function DisconnectableEdge(props: EdgePr
   };
 
   const handleInteractiveEnter = () => {
+    if (handTool || isCanvasGestureActive()) return;
     clearDisconnectLeaveTimer();
     setIsHovered(true);
     if (edgeIsPresetManaged || showDisconnectAction || disconnectHoverTimerRef.current !== null) {
@@ -131,8 +132,15 @@ export const DisconnectableEdge = memo(function DisconnectableEdge(props: EdgePr
     };
   }, []);
 
-  // 选中态高亮：没有选中节点时所有连线保持灰色；选中某节点后，与它相连的
-  // 连线点亮（accent），其余连线压暗，突出与当前节点的关系。
+  useEffect(() => {
+    if (!handTool) return;
+    clearDisconnectHoverTimer();
+    clearDisconnectLeaveTimer();
+    setIsHovered(false);
+    setShowDisconnectAction(false);
+  }, [handTool]);
+
+  // Highlight relationships without dimming ordinary opaque reference lines.
   const hasSelection = selectedNodeId != null;
   const isConnectedToSelected =
     hasSelection && (source === selectedNodeId || target === selectedNodeId);
@@ -204,37 +212,16 @@ export const DisconnectableEdge = memo(function DisconnectableEdge(props: EdgePr
     return (targetNode.data as { isGenerating?: boolean } | undefined)?.isGenerating === true;
   });
 
-  const dataRecord = recordValue(data);
-  const bindingRole =
-    ['candidate_binding', 'role_binding'].includes(String(dataRecord.edgeKind || '')) &&
-    typeof dataRecord.role === 'string'
-      ? dataRecord.role
-      : null;
-
   const processingStroke = 'rgb(var(--accent-rgb) / 0.94)';
   const processingDashStroke = 'rgb(var(--accent-rgb) / 1)';
-  const baseStrokeWidth = isProcessingEdge ? (selected ? 2.7 : 2.2) : 2;
-
-  // 处理中的连线始终保持自己的 accent 高亮样式，不参与选中态调光。
-  // hover/选中相连连线轻微点亮；常态灰色半透明；选中后无关连线再压暗一档。
-  const highlightStroke = 'rgba(205, 209, 216, 0.64)';
-  const bindingStroke = 'rgba(34,211,238,0.66)';
-  const bindingHighlightStroke = 'rgba(172, 226, 236, 0.72)';
-  const baseStroke = 'rgba(176, 176, 183, 0.45)';
-  const dimStroke = 'rgba(176, 176, 183, 0.22)';
+  const active = !handTool && (isConnectedToSelected || selected || isHovered);
   const resolvedStroke = isProcessingEdge
     ? processingStroke
-    : isConnectedToSelected || selected || isHovered
-      ? (bindingRole ? bindingHighlightStroke : highlightStroke)
-      : hasSelection
-        ? dimStroke
-        : (bindingRole ? bindingStroke : baseStroke);
-  const resolvedStrokeWidth = baseStrokeWidth;
-  const shouldShowDataFlow =
-    !isProcessingEdge && (isHovered || selected || isConnectedToSelected);
-  const flowPathId = `canvas-data-flow-path-${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-  const flowGradientId = `canvas-data-flow-gradient-${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-  const flowGlowId = `canvas-data-flow-glow-${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+    : active ? CANVAS_EDGE_HOVER_STROKE : CANVAS_EDGE_STROKE;
+  const resolvedStrokeWidth = isProcessingEdge
+    ? (selected ? 2.7 : 2.2)
+    : active ? CANVAS_EDGE_ACTIVE_WIDTH : CANVAS_EDGE_IDLE_WIDTH;
+  const shouldShowDataFlow = !isProcessingEdge && active;
 
   const sourceDotOffset = portDotOffset(sourcePosition ?? Position.Right);
   const targetDotOffset = portDotOffset(targetPosition ?? Position.Left);
@@ -257,11 +244,13 @@ export const DisconnectableEdge = memo(function DisconnectableEdge(props: EdgePr
         id={id}
         path={edgePath}
         markerEnd={markerEnd}
+        className={styles.line}
         style={{
           ...style,
           stroke: resolvedStroke,
           strokeWidth: resolvedStrokeWidth,
-          transition: `stroke ${EDGE_ACTIVE_TRANSITION_MS}ms ease, stroke-width ${EDGE_ACTIVE_TRANSITION_MS}ms ease`,
+          opacity: 1,
+          strokeOpacity: 1,
         }}
       />
       {/* 连接端点小圆点（对标 libtv）：连线建立后，在两端节点的连接口各画一个连接点，
@@ -307,69 +296,7 @@ export const DisconnectableEdge = memo(function DisconnectableEdge(props: EdgePr
           }}
         />
       )}
-      {shouldShowDataFlow && (
-        <>
-          <defs>
-            <path id={flowPathId} d={edgePath} />
-            <linearGradient
-              id={flowGradientId}
-              gradientUnits="userSpaceOnUse"
-              x1="-48"
-              y1="0"
-              x2="48"
-              y2="0"
-            >
-              <stop offset="0%" stopColor="white" stopOpacity="0" />
-              <stop offset="42%" stopColor="white" stopOpacity="0.28" />
-              <stop offset="100%" stopColor="white" stopOpacity="0.72" />
-            </linearGradient>
-            <filter id={flowGlowId} x="-80%" y="-240%" width="260%" height="580%">
-              <feGaussianBlur stdDeviation="14" />
-            </filter>
-          </defs>
-          {[0, -2.33, -4.67].map((begin) => (
-            <g
-              key={begin}
-              className="canvas-data-edge__packet"
-              style={{ pointerEvents: 'none', opacity: 0.72 }}
-            >
-              <g transform="scale(0.45, 1)">
-                <line
-                  x1="-46"
-                  y1="0"
-                  x2="46"
-                  y2="0"
-                  fill="none"
-                  stroke={`url(#${flowGradientId})`}
-                  strokeLinecap="round"
-                  strokeWidth={12}
-                  opacity={0.34}
-                  filter={`url(#${flowGlowId})`}
-                />
-                <line
-                  x1="-42"
-                  y1="0"
-                  x2="42"
-                  y2="0"
-                  fill="none"
-                  stroke={`url(#${flowGradientId})`}
-                  strokeLinecap="round"
-                  strokeWidth={4}
-                />
-              </g>
-              <animateMotion
-                className="canvas-data-edge__packet-motion"
-                dur="7s"
-                begin={`${begin}s`}
-                repeatCount="indefinite"
-                rotate="auto"
-              >
-                <mpath href={`#${flowPathId}`} />
-              </animateMotion>
-            </g>
-          ))}
-        </>
-      )}
+      {shouldShowDataFlow && <CanvasEdgeFlow id={id} path={edgePath} />}
       {showDisconnectAction && !edgeIsPresetManaged && (
         <EdgeLabelRenderer>
           <div

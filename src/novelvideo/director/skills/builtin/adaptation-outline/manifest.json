@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 2,
+  "key": "studio/adaptation-outline",
+  "stage": "M07",
+  "version": "3.0.1",
+  "purpose": "adaptation-outline",
+  "applicable": [
+    "adaptation"
+  ],
+  "excluded": [
+    "omni",
+    "directing"
+  ],
+  "method": "method.md",
+  "inputSchema": "schemas/input.json",
+  "outputSchema": "schemas/output.json",
+  "template": "templates/request.md",
+  "fixtures": "fixtures/contracts.json",
+  "provenance": "provenance.json",
+  "requiredReferences": [
+    {
+      "path": "references/opening-rules.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/opening-rules.md",
+      "sha256": "72b43ff9ca3d6eaaf91ad1a47f3328de010a8e9c06eb2a6e5819732a94b1b971",
+      "when": "always"
+    },
+    {
+      "path": "references/rhythm-curve.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/rhythm-curve.md",
+      "sha256": "c462669c3224020604e627aa3d6a0c9fb72a5fd41ca730759232dfc073eaea98",
+      "when": "always"
+    },
+    {
+      "path": "references/satisfaction-matrix.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/satisfaction-matrix.md",
+      "sha256": "1eba44d3d2701bb14073e55c6a563cf0a013d76e503da33b3dfacf02b80a46c6",
+      "when": "always"
+    },
+    {
+      "path": "references/adaptation-core.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/adaptation-core.md",
+      "sha256": "1e517e696c0ed19354683dcb37824f61059a06544f34aa0359ef60f7f59e0761",
+      "when": "always"
+    },
+    {
+      "path": "references/event-coverage.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/event-coverage.md",
+      "sha256": "eb0947c3c7714df690c0d16c4ba39cec9b6865fa5545fbd7be74328bd952d9ef",
+      "when": "always"
+    }
+  ],
+  "ruleIds": [
+    "G01",
+    "G03",
+    "G06",
+    "G07",
+    "G08",
+    "G11",
+    "G18"
+  ],
+  "allowedTools": [],
+  "validators": [
+    "adaptation-outline/3.0.0"
+  ],
+  "costClasses": [
+    "text.generate"
+  ],
+  "checkpointKinds": [
+    "WAIT_DIRECTION",
+    "WAIT_OUTLINE"
+  ],
+  "maxSchemaRepairAttempts": 0,
+  "maxAutomaticRevisionAttempts": 0,
+  "compatibility": "Host-frozen adaptation v3 only; existing original and adaptation v2 artifacts remain readable. Structural evidence is not a guarantee of semantic truth.",
+  "files": {
+    "method.md": "d4ae93a3ef59fe775ea98831cbce8979994aad1de1658afb3cc3120a13fea7e0",
+    "provenance.json": "b37705c665a2b6ffea9eeb78ccf992247ecc8e4f81a711b9912767000b9a542e",
+    "LICENSE": "a42977a69c8c05840da8a8e2f9d8dff9f5c8346f236eeabf8c97fb0812f5fe50",
+    "SKILL.md": "5a993d43010696a2f8ce8cfdd01d8fadd9f188f169eac76c7b3247877024c716",
+    "references/adaptation-core.md": "1e517e696c0ed19354683dcb37824f61059a06544f34aa0359ef60f7f59e0761",
+    "references/event-coverage.md": "eb0947c3c7714df690c0d16c4ba39cec9b6865fa5545fbd7be74328bd952d9ef",
+    "references/satisfaction-matrix.md": "1eba44d3d2701bb14073e55c6a563cf0a013d76e503da33b3dfacf02b80a46c6",
+    "references/rhythm-curve.md": "c462669c3224020604e627aa3d6a0c9fb72a5fd41ca730759232dfc073eaea98",
+    "references/opening-rules.md": "72b43ff9ca3d6eaaf91ad1a47f3328de010a8e9c06eb2a6e5819732a94b1b971",
+    "schemas/input.json": "40faa425030c896873c932dc1d875edfebf112614940c229fa53eb52a8daeb67",
+    "schemas/output.json": "b89976a3a56a19a0f51861da88e21f9b527f8a64e2382cb3f5b1051ffeb9cb19",
+    "templates/request.md": "d951fb9c86d2e130abaa6985c74ac995705310071dbb4cb919b34300bfd051a1",
+    "fixtures/contracts.json": "225e68917742a8933b818f9820c19c5d1f7f8ecd32a8d8183b7053bf35652898"
+  }
+}

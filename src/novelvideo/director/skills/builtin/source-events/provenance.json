@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 2,
+  "stage": "M04",
+  "privateLibTVSourceObtained": false,
+  "license": "MIT",
+  "copyright": "2025 0xsline",
+  "adaptation": "Independently implemented host contract; short-drama references retained. No source output is treated as permission or semantic proof.",
+  "sources": [
+    {
+      "path": "references/adaptation-core.md"
+    },
+    {
+      "path": "references/event-coverage.md"
+    }
+  ]
+}

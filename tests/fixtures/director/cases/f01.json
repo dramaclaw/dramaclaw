@@ -1,0 +1,534 @@
+{
+  "schemaVersion": 1,
+  "caseId": "F01",
+  "source": "synthetic",
+  "scope": "foundation_guard_only_not_full_ui_or_workflow_acceptance",
+  "variants": [
+    {
+      "id": "one-episode",
+      "operation": "confirm_spec",
+      "input": {
+        "schemaVersion": 2,
+        "revision": 1,
+        "mode": "original",
+        "brief": "One room, one decision, a closed ending in thirty seconds.",
+        "genres": {
+          "mainId": "drama",
+          "fusionId": null,
+          "customText": ""
+        },
+        "audienceIds": [
+          "all"
+        ],
+        "characterSetup": {
+          "ids": [],
+          "customText": "",
+          "provenance": "user"
+        },
+        "era": {
+          "ids": [],
+          "customText": "",
+          "provenance": "user"
+        },
+        "highlights": {
+          "ids": [],
+          "customText": "",
+          "provenance": "user"
+        },
+        "narrativeTone": {
+          "id": "warm",
+          "customText": "",
+          "provenance": "user"
+        },
+        "visualStyle": {
+          "id": "realistic",
+          "text": "",
+          "referenceAssetVersion": null
+        },
+        "structureId": "unit",
+        "totalEpisodes": 1,
+        "defaultDurationSeconds": 30,
+        "episodeDurations": {},
+        "endingType": "closed",
+        "outputLanguage": "zh-CN",
+        "market": "user-defined",
+        "lockedFacts": [],
+        "adaptation": null,
+        "provenance": {
+          "mode": "user",
+          "brief": "user",
+          "genres": "user",
+          "audienceIds": "user",
+          "characterSetup": "user",
+          "era": "user",
+          "highlights": "user",
+          "narrativeTone": "user",
+          "visualStyle": "user",
+          "structureId": "user",
+          "totalEpisodes": "user",
+          "defaultDurationSeconds": "user",
+          "episodeDurations": "user",
+          "endingType": "user",
+          "outputLanguage": "user",
+          "market": "user",
+          "lockedFacts": "user",
+          "adaptation": "user"
+        }
+      },
+      "expected": {
+        "totalEpisodes": 1,
+        "defaultDurationSeconds": 30,
+        "endingType": "closed"
+      }
+    },
+    {
+      "id": "auto-is-not-confirmed",
+      "operation": "confirm_spec",
+      "input": {
+        "schemaVersion": 2,
+        "revision": 1,
+        "mode": "original",
+        "brief": "One room, one decision, a closed ending in thirty seconds.",
+        "genres": {
+          "mainId": "drama",
+          "fusionId": null,
+          "customText": ""
+        },
+        "audienceIds": [
+          "all"
+        ],
+        "characterSetup": {
+          "ids": [],
+          "customText": "",
+          "provenance": "user"
+        },
+        "era": {
+          "ids": [],
+          "customText": "",
+          "provenance": "user"
+        },
+        "highlights": {
+          "ids": [],
+          "customText": "",
+          "provenance": "user"
+        },
+        "narrativeTone": {
+          "id": "warm",
+          "customText": "",
+          "provenance": "user"
+        },
+        "visualStyle": {
+          "id": "realistic",
+          "text": "",
+          "referenceAssetVersion": null
+        },
+        "structureId": "unit",
+        "totalEpisodes": "auto",
+        "defaultDurationSeconds": 30,
+        "episodeDurations": {},
+        "endingType": "closed",
+        "outputLanguage": "zh-CN",
+        "market": "user-defined",
+        "lockedFacts": [],
+        "adaptation": null,
+        "provenance": {
+          "mode": "user",
+          "brief": "user",
+          "genres": "user",
+          "audienceIds": "user",
+          "characterSetup": "user",
+          "era": "user",
+          "highlights": "user",
+          "narrativeTone": "user",
+          "visualStyle": "user",
+          "structureId": "user",
+          "totalEpisodes": "user",
+          "defaultDurationSeconds": "user",
+          "episodeDurations": "user",
+          "endingType": "user",
+          "outputLanguage": "user",
+          "market": "user",
+          "lockedFacts": "user",
+          "adaptation": "user"
+        }
+      },
+      "expectedError": "SCHEMA_INVALID",
+      "errorPath": "totalEpisodes"
+    },
+    {
+      "id": "boolean-is-not-count",
+      "operation": "confirm_spec",
+      "input": {
+        "schemaVersion": 2,
+        "revision": 1,
+        "mode": "original",
+        "brief": "One room, one decision, a closed ending in thirty seconds.",
+        "genres": {
+          "mainId": "drama",
+          "fusionId": null,
+          "customText": ""
+        },
+        "audienceIds": [
+          "all"
+        ],
+        "characterSetup": {
+          "ids": [],
+          "customText": "",
+          "provenance": "user"
+        },
+        "era": {
+          "ids": [],
+          "customText": "",
+          "provenance": "user"
+        },
+        "highlights": {
+          "ids": [],
+          "customText": "",
+          "provenance": "user"
+        },
+        "narrativeTone": {
+          "id": "warm",
+          "customText": "",
+          "provenance": "user"
+        },
+        "visualStyle": {
+          "id": "realistic",
+          "text": "",
+          "referenceAssetVersion": null
+        },
+        "structureId": "unit",
+        "totalEpisodes": true,
+        "defaultDurationSeconds": 30,
+        "episodeDurations": {},
+        "endingType": "closed",
+        "outputLanguage": "zh-CN",
+        "market": "user-defined",
+        "lockedFacts": [],
+        "adaptation": null,
+        "provenance": {
+          "mode": "user",
+          "brief": "user",
+          "genres": "user",
+          "audienceIds": "user",
+          "characterSetup": "user",
+          "era": "user",
+          "highlights": "user",
+          "narrativeTone": "user",
+          "visualStyle": "user",
+          "structureId": "user",
+          "totalEpisodes": "user",
+          "defaultDurationSeconds": "user",
+          "episodeDurations": "user",
+          "endingType": "user",
+          "outputLanguage": "user",
+          "market": "user",
+          "lockedFacts": "user",
+          "adaptation": "user"
+        }
+      },
+      "expectedError": "SCHEMA_INVALID",
+      "errorPath": "totalEpisodes"
+    },
+    {
+      "id": "unknown-setting",
+      "operation": "confirm_spec",
+      "input": {
+        "schemaVersion": 2,
+        "revision": 1,
+        "mode": "original",
+        "brief": "One room, one decision, a closed ending in thirty seconds.",
+        "genres": {
+          "mainId": "drama",
+          "fusionId": null,
+          "customText": ""
+        },
+        "audienceIds": [
+          "all"
+        ],
+        "characterSetup": {
+          "ids": [],
+          "customText": "",
+          "provenance": "user"
+        },
+        "era": {
+          "ids": [],
+          "customText": "",
+          "provenance": "user"
+        },
+        "highlights": {
+          "ids": [],
+          "customText": "",
+          "provenance": "user"
+        },
+        "narrativeTone": {
+          "id": "warm",
+          "customText": "",
+          "provenance": "user"
+        },
+        "visualStyle": {
+          "id": "realistic",
+          "text": "",
+          "referenceAssetVersion": null
+        },
+        "structureId": "unit",
+        "totalEpisodes": 1,
+        "defaultDurationSeconds": 30,
+        "episodeDurations": {},
+        "endingType": "closed",
+        "outputLanguage": "zh-CN",
+        "market": "user-defined",
+        "lockedFacts": [],
+        "adaptation": null,
+        "secretOverride": true,
+        "provenance": {
+          "mode": "user",
+          "brief": "user",
+          "genres": "user",
+          "audienceIds": "user",
+          "characterSetup": "user",
+          "era": "user",
+          "highlights": "user",
+          "narrativeTone": "user",
+          "visualStyle": "user",
+          "structureId": "user",
+          "totalEpisodes": "user",
+          "defaultDurationSeconds": "user",
+          "episodeDurations": "user",
+          "endingType": "user",
+          "outputLanguage": "user",
+          "market": "user",
+          "lockedFacts": "user",
+          "adaptation": "user"
+        }
+      },
+      "expectedError": "SCHEMA_INVALID",
+      "errorPath": "secretOverride"
+    },
+    {
+      "id": "non-finite-duration",
+      "operation": "confirm_spec",
+      "input": {
+        "schemaVersion": 2,
+        "revision": 1,
+        "mode": "original",
+        "brief": "One room, one decision, a closed ending in thirty seconds.",
+        "genres": {
+          "mainId": "drama",
+          "fusionId": null,
+          "customText": ""
+        },
+        "audienceIds": [
+          "all"
+        ],
+        "characterSetup": {
+          "ids": [],
+          "customText": "",
+          "provenance": "user"
+        },
+        "era": {
+          "ids": [],
+          "customText": "",
+          "provenance": "user"
+        },
+        "highlights": {
+          "ids": [],
+          "customText": "",
+          "provenance": "user"
+        },
+        "narrativeTone": {
+          "id": "warm",
+          "customText": "",
+          "provenance": "user"
+        },
+        "visualStyle": {
+          "id": "realistic",
+          "text": "",
+          "referenceAssetVersion": null
+        },
+        "structureId": "unit",
+        "totalEpisodes": 1,
+        "defaultDurationSeconds": "NaN",
+        "episodeDurations": {},
+        "endingType": "closed",
+        "outputLanguage": "zh-CN",
+        "market": "user-defined",
+        "lockedFacts": [],
+        "adaptation": null,
+        "provenance": {
+          "mode": "user",
+          "brief": "user",
+          "genres": "user",
+          "audienceIds": "user",
+          "characterSetup": "user",
+          "era": "user",
+          "highlights": "user",
+          "narrativeTone": "user",
+          "visualStyle": "user",
+          "structureId": "user",
+          "totalEpisodes": "user",
+          "defaultDurationSeconds": "user",
+          "episodeDurations": "user",
+          "endingType": "user",
+          "outputLanguage": "user",
+          "market": "user",
+          "lockedFacts": "user",
+          "adaptation": "user"
+        }
+      },
+      "expectedError": "SCHEMA_INVALID",
+      "errorPath": "defaultDurationSeconds"
+    },
+    {
+      "id": "duplicate-genre",
+      "operation": "confirm_spec",
+      "input": {
+        "schemaVersion": 2,
+        "revision": 1,
+        "mode": "original",
+        "brief": "One room, one decision, a closed ending in thirty seconds.",
+        "genres": {
+          "mainId": "drama",
+          "fusionId": "drama",
+          "customText": ""
+        },
+        "audienceIds": [
+          "all"
+        ],
+        "characterSetup": {
+          "ids": [],
+          "customText": "",
+          "provenance": "user"
+        },
+        "era": {
+          "ids": [],
+          "customText": "",
+          "provenance": "user"
+        },
+        "highlights": {
+          "ids": [],
+          "customText": "",
+          "provenance": "user"
+        },
+        "narrativeTone": {
+          "id": "warm",
+          "customText": "",
+          "provenance": "user"
+        },
+        "visualStyle": {
+          "id": "realistic",
+          "text": "",
+          "referenceAssetVersion": null
+        },
+        "structureId": "unit",
+        "totalEpisodes": 1,
+        "defaultDurationSeconds": 30,
+        "episodeDurations": {},
+        "endingType": "closed",
+        "outputLanguage": "zh-CN",
+        "market": "user-defined",
+        "lockedFacts": [],
+        "adaptation": null,
+        "provenance": {
+          "mode": "user",
+          "brief": "user",
+          "genres": "user",
+          "audienceIds": "user",
+          "characterSetup": "user",
+          "era": "user",
+          "highlights": "user",
+          "narrativeTone": "user",
+          "visualStyle": "user",
+          "structureId": "user",
+          "totalEpisodes": "user",
+          "defaultDurationSeconds": "user",
+          "episodeDurations": "user",
+          "endingType": "user",
+          "outputLanguage": "user",
+          "market": "user",
+          "lockedFacts": "user",
+          "adaptation": "user"
+        }
+      },
+      "expectedError": "SCHEMA_INVALID",
+      "errorPath": "genres"
+    },
+    {
+      "id": "strategy-in-original",
+      "operation": "confirm_spec",
+      "input": {
+        "schemaVersion": 2,
+        "revision": 1,
+        "mode": "original",
+        "brief": "One room, one decision, a closed ending in thirty seconds.",
+        "genres": {
+          "mainId": "drama",
+          "fusionId": null,
+          "customText": ""
+        },
+        "audienceIds": [
+          "all"
+        ],
+        "characterSetup": {
+          "ids": [],
+          "customText": "",
+          "provenance": "user"
+        },
+        "era": {
+          "ids": [],
+          "customText": "",
+          "provenance": "user"
+        },
+        "highlights": {
+          "ids": [],
+          "customText": "",
+          "provenance": "user"
+        },
+        "narrativeTone": {
+          "id": "warm",
+          "customText": "",
+          "provenance": "user"
+        },
+        "visualStyle": {
+          "id": "realistic",
+          "text": "",
+          "referenceAssetVersion": null
+        },
+        "structureId": "unit",
+        "totalEpisodes": 1,
+        "defaultDurationSeconds": 30,
+        "episodeDurations": {},
+        "endingType": "closed",
+        "outputLanguage": "zh-CN",
+        "market": "user-defined",
+        "lockedFacts": [],
+        "adaptation": {
+          "strategy": "expand",
+          "fidelity": "strict",
+          "lockedFactIds": [],
+          "allowedAdditions": []
+        },
+        "provenance": {
+          "mode": "user",
+          "brief": "user",
+          "genres": "user",
+          "audienceIds": "user",
+          "characterSetup": "user",
+          "era": "user",
+          "highlights": "user",
+          "narrativeTone": "user",
+          "visualStyle": "user",
+          "structureId": "user",
+          "totalEpisodes": "user",
+          "defaultDurationSeconds": "user",
+          "episodeDurations": "user",
+          "endingType": "user",
+          "outputLanguage": "user",
+          "market": "user",
+          "lockedFacts": "user",
+          "adaptation": "user"
+        }
+      },
+      "expectedError": "SCHEMA_INVALID"
+    }
+  ]
+}

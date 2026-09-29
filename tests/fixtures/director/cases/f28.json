@@ -1,0 +1,336 @@
+{
+  "schemaVersion": 1,
+  "caseId": "F28",
+  "source": "synthetic",
+  "scope": "foundation_guard_only_not_full_ui_or_workflow_acceptance",
+  "variants": [
+    {
+      "id": "answer-current-card",
+      "operation": "question",
+      "input": {
+        "checkpoint": {
+          "id": "cp-one",
+          "revision": 3,
+          "questionVersion": 2,
+          "toolCallId": "tool-one",
+          "status": "open",
+          "resumeToken": "resume-one",
+          "questions": [
+            {
+              "id": "direction",
+              "kind": "single",
+              "required": true,
+              "optionIds": [
+                "north",
+                "south"
+              ]
+            }
+          ]
+        },
+        "decision": {
+          "checkpointId": "cp-one",
+          "expectedRevision": 3,
+          "questionVersion": 2,
+          "toolCallId": "tool-one",
+          "decision": "answer",
+          "answers": [
+            {
+              "questionId": "direction",
+              "optionIds": [
+                "north"
+              ],
+              "freeText": ""
+            }
+          ]
+        }
+      },
+      "expected": {
+        "status": "answered",
+        "newRevision": 4,
+        "nextAction": "resume_checkpoint"
+      }
+    },
+    {
+      "id": "skip-not-approval",
+      "operation": "question",
+      "input": {
+        "checkpoint": {
+          "id": "cp-one",
+          "revision": 3,
+          "questionVersion": 2,
+          "toolCallId": "tool-one",
+          "status": "open",
+          "resumeToken": "resume-one",
+          "questions": [
+            {
+              "id": "direction",
+              "kind": "single",
+              "required": true,
+              "optionIds": [
+                "north",
+                "south"
+              ]
+            }
+          ]
+        },
+        "decision": {
+          "checkpointId": "cp-one",
+          "expectedRevision": 3,
+          "questionVersion": 2,
+          "toolCallId": "tool-one",
+          "decision": "skip",
+          "answers": []
+        }
+      },
+      "expected": {
+        "status": "skipped",
+        "newRevision": 4,
+        "nextAction": "WAIT_INPUT"
+      }
+    },
+    {
+      "id": "old-card-version",
+      "operation": "question",
+      "input": {
+        "checkpoint": {
+          "id": "cp-one",
+          "revision": 3,
+          "questionVersion": 2,
+          "toolCallId": "tool-one",
+          "status": "open",
+          "resumeToken": "resume-one",
+          "questions": [
+            {
+              "id": "direction",
+              "kind": "single",
+              "required": true,
+              "optionIds": [
+                "north",
+                "south"
+              ]
+            }
+          ]
+        },
+        "decision": {
+          "checkpointId": "cp-one",
+          "expectedRevision": 2,
+          "questionVersion": 2,
+          "toolCallId": "tool-one",
+          "decision": "answer",
+          "answers": [
+            {
+              "questionId": "direction",
+              "optionIds": [
+                "north"
+              ],
+              "freeText": ""
+            }
+          ]
+        }
+      },
+      "expectedError": "STALE_CHECKPOINT"
+    },
+    {
+      "id": "wrong-tool-call",
+      "operation": "question",
+      "input": {
+        "checkpoint": {
+          "id": "cp-one",
+          "revision": 3,
+          "questionVersion": 2,
+          "toolCallId": "tool-one",
+          "status": "open",
+          "resumeToken": "resume-one",
+          "questions": [
+            {
+              "id": "direction",
+              "kind": "single",
+              "required": true,
+              "optionIds": [
+                "north",
+                "south"
+              ]
+            }
+          ]
+        },
+        "decision": {
+          "checkpointId": "cp-one",
+          "expectedRevision": 3,
+          "questionVersion": 2,
+          "toolCallId": "old-tool",
+          "decision": "answer",
+          "answers": [
+            {
+              "questionId": "direction",
+              "optionIds": [
+                "north"
+              ],
+              "freeText": ""
+            }
+          ]
+        }
+      },
+      "expectedError": "STALE_CHECKPOINT"
+    },
+    {
+      "id": "replayed-answered-card",
+      "operation": "question",
+      "input": {
+        "checkpoint": {
+          "id": "cp-one",
+          "revision": 3,
+          "questionVersion": 2,
+          "toolCallId": "tool-one",
+          "status": "answered",
+          "resumeToken": "resume-one",
+          "questions": [
+            {
+              "id": "direction",
+              "kind": "single",
+              "required": true,
+              "optionIds": [
+                "north",
+                "south"
+              ]
+            }
+          ]
+        },
+        "decision": {
+          "checkpointId": "cp-one",
+          "expectedRevision": 3,
+          "questionVersion": 2,
+          "toolCallId": "tool-one",
+          "decision": "answer",
+          "answers": [
+            {
+              "questionId": "direction",
+              "optionIds": [
+                "north"
+              ],
+              "freeText": ""
+            }
+          ]
+        }
+      },
+      "expectedError": "STALE_CHECKPOINT"
+    },
+    {
+      "id": "missing-required-answer",
+      "operation": "question",
+      "input": {
+        "checkpoint": {
+          "id": "cp-one",
+          "revision": 3,
+          "questionVersion": 2,
+          "toolCallId": "tool-one",
+          "status": "open",
+          "resumeToken": "resume-one",
+          "questions": [
+            {
+              "id": "direction",
+              "kind": "single",
+              "required": true,
+              "optionIds": [
+                "north",
+                "south"
+              ]
+            }
+          ]
+        },
+        "decision": {
+          "checkpointId": "cp-one",
+          "expectedRevision": 3,
+          "questionVersion": 2,
+          "toolCallId": "tool-one",
+          "decision": "answer",
+          "answers": []
+        }
+      },
+      "expectedError": "REQUIRED_ANSWER_MISSING"
+    },
+    {
+      "id": "skip-with-hidden-answer",
+      "operation": "question",
+      "input": {
+        "checkpoint": {
+          "id": "cp-one",
+          "revision": 3,
+          "questionVersion": 2,
+          "toolCallId": "tool-one",
+          "status": "open",
+          "resumeToken": "resume-one",
+          "questions": [
+            {
+              "id": "direction",
+              "kind": "single",
+              "required": true,
+              "optionIds": [
+                "north",
+                "south"
+              ]
+            }
+          ]
+        },
+        "decision": {
+          "checkpointId": "cp-one",
+          "expectedRevision": 3,
+          "questionVersion": 2,
+          "toolCallId": "tool-one",
+          "decision": "skip",
+          "answers": [
+            {
+              "questionId": "direction",
+              "optionIds": [
+                "north"
+              ],
+              "freeText": ""
+            }
+          ]
+        }
+      },
+      "expectedError": "SCHEMA_INVALID"
+    },
+    {
+      "id": "unknown-choice",
+      "operation": "question",
+      "input": {
+        "checkpoint": {
+          "id": "cp-one",
+          "revision": 3,
+          "questionVersion": 2,
+          "toolCallId": "tool-one",
+          "status": "open",
+          "resumeToken": "resume-one",
+          "questions": [
+            {
+              "id": "direction",
+              "kind": "single",
+              "required": true,
+              "optionIds": [
+                "north",
+                "south"
+              ]
+            }
+          ]
+        },
+        "decision": {
+          "checkpointId": "cp-one",
+          "expectedRevision": 3,
+          "questionVersion": 2,
+          "toolCallId": "tool-one",
+          "decision": "answer",
+          "answers": [
+            {
+              "questionId": "direction",
+              "optionIds": [
+                "invented"
+              ],
+              "freeText": ""
+            }
+          ]
+        }
+      },
+      "expectedError": "UNKNOWN_OPTION"
+    }
+  ]
+}

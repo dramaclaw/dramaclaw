@@ -1,0 +1,119 @@
+version = 1
+slug = "liblib-tv-director-discovery"
+ledger = "docs/agent/tasks/liblib-tv-director-discovery.md"
+baseline = "213854b5"
+
+[[claims]]
+path = "docs/guides/tv-director/skill-contracts.md"
+mode = "shared"
+shared_with = ["tv-director-implementation"]
+reason = "Serial plan closure: requested deliverables govern method orchestration, preserving source methods."
+
+[[claims]]
+path = "docs/guides/tv-director/implementation-closure.md"
+mode = "shared"
+shared_with = ["tv-director-implementation"]
+reason = "Serial plan closure: remove stale episode caps and link current S-stage evidence audit."
+
+[[claims]]
+path = "docs/guides/tv-director/plan-closure.json"
+mode = "exclusive"
+reason = "Evidence, current-code and acceptance-definition closure for every requirement; not product test results."
+
+[[claims]]
+path = "docs/guides/tv-director/full-replication-plan.md"
+mode = "exclusive"
+reason = "Complete product plan integrating live UI evidence, existing contracts and short-drama methods."
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Register research lifecycle without changing other workstreams."
+
+[[claims]]
+path = "docs/agent/tasks/liblib-tv-director-discovery.md"
+mode = "coordination"
+reason = "Research plan and handoff."
+
+[[claims]]
+path = "docs/agent/claims/liblib-tv-director-discovery.toml"
+mode = "coordination"
+reason = "Precise scope."
+
+[[claims]]
+path = "docs/guides/liblib-tv-director-analysis.md"
+mode = "exclusive"
+reason = "Button-level evidence report."
+
+[[claims]]
+path = "docs/guides/liblib-tv-director-development.md"
+mode = "shared"
+shared_with = ["tv-director-implementation"]
+reason = "Historical design; implementation line serially aligns it with the fusion v2 contracts."
+
+[[claims]]
+path = "output/playwright/liblib-tv-director/**"
+mode = "exclusive"
+reason = "Ignored local browser evidence only."
+
+[[claims]]
+path = "docs/guides/tv-director-liblib-gap-validation.md"
+mode = "exclusive"
+reason = "Observed N01-N10 subcase evidence and limitations."
+
+[[claims]]
+path = "docs/guides/tv-director/acceptance-contracts.md"
+mode = "shared"
+shared_with = ["tv-director-implementation"]
+reason = "User-approved review fixes; discovery serially unifies acceptance contracts before implementation resumes."
+
+[[claims]]
+path = "docs/guides/tv-director/seed-outline-parity-implementation.md"
+mode = "shared"
+shared_with = ["tv-director-implementation"]
+reason = "User-approved documentation-only review fixes; serial integration with implementation."
+
+[[claims]]
+path = "docs/guides/tv-director/feature-contracts.md"
+mode = "shared"
+shared_with = ["tv-director-implementation"]
+reason = "User-approved documentation-only review fixes; serial integration with implementation."
+
+[[claims]]
+path = "docs/guides/tv-director/implementation-map.json"
+mode = "shared"
+shared_with = ["tv-director-implementation"]
+reason = "User-approved documentation-only review fixes; serial integration with implementation."
+
+[[claims]]
+path = "docs/guides/tv-director/verify-spec.mjs"
+mode = "shared"
+shared_with = ["tv-director-implementation"]
+reason = "User-approved documentation-only review fixes; serial integration with implementation."
+
+[[claims]]
+path = "docs/guides/tv-director/workflow-contracts.md"
+mode = "shared"
+shared_with = ["tv-director-implementation"]
+reason = "User-approved documentation-only review fixes; serial integration with implementation."
+
+[[claims]]
+path = "docs/guides/tv-director/document-semantics.md"
+mode = "shared"
+shared_with = ["tv-director-implementation"]
+reason = "User-approved documentation-only review fixes; serial integration with implementation."
+
+[[claims]]
+path = "docs/guides/tv-director/acceptance-policy.json"
+mode = "exclusive"
+reason = "Single machine-readable parity acceptance policy; no product execution claims."
+
+[[claims]]
+path = "docs/agent/tasks/tv-director-implementation.md"
+mode = "coordination"
+reason = "Record acceptance evidence sharing and research handoff."
+
+[[claims]]
+path = "docs/agent/claims/tv-director-implementation.toml"
+mode = "coordination"
+reason = "Symmetric sharing for the acceptance evidence table."

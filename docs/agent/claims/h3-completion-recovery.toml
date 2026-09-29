@@ -1,0 +1,25 @@
+version = 1
+slug = "h3-completion-recovery"
+ledger = "docs/agent/tasks/h3-completion-recovery.md"
+baseline = "762591d"
+
+[[claims]]
+path = "src/novelvideo/generators/minimax_h3_workbench.py"
+mode = "shared"
+shared_with = ["minimax-h3-liblib-parity", "minimax-h3-canvas-defaults"]
+reason = "Recover completed H3 outputs by job ID."
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Plan and handoff."
+
+[[claims]]
+path = "docs/agent/tasks/h3-completion-recovery.md"
+mode = "coordination"
+reason = "Plan and handoff."
+
+[[claims]]
+path = "docs/agent/claims/h3-completion-recovery.toml"
+mode = "coordination"
+reason = "Plan and handoff."

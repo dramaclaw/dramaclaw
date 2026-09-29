@@ -1,5 +1,6 @@
 """文件下载端点（带路径遍历防护）。"""
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -11,6 +12,7 @@ logger = logging.getLogger("novelvideo.api.files")
 
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.deps import ProjectResolution, resolve_project_scope
+from novelvideo.freezone.browser_video import BrowserVideoError, browser_playback_file
 from novelvideo.utils.thumbnails import (
     fresh_thumbnail,
     is_thumbnailable,
@@ -161,6 +163,26 @@ def _maybe_thumbnail_response(
     return response
 
 
+async def _maybe_browser_video_response(
+    project_dir: Path, requested: Path, request: Request | None
+):
+    # Explicit opt-in keeps download and model-reference URLs on the original.
+    if request is None or request.query_params.get("st_video") != "h264":
+        return None
+    try:
+        playback = await asyncio.to_thread(browser_playback_file, project_dir, requested)
+    except BrowserVideoError as exc:
+        logger.warning("Browser playback unavailable for %s: %s", requested, exc)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if playback == requested:
+        return None
+    return FileResponse(
+        path=str(playback),
+        media_type="video/mp4",
+        headers={"Cache-Control": _variant_cache_control(request)},
+    )
+
+
 def _resolve_project_file(resolved: ProjectResolution, file_path: str) -> Path:
     project_dir = resolved.project_dir
     if not project_dir.exists():
@@ -256,6 +278,9 @@ async def preview_file(
     )
     if thumbnail is not None:
         return thumbnail
+    playback = await _maybe_browser_video_response(resolved.project_dir, requested, request)
+    if playback is not None:
+        return playback
     return _serve_or_redirect_to_oss(requested, as_download=False)
 
 
@@ -274,4 +299,7 @@ async def preview_project_media_file(
     )
     if thumbnail is not None:
         return thumbnail
+    playback = await _maybe_browser_video_response(resolved.project_dir, requested, request)
+    if playback is not None:
+        return playback
     return _serve_or_redirect_to_oss(requested, as_download=False)

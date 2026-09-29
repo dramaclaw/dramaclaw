@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 2,
+  "stage": "M03",
+  "privateLibTVSourceObtained": false,
+  "license": "MIT",
+  "copyright": "2025 0xsline",
+  "sources": [
+    {
+      "path": "references/genre-guide.md",
+      "sha256": "6e9ebf184dd824fcdeacfc0aec113e86aeccc42e50b53b36db469fd0fa149230"
+    },
+    {
+      "path": "references/opening-rules.md",
+      "sha256": "72b43ff9ca3d6eaaf91ad1a47f3328de010a8e9c06eb2a6e5819732a94b1b971"
+    }
+  ],
+  "adaptation": "Independent host planning contracts, informed by observable LibTV checkpoints and routed short-drama methods. Original direction is followed by host-owned episode-count and duration confirmations; model questions remain source-gap prompts only for adaptation. Full semantic quality remains subject to review.",
+  "adaptedReferences": [
+    {
+      "path": "references/source-grounding.md",
+      "sources": [
+        {
+          "originalPath": "references/adaptation-core.md",
+          "sha256": "1e517e696c0ed19354683dcb37824f61059a06544f34aa0359ef60f7f59e0761"
+        },
+        {
+          "originalPath": "references/event-coverage.md",
+          "sha256": "eb0947c3c7714df690c0d16c4ba39cec9b6865fa5545fbd7be74328bd952d9ef"
+        }
+      ],
+      "scope": "Outline event coverage, claim attribution and unapproved bridging; adaptation only."
+    }
+  ]
+}

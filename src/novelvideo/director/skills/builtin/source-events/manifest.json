@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 2,
+  "key": "studio/source-events",
+  "stage": "M04",
+  "version": "3.0.0",
+  "purpose": "source-events",
+  "applicable": [
+    "adaptation"
+  ],
+  "excluded": [
+    "omni",
+    "directing"
+  ],
+  "method": "method.md",
+  "inputSchema": "schemas/input.json",
+  "outputSchema": "schemas/output.json",
+  "template": "templates/request.md",
+  "fixtures": "fixtures/contracts.json",
+  "provenance": "provenance.json",
+  "requiredReferences": [
+    {
+      "path": "references/adaptation-core.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/adaptation-core.md",
+      "sha256": "1e517e696c0ed19354683dcb37824f61059a06544f34aa0359ef60f7f59e0761",
+      "when": "always"
+    },
+    {
+      "path": "references/event-coverage.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/event-coverage.md",
+      "sha256": "eb0947c3c7714df690c0d16c4ba39cec9b6865fa5545fbd7be74328bd952d9ef",
+      "when": "always"
+    }
+  ],
+  "ruleIds": [
+    "G01",
+    "G03",
+    "G06",
+    "G07",
+    "G08",
+    "G11",
+    "G18"
+  ],
+  "allowedTools": [],
+  "validators": [
+    "outline-source/1.0.0"
+  ],
+  "costClasses": [
+    "text.generate"
+  ],
+  "checkpointKinds": [
+    "WAIT_DIRECTION",
+    "WAIT_OUTLINE"
+  ],
+  "maxSchemaRepairAttempts": 0,
+  "maxAutomaticRevisionAttempts": 0,
+  "compatibility": "Host-frozen adaptation v3 only; existing original and adaptation v2 artifacts remain readable. Structural evidence is not a guarantee of semantic truth.",
+  "files": {
+    "method.md": "e5fa954b776935759604ad9c89e657c70374c881899128d8574c4de9779cf618",
+    "provenance.json": "091ae1dbb2a44cc5375489ef9316bd91c8b580e387ce4899e91627f65ac3df7a",
+    "LICENSE": "a42977a69c8c05840da8a8e2f9d8dff9f5c8346f236eeabf8c97fb0812f5fe50",
+    "SKILL.md": "e07725dec4e98853e1c08b221abc8f65f345727c211b27ff7536d9cb99094c40",
+    "references/adaptation-core.md": "1e517e696c0ed19354683dcb37824f61059a06544f34aa0359ef60f7f59e0761",
+    "references/event-coverage.md": "eb0947c3c7714df690c0d16c4ba39cec9b6865fa5545fbd7be74328bd952d9ef",
+    "schemas/input.json": "40faa425030c896873c932dc1d875edfebf112614940c229fa53eb52a8daeb67",
+    "schemas/output.json": "157ccb4680d7a27301d3b1e814271ae094bfa17f3c99d494eb556a13daa292bd",
+    "templates/request.md": "d951fb9c86d2e130abaa6985c74ac995705310071dbb4cb919b34300bfd051a1",
+    "fixtures/contracts.json": "50c24fa5a7bb362d2dfada6108815c64689983f3c870bbf526b654698981af2c"
+  }
+}

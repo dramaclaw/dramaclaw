@@ -129,6 +129,14 @@ export interface PendingAssetReplace {
 interface AssetDropState {
   /** 当前正在拖拽的节点信息;非拖拽时为 null。 */
   activeDrag: ActiveNodeDrag | null;
+  /**
+   * 「挑选态」:用户点了替换入口(把手单击 / 节点右键菜单)而不是拖拽,
+   * 等他在素材库里点一条同类型素材。与 activeDrag 互斥。
+   *
+   * 拖拽要求用户一口气按住移动到侧栏,面板收起时更是完全没有落点;挑选态把
+   * 同一件事拆成「先声明要替换谁 → 再选替换到哪」,宿主据此展开素材库。
+   */
+  pendingPick: ActiveNodeDrag | null;
   /** 当前悬停且类型匹配的资产 id;用于侧栏画虚线框。 */
   hoverAssetId: string | null;
   /** 松手后产生的替换请求;侧栏消费后置空。 */
@@ -138,17 +146,42 @@ interface AssetDropState {
   setHoverAsset: (assetId: string | null) => void;
   /** 结束拖拽。若 commit=true 且当前悬停有效,则生成一个 pendingReplace。 */
   endDrag: (commit: boolean) => void;
+  /** 进入挑选态(点击替换入口)。 */
+  beginPick: (pick: ActiveNodeDrag) => void;
+  /** 退出挑选态,不产生替换。 */
+  cancelPick: () => void;
+  /** 在挑选态下选中一条素材,生成与拖拽同款的 pendingReplace(仍走确认气泡)。 */
+  commitPick: (assetId: string) => void;
   clearPendingReplace: () => void;
 }
 
 let replaceToken = 0;
 
+/** 两条入口(拖拽命中 / 挑选点选)产出的 pendingReplace 完全同构。 */
+function replaceRequestFrom(
+  source: ActiveNodeDrag,
+  assetId: string,
+): PendingAssetReplace | null {
+  if (!source.sourceUrl) return null;
+  replaceToken += 1;
+  return {
+    assetId,
+    nodeId: source.nodeId,
+    sourceUrl: source.sourceUrl,
+    label: source.label,
+    directorControlBundle: source.directorControlBundle,
+    token: replaceToken,
+  };
+}
+
 export const useAssetDropStore = create<AssetDropState>((set, get) => ({
   activeDrag: null,
+  pendingPick: null,
   hoverAssetId: null,
   pendingReplace: null,
 
-  beginDrag: (drag) => set({ activeDrag: drag, hoverAssetId: null }),
+  // 拖拽优先:从挑选态直接改用拖拽时,挑选态作废而不是两个态并存。
+  beginDrag: (drag) => set({ activeDrag: drag, pendingPick: null, hoverAssetId: null }),
 
   setHoverAsset: (assetId) => {
     if (get().hoverAssetId === assetId) return;
@@ -157,24 +190,32 @@ export const useAssetDropStore = create<AssetDropState>((set, get) => ({
 
   endDrag: (commit) => {
     const { activeDrag, hoverAssetId } = get();
-    if (commit && activeDrag && hoverAssetId && activeDrag.sourceUrl) {
-      replaceToken += 1;
-      set({
-        pendingReplace: {
-          assetId: hoverAssetId,
-          nodeId: activeDrag.nodeId,
-          sourceUrl: activeDrag.sourceUrl,
-          label: activeDrag.label,
-          directorControlBundle: activeDrag.directorControlBundle,
-          token: replaceToken,
-        },
-        activeDrag: null,
-        hoverAssetId: null,
-      });
+    const request = commit && activeDrag && hoverAssetId
+      ? replaceRequestFrom(activeDrag, hoverAssetId)
+      : null;
+    if (request) {
+      set({ pendingReplace: request, activeDrag: null, hoverAssetId: null });
       return;
     }
     set({ activeDrag: null, hoverAssetId: null });
   },
 
+  beginPick: (pick) => {
+    if (!pick.sourceUrl) return;
+    set({ pendingPick: pick, activeDrag: null, hoverAssetId: null, pendingReplace: null });
+  },
+
+  cancelPick: () => set({ pendingPick: null }),
+
+  commitPick: (assetId) => {
+    const { pendingPick } = get();
+    if (!pendingPick) return;
+    const request = replaceRequestFrom(pendingPick, assetId);
+    if (!request) return;
+    // 挑选态在这里结束,但替换本身仍要过侧栏卡片上的确认气泡(pendingReplace)。
+    set({ pendingReplace: request, pendingPick: null });
+  },
+
+  // 确认气泡被取消/完成后,顺带确保不会残留挑选态。
   clearPendingReplace: () => set({ pendingReplace: null }),
 }));

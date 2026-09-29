@@ -95,6 +95,7 @@ import {
 } from '@/features/canvas/ui/nodeFrameStyles';
 import { useNaturalSizeRecordTrust } from '@/features/canvas/hooks/useNaturalSizeRecordTrust';
 import { useNodeBodyVariantBudget } from '@/features/canvas/hooks/useNodeBodyVariantBudget';
+import { useDecodedNodeImage } from '@/features/canvas/hooks/useDecodedNodeImage';
 import { useCanvasStore, useIsBoxSelecting } from '@/stores/canvasStore';
 import { ReferenceValidationDialog, referenceIssues, matchesReference, referenceIssueName, type ReferenceIssue } from './shared/ReferenceValidationDialog';
 import { useShallow } from 'zustand/react/shallow';
@@ -116,7 +117,7 @@ import { BackgroundCropperDialog } from '@/features/canvas/ui/BackgroundCropperD
 import {
   ThreeDDirectorDialog,
   type ThreeDDirectorCaptureMeta,
-} from '@/features/viewer-kit/three-d/ThreeDDirectorDialog';
+} from '@/features/viewer-kit/three-d/ThreeDDirectorDialogLazy';
 import type { DirectorStageManifest } from '@/features/viewer-kit/three-d/directorManifest';
 import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
 import { notifyTaskStillRunning } from '@/features/canvas/application/errorDialog';
@@ -185,7 +186,7 @@ import {
   extractUpstreamContent,
   joinUpstreamText,
 } from '@/features/canvas/application/graphContentResolver';
-import { useUpstreamNodes } from '@/features/canvas/application/useUpstreamGraph';
+import { useUpstreamReferenceNodes } from '@/features/canvas/application/useUpstreamGraph';
 import { useNodeGenerationTaskState } from '@/features/canvas/application/useNodeGenerationTaskState';
 import {
   PromptMentionEditor,
@@ -227,6 +228,35 @@ import {
 import { hasImageGenPromptOverride } from '@/features/canvas/nodes/imageGenPrompt';
 import { orderedReferenceUrlsWithOwnFirst } from '@/features/canvas/nodes/referenceOrdering';
 import { useReferenceMentionSync } from '@/features/canvas/nodes/useReferenceMentionSync';
+
+const IMAGE_RESULT_RETRY_DELAYS_MS = [0, 250, 750, 1500] as const;
+
+/**
+ * Completion is signalled before the final static URL is always observable on
+ * disk. Give the result endpoint a short settling window so a successful task
+ * cannot leave the node in its last progress frame just because the artifact
+ * publication lagged behind the task event.
+ */
+async function fetchImageResultWithRetry(
+  projectId: string,
+  taskType: Parameters<typeof fetchFreezoneJobResult>[1],
+  jobId: string,
+): Promise<string | null> {
+  for (const delayMs of IMAGE_RESULT_RETRY_DELAYS_MS) {
+    if (delayMs > 0) {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, delayMs));
+    }
+    try {
+      const result = await fetchFreezoneJobResult(projectId, taskType, jobId);
+      if (typeof result.url === 'string' && result.url.length > 0) {
+        return result.url;
+      }
+    } catch {
+      // The next attempt covers the short task-result publication race.
+    }
+  }
+  return null;
+}
 
 type ImageGenNodeProps = NodeProps & {
   id: string;
@@ -539,7 +569,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   // Subscribe to the upstream graph once. Calling useUpstreamContents here and
   // useUpstreamNodes below created two independent Zustand selectors, so every
   // canvas-store update walked the full nodes/edges arrays twice per image node.
-  const upstreamNodes = useUpstreamNodes(id);
+  const upstreamNodes = useUpstreamReferenceNodes(id);
   const upstreamContents = useMemo(
     () => upstreamNodes.map(extractUpstreamContent),
     [upstreamNodes],
@@ -904,7 +934,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     width: resolvedWidth,
     height: resolvedHeight,
   });
-  const bodyImage = useMemo(
+  const requestedBodyImage = useMemo(
     () =>
       visiblePreviewUrl
         ? nodeBodyImageSrc(visiblePreviewUrl, recordedNaturalSize, {
@@ -921,6 +951,12 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     ],
   );
 
+  const previewDisplay = useDecodedNodeImage(
+    requestedBodyImage,
+    JSON.stringify([id, visiblePreviewUrl]),
+    JSON.stringify([preferOriginalImage, distrusted, recordedNaturalSize?.width, recordedNaturalSize?.height]),
+  );
+  const bodyImage = previewDisplay.displayed;
   const hasGeneratedResult = Boolean(data.imageUrl);
   // Natural pixel size of the displayed image, mirrored from data when present
   // (persisted by the onLoad handler below) and refreshed on every <img> load so
@@ -1265,12 +1301,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         const completed = await awaitTaskCompletion(ref.task_key, projectId, { taskType: ref.task_type });
         let url = resolveOutputUrl(completed.result as Record<string, unknown> | null);
         if (!url) {
-          try {
-            const fallback = await fetchFreezoneJobResult(projectId, ref.task_type, ref.job_id);
-            url = fallback.url;
-          } catch (error) {
-            console.warn('[image-gen] fallback fetch failed', error);
-          }
+          url = await fetchImageResultWithRetry(projectId, ref.task_type, ref.job_id);
         }
         if (url) {
           if (!isCurrentGenerationAttempt()) return;
@@ -1672,6 +1703,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
               // 双击进查看器的必须是原图，不能跟着 src 走降采样副本。
               viewerSourceUrl={visiblePreviewUrl}
               onLoad={(event) => {
+                previewDisplay.onLoad(event.currentTarget);
                 // 记录描述的不是这张图：降采样副本上量不出源图真尺寸。第一次退回
                 // 原图重测（preferOriginal 会让下一轮 downscaled 为 false，不会来
                 // 回抖）；已经退过一次还是对不上，就什么都不写——记录和副本都不是

@@ -1,0 +1,42 @@
+version = 1
+slug = "pending-code-checkpoint"
+ledger = "docs/agent/tasks/pending-code-checkpoint.md"
+baseline = "8428b3a"
+
+[[claims]]
+path = "frontend/src/features/canvas/application/videoPromptSplit.ts"
+mode = "shared"
+shared_with = ["video-prompt-split"]
+reason = "Annotate Chinese prompt grammar as non-UI literals for the existing i18n check."
+
+[[claims]]
+path = "tests/test_h3_prompt_optimizer.py"
+mode = "shared"
+shared_with = ["h3-prompt-optimizer"]
+reason = "Update stale output assertion to the already accepted canonical H3 layout before committing."
+
+[[claims]]
+path = ".gitignore"
+mode = "shared"
+shared_with = ["*"]
+reason = "Exclude local credential attachment and untracked local workflow before checkpoint commits."
+
+[[claims]]
+path = "密钥.txt"
+mode = "read-only"
+reason = "Private user credential; never stage or print."
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Commit progress."
+
+[[claims]]
+path = "docs/agent/tasks/pending-code-checkpoint.md"
+mode = "coordination"
+reason = "Commit plan and handoff."
+
+[[claims]]
+path = "docs/agent/claims/pending-code-checkpoint.toml"
+mode = "coordination"
+reason = "Commit scope."

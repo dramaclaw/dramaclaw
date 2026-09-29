@@ -133,11 +133,13 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   const hasUnreadNotification =
     shouldShowUpgradeNudge(releaseFeed) || announcementUnreadCount(announcementIds) > 0;
   const gatewayConfig = modelGatewayConfig.data?.data;
+  const localRouterActive =
+    gatewayConfig?.custom?.tokenName === "dramaclaw-local-router";
   const hasSettingsWarning = Boolean(
     ceRuntime &&
       gatewayConfig &&
       (gatewayConfig.effective.configured === false ||
-        gatewayConfig.mediaRelay?.configured === false),
+        (!localRouterActive && gatewayConfig.mediaRelay?.configured === false)),
   );
   const settingsWarningBubble = useFloatingBubblePosition(
     settingsAnchorRef,

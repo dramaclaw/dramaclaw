@@ -1,0 +1,122 @@
+{
+  "$defs": {
+    "ReviewCheck": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "enum": [
+            "source_fidelity",
+            "continuity",
+            "causality",
+            "scope",
+            "timing",
+            "format"
+          ],
+          "title": "Id",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "PASS",
+            "FAIL",
+            "UNKNOWN"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "explanation": {
+          "maxLength": 4000,
+          "minLength": 5,
+          "title": "Explanation",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/ReviewEvidence"
+          },
+          "maxItems": 20,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "suggestion": {
+          "maxLength": 4000,
+          "title": "Suggestion",
+          "type": "string"
+        },
+        "unresolvedCriticalFact": {
+          "default": false,
+          "title": "Unresolvedcriticalfact",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "explanation",
+        "evidence",
+        "suggestion"
+      ],
+      "title": "ReviewCheck",
+      "type": "object"
+    },
+    "ReviewEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "inputId": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Inputid",
+          "type": "string"
+        },
+        "quote": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Quote",
+          "type": "string"
+        },
+        "occurrence": {
+          "default": 1,
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Occurrence",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "inputId",
+        "quote"
+      ],
+      "title": "ReviewEvidence",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": 2,
+      "title": "Schemaversion",
+      "type": "integer"
+    },
+    "subjectHash": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Subjecthash",
+      "type": "string"
+    },
+    "checks": {
+      "items": {
+        "$ref": "#/$defs/ReviewCheck"
+      },
+      "maxItems": 6,
+      "minItems": 6,
+      "title": "Checks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "subjectHash",
+    "checks"
+  ],
+  "title": "ModelReview",
+  "type": "object"
+}

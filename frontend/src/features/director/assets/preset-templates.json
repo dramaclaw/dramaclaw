@@ -1,0 +1,95 @@
+{
+  "observedAt": "2026-09-26",
+  "source": "https://www.liblib.tv/canvas",
+  "structurePolicy": "No structure selected in all eight observed templates; preserve the explicit local structure, never silently invent another.",
+  "templates": [
+    {
+      "name": "玄幻修仙逆袭",
+      "primary_genre": "玄幻修仙",
+      "fusion_genre": "",
+      "audience": "男频",
+      "characters": "修士、天才",
+      "era": "架空",
+      "highlights": "器物金手指、收集升级、扮猪吃虎",
+      "visual_style": "东方玄幻 3D",
+      "episode_count": 90
+    },
+    {
+      "name": "现实职场成长",
+      "primary_genre": "都市现实",
+      "fusion_genre": "职场行业",
+      "audience": "女频",
+      "characters": "打工人、不完美成长型",
+      "era": "现代",
+      "highlights": "亲历行业细节、真实成长",
+      "visual_style": "都市写实",
+      "episode_count": 15
+    },
+    {
+      "name": "末世生存基建",
+      "primary_genre": "末世科幻",
+      "fusion_genre": "",
+      "audience": "男频",
+      "characters": "小人物、专业型",
+      "era": "末世",
+      "highlights": "基建生存、专业碾压",
+      "visual_style": "工业质感",
+      "episode_count": 70
+    },
+    {
+      "name": "非遗国潮视觉",
+      "primary_genre": "文旅非遗",
+      "fusion_genre": "",
+      "audience": "泛人群",
+      "characters": "小人物、专业型",
+      "era": "架空、古代",
+      "highlights": "文化元素新用、风格混搭、视觉奇观",
+      "visual_style": "国风壁画",
+      "episode_count": 1
+    },
+    {
+      "name": "古代女频甜宠",
+      "primary_genre": "古装言情",
+      "fusion_genre": "",
+      "audience": "女频",
+      "characters": "王爷、大小姐、腹黑",
+      "era": "古代",
+      "highlights": "先婚后爱、马甲大佬、双向救赎",
+      "visual_style": "柔光古装言情",
+      "episode_count": 70
+    },
+    {
+      "name": "规则怪谈悬疑",
+      "primary_genre": "惊悚怪谈",
+      "fusion_genre": "",
+      "audience": "泛人群",
+      "characters": "小人物",
+      "era": "现代",
+      "highlights": "规则禁忌、单元解谜",
+      "visual_style": "暗黑恐怖",
+      "episode_count": 35
+    },
+    {
+      "name": "重生复仇爽剧",
+      "primary_genre": "家庭伦理",
+      "fusion_genre": "",
+      "audience": "女频",
+      "characters": "女强、黑莲花",
+      "era": "现代",
+      "highlights": "重生复仇、真假千金",
+      "visual_style": "都市写实",
+      "episode_count": 70
+    },
+    {
+      "name": "仙门团宠日常",
+      "primary_genre": "玄幻修仙",
+      "fusion_genre": "古装言情",
+      "audience": "女频",
+      "characters": "小人物、福宝",
+      "era": "架空",
+      "highlights": "团宠被爱、收集升级",
+      "visual_style": "唯美国风 3D",
+      "episode_count": 70
+    }
+  ]
+}

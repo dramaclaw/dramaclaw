@@ -4,9 +4,11 @@
 """
 
 import os
+from ipaddress import ip_address
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 from novelvideo.official_defaults import (
@@ -165,8 +167,9 @@ def _get_newapi_text_model_profile(model_name: str):
 def _newapi_text_http_client_factory(
     *,
     timeout_seconds: float,
+    trust_env_default: bool = True,
 ) -> Any:
-    trust_env = _env_bool("NEWAPI_TEXT_TRUST_ENV", True)
+    trust_env = _env_bool("NEWAPI_TEXT_TRUST_ENV", trust_env_default)
 
     def factory():
         import httpx
@@ -190,8 +193,19 @@ def _newapi_text_openai_provider(
 
     class _LifecycleManagedOpenAIProvider(OpenAIProvider):
         def __init__(self) -> None:
+            # A desktop proxy may intercept localhost and return an empty 502.
+            # Only loopback defaults to direct transport; remote deployments
+            # and an explicit NEWAPI_TEXT_TRUST_ENV keep their existing policy.
+            hostname = urlsplit(base_url).hostname or ""
+            loopback = hostname == "localhost"
+            try:
+                loopback = loopback or ip_address(hostname).is_loopback
+            except ValueError:
+                pass
+            factory_options = {"trust_env_default": False} if loopback else {}
             http_client_factory = _newapi_text_http_client_factory(
                 timeout_seconds=timeout_seconds,
+                **factory_options,
             )
             http_client = http_client_factory()
             super().__init__(
@@ -909,6 +923,12 @@ DEFAULT_RENDER_IMAGE_SELECTION = os.environ.get(
 CHARACTER_IMAGE_SELECTION = os.environ.get(
     "CHARACTER_IMAGE_SELECTION"
 ) or os.environ.get("DEFAULT_CHARACTER_IMAGE_SELECTION")
+LOCAL_QWEN_IMAGE_MODEL = os.environ.get(
+    "LOCAL_QWEN_IMAGE_MODEL", "Qwen-Image-local"
+)
+LOCAL_KREA_IMAGE_MODEL = os.environ.get(
+    "LOCAL_KREA_IMAGE_MODEL", "Krea-2-Turbo-local"
+)
 
 IMAGE_GENERATION_SELECTIONS: dict[str, dict[str, str]] = {
     "huimeng_gpt_image2": {
@@ -951,11 +971,31 @@ IMAGE_GENERATION_SELECTIONS: dict[str, dict[str, str]] = {
         "provider": "newapi",
         "model": NEWAPI_NANOBANANA2_MODEL,
     },
+    "newapi_qwen_image_local": {
+        "label": "Qwen Image（本地 ComfyUI）",
+        "provider": "newapi",
+        "model": LOCAL_QWEN_IMAGE_MODEL,
+    },
+    "newapi_krea2_local": {
+        "label": "Krea 2 Turbo（本地 ComfyUI）",
+        "provider": "newapi",
+        "model": LOCAL_KREA_IMAGE_MODEL,
+    },
+    "newapi_krea2_edit_local": {
+        "label": "编辑",
+        "provider": "newapi",
+        "model": "Krea-2-Identity-Edit-local",
+    },
 }
 
+_LOCAL_MODELS_ONLY = os.environ.get("DRAMACLAW_LOCAL_MODELS_ONLY", "").strip().lower()
 VISIBLE_IMAGE_GENERATION_SELECTION_KEYS = (
-    "newapi_gpt_image2",
-    "newapi_nanobanana2",
+    ("newapi_qwen_image_local", "newapi_krea2_local", "newapi_krea2_edit_local")
+    if _LOCAL_MODELS_ONLY in {"1", "true", "yes", "on"}
+    else (
+        "newapi_gpt_image2",
+        "newapi_nanobanana2",
+    )
 )
 
 LEGACY_IMAGE_GENERATION_SELECTION_ALIASES = {

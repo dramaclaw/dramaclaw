@@ -1,0 +1,186 @@
+{
+  "schemaVersion": 1,
+  "caseId": "F27",
+  "source": "synthetic",
+  "scope": "foundation_guard_only_not_full_ui_or_workflow_acceptance",
+  "variants": [
+    {
+      "id": "frozen-version",
+      "operation": "skill_receipt",
+      "input": {
+        "invocation": {
+          "runId": "run-one",
+          "inputSnapshotHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "binding": {
+            "skillId": "skill-one",
+            "revisionId": "revision-v1",
+            "methodHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "origin": "private"
+          }
+        },
+        "receipt": {
+          "runId": "run-one",
+          "inputSnapshotHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "binding": {
+            "skillId": "skill-one",
+            "revisionId": "revision-v1",
+            "methodHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "origin": "private"
+          },
+          "outputHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "status": "succeeded"
+        }
+      },
+      "expected": {
+        "verified": true
+      }
+    },
+    {
+      "id": "draft-executed",
+      "operation": "skill_receipt",
+      "input": {
+        "invocation": {
+          "runId": "run-one",
+          "inputSnapshotHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "binding": {
+            "skillId": "skill-one",
+            "revisionId": "revision-v1",
+            "methodHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "origin": "private"
+          }
+        },
+        "receipt": {
+          "runId": "run-one",
+          "inputSnapshotHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "binding": {
+            "skillId": "skill-one",
+            "revisionId": "draft-v2",
+            "methodHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "origin": "private"
+          },
+          "outputHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "status": "succeeded"
+        }
+      },
+      "expectedError": "SKILL_RECEIPT_MISMATCH"
+    },
+    {
+      "id": "wrong-method-content",
+      "operation": "skill_receipt",
+      "input": {
+        "invocation": {
+          "runId": "run-one",
+          "inputSnapshotHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "binding": {
+            "skillId": "skill-one",
+            "revisionId": "revision-v1",
+            "methodHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "origin": "private"
+          }
+        },
+        "receipt": {
+          "runId": "run-one",
+          "inputSnapshotHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "binding": {
+            "skillId": "skill-one",
+            "revisionId": "revision-v1",
+            "methodHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "origin": "private"
+          },
+          "outputHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "status": "succeeded"
+        }
+      },
+      "expectedError": "SKILL_RECEIPT_MISMATCH"
+    },
+    {
+      "id": "another-input",
+      "operation": "skill_receipt",
+      "input": {
+        "invocation": {
+          "runId": "run-one",
+          "inputSnapshotHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "binding": {
+            "skillId": "skill-one",
+            "revisionId": "revision-v1",
+            "methodHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "origin": "private"
+          }
+        },
+        "receipt": {
+          "runId": "run-one",
+          "inputSnapshotHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "binding": {
+            "skillId": "skill-one",
+            "revisionId": "revision-v1",
+            "methodHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "origin": "private"
+          },
+          "outputHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "status": "succeeded"
+        }
+      },
+      "expectedError": "SKILL_RECEIPT_MISMATCH"
+    },
+    {
+      "id": "unavailable-is-not-pass",
+      "operation": "skill_receipt",
+      "input": {
+        "invocation": {
+          "runId": "run-one",
+          "inputSnapshotHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "binding": {
+            "skillId": "skill-one",
+            "revisionId": "revision-v1",
+            "methodHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "origin": "private"
+          }
+        },
+        "receipt": {
+          "runId": "run-one",
+          "inputSnapshotHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "binding": {
+            "skillId": "skill-one",
+            "revisionId": "revision-v1",
+            "methodHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "origin": "private"
+          },
+          "outputHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "status": "unavailable"
+        }
+      },
+      "expectedError": "SKILL_RUN_NOT_SUCCEEDED"
+    },
+    {
+      "id": "model-claims-it-passed",
+      "operation": "skill_receipt",
+      "input": {
+        "invocation": {
+          "runId": "run-one",
+          "inputSnapshotHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "binding": {
+            "skillId": "skill-one",
+            "revisionId": "revision-v1",
+            "methodHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "origin": "private"
+          }
+        },
+        "receipt": {
+          "runId": "run-one",
+          "inputSnapshotHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "binding": {
+            "skillId": "skill-one",
+            "revisionId": "revision-v1",
+            "methodHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "origin": "private"
+          },
+          "outputHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "status": "succeeded",
+          "modelSaysPass": true
+        }
+      },
+      "expectedError": "SCHEMA_INVALID",
+      "errorPath": "modelSaysPass"
+    }
+  ]
+}

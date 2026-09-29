@@ -130,13 +130,12 @@ _IMAGE_OUTPUT_KEYS = ("output_url", "image_url", "master_url", "url")
 
 
 def prewarm_history_thumbnail(project_dir: Path, record: dict[str, Any]) -> int:
-    """Queue one 320px thumbnail for a newly written history record.
+    """Queue every canvas image size for one newly written history record.
 
     This is intentionally narrow: one record produces at most one background
-    job and only the ``thumb`` variant. Existing records are never scanned or
+    prewarm call for its displayed image. Existing records are never scanned or
     backfilled while being read, so opening a large history cannot fan out into
-    CPU-bound image decodes. Best-effort and never allowed to break the history
-    write.
+    unrelated image decodes. Best-effort and never allowed to break the history write.
     """
 
     if (
@@ -161,7 +160,10 @@ def prewarm_history_thumbnail(project_dir: Path, record: dict[str, Any]) -> int:
                 source = resolve_static_url_to_path(url, project_dir)
             except (OSError, ValueError):
                 continue
-            return thumbnails.prewarm(project_dir, source, ["thumb"])
+            # 全档位,不再只预热 `thumb`(320)。画布节点主体在 2x 屏上要的是
+            # `card`(1280) 那一档;只预热 320 的话,节点主体永远挑不中副本、
+            # 一路回落原图——降采样这套机制等于没生效。
+            return thumbnails.prewarm(project_dir, source)
     except Exception:
         logger.debug(
             "thumbnail prewarm skipped for %s", record.get("id"), exc_info=True

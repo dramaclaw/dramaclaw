@@ -1,0 +1,134 @@
+{
+  "$defs": {
+    "CandidateFinding": {
+      "additionalProperties": false,
+      "properties": {
+        "assertion": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Assertion",
+          "type": "string"
+        },
+        "candidateQuote": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Candidatequote",
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "supported",
+            "violated",
+            "uncertain",
+            "interpretation"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Reason",
+          "type": "string"
+        },
+        "sourceEvidence": {
+          "items": {
+            "$ref": "#/$defs/SourceQuote"
+          },
+          "title": "Sourceevidence",
+          "type": "array"
+        }
+      },
+      "required": [
+        "assertion",
+        "candidateQuote",
+        "verdict",
+        "reason",
+        "sourceEvidence"
+      ],
+      "title": "CandidateFinding",
+      "type": "object"
+    },
+    "CandidateUnitReview": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Path",
+          "type": "string"
+        },
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/CandidateFinding"
+          },
+          "minItems": 1,
+          "title": "Findings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "path",
+        "findings"
+      ],
+      "title": "CandidateUnitReview",
+      "type": "object"
+    },
+    "SourceQuote": {
+      "additionalProperties": false,
+      "properties": {
+        "unitId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Unitid",
+          "type": "string"
+        },
+        "quote": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Quote",
+          "type": "string"
+        }
+      },
+      "required": [
+        "unitId",
+        "quote"
+      ],
+      "title": "SourceQuote",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract": {
+      "const": "outline-candidate-audit/1.0.0",
+      "title": "Contract",
+      "type": "string"
+    },
+    "units": {
+      "items": {
+        "$ref": "#/$defs/CandidateUnitReview"
+      },
+      "minItems": 1,
+      "title": "Units",
+      "type": "array"
+    },
+    "literaryNotes": {
+      "items": {
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "title": "Literarynotes",
+      "type": "array"
+    }
+  },
+  "required": [
+    "contract",
+    "units",
+    "literaryNotes"
+  ],
+  "title": "CandidateAudit",
+  "type": "object"
+}

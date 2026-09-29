@@ -1,0 +1,2269 @@
+version = 1
+slug = "sync-main-remotes"
+ledger = "docs/agent/tasks/sync-main-remotes.md"
+baseline = "bc051ed3"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Register the cross-remote integration lifecycle and conflict radar."
+
+[[claims]]
+path = "docs/agent/tasks/sync-main-remotes.md"
+mode = "coordination"
+reason = "Plan, verification, and handoff ledger for the final integrator."
+
+[[claims]]
+path = "docs/agent/claims/sync-main-remotes.toml"
+mode = "coordination"
+reason = "Exact machine-readable import and conflict-resolution scope."
+
+[[claims]]
+path = "docs/guides/tv-director/batch-facts-pixels.md"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "docs/guides/tv-director/character-parity.md"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "docs/guides/tv-director/episode-parity.md"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "docs/guides/tv-director/interaction-closure.md"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "docs/guides/tv-director/prop-parity.md"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "docs/guides/tv-director/scene-parity.md"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "frontend/src/__tests__/director-autosave.test.tsx"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "frontend/src/__tests__/director-facts.test.tsx"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "frontend/src/__tests__/director-media-batch.test.tsx"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "frontend/src/__tests__/director-media.test.tsx"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "frontend/src/__tests__/director-streaming.test.tsx"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "frontend/src/features/director/components/DirectorConversation.tsx"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "frontend/src/features/director/components/DirectorMediaNodes.tsx"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "frontend/src/features/director/components/DirectorMediaPanel.tsx"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "frontend/src/features/director/useDirectorMedia.ts"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "frontend/src/features/director/useDocumentAutosave.ts"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "frontend/src/features/director/useExecutionStream.ts"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "src/novelvideo/director/characters.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "src/novelvideo/director/episode_facts.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "src/novelvideo/director/episode_format.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "src/novelvideo/director/fact_guard.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "src/novelvideo/director/media.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "src/novelvideo/director/media_batch.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "src/novelvideo/director/props.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "src/novelvideo/director/scenes.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/character-bible/SKILL.md"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/character-bible/references/character-craft.md"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/character-bible/references/prop-craft.md"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/character-bible/references/scene-craft.md"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-review/SKILL.md"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-writing/SKILL.md"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "src/novelvideo/director/streaming.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "tests/director/live_characters.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "tests/director/live_episode_facts.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "tests/director/live_episodes.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "tests/director/live_props.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "tests/director/live_scenes.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "tests/director/pixel_compare.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "tests/director/test_characters.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "tests/director/test_episode_facts.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "tests/director/test_episode_format.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "tests/director/test_fact_guard.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "tests/director/test_media.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "tests/director/test_media_batch.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "tests/director/test_props.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "tests/director/test_scenes.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+[[claims]]
+path = "tests/director/test_streaming.py"
+mode = "read-only"
+reason = "Import b5883b8f through automatic merge only; preserve original Director behavior."
+
+
+[[claims]]
+path = "frontend/public/locales/vi/translation.json"
+mode = "shared"
+shared_with = ["*", "h3-prompt-optimizer", "storyboard-dual-view", "video-prompt-split"]
+reason = "Merge locale keys from both branch tips without dropping provider, H3 or Director labels."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/VideoNode.tsx"
+mode = "shared"
+shared_with = ["canvas-lod-perf", "*", "video-prompt-split"]
+reason = "Final integration of H3/Mixed, LibTV/depth/shot, and upstream validation/extension behavior."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/shared/videoModelCapabilities.ts"
+mode = "exclusive"
+reason = "Resolve the H3 capability matrix with upstream reference-validation rules."
+
+[[claims]]
+path = "tests/test_freezone_canvas_route_home_node_guard.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Resolve the route-count and home-node guard contract against the merged route table."
+
+[[claims]]
+path = "src/novelvideo/agents/story_writer.py"
+mode = "shared"
+shared_with = ["story-writer"]
+reason = "Adopt the upstream agent-specific text capability without changing story behavior."
+
+[[claims]]
+path = "src/novelvideo/freezone/history.py"
+mode = "shared"
+shared_with = ["canvas-lod-perf", "liblib-canvas-parity"]
+reason = "Align the thumbnail prewarm docstring with the fork's all-variant implementation."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/PromptMentionEditor.tsx"
+mode = "exclusive"
+reason = "Preserve the pending material-replacement chip while H3 candidate signatures update."
+
+[[claims]]
+path = "tests/test_task_payload_projection.py"
+mode = "exclusive"
+reason = "Update the complete runner-count sentinel for the merged freezone registry."
+
+[[claims]]
+path = "tests/test_task_runner_home_node_placement.py"
+mode = "shared"
+shared_with = ["depth-motion-da3", "shot-breakdown"]
+reason = "Add the fork's self-contained audio transform to the merged placement contract."
+
+[[claims]]
+path = "README.md"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "assets/readme/ASSET-LAYOUT-REVISION.md"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "assets/readme/GENERATION.md"
+mode = "exclusive"
+reason = "Normalize the upstream file's extra EOF blank line for repository format gates."
+
+[[claims]]
+path = "assets/readme/REVISION-NOTES.md"
+mode = "exclusive"
+reason = "Normalize the upstream file's extra EOF blank line for repository format gates."
+
+[[claims]]
+path = "assets/readme/asset-library.jpg"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "assets/readme/director-world.jpg"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "assets/readme/storyboards.jpg"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "assets/readme/xia-director.jpg"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "docs/reference-media-validation.md"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/public/locales/en/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Merge locale keys from both branch tips without dropping provider, H3 or Director labels."
+
+[[claims]]
+path = "frontend/public/locales/zh/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Merge locale keys from both branch tips without dropping provider, H3 or Director labels."
+
+[[claims]]
+path = "frontend/src/__tests__/api/client.test.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/api/freezone-video-extend.test.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/components/credits/credit-center-payment-visibility.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/components/credits/payment-order-lifecycle.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/components/episode/beat-workbench/render-section.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/components/layout/credit-balance-badge.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/components/login/login-card.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/reference-validation.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/video-mode-disabled-reason.test.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/video-model-capabilities.test.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/features/freezone/current-beat-context.test.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/hooks/use-task-controller-previous-run.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/lib/custom-recharge.test.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/lib/payment-return.test.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/lib/product-surfaces.test.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/lib/queries/credits.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/lib/queries/payments.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/routes/audio-indextts2-contract.test.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/routes/checkout-custom-recharge.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/routes/credits-org-scope.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/__tests__/routes/credits-route.test.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/api/ops.ts"
+mode = "shared"
+shared_with = ["*"]
+reason = "Resolve the public upstream enhancement API conflict after existing workstream commits."
+
+[[claims]]
+path = "frontend/src/api/referenceMediaLimits.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/api/skills.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/components/credits/CreditCenterDialog.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/components/episode/beat-workbench/audio-pane.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/components/episode/beat-workbench/batch-bar.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/components/episode/beat-workbench/batch-panel.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/components/episode/beat-workbench/render-section.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/components/layout/credit-balance-badge.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/components/login/login-card.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/components/settings/settings-dialog.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/components/themed-toaster.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/features/canvas/domain/canvasNodes.ts"
+mode = "shared"
+shared_with = ["*"]
+reason = "Resolve the public upstream video enhancement node union while retaining private node contracts."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/ImageGenNode.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/SkillNode.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/VideoOperationsPanel.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/shared/ReferenceValidationDialog.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/features/freezone/context/currentBeatContext.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/lib/api-errors.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/lib/audioTranscode.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/lib/custom-recharge.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/lib/payment-errors.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/lib/payment-navigation.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/lib/payment-return.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/lib/queries/credits.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/lib/queries/payments.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/lib/queries/product-surfaces.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/lib/query-keys.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/routeTree.gen.ts"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/routes/_app/credits.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/routes/_app/payment-return.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/routes/checkout.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "frontend/src/routes/recharge.tsx"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "license-inventory.csv"
+mode = "exclusive"
+reason = "Regenerate the license path inventory against the merged Git index."
+
+[[claims]]
+path = "pyproject.toml"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "readme/README_th.md"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "readme/README_vi.md"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "readme/README_zh.md"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "scripts/check_env_config.py"
+mode = "exclusive"
+reason = "Register fork-local optional runtime env reads in the merged ratchet."
+
+[[claims]]
+path = "src/novelvideo/api/deps.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/api/gunicorn_worker.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/api/routes/files.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/api/routes/freezone.py"
+mode = "read-only"
+reason = "This sync workstream imports the merged route unchanged; the H3 follow-up is tracked separately."
+
+[[claims]]
+path = "src/novelvideo/api/routes/generation.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/api/routes/tasks.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/api/schemas.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Resolve the public upstream video enhancement schema conflict while retaining private routes."
+
+[[claims]]
+path = "src/novelvideo/api/sse_shutdown.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/director_world/scene_360_builder.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/freezone/audio_node.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/freezone/jobs.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/freezone/reference_validation.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/freezone/video_node.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/generators/indextts2_fal.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/generators/nanobanana_character.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/generators/nanobanana_grid.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/generators/nanobanana_prop.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/generators/pool_indexer.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/generators/render_identity_guard.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/generators/scene_reference_images.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/generators/video_generator.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/media_archive_copy.py"
+mode = "exclusive"
+reason = "Make the optional delivery-port fallback survive registry module reloads like the other optional ports."
+
+[[claims]]
+path = "src/novelvideo/media_model_request_schema.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/official_media_models.json"
+mode = "shared"
+shared_with = ["minimax-h3-canvas-defaults", "minimax-h3-liblib-parity"]
+reason = "Import origin/main unchanged except for the separately claimed MiniMax-H3 default-parameter hunk."
+
+[[claims]]
+path = "src/novelvideo/ports/__init__.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/ports/project.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/ports/registry.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/ports/video_delivery.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/project_context.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/release-notes.md"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/task_backend/run_core.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/task_backend/runners/audio.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/task_backend/runners/render.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/task_backend/runners/video.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "src/novelvideo/utils/media_download.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/contract/test_m05_route_contracts.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/contract/test_m09_route_contracts.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_api_freezone_projection.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_api_grid_upload_transaction.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_api_gunicorn_worker.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_api_render_regenerate.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_freezone_audio_separate_runner.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_freezone_image_backend.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_freezone_mainline_enqueue_projection.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_freezone_reference_file_upload.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_freezone_video_route_modes.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_media_archive_copy.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_media_model_request_schema.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_media_read_authorization.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_media_thumbnails.py"
+mode = "exclusive"
+reason = "Align upstream thumbnail expectations with the fork's all-variant prewarm contract."
+
+[[claims]]
+path = "tests/test_model_gateway_settings.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_newapi_image_gateway.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_p0g4d_audio_egress.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_pool_indexer_concurrency.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_reference_media_routes.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_reference_media_validation.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_release_feed.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_render_identity_guard.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_render_runner_canvas_skill_inputs.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_task_video_runner_returned_last_frame.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_tasks_stream_list.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "tests/test_video_archive_delivery.py"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = "uv.lock"
+mode = "read-only"
+reason = "Import the exact origin/main result through Git's automatic three-way merge; no manual edits."
+
+[[claims]]
+path = ".env.example"
+mode = "exclusive"
+reason = "Document two observed optional runtime settings to close the merged env contract; preserve runtime defaults."
+
+[[claims]]
+path = "DESIGN.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "docs/agent/archive/git-sync-preparation.md"
+mode = "coordination"
+reason = "Merge incoming coordination records and reconcile ownership without changing research facts."
+
+[[claims]]
+path = "docs/agent/claims/liblib-tv-director-discovery.toml"
+mode = "coordination"
+reason = "Merge incoming coordination records and reconcile ownership without changing research facts."
+
+[[claims]]
+path = "docs/agent/claims/tv-director-implementation.toml"
+mode = "coordination"
+reason = "Merge incoming coordination records and reconcile ownership without changing research facts."
+
+[[claims]]
+path = "docs/agent/tasks/liblib-tv-director-discovery.md"
+mode = "coordination"
+reason = "Merge incoming coordination records and reconcile ownership without changing research facts."
+
+[[claims]]
+path = "docs/agent/tasks/local-stack.md"
+mode = "coordination"
+reason = "Merge incoming coordination records and reconcile ownership without changing research facts."
+
+[[claims]]
+path = "docs/agent/tasks/tv-director-implementation.md"
+mode = "coordination"
+reason = "Merge incoming coordination records and reconcile ownership without changing research facts."
+
+[[claims]]
+path = "docs/guides/liblib-tv-director-analysis.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "docs/guides/liblib-tv-director-development.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "docs/guides/tv-director-liblib-gap-validation.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "docs/guides/tv-director-skill-fusion.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "docs/guides/tv-director/acceptance-contracts.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "docs/guides/tv-director/document-semantics.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "docs/guides/tv-director/feature-contracts.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "docs/guides/tv-director/implementation-closure.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "docs/guides/tv-director/implementation-map.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "docs/guides/tv-director/literary-benchmark.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "docs/guides/tv-director/outline-parity.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "docs/guides/tv-director/runtime-validation.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "docs/guides/tv-director/skill-contracts.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "docs/guides/tv-director/source-inventory.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "docs/guides/tv-director/ui-parity.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "docs/guides/tv-director/verify-spec.mjs"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "docs/guides/tv-director/workflow-contracts.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/package.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/pnpm-lock.yaml"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-00.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-01.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-02.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-03.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-04.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-05.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-06.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-07.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-08.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-09.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-10.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-11.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-12.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-13.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/style-00.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/style-01.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/style-02.png"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/style-03.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/style-04.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/style-05.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/style-06.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/style-07.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/style-08.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/style-09.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/style-10.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/style-11.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/style-12.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/style-13.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/style-14.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/style-15.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/style-16.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/style-17.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/style-18.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/style-19.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/public/director-reference/style-20.webp"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/__tests__/director-execution.test.tsx"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/__tests__/director-richtext.test.tsx"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/__tests__/director-ui.test.tsx"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/api/director-execution.ts"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/api/director.ts"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/components/layout/project-header-navigation.tsx"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/components/layout/project-navigation-routes.ts"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/features/director/DirectorPresetDialog.tsx"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/features/director/DirectorStudio.tsx"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/features/director/assets/libtv-icons.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/features/director/assets/preset-templates.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/features/director/assets/reference-assets.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/features/director/components/DirectorCanvas.tsx"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/features/director/components/DirectorDocumentEditor.tsx"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/features/director/components/DirectorHistoryPopover.tsx"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/features/director/components/DirectorPopover.tsx"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/features/director/components/DirectorReferenceIcon.tsx"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/features/director/components/DirectorRichText.tsx"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/features/director/components/DirectorSettingsDialog.tsx"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/features/director/components/DirectorWindow.tsx"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/features/director/components/DocumentVersionPanel.tsx"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/features/director/components/ExecutionHistory.tsx"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/features/director/components/OutlineReviewDialog.tsx"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/features/director/components/PlanningWorkflow.tsx"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/features/director/components/QualityReviewDialog.tsx"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/features/director/components/RevisionImpactDialog.tsx"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/features/director/director-ui-state.ts"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/features/director/director.css"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "frontend/src/routes/_app/projects.$project/director.lazy.tsx"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/api/__init__.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/api/routes/director.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/config.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/__init__.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/checkpoints.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/context.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/dispatch.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/documents.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/duration.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/execution.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/execution_repository.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/migrations/v2.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/models.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/outline.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/outline_review.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/planning.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/quality.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/recovery.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/references.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/repository.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/revisions.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/rules/resolver.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/schemas/__init__.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/schemas/common.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/schemas/documents.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/schemas/execution.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/schemas/foundation.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/schemas/outline_review.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/schemas/planning.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/schemas/quality.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/schemas/revisions.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/semantic_validator.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/character-bible/LICENSE"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/character-bible/fixtures/contracts.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/character-bible/manifest.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/character-bible/method.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/character-bible/provenance.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/character-bible/references/ai-producibility.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/character-bible/schemas/input.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/character-bible/schemas/output.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/character-bible/templates/request.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/direction-options/LICENSE"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/direction-options/fixtures/contracts.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/direction-options/manifest.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/direction-options/method.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/direction-options/provenance.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/direction-options/references/genre-guide.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/direction-options/references/opening-rules.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/direction-options/schemas/input.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/direction-options/schemas/output.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/direction-options/templates/request.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-directory/LICENSE"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-directory/fixtures/contracts.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-directory/manifest.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-directory/method.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-directory/provenance.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-directory/references/episode-writing.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-directory/references/rhythm-curve.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-directory/schemas/input.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-directory/schemas/output.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-directory/templates/request.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-review/LICENSE"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-review/fixtures/contracts.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-review/manifest.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-review/method.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-review/provenance.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-review/references/ai-producibility.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-review/references/episode-writing.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-review/schemas/input.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-review/schemas/output.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-review/templates/request.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-writing/LICENSE"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-writing/fixtures/contracts.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-writing/manifest.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-writing/method.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-writing/provenance.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-writing/references/ai-producibility.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-writing/references/episode-writing.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-writing/references/hook-design.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-writing/references/opening-rules.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-writing/references/rhythm-curve.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-writing/references/satisfaction-matrix.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-writing/schemas/input.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-writing/schemas/output.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/episode-writing/templates/request.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/story-plan/LICENSE"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/story-plan/SKILL.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/story-plan/fixtures/contracts.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/story-plan/manifest.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/story-plan/method.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/story-plan/provenance.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/story-plan/references/opening-rules.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/story-plan/references/rhythm-curve.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/story-plan/references/satisfaction-matrix.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/story-plan/schemas/input.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/story-plan/schemas/output.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/builtin/story-plan/templates/request.md"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/pinned.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/skills/runtime.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/store.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/workflow.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "src/novelvideo/director/writing.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/director/live_execution.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/director/live_outline.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/director/live_outline_review.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/director/outline_benchmark.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/director/preview_execution.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/director/test_context.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/director/test_documents.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/director/test_execution.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/director/test_foundation.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/director/test_history.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/director/test_migrations.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/director/test_outline.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/director/test_outline_benchmark.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/director/test_outline_review.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/director/test_quality.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/director/test_revisions.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/director/test_rule_resolver.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/director/test_skill_runtime.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/director/test_workflow.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/fixtures/director/cases/f01.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/fixtures/director/cases/f03.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/fixtures/director/cases/f05.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/fixtures/director/cases/f11.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/fixtures/director/cases/f17.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/fixtures/director/cases/f19.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/fixtures/director/cases/f23.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/fixtures/director/cases/f27.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/fixtures/director/cases/f28.json"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/test_newapi_text_gateway.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "tests/test_tv_director.py"
+mode = "read-only"
+reason = "Import main f057a867 through automatic three-way merge only; no manual business edits."
+
+[[claims]]
+path = "docs/agent/claims/h3-prompt-optimizer.toml"
+mode = "coordination"
+reason = "Preserve both serial integration declarations when resolving merge conflicts."
+
+[[claims]]
+path = "docs/agent/claims/storyboard-dual-view.toml"
+mode = "coordination"
+reason = "Preserve both serial integration declarations when resolving merge conflicts."
+
+[[claims]]
+path = "docs/agent/claims/video-prompt-split.toml"
+mode = "coordination"
+reason = "Preserve both serial integration declarations when resolving merge conflicts."
+
+[[claims]]
+path = "docs/agent/claims/liblib-canvas-parity.toml"
+mode = "coordination"
+reason = "Import existing remote branch changes through normal Git merge only."
+
+[[claims]]
+path = "docs/agent/tasks/h3-prompt-optimizer.md"
+mode = "coordination"
+reason = "Import existing remote branch changes through normal Git merge only."
+
+[[claims]]
+path = "docs/agent/tasks/liblib-canvas-parity.md"
+mode = "coordination"
+reason = "Import existing remote branch changes through normal Git merge only."
+
+[[claims]]
+path = "docs/agent/tasks/storyboard-dual-view.md"
+mode = "coordination"
+reason = "Import existing remote branch changes through normal Git merge only."
+
+[[claims]]
+path = "docs/agent/tasks/video-prompt-split.md"
+mode = "coordination"
+reason = "Import existing remote branch changes through normal Git merge only."
+
+[[claims]]
+path = "src/novelvideo/task_backend/runners/freezone.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Resolve public upstream enhancement task-runner registration after existing shot and H3 commits."
+
+[[claims]]
+path = "tests/test_p0g4i_freezone_leaf_classification.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Resolve the audited Freezone leaf registry test for the combined task set."
+
+[[claims]]
+path = "docs/agent/claims/canvas-audio-actions.toml"
+mode = "coordination"
+reason = "Record serial public-upstream conflict integration after the existing audio workstream."
+
+[[claims]]
+path = "docs/agent/tasks/canvas-audio-actions.md"
+mode = "coordination"
+reason = "Document the shared-path ordering without changing prior product conclusions."
+
+[[claims]]
+path = "docs/agent/claims/canvas-audio-split.toml"
+mode = "coordination"
+reason = "Record serial public-upstream conflict integration after the existing split workstream."
+
+[[claims]]
+path = "docs/agent/tasks/canvas-audio-split.md"
+mode = "coordination"
+reason = "Document the shared-path ordering without changing prior product conclusions."
+
+[[claims]]
+path = "docs/agent/claims/depth-motion-da3.toml"
+mode = "coordination"
+reason = "Record serial public-upstream conflict integration after the existing depth workstream."
+
+[[claims]]
+path = "docs/agent/tasks/depth-motion-da3.md"
+mode = "coordination"
+reason = "Document the shared-path ordering without changing prior product conclusions."
+
+[[claims]]
+path = "docs/agent/claims/project-chinese-names.toml"
+mode = "coordination"
+reason = "Record serial public-upstream schema integration after the existing project-name workstream."
+
+[[claims]]
+path = "docs/agent/tasks/project-chinese-names.md"
+mode = "coordination"
+reason = "Document the shared-path ordering without changing prior product conclusions."
+
+[[claims]]
+path = "docs/agent/claims/shot-breakdown.toml"
+mode = "coordination"
+reason = "Record serial public-upstream conflict integration after the existing shot workstream."
+
+[[claims]]
+path = "docs/agent/tasks/shot-breakdown.md"
+mode = "coordination"
+reason = "Document the shared-path ordering without changing prior product conclusions."
+
+[[claims]]
+path = "docs/agent/claims/text-node-liblib-visual-parity.toml"
+mode = "coordination"
+reason = "Record serial public-upstream conflict integration after the existing text-node workstream."
+
+[[claims]]
+path = "docs/agent/tasks/text-node-liblib-visual-parity.md"
+mode = "coordination"
+reason = "Document the shared-path ordering without changing prior product conclusions."
+
+[[claims]]
+path = "frontend/src/__tests__/api/freezone-video-upscale-probe.test.ts"
+mode = "read-only"
+reason = "Import the public-upstream probe regression through normal Git merge only."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/generation-resume-race.test.ts"
+mode = "read-only"
+reason = "Accept the public-upstream resume regression through automatic merge only."
+
+[[claims]]
+path = "frontend/src/__tests__/features/canvas/video-upscale-resolutions.test.ts"
+mode = "read-only"
+reason = "Import the public-upstream resolution regression through normal Git merge only."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/resumeGeneration.ts"
+mode = "read-only"
+reason = "Accept the public-upstream resume behavior through automatic merge only."
+
+[[claims]]
+path = "frontend/src/features/canvas/domain/videoUpscaleResolutions.ts"
+mode = "read-only"
+reason = "Import the public-upstream resolution selector through normal Git merge only."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/VideoUpscaleEditorOverlay.tsx"
+mode = "read-only"
+reason = "Accept the public-upstream enhancement UI through automatic merge only."
+
+[[claims]]
+path = "src/novelvideo/freezone/video_slowdown.py"
+mode = "read-only"
+reason = "Import the public-upstream slowdown helper through normal Git merge only."
+
+[[claims]]
+path = "tests/contract/test_m06_route_contracts.py"
+mode = "read-only"
+reason = "Accept the public-upstream route-contract regression through automatic merge only."
+
+[[claims]]
+path = "tests/test_freezone_video_upscale_backend.py"
+mode = "read-only"
+reason = "Accept the public-upstream enhancement backend regression through automatic merge only."
+
+[[claims]]
+path = "tests/test_p0_gray_shared_egress_seam.py"
+mode = "read-only"
+reason = "Accept the public-upstream egress regression through automatic merge only."
+
+[[claims]]
+path = "tests/test_p0g4c_video_egress.py"
+mode = "read-only"
+reason = "Accept the public-upstream video egress regression through automatic merge only."
+
+[[claims]]
+path = "tests/test_video_processing_request.py"
+mode = "read-only"
+reason = "Import the public-upstream processing contract regression through normal Git merge only."

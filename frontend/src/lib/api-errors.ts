@@ -80,6 +80,57 @@ export class BackendStatusError extends Error {
   }
 }
 
+type ReferenceKind = "total" | "media" | "image" | "video" | "audio";
+interface ReferenceCountLimit {
+  kind: ReferenceKind;
+  actual: number;
+  limit: number;
+}
+
+export class ReferenceCountLimitError extends BackendStatusError {
+  constructor(public readonly limits: ReferenceCountLimit[], status: number, body?: unknown) {
+    super(
+      `Too many references: ${limits.map(({ kind, actual, limit }) => `${kind}: ${actual}, maximum ${limit}`).join('; ')}`,
+      status,
+      body,
+    );
+    this.name = "ReferenceCountLimitError";
+  }
+}
+
+function referenceCountLimits(detail: unknown): ReferenceCountLimit[] {
+  const limits: ReferenceCountLimit[] = [];
+  const addLimit = (value: unknown) => {
+    if (!value || typeof value !== "object") return;
+    const { kind, actual, limit } = value as Record<string, unknown>;
+    if (
+      (kind === "total" || kind === "media" || kind === "image" || kind === "video" || kind === "audio") &&
+      typeof actual === "number" && Number.isSafeInteger(actual) &&
+      typeof limit === "number" && Number.isSafeInteger(limit) && limit >= 0 && actual > limit
+    ) limits.push({ kind, actual, limit });
+  };
+  if (Array.isArray(detail)) {
+    for (const item of detail) {
+      if (!item || typeof item !== "object") continue;
+      if (item.type === "reference_count_exceeded") {
+        addLimit(item.ctx);
+      } else if (item.type === "too_long" && item.ctx?.field_type === "List" && Array.isArray(item.loc)) {
+        // Match only reference arrays, not prompt lengths or nested URL fields.
+        const path = item.loc.join('.');
+        const kind = path === "body.h3_options.reference_order" ? "media"
+          : path === "body.references" ? "total" : null;
+        if (kind) addLimit({ kind, actual: item.ctx.actual_length, limit: item.ctx.max_length });
+      }
+    }
+  } else if (detail && typeof detail === "object") {
+    const record = detail as Record<string, unknown>;
+    if (record.code === "REFERENCE_COUNT_EXCEEDED" && Array.isArray(record.limits)) {
+      record.limits.forEach(addLimit);
+    }
+  }
+  return limits;
+}
+
 export class InsufficientCreditsError extends BackendStatusError {
   constructor(
     message: string,
@@ -238,6 +289,20 @@ export function errorFromBackendBody(status: number, body: unknown, fallback: st
   if (typeof detail === "string" && detail.trim()) {
     return new BackendStatusError(detail, status, body);
   }
+  const referenceLimits = referenceCountLimits(detail);
+  if (referenceLimits.length) return new ReferenceCountLimitError(referenceLimits, status, body);
+  if (Array.isArray(detail)) {
+    // FastAPI validation errors include the rejected input too. Surface only
+    // field paths/messages, never the user's prompt, media URLs or credentials.
+    const messages = detail.flatMap(item => {
+      if (!item || typeof item !== 'object' || typeof item.msg !== 'string') return [];
+      const path = Array.isArray(item.loc)
+        ? item.loc.filter((part: unknown) => typeof part === 'string' || typeof part === 'number').join('.')
+        : '';
+      return [path ? `${path}: ${item.msg}` : item.msg];
+    });
+    if (messages.length) return new BackendStatusError(messages.join('; '), status, body);
+  }
   // FastAPI HTTPException 带结构化 detail（如技能接口的 SkillErrorEnvelope）。
   if (detail && typeof detail === "object") {
     const { message: detailMessage, user_action_hint: hint } = detail as {
@@ -271,6 +336,22 @@ async function backendError(error: unknown): Promise<Error | null> {
   const data = (error as HTTPError & { data?: unknown }).data;
   const body = data !== undefined ? data : await safeJsonFromResponse(error.response);
   return errorFromBackendBody(error.response.status, body, error.message);
+}
+
+/** Normalize HTTP failures without consuming a successful SSE response. */
+export async function responseWithBackendError(request: Promise<Response>): Promise<Response> {
+  try {
+    const response = await request;
+    if (!response.ok) {
+      const body = await safeJsonFromResponse(response);
+      throw errorFromBackendBody(response.status, body, response.statusText) ?? new Error(response.statusText);
+    }
+    return response;
+  } catch (error) {
+    const parsedError = await backendError(error);
+    if (parsedError) throw parsedError;
+    throw error;
+  }
 }
 
 export async function jsonWithBackendError<T>(request: Promise<Response>): Promise<T> {
@@ -486,6 +567,13 @@ export function humanizeTaskError(
 }
 
 export function backendErrorToastMessage(error: unknown, t: TFunction): string {
+  if (error instanceof ReferenceCountLimitError) {
+    return t("common.referenceCountExceeded", {
+      details: error.limits.map(({ kind, actual, limit }) => t("common.referenceCountDetail", {
+        kind: t(`common.referenceKinds.${kind}`), actual, limit,
+      })).join('; '),
+    });
+  }
   if (error instanceof InsufficientCreditsError) {
     return t("common.insufficientCredits", {
       defaultValue: error.message || t("common.error"),

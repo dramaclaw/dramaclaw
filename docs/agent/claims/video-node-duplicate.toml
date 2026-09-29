@@ -1,0 +1,25 @@
+version = 1
+slug = "video-node-duplicate"
+ledger = "docs/agent/tasks/video-node-duplicate.md"
+baseline = "762591d"
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/NodeActionToolbar.tsx"
+mode = "shared"
+shared_with = ["video-prompt-split", "liblib-canvas-parity", "shot-breakdown", "canvas-audio-split", "canvas-audio-actions", "creative-intro-implementation"]
+reason = "Add video duplicate control using existing graph duplication."
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Plan and progress."
+
+[[claims]]
+path = "docs/agent/tasks/video-node-duplicate.md"
+mode = "coordination"
+reason = "Plan and progress."
+
+[[claims]]
+path = "docs/agent/claims/video-node-duplicate.toml"
+mode = "coordination"
+reason = "Plan and progress."

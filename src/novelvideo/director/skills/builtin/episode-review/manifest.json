@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 2,
+  "key": "studio/episode-review",
+  "stage": "M12",
+  "version": "2.2.0",
+  "purpose": "Independent version-bound literary review; no writing or approval permissions.",
+  "applicable": [
+    "original",
+    "adaptation"
+  ],
+  "excluded": [
+    "omni",
+    "directing"
+  ],
+  "method": "method.md",
+  "inputSchema": "schemas/input.json",
+  "outputSchema": "schemas/output.json",
+  "template": "templates/request.md",
+  "fixtures": "fixtures/contracts.json",
+  "provenance": "provenance.json",
+  "requiredReferences": [
+    {
+      "path": "references/episode-writing.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/episode-writing.md",
+      "sha256": "524b3fd13cce2493caa86ce914ba566df20ea53bda2340989025b9d06cb4c298",
+      "when": "always"
+    },
+    {
+      "path": "references/ai-producibility.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/ai-producibility.md",
+      "sha256": "9c16eef426382dc375bde8c76a0db2a9ed8f8b6da3c5d16c42cd79c33a0f2e84",
+      "when": "always"
+    }
+  ],
+  "ruleIds": [
+    "G05",
+    "G06",
+    "G07",
+    "G08",
+    "G09",
+    "G10",
+    "G11",
+    "G12",
+    "G13",
+    "G14"
+  ],
+  "allowedTools": [],
+  "validators": [
+    "review.six_checks"
+  ],
+  "costClasses": [
+    "text.generate"
+  ],
+  "checkpointKinds": [
+    "WAIT_EPISODE"
+  ],
+  "maxSchemaRepairAttempts": 0,
+  "maxAutomaticRevisionAttempts": 0,
+  "compatibility": "six-check base schema plus host-frozen full-paragraph episodeFacts; human truth verification required",
+  "files": {
+    "method.md": "4ed65e23497747c0f8b20852f26db9bf964028d2f2c6418a88a1ff03539070f8",
+    "templates/request.md": "d1c375719c384b32ca26eabe92060775014acb49d3e6907796da9af89e52e5c2",
+    "schemas/input.json": "245bec3439cc8e2f3d6ae9ed7a2aff423c5cd7d6a197f87454d106201493027c",
+    "schemas/output.json": "0feadf760f30848fe8ab96318771bebaad265c4c5512e22e130167e8bcecdcae",
+    "fixtures/contracts.json": "24556657913222e510d4c493c19ec355eb6698c5a4b8a945323797b18a3f37c8",
+    "LICENSE": "a42977a69c8c05840da8a8e2f9d8dff9f5c8346f236eeabf8c97fb0812f5fe50",
+    "references/episode-writing.md": "524b3fd13cce2493caa86ce914ba566df20ea53bda2340989025b9d06cb4c298",
+    "references/ai-producibility.md": "9c16eef426382dc375bde8c76a0db2a9ed8f8b6da3c5d16c42cd79c33a0f2e84",
+    "provenance.json": "33e571577b0a53c2453f6464c50ce7b78225c6f077319bc00bd4f0d331719b53",
+    "SKILL.md": "87894c516384124e3aff42b7cf9464435226e9b7fdbab5eda12ed7de0dc6dbff"
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "policyId": "tv-director-parity/2026-09-27-r1",
+  "kind": "implementation_acceptance_design",
+  "productAcceptanceStatus": "not_run",
+  "authority": "docs/guides/tv-director/acceptance-contracts.md",
+  "modelPolicy": {
+    "local": "doubao-seed-evolving",
+    "reference": "Seed",
+    "allowSilentFallback": false,
+    "allowDefaultMultiModelComparison": false,
+    "captureActualRouteAndUnknowns": true
+  },
+  "visual": {
+    "primaryViewport": [1440, 900],
+    "regressionViewports": [[1920, 1080], [1200, 863], [390, 844]],
+    "browserZoom": 1,
+    "deviceScaleFactor": 1,
+    "sameFontBrowserOsContentAndCanvasScale": true,
+    "rgbChannelThreshold": 16,
+    "maxFullFrameChangedRatio": 0.01,
+    "maxCriticalGeometryErrorCssPx": 1,
+    "maxFontSizeErrorCssPx": 1,
+    "allowMaskResizeBlurOrAlignmentForPass": false,
+    "regionMetrics": "diagnostic_only",
+    "criticalUsabilityFailuresAllowed": 0,
+    "unmatchedDynamicState": "not_comparable",
+    "windowsRequiresPhysicalBrowser": true,
+    "states": ["default", "hover", "focus", "selected", "menu_open", "empty", "populated", "generating", "streaming", "editing", "saving", "save_failed", "conflict", "pending_review", "partially_accepted", "all_rejected", "chat_expanded", "chat_collapsed", "docked", "floating", "refresh_restored", "offline", "reconnected", "reentered"]
+  },
+  "literary": {
+    "scale": [1, 5],
+    "dimensions": ["causality_continuity", "character_dialogue", "pacing_closure", "style_audience", "filmability_execution"],
+    "hardFactFailuresAllowed": 0,
+    "medianMinimumPerDimension": 4,
+    "pairedMinimumMeanDelta": -0.5,
+    "fullGatePairedPassingFraction": 0.8,
+    "fullGateMaxStructuralRewriteFraction": 0.2,
+    "independentReviewersForFullGate": 2,
+    "reviewerDisagreementForArbitration": 2,
+    "stageSingleReviewerResult": "provisional_not_full_parity",
+    "fullGroups": ["B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B09", "B10", "B11", "B12"],
+    "runsPerFullGroupPerSide": 2,
+    "fullSamplesPerSide": 24,
+    "stageProbes": {
+      "A": {"story": "入画", "mode": "adaptation", "firstStage": "S1"},
+      "B": {"story": "原创都市现实小人物", "mode": "original", "firstStage": "S2"},
+      "C": {"story": "无反派温情单集", "mode": "original", "firstStage": "S3"},
+      "D": {"story": "至少两集悬疑因果与物件交接", "mode": "original", "firstStage": "S4"}
+    }
+  },
+  "documentLifecycle": {
+    "kinds": ["outline", "characters", "locations", "props", "episode"],
+    "operations": ["generate", "view", "chat_revise", "diff_review", "edit_save", "refresh_restore", "downstream_read"],
+    "minimumCells": 35,
+    "requireIndependentEvidencePerCell": true,
+    "versionIdentity": ["documentId", "version", "contentHash"],
+    "sameDocumentAcrossSurfacesNotSameVersionAcrossDocuments": true
+  },
+  "stages": [
+    {"id": "S0", "dependsOn": [], "gate": "contracts_and_current_case_audit", "status": "not_run"},
+    {"id": "S1", "dependsOn": ["S0"], "gate": "adaptation_outline_complete_loop", "requiredCases": ["S1-01", "S1-02", "S1-03", "S1-04", "S1-05", "S1-06", "S1-07", "S1-08", "S1-09", "S1-10"], "status": "not_run"},
+    {"id": "S2", "dependsOn": ["S1"], "gate": "original_preset_question_outline", "requiredCases": ["S2-01", "S2-02", "S2-03", "S2-04", "S2-05", "S2-06"], "status": "not_run"},
+    {"id": "S3", "dependsOn": ["S2"], "gate": "preparation_documents_lifecycle", "status": "not_run"},
+    {"id": "S4", "dependsOn": ["S3"], "gate": "episode_lifecycle_and_continuation", "status": "not_run"},
+    {"id": "S5", "dependsOn": ["S4"], "gate": "cross_document_spec_changes", "status": "not_run"},
+    {"id": "S6", "dependsOn": ["S5"], "orderedSubgates": ["omni_canvas_and_batch", "directing_and_media_handoff"], "status": "not_run"},
+    {"id": "S7", "dependsOn": ["S6"], "gate": "skill_lifecycle", "status": "not_run"},
+    {"id": "S8", "dependsOn": ["S7"], "gate": "media_provider_execution", "status": "not_run"},
+    {"id": "S9", "dependsOn": ["S8"], "gate": "settings_sharing_plugins_devices", "status": "not_run"},
+    {"id": "S10", "dependsOn": ["S9"], "gate": "full_states_and_paired_literary_acceptance", "status": "not_run"}
+  ]
+}

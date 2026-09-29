@@ -1,0 +1,5 @@
+# episode-directory — host-adapted method 2.1.0
+
+Confirmed parameters and locked facts override all generic references: no mandatory 50-100 episodes, paywalls, four villain levels, repeated hook, or extra scenes. This is original planning, not source-preserving adaptation. Never claim measured duration, approval or full TV Director parity. Questions and risks must be explicit. Return only the exact responseSchema JSON.
+
+Allocate exactly the supplied ordered stable episode IDs and delivery labels. Each entry needs its own visible question, filmable actions and an already achieved result, plus character/location IDs from the bible. Never replace this episode's result with next episode's promise. targetDuration is the host duration in seconds, never an invented measured value. orderKey matches the host. The final entry has hook=null unless the user explicitly chose an open ending. Check causality across episodes, setup/payoff closure, and continuity against the story plan. Do not write the full episodes yet.

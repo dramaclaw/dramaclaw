@@ -1,0 +1,313 @@
+{
+  "schemaVersion": 1,
+  "caseId": "F17",
+  "source": "synthetic",
+  "scope": "foundation_guard_only_not_full_ui_or_workflow_acceptance",
+  "variants": [
+    {
+      "id": "parallel-eight",
+      "operation": "duration",
+      "input": {
+        "documentVersion": 1,
+        "semanticHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "targetSeconds": 30,
+        "beats": [
+          {
+            "id": "speech",
+            "track": "speech",
+            "estimate": {
+              "minimum": 8,
+              "maximum": 8
+            },
+            "timingStatus": "assumed",
+            "dependsOn": [],
+            "resources": []
+          },
+          {
+            "id": "walk",
+            "track": "action",
+            "estimate": {
+              "minimum": 6,
+              "maximum": 6
+            },
+            "timingStatus": "assumed",
+            "dependsOn": [],
+            "resources": []
+          }
+        ]
+      },
+      "expected": {
+        "minimum": 8,
+        "maximum": 8,
+        "status": "ESTIMATED",
+        "productionReady": false
+      }
+    },
+    {
+      "id": "sequential-fourteen",
+      "operation": "duration",
+      "input": {
+        "documentVersion": 1,
+        "semanticHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "targetSeconds": 30,
+        "beats": [
+          {
+            "id": "speech",
+            "track": "speech",
+            "estimate": {
+              "minimum": 8,
+              "maximum": 8
+            },
+            "timingStatus": "assumed",
+            "dependsOn": [],
+            "resources": []
+          },
+          {
+            "id": "walk",
+            "track": "action",
+            "estimate": {
+              "minimum": 6,
+              "maximum": 6
+            },
+            "timingStatus": "assumed",
+            "dependsOn": [
+              "speech"
+            ],
+            "resources": []
+          }
+        ]
+      },
+      "expected": {
+        "minimum": 14,
+        "maximum": 14,
+        "status": "ESTIMATED"
+      }
+    },
+    {
+      "id": "eleven-not-ten",
+      "operation": "duration",
+      "input": {
+        "documentVersion": 1,
+        "semanticHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "targetSeconds": 10,
+        "beats": [
+          {
+            "id": "put-torch",
+            "track": "action",
+            "estimate": {
+              "minimum": 2,
+              "maximum": 2
+            },
+            "timingStatus": "assumed",
+            "dependsOn": [],
+            "resources": []
+          },
+          {
+            "id": "untie",
+            "track": "action",
+            "estimate": {
+              "minimum": 4,
+              "maximum": 4
+            },
+            "timingStatus": "assumed",
+            "dependsOn": [
+              "put-torch"
+            ],
+            "resources": []
+          },
+          {
+            "id": "take",
+            "track": "action",
+            "estimate": {
+              "minimum": 2,
+              "maximum": 2
+            },
+            "timingStatus": "assumed",
+            "dependsOn": [
+              "untie"
+            ],
+            "resources": []
+          },
+          {
+            "id": "exit",
+            "track": "action",
+            "estimate": {
+              "minimum": 3,
+              "maximum": 3
+            },
+            "timingStatus": "assumed",
+            "dependsOn": [
+              "take"
+            ],
+            "resources": []
+          }
+        ]
+      },
+      "expected": {
+        "minimum": 11,
+        "status": "FAIL"
+      }
+    },
+    {
+      "id": "unknown-not-zero",
+      "operation": "duration",
+      "input": {
+        "documentVersion": 1,
+        "semanticHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "targetSeconds": 30,
+        "beats": [
+          {
+            "id": "unknown",
+            "track": "action",
+            "estimate": null,
+            "timingStatus": "unknown",
+            "dependsOn": [],
+            "resources": []
+          }
+        ]
+      },
+      "expected": {
+        "minimum": null,
+        "maximum": null,
+        "status": "UNKNOWN",
+        "productionReady": false
+      }
+    },
+    {
+      "id": "unknown-does-not-hide-overflow",
+      "operation": "duration",
+      "input": {
+        "documentVersion": 1,
+        "semanticHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "targetSeconds": 10,
+        "beats": [
+          {
+            "id": "long",
+            "track": "action",
+            "estimate": {
+              "minimum": 11,
+              "maximum": 11
+            },
+            "timingStatus": "assumed",
+            "dependsOn": [],
+            "resources": []
+          },
+          {
+            "id": "unknown",
+            "track": "action",
+            "estimate": null,
+            "timingStatus": "unknown",
+            "dependsOn": [],
+            "resources": []
+          }
+        ]
+      },
+      "expected": {
+        "minimum": 11,
+        "maximum": null,
+        "status": "FAIL"
+      }
+    },
+    {
+      "id": "resource-double-booked",
+      "operation": "duration",
+      "input": {
+        "documentVersion": 1,
+        "semanticHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "targetSeconds": 30,
+        "beats": [
+          {
+            "id": "a",
+            "track": "action",
+            "estimate": {
+              "minimum": 4,
+              "maximum": 4
+            },
+            "timingStatus": "assumed",
+            "dependsOn": [],
+            "resources": [
+              "right-hand"
+            ]
+          },
+          {
+            "id": "b",
+            "track": "action",
+            "estimate": {
+              "minimum": 3,
+              "maximum": 3
+            },
+            "timingStatus": "assumed",
+            "dependsOn": [],
+            "resources": [
+              "right-hand"
+            ]
+          }
+        ]
+      },
+      "expectedError": "BLOCKING_RESOURCE_CONFLICT"
+    },
+    {
+      "id": "cycle",
+      "operation": "duration",
+      "input": {
+        "documentVersion": 1,
+        "semanticHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "targetSeconds": 30,
+        "beats": [
+          {
+            "id": "a",
+            "track": "action",
+            "estimate": {
+              "minimum": 4,
+              "maximum": 4
+            },
+            "timingStatus": "assumed",
+            "dependsOn": [
+              "b"
+            ],
+            "resources": []
+          },
+          {
+            "id": "b",
+            "track": "action",
+            "estimate": {
+              "minimum": 3,
+              "maximum": 3
+            },
+            "timingStatus": "assumed",
+            "dependsOn": [
+              "a"
+            ],
+            "resources": []
+          }
+        ]
+      },
+      "expectedError": "DEPENDENCY_CYCLE"
+    },
+    {
+      "id": "dangling-predecessor",
+      "operation": "duration",
+      "input": {
+        "documentVersion": 1,
+        "semanticHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "targetSeconds": 30,
+        "beats": [
+          {
+            "id": "a",
+            "track": "action",
+            "estimate": {
+              "minimum": 4,
+              "maximum": 4
+            },
+            "timingStatus": "assumed",
+            "dependsOn": [
+              "missing"
+            ],
+            "resources": []
+          }
+        ]
+      },
+      "expectedError": "DANGLING_DEPENDENCY"
+    }
+  ]
+}

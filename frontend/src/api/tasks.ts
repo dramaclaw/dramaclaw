@@ -126,6 +126,12 @@ export interface TaskStreamHandler {
   onTask: (task: TaskState) => void;
   onError?: (err: Event) => void;
   onAuthRevoked?: () => void;
+  /**
+   * Replay the current project snapshot when the stream connects. Awaiters
+   * need this because a task may complete between submit and EventSource
+   * connection; the shared HTTP poller remains the recovery fallback.
+   */
+  snapshot?: boolean;
   projectId?: string;
 }
 
@@ -156,8 +162,9 @@ export function openTaskStream(handler: TaskStreamHandler): SseHandle {
 
   const connect = () => {
     if (closed) return;
+    const snapshot = handler.snapshot === true;
     es = new EventSource(
-      `/api/v1/projects/${encodeURIComponent(projectId)}/tasks/stream?snapshot=false`,
+      `/api/v1/projects/${encodeURIComponent(projectId)}/tasks/stream?snapshot=${snapshot}`,
       { withCredentials: true },
     );
 
@@ -213,6 +220,8 @@ interface PendingResolver {
   lastSeenAt: number;
   /** Latest non-terminal status the server reported, for the detach report. */
   lastStatus: TaskStatus | null;
+  /** 非终态更新的观察者；见 awaitTaskCompletion 的 options.onProgress。 */
+  onProgress?: (task: TaskState) => void;
 }
 
 interface ProjectPoller {
@@ -331,6 +340,12 @@ function settleTask(task: TaskState): void {
     // so the idle budget starts over. Queue time must not eat execution time.
     pending.lastSeenAt = Date.now();
     pending.lastStatus = task.status;
+    try {
+      pending.onProgress?.(task);
+    } catch (error) {
+      // 观察者的问题不该把被观察的任务拖下水。
+      console.error("[tasks] onProgress handler threw", error);
+    }
   }
 }
 
@@ -374,6 +389,7 @@ function ensureSharedStream(projectId?: string) {
   if (sharedStreamsByProject.has(resolved)) return;
   const stream = openTaskStream({
     projectId: resolved,
+    snapshot: true,
     onTask: (task) => {
       settleTask(task);
     },
@@ -459,11 +475,18 @@ function ensureProjectPoller(projectId: string): void {
 export function awaitTaskCompletion(
   taskKey: string,
   projectId: string,
-  options?: { timeoutMs?: number; taskType?: string | null },
+  options?: {
+    timeoutMs?: number;
+    taskType?: string | null;
+    /**
+     * 每收到一次非终态更新就回调一次。给那些**跑完之前**就有东西可用的任务用
+     * （逐帧拉片：分镜先好、动态其次、音乐最后），让调用方不必等整个任务结束。
+     * 回调抛异常不影响任务本身——等待的是结果，不是这个回调。
+     */
+    onProgress?: (task: TaskState) => void;
+  },
 ): Promise<TaskState> {
   const resolved = resolveTaskProjectId(projectId);
-  ensureSharedStream(resolved);
-  ensureProjectPoller(resolved);
   const startedAt = Date.now();
   const budgetMs =
     options?.timeoutMs ??
@@ -479,8 +502,14 @@ export function awaitTaskCompletion(
       budgetMs,
       lastSeenAt: startedAt,
       lastStatus: null,
+      onProgress: options?.onProgress,
     });
   });
+  // Register the resolver before opening the stream. The server may replay a
+  // completed task immediately when snapshot=true, and that event must not
+  // arrive before the pending map contains this task key.
+  ensureSharedStream(resolved);
+  ensureProjectPoller(resolved);
   return promise.finally(() => {
     pendingByTaskKey.delete(taskKey);
     maybeStopProjectMonitoring(resolved);

@@ -3,6 +3,8 @@
 
 export const PROJECT_SECTION_ROUTES = {
   freezone: "/projects/$project/freezone",
+  story: "/projects/$project/story",
+  director: "/projects/$project/director",
   ingest: "/projects/$project/ingest",
   characters: "/projects/$project/characters",
   episodes: "/projects/$project/episodes",

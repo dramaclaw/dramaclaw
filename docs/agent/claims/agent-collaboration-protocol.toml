@@ -1,0 +1,83 @@
+version = 1
+slug = "agent-collaboration-protocol"
+ledger = "docs/agent/tasks/agent-collaboration-protocol.md"
+baseline = "0e2d69770c8cff13e0efcf7ea21ff01498920373"
+
+[[claims]]
+path = "AGENTS.md"
+mode = "shared"
+shared_with = ["creative-intro-discovery"]
+reason = "Stable repository-wide agent contract."
+
+[[claims]]
+path = ".gitignore"
+mode = "shared"
+shared_with = ["*"]
+reason = "Ignore only the local lock directory without owning unrelated rules."
+
+[[claims]]
+path = ".pre-commit-config.yaml"
+mode = "shared"
+shared_with = ["*"]
+reason = "Run the read-only repository guard before commits."
+
+[[claims]]
+path = ".github/workflows/ci.yml"
+mode = "shared"
+shared_with = ["*"]
+reason = "Run the collaboration contract check in CI before heavy setup."
+
+[[claims]]
+path = ".claude/hooks/**"
+mode = "exclusive"
+reason = "Claude-specific adapter for the universal protocol."
+
+[[claims]]
+path = "docs/agent/README.md"
+mode = "exclusive"
+reason = "Detailed operating manual for all agents."
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Every workstream updates the shared live index."
+
+[[claims]]
+path = "docs/agent/TEMPLATE.md"
+mode = "exclusive"
+reason = "Canonical workstream ledger template."
+
+[[claims]]
+path = "docs/agent/CLAIM_TEMPLATE.toml.example"
+mode = "exclusive"
+reason = "Copyable machine-scope template for new workstreams."
+
+[[claims]]
+path = "docs/agent/archive/README.md"
+mode = "exclusive"
+reason = "Archive lifecycle rules."
+
+[[claims]]
+path = "docs/agent/claims/README.md"
+mode = "exclusive"
+reason = "Machine-readable scope format documentation."
+
+[[claims]]
+path = "docs/agent/claims/agent-collaboration-protocol.toml"
+mode = "coordination"
+reason = "This workstream's machine-readable scope."
+
+[[claims]]
+path = "docs/agent/tasks/agent-collaboration-protocol.md"
+mode = "coordination"
+reason = "This workstream's plan and handoff ledger."
+
+[[claims]]
+path = "scripts/agent_guard.py"
+mode = "exclusive"
+reason = "Cross-client executable guard."
+
+[[claims]]
+path = "tests/test_agent_guard.py"
+mode = "exclusive"
+reason = "Regression tests for the guard."

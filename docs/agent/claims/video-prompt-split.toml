@@ -1,0 +1,76 @@
+version = 1
+slug = "video-prompt-split"
+ledger = "docs/agent/tasks/video-prompt-split.md"
+baseline = "762591d"
+
+[[claims]]
+path = "frontend/src/features/canvas/application/videoPromptSplit.ts"
+mode = "shared"
+shared_with = ["pending-code-checkpoint"]
+reason = "Timed prompt split integration."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/NodeActionToolbar.tsx"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "canvas-audio-split", "creative-intro-implementation", "liblib-canvas-parity", "shot-breakdown", "video-node-duplicate"]
+reason = "Timed prompt split integration."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/VideoNode.tsx"
+mode = "shared"
+shared_with = ["canvas-lod-perf", "depth-motion-da3", "liblib-canvas-parity", "shot-breakdown", "sync-main-remotes"]
+reason = "Timed prompt split integration."
+
+[[claims]]
+path = "frontend/src/stores/canvasStore.ts"
+mode = "shared"
+shared_with = ["shot-breakdown"]
+reason = "Timed prompt split integration."
+
+[[claims]]
+path = "frontend/public/locales/zh/translation.json"
+mode = "shared"
+shared_with = ["liblib-import-recovery", "asset-replacement-picker", "canvas-audio-actions", "canvas-audio-split", "creative-intro-blend", "creative-intro-implementation", "depth-motion-da3", "h3-prompt-optimizer", "liblib-canvas-parity", "local-stack", "minimax-h3-liblib-parity", "multi-provider-models", "shot-breakdown", "story-writer", "storyboard-dual-view", "sync-main-remotes", "tv-director-implementation", "project-chinese-names"]
+reason = "Timed prompt split integration."
+
+[[claims]]
+path = "frontend/public/locales/en/translation.json"
+mode = "shared"
+shared_with = ["liblib-import-recovery", "asset-replacement-picker", "canvas-audio-actions", "canvas-audio-split", "creative-intro-blend", "creative-intro-implementation", "depth-motion-da3", "h3-prompt-optimizer", "liblib-canvas-parity", "local-stack", "minimax-h3-liblib-parity", "multi-provider-models", "shot-breakdown", "story-writer", "storyboard-dual-view", "sync-main-remotes", "tv-director-implementation", "project-chinese-names"]
+reason = "Timed prompt split integration."
+
+[[claims]]
+path = "frontend/public/locales/vi/translation.json"
+mode = "shared"
+shared_with = ["liblib-import-recovery", "asset-replacement-picker", "canvas-audio-actions", "canvas-audio-split", "creative-intro-blend", "creative-intro-implementation", "depth-motion-da3", "h3-prompt-optimizer", "liblib-canvas-parity", "local-stack", "minimax-h3-liblib-parity", "multi-provider-models", "shot-breakdown", "story-writer", "storyboard-dual-view", "sync-main-remotes", "tv-director-implementation", "project-chinese-names"]
+reason = "Timed prompt split integration."
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Plan and handoff."
+
+[[claims]]
+path = "docs/agent/tasks/video-prompt-split.md"
+mode = "coordination"
+reason = "Plan and handoff."
+
+[[claims]]
+path = "docs/agent/claims/video-prompt-split.toml"
+mode = "coordination"
+reason = "Plan and handoff."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/videoSplitPlacement.ts"
+mode = "exclusive"
+reason = "User-requested split placement repair and regression tests."
+
+[[claims]]
+path = "frontend/src/__tests__/video-prompt-split.test.ts"
+mode = "exclusive"
+reason = "User-requested split placement repair and regression tests."
+
+[[claims]]
+path = "frontend/src/__tests__/stores/canvas-store-video-split.test.ts"
+mode = "exclusive"
+reason = "User-requested split placement repair and regression tests."

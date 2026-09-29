@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 2,
+  "key": "studio/episode-directory",
+  "stage": "M09",
+  "version": "2.1.0",
+  "purpose": "episode-directory",
+  "applicable": [
+    "original"
+  ],
+  "excluded": [
+    "omni",
+    "directing"
+  ],
+  "method": "method.md",
+  "inputSchema": "schemas/input.json",
+  "outputSchema": "schemas/output.json",
+  "template": "templates/request.md",
+  "fixtures": "fixtures/contracts.json",
+  "provenance": "provenance.json",
+  "requiredReferences": [
+    {
+      "path": "references/rhythm-curve.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/rhythm-curve.md",
+      "sha256": "c462669c3224020604e627aa3d6a0c9fb72a5fd41ca730759232dfc073eaea98",
+      "when": "always"
+    },
+    {
+      "path": "references/episode-writing.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/episode-writing.md",
+      "sha256": "524b3fd13cce2493caa86ce914ba566df20ea53bda2340989025b9d06cb4c298",
+      "when": "always"
+    }
+  ],
+  "ruleIds": [
+    "G01",
+    "G03",
+    "G06",
+    "G07",
+    "G08",
+    "G11",
+    "G18"
+  ],
+  "allowedTools": [],
+  "validators": [
+    "planning.M09"
+  ],
+  "costClasses": [
+    "text.generate"
+  ],
+  "checkpointKinds": [
+    "WAIT_OUTLINE"
+  ],
+  "maxSchemaRepairAttempts": 0,
+  "maxAutomaticRevisionAttempts": 0,
+  "compatibility": "Structured original preparation only; no source audit, episode capacity plan or private LibTV source claimed",
+  "files": {
+    "method.md": "c3412ee24ef569dc9ddd93d2d773f5483a596ebe99b5e5a6a1ff55e86df09764",
+    "templates/request.md": "e64e9d119311bf169e2b86bb2cd67d6e79fafd07544351713924947d7448659c",
+    "schemas/input.json": "0a2e3c1043a234d9b5e4b398d070b53378f02dafbf4b2aa9497efbadbc21cd31",
+    "schemas/output.json": "94242fed143ef4fb75baf5eec07c41949ada52503276abcca610d2f92d22304e",
+    "fixtures/contracts.json": "a918aa9dc7282659e2a12f9ff98a60d48df3c05ad78b0243315cc4a19dc3e12c",
+    "LICENSE": "a42977a69c8c05840da8a8e2f9d8dff9f5c8346f236eeabf8c97fb0812f5fe50",
+    "references/rhythm-curve.md": "c462669c3224020604e627aa3d6a0c9fb72a5fd41ca730759232dfc073eaea98",
+    "references/episode-writing.md": "524b3fd13cce2493caa86ce914ba566df20ea53bda2340989025b9d06cb4c298",
+    "provenance.json": "5d941f3d6d6728bfdc16088ac49222eb6b816df99840d30d8dcb7dc7c6218ef8"
+  }
+}

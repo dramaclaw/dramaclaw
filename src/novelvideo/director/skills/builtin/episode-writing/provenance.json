@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 2,
+  "stage": "M11",
+  "privateLibTVSourceObtained": false,
+  "license": "MIT",
+  "copyright": "2025 0xsline",
+  "sources": [
+    {
+      "path": "references/episode-writing.md",
+      "sha256": "524b3fd13cce2493caa86ce914ba566df20ea53bda2340989025b9d06cb4c298"
+    },
+    {
+      "path": "references/ai-producibility.md",
+      "sha256": "9c16eef426382dc375bde8c76a0db2a9ed8f8b6da3c5d16c42cd79c33a0f2e84"
+    },
+    {
+      "path": "references/rhythm-curve.md",
+      "sha256": "c462669c3224020604e627aa3d6a0c9fb72a5fd41ca730759232dfc073eaea98"
+    },
+    {
+      "path": "references/satisfaction-matrix.md",
+      "sha256": "1eba44d3d2701bb14073e55c6a563cf0a013d76e503da33b3dfacf02b80a46c6"
+    },
+    {
+      "path": "references/opening-rules.md",
+      "sha256": "72b43ff9ca3d6eaaf91ad1a47f3328de010a8e9c06eb2a6e5819732a94b1b971"
+    },
+    {
+      "path": "references/hook-design.md",
+      "sha256": "1f7bf12fe600968ab6ff7fb707ead2020f2fea99232e05d4dc7c012d0cb8cd2a"
+    }
+  ],
+  "adaptation": "Host-owned methods and safety contracts; exact short-drama references remain lower-priority craft context. Version 2.2.0 adds seven episode-header fields, synopsis and scene/dialogue hierarchy observed in the authorized LibTV editor. This is independent behavioral reconstruction, not private LibTV prompts. Streaming transports visible answer text only; no hidden reasoning or simulated skill calls."
+}

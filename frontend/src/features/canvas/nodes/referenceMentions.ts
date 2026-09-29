@@ -16,6 +16,8 @@
 export interface MentionFamily {
   /** mention 前缀，如 "图片" / "音频"。 */
   prefix: string;
+  /** `at` 对应 @图片N；`mixed` 对应 MiniMax H3 的 {{Mixed N}}。 */
+  syntax?: "at" | "mixed";
   /** 变更前的有序上游节点 id（与变更前的序号 1..n 对应）。 */
   prevIds: string[];
   /** 变更后的有序上游节点 id（决定新的序号）。 */
@@ -31,12 +33,15 @@ export function remapReferenceMentions(
   families: MentionFamily[],
 ): string {
   let out = prompt;
-  for (const { prefix, prevIds, nextIds } of families) {
+  for (const { prefix, syntax = "at", prevIds, nextIds } of families) {
     // 同一帧内 prev/next 没变化就跳过，避免无谓的字符串重建。
     if (sameOrder(prevIds, nextIds)) {
       continue;
     }
-    const pattern = new RegExp(`@${escapeRegExp(prefix)}(\\d+)(\\s?)`, "g");
+    const pattern =
+      syntax === "mixed"
+        ? new RegExp(`\\{\\{${escapeRegExp(prefix)}\\s+(\\d+)\\}\\}(\\s?)`, "gi")
+        : new RegExp(`@${escapeRegExp(prefix)}(\\d+)(\\s?)`, "g");
     out = out.replace(pattern, (full, numStr: string, trailing: string) => {
       const oldIndex = Number(numStr);
       const node = prevIds[oldIndex - 1];
@@ -49,7 +54,9 @@ export function remapReferenceMentions(
         // 该引用的连线被删了 → 连 mention 带后随空格一起去掉。
         return "";
       }
-      return `@${prefix}${nextIndex + 1}${trailing}`;
+      return syntax === "mixed"
+        ? `{{${prefix} ${nextIndex + 1}}}${trailing}`
+        : `@${prefix}${nextIndex + 1}${trailing}`;
     });
   }
   return out;

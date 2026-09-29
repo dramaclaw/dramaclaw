@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 2,
+  "key": "studio/character-bible",
+  "stage": "M08",
+  "version": "2.4.2",
+  "purpose": "character-bible",
+  "applicable": [
+    "original",
+    "adaptation"
+  ],
+  "excluded": [
+    "omni",
+    "directing"
+  ],
+  "method": "method.md",
+  "inputSchema": "schemas/input.json",
+  "outputSchema": "schemas/output.json",
+  "template": "templates/request.md",
+  "fixtures": "fixtures/contracts.json",
+  "provenance": "provenance.json",
+  "requiredReferences": [
+    {
+      "path": "references/ai-producibility.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/ai-producibility.md",
+      "sha256": "9c16eef426382dc375bde8c76a0db2a9ed8f8b6da3c5d16c42cd79c33a0f2e84",
+      "when": "always"
+    },
+    {
+      "path": "references/character-craft.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "SKILL.md#/characters + references/villain-design.md (adapted)",
+      "sha256": "246db9498f0641f9e3df0c669cacafe343d995cf7201cea4324bae299cb61594",
+      "when": "characters"
+    },
+    {
+      "path": "references/scene-craft.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/episode-writing.md + ai-producibility.md + adaptation-core.md + event-coverage.md (adapted)",
+      "sha256": "f2b5eb7ff72f14a25119df792d12c68f8597009fa16f3aca1e38f5f81166c57b",
+      "when": "scenes"
+    },
+    {
+      "path": "references/prop-craft.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/episode-writing.md + ai-producibility.md + adaptation-core.md + event-coverage.md (adapted)",
+      "sha256": "e50a773b6d9f52c8d4bcfc5acd5aee0172a8e4047fb32ca6371c9ca110fdb835",
+      "when": "props"
+    }
+  ],
+  "ruleIds": [
+    "G01",
+    "G03",
+    "G06",
+    "G07",
+    "G08",
+    "G11",
+    "G18"
+  ],
+  "allowedTools": [],
+  "validators": [
+    "planning.M08"
+  ],
+  "costClasses": [
+    "text.generate"
+  ],
+  "checkpointKinds": [
+    "WAIT_OUTLINE"
+  ],
+  "maxSchemaRepairAttempts": 0,
+  "maxAutomaticRevisionAttempts": 0,
+  "compatibility": "Shared original/adaptation character, scene and prop contracts; preserved source uncertainty, no private LibTV source or semantic quality certification",
+  "files": {
+    "method.md": "18789eed8384f267057d1414eccf24722b21ea7b8636375560f595112e96d75d",
+    "templates/request.md": "e64e9d119311bf169e2b86bb2cd67d6e79fafd07544351713924947d7448659c",
+    "schemas/input.json": "27b95e1ce05c3581a70fb166c38675682b29f62fbbf40f311f1244512fb34f4d",
+    "schemas/output.json": "02227d8b9301087fa26c3ba1a60bc9abb78053f2140714c9cab8038e8b3c8a3d",
+    "fixtures/contracts.json": "977e8edad8c45bb8692bd9911c923dc0da7b35f44fbbc344b3563470b48e53bb",
+    "LICENSE": "a42977a69c8c05840da8a8e2f9d8dff9f5c8346f236eeabf8c97fb0812f5fe50",
+    "references/ai-producibility.md": "9c16eef426382dc375bde8c76a0db2a9ed8f8b6da3c5d16c42cd79c33a0f2e84",
+    "provenance.json": "511409e843ac0342a03af178e978f9537dda9b1039bb4725bf42d6de4dd119c3",
+    "SKILL.md": "229d17f57de03c4d6546a655962802c12b5d98210ffa6afbfa5fc171cbf6d38a",
+    "references/character-craft.md": "246db9498f0641f9e3df0c669cacafe343d995cf7201cea4324bae299cb61594",
+    "references/scene-craft.md": "f2b5eb7ff72f14a25119df792d12c68f8597009fa16f3aca1e38f5f81166c57b",
+    "references/prop-craft.md": "e50a773b6d9f52c8d4bcfc5acd5aee0172a8e4047fb32ca6371c9ca110fdb835"
+  }
+}

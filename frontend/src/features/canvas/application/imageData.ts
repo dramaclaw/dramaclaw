@@ -8,6 +8,8 @@ import {
   MEDIA_VARIANT_MAX_EDGE,
   pickMediaVariant,
   withMediaVariant,
+  withRemoteImageVariant,
+  type MediaVariant,
 } from '@/lib/media-url';
 
 export function parseAspectRatio(value: string): number {
@@ -254,11 +256,10 @@ export function withImageCacheBust(imageUrl: string, token: string | number | nu
 // 元素已经没有新东西可教我们，调用方改从记录里读（见 nodeBodyImageMeasurement）。
 // 尺寸未知的节点照旧加载原图、照旧测量、照旧落库，下次挂载自然就用上变体了。
 //
-// 前端只请求生产会预热的 320px thumb。按 displayEdge × zoom × devicePixelRatio
-// 算出这一格需要的设备像素；thumb 盖不住就回原图，避免放大模糊。
+// 按 displayEdge × zoom × devicePixelRatio 从 320/640/1280 三档挑选；
+// 超出最大档则回原图，避免放大模糊。
 //
-// 用 zoom 但不怕抖：pickMediaVariant 的输出只有 thumb 和 null，节点订阅的是这个
-// 量化结果而不是 zoom 本身，只在跨过 320px 阈值时切换 src。
+// 节点订阅量化后的档位而非 zoom 本身；画布 hook 对降档保留余量，减少边界反复切换。
 //
 // 全屏查看器 / 下载 / 导出 / 各类编辑器一律仍然拿原图，见各调用点的
 // viewerSourceUrl。
@@ -295,6 +296,15 @@ export type NodeBodyImage = {
   maxEdge: number | null;
 };
 
+/** Posters/shells do not measure original pixels; keep the full descriptor for handoff. */
+export function canvasPreviewImage(url: string | null, variant: MediaVariant | null): NodeBodyImage | null {
+  if (!url) return null;
+  const maxEdge = variant ? MEDIA_VARIANT_MAX_EDGE[variant] : null;
+  const local = variant ? withMediaVariant(url, variant) : url;
+  const src = local === url && maxEdge ? withRemoteImageVariant(url, maxEdge) : local;
+  return { src, original: url, downscaled: src !== url, maxEdge: src !== url ? maxEdge : null };
+}
+
 /** 从节点数据里读已记录的原图像素尺寸；没有或不合法时返回 null。 */
 export function readNodeNaturalSize(data: unknown): ImagePixelSize | null {
   if (!data || typeof data !== 'object') return null;
@@ -323,10 +333,15 @@ export function nodeBodyImageSrc(
   const maxEdge = MEDIA_VARIANT_MAX_EDGE[variant];
   // 本来就不比变体大：换成变体只是重编码一遍，白白多一个文件。
   if (Math.max(natural.width, natural.height) <= maxEdge) return asOriginal;
-  // 变体只对受保护的项目静态图片生效；不适用时原样返回（blob:/data: 的上传预览、
+  // 本地阶梯只对受保护的项目静态图片生效；不适用时原样返回（blob:/data: 的上传预览、
   // 遗留路径、非图片后缀都会走到这里），downscaled 随之为 false。
   const src = withMediaVariant(url, variant);
-  return src === url ? asOriginal : { src, original: url, downscaled: true, maxEdge };
+  if (src !== url) return { src, original: url, downscaled: true, maxEdge };
+  // 远端素材(导入的画布在本地化之前全是这种)没有本地阶梯可用,改走对象存储的
+  // 服务端缩放。不适用时同样原样返回。
+  const remote = withRemoteImageVariant(url, maxEdge);
+  if (remote !== url) return { src: remote, original: url, downscaled: true, maxEdge };
+  return asOriginal;
 }
 
 /**

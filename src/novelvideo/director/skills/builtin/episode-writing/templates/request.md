@@ -1,0 +1,2 @@
+## Output contract
+Return a complete candidate in the confirmed output language. Scene headers identify location, day/night and participants. Actions identify subject, object and result; dialogue names its speaker. Honor explicit scene/length constraints over examples. Keep source episode labels separate from delivery order. Any notes about added facts or timing must be visibly labeled as proposals/estimates and kept separate from screenplay dialogue.

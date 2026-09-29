@@ -1,0 +1,43 @@
+[
+  {
+    "valid": true,
+    "value": {
+      "contract": "outline-source-audit/1.0.0",
+      "readUnitIds": [
+        "unit-demo"
+      ],
+      "observations": [
+        {
+          "assertion": "A visitor leaves.",
+          "evidence": [
+            {
+              "unitId": "unit-demo",
+              "quote": "A visitor leaves."
+            }
+          ],
+          "matchingClaimIds": [
+            "claim-demo"
+          ],
+          "critical": true
+        }
+      ],
+      "checks": [
+        {
+          "claimId": "claim-demo",
+          "verdict": "supported",
+          "reason": "Shown by the narrator.",
+          "evidence": [
+            {
+              "unitId": "unit-demo",
+              "quote": "A visitor leaves."
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "valid": false,
+    "value": {}
+  }
+]

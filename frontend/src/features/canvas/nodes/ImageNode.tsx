@@ -57,6 +57,7 @@ import {
 import { useNodeGenerationTaskState } from '@/features/canvas/application/useNodeGenerationTaskState';
 import { useNaturalSizeRecordTrust } from '@/features/canvas/hooks/useNaturalSizeRecordTrust';
 import { useNodeBodyVariantBudget } from '@/features/canvas/hooks/useNodeBodyVariantBudget';
+import { useDecodedNodeImage } from '@/features/canvas/hooks/useDecodedNodeImage';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useShallow } from 'zustand/react/shallow';
 
@@ -188,7 +189,7 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
 
   const { distrusted, distrustRecord, trustAgain } = useNaturalSizeRecordTrust(recordSubject);
 
-  const bodyImage = useMemo(() => {
+  const requestedBodyImage = useMemo(() => {
     const picked = preferOriginalImage
       ? data.imageUrl || data.previewImageUrl
       : data.previewImageUrl || data.imageUrl;
@@ -211,6 +212,12 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
     preferOriginalImage,
     recordedNaturalSize,
   ]);
+  const previewDisplay = useDecodedNodeImage(
+    requestedBodyImage,
+    JSON.stringify([id, recordSubject, data.imageUrl, data.previewImageUrl]),
+    JSON.stringify([preferOriginalImage, distrusted, recordedNaturalSize?.width, recordedNaturalSize?.height]),
+  );
+  const bodyImage = previewDisplay.displayed;
   const imageSource = bodyImage?.src ?? null;
 
   // 获取原图 URL 用于查看器
@@ -272,6 +279,7 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
             alt={isExportResultNode ? t('node.imageNode.resultAlt') : t('node.imageNode.generatedAlt')}
             viewerSourceUrl={originalImageUrl}
             onLoad={(event) => {
+              previewDisplay.onLoad(event.currentTarget);
               // 记录描述的不是这张图：降采样副本上量不出源图真尺寸。第一次退回
               // 原图重测（preferOriginal 会让下一轮 downscaled 为 false，不会来回
               // 抖）；已经退过一次还是对不上，就什么都不写——记录和副本都不是真

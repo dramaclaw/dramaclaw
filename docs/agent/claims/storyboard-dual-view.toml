@@ -1,0 +1,91 @@
+version = 1
+slug = "storyboard-dual-view"
+ledger = "docs/agent/tasks/storyboard-dual-view.md"
+baseline = "762591d0e2511dd16765b878a0f21df67c7013c0"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Implementation plan and handoff."
+
+[[claims]]
+path = "docs/agent/tasks/storyboard-dual-view.md"
+mode = "coordination"
+reason = "Implementation plan and handoff."
+
+[[claims]]
+path = "docs/agent/claims/storyboard-dual-view.toml"
+mode = "coordination"
+reason = "Implementation plan and handoff."
+
+[[claims]]
+path = "frontend/src/features/freezone/FreezoneShell.tsx"
+mode = "shared"
+shared_with = ["liblib-import-recovery", "asset-replacement-picker", "liblib-canvas-parity"]
+reason = "Dual view projection, editor host, persistence and parity validation."
+
+[[claims]]
+path = "frontend/src/features/freezone/useCanvasSync.ts"
+mode = "shared"
+shared_with = ["liblib-import-recovery", "freezone-entry-recovery"]
+reason = "Dual view projection, editor host, persistence and parity validation."
+
+[[claims]]
+path = "frontend/src/features/canvas/Canvas.tsx"
+mode = "shared"
+shared_with = ["asset-replacement-picker", "canvas-lod-perf", "liblib-canvas-parity"]
+reason = "Dual view projection, editor host, persistence and parity validation."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/OperationPanelShell.tsx"
+mode = "exclusive"
+reason = "Dual view projection, editor host, persistence and parity validation."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/TextAnnotationNode.tsx"
+mode = "shared"
+shared_with = ["multi-provider-models", "text-node-liblib-visual-parity"]
+reason = "Dual view projection, editor host, persistence and parity validation."
+
+[[claims]]
+path = "frontend/public/locales/zh/translation.json"
+mode = "shared"
+shared_with = ["liblib-import-recovery", "asset-replacement-picker", "canvas-audio-actions", "canvas-audio-split", "creative-intro-blend", "creative-intro-implementation", "depth-motion-da3", "h3-prompt-optimizer", "liblib-canvas-parity", "local-stack", "multi-provider-models", "shot-breakdown", "story-writer", "sync-main-remotes", "tv-director-implementation", "video-prompt-split", "project-chinese-names"]
+reason = "Dual view projection, editor host, persistence and parity validation."
+
+[[claims]]
+path = "frontend/public/locales/en/translation.json"
+mode = "shared"
+shared_with = ["liblib-import-recovery", "asset-replacement-picker", "canvas-audio-actions", "canvas-audio-split", "creative-intro-blend", "creative-intro-implementation", "depth-motion-da3", "h3-prompt-optimizer", "liblib-canvas-parity", "local-stack", "multi-provider-models", "shot-breakdown", "story-writer", "sync-main-remotes", "tv-director-implementation", "video-prompt-split", "project-chinese-names"]
+reason = "Dual view projection, editor host, persistence and parity validation."
+
+[[claims]]
+path = "frontend/public/locales/vi/translation.json"
+mode = "shared"
+shared_with = ["liblib-import-recovery", "asset-replacement-picker", "canvas-audio-actions", "canvas-audio-split", "creative-intro-blend", "creative-intro-implementation", "depth-motion-da3", "h3-prompt-optimizer", "liblib-canvas-parity", "local-stack", "multi-provider-models", "shot-breakdown", "story-writer", "sync-main-remotes", "tv-director-implementation", "video-prompt-split", "project-chinese-names"]
+reason = "Dual view projection, editor host, persistence and parity validation."
+
+[[claims]]
+path = "frontend/src/features/storyboard/**"
+mode = "exclusive"
+reason = "Dual view projection, editor host, persistence and parity validation."
+
+[[claims]]
+path = "frontend/src/__tests__/storyboard.test.ts"
+mode = "exclusive"
+reason = "Dual view projection, editor host, persistence and parity validation."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/NodeGenerationHistory.tsx"
+mode = "exclusive"
+reason = "Move the existing history strip into the storyboard detail; retain original restore handlers."
+
+[[claims]]
+path = "frontend/src/__tests__/storyboard-ui.test.tsx"
+mode = "exclusive"
+reason = "Verify board interactions against the shared canvas store."
+
+[[claims]]
+path = "frontend/src/__tests__/storyboard-sync.test.tsx"
+mode = "exclusive"
+reason = "Verify metadata-only autosave and hydration without geometry changes."

@@ -1,0 +1,125 @@
+{
+  "$defs": {
+    "DirectoryEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "episodeId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Episodeid",
+          "type": "string"
+        },
+        "orderKey": {
+          "minimum": 1,
+          "title": "Orderkey",
+          "type": "integer"
+        },
+        "deliveryLabel": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Deliverylabel",
+          "type": "string"
+        },
+        "question": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Question",
+          "type": "string"
+        },
+        "actions": {
+          "items": {
+            "maxLength": 12000,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Actions",
+          "type": "array"
+        },
+        "result": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Result",
+          "type": "string"
+        },
+        "hook": {
+          "anyOf": [
+            {
+              "maxLength": 12000,
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Hook"
+        },
+        "characterIds": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Characterids",
+          "type": "array"
+        },
+        "locationIds": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Locationids",
+          "type": "array"
+        },
+        "targetDuration": {
+          "minimum": 1,
+          "title": "Targetduration",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "episodeId",
+        "orderKey",
+        "deliveryLabel",
+        "question",
+        "actions",
+        "result",
+        "hook",
+        "characterIds",
+        "locationIds",
+        "targetDuration"
+      ],
+      "title": "DirectoryEntry",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "entries": {
+      "items": {
+        "$ref": "#/$defs/DirectoryEntry"
+      },
+      "maxItems": 100,
+      "minItems": 1,
+      "title": "Entries",
+      "type": "array"
+    }
+  },
+  "required": [
+    "entries"
+  ],
+  "title": "EpisodeDirectory",
+  "type": "object"
+}

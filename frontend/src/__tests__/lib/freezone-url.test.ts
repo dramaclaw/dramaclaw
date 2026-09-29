@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { describe, expect, it } from "vitest";
 import {
+  buildFreezoneCanvasUrl,
   buildFreezoneProjectUrl,
   buildFreezoneUrl,
   openFreezoneProject,
@@ -26,6 +27,12 @@ describe("freezone-url", () => {
         "/projects/01KS77361FXAQNKQF2W4EWWVCW/freezone",
       );
     });
+
+    it("builds a project canvas URL and escapes both ids", () => {
+      expect(buildFreezoneCanvasUrl("project one", "canvas/two")).toBe(
+        "/projects/project%20one/freezone?canvas=canvas%2Ftwo",
+      );
+    });
   });
 
   it("rejects empty / non-http inputs", () => {
@@ -36,6 +43,7 @@ describe("freezone-url", () => {
     expect(buildFreezoneUrl("/?canvas=c1")).toBeNull();
     expect(buildFreezoneProjectUrl("")).toBeNull();
     expect(buildFreezoneProjectUrl("   ")).toBeNull();
+    expect(buildFreezoneCanvasUrl("p1", "")).toBeNull();
   });
 
   it("stays same-origin", () => {

@@ -42,10 +42,13 @@ type NodeHeaderProps = {
   onTitleChange?: (value: string) => void;
 };
 
-export const NODE_HEADER_TONE_CLASS = 'text-[rgba(15,23,42,0.68)] dark:text-white/55';
-export const NODE_HEADER_TITLE_CLASS = 'text-[14px] font-normal';
+// 标题对齐 liblib.tv：12px / 常规字重 / 近纯白(#F7F7F7 ≈ white 95%)。原来的
+// 14px + 55% 白在画布上比 liblib 明显更大更灰，是观感差距最直接的一项。
+export const NODE_HEADER_TONE_CLASS = 'text-[rgba(15,23,42,0.85)] dark:text-white/95';
+export const NODE_HEADER_TITLE_CLASS = 'text-[12px] font-normal';
 export const NODE_HEADER_META_CLASS = 'text-xs text-text-muted';
-export const NODE_HEADER_FLOATING_POSITION_CLASS = 'absolute -top-7 left-1 right-1 z-10';
+// liblib 的标题是 top:-28px / left:0，紧贴卡片左缘。
+export const NODE_HEADER_FLOATING_POSITION_CLASS = 'absolute -top-7 left-0 right-0 z-10';
 const NODE_HEADER_TITLE_MAX_WIDTH_CLASS = 'max-w-[60%]';
 const NODE_HEADER_TITLE_FADE_STYLE: CSSProperties = {
   WebkitMaskImage: 'linear-gradient(to right, #000 0%, #000 82%, transparent 100%)',

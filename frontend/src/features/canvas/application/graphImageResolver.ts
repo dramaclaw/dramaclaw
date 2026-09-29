@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import {
+  CANVAS_NODE_TYPES,
+  type LiblibMediaNodeData,
   isExportImageNode,
   isImageEditNode,
+  isImageGenNode,
   isUploadNode,
   type CanvasEdge,
   type CanvasNode,
@@ -34,7 +37,12 @@ export function extractUpstreamImages(node: CanvasNode | undefined): string[] {
     return [];
   }
 
-  if (isUploadNode(node) || isImageEditNode(node) || isExportImageNode(node)) {
+  if (node.type === CANVAS_NODE_TYPES.liblibMedia) {
+    const data = node.data as LiblibMediaNodeData;
+    return data.mediaKind === 'image' && data.imageUrl ? [data.imageUrl] : [];
+  }
+
+  if (isUploadNode(node) || isImageEditNode(node) || isImageGenNode(node) || isExportImageNode(node)) {
     return node.data.imageUrl ? [node.data.imageUrl] : [];
   }
 

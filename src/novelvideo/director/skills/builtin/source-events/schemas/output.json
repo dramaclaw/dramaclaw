@@ -1,0 +1,126 @@
+{
+  "$defs": {
+    "ExtractedClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "assertion": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Assertion",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "observed",
+            "character_statement",
+            "retrospective",
+            "unresolved"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "speaker": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Speaker"
+        },
+        "subjects": {
+          "items": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Subjects",
+          "type": "array"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceQuote"
+          },
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "critical": {
+          "title": "Critical",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "assertion",
+        "kind",
+        "speaker",
+        "subjects",
+        "evidence",
+        "critical"
+      ],
+      "title": "ExtractedClaim",
+      "type": "object"
+    },
+    "SourceQuote": {
+      "additionalProperties": false,
+      "properties": {
+        "unitId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Unitid",
+          "type": "string"
+        },
+        "quote": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Quote",
+          "type": "string"
+        }
+      },
+      "required": [
+        "unitId",
+        "quote"
+      ],
+      "title": "SourceQuote",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract": {
+      "const": "outline-source/1.0.0",
+      "title": "Contract",
+      "type": "string"
+    },
+    "readUnitIds": {
+      "items": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Readunitids",
+      "type": "array"
+    },
+    "claims": {
+      "items": {
+        "$ref": "#/$defs/ExtractedClaim"
+      },
+      "minItems": 1,
+      "title": "Claims",
+      "type": "array"
+    }
+  },
+  "required": [
+    "contract",
+    "readUnitIds",
+    "claims"
+  ],
+  "title": "SourceExtraction",
+  "type": "object"
+}

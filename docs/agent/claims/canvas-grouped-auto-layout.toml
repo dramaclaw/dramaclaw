@@ -1,0 +1,25 @@
+version = 1
+slug = "canvas-grouped-auto-layout"
+ledger = "docs/agent/tasks/canvas-grouped-auto-layout.md"
+baseline = "8e024ac"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Register the workstream."
+
+[[claims]]
+path = "docs/agent/tasks/canvas-grouped-auto-layout.md"
+mode = "coordination"
+reason = "Plan and handoff ledger."
+
+[[claims]]
+path = "docs/agent/claims/canvas-grouped-auto-layout.toml"
+mode = "coordination"
+reason = "Machine-readable scope."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/autoLayout.ts"
+mode = "exclusive"
+reason = "Project grouped child edges to top-level layout nodes."
+

@@ -101,6 +101,27 @@ describe("freezone projection helpers", () => {
     ).toBe("member_canvas");
   });
 
+  it("chooses an existing project canvas before inventing a personal one", () => {
+    expect(
+      canvasIdForFreezoneEntry({
+        explicitCanvasId: null,
+        username: "eric@example.com",
+        availableCanvases: [
+          { id: "default", modified_at: "2026-09-18T10:00:00Z" },
+          { id: "older", modified_at: "2026-09-17T10:00:00Z" },
+          { id: "newer", modified_at: "2026-09-18T12:00:00Z" },
+        ],
+      }),
+    ).toBe("newer");
+    expect(
+      canvasIdForFreezoneEntry({
+        explicitCanvasId: null,
+        username: "eric@example.com",
+        availableCanvases: [{ id: "user_eric_example_com_1m9fjbn" }],
+      }),
+    ).toBe("user_eric_example_com_1m9fjbn");
+  });
+
   it("keeps projection freshness as ephemeral UI state keyed by projection key", () => {
     setCanvasProjectionStatuses([
       { projection_key: "beat:1:4", stale: true },

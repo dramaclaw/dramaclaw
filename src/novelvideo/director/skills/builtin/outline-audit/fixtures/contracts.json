@@ -1,0 +1,34 @@
+[
+  {
+    "valid": true,
+    "value": {
+      "contract": "outline-candidate-audit/1.0.0",
+      "units": [
+        {
+          "path": "overview.synopsis.0",
+          "findings": [
+            {
+              "assertion": "A visitor leaves.",
+              "candidateQuote": "visitor leaves",
+              "verdict": "supported",
+              "reason": "The source narrates it.",
+              "sourceEvidence": [
+                {
+                  "unitId": "unit-demo",
+                  "quote": "A visitor leaves."
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "literaryNotes": [
+        "A closed departure."
+      ]
+    }
+  },
+  {
+    "valid": false,
+    "value": {}
+  }
+]

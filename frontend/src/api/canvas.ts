@@ -233,6 +233,52 @@ export async function createBlankFreezoneCanvas(
   });
 }
 
+/** The backend reads the uncommitted root cookie file and returns a copyable share graph. */
+export async function getLiblibShareCanvasDetail(
+  projectId: string,
+  shareUrl: string,
+  downloadAssets = false,
+): Promise<Record<string, unknown>> {
+  return await apiCall<Record<string, unknown>>(
+    `projects/${encodeURIComponent(projectId)}/freezone/liblib:detail`,
+    {
+      method: "POST",
+      json: { share_url: shareUrl, download_assets: downloadAssets },
+      // A canvas may contain hundreds of media files; the default 30s API
+      // timeout is too short for a full first-time local copy.
+      timeout: downloadAssets ? 10 * 60_000 : 30_000,
+    },
+  );
+}
+
+export interface LiblibLocalizeResult {
+  assetMap: Record<string, string>;
+  skippedMedia: { url: string; reason: string }[];
+}
+
+/**
+ * 「一键本地化」：把画布上仍指向远端的素材补下载到本地。
+ *
+ * 和导入走同一套护栏、同一个落盘目录，所以导入当时因为环境问题（代理 fake-IP、
+ * 源站限流…）没存下来的素材，环境修好后补跑即可，不必重新导入整张画布——重新导入
+ * 会丢掉用户在画布上已经做的改动。
+ */
+export async function localizeLiblibCanvasAssets(
+  projectId: string,
+  urls: string[],
+  sourceProjectId: string | null,
+): Promise<LiblibLocalizeResult> {
+  return await apiCall<LiblibLocalizeResult>(
+    `projects/${encodeURIComponent(projectId)}/freezone/liblib:localize`,
+    {
+      method: "POST",
+      json: { urls, source_project_id: sourceProjectId },
+      // 和 liblib:detail 同理：几百个文件的下载远超默认 30s。
+      timeout: 10 * 60_000,
+    },
+  );
+}
+
 export async function deleteFreezoneCanvas(
   projectId: string,
   canvasId: string,

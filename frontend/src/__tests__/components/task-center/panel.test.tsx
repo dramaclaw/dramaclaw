@@ -109,6 +109,9 @@ describe("TaskPanel", () => {
     expect(region).toBeInTheDocument();
     expect(region).toHaveAttribute("aria-hidden", "true");
     expect(region.style.height).toBe("0px");
+    const backdrop = screen.getByTestId("task-panel-backdrop");
+    expect(backdrop).toHaveClass("invisible", "opacity-0", "pointer-events-none");
+    expect(backdrop).toHaveClass("transition-[opacity,visibility]", "motion-reduce:transition-none");
   });
 
   it("renders list + detail when open", async () => {
@@ -117,6 +120,7 @@ describe("TaskPanel", () => {
     expect(await screen.findByRole("region", { name: /task center/i })).toBeInTheDocument();
     expect(await screen.findByRole("tab", { name: /all/i })).toBeInTheDocument();
     expect(await screen.findByText(/select a task/i)).toBeInTheDocument();
+    expect(screen.getByTestId("task-panel-backdrop")).toHaveClass("visible", "opacity-100", "pointer-events-auto");
   });
 
   it("close button sets taskPanelOpen to false", async () => {
@@ -125,6 +129,20 @@ describe("TaskPanel", () => {
     const closeBtn = await screen.findByRole("button", { name: /close/i });
     fireEvent.click(closeBtn);
     expect(useAppStore.getState().taskPanelOpen).toBe(false);
+    expect(screen.getByTestId("task-panel-backdrop")).toHaveClass("invisible", "opacity-0");
+  });
+
+  it("restores the backdrop immediately when reopened during a close transition", async () => {
+    useAppStore.setState({ taskPanelOpen: true });
+    renderPanel();
+    const backdrop = await screen.findByTestId("task-panel-backdrop");
+    fireEvent.click(backdrop);
+    expect(useAppStore.getState().taskPanelOpen).toBe(false);
+    expect(backdrop).toHaveClass("invisible", "pointer-events-none");
+
+    act(() => useAppStore.getState().setTaskPanelOpen(true));
+    expect(backdrop).toHaveClass("visible", "opacity-100", "pointer-events-auto");
+    expect(backdrop).not.toHaveClass("invisible");
   });
 
   it("Esc while focus is inside panel closes it", async () => {

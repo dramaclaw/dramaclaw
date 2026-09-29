@@ -1,0 +1,79 @@
+[
+  {
+    "id": "honest-unknown",
+    "valid": true,
+    "value": {
+      "schemaVersion": 2,
+      "subjectHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "checks": [
+        {
+          "id": "source_fidelity",
+          "status": "UNKNOWN",
+          "explanation": "Insufficient evidence for a definitive conclusion.",
+          "evidence": [],
+          "suggestion": "Provide the missing source or rehearsal.",
+          "unresolvedCriticalFact": false
+        },
+        {
+          "id": "continuity",
+          "status": "UNKNOWN",
+          "explanation": "Insufficient evidence for a definitive conclusion.",
+          "evidence": [],
+          "suggestion": "Provide the missing source or rehearsal.",
+          "unresolvedCriticalFact": false
+        },
+        {
+          "id": "causality",
+          "status": "UNKNOWN",
+          "explanation": "Insufficient evidence for a definitive conclusion.",
+          "evidence": [],
+          "suggestion": "Provide the missing source or rehearsal.",
+          "unresolvedCriticalFact": false
+        },
+        {
+          "id": "scope",
+          "status": "UNKNOWN",
+          "explanation": "Insufficient evidence for a definitive conclusion.",
+          "evidence": [],
+          "suggestion": "Provide the missing source or rehearsal.",
+          "unresolvedCriticalFact": false
+        },
+        {
+          "id": "timing",
+          "status": "UNKNOWN",
+          "explanation": "Insufficient evidence for a definitive conclusion.",
+          "evidence": [],
+          "suggestion": "Provide the missing source or rehearsal.",
+          "unresolvedCriticalFact": false
+        },
+        {
+          "id": "format",
+          "status": "UNKNOWN",
+          "explanation": "Insufficient evidence for a definitive conclusion.",
+          "evidence": [],
+          "suggestion": "Provide the missing source or rehearsal.",
+          "unresolvedCriticalFact": false
+        }
+      ]
+    }
+  },
+  {
+    "id": "missing-check",
+    "valid": false,
+    "value": {
+      "schemaVersion": 2,
+      "subjectHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "checks": []
+    }
+  },
+  {
+    "id": "authority-injection",
+    "valid": false,
+    "value": {
+      "schemaVersion": 2,
+      "subjectHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "checks": [],
+      "approved": true
+    }
+  }
+]

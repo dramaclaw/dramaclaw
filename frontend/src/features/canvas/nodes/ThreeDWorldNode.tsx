@@ -7,16 +7,19 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
 } from 'react';
 import {
   Handle,
   Position,
-  useStore,
   useUpdateNodeInternals,
   type NodeProps,
 } from '@xyflow/react';
-import { isLowDetailZoom } from '@/features/canvas/application/canvasLod';
+import {
+  isLowDetailActive,
+  subscribeLowDetail,
+} from '@/features/canvas/application/canvasLod';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
@@ -61,7 +64,7 @@ import { setDirectorWorldSceneSaveHandler } from '@/features/canvas/domain/direc
 import {
   ThreeDDirectorDialog,
   type ThreeDDirectorCaptureMeta,
-} from '@/features/viewer-kit/three-d/ThreeDDirectorDialog';
+} from '@/features/viewer-kit/three-d/ThreeDDirectorDialogLazy';
 import type { ThreeDSceneSnapshot } from '@/features/viewer-kit/three-d/engine/viewerApp';
 import type {
   DirectorControlFrameBundle,
@@ -846,8 +849,8 @@ export const ThreeDWorldNode = memo(({ id, data, selected, width, height }: Thre
       : null);
   const updateNodeInternals = useUpdateNodeInternals();
   // 入口按钮的循环动效在低缩放档下只有几十像素宽，看不出是动的，却要每帧上传
-  // 一次视频纹理。选择器返回 boolean，只在跨过阈值那一次触发重渲染。
-  const lowDetailZoom = useStore((state) => isLowDetailZoom(state.transform[2]));
+  // 一次视频纹理。订阅模块级单一真值（带滞回），只在跨档时翻转。
+  const lowDetailZoom = useSyncExternalStore(subscribeLowDetail, isLowDetailActive);
   const entryMotionRef = useRef<HTMLVideoElement | null>(null);
   useEffect(() => {
     const video = entryMotionRef.current;

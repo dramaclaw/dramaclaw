@@ -1,0 +1,316 @@
+{
+  "sourceSite": "https://www.liblib.tv/canvas",
+  "observedAt": "2026-09-26",
+  "purpose": "User-requested UI parity reference assets. Not user-generated project content.",
+  "license": "No redistribution license was provided by the source. Do not infer a third-party license from public availability or the user's request.",
+  "icons": [
+    "NewConversation",
+    "History",
+    "Share",
+    "Settings",
+    "Plugin",
+    "Dock",
+    "Minimize",
+    "Close",
+    "Preset",
+    "Plus",
+    "ChevronDown",
+    "Hand",
+    "Send",
+    "LaurelLeft",
+    "LaurelRight",
+    "Custom",
+    "GenrePointer",
+    "FusionPlus",
+    "FusionRemove",
+    "Audience",
+    "Character",
+    "Era",
+    "Highlights",
+    "Style",
+    "Structure",
+    "Welcome",
+    "NodeCharacter",
+    "Creation",
+    "Expand",
+    "Download",
+    "Edit",
+    "Check",
+    "ChevronRight",
+    "Document",
+    "Caption",
+    "Search",
+    "Undo",
+    "Redo",
+    "ZoomOut",
+    "ZoomIn",
+    "Heading",
+    "List",
+    "Bold",
+    "Italic",
+    "Strike",
+    "Move",
+    "Arrange",
+    "Map",
+    "Links",
+    "Snap",
+    "Assets",
+    "Library",
+    "Shortcuts",
+    "Tutorial"
+  ],
+  "genres": [
+    {
+      "subject": "玄幻修仙",
+      "path": "/director-reference/genre-00.webp",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/1f48e6125444ee2f7a1df247dbe4d70676f05956.webp",
+      "bytes": 119078,
+      "sha256": "3b33378834ab543383e1781c8fe5802239442b2a15dc242b27a3ebf6ce3ecebb"
+    },
+    {
+      "subject": "都市现实",
+      "path": "/director-reference/genre-01.webp",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/444fa048888a9cc7c057ace1ca4cc4e3a079c587.webp",
+      "bytes": 52822,
+      "sha256": "073a66273d9ad516fe2bc60aacfd8196fe2fa0a8e85069ce8c1712aaf0137e5c"
+    },
+    {
+      "subject": "古装言情",
+      "path": "/director-reference/genre-02.webp",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/f55a2ff8233346ad5f48dd960ad7536eb8fdedcd.webp",
+      "bytes": 90692,
+      "sha256": "359a8c96c8c3e4aabc00efd5a2ece7e2d2e637c1a8a90f49a877a250746b63ef"
+    },
+    {
+      "subject": "悬疑推理",
+      "path": "/director-reference/genre-03.webp",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/05e143e3bbb0b3cd05241bb99d5ead6b751a2280.webp",
+      "bytes": 37506,
+      "sha256": "9300ea21cbb375bc23110a7dd7abb2f1bf03942cfaf72d32c57fe70318038219"
+    },
+    {
+      "subject": "惊悚怪谈",
+      "path": "/director-reference/genre-04.webp",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/ab5cf1b1b6ab9f2695ab81e5489ed09d60b0fd53.webp",
+      "bytes": 99936,
+      "sha256": "1634f2b4c77de858a46bd71a8d6469eb1d5240cbdf05356bfcff8189c20dd077"
+    },
+    {
+      "subject": "犯罪谍战",
+      "path": "/director-reference/genre-05.webp",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/3d9809065aff7bf8c528ea134925cfccd5a2be27.webp",
+      "bytes": 66564,
+      "sha256": "b46f5c1e7d6be3442ee0950006c416d3efa0688eda2923e5a1d0b8e20f1167f6"
+    },
+    {
+      "subject": "家庭伦理",
+      "path": "/director-reference/genre-06.webp",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/a42ed0978ed9b07242b09944a2d45568c5e6923e.webp",
+      "bytes": 74946,
+      "sha256": "2e04e7a9d0332127dadf51defe75fca8329cad1d5bec262b3d7b17319eebaef4"
+    },
+    {
+      "subject": "末世科幻",
+      "path": "/director-reference/genre-07.webp",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/208648077b4fc15b8c6c331509521cb689f92805.webp",
+      "bytes": 136254,
+      "sha256": "bbfad877b084b455c5b3f446791d855b69fdde929085e833db154fffc9f40b61"
+    },
+    {
+      "subject": "历史传奇",
+      "path": "/director-reference/genre-08.webp",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/1829f769ad49457dfd0043fe3dbfab85ba62b452.webp",
+      "bytes": 159000,
+      "sha256": "6e00ef4def7c8ca7aee6a75b0a5fa4034e16587abad1bd25ec4b3bbcd76588f2"
+    },
+    {
+      "subject": "喜剧",
+      "path": "/director-reference/genre-09.webp",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/4375dce902996322f575b285bf98b1dfd328c663.webp",
+      "bytes": 85526,
+      "sha256": "a5de4a1eeaf5cf3c700975708331d0d51a2f28661a5216816cafa0ede6dc2580"
+    },
+    {
+      "subject": "主旋律",
+      "path": "/director-reference/genre-10.webp",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/4f848c86a7f0abcbd2961d5cece13f5d415824f1.webp",
+      "bytes": 85418,
+      "sha256": "ec9aa5f4c637ab11980d81cf373d20c683622b62fb03d6e6b2695a4b35931f45"
+    },
+    {
+      "subject": "体育竞技",
+      "path": "/director-reference/genre-11.webp",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/d15289023daf283144e6a9fe82d99bf9d233a651.webp",
+      "bytes": 116802,
+      "sha256": "c67755c674eb149d64a7b5eae256c6a8693d078cc6c6a1a5692ac38c6f2bc103"
+    },
+    {
+      "subject": "职场行业",
+      "path": "/director-reference/genre-12.webp",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/c296b82169118b9325abccb92d40787f7e5dfba6.webp",
+      "bytes": 55962,
+      "sha256": "d0000ca8113285906a6764f7c882e59b04d364e4b0b022ce67ccf81f624a3d3a"
+    },
+    {
+      "subject": "文旅非遗",
+      "path": "/director-reference/genre-13.webp",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/4dec2d60b504b4e3e24ec806e21b6cf5e66c219a.webp",
+      "bytes": 113578,
+      "sha256": "a14fa6be86c49569cf555814098fe5f703201525eaec548c96d98f1088124dfc"
+    }
+  ],
+  "iconCatalog": {
+    "path": "libtv-icons.json",
+    "bytes": 39758,
+    "sha256": "ab9ec2dacfc92f882b133da7b9e021e4ac4832171eca705cc3ec86eb341b7089"
+  },
+  "styles": [
+    {
+      "label": "冷峻宫廷权谋",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/7dc2bd2d59fe7a623beb2fe7cbe181faf310d173.webp",
+      "path": "/director-reference/style-00.webp",
+      "bytes": 30384,
+      "sha256": "335ab6927394c1cc5dfe5ad064c5a8bcb7b2b5b026fddf1d7f604b6a6311db31"
+    },
+    {
+      "label": "国产冷调悬疑",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/8607177ec1c9c3b8cf200714b9b4609153873c12.webp",
+      "path": "/director-reference/style-01.webp",
+      "bytes": 29098,
+      "sha256": "f82341ebdb7ee3a590850be631d0146561e4aee0621050045eac682251559a75"
+    },
+    {
+      "label": "都市写实",
+      "source": "https://libtv-res.liblib.art/upload-images/5ef327e771bd41dd9256289dd7127f5a/34821d58fed9171094960176ededd667123ba6a2.png",
+      "path": "/director-reference/style-02.png",
+      "bytes": 2861838,
+      "sha256": "7140335670bd7a32c1b217ac02515bd70404b18091975ea2c91d11ae90c9eabd"
+    },
+    {
+      "label": "柔光古装言情",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/b0b01058c00dc76cdbbf23d0ccb9991e72efec7f.webp",
+      "path": "/director-reference/style-03.webp",
+      "bytes": 39376,
+      "sha256": "148c06039b7cdb389925008fe488602544d1f2e58d9d161e71469614e147244f"
+    },
+    {
+      "label": "日系青春胶片",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/5c8b3e119d0e40b9de9f472b3486a3d72765c948.webp",
+      "path": "/director-reference/style-04.webp",
+      "bytes": 15532,
+      "sha256": "b701c2cbd3087cc399bd7522cab8d2f3ba77fe73023aa499073b41211ed899bf"
+    },
+    {
+      "label": "写实江湖武侠",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/69aad482835bbcf7335641aa6206061317d5e155.webp",
+      "path": "/director-reference/style-05.webp",
+      "bytes": 42488,
+      "sha256": "aca1846439a5e9deccf28423ecdb8275e607a31d52b3ce6d66bc67968648a07a"
+    },
+    {
+      "label": "高调棚拍广告",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/7520f5ecd3ac933fb07dbe89e068631db6f924fd.webp",
+      "path": "/director-reference/style-06.webp",
+      "bytes": 10562,
+      "sha256": "a735ffc191f1ceafab0bec5b5a0c1bddfe95ace737028177c467dddc32d51fcc"
+    },
+    {
+      "label": "经典好莱坞",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/cb7252271d824b77be0698ab5341ffcd8e24824d.webp",
+      "path": "/director-reference/style-07.webp",
+      "bytes": 19596,
+      "sha256": "52dddc0718cc8c6e8f4501912a81a52d825f06a011639c3ffbc7c316d3e1e740"
+    },
+    {
+      "label": "赛博科幻",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/efeecf140111ac79d52d83f7096ac8a4dc6caeda.webp",
+      "path": "/director-reference/style-08.webp",
+      "bytes": 39310,
+      "sha256": "f14291aaff15deda0b829a140fd63ef78d23c3548d82132b0879430369a139ba"
+    },
+    {
+      "label": "冷感文艺",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/083c124cd8cf5f88a399f7e5bd2df66bd149feb8.webp",
+      "path": "/director-reference/style-09.webp",
+      "bytes": 14186,
+      "sha256": "d22e30473cda68504494b23e23bbd9a8df9fae9d1e57c7a17ccb116173e00230"
+    },
+    {
+      "label": "暗黑恐怖",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/2a46c0614fee73bab99178a16cbf6a26da48818f.webp",
+      "path": "/director-reference/style-10.webp",
+      "bytes": 13950,
+      "sha256": "1053d2ccc870300042f8a5add3ce6eb922c4bae0f5501076511a62fa0588acfd"
+    },
+    {
+      "label": "3D 奇幻动画",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/2bb582d0f1df743fd552a60687401012f6e1cd6e.webp",
+      "path": "/director-reference/style-11.webp",
+      "bytes": 43938,
+      "sha256": "db473e6309c2aad3a26af0aea4b62e50a3673b67f29ca6494f918094911fc877"
+    },
+    {
+      "label": "工业质感",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/62ba00792593165df291052375e2a8e3353f2370.webp",
+      "path": "/director-reference/style-12.webp",
+      "bytes": 39100,
+      "sha256": "4ea4d55340d2d0c77de28b589bd3738acc426647a66d4fa1ba994d52f2fbf3c0"
+    },
+    {
+      "label": "怀旧港片",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/d36cd498598d793aba004a0f46257b9dbc14a457.webp",
+      "path": "/director-reference/style-13.webp",
+      "bytes": 58176,
+      "sha256": "0f3889446f4318c776c76e7088785953e551c1646434edab3ea46d6964a3324c"
+    },
+    {
+      "label": "唯美国风 3D",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/e45079a0780f1b4ea09d3cdfd8104c38aa8932bb.webp",
+      "path": "/director-reference/style-14.webp",
+      "bytes": 39558,
+      "sha256": "660547db6a536e2d0d7b3e9b3d9c16854d3af5b9a2036431952b47c6ecab4ef0"
+    },
+    {
+      "label": "三渲二动漫",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/5c324b9565567087b4950bd00e0641927c290de7.webp",
+      "path": "/director-reference/style-15.webp",
+      "bytes": 79960,
+      "sha256": "3deae8ccf21868abc9afb0f7a234a621695c528031f2512594586c8e86310ff1"
+    },
+    {
+      "label": "超写实 3D",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/870d47ab802685e3329835f05026abe452276da9.webp",
+      "path": "/director-reference/style-16.webp",
+      "bytes": 21648,
+      "sha256": "cd4edf31a425e3423f903e64d56a95a7b4641775b691cae692627444412659b7"
+    },
+    {
+      "label": "暗调奇幻 CG",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/d9de128609aad1012631c7665ec35342d07d33e2.webp",
+      "path": "/director-reference/style-17.webp",
+      "bytes": 17978,
+      "sha256": "005513b4bbdfc40e9668448e24ffa794d8b05e1d8d56b0fbf638f0a97f4ad5c8"
+    },
+    {
+      "label": "东方玄幻 3D",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/18af161c329e205900ee3eabfd51425283852110.webp",
+      "path": "/director-reference/style-18.webp",
+      "bytes": 35872,
+      "sha256": "b3b46ac309d8b2e5a0eb9229c131e3169715c9a1bf5c50f88479d8fecf5a8439"
+    },
+    {
+      "label": "经典国产美术",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/0697369663dcf941715a3c26950553d33edf8da4.webp",
+      "path": "/director-reference/style-19.webp",
+      "bytes": 44198,
+      "sha256": "030c28a838550d4ad83c1b5b777e672770c8715a45a6b34df74f313ffc5a780b"
+    },
+    {
+      "label": "国风壁画",
+      "source": "https://libtv-res.liblib.art/upload-images/3a0c814ccb064fdbb92f554a7035f7c4/2464df1e621a67cb36c2cc4a1b412663c9e099b4.webp",
+      "path": "/director-reference/style-20.webp",
+      "bytes": 65850,
+      "sha256": "d827fbb0d9c7827ed6a863e181fb9dbebaf3a0136eb05db7f790e40e46528662"
+    }
+  ]
+}

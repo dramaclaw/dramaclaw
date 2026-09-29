@@ -1,0 +1,72 @@
+version = 1
+slug = "text-node-liblib-visual-parity"
+ledger = "docs/agent/tasks/text-node-liblib-visual-parity.md"
+baseline = "8e024ac"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Register the workstream."
+
+[[claims]]
+path = "docs/agent/tasks/text-node-liblib-visual-parity.md"
+mode = "coordination"
+reason = "Plan and handoff ledger."
+
+[[claims]]
+path = "docs/agent/claims/text-node-liblib-visual-parity.toml"
+mode = "coordination"
+reason = "Machine-readable scope."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/TextAnnotationNode.tsx"
+mode = "shared"
+shared_with = ["storyboard-dual-view", "multi-provider-models"]
+reason = "Show live upstream references and submit them with compatible text or vision model."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/shared/TextModelPicker.tsx"
+mode = "shared"
+shared_with = ["multi-provider-models"]
+reason = "Liblib-style text model trigger and portalled popup with keyboard selection."
+
+[[claims]]
+path = "frontend/src/api/ops.ts"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "canvas-audio-split", "depth-motion-da3", "h3-prompt-optimizer", "shot-breakdown", "multi-provider-models", "sync-main-remotes"]
+reason = "Expose text and vision model catalog and send ordered references."
+
+[[claims]]
+path = "src/novelvideo/api/schemas.py"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "canvas-audio-split", "depth-motion-da3", "h3-prompt-optimizer", "shot-breakdown", "multi-provider-models", "project-chinese-names", "sync-main-remotes"]
+reason = "Validate selected model and bounded text, image, video reference fields."
+
+[[claims]]
+path = "src/novelvideo/api/routes/freezone.py"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "canvas-audio-split", "depth-motion-da3", "h3-prompt-optimizer", "liblib-canvas-parity", "local-stack", "minimax-h3-canvas-defaults", "shot-breakdown", "multi-provider-models"]
+reason = "Text/vision model catalog, media scope validation, and generation submission only."
+
+[[claims]]
+path = "src/novelvideo/task_backend/runners/freezone.py"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "depth-motion-da3", "h3-prompt-optimizer", "shot-breakdown", "sync-main-remotes"]
+reason = "Pass selected model and references to freezone text leaf."
+
+[[claims]]
+path = "src/novelvideo/freezone/text_node.py"
+mode = "shared"
+reason = "Select compatible model and send ordered text and compacted image/video frames."
+shared_with = ["h3-prompt-optimizer", "multi-provider-models"]
+
+[[claims]]
+path = "src/novelvideo/local_gateway.py"
+mode = "shared"
+shared_with = ["local-stack", "h3-prompt-optimizer", "multi-provider-models"]
+reason = "Honor authenticated DeepSeek and supported GLM/Qwen vision chat model selection."
+
+[[claims]]
+path = "state/local/test/freezone/canvases/liblib_72c039ea0dd1485493c4c54e3590bab7.json"
+mode = "exclusive"
+reason = "Restore only the viewport changed by visual inspection."

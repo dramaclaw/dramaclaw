@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 2,
+  "key": "studio/direction-options",
+  "stage": "M03",
+  "version": "2.3.2",
+  "purpose": "direction-options",
+  "applicable": [
+    "original",
+    "adaptation"
+  ],
+  "excluded": [
+    "omni",
+    "directing"
+  ],
+  "method": "method.md",
+  "inputSchema": "schemas/input.json",
+  "outputSchema": "schemas/output.json",
+  "template": "templates/request.md",
+  "fixtures": "fixtures/contracts.json",
+  "provenance": "provenance.json",
+  "requiredReferences": [
+    {
+      "path": "references/genre-guide.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/genre-guide.md",
+      "sha256": "6e9ebf184dd824fcdeacfc0aec113e86aeccc42e50b53b36db469fd0fa149230",
+      "when": "always"
+    },
+    {
+      "path": "references/opening-rules.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/opening-rules.md",
+      "sha256": "72b43ff9ca3d6eaaf91ad1a47f3328de010a8e9c06eb2a6e5819732a94b1b971",
+      "when": "always"
+    },
+    {
+      "path": "references/source-grounding.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/adaptation-core.md + references/event-coverage.md",
+      "sha256": "89388a99412cba521ed62ab619c4d9a027b6dd4ac56ada69914380a24936c2d0",
+      "when": "adaptation"
+    }
+  ],
+  "ruleIds": [
+    "G01",
+    "G03",
+    "G06",
+    "G07",
+    "G08",
+    "G11",
+    "G18"
+  ],
+  "allowedTools": [],
+  "validators": [
+    "planning.M03"
+  ],
+  "costClasses": [
+    "text.generate"
+  ],
+  "checkpointKinds": [
+    "WAIT_DIRECTION"
+  ],
+  "maxSchemaRepairAttempts": 0,
+  "maxAutomaticRevisionAttempts": 0,
+  "compatibility": "Source-bound directions; adaptation stops at an explicitly adopted outline, not a complete source audit or private LibTV method.",
+  "files": {
+    "method.md": "d302f25468b60cad737067370a752a3aed9ef18f46b7836e00b874aeb9356c62",
+    "templates/request.md": "e64e9d119311bf169e2b86bb2cd67d6e79fafd07544351713924947d7448659c",
+    "schemas/input.json": "b73d47e0b79daec532886f72f07651f10d4398d4c01e201a1f1b0a6697dc7358",
+    "schemas/output.json": "9895165e7b9a16e3a5f2474643124d2d65f643c886d09f2ef5a456e961993737",
+    "fixtures/contracts.json": "270a3a3196069d592215b77aed5fdfd918740138ad5eadc9b6fcd519c2288e5c",
+    "LICENSE": "a42977a69c8c05840da8a8e2f9d8dff9f5c8346f236eeabf8c97fb0812f5fe50",
+    "references/genre-guide.md": "6e9ebf184dd824fcdeacfc0aec113e86aeccc42e50b53b36db469fd0fa149230",
+    "references/opening-rules.md": "72b43ff9ca3d6eaaf91ad1a47f3328de010a8e9c06eb2a6e5819732a94b1b971",
+    "provenance.json": "c0232602f79954dda1fe21a63270e70f83e3677166b02b301ec63c23f301f78b",
+    "references/source-grounding.md": "89388a99412cba521ed62ab619c4d9a027b6dd4ac56ada69914380a24936c2d0"
+  }
+}

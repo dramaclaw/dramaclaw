@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useMemo } from 'react';
+import { createPortal } from 'react-dom';
+import { useNodeId } from '@xyflow/react';
+import { useStoryboardView } from '@/features/storyboard/storyboardStore';
+import { useCanvasStore } from '@/stores/canvasStore';
 import { useTranslation } from 'react-i18next';
 import {
   AlertCircle,
@@ -355,7 +359,23 @@ interface NodeGenerationHistoryProps {
  * dimmed and not restorable. The host node owns the restore semantics via
  * `onRestore` (the strip stays media-agnostic).
  */
-export function NodeGenerationHistory({
+export function NodeGenerationHistory(props: NodeGenerationHistoryProps) {
+  const host = useStoryboardView(s => s.historyHost);
+  const mode = useStoryboardView(s => s.mode);
+  if (mode === 'storyboard' && host) return <StoryboardHistory host={host} {...props} />;
+  return <NodeGenerationHistoryContent {...props} />;
+}
+
+function StoryboardHistory({ host, ...props }: NodeGenerationHistoryProps & { host: HTMLElement }) {
+  const nodeId = useNodeId();
+  const selectedId = useCanvasStore(s => s.selectedNodeId);
+  const busy = useCanvasStore(s => Boolean(s.nodes.find(n => n.id === nodeId)?.data.isGenerating));
+  if (nodeId !== selectedId) return null;
+  // Original node handlers retain restore semantics; don't select history over an active job.
+  return createPortal(<div inert={busy || undefined}><NodeGenerationHistoryContent {...props} /></div>, host);
+}
+
+function NodeGenerationHistoryContent({
   records,
   isLoading = false,
   onRestore,

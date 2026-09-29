@@ -1,0 +1,64 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": 2,
+      "title": "Schemaversion",
+      "type": "integer"
+    },
+    "stage": {
+      "enum": [
+        "M11",
+        "M12"
+      ],
+      "title": "Stage",
+      "type": "string"
+    },
+    "mode": {
+      "enum": [
+        "original",
+        "adaptation"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "episodeOrdinal": {
+      "maximum": 100,
+      "minimum": 1,
+      "title": "Episodeordinal",
+      "type": "integer"
+    },
+    "totalEpisodes": {
+      "maximum": 100,
+      "minimum": 1,
+      "title": "Totalepisodes",
+      "type": "integer"
+    },
+    "endingType": {
+      "enum": [
+        "closed",
+        "open",
+        "reversal",
+        "tragic"
+      ],
+      "title": "Endingtype",
+      "type": "string"
+    },
+    "parametersHash": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Parametershash",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "stage",
+    "mode",
+    "episodeOrdinal",
+    "totalEpisodes",
+    "endingType",
+    "parametersHash"
+  ],
+  "title": "MethodContext",
+  "type": "object"
+}

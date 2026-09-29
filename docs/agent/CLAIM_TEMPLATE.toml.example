@@ -1,0 +1,43 @@
+version = 1
+slug = "replace-with-task-slug"
+ledger = "docs/agent/tasks/replace-with-task-slug.md"
+baseline = "replace-with-current-commit-hash"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Update lifecycle and conflict radar."
+
+[[claims]]
+path = "docs/agent/tasks/replace-with-task-slug.md"
+mode = "coordination"
+reason = "This workstream's plan and handoff ledger."
+
+[[claims]]
+path = "docs/agent/claims/replace-with-task-slug.toml"
+mode = "coordination"
+reason = "This workstream's machine-readable scope."
+
+[[claims]]
+path = "path/to/exact-file.py"
+mode = "exclusive"
+reason = "Explain why only this workstream may change it."
+
+# Use a directory claim only when the whole narrow directory belongs to this task.
+[[claims]]
+path = "path/to/new-feature/**"
+mode = "exclusive"
+reason = "New directory owned by this workstream."
+
+# Shared paths must be declared by both workstreams.  "*" is reserved for
+# truly global merge-by-key / generated registries; prefer exact peer slugs.
+[[claims]]
+path = "path/to/shared-adapter.py"
+mode = "shared"
+shared_with = ["other-task-slug"]
+reason = "Both tasks integrate through this adapter; edit serially."
+
+[[claims]]
+path = "path/to/evidence-only.md"
+mode = "read-only"
+reason = "Read for evidence, but do not modify in this workstream."
