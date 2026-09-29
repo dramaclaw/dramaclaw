@@ -181,7 +181,11 @@ export function PrevizViewportControls({
         外面这层不吃指针事件、宽度只到内容为止：绝对定位的容器铺开一片透明区，视口的
         拾取与轨迹绘制就在这一片里失灵。
       */}
-      <div className="pointer-events-none absolute left-4 top-4 z-20 flex w-24 flex-col items-start gap-2">
+      {/*
+        `left-[114px]`：左上角先是 `PrevizToolbar` 那块浮动面板（left-4 起、约 86px 宽），
+        这一列排在它右边再空 12px。面板宽度变了这里要跟着改。
+      */}
+      <div className="pointer-events-none absolute left-[114px] top-4 z-20 flex w-24 flex-col items-start gap-2">
         <div
           role="group"
           aria-label={t("previz.viewport.group.axis")}

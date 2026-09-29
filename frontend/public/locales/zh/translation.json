@@ -7841,8 +7841,7 @@
       },
       "group": {
         "create": "创建",
-        "tool": "工具",
-        "gizmo": "手柄"
+        "tool": "工具"
       },
       "collapseTimeline": "收起轨迹面板",
       "expandTimeline": "展开轨迹面板",

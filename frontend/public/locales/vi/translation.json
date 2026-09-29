@@ -7745,8 +7745,7 @@
       },
       "group": {
         "create": "Create",
-        "tool": "Tool",
-        "gizmo": "Gizmo"
+        "tool": "Tool"
       },
       "collapseTimeline": "Collapse timeline panel",
       "expandTimeline": "Expand timeline panel",

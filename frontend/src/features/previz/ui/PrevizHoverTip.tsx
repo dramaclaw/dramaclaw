@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 
 /**
  * 给一个只有图标的控件挂一条悬停文字提示。
@@ -21,15 +22,21 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 export function PrevizHoverTip({
   label,
   side = "top",
+  className,
   children,
 }: {
   label: string;
   side?: "top" | "bottom" | "left" | "right";
+  /**
+   * 挂在外层 <span> 上。这层 span 才是父级布局里的那一项（比如网格的一格），
+   * 列定位之类的类得给它，给里面的控件不起作用。
+   */
+  className?: string;
   children: ReactNode;
 }) {
   return (
     <Tooltip>
-      <TooltipTrigger render={<span className="inline-flex" />}>{children}</TooltipTrigger>
+      <TooltipTrigger render={<span className={cn("inline-flex", className)} />}>{children}</TooltipTrigger>
       <TooltipContent side={side}>{label}</TooltipContent>
     </Tooltip>
   );

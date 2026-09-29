@@ -1427,12 +1427,13 @@ describe("PrevizEditor", () => {
 });
 
 /**
- * 左栏两段工具里按下态的那几颗。整屏去数是不行的：视口自己那一角还有显示模式那组
+ * 工具面板里按下态的那几颗。整屏去数是不行的：视口自己那一角还有显示模式那组
  * 按钮，它们也有 aria-pressed，跟「当前工具」毫无关系。
  */
 function pressedRailButtons(): HTMLElement[] {
-  return ["previz.toolbar.group.tool", "previz.toolbar.group.gizmo"].flatMap((label) =>
-    within(screen.getByRole("group", { name: label })).queryAllByRole("button", { pressed: true }),
+  return within(screen.getByRole("group", { name: "previz.toolbar.group.tool" })).queryAllByRole(
+    "button",
+    { pressed: true },
   );
 }
 
