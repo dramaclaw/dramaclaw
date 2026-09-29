@@ -224,6 +224,25 @@ export function compileGraphToInk(
     }
   }
 
+  // Ink does not increment a knot's read count when diverting within that same
+  // knot. Route self-transitions through a content-free sibling knot so every
+  // segment entry counts once, including automatic transitions and saved games.
+  const usedNames = new Set([
+    ...variables.map(variable => variable.name),
+    ...flags.map(flag => flag.name),
+    ...reachable.map(knotNameForNodeId),
+  ]);
+  const reentryKnots = new Map<string, string>();
+  for (const id of reachable) {
+    if (!(choicesBySource.get(id) ?? []).some(choice => choice.target === id)) continue;
+    let name = `reenter_${knotNameForNodeId(id)}`;
+    while (usedNames.has(name)) name += '_';
+    usedNames.add(name);
+    reentryKnots.set(id, name);
+  }
+  const transitionTarget = (source: string, target: string) =>
+    source === target ? reentryKnots.get(source)! : knotNameForNodeId(target);
+
   const clipByNodeId: Record<string, string> = {};
   const choiceLoopClipByNodeId: Record<string, string> = {};
   const knotByNodeId: Record<string, string> = {};
@@ -307,7 +326,7 @@ export function compileGraphToInk(
             ? `${leaves.length > 0 && guardExpr ? '    ' : ''}~ ${eff.flag} = ${eff.value ? 'true' : 'false'}`
             : `${leaves.length > 0 && guardExpr ? '    ' : ''}~ ${eff.var} += ${Math.trunc(eff.delta)}`);
         }
-        lines.push(`${leaves.length > 0 && guardExpr ? '    ' : ''}-> ${knotNameForNodeId(choice.target)}`);
+        lines.push(`${leaves.length > 0 && guardExpr ? '    ' : ''}-> ${transitionTarget(id, choice.target)}`);
         if (leaves.length > 0 && guardExpr) lines.push('}');
       }
       for (const choice of visible) {
@@ -349,10 +368,12 @@ export function compileGraphToInk(
             ? `    ~ ${eff.flag} = ${eff.value ? 'true' : 'false'}`
             : `    ~ ${eff.var} += ${Math.trunc(eff.delta)}`);
         }
-        lines.push(`    -> ${knotNameForNodeId(choice.target)}`);
+        lines.push(`    -> ${transitionTarget(id, choice.target)}`);
       }
     }
     lines.push('');
+    const reentry = reentryKnots.get(id);
+    if (reentry) lines.push(`=== ${reentry} ===`, `-> ${knot}`, '');
   }
 
   return {

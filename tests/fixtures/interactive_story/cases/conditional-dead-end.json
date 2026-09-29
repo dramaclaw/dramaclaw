@@ -1,0 +1,88 @@
+{
+  "description": "conditional-dead-end",
+  "story": {
+    "schema_version": "story_draft.v2",
+    "story_id": "conditional-dead-end",
+    "title": "conditional-dead-end",
+    "start_segment_id": "start",
+    "segments": [
+      {
+        "id": "start",
+        "title": "start",
+        "script": "start",
+        "media": {
+          "source": "imported",
+          "url": "start.mp4",
+          "status": "ready"
+        }
+      },
+      {
+        "id": "end",
+        "title": "end",
+        "script": "end",
+        "media": {
+          "source": "imported",
+          "url": "end.mp4",
+          "status": "ready"
+        },
+        "kind": "ending",
+        "ending_label": "END"
+      }
+    ],
+    "choices": [
+      {
+        "id": "blocked",
+        "source_segment_id": "start",
+        "target_segment_id": "end",
+        "order": 0,
+        "mode": "automatic",
+        "text": "",
+        "condition": {
+          "kind": "variable",
+          "variable": "score",
+          "operator": ">",
+          "value": 0
+        }
+      }
+    ],
+    "variables": [
+      {
+        "name": "score",
+        "label": "score",
+        "initial": 0
+      }
+    ],
+    "flags": []
+  },
+  "expectedIssues": [
+    {
+      "code": "automatic_no_fallback",
+      "entityId": "start",
+      "severity": "warning"
+    },
+    {
+      "code": "runtime_unreachable",
+      "entityId": "end",
+      "severity": "warning"
+    },
+    {
+      "code": "condition_unreachable",
+      "entityId": "blocked",
+      "severity": "warning"
+    }
+  ],
+  "playthroughs": [
+    {
+      "choices": [],
+      "expectedSegments": [
+        "start"
+      ],
+      "expectedVariables": {
+        "score": 0
+      },
+      "expectedRuntimeErrors": [
+        "ran out of content"
+      ]
+    }
+  ]
+}
