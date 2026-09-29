@@ -70,6 +70,16 @@ class WallIR(_Frozen):
     openings: tuple[OpeningIR, ...] = ()
 
 
+class RoomIR(_Frozen):
+    """Where a `scene.room` stands. Its floor and walls are listed on their own;
+    this record only lets checks ask whether something is inside the room."""
+
+    id: str
+    center: Vec2
+    size: Vec2
+    height: float
+
+
 class SolidIR(_Frozen):
     id: str
     semantic_type: str
@@ -93,3 +103,4 @@ class SceneIR(_Frozen):
     walls: tuple[WallIR, ...]
     solids: tuple[SolidIR, ...]
     camera: CameraIR
+    rooms: tuple[RoomIR, ...] = ()

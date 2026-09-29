@@ -9,6 +9,11 @@ errors    contradict the scene's own conventions. The model gets them back and
 warnings  look odd but may be intended (a lamp hanging from the ceiling). They
           are recorded and returned to the user, and never trigger a retry.
           A piece that rests on another or hangs on a wall is not floating.
+
+A `scene.room` is open toward the reference camera and closed on the other
+three sides, so the picture can only have been taken from between its side
+walls and in front of its back wall. A camera anywhere else looks at the back
+of a wall, which is an error.
 """
 
 from __future__ import annotations
@@ -164,6 +169,33 @@ def _overlap_ratio(a: SolidIR, b: SolidIR) -> float:
     return volume / smaller
 
 
+def _outside_every_room(scene: SceneIR) -> str | None:
+    camera = scene.camera
+    x, _, z = camera.position
+    first: str | None = None
+    for room in scene.rooms:
+        left = room.center[0] - room.size[0] / 2.0
+        right = room.center[0] + room.size[0] / 2.0
+        back = room.center[1] + room.size[1] / 2.0
+        if x < left:
+            problem = f"position.x = {x:g} is beyond the left wall (x = {left:g})"
+        elif x > right:
+            problem = f"position.x = {x:g} is beyond the right wall (x = {right:g})"
+        elif z > back:
+            problem = f"position.z = {z:g} is behind the back wall (z = {back:g})"
+        else:
+            return None
+        first = first or (
+            f"camera '{camera.id}' stands outside room '{room.id}': {problem}. "
+            "The picture was taken from inside the room or from its open side, "
+            f"so keep position.x between {left:g} and {right:g} and position.z "
+            f"below {back:g}. To look across the room at an angle, move target.x "
+            "and leave position.x between the side walls; if the room in the "
+            "picture reaches further than that, make the room larger"
+        )
+    return first
+
+
 def check_plausibility(
     scene: SceneIR, *, image_aspect: float = DEFAULT_IMAGE_ASPECT
 ) -> PlausibilityReport:
@@ -189,6 +221,9 @@ def check_plausibility(
                 f"{solid.position[1]:g}; position.y is the height of the bottom "
                 "face and 0 means standing on the floor"
             )
+    outside = _outside_every_room(scene)
+    if outside:
+        errors.append(outside)
     if scene.solids and not errors:
         visible = _in_view_count(scene, image_aspect)
         if visible < len(scene.solids) * MIN_IN_VIEW_RATIO:

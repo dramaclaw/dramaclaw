@@ -38,7 +38,7 @@ def test_object_below_the_floor_is_an_error():
 def test_camera_looking_toward_the_viewer_is_an_error():
     report = _check(
         TABLE,
-        "scene.camera(id='cam', position=(0, 1.6, 5), target=(0, 1.2, -1))\n",
+        "scene.camera(id='cam', position=(0, 1.6, 2), target=(0, 1.2, -1))\n",
     )
 
     assert len(report.errors) == 1
@@ -187,3 +187,82 @@ def test_piece_past_the_end_of_a_wall_still_floats():
     assert report.warnings == (
         "'far' floats 1.4 m above the floor with nothing under it",
     )
+
+
+def test_camera_beside_the_room_is_an_error():
+    report = _check(
+        TABLE, "scene.camera(id='cam', position=(-4.7, 1.6, -5), target=(0, 1.2, 1))\n"
+    )
+
+    assert len(report.errors) == 1
+    assert (
+        "camera 'cam' stands outside room 'room': position.x = -4.7 is beyond "
+        "the left wall (x = -4)"
+    ) in report.errors[0]
+    assert "keep position.x between -4 and 4" in report.errors[0]
+
+
+def test_camera_beyond_the_right_wall_is_an_error():
+    report = _check(
+        TABLE, "scene.camera(id='cam', position=(4.5, 1.6, -5), target=(0, 1.2, 1))\n"
+    )
+
+    assert ["beyond the right wall (x = 4)" in error for error in report.errors] == [
+        True
+    ]
+
+
+def test_camera_behind_the_back_wall_is_an_error():
+    report = _check(
+        "scene.box(id='far', position=(0, 0, 6), size=(1, 1, 1), semantic_type='prop')\n",
+        "scene.camera(id='cam', position=(0, 1.6, 3.5), target=(0, 1.2, 6))\n",
+    )
+
+    assert ["behind the back wall (z = 3)" in error for error in report.errors] == [
+        True
+    ]
+
+
+def test_camera_in_front_of_the_open_side_is_fine_however_far_back():
+    report = _check(
+        TABLE, "scene.camera(id='cam', position=(3.9, 1.6, -30), target=(0, 1.2, 1))\n"
+    )
+
+    assert report.errors == ()
+
+
+def test_camera_inside_any_one_room_is_enough():
+    report = check_plausibility(
+        parse_blockout_program(
+            "scene.room(id='a', width=4, depth=4, height=3, center=(-3, 0))\n"
+            "scene.room(id='b', width=4, depth=4, height=3, center=(3, 0))\n"
+            "scene.box(id='t', position=(3, 0, 0), size=(1, 1, 1), semantic_type='table')\n"
+            "scene.camera(id='cam', position=(3, 1.6, -4), target=(3, 1.2, 1))\n"
+        )
+    )
+
+    assert report.errors == ()
+
+
+def test_scene_without_a_room_has_no_rule_about_where_the_camera_stands():
+    report = check_plausibility(
+        parse_blockout_program(
+            "scene.floor(id='ground', center=(0, 0), size=(8, 6))\n"
+            "scene.wall(id='w', start=(-4, -3), end=(-4, 3), height=3)\n"
+            + TABLE
+            + "scene.camera(id='cam', position=(-6, 1.6, -5), target=(0, 1.2, 1))\n"
+        )
+    )
+
+    assert report.errors == ()
+
+
+def test_piece_hung_against_a_wall_is_not_reported_as_floating():
+    report = _check(
+        "scene.box(id='scroll', against='room_back', offset=3, bottom=1.2, size=(0.8, 1.4, 0.04), semantic_type='prop')\n"
+        "scene.box(id='desk', against='room_left', offset=4, size=(1.6, 0.8, 0.6), semantic_type='desk')\n"
+        "scene.cylinder(id='vase', on='desk', radius=0.1, height=0.3, semantic_type='prop')\n"
+    )
+
+    assert report.errors == ()
+    assert report.warnings == ()

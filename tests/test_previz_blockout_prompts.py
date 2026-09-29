@@ -19,7 +19,18 @@ def test_the_example_in_the_prompt_is_a_valid_plausible_program():
     scene = parse_blockout_program(BLOCKOUT_EXAMPLE_PROGRAM)
 
     assert check_plausibility(scene).errors == ()
-    assert len(scene.solids) == 7
+    assert check_plausibility(scene).warnings == ()
+    assert len(scene.solids) == 8
+
+
+def _signatures(prompt: str, instruction: str) -> str:
+    """Every `scene.<instruction>(...)` written as inline code, joined.
+
+    The example program is not inline code, so an argument that only the example
+    uses does not count as documented.
+    """
+    pieces = prompt.split(f"`scene.{instruction}(")[1:]
+    return " ".join(piece.split(")`", 1)[0] for piece in pieces)
 
 
 def test_prompt_names_every_instruction_and_argument_the_parser_accepts():
@@ -29,8 +40,7 @@ def test_prompt_names_every_instruction_and_argument_the_parser_accepts():
         f"{instruction}.{argument}"
         for instruction, (required, optional) in _SPEC.items()
         for argument in (*required, *optional)
-        if f"scene.{instruction}(" not in prompt
-        or argument not in prompt.split(f"scene.{instruction}(", 1)[1].split(")`", 1)[0]
+        if argument not in _signatures(prompt, instruction)
     ]
 
     assert missing == []
@@ -91,7 +101,7 @@ def test_prompt_places_large_pieces_before_small_ones():
     prompt = build_blockout_prompt()
 
     assert "先摆完大家具，再摆小摆件" in prompt
-    assert "y 写那件家具顶面的高度" in prompt
+    assert "放在别的物件上的用 on 写" in prompt
 
 
 def test_example_shows_a_small_piece_resting_on_a_larger_one():
@@ -123,4 +133,24 @@ def test_example_shows_labels_and_the_layout_notes():
 
 
 def test_prompt_version_moves_with_the_wording():
-    assert BLOCKOUT_PROMPT_VERSION == 3
+    assert BLOCKOUT_PROMPT_VERSION == 4
+
+
+def test_prompt_asks_for_relations_instead_of_coordinates_where_it_can():
+    prompt = build_blockout_prompt()
+
+    assert "靠墙的物件用 against 写" in prompt
+    assert "放在别的物件上的用 on 写" in prompt
+    assert "只有不靠墙、也不放在别的物件上的，才用 position 写坐标" in prompt
+    assert "家具的长边通常顺着它靠的那面墙" in prompt
+    assert "相机的 x 要落在左墙和右墙之间" in prompt
+
+
+def test_example_places_pieces_by_relation():
+    for placement in (
+        'against="room_left"',
+        'against="room_back"',
+        'against="room_right"',
+        'on="table"',
+    ):
+        assert placement in BLOCKOUT_EXAMPLE_PROGRAM

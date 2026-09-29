@@ -3,6 +3,11 @@
 The surface syntax is Python, but the program is only ever read with `ast.parse`
 and checked against a whitelist. Nothing in this module evaluates, compiles or
 runs the program.
+
+A box or cylinder says where it goes in one of three ways: `position` (plain
+coordinates), `against` (a wall) or `on` (another piece). The last two are
+relations; they are turned into coordinates here, so SceneIR and everything
+after it only ever see positions.
 """
 
 from __future__ import annotations
@@ -24,8 +29,11 @@ from novelvideo.director_world.blockout.scene_ir import (
     CameraIR,
     FloorIR,
     OpeningIR,
+    RoomIR,
     SceneIR,
     SolidIR,
+    Vec2,
+    Vec3,
     WallIR,
 )
 
@@ -39,6 +47,9 @@ _SEMANTIC_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 _OPENING_KINDS = ("door", "window", "arch")
 _REPEAT_PRIMITIVES = ("box", "cylinder", "wedge")
 _MAX_LITERAL_DEPTH = 3
+_PLACEMENTS = ("position", "against", "on")
+_AGAINST_ONLY = ("offset", "bottom", "gap")
+_PLACEMENT_ARGS = frozenset({*_PLACEMENTS, *_AGAINST_ONLY, "shift"})
 
 # instruction → (required keyword names, optional keyword names)
 _SPEC: dict[str, tuple[frozenset[str], frozenset[str]]] = {
@@ -59,12 +70,12 @@ _SPEC: dict[str, tuple[frozenset[str], frozenset[str]]] = {
         frozenset({"kind", "sill"}),
     ),
     "box": (
-        frozenset({"id", "position", "size", "semantic_type"}),
-        frozenset({"rotation_y", "label"}),
+        frozenset({"id", "size", "semantic_type"}),
+        frozenset({"rotation_y", "label"}) | _PLACEMENT_ARGS,
     ),
     "cylinder": (
-        frozenset({"id", "position", "radius", "height", "semantic_type"}),
-        frozenset({"label"}),
+        frozenset({"id", "radius", "height", "semantic_type"}),
+        frozenset({"label"}) | _PLACEMENT_ARGS,
     ),
     "wedge": (
         frozenset({"id", "position", "size"}),
@@ -194,7 +205,7 @@ def _read_calls(source: str) -> list[_Call]:
             if name not in required and name not in optional:
                 hint = (
                     f"; {_POSITION_HINT}"
-                    if name == "center" and "position" in required
+                    if name == "center" and "position" in required | optional
                     else ""
                 )
                 raise _fail(
@@ -406,6 +417,207 @@ def _cylinder_size(call: _Call) -> tuple[float, float, float]:
     return (radius * 2, height, radius * 2)
 
 
+def _placement(call: _Call, object_id: str) -> str:
+    """Which of position, against, on the piece uses. Exactly one is allowed."""
+    given = [name for name in _PLACEMENTS if name in call.args]
+    if len(given) != 1:
+        raise _fail(
+            f"scene.{call.op}: say where '{object_id}' goes with exactly one of "
+            f"{', '.join(_PLACEMENTS)}; got {', '.join(given) or 'none of them'}",
+            call.line,
+        )
+    kind = given[0]
+    for name in _AGAINST_ONLY:
+        if name in call.args and kind != "against":
+            raise _fail(
+                f"scene.{call.op}: '{name}' is only used together with 'against'",
+                call.line,
+            )
+    if "shift" in call.args and kind != "on":
+        raise _fail(
+            f"scene.{call.op}: 'shift' is only used together with 'on'", call.line
+        )
+    if kind == "against":
+        if "rotation_y" in call.args:
+            raise _fail(
+                f"scene.{call.op}: 'rotation_y' cannot be combined with 'against': "
+                "the wall sets the rotation",
+                call.line,
+            )
+        if "offset" not in call.args:
+            raise _fail(
+                f"scene.{call.op}: 'against' needs 'offset', the distance from the "
+                "start of the wall to the near end of the piece",
+                call.line,
+            )
+    return kind
+
+
+def _moved(
+    call: _Call, solid: SolidIR, position: Vec3, rotation_y: float
+) -> SolidIR:
+    for item in position:
+        if abs(item) > MAX_COORDINATE_ABS:
+            raise _fail(
+                f"scene.{call.op}: '{solid.id}' ends up out of bounds: "
+                f"|{item:g}| > {MAX_COORDINATE_ABS:g} metres",
+                call.line,
+            )
+    return solid.model_copy(update={"position": position, "rotation_y": rotation_y})
+
+
+def _against_wall(
+    call: _Call,
+    solid: SolidIR,
+    walls: dict[str, WallIR],
+    inside: dict[str, Vec2],
+    camera: CameraIR,
+) -> SolidIR:
+    """Stand the piece against the face of the wall that looks into the scene.
+
+    Its width runs along the wall, so it takes the rotation `compiler.py` gives
+    the wall itself. `offset` is measured like the offset of an opening.
+    """
+    wall_id = _text(call, "against")
+    wall = walls.get(wall_id)
+    if wall is None:
+        raise _fail(
+            f"scene.{call.op}: wall '{wall_id}' does not exist; known walls: "
+            f"{', '.join(sorted(walls)) or '(none)'}",
+            call.line,
+        )
+    offset = _number(call, "offset")
+    bottom = _number(call, "bottom", 0.0)
+    gap = _number(call, "gap", 0.0)
+    if offset < 0 or bottom < 0 or gap < 0:
+        raise _fail(
+            f"scene.{call.op}: 'offset', 'bottom' and 'gap' must not be negative",
+            call.line,
+        )
+    for name, value in (("bottom", bottom), ("gap", gap)):
+        if value > MAX_COORDINATE_ABS:
+            raise _fail(
+                f"scene.{call.op}: '{name}' is out of bounds: |{value:g}| > "
+                f"{MAX_COORDINATE_ABS:g} metres",
+                call.line,
+            )
+    run_x, run_z = wall.end[0] - wall.start[0], wall.end[1] - wall.start[1]
+    length = math.hypot(run_x, run_z)
+    width, _, depth = solid.size
+    if offset + width > length + 1e-9:
+        raise _fail(
+            f"scene.{call.op}: '{solid.id}' runs past the end of wall "
+            f"'{wall_id}': offset {offset:g} + width {width:g} > "
+            f"wall length {length:g}",
+            call.line,
+        )
+    unit_x, unit_z = run_x / length, run_z / length
+    normal_x, normal_z = -unit_z, unit_x
+    # A wall of a room faces the middle of that room; any other wall faces the
+    # reference camera, because the picture shows the side the camera sees.
+    toward_x, toward_z = inside.get(wall_id, (camera.position[0], camera.position[2]))
+    side = (toward_x - wall.start[0]) * normal_x + (toward_z - wall.start[1]) * normal_z
+    if abs(side) < MIN_PIECE_METERS:
+        raise _fail(
+            f"scene.{call.op}: cannot tell which side of wall '{wall_id}' faces "
+            f"the camera, because the camera stands in line with it; place "
+            f"'{solid.id}' with position=(x, y, z) instead",
+            call.line,
+        )
+    sign = 1.0 if side > 0 else -1.0
+    along = offset + width / 2.0
+    out = sign * (wall.thickness / 2.0 + gap + depth / 2.0)
+    return _moved(
+        call,
+        solid,
+        (
+            wall.start[0] + unit_x * along + normal_x * out,
+            bottom,
+            wall.start[1] + unit_z * along + normal_z * out,
+        ),
+        0.0 if solid.shape == "cylinder" else math.degrees(math.atan2(run_z, run_x)),
+    )
+
+
+def _on_top(call: _Call, solid: SolidIR, above: dict[str, SolidIR]) -> SolidIR:
+    """Rest the piece on the top face of one written earlier in the program."""
+    base_id = _text(call, "on")
+    base = above.get(base_id)
+    if base is None:
+        raise _fail(
+            f"scene.{call.op}: '{solid.id}' cannot rest on '{base_id}': no box or "
+            "cylinder with that id is written above this line",
+            call.line,
+        )
+    if base.shape == "wedge":
+        raise _fail(
+            f"scene.{call.op}: '{solid.id}' cannot rest on '{base_id}': a ramp or "
+            "stairs has no flat top; use position=(x, y, z) instead",
+            call.line,
+        )
+    shift_x, shift_z = _vector(call, "shift", 2, default=(0.0, 0.0))
+    if base.shape == "cylinder":
+        outside = math.hypot(shift_x, shift_z) > base.size[0] / 2.0 + 1e-9
+        top = f"{base.size[0]:g} across"
+    else:
+        # shift is written in scene axes; the top of the base is turned with it.
+        angle = math.radians(base.rotation_y)
+        across = shift_x * math.cos(angle) + shift_z * math.sin(angle)
+        deep = shift_z * math.cos(angle) - shift_x * math.sin(angle)
+        outside = (
+            abs(across) > base.size[0] / 2.0 + 1e-9
+            or abs(deep) > base.size[2] / 2.0 + 1e-9
+        )
+        top = f"{base.size[0]:g} wide and {base.size[2]:g} deep"
+    if outside:
+        raise _fail(
+            f"scene.{call.op}: '{solid.id}' would not rest on '{base_id}': shift "
+            f"({shift_x:g}, {shift_z:g}) puts its centre outside the top of "
+            f"'{base_id}', which is {top}",
+            call.line,
+        )
+    if solid.shape == "cylinder":
+        rotation_y = 0.0
+    elif "rotation_y" in call.args:
+        rotation_y = _rotation(call)
+    else:
+        rotation_y = base.rotation_y
+    return _moved(
+        call,
+        solid,
+        (
+            base.position[0] + shift_x,
+            base.position[1] + base.size[1],
+            base.position[2] + shift_z,
+        ),
+        rotation_y,
+    )
+
+
+def _place(
+    solids: list[SolidIR],
+    relations: dict[int, tuple[str, _Call]],
+    walls: list[WallIR],
+    inside: dict[str, Vec2],
+    camera: CameraIR,
+) -> list[SolidIR]:
+    """Turn `against` and `on` into positions, in the order of the program."""
+    by_id = {wall.id: wall for wall in walls}
+    above: dict[str, SolidIR] = {}
+    placed: list[SolidIR] = []
+    for index, solid in enumerate(solids):
+        if index in relations:
+            kind, call = relations[index]
+            solid = (
+                _against_wall(call, solid, by_id, inside, camera)
+                if kind == "against"
+                else _on_top(call, solid, above)
+            )
+        above[solid.id] = solid
+        placed.append(solid)
+    return placed
+
+
 def _attach_openings(
     walls: list[WallIR], opening_calls: list[_Call], ids: _Ids
 ) -> list[WallIR]:
@@ -492,7 +704,12 @@ def parse_blockout_program(source: str) -> SceneIR:
     floors: list[FloorIR] = []
     walls: list[WallIR] = []
     solids: list[SolidIR] = []
+    rooms: list[RoomIR] = []
     opening_calls: list[_Call] = []
+    # index into `solids` → how the piece is placed, for `against` and `on`
+    relations: dict[int, tuple[str, _Call]] = {}
+    # wall id → a point on the side of the wall that pieces stand on
+    inside: dict[str, Vec2] = {}
     camera: CameraIR | None = None
 
     for call in calls:
@@ -559,6 +776,11 @@ def parse_blockout_program(source: str) -> SceneIR:
             thickness = _length(call, "wall_thickness", DEFAULT_WALL_THICKNESS)
             cx, cz = _vector(call, "center", 2, default=(0.0, 0.0))
             half_w, half_d = width / 2, depth / 2
+            rooms.append(
+                RoomIR(
+                    id=object_id, center=(cx, cz), size=(width, depth), height=height
+                )
+            )
             floors.append(
                 FloorIR(
                     id=ids.claim(f"{object_id}_floor", call, derived=True),
@@ -574,17 +796,10 @@ def parse_blockout_program(source: str) -> SceneIR:
                 ("left", "左墙", (cx - half_w, cz - half_d), (cx - half_w, cz + half_d)),
                 ("right", "右墙", (cx + half_w, cz - half_d), (cx + half_w, cz + half_d)),
             ):
+                wall_id = ids.claim(f"{object_id}_{suffix}", call, derived=True)
+                inside[wall_id] = (cx, cz)
                 walls.append(
-                    _wall(
-                        call,
-                        ids.claim(f"{object_id}_{suffix}", call, derived=True),
-                        start,
-                        end,
-                        height,
-                        thickness,
-                        "wall",
-                        hint,
-                    )
+                    _wall(call, wall_id, start, end, height, thickness, "wall", hint)
                 )
         elif call.op == "floor":
             floors.append(
@@ -609,27 +824,20 @@ def parse_blockout_program(source: str) -> SceneIR:
                     _label(call),
                 )
             )
-        elif call.op == "box":
+        elif call.op in {"box", "cylinder"}:
+            kind = _placement(call, object_id)
+            if kind != "position":
+                relations[len(solids)] = (kind, call)
             solids.append(
                 _solid(
                     call,
                     object_id,
-                    "box",
-                    _vector(call, "position", 3),
-                    _vector(call, "size", 3, size=True),
-                    _rotation(call),
-                    _semantic(call),
-                )
-            )
-        elif call.op == "cylinder":
-            solids.append(
-                _solid(
-                    call,
-                    object_id,
-                    "cylinder",
-                    _vector(call, "position", 3),
-                    _cylinder_size(call),
-                    0.0,
+                    call.op,
+                    _vector(call, "position", 3, default=(0.0, 0.0, 0.0)),
+                    _vector(call, "size", 3, size=True)
+                    if call.op == "box"
+                    else _cylinder_size(call),
+                    _rotation(call) if call.op == "box" else 0.0,
                     _semantic(call),
                 )
             )
@@ -678,6 +886,7 @@ def parse_blockout_program(source: str) -> SceneIR:
     return SceneIR(
         floors=tuple(floors),
         walls=tuple(walls),
-        solids=tuple(solids),
+        solids=tuple(_place(solids, relations, walls, inside, camera)),
         camera=camera,
+        rooms=tuple(rooms),
     )
