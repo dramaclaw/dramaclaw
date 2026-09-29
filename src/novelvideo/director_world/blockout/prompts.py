@@ -9,19 +9,20 @@ from __future__ import annotations
 
 from novelvideo.director_world.blockout.scene_ir import MAX_COMPILED_OBJECTS
 
-BLOCKOUT_PROMPT_VERSION = 2
+BLOCKOUT_PROMPT_VERSION = 3
 MAX_DESCRIPTION_CHARS = 500
-SUGGESTED_OBJECT_COUNT = 25
+SUGGESTED_OBJECT_COUNT = 40
 
 BLOCKOUT_EXAMPLE_PROGRAM = """\
 # 机位：正对后墙，平视，相机在房间敞开一侧的中间偏右
-# 靠墙：屏幕挂在后墙偏左；绿植在右后角；会议桌在房间中间，三把椅子在桌子靠相机的一侧
+# 靠墙：屏幕挂在后墙偏左；绿植在右后角；会议桌在房间中间，三把椅子在桌子靠相机的一侧；笔记本电脑放在会议桌上
 # 一间小会议室：后墙偏右有一扇门，左墙有一扇窗
 scene.room(id="room", width=6.0, depth=5.0, height=2.8)
 scene.opening(id="door", wall="room_back", kind="door", offset=4.2, width=0.9, height=2.1)
 scene.opening(id="win", wall="room_left", kind="window", offset=1.5, width=1.8, height=1.3, sill=0.9)
 scene.box(id="table", position=(0.0, 0.0, 0.3), size=(2.4, 0.75, 1.0), semantic_type="table", label="会议桌")
 scene.repeat(primitive="box", ids=["chair_1", "chair_2", "chair_3"], positions=[(-0.8, 0.0, -0.6), (0.0, 0.0, -0.6), (0.8, 0.0, -0.6)], size=(0.45, 0.9, 0.45), semantic_type="chair", label="椅子")
+scene.box(id="laptop", position=(0.4, 0.75, 0.3), size=(0.35, 0.03, 0.25), semantic_type="prop", label="笔记本电脑")
 scene.box(id="screen", position=(-1.5, 1.0, 2.35), size=(1.6, 0.9, 0.08), semantic_type="prop", label="屏幕")
 scene.cylinder(id="plant", position=(2.5, 0.0, 2.0), radius=0.25, height=1.2, semantic_type="prop", label="绿植")
 scene.camera(id="cam", position=(0.3, 1.5, -3.2), target=(0.0, 1.0, 1.0), fov=60)
@@ -30,7 +31,7 @@ scene.camera(id="cam", position=(0.3, 1.5, -3.2), target=(0.0, 1.0, 1.0), fov=60
 _INSTRUCTIONS = f"""\
 你是影视预演的场景搭建师。我给你一张场景参考图，请写一段 SceneBlockoutDSL 程序，用基础几何体搭出这个场景的白模，供导演走位和设计机位。
 
-目标是「认得出是同一个场景，主要空间关系接近参考图」，不是测绘，也不是还原陈设。宁可物件少而位置准，不要多而乱。
+目标是「认得出是同一个场景，主要空间关系接近参考图」，不是测绘，也不是雕刻细节。每件东西一个整体，位置准比细节多重要。
 
 ## 坐标系
 
@@ -94,8 +95,9 @@ rotation_y 的单位是度，从上往下看逆时针为正。size 的「宽」�
 4. 搭大结构。规整的室内用 room；室外或不规则空间用 floor 加若干 wall。
 5. 由大到小摆物件：
    - 一件家具只用一个几何体，取它的外轮廓。桌腿、椅背、台面不要单独摆。
-   - 小摆件不要摆：花瓶、杯盘、书本、靠垫、挂画、字画这类不影响走位的东西一律略去。
-   - 只摆对走位和构图有影响的，总数建议不超过 {SUGGESTED_OBJECT_COUNT} 件，硬上限是 {MAX_COMPILED_OBJECTS} 件（一面带洞口的墙会占 3 到 4 件）。
+   - 小摆件也摆，同样一件只用一个几何体：花瓶一个圆柱，一摞书一个盒子，挂画一个薄盒子。画框和画芯、瓶身和瓶口不要分开摆。
+   - 先摆完大家具，再摆小摆件。放在家具上的小摆件，x、z 落在那件家具的范围内，y 写那件家具顶面的高度。
+   - 总数建议不超过 {SUGGESTED_OBJECT_COUNT} 件，硬上限是 {MAX_COMPILED_OBJECTS} 件（一面带洞口的墙会占 3 到 4 件）。
    - 沿纵深铺开：离相机近的 z 小，离相机远的 z 大，不要把东西都挤在后墙跟前。
    - 人物、动物不要摆。
 6. 自查：立在地上的物件 y 是否为 0；物件之间有没有互相穿插；物件是否都落在地面范围内；主要物件是否都在相机视野里；左右有没有写反（画面左边的东西 x 为负）；第 1 步写下的靠墙关系和坐标对不对得上。
