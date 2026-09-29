@@ -3462,6 +3462,20 @@ describe("PrevizEditor autosave failure", () => {
 });
 
 describe("PrevizEditor model library", () => {
+  let pickedSpot: [number, number] = [0, 0];
+
+  /**
+   * 选落点那一屏：点一下选位图、再点「放置」。合成点击（`detail: 0`）让选位图落在取景
+   * 中心——jsdom 不排版，走坐标那条路拿不到 rect。落点读数回显的就是它选中的世界 XZ。
+   */
+  async function placeAtPickedSpot(user: ReturnType<typeof userEvent.setup>) {
+    fireEvent.click(screen.getByRole("button", { name: /previz\.characterCreate\.pickHint/ }));
+    const readout = screen.getByLabelText("previz.library.spotLabel").textContent ?? "";
+    pickedSpot = readout.split(" / ").map(Number) as [number, number];
+    expect(pickedSpot.every(Number.isFinite)).toBe(true);
+    await user.click(screen.getByRole("button", { name: "previz.library.place" }));
+  }
+
   function renderEditor() {
     render(
       <PrevizEditor
@@ -3485,12 +3499,25 @@ describe("PrevizEditor model library", () => {
     expect(usePrevizStore.getState().scene.objects).toHaveLength(0);
   });
 
-  it("creates the picked primitive, frames it and closes the library", async () => {
+  it("waits for a spot before creating the picked primitive", async () => {
     const user = userEvent.setup();
     renderEditor();
 
     await user.click(screen.getByRole("button", { name: "previz.toolbar.add.prop" }));
     await user.click(screen.getByRole("button", { name: /^previz\.library\.primitive\.cube/ }));
+
+    // 挑中只是换到选落点那一屏，还没建。
+    expect(usePrevizStore.getState().scene.objects).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "previz.library.place" })).toBeDisabled();
+  });
+
+  it("creates the picked primitive at the chosen spot, frames it and closes the library", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.prop" }));
+    await user.click(screen.getByRole("button", { name: /^previz\.library\.primitive\.cube/ }));
+    await placeAtPickedSpot(user);
 
     const objects = usePrevizStore.getState().scene.objects;
     expect(objects).toHaveLength(1);
@@ -3501,6 +3528,8 @@ describe("PrevizEditor model library", () => {
       assetFormat: "primitive",
       assetUrl: "cube",
     });
+    // 落在选位图点定的那一处，贴地。
+    expect(objects[0]!.transform.position).toEqual([pickedSpot[0], 0, pickedSpot[1]]);
     // 与本地导入同一个取景：模型换进来之后再对准，不对着占位方块取景。
     expect(focusObjectWhenReady).toHaveBeenCalledWith(objects[0]!.id);
     expect(screen.queryByRole("dialog", { name: "previz.library.title" })).toBeNull();
@@ -3528,6 +3557,9 @@ describe("PrevizEditor model library", () => {
       screen.getByLabelText("previz.library.importLocal"),
       new File(["o"], "chair.obj"),
     );
+    // 本地文件同样先选落点，选完才开始上传。
+    expect(usePrevizStore.getState().scene.objects).toHaveLength(0);
+    await placeAtPickedSpot(user);
 
     expect(screen.queryByRole("dialog", { name: "previz.library.title" })).toBeNull();
     await waitFor(() => expect(usePrevizStore.getState().scene.objects).toHaveLength(1));
@@ -3537,6 +3569,11 @@ describe("PrevizEditor model library", () => {
       assetFormat: "obj",
       assetUrl: "/static/shot.png",
     });
+    expect(usePrevizStore.getState().scene.objects[0]!.transform.position).toEqual([
+      pickedSpot[0],
+      0,
+      pickedSpot[1],
+    ]);
   });
 
   // 面板必须自己能接住焦点：没有 tabIndex 的 <section> 接不住 focus()，点它空白处时

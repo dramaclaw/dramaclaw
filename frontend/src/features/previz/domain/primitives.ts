@@ -13,13 +13,30 @@
  */
 export type PrevizPrimitiveShape =
   | 'cube'
+  | 'cuboid'
+  | 'roundedBox'
   | 'sphere'
+  | 'hemisphere'
+  | 'ellipsoid'
   | 'cylinder'
+  | 'tube'
+  | 'disc'
   | 'cone'
-  | 'plane'
+  | 'frustum'
+  | 'pyramid'
+  | 'squareFrustum'
+  | 'bipyramid'
   | 'capsule'
   | 'wedge'
-  | 'torus';
+  | 'triangularPrism'
+  | 'hexagonalPrism'
+  | 'octagonalPrism'
+  | 'starPrism'
+  | 'tetrahedron'
+  | 'octahedron'
+  | 'icosahedron'
+  | 'torus'
+  | 'plane';
 
 export interface PrevizPrimitiveSpec {
   /**
@@ -34,13 +51,30 @@ export interface PrevizPrimitiveSpec {
 /** 键序即模型库里的展示顺序。 */
 export const PREVIZ_PRIMITIVE_SHAPES: Readonly<Record<PrevizPrimitiveShape, PrevizPrimitiveSpec>> = {
   cube: { triangles: 12, aliases: ['box', 'block'] },
+  cuboid: { triangles: 12, aliases: ['brick', 'rectangular'] },
+  roundedBox: { triangles: 972, aliases: ['rounded', 'bevel'] },
   sphere: { triangles: 720, aliases: ['ball'] },
+  hemisphere: { triangles: 384, aliases: ['dome'] },
+  ellipsoid: { triangles: 720, aliases: ['egg', 'oval'] },
   cylinder: { triangles: 96, aliases: ['pillar', 'column'] },
+  tube: { triangles: 192, aliases: ['pipe', 'hollow'] },
+  disc: { triangles: 128, aliases: ['disk', 'coin'] },
   cone: { triangles: 48, aliases: [] },
-  plane: { triangles: 2, aliases: ['floor', 'ground'] },
+  frustum: { triangles: 96, aliases: ['truncated cone'] },
+  pyramid: { triangles: 8, aliases: [] },
+  squareFrustum: { triangles: 16, aliases: ['truncated pyramid'] },
+  bipyramid: { triangles: 48, aliases: ['diamond', 'double cone'] },
   capsule: { triangles: 288, aliases: ['pill'] },
   wedge: { triangles: 8, aliases: ['ramp', 'slope'] },
+  triangularPrism: { triangles: 12, aliases: ['prism'] },
+  hexagonalPrism: { triangles: 24, aliases: ['hexagon', 'prism'] },
+  octagonalPrism: { triangles: 32, aliases: ['octagon', 'prism'] },
+  starPrism: { triangles: 36, aliases: ['star'] },
+  tetrahedron: { triangles: 6, aliases: [] },
+  octahedron: { triangles: 8, aliases: [] },
+  icosahedron: { triangles: 20, aliases: [] },
   torus: { triangles: 768, aliases: ['ring', 'donut'] },
+  plane: { triangles: 2, aliases: ['floor', 'ground'] },
 };
 
 export function isPrevizPrimitiveShape(value: unknown): value is PrevizPrimitiveShape {

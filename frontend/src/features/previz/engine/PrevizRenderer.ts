@@ -10,6 +10,7 @@ import type { PrevizCameraDraft } from '../domain/cameraDraft';
 import type { PrevizCharacterDraft } from '../domain/characterDraft';
 import { dropPositionY, dropRayOriginY } from '../domain/drop';
 import { evaluateSceneAt, type EvaluatedMotion } from '../domain/evaluate';
+import { isPrevizLibraryModelUrl } from '../domain/modelLibrary';
 import type { PrevizPropExtent } from '../domain/moveAssist';
 import type { PrevizMotionStatus } from '../domain/motionLibrary';
 import { PREVIZ_DEFAULT_HEIGHT_CM } from '../domain/objects';
@@ -63,7 +64,7 @@ import { PrevizPathPreview } from './pathPreview';
 import { PrevizStrokePreview } from './strokePreview';
 import { PrevizGizmo, type GizmoMode, type TransformControlsLike } from './gizmo';
 import { createInfiniteGrid } from './grid';
-import { prepareImportedMaterials } from './importedMaterials';
+import { applyClayMaterial, prepareImportedMaterials } from './importedMaterials';
 import { buildPrimitive } from './primitiveBuilder';
 import { PropLoader } from './propLoader';
 import { PREVIZ_PLACEHOLDER_RADIUS, PrevizSceneGraph, type ThreeModule } from './sceneGraph';
@@ -507,7 +508,10 @@ export class PrevizRenderer {
           // `propUnitScale` 认这个数、原样放行，不用在这里兜。
           return Math.max(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z);
         },
-        prepareMaterials: (object) => prepareImportedMaterials(three, object),
+        prepareMaterials: (object, prop) =>
+          isPrevizLibraryModelUrl(prop.assetUrl)
+            ? applyClayMaterial(three, object)
+            : prepareImportedMaterials(three, object),
         buildPrimitive: (shape) => buildPrimitive(three, shape),
       }),
     );

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useId, useMemo, useState } from "react";
-import { Upload, X } from "lucide-react";
+import { useCallback, useId, useMemo, useState } from "react";
+import { ArrowLeft, Box, Upload, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -13,16 +13,32 @@ import {
   type PrevizLibraryEntry,
 } from "@/features/previz/domain/modelLibrary";
 import { isPrevizPrimitiveShape } from "@/features/previz/domain/primitives";
+import type { PrevizObject } from "@/features/previz/domain/scene";
+import type {
+  PrevizTopDownFootprint,
+  PrevizTopDownView,
+} from "@/features/previz/domain/topDownMap";
 import { PrevizPrimitivePreview } from "@/features/previz/ui/PrevizPrimitivePreview";
+import { PrevizTopDownPicker } from "@/features/previz/ui/PrevizTopDownPicker";
 
 export interface PrevizModelLibraryDialogProps {
   open: boolean;
-  /** 挑中一张卡片。关不关对话框由父级决定（它还要先查上限、建物件）。 */
-  onPick: (entry: PrevizLibraryEntry) => void;
-  /** 从本地选了一个模型文件。上传、压缩、toast 仍走编辑器原来那条导入流程。 */
-  onImportFile: (file: File) => void;
+  /**
+   * 场里已有的对象与道具占地，原样转给「选落点」那一步的俯视选位图。**引用要稳**，
+   * 理由同 `PrevizCharacterCreateDialog` 的同名 props：它们是选位图取景的依赖。
+   */
+  objects: readonly PrevizObject[];
+  footprints?: readonly PrevizTopDownFootprint[];
+  onRenderTopDown?: (canvas: HTMLCanvasElement) => PrevizTopDownView | null;
+  /** 挑好模型并点定了落点（世界 XZ）。关不关对话框由父级决定（它还要先查上限、建物件）。 */
+  onPlace: (entry: PrevizLibraryEntry, spot: [number, number]) => void;
+  /** 本地模型文件选好了落点。上传、压缩、toast 仍走编辑器原来那条导入流程。 */
+  onImportFile: (file: File, spot: [number, number]) => void;
   onClose: () => void;
 }
+
+/** 挑中了、正等着选落点的那一个：库里的一张卡片，或本地选的一个文件。 */
+type PendingModel = { kind: "entry"; entry: PrevizLibraryEntry } | { kind: "file"; file: File };
 
 type CategoryFilter = PrevizLibraryCategory | "all";
 
@@ -41,6 +57,10 @@ const CARD =
 /**
  * 模型库：左栏分类带计数，右侧搜索加卡片网格，本地导入退到底部的次按钮。
  *
+ * 挑中模型（或选好本地文件）后不直接建，而是换到「选落点」一步：同人物创建，在俯视图上
+ * 点一下决定放哪。直接建的话每个模型都落在世界原点，连放两个就叠在一起。返回键回到
+ * 网格时搜索词与分类都还在——面板没卸载，只是换了一屏。
+ *
  * 铺在视口上而不是再套一层 base-ui Dialog，理由同机位创建对话框：编辑器本身已经是个
  * 全屏 Dialog，嵌套会把焦点陷阱和 Esc 各劫持一遍。
  */
@@ -50,11 +70,34 @@ export function PrevizModelLibraryDialog({ open, ...props }: PrevizModelLibraryD
   return <LibraryPanel {...props} />;
 }
 
-function LibraryPanel({ onPick, onImportFile, onClose }: Omit<PrevizModelLibraryDialogProps, "open">) {
+function LibraryPanel({
+  objects,
+  footprints,
+  onRenderTopDown,
+  onPlace,
+  onImportFile,
+  onClose,
+}: Omit<PrevizModelLibraryDialogProps, "open">) {
   const { t } = useTranslation();
   const fileInputId = useId();
   const [category, setCategory] = useState<CategoryFilter>("all");
   const [query, setQuery] = useState("");
+  const [pending, setPending] = useState<PendingModel | null>(null);
+  const [spot, setSpot] = useState<[number, number] | null>(null);
+  // 引用稳定的理由见 `PrevizCharacterCreateDialog.handlePick`。
+  const handlePick = useCallback((point: [number, number]) => setSpot(point), []);
+
+  const choose = (next: PendingModel) => {
+    setPending(next);
+    // 换一个模型就重新选：上一个的落点留着的话，「放置」一点就亮，用户以为不用再选。
+    setSpot(null);
+  };
+
+  const place = () => {
+    if (!pending || !spot) return;
+    if (pending.kind === "entry") onPlace(pending.entry, spot);
+    else onImportFile(pending.file, spot);
+  };
 
   const matches = useMemo(() => {
     const inCategory =
@@ -93,7 +136,25 @@ function LibraryPanel({ onPick, onImportFile, onClose }: Omit<PrevizModelLibrary
     >
       <div className="flex h-full max-h-[560px] w-full max-w-[760px] flex-col gap-3 rounded-xl border border-white/10 bg-[#14161b] p-4 shadow-2xl">
         <header className="flex items-center justify-between">
-          <h4 className="text-[13px] font-medium text-white/90">{t("previz.library.title")}</h4>
+          {pending ? (
+            <div className="flex min-w-0 items-center gap-1">
+              <button
+                type="button"
+                className={STEP_BUTTON}
+                aria-label={t("previz.library.back")}
+                onClick={() => setPending(null)}
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+              </button>
+              <h4 className="truncate text-[13px] font-medium text-white/90">
+                {t("previz.library.placeTitle", {
+                  name: pending.kind === "entry" ? t(pending.entry.nameKey) : pending.file.name,
+                })}
+              </h4>
+            </div>
+          ) : (
+            <h4 className="text-[13px] font-medium text-white/90">{t("previz.library.title")}</h4>
+          )}
           <button
             type="button"
             className={STEP_BUTTON}
@@ -104,88 +165,205 @@ function LibraryPanel({ onPick, onImportFile, onClose }: Omit<PrevizModelLibrary
           </button>
         </header>
 
-        <div className="flex min-h-0 flex-1 gap-4">
-          <nav
-            aria-label={t("previz.library.categories")}
-            className="flex w-36 shrink-0 flex-col gap-0.5"
-          >
-            {railButton("all", t("previz.library.all"), COUNTS.all)}
-            {CATEGORIES.map((value) =>
-              railButton(
-                value,
-                t(PREVIZ_LIBRARY_CATEGORIES[value].labelKey),
-                COUNTS.byCategory[value],
-              ),
-            )}
-          </nav>
-
-          <div className="flex min-w-0 flex-1 flex-col gap-3">
-            <input
-              type="search"
-              // 打开就是来找东西的：直接能打字，不用先去点一下搜索框。
-              autoFocus
-              aria-label={t("previz.library.search")}
-              placeholder={t("previz.library.search")}
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              className="h-8 w-full rounded-md border border-white/10 bg-white/[0.04] px-2 text-[12px] text-white/90 outline-none placeholder:text-white/30 focus:border-white/25"
-            />
-            {matches.length > 0 ? (
-              <ul className="grid min-h-0 grid-cols-[repeat(auto-fill,minmax(112px,1fr))] content-start gap-2 overflow-y-auto">
-                {matches.map((entry) => (
-                  <li key={entry.id}>
-                    <button type="button" className={CARD} onClick={() => onPick(entry)}>
-                      {entry.assetFormat === "primitive" && isPrevizPrimitiveShape(entry.assetUrl) && (
-                        <PrevizPrimitivePreview shape={entry.assetUrl} className="h-16 w-16" />
-                      )}
-                      <span className="w-full truncate text-center text-[12px]">
-                        {t(entry.nameKey)}
-                      </span>
-                      <span className="text-[11px] tabular-nums text-white/35">
-                        {t("previz.library.triangles", { count: entry.triangles })}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="py-10 text-center text-[12px] text-white/40">
-                {t("previz.library.empty")}
-              </p>
-            )}
-          </div>
-        </div>
-
-        <footer className="flex justify-end border-t border-white/10 pt-3">
-          {/*
-            input 是 `sr-only` 而不是 `hidden`：display:none 的控件拿不到焦点，键盘用户就
-            再也够不着导入入口了。视觉上的按钮是它的 <label>，焦点环靠 peer-* 从 input 转过来。
-            无障碍名字只由 <label> 的可见文字提供——再挂一份 aria-label 是两处真相，
-            改坏其中一处另一处会把问题遮住。
-            label 上那三个 peer-focus-visible:* 是 buttonVariants 基类里 focus-visible:*
-            的同值翻版（Tailwind 无法给现成的变体换前缀）；设计系统改焦点环时这里要跟着改。
-          */}
-          <input
-            id={fileInputId}
-            type="file"
-            accept=".glb,.gltf,.obj"
-            className="peer sr-only"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) onImportFile(file);
-              // 清空 value：不清的话选同一个文件第二次不会触发 change。
-              event.target.value = "";
-            }}
+        {pending ? (
+          <PlaceStep
+            pending={pending}
+            objects={objects}
+            footprints={footprints}
+            onRenderTopDown={onRenderTopDown}
+            spot={spot}
+            onPick={handlePick}
           />
-          <label
-            htmlFor={fileInputId}
-            className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-white/10 px-3 text-[12px] text-white/70 transition-colors hover:bg-white/10 hover:text-white/90 peer-focus-visible:border-ring peer-focus-visible:ring-3 peer-focus-visible:ring-ring/50"
-          >
-            <Upload className="h-3.5 w-3.5" />
-            {t("previz.library.importLocal")}
-          </label>
-        </footer>
+        ) : (
+          <div className="flex min-h-0 flex-1 gap-4">
+            <nav
+              aria-label={t("previz.library.categories")}
+              className="flex w-36 shrink-0 flex-col gap-0.5"
+            >
+              {railButton("all", t("previz.library.all"), COUNTS.all)}
+              {CATEGORIES.map((value) =>
+                railButton(
+                  value,
+                  t(PREVIZ_LIBRARY_CATEGORIES[value].labelKey),
+                  COUNTS.byCategory[value],
+                ),
+              )}
+            </nav>
+
+            <div className="flex min-w-0 flex-1 flex-col gap-3">
+              <input
+                type="search"
+                // 打开就是来找东西的：直接能打字，不用先去点一下搜索框。
+                autoFocus
+                aria-label={t("previz.library.search")}
+                placeholder={t("previz.library.search")}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                className="h-8 w-full rounded-md border border-white/10 bg-white/[0.04] px-2 text-[12px] text-white/90 outline-none placeholder:text-white/30 focus:border-white/25"
+              />
+              {matches.length > 0 ? (
+                <ul className="grid min-h-0 grid-cols-[repeat(auto-fill,minmax(112px,1fr))] content-start gap-2 overflow-y-auto">
+                  {matches.map((entry) => (
+                    <li key={entry.id}>
+                      <button
+                        type="button"
+                        className={CARD}
+                        onClick={() => choose({ kind: "entry", entry })}
+                      >
+                        <EntryThumbnail entry={entry} />
+                        <span className="w-full truncate text-center text-[12px]">
+                          {t(entry.nameKey)}
+                        </span>
+                        <span className="text-[11px] tabular-nums text-white/35">
+                          {t("previz.library.triangles", { count: entry.triangles })}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="py-10 text-center text-[12px] text-white/40">
+                  {t("previz.library.empty")}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {pending ? (
+          <footer className="flex items-center justify-end gap-2 border-t border-white/10 pt-3">
+            <button
+              type="button"
+              className="h-8 shrink-0 rounded-md border border-white/10 px-3 text-[12px] text-white/70 transition-colors hover:bg-white/10 hover:text-white/90"
+              onClick={() => setPending(null)}
+            >
+              {t("previz.library.back")}
+            </button>
+            <button
+              type="button"
+              disabled={!spot}
+              className="h-8 shrink-0 rounded-md bg-white/90 px-3 text-[12px] font-medium text-black transition-colors hover:bg-white disabled:cursor-not-allowed disabled:bg-white/25 disabled:text-black/40"
+              onClick={place}
+            >
+              {t("previz.library.place")}
+            </button>
+          </footer>
+        ) : (
+          <footer className="flex justify-end border-t border-white/10 pt-3">
+            {/*
+              input 是 `sr-only` 而不是 `hidden`：display:none 的控件拿不到焦点，键盘用户就
+              再也够不着导入入口了。视觉上的按钮是它的 <label>，焦点环靠 peer-* 从 input 转过来。
+              无障碍名字只由 <label> 的可见文字提供——再挂一份 aria-label 是两处真相，
+              改坏其中一处另一处会把问题遮住。
+              label 上那三个 peer-focus-visible:* 是 buttonVariants 基类里 focus-visible:*
+              的同值翻版（Tailwind 无法给现成的变体换前缀）；设计系统改焦点环时这里要跟着改。
+            */}
+            <input
+              id={fileInputId}
+              type="file"
+              accept=".glb,.gltf,.obj"
+              className="peer sr-only"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) choose({ kind: "file", file });
+                // 清空 value：不清的话选同一个文件第二次不会触发 change。
+                event.target.value = "";
+              }}
+            />
+            <label
+              htmlFor={fileInputId}
+              className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-white/10 px-3 text-[12px] text-white/70 transition-colors hover:bg-white/10 hover:text-white/90 peer-focus-visible:border-ring peer-focus-visible:ring-3 peer-focus-visible:ring-ring/50"
+            >
+              <Upload className="h-3.5 w-3.5" />
+              {t("previz.library.importLocal")}
+            </label>
+          </footer>
+        )}
       </div>
     </section>
+  );
+}
+
+/** 选落点那一屏：左边俯视选位图，右边是挑中的模型与落点读数。 */
+function PlaceStep({
+  pending,
+  objects,
+  footprints,
+  onRenderTopDown,
+  spot,
+  onPick,
+}: {
+  pending: PendingModel;
+  objects: readonly PrevizObject[];
+  footprints?: readonly PrevizTopDownFootprint[];
+  onRenderTopDown?: (canvas: HTMLCanvasElement) => PrevizTopDownView | null;
+  spot: [number, number] | null;
+  onPick: (point: [number, number]) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex min-h-0 flex-1 gap-4">
+      <PrevizTopDownPicker
+        objects={objects}
+        footprints={footprints}
+        renderTopDown={onRenderTopDown}
+        value={spot}
+        onPick={onPick}
+      />
+      <div className="flex min-w-0 flex-1 flex-col items-center gap-3 pt-6">
+        {pending.kind === "entry" ? (
+          <EntryThumbnail entry={pending.entry} />
+        ) : (
+          <span className="flex h-16 w-16 items-center justify-center text-white/25">
+            <Box className="h-7 w-7" />
+          </span>
+        )}
+        <span className="w-full truncate text-center text-[12px] text-white/80">
+          {pending.kind === "entry" ? t(pending.entry.nameKey) : pending.file.name}
+        </span>
+        <div className="flex w-full max-w-[220px] items-center gap-2">
+          <span className="shrink-0 text-[11px] text-white/45">{t("previz.library.spot")}</span>
+          {/* 读数 `aria-live` 的理由同人物创建对话框的站位读数。 */}
+          <span
+            aria-label={t("previz.library.spotLabel")}
+            aria-live="polite"
+            className="min-w-0 flex-1 rounded-lg border border-white/[0.06] bg-white/[0.03] px-2 py-1.5 text-center text-[12px] tabular-nums text-white/85"
+          >
+            {spot ? `${spot[0].toFixed(2)} / ${spot[1].toFixed(2)}` : "— / —"}
+          </span>
+        </div>
+        {!spot && (
+          <p className="text-center text-[12px] text-white/40">{t("previz.library.pickHint")}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** 基础几何体画矢量示意图；CDN 模型用缩略图，图挂了退成一个方块图标，卡片不塌。 */
+function EntryThumbnail({ entry }: { entry: PrevizLibraryEntry }) {
+  const [failed, setFailed] = useState(false);
+  if (entry.assetFormat === "primitive" && isPrevizPrimitiveShape(entry.assetUrl)) {
+    return <PrevizPrimitivePreview shape={entry.assetUrl} className="h-16 w-16" />;
+  }
+  if (!entry.thumbnailUrl || failed) {
+    return (
+      <span className="flex h-16 w-16 items-center justify-center text-white/25">
+        <Box className="h-7 w-7" />
+      </span>
+    );
+  }
+  return (
+    <img
+      src={entry.thumbnailUrl}
+      // 名字就在卡片下面，图只是装饰。
+      alt=""
+      // 两百多张图，只取滚进视口的那些。
+      loading="lazy"
+      decoding="async"
+      draggable={false}
+      onError={() => setFailed(true)}
+      className="h-16 w-16 object-contain"
+    />
   );
 }

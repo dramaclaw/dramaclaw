@@ -18,6 +18,7 @@ import {
 } from '../domain/scene';
 import { buildCameraModel, syncCameraFrustum } from './cameraModel';
 import { disposeRigMaterials, type CharacterRigFactory } from './characterRig';
+import { CLAY_COLOR } from './importedMaterials';
 import type { PropLoader } from './propLoader';
 
 /** three 命名空间本体。以构造参数传入，绝不在本文件里 import —— 见类注释。 */
@@ -90,8 +91,6 @@ function placeholderBodyHeight(height: number): number {
   return height - PLACEHOLDER_HEAD_RADIUS * 2 + PLACEHOLDER_NECK;
 }
 
-/** 全灰模式的统一颜色。 */
-const CLAY_COLOR = 0xb9bec8;
 
 /**
  * 单件占位体的分类色。机位与人物都不在表里，理由是同一条：颜色由别处管，
