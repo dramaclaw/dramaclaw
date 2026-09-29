@@ -82,7 +82,6 @@ export const StoryPlaytestTree = memo(function StoryPlaytestTree({
     const viewport = treeRootRef.current?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
     if (!viewport) return;
     const handleWheel = (event: WheelEvent) => {
-      // 普通滚轮保持纵向；Shift+滚轮查看深层长标题，触控板的原生横向手势照常生效。
       if (!event.shiftKey || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
       viewport.scrollLeft += event.deltaY;
       event.preventDefault();
@@ -131,10 +130,15 @@ export const StoryPlaytestTree = memo(function StoryPlaytestTree({
 
   useEffect(() => {
     if (!selectedRowId) return;
+    const viewport = treeRootRef.current?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
     const active = Array.from(
       treeRootRef.current?.querySelectorAll<HTMLElement>('[data-story-row-id]') ?? [],
     ).find((element) => element.dataset.storyRowId === selectedRowId);
-    active?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    if (!viewport || !active) return;
+    const viewportRect = viewport.getBoundingClientRect();
+    const activeRect = active.getBoundingClientRect();
+    if (activeRect.top < viewportRect.top) viewport.scrollTop += activeRect.top - viewportRect.top;
+    else if (activeRect.bottom > viewportRect.bottom) viewport.scrollTop += activeRect.bottom - viewportRect.bottom;
   }, [selectedRowId]);
 
   const selectEntry = (nodeId: string, rowId: string) => {
@@ -323,8 +327,7 @@ export const StoryPlaytestTree = memo(function StoryPlaytestTree({
       </div>
 
       <ScrollArea
-        horizontal
-        className="min-h-0 flex-1 [&_[data-slot=scroll-area-scrollbar]]:z-20 [&_[data-orientation=vertical]]:!w-3.5 [&_[data-orientation=vertical]]:!border-l [&_[data-orientation=horizontal]]:!h-3.5 [&_[data-orientation=horizontal]]:!border-t [&_[data-slot=scroll-area-scrollbar]]:!border-white/[0.08] [&_[data-slot=scroll-area-scrollbar]]:!bg-[#090a0e] [&_[data-slot=scroll-area-scrollbar]]:!p-0.5 [&_[data-orientation=vertical]_[data-slot=scroll-area-thumb]]:!min-h-8 [&_[data-orientation=horizontal]_[data-slot=scroll-area-thumb]]:!min-w-10 [&_[data-slot=scroll-area-thumb]]:!bg-[oklch(0.72_0.145_205/0.68)] [&_[data-slot=scroll-area-thumb]]:!shadow-[0_0_8px_oklch(0.72_0.145_205/0.22)] hover:[&_[data-slot=scroll-area-thumb]]:!bg-[oklch(0.72_0.145_205/0.92)]"
+        className="min-h-0 min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]]:!overflow-x-auto [&_[data-slot=scroll-area-scrollbar]]:z-20 [&_[data-orientation=vertical]]:!w-3.5 [&_[data-orientation=vertical]]:!border-l [&_[data-slot=scroll-area-scrollbar]]:!border-white/[0.08] [&_[data-slot=scroll-area-scrollbar]]:!bg-[#090a0e] [&_[data-slot=scroll-area-scrollbar]]:!p-0.5 [&_[data-orientation=vertical]_[data-slot=scroll-area-thumb]]:!min-h-8 [&_[data-slot=scroll-area-thumb]]:!bg-[oklch(0.72_0.145_205/0.68)] [&_[data-slot=scroll-area-thumb]]:!shadow-[0_0_8px_oklch(0.72_0.145_205/0.22)] hover:[&_[data-slot=scroll-area-thumb]]:!bg-[oklch(0.72_0.145_205/0.92)]"
         role="region"
         aria-label={t('canvas.story.tree.title')}
       >

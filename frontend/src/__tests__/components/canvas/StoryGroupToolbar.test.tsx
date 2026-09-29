@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { act, cleanup, render } from '@testing-library/react';
+import { act, cleanup, render, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { StoryGroupToolbar } from '@/features/canvas/ui/StoryGroupToolbar';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useStoryRuntimeStore } from '@/stores/storyRuntimeStore';
@@ -9,7 +10,7 @@ import { FREEZONE_DOCK_OFFSET_ANIMATED_STYLE } from '@/features/freezone/dockOff
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 afterEach(cleanup);
 
-it('选中故事组或其片段时显示右上角悬浮工具栏，非故事选择和试玩时隐藏', () => {
+it('故事组工具栏直接显示常用操作，仅导出保留在更多中', async () => {
   useStoryRuntimeStore.setState({ mode: 'edit' });
   useCanvasStore.setState({ selectedNodeId: 'clip', nodes: [
     { id: 'g', type: 'groupNode', position: { x: 0, y: 0 }, data: { storyGroup: true, displayName: '小胡的故事' } },
@@ -24,7 +25,19 @@ it('选中故事组或其片段时显示右上角悬浮工具栏，非故事选�
   expect(region).not.toHaveClass('w-full');
   expect(region).toHaveClass('pointer-events-none');
   expect(region).toHaveStyle({ ...FREEZONE_DOCK_OFFSET_ANIMATED_STYLE });
-  expect(view.getByRole('toolbar')).toHaveClass('flex-wrap');
+  const toolbar = view.getByRole('toolbar');
+  expect(toolbar).toHaveClass('flex-wrap');
+  expect(within(toolbar).queryByRole('button', { name: 'canvas.story.addSegment' })).not.toBeInTheDocument();
+  for (const name of ['canvas.story.overview.open', 'canvas.story.states', 'canvas.story.lint.open']) {
+    expect(within(toolbar).getByRole('button', { name })).toBeInTheDocument();
+  }
+  expect(within(toolbar).getAllByRole('button').slice(-2).map((button) => button.textContent)).toEqual([
+    'storyPublication.publish', 'canvas.story.moreActions',
+  ]);
+  await userEvent.click(within(toolbar).getByRole('button', { name: 'canvas.story.moreActions' }));
+  expect(view.getByRole('menuitem', { name: 'canvas.story.export' })).toBeInTheDocument();
+  expect(view.queryAllByRole('menuitem')).toHaveLength(1);
+  await userEvent.keyboard('{Escape}');
   act(() => useCanvasStore.setState({ selectedNodeId: 'g' }));
   expect(view.getByRole('toolbar')).toBeInTheDocument();
   act(() => useCanvasStore.setState({ selectedNodeId: null }));

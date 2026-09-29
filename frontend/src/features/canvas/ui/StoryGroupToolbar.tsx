@@ -3,7 +3,7 @@ import { StoryPublicationPanel } from '@/features/canvas/story/StoryPublicationP
 import { StoryOverviewPanel } from '@/components/canvas/StoryOverviewPanel';
 import { memo, useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Download, ListTree, MoreHorizontal, Play, Plus, ScrollText, ShieldCheck, SlidersHorizontal } from 'lucide-react';
+import { Download, ListTree, MoreHorizontal, Play, ScrollText, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 import { toast } from 'sonner';
 import { Compiler } from 'inkjs/full';
 import { useCanvasStore } from '@/stores/canvasStore';
@@ -99,6 +99,8 @@ function StoryGroupActions({ id, data, onPublish, onOverview }: { id: string; da
           loadError: t('canvas.story.error'),
           placeholderBadge: t('canvas.story.placeholderBadge'),
           placeholderHint: t('canvas.story.placeholderHint'),
+          automaticPlaceholderHint: t('canvas.story.automaticPlaceholderHint'),
+          automaticPlaceholderNext: t('canvas.story.automaticPlaceholderNext'),
         },
       });
       downloadStoryHtml(html, title);
@@ -128,14 +130,20 @@ function StoryGroupActions({ id, data, onPublish, onOverview }: { id: string; da
         onClick={(event) => event.stopPropagation()}
         onWheel={(event) => event.stopPropagation()}
       >
-        <button type="button" className={ACTION_CLASS} onClick={() => useCanvasStore.getState().addStorySegment(id)}>
-          <Plus className="size-4" />{t('canvas.story.addSegment')}
-        </button>
         <button type="button" className={ACTION_CLASS} onClick={() => handleStoryGroupPlay(id)}>
           <Play className="size-4" />{t('canvas.story.play')}
         </button>
         <button type="button" className={ACTION_CLASS} onClick={() => handleStoryGroupLive(id)}>
           <ListTree className="size-4" />{t('canvas.story.playMode.live')}
+        </button>
+        <button type="button" className={ACTION_CLASS} onClick={onOverview}>
+          <ScrollText className="size-4" />{t('canvas.story.overview.open')}
+        </button>
+        <button type="button" className={ACTION_CLASS} onClick={() => useCanvasStore.getState().openStoryVariables(id)}>
+          <SlidersHorizontal className="size-4" />{t('canvas.story.states')}
+        </button>
+        <button type="button" className={ACTION_CLASS} onClick={() => useCanvasStore.getState().openStoryLint(id)}>
+          <ShieldCheck className="size-4" />{t('canvas.story.lint.open')}
         </button>
         <button type="button" className={ACTION_CLASS} onClick={onPublish}>{t('storyPublication.publish')}</button>
         <DropdownMenu>
@@ -143,9 +151,6 @@ function StoryGroupActions({ id, data, onPublish, onOverview }: { id: string; da
             <button type="button" className={ACTION_CLASS}><MoreHorizontal className="size-4" />{t('canvas.story.moreActions')}</button>
           </DropdownMenuTrigger>
           <DropdownMenuContent side="bottom" align="end" className="min-w-48">
-            <DropdownMenuItem onSelect={onOverview}><ScrollText className="mr-2 size-4" />{t('canvas.story.overview.open')}</DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => useCanvasStore.getState().openStoryVariables(id)}><SlidersHorizontal className="mr-2 size-4" />{t('canvas.story.states')}</DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => useCanvasStore.getState().openStoryLint(id)}><ShieldCheck className="mr-2 size-4" />{t('canvas.story.lint.open')}</DropdownMenuItem>
             <DropdownMenuItem disabled={exporting} onSelect={() => void handleStoryGroupExport(id)}><Download className="mr-2 size-4" />{t('canvas.story.export')}</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

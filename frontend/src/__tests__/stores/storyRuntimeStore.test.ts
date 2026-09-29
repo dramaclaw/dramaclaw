@@ -146,6 +146,7 @@ describe('storyRuntimeStore', () => {
     store.enterPlay(compiled);
     expect(useStoryRuntimeStore.getState().currentChoices).toEqual([]);
     expect(useStoryRuntimeStore.getState().phase).toBe('playing');
+    expect(useStoryRuntimeStore.getState().nextClipUrls).toEqual(['open.mp4']);
     store.advanceAutomatic();
     expect(useStoryRuntimeStore.getState().currentClipUrl).toBe('open.mp4');
     expect(useStoryRuntimeStore.getState().phase).toBe('ended');

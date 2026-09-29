@@ -44,8 +44,12 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
   // 试玩模式直接恢复剧情存档；失效存档由 runtime 清理并回到起点。
   useEffect(() => {
     if (embedded || mode !== 'play' || playKind !== 'entertainment' || !resumeAvailable) return;
-    if (!resumeSaved()) toast(t('canvas.story.resume.invalid'));
-  }, [embedded, mode, playKind, resumeAvailable, resumeSaved, t]);
+    if (!resumeSaved()) {
+      toast(t('canvas.story.resume.invalid'));
+    } else if (useStoryRuntimeStore.getState().phase === 'ended' && !useStoryRuntimeStore.getState().currentClipUrl) {
+      restart();
+    }
+  }, [embedded, mode, playKind, resumeAvailable, resumeSaved, restart, t]);
   const startPlayback = useCallback((kind: 'entertainment' | 'live', entryNodeId?: string) => {
     if (!groupId) return;
     const { nodes, edges } = useCanvasStore.getState();

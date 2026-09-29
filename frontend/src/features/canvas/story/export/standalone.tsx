@@ -26,6 +26,8 @@ const labelKeys: Record<string, keyof PlayerLabels> = {
   'canvas.story.restart': 'restart',
   'canvas.story.placeholderBadge': 'placeholderBadge',
   'canvas.story.placeholderHint': 'placeholderHint',
+  'canvas.story.automaticPlaceholderHint': 'automaticPlaceholderHint',
+  'canvas.story.automaticPlaceholderNext': 'automaticPlaceholderNext',
   'canvas.story.playMode.playCurrent': 'play',
   'canvas.story.playMode.pauseCurrent': 'pause',
   'canvas.story.playMode.seek': 'seek',

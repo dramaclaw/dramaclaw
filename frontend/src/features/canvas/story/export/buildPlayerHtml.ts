@@ -10,6 +10,8 @@ export interface PlayerLabels {
   loadError: string;
   placeholderBadge: string;
   placeholderHint: string;
+  automaticPlaceholderHint?: string;
+  automaticPlaceholderNext?: string;
   play?: string;
   pause?: string;
   seek?: string;
@@ -37,6 +39,8 @@ const DEFAULT_LABELS: PlayerLabels = {
   loadError: '故事加载失败',
   placeholderBadge: '占位片段',
   placeholderHint: '此片段尚未生成视频,点选下方选项继续试玩',
+  automaticPlaceholderHint: '此片段尚未生成视频',
+  automaticPlaceholderNext: '即将自动进入下一片段',
   play: '播放当前片段',
   pause: '暂停当前片段',
   seek: '播放进度',

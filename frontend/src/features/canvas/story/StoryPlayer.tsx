@@ -12,6 +12,8 @@ import { useStoryFrameTransition } from './useStoryFrameTransition';
 /** 选择确认后给玩家阅读剧情反馈的停留时间；不会改变当前或后续视频资源。 */
 export const STORY_OUTCOME_FEEDBACK_MS = 1500;
 const PLAYER_CONTROLS_HIDE_MS = 1500;
+export const STORY_AUTOMATIC_PLACEHOLDER_MIN_MS = 2500;
+const STORY_AUTOMATIC_PLACEHOLDER_MAX_MS = 12000;
 
 interface OutcomeFeedback {
   text?: string;
@@ -92,6 +94,7 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
     return () => { observer?.disconnect(); window.removeEventListener('resize', update); };
   }, [fitToMedia, mediaAspectRatio]);
   const [endedPlaybackKey, setEndedPlaybackKey] = useState<string | null>(null);
+  const [automaticCountdown, setAutomaticCountdown] = useState<{ playbackKey: string; seconds: number } | null>(null);
   const [outcomeFeedback, setOutcomeFeedback] = useState<OutcomeFeedback | null>(null);
   const outcomeFeedbackTimerRef = useRef<number | null>(null);
   const outcomeFeedbackPendingRef = useRef(false);
@@ -240,11 +243,28 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
   useEffect(() => {
     if (resumeAvailable || phase !== 'playing' || currentChoices.length > 0) return;
     if (!videoEnded && resolvedUrl) return;
-    // A new visit must re-evaluate even when both clips have no URL. Yield between
-    // placeholder hops, and cancel pending advancement when playback changes.
-    const timer = window.setTimeout(advanceAutomatic, 0);
-    return () => window.clearTimeout(timer);
-  }, [advanceAutomatic, currentChoices.length, phase, resolvedUrl, resumeAvailable, videoEnded, playbackKey]);
+    // Let an ungenerated automatic clip show its story text before the next hop.
+    // Empty placeholders still advance immediately; each visit owns its timer.
+    const textLength = `${currentPlaceholder?.label ?? ''}${currentPlaceholder?.text ?? ''}`.trim().length;
+    const delay = !resolvedUrl && textLength > 0
+      ? Math.min(STORY_AUTOMATIC_PLACEHOLDER_MAX_MS, Math.max(STORY_AUTOMATIC_PLACEHOLDER_MIN_MS, textLength * 55))
+      : 0;
+    const deadline = Date.now() + delay;
+    if (delay > 0) {
+      setAutomaticCountdown({ playbackKey, seconds: Math.ceil(delay / 1000) });
+    }
+    const countdownTimer = delay > 0 ? window.setInterval(() => {
+      setAutomaticCountdown({
+        playbackKey,
+        seconds: Math.max(1, Math.ceil((deadline - Date.now()) / 1000)),
+      });
+    }, 250) : null;
+    const timer = window.setTimeout(advanceAutomatic, delay);
+    return () => {
+      window.clearTimeout(timer);
+      if (countdownTimer !== null) window.clearInterval(countdownTimer);
+    };
+  }, [advanceAutomatic, currentChoices.length, currentPlaceholder, phase, resolvedUrl, resumeAvailable, videoEnded, playbackKey]);
 
   // 锚点属于原始视频画幅；播放器按 contain 完整展示横/竖屏时，要把留白偏移计入坐标。
   useEffect(() => {
@@ -652,20 +672,30 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
       </div>
 
       {/* 占位卡:片段未生成视频时,用旁白/显示名占位,先跑通并读懂故事结构再花钱生成视频。 */}
-      {phase !== 'error' && !resumeAvailable && !resolvedUrl && currentChoices.length > 0 && currentPlaceholder && (
+      {phase !== 'error' && !resumeAvailable && !resolvedUrl && phase === 'playing' && currentPlaceholder && (
         <>
           <span className="pointer-events-none absolute left-6 top-5 z-[8] text-xs font-medium text-white/40">
             {t('canvas.story.placeholderBadge')}
           </span>
           {!outcomeFeedback && (
-            <div data-story-placeholder className="absolute inset-x-0 top-[18%] bottom-[32%] z-[8] flex overflow-y-auto overscroll-contain px-6 sm:px-8">
+            <div data-story-placeholder className={`absolute inset-x-0 top-[18%] z-[8] flex overflow-y-auto overscroll-contain px-6 sm:px-8 ${currentChoices.length > 0 ? 'bottom-[32%]' : 'bottom-[18%]'}`}>
               <div className="m-auto w-full max-w-xl space-y-3 text-left">
                 {currentPlaceholder.label && (
                   <p className="text-sm font-medium leading-5 text-white/60">{currentPlaceholder.label}</p>
                 )}
                 <p className="whitespace-pre-wrap break-words text-base font-normal leading-8 text-white/90 sm:text-lg">
-                  {currentPlaceholder.text.trim() || t('canvas.story.placeholderHint')}
+                  {currentPlaceholder.text.trim() || t(currentChoices.length > 0 ? 'canvas.story.placeholderHint' : 'canvas.story.automaticPlaceholderHint')}
                 </p>
+                {currentChoices.length === 0 && (
+                  <p className="text-sm text-white/50">
+                    {t('canvas.story.automaticPlaceholderNext')}
+                    {automaticCountdown?.playbackKey === playbackKey && (
+                      <span data-story-auto-countdown role="timer" aria-live="off" className="ml-2 inline-block min-w-8 text-right font-medium tabular-nums text-white/80">
+                        {automaticCountdown.seconds}s
+                      </span>
+                    )}
+                  </p>
+                )}
               </div>
             </div>
           )}

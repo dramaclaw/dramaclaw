@@ -4667,6 +4667,7 @@
       "overview": {
         "open": "Xem kịch bản",
         "title": "Tổng quan kịch bản",
+        "resize": "Điều chỉnh chiều rộng bảng kịch bản",
         "empty": "Canvas chưa có phân cảnh kịch bản",
         "synopsis": "Bối cảnh",
         "synopsisEmpty": "Chưa lưu tóm tắt",
@@ -4708,8 +4709,8 @@
         "chooseSource": "Choose the preceding shot",
         "untitled": "Untitled clip",
         "noSource": "No preceding shot. This clip opens independently.",
-        "sourceHint": "Reuse the last frame of “{{name}}” when generating. Branches share the same frame.",
-        "independentHint": "Use this shot’s own opening without automatically adding a preceding frame."
+        "sourceHint": "Mở đầu bằng khung hình cuối của “{{name}}”.",
+        "independentHint": "Không dùng khung hình cuối của cảnh trước."
       },
       "waitingBehavior": "While waiting for a choice",
       "freezeFrame": "Freeze last frame",
@@ -4818,6 +4819,8 @@
       "endingFallback": "The End",
       "placeholderBadge": "Placeholder clip",
       "placeholderHint": "This clip has no video yet — pick an option below to keep playtesting",
+      "automaticPlaceholderHint": "Đoạn này chưa có video",
+      "automaticPlaceholderNext": "Sẽ tự động chuyển sang đoạn tiếp theo",
       "stats": {
         "open": "Playtest stats",
         "title": "Playtest stats",
@@ -4862,7 +4865,7 @@
         "noResults": "No matching story scenes"
       },
       "lint": {
-        "open": "Production readiness",
+        "open": "Kiểm tra sẵn sàng",
         "title": "Production readiness",
         "empty": "No issues found",
         "videoReady": "Videos",

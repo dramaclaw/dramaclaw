@@ -130,28 +130,59 @@ describe('StoryClipNarrativePanel', () => {
       />,
     );
 
+    expect(screen.getByRole('tab', { name: '剧情内容' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: '制作备注' })).toHaveAttribute('aria-selected', 'false');
     expect(screen.getByDisplayValue('她推开门，看见走廊尽头的灯闪了三次。')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: '制作备注' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: '制作备注' }));
     expect(screen.getByDisplayValue('保持雨夜光线连续。')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: '剧情内容' })).not.toBeInTheDocument();
     expect(screen.queryByText('视频已就绪')).not.toBeInTheDocument();
   });
 
-  it('失焦时分别保存剧情和制作备注，不改动视频字段', () => {
+  it('切换 tab 时分别保存剧情和制作备注，不改动视频字段', () => {
     const onChange = vi.fn();
     render(
       <StoryClipNarrativePanel nodeId="clip" mediaState="missing" onChange={onChange} />,
     );
 
-    const narration = screen.getByLabelText('剧情内容');
+    const narration = screen.getByRole('textbox', { name: '剧情内容' });
     fireEvent.change(narration, { target: { value: '  新剧情  ' } });
-    fireEvent.blur(narration);
-
-    const notes = screen.getByLabelText('制作备注');
+    fireEvent.click(screen.getByRole('tab', { name: '制作备注' }));
+    const notes = screen.getByRole('textbox', { name: '制作备注' });
     fireEvent.change(notes, { target: { value: '  连续性备注  ' } });
-    fireEvent.blur(notes);
+    fireEvent.click(screen.getByRole('tab', { name: '剧情内容' }));
 
     expect(onChange).toHaveBeenNthCalledWith(1, { narration: '新剧情' });
     expect(onChange).toHaveBeenNthCalledWith(2, { storyProductionNotes: '连续性备注' });
+    expect(screen.queryByRole('textbox', { name: '制作备注' })).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '剧情内容' })).toHaveValue('  新剧情  ');
     expect(screen.queryByText('待制作视频')).not.toBeInTheDocument();
+  });
+
+  it('制作备注失焦时保存', () => {
+    const onChange = vi.fn();
+    render(<StoryClipNarrativePanel nodeId="clip" productionNotes="原备注" mediaState="ready" onChange={onChange} />);
+
+    fireEvent.click(screen.getByRole('tab', { name: '制作备注' }));
+    const notes = screen.getByRole('textbox', { name: '制作备注' });
+    fireEvent.change(notes, { target: { value: '新备注' } });
+    fireEvent.blur(notes);
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ storyProductionNotes: '新备注' });
+  });
+
+  it('可用方向键切换剧情和备注 tab', () => {
+    render(<StoryClipNarrativePanel nodeId="clip" mediaState="ready" onChange={vi.fn()} />);
+    const narrationTab = screen.getByRole('tab', { name: '剧情内容' });
+    const notesTab = screen.getByRole('tab', { name: '制作备注' });
+
+    narrationTab.focus();
+    fireEvent.keyDown(narrationTab, { key: 'ArrowRight' });
+
+    expect(notesTab).toHaveFocus();
+    expect(notesTab).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('textbox', { name: '制作备注' })).toBeInTheDocument();
   });
 
   it('保留导入故事的期望视频文件名与复核提示', () => {

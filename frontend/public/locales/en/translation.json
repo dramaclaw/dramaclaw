@@ -4917,8 +4917,8 @@
         "chooseSource": "Choose the preceding shot",
         "untitled": "Untitled clip",
         "noSource": "No preceding shot. This clip opens independently.",
-        "sourceHint": "Reuse the last frame of “{{name}}” when generating. Branches share the same frame.",
-        "independentHint": "Use this shot’s own opening without automatically adding a preceding frame."
+        "sourceHint": "Open with the last frame of “{{name}}”.",
+        "independentHint": "Don't use the previous shot's last frame."
       },
       "waitingBehavior": "While waiting for a choice",
       "freezeFrame": "Freeze last frame",
@@ -5027,6 +5027,8 @@
       "endingFallback": "The End",
       "placeholderBadge": "Placeholder clip",
       "placeholderHint": "This clip has no video yet — pick an option below to keep playtesting",
+      "automaticPlaceholderHint": "This clip has no video yet",
+      "automaticPlaceholderNext": "Continuing to the next clip automatically",
       "stats": {
         "open": "Playtest stats",
         "title": "Playtest stats",
@@ -5073,6 +5075,7 @@
       "overview": {
         "open": "View script",
         "title": "Script overview",
+        "resize": "Resize script panel",
         "empty": "No script segments on this canvas yet",
         "synopsis": "Background",
         "synopsisEmpty": "No synopsis saved yet",
@@ -5090,7 +5093,7 @@
         "productionNotes": "Production notes"
       },
       "lint": {
-        "open": "Production readiness",
+        "open": "Readiness check",
         "title": "Production readiness",
         "empty": "No issues found",
         "videoReady": "Videos",

@@ -134,16 +134,22 @@ function interactionFromChoiceTags(
  */
 function peekNextClipUrls(story: InkStory, clipByNodeId: Record<string, string>): string[] {
   const choices = story.currentChoices;
-  if (choices.length === 0) return [];
+  if (choices.length === 0 && !story.canContinue) return [];
   const snapshot = story.state.toJson();
   const urls: string[] = [];
   try {
-    for (const choice of choices) {
-      story.ChooseChoiceIndex(choice.index);
+    if (choices.length === 0) {
       if (story.canContinue) story.Continue();
       const url = clipUrlFromTags(story, clipByNodeId);
       if (url) urls.push(url);
-      story.state.LoadJson(snapshot);
+    } else {
+      for (const choice of choices) {
+        story.ChooseChoiceIndex(choice.index);
+        if (story.canContinue) story.Continue();
+        const url = clipUrlFromTags(story, clipByNodeId);
+        if (url) urls.push(url);
+        story.state.LoadJson(snapshot);
+      }
     }
   } finally {
     story.state.LoadJson(snapshot);
@@ -162,6 +168,7 @@ function advanceToClip(
   choiceFeedbackById: Record<string, string>,
   choiceStateChangesById: Record<string, StoryStateChange[]>,
   choiceInteractionById: Record<string, StoryChoiceInteraction>,
+  continueStory = true,
 ): {
   currentNodeId: string | null;
   currentClipUrl: string | null;
@@ -173,7 +180,7 @@ function advanceToClip(
   currentPlaceholder: { text: string; label?: string } | null;
   phase: StoryPhase;
 } {
-  if (story.canContinue) {
+  if (continueStory && story.canContinue) {
     story.Continue();
   }
   const tag = story.currentTags?.find((it) => it.startsWith(CLIP_TAG_PREFIX));
@@ -336,7 +343,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
       story.state.LoadJson(json);
       // LoadJson 可能接受过期指针，直到继续执行或分支预取才抛错。
       // 整个恢复过程都必须成功，才能发布恢复后的运行态。
-      const next = advanceToClip(story, clipByNodeId, choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId, choiceFeedbackById, choiceStateChangesById, choiceInteractionById);
+      const next = advanceToClip(story, clipByNodeId, choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId, choiceFeedbackById, choiceStateChangesById, choiceInteractionById, false);
       set({ resumeAvailable: false, ...next });
     } catch {
       // 存档与当前 ink 不匹配/损坏:清档,从头开始。

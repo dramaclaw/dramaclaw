@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StrictMode } from 'react';
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
-import { StoryPlayer } from '@/features/canvas/story/StoryPlayer';
+import { StoryPlayer, STORY_AUTOMATIC_PLACEHOLDER_MIN_MS } from '@/features/canvas/story/StoryPlayer';
 import { useStoryRuntimeStore as store } from '@/stores/storyRuntimeStore';
 import { CHOICE_STAGE_TIMING } from '@/components/canvas/useChoicePointMachine';
 
@@ -191,6 +191,33 @@ describe('shared player playback visits', () => {
     await waitFor(() => expect(store.getState().currentNodeId).toBe('c'));
     expect(document.querySelector('video')?.getAttribute('src')).toBe('/c.mp4');
     expect(document.querySelector('[data-story-ending]')).toBeNull();
+  });
+
+  it('shows each text placeholder before an automatic jump instead of skipping straight to the ending', () => {
+    vi.useFakeTimers();
+    try {
+      enter(chain, {}, {}, {
+        a: { label: '开场', text: '比赛还剩最后一分钟。' },
+        b: { label: '反击', text: '主队重新发起进攻。' },
+        c: { label: '结局', text: '哨声响起。' },
+      });
+      expect(store.getState().currentNodeId).toBe('a');
+      expect(document.querySelector('[data-story-placeholder]')).toHaveTextContent('比赛还剩最后一分钟。');
+      expect(document.querySelector('[data-story-auto-countdown]')).toHaveTextContent('3s');
+      act(() => vi.advanceTimersByTime(1000));
+      expect(document.querySelector('[data-story-auto-countdown]')).toHaveTextContent('2s');
+      act(() => vi.advanceTimersByTime(STORY_AUTOMATIC_PLACEHOLDER_MIN_MS - 1001));
+      expect(store.getState().currentNodeId).toBe('a');
+      act(() => vi.advanceTimersByTime(1));
+      expect(store.getState().currentNodeId).toBe('b');
+      expect(document.querySelector('[data-story-placeholder]')).toHaveTextContent('主队重新发起进攻。');
+      expect(document.querySelector('[data-story-auto-countdown]')).toHaveTextContent('3s');
+      act(() => vi.advanceTimersByTime(STORY_AUTOMATIC_PLACEHOLDER_MIN_MS));
+      expect(store.getState().currentNodeId).toBe('c');
+      expect(document.querySelector('[data-story-ending]')).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('uses the loaded main video when its URL is also the choice loop', () => {

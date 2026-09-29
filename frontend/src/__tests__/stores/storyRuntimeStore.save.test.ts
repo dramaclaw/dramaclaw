@@ -84,6 +84,29 @@ describe('storyRuntimeStore 存档/续玩', () => {
     expect(s.phase).toBe('ended');
   });
 
+  it('续玩自动跳转片段时停在存档片段，等待该片段播放完成', () => {
+    const compiled = compileGraphToInk(
+      [v('intro', '', 'start'), v('middle', ''), v('end', '')],
+      [
+        { id: 'intro->middle', source: 'intro', target: 'middle', type: STORY_CHOICE_EDGE_TYPE,
+          data: { choiceText: '', order: 0, transitionMode: 'automatic' } } as CanvasEdge,
+        { id: 'middle->end', source: 'middle', target: 'end', type: STORY_CHOICE_EDGE_TYPE,
+          data: { choiceText: '', order: 0, transitionMode: 'automatic' } } as CanvasEdge,
+      ],
+    );
+    const store = useStoryRuntimeStore.getState();
+    store.enterPlay(compiled, { saveKey: KEY });
+    store.advanceAutomatic();
+    expect(useStoryRuntimeStore.getState().currentNodeId).toBe('middle');
+    store.exitPlay();
+    store.enterPlay(compiled, { saveKey: KEY });
+    expect(store.resumeSaved()).toBe(true);
+    expect(useStoryRuntimeStore.getState().currentNodeId).toBe('middle');
+    expect(useStoryRuntimeStore.getState().phase).toBe('playing');
+    store.advanceAutomatic();
+    expect(useStoryRuntimeStore.getState().currentNodeId).toBe('end');
+  });
+
   it('startFresh 忽略存档回到起点并覆盖存档', () => {
     const store = useStoryRuntimeStore.getState();
     store.enterPlay(fixture(), { saveKey: KEY });

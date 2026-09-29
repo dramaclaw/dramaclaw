@@ -107,6 +107,18 @@ describe('StoryPlayerOverlay — 选择点四阶段接线', () => {
     expect(queryByText('canvas.story.resume.continue')).not.toBeInTheDocument();
   });
 
+  it('娱乐模式重开已完成且没有视频的存档时从起点试玩', () => {
+    const restart = vi.fn();
+    const resumeSaved = vi.fn(() => {
+      useStoryRuntimeStore.setState({ resumeAvailable: false, phase: 'ended', currentClipUrl: null });
+      return true;
+    });
+    seedChoicePoint({ playKind: 'entertainment', resumeAvailable: true, resumeSaved, restart });
+    render(<StoryPlayerOverlay />);
+    expect(resumeSaved).toHaveBeenCalledOnce();
+    expect(restart).toHaveBeenCalledOnce();
+  });
+
   it('从此生成同步画布选中状态并打开当前片段编辑态', () => {
     const previous = useCanvasStore.getState();
     useCanvasStore.setState({ nodes: [

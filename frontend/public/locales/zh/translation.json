@@ -4917,8 +4917,8 @@
         "chooseSource": "请选择要承接的上一镜头",
         "untitled": "未命名片段",
         "noSource": "没有可承接的上一镜头，使用独立开场。",
-        "sourceHint": "生成时自动复用「{{name}}」的尾帧，分支共用。",
-        "independentHint": "使用本镜头自己的开场，不自动接入上一镜尾帧。"
+        "sourceHint": "使用「{{name}}」尾帧开场。",
+        "independentHint": "不使用上一镜尾帧。"
       },
       "waitingBehavior": "等待选择时",
       "freezeFrame": "停在尾帧",
@@ -5027,6 +5027,8 @@
       "endingFallback": "全剧终",
       "placeholderBadge": "占位片段",
       "placeholderHint": "此片段尚未生成视频,点选下方选项继续试玩",
+      "automaticPlaceholderHint": "此片段尚未生成视频",
+      "automaticPlaceholderNext": "即将自动进入下一片段",
       "stats": {
         "open": "试玩统计",
         "title": "试玩统计",
@@ -5073,6 +5075,7 @@
       "overview": {
         "open": "查看剧本",
         "title": "剧本总览",
+        "resize": "拖动调整剧本宽度",
         "empty": "画布上还没有剧本片段",
         "synopsis": "故事背景",
         "synopsisEmpty": "尚未保存梗概",
@@ -5090,7 +5093,7 @@
         "productionNotes": "制作说明"
       },
       "lint": {
-        "open": "制作就绪检查",
+        "open": "就绪检查",
         "title": "制作就绪检查",
         "empty": "未发现问题",
         "videoReady": "视频",

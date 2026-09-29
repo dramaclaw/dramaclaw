@@ -87,3 +87,44 @@ it('story overview panel yields to the chat dock like the lint/tree panels', () 
   expect(panel).toHaveStyle({ ...FREEZONE_DOCK_OFFSET_ANIMATED_STYLE });
   expect(panel.className).toContain(DOCK_MAX_WIDTH);
 });
+
+it('story overview opens below the story toolbar', () => {
+  const toolbar = document.createElement('div');
+  toolbar.setAttribute('data-story-toolbar-region', '');
+  vi.spyOn(toolbar, 'getBoundingClientRect').mockReturnValue({ bottom: 92 } as DOMRect);
+  document.body.append(toolbar);
+  useCanvasStore.setState({ nodes: [{
+    id: 'g1', type: CANVAS_NODE_TYPES.group, position: { x: 0, y: 0 }, data: { storyGroup: true },
+  } as CanvasNode], edges: [] });
+  try {
+    const view = render(<StoryOverviewPanel groupId="g1" onClose={vi.fn()} />);
+    expect(view.getByRole('dialog')).toHaveStyle({ top: '100px' });
+    expect(view.getByRole('dialog')).toHaveStyle({ maxHeight: 'min(78vh, calc(100dvh - 100px - 16px))' });
+  } finally {
+    toolbar.remove();
+  }
+});
+
+it('story overview width can be dragged and adjusted from the keyboard', () => {
+  useCanvasStore.setState({ nodes: [{
+    id: 'g1', type: CANVAS_NODE_TYPES.group, position: { x: 0, y: 0 }, data: { storyGroup: true },
+  } as CanvasNode], edges: [] });
+  const view = render(<StoryOverviewPanel groupId="g1" onClose={vi.fn()} />);
+  const panel = view.getByRole('dialog');
+  const handle = view.getByRole('separator', { name: 'canvas.story.overview.resize' });
+
+  expect(panel).toHaveStyle({ width: '420px' });
+  fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX: 600 });
+  fireEvent.pointerMove(handle, { pointerId: 1, clientX: 480 });
+  fireEvent.pointerUp(handle, { pointerId: 1, clientX: 480 });
+  expect(panel).toHaveStyle({ width: '540px' });
+
+  fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+  expect(panel).toHaveStyle({ width: '564px' });
+
+  vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({ right: 600, width: 564 } as DOMRect);
+  fireEvent.pointerDown(handle, { pointerId: 2, button: 0, clientX: 600 });
+  fireEvent.pointerMove(handle, { pointerId: 2, clientX: 0 });
+  fireEvent.pointerUp(handle, { pointerId: 2, clientX: 0 });
+  expect(panel).toHaveStyle({ width: '584px' });
+});

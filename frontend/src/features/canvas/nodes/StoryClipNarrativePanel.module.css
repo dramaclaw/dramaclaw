@@ -1,7 +1,7 @@
 .textareaFrame {
   box-sizing: border-box;
-  height: 96px;
-  min-height: 80px;
+  height: 144px;
+  min-height: 112px;
   padding: 8px 8px 16px 10px;
   overflow: hidden;
   resize: vertical;
@@ -38,6 +38,38 @@
     linear-gradient(135deg, transparent 45%, rgb(var(--text-rgb) / .7) 45%, rgb(var(--text-rgb) / .7) 55%, transparent 55%) right 3px bottom 3px / 8px 8px no-repeat,
     linear-gradient(135deg, transparent 45%, rgb(var(--text-rgb) / .7) 45%, rgb(var(--text-rgb) / .7) 65%, transparent 65%) right 3px bottom 3px / 4px 4px no-repeat;
   border: 0;
+}
+
+.textTabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--ui-border-soft);
+}
+
+.textTab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 6px 4px;
+  border-bottom: 2px solid transparent;
+  color: rgb(var(--text-rgb) / .7);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.25;
+  transition: color var(--duration-fast), border-color var(--duration-fast);
+}
+
+.textTab:hover { color: rgb(var(--text-rgb)); }
+.textTab[aria-selected='true'] {
+  border-color: rgb(var(--accent-rgb));
+  color: rgb(var(--text-rgb));
+}
+.textTab:focus-visible {
+  outline: 2px solid rgb(var(--accent-rgb));
+  outline-offset: -2px;
 }
 
 .modeButton {

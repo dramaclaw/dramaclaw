@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { memo, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import { memo, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Clapperboard, FileText, Film, Link2, MousePointerClick, Repeat2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -49,8 +49,12 @@ export const StoryClipNarrativePanel = memo(function StoryClipNarrativePanel({
   onChange,
 }: StoryClipNarrativePanelProps) {
   const { t } = useTranslation();
+  const textTabsId = useId();
   const [narrationDraft, setNarrationDraft] = useState(narration);
   const [notesDraft, setNotesDraft] = useState(productionNotes);
+  const committedNarration = useRef(narration);
+  const committedNotes = useRef(productionNotes);
+  const [activeTextTab, setActiveTextTab] = useState<'narration' | 'notes'>('narration');
   const [loopPickerOpen, setLoopPickerOpen] = useState(false);
   const nodes = useCanvasStore((state) => state.nodes);
   const edges = useCanvasStore((state) => state.edges);
@@ -78,16 +82,29 @@ export const StoryClipNarrativePanel = memo(function StoryClipNarrativePanel({
     (candidate) => candidate.url === nodeData?.choiceLoopVideoUrl,
   )?.nodeId ?? (nodeData?.choiceLoopVideoUrl ? '__external__' : '');
 
-  useEffect(() => setNarrationDraft(narration), [narration]);
-  useEffect(() => setNotesDraft(productionNotes), [productionNotes]);
+  useEffect(() => { setNarrationDraft(narration); committedNarration.current = narration; }, [narration, nodeId]);
+  useEffect(() => { setNotesDraft(productionNotes); committedNotes.current = productionNotes; }, [productionNotes, nodeId]);
+  useEffect(() => setActiveTextTab('narration'), [nodeId]);
 
   const commitNarration = () => {
     const next = narrationDraft.trim();
-    if (next !== narration) onChange({ narration: next });
+    if (next !== committedNarration.current) {
+      committedNarration.current = next;
+      onChange({ narration: next });
+    }
   };
   const commitNotes = () => {
     const next = notesDraft.trim();
-    if (next !== productionNotes) onChange({ storyProductionNotes: next });
+    if (next !== committedNotes.current) {
+      committedNotes.current = next;
+      onChange({ storyProductionNotes: next });
+    }
+  };
+  const switchTextTab = (tab: 'narration' | 'notes') => {
+    if (tab === activeTextTab) return;
+    if (activeTextTab === 'narration') commitNarration();
+    else commitNotes();
+    setActiveTextTab(tab);
   };
 
   const handleCtaLabelChange = (label: string) => {
@@ -126,43 +143,46 @@ export const StoryClipNarrativePanel = memo(function StoryClipNarrativePanel({
       onPointerDown={(event) => event.stopPropagation()}
     >
       <div className="nowheel flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-3">
-        <label className="flex shrink-0 flex-col gap-1.5">
-          <span className="flex items-center gap-1.5 text-[11px] font-medium text-text-muted">
-            <FileText className="h-3.5 w-3.5" />
-            {t('canvas.story.narrationLabel')}
-          </span>
-          <div className={styles.textareaFrame}>
-          <textarea
-            value={narrationDraft}
-            rows={3}
-            aria-label={t('canvas.story.narrationLabel')}
-            placeholder={t('canvas.story.narrationPlaceholder')}
-            className={`${styles.textarea} nowheel text-xs leading-5 text-text-dark placeholder:text-text-muted/60`}
-            onChange={(event) => setNarrationDraft(event.target.value)}
-            onBlur={commitNarration}
-            onKeyDown={blurOnCommitShortcut}
-          />
+        <section className="flex min-w-0 shrink-0 flex-col gap-1.5">
+          <div className={styles.textTabs} role="tablist" aria-label={t('canvas.story.segmentDetails')}
+            onKeyDown={(event) => {
+              if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+              event.preventDefault();
+              const nextTab = activeTextTab === 'narration' ? 'notes' : 'narration';
+              switchTextTab(nextTab);
+              event.currentTarget.querySelector<HTMLButtonElement>(`[id="${textTabsId}-${nextTab}"]`)?.focus();
+            }}>
+            <button type="button" id={`${textTabsId}-narration`} role="tab"
+              className={styles.textTab} aria-selected={activeTextTab === 'narration'}
+              tabIndex={activeTextTab === 'narration' ? 0 : -1}
+              aria-controls={`${textTabsId}-panel`} onClick={() => switchTextTab('narration')}>
+              <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+              {t('canvas.story.narrationLabel')}
+            </button>
+            <button type="button" id={`${textTabsId}-notes`} role="tab"
+              className={styles.textTab} aria-selected={activeTextTab === 'notes'}
+              tabIndex={activeTextTab === 'notes' ? 0 : -1}
+              aria-controls={`${textTabsId}-panel`} onClick={() => switchTextTab('notes')}>
+              <Clapperboard className="h-3.5 w-3.5" aria-hidden="true" />
+              {t('canvas.story.productionNotesLabel')}
+            </button>
           </div>
-        </label>
-
-        <label className="flex shrink-0 flex-col gap-1.5">
-          <span className="flex items-center gap-1.5 text-[11px] font-medium text-text-muted">
-            <Clapperboard className="h-3.5 w-3.5" />
-            {t('canvas.story.productionNotesLabel')}
-          </span>
-          <div className={styles.textareaFrame}>
-          <textarea
-            value={notesDraft}
-            aria-label={t('canvas.story.productionNotesLabel')}
-            placeholder={t('canvas.story.productionNotesPlaceholder')}
-            rows={3}
-            className={`${styles.textarea} nowheel text-xs leading-5 text-text-dark placeholder:text-text-muted/60`}
-            onChange={(event) => setNotesDraft(event.target.value)}
-            onBlur={commitNotes}
-            onKeyDown={blurOnCommitShortcut}
-          />
+          <div id={`${textTabsId}-panel`} role="tabpanel"
+            aria-labelledby={`${textTabsId}-${activeTextTab}`}
+            className={styles.textareaFrame}>
+            <textarea
+              value={activeTextTab === 'narration' ? narrationDraft : notesDraft}
+              rows={3}
+              aria-label={t(activeTextTab === 'narration' ? 'canvas.story.narrationLabel' : 'canvas.story.productionNotesLabel')}
+              placeholder={t(activeTextTab === 'narration' ? 'canvas.story.narrationPlaceholder' : 'canvas.story.productionNotesPlaceholder')}
+              className={`${styles.textarea} nowheel text-xs leading-5 text-text-dark placeholder:text-text-muted/60`}
+              onChange={(event) => activeTextTab === 'narration'
+                ? setNarrationDraft(event.target.value) : setNotesDraft(event.target.value)}
+              onBlur={activeTextTab === 'narration' ? commitNarration : commitNotes}
+              onKeyDown={blurOnCommitShortcut}
+            />
           </div>
-        </label>
+        </section>
 
         <fieldset className="flex min-w-0 shrink-0 flex-col gap-1.5">
           <legend className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-text-muted">
@@ -225,15 +245,15 @@ export const StoryClipNarrativePanel = memo(function StoryClipNarrativePanel({
           </div>
         </fieldset>}
         {hasOutgoingChoices && (
-          <div className="flex flex-col gap-1.5">
-            <span className="flex items-center gap-1.5 text-[11px] font-medium text-text-muted">
-              <Repeat2 className="h-3.5 w-3.5" />
+          <fieldset className="flex min-w-0 shrink-0 flex-col gap-1.5">
+            <legend className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-text-muted">
+              <Repeat2 className="h-3.5 w-3.5" aria-hidden="true" />
               {t('canvas.story.waitingBehavior')}
-            </span>
-            <div className="flex gap-1" role="group" aria-label={t('canvas.story.waitingBehavior')}>
-              <button type="button" className="tap-button aria-pressed:text-accent" aria-pressed={!boundCandidateId && !loopPickerOpen}
+            </legend>
+            <div className="flex flex-wrap gap-1">
+              <button type="button" className={styles.modeButton} aria-pressed={!boundCandidateId && !loopPickerOpen}
                 onClick={() => { handleLoopChange(''); setLoopPickerOpen(false); }}>{t('canvas.story.freezeFrame')}</button>
-              <button type="button" className="tap-button aria-pressed:text-accent" aria-pressed={!!boundCandidateId || loopPickerOpen}
+              <button type="button" className={styles.modeButton} aria-pressed={!!boundCandidateId || loopPickerOpen}
                 onClick={() => setLoopPickerOpen(true)}>{t('canvas.story.loopVideo')}</button>
             </div>
             {(!!boundCandidateId || loopPickerOpen) && <>
@@ -259,7 +279,7 @@ export const StoryClipNarrativePanel = memo(function StoryClipNarrativePanel({
                 : t('canvas.story.choiceLoop.empty')}
             </span>
             </>}
-          </div>
+          </fieldset>
         )}
       </div>
 
