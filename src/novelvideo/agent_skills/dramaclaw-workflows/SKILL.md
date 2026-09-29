@@ -121,6 +121,13 @@ or node counts. Never use them as per-node generation counts. Only
 `image_variants_per_node` / `video_variants_per_node` map to canvas node `data.count`, and their
 portable supported values are `1`, `2`, and `4`.
 
+For an exact Plan, copy every user-confirmed input declared by the selected Workflow catalog Skill
+into `plan.inputs` under its exact parameter ID. Node data and portable `image_*` controls do not
+replace Skill inputs such as `platforms`, `image_count`, or `aspect_ratio`. Leave an optional Skill
+input absent only when the user has not chosen it and its catalog default agrees with the planned
+nodes. If preparation rejects an `inputs.*` mismatch, correct the Plan input and matching nodes
+against the confirmed request; do not retry the same Plan or silently change the user's choice.
+
 Use only the image or video keys relevant to the selected plan. For an exact custom topology,
 shared confirmed choices may remain in `plan.inputs`; preparation applies each image/video choice
 to every matching generated node that leaves the field unset. Node `data` may instead pin the
