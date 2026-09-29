@@ -227,9 +227,10 @@ export function StoryPublicationPanel({
           `${base}/${prepared!.public_id}/versions/${prepared!.version}`,
         );
         if (!stopped) {
-          if (version.status === "ready" && recoveringCoverVersion.current === version.version) {
-            // A preparing manifest has no archived cover yet. Restore only that
-            // field; title, description and framing may have been edited meanwhile.
+          if ((version.status === "ready" || version.error === "publication_interrupted") &&
+              recoveringCoverVersion.current === version.version) {
+            // Restore the archived cover on success or the original cover on
+            // interruption. Keep title, description and framing edits intact.
             setCover(version.cover ?? "");
             preparedInput.current = fingerprint(version);
             recoveringCoverVersion.current = null;
@@ -383,7 +384,7 @@ export function StoryPublicationPanel({
     useCanvasStore.setState({ edges: state.edges.map((item) => ({ ...item, selected: item.id === edge?.id })) });
     state.requestFocusNode(nodeId);
   }
-  const systemCheckError = prepared?.error && ["publication_data_invalid", "publication_check_failed"].includes(prepared.error);
+  const systemCheckError = prepared?.error && ["publication_data_invalid", "publication_check_failed", "publication_interrupted"].includes(prepared.error);
   function cancelAction() {
     setPendingAction(null);
     actionTrigger.current?.focus();
@@ -809,7 +810,7 @@ export function StoryPublicationPanel({
                           }
                         }}
                       >
-                        {t(prepared.error === "draft_superseded" ? "storyPublication.close" : systemCheckError ? "storyPublication.retryChecks" : "storyPublication.openChecks")}
+                        {t(prepared.error === "draft_superseded" ? "storyPublication.close" : prepared.error === "publication_interrupted" ? "storyPublication.retryPreparation" : systemCheckError ? "storyPublication.retryChecks" : "storyPublication.openChecks")}
                       </button>
                     </div>
                   )}

@@ -8720,6 +8720,7 @@
       "choice_area_outside_bottom": "The choice area extends past the bottom edge. Move it inside the frame or reduce its size.",
       "draft_superseded": "This draft was replaced by a newer check. Close and reopen the publication panel.",
       "publication_data_invalid": "Publication data is invalid. Retry or contact your administrator.",
+      "publication_interrupted": "Lần chuẩn bị trước đã bị gián đoạn. Vui lòng thử lại. Phiên bản đã xuất bản không bị ảnh hưởng.",
       "publication_check_failed": "A system error interrupted the checks. Please retry."
     },
     "openChecks": "Review in canvas",
@@ -8816,6 +8817,7 @@
     "offlineVersion": "v{{version}} · Offline",
     "needsRecheck": "Content changed. Check again.",
     "publicationChecks": "Publication checks",
+    "retryPreparation": "Thử chuẩn bị lại",
     "retryChecks": "Retry checks",
     "checkIncomplete": "Checks interrupted",
     "locateIssue": "Locate issue",

@@ -12,6 +12,7 @@ import re
 import secrets
 import shutil
 import time
+from threading import local
 from collections.abc import Callable
 from datetime import datetime, timezone
 from contextlib import contextmanager, nullcontext
@@ -27,6 +28,7 @@ from novelvideo.interactive_story.canvas_mapper import (
     story_from_canvas,
 )
 from novelvideo.interactive_story.service import issues_for_story
+from novelvideo.interactive_story import preparation_lease
 
 logger = logging.getLogger(__name__)
 NODE_FIELDS = {
@@ -131,9 +133,24 @@ class PublicationStore:
         self.project_id = project_id
         self.index_root = index_root
         self.check_project: Callable[[], None] | None = None
+        self._lock_state = local()
 
     @contextmanager
     def locked(self):
+        # Version reads may reconcile abandoned jobs inside an existing mutation.
+        # Reuse only this thread's lock; other threads must still acquire the file lock.
+        if getattr(self._lock_state, "held", False):
+            yield
+            return
+        with self._project_lock():
+            self._lock_state.held = True
+            try:
+                yield
+            finally:
+                self._lock_state.held = False
+
+    @contextmanager
+    def _project_lock(self):
         if self.index_root is not None:
             # The lock survives project directory moves, and stale workers must
             # never recreate a purged project's state directory.
@@ -254,6 +271,27 @@ class PublicationStore:
             work = self.read(public_id)
             if version not in work["versions"]:
                 raise PublicationError("not_found", 404)
+            if release.get("status") == "preparing" and release.get("preparation_lease"):
+                if not getattr(self._lock_state, "held", False):
+                    with self.locked():
+                        # Re-read membership and status after lifecycle operations
+                        # ahead of us have completed. Never write from stale data.
+                        return self.version(public_id, version)
+                directory = self.directory(public_id) / version
+                with preparation_lease.abandoned(directory) as abandoned:
+                    if abandoned:
+                        with self.file_lock(directory / ".job-lock"):
+                            # Re-read after acquiring the locks: another reader may
+                            # already have recorded the interruption.
+                            release = json.loads((directory / "version.json").read_text())
+                            if release["status"] == "preparing":
+                                release["status"] = "failed"
+                                release["error"] = "publication_interrupted"
+                                # Retain the author's original cover selection for retry.
+                                release["cover"] = release.get("request", {}).get("cover")
+                                self.write(directory / "version.json", release)
+                                (directory / "job.json").unlink(missing_ok=True)
+                                shutil.rmtree(directory / "media", ignore_errors=True)
             release["published"] = version in work["published_versions"]
             if not isinstance(work.get("publication_details"), dict):
                 raise PublicationError("publication_data_invalid", 500)
@@ -532,6 +570,7 @@ class PublicationStore:
             "created_at": datetime.now(timezone.utc).isoformat(),
             "public_id": work["public_id"],
             "status": "preparing",
+            "preparation_lease": True,
             "issues": [],
             "request_id": body["request_id"],
             "request": body,
@@ -543,19 +582,24 @@ class PublicationStore:
             "revision": body["revision"],
         }
         directory = self.directory(work["public_id"]) / version["version"]
-        self.write(directory / "version.json", version)
-        self.write(
-            directory / "job.json",
-            {
-                **version,
-                "_canvas": copy.deepcopy(canvas),
-                "_sources": sources,
-                "_output": str(output_dir),
-                "_project": project,
-            },
-        )
-        work["versions"].append(version["version"])
-        self.write(directory.parent / "work.json", work)
+        preparation_lease.claim(directory)
+        try:
+            self.write(directory / "version.json", version)
+            self.write(
+                directory / "job.json",
+                {
+                    **version,
+                    "_canvas": copy.deepcopy(canvas),
+                    "_sources": sources,
+                    "_output": str(output_dir),
+                    "_project": project,
+                },
+            )
+            work["versions"].append(version["version"])
+            self.write(directory.parent / "work.json", work)
+        except Exception:
+            preparation_lease.release(directory)
+            raise
         # Capture the source before returning; the background task never reads a newer canvas.
         return {
             **version,
@@ -570,7 +614,9 @@ class PublicationStore:
             return
         for job in self.root.glob("*/*/job.json"):
             try:
-                self.finish(json.loads(job.read_text()))
+                prepared = json.loads(job.read_text())
+                if self.version(prepared["public_id"], prepared["version"])["status"] == "preparing":
+                    self.finish(prepared)
             except Exception:
                 logger.exception("Unable to recover story publication job")
 
@@ -578,6 +624,13 @@ class PublicationStore:
             self._prune_best_effort(path.parent.name)
 
     def finish(self, prepared: dict):
+        directory = self.directory(prepared["public_id"]) / prepared["version"]
+        try:
+            self._finish_owned(prepared)
+        finally:
+            preparation_lease.release(directory)
+
+    def _finish_owned(self, prepared: dict):
         directory = self.directory(prepared["public_id"]) / prepared["version"]
         while True:
             try:

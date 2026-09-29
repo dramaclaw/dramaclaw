@@ -632,3 +632,54 @@ it("stops checking and explains when another window supersedes the draft", async
   expect(screen.queryByRole("button", { name: "storyPublication.checking" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "storyPublication.openChecks" })).not.toBeInTheDocument();
 });
+
+it("offers an explicit retry for preparation interrupted by a server restart", async () => {
+  mocks.api.mockResolvedValue({ ...work, versions: [{ ...preparedVersion, status: "failed", error: "publication_interrupted" }] });
+  render(<StoryPublicationPanel groupId="g" title="Title" onClose={() => {}} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("storyPublication.errors.publication_interrupted");
+  expect(screen.queryByText("storyPublication.openChecks")).not.toBeInTheDocument();
+  expect(mocks.api.mock.calls.some(([path]) => path.endsWith("/prepare"))).toBe(false);
+  mocks.api.mockImplementation(async (path: string) => path.endsWith("/prepare") ? preparedVersion : work);
+  fireEvent.click(screen.getByRole("button", { name: "storyPublication.retryPreparation" }));
+  await waitFor(() => expect(mocks.api.mock.calls.some(([path]) => path.endsWith("/prepare"))).toBe(true));
+});
+
+it("shows interruption discovered by polling and waits for the user to retry", async () => {
+  mocks.api.mockImplementation(async (path: string) => path.endsWith("/versions/v1")
+    ? { ...preparedVersion, status: "failed", error: "publication_interrupted" }
+    : { ...work, versions: [{ ...preparedVersion, status: "preparing" }] });
+  render(<StoryPublicationPanel groupId="g" title="Title" onClose={() => {}} />);
+  expect(await screen.findByText("storyPublication.preparingHint")).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "storyPublication.retryPreparation" }, { timeout: 3000 })).toBeEnabled();
+  expect(screen.queryByText("storyPublication.preparingHint")).not.toBeInTheDocument();
+  expect(mocks.api.mock.calls.some(([path]) => path.endsWith("/prepare"))).toBe(false);
+});
+
+it.each(["unchanged", "uploaded", "removed"])("preserves the retry cover after polling detects interruption (%s)", async (edit) => {
+  const originalCover = "/api/v1/projects/p/media/original.png";
+  const newCover = "/api/v1/projects/p/media/new.png";
+  mocks.api.mockImplementation(async (path: string) =>
+    path.endsWith("/upload") ? { url: newCover } :
+    path.endsWith("/prepare") ? preparedVersion :
+    path.endsWith("/versions/v1")
+      ? { ...preparedVersion, status: "failed", error: "publication_interrupted", cover: originalCover }
+      : { ...work, versions: [{ ...preparedVersion, status: "preparing", cover: null }] });
+  render(<StoryPublicationPanel groupId="g" title="Title" onClose={() => {}} />);
+  await screen.findByText("storyPublication.preparingHint");
+  fireEvent.change(screen.getByLabelText("storyPublication.title"), { target: { value: "Edited title" } });
+  fireEvent.change(screen.getByLabelText("storyPublication.description"), { target: { value: "Edited description" } });
+  fireEvent.click(screen.getByRole("button", { name: "storyPublication.portrait" }));
+  if (edit !== "unchanged") {
+    fireEvent.change(screen.getByLabelText("storyPublication.uploadCover"), {
+      target: { files: [new File(["image"], "new.png", { type: "image/png" })] },
+    });
+    await screen.findByLabelText("storyPublication.changeCover");
+    if (edit === "removed") fireEvent.click(screen.getByRole("button", { name: "storyPublication.removeCover" }));
+  }
+  fireEvent.click(await screen.findByRole("button", { name: "storyPublication.retryPreparation" }, { timeout: 3000 }));
+  await waitFor(() => expect(mocks.api).toHaveBeenCalledWith(expect.stringContaining("/prepare"),
+    expect.objectContaining({ json: expect.objectContaining({
+      cover: edit === "uploaded" ? newCover : edit === "removed" ? null : originalCover,
+      title: "Edited title", description: "Edited description", cover_mode: "portrait",
+    }) })));
+});

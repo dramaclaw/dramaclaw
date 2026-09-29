@@ -8723,6 +8723,7 @@
       "choice_area_outside_bottom": "选项区域超出画面下边缘，请向上移动或缩小区域。",
       "draft_superseded": "这份草稿已被新的检查结果替代，请关闭并重新打开发布面板。",
       "publication_data_invalid": "发布数据异常，暂时无法完成检查。请重试；仍失败时联系管理员。",
+      "publication_interrupted": "上次准备已中断，请点击重试。已发布的作品不受影响。",
       "publication_check_failed": "检查过程中发生系统错误，请重试。"
     },
     "openChecks": "返回画布检查",
@@ -8819,6 +8820,7 @@
     "offlineVersion": "v{{version}} · 已下架",
     "needsRecheck": "内容已修改，需重新检查",
     "publicationChecks": "发布检查",
+    "retryPreparation": "重试准备",
     "retryChecks": "重试检查",
     "checkIncomplete": "检查未完成",
     "locateIssue": "定位到问题",

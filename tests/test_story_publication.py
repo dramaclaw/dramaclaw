@@ -965,7 +965,12 @@ def test_project_move_includes_pending_job_and_late_worker_cannot_recreate_files
     assert not state.exists()
     detached.rename(state)
     store.recover()
-    assert store.version(pending["public_id"], pending["version"])["status"] == "ready"
+    interrupted = store.version(pending["public_id"], pending["version"])
+    assert interrupted["status"] == "failed"
+    assert interrupted["error"] == "publication_interrupted"
+    retry = store.prepare("owner", state, output, "p", {**body, "request_id": "retry-after-restore"})
+    store.finish(retry)
+    assert store.version(retry["public_id"], retry["version"])["status"] == "ready"
 
 
 @pytest.mark.parametrize("contention", ["project", "job", "project_detached"])
@@ -1116,3 +1121,153 @@ async def test_ce_restart_rebuilds_index_from_project_owned_data(source, monkeyp
     assert (await storage.public_store(first["public_id"])).public(first["public_id"])[
         "version"
     ] == first["version"]
+
+
+def test_interrupted_preparation_is_retryable_without_changing_online_version(source):
+    from novelvideo.interactive_story import preparation_lease
+
+    store, output, published, _ = ready(source)
+    store.activate(published['public_id'], 'owner', published['version'], True)
+    (output / 'cover.png').write_bytes(b'cover')
+    body = {**source[3], 'request_id': 'interrupted', 'cover': '/api/v1/projects/p/media/cover.png'}
+    pending = store.prepare('owner', Path('.'), output, 'p', body)
+    directory = store.directory(pending['public_id']) / pending['version']
+    (directory / 'media').mkdir()
+    (directory / 'media' / 'partial.mp4').write_bytes(b'partial')
+    # A queued job is alive even before finish() acquires its execution lock.
+    observer = PublicationStore(store.root)
+    assert observer.version(pending['public_id'], pending['version'])['status'] == 'preparing'
+    preparation_lease.release(directory)  # Same OS effect as the owning process exiting.
+    failed = observer.version(pending['public_id'], pending['version'])
+    assert failed['status'] == 'failed'
+    assert failed['error'] == 'publication_interrupted'
+    assert failed['cover'] == body['cover']
+    assert not (directory / 'media').exists()
+    assert not (directory / 'job.json').exists()
+    assert store.public(published['public_id'])['version'] == published['version']
+    # A lost-response retry stays idempotent; an explicit retry gets a new request ID.
+    assert store.prepare('owner', Path('.'), output, 'p', body)['error'] == 'publication_interrupted'
+    retry = store.prepare('owner', Path('.'), output, 'p', {**body, 'request_id': 'retry'})
+    store.finish(retry)
+    assert store.version(retry['public_id'], retry['version'])['status'] == 'ready'
+    assert store.public(published['public_id'])['version'] == published['version']
+
+
+def test_preparation_owner_process_exit_is_detected(source):
+    import subprocess
+    import sys
+
+    from novelvideo.interactive_story import preparation_lease
+
+    store, output, _, body = source
+    pending = store.prepare('owner', Path('.'), output, 'p', body)
+    directory = store.directory(pending['public_id']) / pending['version']
+    preparation_lease.release(directory)
+    worker = subprocess.Popen(
+        [sys.executable, '-c',
+         'import portalocker, sys; '
+         'lock = portalocker.Lock(sys.argv[1], mode="a", timeout=0); '
+         'lock.acquire(); print("ready", flush=True); sys.stdin.read()',
+         str(directory / '.owner-lock')],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+    )
+    try:
+        assert worker.stdout.readline().strip() == 'ready'
+        assert store.version(pending['public_id'], pending['version'])['status'] == 'preparing'
+        worker.kill()
+        worker.wait(timeout=5)
+        assert store.version(pending['public_id'], pending['version'])['error'] == 'publication_interrupted'
+    finally:
+        if worker.poll() is None:
+            worker.kill()
+            worker.wait(timeout=5)
+        worker.stdin.close()
+        worker.stdout.close()
+
+
+def test_interruption_write_holds_project_lock(source, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from novelvideo.interactive_story import preparation_lease
+
+    store, output, _, body = source
+    store.index_root = output.parent / "index"
+    pending = store.prepare("owner", Path("."), output, "p", body)
+    directory = store.directory(pending["public_id"]) / pending["version"]
+    preparation_lease.release(directory)
+    original_write = store.write
+    checked = []
+
+    def competing_lifecycle_operation():
+        # Even the same store on another thread must acquire the project lock.
+        with pytest.raises(PublicationError, match="publication_busy"):
+            with store.locked():
+                pytest.fail("lifecycle operation entered during interruption write")
+
+    def observed_write(path, value):
+        if value.get("error") == "publication_interrupted":
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                executor.submit(competing_lifecycle_operation).result(timeout=5)
+            checked.append(True)
+        original_write(path, value)
+
+    monkeypatch.setattr(store, "write", observed_write)
+    assert store.version(pending["public_id"], pending["version"])["error"] == "publication_interrupted"
+    assert checked == [True]
+
+
+@pytest.mark.parametrize("change", ["detach", "retire"])
+def test_interruption_rechecks_project_and_membership_under_lock(source, monkeypatch, change):
+    import shutil
+
+    from novelvideo.interactive_story import preparation_lease
+
+    store, output, _, body = source
+    state = output.parent / "state"
+    state.mkdir()
+    store = PublicationStore(state / "publications", index_root=output.parent / "index")
+    pending = store.prepare("owner", state, output, "p", body)
+    directory = store.directory(pending["public_id"]) / pending["version"]
+    preparation_lease.release(directory)
+    original_read = store.read
+    changed = False
+
+    def read_then_change(public_id):
+        nonlocal changed
+        work = original_read(public_id)
+        if not changed:
+            changed = True
+            # A lifecycle operation finishes between the optimistic read and
+            # acquisition of the project lock.
+            other = PublicationStore(store.root, index_root=store.index_root)
+            with other.locked():
+                if change == "detach":
+                    state.rename(state.with_name("detached"))
+                else:
+                    other.write(directory.parent / "work.json", {**work, "versions": []})
+                    shutil.rmtree(directory)
+        return work
+
+    monkeypatch.setattr(store, "read", read_then_change)
+    with pytest.raises(PublicationError, match="unavailable" if change == "detach" else "not_found"):
+        store.version(pending["public_id"], pending["version"])
+    assert not directory.exists()
+    if change == "detach":
+        assert not state.exists()
+
+
+@pytest.mark.parametrize("operation", ["prepare", "prune"])
+def test_interruption_reconciles_inside_existing_project_lock(source, operation):
+    from novelvideo.interactive_story import preparation_lease
+
+    store, output, _, body = source
+    store.index_root = output.parent / "index"
+    pending = store.prepare("owner", Path("."), output, "p", body)
+    preparation_lease.release(store.directory(pending["public_id"]) / pending["version"])
+    if operation == "prepare":
+        result = store.prepare("owner", Path("."), output, "p", body)
+        assert result["version"] == pending["version"]
+        assert result["error"] == "publication_interrupted"
+    else:
+        store.prune_drafts(pending["public_id"])
+    assert store.version(pending["public_id"], pending["version"])["error"] == "publication_interrupted"
