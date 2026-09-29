@@ -12,6 +12,7 @@ import {
 } from '@/features/previz/domain/scene';
 import { usePrevizStore } from '@/features/previz/store';
 import { PrevizClipInspector } from '@/features/previz/ui/PrevizClipInspector';
+import { optionValues, pickOption } from './previzSelect';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -208,22 +209,21 @@ describe('PrevizClipInspector', () => {
     const cameraId = usePrevizStore.getState().addObject('camera');
     render(<PrevizClipInspector />);
 
-    await user.selectOptions(screen.getByLabelText('previz.clip.aim'), cameraId!);
+    await pickOption(user, screen.getByLabelText('previz.clip.aim'), cameraId!);
     expect(currentClip().aimObjectId).toBe(cameraId);
 
     // 「不指定」是回到沿切线自动朝向，不是把朝向冻在最后看的那个方向上。
-    await user.selectOptions(screen.getByLabelText('previz.clip.aim'), '');
+    await pickOption(user, screen.getByLabelText('previz.clip.aim'), '');
     expect(currentClip().aimObjectId).toBeNull();
   });
 
-  it('keeps the object itself out of its own aim list', () => {
+  it('keeps the object itself out of its own aim list', async () => {
+    const user = userEvent.setup();
     const { objectId } = seedNamed();
     render(<PrevizClipInspector />);
 
     // 自己看自己解不出方向。列在下拉里等于摆一个选了没用的选项。
-    const options = Array.from(
-      screen.getByLabelText('previz.clip.aim').querySelectorAll('option'),
-    ).map((option) => option.value);
+    const options = await optionValues(user, screen.getByLabelText('previz.clip.aim'));
     expect(options).not.toContain(objectId);
   });
 
@@ -282,7 +282,7 @@ describe('PrevizClipInspector closeup clips', () => {
     const { sideId } = seedCloseup();
     render(<PrevizClipInspector />);
 
-    await user.selectOptions(screen.getByLabelText('previz.clip.closeup.target'), sideId);
+    await pickOption(user, screen.getByLabelText('previz.clip.closeup.target'), sideId);
 
     expect(currentRig().anchorObjectId).toBe(sideId);
     // 「看向」原本跟着目标走，换人之后不该还盯着上一个人。
@@ -294,7 +294,7 @@ describe('PrevizClipInspector closeup clips', () => {
     seedCloseup();
     render(<PrevizClipInspector />);
 
-    await user.selectOptions(screen.getByLabelText('previz.clip.closeup.anchor'), 'chest');
+    await pickOption(user, screen.getByLabelText('previz.clip.closeup.anchor'), 'chest');
 
     expect(currentRig().anchorPart).toBe('chest');
   });
@@ -304,7 +304,7 @@ describe('PrevizClipInspector closeup clips', () => {
     seedCloseup();
     render(<PrevizClipInspector />);
 
-    await user.selectOptions(screen.getByLabelText('previz.clip.closeup.aim'), 'free');
+    await pickOption(user, screen.getByLabelText('previz.clip.closeup.aim'), 'free');
 
     // 只定机位不定朝向：位置照样跟着人走，构图留给自己转。
     expect(currentRig().aimObjectId).toBeNull();
@@ -342,7 +342,7 @@ describe('PrevizClipInspector closeup clips', () => {
     seedCloseup();
     render(<PrevizClipInspector />);
 
-    await user.selectOptions(screen.getByLabelText('previz.clip.closeup.motion'), 'orbit');
+    await pickOption(user, screen.getByLabelText('previz.clip.closeup.motion'), 'orbit');
 
     expect(currentRig().motion).toBe('orbit');
   });

@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { PREVIZ_MAX_CUTS } from '../domain/program';
 import type { PrevizScene } from '../domain/scene';
 import { ClipBar, PREVIZ_TRACK_HEADER_PX } from './PrevizTimelineTrack';
+import { PrevizSelect } from './PrevizSelect';
 
 /** 表头那只下拉。样式串太长，拆到行内会把 JSX 挤过 100 列，提成常量。 */
 const CUT_PICKER =
@@ -76,25 +77,16 @@ export function PrevizProgramTrack({
         </span>
         {/* title 只裹住下拉本身：挂在整条表头上，鼠标划过图标与行名也会弹，读起来像在说这一行。 */}
         <span title={disabledHint} className="flex shrink-0">
-          <select
+          {/* 占位字只是下拉收起时的标题，不是可选项。 */}
+          <PrevizSelect
             aria-label={t('previz.program.cutTo')}
-            value=""
+            placeholder={t('previz.program.cutTo')}
+            value={null}
             disabled={noCamera || full}
             className={CUT_PICKER}
-            onChange={(event) => {
-              if (event.target.value) onCut(event.target.value);
-            }}
-          >
-            {/* 占位项只是下拉收起时的标题，disabled hidden 让它不出现在可选项里。 */}
-            <option value="" disabled hidden>
-              {t('previz.program.cutTo')}
-            </option>
-            {cameras.map((camera) => (
-              <option key={camera.id} value={camera.id}>
-                {camera.name}
-              </option>
-            ))}
-          </select>
+            options={cameras.map((camera) => ({ value: camera.id, label: camera.name }))}
+            onChange={onCut}
+          />
         </span>
       </div>
 

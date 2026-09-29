@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultScene } from '@/features/previz/domain/scene';
 import { usePrevizStore } from '@/features/previz/store';
 import { PrevizTimeline } from '@/features/previz/ui/PrevizTimeline';
+import { pickOption } from './previzSelect';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -62,7 +63,7 @@ describe('PrevizTimeline fixed rows', () => {
     const cameraId = addCameraTrack();
     render(<PrevizTimeline />);
     const picker = screen.getByRole('combobox', { name: 'previz.program.cutTo' });
-    await user.selectOptions(picker, cameraId);
+    await pickOption(user, picker, cameraId);
     expect(usePrevizStore.getState().scene.timeline.program).toHaveLength(1);
   });
 

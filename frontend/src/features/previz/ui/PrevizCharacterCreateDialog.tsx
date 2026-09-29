@@ -28,6 +28,7 @@ import type {
   PrevizTopDownView,
 } from "@/features/previz/domain/topDownMap";
 import { PrevizTopDownPicker } from "@/features/previz/ui/PrevizTopDownPicker";
+import { PrevizSelect } from "@/features/previz/ui/PrevizSelect";
 
 export interface PrevizCharacterCreateDialogProps {
   open: boolean;
@@ -313,18 +314,16 @@ function CharacterCreatePanel({
                   <label className={LABEL} htmlFor={`${prefix}-body`}>
                     {t("previz.inspector.bodyType")}
                   </label>
-                  <select
+                  <PrevizSelect
                     id={`${prefix}-body`}
                     className={FIELD}
                     value={draft.bodyType}
-                    onChange={(event) => patch({ bodyType: event.target.value as BodyType })}
-                  >
-                    {BODY_TYPES.map((type) => (
-                      <option key={type} value={type}>
-                        {t(`previz.inspector.bodyTypes.${type}`)}
-                      </option>
-                    ))}
-                  </select>
+                    options={BODY_TYPES.map((type) => ({
+                      value: type,
+                      label: t(`previz.inspector.bodyTypes.${type}`),
+                    }))}
+                    onChange={(bodyType) => patch({ bodyType })}
+                  />
                 </div>
                 <div>
                   <label className={LABEL} htmlFor={`${prefix}-height`}>
@@ -353,20 +352,15 @@ function CharacterCreatePanel({
                   <label className={LABEL} htmlFor={`${prefix}-pose`}>
                     {t("previz.inspector.basePose")}
                   </label>
-                  <select
+                  {/* 标签走 `PREVIZ_POSE_LABEL_KEYS`，不另起一套：同一个姿势在预演台和
+                      3D 导演里必须同名，`poses.test.ts` 有棘轮盯着两张表逐字相等。 */}
+                  <PrevizSelect
                     id={`${prefix}-pose`}
                     className={FIELD}
                     value={draft.basePoseId}
-                    onChange={(event) => patch({ basePoseId: event.target.value })}
-                  >
-                    {/* 标签走 `PREVIZ_POSE_LABEL_KEYS`，不另起一套：同一个姿势在预演台和
-                        3D 导演里必须同名，`poses.test.ts` 有棘轮盯着两张表逐字相等。 */}
-                    {PREVIZ_POSES.map((pose) => (
-                      <option key={pose} value={pose}>
-                        {t(PREVIZ_POSE_LABEL_KEYS[pose])}
-                      </option>
-                    ))}
-                  </select>
+                    options={PREVIZ_POSES.map((pose) => ({ value: pose, label: t(PREVIZ_POSE_LABEL_KEYS[pose]) }))}
+                    onChange={(basePoseId) => patch({ basePoseId })}
+                  />
                 </div>
                 <div>
                   <span className={LABEL}>{t("previz.inspector.poseAdjust.label")}</span>
@@ -420,20 +414,16 @@ function CharacterCreatePanel({
                     同一个常量），此刻选「锁定平面」锁的正好是他将要站的这一层，多一个输入框
                     只能填出一个与落点不符的数。要改那一层，去属性面板。
                   */}
-                  <select
+                  <PrevizSelect
                     id={`${prefix}-height-policy`}
                     className={FIELD}
                     value={draft.heightPolicy}
-                    onChange={(event) =>
-                      patch({ heightPolicy: event.target.value as HeightPolicy })
-                    }
-                  >
-                    {HEIGHT_POLICIES.map((policy) => (
-                      <option key={policy} value={policy}>
-                        {t(`previz.inspector.heightPolicies.${policy}`)}
-                      </option>
-                    ))}
-                  </select>
+                    options={HEIGHT_POLICIES.map((policy) => ({
+                      value: policy,
+                      label: t(`previz.inspector.heightPolicies.${policy}`),
+                    }))}
+                    onChange={(heightPolicy) => patch({ heightPolicy })}
+                  />
                 </div>
               {/*
                 移动辅助只在播放时生效：求值层按这两个开关决定要不要把人从道具里推开、

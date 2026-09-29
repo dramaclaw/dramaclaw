@@ -12,6 +12,7 @@ import type {
   PrevizTransform,
 } from "@/features/previz/domain/scene";
 import { PrevizInspector } from "@/features/previz/ui/PrevizInspector";
+import { optionLabels, optionValues, pickOption } from "./previzSelect";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -297,7 +298,7 @@ describe("PrevizInspector", () => {
     const onChange = renderInspector(createPrevizObject("character", []));
 
     expect(screen.getByLabelText("previz.inspector.heightCm")).toHaveValue(175);
-    await user.selectOptions(screen.getByLabelText("previz.inspector.basePose"), "sitting");
+    await pickOption(user, screen.getByLabelText("previz.inspector.basePose"), "sitting");
 
     expect(onChange).toHaveBeenLastCalledWith({ basePoseId: "sitting" });
   });
@@ -306,13 +307,12 @@ describe("PrevizInspector", () => {
   // 之类）或者被过滤掉几个，选中的对象照样能存、能渲染，只是用户再也选不到那几个姿势，
   // 一条断言都碰不到。选项值逐个写死在这里，不从 `PREVIZ_POSES` 取——跟着实现一起变的
   // 列表等于没有列表。
-  it("offers every pose in the dropdown", () => {
+  it("offers every pose in the dropdown", async () => {
+    const user = userEvent.setup();
     renderInspector(createPrevizObject("character", []));
 
-    const options = Array.from(
-      screen.getByLabelText("previz.inspector.basePose").querySelectorAll("option"),
-    );
-    expect(options.map((option) => option.value)).toEqual([
+    const options = await optionValues(user, screen.getByLabelText("previz.inspector.basePose"));
+    expect(options).toEqual([
       "standing",
       "talking",
       "arms_crossed",
@@ -335,26 +335,24 @@ describe("PrevizInspector", () => {
   // `previz.*` key——同一个姿势在预演台和 3D 导演里必须叫同一个名字，两张 key 表由
   // poses.test.ts 的棘轮盯着。这里钉住的是 key，免得有人顺手改成 previz 自己的命名空间：
   // 那样词条还在、界面也不报错，只有另一个文件里的棘轮会红，症状离改动很远。
-  it("labels the poses with the shared viewer-kit pose keys", () => {
+  it("labels the poses with the shared viewer-kit pose keys", async () => {
+    const user = userEvent.setup();
     renderInspector(createPrevizObject("character", []));
 
-    const options = Array.from(
-      screen.getByLabelText("previz.inspector.basePose").querySelectorAll("option"),
-    );
-    expect(options[0]?.textContent).toBe("viewer.threeD.poses.standing");
-    expect(options[3]?.textContent).toBe("viewer.threeD.poses.sitting");
-    expect(options[14]?.textContent).toBe("viewer.threeD.poses.sword");
+    const labels = await optionLabels(user, screen.getByLabelText("previz.inspector.basePose"));
+    expect(labels[0]).toBe("viewer.threeD.poses.standing");
+    expect(labels[3]).toBe("viewer.threeD.poses.sitting");
+    expect(labels[14]).toBe("viewer.threeD.poses.sword");
   });
 
   // 五个值逐个写死，不从 `BodyType` 取：漏掉一档下拉框里就没有那一项，用户永远选不到，
   // 而落盘的场景里那一档照样合法——存进去是「高挑」，界面上显示成空选中，没有任何报错。
-  it("offers every build in the dropdown", () => {
+  it("offers every build in the dropdown", async () => {
+    const user = userEvent.setup();
     renderInspector(createPrevizObject("character", []));
 
-    const options = Array.from(
-      screen.getByLabelText("previz.inspector.bodyType").querySelectorAll("option"),
-    );
-    expect(options.map((option) => option.value)).toEqual([
+    const options = await optionValues(user, screen.getByLabelText("previz.inspector.bodyType"));
+    expect(options).toEqual([
       "capsule",
       "slim",
       "average",
@@ -367,26 +365,28 @@ describe("PrevizInspector", () => {
     const user = userEvent.setup();
     const onChange = renderInspector(createPrevizObject("character", []));
 
-    await user.selectOptions(screen.getByLabelText("previz.inspector.bodyType"), "heavy");
+    await pickOption(user, screen.getByLabelText("previz.inspector.bodyType"), "heavy");
 
     expect(onChange).toHaveBeenLastCalledWith({ bodyType: "heavy" });
   });
 
   // 三档逐个写死，理由同上面那张体型表。少一档的表现同样是「存得进去、选不出来」。
-  it("offers every height policy in the dropdown", () => {
+  it("offers every height policy in the dropdown", async () => {
+    const user = userEvent.setup();
     renderInspector(createPrevizObject("character", []));
 
-    const options = Array.from(
-      screen.getByLabelText("previz.inspector.heightPolicy").querySelectorAll("option"),
+    const options = await optionValues(
+      user,
+      screen.getByLabelText("previz.inspector.heightPolicy"),
     );
-    expect(options.map((option) => option.value)).toEqual(["follow", "ground", "plane"]);
+    expect(options).toEqual(["follow", "ground", "plane"]);
   });
 
   it("edits the height policy", async () => {
     const user = userEvent.setup();
     const onChange = renderInspector(createPrevizObject("character", []));
 
-    await user.selectOptions(screen.getByLabelText("previz.inspector.heightPolicy"), "ground");
+    await pickOption(user, screen.getByLabelText("previz.inspector.heightPolicy"), "ground");
 
     expect(onChange).toHaveBeenLastCalledWith({ heightPolicy: "ground" });
   });
@@ -406,7 +406,7 @@ describe("PrevizInspector", () => {
       transform: { ...character.transform, position: [1, 3.5, -2] },
     });
 
-    await user.selectOptions(screen.getByLabelText("previz.inspector.heightPolicy"), "plane");
+    await pickOption(user, screen.getByLabelText("previz.inspector.heightPolicy"), "plane");
 
     expect(onChange).toHaveBeenLastCalledWith({ heightPolicy: "plane", planeY: 3.5 });
   });
@@ -463,14 +463,14 @@ describe("PrevizInspector", () => {
     expect(y).toBeEnabled();
     expect(screen.queryByTestId("previz-inspector-height-note")).toBeNull();
 
-    await user.selectOptions(screen.getByLabelText("previz.inspector.heightPolicy"), "ground");
+    await pickOption(user, screen.getByLabelText("previz.inspector.heightPolicy"), "ground");
 
     expect(screen.getByLabelText("previz.inspector.position.y")).toBeDisabled();
     expect(screen.getByTestId("previz-inspector-height-note")).toHaveTextContent(
       "previz.inspector.heightNote.ground",
     );
 
-    await user.selectOptions(screen.getByLabelText("previz.inspector.heightPolicy"), "plane");
+    await pickOption(user, screen.getByLabelText("previz.inspector.heightPolicy"), "plane");
 
     expect(screen.getByLabelText("previz.inspector.position.y")).toBeDisabled();
     expect(screen.getByTestId("previz-inspector-height-note")).toHaveTextContent(
@@ -577,8 +577,8 @@ describe("PrevizInspector", () => {
     );
 
     expect(screen.getByLabelText("previz.inspector.heightCm")).toHaveValue(163);
-    expect(screen.getByLabelText("previz.inspector.bodyType")).toHaveValue("heavy");
-    expect(screen.getByLabelText("previz.inspector.basePose")).toHaveValue("sitting");
+    expect(screen.getByLabelText("previz.inspector.bodyType")).toHaveAttribute("data-value", "heavy");
+    expect(screen.getByLabelText("previz.inspector.basePose")).toHaveAttribute("data-value", "sitting");
   });
 
   // 三轴的区间各不相同（人向前屈得比向后仰得多），一根滑杆一根滑杆地锁住，
@@ -608,24 +608,24 @@ describe("PrevizInspector", () => {
     // 全画幅 50 mm 的镜头视角是 27.0°，直接显示出来省得用户自己心算。
     expect(screen.getByTestId("previz-inspector-fov")).toHaveTextContent(/^27\.0°$/);
 
-    await user.selectOptions(screen.getByLabelText("previz.inspector.sensor"), "s35");
+    await pickOption(user, screen.getByLabelText("previz.inspector.sensor"), "s35");
     expect(onChange).toHaveBeenLastCalledWith({ sensor: "s35" });
     // 换机身要真的换掉换算里的成像面尺寸：Super 35 的 50 mm 是 21.1°，不是 27.0°。
     expect(screen.getByTestId("previz-inspector-fov")).toHaveTextContent(/^21\.1°$/);
   });
 
-  // 两个 `<option>` 的 value 就是 store 里存的机身 id。把 "ff" 打错（或两个 option 写成
+  // 两个选项的 value 就是 store 里存的机身 id。把 "ff" 打错（或两个 option 写成
   // 同一个 value）之后，默认的全画幅机位在下拉框里选不中、也换不回来，而 `sensor: "s35"`
   // 的机位照样一切正常——上面那条用例只走 s35，看不出来。
-  it("offers both sensor options", () => {
+  it("offers both sensor options", async () => {
+    const user = userEvent.setup();
     renderInspector(createPrevizObject("camera", []));
 
     const select = screen.getByLabelText("previz.inspector.sensor");
-    expect(
-      Array.from(select.querySelectorAll("option")).map((option) => option.value),
-    ).toEqual(["ff", "s35"]);
-    // 默认机位是全画幅：选不中 "ff" 时受控 select 的值会掉成空串。
-    expect(select).toHaveValue("ff");
+    expect(await optionValues(user, select)).toEqual(["ff", "s35"]);
+    // 默认机位是全画幅：选不中 "ff" 时框里就显示不出当前机身。
+    expect(select).toHaveAttribute("data-value", "ff");
+    expect(select).toHaveTextContent("previz.inspector.sensors.ff");
   });
 
   it("recomputes the angle of view when the focal length changes", () => {
@@ -662,7 +662,7 @@ describe("PrevizInspector", () => {
 
     expect(screen.getByLabelText("previz.inspector.focalMm")).toHaveValue(85);
     expect(screen.getByLabelText("previz.inspector.aperture")).toHaveValue(5.6);
-    expect(screen.getByLabelText("previz.inspector.sensor")).toHaveValue("s35");
+    expect(screen.getByLabelText("previz.inspector.sensor")).toHaveAttribute("data-value", "s35");
     // Super 35 的 85 mm 是 12.5°：读数要同时跟着焦距与机身走，把 aperture 当焦距喂进
     // 换算（5.6 mm 在 s35 上是 118.6°）也会在这里现形。
     expect(screen.getByTestId("previz-inspector-fov")).toHaveTextContent(/^12\.5°$/);
@@ -701,7 +701,7 @@ describe("PrevizInspector", () => {
     const user = userEvent.setup();
     const onChange = renderInspector(createPrevizObject("light", []));
 
-    await user.selectOptions(screen.getByLabelText("previz.inspector.lightType"), "spot");
+    await pickOption(user, screen.getByLabelText("previz.inspector.lightType"), "spot");
 
     expect(onChange).toHaveBeenLastCalledWith({ lightType: "spot" });
   });
@@ -742,7 +742,7 @@ describe("PrevizInspector", () => {
       }),
     );
 
-    expect(screen.getByLabelText("previz.inspector.lightType")).toHaveValue("spot");
+    expect(screen.getByLabelText("previz.inspector.lightType")).toHaveAttribute("data-value", "spot");
     expect(screen.getByLabelText("previz.inspector.color")).toHaveValue("#3366cc");
     expect(screen.getByLabelText("previz.inspector.intensity")).toHaveValue("3.5");
   });

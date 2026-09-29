@@ -70,6 +70,7 @@ import {
   moveClip,
   pathClipAt,
   pinTrack,
+  playbackEndFrame,
   removeClip,
   removePathPoint,
   removeTrack,
@@ -231,7 +232,7 @@ interface PrevizStoreState {
   setTimelinePlaying: (playing: boolean) => void;
   /** 停止：回到第 0 帧。参照实现的「停止」按钮就是这个语义，不是暂停。 */
   stopPlayback: () => void;
-  /** 推进播放头；走到末尾就停住，不循环。入参是这一帧的真实耗时，单位秒。 */
+  /** 推进播放头；走到末尾（独奏时是独奏轨道的末尾）就停住，不循环。入参是这一帧的真实耗时，单位秒。 */
   tickPlayback: (deltaSeconds: number) => void;
   setTimelineRate: (rate: number) => void;
   /** 按倍数缩放时间轴（放大传 >1，缩小传 <1），夹在缩放范围内。 */
@@ -483,7 +484,20 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
     }));
   },
 
-  setTimelinePlaying: (playing) => set({ timelinePlaying: playing }),
+  setTimelinePlaying: (playing) =>
+    set((state) => {
+      // 停在终点时再按播放，从头播：独奏把终点提前后，播完一遍停在独奏末尾，
+      // 不回零的话再按播放会原地立刻停下，看起来像按钮失灵。
+      if (!playing || state.timelineFrame < playbackEndFrame(state.scene, state.soloObjectIds)) {
+        return { timelinePlaying: playing };
+      }
+      return {
+        timelinePlaying: true,
+        timelineFrame: 0,
+        playbackCarry: 0,
+        seekSerial: state.seekSerial + 1,
+      };
+    }),
 
   stopPlayback: () =>
     set((state) => ({
@@ -494,9 +508,10 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
     })),
 
   tickPlayback: (deltaSeconds) => {
-    const { timelinePlaying, timelineFrame, timelineRate, scene, playbackCarry } = get();
+    const { timelinePlaying, timelineFrame, timelineRate, scene, playbackCarry, soloObjectIds } =
+      get();
     if (!timelinePlaying) return;
-    const last = scene.settings.durationFrames;
+    const last = playbackEndFrame(scene, soloObjectIds);
     const next = timelineFrame + playbackCarry + deltaSeconds * PREVIZ_FPS * timelineRate;
     // 停在最后一帧，不回零、不循环——实测参照实现就是这样（循环默认关）。
     if (next >= last) {

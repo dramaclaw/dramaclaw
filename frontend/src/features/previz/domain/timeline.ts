@@ -530,6 +530,21 @@ export function soloScene(scene: PrevizScene, soloObjectIds: readonly string[]):
   };
 }
 
+/**
+ * 播放走到哪一帧停。独奏时停在独奏轨道最晚那个片段的末尾——别的轨道都冻住了，
+ * 再往后走只是空跑时间；没在独奏（或独奏轨道上一个片段都没有）就走满总长。
+ * 夹在总长以内：超出总长的片段本来也播不到。
+ */
+export function playbackEndFrame(scene: PrevizScene, soloObjectIds: readonly string[]): number {
+  const last = scene.settings.durationFrames;
+  let end = 0;
+  for (const track of scene.timeline.tracks) {
+    if (!soloObjectIds.includes(track.objectId)) continue;
+    for (const clip of track.clips) end = Math.max(end, clip.endFrame);
+  }
+  return end > 0 ? Math.min(end, last) : last;
+}
+
 /** 两个 u 差在这以内就算同一个关键帧。120 帧的片段上 1e-6 远小于半帧。 */
 const U_EPSILON = 1e-6;
 

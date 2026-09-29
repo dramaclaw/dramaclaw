@@ -280,3 +280,60 @@ describe('seekSerial', () => {
     expect(usePrevizStore.getState().seekSerial).toBe(start);
   });
 });
+
+describe('solo playback', () => {
+  /** 两个人：短的走 0–40 帧，长的走 0–100 帧；总长仍是默认的 120 帧。 */
+  function stage(): { short: string; long: string } {
+    reset();
+    const store = usePrevizStore.getState();
+    const [short, long] = [store.addObject('character')!, store.addObject('character')!];
+    const scene = usePrevizStore.getState().scene;
+    usePrevizStore.getState().loadScene({
+      ...scene,
+      timeline: {
+        ...scene.timeline,
+        tracks: [
+          { id: 'ts', objectId: short, clips: [{ id: 's', kind: 'path', startFrame: 0, endFrame: 40, points: [] }] },
+          { id: 'tl', objectId: long, clips: [{ id: 'l', kind: 'path', startFrame: 0, endFrame: 100, points: [] }] },
+        ],
+      },
+    });
+    return { short, long };
+  }
+
+  it('stops at the end of the soloed track instead of the full duration', () => {
+    const { short } = stage();
+    usePrevizStore.getState().toggleSolo(short);
+    usePrevizStore.getState().setTimelinePlaying(true);
+    usePrevizStore.getState().tickPlayback(2);
+    expect(usePrevizStore.getState()).toMatchObject({ timelineFrame: 40, timelinePlaying: false });
+  });
+
+  it('runs the full duration once solo is off', () => {
+    stage();
+    usePrevizStore.getState().setTimelinePlaying(true);
+    usePrevizStore.getState().tickPlayback(2);
+    expect(usePrevizStore.getState()).toMatchObject({ timelineFrame: 60, timelinePlaying: true });
+  });
+
+  it('rewinds to the start when play is pressed at the end', () => {
+    const { short } = stage();
+    usePrevizStore.getState().toggleSolo(short);
+    usePrevizStore.getState().setTimelineFrame(40);
+    const serial = usePrevizStore.getState().seekSerial;
+    usePrevizStore.getState().setTimelinePlaying(true);
+    expect(usePrevizStore.getState()).toMatchObject({
+      timelineFrame: 0,
+      timelinePlaying: true,
+      seekSerial: serial + 1,
+    });
+  });
+
+  it('resumes in place when play is pressed before the end', () => {
+    const { short } = stage();
+    usePrevizStore.getState().toggleSolo(short);
+    usePrevizStore.getState().setTimelineFrame(20);
+    usePrevizStore.getState().setTimelinePlaying(true);
+    expect(usePrevizStore.getState().timelineFrame).toBe(20);
+  });
+});

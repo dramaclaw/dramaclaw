@@ -10,6 +10,7 @@ import {
   PREVIZ_PREVIEW_DRAG_DEG_PER_PX,
   PrevizCameraCreateDialog,
 } from "@/features/previz/ui/PrevizCameraCreateDialog";
+import { pickOption } from "./previzSelect";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -180,7 +181,7 @@ describe("PrevizCameraCreateDialog", () => {
     const user = userEvent.setup();
     const { onCreate } = setup();
 
-    await user.selectOptions(screen.getByLabelText("previz.cameraCreate.sensor"), "s35");
+    await pickOption(user, screen.getByLabelText("previz.cameraCreate.sensor"), "s35");
 
     // Super 35 的成像面更小，同一支 50mm 的视场角从 27.0° 收到 21.1°。
     expect(screen.getByTestId("camera-create-focal-note")).toHaveTextContent("· 21.1°");

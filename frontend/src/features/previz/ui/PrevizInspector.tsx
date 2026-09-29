@@ -30,6 +30,7 @@ import {
   type PrevizTransform,
   type Vec3,
 } from "@/features/previz/domain/scene";
+import { PrevizSelect } from "@/features/previz/ui/PrevizSelect";
 
 export interface PrevizInspectorProps {
   object: PrevizObject | null;
@@ -101,9 +102,8 @@ function readNumber(raw: string): number | null {
  * 选中对象的属性面板。只吃 props、不读 store——store 接线全在 `PrevizEditor` 那一层，
  * 这样面板本身可以用纯 props 测。
  *
- * 控件用原生 `<select>` 与 `<input type="range">`，与 `ThreeDDirectorDialog.tsx` 一致：
- * `@base-ui/react` 的 Select 要开 Portal，嵌在这个全屏 Dialog 里有额外的层级坑，
- * 为几个下拉不值当。
+ * 下拉走 `PrevizSelect`（原生 `<select>` 在 macOS 上会把面板压在框上），
+ * 滑杆仍是原生 `<input type="range">`。
  */
 export function PrevizInspector({ object, onChange }: PrevizInspectorProps) {
   const { t } = useTranslation();
@@ -255,38 +255,31 @@ export function PrevizInspector({ object, onChange }: PrevizInspectorProps) {
             <label className={LABEL} htmlFor={`${prefix}-body`}>
               {t("previz.inspector.bodyType")}
             </label>
-            <select
+            <PrevizSelect
               id={`${prefix}-body`}
               className={FIELD}
               value={character.bodyType}
-              onChange={(event) => onChange({ bodyType: event.target.value as BodyType })}
-            >
-              {BODY_TYPES.map((type) => (
-                <option key={type} value={type}>
-                  {t(`previz.inspector.bodyTypes.${type}`)}
-                </option>
-              ))}
-            </select>
+              options={BODY_TYPES.map((type) => ({
+                value: type,
+                label: t(`previz.inspector.bodyTypes.${type}`),
+              }))}
+              onChange={(bodyType) => onChange({ bodyType })}
+            />
           </div>
           <div>
             <label className={LABEL} htmlFor={`${prefix}-pose`}>
               {t("previz.inspector.basePose")}
             </label>
-            <select
+            {/* 标签走 i18n，但 key 表不许自己另起一套：`PREVIZ_POSE_LABEL_KEYS` 与
+                viewer-kit 的 `POSE_LABEL_KEYS` 有棘轮对齐（`poses.test.ts` 盯着），
+                两边必须逐字一致，同一个姿势才会在预演台和 3D 导演里同名。 */}
+            <PrevizSelect
               id={`${prefix}-pose`}
               className={FIELD}
               value={character.basePoseId}
-              onChange={(event) => onChange({ basePoseId: event.target.value })}
-            >
-              {/* 标签走 i18n，但 key 表不许自己另起一套：`PREVIZ_POSE_LABEL_KEYS` 与
-                  viewer-kit 的 `POSE_LABEL_KEYS` 有棘轮对齐（`poses.test.ts` 盯着），
-                  两边必须逐字一致，同一个姿势才会在预演台和 3D 导演里同名。 */}
-              {PREVIZ_POSES.map((pose) => (
-                <option key={pose} value={pose}>
-                  {t(PREVIZ_POSE_LABEL_KEYS[pose])}
-                </option>
-              ))}
-            </select>
+              options={PREVIZ_POSES.map((pose) => ({ value: pose, label: t(PREVIZ_POSE_LABEL_KEYS[pose]) }))}
+              onChange={(basePoseId) => onChange({ basePoseId })}
+            />
           </div>
           <div>
             <span className={LABEL}>{t("previz.inspector.poseAdjust.label")}</span>
@@ -317,20 +310,16 @@ export function PrevizInspector({ object, onChange }: PrevizInspectorProps) {
             <label className={LABEL} htmlFor={`${prefix}-height-policy`}>
               {t("previz.inspector.heightPolicy")}
             </label>
-            <select
+            <PrevizSelect
               id={`${prefix}-height-policy`}
               className={FIELD}
               value={character.heightPolicy}
-              onChange={(event) =>
-                patchHeightPolicy(character, event.target.value as HeightPolicy)
-              }
-            >
-              {HEIGHT_POLICIES.map((policy) => (
-                <option key={policy} value={policy}>
-                  {t(`previz.inspector.heightPolicies.${policy}`)}
-                </option>
-              ))}
-            </select>
+              options={HEIGHT_POLICIES.map((policy) => ({
+                value: policy,
+                label: t(`previz.inspector.heightPolicies.${policy}`),
+              }))}
+              onChange={(policy) => patchHeightPolicy(character, policy)}
+            />
           </div>
           {/* 只有「锁定平面」读得到这个数。另外两档也摆一个改不出效果的输入框在那里，
               用户会以为自己改的高度没生效。 */}
@@ -427,15 +416,16 @@ export function PrevizInspector({ object, onChange }: PrevizInspectorProps) {
             <label className={LABEL} htmlFor={`${prefix}-sensor`}>
               {t("previz.inspector.sensor")}
             </label>
-            <select
+            <PrevizSelect
               id={`${prefix}-sensor`}
               className={FIELD}
               value={camera.sensor}
-              onChange={(event) => onChange({ sensor: event.target.value as "ff" | "s35" })}
-            >
-              <option value="ff">{t("previz.inspector.sensors.ff")}</option>
-              <option value="s35">{t("previz.inspector.sensors.s35")}</option>
-            </select>
+              options={[
+                { value: "ff", label: t("previz.inspector.sensors.ff") },
+                { value: "s35", label: t("previz.inspector.sensors.s35") },
+              ] as const}
+              onChange={(sensor) => onChange({ sensor })}
+            />
           </div>
           {/* 视场角是算出来的读数，不是可编辑字段：数字单独占一个节点，好让它跟着
               焦距与机身走，而不是跟着文案模板走。
@@ -457,18 +447,17 @@ export function PrevizInspector({ object, onChange }: PrevizInspectorProps) {
             <label className={LABEL} htmlFor={`${prefix}-light-type`}>
               {t("previz.inspector.lightType")}
             </label>
-            <select
+            <PrevizSelect
               id={`${prefix}-light-type`}
               className={FIELD}
               value={light.lightType}
-              onChange={(event) =>
-                onChange({ lightType: event.target.value as "key" | "point" | "spot" })
-              }
-            >
-              <option value="key">{t("previz.inspector.lightTypes.key")}</option>
-              <option value="point">{t("previz.inspector.lightTypes.point")}</option>
-              <option value="spot">{t("previz.inspector.lightTypes.spot")}</option>
-            </select>
+              options={[
+                { value: "key", label: t("previz.inspector.lightTypes.key") },
+                { value: "point", label: t("previz.inspector.lightTypes.point") },
+                { value: "spot", label: t("previz.inspector.lightTypes.spot") },
+              ] as const}
+              onChange={(lightType) => onChange({ lightType })}
+            />
           </div>
           <div>
             <label className={LABEL} htmlFor={`${prefix}-color`}>

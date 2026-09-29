@@ -27,6 +27,7 @@ import {
   PREVIZ_PREVIEW_SIZE,
   type CameraPreviewCanvas,
 } from "@/features/previz/engine/cameraPreview";
+import { PrevizSelect } from "@/features/previz/ui/PrevizSelect";
 
 export interface PrevizCameraCreateDialogProps {
   open: boolean;
@@ -375,17 +376,16 @@ function CameraCreatePanel({
                 <label className={`shrink-0 ${LABEL}`} htmlFor={`${prefix}-sensor`}>
                   {t("previz.cameraCreate.sensor")}
                 </label>
-                <select
+                <PrevizSelect
                   id={`${prefix}-sensor`}
                   className={`${FIELD_BASE} min-w-0 flex-1`}
                   value={draft.sensor}
-                  onChange={(event) =>
-                    patch({ sensor: event.target.value as PrevizCamera["sensor"] })
-                  }
-                >
-                  <option value="ff">{t("previz.inspector.sensors.ff")}</option>
-                  <option value="s35">{t("previz.inspector.sensors.s35")}</option>
-                </select>
+                  options={[
+                    { value: "ff", label: t("previz.inspector.sensors.ff") },
+                    { value: "s35", label: t("previz.inspector.sensors.s35") },
+                  ] as const}
+                  onChange={(sensor) => patch({ sensor })}
+                />
               </div>
             </section>
 
