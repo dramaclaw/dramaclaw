@@ -131,3 +131,59 @@ def test_object_outside_every_floor_is_a_warning():
 
     assert report.errors == ()
     assert report.warnings == ("'far' stands outside every floor",)
+
+
+def test_top_resting_on_two_legs_is_not_floating():
+    report = _check(
+        "scene.box(id='leg_l', position=(-0.9, 0, 0), size=(0.2, 0.5, 0.7), semantic_type='prop')\n"
+        "scene.box(id='leg_r', position=(0.9, 0, 0), size=(0.2, 0.5, 0.7), semantic_type='prop')\n"
+        "scene.box(id='top', position=(0, 0.5, 0), size=(2.4, 0.1, 0.9), semantic_type='table')\n"
+    )
+
+    assert report.warnings == ()
+
+
+def test_piece_beside_a_supporter_but_not_over_it_still_floats():
+    report = _check(
+        TABLE
+        + "scene.box(id='shelf', position=(2, 0.75, 0), size=(0.5, 0.1, 0.5), semantic_type='shelf')\n"
+    )
+
+    assert report.warnings == (
+        "'shelf' floats 0.75 m above the floor with nothing under it",
+    )
+
+
+def test_piece_hung_on_a_wall_is_not_floating():
+    # room 8 × 6: the back wall's inner face is at z = 2.9, the left wall's at x = -3.9
+    report = _check(
+        "scene.box(id='scroll', position=(1, 1.4, 2.82), size=(1.2, 1.6, 0.06), semantic_type='prop')\n"
+        "scene.box(id='lattice', position=(-3.85, 1.0, 0.5), size=(0.08, 1.5, 1.8), semantic_type='window')\n"
+    )
+
+    assert report.warnings == ()
+
+
+def test_piece_above_the_top_of_a_wall_still_floats():
+    report = _check(
+        "scene.box(id='sign', position=(1, 3.2, 2.82), size=(1.2, 0.4, 0.06), semantic_type='prop')\n"
+    )
+
+    assert report.warnings == (
+        "'sign' floats 3.2 m above the floor with nothing under it",
+    )
+
+
+def test_piece_past_the_end_of_a_wall_still_floats():
+    report = check_plausibility(
+        parse_blockout_program(
+            "scene.floor(id='ground', center=(0, 0), size=(8, 6))\n"
+            "scene.wall(id='w', start=(-1, 2), end=(1, 2), height=3)\n"
+            + CAMERA
+            + "scene.box(id='far', position=(3, 1.4, 1.85), size=(1, 1, 0.06), semantic_type='prop')\n"
+        )
+    )
+
+    assert report.warnings == (
+        "'far' floats 1.4 m above the floor with nothing under it",
+    )

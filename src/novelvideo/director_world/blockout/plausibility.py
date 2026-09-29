@@ -8,6 +8,7 @@ errors    contradict the scene's own conventions. The model gets them back and
           retries.
 warnings  look odd but may be intended (a lamp hanging from the ceiling). They
           are recorded and returned to the user, and never trigger a retry.
+          A piece that rests on another or hangs on a wall is not floating.
 """
 
 from __future__ import annotations
@@ -15,10 +16,11 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from novelvideo.director_world.blockout.scene_ir import SceneIR, SolidIR
+from novelvideo.director_world.blockout.scene_ir import SceneIR, SolidIR, WallIR
 
 FLOOR_TOLERANCE_METERS = 0.01
 SUPPORT_TOLERANCE_METERS = 0.05
+WALL_TOLERANCE_METERS = 0.1
 MIN_IN_VIEW_RATIO = 0.5
 VIEW_MARGIN = 1.1
 HEAVY_OVERLAP_RATIO = 0.5
@@ -96,16 +98,50 @@ def _in_view_count(scene: SceneIR, image_aspect: float) -> int:
 
 
 def _is_supported(solid: SolidIR, others: tuple[SolidIR, ...]) -> bool:
-    x, bottom, z = solid.position
+    """Something ends where this begins, and the two footprints overlap.
+
+    Overlap rather than "under the centre": a table top rests on two legs,
+    neither of which is under its middle.
+    """
+    min_x, max_x, bottom, _, min_z, max_z = _bounds(solid)
     for other in others:
         if other.id == solid.id:
             continue
-        min_x, max_x, _, top, min_z, max_z = _bounds(other)
+        other_min_x, other_max_x, _, top, other_min_z, other_max_z = _bounds(other)
         if (
             abs(top - bottom) <= SUPPORT_TOLERANCE_METERS
-            and min_x <= x <= max_x
-            and min_z <= z <= max_z
+            and min_x < other_max_x
+            and other_min_x < max_x
+            and min_z < other_max_z
+            and other_min_z < max_z
         ):
+            return True
+    return False
+
+
+def _hangs_on_a_wall(solid: SolidIR, walls: tuple[WallIR, ...]) -> bool:
+    """The footprint touches a wall face below the top of that wall."""
+    min_x, max_x, bottom, _, min_z, max_z = _bounds(solid)
+    corners = ((min_x, min_z), (min_x, max_z), (max_x, min_z), (max_x, max_z))
+    for wall in walls:
+        if bottom >= wall.height:
+            continue
+        run_x = wall.end[0] - wall.start[0]
+        run_z = wall.end[1] - wall.start[1]
+        length = math.hypot(run_x, run_z)
+        unit_x, unit_z = run_x / length, run_z / length
+        along = [
+            (x - wall.start[0]) * unit_x + (z - wall.start[1]) * unit_z
+            for x, z in corners
+        ]
+        if max(along) < 0.0 or min(along) > length:
+            continue
+        across = [
+            (z - wall.start[1]) * unit_x - (x - wall.start[0]) * unit_z
+            for x, z in corners
+        ]
+        half = wall.thickness / 2.0
+        if max(min(across) - half, -half - max(across)) <= WALL_TOLERANCE_METERS:
             return True
     return False
 
@@ -163,8 +199,10 @@ def check_plausibility(
             )
 
     for solid in scene.solids:
-        if solid.position[1] > SUPPORT_TOLERANCE_METERS and not _is_supported(
-            solid, scene.solids
+        if (
+            solid.position[1] > SUPPORT_TOLERANCE_METERS
+            and not _is_supported(solid, scene.solids)
+            and not _hangs_on_a_wall(solid, scene.walls)
         ):
             warnings.append(
                 f"'{solid.id}' floats {solid.position[1]:g} m above the floor "
