@@ -17,6 +17,7 @@ from novelvideo.director_world.blockout.scene_ir import (
     MAX_AST_NODES,
     MAX_COORDINATE_ABS,
     MAX_EDGE_METERS,
+    MAX_LABEL_CHARS,
     MAX_PROGRAM_CHARS,
     MIN_PIECE_METERS,
     BlockoutProgramError,
@@ -45,10 +46,13 @@ _SPEC: dict[str, tuple[frozenset[str], frozenset[str]]] = {
         frozenset({"id", "width", "depth", "height"}),
         frozenset({"center", "wall_thickness"}),
     ),
-    "floor": (frozenset({"id", "center", "size"}), frozenset({"semantic_type"})),
+    "floor": (
+        frozenset({"id", "center", "size"}),
+        frozenset({"semantic_type", "label"}),
+    ),
     "wall": (
         frozenset({"id", "start", "end", "height"}),
-        frozenset({"thickness", "semantic_type"}),
+        frozenset({"thickness", "semantic_type", "label"}),
     ),
     "opening": (
         frozenset({"id", "wall", "offset", "width", "height"}),
@@ -56,20 +60,23 @@ _SPEC: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     ),
     "box": (
         frozenset({"id", "position", "size", "semantic_type"}),
-        frozenset({"rotation_y"}),
+        frozenset({"rotation_y", "label"}),
     ),
     "cylinder": (
         frozenset({"id", "position", "radius", "height", "semantic_type"}),
-        frozenset(),
+        frozenset({"label"}),
     ),
     "wedge": (
         frozenset({"id", "position", "size"}),
-        frozenset({"rotation_y", "semantic_type"}),
+        frozenset({"rotation_y", "semantic_type", "label"}),
     ),
-    "stairs": (frozenset({"id", "position", "size"}), frozenset({"rotation_y"})),
+    "stairs": (
+        frozenset({"id", "position", "size"}),
+        frozenset({"rotation_y", "label"}),
+    ),
     "repeat": (
         frozenset({"primitive", "ids", "positions", "semantic_type"}),
-        frozenset({"size", "radius", "height", "rotation_y"}),
+        frozenset({"size", "radius", "height", "rotation_y", "label"}),
     ),
     "camera": (frozenset({"id", "position", "target"}), frozenset({"fov"})),
 }
@@ -291,6 +298,13 @@ def _semantic(call: _Call, default: str | None = None) -> str:
     return value
 
 
+def _label(call: _Call) -> str:
+    """The display name the model gave the piece; cosmetic, so cleaned, not rejected."""
+    value = _text(call, "label", "")
+    printable = "".join(char if char.isprintable() else " " for char in value)
+    return " ".join(printable.split())[:MAX_LABEL_CHARS].strip()
+
+
 def _rotation(call: _Call) -> float:
     value = _number(call, "rotation_y", 0.0)
     if abs(value) > MAX_ROTATION_ABS:
@@ -373,6 +387,7 @@ def _solid(
     return SolidIR(
         id=solid_id,
         semantic_type=semantic_type,
+        name_hint=_label(call),
         shape=shape,
         position=(position[0], position[1], position[2]),
         size=(size[0], size[1], size[2]),
@@ -576,6 +591,7 @@ def parse_blockout_program(source: str) -> SceneIR:
                 FloorIR(
                     id=object_id,
                     semantic_type=_semantic(call, "floor"),
+                    name_hint=_label(call),
                     center=_vector(call, "center", 2),
                     size=_vector(call, "size", 2, size=True),
                 )
@@ -590,6 +606,7 @@ def parse_blockout_program(source: str) -> SceneIR:
                     _length(call, "height"),
                     _length(call, "thickness", DEFAULT_WALL_THICKNESS),
                     _semantic(call, "wall"),
+                    _label(call),
                 )
             )
         elif call.op == "box":

@@ -19,6 +19,7 @@ MAX_COMPILED_OBJECTS = 150
 MAX_COORDINATE_ABS = 100.0
 MAX_EDGE_METERS = 100.0
 MIN_PIECE_METERS = 0.01
+MAX_LABEL_CHARS = 24
 
 Vec2 = tuple[float, float]
 Vec3 = tuple[float, float, float]
@@ -72,6 +73,7 @@ class WallIR(_Frozen):
 class SolidIR(_Frozen):
     id: str
     semantic_type: str
+    name_hint: str = ""
     shape: Literal["box", "cylinder", "wedge"]
     position: Vec3
     size: Vec3

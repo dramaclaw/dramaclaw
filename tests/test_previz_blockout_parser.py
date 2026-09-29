@@ -289,3 +289,59 @@ def test_the_blockout_package_never_runs_code():
                     assert alias.name.split(".")[0] not in banned_modules, source.name
             if isinstance(node, ast.ImportFrom):
                 assert (node.module or "").split(".")[0] not in banned_modules, source.name
+
+
+def test_label_is_kept_as_the_name_of_the_piece():
+    scene = _parse(
+        'scene.box(id="kang", position=(0, 0, 1), size=(2, 0.5, 1), semantic_type="platform", label="炕")\n'
+        'scene.cylinder(id="stand", position=(1, 0, 1), radius=0.2, height=0.9, semantic_type="prop", label="花几")\n'
+        'scene.wedge(id="slope", position=(2, 0, 1), size=(1, 0.3, 1), label="坡道")\n'
+        'scene.stairs(id="steps", position=(3, 0, 1), size=(1, 0.3, 1), label="台阶")\n'
+        'scene.repeat(primitive="box", ids=["a", "b"], positions=[(-1, 0, 0), (-2, 0, 0)], '
+        'size=(0.5, 0.9, 0.5), semantic_type="chair", label="圈椅")\n'
+        'scene.wall(id="screen", start=(-3, 2), end=(-1, 2), height=2, label="屏风")\n'
+    )
+
+    assert [solid.name_hint for solid in scene.solids] == [
+        "炕",
+        "花几",
+        "坡道",
+        "台阶",
+        "圈椅",
+        "圈椅",
+    ]
+    assert scene.walls[0].name_hint == "屏风"
+
+
+def test_floor_label_is_kept():
+    scene = parse_blockout_program(
+        'scene.floor(id="yard", center=(0, 0), size=(8, 6), label="院子")\n' + CAMERA
+    )
+
+    assert scene.floors[0].name_hint == "院子"
+
+
+def test_piece_without_a_label_has_no_name_hint():
+    scene = _parse(
+        'scene.box(id="b", position=(0, 0, 1), size=(1, 1, 1), semantic_type="prop")\n'
+    )
+
+    assert scene.solids[0].name_hint == ""
+
+
+def test_label_is_flattened_and_capped():
+    scene = _parse(
+        'scene.box(id="b", position=(0, 0, 1), size=(1, 1, 1), semantic_type="prop", '
+        'label="  紫檀\\n条案\\x00  ' + "长" * 40 + '")\n'
+    )
+
+    assert scene.solids[0].name_hint == ("紫檀 条案 " + "长" * 40)[:24]
+
+
+def test_label_must_be_a_string():
+    with pytest.raises(BlockoutProgramError) as caught:
+        _parse(
+            'scene.box(id="b", position=(0, 0, 1), size=(1, 1, 1), semantic_type="prop", label=3)\n'
+        )
+
+    assert "'label' must be a string" in caught.value.message

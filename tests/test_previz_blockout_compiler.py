@@ -289,3 +289,20 @@ def test_object_count_is_capped():
 
     with pytest.raises(BlockoutLimitError, match="151 objects > 150"):
         compile_scene(parse_blockout_program(program(MAX_COMPILED_OBJECTS + 1)))
+
+
+def test_label_names_the_piece_and_repeats_are_numbered():
+    result = _by_id(
+        _compile(
+            "scene.box(id='kang', position=(0, 0, 1), size=(2, 0.5, 1), "
+            "semantic_type='platform', label='炕')\n"
+            "scene.repeat(primitive='box', ids=['a', 'b'], positions=[(-1, 0, 0), (-2, 0, 0)], "
+            "size=(0.5, 0.9, 0.5), semantic_type='chair', label='圈椅')\n"
+            "scene.box(id='plain', position=(2, 0, 1), size=(1, 1, 1), semantic_type='table')\n"
+        )
+    )
+
+    assert [result[key]["name"] for key in (
+        "blockout-kang", "blockout-a", "blockout-b", "blockout-plain"
+    )] == ["炕", "圈椅", "圈椅 2", "桌子 1"]
+    assert result["blockout-kang"]["blockout"] == {"id": "kang", "semanticType": "platform"}

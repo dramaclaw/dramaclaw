@@ -7,7 +7,9 @@ from novelvideo.director_world.blockout.dsl_parser import (
 from novelvideo.director_world.blockout.plausibility import check_plausibility
 from novelvideo.director_world.blockout.prompts import (
     BLOCKOUT_EXAMPLE_PROGRAM,
+    BLOCKOUT_PROMPT_VERSION,
     MAX_DESCRIPTION_CHARS,
+    SUGGESTED_OBJECT_COUNT,
     build_blockout_prompt,
     build_blockout_retry_prompt,
 )
@@ -66,3 +68,41 @@ def test_retry_prompt_carries_the_previous_program_and_every_error():
     assert "```\nscene.box(id='a')\n```" in prompt
     assert "- line 1: box is missing position\n- camera is required\n" in prompt
     assert prompt.startswith(build_blockout_prompt())
+
+
+def test_prompt_asks_for_one_box_per_piece_of_furniture():
+    prompt = build_blockout_prompt()
+
+    assert "一件家具只用一个几何体" in prompt
+    assert "桌腿、椅背、台面不要单独摆" in prompt
+
+
+def test_prompt_leaves_small_decorations_out():
+    prompt = build_blockout_prompt()
+
+    assert "小摆件不要摆" in prompt
+    assert f"总数建议不超过 {SUGGESTED_OBJECT_COUNT} 件" in prompt
+    assert SUGGESTED_OBJECT_COUNT <= 30
+
+
+def test_prompt_asks_which_wall_each_piece_stands_against_before_any_geometry():
+    prompt = build_blockout_prompt()
+
+    analysis = prompt.index("靠哪面墙")
+    assert analysis < prompt.index("搭大结构")
+    assert "正对后墙，还是斜着拍" in prompt
+
+
+def test_prompt_asks_for_a_label_on_every_piece():
+    assert "label 写这件东西的中文名" in build_blockout_prompt()
+
+
+def test_example_shows_labels_and_the_layout_notes():
+    scene = parse_blockout_program(BLOCKOUT_EXAMPLE_PROGRAM)
+
+    assert all(solid.name_hint for solid in scene.solids)
+    assert "# 靠墙：" in BLOCKOUT_EXAMPLE_PROGRAM
+
+
+def test_prompt_version_moves_with_the_wording():
+    assert BLOCKOUT_PROMPT_VERSION == 2

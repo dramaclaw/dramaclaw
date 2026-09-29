@@ -262,7 +262,7 @@ def compile_scene(scene: SceneIR) -> dict[str, Any]:
         objects.append(
             _prop(
                 object_id=f"{OBJECT_ID_PREFIX}{solid.id}",
-                name=names.next(solid.semantic_type),
+                name=names.next(solid.semantic_type, solid.name_hint),
                 primitive=_SHAPE_TO_PRIMITIVE[solid.shape],
                 position=solid.position,
                 rotation_y=solid.rotation_y,
