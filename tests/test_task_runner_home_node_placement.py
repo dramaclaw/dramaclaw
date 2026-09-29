@@ -33,6 +33,7 @@ PLACEMENT_FREE_TASKS = {
     "freezone_gen",
     "freezone_image_reverse_prompt",
     "freezone_image_to_3gs",
+    "freezone_image_to_blockout",
     "freezone_mask_edit",
     "freezone_story_script",
     "freezone_text_generate",
