@@ -38,13 +38,17 @@ import { cn } from "@/lib/utils";
  * 触控板用）；绘制是按住左键在地面上拖出一条轨迹；标记是逐点单击放点、自动与前一点连线
  * （Esc 退出）。这四颗底下视口里**没有**变换手柄。后三颗按下才在选中物体上支起对应的手柄。
  *
- * 拆成两个常量而不是一个七元数组：左栏中间那条分隔线正照着这个界把按钮分成两段，两段
- * 各有各的 `role="group"` 名字。`PREVIZ_TOOLS` 由它们拼出来，分界线只有一处真相。
+ * 按行写而不是一条七元数组：面板是两列网格，每一行从左列起头——缩放单独占一行，
+ * 让它压在移动正下方、三颗手柄工具竖着连成一片，绘制与标记另起一行成对。只写一条
+ * 扁平列表的话，自动排布会把缩放和绘制挤进同一行。
  */
-export const PREVIZ_POINTER_TOOLS = ["select", "navigate", "draw", "mark"] as const;
-export const PREVIZ_TRANSFORM_TOOLS = ["translate", "rotate", "scale"] as const;
-export const PREVIZ_TOOLS = [...PREVIZ_POINTER_TOOLS, ...PREVIZ_TRANSFORM_TOOLS] as const;
-export type PrevizTool = (typeof PREVIZ_TOOLS)[number];
+export const PREVIZ_TOOL_ROWS = [
+  ["select", "navigate"],
+  ["translate", "rotate"],
+  ["scale"],
+  ["draw", "mark"],
+] as const;
+export type PrevizTool = (typeof PREVIZ_TOOL_ROWS)[number][number];
 
 /**
  * 没有别的理由时该落在哪一颗工具上。三处使用点：编辑器的初始状态、画完一笔之后的回落、
@@ -62,14 +66,14 @@ export const PREVIZ_DEFAULT_TOOL: PrevizTool = "translate";
 /**
  * 图标写成 Record 而不是数组字面量：新增一种取值时这里编译期报错，不会静默塌成一个
  * 通用图标、或者干脆少一个按钮。对象类型那张还兼着排序——`Object.keys` 对非整数字符串
- * 键保持书写顺序，所以键序就是按钮从上到下的顺序；工具的顺序另有 `PREVIZ_*_TOOLS`
- * 两条列表说了算，那里还要分段，靠不了一张表的键序。
+ * 键保持书写顺序，所以键序就是按钮在两列网格里逐行排下来的顺序；工具的顺序另有
+ * `PREVIZ_TOOL_ROWS` 说了算，那里还要分行，靠不了一张表的键序。
  */
 const KIND_ICON: Record<PrevizObjectKind, LucideIcon> = {
-  character: User,
+  prop: Box,
   camera: Camera,
   light: Lightbulb,
-  prop: Box,
+  character: User,
 };
 
 const TOOL_ICON: Record<PrevizTool, LucideIcon> = {
@@ -162,13 +166,14 @@ const RAIL_BUTTON = cn(
   "relative disabled:pointer-events-auto disabled:cursor-not-allowed",
 );
 
-/** 竖栏上的一颗按钮：图标 + 弹在右侧的悬停提示（见 [PrevizHoverTip]）。 */
+/** 面板上的一颗按钮：图标 + 弹在右侧的悬停提示（见 [PrevizHoverTip]）。 */
 function RailButton({
   icon: Icon,
   label,
   tip,
   on,
   shortcut,
+  rowStart,
   className,
   ...props
 }: {
@@ -185,9 +190,18 @@ function RailButton({
   on?: boolean;
   /** 快捷键字母；给了就在右上角画一个小键帽，并写进 aria-keyshortcuts。 */
   shortcut?: string;
+  /**
+   * 在两列网格里另起一行、从左列开始。落在提示外层那个 span 上——网格的格子是它，
+   * 不是按钮本身。
+   */
+  rowStart?: boolean;
 } & ComponentProps<typeof Button>) {
   return (
-    <PrevizHoverTip label={tip ?? label} side="right">
+    <PrevizHoverTip
+      label={tip ?? label}
+      side="right"
+      className={rowStart ? "col-start-1" : undefined}
+    >
       <Button
         type="button"
         variant="ghost"
@@ -208,8 +222,8 @@ function RailButton({
 }
 
 /**
- * 每一段都要有名字：这条竖栏是一串纯图标按钮，读屏顺着读下来是「添加人物 添加机位 …
- * 选择 绘制轨迹 移动 旋转 缩放 …」——十几个按钮连成一条，「缩放」到底是
+ * 每一段都要有名字：这块面板是一串纯图标按钮，读屏顺着读下来是「选择 导航 移动 …
+ * 添加道具 添加机位 …」——十几个按钮连成一串，「缩放」到底是
  * 手柄模式还是画面缩放全靠猜。`role="group"` + 名字把它切成几段，与 `PrevizLayerPanel`
  * 里按对象类型分组的做法同源。
  *
@@ -218,28 +232,27 @@ function RailButton({
  */
 function RailGroup({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div role="group" aria-label={label} className="flex flex-col items-center gap-1">
+    <div role="group" aria-label={label} className="grid grid-cols-2 gap-1">
       {children}
     </div>
   );
 }
 
 function RailDivider() {
-  return <div className="my-1 h-px w-8 shrink-0 bg-white/10" />;
+  return <div className="my-1 h-px shrink-0 bg-white/10" />;
 }
 
 /**
- * 编辑器的左侧菜单列：建对象、指针工具、变换工具，最后是收起/展开轨迹面板。
+ * 编辑器左上角的浮动工具面板：工具、建对象，最后是收起/展开轨迹面板。两列网格，
+ * 浮在视口里而不是贴边占一整条竖栏——整条栏子十几颗图标排成一列，最底下那颗离视口
+ * 顶边太远；两列之后高度减半，面板底下的画面照样能拾取和画轨迹。
  *
- * 这条栏只收「摆场景用的工具」。撤销重做、显示模式、重置视角不在这里——那三样是
- * 「对着画面调画面」的动作，手和眼都在视口里，跑到左边角落去按一下再跑回来看效果，
- * 一个来回就断一次注意力；它们浮在视口自己那一角（`PrevizViewportControls`）。出片
- * 画幅同理，归在监看画中画上（`PrevizMonitorFrame`）：改画幅要看的就是那块画面被裁
- * 成什么样，在这里改等于盲调。轨迹点间距也跟着画笔的落点走，去了视口右上角。切视角
- * 与聚焦同样搬走了：它们现在是视口左上角那颗坐标轴球的两个邻居，按哪个轴、往哪聚焦
- * 都得看着画面里的朝向定。
+ * 这块面板只收「摆场景用的工具」。撤销重做、显示模式、重置视角不在这里——那三样是
+ * 「对着画面调画面」的动作，浮在视口自己那一角（`PrevizViewportControls`）。出片画幅
+ * 归在监看画中画上（`PrevizMonitorFrame`）。轨迹点间距跟着画笔的落点走，去了视口右上角。
+ * 切视角与聚焦是坐标轴球的两个邻居，那一列排在本面板右侧。
  *
- * 中间那段可以纵向滚动，轨迹面板开关钉在最底下不跟着滚：栏子被挤矮时最先滚出视野的
+ * 中间那段可以纵向滚动，轨迹面板开关钉在最底下不跟着滚：视口被挤矮时最先滚出视野的
  * 是最下面那一项，而那一项恰恰是唯一一个「用来腾地方」的开关——它自己被挤没了，用户
  * 就再也腾不出地方来。
  */
@@ -254,11 +267,11 @@ export function PrevizToolbar({
   const { t } = useTranslation();
 
   /*
-    两段按钮走同一个渲染函数，按下态一律拿同一个 `tool` 去比——互斥性是这么保证的，
-    不是靠哪条断言。各段自己算一遍按下态（原来就是那样：一段读 tool、一段读 gizmoMode）
-    的话，两颗同时亮又会长回来，而且这次连「有两个 state」这个显眼的线索都没有了。
+    所有工具走同一个渲染函数，按下态一律拿同一个 `tool` 去比——互斥性是这么保证的，
+    不是靠哪条断言。`rowStart` 让每一行从左列起头：缩放那一行只有一颗，不钉住列的话
+    绘制会被自动排布塞进它右边那格。
   */
-  const toolButton = (option: PrevizTool) => (
+  const toolButton = (option: PrevizTool, rowStart: boolean) => (
     <RailButton
       key={option}
       icon={TOOL_ICON[option]}
@@ -266,6 +279,7 @@ export function PrevizToolbar({
       tip={TOOL_TIP_KEY[option] && t(TOOL_TIP_KEY[option])}
       on={option === tool}
       shortcut={TOOL_KEY[option]}
+      rowStart={rowStart}
       onClick={() => onTool(option)}
     />
   );
@@ -276,15 +290,30 @@ export function PrevizToolbar({
 
   return (
     <TooltipProvider delay={120}>
-      <div className="flex w-14 shrink-0 flex-col items-center border-r border-white/10 bg-black/30 py-3">
+      {/*
+        `max-h` 以视口为基准留出上下各 16px：视口被挤矮时面板不顶出底边，中间那段改为
+        内部滚动。宽度由两列 32px 按钮 + 间距 + 内边距撑出来（约 86px），
+        `PrevizViewportControls` 左上那一列按这个宽度往右让位。
+
+        `z-30` 压过视口里那几块 `absolute inset-0 z-20` 的浮层（机位/人物创建、模型库、
+        动作库）：它们开着时面板照样能点，`handleAdd` 靠的就是这一点——点另一个加号先把
+        当前浮层收掉再开新的。
+      */}
+      <div className="absolute left-4 top-4 z-30 flex max-h-[calc(100%-2rem)] flex-col rounded-xl border border-white/10 bg-black/55 backdrop-blur-sm">
         {/*
-          `self-stretch`：角标探出按钮右上角 4px，而 CSS Overflow 规定 overflow-y 一旦不是
-          visible，overflow-x 会跟着变成 auto——这一层本来靠 `items-center` 收缩到跟按钮一样
-          宽（32px），4px 的探出正好落在这条框的滚动裁切线外面，右边角标被裁掉、整条栏子还
-          多出 4px 的横向可滚动区。撑满父级 56px 宽（`w-14`）之后按钮两侧各留 12px，角标那
-          4px 远远够不到裁切线；子元素照样靠自己的 `items-center` 居中，视觉上不挪位置。
+          内边距放在滚动层上而不是外框上：角标探出按钮右上角 4px，而 CSS Overflow 规定
+          overflow-y 一旦不是 visible，overflow-x 会跟着变成 auto——滚动层要是贴着按钮边，
+          右列的角标会被裁掉、面板还多出 4px 的横向可滚动区。8px 内边距把裁切线推到角标外面。
         */}
-        <div className="flex min-h-0 flex-1 flex-col items-center gap-1 self-stretch overflow-y-auto">
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-2">
+          <RailGroup label={t("previz.toolbar.group.tool")}>
+            {PREVIZ_TOOL_ROWS.flatMap((row) =>
+              row.map((option, index) => toolButton(option, index === 0)),
+            )}
+          </RailGroup>
+
+          <RailDivider />
+
           <RailGroup label={t("previz.toolbar.group.create")}>
             {KINDS.map((kind) => {
               const addLabel = t(`previz.toolbar.add.${kind}`);
@@ -304,30 +333,13 @@ export function PrevizToolbar({
               );
             })}
           </RailGroup>
-
-          <RailDivider />
-
-          <RailGroup label={t("previz.toolbar.group.tool")}>
-            {PREVIZ_POINTER_TOOLS.map(toolButton)}
-          </RailGroup>
-
-          {/*
-            分隔线和两个分组留着，虽然七颗按钮现在是一条互斥列表：「按下它视口里会多出
-            一副手柄」是用户唯一需要提前知道的区别，混排的话这条界就只能靠图标去猜了。
-          */}
-          <RailDivider />
-
-          <RailGroup label={t("previz.toolbar.group.gizmo")}>
-            {PREVIZ_TRANSFORM_TOOLS.map(toolButton)}
-          </RailGroup>
         </div>
 
         {/*
-          轨迹面板开关钉在最底下，紧挨着它要收起的那块面板——按下去时视线不用离开那条
-          边界。同一颗按钮既收也展（图标跟着换），收起后原地不动，不会出现「收起来之后
-          找不到怎么开回去」。
+          轨迹面板开关钉在最底下。同一颗按钮既收也展（图标跟着换），收起后原地不动，
+          不会出现「收起来之后找不到怎么开回去」。
         */}
-        <div className="mt-2 flex shrink-0 flex-col items-center border-t border-white/10 pt-2">
+        <div className="mx-2 flex shrink-0 border-t border-white/10 py-2">
           <RailButton
             icon={timelineOpen ? PanelBottomClose : PanelBottomOpen}
             label={timelineLabel}

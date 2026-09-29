@@ -23,17 +23,25 @@ type ToolbarProps = ComponentProps<typeof PrevizToolbar>;
  * 只有图标没有可见文字，图标就是它们对用户的全部身份，所以也得逐个锁住。
  */
 const KINDS = [
-  { kind: "character", limit: 50, icon: "lucide-user" },
+  { kind: "prop", limit: 20, icon: "lucide-box" },
   { kind: "camera", limit: 30, icon: "lucide-camera" },
   { kind: "light", limit: 12, icon: "lucide-lightbulb" },
-  { kind: "prop", limit: 20, icon: "lucide-box" },
+  { kind: "character", limit: 50, icon: "lucide-user" },
 ] as const;
 
-/** 两段工具与六个方向都写成字面量，理由同上。 */
-const POINTER_TOOLS = ["select", "navigate", "draw", "mark"] as const;
-const TRANSFORM_TOOLS = ["translate", "rotate", "scale"] as const;
-/** 栏上从上到下的实际顺序；互斥性的断言要拿整条列表去比，不能只比其中一段。 */
-const TOOLS = [...POINTER_TOOLS, ...TRANSFORM_TOOLS] as const;
+/**
+ * 面板上逐行读下来的实际顺序（两列网格：选择/导航、移动/旋转、缩放、绘制/标记），
+ * 写成字面量，理由同上。互斥性的断言也拿这整条列表去比。
+ */
+const TOOLS = [
+  "select",
+  "navigate",
+  "translate",
+  "rotate",
+  "scale",
+  "draw",
+  "mark",
+] as const;
 /**
  * 工具名到可访问名字的映射写死在这里。前四个在 `tool.` 下、后三个仍在 `gizmo.` 下：
  * 七颗按钮合成一条互斥列表这件事不动任何一条 i18n 键，这份字面量把这一点也钉住。
@@ -172,16 +180,22 @@ describe("PrevizToolbar", () => {
     }
   });
 
-  // 三段的上下次序是用户一眼看到的布局，而段与段之间没有任何按钮名字能表达它：
-  // 把手柄那段整个挪到创建前面，下面每一条「段内顺序」用例都照样全绿。
-  it("lays the three rail groups out in order", () => {
+  // 两段的上下次序是用户一眼看到的布局，而段与段之间没有任何按钮名字能表达它：
+  // 把创建那段整个挪到工具前面，下面每一条「段内顺序」用例都照样全绿。
+  it("lays the two rail groups out in order", () => {
     setup();
 
-    expectInOrder(screen, "group", [
-      "previz.toolbar.group.create",
-      "previz.toolbar.group.tool",
-      "previz.toolbar.group.gizmo",
-    ]);
+    expectInOrder(screen, "group", ["previz.toolbar.group.tool", "previz.toolbar.group.create"]);
+  });
+
+  it("lays the create group out in order", () => {
+    setup();
+
+    expectInOrder(
+      groupNamed("previz.toolbar.group.create"),
+      "button",
+      KINDS.map(({ kind }) => `previz.toolbar.add.${kind}`),
+    );
   });
 
   // 撤销重做、显示模式、重置视角、轨迹点间距、切视角与聚焦都搬去了视口自己那两角
@@ -291,15 +305,31 @@ describe("PrevizToolbar", () => {
     expect(screen.queryByLabelText("previz.toolbar.importProp")).toBeNull();
   });
 
+  // 段里「有哪几个、按什么顺序」是用户直接看到的东西，得整段钉死：只逐个断言「每个
+  // 都在」的话，多长一个按钮或换个先后顺序都是全绿。
   it("lays the tool group out in order", () => {
     setup();
 
-    expectInOrder(groupNamed("previz.toolbar.group.tool"), "button", [
-      "previz.toolbar.tool.select",
-      "previz.toolbar.tool.navigate",
-      "previz.toolbar.tool.draw",
-      "previz.toolbar.tool.mark",
-    ]);
+    expectInOrder(
+      groupNamed("previz.toolbar.group.tool"),
+      "button",
+      TOOLS.map((option) => TOOL_LABELS[option]),
+    );
+  });
+
+  // 两列网格里每一行从左列起头：缩放那一行只有一颗，绘制不钉住列的话会被自动排布
+  // 塞到缩放右边，面板就排不成「选择/导航、移动/旋转、缩放、绘制/标记」四行。网格的
+  // 格子是按钮外面那层提示 span，所以查它的父元素。
+  it("starts each tool row in the left column", () => {
+    setup();
+
+    const cell = (option: (typeof TOOLS)[number]) => button(TOOL_LABELS[option]).parentElement;
+    for (const option of ["select", "translate", "scale", "draw"] as const) {
+      expect(cell(option), option).toHaveClass("col-start-1");
+    }
+    for (const option of ["navigate", "rotate", "mark"] as const) {
+      expect(cell(option), option).not.toHaveClass("col-start-1");
+    }
   });
 
   /*
@@ -335,20 +365,6 @@ describe("PrevizToolbar", () => {
     expect(handlers.onTool).toHaveBeenCalledTimes(1);
     expect(handlers.onTool).toHaveBeenCalledWith(option);
     expectOnly(handlers, "onTool");
-  });
-
-  // 段里「有哪几个、按什么顺序」是用户直接看到的东西，跟画幅下拉一样得整段钉死：
-  // 只逐个断言「每个都在」的话，多长一个按钮或换个先后顺序都是全绿。合并成一条互斥
-  // 列表之后分段与分隔线照旧：变换那三颗跟指针工具混排的话，用户再也认不出「按了它
-  // 视口里会多出一副手柄」这条界。
-  it("lists exactly the three transform tools in order", () => {
-    setup();
-
-    expectInOrder(groupNamed("previz.toolbar.group.gizmo"), "button", [
-      "previz.toolbar.gizmo.translate",
-      "previz.toolbar.gizmo.rotate",
-      "previz.toolbar.gizmo.scale",
-    ]);
   });
 
   // 悬停提示曾是唯一念出 W/Q/G/R/S 的地方，鼠标不划过去就看不见。角标要把这五个键位

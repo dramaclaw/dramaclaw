@@ -276,7 +276,7 @@ export function PrevizEditor({
   const [panelsOpen, setPanelsOpen] = useState(true);
   /**
    * 底下那条轨迹面板是否展开。摆位阶段（搭景、调机位）用不上时间轴，收起来能把视口
-   * 还给画面；开关钉在左栏最下面，紧挨着它收起的那块面板。
+   * 还给画面；开关钉在左上角工具面板的最下面。
    */
   const [timelineOpen, setTimelineOpen] = useState(true);
   /**
@@ -1610,15 +1610,6 @@ export function PrevizEditor({
           />
 
           <div className="flex min-h-0 flex-1">
-          <PrevizToolbar
-            canAdd={canAdd}
-            tool={tool}
-            timelineOpen={timelineOpen}
-            onAdd={handleAdd}
-            onTool={setTool}
-            onTimelineOpen={setTimelineOpen}
-          />
-
           {/*
             视口四周那几颗浮着的图标按钮（关闭、侧栏把手、监看开关，以及浮层控件里的
             撤销与显示模式）共用一份延迟：少了这个 Provider，鼠标从一颗扫到相邻那颗还要
@@ -1801,6 +1792,15 @@ export function PrevizEditor({
                   </button>
                 </PrevizHoverTip>
               </span>
+
+              <PrevizToolbar
+                canAdd={canAdd}
+                tool={tool}
+                timelineOpen={timelineOpen}
+                onAdd={handleAdd}
+                onTool={setTool}
+                onTimelineOpen={setTimelineOpen}
+              />
 
               <PrevizViewportControls
                 displayMode={scene.settings.displayMode}
