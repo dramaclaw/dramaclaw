@@ -3575,6 +3575,60 @@ def _noncanonical_video_duration_blockers(nodes: list[Any]) -> list[dict[str, st
     return blockers
 
 
+def _quick_drama_visual_style_blockers(
+    plan: dict[str, Any], visual_style: Any,
+) -> list[dict[str, str]]:
+    """Require a confirmed style in each executable visual task's prompt context."""
+    style = _text(visual_style)
+    if not style or style.casefold() == "未指定":
+        return []
+    nodes = plan.get("nodes") if isinstance(plan.get("nodes"), list) else []
+    edges = plan.get("edges") if isinstance(plan.get("edges"), list) else []
+    by_id = {
+        _text(node.get("id")): node for node in nodes if isinstance(node, dict)
+    }
+
+    def task_text(node: dict[str, Any]) -> str:
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        return "\n".join(
+            _text(value) for value in (
+                data.get("prompt"), data.get("content"), data.get("text"),
+            )
+        ).casefold()
+
+    blockers: list[dict[str, str]] = []
+    for index, node in enumerate(nodes):
+        if not isinstance(node, dict) or node.get("node_type") not in {
+            "imageGenNode", "videoNode",
+        }:
+            continue
+        node_id = _text(node.get("id"))
+        if style.casefold() in task_text(node):
+            continue
+        consumes_style = any(
+            isinstance(edge, dict)
+            and edge.get("target") == node_id
+            and edge.get("link_type") in {"prompt_for", "context_for"}
+            and isinstance(by_id.get(_text(edge.get("source"))), dict)
+            and by_id[_text(edge["source"])].get("node_type") in {
+                "textAnnotationNode", "scriptNode", "beatContextNode",
+            }
+            and style.casefold() in task_text(by_id[_text(edge["source"])])
+            for edge in edges
+        )
+        if not consumes_style:
+            blockers.append({
+                "path": f"nodes[{index}].data.prompt",
+                "code": "confirmed_visual_style_missing",
+                "node_id": node_id,
+                "message": (
+                    "Confirmed visual style must appear in this visual task or in "
+                    "a consumed upstream text node (prompt_for/context_for)."
+                ),
+            })
+    return blockers
+
+
 def validate_agent_workflow_plan(
     plan: Any,
     *,
@@ -3770,6 +3824,13 @@ def validate_agent_workflow_plan(
     # (e.g. a short drama without shot planning) is a preflight blocker, not a
     # schema error: the draft can be revised or re-planned (issue #677).
     _attach_skill_stage_blockers(validated, skill_id)
+    if skill_id == "short-drama-quick":
+        _attach_preflight_blockers(
+            validated,
+            _quick_drama_visual_style_blockers(
+                validated_plan, input_contract["resolved"].get("visual_style")
+            ),
+        )
     duration_blockers = _noncanonical_video_duration_blockers(
         validated_plan.get("nodes") or []
     )

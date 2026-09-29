@@ -356,6 +356,8 @@ def test_standard_skill_planners_expand_without_agent_authored_topology(monkeypa
             {
                 "skill_id": skill_id,
                 "user_goal": "生成一个两段式竖屏测试视频",
+                **({"inputs": {"visual_style": "未指定"}}
+                   if skill_id == "short-drama-quick" else {}),
                 "planner": {
                     "mode": "standard",
                     "item_count": 2,
@@ -461,6 +463,8 @@ def _raw_plan_from_standard(catalog, intent: dict, *, deviate: bool = True) -> d
     custom topology that stays on the agent-authored path (issue #678).
     Without it the plan restates the template and is rerouted.
     """
+    if intent.get("skill_id") == "short-drama-quick":
+        intent = {**intent, "inputs": {"visual_style": "未指定", **intent.get("inputs", {})}}
     compiled = catalog.compile_workflow_intent(intent)
     assert compiled["ok"] is True, compiled
     plan = copy.deepcopy(compiled["plan"])
@@ -1451,6 +1455,7 @@ def test_standard_audio_planner_rejects_missing_or_placeholder_narration(monkeyp
             {
                 "skill_id": "short-drama-quick",
                 "user_goal": "制作短剧",
+                "inputs": {"visual_style": "未指定"},
                 "include_audio": True,
                 "planner": {
                     "mode": "standard",
@@ -1616,6 +1621,8 @@ def test_standard_skill_stage_templates_are_locked_to_the_planner_output(monkeyp
                 result = catalog.compile_workflow_intent({
                     "skill_id": skill_id,
                     "user_goal": "生成一个两段式竖屏测试视频",
+                    **({"inputs": {"visual_style": "未指定"}}
+                       if skill_id == "short-drama-quick" else {}),
                     "planner": {
                         "mode": "standard",
                         "item_count": 2,
@@ -1676,6 +1683,7 @@ def _short_drama_plan_without_shot_planning(catalog) -> dict:
     compiled = catalog.compile_workflow_intent({
         "skill_id": "short-drama-quick",
         "user_goal": "舞台对决",
+        "inputs": {"visual_style": "未指定"},
         "planner": {"mode": "standard", "item_count": 2, "include_audio": False},
     })
     assert compiled["ok"] is True, compiled
@@ -3300,6 +3308,98 @@ def test_workflow_plan_reports_deterministic_preflight_summary():
     }
 
 
+def _quick_drama_visual_style_plan(style="写实"):
+    return {
+        "schema_version": "freezone_workflow_plan.v1",
+        "summary": "双镜短剧",
+        "skill": {"id": "short-drama-quick"},
+        "inputs": {"visual_style": style},
+        "nodes": [
+            {"id": "story", "node_type": "textAnnotationNode", "stage": "story", "data": {
+                "displayName": "故事设定",
+                "content": "写实的短剧故事" if style == "写实" else "短剧故事",
+                "workflowCatalog": {"skillId": "short-drama-quick", "recipeId": "drama-plot-outline"},
+            }},
+            {"id": "portrait", "node_type": "imageGenNode", "stage": "image", "data": {
+                "displayName": "角色形象", "prompt": "人物站在街边",
+                "workflowCatalog": {
+                    "skillId": "short-drama-quick", "recipeId": "drama-character-turnaround",
+                },
+            }},
+            {"id": "clip", "node_type": "videoNode", "stage": "video", "data": {
+                "displayName": "开场镜头", "prompt": "人物走进店里", "durationSec": 7,
+                "workflowCatalog": {"skillId": "short-drama-quick", "recipeId": "general-video"},
+            }},
+        ],
+        "edges": [
+            {"source": "story", "target": "portrait", "link_type": "prompt_for"},
+            {"source": "portrait", "target": "clip", "link_type": "media_input_for"},
+        ],
+    }
+
+
+def test_quick_drama_requires_explicit_visual_style_decision(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    package = catalog.get_workflow_skill({"skill_id": "short-drama-quick", "user_goal": "短剧"})
+
+    assert "visual_style" in package["input_contract"]["missing_required"]
+    missing = _quick_drama_visual_style_plan()
+    del missing["inputs"]["visual_style"]
+    rejected = catalog.validate_agent_workflow_plan(missing)
+    assert rejected["ok"] is False
+    assert rejected["errors"][0]["path"] == "inputs.visual_style"
+
+    unspecified = _quick_drama_visual_style_plan("未指定")
+    accepted = catalog.validate_agent_workflow_plan(unspecified)
+    assert accepted["ok"] is True, accepted
+    assert not any(
+        blocker["code"] == "confirmed_visual_style_missing"
+        for blocker in accepted["preflight"]["blockers"]
+    )
+    assert "写实" not in str(accepted["plan"]["nodes"])
+
+
+def test_quick_drama_confirmed_style_reaches_every_visual_task(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    plan = _quick_drama_visual_style_plan()
+
+    missing_video = catalog.validate_agent_workflow_plan(plan)
+    assert missing_video["ok"] is True, missing_video
+    assert missing_video["preflight"]["status"] == "blocked"
+    style_blockers = [
+        blocker for blocker in missing_video["preflight"]["blockers"]
+        if blocker["code"] == "confirmed_visual_style_missing"
+    ]
+    assert [blocker["node_id"] for blocker in style_blockers] == ["clip"]
+
+    # A title or catalog metadata is not prompt context consumed by the model.
+    plan["nodes"][-1]["data"]["displayName"] = "写实开场镜头"
+    titled = catalog.validate_agent_workflow_plan(plan)
+    assert any(
+        blocker["code"] == "confirmed_visual_style_missing"
+        and blocker["node_id"] == "clip"
+        for blocker in titled["preflight"]["blockers"]
+    )
+
+    plan["edges"].append({"source": "story", "target": "clip", "link_type": "prompt_for"})
+    linked = catalog.validate_agent_workflow_plan(plan)
+    assert linked["ok"] is True, linked
+    assert not any(
+        blocker["code"] == "confirmed_visual_style_missing"
+        for blocker in linked["preflight"]["blockers"]
+    )
+
+    plan["edges"].pop()
+    plan["nodes"][-1]["data"]["prompt"] += "，写实摄影风格"
+    direct = catalog.validate_agent_workflow_plan(plan)
+    assert not any(
+        blocker["code"] == "confirmed_visual_style_missing"
+        for blocker in direct["preflight"]["blockers"]
+    )
+
+
 def test_exact_short_drama_plan_supports_24_beats_and_exact_count_guards(monkeypatch):
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)
@@ -3438,7 +3538,8 @@ def test_exact_short_drama_plan_supports_24_beats_and_exact_count_guards(monkeyp
     plan = {
         "schema_version": "freezone_workflow_plan.v1",
         "workflow_type": "dynamic.short-drama-episode",
-        "skill": {"id": skill_id, "version": 1},
+        "skill": {"id": skill_id, "version": 2},
+        "inputs": {"visual_style": "未指定"},
         "expected_node_count": 53,
         "expected_node_counts": {
             "textAnnotationNode": 2,
@@ -4622,6 +4723,8 @@ def test_project_catalog_skills_compile_dynamic_multi_item_workflows(monkeypatch
                 "schema_version": "freezone_workflow_intent.v1",
                 "skill_id": skill_id,
                 "user_goal": f"测试 {skill_id}",
+                **({"inputs": {"visual_style": "未指定"}}
+                   if skill_id == "short-drama-quick" else {}),
                 "items": anchor_items
                 + [
                     {
@@ -4650,6 +4753,7 @@ def test_short_drama_quick_expands_shot_voice_and_background_music(monkeypatch):
             "schema_version": "freezone_workflow_intent.v1",
             "skill_id": "short-drama-quick",
             "user_goal": "制作两镜头悬疑短剧",
+            "inputs": {"visual_style": "未指定"},
             "items": [
                 {
                     "id": "clip_1",
