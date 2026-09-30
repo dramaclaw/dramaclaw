@@ -90,6 +90,7 @@ async def test_route_enqueues_the_job_with_feature_billing(route_env, monkeypatc
             source_url=source_url,
             description="  层高 3 米  ",
             picture_check=True,
+            render_check=True,
             canvas_id="canvas_1",
             node_id="node_1",
         ),
@@ -110,6 +111,7 @@ async def test_route_enqueues_the_job_with_feature_billing(route_env, monkeypatc
         ).as_posix(),
         "description": "层高 3 米",
         "picture_check": True,
+        "render_check": True,
         "canvas_id": "canvas_1",
         "node_id": "node_1",
         "billing": {

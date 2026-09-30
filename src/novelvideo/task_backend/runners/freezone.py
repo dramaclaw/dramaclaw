@@ -1290,6 +1290,7 @@ async def _run_freezone_image_to_blockout_async(
             image_path=source_path,
             description=str(payload.get("description") or ""),
             picture_check=bool(payload.get("picture_check", False)),
+            render_check=bool(payload.get("render_check", False)),
         )
     except BlockoutGenerationError as exc:
         write_blockout_failure_artifacts(out_dir, exc)

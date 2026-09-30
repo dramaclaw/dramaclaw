@@ -8605,6 +8605,7 @@ async def freezone_image_to_blockout(
                 "source_path": source_path.as_posix(),
                 "description": body.description.strip(),
                 "picture_check": body.picture_check,
+                "render_check": body.render_check,
                 "canvas_id": body.canvas_id or "",
                 "node_id": body.node_id or "",
                 "billing": freezone_image_to_blockout_task_billing(

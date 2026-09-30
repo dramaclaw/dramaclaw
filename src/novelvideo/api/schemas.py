@@ -1424,6 +1424,10 @@ class FreezoneImageToBlockoutRequest(BaseModel):
         default=False,
         description="可选：画面核对——把白模投影回参考图校验坐标、尺寸和相机是否自洽，多耗一到两轮模型调用",
     )
+    render_check: bool = Field(
+        default=False,
+        description="可选：渲染核对——把白模渲染成图和参考图放在一起让模型对照修改，多耗两轮模型调用",
+    )
 
 
 class FreezoneImageReversePromptData(BaseModel):
