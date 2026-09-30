@@ -457,11 +457,14 @@ export function useInitCustomNewApi() {
   const qc = useQueryClient();
   return useMutation({
     // 初始化要连 NewAPI、建 token、写库，耗时较长，放宽超时。
+    // 必须大于后端 NEWAPI_PROVISIONER_INIT_TIMEOUT_MS（默认 120s）：否则前端先超时，
+    // 用户只看到一句 Request timed out，后端那条带排查指引的错误永远到不了界面。
+    // 连不上 NewAPI 的常见情况后端会在 20s 内快速失败，不会真的等满这里。
     mutationFn: (input: InitCustomNewApiInput) =>
       api
         .post("api/v1/model-gateway/custom/newapi/init", {
           json: input,
-          timeout: 60_000,
+          timeout: 180_000,
           throwHttpErrors: false,
         })
         .json<OkResponse<InitCustomNewApiResult> | ErrorResponse | FastApiErrorResponse>(),
