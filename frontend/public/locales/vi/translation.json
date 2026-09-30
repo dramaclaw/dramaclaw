@@ -1386,6 +1386,22 @@
     }
   },
   "credits": {
+    "transactionSource": {
+      "orgAllocate": "Tổ chức phân bổ điểm",
+      "orgReduce": "Tổ chức thu hồi điểm",
+      "orgDepartureSweep": "Thu hồi điểm khi rời tổ chức",
+      "orgRefundSweep": "Thu hồi điểm hoàn trả sau khi rời tổ chức",
+      "orgTransfer": "Điều chỉnh điểm của tổ chức",
+
+      "orgRecharge": "Nạp điểm tổ chức",
+      "personalRecharge": "Nạp điểm",
+      "paymentReceived": "Thanh toán thành công, điểm đã được cộng",
+      "adminIncrease": "Quản trị viên cộng điểm",
+      "adminDecrease": "Quản trị viên trừ điểm",
+      "adminRecharge": "Quản trị viên nạp điểm",
+      "adminAdjustment": "Quản trị viên điều chỉnh thủ công",
+      "adminRechargeReceived": "Điểm nạp thủ công đã được cộng"
+    },
     "balance": "Số dư credits hiện tại",
     "availableBalance": "Số dư credits khả dụng",
     "short": "Credits",
