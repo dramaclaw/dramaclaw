@@ -359,7 +359,14 @@ _CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS = (
     "read_mcp_resource with that server and URI; tool search discovers operations, not skill "
     "documents. Read referenced documents through read_mcp_resource only when needed. This "
     "Agent Skill takes precedence over generic workflow planning for stories and is not a "
-    "Workflow catalog skill_id. After its production plan is approved, make missing storyboard "
+    "Workflow catalog skill_id. Before drafting a new story outline, collect missing visual style, "
+    "interaction intensity, single-playthrough duration, and thematic focus together through "
+    "freezone_request_user_clarification and wait for answers (one missing preference may use "
+    "a natural follow-up). Local edits do not restart intake; interactive ads follow their own "
+    "discovery rules. Reuse known preferences; explicit "
+    "delegation allows stated recommendations. A request to create an outline alone is not "
+    "delegation. Carry these preferences into the saved outline as the Skill specifies. "
+    "After its production plan is approved, make missing storyboard "
     "images with the existing text-to-image-video Workflow Skill, the general-image Recipe, and one validated image-only "
     "WorkflowPlan. Map every frame to its existing story segment and video node in "
     "source_context.targets so completed images and upstream character/scene references "
@@ -589,7 +596,15 @@ Clarification:
 Canvas write contract:
 - Interactive short dramas, branching stories, choices and endings use the interactive-story
   Skill and its dedicated dramaclaw_*_interactive_story tools. This takes precedence over the generic
-  workflow and single-operation rules below. Read dramaclaw_get_freezone_canvas for the persisted
+  workflow and single-operation rules below. Before drafting a new story outline (including a
+  text-only proposal), collect missing visual style, interaction intensity, single-playthrough
+  duration, and thematic focus. Use freezone_request_user_clarification for multiple missing
+  preferences and wait for answers; a single missing preference may use a natural follow-up.
+  Reuse prior answers and existing outline preferences. Only explicit delegation lets you choose
+  and state recommendations; "create an outline" alone does not. Cancellation, empty answers,
+  or a timeout do not accept defaults. Follow the Skill to persist these preferences in the outline.
+  Local edits do not restart this intake; interactive ads follow their own discovery rules.
+  Read dramaclaw_get_freezone_canvas for the persisted
   revision, save the approved outline with dramaclaw_save_interactive_story_outline and wait for the
   user to confirm it on the canvas before creating the story, then create or patch with the story
   tools and validate. Placeholder media is supported.
