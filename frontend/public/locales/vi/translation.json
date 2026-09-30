@@ -7766,6 +7766,8 @@
       "descriptionPlaceholder": "e.g. ceiling about 3 m high, table 2.4 m long, door on the right of the back wall",
       "pictureCheck": "Đối chiếu với ảnh",
       "pictureCheckHint": "Chiếu mô hình thô ngược lại ảnh tham chiếu để kiểm tra vị trí, kích thước và máy quay có khớp nhau; tốn thêm một hai vòng tạo nên chậm hơn",
+      "renderCheck": "Đối chiếu bản dựng",
+      "renderCheckHint": "Dựng mô hình thô thành ảnh, để mô hình so với ảnh tham chiếu rồi sửa lại, hai vòng; tốn thêm hai vòng tạo nên chậm hơn",
       "badExtension": "Only png / jpg / jpeg / webp files are supported",
       "tooLarge": "Reference images must be 20 MB or smaller",
       "noProject": "This page has no project context, so nothing can be generated",

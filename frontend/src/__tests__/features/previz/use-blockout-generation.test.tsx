@@ -23,6 +23,7 @@ type Submit = (
     sourceUrl: string;
     description?: string;
     pictureCheck?: boolean;
+    renderCheck?: boolean;
     canvasId?: string;
     nodeId?: string;
   },
@@ -135,6 +136,7 @@ const request = (mode: "replace" | "append" = "replace") => ({
   file: image(),
   description: "",
   pictureCheck: false,
+  renderCheck: false,
   mode,
 });
 
@@ -161,6 +163,7 @@ describe("useBlockoutGeneration submits and hands the task to the canvas", () =>
         file: image(),
         description: "  门宽 0.9 米  ",
         pictureCheck: true,
+        renderCheck: true,
         mode: "append",
       });
     });
@@ -173,6 +176,7 @@ describe("useBlockoutGeneration submits and hands the task to the canvas", () =>
       sourceUrl: "/static/ref.png",
       description: "门宽 0.9 米",
       pictureCheck: true,
+      renderCheck: true,
       canvasId: "board-1",
       nodeId: id,
     });

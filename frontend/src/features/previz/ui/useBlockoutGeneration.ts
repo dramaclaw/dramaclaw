@@ -29,8 +29,9 @@ export type PrevizBlockoutStage = 'idle' | 'uploading' | 'generating';
 export interface PrevizBlockoutRequest {
   file: File;
   description: string;
-  /** 对话框里的「画面核对」勾选，原样交给后端。 */
+  /** 对话框里的「画面核对」「渲染核对」勾选，原样交给后端。 */
   pictureCheck: boolean;
+  renderCheck: boolean;
   mode: PrevizBlockoutImportMode;
 }
 
@@ -68,7 +69,7 @@ export function useBlockoutGeneration(nodeId: string): BlockoutGeneration {
   const held = (nodeData?.blockoutHeld ?? null) as PrevizHeldBlockout | null;
 
   const start = useCallback(
-    async ({ file, description, pictureCheck, mode }: PrevizBlockoutRequest) => {
+    async ({ file, description, pictureCheck, renderCheck, mode }: PrevizBlockoutRequest) => {
       if (readNodeData(nodeId).isGenerating === true) return false;
       const verdict = isAcceptedBlockoutImage(file.name, file.size);
       if (verdict === 'extension') {
@@ -105,6 +106,7 @@ export function useBlockoutGeneration(nodeId: string): BlockoutGeneration {
           sourceUrl: upload.url,
           description: description.trim().slice(0, PREVIZ_BLOCKOUT_DESCRIPTION_MAX_CHARS),
           pictureCheck,
+          renderCheck,
           canvasId: canvas ?? 'default',
           nodeId,
         });

@@ -105,6 +105,8 @@ function BlockoutPanel({
   const noteId = useId();
   const pictureCheckId = useId();
   const pictureCheckHintId = useId();
+  const renderCheckId = useId();
+  const renderCheckHintId = useId();
   const guideId = useId();
   const hintId = useId();
   const heldId = useId();
@@ -113,6 +115,7 @@ function BlockoutPanel({
   const [hints, setHints] = useState<PrevizBlockoutImageHint[]>([]);
   const [description, setDescription] = useState("");
   const [pictureCheck, setPictureCheck] = useState(false);
+  const [renderCheck, setRenderCheck] = useState(false);
   const [mode, setMode] = useState<PrevizBlockoutImportMode>("replace");
   const [dragging, setDragging] = useState(false);
   /** 量尺寸是异步的：连着选两张图时，先选那张的结果不能盖到后选那张头上。 */
@@ -326,6 +329,26 @@ function BlockoutPanel({
           </div>
         </div>
 
+        <div className="flex items-start gap-2">
+          <input
+            id={renderCheckId}
+            type="checkbox"
+            disabled={busy}
+            checked={renderCheck}
+            aria-describedby={renderCheckHintId}
+            onChange={(event) => setRenderCheck(event.target.checked)}
+            className="mt-0.5 accent-white/80"
+          />
+          <div className="flex flex-col gap-0.5">
+            <label htmlFor={renderCheckId} className="text-[12px] text-white/60">
+              {t("previz.blockout.renderCheck")}
+            </label>
+            <span id={renderCheckHintId} className="text-[11px] text-white/35">
+              {t("previz.blockout.renderCheckHint")}
+            </span>
+          </div>
+        </div>
+
         {hasExisting && (
           <div
             role="group"
@@ -388,7 +411,7 @@ function BlockoutPanel({
             disabled={!canStart}
             className={PRIMARY_BUTTON}
             onClick={() => {
-              if (file) onStart({ file, description, pictureCheck, mode });
+              if (file) onStart({ file, description, pictureCheck, renderCheck, mode });
             }}
           >
             {t("previz.blockout.submit")}

@@ -7862,6 +7862,8 @@
       "descriptionPlaceholder": "例如：层高约 3 米，餐桌长 2.4 米，门在后墙右侧",
       "pictureCheck": "画面核对",
       "pictureCheckHint": "生成后把白模投影回参考图，核对位置、尺寸和机位是否自洽；多耗一到两轮生成，耗时更长",
+      "renderCheck": "渲染核对",
+      "renderCheckHint": "生成后把白模渲染成图，和参考图放在一起让模型对照着改，改两轮；多耗两轮生成，耗时更长",
       "badExtension": "只支持 png / jpg / jpeg / webp",
       "tooLarge": "参考图不能超过 20 MB",
       "noProject": "当前页面没有项目上下文，无法生成",

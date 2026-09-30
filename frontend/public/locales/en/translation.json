@@ -7862,6 +7862,8 @@
       "descriptionPlaceholder": "e.g. ceiling about 3 m high, table 2.4 m long, door on the right of the back wall",
       "pictureCheck": "Picture check",
       "pictureCheckHint": "Project the blockout back onto the picture and check that positions, sizes and camera agree; one or two extra model rounds, so slower",
+      "renderCheck": "Render check",
+      "renderCheckHint": "Render the blockout and let the model compare it with the picture and rewrite, twice; two extra model rounds, so slower",
       "badExtension": "Only png / jpg / jpeg / webp files are supported",
       "tooLarge": "Reference images must be 20 MB or smaller",
       "noProject": "This page has no project context, so nothing can be generated",
