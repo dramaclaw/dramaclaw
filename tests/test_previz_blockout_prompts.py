@@ -133,7 +133,7 @@ def test_example_shows_labels_and_the_layout_notes():
 
 
 def test_prompt_version_moves_with_the_wording():
-    assert BLOCKOUT_PROMPT_VERSION == 5
+    assert BLOCKOUT_PROMPT_VERSION == 6
 
 
 def test_prompt_asks_for_relations_instead_of_coordinates_where_it_can():
@@ -205,3 +205,39 @@ def test_footprints_stated_in_the_example_match_its_geometry():
     assert round(pieces["cabinet"].size[0] / room.size[1], 2) == 0.24
     assert round(pieces["table"].size[0] / room.size[0], 2) == 0.4
     assert round(pieces["table"].size[2] / room.size[1], 2) == 0.2
+
+
+def test_prompt_derives_the_camera_distance_from_the_back_wall_share():
+    """A picture does not say how far the camera stood, but it does say how much of
+    its width the back wall fills; the distance follows from that and the fov."""
+    prompt = build_blockout_prompt()
+
+    assert "后墙在画面里占了画面宽度的几分之几" in prompt
+    assert "距离 = 后墙宽 ÷ 占比 ÷ k" in prompt
+    assert "fov 50 取 0.93，60 取 1.15，70 取 1.40，80 取 1.68" in prompt
+    assert "不要退到房间外面很远的地方" not in prompt
+    assert "相机离后墙的距离是不是按后墙的占比算出来的" in prompt
+
+
+def test_prompt_says_which_side_the_camera_stands_on_in_an_oblique_shot():
+    """You see the face of the wall you are facing: the side wall that shows its
+    face is the far one, and the camera stands on the opposite side."""
+    prompt = build_blockout_prompt()
+
+    assert "相机在它对面那一侧、朝它看" in prompt
+    assert "只露出一条边贴着画面边缘的侧墙，相机就贴近它" in prompt
+
+
+def test_example_camera_stands_as_far_back_as_its_stated_back_wall_share_says():
+    import math
+
+    scene = parse_blockout_program(BLOCKOUT_EXAMPLE_PROGRAM)
+    room = scene.rooms[0]
+    back_z = room.center[1] + room.size[1] / 2.0
+    front_z = room.center[1] - room.size[1] / 2.0
+    camera = scene.camera
+
+    assert "后墙占画面宽度约六成" in BLOCKOUT_EXAMPLE_PROGRAM
+    expected = room.size[0] / 0.6 / (2.0 * math.tan(math.radians(camera.fov) / 2.0))
+    assert abs((back_z - camera.position[2]) - expected) < 0.3
+    assert camera.position[2] < front_z - 2.0
