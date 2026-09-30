@@ -2355,6 +2355,7 @@
       "deleted": "Moved \"{{name}}\" to Trash",
       "restored": "Restored \"{{name}}\"",
       "purged": "Permanently deleted \"{{name}}\"",
+      "purgeFailed": "Could not finish deleting \"{{name}}\". It remains in Trash; try again.",
       "undo": "Undo"
     },
     "title": "Projects",

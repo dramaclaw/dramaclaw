@@ -2259,6 +2259,7 @@
       "deleted": "Đã chuyển \"{{name}}\" vào Thùng rác",
       "restored": "Đã khôi phục \"{{name}}\"",
       "purged": "Đã xoá vĩnh viễn \"{{name}}\"",
+      "purgeFailed": "Chưa thể xoá xong \"{{name}}\". Dự án vẫn ở Thùng rác; hãy thử lại.",
       "undo": "Hoàn tác"
     },
     "title": "Dự án",

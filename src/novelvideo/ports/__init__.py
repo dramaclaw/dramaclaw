@@ -18,6 +18,14 @@ def get_project_registry():
     return get_port("project_registry")
 
 
+def get_project_output_purger():
+    if runtime_env.edition() == "ce":
+        from novelvideo.ports.local.project_output import LocalProjectOutputPurger
+
+        return LocalProjectOutputPurger()
+    return get_port("project_output_purger")
+
+
 def get_project_access():
     return get_port("project_access")
 
@@ -167,6 +175,7 @@ __all__ = [
     "get_model_credentials",
     "get_product_surface_access",
     "get_project_access",
+    "get_project_output_purger",
     "get_project_registry",
     "get_provider_instrumentation",
     "get_release_feed_port",
