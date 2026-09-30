@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   PrevizActionClip,
@@ -13,6 +13,7 @@ import type {
   PrevizTrack,
 } from '@/features/previz/domain/scene';
 import { ClipBar, PrevizTimelineTrack } from '@/features/previz/ui/PrevizTimelineTrack';
+import { usePrevizStore } from '@/features/previz/store';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -90,7 +91,6 @@ function trackProps(overrides: Partial<Parameters<typeof PrevizTimelineTrack>[0]
     kind: 'camera' as const,
     pxPerFrame: 2,
     laneWidthPx: 400,
-    frame: 0,
     expanded: false,
     selectedClipId: null,
     selectedPointId: null,
@@ -110,6 +110,11 @@ function trackProps(overrides: Partial<Parameters<typeof PrevizTimelineTrack>[0]
     ...overrides,
   };
 }
+
+// 播放头从 store 读；每条用例从第 0 帧起，免得上一条挪过的播放头漏进来。
+beforeEach(() => {
+  usePrevizStore.setState({ timelineFrame: 0 });
+});
 
 describe('ClipBar', () => {
   it('shows the given label instead of the frame range and paints the tone', () => {
@@ -238,9 +243,10 @@ describe('PrevizTimelineTrack action clips', () => {
   it('leaves action clips to their own row and keeps the razor on the path clip', async () => {
     const onSplit = vi.fn();
     const track: PrevizTrack = { id: 't1', objectId: 'hero', clips: [walk, route] };
+    usePrevizStore.setState({ timelineFrame: 20 });
     render(
       <ul>
-        <PrevizTimelineTrack {...trackProps({ track, kind: 'character', frame: 20, onSplit })} />
+        <PrevizTimelineTrack {...trackProps({ track, kind: 'character', onSplit })} />
       </ul>,
     );
     expect(screen.queryByTestId('previz-clip-a1')).toBeNull();
@@ -294,9 +300,10 @@ describe('PrevizTimelineTrack motion path row', () => {
 
   it('greys the buttons out when the playhead sits on a closeup and nothing else', () => {
     const track: PrevizTrack = { id: 't1', objectId: 'cam', clips: [closeup] };
+    usePrevizStore.setState({ timelineFrame: 20 });
     render(
       <ul>
-        <PrevizTimelineTrack {...trackProps({ track, frame: 20, expanded: true })} />
+        <PrevizTimelineTrack {...trackProps({ track, expanded: true })} />
       </ul>,
     );
     const { insert, clear } = pathButtons();
@@ -308,10 +315,11 @@ describe('PrevizTimelineTrack motion path row', () => {
     const onInsertKeyframe = vi.fn();
     const onClearPath = vi.fn();
     const track: PrevizTrack = { id: 't1', objectId: 'cam', clips: [closeup, drawn] };
+    usePrevizStore.setState({ timelineFrame: 20 });
     render(
       <ul>
         <PrevizTimelineTrack
-          {...trackProps({ track, frame: 20, expanded: true, onInsertKeyframe, onClearPath })}
+          {...trackProps({ track, expanded: true, onInsertKeyframe, onClearPath })}
         />
       </ul>,
     );
@@ -324,9 +332,10 @@ describe('PrevizTimelineTrack motion path row', () => {
 
   it('greys the buttons out on a path clip nobody has drawn yet', () => {
     const track: PrevizTrack = { id: 't1', objectId: 'cam', clips: [{ ...drawn, points: [] }] };
+    usePrevizStore.setState({ timelineFrame: 20 });
     render(
       <ul>
-        <PrevizTimelineTrack {...trackProps({ track, frame: 20, expanded: true })} />
+        <PrevizTimelineTrack {...trackProps({ track, expanded: true })} />
       </ul>,
     );
     const { insert, clear } = pathButtons();
@@ -337,9 +346,10 @@ describe('PrevizTimelineTrack motion path row', () => {
   it('keeps the razor on whatever clip the playhead is over', async () => {
     const onSplit = vi.fn();
     const track: PrevizTrack = { id: 't1', objectId: 'cam', clips: [closeup] };
+    usePrevizStore.setState({ timelineFrame: 20 });
     render(
       <ul>
-        <PrevizTimelineTrack {...trackProps({ track, frame: 20, expanded: true, onSplit })} />
+        <PrevizTimelineTrack {...trackProps({ track, expanded: true, onSplit })} />
       </ul>,
     );
     await userEvent.click(screen.getByRole('button', { name: 'previz.timeline.razor' }));

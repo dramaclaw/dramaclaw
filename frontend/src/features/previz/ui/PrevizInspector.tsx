@@ -15,6 +15,7 @@ import {
   PREVIZ_HEIGHT_CM_RANGE,
   type PrevizObjectPatch,
 } from "@/features/previz/domain/objects";
+import { findPrevizLibraryModel } from "@/features/previz/domain/modelLibrary";
 import { PREVIZ_POSES, PREVIZ_POSE_LABEL_KEYS } from "@/features/previz/domain/poses";
 import {
   isPrevizPrimitiveShape,
@@ -27,6 +28,7 @@ import {
   type HeightPolicy,
   type PrevizCharacter,
   type PrevizObject,
+  type PrevizProp,
   type PrevizTransform,
   type Vec3,
 } from "@/features/previz/domain/scene";
@@ -92,6 +94,37 @@ const AXES = ["x", "y", "z"] as const;
  * 要修得让面板自己存一份编辑中的原始字符串（聚焦期间不从 prop 回灌），那是另一件事，
  * 不是这道守卫能顺手办掉的。
  */
+/**
+ * 模型那一栏显示什么：几何体显示形状名，模型库的模型显示库里的名字，自己导入的只显示
+ * 文件名。完整 URL 对人没用，还会把真正的名字挤出框外。
+ */
+function describeAsset(
+  prop: PrevizProp,
+): { labelKey: string; nameKey?: string; value: string } {
+  if (prop.assetFormat === "primitive") {
+    // 认不出的形状（更新的版本写入的）原样显示，别显示一个不存在的 i18n key。
+    const nameKey = isPrevizPrimitiveShape(prop.assetUrl)
+      ? previzPrimitiveNameKey(prop.assetUrl)
+      : undefined;
+    return { labelKey: "previz.inspector.primitive", nameKey, value: prop.assetUrl };
+  }
+  const entry = findPrevizLibraryModel(prop.assetUrl);
+  if (entry) {
+    return { labelKey: "previz.inspector.libraryModel", nameKey: entry.nameKey, value: entry.id };
+  }
+  return { labelKey: "previz.inspector.assetFile", value: fileNameOf(prop.assetUrl) };
+}
+
+function fileNameOf(url: string): string {
+  const path = url.split(/[?#]/, 1)[0];
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  try {
+    return decodeURIComponent(name);
+  } catch {
+    return name;
+  }
+}
+
 function readNumber(raw: string): number | null {
   if (raw.trim() === "") return null;
   const value = Number(raw);
@@ -123,6 +156,7 @@ export function PrevizInspector({ object, onChange }: PrevizInspectorProps) {
   const camera = selected.kind === "camera" ? selected : null;
   const light = selected.kind === "light" ? selected : null;
   const prop = selected.kind === "prop" ? selected : null;
+  const asset = prop ? describeAsset(prop) : null;
 
   /**
    * 三个通道共用一份：只把改动的那一轴换掉，另外两轴与另外两个通道原样带回去。
@@ -493,25 +527,18 @@ export function PrevizInspector({ object, onChange }: PrevizInspectorProps) {
         </>
       )}
 
-      {prop && (
+      {prop && asset && (
         <div>
           <label className={LABEL} htmlFor={`${prefix}-asset`}>
-            {t(
-              prop.assetFormat === "primitive"
-                ? "previz.inspector.primitive"
-                : "previz.inspector.assetUrl",
-            )}
+            {t(asset.labelKey)}
           </label>
-          {/* 只读：手打 URL 只会打错，换模型走模型库。 */}
+          {/* 只读：手打 URL 只会打错，换模型走模型库。完整地址留在悬停提示里备查。 */}
           <input
             id={`${prefix}-asset`}
             className={FIELD}
             readOnly
-            value={
-              prop.assetFormat === "primitive" && isPrevizPrimitiveShape(prop.assetUrl)
-                ? t(previzPrimitiveNameKey(prop.assetUrl))
-                : prop.assetUrl
-            }
+            title={prop.assetFormat === "primitive" ? undefined : prop.assetUrl}
+            value={asset.nameKey ? t(asset.nameKey) : asset.value}
           />
         </div>
       )}

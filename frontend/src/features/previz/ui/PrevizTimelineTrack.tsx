@@ -23,6 +23,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import type { CloseupTarget } from '../domain/closeupClip';
 import type { PrevizClip, PrevizObjectKind, PrevizTrack } from '../domain/scene';
 import { isActionClip, isPathClip, pathClipAt, uToFrame } from '../domain/timeline';
+import { usePrevizStore } from '../store';
 import { PrevizHoverTip } from './PrevizHoverTip';
 
 /** 头列宽度。轨道行、子轨道行、标尺占位共用同一个数，三者才对得齐。 */
@@ -52,8 +53,6 @@ export interface PrevizTimelineTrackProps {
   kind: PrevizObjectKind;
   pxPerFrame: number;
   laneWidthPx: number;
-  /** 播放头所在帧。剃刀、插入关键帧、上一帧/下一帧都以它为准。 */
-  frame: number;
   expanded: boolean;
   selectedClipId: string | null;
   selectedPointId: string | null;
@@ -110,7 +109,6 @@ export function PrevizTimelineTrack({
   kind,
   pxPerFrame,
   laneWidthPx,
-  frame,
   expanded,
   selectedClipId,
   selectedPointId,
@@ -138,18 +136,22 @@ export function PrevizTimelineTrack({
   const [picking, setPicking] = useState(false);
   const KindIcon = KIND_ICON[kind];
   const clips = laneClips(track);
-  const current = clipUnder(clips, frame);
+  // 剃刀、插入关键帧、上一帧/下一帧都以播放头为准。播放头不走 props、各行自己按选择器
+  // 读：播放时它每秒变几十次，走 props 就得让整条时间轴跟着每帧重渲；选择器只在
+  // 「压着的片段」「前后关键帧」这些结果真变了时才让这一行重渲。
+  const current = usePrevizStore((state) => clipUnder(clips, state.timelineFrame));
   /**
    * 运动路径行的两个按钮只认路径片段。跟着 `current` 走的话，机位上压着一段特写就足以
    * 把它们点亮，而 `insertPathPointAt` / `clearPathPoints` 见到非路径片段直接原样返回——
    * 按钮是亮的、按下去没反应。没画过点的空路径同理：曲线上采不到值，插进去的只会是原点，
    * 域里也是直接返回，所以空片段一样按灰。
    */
-  const currentPath = pathClipAt(track, frame);
+  const currentPath = usePrevizStore((state) => pathClipAt(track, state.timelineFrame));
   const pathEditable = currentPath !== undefined && currentPath.points.length > 0;
   const keyframes = keyframeFrames(track);
-  const previous = [...keyframes].reverse().find((at) => at < frame);
-  const next = keyframes.find((at) => at > frame);
+  const descending = [...keyframes].reverse();
+  const previous = usePrevizStore((state) => descending.find((at) => at < state.timelineFrame));
+  const next = usePrevizStore((state) => keyframes.find((at) => at > state.timelineFrame));
   const lastEnd = clips.reduce((end, clip) => Math.max(end, clip.endFrame), 0);
 
   return (

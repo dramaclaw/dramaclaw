@@ -4,18 +4,16 @@ import { describe, expect, it } from "vitest";
 
 import {
   PREVIZ_DEFAULT_VIEW,
-  PREVIZ_DRAW_TOP_MIN_RADIUS_M,
   PREVIZ_VIEW_DIRECTIONS,
   boundsCenter,
   boundsRadius,
-  drawTopPlacement,
   framingDistance,
   orbitDepthRange,
   orthoPlacement,
   unionBounds,
   viewPlacement,
 } from "@/features/previz/domain/view";
-import type { PrevizBounds, PrevizViewDirection } from "@/features/previz/domain/view";
+import type { PrevizViewDirection } from "@/features/previz/domain/view";
 
 /** three 的空 `Box3`：`makeEmpty()` 之后就是这副样子，取景路径上会真的收到它。 */
 const EMPTY_BOX = {
@@ -362,41 +360,5 @@ describe("orbitDepthRange", () => {
   // three 拿到 NaN 的投影矩阵不报错，只给一片黑——症状离病因隔着整个引擎层。
   it.each([Number.NaN, Infinity, -1, 0])("falls back to the fixed pair for %s", (distance) => {
     expect(orbitDepthRange(distance)).toEqual({ near: 0.1, far: 500 });
-  });
-});
-
-describe("drawTopPlacement", () => {
-  /*
-    场景里只有一个人物时，全场景包围球就是那个人物（半径不到 1 m）。照它取景，相机会
-    停在人头顶一米多的地方——远处的目的地正好在画面外，切过去等于白切。兜底半径把这
-    一档顶到 6 m。
-  */
-  it("backs off to the minimum radius for a tiny scene", () => {
-    const bounds: PrevizBounds = { min: [-0.3, 0, -0.3], max: [0.3, 1.7, 0.3] };
-
-    const placement = drawTopPlacement(bounds, 50, 16 / 9);
-
-    const center = boundsCenter(bounds);
-    placement.target.forEach((value, axis) => expect(value).toBeCloseTo(center[axis], 9));
-    expect(placement.position[1]).toBeGreaterThan(placement.target[1]);
-    expect(placement.position[0]).toBeCloseTo(placement.target[0], 9);
-    expect(placement.position[1] - placement.target[1]).toBeCloseTo(
-      framingDistance(PREVIZ_DRAW_TOP_MIN_RADIUS_M, 50, 16 / 9),
-      6,
-    );
-  });
-
-  // 大场景不该被兜底压扁：60 m 见方的场景还按 6 m 退开的话，一大半走位都在画面外。
-  it("leaves a scene that is already larger than the minimum alone", () => {
-    const bounds: PrevizBounds = { min: [-30, -30, -30], max: [30, 30, 30] };
-
-    expect(drawTopPlacement(bounds, 50, 16 / 9)).toEqual(viewPlacement("top", bounds, 50, 16 / 9));
-  });
-
-  it("leaves a flat off-centre scene alone", () => {
-    // 一块地面加一个人：XZ 很大、Y 只有两米。没有早退的话 Y 会被撑到兜底半径，
-    // 白退远半米。
-    const bounds: PrevizBounds = { min: [-17, 0.5, -23], max: [23, 4.5, 17] };
-    expect(drawTopPlacement(bounds, 50, 16 / 9)).toEqual(viewPlacement("top", bounds, 50, 16 / 9));
   });
 });

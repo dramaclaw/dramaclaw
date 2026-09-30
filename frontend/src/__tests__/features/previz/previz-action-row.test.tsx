@@ -2,11 +2,12 @@
 // Copyright (c) 2026 ClaymoreLab
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PrevizActionClip, PrevizImportedMotion, PrevizTrack } from '@/features/previz/domain/scene';
 import { PREVIZ_FPS } from '@/features/previz/domain/scene';
 import { actionClipMarks, PrevizActionRow } from '@/features/previz/ui/PrevizActionRow';
+import { usePrevizStore } from '@/features/previz/store';
 
 // 回显 key，带参数时把参数拼在后面：断言要看得出报错原因带没带上缺失的骨骼。
 vi.mock('react-i18next', () => ({
@@ -37,7 +38,6 @@ function rowProps(clips: PrevizTrack['clips'], overrides: Partial<Parameters<typ
     track: { id: 't1', objectId: 'hero', clips } satisfies PrevizTrack,
     pxPerFrame: 2,
     laneWidthPx: 800,
-    frame: 0,
     selectedClipId: null,
     motions: [wave],
     motionStatus: {},
@@ -48,6 +48,11 @@ function rowProps(clips: PrevizTrack['clips'], overrides: Partial<Parameters<typ
     ...overrides,
   };
 }
+
+// 播放头从 store 读；每条用例从第 0 帧起，免得上一条挪过的播放头漏进来。
+beforeEach(() => {
+  usePrevizStore.setState({ timelineFrame: 0 });
+});
 
 describe('actionClipMarks', () => {
   it('puts a divider at every full loop inside the clip', () => {
@@ -120,14 +125,16 @@ describe('PrevizActionRow', () => {
 
   it('splits the action clip under the playhead, not a path clip', async () => {
     const path = { id: 'p1', kind: 'path' as const, startFrame: 0, endFrame: 100, points: [] };
-    const props = rowProps([path, action()], { frame: 20 });
+    usePrevizStore.setState({ timelineFrame: 20 });
+    const props = rowProps([path, action()]);
     render(<PrevizActionRow {...props} />);
     await userEvent.click(screen.getByRole('button', { name: 'previz.motion.razor' }));
     expect(props.onSplit).toHaveBeenCalledWith('a1');
   });
 
   it('turns the razor off when the playhead is not over an action clip', () => {
-    render(<PrevizActionRow {...rowProps([action()], { frame: 90 })} />);
+    usePrevizStore.setState({ timelineFrame: 90 });
+    render(<PrevizActionRow {...rowProps([action()])} />);
     expect(screen.getByRole('button', { name: 'previz.motion.razor' })).toBeDisabled();
   });
 

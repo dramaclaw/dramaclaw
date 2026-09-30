@@ -92,7 +92,9 @@ export function PrevizTimeline({
 } = {}) {
   const { t } = useTranslation();
   const durationFrames = usePrevizStore((state) => state.scene.settings.durationFrames);
-  const frame = usePrevizStore((state) => state.timelineFrame);
+  // 播放头帧号不在这里订阅：播放时它每秒变几十次，订在这一层就是整条时间轴连同每条
+  // 轨道每帧重渲一遍。要它的地方（时间码、播放头竖线、各轨道的剃刀与关键帧按钮）各自
+  // 按选择器读；按钮回调里现取 `getState()`。
   const playing = usePrevizStore((state) => state.timelinePlaying);
   const rate = usePrevizStore((state) => state.timelineRate);
   const zoom = usePrevizStore((state) => state.timelineZoom);
@@ -126,7 +128,7 @@ export function PrevizTimeline({
   const openMotionDialog = usePrevizStore((state) => state.openMotionDialog);
   const cutToCamera = useCutToCamera();
   const audioImport = useAudioImport(nodeId);
-  const liveCameraId = liveCameraAt(scene, frame);
+  const liveCameraId = usePrevizStore((state) => liveCameraAt(state.scene, state.timelineFrame));
 
   /** 折叠过的轨道。没记过的默认展开——建完轨迹马上要看关键帧。 */
   const [collapsed, setCollapsed] = useState<Record<string, true>>({});
@@ -286,7 +288,7 @@ export function PrevizTimeline({
               type="button"
               className={BUTTON_CLASS}
               aria-label={t('previz.timeline.prevFrame')}
-              onClick={() => setTimelineFrame(frame - 1)}
+              onClick={() => setTimelineFrame(usePrevizStore.getState().timelineFrame - 1)}
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
@@ -296,7 +298,7 @@ export function PrevizTimeline({
               type="button"
               className={BUTTON_CLASS}
               aria-label={t('previz.timeline.nextFrame')}
-              onClick={() => setTimelineFrame(frame + 1)}
+              onClick={() => setTimelineFrame(usePrevizStore.getState().timelineFrame + 1)}
             >
               <ChevronRight className="h-4 w-4" />
             </button>
@@ -317,8 +319,7 @@ export function PrevizTimeline({
             className="ml-2 font-mono text-xs tabular-nums text-[#c7cedb]"
           >
             {/* 帧号、已走的秒数、总长一起报：只报帧号的话「这个镜头几秒」每次都得心算。 */}
-            F{frame} · {(frame / PREVIZ_FPS).toFixed(2)}s /{' '}
-            {(durationFrames / PREVIZ_FPS).toFixed(2)}s
+            <Timecode /> / {(durationFrames / PREVIZ_FPS).toFixed(2)}s
           </span>
 
           <label className="ml-3 flex items-center gap-1 text-xs text-[#8b93a3]">
@@ -400,15 +401,10 @@ export function PrevizTimeline({
           mock 出来的 getBoundingClientRect 断言，等于没测。range 顺带白拿键盘可达性，
           视觉上藏起来——参照实现的时间轴上并没有这么一根滑块。
         */}
-        <input
-          type="range"
-          aria-label={t('previz.timeline.playhead')}
-          className="sr-only"
-          min={0}
-          max={durationFrames}
-          step={1}
-          value={frame}
-          onChange={(event) => setTimelineFrame(Number(event.target.value))}
+        <PlayheadInput
+          label={t('previz.timeline.playhead')}
+          durationFrames={durationFrames}
+          onSeek={setTimelineFrame}
         />
 
         <div
@@ -459,7 +455,6 @@ export function PrevizTimeline({
                     kind={kind}
                     pxPerFrame={pxPerFrame}
                     laneWidthPx={laneWidthPx}
-                    frame={frame}
                     expanded={!collapsed[track.id]}
                     selectedClipId={selectedClipId}
                     selectedPointId={selectedPointId}
@@ -502,7 +497,6 @@ export function PrevizTimeline({
                           track={track}
                           pxPerFrame={pxPerFrame}
                           laneWidthPx={laneWidthPx}
-                          frame={frame}
                           selectedClipId={selectedClipId}
                           motions={scene.motions}
                           motionStatus={motionStatus}
@@ -570,17 +564,62 @@ export function PrevizTimeline({
               className="pointer-events-none absolute inset-y-0 z-20"
               style={{ left: PREVIZ_TRACK_HEADER_PX, width: laneWidthPx }}
             >
-              <div
-                data-testid="previz-playhead"
-                className="absolute inset-y-0 w-px bg-[#e8ecf5]"
-                style={{ left: frame * pxPerFrame }}
-              >
-                <span className="absolute -left-[5px] top-0 h-2.5 w-2.5 rounded-b-sm bg-[#e8ecf5]" />
-              </div>
+              <PlayheadLine pxPerFrame={pxPerFrame} />
             </div>
           </div>
         </div>
       </div>
     </TooltipProvider>
+  );
+}
+
+/*
+  下面三个是时间轴上真正要每帧跟着播放头变的东西。各自订阅帧号，播放时每帧只重渲
+  它们自己，不牵动上面整条时间轴。
+*/
+
+function Timecode() {
+  const frame = usePrevizStore((state) => state.timelineFrame);
+  return (
+    <>
+      F{frame} · {(frame / PREVIZ_FPS).toFixed(2)}s
+    </>
+  );
+}
+
+function PlayheadInput({
+  label,
+  durationFrames,
+  onSeek,
+}: {
+  label: string;
+  durationFrames: number;
+  onSeek: (frame: number) => void;
+}) {
+  const frame = usePrevizStore((state) => state.timelineFrame);
+  return (
+    <input
+      type="range"
+      aria-label={label}
+      className="sr-only"
+      min={0}
+      max={durationFrames}
+      step={1}
+      value={frame}
+      onChange={(event) => onSeek(Number(event.target.value))}
+    />
+  );
+}
+
+function PlayheadLine({ pxPerFrame }: { pxPerFrame: number }) {
+  const frame = usePrevizStore((state) => state.timelineFrame);
+  return (
+    <div
+      data-testid="previz-playhead"
+      className="absolute inset-y-0 w-px bg-[#e8ecf5]"
+      style={{ left: frame * pxPerFrame }}
+    >
+      <span className="absolute -left-[5px] top-0 h-2.5 w-2.5 rounded-b-sm bg-[#e8ecf5]" />
+    </div>
   );
 }
