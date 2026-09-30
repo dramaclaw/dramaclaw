@@ -21,7 +21,7 @@ import {
   PREVIZ_ACTOR_MODEL_URL,
 } from '@/features/previz/engine/characterRig';
 import { PropLoader } from '@/features/previz/engine/propLoader';
-import { KIND_COLOR, PrevizSceneGraph } from '@/features/previz/engine/sceneGraph';
+import { BLOCKOUT_COLOR, KIND_COLOR, PrevizSceneGraph } from '@/features/previz/engine/sceneGraph';
 
 /**
  * 一份够用的假 three。真 three 在 jsdom 里连 WebGLRenderer 都建不出来，而这个
@@ -695,6 +695,38 @@ describe('PrevizSceneGraph', () => {
     // 都不会红，唯一的暴露方式是用户发现小地图和 3D 视口里同一个道具不是一个颜色。
     expect(light!.material.color.getHex()).toBe(KIND_COLOR.light);
     expect(prop!.material.color.getHex()).toBe(KIND_COLOR.prop);
+  });
+
+  // 白模出图后是给生成模型当参考的：参考图里带颜色，生成模型会把它当成要保留的内容。
+  // 所以白模是灰的，手摆的道具仍是分类色。
+  it('paints a blockout prop grey from the first frame, set darker than pieces', () => {
+    const three = fakeThree();
+    const graph = new PrevizSceneGraph(three, new three.Group());
+    const scene = createDefaultScene();
+    const tagged = (semanticType: string): PrevizProp => ({
+      ...(createPrevizObject('prop', scene.objects) as PrevizProp),
+      blockout: { id: semanticType, semanticType },
+    });
+    const wall = tagged('wall');
+    scene.objects.push(wall);
+    const table = tagged('table');
+    scene.objects.push(table);
+    const placed = createPrevizObject('prop', scene.objects);
+    scene.objects.push(placed);
+
+    graph.sync(scene);
+    const colourOf = (id: string) => placeholderOf(graph, id).material.color.getHex();
+
+    expect(colourOf(wall.id)).toBe(BLOCKOUT_COLOR.structure);
+    expect(colourOf(table.id)).toBe(BLOCKOUT_COLOR.piece);
+    expect(colourOf(placed.id)).toBe(KIND_COLOR.prop);
+    // 两档都是没有色相的灰，而且布景比里面的东西暗：物件才能从墙和地面上读出来。
+    for (const colour of [BLOCKOUT_COLOR.structure, BLOCKOUT_COLOR.piece]) {
+      const [red, green, blue] = [colour >> 16, (colour >> 8) & 0xff, colour & 0xff];
+      expect(red).toBe(green);
+      expect(green).toBe(blue);
+    }
+    expect(BLOCKOUT_COLOR.structure).toBeLessThan(BLOCKOUT_COLOR.piece);
   });
 
   it('sizes the character capsule from heightCm and stands it on the ground', () => {

@@ -508,7 +508,7 @@ export class PrevizRenderer {
           return Math.max(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z);
         },
         prepareMaterials: (object) => prepareImportedMaterials(three, object),
-        buildPrimitive: (shape) => buildPrimitive(three, shape),
+        buildPrimitive: (shape, tone) => buildPrimitive(three, shape, tone),
       }),
     );
 

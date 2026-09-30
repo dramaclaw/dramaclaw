@@ -3006,6 +3006,7 @@
       "selected_regen": "选中重生成",
       "compose_episode": "视频合成",
       "freezone_image_reverse_prompt": "图片反推提示词",
+      "freezone_image_to_blockout": "参考图转白模",
       "build_scenes": "构建场景",
       "build_props": "构建道具",
       "beat_video_prompt": "生成提示词",
@@ -7763,6 +7764,7 @@
       "empty": "尚未搭建场景",
       "summary": "{{objects}} 个对象 · {{frames}} 帧",
       "versionTooNew": "场景由更新的版本写入，请升级后再打开",
+      "generating": "白模生成中，完成后自动放进场景",
       "audioSummary": "已接入音频 {{count}} 段"
     },
     "editor": {
@@ -7845,7 +7847,65 @@
       },
       "collapseTimeline": "收起轨迹面板",
       "expandTimeline": "展开轨迹面板",
-      "markHint": "标记轨迹：在视口逐点单击放点，自动与前一点连线（Esc 退出）"
+      "markHint": "标记轨迹：在视口逐点单击放点，自动与前一点连线（Esc 退出）",
+      "blockout": "从参考图生成场景",
+      "blockoutFull": "几何体已达上限 {{count}} 个，先删掉一些再生成"
+    },
+    "blockout": {
+      "title": "从参考图生成场景",
+      "close": "关闭",
+      "pick": "选择参考图",
+      "dropHint": "或把图片拖到这里",
+      "dropNow": "松开鼠标，用这张图",
+      "submit": "生成白模",
+      "description": "补充说明（可选）",
+      "descriptionPlaceholder": "例如：层高约 3 米，餐桌长 2.4 米，门在后墙右侧",
+      "pictureCheck": "画面核对",
+      "pictureCheckHint": "生成后把白模投影回参考图，核对位置、尺寸和机位是否自洽；多耗一到两轮生成，耗时更长",
+      "badExtension": "只支持 png / jpg / jpeg / webp",
+      "tooLarge": "参考图不能超过 20 MB",
+      "noProject": "当前页面没有项目上下文，无法生成",
+      "noRoom": "场景里的几何体已达上限 {{limit}} 个，先删掉一些再生成",
+      "failed": "生成失败：{{message}}",
+      "cancelled": "生成已取消",
+      "queued": "白模已开始生成，进度见任务中心；完成后自动放进场景",
+      "done": "已生成 {{count}} 个几何体",
+      "warnings": "有 {{count}} 处可能需要手动调整",
+      "closeDiscards": "关闭此窗口不影响生成：任务在后台继续，结果会自动放进场景，进度见任务中心",
+      "guide": {
+        "title": "什么样的图效果好",
+        "space": "能看清空间结构的场景图：室内、街道、院落等",
+        "floor": "看得见地面，以及至少一面墙或明显的边界",
+        "framing": "平视或略俯视的全景，避免特写和极端仰拍",
+        "occlusion": "主要物件没有被人物或前景大面积挡住"
+      },
+      "hint": {
+        "title": "这张图可能影响生成效果，仍然可以继续",
+        "small": "图片偏小（短边不足 512 像素），细节可能认不清",
+        "wide": "图片过宽，两侧的内容可能被忽略",
+        "tall": "图片过高，上下的内容可能被忽略",
+        "unreadable": "浏览器读不出这张图，文件可能已损坏或并不是图片，生成多半会失败"
+      },
+      "mode": {
+        "title": "场景里已有白模",
+        "replace": "替换",
+        "append": "追加"
+      },
+      "stage": {
+        "uploading": "正在上传参考图…",
+        "generating": "正在生成白模，可能需要几分钟…"
+      },
+      "rejected": {
+        "empty": "这一次没有生成出可用的几何体，换一张图或补充说明再试",
+        "primitiveLimit": "放不下：还差 {{missing}} 个名额（几何体上限 {{limit}} 个）",
+        "cameraLimit": "放不下参考机位：还差 {{missing}} 个名额（机位上限 {{limit}} 个）",
+        "tooLarge": "场景数据过大，放不进这个节点；先删掉一些对象再导入"
+      },
+      "held": {
+        "title": "白模已生成，但还没放进场景",
+        "free": "腾出名额后可以直接重新导入，不会再次扣费",
+        "retry": "重新导入"
+      }
     },
     "library": {
       "title": "模型库",

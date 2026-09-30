@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import type * as THREE from 'three';
 
+import { blockoutTone, type PrevizBlockoutTone } from '../domain/blockout';
 import { clampToRange, DEG_TO_RAD } from '../domain/camera';
 import type { EvaluatedMotion } from '../domain/evaluate';
 import { PREVIZ_HEIGHT_CM_RANGE } from '../domain/objects';
@@ -103,6 +104,28 @@ export const KIND_COLOR: Record<Exclude<PrevizObject['kind'], 'camera' | 'charac
   light: 0xfff3b0,
   prop: 0x9ad0a0,
 };
+
+/**
+ * 白模物件的两档灰，没有色相。布景（墙、地面）暗一档，摆在里面的东西亮一档，物件才
+ * 能从布景上读出来。不按类别上色的理由见 `domain/blockout.ts` 的 `PrevizBlockoutTone`。
+ */
+export const BLOCKOUT_COLOR: Record<PrevizBlockoutTone, number> = {
+  structure: 0xa8a8a8,
+  piece: 0xe2e2e2,
+};
+
+/** 白模那一档灰的颜色；`tone` 为 null（手摆的道具）时是道具的分类色。 */
+export function propToneColor(tone: PrevizBlockoutTone | null): number {
+  return tone === null ? KIND_COLOR.prop : BLOCKOUT_COLOR[tone];
+}
+
+/**
+ * 一件道具的本色。占位方块、换进来的基础几何体、俯视图上的点都从这里取，三处才不会
+ * 各说各的。
+ */
+export function propColor(prop: PrevizObject): number {
+  return propToneColor(blockoutTone(prop));
+}
 
 /**
  * 占位体那份材质。三处占位体（人物胶囊、人物球头、灯球 / 方块）用的是同一组参数，
@@ -819,7 +842,7 @@ export class PrevizSceneGraph {
         break;
       case 'prop':
         geometry = new three.BoxGeometry(0.6, 0.6, 0.6);
-        color = KIND_COLOR.prop;
+        color = propColor(object);
         break;
     }
 

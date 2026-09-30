@@ -200,7 +200,15 @@ export const PrevizNode = memo(({ id, data, selected }: PrevizNodeProps) => {
                 : t("previz.node.empty")}
           </span>
 
-          <span className="text-[11px] text-text-muted/70">{t("previz.node.hint")}</span>
+          {data.isGenerating ? (
+            // 白模任务在途：句柄在节点上，画布的恢复路径正在等它，进度见任务中心。
+            <span className="flex items-center gap-1.5 text-[11px] text-text-muted/90">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white/70" />
+              {t("previz.node.generating")}
+            </span>
+          ) : (
+            <span className="text-[11px] text-text-muted/70">{t("previz.node.hint")}</span>
+          )}
         </div>
       </div>
 

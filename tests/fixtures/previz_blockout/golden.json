@@ -1,0 +1,698 @@
+{
+  "about": "Shared by the backend compiler test and the frontend import test. `compiled` is what the backend returns for golden.blockout.dsl. `expectations` are written by hand from the DSL program in the previz frame (x right, y up, viewer looks down -z); they are not produced by the compiler.",
+  "expectations": {
+    "directions": [
+      {
+        "object": "blockout-partition",
+        "localAxis": [
+          1,
+          0,
+          0
+        ],
+        "points": [
+          0.7071,
+          0,
+          -0.7071
+        ],
+        "why": "the wall runs from DSL (1, 0) to (3, 2): right and away from the camera"
+      },
+      {
+        "object": "blockout-counter",
+        "localAxis": [
+          1,
+          0,
+          0
+        ],
+        "points": [
+          0.866,
+          0,
+          -0.5
+        ],
+        "why": "rotation_y=30 turns the long side counter-clockwise seen from above, toward the far side"
+      },
+      {
+        "object": "blockout-steps",
+        "localAxis": [
+          0,
+          0,
+          -1
+        ],
+        "points": [
+          -1,
+          0,
+          0
+        ],
+        "why": "a wedge rises toward DSL +z; rotation_y=90 turns that to DSL -x, the left"
+      },
+      {
+        "object": "blockout-cam",
+        "localAxis": [
+          0,
+          0,
+          -1
+        ],
+        "points": [
+          -0.164,
+          -0.0656,
+          -0.9843
+        ],
+        "why": "the camera looks from DSL (1, 1.6, -5) to (0, 1.2, 1)"
+      }
+    ],
+    "gaps": [
+      {
+        "wall": "room_back",
+        "min": [
+          -3,
+          0,
+          -3
+        ],
+        "max": [
+          -2,
+          2.1,
+          -3
+        ],
+        "why": "door: 1 m from the left end of the back wall, 1 m wide, 2.1 m high"
+      },
+      {
+        "wall": "room_left",
+        "min": [
+          -4,
+          0.9,
+          -0.5
+        ],
+        "max": [
+          -4,
+          2.1,
+          1
+        ],
+        "why": "window: 2 m from the near end of the left wall, 1.5 m wide, sill 0.9 m, 1.2 m high"
+      }
+    ],
+    "horizontalFovDeg": 65,
+    "positions": [
+      {
+        "object": "blockout-cam",
+        "at": [
+          1.0,
+          1.6,
+          5.0
+        ],
+        "why": "DSL z = -5 is on the viewer's side, which is previz +z"
+      },
+      {
+        "object": "blockout-stool",
+        "at": [
+          -2.0,
+          0.0,
+          -0.5
+        ],
+        "why": "DSL (-2, 0, 0.5): left of centre, half a metre into the picture"
+      },
+      {
+        "object": "blockout-counter",
+        "at": [
+          2.8,
+          0.0,
+          1.2
+        ],
+        "why": "DSL (2.8, 0, -1.2): right of centre, nearer the viewer"
+      },
+      {
+        "object": "blockout-table_2",
+        "at": [
+          1.0,
+          0.0,
+          1.0
+        ],
+        "why": "second entry of the repeat, DSL (1, 0, -1)"
+      }
+    ],
+    "solid": [
+      {
+        "wall": "room_back",
+        "point": [
+          -3.5,
+          1.0,
+          -3.0
+        ],
+        "why": "back wall left of the door"
+      },
+      {
+        "wall": "room_back",
+        "point": [
+          -2.5,
+          2.5,
+          -3.0
+        ],
+        "why": "lintel above the door"
+      },
+      {
+        "wall": "room_back",
+        "point": [
+          0.0,
+          1.0,
+          -3.0
+        ],
+        "why": "back wall right of the door"
+      },
+      {
+        "wall": "room_left",
+        "point": [
+          -4.0,
+          1.5,
+          2.0
+        ],
+        "why": "left wall nearer the viewer than the window"
+      },
+      {
+        "wall": "room_left",
+        "point": [
+          -4.0,
+          0.5,
+          0.25
+        ],
+        "why": "left wall below the window sill"
+      },
+      {
+        "wall": "room_left",
+        "point": [
+          -4.0,
+          2.5,
+          0.25
+        ],
+        "why": "left wall above the window"
+      },
+      {
+        "wall": "room_left",
+        "point": [
+          -4.0,
+          1.5,
+          -2.0
+        ],
+        "why": "left wall beyond the window"
+      },
+      {
+        "wall": "room_right",
+        "point": [
+          4.0,
+          1.5,
+          0.0
+        ],
+        "why": "right wall, no openings"
+      }
+    ]
+  },
+  "compiled": {
+    "objects": [
+      {
+        "id": "blockout-room_floor",
+        "kind": "prop",
+        "name": "地面",
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            8.0,
+            1.0,
+            6.0
+          ]
+        },
+        "visible": true,
+        "locked": false,
+        "assetUrl": "plane",
+        "assetFormat": "primitive",
+        "blockout": {
+          "id": "room_floor",
+          "semanticType": "floor"
+        }
+      },
+      {
+        "id": "blockout-room_back-1",
+        "kind": "prop",
+        "name": "后墙-段 1",
+        "transform": {
+          "position": [
+            -3.5,
+            0.0,
+            -3.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            3.0,
+            0.2
+          ]
+        },
+        "visible": true,
+        "locked": false,
+        "assetUrl": "cube",
+        "assetFormat": "primitive",
+        "blockout": {
+          "id": "room_back",
+          "semanticType": "wall"
+        }
+      },
+      {
+        "id": "blockout-room_back-2",
+        "kind": "prop",
+        "name": "后墙-门楣 1",
+        "transform": {
+          "position": [
+            -2.5,
+            2.1,
+            -3.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            0.9,
+            0.2
+          ]
+        },
+        "visible": true,
+        "locked": false,
+        "assetUrl": "cube",
+        "assetFormat": "primitive",
+        "blockout": {
+          "id": "room_back",
+          "semanticType": "wall"
+        }
+      },
+      {
+        "id": "blockout-room_back-3",
+        "kind": "prop",
+        "name": "后墙-段 2",
+        "transform": {
+          "position": [
+            1.0,
+            0.0,
+            -3.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            6.0,
+            3.0,
+            0.2
+          ]
+        },
+        "visible": true,
+        "locked": false,
+        "assetUrl": "cube",
+        "assetFormat": "primitive",
+        "blockout": {
+          "id": "room_back",
+          "semanticType": "wall"
+        }
+      },
+      {
+        "id": "blockout-room_left-1",
+        "kind": "prop",
+        "name": "左墙-段 1",
+        "transform": {
+          "position": [
+            -4.0,
+            0.0,
+            2.0
+          ],
+          "rotation": [
+            0.0,
+            90.0,
+            0.0
+          ],
+          "scale": [
+            2.0,
+            3.0,
+            0.2
+          ]
+        },
+        "visible": true,
+        "locked": false,
+        "assetUrl": "cube",
+        "assetFormat": "primitive",
+        "blockout": {
+          "id": "room_left",
+          "semanticType": "wall"
+        }
+      },
+      {
+        "id": "blockout-room_left-2",
+        "kind": "prop",
+        "name": "左墙-门楣 1",
+        "transform": {
+          "position": [
+            -4.0,
+            2.1,
+            0.25
+          ],
+          "rotation": [
+            0.0,
+            90.0,
+            0.0
+          ],
+          "scale": [
+            1.5,
+            0.9,
+            0.2
+          ]
+        },
+        "visible": true,
+        "locked": false,
+        "assetUrl": "cube",
+        "assetFormat": "primitive",
+        "blockout": {
+          "id": "room_left",
+          "semanticType": "wall"
+        }
+      },
+      {
+        "id": "blockout-room_left-3",
+        "kind": "prop",
+        "name": "左墙-窗台 1",
+        "transform": {
+          "position": [
+            -4.0,
+            0.0,
+            0.25
+          ],
+          "rotation": [
+            0.0,
+            90.0,
+            0.0
+          ],
+          "scale": [
+            1.5,
+            0.9,
+            0.2
+          ]
+        },
+        "visible": true,
+        "locked": false,
+        "assetUrl": "cube",
+        "assetFormat": "primitive",
+        "blockout": {
+          "id": "room_left",
+          "semanticType": "wall"
+        }
+      },
+      {
+        "id": "blockout-room_left-4",
+        "kind": "prop",
+        "name": "左墙-段 2",
+        "transform": {
+          "position": [
+            -4.0,
+            0.0,
+            -1.75
+          ],
+          "rotation": [
+            0.0,
+            90.0,
+            0.0
+          ],
+          "scale": [
+            2.5,
+            3.0,
+            0.2
+          ]
+        },
+        "visible": true,
+        "locked": false,
+        "assetUrl": "cube",
+        "assetFormat": "primitive",
+        "blockout": {
+          "id": "room_left",
+          "semanticType": "wall"
+        }
+      },
+      {
+        "id": "blockout-room_right",
+        "kind": "prop",
+        "name": "右墙",
+        "transform": {
+          "position": [
+            4.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            90.0,
+            0.0
+          ],
+          "scale": [
+            6.0,
+            3.0,
+            0.2
+          ]
+        },
+        "visible": true,
+        "locked": false,
+        "assetUrl": "cube",
+        "assetFormat": "primitive",
+        "blockout": {
+          "id": "room_right",
+          "semanticType": "wall"
+        }
+      },
+      {
+        "id": "blockout-partition",
+        "kind": "prop",
+        "name": "墙 1",
+        "transform": {
+          "position": [
+            2.0,
+            0.0,
+            -1.0
+          ],
+          "rotation": [
+            0.0,
+            45.0,
+            0.0
+          ],
+          "scale": [
+            2.8284,
+            2.4,
+            0.1
+          ]
+        },
+        "visible": true,
+        "locked": false,
+        "assetUrl": "cube",
+        "assetFormat": "primitive",
+        "blockout": {
+          "id": "partition",
+          "semanticType": "wall"
+        }
+      },
+      {
+        "id": "blockout-counter",
+        "kind": "prop",
+        "name": "柜台 1",
+        "transform": {
+          "position": [
+            2.8,
+            0.0,
+            1.2
+          ],
+          "rotation": [
+            0.0,
+            30.0,
+            0.0
+          ],
+          "scale": [
+            2.0,
+            1.1,
+            0.6
+          ]
+        },
+        "visible": true,
+        "locked": false,
+        "assetUrl": "cube",
+        "assetFormat": "primitive",
+        "blockout": {
+          "id": "counter",
+          "semanticType": "counter"
+        }
+      },
+      {
+        "id": "blockout-stool",
+        "kind": "prop",
+        "name": "椅子 1",
+        "transform": {
+          "position": [
+            -2.0,
+            0.0,
+            -0.5
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.4,
+            0.7,
+            0.4
+          ]
+        },
+        "visible": true,
+        "locked": false,
+        "assetUrl": "cylinder",
+        "assetFormat": "primitive",
+        "blockout": {
+          "id": "stool",
+          "semanticType": "chair"
+        }
+      },
+      {
+        "id": "blockout-steps",
+        "kind": "prop",
+        "name": "楼梯 1",
+        "transform": {
+          "position": [
+            -3.0,
+            0.0,
+            -2.0
+          ],
+          "rotation": [
+            0.0,
+            90.0,
+            0.0
+          ],
+          "scale": [
+            1.2,
+            1.0,
+            2.0
+          ]
+        },
+        "visible": true,
+        "locked": false,
+        "assetUrl": "wedge",
+        "assetFormat": "primitive",
+        "blockout": {
+          "id": "steps",
+          "semanticType": "stairs"
+        }
+      },
+      {
+        "id": "blockout-table_1",
+        "kind": "prop",
+        "name": "桌子 1",
+        "transform": {
+          "position": [
+            -1.0,
+            0.0,
+            1.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.2,
+            0.75,
+            0.7
+          ]
+        },
+        "visible": true,
+        "locked": false,
+        "assetUrl": "cube",
+        "assetFormat": "primitive",
+        "blockout": {
+          "id": "table_1",
+          "semanticType": "table"
+        }
+      },
+      {
+        "id": "blockout-table_2",
+        "kind": "prop",
+        "name": "桌子 2",
+        "transform": {
+          "position": [
+            1.0,
+            0.0,
+            1.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.2,
+            0.75,
+            0.7
+          ]
+        },
+        "visible": true,
+        "locked": false,
+        "assetUrl": "cube",
+        "assetFormat": "primitive",
+        "blockout": {
+          "id": "table_2",
+          "semanticType": "table"
+        }
+      },
+      {
+        "id": "blockout-cam",
+        "kind": "camera",
+        "name": "参考机位",
+        "transform": {
+          "position": [
+            1.0,
+            1.6,
+            5.0
+          ],
+          "rotation": [
+            -3.7623,
+            9.4623,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "visible": true,
+        "locked": false,
+        "focalMm": 28.2543,
+        "aperture": 2.8,
+        "sensor": "ff",
+        "cameraBody": "cine",
+        "lensSeries": "prime",
+        "blockout": {
+          "id": "cam",
+          "semanticType": "reference_camera"
+        }
+      }
+    ],
+    "reference_camera_id": "blockout-cam",
+    "counts": {
+      "prop": 15,
+      "camera": 1
+    }
+  }
+}

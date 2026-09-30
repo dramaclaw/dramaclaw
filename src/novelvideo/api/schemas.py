@@ -1409,6 +1409,23 @@ class FreezoneImageReversePromptRequest(BaseModel):
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
 
 
+class FreezoneImageToBlockoutRequest(BaseModel):
+    """参考图转预演台白模请求。"""
+
+    source_url: str = Field(description="参考图静态地址")
+    description: str = Field(
+        default="",
+        max_length=2000,
+        description="可选：对场景的补充说明，如真实尺寸、要保留的物件",
+    )
+    canvas_id: str = Field(default="", description="可选：来源画布 id")
+    node_id: str = Field(default="", description="可选：来源节点 id")
+    picture_check: bool = Field(
+        default=False,
+        description="可选：画面核对——把白模投影回参考图校验坐标、尺寸和相机是否自洽，多耗一到两轮模型调用",
+    )
+
+
 class FreezoneImageReversePromptData(BaseModel):
     """图反推提示词结果。"""
 

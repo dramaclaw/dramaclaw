@@ -15,7 +15,7 @@ import {
 } from "@/features/previz/domain/topDownMap";
 import { PREVIZ_CAMERA_COLOR } from "@/features/previz/engine/cameraModel";
 import { PREVIZ_GRID_CELL_SIZE } from "@/features/previz/engine/grid";
-import { KIND_COLOR } from "@/features/previz/engine/sceneGraph";
+import { BLOCKOUT_COLOR, KIND_COLOR } from "@/features/previz/engine/sceneGraph";
 import {
   PREVIZ_TOP_DOWN_KEY_STEP_M,
   PREVIZ_TOP_DOWN_PICKER_SIZE,
@@ -514,6 +514,21 @@ describe("PrevizTopDownPicker", () => {
       cssHex(KIND_COLOR.prop),
       cssHex(KIND_COLOR.light),
       cssHex(PREVIZ_CAMERA_COLOR.body),
+    ]);
+  });
+
+  // 俯视图和 3D 视口画的是同一批物件：白模在那边是灰的，在这边也得是。
+  it("draws blockout props in the grey they wear in the viewport", () => {
+    const { arcs } = captureDraw();
+    const tagged = (semanticType: string, x: number) =>
+      ({ ...objectAt("prop", x, 0), blockout: { id: semanticType, semanticType } }) as PrevizObject;
+    const objects = [tagged("wall", -2), tagged("table", 2), objectAt("prop", 0, 3)];
+    render(<PrevizTopDownPicker objects={objects} value={null} onPick={vi.fn()} />);
+
+    expect(arcs.map((arc) => arc.fillStyle)).toEqual([
+      cssHex(BLOCKOUT_COLOR.structure),
+      cssHex(BLOCKOUT_COLOR.piece),
+      cssHex(KIND_COLOR.prop),
     ]);
   });
 

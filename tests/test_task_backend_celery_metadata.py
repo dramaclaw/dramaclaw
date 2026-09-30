@@ -123,6 +123,7 @@ def test_project_task_metrics_context_carries_shared_project_billing_metadata(mo
         ("freezone_analyze", "video"),
         ("freezone_video_story", "video"),
         ("freezone_image_reverse_prompt", "script"),
+        ("freezone_image_to_blockout", "script"),
         ("freezone_story_script", "script"),
     ],
 )

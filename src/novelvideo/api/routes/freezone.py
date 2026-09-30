@@ -55,6 +55,7 @@ from novelvideo.api.schemas import (
     FreezoneGenRequest,
     FreezoneImageCameraConfig,
     FreezoneImageReversePromptRequest,
+    FreezoneImageToBlockoutRequest,
     FreezoneImageStyleConfig,
     FreezoneImageTo3GSRequest,
     FreezoneImageToVideoRequest,
@@ -6622,6 +6623,10 @@ def _image_reverse_prompt_output_path(project_dir: Path, job_id: str) -> Path:
     return outputs_dir(project_dir, "freezone_image_reverse_prompt") / f"{job_id}.json"
 
 
+def _image_to_blockout_output_path(project_dir: Path, job_id: str) -> Path:
+    return outputs_dir(project_dir, "freezone_image_to_blockout") / job_id / "result.json"
+
+
 def _video_compose_output_path(project_dir: Path, job_id: str) -> Path:
     return outputs_dir(project_dir, "freezone_video_compose") / f"{job_id}.mp4"
 
@@ -8563,6 +8568,55 @@ async def freezone_image_reverse_prompt(
     )
 
 
+@router.post(
+    "/projects/{project}/freezone/image-to-blockout",
+    response_model=FreezoneJobAcceptedResponse,
+    tags=[TAG_FREEZONE_IMAGE],
+)
+async def freezone_image_to_blockout(
+    project: str,
+    body: FreezoneImageToBlockoutRequest,
+    user: dict = Depends(get_api_user),
+):
+    """预演台：参考图转白模，异步生成一组可编辑的基础几何体。"""
+    from novelvideo.api.routes.model_credits import (
+        freezone_image_to_blockout_task_billing,
+    )
+
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    try:
+        source_path = resolve_static_url_to_path(body.source_url, project_dir)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not source_path.exists():
+        raise HTTPException(404, f"source not found: {source_path}")
+    if source_path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+        raise HTTPException(400, f"source must be an image: {source_path}")
+
+    try:
+        return await _enqueue_freezone_background_job(
+            ctx=ctx,
+            project_dir=project_dir,
+            task_type="freezone_image_to_blockout",
+            job_id=_new_job_id(),
+            payload={
+                "source_path": source_path.as_posix(),
+                "description": body.description.strip(),
+                "picture_check": body.picture_check,
+                "canvas_id": body.canvas_id or "",
+                "node_id": body.node_id or "",
+                "billing": freezone_image_to_blockout_task_billing(
+                    {"operation": "image_to_blockout"}
+                ),
+            },
+        )
+    except RuntimeError as exc:
+        _handle_task_start_runtime_error("image to blockout failed", exc)
+        raise HTTPException(500, f"image to blockout failed: {exc}") from exc
+
+
 @router.get("/projects/{project}/freezone/video/character-library", tags=[TAG_FREEZONE_VIDEO])
 async def freezone_video_character_library(
     project: str,
@@ -10226,6 +10280,7 @@ async def freezone_job_result(
         "freezone_video_compose",
         "freezone_image_reverse_prompt",
         "freezone_image_to_3gs",
+        "freezone_image_to_blockout",
         "freezone_text_generate",
         "freezone_text_translate",
         "freezone_story_script",
@@ -10333,6 +10388,8 @@ async def freezone_job_result(
     out = output_path_for_job(project_dir, task_type, job_id)
     if task_type == "freezone_image_reverse_prompt":
         out = _image_reverse_prompt_output_path(project_dir, job_id)
+    if task_type == "freezone_image_to_blockout":
+        out = _image_to_blockout_output_path(project_dir, job_id)
     if task_type == "freezone_video_erase":
         out = _video_erase_output_path(project_dir, job_id)
     if task_type == "freezone_video_upscale":
@@ -10440,6 +10497,7 @@ async def freezone_job_result(
         return {"ok": False, "info": "job result not yet on disk", "status": "unknown"}
     if task_type in {
         "freezone_image_reverse_prompt",
+        "freezone_image_to_blockout",
         "freezone_text_generate",
         "freezone_text_translate",
         "freezone_story_script",

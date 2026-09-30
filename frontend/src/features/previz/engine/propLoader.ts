@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import type * as THREE from 'three';
 
+import { blockoutTone, type PrevizBlockoutTone } from '../domain/blockout';
 import { isPrevizPrimitiveShape, type PrevizPrimitiveShape } from '../domain/primitives';
 import { propUnitScale } from '../domain/propUnits';
 import type { PrevizProp } from '../domain/scene';
@@ -36,8 +37,22 @@ export interface PropLoaderDeps {
   /**
    * 按形状名现造一件基础几何体（`assetFormat: 'primitive'`）。渲染器用
    * `primitiveBuilder.ts` 实现。做成注入的理由同 `measure`：这一层只 import three 的类型。
+   *
+   * `tone` 是白模物件的明暗档，手摆的道具为 null。
    */
-  buildPrimitive: (shape: PrevizPrimitiveShape) => THREE.Object3D;
+  buildPrimitive: (shape: PrevizPrimitiveShape, tone: PrevizBlockoutTone | null) => THREE.Object3D;
+}
+
+/**
+ * 缓存键。克隆体与源模型共用材质，所以颜色不同的基础几何体不能出自同一份源模型：
+ * 墙和桌子都是立方体，共用一份的话，先建的那个是什么颜色，后面的就全是什么颜色。
+ * 加载回来的模型（glb / gltf / obj）带自己的材质，不分档。
+ */
+function cacheKey(prop: PrevizProp): string {
+  const key = `${prop.assetFormat}:${prop.assetUrl}`;
+  if (prop.assetFormat !== 'primitive') return key;
+  const tone = blockoutTone(prop);
+  return tone === null ? key : `${key}#${tone}`;
 }
 
 /**
@@ -49,14 +64,14 @@ export interface PropLoaderDeps {
  * 换不明白的仍旧原样放行，由用户在属性面板改 scale。
  */
 export class PropLoader {
-  /** 同一个 URL 只加载一次：同一把椅子摆 20 张不该下 20 遍。 */
+  /** 同一个 URL 只加载一次：同一把椅子摆 20 张不该下 20 遍。键的算法见 `cacheKey`。 */
   private readonly cache = new Map<string, Promise<THREE.Object3D | null>>();
 
   constructor(private readonly deps: PropLoaderDeps) {}
 
   load(prop: PrevizProp): Promise<THREE.Object3D | null> {
     if (!prop.assetUrl) return Promise.resolve(null);
-    const key = `${prop.assetFormat}:${prop.assetUrl}`;
+    const key = cacheKey(prop);
     let pending = this.cache.get(key);
     if (!pending) {
       pending = this.loadOnce(prop).catch((error: unknown) => {
@@ -97,7 +112,7 @@ export class PropLoader {
         if (!isPrevizPrimitiveShape(prop.assetUrl)) {
           throw new Error(`unknown primitive shape: ${prop.assetUrl}`);
         }
-        return this.deps.buildPrimitive(prop.assetUrl);
+        return this.deps.buildPrimitive(prop.assetUrl, blockoutTone(prop));
       case 'obj':
         return this.deps.loadObj(prop.assetUrl);
       default:

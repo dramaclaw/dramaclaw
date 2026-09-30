@@ -18,7 +18,13 @@ import {
   type PrevizAudioSource,
 } from './domain/audioTrack';
 import { clampToRange } from './domain/camera';
-import { canAddObject } from './domain/limits';
+import {
+  planBlockoutImport,
+  type PrevizBlockoutImportMode,
+  type PrevizBlockoutPayload,
+  type PrevizBlockoutRejection,
+} from './domain/blockout';
+import { canAddObject, canAddPrimitive } from './domain/limits';
 import type { PrevizMotionStatus } from './domain/motionLibrary';
 import {
   createPrevizObject,
@@ -162,6 +168,14 @@ export type PrevizMotionDialog =
 
 interface PrevizStoreState {
   scene: PrevizScene;
+  /**
+   * 编辑器此刻打开的是哪个预演台节点；关着为 null。
+   *
+   * 白模生成是画布层的任务，落地时编辑器可能开着、关着、或开着别的节点。
+   * 结果只有在「开着的正是这个节点」时才能进 store（否则就落进了别人的场景），
+   * 其余情形直接写回节点数据——判断依据就是这一个字段。
+   */
+  editingNodeId: string | null;
   /** 相对上次写回 node.data 是否有未落盘改动。 */
   dirty: boolean;
   past: PrevizScene[];
@@ -283,7 +297,9 @@ interface PrevizStoreState {
   /** 「转为路径片段」：把跟踪结果烤成关键帧，从此不再跟着人物走。 */
   bakeCloseup: (clipId: string) => void;
   /** 打开编辑器时灌入初始场景，同时清空历史——上一次会话的 undo 不该跨节点串。 */
-  loadScene: (scene: PrevizScene) => void;
+  loadScene: (scene: PrevizScene, nodeId?: string | null) => void;
+  /** 关编辑器：此后到达的生成结果不再进 store，改写节点数据。场景本身留着不动。 */
+  unloadScene: () => void;
   /** 场景改动的唯一入口：压历史、清 redo、置脏。 */
   applyScene: (next: PrevizScene) => void;
   undo: () => void;
@@ -304,6 +320,14 @@ interface PrevizStoreState {
   ) => string | null;
   updateObject: (id: string, patch: PrevizObjectPatch) => void;
   removeObject: (id: string) => void;
+  /**
+   * 把一次「参考图转白模」的结果整份写进场景，算一步撤销。写不进去时返回理由且不动场景。
+   * 写进去之后选中参考机位并把监看切过去。
+   */
+  importBlockout: (
+    payload: PrevizBlockoutPayload,
+    mode: PrevizBlockoutImportMode,
+  ) => PrevizBlockoutRejection | null;
   setDisplayMode: (mode: DisplayMode) => void;
   setOutputAspect: (aspect: OutputAspect) => void;
   setDurationFrames: (frames: number) => void;
@@ -311,6 +335,7 @@ interface PrevizStoreState {
 
 export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   scene: createDefaultScene(),
+  editingNodeId: null,
   dirty: false,
   past: [],
   future: [],
@@ -331,9 +356,10 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   motionDialog: null,
   motionStatus: {},
 
-  loadScene: (scene) =>
+  loadScene: (scene, nodeId = null) =>
     set({
       scene,
+      editingNodeId: nodeId,
       dirty: false,
       past: [],
       future: [],
@@ -351,6 +377,8 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
       motionDialog: null,
       motionStatus: {},
     }),
+
+  unloadScene: () => set({ editingNodeId: null }),
 
   applyScene: (next) => {
     const { scene, past } = get();
@@ -392,7 +420,10 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   addObject: (kind, overrides) => {
     const { scene, applyScene } = get();
     // 越界时连新场景都不建：建了就等于往 undo 栈里塞一步什么都没干的操作。
-    if (!canAddObject(scene, kind)) return null;
+    // 基础几何体有自己的 150 个名额，不占导入模型那 20 个（见 `PREVIZ_PRIMITIVE_LIMIT`）。
+    const primitive =
+      kind === 'prop' && (overrides as { assetFormat?: unknown } | undefined)?.assetFormat === 'primitive';
+    if (primitive ? !canAddPrimitive(scene) : !canAddObject(scene, kind)) return null;
 
     // overrides 会从导入路径带进脏数值，所以新建这一步也收敛一次；
     // 不带 overrides 时 `createPrevizObject` 的默认值本就合法，这一步是幂等的。
@@ -445,6 +476,28 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
       monitorFollowsProgram: activeCameraId === id ? true : monitorFollowsProgram,
       soloObjectIds: soloObjectIds.filter((soloId) => soloId !== id),
     });
+  },
+
+  importBlockout: (payload, mode) => {
+    const { scene, applyScene, selectedObjectId, activeCameraId, monitorFollowsProgram, soloObjectIds } =
+      get();
+    const plan = planBlockoutImport(scene, payload, mode);
+    if (!plan.ok) return plan.rejection;
+
+    // 一次 `applyScene`：上百个方块是一次生成的结果，撤销也该一次退干净。
+    applyScene(plan.scene);
+    const removed = new Set(plan.removedIds);
+    const activeRemoved = activeCameraId !== null && removed.has(activeCameraId);
+    const reference = plan.referenceCameraId;
+    set({
+      selectedObjectId:
+        reference ?? (selectedObjectId !== null && removed.has(selectedObjectId) ? null : selectedObjectId),
+      // 参考机位就是拍参考图的那台：监看切过去，右下角看到的画面才能跟参考图对着比。
+      activeCameraId: reference ?? (activeRemoved ? null : activeCameraId),
+      monitorFollowsProgram: reference !== null ? false : activeRemoved ? true : monitorFollowsProgram,
+      soloObjectIds: soloObjectIds.filter((id) => !removed.has(id)),
+    });
+    return null;
   },
 
   setDisplayMode: (mode) => {
