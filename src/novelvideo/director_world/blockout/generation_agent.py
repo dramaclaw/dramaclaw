@@ -37,6 +37,9 @@ from novelvideo.director_world.blockout.scene_ir import (
 from novelvideo.egress_context import TrustedEgressContext
 
 BLOCKOUT_MODEL_ENV = "PREVIZ_BLOCKOUT_MODEL"
+# 画面核对（scene.seen 投影回看）默认关：它只能发现坐标、尺寸、相机互相矛盾，
+# 换来的是每次多一到两轮模型调用。请求里没说时按这个环境变量。
+BLOCKOUT_PICTURE_CHECK_ENV = "PREVIZ_BLOCKOUT_PICTURE_CHECK"
 BLOCKOUT_TIMEOUT_SECONDS = 300.0
 BLOCKOUT_MAX_ATTEMPTS = 3
 
@@ -51,6 +54,14 @@ def resolve_blockout_model() -> str:
     from novelvideo.freezone.vision_gateway import resolve_freezone_vision_model
 
     return resolve_freezone_vision_model(os.environ.get(BLOCKOUT_MODEL_ENV))
+
+
+def resolve_picture_check(requested: bool | None) -> bool:
+    """The request's choice if it made one, else `PREVIZ_BLOCKOUT_PICTURE_CHECK`."""
+    if requested is not None:
+        return bool(requested)
+    value = os.environ.get(BLOCKOUT_PICTURE_CHECK_ENV, "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 
 def extract_program(text: str) -> str:
@@ -123,11 +134,13 @@ async def generate_blockout_from_image(
     *,
     image_path: Path,
     description: str = "",
+    picture_check: bool | None = None,
     egress_context: TrustedEgressContext | None = None,
 ) -> BlockoutGeneration:
     from novelvideo.freezone.vision_gateway import load_compact_vision_inputs
 
     model = resolve_blockout_model()
+    picture_check = resolve_picture_check(picture_check)
 
     def unreadable(reason: str, *, sha256: str) -> BlockoutGenerationError:
         # 原始异常里带着服务器上的绝对路径，不该原样走到用户面前。
@@ -150,7 +163,9 @@ async def generate_blockout_from_image(
         # 扩展名对、内容不是图片（改了后缀的 HEIC、传坏的文件、像素数超限的图）。
         raise unreadable("文件不是有效的图片", sha256=image_sha256) from exc
     image_aspect = image_size[0] / image_size[1]
-    base_prompt = build_blockout_prompt(description=description, image_size=image_size)
+    base_prompt = build_blockout_prompt(
+        description=description, image_size=image_size, picture_check=picture_check
+    )
 
     attempts: list[BlockoutAttempt] = []
     # 解析和编译都过了、只是合理性检查没过的那一份。三次都没有干净结果时交它，
@@ -183,7 +198,9 @@ async def generate_blockout_from_image(
             attempts.append(BlockoutAttempt(program, (str(exc),), seconds))
             raise failure(f"场景过于复杂：{exc}") from exc
         else:
-            report = check_plausibility(scene, image_aspect=image_aspect)
+            report = check_plausibility(
+                scene, image_aspect=image_aspect, picture_check=picture_check
+            )
             errors = report.errors
             if not errors:
                 attempts.append(BlockoutAttempt(program, (), seconds))
@@ -196,6 +213,7 @@ async def generate_blockout_from_image(
                     attempts=tuple(attempts),
                     image_sha256=image_sha256,
                     image_size=image_size,
+                    picture_check=picture_check,
                 )
             if fallback is None or len(errors) <= len(fallback[3]):
                 fallback = (program, scene, compiled, (*errors, *report.warnings))
@@ -215,6 +233,7 @@ async def generate_blockout_from_image(
             attempts=tuple(attempts),
             image_sha256=image_sha256,
             image_size=image_size,
+            picture_check=picture_check,
         )
     raise failure(
         f"模型连续 {BLOCKOUT_MAX_ATTEMPTS} 次没有写出合法的场景程序："

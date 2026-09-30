@@ -1420,6 +1420,10 @@ class FreezoneImageToBlockoutRequest(BaseModel):
     )
     canvas_id: str = Field(default="", description="可选：来源画布 id")
     node_id: str = Field(default="", description="可选：来源节点 id")
+    picture_check: bool | None = Field(
+        default=None,
+        description="可选：是否做画面核对（把白模投影回参考图校验，多耗一到两轮模型调用）；不填按服务端默认",
+    )
 
 
 class FreezoneImageReversePromptData(BaseModel):

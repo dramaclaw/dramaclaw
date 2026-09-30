@@ -43,6 +43,7 @@ class BlockoutGeneration:
     attempts: tuple[BlockoutAttempt, ...]
     image_sha256: str
     image_size: tuple[int, int]
+    picture_check: bool = False
 
 
 class BlockoutGenerationError(RuntimeError):
@@ -77,10 +78,12 @@ def _generation_record(
     image_sha256: str,
     image_size: tuple[int, int],
     error: str | None,
+    picture_check: bool = False,
 ) -> dict[str, Any]:
     return {
         "model": model,
         "prompt_version": BLOCKOUT_PROMPT_VERSION,
+        "picture_check": picture_check,
         "compiler_version": BLOCKOUT_COMPILER_VERSION,
         "image": {
             "sha256": image_sha256,
@@ -118,6 +121,7 @@ def write_blockout_artifacts(
             image_sha256=generation.image_sha256,
             image_size=generation.image_size,
             error=None,
+            picture_check=generation.picture_check,
         ),
     )
     result = {

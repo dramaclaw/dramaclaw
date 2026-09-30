@@ -112,11 +112,14 @@ def runner_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     calls: list[dict] = []
 
     def install(outcome):
-        async def leaf(*, image_path, description="", egress_context=None):
+        async def leaf(
+            *, image_path, description="", picture_check=None, egress_context=None
+        ):
             calls.append(
                 {
                     "image_path": image_path,
                     "description": description,
+                    "picture_check": picture_check,
                     "egress_context": egress_context,
                 }
             )
@@ -159,6 +162,7 @@ async def test_runner_writes_the_artifacts_and_returns_a_summary(runner_env):
         {
             "image_path": runner_env.source,
             "description": "层高 3 米",
+            "picture_check": None,
             "egress_context": None,
         }
     ]
@@ -269,3 +273,14 @@ def test_the_task_type_is_registered_with_its_label_and_resource_kind():
         if isinstance(value, dict) and value.get("freezone_image_reverse_prompt")
     ]
     assert labels and all(table[TASK_TYPE] == "参考图转白模" for table in labels)
+
+
+async def test_runner_passes_the_picture_check_option_to_the_leaf(runner_env):
+    runner_env.install(_generation())
+
+    await freezone_runners._run_freezone_image_to_blockout_async(
+        {"task_type": TASK_TYPE, "payload": {**runner_env.payload, "picture_check": True}},
+        runner_env.ctx,
+    )
+
+    assert runner_env.calls[0]["picture_check"] is True

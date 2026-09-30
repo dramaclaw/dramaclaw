@@ -1258,6 +1258,11 @@ async def _run_freezone_image_reverse_prompt_async(
     return result
 
 
+def _optional_flag(value: object) -> bool | None:
+    """A tri-state request flag: absent means "use the deployment default"."""
+    return None if value is None else bool(value)
+
+
 async def _run_freezone_image_to_blockout_async(
     envelope: dict[str, Any],
     ctx: ProjectContext,
@@ -1289,6 +1294,7 @@ async def _run_freezone_image_to_blockout_async(
             "generate_blockout_from_image",
             image_path=source_path,
             description=str(payload.get("description") or ""),
+            picture_check=_optional_flag(payload.get("picture_check")),
         )
     except BlockoutGenerationError as exc:
         write_blockout_failure_artifacts(out_dir, exc)

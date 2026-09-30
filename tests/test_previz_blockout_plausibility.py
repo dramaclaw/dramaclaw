@@ -284,7 +284,9 @@ BACK_WALL_SEEN = "scene.seen(id='room_back', left=0.1, right=0.9)\n"
 
 
 def _sightings(body: str, seen: str, camera: str = CAMERA):
-    report = check_plausibility(parse_blockout_program(ROOM + camera + body + seen))
+    report = check_plausibility(
+        parse_blockout_program(ROOM + camera + body + seen), picture_check=True
+    )
     return [error for error in report.errors if "scene.seen" in error or "declared" in error]
 
 
@@ -411,3 +413,13 @@ def test_sightings_are_not_checked_while_the_camera_itself_is_wrong():
 
     assert len(report.errors) == 1
     assert "looks toward -z" in report.errors[0]
+
+
+def test_sightings_are_ignored_unless_the_picture_check_is_on():
+    # Neither the missing sightings nor a wrong one count without the option.
+    scene = parse_blockout_program(
+        ROOM + CAMERA + THREE_PIECES + "scene.seen(id='b', left=0.2, right=0.28)\n"
+    )
+
+    assert check_plausibility(scene).errors == ()
+    assert check_plausibility(scene, picture_check=True).errors != ()

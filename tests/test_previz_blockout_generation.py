@@ -51,6 +51,7 @@ class FakeModel:
 def default_model_names(monkeypatch):
     monkeypatch.delenv("PREVIZ_BLOCKOUT_MODEL", raising=False)
     monkeypatch.delenv("FREEZONE_VISION_MODEL", raising=False)
+    monkeypatch.delenv("PREVIZ_BLOCKOUT_PICTURE_CHECK", raising=False)
 
 
 @pytest.fixture
@@ -319,6 +320,7 @@ async def test_a_hostile_program_is_never_run(image_path, model, tmp_path, monke
 def test_the_model_falls_back_to_the_freezone_vision_model(monkeypatch):
     monkeypatch.delenv("PREVIZ_BLOCKOUT_MODEL", raising=False)
     monkeypatch.delenv("FREEZONE_VISION_MODEL", raising=False)
+    monkeypatch.delenv("PREVIZ_BLOCKOUT_PICTURE_CHECK", raising=False)
     assert resolve_blockout_model() == "DC-freezone-vision-LLM"
 
     monkeypatch.setenv("FREEZONE_VISION_MODEL", "self-hosted-vision-model")
@@ -475,3 +477,59 @@ def test_no_module_of_the_package_can_run_a_program():
         }
         assert calls.isdisjoint(banned_calls), module.name
         assert imports.isdisjoint(banned_modules), module.name
+
+
+# Three pieces and no sighting: clean without the picture check, one error with it.
+UNSIGHTED = (
+    "scene.room(id='room', width=8, depth=6, height=3)\n"
+    "scene.camera(id='cam', position=(0, 1.6, -5), target=(0, 1.2, 1), fov=65)\n"
+    "scene.box(id='a', position=(-2, 0, 1), size=(0.5, 0.5, 0.5), semantic_type='prop')\n"
+    "scene.box(id='b', position=(0, 0, 1), size=(0.5, 0.5, 0.5), semantic_type='prop')\n"
+    "scene.box(id='c', position=(2, 0, 1), size=(0.5, 0.5, 0.5), semantic_type='prop')\n"
+)
+
+
+async def test_the_picture_check_is_off_unless_asked_for(image_path, model):
+    fake = model(UNSIGHTED)
+
+    generation = await generate_blockout_from_image(image_path=image_path)
+
+    assert len(fake.calls) == 1
+    assert "scene.seen" not in fake.calls[0]["prompt"]
+    assert generation.warnings == ()
+    assert generation.picture_check is False
+
+
+async def test_the_picture_check_asks_for_sightings_and_checks_them(image_path, model):
+    fake = model(UNSIGHTED, GOLDEN_PROGRAM)
+
+    generation = await generate_blockout_from_image(
+        image_path=image_path, picture_check=True
+    )
+
+    assert "scene.seen" in fake.calls[0]["prompt"]
+    assert (
+        "scene.seen" in fake.calls[1]["prompt"]
+        and "at least 3" in fake.calls[1]["prompt"]
+    )
+    assert generation.compiled == GOLDEN["compiled"]
+    assert generation.picture_check is True
+
+
+async def test_the_picture_check_can_be_switched_on_by_the_environment(
+    image_path, model, monkeypatch
+):
+    monkeypatch.setenv("PREVIZ_BLOCKOUT_PICTURE_CHECK", "1")
+    fake = model(GOLDEN_PROGRAM)
+
+    generation = await generate_blockout_from_image(image_path=image_path)
+
+    assert "scene.seen" in fake.calls[0]["prompt"]
+    assert generation.picture_check is True
+    # An explicit request wins over the environment.
+    fake = model(UNSIGHTED)
+    generation = await generate_blockout_from_image(
+        image_path=image_path, picture_check=False
+    )
+    assert "scene.seen" not in fake.calls[0]["prompt"]
+    assert generation.picture_check is False

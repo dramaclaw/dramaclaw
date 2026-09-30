@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from novelvideo.director_world.blockout.scene_ir import MAX_COMPILED_OBJECTS
 
-BLOCKOUT_PROMPT_VERSION = 7
+BLOCKOUT_PROMPT_VERSION = 8
 MAX_DESCRIPTION_CHARS = 500
 SUGGESTED_OBJECT_COUNT = 40
 
@@ -28,13 +28,43 @@ scene.box(id="table", position=(0.0, 0.0, 0.3), size=(2.4, 0.75, 1.0), semantic_
 scene.repeat(primitive="box", ids=["chair_1", "chair_2", "chair_3"], positions=[(-0.8, 0.0, -0.6), (0.0, 0.0, -0.6), (0.8, 0.0, -0.6)], size=(0.45, 0.9, 0.45), semantic_type="chair", label="椅子")
 scene.box(id="laptop", on="table", shift=(0.4, 0.0), size=(0.35, 0.03, 0.25), semantic_type="prop", label="笔记本电脑")
 scene.camera(id="cam", position=(0.3, 1.5, -6.2), target=(0.0, 1.0, 1.0), fov=60)
+"""
+
+# Appended to the example only when the picture check is on (see
+# `build_blockout_prompt`); the numbers are read off the picture the example
+# describes and agree with its camera.
+BLOCKOUT_EXAMPLE_SIGHTINGS = """\
 # 画面核对：后墙从画面宽度的两成到八成，墙脚在画面高度的三分之二处；会议桌从三成到六成半；文件柜从一成半到两成半
 scene.seen(id="room_back", left=0.2, right=0.8, bottom=0.66)
 scene.seen(id="table", left=0.32, right=0.67, bottom=0.78)
 scene.seen(id="cabinet", left=0.16, right=0.26, bottom=0.7)
 """
 
-_INSTRUCTIONS = f"""\
+_SIGHTING_REFERENCE = """\
+画面核对：
+
+- `scene.seen(id, left=0.2, right=0.8, bottom=0.7)`
+  写下某件东西在参考图里的位置：left、right 是它左右两端离画面左边缘的距离，占画面宽度的几分之几；bottom 是它落地那条边离画面上边缘的距离，占画面高度的几分之几，可不写。画面左边缘是 0，右边缘是 1，被画面边缘切掉的一端写 0 或 1。id 可以是任何物件或墙，room 的墙叫 `<room id>_back`、`_left`、`_right`。
+  这些数字是读图读出来的，不是从坐标算出来的。编译器会把你写的场景通过你写的相机投影回画面，和这里的数字对照，对不上就把差在哪里退回给你改；它是用来发现坐标、尺寸和相机互相矛盾的，所以要照图老实写，不要反过来凑坐标。
+
+"""
+
+_SIGHTING_STEP = """\
+6. 画面核对：至少给三件东西写 scene.seen：画面里最大的一件结构（通常是后墙），离相机最近的一件大家具，离相机最远的一件大家具。直接在图上量，写占比；量完再看一眼第 3 步算的相机距离和这几个占比是否说得通。
+"""
+
+_SIGHTING_SELF_CHECK = "；scene.seen 写的是不是图上看到的位置，而不是从坐标反推的"
+
+
+def _instructions(*, picture_check: bool) -> str:
+    sighting_reference = _SIGHTING_REFERENCE if picture_check else ""
+    sighting_step = _SIGHTING_STEP if picture_check else ""
+    self_check_number = 7 if picture_check else 6
+    sighting_self_check = _SIGHTING_SELF_CHECK if picture_check else ""
+    example = BLOCKOUT_EXAMPLE_PROGRAM + (
+        BLOCKOUT_EXAMPLE_SIGHTINGS if picture_check else ""
+    )
+    return f"""\
 你是影视预演的场景搭建师。我给你一张场景参考图，请写一段 SceneBlockoutDSL 程序，用基础几何体搭出这个场景的白模，供导演走位和设计机位。
 
 目标是「认得出是同一个场景，主要空间关系接近参考图」，不是测绘，也不是雕刻细节。每件东西一个整体，位置准比细节多重要。
@@ -109,13 +139,7 @@ rotation_y 的单位是度，从上往下看逆时针为正。size 的「宽」�
 - `scene.camera(id, position=(x, y, z), target=(x, y, z), fov=60)`
   还原拍这张图的相机，整份程序必须有且只有一条。fov 是横向视场角，单位度。position 的 z 必须小于 target 的 z。
 
-画面核对：
-
-- `scene.seen(id, left=0.2, right=0.8, bottom=0.7)`
-  写下某件东西在参考图里的位置：left、right 是它左右两端离画面左边缘的距离，占画面宽度的几分之几；bottom 是它落地那条边离画面上边缘的距离，占画面高度的几分之几，可不写。画面左边缘是 0，右边缘是 1，被画面边缘切掉的一端写 0 或 1。id 可以是任何物件或墙，room 的墙叫 `<room id>_back`、`_left`、`_right`。
-  这些数字是读图读出来的，不是从坐标算出来的。编译器会把你写的场景通过你写的相机投影回画面，和这里的数字对照，对不上就把差在哪里退回给你改；它是用来发现坐标、尺寸和相机互相矛盾的，所以要照图老实写，不要反过来凑坐标。
-
-## 步骤
+{sighting_reference}## 步骤
 
 1. 先看懂布局，再动手。把结论用 `#` 注释写在程序最前面，三四行即可：
    - 机位：相机是正对后墙，还是斜着拍？斜着拍的图里，有一面墙会沿纵深往远处收拢，那是左墙或右墙，不是后墙。
@@ -140,15 +164,14 @@ rotation_y 的单位是度，从上往下看逆时针为正。size 的「宽」�
    - 总数建议不超过 {SUGGESTED_OBJECT_COUNT} 件，硬上限是 {MAX_COMPILED_OBJECTS} 件（一面带洞口的墙会占 3 到 4 件）。
    - 沿纵深铺开：离相机近的 z 小，离相机远的 z 大，不要把东西都挤在后墙跟前。
    - 人物、动物不要摆。
-6. 画面核对：至少给三件东西写 scene.seen：画面里最大的一件结构（通常是后墙），离相机最近的一件大家具，离相机最远的一件大家具。直接在图上量，写占比；量完再看一眼第 3 步算的相机距离和这几个占比是否说得通。
-7. 自查：每件靠墙的物件，against 写的墙和第 1 步写下的是不是同一面；每件大家具的宽和深，和第 1 步写的占比对得上吗；同一面墙上的物件和洞口，offset 到 offset + 宽 的范围有没有互相重叠；用 position 写的物件，立在地上的 y 是否为 0；物件之间有没有互相穿插；主要物件是否都在相机视野里；左右有没有写反（画面左边的东西 x 为负）；相机是不是在左墙和右墙之间；相机离后墙的距离是不是按后墙的占比算出来的；scene.seen 写的是不是图上看到的位置，而不是从坐标反推的。
+{sighting_step}{self_check_number}. 自查：每件靠墙的物件，against 写的墙和第 1 步写下的是不是同一面；每件大家具的宽和深，和第 1 步写的占比对得上吗；同一面墙上的物件和洞口，offset 到 offset + 宽 的范围有没有互相重叠；用 position 写的物件，立在地上的 y 是否为 0；物件之间有没有互相穿插；主要物件是否都在相机视野里；左右有没有写反（画面左边的东西 x 为负）；相机是不是在左墙和右墙之间；相机离后墙的距离是不是按后墙的占比算出来的{sighting_self_check}。
 
 镜头背后和被挡住的地方图里看不到，不要编造，留空即可。
 
 ## 例子
 
 ```
-{BLOCKOUT_EXAMPLE_PROGRAM}```
+{example}```
 
 例子只示范写法，尺寸和布局要按参考图来。
 
@@ -165,9 +188,18 @@ def clean_description(description: str) -> str:
 
 
 def build_blockout_prompt(
-    *, description: str = "", image_size: tuple[int, int] | None = None
+    *,
+    description: str = "",
+    image_size: tuple[int, int] | None = None,
+    picture_check: bool = False,
 ) -> str:
-    sections = [_INSTRUCTIONS]
+    """The prompt for one picture.
+
+    `picture_check` asks the model for `scene.seen` lines so the plausibility
+    check can project the scene back onto the picture; off, the instruction is
+    not mentioned at all (a program that still writes it is parsed as usual).
+    """
+    sections = [_instructions(picture_check=picture_check)]
     if image_size is not None and image_size[0] > 0 and image_size[1] > 0:
         width, height = image_size
         sections.append(

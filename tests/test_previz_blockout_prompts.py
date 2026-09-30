@@ -7,6 +7,7 @@ from novelvideo.director_world.blockout.dsl_parser import (
 from novelvideo.director_world.blockout.plausibility import check_plausibility
 from novelvideo.director_world.blockout.prompts import (
     BLOCKOUT_EXAMPLE_PROGRAM,
+    BLOCKOUT_EXAMPLE_SIGHTINGS,
     BLOCKOUT_PROMPT_VERSION,
     MAX_DESCRIPTION_CHARS,
     SUGGESTED_OBJECT_COUNT,
@@ -34,7 +35,7 @@ def _signatures(prompt: str, instruction: str) -> str:
 
 
 def test_prompt_names_every_instruction_and_argument_the_parser_accepts():
-    prompt = build_blockout_prompt()
+    prompt = build_blockout_prompt(picture_check=True)
 
     missing = [
         f"{instruction}.{argument}"
@@ -44,6 +45,15 @@ def test_prompt_names_every_instruction_and_argument_the_parser_accepts():
     ]
 
     assert missing == []
+
+
+def test_without_the_picture_check_the_prompt_never_mentions_sightings():
+    prompt = build_blockout_prompt()
+
+    assert "scene.seen" not in prompt
+    assert "画面核对" not in prompt
+    # The example is part of the prompt, so it must not teach the instruction either.
+    assert "scene.seen" not in BLOCKOUT_EXAMPLE_PROGRAM
 
 
 def test_prompt_tells_the_model_not_to_write_the_header_from_the_old_proposal():
@@ -133,7 +143,7 @@ def test_example_shows_labels_and_the_layout_notes():
 
 
 def test_prompt_version_moves_with_the_wording():
-    assert BLOCKOUT_PROMPT_VERSION == 7
+    assert BLOCKOUT_PROMPT_VERSION == 8
 
 
 def test_prompt_asks_for_relations_instead_of_coordinates_where_it_can():
@@ -244,7 +254,7 @@ def test_example_camera_stands_as_far_back_as_its_stated_back_wall_share_says():
 
 
 def test_prompt_asks_the_model_to_read_picture_positions_off_the_picture():
-    prompt = build_blockout_prompt()
+    prompt = build_blockout_prompt(picture_check=True)
 
     assert "至少给三件东西写 scene.seen" in prompt
     assert "离画面左边缘的距离" in prompt
@@ -256,11 +266,12 @@ def test_prompt_asks_the_model_to_read_picture_positions_off_the_picture():
 
 
 def test_example_sightings_are_read_from_the_picture_the_example_describes():
-    scene = parse_blockout_program(BLOCKOUT_EXAMPLE_PROGRAM)
+    scene = parse_blockout_program(BLOCKOUT_EXAMPLE_PROGRAM + BLOCKOUT_EXAMPLE_SIGHTINGS)
 
     described = {sighting.id for sighting in scene.sightings}
     assert "room_back" in described
     assert len(described) >= 3
     # The sightings must agree with the example's own camera, or the example
     # would teach the model a program the check rejects.
-    assert check_plausibility(scene).errors == ()
+    assert check_plausibility(scene, picture_check=True).errors == ()
+    assert BLOCKOUT_EXAMPLE_SIGHTINGS in build_blockout_prompt(picture_check=True)

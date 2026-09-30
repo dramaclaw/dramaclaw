@@ -403,8 +403,16 @@ def _outside_every_room(scene: SceneIR) -> str | None:
 
 
 def check_plausibility(
-    scene: SceneIR, *, image_aspect: float = DEFAULT_IMAGE_ASPECT
+    scene: SceneIR,
+    *,
+    image_aspect: float = DEFAULT_IMAGE_ASPECT,
+    picture_check: bool = False,
 ) -> PlausibilityReport:
+    """Geometry checks always; the `scene.seen` picture check only when asked.
+
+    Off, any sightings the program wrote are parsed and kept but not compared,
+    and none are required.
+    """
     errors: list[str] = []
     warnings: list[str] = []
     camera = scene.camera
@@ -438,7 +446,7 @@ def check_plausibility(
                 "reference camera's view; the image shows them all, so the camera "
                 "position, target and fov are inconsistent with the object positions"
             )
-    if not errors:
+    if picture_check and not errors:
         errors.extend(_sighting_errors(scene, image_aspect))
 
     for solid in scene.solids:
