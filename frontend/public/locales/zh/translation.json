@@ -3006,6 +3006,7 @@
       "selected_regen": "选中重生成",
       "compose_episode": "视频合成",
       "freezone_image_reverse_prompt": "图片反推提示词",
+      "freezone_image_to_blockout": "参考图转白模",
       "build_scenes": "构建场景",
       "build_props": "构建道具",
       "beat_video_prompt": "生成提示词",
@@ -7763,6 +7764,7 @@
       "empty": "尚未搭建场景",
       "summary": "{{objects}} 个对象 · {{frames}} 帧",
       "versionTooNew": "场景由更新的版本写入，请升级后再打开",
+      "generating": "白模生成中，完成后自动放进场景",
       "audioSummary": "已接入音频 {{count}} 段"
     },
     "editor": {
@@ -7866,10 +7868,10 @@
       "noRoom": "场景里的几何体已达上限 {{limit}} 个，先删掉一些再生成",
       "failed": "生成失败：{{message}}",
       "cancelled": "生成已取消",
-      "detached": "等待超时：任务仍在后台运行，这一次的结果不会自动放进场景",
+      "queued": "白模已开始生成，进度见任务中心；完成后自动放进场景",
       "done": "已生成 {{count}} 个几何体",
       "warnings": "有 {{count}} 处可能需要手动调整",
-      "closeDiscards": "生成期间关闭此窗口会丢弃这一次的结果，任务仍会照常跑完并计费",
+      "closeDiscards": "关闭此窗口不影响生成：任务在后台继续，结果会自动放进场景，进度见任务中心",
       "guide": {
         "title": "什么样的图效果好",
         "space": "能看清空间结构的场景图：室内、街道、院落等",

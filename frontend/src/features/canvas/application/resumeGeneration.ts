@@ -16,6 +16,7 @@ import i18n from 'i18next';
 import type { CanvasNode, CanvasNodeType } from '@/features/canvas/domain/canvasNodes';
 import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
 import {
+  fetchFreezoneImageToBlockoutResult,
   fetchFreezoneJobResult,
   fetchFreezoneReversePromptResult,
   fetchFreezoneStoryScriptResult,
@@ -39,6 +40,7 @@ import {
   isStaleGenerationTask,
   shouldWriteGenerationError,
 } from '@/features/canvas/application/generationTaskArbitration';
+import { landBlockoutResult, reportBlockoutFailure } from '@/features/previz/blockoutLanding';
 
 type FreezoneTaskType = FreezoneJobRef['task_type'];
 
@@ -73,6 +75,18 @@ const sessionOwnedTaskKeys = new Set<string>();
  */
 export function generationTaskDescriptor(ref: FreezoneJobRef): GenerationTaskDescriptor {
   sessionOwnedTaskKeys.add(ref.task_key);
+  return handedOffGenerationTaskDescriptor(ref);
+}
+
+/**
+ * 同 {@link generationTaskDescriptor}，但**不**把任务算作本会话已接管：提交方只管
+ * 提交，等结果与落地全部交给 {@link resumeNodeGeneration}——Canvas 扫到节点上的句柄
+ * 就会立刻接上去等，跟刷新后恢复走的是同一条路。
+ *
+ * 给那些提交方活不过任务的流程用：预演台的白模生成从编辑器里发起，而编辑器随时会被
+ * 关掉；要是在提交方里 await，关窗就等于丢结果。
+ */
+export function handedOffGenerationTaskDescriptor(ref: FreezoneJobRef): GenerationTaskDescriptor {
   return {
     generationTaskKey: ref.task_key,
     generationTaskType: ref.task_type,
@@ -185,7 +199,8 @@ type ResumeKind =
   | 'ply'
   | 'script'
   | 'reverse-prompt'
-  | 'text-generate';
+  | 'text-generate'
+  | 'blockout';
 
 function resumeKindForNode(type: CanvasNodeType, taskType: FreezoneTaskType): ResumeKind | null {
   switch (type) {
@@ -203,6 +218,8 @@ function resumeKindForNode(type: CanvasNodeType, taskType: FreezoneTaskType): Re
       return 'script';
     case CANVAS_NODE_TYPES.textAnnotation:
       return taskType === 'freezone_text_generate' ? 'text-generate' : 'reverse-prompt';
+    case CANVAS_NODE_TYPES.previz:
+      return 'blockout';
     default:
       return null;
   }
@@ -259,12 +276,19 @@ const CLEARED_TASK_FIELDS = {
   generationTaskJobId: null,
 } as const;
 
+/** 白模落地要读节点上的最新数据（导入模式、编辑器关着时的场景），这一步之前的 patch 不够用。 */
+interface ResumeNodeContext {
+  nodeId: string;
+  readNodeData: () => Record<string, unknown>;
+}
+
 async function buildSuccessPatch(
   kind: ResumeKind,
   completed: TaskState,
   taskType: FreezoneTaskType,
   jobId: string,
   projectId: string,
+  context: ResumeNodeContext,
 ): Promise<Record<string, unknown>> {
   switch (kind) {
     case 'image': {
@@ -333,12 +357,27 @@ async function buildSuccessPatch(
         model: result.model,
       };
     }
+    case 'blockout': {
+      const body: unknown = await fetchFreezoneImageToBlockoutResult(projectId, jobId);
+      const nodeData = context.readNodeData();
+      const mode = nodeData.blockoutImportMode === 'append' ? 'append' : 'replace';
+      return {
+        ...CLEARED_TASK_FIELDS,
+        blockoutImportMode: null,
+        ...landBlockoutResult({ nodeId: context.nodeId, nodeData, jobId, body, mode }),
+      };
+    }
     default:
       return { ...CLEARED_TASK_FIELDS };
   }
 }
 
 function buildErrorPatch(kind: ResumeKind, error: unknown): Record<string, unknown> {
+  if (kind === 'blockout') {
+    // 预演台节点卡片上没有错误位，取消/失败都用 toast 说；生成态照常清掉。
+    reportBlockoutFailure(error);
+    return { ...CLEARED_TASK_FIELDS, blockoutImportMode: null };
+  }
   if (isTaskCancelledError(error)) {
     // 用户主动终止过的任务恢复时只清理生成态，不当错误展示。
     return { ...CLEARED_TASK_FIELDS };
@@ -419,7 +458,13 @@ export async function resumeNodeGeneration(params: {
   try {
     // 按任务类型取预算，跟提交侧同一份口径（见 pollTimeoutForTaskType）。
     const completed = await awaitTaskCompletion(taskKey, projectId, { taskType });
-    updateNodeData(node.id, await buildSuccessPatch(kind, completed, taskType, jobId, projectId));
+    updateNodeData(
+      node.id,
+      await buildSuccessPatch(kind, completed, taskType, jobId, projectId, {
+        nodeId: node.id,
+        readNodeData: readLatestNodeData,
+      }),
+    );
   } catch (error) {
     console.warn('[resume-generation] task resume failed', { nodeId: node.id, taskKey, error });
     // 轮询超时只说明这一轮不再等了，任务还在后端跑：保留 isGenerating 与句柄，

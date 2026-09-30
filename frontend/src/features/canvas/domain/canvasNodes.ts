@@ -6,6 +6,8 @@ import type {
   DirectorObjectLayer,
   DirectorWorldSource,
 } from '@/features/viewer-kit/three-d/directorManifest';
+import type { PrevizHeldBlockout } from '@/features/previz/blockoutLanding';
+import type { PrevizBlockoutImportMode } from '@/features/previz/domain/blockout';
 import type { PrevizNodeSummary, PrevizScene } from '@/features/previz/domain/scene';
 
 export const CANVAS_NODE_TYPES = {
@@ -686,6 +688,19 @@ export interface PrevizNodeData extends NodeDisplayData {
   summary?: PrevizNodeSummary | null;
   /** 节点封面，P2 截图闭环写入。 */
   previewImageUrl?: string | null;
+  /**
+   * 「参考图转白模」任务在途。句柄三件套与别的生成节点同名，好让画布的恢复路径
+   * （resumeGeneration）一视同仁地接管；结果落地见 features/previz/blockoutLanding.ts。
+   */
+  isGenerating?: boolean;
+  generationStartedAt?: number | null;
+  generationTaskKey?: string | null;
+  generationTaskType?: string | null;
+  generationTaskJobId?: string | null;
+  /** 在途任务落地时该替换还是追加，提交时定下。 */
+  blockoutImportMode?: PrevizBlockoutImportMode | null;
+  /** 生成成功但放不进场景的那份结果，按任务号可再取。 */
+  blockoutHeld?: PrevizHeldBlockout | null;
 }
 
 export interface SkillNodeData extends NodeDisplayData {

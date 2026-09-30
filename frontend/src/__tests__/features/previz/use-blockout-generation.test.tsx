@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+// 「从参考图生成场景」的提交侧：上传、提交、把任务句柄写到预演台节点上。等结果与
+// 落地不在这里——那是画布恢复路径（resumeGeneration）的事，跟别的节点一样，关掉
+// 对话框、关掉编辑器、刷新页面都不会把任务弄丢。
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 
-import { TaskCompletionError, TaskPollTimeoutError } from "@/api/tasks";
+import { nodeNeedsGenerationResume } from "@/features/canvas/application/resumeGeneration";
+import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
 import { PREVIZ_PRIMITIVE_LIMIT } from "@/features/previz/domain/limits";
 import { createDefaultScene, type PrevizProp } from "@/features/previz/domain/scene";
 import { usePrevizStore } from "@/features/previz/store";
 import { useBlockoutGeneration } from "@/features/previz/ui/useBlockoutGeneration";
 import { readUrl } from "@/lib/url-params";
+import { useCanvasStore } from "@/stores/canvasStore";
 
 type Upload = (project: string, file: File, name: string) => Promise<{ url: string }>;
 type Submit = (
@@ -22,11 +27,6 @@ type Submit = (
     nodeId?: string;
   },
 ) => Promise<{ task_type: string; job_id: string; task_key: string }>;
-type Await = (
-  taskKey: string,
-  project: string,
-  options?: { taskType?: string | null },
-) => Promise<unknown>;
 type Fetch = (project: string, jobId: string) => Promise<unknown>;
 
 const JOB = {
@@ -37,7 +37,6 @@ const JOB = {
 
 const uploadFreezoneImage = vi.fn<Upload>(async () => ({ url: "/static/ref.png" }));
 const submitFreezoneImageToBlockout = vi.fn<Submit>(async () => JOB);
-const awaitTaskCompletion = vi.fn<Await>(async () => ({ status: "completed" }));
 const fetchFreezoneImageToBlockoutResult = vi.fn<Fetch>(async () => result(3));
 
 vi.mock("react-i18next", () => ({
@@ -45,6 +44,12 @@ vi.mock("react-i18next", () => ({
     t: (key: string, options?: Record<string, unknown>) =>
       options ? `${key}:${JSON.stringify(options)}` : key,
   }),
+}));
+vi.mock("i18next", () => ({
+  default: {
+    t: (key: string, options?: Record<string, unknown>) =>
+      options ? `${key}:${JSON.stringify(options)}` : key,
+  },
 }));
 vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn(), info: vi.fn() },
@@ -58,11 +63,6 @@ vi.mock("@/api/ops", () => ({
     submitFreezoneImageToBlockout(...(args as Parameters<Submit>)),
   fetchFreezoneImageToBlockoutResult: (...args: unknown[]) =>
     fetchFreezoneImageToBlockoutResult(...(args as Parameters<Fetch>)),
-}));
-// 只换掉等待那一个函数：两个错误类要用真的，hook 是拿 instanceof 认它们的。
-vi.mock("@/api/tasks", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/api/tasks")>()),
-  awaitTaskCompletion: (...args: unknown[]) => awaitTaskCompletion(...(args as Parameters<Await>)),
 }));
 
 function piece(index: number): Record<string, unknown> {
@@ -79,28 +79,11 @@ function piece(index: number): Record<string, unknown> {
   };
 }
 
-function camera(): Record<string, unknown> {
-  return {
-    id: "blockout-cam",
-    kind: "camera",
-    name: "cam",
-    visible: true,
-    locked: false,
-    transform: { position: [0, 1.6, 5], rotation: [0, 0, 0], scale: [1, 1, 1] },
-    focalMm: 28,
-    aperture: 2.8,
-    sensor: "ff",
-    cameraBody: "cine",
-    lensSeries: "prime",
-    blockout: { id: "cam", semanticType: "reference_camera" },
-  };
-}
-
 function result(pieces: number, warnings: string[] = []) {
   return {
-    objects: [...Array.from({ length: pieces }, (_, index) => piece(index)), camera()],
-    reference_camera_id: "blockout-cam",
-    counts: { prop: pieces, camera: 1 },
+    objects: Array.from({ length: pieces }, (_, index) => piece(index)),
+    reference_camera_id: null,
+    counts: { prop: pieces, camera: 0 },
     warnings,
     compiler_version: 1,
   };
@@ -133,9 +116,27 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function setup(nodeId = "previz-1") {
+/** 一个真实的预演台节点：句柄要写到它身上，恢复路径也从它身上读。 */
+function addPrevizNode(data: Record<string, unknown> = {}): string {
+  const id = useCanvasStore.getState().addNode(CANVAS_NODE_TYPES.previz, { x: 0, y: 0 }, data);
+  if (!id) throw new Error("could not add previz node");
+  return id;
+}
+
+const nodeData = (id: string) =>
+  useCanvasStore.getState().nodes.find((node) => node.id === id)?.data as Record<string, unknown>;
+const node = (id: string) => useCanvasStore.getState().nodes.find((entry) => entry.id === id)!;
+
+function setup(nodeId: string) {
   return renderHook(({ id }) => useBlockoutGeneration(id), { initialProps: { id: nodeId } });
 }
+
+const request = (mode: "replace" | "append" = "replace") => ({
+  file: image(),
+  description: "",
+  pictureCheck: false,
+  mode,
+});
 
 const objectIds = () => usePrevizStore.getState().scene.objects.map((object) => object.id);
 
@@ -143,62 +144,60 @@ beforeEach(() => {
   vi.clearAllMocks();
   uploadFreezoneImage.mockReset().mockImplementation(async () => ({ url: "/static/ref.png" }));
   submitFreezoneImageToBlockout.mockReset().mockImplementation(async () => JOB);
-  awaitTaskCompletion.mockReset().mockImplementation(async () => ({ status: "completed" }));
   fetchFreezoneImageToBlockoutResult.mockReset().mockImplementation(async () => result(3));
   vi.mocked(readUrl).mockReturnValue({ project: "demo", canvas: "board-1" });
+  useCanvasStore.getState().setCanvasData([], []);
   usePrevizStore.getState().loadScene(createDefaultScene());
 });
 
-describe("useBlockoutGeneration happy path", () => {
-  it("uploads, submits, waits, fetches and imports in one undo step", async () => {
-    const { result: hook } = setup();
+describe("useBlockoutGeneration submits and hands the task to the canvas", () => {
+  it("uploads, submits and records the task on the node like any other generation", async () => {
+    const id = addPrevizNode();
+    const { result: hook } = setup(id);
 
-    let imported = false;
+    let queued = false;
     await act(async () => {
-      imported = await hook.current.start({
+      queued = await hook.current.start({
         file: image(),
         description: "  门宽 0.9 米  ",
         pictureCheck: true,
-        mode: "replace",
+        mode: "append",
       });
     });
 
-    expect(imported).toBe(true);
-    expect(uploadFreezoneImage).toHaveBeenCalledTimes(1);
+    expect(queued).toBe(true);
     const [project, , filename] = uploadFreezoneImage.mock.calls[0]!;
     expect(project).toBe("demo");
-    expect(filename).toMatch(/^previz-blockout-previz-1-\d+\.png$/);
+    expect(filename).toMatch(new RegExp(`^previz-blockout-${id}-\\d+\\.png$`));
     expect(submitFreezoneImageToBlockout).toHaveBeenCalledWith("demo", {
       sourceUrl: "/static/ref.png",
       description: "门宽 0.9 米",
       pictureCheck: true,
       canvasId: "board-1",
-      nodeId: "previz-1",
+      nodeId: id,
     });
-    expect(awaitTaskCompletion).toHaveBeenCalledWith(JOB.task_key, "demo", {
-      taskType: "freezone_image_to_blockout",
+    expect(nodeData(id)).toMatchObject({
+      isGenerating: true,
+      generationTaskKey: JOB.task_key,
+      generationTaskType: "freezone_image_to_blockout",
+      generationTaskJobId: "job-1",
+      blockoutImportMode: "append",
+      blockoutHeld: null,
     });
-    expect(fetchFreezoneImageToBlockoutResult).toHaveBeenCalledWith("demo", "job-1");
-
-    expect(objectIds()).toEqual([
-      "blockout-box_0",
-      "blockout-box_1",
-      "blockout-box_2",
-      "blockout-cam",
-    ]);
-    expect(usePrevizStore.getState().past).toHaveLength(1);
-    expect(usePrevizStore.getState().activeCameraId).toBe("blockout-cam");
-    expect(toast.success).toHaveBeenCalledWith('previz.blockout.done:{"count":3}');
-    expect(toast.warning).not.toHaveBeenCalled();
-    expect(hook.current.stage).toBe("idle");
-    expect(hook.current.held).toBeNull();
+    expect(typeof nodeData(id).generationStartedAt).toBe("number");
+    // 不等结果：落地归画布的恢复路径，所以这个任务不能算「本会话已接管」。
+    expect(nodeNeedsGenerationResume(node(id))).toBe(true);
+    expect(fetchFreezoneImageToBlockoutResult).not.toHaveBeenCalled();
+    expect(objectIds()).toEqual([]);
+    expect(toast.info).toHaveBeenCalledWith("previz.blockout.queued");
+    expect(hook.current.stage).toBe("generating");
   });
 
   it("falls back to the default canvas when the URL names none", async () => {
     vi.mocked(readUrl).mockReturnValue({ project: "demo", canvas: null });
-    const { result: hook } = setup();
+    const { result: hook } = setup(addPrevizNode());
 
-    await act(() => hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" }));
+    await act(() => hook.current.start(request()));
 
     expect(submitFreezoneImageToBlockout.mock.calls[0]![1]).toMatchObject({
       canvasId: "default",
@@ -207,51 +206,68 @@ describe("useBlockoutGeneration happy path", () => {
   });
 
   it("keeps the extension of the picked file in the upload name", async () => {
-    const { result: hook } = setup();
+    const { result: hook } = setup(addPrevizNode());
 
-    await act(() =>
-      hook.current.start({ file: image("Room.JPEG"), description: "", pictureCheck: false, mode: "replace" }),
-    );
+    await act(() => hook.current.start({ ...request(), file: image("Room.JPEG") }));
 
     expect(uploadFreezoneImage.mock.calls[0]![2]).toMatch(/\.jpeg$/);
   });
 
-  it("walks through uploading and generating while the work is in flight", async () => {
+  it("shows uploading until the task is queued, then generating until the node settles", async () => {
     const upload = deferred<{ url: string }>();
-    const task = deferred<unknown>();
     uploadFreezoneImage.mockImplementationOnce(() => upload.promise);
-    awaitTaskCompletion.mockImplementationOnce(() => task.promise);
-    const { result: hook } = setup();
+    const id = addPrevizNode();
+    const { result: hook } = setup(id);
 
     let run!: Promise<boolean>;
     act(() => {
-      run = hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" });
+      run = hook.current.start(request());
     });
     await waitFor(() => expect(hook.current.stage).toBe("uploading"));
 
-    await act(async () => upload.resolve({ url: "/static/ref.png" }));
-    await waitFor(() => expect(hook.current.stage).toBe("generating"));
-    expect(objectIds()).toEqual([]);
-
     await act(async () => {
-      task.resolve({ status: "completed" });
+      upload.resolve({ url: "/static/ref.png" });
       await run;
     });
+    expect(hook.current.stage).toBe("generating");
+
+    // 恢复路径落地时清掉生成态（CLEARED_TASK_FIELDS），进度随之归零。
+    act(() => {
+      useCanvasStore.getState().updateNodeData(id, {
+        isGenerating: false,
+        generationTaskKey: null,
+        generationTaskType: null,
+        generationTaskJobId: null,
+      });
+    });
     expect(hook.current.stage).toBe("idle");
-    expect(objectIds()).toHaveLength(4);
   });
 
-  it("reports what the checks flagged, three lines at most", async () => {
-    fetchFreezoneImageToBlockoutResult.mockResolvedValueOnce(
-      result(2, ["a 悬空", "b 穿插", "c 出界", "d 太大"]),
-    );
-    const { result: hook } = setup();
-
-    await act(() => hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" }));
-
-    expect(toast.warning).toHaveBeenCalledWith('previz.blockout.warnings:{"count":4}', {
-      description: "a 悬空\nb 穿插\nc 出界",
+  it("reads the generating state of a node restored from storage", () => {
+    const id = addPrevizNode({
+      isGenerating: true,
+      generationTaskKey: JOB.task_key,
+      generationTaskType: "freezone_image_to_blockout",
+      generationTaskJobId: "job-1",
     });
+
+    const { result: hook } = setup(id);
+
+    expect(hook.current.stage).toBe("generating");
+  });
+
+  it("refuses a second start while the node is still generating", async () => {
+    const id = addPrevizNode();
+    const { result: hook } = setup(id);
+    await act(() => hook.current.start(request()));
+
+    let queued = true;
+    await act(async () => {
+      queued = await hook.current.start(request());
+    });
+
+    expect(queued).toBe(false);
+    expect(uploadFreezoneImage).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -260,28 +276,23 @@ describe("useBlockoutGeneration refuses before spending anything", () => {
     ["room.gif", 2048, "previz.blockout.badExtension"],
     ["room.png", 21 * 1024 * 1024, "previz.blockout.tooLarge"],
   ])("turns away %s (%d bytes)", async (name, bytes, message) => {
-    const { result: hook } = setup();
+    const { result: hook } = setup(addPrevizNode());
 
-    let imported = true;
+    let queued = true;
     await act(async () => {
-      imported = await hook.current.start({
-        file: image(name, bytes),
-        description: "",
-        pictureCheck: false,
-        mode: "replace",
-      });
+      queued = await hook.current.start({ ...request(), file: image(name, bytes) });
     });
 
-    expect(imported).toBe(false);
+    expect(queued).toBe(false);
     expect(toast.error).toHaveBeenCalledWith(message);
     expect(uploadFreezoneImage).not.toHaveBeenCalled();
   });
 
   it("needs a project in the URL", async () => {
     vi.mocked(readUrl).mockReturnValue({ project: null, canvas: null });
-    const { result: hook } = setup();
+    const { result: hook } = setup(addPrevizNode());
 
-    await act(() => hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" }));
+    await act(() => hook.current.start(request()));
 
     expect(toast.error).toHaveBeenCalledWith("previz.blockout.noProject");
     expect(uploadFreezoneImage).not.toHaveBeenCalled();
@@ -292,9 +303,9 @@ describe("useBlockoutGeneration refuses before spending anything", () => {
     usePrevizStore
       .getState()
       .loadScene({ ...scene, objects: handPlacedPrimitives(PREVIZ_PRIMITIVE_LIMIT) });
-    const { result: hook } = setup();
+    const { result: hook } = setup(addPrevizNode());
 
-    await act(() => hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" }));
+    await act(() => hook.current.start(request()));
 
     expect(toast.error).toHaveBeenCalledWith('previz.blockout.noRoom:{"limit":150}');
     expect(uploadFreezoneImage).not.toHaveBeenCalled();
@@ -302,331 +313,144 @@ describe("useBlockoutGeneration refuses before spending anything", () => {
   });
 
   it("starts on a full scene when replacing would free the slots", async () => {
-    const { result: hook } = setup();
-    fetchFreezoneImageToBlockoutResult.mockResolvedValueOnce(result(PREVIZ_PRIMITIVE_LIMIT));
-    await act(() => hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" }));
-    expect(objectIds()).toHaveLength(PREVIZ_PRIMITIVE_LIMIT + 1);
+    const scene = createDefaultScene();
+    const blockout = handPlacedPrimitives(PREVIZ_PRIMITIVE_LIMIT).map((prop) => ({
+      ...prop,
+      blockout: { id: prop.id, semanticType: "prop" },
+    }));
+    usePrevizStore.getState().loadScene({ ...scene, objects: blockout });
+    const { result: hook } = setup(addPrevizNode());
 
-    await act(() => hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" }));
+    await act(() => hook.current.start(request("replace")));
 
-    expect(uploadFreezoneImage).toHaveBeenCalledTimes(2);
-    expect(objectIds()).toEqual([
-      "blockout-box_0",
-      "blockout-box_1",
-      "blockout-box_2",
-      "blockout-cam",
-    ]);
+    expect(uploadFreezoneImage).toHaveBeenCalledTimes(1);
   });
 
   it("does not start appending to a full scene", async () => {
-    const { result: hook } = setup();
-    fetchFreezoneImageToBlockoutResult.mockResolvedValueOnce(result(PREVIZ_PRIMITIVE_LIMIT));
-    await act(() => hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" }));
+    const scene = createDefaultScene();
+    const blockout = handPlacedPrimitives(PREVIZ_PRIMITIVE_LIMIT).map((prop) => ({
+      ...prop,
+      blockout: { id: prop.id, semanticType: "prop" },
+    }));
+    usePrevizStore.getState().loadScene({ ...scene, objects: blockout });
+    const { result: hook } = setup(addPrevizNode());
 
-    await act(() => hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "append" }));
+    await act(() => hook.current.start(request("append")));
 
-    expect(uploadFreezoneImage).toHaveBeenCalledTimes(1);
+    expect(uploadFreezoneImage).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith('previz.blockout.noRoom:{"limit":150}');
   });
 });
 
-describe("useBlockoutGeneration failures leave the scene alone", () => {
+describe("useBlockoutGeneration failures before the task exists leave the node alone", () => {
   async function failing(arrange: () => void) {
     arrange();
-    const before = usePrevizStore.getState().scene;
-    const { result: hook } = setup();
-    let imported = true;
+    const id = addPrevizNode();
+    const before = nodeData(id);
+    const { result: hook } = setup(id);
+    let queued = true;
     await act(async () => {
-      imported = await hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" });
+      queued = await hook.current.start(request());
     });
-    expect(imported).toBe(false);
-    expect(usePrevizStore.getState().scene).toBe(before);
-    expect(usePrevizStore.getState().past).toHaveLength(0);
+    expect(queued).toBe(false);
+    expect(nodeData(id)).toEqual(before);
     expect(hook.current.stage).toBe("idle");
-    expect(hook.current.held).toBeNull();
-    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.info).not.toHaveBeenCalled();
   }
 
   it("upload fails", async () => {
-    await failing(() => uploadFreezoneImage.mockRejectedValueOnce(new Error("disk full")));
-    expect(toast.error).toHaveBeenCalledWith('previz.blockout.failed:{"message":"disk full"}');
+    await failing(() => uploadFreezoneImage.mockRejectedValueOnce(new Error("413")));
+    expect(toast.error).toHaveBeenCalledWith('previz.blockout.failed:{"message":"413"}');
     expect(submitFreezoneImageToBlockout).not.toHaveBeenCalled();
   });
 
   it("shows the message a person can read when the upload error wraps one", async () => {
-    await failing(() =>
-      uploadFreezoneImage.mockRejectedValueOnce(
-        Object.assign(new Error("Request failed: http://api.internal/upload"), {
-          cause: new Error("文件太大"),
-        }),
-      ),
-    );
+    const wrapped = new Error("Request failed with status 413");
+    (wrapped as { cause?: unknown }).cause = new Error("文件太大");
+    await failing(() => uploadFreezoneImage.mockRejectedValueOnce(wrapped));
     expect(toast.error).toHaveBeenCalledWith('previz.blockout.failed:{"message":"文件太大"}');
   });
 
   it("submit fails", async () => {
-    await failing(() =>
-      submitFreezoneImageToBlockout.mockRejectedValueOnce(new Error("积分不足")),
-    );
-    expect(toast.error).toHaveBeenCalledWith('previz.blockout.failed:{"message":"积分不足"}');
-    expect(awaitTaskCompletion).not.toHaveBeenCalled();
-  });
-
-  it("the task fails", async () => {
-    await failing(() =>
-      awaitTaskCompletion.mockRejectedValueOnce(
-        new TaskCompletionError("场景过于复杂：编译出 180 件", "failed", JOB.task_key),
-      ),
-    );
-    expect(toast.error).toHaveBeenCalledWith(
-      'previz.blockout.failed:{"message":"场景过于复杂：编译出 180 件"}',
-    );
-    expect(fetchFreezoneImageToBlockoutResult).not.toHaveBeenCalled();
-  });
-
-  it("the task is cancelled, which is not an error", async () => {
-    await failing(() =>
-      awaitTaskCompletion.mockRejectedValueOnce(
-        new TaskCompletionError("cancelled", "cancelled", JOB.task_key),
-      ),
-    );
-    expect(toast.error).not.toHaveBeenCalled();
-    expect(toast.info).toHaveBeenCalledWith("previz.blockout.cancelled");
-  });
-
-  it("the page loses track of the task", async () => {
-    await failing(() =>
-      awaitTaskCompletion.mockRejectedValueOnce(new TaskPollTimeoutError(JOB.task_key, 1000)),
-    );
-    expect(toast.error).not.toHaveBeenCalled();
-    expect(toast.warning).toHaveBeenCalledWith("previz.blockout.detached");
-  });
-
-  it("the result cannot be read", async () => {
-    await failing(() =>
-      fetchFreezoneImageToBlockoutResult.mockRejectedValueOnce(new Error("job result missing")),
-    );
-    expect(toast.error).toHaveBeenCalledWith(
-      'previz.blockout.failed:{"message":"job result missing"}',
-    );
-  });
-
-  it.each([
-    ["not an object", "nope"],
-    ["null", null],
-    ["objects is not a list", { objects: "x", reference_camera_id: null, warnings: [] }],
-    ["nothing usable in the list", { objects: [{ id: "x" }], reference_camera_id: null }],
-  ])("the result is malformed: %s", async (_label, body) => {
-    await failing(() => fetchFreezoneImageToBlockoutResult.mockResolvedValueOnce(body));
-    expect(toast.error).toHaveBeenCalledWith("previz.blockout.rejected.empty");
+    await failing(() => submitFreezoneImageToBlockout.mockRejectedValueOnce(new Error("402")));
+    expect(toast.error).toHaveBeenCalledWith('previz.blockout.failed:{"message":"402"}');
   });
 });
 
 describe("useBlockoutGeneration keeps a paid result that did not fit", () => {
-  function fillScene(count: number) {
-    const scene = createDefaultScene();
-    usePrevizStore.getState().loadScene({ ...scene, objects: handPlacedPrimitives(count) });
-  }
+  const held = {
+    jobId: "job-1",
+    rejection: { reason: "primitive-limit", missing: 5, limit: PREVIZ_PRIMITIVE_LIMIT },
+  };
 
-  it("holds the result and says how many slots are missing", async () => {
-    fillScene(140);
-    fetchFreezoneImageToBlockoutResult.mockResolvedValueOnce(result(15));
-    const before = usePrevizStore.getState().scene;
-    const { result: hook } = setup();
+  it("shows what the landing held on the node", () => {
+    const { result: hook } = setup(addPrevizNode({ blockoutHeld: held }));
 
-    let imported = true;
-    await act(async () => {
-      imported = await hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" });
-    });
-
-    expect(imported).toBe(false);
-    expect(usePrevizStore.getState().scene).toBe(before);
-    expect(hook.current.held?.rejection).toEqual({
-      reason: "primitive-limit",
-      missing: 5,
-      limit: 150,
-    });
-    expect(toast.error).toHaveBeenCalledWith(
-      'previz.blockout.rejected.primitiveLimit:{"missing":5,"limit":150}',
-    );
+    expect(hook.current.held).toEqual(held);
   });
 
-  it("imports the held result without another model call once there is room", async () => {
-    fillScene(140);
-    fetchFreezoneImageToBlockoutResult.mockResolvedValueOnce(result(15, ["a 悬空"]));
-    const { result: hook } = setup();
-    await act(() => hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" }));
-    vi.clearAllMocks();
+  it("imports the held result again by job id, without another model call", async () => {
+    const id = addPrevizNode({ blockoutHeld: held });
+    usePrevizStore.getState().loadScene(createDefaultScene(), id);
+    const { result: hook } = setup(id);
 
-    const scene = usePrevizStore.getState().scene;
-    act(() =>
-      usePrevizStore.getState().loadScene({ ...scene, objects: scene.objects.slice(0, 100) }),
-    );
     let imported = false;
-    act(() => {
-      imported = hook.current.retryImport("append");
+    await act(async () => {
+      imported = await hook.current.retryImport("append");
     });
 
     expect(imported).toBe(true);
-    expect(objectIds()).toHaveLength(100 + 16);
-    expect(hook.current.held).toBeNull();
-    expect(submitFreezoneImageToBlockout).not.toHaveBeenCalled();
     expect(uploadFreezoneImage).not.toHaveBeenCalled();
-    expect(toast.success).toHaveBeenCalledWith('previz.blockout.done:{"count":15}');
-    expect(toast.warning).toHaveBeenCalledWith('previz.blockout.warnings:{"count":1}', {
-      description: "a 悬空",
-    });
+    expect(submitFreezoneImageToBlockout).not.toHaveBeenCalled();
+    expect(fetchFreezoneImageToBlockoutResult).toHaveBeenCalledWith("demo", "job-1");
+    expect(objectIds()).toEqual(["blockout-box_0", "blockout-box_1", "blockout-box_2"]);
+    expect(nodeData(id).blockoutHeld).toBeNull();
+    expect(hook.current.held).toBeNull();
   });
 
   it("keeps holding when the retry still does not fit", async () => {
-    fillScene(140);
-    fetchFreezoneImageToBlockoutResult.mockResolvedValueOnce(result(15));
-    const { result: hook } = setup();
-    await act(() => hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" }));
+    const id = addPrevizNode({ blockoutHeld: held });
+    const scene = createDefaultScene();
+    usePrevizStore
+      .getState()
+      .loadScene({ ...scene, objects: handPlacedPrimitives(PREVIZ_PRIMITIVE_LIMIT - 1) }, id);
+    const { result: hook } = setup(id);
 
-    let imported = true;
-    act(() => {
-      imported = hook.current.retryImport("append");
-    });
-
-    expect(imported).toBe(false);
-    expect(hook.current.held).not.toBeNull();
-    expect(objectIds()).toHaveLength(140);
-  });
-
-  it("does nothing when there is no held result", () => {
-    const { result: hook } = setup();
-
-    let imported = true;
-    act(() => {
-      imported = hook.current.retryImport("replace");
-    });
-
-    expect(imported).toBe(false);
-    expect(toast.error).not.toHaveBeenCalled();
-  });
-
-  it("lets go of the held result when abandoned", async () => {
-    fillScene(140);
-    fetchFreezoneImageToBlockoutResult.mockResolvedValueOnce(result(15));
-    const { result: hook } = setup();
-    await act(() => hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" }));
-
-    act(() => hook.current.abandon());
-
-    expect(hook.current.held).toBeNull();
-  });
-});
-
-describe("useBlockoutGeneration drops results nobody is waiting for", () => {
-  it("does not import after the dialog was closed mid-generation", async () => {
-    const task = deferred<unknown>();
-    awaitTaskCompletion.mockImplementationOnce(() => task.promise);
-    const { result: hook } = setup();
-    let run!: Promise<boolean>;
-    act(() => {
-      run = hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" });
-    });
-    await waitFor(() => expect(hook.current.stage).toBe("generating"));
-
-    act(() => hook.current.abandon());
-    expect(hook.current.stage).toBe("idle");
     let imported = true;
     await act(async () => {
-      task.resolve({ status: "completed" });
-      imported = await run;
+      imported = await hook.current.retryImport("append");
     });
 
     expect(imported).toBe(false);
-    expect(objectIds()).toEqual([]);
+    expect(hook.current.held).toEqual({
+      jobId: "job-1",
+      rejection: { reason: "primitive-limit", missing: 2, limit: PREVIZ_PRIMITIVE_LIMIT },
+    });
+  });
+
+  it("reports when the held result can no longer be fetched", async () => {
+    fetchFreezoneImageToBlockoutResult.mockRejectedValueOnce(new Error("gone"));
+    const { result: hook } = setup(addPrevizNode({ blockoutHeld: held }));
+
+    let imported = true;
+    await act(async () => {
+      imported = await hook.current.retryImport("append");
+    });
+
+    expect(imported).toBe(false);
+    expect(toast.error).toHaveBeenCalledWith('previz.blockout.failed:{"message":"gone"}');
+    expect(hook.current.held).toEqual(held);
+  });
+
+  it("does nothing when there is no held result", async () => {
+    const { result: hook } = setup(addPrevizNode());
+
+    let imported = true;
+    await act(async () => {
+      imported = await hook.current.retryImport("append");
+    });
+
+    expect(imported).toBe(false);
     expect(fetchFreezoneImageToBlockoutResult).not.toHaveBeenCalled();
-    expect(toast.success).not.toHaveBeenCalled();
-    expect(toast.error).not.toHaveBeenCalled();
-  });
-
-  it("stays quiet when an abandoned run fails later", async () => {
-    const task = deferred<unknown>();
-    awaitTaskCompletion.mockImplementationOnce(() => task.promise);
-    const { result: hook } = setup();
-    let run!: Promise<boolean>;
-    act(() => {
-      run = hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" });
-    });
-    await waitFor(() => expect(hook.current.stage).toBe("generating"));
-    act(() => hook.current.abandon());
-
-    await act(async () => {
-      task.reject(new TaskCompletionError("boom", "failed", JOB.task_key));
-      await run;
-    });
-
-    expect(toast.error).not.toHaveBeenCalled();
-  });
-
-  // store 是模块级单例：编辑器关掉之后再打开的可能是另一个预演台节点，迟到的结果
-  // 要是照样导入，白模就落进了别人的场景里。
-  it("does not import into whatever scene is loaded after the editor unmounted", async () => {
-    const task = deferred<unknown>();
-    awaitTaskCompletion.mockImplementationOnce(() => task.promise);
-    const { result: hook, unmount } = setup();
-    let run!: Promise<boolean>;
-    act(() => {
-      run = hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" });
-    });
-    await waitFor(() => expect(awaitTaskCompletion).toHaveBeenCalled());
-
-    unmount();
-    usePrevizStore.getState().loadScene(createDefaultScene());
-    await act(async () => {
-      task.resolve({ status: "completed" });
-      await run;
-    });
-
-    expect(objectIds()).toEqual([]);
-    expect(toast.success).not.toHaveBeenCalled();
-  });
-
-  it("does not import after the editor switched to another node", async () => {
-    const task = deferred<unknown>();
-    awaitTaskCompletion.mockImplementationOnce(() => task.promise);
-    const { result: hook, rerender } = setup("previz-1");
-    let run!: Promise<boolean>;
-    act(() => {
-      run = hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" });
-    });
-    await waitFor(() => expect(awaitTaskCompletion).toHaveBeenCalled());
-
-    rerender({ id: "previz-2" });
-    await act(async () => {
-      task.resolve({ status: "completed" });
-      await run;
-    });
-
-    expect(objectIds()).toEqual([]);
-    expect(hook.current.stage).toBe("idle");
-  });
-
-  it("refuses a second start while one is running", async () => {
-    const task = deferred<unknown>();
-    awaitTaskCompletion.mockImplementationOnce(() => task.promise);
-    const { result: hook } = setup();
-    let first!: Promise<boolean>;
-    act(() => {
-      first = hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" });
-    });
-    await waitFor(() => expect(hook.current.stage).toBe("generating"));
-
-    let second = true;
-    await act(async () => {
-      second = await hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" });
-    });
-
-    expect(second).toBe(false);
-    expect(uploadFreezoneImage).toHaveBeenCalledTimes(1);
-    await act(async () => {
-      task.resolve({ status: "completed" });
-      await first;
-    });
-    expect(objectIds()).toHaveLength(4);
   });
 });

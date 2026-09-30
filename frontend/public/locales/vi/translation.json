@@ -2910,6 +2910,7 @@
       "selected_regen": "Tạo lại mục đã chọn",
       "compose_episode": "Dựng video",
       "freezone_image_reverse_prompt": "Đảo ngược prompt từ ảnh",
+      "freezone_image_to_blockout": "Ảnh tham chiếu sang blockout",
       "build_scenes": "Dựng bối cảnh",
       "build_props": "Dựng đạo cụ",
       "beat_video_prompt": "Tạo prompt",
@@ -7667,6 +7668,7 @@
       "empty": "No scene yet",
       "summary": "{{objects}} objects · {{frames}} frames",
       "versionTooNew": "This scene was written by a newer version. Update before opening it.",
+      "generating": "Generating blockout; it lands in the scene when done",
       "audioSummary": "{{count}} audio clips attached"
     },
     "editor": {
@@ -7770,10 +7772,10 @@
       "noRoom": "The scene already holds {{limit}} primitives; remove some before generating",
       "failed": "Generation failed: {{message}}",
       "cancelled": "Generation cancelled",
-      "detached": "Timed out waiting: the task is still running in the background and this result will not be added to the scene",
+      "queued": "Blockout generation started; track it in the task center. The result lands in the scene automatically",
       "done": "Generated {{count}} primitives",
       "warnings": "{{count}} spots may need manual adjustment",
-      "closeDiscards": "Closing this window while generating discards this result; the task still runs to the end and is billed",
+      "closeDiscards": "Closing this window does not stop the generation: the task keeps running, the result lands in the scene automatically, and progress shows in the task center",
       "guide": {
         "title": "Images that work well",
         "space": "A scene whose layout is readable: a room, a street, a courtyard",

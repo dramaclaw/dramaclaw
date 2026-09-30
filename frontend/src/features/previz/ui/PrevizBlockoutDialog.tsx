@@ -19,10 +19,10 @@ import {
   PREVIZ_BLOCKOUT_HINT_KEY,
   blockoutRejectionMessage,
 } from "@/features/previz/ui/blockoutMessages";
+import type { PrevizHeldBlockout } from "@/features/previz/blockoutLanding";
 import type {
   PrevizBlockoutRequest,
   PrevizBlockoutStage,
-  PrevizHeldBlockout,
 } from "@/features/previz/ui/useBlockoutGeneration";
 import { BillingRuleNotConfiguredError } from "@/lib/api-errors";
 import { useGenerationCreditCost } from "@/lib/queries/generation-credit-cost";

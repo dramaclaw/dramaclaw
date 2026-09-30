@@ -9,7 +9,7 @@ import {
   PrevizBlockoutDialog,
   type PrevizBlockoutDialogProps,
 } from "@/features/previz/ui/PrevizBlockoutDialog";
-import type { PrevizHeldBlockout } from "@/features/previz/ui/useBlockoutGeneration";
+import type { PrevizHeldBlockout } from "@/features/previz/blockoutLanding";
 import { BillingRuleNotConfiguredError } from "@/lib/api-errors";
 
 type CostResult = { data?: { data: { display: string } }; error?: unknown };
@@ -33,8 +33,7 @@ vi.mock("@/components/credit-cost-inline", () => ({
 }));
 
 const HELD: PrevizHeldBlockout = {
-  payload: { objects: [{}], referenceCameraId: null },
-  warnings: [],
+  jobId: "job-1",
   rejection: { reason: "primitive-limit", missing: 5, limit: 150 },
 };
 

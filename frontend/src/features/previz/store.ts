@@ -168,6 +168,14 @@ export type PrevizMotionDialog =
 
 interface PrevizStoreState {
   scene: PrevizScene;
+  /**
+   * 编辑器此刻打开的是哪个预演台节点；关着为 null。
+   *
+   * 白模生成是画布层的任务，落地时编辑器可能开着、关着、或开着别的节点。
+   * 结果只有在「开着的正是这个节点」时才能进 store（否则就落进了别人的场景），
+   * 其余情形直接写回节点数据——判断依据就是这一个字段。
+   */
+  editingNodeId: string | null;
   /** 相对上次写回 node.data 是否有未落盘改动。 */
   dirty: boolean;
   past: PrevizScene[];
@@ -289,7 +297,9 @@ interface PrevizStoreState {
   /** 「转为路径片段」：把跟踪结果烤成关键帧，从此不再跟着人物走。 */
   bakeCloseup: (clipId: string) => void;
   /** 打开编辑器时灌入初始场景，同时清空历史——上一次会话的 undo 不该跨节点串。 */
-  loadScene: (scene: PrevizScene) => void;
+  loadScene: (scene: PrevizScene, nodeId?: string | null) => void;
+  /** 关编辑器：此后到达的生成结果不再进 store，改写节点数据。场景本身留着不动。 */
+  unloadScene: () => void;
   /** 场景改动的唯一入口：压历史、清 redo、置脏。 */
   applyScene: (next: PrevizScene) => void;
   undo: () => void;
@@ -325,6 +335,7 @@ interface PrevizStoreState {
 
 export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   scene: createDefaultScene(),
+  editingNodeId: null,
   dirty: false,
   past: [],
   future: [],
@@ -345,9 +356,10 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
   motionDialog: null,
   motionStatus: {},
 
-  loadScene: (scene) =>
+  loadScene: (scene, nodeId = null) =>
     set({
       scene,
+      editingNodeId: nodeId,
       dirty: false,
       past: [],
       future: [],
@@ -365,6 +377,8 @@ export const usePrevizStore = create<PrevizStoreState>((set, get) => ({
       motionDialog: null,
       motionStatus: {},
     }),
+
+  unloadScene: () => set({ editingNodeId: null }),
 
   applyScene: (next) => {
     const { scene, past } = get();

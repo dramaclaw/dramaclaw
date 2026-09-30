@@ -322,15 +322,8 @@ export function PrevizEditor({
   /** 「从参考图生成场景」开着没有。 */
   const [blockoutOpen, setBlockoutOpen] = useState(false);
   const blockout = useBlockoutGeneration(nodeId);
-  const abandonBlockout = blockout.abandon;
-  /**
-   * 关掉 = 这一次的结果不要了（对话框里写明了）。任务在后端照跑，迟到的结果由
-   * `abandon` 挡在场景外面——用户关掉之后多半已经在手摆别的了。
-   */
-  const closeBlockout = useCallback(() => {
-    abandonBlockout();
-    setBlockoutOpen(false);
-  }, [abandonBlockout]);
+  /** 关掉只是关掉：任务挂在节点上，由画布接回来，结果照样进场景。 */
+  const closeBlockout = useCallback(() => setBlockoutOpen(false), []);
   const pointerDownAt = useRef<{ x: number; y: number } | null>(null);
   /**
    * Web Audio 上下文按需建、整个编辑器共用一份：浏览器对 AudioContext 数量有上限，
@@ -584,8 +577,10 @@ export function PrevizEditor({
   initialSceneRef.current = initialScene;
 
   useEffect(() => {
-    if (!open) return;
-    loadScene(initialSceneRef.current);
+    if (!open) return undefined;
+    // 带上 nodeId：白模结果落地时据此判断该进 store 还是直接写回节点。
+    loadScene(initialSceneRef.current, nodeId);
+    return () => usePrevizStore.getState().unloadScene();
   }, [open, nodeId, loadScene]);
 
   useEffect(() => {
@@ -1914,13 +1909,15 @@ export function PrevizEditor({
                 held={blockout.held}
                 hasExisting={sceneHasBlockout}
                 onStart={(request) => {
-                  // 落进场景才关；失败或放不下时留着，用户改一改还能再来。
-                  void blockout.start(request).then((landed) => {
-                    if (landed) setBlockoutOpen(false);
+                  // 提交成功就关，结果由画布接回来；提交失败留着，用户改一改还能再来。
+                  void blockout.start(request).then((queued) => {
+                    if (queued) setBlockoutOpen(false);
                   });
                 }}
                 onRetryImport={(mode) => {
-                  if (blockout.retryImport(mode)) setBlockoutOpen(false);
+                  void blockout.retryImport(mode).then((landed) => {
+                    if (landed) setBlockoutOpen(false);
+                  });
                 }}
                 onClose={closeBlockout}
               />

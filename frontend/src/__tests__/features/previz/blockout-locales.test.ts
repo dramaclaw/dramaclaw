@@ -13,8 +13,9 @@ import {
 } from "@/features/previz/ui/blockoutMessages";
 
 const LANGUAGES = ["zh", "en", "vi"] as const;
-/** 出文案的就这四个文件；往别处加了 `previz.blockout.*` 的话把它补进来。 */
+/** 出文案的就这几个文件；往别处加了 `previz.blockout.*` 的话把它补进来。 */
 const SOURCES = [
+  "src/features/previz/blockoutLanding.ts",
   "src/features/previz/ui/PrevizBlockoutDialog.tsx",
   "src/features/previz/ui/PrevizToolbar.tsx",
   "src/features/previz/ui/blockoutMessages.ts",
@@ -94,6 +95,13 @@ describe("previz.blockout 文案", () => {
     expect(literalKeys()).toContain("previz.blockout.title");
     expect(literalKeys()).toContain("previz.toolbar.blockout");
     expect(literalKeys().length).toBeGreaterThan(15);
+  });
+
+  // 任务中心按 task_type 查 `tasks.types.*`，缺了就只能显示后端的 label 或裸 type。
+  it.each(LANGUAGES)("任务中心在 %s 里有白模任务的名字", (lng) => {
+    const label = lookup(table(lng), "tasks.types.freezone_image_to_blockout");
+    expect(typeof label).toBe("string");
+    expect((label as string).trim().length).toBeGreaterThan(0);
   });
 
   it("三种语言的键完全一致", () => {
