@@ -1690,6 +1690,10 @@ def test_workflow_draft_can_be_prepared_patched_and_confirmed_once(
         }
 
     monkeypatch.setattr(plugin, "compile_workflow_intent", fake_compile)
+    # This test owns the draft revision lifecycle, not model-catalog admission.
+    monkeypatch.setattr(plugin, "_workflow_runtime_preflight", lambda *_args, **_kwargs: {
+        "status": "ready", "blockers": [], "warnings": [],
+    })
     monkeypatch.setattr(
         plugin,
         "build_workflow_graph_commands",
@@ -2501,7 +2505,9 @@ def test_workflow_runtime_preflight_warns_when_queue_is_full(monkeypatch):
             "plan": {
                 "nodes": [
                     {"id": "brief", "node_type": "textAnnotationNode", "data": {}},
-                    {"id": "image", "node_type": "imageGenNode", "data": {}},
+                    {"id": "text", "node_type": "textAnnotationNode", "data": {
+                        "workflowCatalog": {"recipeId": "general-text"},
+                    }},
                 ]
             },
         },
@@ -3870,6 +3876,22 @@ def test_generation_clarification_partial_card_recommends_from_confirmed_model(m
     }
 
 
+def test_generation_clarification_mixed_modes_return_actionable_recovery():
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+
+    result = handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a",
+        "generation_media_types": ["video"],
+        "generation_required_choices": {"video": ["duration_seconds"]},
+    })
+
+    assert result["ok"] is False
+    assert result["status"] == "generation_clarification_args_invalid"
+    assert "generation_media_types and generation_required_choices are mutually exclusive" in result["error"]
+    assert "omit generation_media_types" in result["error"]
+
+
 def test_generation_clarification_partial_card_recommends_for_alias_model(monkeypatch):
     """CORE-CANVAS-01: a confirmed catalog alias still yields concrete recommendations."""
     plugin = _load_plugin_module()
@@ -4301,6 +4323,33 @@ def test_prepare_workflow_rejects_incomplete_generation_answers(monkeypatch):
 
     assert result["status"] == "generation_answers_incomplete"
     assert "image_aspect_ratio" in result["error"]
+
+
+def test_prepare_exact_plan_video_mode_is_not_a_generation_answer(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(
+        plugin, "validate_agent_workflow_plan",
+        lambda _plan: pytest.fail("invalid generation answers must stop before validation"),
+    )
+    result = plugin._handle_prepare_workflow_plan_draft({
+        "plan": {
+            "schema_version": "freezone_workflow_plan.v1",
+            "inputs": {"video_generation_mode": "allReference"},
+            "nodes": [{"id": "clip", "node_type": "videoNode", "data": {
+                "genMode": "allReference", "durationSec": 8,
+            }}],
+            "edges": [],
+        },
+        "generation_answers": {
+            "video_generation_mode": {"option_ids": ["allReference"]},
+        },
+    })
+
+    assert result["status"] == "generation_answers_incomplete"
+    assert result["unsupported_answer"] == "video_generation_mode"
+    assert "video_generation_mode" not in result["allowed_answer_ids"]
+    assert "plan.inputs.video_generation_mode" in result["agent_instruction"]
+    assert "data.genMode" in result["agent_instruction"]
 
 
 def test_prepare_exact_plan_maps_generation_answers_into_nodes(monkeypatch, tmp_path):
