@@ -31,6 +31,7 @@ from novelvideo.director_world.blockout.scene_ir import (
     OpeningIR,
     RoomIR,
     SceneIR,
+    SightingIR,
     SolidIR,
     Vec2,
     Vec3,
@@ -90,6 +91,7 @@ _SPEC: dict[str, tuple[frozenset[str], frozenset[str]]] = {
         frozenset({"size", "radius", "height", "rotation_y", "label"}),
     ),
     "camera": (frozenset({"id", "position", "target"}), frozenset({"fov"})),
+    "seen": (frozenset({"id", "left", "right"}), frozenset({"bottom"})),
 }
 
 _POSITION_HINT = (
@@ -314,6 +316,32 @@ def _label(call: _Call) -> str:
     value = _text(call, "label", "")
     printable = "".join(char if char.isprintable() else " " for char in value)
     return " ".join(printable.split())[:MAX_LABEL_CHARS].strip()
+
+
+def _fraction(call: _Call, name: str, default: float | None = None) -> float:
+    value = _number(call, name, default)
+    if not 0.0 <= value <= 1.0:
+        raise _fail(
+            f"scene.{call.op}: '{name}' is a share of the picture and must be "
+            f"between 0 and 1, got {value:g}",
+            call.line,
+        )
+    return value
+
+
+def _sighting(call: _Call) -> SightingIR:
+    subject = call.args["id"]
+    if not isinstance(subject, str) or not _ID_RE.match(subject):
+        raise _fail("scene.seen: 'id' must name a piece or a wall", call.line)
+    left, right = _fraction(call, "left"), _fraction(call, "right")
+    if left >= right:
+        raise _fail(
+            f"scene.seen: 'left' must be smaller than 'right', got {left:g} and "
+            f"{right:g}",
+            call.line,
+        )
+    bottom = _fraction(call, "bottom") if "bottom" in call.args else None
+    return SightingIR(id=subject, left=left, right=right, bottom=bottom)
 
 
 def _rotation(call: _Call) -> float:
@@ -711,10 +739,14 @@ def parse_blockout_program(source: str) -> SceneIR:
     # wall id → a point on the side of the wall that pieces stand on
     inside: dict[str, Vec2] = {}
     camera: CameraIR | None = None
+    sightings: list[tuple[SightingIR, _Call]] = []
 
     for call in calls:
         if call.op == "opening":
             opening_calls.append(call)
+            continue
+        if call.op == "seen":
+            sightings.append((_sighting(call), call))
             continue
         if call.op == "repeat":
             primitive = _text(call, "primitive")
@@ -883,10 +915,24 @@ def parse_blockout_program(source: str) -> SceneIR:
         raise _fail("scene.camera(...) is required exactly once", None)
     if not floors and not walls and not solids:
         raise _fail("the scene has no geometry", None)
+    projectable = {piece.id for piece in (*solids, *walls)}
+    described: set[str] = set()
+    for sighting, call in sightings:
+        if sighting.id not in projectable:
+            raise _fail(
+                f"scene.seen: '{sighting.id}' is not a piece or a wall; it must be "
+                "the id of a box, cylinder, wedge, stairs, repeat item or wall "
+                "(the walls of a room are <room id>_back, _left and _right)",
+                call.line,
+            )
+        if sighting.id in described:
+            raise _fail(f"scene.seen: '{sighting.id}' is described twice", call.line)
+        described.add(sighting.id)
     return SceneIR(
         floors=tuple(floors),
         walls=tuple(walls),
         solids=tuple(_place(solids, relations, walls, inside, camera)),
         camera=camera,
         rooms=tuple(rooms),
+        sightings=tuple(sighting for sighting, _ in sightings),
     )

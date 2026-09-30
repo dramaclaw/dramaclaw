@@ -616,3 +616,52 @@ def test_room_is_recorded_so_that_checks_can_use_it():
         {"id": "r", "center": (1.0, 2.0), "size": (4.0, 6.0), "height": 3.0}
     ]
     assert _parse(BOX + "\n").rooms == ()
+
+
+def test_seen_records_where_a_piece_or_a_wall_lies_in_the_picture():
+    scene = parse_blockout_program(
+        "scene.room(id='room', width=8, depth=6, height=3)\n"
+        + CAMERA
+        + "scene.box(id='table', position=(0, 0, 0), size=(1.2, 0.75, 0.7), semantic_type='table')\n"
+        "scene.seen(id='table', left=0.3, right=0.6, bottom=0.8)\n"
+        "scene.seen(id='room_back', left=0.1, right=0.9)\n"
+    )
+
+    assert [(s.id, s.left, s.right, s.bottom) for s in scene.sightings] == [
+        ("table", 0.3, 0.6, 0.8),
+        ("room_back", 0.1, 0.9, None),
+    ]
+
+
+def test_seen_may_be_written_before_the_piece_it_describes():
+    scene = _parse(
+        "scene.seen(id='b', left=0.2, right=0.4)\n"
+        "scene.box(id='b', position=(0, 0, 0), size=(1, 1, 1), semantic_type='prop')\n"
+    )
+
+    assert scene.sightings[0].id == "b"
+
+
+@pytest.mark.parametrize(
+    "body, fragment",
+    [
+        ("scene.seen(id='ghost', left=0.2, right=0.4)", "'ghost' is not a piece or a wall"),
+        ("scene.seen(id='ground', left=0.2, right=0.4)", "'ground' is not a piece or a wall"),
+        ("scene.seen(id='b', left=0.5, right=0.4)", "'left' must be smaller than 'right'"),
+        ("scene.seen(id='b', left=-0.1, right=0.4)", "between 0 and 1"),
+        ("scene.seen(id='b', left=0.1, right=0.4, bottom=1.2)", "between 0 and 1"),
+        (
+            "scene.seen(id='b', left=0.1, right=0.4)\nscene.seen(id='b', left=0.1, right=0.4)",
+            "'b' is described twice",
+        ),
+    ],
+)
+def test_rejects_bad_sightings(body: str, fragment: str):
+    with pytest.raises(BlockoutProgramError) as caught:
+        _parse(
+            "scene.box(id='b', position=(0, 0, 0), size=(1, 1, 1), semantic_type='prop')\n"
+            + body
+            + "\n"
+        )
+
+    assert fragment in str(caught.value)

@@ -262,7 +262,152 @@ def test_piece_hung_against_a_wall_is_not_reported_as_floating():
         "scene.box(id='scroll', against='room_back', offset=3, bottom=1.2, size=(0.8, 1.4, 0.04), semantic_type='prop')\n"
         "scene.box(id='desk', against='room_left', offset=4, size=(1.6, 0.8, 0.6), semantic_type='desk')\n"
         "scene.cylinder(id='vase', on='desk', radius=0.1, height=0.3, semantic_type='prop')\n"
+        "scene.seen(id='scroll', left=0.4, right=0.48, bottom=0.48)\n"
+        "scene.seen(id='desk', left=0.0, right=0.16, bottom=0.77)\n"
+        "scene.seen(id='vase', left=0.07, right=0.1)\n"
     )
 
     assert report.errors == ()
     assert report.warnings == ()
+
+
+# Three pieces with no sighting at all: the minimum-sightings rule fires, nothing else.
+THREE_PIECES = (
+    TABLE
+    + "scene.box(id='a', position=(-2, 0, 1), size=(0.5, 0.5, 0.5), semantic_type='prop')\n"
+    "scene.box(id='b', position=(2, 0, 1), size=(0.5, 0.5, 0.5), semantic_type='prop')\n"
+)
+# CAMERA stands 8 m in front of the 8 m back wall with fov 65 and a slight downward
+# tilt, so the wall spans 0.5 ± 4 / (8 · 2 · tan 32.5°) ≈ 0.10 .. 0.90 of the picture
+# width, and its foot lies at 0.68 of the picture height.
+BACK_WALL_SEEN = "scene.seen(id='room_back', left=0.1, right=0.9)\n"
+
+
+def _sightings(body: str, seen: str, camera: str = CAMERA):
+    report = check_plausibility(parse_blockout_program(ROOM + camera + body + seen))
+    return [error for error in report.errors if "scene.seen" in error or "declared" in error]
+
+
+def test_sightings_that_agree_with_the_projection_are_clean():
+    errors = _sightings(
+        THREE_PIECES,
+        BACK_WALL_SEEN
+        + "scene.seen(id='a', left=0.2, right=0.28)\n"
+        "scene.seen(id='b', left=0.72, right=0.8)\n",
+    )
+
+    assert errors == []
+
+
+def test_three_or_more_pieces_need_at_least_three_sightings():
+    errors = _sightings(THREE_PIECES, BACK_WALL_SEEN)
+
+    assert len(errors) == 1
+    assert "at least 3" in errors[0]
+    assert "scene.seen" in errors[0]
+
+
+def test_two_pieces_need_no_sightings():
+    report = check_plausibility(
+        parse_blockout_program(
+            ROOM + CAMERA + TABLE
+            + "scene.box(id='a', position=(-2, 0, 1), size=(0.5, 0.5, 0.5), semantic_type='prop')\n"
+        )
+    )
+
+    assert report.errors == ()
+
+
+def test_a_sighting_on_the_wrong_side_of_the_picture_is_an_error():
+    errors = _sightings(
+        THREE_PIECES,
+        BACK_WALL_SEEN
+        + "scene.seen(id='a', left=0.2, right=0.28)\n"
+        "scene.seen(id='b', left=0.2, right=0.28)\n",
+    )
+
+    assert len(errors) == 1
+    assert errors[0].startswith("'b' is declared at 20%..28% of the picture width")
+    assert "lands at 72%..80%" in errors[0]
+    assert "too far to the right" in errors[0]
+
+
+def test_a_sighting_much_wider_than_the_projection_is_an_error():
+    errors = _sightings(
+        THREE_PIECES,
+        "scene.seen(id='room_back', left=0.3, right=0.7)\n"
+        "scene.seen(id='a', left=0.2, right=0.28)\n"
+        "scene.seen(id='b', left=0.72, right=0.8)\n",
+    )
+
+    assert len(errors) == 1
+    assert errors[0].startswith("'room_back' is declared at 30%..70%")
+    assert "lands at 10%..90%" in errors[0]
+    assert "too wide" in errors[0]
+
+
+def test_a_sighting_with_the_wrong_bottom_is_an_error():
+    # The wall meets the floor 8 m ahead of a camera 1.6 m up, looking slightly down.
+    clean = _sightings(
+        THREE_PIECES,
+        "scene.seen(id='room_back', left=0.1, right=0.9, bottom=0.68)\n"
+        "scene.seen(id='a', left=0.2, right=0.28)\n"
+        "scene.seen(id='b', left=0.72, right=0.8)\n",
+    )
+    wrong = _sightings(
+        THREE_PIECES,
+        "scene.seen(id='room_back', left=0.1, right=0.9, bottom=0.95)\n"
+        "scene.seen(id='a', left=0.2, right=0.28)\n"
+        "scene.seen(id='b', left=0.72, right=0.8)\n",
+    )
+
+    assert clean == []
+    assert len(wrong) == 1
+    assert "bottom at 95%" in wrong[0]
+    assert "lands" in wrong[0] and "bottom at 68%" in wrong[0]
+    assert "too high in the picture" in wrong[0]
+
+
+def test_a_sighting_of_a_piece_behind_the_camera_is_an_error():
+    errors = _sightings(
+        THREE_PIECES
+        + "scene.box(id='behind', position=(0, 0, -7), size=(0.5, 0.5, 0.5), semantic_type='prop')\n",
+        BACK_WALL_SEEN
+        + "scene.seen(id='a', left=0.2, right=0.28)\n"
+        "scene.seen(id='behind', left=0.4, right=0.6)\n",
+    )
+
+    assert len(errors) == 1
+    assert "'behind' is declared" in errors[0]
+    assert "behind the camera" in errors[0]
+
+
+def test_a_wall_running_past_the_camera_is_clipped_not_dropped():
+    # The camera stands inside the room, 1 m from the left wall, which runs from
+    # 2 m behind it to 4 m ahead. Its near corners cannot be projected; the part
+    # ahead of the camera still fills the left fifth of the picture. Were the
+    # wall's corners behind the camera simply dropped, the two far corners would
+    # be left, both at 21%, and the wall would be reported as too narrow.
+    inside = "scene.camera(id='cam', position=(-3, 1.6, -1), target=(-2.5, 1.2, 3), fov=65)\n"
+    errors = _sightings(
+        THREE_PIECES,
+        "scene.seen(id='room_left', left=0.0, right=0.2)\n"
+        "scene.seen(id='room_back', left=0.2, right=1.0)\n"
+        "scene.seen(id='a', left=0.65, right=0.9)\n",
+        camera=inside,
+    )
+
+    assert errors == []
+
+
+def test_sightings_are_not_checked_while_the_camera_itself_is_wrong():
+    report = check_plausibility(
+        parse_blockout_program(
+            ROOM
+            + "scene.camera(id='cam', position=(0, 1.6, 2), target=(0, 1.2, -1))\n"
+            + THREE_PIECES
+        )
+    )
+
+    assert len(report.errors) == 1
+    assert "looks toward -z" in report.errors[0]

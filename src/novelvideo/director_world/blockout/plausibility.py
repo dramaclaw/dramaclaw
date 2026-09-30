@@ -14,6 +14,12 @@ A `scene.room` is open toward the reference camera and closed on the other
 three sides, so the picture can only have been taken from between its side
 walls and in front of its back wall. A camera anywhere else looks at the back
 of a wall, which is an error.
+
+`scene.seen` closes the loop a renderer would: the model writes down where a
+piece lies in the picture, the piece is projected through the model's own
+camera, and the two must agree. A picture cannot tell a small room seen from
+close up from a large one seen from afar, so this does not pin the scale; it
+catches the camera, the sizes and the positions contradicting one another.
 """
 
 from __future__ import annotations
@@ -21,7 +27,13 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from novelvideo.director_world.blockout.scene_ir import SceneIR, SolidIR, WallIR
+from novelvideo.director_world.blockout.scene_ir import (
+    CameraIR,
+    SceneIR,
+    SightingIR,
+    SolidIR,
+    WallIR,
+)
 
 FLOOR_TOLERANCE_METERS = 0.01
 SUPPORT_TOLERANCE_METERS = 0.05
@@ -30,6 +42,13 @@ MIN_IN_VIEW_RATIO = 0.5
 VIEW_MARGIN = 1.1
 HEAVY_OVERLAP_RATIO = 0.5
 DEFAULT_IMAGE_ASPECT = 16 / 9
+# Sightings are the model's reading of the picture, good to a few percent.
+MIN_SIGHTINGS = 3
+SIGHTING_CENTRE_TOLERANCE = 0.08
+SIGHTING_WIDTH_RATIO = 1.6
+SIGHTING_BOTTOM_TOLERANCE = 0.10
+SIGHTING_MIN_WIDTH = 0.05
+NEAR_PLANE_METERS = 0.05
 
 
 @dataclass(frozen=True)
@@ -62,44 +81,231 @@ def _dot(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 
 
-def _in_view_count(scene: SceneIR, image_aspect: float) -> int:
-    camera = scene.camera
-    forward = _normalise(
-        (
-            camera.target[0] - camera.position[0],
-            camera.target[1] - camera.position[1],
-            camera.target[2] - camera.position[2],
+class _Projector:
+    """Camera basis and the pinhole projection into picture fractions.
+
+    `project` returns (u, v, depth): u from the left edge and v from the top
+    edge, both as fractions of the picture (0.5, 0.5 is the centre), depth
+    along the view direction in metres.
+    """
+
+    def __init__(self, camera: CameraIR, image_aspect: float) -> None:
+        self.origin = camera.position
+        self.forward = _normalise(
+            (
+                camera.target[0] - camera.position[0],
+                camera.target[1] - camera.position[1],
+                camera.target[2] - camera.position[2],
+            )
         )
-    )
-    if math.hypot(forward[0], forward[2]) < 1e-9:
-        right = (1.0, 0.0, 0.0)
-    else:
-        right = _normalise((forward[2], 0.0, -forward[0]))
-    lift = _dot((0.0, 1.0, 0.0), forward)
-    up_raw = (-lift * forward[0], 1.0 - lift * forward[1], -lift * forward[2])
-    up = (
-        (0.0, 0.0, 1.0)
-        if math.sqrt(_dot(up_raw, up_raw)) < 1e-9
-        else _normalise(up_raw)
-    )
-    tan_horizontal = math.tan(math.radians(camera.fov) / 2.0)
-    tan_vertical = tan_horizontal / image_aspect
+        forward = self.forward
+        if math.hypot(forward[0], forward[2]) < 1e-9:
+            self.right = (1.0, 0.0, 0.0)
+        else:
+            self.right = _normalise((forward[2], 0.0, -forward[0]))
+        lift = _dot((0.0, 1.0, 0.0), forward)
+        up_raw = (-lift * forward[0], 1.0 - lift * forward[1], -lift * forward[2])
+        self.up = (
+            (0.0, 0.0, 1.0)
+            if math.sqrt(_dot(up_raw, up_raw)) < 1e-9
+            else _normalise(up_raw)
+        )
+        self.tan_horizontal = math.tan(math.radians(camera.fov) / 2.0)
+        self.tan_vertical = self.tan_horizontal / image_aspect
+
+    def depth(self, point: tuple[float, float, float]) -> float:
+        return _dot(self._offset(point), self.forward)
+
+    def project(self, point: tuple[float, float, float]) -> tuple[float, float, float]:
+        offset = self._offset(point)
+        depth = _dot(offset, self.forward)
+        u = 0.5 + _dot(offset, self.right) / (depth * 2.0 * self.tan_horizontal)
+        v = 0.5 - _dot(offset, self.up) / (depth * 2.0 * self.tan_vertical)
+        return (u, v, depth)
+
+    def _offset(self, point: tuple[float, float, float]) -> tuple[float, float, float]:
+        return (
+            point[0] - self.origin[0],
+            point[1] - self.origin[1],
+            point[2] - self.origin[2],
+        )
+
+
+def _in_view_count(scene: SceneIR, image_aspect: float) -> int:
+    projector = _Projector(scene.camera, image_aspect)
     count = 0
     for solid in scene.solids:
-        offset = (
-            solid.position[0] - camera.position[0],
-            solid.position[1] + solid.size[1] / 2.0 - camera.position[1],
-            solid.position[2] - camera.position[2],
+        centre = (
+            solid.position[0],
+            solid.position[1] + solid.size[1] / 2.0,
+            solid.position[2],
         )
-        depth = _dot(offset, forward)
-        if depth <= SUPPORT_TOLERANCE_METERS:
+        if projector.depth(centre) <= SUPPORT_TOLERANCE_METERS:
             continue
-        if abs(_dot(offset, right)) > depth * tan_horizontal * VIEW_MARGIN:
-            continue
-        if abs(_dot(offset, up)) > depth * tan_vertical * VIEW_MARGIN:
+        u, v, _ = projector.project(centre)
+        if abs(u - 0.5) > VIEW_MARGIN / 2.0 or abs(v - 0.5) > VIEW_MARGIN / 2.0:
             continue
         count += 1
     return count
+
+
+_Point = tuple[float, float, float]
+
+
+def _solid_corners(solid: SolidIR) -> tuple[list[_Point], list[tuple[int, int]]]:
+    """The eight corners of a solid's box and the twelve edges between them."""
+    half_w, half_d = solid.size[0] / 2.0, solid.size[2] / 2.0
+    angle = math.radians(solid.rotation_y)
+    cos, sin = math.cos(angle), math.sin(angle)
+    x, y, z = solid.position
+    corners: list[_Point] = []
+    for level in (y, y + solid.size[1]):
+        for dx, dz in (
+            (-half_w, -half_d),
+            (half_w, -half_d),
+            (half_w, half_d),
+            (-half_w, half_d),
+        ):
+            # rotation_y is counter-clockwise seen from above: +x turns toward -z
+            corners.append((x + dx * cos + dz * sin, level, z - dx * sin + dz * cos))
+    edges = [(i, (i + 1) % 4) for i in range(4)]
+    edges += [(4 + i, 4 + (i + 1) % 4) for i in range(4)]
+    edges += [(i, 4 + i) for i in range(4)]
+    return corners, edges
+
+
+def _wall_corners(wall: WallIR) -> tuple[list[_Point], list[tuple[int, int]]]:
+    (sx, sz), (ex, ez) = wall.start, wall.end
+    corners: list[_Point] = [
+        (sx, 0.0, sz),
+        (ex, 0.0, ez),
+        (ex, wall.height, ez),
+        (sx, wall.height, sz),
+    ]
+    return corners, [(0, 1), (1, 2), (2, 3), (3, 0)]
+
+
+def _visible_points(
+    projector: _Projector, corners: list[_Point], edges: list[tuple[int, int]]
+) -> list[_Point]:
+    """The corners in front of the camera, plus where edges cross its near plane.
+
+    A wall that runs past the camera has corners behind it; those cannot be
+    projected, but the part of the wall in front of the camera still shows in
+    the picture, so the edges are clipped instead of the piece being dropped.
+    """
+    depths = [projector.depth(corner) for corner in corners]
+    points = [
+        corner for corner, depth in zip(corners, depths) if depth > NEAR_PLANE_METERS
+    ]
+    for a, b in edges:
+        if (depths[a] > NEAR_PLANE_METERS) == (depths[b] > NEAR_PLANE_METERS):
+            continue
+        t = (NEAR_PLANE_METERS - depths[a]) / (depths[b] - depths[a])
+        points.append(
+            tuple(
+                corners[a][axis] + (corners[b][axis] - corners[a][axis]) * t
+                for axis in range(3)
+            )
+        )
+    return points
+
+
+def _clamp(value: float) -> float:
+    return min(max(value, 0.0), 1.0)
+
+
+def _percent(value: float) -> str:
+    return f"{round(value * 100):d}%"
+
+
+def _sighting_errors(scene: SceneIR, image_aspect: float) -> list[str]:
+    errors: list[str] = []
+    if len(scene.solids) >= MIN_SIGHTINGS and len(scene.sightings) < MIN_SIGHTINGS:
+        errors.append(
+            f"only {len(scene.sightings)} scene.seen(...) line(s) for "
+            f"{len(scene.solids)} pieces; write scene.seen for at least "
+            f"{MIN_SIGHTINGS} of them (the largest piece of structure, the nearest "
+            "large piece and the farthest large piece), reading left, right and "
+            "bottom off the picture"
+        )
+    projector = _Projector(scene.camera, image_aspect)
+    pieces: dict[str, tuple[list[_Point], list[tuple[int, int]]]] = {
+        solid.id: _solid_corners(solid) for solid in scene.solids
+    }
+    pieces.update({wall.id: _wall_corners(wall) for wall in scene.walls})
+    for sighting in scene.sightings:
+        corners, edges = pieces[sighting.id]
+        error = _sighting_error(
+            sighting, _visible_points(projector, corners, edges), projector
+        )
+        if error:
+            errors.append(error)
+    return errors
+
+
+def _sighting_error(
+    sighting: SightingIR, points: list[_Point], projector: _Projector
+) -> str | None:
+    declared = (
+        f"'{sighting.id}' is declared at {_percent(sighting.left)}.."
+        f"{_percent(sighting.right)} of the picture width"
+        + (
+            f" with its bottom at {_percent(sighting.bottom)} of the picture height"
+            if sighting.bottom is not None
+            else ""
+        )
+    )
+    if not points:
+        return (
+            f"{declared}, but with this camera it lies entirely behind the camera; "
+            "move it forward (larger z), or move the camera back"
+        )
+    projected = [projector.project(point) for point in points]
+    left = _clamp(min(u for u, _, _ in projected))
+    right = _clamp(max(u for u, _, _ in projected))
+    bottom = _clamp(max(v for _, v, _ in projected))
+    lands = f"lands at {_percent(left)}..{_percent(right)}"
+    if sighting.bottom is not None:
+        lands += f" with its bottom at {_percent(bottom)}"
+    centre_off = (left + right) / 2.0 - (sighting.left + sighting.right) / 2.0
+    problems: list[str] = []
+    if abs(centre_off) > SIGHTING_CENTRE_TOLERANCE:
+        problems.append(
+            "too far to the right" if centre_off > 0 else "too far to the left"
+        )
+    declared_width = sighting.right - sighting.left
+    width = right - left
+    if max(width, declared_width) >= SIGHTING_MIN_WIDTH:
+        ratio = (width + 1e-9) / (declared_width + 1e-9)
+        if ratio > SIGHTING_WIDTH_RATIO:
+            problems.append(
+                "too wide: the piece is too large or too close to the camera, or "
+                "the camera's fov is too narrow"
+            )
+        elif ratio < 1.0 / SIGHTING_WIDTH_RATIO:
+            problems.append(
+                "too narrow: the piece is too small or too far from the camera, "
+                "or the camera's fov is too wide"
+            )
+    if sighting.bottom is not None:
+        bottom_off = bottom - sighting.bottom
+        if abs(bottom_off) > SIGHTING_BOTTOM_TOLERANCE:
+            problems.append(
+                "too low in the picture: the piece is too close to the camera or "
+                "the camera is too high or tilted too far down"
+                if bottom_off > 0
+                else "too high in the picture: the piece is too far from the "
+                "camera or the camera is too low or tilted too far up"
+            )
+    if not problems:
+        return None
+    return (
+        f"{declared}, but projected through your camera it {lands}: "
+        f"{'; '.join(problems)}. Both come from the picture, so change the "
+        "coordinates, the sizes or the camera until they agree; do not change "
+        "the scene.seen numbers to match the coordinates"
+    )
 
 
 def _is_supported(solid: SolidIR, others: tuple[SolidIR, ...]) -> bool:
@@ -232,6 +438,8 @@ def check_plausibility(
                 "reference camera's view; the image shows them all, so the camera "
                 "position, target and fov are inconsistent with the object positions"
             )
+    if not errors:
+        errors.extend(_sighting_errors(scene, image_aspect))
 
     for solid in scene.solids:
         if (

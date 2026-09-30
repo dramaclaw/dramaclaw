@@ -15,3 +15,10 @@ scene.repeat(
     semantic_type="table",
 )
 scene.camera(id="cam", position=(1.0, 1.6, -5.0), target=(0.0, 1.2, 1.0), fov=65)
+# Where the pieces lie in the picture, read off the picture; the check projects
+# the scene through the camera above and must land on the same spots. No
+# `bottom` here: it depends on the picture's aspect ratio, and tests feed this
+# program pictures of several shapes.
+scene.seen(id="room_back", left=0.17, right=0.96)
+scene.seen(id="steps", left=0.08, right=0.33)
+scene.seen(id="stool", left=0.19, right=0.27)

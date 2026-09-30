@@ -97,6 +97,21 @@ class CameraIR(_Frozen):
     fov: float
 
 
+class SightingIR(_Frozen):
+    """Where the model says a piece or a wall lies in the reference picture.
+
+    `left` and `right` are fractions of the picture width from its left edge,
+    `bottom` a fraction of the picture height from its top edge. They are the
+    model's reading of the picture, not of its own coordinates, so projecting
+    the piece through the camera and comparing is a check the scene can fail.
+    """
+
+    id: str
+    left: float
+    right: float
+    bottom: float | None = None
+
+
 class SceneIR(_Frozen):
     compiler_version: int = BLOCKOUT_COMPILER_VERSION
     floors: tuple[FloorIR, ...]
@@ -104,3 +119,4 @@ class SceneIR(_Frozen):
     solids: tuple[SolidIR, ...]
     camera: CameraIR
     rooms: tuple[RoomIR, ...] = ()
+    sightings: tuple[SightingIR, ...] = ()

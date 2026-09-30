@@ -133,7 +133,7 @@ def test_example_shows_labels_and_the_layout_notes():
 
 
 def test_prompt_version_moves_with_the_wording():
-    assert BLOCKOUT_PROMPT_VERSION == 6
+    assert BLOCKOUT_PROMPT_VERSION == 7
 
 
 def test_prompt_asks_for_relations_instead_of_coordinates_where_it_can():
@@ -241,3 +241,26 @@ def test_example_camera_stands_as_far_back_as_its_stated_back_wall_share_says():
     expected = room.size[0] / 0.6 / (2.0 * math.tan(math.radians(camera.fov) / 2.0))
     assert abs((back_z - camera.position[2]) - expected) < 0.3
     assert camera.position[2] < front_z - 2.0
+
+
+def test_prompt_asks_the_model_to_read_picture_positions_off_the_picture():
+    prompt = build_blockout_prompt()
+
+    assert "至少给三件东西写 scene.seen" in prompt
+    assert "离画面左边缘的距离" in prompt
+    assert "离画面上边缘的距离" in prompt
+    assert "不要反过来凑坐标" in prompt
+    # The check runs on the model's own program, so the prompt has to say that
+    # a mismatch comes back for the coordinates to change, not the sightings.
+    assert "对不上就把差在哪里退回给你改" in prompt
+
+
+def test_example_sightings_are_read_from_the_picture_the_example_describes():
+    scene = parse_blockout_program(BLOCKOUT_EXAMPLE_PROGRAM)
+
+    described = {sighting.id for sighting in scene.sightings}
+    assert "room_back" in described
+    assert len(described) >= 3
+    # The sightings must agree with the example's own camera, or the example
+    # would teach the model a program the check rejects.
+    assert check_plausibility(scene).errors == ()
