@@ -90,9 +90,12 @@ it("places cloudtop routes across the ridge and amber routes above the open fiel
 });
 
 it.each([
+  ["welcome-courtyard", 250, 400],
+  ["artisan-market", 250, 400],
+  ["lantern-canal-street", 285, 430],
   ["cloudtop-slope", 500, 700],
   ["amber-wilds", 100, 300],
-] as const)("uses shared aerial textures with %s's authored sky height", async (mapId, minY, maxY) => {
+] as const)("uses shared textures and opacity with %s's authored sky height", async (mapId, minY, maxY) => {
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
   vi.spyOn(document, "hidden", "get").mockReturnValue(false);
   const atlas = new Texture({ source: new TextureSource({ width: 2048, height: 512 }) });
@@ -110,7 +113,8 @@ it.each([
   ticker.update(1000); ticker.update(1100);
   expect(runtime.clouds[0].y).toBeGreaterThan(minY);
   expect(runtime.clouds[0].y).toBeLessThan(maxY);
-  expect(runtime.clouds[0].alpha).toBeGreaterThan(0);
+  expect(runtime.clouds[0].alpha).toBeCloseTo(0.24 * AERIAL_LANE_DEPTH.middle.alpha);
+  expect(runtime.cloudShadows[0].alpha).toBeCloseTo(0.12 * AERIAL_LANE_DEPTH.middle.shadowAlpha);
   runtime.destroy(); ticker.destroy();
   await vi.waitFor(() => expect(unload).toHaveBeenCalledTimes(2));
 });
@@ -129,7 +133,7 @@ it("bounds the randomized distant flock and cloud-group presets", () => {
   }
 });
 
-it("enlarges cliff clouds while reducing travel speed, opacity and the quiet gap", () => {
+it("enlarges cliff clouds while preserving shared opacity and adjusting travel timing", () => {
   for (const random of [() => 0, () => 0.5, () => 0.999]) {
     for (const lane of AERIAL_LANES) {
       const original = createCloudEvent(lane, random);
@@ -143,8 +147,8 @@ it("enlarges cliff clouds while reducing travel speed, opacity and the quiet gap
       expect(route.to.y).toBe(route.from.y);
       expect(route.arc).toBe(0);
       expect(aerialCycleState(cliff.duration * 0.07, cliff.duration, cliff.duration + cliff.gap, cliff.fadeFraction).fade).toBeCloseTo(0.5);
-      expect(cliff.clouds[0].alpha).toBeLessThan(original.clouds[0].alpha);
-      expect(cliff.clouds[0].shadowAlpha).toBeLessThan(original.clouds[0].shadowAlpha / 2);
+      expect(cliff.clouds[0].alpha).toBe(original.clouds[0].alpha);
+      expect(cliff.clouds[0].shadowAlpha).toBe(original.clouds[0].shadowAlpha);
       expect(cliff.gap).toBeLessThan(original.gap);
     }
   }

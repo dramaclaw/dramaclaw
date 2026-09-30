@@ -52,7 +52,7 @@ export function usePikoMusicMuted() {
 }
 
 /** A music channel can retire with a fade while its replacement starts playing. */
-export function startPikoMusic(tracks: readonly string[], fadeInMs = 2000) {
+export function startPikoMusic(tracks: readonly string[], fadeInMs = 2000, volume = MUSIC_VOLUME) {
   if (typeof Audio === "undefined" || tracks.length === 0) return () => {};
   let trackIndex = 0;
   reportPlayback("", false);
@@ -102,7 +102,7 @@ export function startPikoMusic(tracks: readonly string[], fadeInMs = 2000) {
         pending = false;
         playing = true;
         reportPlayback(tracks[trackIndex], true);
-        fade(MUSIC_VOLUME, fadeInMs);
+        fade(volume, fadeInMs);
       }, () => { if (attempt === generation) { pending = false; reportPlayback(tracks[trackIndex], false, true); } });
     } catch { pending = false; reportPlayback(tracks[trackIndex], false, true); }
   };
@@ -129,7 +129,7 @@ export function startPikoMusic(tracks: readonly string[], fadeInMs = 2000) {
     if (!playing || disposed) return;
     clearTimeout(duckTimer);
     fade(Math.min(audio.volume, DUCKED_VOLUME), 150);
-    duckTimer = setTimeout(() => fade(MUSIC_VOLUME, 700), 1100);
+    duckTimer = setTimeout(() => fade(volume, 700), 1100);
   };
   const advance = () => {
     trackIndex = (trackIndex + 1) % tracks.length;
@@ -229,11 +229,12 @@ export function startPikoMusic(tracks: readonly string[], fadeInMs = 2000) {
 export function useMapMusic(mapId: PikoMapId | null) {
   const selected = usePikoSelection();
   const tracks = mapId ? selected ?? PIKO_MAP_MUSIC[mapId] : null;
-  const current = useRef<{ tracks: readonly string[]; stop: ReturnType<typeof startPikoMusic> } | null>(null);
+  const volume = !selected && mapId === "town-hall-interior" ? 0.4 : MUSIC_VOLUME;
+  const current = useRef<{ volume: number; tracks: readonly string[]; stop: ReturnType<typeof startPikoMusic> } | null>(null);
   const outgoing = useRef(new Set<ReturnType<typeof startPikoMusic>>());
   useEffect(() => {
     const previous = current.current;
-    if (previous?.tracks === tracks) return;
+    if (previous?.tracks === tracks && previous.volume === volume) return;
     // Only the immediately preceding channel may overlap the new track.
     outgoing.current.forEach(stop => stop());
     outgoing.current.clear();
@@ -241,12 +242,12 @@ export function useMapMusic(mapId: PikoMapId | null) {
       outgoing.current.add(previous.stop);
       previous.stop(tracks ? MUSIC_FADE_MS : 0, () => outgoing.current.delete(previous.stop));
     }
-    current.current = tracks ? { tracks, stop: startPikoMusic(tracks, previous ? MUSIC_FADE_MS : 2000) } : null;
+    current.current = tracks ? { tracks, volume, stop: startPikoMusic(tracks, previous ? MUSIC_FADE_MS : 2000, volume) } : null;
     if (!tracks) {
       outgoing.current.forEach(stop => stop());
       outgoing.current.clear();
     }
-  }, [tracks]);
+  }, [tracks, volume]);
   useEffect(() => () => {
     current.current?.stop();
     current.current = null;

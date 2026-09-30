@@ -27,6 +27,7 @@ export function PikoMapExitMarker({ definition, fit, player, onActivate }: {
       role={definition.action ? undefined : "img"} aria-label={definition.action ? undefined : title}>
       {definition.action && canActivateTransport(definition, player, Boolean(onActivate)) ? (
         <button type="button" className={`${styles.name} ${styles.action}`}
+          style={definition.labelOffsetY ? { marginTop: definition.labelOffsetY } : undefined}
           onPointerDown={event => event.stopPropagation()}
           onClick={event => { event.stopPropagation(); onActivate?.(); }}>
           {t(`pikoWorld.transport.${definition.action}`)}

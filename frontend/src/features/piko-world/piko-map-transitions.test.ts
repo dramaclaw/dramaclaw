@@ -10,9 +10,9 @@ import {
 
 describe("Piko map transition definitions", () => {
   it("registers one transition title for every planned map", () => {
-    expect(Object.keys(PIKO_MAP_TRANSITIONS)).toHaveLength(16);
+    expect(Object.keys(PIKO_MAP_TRANSITIONS)).toHaveLength(17);
     expect(new Set(Object.values(PIKO_MAP_TRANSITIONS).map(({ src }) => src)).size).toBe(
-      16,
+      17,
     );
   });
 

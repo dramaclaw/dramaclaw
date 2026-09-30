@@ -1,0 +1,136 @@
+{
+  "schemaVersion": 1,
+  "mapId": "town-hall-interior",
+  "interactions": [
+    {
+      "id": "hall-west-seat",
+      "kind": "seat",
+      "trigger": {
+        "id": "hall-west-seat-hit",
+        "points": [
+          {
+            "x": 1524,
+            "y": 623
+          },
+          {
+            "x": 1620,
+            "y": 623
+          },
+          {
+            "x": 1620,
+            "y": 763
+          },
+          {
+            "x": 1524,
+            "y": 763
+          }
+        ]
+      },
+      "actionId": "hall-west-seat"
+    },
+    {
+      "id": "hall-east-seat",
+      "kind": "seat",
+      "trigger": {
+        "id": "hall-east-seat-hit",
+        "points": [
+          {
+            "x": 1634,
+            "y": 623
+          },
+          {
+            "x": 1730,
+            "y": 623
+          },
+          {
+            "x": 1730,
+            "y": 763
+          },
+          {
+            "x": 1634,
+            "y": 763
+          }
+        ]
+      },
+      "actionId": "hall-east-seat"
+    },
+    {
+      "id": "hall-noticeboard",
+      "kind": "sign",
+      "trigger": {
+        "id": "hall-noticeboard-hit",
+        "points": [
+          {
+            "x": 35,
+            "y": 255
+          },
+          {
+            "x": 185,
+            "y": 255
+          },
+          {
+            "x": 185,
+            "y": 515
+          },
+          {
+            "x": 35,
+            "y": 515
+          }
+        ]
+      },
+      "actionId": "hall-noticeboard"
+    },
+    {
+      "id": "hall-reading",
+      "kind": "sign",
+      "trigger": {
+        "id": "hall-reading-hit",
+        "points": [
+          {
+            "x": 145,
+            "y": 510
+          },
+          {
+            "x": 430,
+            "y": 510
+          },
+          {
+            "x": 430,
+            "y": 600
+          },
+          {
+            "x": 145,
+            "y": 600
+          }
+        ]
+      },
+      "actionId": "hall-reading"
+    },
+    {
+      "id": "hall-reception",
+      "kind": "sign",
+      "trigger": {
+        "id": "hall-reception-hit",
+        "points": [
+          {
+            "x": 1000,
+            "y": 270
+          },
+          {
+            "x": 1470,
+            "y": 270
+          },
+          {
+            "x": 1470,
+            "y": 430
+          },
+          {
+            "x": 1000,
+            "y": 430
+          }
+        ]
+      },
+      "actionId": "hall-reception"
+    }
+  ]
+}

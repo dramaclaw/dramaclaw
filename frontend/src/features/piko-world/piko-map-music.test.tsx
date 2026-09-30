@@ -63,6 +63,21 @@ it("plays the new courtyard track first and includes the warm version next", asy
   stop(); vi.advanceTimersByTime(800);
 });
 
+it("uses quiet hall music and restores outdoor gain when following maps", async () => {
+  vi.useFakeTimers(); const clips = mockAudio();
+  selectPikoMusic(null);
+  const { rerender, unmount } = renderHook(({ id }) => useMapMusic(id), {
+    initialProps: { id: "town-hall-interior" as keyof typeof PIKO_MAP_MUSIC },
+  });
+  await act(async () => {}); act(() => vi.advanceTimersByTime(2000));
+  expect(clips[0].src).toContain("welcome-courtyard-warm.mp3");
+  expect(clips[0].volume).toBeCloseTo(0.4);
+  rerender({ id: "welcome-courtyard" });
+  await act(async () => {}); act(() => vi.advanceTimersByTime(3000));
+  expect(clips[1].volume).toBe(1);
+  unmount(); expect(vi.getTimerCount()).toBe(0);
+});
+
 it("manual selection owns one channel across travel and follows the latest map on request", async () => {
   vi.useFakeTimers(); const clips = mockAudio();
   const { result, rerender, unmount } = renderHook(({ id }) => {

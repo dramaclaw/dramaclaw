@@ -16,6 +16,7 @@ const p = PIKO_MUSIC_PLAYLISTS;
 const courtyardMapTracks = [...p.courtyard, ...p.courtyardWarm];
 // Every association follows the supplied filenames or explicit user confirmation.
 export const PIKO_MAP_MUSIC: Record<PikoMapId, readonly string[] | null> = {
+  "town-hall-interior": p.courtyardWarm,
   "welcome-courtyard": courtyardMapTracks,
   "artisan-market": courtyardMapTracks,
   "wind-garden-gate": p.meadowGate,

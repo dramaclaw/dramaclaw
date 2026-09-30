@@ -4,6 +4,11 @@
 const MAP_TITLE_ROOT = "/piko/world/ui/map-titles";
 
 export const PIKO_MAP_TRANSITIONS = {
+  "town-hall-interior": {
+    title: "暖光会厅",
+    subtitle: "窗边有阳光，炉边有暖意",
+    src: `${MAP_TITLE_ROOT}/piko-world-map-title-town-hall-interior-v1.png`,
+  },
   "welcome-courtyard": {
     title: "初遇庭院",
     subtitle: "风从泉水边带来问候",

@@ -1286,6 +1286,14 @@
         "y": 1010
       },
       "facing": "north"
+    },
+    {
+      "id": "town-hall-arrival",
+      "position": {
+        "x": 1095,
+        "y": 422
+      },
+      "facing": "south"
     }
   ],
   "exits": [
@@ -1391,6 +1399,32 @@
         ]
       },
       "targetMapId": "amber-wilds",
+      "targetSpawnId": "welcome-courtyard-arrival"
+    },
+    {
+      "id": "to-town-hall-interior",
+      "trigger": {
+        "id": "hall-door",
+        "points": [
+          {
+            "x": 1013,
+            "y": 375
+          },
+          {
+            "x": 1095,
+            "y": 375
+          },
+          {
+            "x": 1095,
+            "y": 401
+          },
+          {
+            "x": 1013,
+            "y": 401
+          }
+        ]
+      },
+      "targetMapId": "town-hall-interior",
       "targetSpawnId": "welcome-courtyard-arrival"
     }
   ]

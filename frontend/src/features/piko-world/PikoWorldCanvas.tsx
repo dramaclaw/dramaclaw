@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { createTownHallAmbience } from "./runtime/town-hall-ambience";
+import { TOWN_HALL_NOTICES } from "./runtime/town-hall-interactions";
 import { mapPerspectiveScale } from "./runtime/map-perspective";
 import { PikoTaskLabel } from "./PikoTaskLabel";
 import type { PikoOwnTaskStatus } from "./use-piko-task-status";
@@ -27,7 +29,7 @@ import { createMapAerialRuntime, isAerialMap } from "./runtime/map-aerial-runtim
 import { createCourtyardLampRuntime, createLanternCanalLampRuntime } from "./runtime/courtyard-lamp";
 import { createCourtyardAnimalRuntime } from "./runtime/courtyard-animal-runtime";
 import { localAnimalsForMap } from "./runtime/courtyard-animals";
-import { CANAL_HEN_AUDIO, createAnimalAudio } from "./runtime/animal-audio";
+import { createAnimalAudio } from "./runtime/animal-audio";
 import { createEnvironmentAudio } from "./runtime/environment-audio";
 import { createResidentOcclusionSilhouette } from "./runtime/resident-occlusion-silhouette";
 import { containWorldInViewport, type PikoSize } from "./runtime/viewport-fit";
@@ -93,6 +95,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
   const [playerPosition, setPlayerPosition] = useState({ x: 1190, y: 485 });
   const [dogGreeting, setDogGreeting] = useState<{ mapId: string; x: number; y: number; headOffset: number } | null>(null);
   const [playerSeated, setPlayerSeated] = useState(false);
+  const [hallNotice, setHallNotice] = useState<{ body: string; position: { x: number; y: number } } | null>(null);
   const [seatHovered, setSeatHovered] = useState<string | null>(null);
   const [seatHints, setSeatHints] = useState<{ id: string; action: PikoSeatAction }[]>([]);
   const [playerHeadOccluded, setPlayerHeadOccluded] = useState(false);
@@ -104,7 +107,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
   const welcomeOpenRef = useRef(false);
   const interactRef = useRef<()=>void>(()=>{});
   const nicknameRef = useRef(nickname);
-  const playerNameGap = playerGender ? 6 + Math.max(0, -(accessoryDefinition(accessory)?.y ?? 0)) * RESIDENT_WORLD_SCALE : 4;
+  const playerNameGap = playerGender ? 6 + Math.max(0, -(accessoryDefinition(accessory)?.y ?? 0)) * RESIDENT_WORLD_SCALE * mapPerspectiveScale(mapId, playerPosition.y) : 4;
   const playerNameGapRef = useRef(playerNameGap);
   playerNameGapRef.current = playerNameGap;
   const accessoryRef = useRef(accessory);
@@ -154,6 +157,9 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
     let mayorActor: ReturnType<typeof createMayorActor> | null = null;
     let environmentRuntime: Awaited<ReturnType<typeof createEnvironmentEffectRuntime>> = null;
     let courtyardFoliageRuntime: Awaited<ReturnType<typeof createCourtyardFoliageRuntime>> = null;
+    let hallAmbience: ReturnType<typeof createTownHallAmbience> | null = null;
+    let hallNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+    setHallNotice(null);
     let aerialRuntime: Awaited<ReturnType<typeof createMapAerialRuntime>> = null;
     let lampRuntime: ReturnType<typeof createCourtyardLampRuntime> | null = null;
     let courtyardAnimalRuntime: Awaited<ReturnType<typeof createCourtyardAnimalRuntime>> = null;
@@ -200,6 +206,8 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
       exitMarkers.forEach(marker => marker.destroy());
       courtyardAnimalRuntime?.destroy();
       aerialRuntime?.destroy();
+      hallAmbience?.destroy();
+      clearTimeout(hallNoticeTimer);
       lampRuntime?.destroy();
       riverFishRuntime?.destroy();
       environmentRuntime?.destroy();
@@ -269,7 +277,22 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
         ground.eventMode = "static";
         ground.on("pointertap", event => {
           if (event.button !== 0 || event.pointerType !== "mouse") return;
+          if (!canInteract()) return;
           const target = world.toLocal(event.global);
+          const notice = mapId === "town-hall-interior" ? interactions?.interactions.find(item =>
+            item.kind === "sign" && pointInPolygon(target, item.trigger.points)) : undefined;
+          const noticeAction = notice && TOWN_HALL_NOTICES[notice.actionId];
+          if (noticeAction && residentActor) {
+            const show = () => {
+              if (disposed) return;
+              clearTimeout(hallNoticeTimer);
+              setHallNotice({ body: noticeAction.message, position: noticeAction.approach });
+              hallNoticeTimer = setTimeout(() => setHallNotice(null), 3500);
+            };
+            if (residentActor.walkTo(noticeAction.approach, show)) clickFeedback?.show(noticeAction.approach);
+            return;
+          }
+          setHallNotice(null);
           const seat = interactions?.interactions.find(item => item.kind === "seat" && pointInPolygon(target, item.trigger.points));
           const seatAction = seat ? pikoSeatAction(seat.actionId) : null;
           if (seatAction && residentActor && playerSitTexture) {
@@ -290,8 +313,10 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
         });
         ground.on("pointermove", event => {
           const target = world.toLocal(event.global);
-          const interactive = canInteract() && playerSitTexture ? interactions?.interactions.find(item =>
-            item.kind === "seat" && pikoSeatAction(item.actionId) && pointInPolygon(target, item.trigger.points)) : undefined;
+          const interactive = canInteract() ? interactions?.interactions.find(item =>
+            ((item.kind === "seat" && playerSitTexture && pikoSeatAction(item.actionId))
+              || (mapId === "town-hall-interior" && item.kind === "sign" && TOWN_HALL_NOTICES[item.actionId]))
+            && pointInPolygon(target, item.trigger.points)) : undefined;
           nextApp.canvas.style.cursor = interactive ? PIKO_CHARACTER_CURSOR : PIKO_DEFAULT_CURSOR;
           ground.cursor = interactive ? PIKO_CHARACTER_CURSOR : PIKO_DEFAULT_CURSOR;
           setSeatHovered(interactive?.actionId ?? null);
@@ -340,6 +365,15 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
           const occluder = createMapOccluder(source, definition);
           occluders.push(occluder);
           world.addChild(occluder.container);
+        }
+        if (mapId === "town-hall-interior") {
+          const [clean, fire] = await Promise.all([
+            loadTexture(resolvePikoMapAssetUrl(mapId, "effects/firebox-clean.png")),
+            loadTexture(resolvePikoMapAssetUrl(mapId, "effects/hearth-fire.png")),
+          ]);
+          if (!clean || !fire || disposed) return;
+          hallAmbience = createTownHallAmbience(nextApp.ticker, clean, fire);
+          world.addChild(hallAmbience.container);
         }
         const environment = await loadPikoMapEnvironment(mapId, manifest.data.environment, abortController.signal);
         if (disposed) return;
@@ -419,8 +453,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
             animalAudio = createAnimalAudio(() => courtyardAnimalRuntime?.actors.map(actor => ({
               id: actor.placement.id, kind: actor.placement.kind, ...actor.motion.state,
               position: actor.container.visible ? actor.motion.state.position : { x: -100000, y: -100000 },
-            })) ?? [], src => resolvePikoMapAssetUrl("welcome-courtyard", src), Math.random,
-              mapId === "lantern-canal-street" ? { hen: CANAL_HEN_AUDIO } : undefined);
+            })) ?? [], src => resolvePikoMapAssetUrl("welcome-courtyard", src));
           }
           const legacyResidentIds = playerGender ? [] : Object.keys(PIKO_PLAYABLE_RESIDENTS) as PlayablePikoResidentId[];
           for (const id of legacyResidentIds) {
@@ -451,7 +484,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
           }
           residentActor = createResidentActor(playerMotionTexture ?? residentTextures.get(residentIdRef.current)!, nextApp.ticker,
             canInteract,
-            {host, navigation, position: spawn?.position, facing: spawn?.facing, footsteps: mapId !== "boundless-sea" && mapId !== "changfeng-sea",
+            {host, navigation, position: spawn?.position, facing: spawn?.facing, footsteps: !["boundless-sea", "changfeng-sea", "town-hall-interior"].includes(mapId),
               onPose: (facing, column, idleElapsedMs) => {
                 if (residentActor) {
                   const seated = residentActor.isSeated();
@@ -461,6 +494,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
                   residentActor.body.scale.x = scaleX;
                   // Also scale the shadow to match perspective
                   residentActor.shadow.scale.set(scaleX);
+                  residentActor.shadow.y = seated ? (SEATED_POSE.footY - SEATED_POSE.pivot.y) * scaleY : 0;
                   if (residentActor.body.scale.y !== scaleY) {
                     residentActor.body.scale.y = scaleY;
                     residentPresentationRef.current?.setNameGap(playerNameGapRef.current);
@@ -653,6 +687,10 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
         onInteract={() => stopPlayerRef.current()} />}
       {loadState === "ready" && showMayorHint && speech && !playerHeadOccluded && <PikoSpeechBubble body={speech.body} position={playerPosition} fit={worldFit} headOffset={(playerSeated ? 73 : 128) * mapPerspectiveScale(mapId, playerPosition.y) + playerNameGap} />}
       {loadState === "ready" && showMayorHint && dogGreeting?.mapId === mapId && <PikoSpeechBubble body="🐶❤️" position={dogGreeting} fit={worldFit} headOffset={dogGreeting.headOffset} />}
+      {loadState === "ready" && mapId === "town-hall-interior" && hallNotice && !movementBlocked && <>
+        <PikoSpeechBubble body={hallNotice.body} position={hallNotice.position} fit={worldFit} headOffset={185} />
+        <span className="sr-only" role="status">{hallNotice.body}</span>
+      </>}
       <PikoWelcomeDialog open={welcomeOpen} onOpenChange={open=>{welcomeOpenRef.current=open;setWelcomeOpen(open);}} />
       {import.meta.env.DEV && loadState === "ready" && showMayorHint && debugNavigation && worldFit.scale > 0 && !movementBlocked && (
         <Suspense fallback={null}><NavigationEditor key={mapId} navigation={debugNavigation} occlusion={debugOcclusion} fit={worldFit} player={playerPosition}

@@ -11,13 +11,14 @@ import { createExitGate, enabledMapExits, prepareMapTravel } from "./map-travel"
 
 const read = (map: string, file: string) => JSON.parse(readFileSync(`public/piko/world/maps/${map}/${file}`, "utf8"));
 const maps = Object.keys(MAP_EXIT_MARKERS) as PikoMapId[];
-const previewMaps = maps.filter(map => !["welcome-courtyard", "artisan-market", "amber-wilds", "cloudtop-slope", "lantern-canal-street"].includes(map));
+const previewMaps = maps.filter(map => !["town-hall-interior", "welcome-courtyard", "artisan-market", "amber-wilds", "cloudtop-slope", "lantern-canal-street"].includes(map));
 const packages = new Map(maps.map(map => [map, PikoMapPackageSchema.parse({
   manifest: read(map, "manifest.json"), navigation: read(map, "data/navigation.json"),
   occlusion: read(map, "data/occlusion.json"), environment: read(map, "data/environment.json"),
   interactions: read(map, "data/interactions.json"),
 })]));
 const centres: Partial<Record<PikoMapId, { x: number; y: number }>> = {
+  "town-hall-interior": { x: 1024, y: 800 },
   "welcome-courtyard": { x: 1190, y: 485 }, "artisan-market": { x: 1130, y: 650 },
   "wind-garden-gate": { x: 1180, y: 725 }, "lantern-canal-street": { x: 1070, y: 540 },
   "starlight-dock": { x: 900, y: 550 },
@@ -60,7 +61,7 @@ for (const map of maps) {
   });
 }
 
-it("prepares all thirty-two directions with the correct source fallback in maps with multiple exits", async () => {
+it("prepares all thirty-four directions with the correct source fallback in maps with multiple exits", async () => {
   vi.stubGlobal("fetch", vi.fn(async (url: string) => ({ ok: true, json: async () => {
     const [, map, file] = url.match(/\/maps\/([^/]+)\/(.*)/)!;
     return read(map, file);
@@ -76,13 +77,13 @@ it("prepares all thirty-two directions with the correct source fallback in maps 
       packages.get(map)!.navigation)).toBe(true);
     directions++;
   }
-  expect(directions).toBe(32);
+  expect(directions).toBe(34);
 });
 
 it("arms each courtyard exit independently", () => {
   const navigation = packages.get("welcome-courtyard")!.navigation;
   const gate = createExitGate(enabledMapExits(navigation));
-  for (const marker of MAP_EXIT_MARKERS["welcome-courtyard"]!) {
+  for (const marker of MAP_EXIT_MARKERS["welcome-courtyard"]!.filter(marker => !marker.action)) {
     expect(gate(marker.position, false)).toBeUndefined();
     expect(gate(marker.position, true)?.id).toBe(marker.exitId);
     expect(gate(marker.position, true)).toBeUndefined();
@@ -103,7 +104,7 @@ it("allows pure-map previews without stale collision or occlusion regions", () =
   }
 });
 
-it("connects all sixteen regions to the courtyard and closes the southern loop", () => {
+it("connects all seventeen regions to the courtyard and closes the southern loop", () => {
   expect([...maps].sort()).toEqual(Object.keys(PIKO_MAP_TRANSITIONS).sort());
   const seen = new Set<PikoMapId>();
   const visit = (map: PikoMapId) => {
@@ -112,7 +113,7 @@ it("connects all sixteen regions to the courtyard and closes the southern loop",
     MAP_EXIT_MARKERS[map]!.forEach(exit => visit(exit.targetMapId));
   };
   visit("welcome-courtyard");
-  expect(seen.size).toBe(16);
+  expect(seen.size).toBe(17);
   const loop: PikoMapId[] = ["welcome-courtyard", "amber-wilds", "crimson-canyon", "startrace-coast",
     "starfall-tidal-wetland", "starlight-dock", "lantern-canal-street", "welcome-courtyard"];
   loop.slice(0, -1).forEach((map, index) => {

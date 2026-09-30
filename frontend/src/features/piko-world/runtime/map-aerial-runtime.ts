@@ -101,12 +101,12 @@ export const AMBER_CLOUD_ROUTES: Record<AerialLane, Route> = {
 export type AerialMapId = "welcome-courtyard" | "artisan-market" | "lantern-canal-street"
   | "cloudtop-slope" | "amber-wilds";
 const AERIAL_ROUTES: Record<AerialMapId, { birds: Record<AerialLane, Route>; clouds: Record<AerialLane, Route>;
-  cloudOpacity?: number; cloudGap?: readonly [number, number] }> = {
+  cloudGap?: readonly [number, number] }> = {
   "welcome-courtyard": { birds: BIRD_ROUTES, clouds: CLOUD_ROUTES, cloudGap: [8, 12] },
   "artisan-market": { birds: MARKET_BIRD_ROUTES, clouds: MARKET_CLOUD_ROUTES },
   "lantern-canal-street": { birds: CANAL_BIRD_ROUTES, clouds: CANAL_CLOUD_ROUTES },
-  "cloudtop-slope": { birds: CLOUDTOP_BIRD_ROUTES, clouds: CLOUDTOP_CLOUD_ROUTES, cloudOpacity: 0.8 },
-  "amber-wilds": { birds: AMBER_BIRD_ROUTES, clouds: AMBER_CLOUD_ROUTES, cloudOpacity: 0.55 },
+  "cloudtop-slope": { birds: CLOUDTOP_BIRD_ROUTES, clouds: CLOUDTOP_CLOUD_ROUTES },
+  "amber-wilds": { birds: AMBER_BIRD_ROUTES, clouds: AMBER_CLOUD_ROUTES },
 };
 
 export function isAerialMap(mapId: string): mapId is AerialMapId {
@@ -211,8 +211,7 @@ export function createCloudtopCloudEvent(lane: AerialLane, random: Random = Math
     duration: lane === "upper" ? event.duration / 0.7 : event.duration * 2 / AERIAL_LANE_DEPTH[lane].duration,
     fadeFraction: 0.14,
     gap: lane === "upper" ? randomBetween(random, 12, 20) : randomBetween(random, 3, 6),
-    clouds: [{ ...event.clouds[0], x: 0, y: 0, drift: event.clouds[0].drift * 0.12, width: event.clouds[0].width * 1.75,
-      alpha: event.clouds[0].alpha * 0.72, shadowAlpha: event.clouds[0].shadowAlpha * 0.28 }],
+    clouds: [{ ...event.clouds[0], x: 0, y: 0, drift: event.clouds[0].drift * 0.12, width: event.clouds[0].width * 1.75 }],
   };
 }
 
@@ -371,8 +370,8 @@ export async function createMapAerialRuntime({ mapId, ticker, resolveAssetUrl, i
         const y = point.y + item.y * depth.scale + drift;
         body.position.set(x, y);
         shadow.position.set(x + item.shadowOffset.x * depth.scale, y + item.shadowOffset.y * depth.scale);
-        body.alpha = item.alpha * depth.alpha * state.fade * (routes.cloudOpacity ?? 1);
-        shadow.alpha = item.shadowAlpha * depth.shadowAlpha * state.fade * (routes.cloudOpacity ?? 1);
+        body.alpha = item.alpha * depth.alpha * state.fade;
+        shadow.alpha = item.shadowAlpha * depth.shadowAlpha * state.fade;
         body.visible = shadow.visible = index < event.count && state.visible;
       });
     });

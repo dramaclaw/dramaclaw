@@ -219,12 +219,19 @@ export const AMBER_WILDS_ANIMALS: readonly AnimalPlacement[] = [
   { id: "amber-east-flowers-butterfly", kind: "butterfly", position: { x: 1600, y: 870 }, scale: 0.018 },
 ];
 
+/** Two quiet indoor accents near the window planter and lounge greenery. */
+export const TOWN_HALL_BUTTERFLIES: readonly AnimalPlacement[] = [
+  { id: "hall-window-butterfly", kind: "butterfly", position: { x: 360, y: 490 }, scale: 0.022 },
+  { id: "hall-lounge-butterfly", kind: "butterfly", position: { x: 1780, y: 575 }, scale: 0.020 },
+];
+
 const LOCAL_ANIMALS = new Map<string, readonly AnimalPlacement[]>([
   ["welcome-courtyard", COURTYARD_ANIMALS.filter(placement => placement.kind !== "dog")],
   ["artisan-market", ARTISAN_MARKET_ANIMALS],
   ["lantern-canal-street", LANTERN_CANAL_ANIMALS],
   ["cloudtop-slope", CLOUDTOP_SLOPE_ANIMALS],
   ["amber-wilds", AMBER_WILDS_ANIMALS],
+  ["town-hall-interior", TOWN_HALL_BUTTERFLIES],
 ]);
 
 /** The roaming dog is supplied separately by its cross-map route. */

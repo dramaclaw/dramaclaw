@@ -49,7 +49,7 @@ it("prepares reciprocal arrivals and rejects an unfinished connection", async ()
   await expect(prepareMapTravel("welcome-courtyard", { ...courtyard.exits[0], targetMapId: "boundless-sea" }, new AbortController().signal)).rejects.toThrow("not open");
 });
 
-it("requires deliberate nearby activation for sea and sky transfers", () => {
+it("requires deliberate nearby activation for sea, sky and hall transfers", () => {
   let actions = 0;
   for (const [map, markers] of Object.entries(MAP_EXIT_MARKERS)) {
     const navigation = PikoNavigationSchema.parse(read(map, "data/navigation.json"));
@@ -62,7 +62,7 @@ it("requires deliberate nearby activation for sea and sky transfers", () => {
       expect(canActivateTransport(marker, marker.position, true)).toBe(true);
     }
   }
-  expect(actions).toBe(4);
+  expect(actions).toBe(5);
 });
 it("rejects a missing target spawn without switching maps", async () => {
   vi.stubGlobal("fetch", vi.fn(async (url: string) => ({ ok: true, json: async () => {

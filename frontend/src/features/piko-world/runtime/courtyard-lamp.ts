@@ -27,7 +27,7 @@ export const LANTERN_CANAL_LAMPS: readonly LampConfig[] = [
     width: 0.95, height: 1, haloScale: 0.74, clipBottom: 30 },
 ];
 
-function createLamp(config: LampConfig, index: number, random: () => number) {
+export function createLamp(config: LampConfig, index: number, random: () => number) {
   const container = new Container({ label: `${config.id}-lamp-light`, eventMode: "none", zIndex: config.baseY });
   container.position.set(config.x, config.y);
   // Nested translucent ellipses brighten the baked map without a hard halo edge.
