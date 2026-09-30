@@ -16,6 +16,7 @@ from novelvideo.director_world.blockout.artifacts import (
 )
 from novelvideo.director_world.blockout.generation_agent import (
     BLOCKOUT_MAX_ATTEMPTS,
+    BLOCKOUT_REVIEW_ROUNDS,
     extract_program,
     generate_blockout_from_image,
     resolve_blockout_model,
@@ -27,6 +28,10 @@ GOLDEN_PROGRAM = (FIXTURES / "golden.blockout.dsl").read_text(encoding="utf-8")
 GOLDEN = json.loads((FIXTURES / "golden.json").read_text(encoding="utf-8"))
 
 BROKEN = "scene.box(id='a', position=(0, 0, 0), size=(1, 1, 1))\n"
+# The golden scene as a review would hand it back: one number moved, still clean.
+REVIEWED_PROGRAM = GOLDEN_PROGRAM.replace("radius=0.2,", "radius=0.25,")
+REVIEWED_AGAIN = GOLDEN_PROGRAM.replace("radius=0.2,", "radius=0.3,")
+assert GOLDEN_PROGRAM != REVIEWED_PROGRAM != REVIEWED_AGAIN
 LOOKS_AWAY = (
     "scene.floor(id='f', center=(0, 0), size=(8, 8))\n"
     "scene.box(id='a', position=(0, 0, 0), size=(1, 1, 1), semantic_type='prop')\n"
@@ -512,3 +517,126 @@ async def test_the_picture_check_asks_for_sightings_and_checks_them(image_path, 
     )
     assert generation.compiled == GOLDEN["compiled"]
     assert generation.picture_check is True
+
+
+async def test_the_render_check_is_off_unless_asked_for(image_path, model):
+    fake = model(GOLDEN_PROGRAM)
+
+    generation = await generate_blockout_from_image(image_path=image_path)
+
+    assert len(fake.calls) == 1
+    assert generation.render_check is False
+    assert generation.renders == ()
+
+
+async def test_the_render_check_shows_the_model_its_own_scene_and_takes_the_rewrite(
+    image_path, model
+):
+    fake = model(GOLDEN_PROGRAM, REVIEWED_PROGRAM, REVIEWED_AGAIN)
+
+    generation = await generate_blockout_from_image(
+        image_path=image_path, render_check=True
+    )
+
+    assert BLOCKOUT_REVIEW_ROUNDS == 2
+    assert len(fake.calls) == 1 + BLOCKOUT_REVIEW_ROUNDS
+    first, second, third = fake.calls
+    assert len(first["images"]) == 1
+    # Each review sees the reference picture and a render of the scene under review.
+    assert second["images"][0].data == first["images"][0].data
+    render = Image.open(io.BytesIO(second["images"][1].data))
+    assert render.format == "PNG" and render.size == (1024, 576)
+    assert "## 渲染核对" in second["prompt"]
+    assert GOLDEN_PROGRAM.strip() in second["prompt"]
+    assert REVIEWED_PROGRAM.strip() in third["prompt"]
+    assert generation.program == REVIEWED_AGAIN.strip()
+    assert generation.render_check is True
+    assert len(generation.renders) == BLOCKOUT_REVIEW_ROUNDS
+    assert generation.renders[0] == second["images"][1].data
+    assert [attempt.review for attempt in generation.attempts] == [False, True, True]
+
+
+async def test_a_review_that_breaks_the_scene_is_dropped_and_the_last_good_one_kept(
+    image_path, model
+):
+    fake = model(GOLDEN_PROGRAM, BROKEN, REVIEWED_PROGRAM)
+
+    generation = await generate_blockout_from_image(
+        image_path=image_path, render_check=True
+    )
+
+    assert len(fake.calls) == 3
+    # The second review still looks at the golden scene, not at the broken rewrite.
+    assert GOLDEN_PROGRAM.strip() in fake.calls[2]["prompt"]
+    assert fake.calls[2]["images"][1].data == fake.calls[1]["images"][1].data
+    assert generation.program == REVIEWED_PROGRAM.strip()
+    assert [len(attempt.errors) for attempt in generation.attempts] == [0, 1, 0]
+
+
+async def test_a_review_that_only_adds_plausibility_errors_is_dropped_too(
+    image_path, model
+):
+    fake = model(GOLDEN_PROGRAM, LOOKS_AWAY, LOOKS_AWAY)
+
+    generation = await generate_blockout_from_image(
+        image_path=image_path, render_check=True
+    )
+
+    assert len(fake.calls) == 3
+    assert generation.program == GOLDEN_PROGRAM.strip()
+    assert generation.warnings == ()
+    assert [len(attempt.errors) for attempt in generation.attempts] == [0, 1, 1]
+
+
+async def test_the_render_check_starts_from_the_fallback_when_no_draft_was_clean(
+    image_path, model
+):
+    fake = model(LOOKS_AWAY, LOOKS_AWAY, LOOKS_AWAY, GOLDEN_PROGRAM, REVIEWED_PROGRAM)
+
+    generation = await generate_blockout_from_image(
+        image_path=image_path, render_check=True
+    )
+
+    assert len(fake.calls) == BLOCKOUT_MAX_ATTEMPTS + BLOCKOUT_REVIEW_ROUNDS
+    assert LOOKS_AWAY.strip() in fake.calls[3]["prompt"]
+    assert generation.program == REVIEWED_PROGRAM.strip()
+    assert generation.warnings == ()
+
+
+async def test_every_review_round_settles_its_own_egress(image_path, model, monkeypatch):
+    egress = FakeEgress(monkeypatch)
+    fake = model(GOLDEN_PROGRAM, REVIEWED_PROGRAM, REVIEWED_AGAIN)
+
+    await generate_blockout_from_image(
+        image_path=image_path, render_check=True, egress_context="org"
+    )
+
+    assert [event[0] for event in egress.events] == ["prepare", "complete"] * 3
+    assert [call["transport_context"] for call in fake.calls] == ["transport"] * 3
+
+
+async def test_artifacts_of_a_render_checked_job_keep_the_renders(
+    image_path, model, tmp_path
+):
+    model(GOLDEN_PROGRAM, REVIEWED_PROGRAM, BROKEN)
+    generation = await generate_blockout_from_image(
+        image_path=image_path, render_check=True
+    )
+    out_dir = tmp_path / "job"
+
+    write_blockout_artifacts(out_dir, generation)
+
+    assert sorted(path.name for path in out_dir.iterdir()) == [
+        "generation.json",
+        "render_1.png",
+        "render_2.png",
+        "result.json",
+        "scene.blockout.dsl",
+        "scene_ir.json",
+    ]
+    assert (out_dir / "render_1.png").read_bytes() == generation.renders[0]
+    record = json.loads((out_dir / "generation.json").read_text(encoding="utf-8"))
+    assert record["render_check"] is True
+    assert record["retries"] == 0
+    assert [attempt["review"] for attempt in record["attempts"]] == [False, True, True]
+    assert [len(attempt["errors"]) for attempt in record["attempts"]] == [0, 0, 1]

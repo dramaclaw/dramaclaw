@@ -13,6 +13,7 @@ import os
 import re
 import textwrap
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +28,9 @@ from novelvideo.director_world.blockout.plausibility import check_plausibility
 from novelvideo.director_world.blockout.prompts import (
     build_blockout_prompt,
     build_blockout_retry_prompt,
+    build_blockout_review_prompt,
 )
+from novelvideo.director_world.blockout.render import render_blockout
 from novelvideo.director_world.blockout.scene_ir import (
     MAX_PROGRAM_CHARS,
     BlockoutLimitError,
@@ -39,6 +42,9 @@ from novelvideo.egress_context import TrustedEgressContext
 BLOCKOUT_MODEL_ENV = "PREVIZ_BLOCKOUT_MODEL"
 BLOCKOUT_TIMEOUT_SECONDS = 300.0
 BLOCKOUT_MAX_ATTEMPTS = 3
+# 渲染核对的轮数：每轮把当前场景渲染成图，和参考图一起交给模型改。第一轮修构图，
+# 第二轮能把第一轮误删的东西找回来；再多收益就很小了，而每轮都是一次模型调用。
+BLOCKOUT_REVIEW_ROUNDS = 2
 
 _FENCED_BLOCK = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
 _FENCE_LINE = re.compile(r"^[ \t]*```[^\n]*$", re.MULTILINE)
@@ -81,7 +87,7 @@ def _image_size(data: bytes) -> tuple[int, int]:
 async def _ask_model(
     *,
     prompt: str,
-    image,
+    images: list,
     model: str,
     egress_context: TrustedEgressContext | None,
 ) -> str:
@@ -99,13 +105,13 @@ async def _ask_model(
         egress_context=egress_context,
         model_name=model,
         prompt=prompt,
-        images=[image.data],
+        images=[image.data for image in images],
         timeout_seconds=BLOCKOUT_TIMEOUT_SECONDS,
     )
     try:
         _model, text = await vision_gateway.call_freezone_vision_model(
             prompt=prompt,
-            images=[image],
+            images=images,
             model_override=model,
             timeout_seconds=BLOCKOUT_TIMEOUT_SECONDS,
             transport_context=(
@@ -119,21 +125,67 @@ async def _ask_model(
     return text
 
 
+@dataclass(frozen=True)
+class _Candidate:
+    """A program that parsed and compiled, with whatever the plausibility check said."""
+
+    program: str
+    scene: SceneIR
+    compiled: dict[str, Any]
+    errors: tuple[str, ...]
+    warnings: tuple[str, ...]
+
+
+def _evaluate(
+    program: str, *, image_aspect: float, picture_check: bool
+) -> tuple[_Candidate | None, tuple[str, ...]]:
+    """Parse, compile and check one program: (candidate, errors).
+
+    A program that does not parse or compile has no candidate. `BlockoutLimitError`
+    is not caught: a scene past the limits ends the job, it is not retried.
+    """
+    try:
+        scene = parse_blockout_program(program)
+        compiled = compile_scene(scene)
+    except BlockoutProgramError as exc:
+        return None, (str(exc),)
+    report = check_plausibility(
+        scene, image_aspect=image_aspect, picture_check=picture_check
+    )
+    return (
+        _Candidate(program, scene, compiled, report.errors, report.warnings),
+        report.errors,
+    )
+
+
 async def generate_blockout_from_image(
     *,
     image_path: Path,
     description: str = "",
     picture_check: bool = False,
+    render_check: bool = False,
     egress_context: TrustedEgressContext | None = None,
 ) -> BlockoutGeneration:
     """Write a blockout for one picture.
 
-    `picture_check` is the user's choice, made per job in the dialog: ask the
-    model for `scene.seen` lines and project the scene back onto the picture.
-    It only catches contradictions between coordinates, sizes and camera, and
-    costs one or two extra model calls, so it is off unless asked for.
+    `picture_check` and `render_check` are the user's choices, made per job in
+    the dialog, and both cost extra model calls, so they are off unless asked for.
+
+    `picture_check` asks the model for `scene.seen` lines and projects the scene
+    back onto the picture. It only catches contradictions between coordinates,
+    sizes and camera.
+
+    `render_check` renders the finished scene from its camera and shows the
+    render next to the picture, `BLOCKOUT_REVIEW_ROUNDS` times, asking for a
+    rewrite each time. It corrects what the model can see is wrong (camera
+    distance and height, where the big pieces stand); it does not make the
+    model read the picture better. A rewrite that breaks the scene or adds
+    plausibility errors is dropped and the scene under review is kept.
     """
-    from novelvideo.freezone.vision_gateway import load_compact_vision_inputs
+    from novelvideo.freezone.vision_gateway import (
+        VisionInput,
+        load_compact_vision_inputs,
+    )
 
     model = resolve_blockout_model()
 
@@ -165,7 +217,7 @@ async def generate_blockout_from_image(
     attempts: list[BlockoutAttempt] = []
     # 解析和编译都过了、只是合理性检查没过的那一份。三次都没有干净结果时交它，
     # 问题降级成提示：一份能改的白模比一次失败有用。
-    fallback: tuple[str, SceneIR, dict[str, Any], tuple[str, ...]] | None = None
+    fallback: _Candidate | None = None
     prompt = base_prompt
 
     def failure(message: str) -> BlockoutGenerationError:
@@ -177,60 +229,79 @@ async def generate_blockout_from_image(
             image_size=image_size,
         )
 
-    for _ in range(BLOCKOUT_MAX_ATTEMPTS):
+    async def ask(prompt: str, *images) -> tuple[str, float]:
         started = time.monotonic()
         text = await _ask_model(
-            prompt=prompt, image=image, model=model, egress_context=egress_context
+            prompt=prompt, images=list(images), model=model, egress_context=egress_context
         )
-        program = extract_program(text)
-        seconds = round(time.monotonic() - started, 3)
+        return extract_program(text), round(time.monotonic() - started, 3)
+
+    chosen: _Candidate | None = None
+    for _ in range(BLOCKOUT_MAX_ATTEMPTS):
+        program, seconds = await ask(prompt, image)
         try:
-            scene = parse_blockout_program(program)
-            compiled = compile_scene(scene)
-        except BlockoutProgramError as exc:
-            errors: tuple[str, ...] = (str(exc),)
+            candidate, errors = _evaluate(
+                program, image_aspect=image_aspect, picture_check=picture_check
+            )
         except BlockoutLimitError as exc:
             attempts.append(BlockoutAttempt(program, (str(exc),), seconds))
             raise failure(f"场景过于复杂：{exc}") from exc
-        else:
-            report = check_plausibility(
-                scene, image_aspect=image_aspect, picture_check=picture_check
-            )
-            errors = report.errors
-            if not errors:
-                attempts.append(BlockoutAttempt(program, (), seconds))
-                return BlockoutGeneration(
-                    model=model,
-                    program=program,
-                    scene=scene,
-                    compiled=compiled,
-                    warnings=report.warnings,
-                    attempts=tuple(attempts),
-                    image_sha256=image_sha256,
-                    image_size=image_size,
-                    picture_check=picture_check,
-                )
-            if fallback is None or len(errors) <= len(fallback[3]):
-                fallback = (program, scene, compiled, (*errors, *report.warnings))
         attempts.append(BlockoutAttempt(program, errors, seconds))
+        if candidate is not None and not errors:
+            chosen = candidate
+            break
+        if candidate is not None and (
+            fallback is None
+            or len(errors) <= len(fallback.errors) + len(fallback.warnings)
+        ):
+            fallback = candidate
         prompt = build_blockout_retry_prompt(
             base_prompt=base_prompt, previous_program=program, errors=errors
         )
 
-    if fallback is not None:
-        program, scene, compiled, warnings = fallback
-        return BlockoutGeneration(
-            model=model,
-            program=program,
-            scene=scene,
-            compiled=compiled,
-            warnings=warnings,
-            attempts=tuple(attempts),
-            image_sha256=image_sha256,
-            image_size=image_size,
-            picture_check=picture_check,
-        )
-    raise failure(
-        f"模型连续 {BLOCKOUT_MAX_ATTEMPTS} 次没有写出合法的场景程序："
-        f"{attempts[-1].errors[0]}"
+    if chosen is None:
+        if fallback is None:
+            raise failure(
+                f"模型连续 {BLOCKOUT_MAX_ATTEMPTS} 次没有写出合法的场景程序："
+                f"{attempts[-1].errors[0]}"
+            )
+        chosen = fallback
+
+    renders: list[bytes] = []
+    if render_check:
+        for _ in range(BLOCKOUT_REVIEW_ROUNDS):
+            png = await asyncio.to_thread(
+                render_blockout, chosen.compiled["objects"], image_aspect=image_aspect
+            )
+            renders.append(png)
+            program, seconds = await ask(
+                build_blockout_review_prompt(
+                    base_prompt=base_prompt, previous_program=chosen.program
+                ),
+                image,
+                VisionInput(data=png, media_type="image/png"),
+            )
+            try:
+                candidate, errors = _evaluate(
+                    program, image_aspect=image_aspect, picture_check=picture_check
+                )
+            except BlockoutLimitError as exc:
+                errors, candidate = (str(exc),), None
+            attempts.append(BlockoutAttempt(program, errors, seconds, review=True))
+            # 改坏了就不要：只接受不比手里这份更差的改法。
+            if candidate is not None and len(errors) <= len(chosen.errors):
+                chosen = candidate
+
+    return BlockoutGeneration(
+        model=model,
+        program=chosen.program,
+        scene=chosen.scene,
+        compiled=chosen.compiled,
+        warnings=(*chosen.errors, *chosen.warnings),
+        attempts=tuple(attempts),
+        image_sha256=image_sha256,
+        image_size=image_size,
+        picture_check=picture_check,
+        render_check=render_check,
+        renders=tuple(renders),
     )

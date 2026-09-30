@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from novelvideo.director_world.blockout.scene_ir import MAX_COMPILED_OBJECTS
 
-BLOCKOUT_PROMPT_VERSION = 8
+BLOCKOUT_PROMPT_VERSION = 9
 MAX_DESCRIPTION_CHARS = 500
 SUGGESTED_OBJECT_COUNT = 40
 
@@ -230,4 +230,34 @@ def build_blockout_retry_prompt(
         "校验器报告的问题（行号指上面这段程序）：\n\n"
         f"{problems}\n\n"
         "请对照参考图改正这些问题，重新输出完整的程序，不要只输出改动的部分。\n"
+    )
+
+
+def build_blockout_review_prompt(*, base_prompt: str, previous_program: str) -> str:
+    """The render check: the model sees the picture and a render of its own scene.
+
+    Structure first (what to add, what to drop, whether the camera and the room
+    are right), then per-piece differences in picture terms, then the whole
+    program again. Big rewrites are allowed on purpose: a wrong structure does
+    not get fixed by nudging numbers.
+    """
+    return (
+        f"{base_prompt}\n"
+        "## 渲染核对\n\n"
+        "第一张图是参考图。第二张图是把你上一次写的程序编译后、从程序里的 camera "
+        "渲染出来的白模；每件东西上标着它的 id（墙和地面不标），"
+        "颜色只用来区分类型，没有别的含义。\n\n"
+        "上一次的程序：\n\n"
+        f"```\n{previous_program.rstrip()}\n```\n\n"
+        "先把两张图逐块对照，用普通文字（不要用代码块）列出最多 12 条最明显的差别，"
+        "按影响从大到小排。先答三个问题："
+        "(a) 参考图里有、渲染图里没有的结构和大件是什么"
+        "（比如楼层、廊台、隔墙、台阶、柱子、大家具），要新增；"
+        "(b) 渲染图里有、参考图里没有或明显多余的是什么，要删掉；"
+        "(c) 相机离场景的远近、高度、俯仰、fov 和房间的宽深高对不对。"
+        "然后再逐件写：是哪件东西（写 id）还是相机；"
+        "参考图里它在什么位置、多大（用画面占比说，比如「桌子左端在画面两成处、"
+        "桌面在画面高度七成处」）；渲染图里它在哪、多大；要把哪个数值改成多少。"
+        "允许大改：结构不对就重写结构，不要只微调数字。\n\n"
+        "然后按改正后的样子重新输出完整的程序，不要只输出改动的部分，放在一个代码块里。\n"
     )

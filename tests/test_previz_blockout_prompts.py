@@ -13,6 +13,7 @@ from novelvideo.director_world.blockout.prompts import (
     SUGGESTED_OBJECT_COUNT,
     build_blockout_prompt,
     build_blockout_retry_prompt,
+    build_blockout_review_prompt,
 )
 
 
@@ -142,8 +143,25 @@ def test_example_shows_labels_and_the_layout_notes():
     assert "# 靠墙：" in BLOCKOUT_EXAMPLE_PROGRAM
 
 
+def test_review_prompt_shows_the_program_and_the_render_and_asks_for_a_full_rewrite():
+    prompt = build_blockout_review_prompt(
+        base_prompt=build_blockout_prompt(), previous_program="scene.box(id='a')\n"
+    )
+
+    assert prompt.startswith(build_blockout_prompt())
+    assert "## 渲染核对" in prompt
+    assert "```\nscene.box(id='a')\n```" in prompt
+    # The model is told what each picture is and what the colours and labels mean.
+    assert "第一张图是参考图" in prompt and "第二张图" in prompt
+    assert "id" in prompt and "颜色只用来区分类型" in prompt
+    # Structure first, numbers second, and the whole program back.
+    assert "要新增" in prompt and "要删掉" in prompt and "相机" in prompt
+    assert "允许大改" in prompt
+    assert "完整的程序" in prompt and "不要只输出改动的部分" in prompt
+
+
 def test_prompt_version_moves_with_the_wording():
-    assert BLOCKOUT_PROMPT_VERSION == 8
+    assert BLOCKOUT_PROMPT_VERSION == 9
 
 
 def test_prompt_asks_for_relations_instead_of_coordinates_where_it_can():

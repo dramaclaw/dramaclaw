@@ -24,6 +24,7 @@ PROGRAM_FILENAME = "scene.blockout.dsl"
 SCENE_IR_FILENAME = "scene_ir.json"
 GENERATION_FILENAME = "generation.json"
 RESULT_FILENAME = "result.json"
+RENDER_FILENAME = "render_{round}.png"
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,9 @@ class BlockoutAttempt:
     program: str
     errors: tuple[str, ...]
     seconds: float
+    # A render-check round, as opposed to a draft: it started from a render of
+    # the scene under review, and a bad reply is dropped instead of retried.
+    review: bool = False
 
 
 @dataclass(frozen=True)
@@ -44,6 +48,9 @@ class BlockoutGeneration:
     image_sha256: str
     image_size: tuple[int, int]
     picture_check: bool = False
+    render_check: bool = False
+    # The PNG shown to the model in each render-check round, in order.
+    renders: tuple[bytes, ...] = ()
 
 
 class BlockoutGenerationError(RuntimeError):
@@ -79,24 +86,28 @@ def _generation_record(
     image_size: tuple[int, int],
     error: str | None,
     picture_check: bool = False,
+    render_check: bool = False,
 ) -> dict[str, Any]:
+    drafts = [attempt for attempt in attempts if not attempt.review]
     return {
         "model": model,
         "prompt_version": BLOCKOUT_PROMPT_VERSION,
         "picture_check": picture_check,
+        "render_check": render_check,
         "compiler_version": BLOCKOUT_COMPILER_VERSION,
         "image": {
             "sha256": image_sha256,
             "sent_width": image_size[0],
             "sent_height": image_size[1],
         },
-        "retries": max(len(attempts) - 1, 0),
+        "retries": max(len(drafts) - 1, 0),
         "seconds": round(sum(attempt.seconds for attempt in attempts), 3),
         "attempts": [
             {
                 "program": attempt.program,
                 "errors": list(attempt.errors),
                 "seconds": attempt.seconds,
+                "review": attempt.review,
             }
             for attempt in attempts
         ],
@@ -107,7 +118,7 @@ def _generation_record(
 def write_blockout_artifacts(
     out_dir: Path, generation: BlockoutGeneration
 ) -> dict[str, Any]:
-    """Write the four files of a finished job and return the result payload."""
+    """Write the files of a finished job (plus one render per review round) and return the result payload."""
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / PROGRAM_FILENAME).write_text(
         generation.program + "\n", encoding="utf-8"
@@ -122,8 +133,11 @@ def write_blockout_artifacts(
             image_size=generation.image_size,
             error=None,
             picture_check=generation.picture_check,
+            render_check=generation.render_check,
         ),
     )
+    for index, png in enumerate(generation.renders, start=1):
+        (out_dir / RENDER_FILENAME.format(round=index)).write_bytes(png)
     result = {
         "objects": generation.compiled["objects"],
         "reference_camera_id": generation.compiled["reference_camera_id"],
