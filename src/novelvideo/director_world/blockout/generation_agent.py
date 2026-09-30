@@ -37,9 +37,6 @@ from novelvideo.director_world.blockout.scene_ir import (
 from novelvideo.egress_context import TrustedEgressContext
 
 BLOCKOUT_MODEL_ENV = "PREVIZ_BLOCKOUT_MODEL"
-# 画面核对（scene.seen 投影回看）默认关：它只能发现坐标、尺寸、相机互相矛盾，
-# 换来的是每次多一到两轮模型调用。请求里没说时按这个环境变量。
-BLOCKOUT_PICTURE_CHECK_ENV = "PREVIZ_BLOCKOUT_PICTURE_CHECK"
 BLOCKOUT_TIMEOUT_SECONDS = 300.0
 BLOCKOUT_MAX_ATTEMPTS = 3
 
@@ -54,14 +51,6 @@ def resolve_blockout_model() -> str:
     from novelvideo.freezone.vision_gateway import resolve_freezone_vision_model
 
     return resolve_freezone_vision_model(os.environ.get(BLOCKOUT_MODEL_ENV))
-
-
-def resolve_picture_check(requested: bool | None) -> bool:
-    """The request's choice if it made one, else `PREVIZ_BLOCKOUT_PICTURE_CHECK`."""
-    if requested is not None:
-        return bool(requested)
-    value = os.environ.get(BLOCKOUT_PICTURE_CHECK_ENV, "").strip().lower()
-    return value in {"1", "true", "yes", "on"}
 
 
 def extract_program(text: str) -> str:
@@ -134,13 +123,19 @@ async def generate_blockout_from_image(
     *,
     image_path: Path,
     description: str = "",
-    picture_check: bool | None = None,
+    picture_check: bool = False,
     egress_context: TrustedEgressContext | None = None,
 ) -> BlockoutGeneration:
+    """Write a blockout for one picture.
+
+    `picture_check` is the user's choice, made per job in the dialog: ask the
+    model for `scene.seen` lines and project the scene back onto the picture.
+    It only catches contradictions between coordinates, sizes and camera, and
+    costs one or two extra model calls, so it is off unless asked for.
+    """
     from novelvideo.freezone.vision_gateway import load_compact_vision_inputs
 
     model = resolve_blockout_model()
-    picture_check = resolve_picture_check(picture_check)
 
     def unreadable(reason: str, *, sha256: str) -> BlockoutGenerationError:
         # 原始异常里带着服务器上的绝对路径，不该原样走到用户面前。

@@ -140,7 +140,21 @@ describe("PrevizBlockoutDialog", () => {
     const request = onStart.mock.calls[0]![0];
     expect(request.file).toBe(file);
     expect(request.description).toBe("层高 3 米");
+    expect(request.pictureCheck).toBe(false);
     expect(request.mode).toBe("replace");
+  });
+
+  it("sends the picture check only when the box is ticked", async () => {
+    const user = userEvent.setup();
+    const { onStart } = setup();
+
+    await pick(image());
+    const box = screen.getByRole("checkbox", { name: "previz.blockout.pictureCheck" });
+    expect(box).not.toBeChecked();
+    await user.click(box);
+    await user.click(submit());
+
+    expect(onStart.mock.calls[0]![0].pictureCheck).toBe(true);
   });
 
   // 读 `value` 验不出来：jsdom 里用 `fireEvent` 塞进去的文件不进 input 自己的文件表，

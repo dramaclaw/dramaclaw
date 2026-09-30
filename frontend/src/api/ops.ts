@@ -837,12 +837,14 @@ export async function submitFreezoneReversePrompt(
 
 /**
  * 一张参考图转成预演台白模。`description` 是用户对这张图的补充说明（真实尺寸等），
- * 可以不填；后端上限 2000 字，超了回 422。
+ * 可以不填；后端上限 2000 字，超了回 422。`pictureCheck` 让后端把白模投影回参考图
+ * 核对坐标、尺寸和相机是否自洽，多耗一到两轮模型调用，默认不做。
  */
 export interface FreezoneImageToBlockoutPayload
   extends Pick<FreezoneNodeContext, "canvasId" | "nodeId"> {
   sourceUrl: string;
   description?: string;
+  pictureCheck?: boolean;
 }
 
 export async function submitFreezoneImageToBlockout(
@@ -856,6 +858,7 @@ export async function submitFreezoneImageToBlockout(
       json: {
         source_url: payload.sourceUrl,
         description: payload.description ?? "",
+        picture_check: payload.pictureCheck ?? false,
         ...nodeContextBody(payload),
       },
     },

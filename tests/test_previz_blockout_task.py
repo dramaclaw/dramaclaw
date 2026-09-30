@@ -113,7 +113,7 @@ def runner_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
     def install(outcome):
         async def leaf(
-            *, image_path, description="", picture_check=None, egress_context=None
+            *, image_path, description="", picture_check=False, egress_context=None
         ):
             calls.append(
                 {
@@ -162,7 +162,7 @@ async def test_runner_writes_the_artifacts_and_returns_a_summary(runner_env):
         {
             "image_path": runner_env.source,
             "description": "层高 3 米",
-            "picture_check": None,
+            "picture_check": False,
             "egress_context": None,
         }
     ]

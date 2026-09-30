@@ -103,6 +103,8 @@ function BlockoutPanel({
   const { t } = useTranslation();
   const fileInputId = useId();
   const noteId = useId();
+  const pictureCheckId = useId();
+  const pictureCheckHintId = useId();
   const guideId = useId();
   const hintId = useId();
   const heldId = useId();
@@ -110,6 +112,7 @@ function BlockoutPanel({
   const [refusal, setRefusal] = useState<string | null>(null);
   const [hints, setHints] = useState<PrevizBlockoutImageHint[]>([]);
   const [description, setDescription] = useState("");
+  const [pictureCheck, setPictureCheck] = useState(false);
   const [mode, setMode] = useState<PrevizBlockoutImportMode>("replace");
   const [dragging, setDragging] = useState(false);
   /** 量尺寸是异步的：连着选两张图时，先选那张的结果不能盖到后选那张头上。 */
@@ -303,6 +306,26 @@ function BlockoutPanel({
           </span>
         </div>
 
+        <div className="flex items-start gap-2">
+          <input
+            id={pictureCheckId}
+            type="checkbox"
+            disabled={busy}
+            checked={pictureCheck}
+            aria-describedby={pictureCheckHintId}
+            onChange={(event) => setPictureCheck(event.target.checked)}
+            className="mt-0.5 accent-white/80"
+          />
+          <div className="flex flex-col gap-0.5">
+            <label htmlFor={pictureCheckId} className="text-[12px] text-white/60">
+              {t("previz.blockout.pictureCheck")}
+            </label>
+            <span id={pictureCheckHintId} className="text-[11px] text-white/35">
+              {t("previz.blockout.pictureCheckHint")}
+            </span>
+          </div>
+        </div>
+
         {hasExisting && (
           <div
             role="group"
@@ -365,7 +388,7 @@ function BlockoutPanel({
             disabled={!canStart}
             className={PRIMARY_BUTTON}
             onClick={() => {
-              if (file) onStart({ file, description, mode });
+              if (file) onStart({ file, description, pictureCheck, mode });
             }}
           >
             {t("previz.blockout.submit")}

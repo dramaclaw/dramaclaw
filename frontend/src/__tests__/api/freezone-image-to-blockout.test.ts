@@ -25,6 +25,7 @@ describe("image to blockout api", () => {
     const ref = await submitFreezoneImageToBlockout("project a", {
       sourceUrl: "/static/projects/p/freezone/uploads/ref.png",
       description: "层高 3 米",
+      pictureCheck: true,
       canvasId: "default",
       nodeId: "previz-1",
     });
@@ -34,6 +35,7 @@ describe("image to blockout api", () => {
       json: {
         source_url: "/static/projects/p/freezone/uploads/ref.png",
         description: "层高 3 米",
+        picture_check: true,
         canvas_id: "default",
         node_id: "previz-1",
       },
@@ -48,7 +50,7 @@ describe("image to blockout api", () => {
 
     expect(apiCall).toHaveBeenCalledWith("projects/p/freezone/image-to-blockout", {
       method: "POST",
-      json: { source_url: "/static/a.png", description: "" },
+      json: { source_url: "/static/a.png", description: "", picture_check: false },
     });
   });
 

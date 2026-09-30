@@ -14,7 +14,13 @@ import { readUrl } from "@/lib/url-params";
 type Upload = (project: string, file: File, name: string) => Promise<{ url: string }>;
 type Submit = (
   project: string,
-  payload: { sourceUrl: string; description?: string; canvasId?: string; nodeId?: string },
+  payload: {
+    sourceUrl: string;
+    description?: string;
+    pictureCheck?: boolean;
+    canvasId?: string;
+    nodeId?: string;
+  },
 ) => Promise<{ task_type: string; job_id: string; task_key: string }>;
 type Await = (
   taskKey: string,
@@ -152,6 +158,7 @@ describe("useBlockoutGeneration happy path", () => {
       imported = await hook.current.start({
         file: image(),
         description: "  门宽 0.9 米  ",
+        pictureCheck: true,
         mode: "replace",
       });
     });
@@ -164,6 +171,7 @@ describe("useBlockoutGeneration happy path", () => {
     expect(submitFreezoneImageToBlockout).toHaveBeenCalledWith("demo", {
       sourceUrl: "/static/ref.png",
       description: "门宽 0.9 米",
+      pictureCheck: true,
       canvasId: "board-1",
       nodeId: "previz-1",
     });
@@ -190,7 +198,7 @@ describe("useBlockoutGeneration happy path", () => {
     vi.mocked(readUrl).mockReturnValue({ project: "demo", canvas: null });
     const { result: hook } = setup();
 
-    await act(() => hook.current.start({ file: image(), description: "", mode: "replace" }));
+    await act(() => hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" }));
 
     expect(submitFreezoneImageToBlockout.mock.calls[0]![1]).toMatchObject({
       canvasId: "default",
@@ -202,7 +210,7 @@ describe("useBlockoutGeneration happy path", () => {
     const { result: hook } = setup();
 
     await act(() =>
-      hook.current.start({ file: image("Room.JPEG"), description: "", mode: "replace" }),
+      hook.current.start({ file: image("Room.JPEG"), description: "", pictureCheck: false, mode: "replace" }),
     );
 
     expect(uploadFreezoneImage.mock.calls[0]![2]).toMatch(/\.jpeg$/);
@@ -217,7 +225,7 @@ describe("useBlockoutGeneration happy path", () => {
 
     let run!: Promise<boolean>;
     act(() => {
-      run = hook.current.start({ file: image(), description: "", mode: "replace" });
+      run = hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" });
     });
     await waitFor(() => expect(hook.current.stage).toBe("uploading"));
 
@@ -239,7 +247,7 @@ describe("useBlockoutGeneration happy path", () => {
     );
     const { result: hook } = setup();
 
-    await act(() => hook.current.start({ file: image(), description: "", mode: "replace" }));
+    await act(() => hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" }));
 
     expect(toast.warning).toHaveBeenCalledWith('previz.blockout.warnings:{"count":4}', {
       description: "a 悬空\nb 穿插\nc 出界",
@@ -259,6 +267,7 @@ describe("useBlockoutGeneration refuses before spending anything", () => {
       imported = await hook.current.start({
         file: image(name, bytes),
         description: "",
+        pictureCheck: false,
         mode: "replace",
       });
     });
@@ -272,7 +281,7 @@ describe("useBlockoutGeneration refuses before spending anything", () => {
     vi.mocked(readUrl).mockReturnValue({ project: null, canvas: null });
     const { result: hook } = setup();
 
-    await act(() => hook.current.start({ file: image(), description: "", mode: "replace" }));
+    await act(() => hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" }));
 
     expect(toast.error).toHaveBeenCalledWith("previz.blockout.noProject");
     expect(uploadFreezoneImage).not.toHaveBeenCalled();
@@ -285,7 +294,7 @@ describe("useBlockoutGeneration refuses before spending anything", () => {
       .loadScene({ ...scene, objects: handPlacedPrimitives(PREVIZ_PRIMITIVE_LIMIT) });
     const { result: hook } = setup();
 
-    await act(() => hook.current.start({ file: image(), description: "", mode: "replace" }));
+    await act(() => hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" }));
 
     expect(toast.error).toHaveBeenCalledWith('previz.blockout.noRoom:{"limit":150}');
     expect(uploadFreezoneImage).not.toHaveBeenCalled();
@@ -295,10 +304,10 @@ describe("useBlockoutGeneration refuses before spending anything", () => {
   it("starts on a full scene when replacing would free the slots", async () => {
     const { result: hook } = setup();
     fetchFreezoneImageToBlockoutResult.mockResolvedValueOnce(result(PREVIZ_PRIMITIVE_LIMIT));
-    await act(() => hook.current.start({ file: image(), description: "", mode: "replace" }));
+    await act(() => hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" }));
     expect(objectIds()).toHaveLength(PREVIZ_PRIMITIVE_LIMIT + 1);
 
-    await act(() => hook.current.start({ file: image(), description: "", mode: "replace" }));
+    await act(() => hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" }));
 
     expect(uploadFreezoneImage).toHaveBeenCalledTimes(2);
     expect(objectIds()).toEqual([
@@ -312,9 +321,9 @@ describe("useBlockoutGeneration refuses before spending anything", () => {
   it("does not start appending to a full scene", async () => {
     const { result: hook } = setup();
     fetchFreezoneImageToBlockoutResult.mockResolvedValueOnce(result(PREVIZ_PRIMITIVE_LIMIT));
-    await act(() => hook.current.start({ file: image(), description: "", mode: "replace" }));
+    await act(() => hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" }));
 
-    await act(() => hook.current.start({ file: image(), description: "", mode: "append" }));
+    await act(() => hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "append" }));
 
     expect(uploadFreezoneImage).toHaveBeenCalledTimes(1);
     expect(toast.error).toHaveBeenCalledWith('previz.blockout.noRoom:{"limit":150}');
@@ -328,7 +337,7 @@ describe("useBlockoutGeneration failures leave the scene alone", () => {
     const { result: hook } = setup();
     let imported = true;
     await act(async () => {
-      imported = await hook.current.start({ file: image(), description: "", mode: "replace" });
+      imported = await hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" });
     });
     expect(imported).toBe(false);
     expect(usePrevizStore.getState().scene).toBe(before);
@@ -427,7 +436,7 @@ describe("useBlockoutGeneration keeps a paid result that did not fit", () => {
 
     let imported = true;
     await act(async () => {
-      imported = await hook.current.start({ file: image(), description: "", mode: "replace" });
+      imported = await hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" });
     });
 
     expect(imported).toBe(false);
@@ -446,7 +455,7 @@ describe("useBlockoutGeneration keeps a paid result that did not fit", () => {
     fillScene(140);
     fetchFreezoneImageToBlockoutResult.mockResolvedValueOnce(result(15, ["a 悬空"]));
     const { result: hook } = setup();
-    await act(() => hook.current.start({ file: image(), description: "", mode: "replace" }));
+    await act(() => hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" }));
     vi.clearAllMocks();
 
     const scene = usePrevizStore.getState().scene;
@@ -473,7 +482,7 @@ describe("useBlockoutGeneration keeps a paid result that did not fit", () => {
     fillScene(140);
     fetchFreezoneImageToBlockoutResult.mockResolvedValueOnce(result(15));
     const { result: hook } = setup();
-    await act(() => hook.current.start({ file: image(), description: "", mode: "replace" }));
+    await act(() => hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" }));
 
     let imported = true;
     act(() => {
@@ -501,7 +510,7 @@ describe("useBlockoutGeneration keeps a paid result that did not fit", () => {
     fillScene(140);
     fetchFreezoneImageToBlockoutResult.mockResolvedValueOnce(result(15));
     const { result: hook } = setup();
-    await act(() => hook.current.start({ file: image(), description: "", mode: "replace" }));
+    await act(() => hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" }));
 
     act(() => hook.current.abandon());
 
@@ -516,7 +525,7 @@ describe("useBlockoutGeneration drops results nobody is waiting for", () => {
     const { result: hook } = setup();
     let run!: Promise<boolean>;
     act(() => {
-      run = hook.current.start({ file: image(), description: "", mode: "replace" });
+      run = hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" });
     });
     await waitFor(() => expect(hook.current.stage).toBe("generating"));
 
@@ -541,7 +550,7 @@ describe("useBlockoutGeneration drops results nobody is waiting for", () => {
     const { result: hook } = setup();
     let run!: Promise<boolean>;
     act(() => {
-      run = hook.current.start({ file: image(), description: "", mode: "replace" });
+      run = hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" });
     });
     await waitFor(() => expect(hook.current.stage).toBe("generating"));
     act(() => hook.current.abandon());
@@ -562,7 +571,7 @@ describe("useBlockoutGeneration drops results nobody is waiting for", () => {
     const { result: hook, unmount } = setup();
     let run!: Promise<boolean>;
     act(() => {
-      run = hook.current.start({ file: image(), description: "", mode: "replace" });
+      run = hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" });
     });
     await waitFor(() => expect(awaitTaskCompletion).toHaveBeenCalled());
 
@@ -583,7 +592,7 @@ describe("useBlockoutGeneration drops results nobody is waiting for", () => {
     const { result: hook, rerender } = setup("previz-1");
     let run!: Promise<boolean>;
     act(() => {
-      run = hook.current.start({ file: image(), description: "", mode: "replace" });
+      run = hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" });
     });
     await waitFor(() => expect(awaitTaskCompletion).toHaveBeenCalled());
 
@@ -603,13 +612,13 @@ describe("useBlockoutGeneration drops results nobody is waiting for", () => {
     const { result: hook } = setup();
     let first!: Promise<boolean>;
     act(() => {
-      first = hook.current.start({ file: image(), description: "", mode: "replace" });
+      first = hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" });
     });
     await waitFor(() => expect(hook.current.stage).toBe("generating"));
 
     let second = true;
     await act(async () => {
-      second = await hook.current.start({ file: image(), description: "", mode: "replace" });
+      second = await hook.current.start({ file: image(), description: "", pictureCheck: false, mode: "replace" });
     });
 
     expect(second).toBe(false);

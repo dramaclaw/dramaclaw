@@ -36,6 +36,8 @@ const SHOWN_WARNINGS = 3;
 export interface PrevizBlockoutRequest {
   file: File;
   description: string;
+  /** 对话框里的「画面核对」勾选，原样交给后端。 */
+  pictureCheck: boolean;
   mode: PrevizBlockoutImportMode;
 }
 
@@ -125,7 +127,7 @@ export function useBlockoutGeneration(nodeId: string): BlockoutGeneration {
   );
 
   const start = useCallback(
-    async ({ file, description, mode }: PrevizBlockoutRequest) => {
+    async ({ file, description, pictureCheck, mode }: PrevizBlockoutRequest) => {
       if (active.current !== null) return false;
       const verdict = isAcceptedBlockoutImage(file.name, file.size);
       if (verdict === 'extension') {
@@ -167,6 +169,7 @@ export function useBlockoutGeneration(nodeId: string): BlockoutGeneration {
         const job = await submitFreezoneImageToBlockout(project, {
           sourceUrl: upload.url,
           description: description.trim().slice(0, PREVIZ_BLOCKOUT_DESCRIPTION_MAX_CHARS),
+          pictureCheck,
           canvasId: canvas ?? 'default',
           nodeId,
         });
