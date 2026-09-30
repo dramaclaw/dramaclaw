@@ -328,6 +328,7 @@ export function PrevizToolbar({
                       : t("previz.toolbar.limitReached", { count: PREVIZ_OBJECT_LIMITS[kind] })
                   }
                   disabled={!canAdd[kind]}
+                  shortcut={kind === "prop" ? "T" : undefined}
                   onClick={() => onAdd(kind)}
                 />
               );

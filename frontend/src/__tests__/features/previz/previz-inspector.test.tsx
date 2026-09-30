@@ -239,7 +239,7 @@ describe("PrevizInspector", () => {
     expect(screen.getByText("previz.inspector.poseAdjust.label")).toBeInTheDocument();
     expect(screen.queryByLabelText("previz.inspector.focalMm")).toBeNull();
     expect(screen.queryByLabelText("previz.inspector.lightType")).toBeNull();
-    expect(screen.queryByLabelText("previz.inspector.assetUrl")).toBeNull();
+    expect(screen.queryByLabelText("previz.inspector.assetFile")).toBeNull();
   });
 
   it("shows only the camera fields for a camera", () => {
@@ -250,7 +250,7 @@ describe("PrevizInspector", () => {
     expect(screen.getByLabelText("previz.inspector.sensor")).toBeInTheDocument();
     expect(screen.queryByLabelText("previz.inspector.heightCm")).toBeNull();
     expect(screen.queryByLabelText("previz.inspector.lightType")).toBeNull();
-    expect(screen.queryByLabelText("previz.inspector.assetUrl")).toBeNull();
+    expect(screen.queryByLabelText("previz.inspector.assetFile")).toBeNull();
   });
 
   it("shows only the light fields for a light", () => {
@@ -261,13 +261,13 @@ describe("PrevizInspector", () => {
     expect(screen.getByLabelText("previz.inspector.intensity")).toBeInTheDocument();
     expect(screen.queryByLabelText("previz.inspector.heightCm")).toBeNull();
     expect(screen.queryByLabelText("previz.inspector.focalMm")).toBeNull();
-    expect(screen.queryByLabelText("previz.inspector.assetUrl")).toBeNull();
+    expect(screen.queryByLabelText("previz.inspector.assetFile")).toBeNull();
   });
 
   it("shows only the prop fields for a prop", () => {
     renderInspector(createPrevizObject("prop", []));
 
-    expect(screen.getByLabelText("previz.inspector.assetUrl")).toBeInTheDocument();
+    expect(screen.getByLabelText("previz.inspector.assetFile")).toBeInTheDocument();
     expect(screen.queryByLabelText("previz.inspector.heightCm")).toBeNull();
     expect(screen.queryByLabelText("previz.inspector.focalMm")).toBeNull();
     expect(screen.queryByLabelText("previz.inspector.lightType")).toBeNull();
@@ -754,10 +754,26 @@ describe("PrevizInspector", () => {
 
     // 名字框也是回读方向的一员：它显示的必须是 name，不是 id、也不是资产路径。
     expect(screen.getByLabelText("previz.inspector.name")).toHaveValue("红椅子");
-    const input = screen.getByLabelText("previz.inspector.assetUrl");
-    expect(input).toHaveValue("/static/chair.glb");
-    // 手打 URL 只会打错；换模型走工具栏的导入。
+    const input = screen.getByLabelText("previz.inspector.assetFile");
+    // 只显示文件名；完整地址留在悬停提示里。
+    expect(input).toHaveValue("chair.glb");
+    expect(input).toHaveAttribute("title", "/static/chair.glb");
+    // 手打 URL 只会打错；换模型走模型库。
     expect(input).toHaveAttribute("readonly");
+  });
+
+  // 模型库的模型显示库里的名字，不把 CDN 地址摊给用户看；换过根的旧物件也认得出来。
+  it("names a library model instead of showing its CDN url", () => {
+    renderInspector(
+      createPrevizObject("prop", [], {
+        assetUrl: "/previz/models/v1/vehicle/sedan.glb",
+        assetFormat: "glb",
+      }),
+    );
+
+    const input = screen.getByLabelText("previz.inspector.libraryModel");
+    expect(input).toHaveValue("previz.library.model.vehicle-sedan");
+    expect(screen.queryByLabelText("previz.inspector.assetFile")).toBeNull();
   });
 
   // 几何体的 assetUrl 是形状名，把「cube」当地址显示给用户没有意义。
@@ -769,7 +785,7 @@ describe("PrevizInspector", () => {
     const input = screen.getByLabelText("previz.inspector.primitive");
     expect(input).toHaveValue("previz.library.primitive.cube");
     expect(input).toHaveAttribute("readonly");
-    expect(screen.queryByLabelText("previz.inspector.assetUrl")).toBeNull();
+    expect(screen.queryByLabelText("previz.inspector.assetFile")).toBeNull();
   });
 
   // 更新的版本写入的新形状：认不出就原样显示，别显示一个不存在的 i18n key。

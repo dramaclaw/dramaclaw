@@ -28,7 +28,6 @@ import {
   PREVIZ_VIEW_NEAR_M,
   boundsCenter,
   boundsRadius,
-  drawTopPlacement,
   framingDistance,
   orbitDepthRange,
   orthoPlacement,
@@ -207,6 +206,14 @@ export interface PrevizPathPointPick {
  */
 const PLACEHOLDER_HEIGHT_M = PREVIZ_DEFAULT_HEIGHT_CM / 100;
 const PLACEHOLDER_HALF_WIDTH_M = PREVIZ_PLACEHOLDER_RADIUS;
+
+/**
+ * 开发期把一段耗时记成 User Timing（`previz:*`），在 DevTools 性能面板里和 React 的
+ * 组件轨对着看，分得清卡在界面、求值还是出图。生产构建里整段被摇掉。
+ */
+function measureDev(name: string, start: number): void {
+  if (import.meta.env.DEV) performance.measure(name, { start, end: performance.now() });
+}
 
 /**
  * 求值器会写回的那两项变了没有。
@@ -791,6 +798,7 @@ export class PrevizRenderer {
     // 录制、出图一律按完整场景：独奏是看的工具，不该漏进导出的成片。
     const solved =
       this.recording || this.capturing ? scene : soloScene(scene, this.soloObjectIds);
+    const start = performance.now();
     const evaluated = evaluateSceneAt(solved, this.currentFrame, this.propExtents());
     for (const [objectId, state] of evaluated) {
       // 姿势不归手摆管：拖动一个正在走的人物改的是他站在哪，不是把他的腿定住。
@@ -808,7 +816,10 @@ export class PrevizRenderer {
         state.rotation[2] * DEG_TO_RAD,
       );
     }
+    measureDev('previz:evaluate', start);
+    const groundStart = performance.now();
     this.standGroundCharacters(scene);
+    measureDev('previz:ground', groundStart);
   }
 
   /**
@@ -1252,42 +1263,6 @@ export class PrevizRenderer {
       this.camera.aspect,
     );
     this.moveCamera(placement.position, placement.target);
-  }
-
-  /**
-   * 画笔接管视角用的一次性切换：切到俯视，并把切换前的机位交回去，由调用方留着还原。
-   *
-   * 框的是全场景而不是 [currentBounds]，且半径有兜底——理由见 `drawTopPlacement`。
-   * 视角球上那颗「顶视图」照旧走 [applyViewDirection]，框选中对象，两者不是一回事。
-   *
-   * 返回 `null` = 这次没切（已经拆了，或者正在录制）。录制期间 [moveCamera] 本来就不动
-   * 相机，这时候还交出一份快照，调用方会在退出画笔时拿它硬写一次，等于凭空跳一下机位。
-   *
-   * **不幂等**：已经在画笔俯视里再调一次，交回来的就是俯视本身，原机位会丢。调用方
-   * 只该在自己那份快照为空时才写入——`main.tsx` 开着 `StrictMode`，dev 下 effect
-   * 双跑正好会踩这一点。
-   */
-  applyDrawTopView(): PrevizViewPlacement | null {
-    if (this.disposed || this.recording) return null;
-    const previous = this.viewPose();
-    const placement = drawTopPlacement(this.sceneBounds(), EDITOR_FOV_DEG, this.camera.aspect);
-    this.moveCamera(placement.position, placement.target);
-    return previous;
-  }
-
-  /**
-   * 把一份机位快照原样写回相机。画笔退出时的还原走这条。
-   *
-   * 不直接暴露 [moveCamera]：录制拦截、`controls.update()`、`requestRender()` 那三件事都在
-   * 那条唯一的写机位路径上，绕开一次就少一样。传进来的两个数组不留引用——调用方那份
-   * 快照可能还要再用一次（用户切回画笔）。
-   *
-   * 录制中这次还原会被 [moveCamera] 静默丢掉——这里只挡 `disposed`，`recording` 交给
-   * `moveCamera` 兜。
-   */
-  applyViewPose(pose: PrevizViewPlacement): void {
-    if (this.disposed) return;
-    this.moveCamera([...pose.position], [...pose.target]);
   }
 
   /** 聚焦某个对象（F 键）。对象不存在时什么都不做，别把相机甩到原点。 */
@@ -1866,8 +1841,21 @@ export class PrevizRenderer {
   private renderFrame(): void {
     this.needsRender = false;
     this.syncDepthRange();
+    const start = performance.now();
     this.renderer.render(this.scene, this.camera);
-    this.renderMonitor();
+    measureDev('previz:render-main', start);
+    // 监看框复用主视图刚画好的阴影图，不再画第二遍：主光是平行光，阴影相机钉在光上，
+    // 与从哪台相机看无关；监看时藏起来的那些辅助物与机身本来就不投影（见
+    // `sceneGraph.ts` 的 `enableShadows`）。整张 2048² 深度图要把所有投影网格再画一遍，
+    // 大模型一多，这一遍就是每帧里白花的大头。
+    const monitorStart = performance.now();
+    this.renderer.shadowMap.autoUpdate = false;
+    try {
+      this.renderMonitor();
+    } finally {
+      this.renderer.shadowMap.autoUpdate = true;
+    }
+    measureDev('previz:render-monitor', monitorStart);
   }
 
   /**

@@ -8171,6 +8171,13 @@
       "remove": "Delete",
       "setActiveCamera": "Use as monitor camera"
     },
+    "contextMenu": {
+      "addToTimeline": "Add to timeline",
+      "hide": "Hide",
+      "show": "Show",
+      "lock": "Lock",
+      "unlock": "Unlock"
+    },
     "cameraCreate": {
       "title": "Create camera",
       "close": "Close camera creation",
@@ -8313,7 +8320,8 @@
       "color": "Color",
       "markerColor": "Marker colour",
       "intensity": "Intensity",
-      "assetUrl": "Model URL",
+      "assetFile": "Model file",
+      "libraryModel": "Library model",
       "primitive": "Primitive"
     },
     "monitor": {

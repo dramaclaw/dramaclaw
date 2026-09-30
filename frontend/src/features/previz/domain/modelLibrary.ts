@@ -61,6 +61,11 @@ export function isPrevizLibraryModelUrl(url: string): boolean {
   return /\/previz\/models\/v\d+\//.test(url);
 }
 
+/** 版本段往后那截（`v1/vehicle/sedan.glb`）：同一个模型换过根也认得出来。 */
+function libraryModelKey(url: string): string | null {
+  return /\/previz\/models\/(v\d+\/.+)$/.exec(url)?.[1] ?? null;
+}
+
 export interface PrevizLibraryEntry {
   id: string;
   nameKey: string;
@@ -134,5 +139,17 @@ export function searchLibrary(
   if (!needle) return [...entries];
   return entries.filter((entry) =>
     [translate(entry.nameKey), ...entry.tags].some((text) => text.toLowerCase().includes(needle)),
+  );
+}
+
+/**
+ * 物件的模型对应模型库里哪一项，认不出（用户自己导入的、更新版本才有的模型）返回
+ * `undefined`。几何体存的是形状名，不走这里。
+ */
+export function findPrevizLibraryModel(url: string): PrevizLibraryEntry | undefined {
+  const key = libraryModelKey(url);
+  if (key === null) return undefined;
+  return PREVIZ_LIBRARY_ENTRIES.find(
+    (entry) => entry.assetFormat !== 'primitive' && libraryModelKey(entry.assetUrl) === key,
   );
 }

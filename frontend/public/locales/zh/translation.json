@@ -8171,6 +8171,13 @@
       "remove": "删除",
       "setActiveCamera": "设为监看机位"
     },
+    "contextMenu": {
+      "addToTimeline": "加到时间轴",
+      "hide": "隐藏",
+      "show": "显示",
+      "lock": "锁定",
+      "unlock": "解锁"
+    },
     "cameraCreate": {
       "title": "摄影机创建",
       "close": "关闭机位创建",
@@ -8313,7 +8320,8 @@
       "color": "颜色",
       "markerColor": "辨识色",
       "intensity": "强度",
-      "assetUrl": "模型地址",
+      "assetFile": "模型文件",
+      "libraryModel": "模型库",
       "primitive": "几何体"
     },
     "monitor": {
