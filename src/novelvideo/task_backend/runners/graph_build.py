@@ -190,14 +190,14 @@ async def _run_build_episodes(
     payload = envelope.get("payload") or {}
     config = dict(payload.get("config") or {})
     target = int(config.get("target_episodes", 10))
-    use_agent = bool(config.get("use_agent_planner", True))
     planning_mode = str(config.get("planning_mode", "ai"))
     generate_metadata = bool(config.get("generate_metadata", False))
     require_imported_novel(ctx.output_dir)
     # Defence in depth: the route rejects AI modes for structured projects
     # before enqueue, but a task queued before the project's track was known
     # must not reach a planner that needs the graph.
-    if is_structured_pipeline(ctx.state_dir) and planning_mode != "chapters":
+    state_dir = getattr(ctx, "state_dir", ctx.output_dir)
+    if is_structured_pipeline(state_dir) and planning_mode != "chapters":
         raise KnowledgePipelineUnsupported(
             "structured_v1 only supports deterministic chapter/episode mapping"
         )
@@ -219,28 +219,14 @@ async def _run_build_episodes(
                 on_progress=update,
                 on_log=lambda message: update(None, message),
             )
-        elif use_agent:
-            try:
-                planner = EpisodePlannerAgent(store)
-                episodes = await planner.plan_episodes(
-                    target_episodes=target,
-                    on_progress=update,
-                    on_log=lambda message: update(None, message),
-                )
-            except Exception:
-                episodes = await store.build_episodes(
-                    target_episodes=target,
-                    on_progress=update,
-                    on_log=lambda message: update(None, message),
-                )
-            else:
-                await store.replace_episodes(episodes)
         else:
-            episodes = await store.build_episodes(
+            planner = EpisodePlannerAgent(store)
+            episodes = await planner.plan_episodes(
                 target_episodes=target,
                 on_progress=update,
                 on_log=lambda message: update(None, message),
             )
+            await store.replace_episodes(episodes)
         return {"episodes": len(episodes)}
     finally:
         await store.close()

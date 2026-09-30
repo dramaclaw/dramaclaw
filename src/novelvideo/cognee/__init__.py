@@ -29,7 +29,6 @@ from novelvideo.models import (
 )
 from .pipeline import (
     run_character_extraction_pipeline,
-    run_episode_planning_pipeline,
     extract_scenes_from_graph,
     extract_scenes_from_script,
     extract_props_from_graph,
@@ -51,7 +50,6 @@ __all__ = [
 
     # Pipeline
     "run_character_extraction_pipeline",
-    "run_episode_planning_pipeline",
     "extract_scenes_from_graph",
     "extract_scenes_from_script",
     "extract_props_from_graph",

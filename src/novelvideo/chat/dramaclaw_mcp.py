@@ -9,19 +9,99 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import inspect
 import json
+import logging
+import os
+import re
 import sys
+import time
 import types as py_types
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError, ValidationError
 from mcp import types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
+logger = logging.getLogger("novelvideo.chat.dramaclaw_mcp")
 
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+_FIXED_RUNTIME_ROOT = Path("/app")
+_SOURCE_MODULE_PATH = Path("src") / "novelvideo" / "chat" / "dramaclaw_mcp.py"
+
+
+def _trusted_source_root() -> Path | None:
+    """Return the checkout root only when this module has the reviewed src layout."""
+    module_path = Path(__file__).resolve()
+    source_parts = _SOURCE_MODULE_PATH.parts
+    if tuple(module_path.parts[-len(source_parts) :]) != source_parts:
+        return None
+    return module_path.parents[len(source_parts) - 1]
+
+
+def _plugin_from_root(root: Path, relative_paths: tuple[Path, ...]) -> Path | None:
+    plugins_root = (root / ".hermes" / "plugins").resolve()
+    for relative_path in relative_paths:
+        candidate = root / relative_path
+        if not candidate.is_file():
+            continue
+        resolved = candidate.resolve()
+        try:
+            resolved.relative_to(plugins_root)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Hermes plugin path escapes the trusted plugin root: {candidate}"
+            ) from exc
+        return resolved
+    return None
+
+
+def _plugin_path(plugin_name: str) -> Path:
+    """Resolve a bundled Hermes plugin without assuming a source checkout import.
+
+    Production installs may import this module from ``site-packages`` while the
+    reviewed plugins live under ``/app/.hermes``.  In that layout deriving the
+    repository root from ``__file__`` points at the Python installation instead
+    of the application root.
+    """
+    relative_paths = (
+        Path(".hermes") / "plugins" / plugin_name / "__init__.py",
+        Path(".hermes") / "plugins" / plugin_name / "init.py",
+    )
+    configured_root = os.environ.get("DRAMACLAW_ROOT", "").strip()
+    if configured_root:
+        root = Path(configured_root).expanduser().resolve()
+        plugin_path = _plugin_from_root(root, relative_paths)
+        if plugin_path is not None:
+            return plugin_path
+        expected = ", ".join(str(root / path) for path in relative_paths)
+        raise RuntimeError(
+            f"DRAMACLAW_ROOT does not contain the {plugin_name} plugin; expected {expected}"
+        )
+
+    roots: list[Path] = []
+    source_root = _trusted_source_root()
+    if source_root is not None:
+        roots.append(source_root)
+    roots.append(_FIXED_RUNTIME_ROOT)
+
+    searched: list[str] = []
+    seen: set[Path] = set()
+    for root in roots:
+        if root in seen:
+            continue
+        seen.add(root)
+        searched.extend(str(root / relative_path) for relative_path in relative_paths)
+        plugin_path = _plugin_from_root(root, relative_paths)
+        if plugin_path is not None:
+            return plugin_path
+    raise RuntimeError(
+        f"cannot locate bundled Hermes plugin {plugin_name}; searched: "
+        + ", ".join(searched)
+    )
 
 
 def _install_hermes_registry_shim() -> None:
@@ -44,59 +124,804 @@ def _install_hermes_registry_shim() -> None:
     sys.modules["tools.registry"] = registry
 
 
-def _load_dramaclaw_plugin() -> Any:
+def _load_plugin(plugin_name: str) -> Any:
     _install_hermes_registry_shim()
-    plugin_path = _repo_root() / ".hermes" / "plugins" / "dramaclaw" / "__init__.py"
+    plugin_path = _plugin_path(plugin_name)
     spec = importlib.util.spec_from_file_location(
-        "_dramaclaw_hermes_plugin_for_mcp",
+        f"_dramaclaw_{plugin_name}_hermes_plugin_for_mcp",
         plugin_path,
     )
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load DramaClaw plugin from {plugin_path}")
+        raise RuntimeError(f"cannot load {plugin_name} plugin from {plugin_path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-def _tool_index(plugin: Any) -> dict[str, tuple[dict[str, Any], Any]]:
+def _tool_index(*plugins: Any) -> dict[str, tuple[dict[str, Any], Any]]:
     index: dict[str, tuple[dict[str, Any], Any]] = {}
-    for entry in getattr(plugin, "TOOLS", ()):
-        if not isinstance(entry, tuple) or len(entry) != 3:
-            continue
-        name, schema, handler = entry
-        if isinstance(name, str) and isinstance(schema, dict) and callable(handler):
-            index[name] = (schema, handler)
+    for plugin in plugins:
+        for entry in getattr(plugin, "TOOLS", ()):
+            if not isinstance(entry, tuple) or len(entry) != 3:
+                continue
+            name, schema, handler = entry
+            if isinstance(name, str) and isinstance(schema, dict) and callable(handler):
+                if name in index:
+                    raise RuntimeError(f"duplicate MCP tool name: {name}")
+                index[name] = (schema, handler)
     return index
 
 
-PLUGIN = _load_dramaclaw_plugin()
-TOOLS = _tool_index(PLUGIN)
+_PLUGIN_CACHE: dict[str, Any] = {}
+_PLUGIN_TOOL_CACHE: dict[str, dict[str, tuple[dict[str, Any], Any]]] = {}
 SERVER = Server("dramaclaw", version="0.1.0")
+
+
+def _plugin(plugin_name: str) -> Any:
+    plugin = _PLUGIN_CACHE.get(plugin_name)
+    if plugin is None:
+        plugin = _load_plugin(plugin_name)
+        _PLUGIN_CACHE[plugin_name] = plugin
+    return plugin
+
+
+def _agent_plugin_name() -> str:
+    """Choose one capability boundary for this agent process."""
+    return "freezone" if _freezone_canvas_mode() else "dramaclaw"
+
+
+def _plugin_tools(plugin_name: str) -> dict[str, tuple[dict[str, Any], Any]]:
+    tools = _PLUGIN_TOOL_CACHE.get(plugin_name)
+    if tools is None:
+        tools = _tool_index(_plugin(plugin_name))
+        _PLUGIN_TOOL_CACHE[plugin_name] = tools
+    return tools
+
+
+def _agent_tools() -> dict[str, tuple[dict[str, Any], Any]]:
+    """Load only the plugin belonging to the active agent profile."""
+    tools = _plugin_tools(_agent_plugin_name())
+    if _scope_kind() == "home":
+        return {name: tools[name] for name in sorted(HOME_TOOL_NAMES) if name in tools}
+    return tools
+
+
+def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
+    """Resolve legacy workflow instructions at the external MCP boundary.
+
+    Hermes consumes the plugin result directly and keeps its existing flow. External
+    MCP agents receive an instruction that distinguishes an already-authorized create
+    imperative from a draft that genuinely still needs confirmation.
+    """
+
+    raw = str(value or "")
+    try:
+        result = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        result = None
+    if isinstance(result, dict) and result.get("ok") is True and result.get("applied") is True:
+        from novelvideo.chat.canvas_outcome import CANVAS_FINAL_RESPONSE_INSTRUCTIONS
+
+        result["agent_instruction"] = (
+            CANVAS_FINAL_RESPONSE_INSTRUCTIONS + " " + str(result.get("agent_instruction") or "").replace(
+                "Report success briefly", "Report success briefly in the JSON message field"
+            )
+        )
+        return json.dumps(result, ensure_ascii=False)
+    if name not in {
+        "freezone_prepare_workflow",
+        "freezone_prepare_workflow_draft",
+        "freezone_prepare_workflow_plan_draft",
+    }:
+        return raw
+    try:
+        payload = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return raw
+    if not isinstance(payload, dict) or not (
+        payload.get("ok") is True
+        and str(payload.get("status") or "") == "workflow_draft_ready"
+    ):
+        return raw
+    for field in ("billing", "agent_planning_charge", "agent_credit_estimate"):
+        payload.pop(field, None)
+    instruction = (
+        "Present the exact preview in product language, including each node's "
+        "preview.recipe_pipelines order as 主 Recipe → 补充 Recipe. If the current user message explicitly asks to create "
+        "or run the workflow and all required clarification answers are available, that "
+        "imperative is authorization: call freezone_confirm_workflow_draft exactly once now "
+        "with this draft_id and revision, without asking for another confirmation. Otherwise "
+        "wait for explicit user confirmation. A submitted model/parameter clarification card "
+        "is not proof that canvas nodes were created. When confirmation is still required, "
+        "present the exact preview; the product exposes a draft continuation action. "
+        "When the user confirms a named draft_id and revision, call "
+        "freezone_confirm_workflow_draft with those exact values and scope; never prepare "
+        "another draft instead. Do not report workflow creation success until the actual "
+        "canvas write receipt confirms the nodes were applied. "
+    )
+    instruction += (
+        "For adjustments, prepare a new complete Plan draft."
+        if name == "freezone_prepare_workflow_plan_draft"
+        else "For adjustments, patch this draft instead of rebuilding the intent."
+    )
+    instruction += " Do not invent or mention credits, billing, pricing, or editions."
+    payload["agent_instruction"] = instruction
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _output_schema_for_tool(name: str) -> dict[str, Any]:
+    """Read the explicit contract declared next to the plugin tool definition."""
+    schema_entry = _agent_tools().get(name)
+    if schema_entry is None:
+        raise ValueError(f"unknown DramaClaw tool: {name}")
+    schema, _handler = schema_entry
+    output_schema = schema.get("output_schema")
+    if not isinstance(output_schema, dict):
+        raise RuntimeError(f"missing output schema for {name}")
+    return output_schema
+
+
+# Home turns have no bound project and should only manage the project
+# collection. Project-scoped tokens remain the authority for every underlying
+# API call, but this allow-list also keeps irrelevant production schemas out of
+# discovery and prevents the model from selecting a project-only operation.
+HOME_TOOL_NAMES = frozenset(
+    {
+        "dramaclaw_get",
+        "dramaclaw_post",
+        "dramaclaw_patch",
+        "dramaclaw_delete",
+    }
+)
+
+
+def _scope_kind() -> str:
+    return "project" if os.environ.get("DRAMACLAW_PROJECT_ID", "").strip() else "home"
+
+
+def _freezone_canvas_mode() -> bool:
+    """Detect Freezone even when a shared App Server drops one env flag."""
+    if os.environ.get("DRAMACLAW_TOOL_MODE", "").strip() == "freezone_canvas":
+        return True
+    return (
+        bool(
+            os.environ.get("DRAMACLAW_CANVAS_ID", "").strip()
+            and os.environ.get("DRAMACLAW_AGENT_PROFILE", "")
+            .strip()
+            .startswith("freezone")
+        )
+        or os.environ.get("DRAMACLAW_CHAT_SURFACE", "").strip() == "freezone"
+    )
+
+
+def _normalize_structured_result(
+    schema: dict[str, Any], decoded: Any
+) -> dict[str, Any]:
+    raw = decoded if isinstance(decoded, dict) else {}
+    nested = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+    ok = (
+        raw.get("ok") if isinstance(raw.get("ok"), bool) else not bool(raw.get("error"))
+    )
+    status = raw.get("status") or nested.get("status")
+    if not isinstance(status, str) or not status:
+        status = "completed" if ok else "failed"
+    properties = schema.get("properties") or {}
+    structured = {"ok": ok, "status": status}
+    for key in properties:
+        if key in {"ok", "status"}:
+            continue
+        if key in raw:
+            structured[key] = raw[key]
+        elif key in nested:
+            structured[key] = nested[key]
+
+    tool_name = str(schema.get("x-dramaclaw-tool") or "")
+    if "canvas_context_status" in properties and not ok:
+        # Some bridge cancellations have no message. Keep the original failure
+        # state, but provide a valid diagnostic instead of a second schema error.
+        if not any(structured.get(key) for key in ("code", "error", "message", "errors")):
+            structured["message"] = "Canvas context request failed without error details."
+    if tool_name in {
+        "dramaclaw_get",
+        "dramaclaw_post",
+        "dramaclaw_patch",
+        "dramaclaw_delete",
+    }:
+        structured["response"] = raw.get("data", decoded)
+    elif tool_name == "dramaclaw_get_task":
+        structured["task"] = raw.get("data")
+    elif tool_name == "dramaclaw_get_episode_script":
+        structured["script"] = raw.get("data")
+    elif tool_name == "dramaclaw_update_character_face_prompt":
+        structured["character"] = raw.get("data")
+
+    if isinstance(raw.get("data"), list):
+        array_fields = [
+            key
+            for key, property_schema in properties.items()
+            if key not in structured and property_schema.get("type") == "array"
+        ]
+        if len(array_fields) == 1:
+            structured[array_fields[0]] = raw["data"]
+    for collection_field, count_field in (
+        ("skills", "count"),
+        ("canvases", "count"),
+        ("tasks", "count"),
+        ("files", "count"),
+        ("candidates", "candidate_count"),
+    ):
+        collection = structured.get(collection_field)
+        if isinstance(collection, list) and count_field in properties:
+            structured.setdefault(count_field, len(collection))
+    Draft202012Validator(schema).validate(structured)
+    return structured
+
+
+def _mcp_error_result(name: str, payload: dict[str, Any]) -> types.CallToolResult:
+    """Expose validation failures as MCP errors rather than plain text."""
+    body = dict(payload)
+    body.setdefault("ok", False)
+    body.setdefault("status", "tool_failed")
+    body.setdefault("retryable", False)
+    body.setdefault("next_action", "检查错误字段后再重试")
+    encoded = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+    schema = _output_schema_for_tool(name)
+    structured = _normalize_structured_result(schema, body)
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text=encoded)],
+        structuredContent=structured,
+        isError=True,
+    )
+
+
+def _structured_tool_result(name: str, adapted: str) -> types.CallToolResult:
+    """Preserve legacy text while exposing a validated structured result."""
+    try:
+        decoded = json.loads(adapted)
+    except (TypeError, json.JSONDecodeError):
+        decoded = adapted
+    structured = _normalize_structured_result(_output_schema_for_tool(name), decoded)
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text=adapted)],
+        structuredContent=structured,
+        isError=structured["ok"] is False,
+    )
+
+
+def _log_mcp_call_end(
+    *,
+    scope: str,
+    tool: str,
+    started: float,
+    payload: Any = None,
+    error: Any = None,
+) -> None:
+    """Log a compact call outcome without prompts, paths, or credentials."""
+    if isinstance(payload, dict):
+        ok = payload.get("ok")
+        status = payload.get("status")
+        error = payload.get("error", error)
+    else:
+        ok = None
+        status = None
+    logger.info(
+        "mcp.call.end scope=%s tool=%s elapsed_ms=%d ok=%s status=%s error=%s result_type=%s result_bytes=%s",
+        scope,
+        tool,
+        int((time.monotonic() - started) * 1000),
+        ok,
+        status,
+        str(error)[:240] if error else None,
+        type(payload).__name__ if payload is not None else "none",
+        len(payload) if isinstance(payload, str) else None,
+    )
+
+
+def _workflow_schema_recovery_instruction(tool_name: str) -> str | None:
+    if tool_name not in {
+        "freezone_prepare_workflow_plan_draft",
+        "workflow_graph_compile",
+    }:
+        return None
+    return (
+        "WorkflowPlan 校验失败。先按 message/path 指出的字段逐项修正，不要逐个猜删其它字段。"
+        "不要提交单节点探测、空 edges 或 compact Intent。"
+        "请保留同一份完整节点清单和所有边；每个可执行节点必须把"
+        "workflowCatalog.recipeId 放在节点 data 内。确认所有 edge 的 source/target"
+        "都对应 nodes[].id。提交前由 Agent 检查整图连通性；独立 Beat/镜头分支应通过"
+        "非执行型公共输入根节点扇出连接，不能要求用户说明内部连线，也不能把需要故障"
+        "隔离的兄弟分支串行连接。连线兼容性不明确时先读取 link type catalog，禁止猜测"
+        "类型或反复试编译。恢复编译成功后立即用同一计划提交创建。"
+    )
+
+
+def _workflow_plan_log_summary(arguments: Any) -> dict[str, Any]:
+    plan = arguments.get("plan") if isinstance(arguments, dict) else None
+    if not isinstance(plan, dict):
+        return {"plan_type": type(plan).__name__}
+    nodes = plan.get("nodes")
+    edges = plan.get("edges")
+    node_types: dict[str, int] = {}
+    if isinstance(nodes, list):
+        for node in nodes:
+            if isinstance(node, dict):
+                node_type = str(node.get("node_type") or node.get("type") or "unknown")
+                node_types[node_type] = node_types.get(node_type, 0) + 1
+    return {
+        "schema_version": plan.get("schema_version"),
+        "node_count": len(nodes) if isinstance(nodes, list) else None,
+        "edge_count": len(edges) if isinstance(edges, list) else None,
+        "node_types": node_types,
+        "has_skill": isinstance(plan.get("skill"), dict),
+    }
 
 
 @SERVER.list_tools()
 async def list_tools() -> list[types.Tool]:
+    # Native Responses Tool Search progressively loads these scope-filtered
+    # concrete tools and preserves their input/output schemas end to end.
     result: list[types.Tool] = []
-    for name, (schema, _handler) in sorted(TOOLS.items()):
+    for name, (schema, _handler) in sorted(_agent_tools().items()):
         parameters = schema.get("parameters") if isinstance(schema, dict) else None
         result.append(
             types.Tool(
                 name=name,
                 description=str(schema.get("description") or ""),
-                inputSchema=parameters if isinstance(parameters, dict) else {"type": "object"},
+                inputSchema=(
+                    parameters if isinstance(parameters, dict) else {"type": "object"}
+                ),
+                outputSchema=_output_schema_for_tool(name),
             )
         )
     return result
 
 
-@SERVER.call_tool(validate_input=True)
+def _skill_resource_path(uri: str) -> Path:
+    """Resolve only Markdown files below an agent ``.agents/skills`` root.
+
+    Codex can send either a standards-based ``file://`` URI or the resource's
+    absolute/agent-root-relative path while progressively loading a skill.
+    Both forms are constrained and then remapped to the current thread root.
+    """
+    raw_uri = str(uri or "").strip()
+    parsed = urlparse(raw_uri)
+    if parsed.scheme == "file":
+        if parsed.netloc:
+            raise ValueError("remote file skill resources are not supported")
+        raw_path = unquote(parsed.path)
+    elif not parsed.scheme and not parsed.netloc:
+        raw_path = unquote(parsed.path)
+    else:
+        raise ValueError("only local skill resources are supported")
+    if not raw_path:
+        raise ValueError("skill resource path is required")
+    raw_target = Path(raw_path).expanduser()
+    parts = raw_target.parts
+    relative: Path | None = None
+    for index in range(len(parts) - 1):
+        if parts[index] == ".agents" and parts[index + 1] == "skills":
+            relative = Path(*parts[index + 2 :])
+            break
+    if relative is None:
+        raise ValueError("resource is outside the agent skills directory")
+    if any(part in {"", ".", ".."} for part in relative.parts):
+        raise ValueError("resource is outside the agent skills directory")
+    if relative.suffix.lower() != ".md":
+        raise ValueError("only Markdown skill resources are supported")
+    relative_parts = relative.parts
+    if len(relative_parts) < 2 or (
+        relative_parts[-1] != "SKILL.md" and "references" not in relative_parts[1:-1]
+    ):
+        raise ValueError("resource is not a skill document")
+    roots = _skill_resource_roots()
+    if raw_target.is_absolute() and raw_target.exists():
+        existing_target = raw_target.resolve()
+        if not any(_path_is_within(existing_target, root) for root in roots):
+            raise ValueError("resource belongs to a different agent workspace")
+    # Persisted Codex threads can retain a file URI from an older workspace.
+    # Resolve the same skill-relative path against the current thread's
+    # explicitly scoped skills root; never search arbitrary host directories.
+    for root in roots:
+        candidate = (root / relative).resolve()
+        if not _path_is_within(candidate, root):
+            continue
+        if candidate.is_file():
+            return candidate
+    raise ValueError("skill resource is unavailable")
+
+
+def _path_is_within(target: Path, root: Path) -> bool:
+    try:
+        target.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _skill_resource_roots() -> list[Path]:
+    candidates: list[Path] = []
+    configured = os.environ.get("DRAMACLAW_SKILLS_DIR", "").strip()
+    if configured:
+        candidates.append(Path(configured))
+    candidates.append(Path.cwd() / ".agents" / "skills")
+    roots: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        try:
+            root = candidate.expanduser().resolve()
+        except OSError:
+            continue
+        if root in seen or not root.is_dir():
+            continue
+        seen.add(root)
+        roots.append(root)
+    return roots
+
+
+@SERVER.list_resources()
+async def list_resources() -> list[types.Resource]:
+    """Advertise readable skill Markdown resources to MCP clients."""
+    resources: list[types.Resource] = []
+    seen: set[Path] = set()
+    for root in _skill_resource_roots():
+        for target in sorted(root.rglob("*.md")):
+            if not target.is_file() or target in seen:
+                continue
+            try:
+                _skill_resource_path(target.as_uri())
+            except ValueError:
+                continue
+            seen.add(target)
+            resources.append(
+                types.Resource(
+                    name=target.relative_to(root).as_posix(),
+                    uri=target.as_uri(),
+                    description="DramaClaw agent skill resource",
+                    mimeType="text/markdown",
+                    size=target.stat().st_size,
+                )
+            )
+    logger.info("mcp resources/list scope=%s count=%d", _scope_kind(), len(resources))
+    return resources
+
+
+@SERVER.list_resource_templates()
+async def list_resource_templates() -> list[types.ResourceTemplate]:
+    """DramaClaw exposes concrete skill files, not parameterized resources."""
+    logger.info("mcp resources/templates/list scope=%s count=0", _scope_kind())
+    return []
+
+
+@SERVER.read_resource()
+async def read_resource(uri: Any) -> str:
+    """Read a referenced SKILL.md or references/*.md file only."""
+    target = _skill_resource_path(str(uri))
+    logger.info("mcp resources/read scope=%s resource=%s", _scope_kind(), target.name)
+    try:
+        return target.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError("skill resource is unavailable") from exc
+
+
+def _format_schema_path(parts: list[Any]) -> str:
+    path = ""
+    for part in parts:
+        if isinstance(part, int):
+            path += f"[{part}]"
+        elif path:
+            path += f".{part}"
+        else:
+            path = str(part)
+    return path or "arguments"
+
+
+def _matching_object_variants(
+    schema: Any, value: dict[str, Any]
+) -> list[dict[str, Any]] | None:
+    """The object schemas that apply to this value, narrowing a oneOf/anyOf
+    union by its type discriminator; None when that cannot be decided."""
+    if not isinstance(schema, dict):
+        return None
+    variants = schema.get("oneOf") or schema.get("anyOf")
+    if not isinstance(variants, list):
+        variants = [schema]
+    matching = []
+    for variant in variants:
+        if not isinstance(variant, dict):
+            return None
+        discriminator = (variant.get("properties") or {}).get("type")
+        allowed = discriminator.get("enum") if isinstance(discriminator, dict) else None
+        if isinstance(allowed, list) and value.get("type") not in allowed:
+            continue
+        matching.append(variant)
+    return matching or None
+
+
+def _closed_object_fields(schema: Any, value: dict[str, Any]) -> set[str] | None:
+    """Fields a closed object schema allows for this value, or None if unknown.
+
+    Open schemas, or unions with no matching variant, are never judged.
+    """
+    matching = _matching_object_variants(schema, value)
+    if matching is None or any(
+        variant.get("additionalProperties") is not False
+        or not isinstance(variant.get("properties"), dict)
+        for variant in matching
+    ):
+        return None
+    return {field for variant in matching for field in variant["properties"]}
+
+
+def _unexpected_argument_fields(
+    schema: dict[str, Any], arguments: Any
+) -> list[dict[str, Any]]:
+    """Fields no schema variant allows, by path, for a provable retry (#686).
+
+    Dropping exactly these fields is the only structural correction the chat
+    service accepts as the same call when the agent retries a rejection.
+    Covers the top-level arguments and objects inside top-level arrays.
+    """
+    if not isinstance(arguments, dict):
+        return []
+    found: list[dict[str, Any]] = []
+    allowed = _closed_object_fields(schema, arguments)
+    if allowed is not None and set(arguments) - allowed:
+        found.append({"path": [], "fields": sorted(set(arguments) - allowed)})
+    properties = schema.get("properties") if isinstance(schema, dict) else None
+    for key, value in arguments.items():
+        property_schema = (properties or {}).get(key)
+        if not isinstance(value, list) or not isinstance(property_schema, dict):
+            continue
+        for index, item in enumerate(value):
+            if not isinstance(item, dict):
+                continue
+            allowed = _closed_object_fields(property_schema.get("items"), item)
+            if allowed is not None and set(item) - allowed:
+                found.append(
+                    {"path": [key, index], "fields": sorted(set(item) - allowed)}
+                )
+    return found
+
+
+_ASCII_INTEGER_STRING = re.compile(r"-?[0-9]+", re.ASCII)
+
+
+def _declares_integer(schema: Any) -> bool:
+    if not isinstance(schema, dict):
+        return False
+    declared = schema.get("type")
+    types = declared if isinstance(declared, list) else [declared]
+    return "integer" in types and "string" not in types
+
+
+def _integer_string_argument_paths(schema: Any, value: Any) -> list[list[Any]]:
+    """Paths the schema declares integer but that hold a numeric string (#686).
+
+    Coercing exactly these values is the only value correction the chat
+    service accepts as the same call on retry. Open objects such as node data
+    declare nothing, so their contents are never coerced.
+    """
+    found: list[list[Any]] = []
+    if isinstance(value, list) and isinstance(schema, dict):
+        for index, item in enumerate(value):
+            for path in _integer_string_argument_paths(schema.get("items"), item):
+                found.append([index, *path])
+        return found
+    if not isinstance(value, dict):
+        return found
+    matching = _matching_object_variants(schema, value)
+    if matching is None:
+        return found
+    for key, item in value.items():
+        property_schemas = [
+            (variant.get("properties") or {}).get(key) for variant in matching
+        ]
+        # Every applicable variant must agree, or the type is not provable.
+        if any(not isinstance(candidate, dict) for candidate in property_schemas):
+            continue
+        if all(_declares_integer(candidate) for candidate in property_schemas):
+            if isinstance(item, str) and _ASCII_INTEGER_STRING.fullmatch(item):
+                found.append([key])
+            continue
+        if len(property_schemas) == 1:
+            for path in _integer_string_argument_paths(property_schemas[0], item):
+                found.append([key, *path])
+    return found
+
+
+def _schema_validation_diagnostic(exc: SchemaError | ValidationError) -> tuple[str, str]:
+    parts = list(getattr(exc, "absolute_path", ()))
+    if isinstance(exc, ValidationError) and exc.validator in {"oneOf", "anyOf"}:
+        instance = exc.instance
+        variants = exc.validator_value
+        if (
+            isinstance(instance, dict)
+            and "type" not in instance
+            and isinstance(variants, list)
+            and variants
+            and all(
+                isinstance(variant, dict)
+                and "type" in variant.get("required", [])
+                for variant in variants
+            )
+        ):
+            path = _format_schema_path([*parts, "type"])
+            return path, f"{path}: field is required"
+
+    path = _format_schema_path(parts)
+    return path, getattr(exc, "message", str(exc))
+
+
+@SERVER.call_tool(validate_input=False)
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
-    item = TOOLS.get(name)
-    if item is None:
-        raise ValueError(f"unknown DramaClaw tool: {name}")
-    _schema, handler = item
-    text = handler(arguments or {})
-    return [types.TextContent(type="text", text=str(text or ""))]
+    # Validate below, after narrowly scoped serialization repair. The SDK's
+    # pre-validation would reject recoverable inputs before this boundary.
+    from novelvideo.freezone.workflow_schema import (
+        normalize_workflow_tool_arguments,
+        workflow_plan_schema_diagnostics,
+    )
+
+    arguments = normalize_workflow_tool_arguments(name, arguments or {})
+    call_started = time.monotonic()
+    logger.info(
+        "mcp.call.start scope=%s tool=%s arg_keys=%s",
+        _scope_kind(),
+        name,
+        sorted(str(key) for key in arguments),
+    )
+    agent_tools = _agent_tools()
+    if name in agent_tools:
+        schema, handler = agent_tools[name]
+        workflow_started = (
+            time.monotonic() if name == "freezone_prepare_workflow_plan_draft" else None
+        )
+        if workflow_started is not None:
+            logger.info(
+                "freezone_prepare_workflow_plan_draft.start scope=%s summary=%s",
+                _scope_kind(),
+                _workflow_plan_log_summary(arguments),
+            )
+        parameters = schema.get("parameters") if isinstance(schema, dict) else None
+        input_schema = (
+            parameters if isinstance(parameters, dict) else {"type": "object"}
+        )
+        try:
+            Draft202012Validator.check_schema(input_schema)
+            Draft202012Validator(input_schema).validate(arguments)
+        except (SchemaError, ValidationError) as exc:
+            recovery = _workflow_schema_recovery_instruction(name)
+            if workflow_started is not None:
+                logger.warning(
+                    "freezone_prepare_workflow_plan_draft.validation_failed elapsed_ms=%d message=%s path=%s summary=%s",
+                    int((time.monotonic() - workflow_started) * 1000),
+                    getattr(exc, "message", str(exc)),
+                    ".".join(str(part) for part in getattr(exc, "absolute_path", ())),
+                    _workflow_plan_log_summary(arguments),
+                )
+            # Some model adapters accidentally wrap a complete graph one level
+            # too deep as {"plan": {"plan": {...}}}. Unwrap only this exact
+            # shape; all other schema errors remain fail-closed.
+            nested = arguments.get("plan") if isinstance(arguments, dict) else None
+            if (
+                name == "freezone_prepare_workflow_plan_draft"
+                and isinstance(nested, dict)
+                and isinstance(nested.get("plan"), dict)
+            ):
+                unwrapped = dict(arguments)
+                unwrapped["plan"] = nested["plan"]
+                try:
+                    Draft202012Validator(input_schema).validate(unwrapped)
+                except ValidationError:
+                    pass
+                else:
+                    arguments = unwrapped
+                    # Continue through the normal handler below.
+                    try:
+                        result = await asyncio.to_thread(handler, arguments)
+                    except Exception as exc:
+                        logger.exception(
+                            "mcp.call.exception scope=%s tool=%s elapsed_ms=%d error_type=%s error=%s",
+                            _scope_kind(),
+                            name,
+                            int((time.monotonic() - call_started) * 1000),
+                            type(exc).__name__,
+                            str(exc)[:240],
+                        )
+                        raise
+                    if inspect.isawaitable(result):
+                        result = await result
+                    adapted = _adapt_external_agent_tool_result(name, result)
+                    return _structured_tool_result(name, adapted)
+            diagnostics = workflow_plan_schema_diagnostics(arguments, input_schema)
+            validation_path, validation_message = _schema_validation_diagnostic(exc)
+            unexpected_fields = _unexpected_argument_fields(input_schema, arguments)
+            integer_string_fields = _integer_string_argument_paths(
+                input_schema, arguments
+            )
+            error_payload = {
+                "ok": False,
+                "error": "tool_arguments_invalid",
+                "tool_name": name,
+                "message": "; ".join(
+                    f"{issue['path']}: {issue['message']}" for issue in diagnostics
+                ) if diagnostics else validation_message,
+                "path": diagnostics[0]["path"] if diagnostics else validation_path,
+                "status": (
+                    "workflow_validation_failed"
+                    if name
+                    in {
+                        "freezone_prepare_workflow_plan_draft",
+                        "workflow_graph_compile",
+                    }
+                    else "tool_arguments_invalid"
+                ),
+                "phase": (
+                    "graph_compile"
+                    if name
+                    in {
+                        "freezone_prepare_workflow_plan_draft",
+                        "workflow_graph_compile",
+                    }
+                    else "tool_validation"
+                ),
+                "retryable": name
+                in {"freezone_prepare_workflow_plan_draft", "workflow_graph_compile"},
+                **({"agent_instruction": recovery} if recovery else {}),
+                **(
+                    {"unexpected_fields": unexpected_fields}
+                    if unexpected_fields
+                    else {}
+                ),
+                **(
+                    {"integer_string_fields": integer_string_fields}
+                    if integer_string_fields
+                    else {}
+                ),
+            }
+            _log_mcp_call_end(
+                scope=_scope_kind(),
+                tool=name,
+                started=call_started,
+                payload=error_payload,
+            )
+            return _mcp_error_result(name, error_payload)
+        try:
+            result = await asyncio.to_thread(handler, arguments)
+        except Exception as exc:
+            logger.exception(
+                "mcp.call.exception scope=%s tool=%s elapsed_ms=%d error_type=%s error=%s",
+                _scope_kind(),
+                name,
+                int((time.monotonic() - call_started) * 1000),
+                type(exc).__name__,
+                str(exc)[:240],
+            )
+            raise
+        if inspect.isawaitable(result):
+            result = await result
+        adapted = _adapt_external_agent_tool_result(name, result)
+        if workflow_started is not None:
+            logger.info(
+                "freezone_prepare_workflow_plan_draft.end elapsed_ms=%d result_bytes=%d",
+                int((time.monotonic() - workflow_started) * 1000),
+                len(adapted),
+            )
+        structured_result = _structured_tool_result(name, adapted)
+        structured = structured_result.structuredContent
+        if isinstance(structured, dict):
+            _log_mcp_call_end(
+                scope=_scope_kind(), tool=name, started=call_started, payload=structured
+            )
+            return structured_result
+        _log_mcp_call_end(
+            scope=_scope_kind(),
+            tool=name,
+            started=call_started,
+            payload=adapted,
+        )
+        return structured_result
+
+    raise ValueError(f"unknown DramaClaw tool: {name}")
 
 
 async def _main() -> None:

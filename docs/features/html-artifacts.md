@@ -1,0 +1,30 @@
+# HTML webpage artifacts
+
+Freezone stores one project-scoped webpage identity with immutable source revisions. The existing director uses `freezone_html_artifact` to create, read, update, list, inspect history, or restore a page. Create/update/restore use the existing canvas confirmation bridge. Source reads are data, never executable canvas command envelopes.
+
+A successful creation produces a canvas node and an openable chat result card. Both reference the same artifact. Normal revisions update that identity; explicit alternatives use create. Optional `reference_node_ids` preserve source relationships as derived-from edges. The editor occupies the canvas content region while retaining the existing director dock.
+
+## Editing and delivery
+
+- Desktop/mobile saved-version preview; HTML source and title editing.
+- Explicit save with `base_version`; conflicting writes return HTTP 409 and preserve the draft.
+- In-app navigation preserves source drafts in memory. Leaving the browser with unsaved changes triggers its unload guard. This is not durable cross-device draft storage.
+- Historical selection previews an existing revision; applying it switches the selected node reference without creating source. Saving an edit creates a new revision and checks the head observed when editing began. The explicit tool restore action still creates a new revision.
+- Selected elements appear as removable chat references; selectors/IDs remain transport metadata.
+- Export streams `index.html` and referenced project media into a request-owned temporary ZIP and serves it directly from the authorized artifact endpoint. HTML is compressed, already-compressed media is copied in bounded chunks, and the temporary file is deleted after delivery, failure or cancellation. Exports are never retained as project data. Use inline CSS/JS and project-relative or current-project `/api/v1/projects/{id}/media/...` or `/static/...` paths. No arbitrary remote fetches, external scripts/stylesheets, srcset, CSS imports or backend/npm runtime. Unsupported export dependencies fail explicitly; preview reports omitted dependencies.
+
+## Preview isolation
+
+The default preview runs only a nonce-authorized element-selection bridge in an opaque-origin sandbox. Authored scripts/event handlers are disabled. Project media is validated into a same-project resource manifest. Each resource receives a short-lived, project/artifact/path-bound URL after the application has authorized the preview. The isolated frame loads those URLs directly, so images can use existing thumbnails and video/audio can use browser range requests without receiving app credentials. Local grants refresh while the preview remains open; OSS-backed media reuses existing presigned delivery.
+
+Interactive script execution is an explicit per-artifact-version choice. It requires browser support for credentialless iframes, remounts the frame when switching modes, and is revoked before rendering a different revision. Interactive code may navigate or transmit its embedded page contents to external sites: CSP does not prevent all script-driven self-navigation. This limitation is disclosed beside the control. Unsupported browsers retain static preview, selection and source editing.
+
+Preview source is bounded at 2 MiB and expanded output at 16 MiB. Resource export is capped at 100 MiB. The 16 MiB preview bound applies to generated markup and inline data, not separately loaded project media. CSP denies connect/frame/object/form operations and limits passive media to validated preview URLs, data and Blob URLs.
+
+## Persistence and deployment
+
+Routes: `/api/v1/projects/{project}/freezone/html-artifacts`. Reads/export use viewer access; writes use editor access. All retain the existing home-node guard. Immutable source files live in `freezone/_html_artifacts/<artifact-id>/<uuid>.html`; `<version>.json` records metadata, project binding and checksum, while `HEAD.json` locates the current revision without scanning history. Missing legacy HEAD files are rebuilt under the existing canvas mutex. Node generation history lives in `freezone/_generation_history/<canvas-id>/<node-id>.jsonl`; HTML writes use the common bounded idempotency sidecar instead of scanning the complete JSONL before every append. Include both directories in project backups. No runtime SQLite compatibility is required. Storage symlinks are rejected and source reads use no-follow descriptors. EE must provide consistent output mount paths and reliable mutex/publication semantics.
+
+Deployments upgrading from persistent ZIP exports may run `uv run python scripts/cleanup_html_artifact_exports.py <project-dir> [...]` after every old application worker has stopped. The cleanup is intentionally explicit: old workers return URLs to cached ZIPs before clients open them, so deleting those files from a normal read path would break in-flight downloads during a rolling deployment.
+
+CE must explicitly enable the existing director surface using `ST_CE_ENABLE_ASSISTANT_SURFACES=1` and configure its normal model provider to use natural-language generation. HTML API/editor operation does not require a model key. EE uses existing project roles and product-surface policy. Public hosting/sharing and full-stack applications are outside this version.

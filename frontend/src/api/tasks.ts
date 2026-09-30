@@ -14,6 +14,8 @@ import { readUrl } from "@/lib/url-params";
 export type TaskStatus =
   | "submitting"
   | "queued"
+  | "pending"
+  | "starting"
   | "running"
   | "completed"
   | "failed"
@@ -38,6 +40,19 @@ export interface TaskState {
   updated_at?: string;
   metadata?: Record<string, unknown> | null;
 }
+
+export type ProjectTaskQueueKind = "default" | "video" | "world" | "ffmpeg";
+
+export interface ProjectTaskLaneLimits {
+  limit: number | null;
+  active: number;
+  remaining: number | null;
+  user_limit: number | null;
+  user_active: number;
+  user_remaining: number | null;
+}
+
+export type ProjectTaskLimits = Record<ProjectTaskQueueKind, ProjectTaskLaneLimits>;
 
 export class TaskCompletionError extends Error {
   constructor(
@@ -98,6 +113,13 @@ export async function listTasks(projectId?: string): Promise<TaskState[]> {
   const resolved = resolveTaskProjectId(projectId);
   return await apiCall<TaskState[]>(
     `projects/${encodeURIComponent(resolved)}/tasks`,
+  );
+}
+
+export async function getProjectTaskLimits(projectId: string): Promise<ProjectTaskLimits> {
+  const resolved = resolveTaskProjectId(projectId);
+  return await apiCall<ProjectTaskLimits>(
+    `projects/${encodeURIComponent(resolved)}/tasks/limits`,
   );
 }
 
@@ -215,6 +237,10 @@ interface PendingResolver {
   lastStatus: TaskStatus | null;
 }
 
+type TaskStateEvent = Omit<TaskState, "result"> & {
+  result?: unknown | null;
+};
+
 interface ProjectPoller {
   timer: number | null;
   inFlight: boolean;
@@ -262,15 +288,9 @@ export function pollTimeoutForTaskType(taskType: string | null | undefined): num
   return LONG_JOB_MAX_POLL_MS;
 }
 const pendingByTaskKey = new Map<string, PendingResolver>();
-const sharedStreamsByProject = new Map<string, SseHandle>();
 const pollersByProject = new Map<string, ProjectPoller>();
 
 function closeAllTaskMonitoring(err?: Error): void {
-  for (const [, stream] of sharedStreamsByProject) {
-    stream.close();
-  }
-  sharedStreamsByProject.clear();
-
   for (const [, poller] of pollersByProject) {
     if (poller.timer != null) {
       window.clearTimeout(poller.timer);
@@ -305,21 +325,13 @@ function maybeStopProjectMonitoring(projectId: string): void {
     pollersByProject.delete(projectId);
   }
 
-  // No job awaiting this project anymore — tear down the shared SSE stream too,
-  // otherwise an idle connection (and its backoff reconnects) keeps hitting
-  // /tasks/stream forever. It re-opens lazily on the next awaitTaskCompletion.
-  const stream = sharedStreamsByProject.get(projectId);
-  if (stream) {
-    stream.close();
-    sharedStreamsByProject.delete(projectId);
-  }
 }
 
-function settleTask(task: TaskState): void {
+function settleTask(task: TaskStateEvent): void {
   const pending = pendingByTaskKey.get(task.task_key);
   if (!pending) return;
   if (task.status === "completed") {
-    pending.resolve(task);
+    pending.resolve(task as TaskState);
     pendingByTaskKey.delete(task.task_key);
     maybeStopProjectMonitoring(pending.projectId);
   } else if (task.status === "failed" || task.status === "cancelled") {
@@ -360,35 +372,25 @@ function detachIdlePending(projectId: string): void {
   }
 }
 
-function rejectProjectPending(projectId: string, err: Error): void {
-  for (const [taskKey, pending] of pendingByTaskKey) {
-    if (pending.projectId !== projectId) continue;
-    pending.reject(err);
-    pendingByTaskKey.delete(taskKey);
-  }
-  maybeStopProjectMonitoring(projectId);
+/**
+ * Feed the app-wide task-center state into node-level task waiters.
+ *
+ * TaskCenterProvider owns the only long-lived project SSE connection. Canvas
+ * generation code consumes that same stream through this function and keeps
+ * HTTP polling only as a reconnect/missed-event fallback.
+ */
+export function publishTaskState(task: TaskStateEvent): void {
+  settleTask(task);
 }
 
-function ensureSharedStream(projectId?: string) {
-  const resolved = resolveTaskProjectId(projectId);
-  if (sharedStreamsByProject.has(resolved)) return;
-  const stream = openTaskStream({
-    projectId: resolved,
-    onTask: (task) => {
-      settleTask(task);
-    },
-    onAuthRevoked: () => {
-      rejectProjectPending(resolved, new Error("auth revoked"));
-    },
-  });
-  sharedStreamsByProject.set(resolved, stream);
+export function publishTaskSnapshot(tasks: TaskStateEvent[]): void {
+  for (const task of tasks) settleTask(task);
 }
 
 /**
- * Shared HTTP polling fallback for {@link awaitTaskCompletion}. SSE is the
- * primary channel, but the stream can drop events during reconnect windows,
- * idle disconnects, or proxy hiccups. Keep one poller per project so concurrent
- * jobs share a single `/projects/:project/tasks` request cadence.
+ * Shared HTTP polling fallback for {@link awaitTaskCompletion}. TaskCenter's
+ * project SSE is the primary channel, but it can drop events during reconnect
+ * windows. Keep one poller per project so concurrent jobs share one request.
  */
 function ensureProjectPoller(projectId: string): void {
   if (pollersByProject.has(projectId)) return;
@@ -416,6 +418,7 @@ function ensureProjectPoller(projectId: string): void {
     try {
       const tasks = await listTasks(projectId);
       const tasksByKey = new Map(tasks.map((task) => [task.task_key, task]));
+      publishTaskSnapshot(tasks);
       for (const [taskKey, pending] of pendingByTaskKey) {
         if (pending.projectId !== projectId) continue;
         const found = tasksByKey.get(taskKey);
@@ -462,7 +465,6 @@ export function awaitTaskCompletion(
   options?: { timeoutMs?: number; taskType?: string | null },
 ): Promise<TaskState> {
   const resolved = resolveTaskProjectId(projectId);
-  ensureSharedStream(resolved);
   ensureProjectPoller(resolved);
   const startedAt = Date.now();
   const budgetMs =

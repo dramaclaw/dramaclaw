@@ -1,0 +1,77 @@
+# Backend workflow operations
+
+`freezone_prepare_workflow` takes exactly one `intent` or `plan`, the admitted `operation_id`,
+optional `run_after_create`, and optional `bindings`. It returns the persisted identity, revision,
+digest, preview and next action, not the full compiled graph. It does not execute the canvas.
+
+For an exact `plan`, shared generation controls may use these stable portable names under
+`plan.inputs`; preparation applies them to every matching media node. The same names are also
+accepted under node `data` for step-local pins:
+`image_model`, `image_aspect_ratio`, `image_resolution`, `image_quality`,
+`image_variants_per_node`, `video_model`, `video_aspect_ratio`, `video_resolution`,
+`video_duration_seconds`, `video_generate_audio`, `video_generation_mode`, and
+`video_variants_per_node`. Preparation converts them to the canvas runtime fields before validation
+and persistence. The shorter semantic setting names used by revision are also accepted under node
+`data` during exact plan preparation. Shared `plan.inputs` values only fill fields a node leaves
+unset: an explicit node pin (either spelling) wins over the shared value. Two aliases for the same
+setting with different values on one node are still rejected; the server never silently chooses
+between them.
+
+`video_generation_mode` is the exception to "the node wins": it records the mode the user asked
+for, and modes are not interchangeable (`imageToVideo` uses the image as a whole-picture
+reference, `firstFrame` locks it as the opening frame). State the mode as the shared
+`video_generation_mode`; a video node `genMode` that differs from it blocks the draft with
+`video_generation_mode_conflict`, and a node `genMode` with no shared mode blocks it with
+`video_generation_mode_unconfirmed`. A single shot may differ only through a
+`freezone_revise_workflow` step update of `generation_mode`, which the server records for that node
+outside the plan; a `confirmedInputs.video_generation_mode` inside any plan (including a draft
+stored earlier) is never treated as a confirmation. When a
+model rejects the mode (`model_capability_unsupported` on `genMode`), keep the mode and switch to
+one of the returned `compatible_models`; if there are none, ask the user.
+
+Bindings refer to existing plan node IDs:
+
+```json
+{"source":"brief","target":"image","usage":"prompt","prompt":"Actual generation prompt"}
+```
+
+Usage is `prompt`, `context`, `reference`, `dependency`, or `composition`. A planning/context
+source used as a generation prompt requires actual prompt text: the backend creates a separate
+`input_text` node and the two typed edges. It never changes the source's semantic role, invents
+prompt content, removes existing edges, or relaxes exact-count constraints. Invalid existing edges
+must be corrected in the complete source plan. Documentation-only content should be grouped with
+its generator rather than connected as a prompt.
+
+`freezone_revise_workflow` takes `draft_id`, integer `expected_revision`, and `changes`:
+
+- Compact intent: only changed intent fields (`inputs` merges; optional null fields are removed).
+- Exact plan: `step_updates` and/or `bindings`. A step update contains `node_id`, optional `prompt`,
+  and optional `settings`. Settings include supported model, aspect_ratio, resolution, quality,
+  duration_seconds, generate_audio, generation_mode, variants, or voice_ref for that node type.
+  Existing custom voice and generation-parameter rules still apply. Do not mix these changes with
+  compact intent fields.
+
+All edits are revalidated before a compare-and-swap revision update. Unknown fields and invalid
+edges are rejected without modifying the stored draft. A revision conflict requires reading and
+reviewing current state; do not blindly retry with the new revision.
+
+`freezone_get_workflow` returns compact draft/confirmation state. `submitted` and `confirming`
+mean await receipt. `confirmed` means canvas confirmation, not completed media generation; inspect
+the workflow run for media completion. Do not repeat preparation or confirmation after a timeout.
+
+
+Preparation, revision, and confirmation all recheck live model capabilities on the backend.
+The authenticated request identity selects the catalog. Unsupported parameters or unavailable
+catalogs block explicit model requests; fix the reported fields without changing user requirements.
+Missing live queue information is advisory; execution admission still enforces queue limits.
+
+`freezone_observe_workflow_run` accepts `run_id`, optional `wait_seconds` (0–20), and optional `after`
+(the previous `observation_token`). It reconciles durable tasks and artifact evidence, then returns
+progress, counts, terminal state, and per-node recovery decisions. Bounded waiting reduces agent
+polling; this is not a continuously running background scheduler.
+
+Transient query failures may be retried as reads of the same run. An ambiguous generation timeout
+requires reconciliation before any retry. `retry_after_confirmation` requires authorization and the
+existing runner's resume path. Observation never enqueues media, overrides a runner lease, confirms
+an approval, or repeats paid generation. Preserve the returned recovery decision rather than
+inferring retries from raw error text. A terminal run must not be polled indefinitely.

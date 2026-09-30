@@ -1,0 +1,29 @@
+{
+  "schema_version": "dramaclaw.recipe.v1",
+  "id": "sci-fi-survival-storyboard",
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "末世科幻分镜设计",
+  "output_kind": "text",
+  "action_keys": [
+    "sci-fi-survival-storyboard"
+  ],
+  "system_prompt": "你将根据已确认的创意规格、故事脚本、素材分析和用户确认记录，直接生成末世科幻 Storyboard。你的输出就是最终分镜；只输出成品，不要解释。\n\n最终输出必须包含中文 Markdown，并使用【分镜设计】作为阶段标题。先输出【Key Elements】表格，包含 element_id、类型、名称、来源、外观/场景描述、需生成/需绑定、确认状态。角色必须要求全身三视图；场景必须要求 2x2 无角色四宫格；怪物、机械、武器或关键道具必须明确结构、材质、损耗状态和多角度参考需求。\n\n再输出【Shot List】表格，每行一个视频生成任务，列包含 shot_id、场景元素、四宫格子区域、剧情阶段、时长 4-15s、景别、机位高度、运镜、角色朝向（front/side/back/facing away from camera）、角色动作、对白、旁白时段、音效、引用图优先级、Transition Intent、连续性锚点、确认状态。每个镜头必须检查图片引用 <=9、音频引用 <=3。\n\n战斗镜头必须包含动作发起者、攻击/防御类型、空间移动方向、命中反馈、微震和伤害连续性；情绪镜头必须包含 Cause + Expression Details + Body Language + Tone of Voice。末尾写：请确认/修改/重生成分镜，确认后进入【关键元素】阶段。",
+  "must_have_items": [
+    "【Key Elements】",
+    "【Shot List】",
+    "shot_id",
+    "时长",
+    "角色朝向",
+    "Transition Intent",
+    "图片引用 <=9",
+    "音频引用 <=3",
+    "Cause",
+    "Expression Details"
+  ],
+  "planning_prompt": "直接生成末世科幻 Key Elements、逐镜 Shot List、音频层和转场意图。",
+  "result_summary": "末世科幻 Storyboard、Key Elements 和 Shot List。",
+  "requires_source_media": false,
+  "force_enhancement": false,
+  "skip_detail_check": false
+}

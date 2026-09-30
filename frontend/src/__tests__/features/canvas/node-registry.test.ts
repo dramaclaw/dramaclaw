@@ -16,6 +16,15 @@ import {
 } from "@/features/canvas/domain/nodeRegistry";
 
 describe("canvas node registry", () => {
+  it("keeps ordinary audio nodes on the stable reference-voice default", () => {
+    const definition = canvasNodeDefinitions[CANVAS_NODE_TYPES.audio];
+    const data = definition.createDefaultData() as Record<string, unknown>;
+
+    expect(data).not.toHaveProperty("speechMode");
+    expect(data).not.toHaveProperty("presetModel");
+    expect(data).not.toHaveProperty("presetVoice");
+  });
+
   it("creates standalone shot context nodes from the menu with local schema data", () => {
     const definition = canvasNodeDefinitions[CANVAS_NODE_TYPES.beatContext];
     const data = definition.createDefaultData() as Record<string, unknown>;

@@ -1,0 +1,479 @@
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+import pytest
+
+from novelvideo.freezone.workflow_drafts import (
+    bind_workflow_draft_task,
+    cancel_workflow_draft,
+    claim_workflow_draft_confirmation,
+    create_workflow_draft,
+    finish_workflow_draft_confirmation,
+    patch_workflow_draft,
+    read_workflow_draft,
+    prune_expired_workflow_drafts,
+    workflow_drafts_db_path,
+)
+
+
+def _compiled(*, item_count: int = 1) -> dict:
+    return {
+        "ok": True,
+        "skill_id": "video-ad",
+        "edge_count": max(item_count - 1, 0),
+        "plan": {
+            "summary": "广告",
+            "inputs": {},
+            "phases": ["视频"],
+            "nodes": [
+                {
+                    "id": f"shot-{index + 1}",
+                    "name": f"镜头 {index + 1}",
+                    "node_type": "videoNode",
+                    "stage": "video",
+                }
+                for index in range(item_count)
+            ],
+            "edges": [],
+        },
+    }
+
+
+def test_workflow_draft_lifecycle_uses_project_database(tmp_path: Path) -> None:
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        intent={"skill_id": "video-ad", "user_goal": "广告", "items": ["开场"]},
+        compiled=_compiled(),
+        run_after_create=True,
+    )
+
+    patched, error = patch_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        expected_revision=1,
+        intent={
+            "skill_id": "video-ad",
+            "user_goal": "广告",
+            "items": ["开场", "收尾"],
+        },
+        compiled=_compiled(item_count=2),
+        last_changes={"items": ["开场", "收尾"]},
+    )
+
+    assert error is None
+    assert patched is not None
+    assert patched["revision"] == 2
+    assert patched["preview"]["node_count"] == 2
+    assert patched["run_after_create"] is True
+
+    claimed, claim_error = claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        revision=2,
+    )
+    assert claim_error is None
+    assert claimed is not None
+    assert claimed["status"] == "confirming"
+
+    bind_workflow_draft_task(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        task_id="task-1",
+        root_task_id="task-1",
+    )
+    finished = finish_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        outcome="confirmed",
+        expected_task_id="task-1",
+    )
+    assert finished is not None
+    assert finished["status"] == "confirmed"
+    assert workflow_drafts_db_path(tmp_path).is_file()
+    assert not (tmp_path / "workflow_drafts").exists()
+
+
+def test_workflow_draft_rejects_stale_patch(tmp_path: Path) -> None:
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled=_compiled(),
+    )
+
+    patched, error = patch_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        expected_revision=2,
+        intent=draft["intent"],
+        compiled=draft["compiled"],
+    )
+
+    assert patched is None
+    assert error is not None
+    assert error["status"] == "workflow_draft_revision_conflict"
+
+
+def test_cancelled_workflow_draft_cannot_be_confirmed_or_patched(tmp_path: Path) -> None:
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        intent={"skill_id": "video-ad"},
+        compiled=_compiled(),
+    )
+    stale, error = cancel_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        expected_revision=2,
+    )
+    assert stale is None
+    assert error is not None and error["status"] == "workflow_draft_revision_conflict"
+
+    cancelled, error = cancel_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        expected_revision=1,
+    )
+    assert error is None
+    assert cancelled is not None and cancelled["status"] == "cancelled"
+    assert read_workflow_draft(
+        project_dir=tmp_path, canvas_id="default", draft_id=draft["draft_id"]
+    )[0]["status"] == "cancelled"
+    claimed, claim_error = claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        revision=1,
+    )
+    assert claimed is None
+    assert claim_error is not None and claim_error["status"] == "workflow_draft_not_confirmable"
+    assert claim_error["message_i18n"] == {
+        "code": "workflowDraftContinuation.notConfirmable"
+    }
+    patched, patch_error = patch_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        expected_revision=1,
+        intent=draft["intent"],
+        compiled=draft["compiled"],
+    )
+    assert patched is None
+    assert patch_error is not None and patch_error["status"] == "workflow_draft_not_editable"
+
+
+def test_claimed_workflow_draft_cannot_be_cancelled(tmp_path: Path) -> None:
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        intent={"skill_id": "video-ad"},
+        compiled=_compiled(),
+    )
+    claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        revision=1,
+    )
+    cancelled, error = cancel_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        expected_revision=1,
+    )
+    assert cancelled is None
+    assert error is not None and error["status"] == "workflow_draft_not_cancellable"
+
+
+def test_workflow_draft_confirmation_is_atomic(tmp_path: Path) -> None:
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled=_compiled(),
+    )
+
+    def claim():
+        return claim_workflow_draft_confirmation(
+            project_dir=tmp_path,
+            canvas_id="default",
+            draft_id=draft["draft_id"],
+            revision=1,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: claim(), range(2)))
+
+    claimed = [
+        payload for payload, error in results if payload is not None and error is None
+    ]
+    rejected = [
+        error for payload, error in results if payload is None and error is not None
+    ]
+    assert len(claimed) == 1
+    assert rejected[0]["status"] == "workflow_draft_confirmation_in_progress"
+
+
+def test_submitted_workflow_draft_is_not_claimed_again(tmp_path: Path) -> None:
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled=_compiled(),
+    )
+    claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        revision=1,
+    )
+    finish_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        outcome="submitted",
+    )
+
+    claimed, error = claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        revision=1,
+    )
+
+    assert claimed is None
+    assert error is not None
+    assert error["status"] == "workflow_draft_confirmation_in_progress"
+
+
+def test_confirmed_workflow_draft_is_not_claimed_twice(tmp_path: Path) -> None:
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled=_compiled(),
+    )
+    claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        revision=1,
+    )
+    bind_workflow_draft_task(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        task_id="task-1",
+        root_task_id="task-1",
+    )
+    finish_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        outcome="confirmed",
+        expected_task_id="task-1",
+    )
+
+    claimed, error = claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        revision=1,
+    )
+
+    assert claimed is None
+    assert error is not None
+    assert error["status"] == "workflow_draft_already_confirmed"
+    stored, read_error = read_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+    )
+    assert read_error is None
+    assert stored is not None
+    assert stored["status"] == "confirmed"
+
+
+def test_confirmation_is_not_reclaimed_by_elapsed_time(
+    tmp_path: Path,
+) -> None:
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled=_compiled(),
+    )
+    claimed, error = claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        revision=1,
+        now=1000,
+    )
+    assert error is None
+    assert claimed is not None
+
+    reclaimed, reclaim_error = claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        revision=1,
+        now=1301,
+    )
+
+    assert reclaimed is None
+    assert reclaim_error is not None
+    assert reclaim_error["status"] == "workflow_draft_confirmation_in_progress"
+
+
+def test_expiry_prune_preserves_draft_with_active_durable_task(
+    tmp_path: Path,
+) -> None:
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled=_compiled(),
+    )
+    claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        revision=1,
+    )
+    bind_workflow_draft_task(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        task_id="task-1",
+        root_task_id="task-1",
+    )
+
+    deleted = prune_expired_workflow_drafts(
+        project_dir=tmp_path,
+        canvas_id="default",
+        now=float(draft["expires_at"]) + 1,
+    )
+
+    stored, error = read_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+    )
+    assert deleted == 0
+    assert error is None
+    assert stored is not None
+    assert stored["task_id"] == "task-1"
+
+
+def test_stale_confirmation_with_task_stays_in_progress(
+    tmp_path: Path,
+) -> None:
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled=_compiled(),
+    )
+    claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        revision=1,
+        now=1000,
+    )
+    bind_workflow_draft_task(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        task_id="task-1",
+        root_task_id="task-1",
+    )
+
+    claimed, error = claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        revision=1,
+        now=1301,
+    )
+
+    assert claimed is None
+    assert error is not None
+    assert error["status"] == "workflow_draft_confirmation_in_progress"
+
+
+def test_workflow_draft_rejects_task_identity_rebinding(tmp_path: Path) -> None:
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled=_compiled(),
+    )
+    claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        revision=1,
+    )
+    bind_workflow_draft_task(
+        project_dir=tmp_path,
+        canvas_id="default",
+        draft_id=draft["draft_id"],
+        task_id="task-1",
+        root_task_id="task-1",
+    )
+
+    with pytest.raises(ValueError, match="different task"):
+        bind_workflow_draft_task(
+            project_dir=tmp_path,
+            canvas_id="default",
+            draft_id=draft["draft_id"],
+            task_id="task-2",
+            root_task_id="task-2",
+        )
+
+
+def test_bound_draft_requires_task_identity_and_claimed_state(tmp_path):
+    scope = {"project_dir": tmp_path, "canvas_id": "default"}
+    draft = create_workflow_draft(
+        **scope, project_id="p", intent={}, compiled=_compiled()
+    )
+    scope["draft_id"] = draft["draft_id"]
+    with pytest.raises(ValueError, match="not been claimed"):
+        finish_workflow_draft_confirmation(**scope, outcome="confirmed")
+    claim_workflow_draft_confirmation(**scope, revision=1)
+    bind_workflow_draft_task(**scope, task_id="task-1", root_task_id="task-1")
+    with pytest.raises(ValueError, match="identity is required"):
+        finish_workflow_draft_confirmation(**scope, outcome="confirmed")
+    finish_workflow_draft_confirmation(
+        **scope, outcome="ready", expected_task_id="task-1"
+    )
+    claim_workflow_draft_confirmation(**scope, revision=1)
+    bind_workflow_draft_task(**scope, task_id="task-2", root_task_id="task-2")
+    with pytest.raises(ValueError, match="task changed"):
+        finish_workflow_draft_confirmation(
+            **scope, outcome="confirmed", expected_task_id="task-1"
+        )
+    assert read_workflow_draft(**scope)[0]["status"] == "confirming"

@@ -2,7 +2,10 @@
 // Copyright (c) 2026 ClaymoreLab
 import { describe, expect, it } from "vitest";
 
-import { hasCompletedHistoryRecords } from "@/features/canvas/ui/NodeGenerationHistory";
+import {
+  hasCompletedHistoryRecords,
+  historyRecordHtmlIdentity,
+} from "@/features/canvas/ui/NodeGenerationHistory";
 import type { FreezoneGenerationHistoryRecord } from "@/api/ops";
 
 function record(status: string): FreezoneGenerationHistoryRecord {
@@ -21,5 +24,20 @@ describe("hasCompletedHistoryRecords", () => {
   it("is true when at least one record completed/succeeded", () => {
     expect(hasCompletedHistoryRecords([record("failed"), record("completed")])).toBe(true);
     expect(hasCompletedHistoryRecords([record("succeeded")])).toBe(true);
+  });
+});
+
+describe("historyRecordHtmlIdentity", () => {
+  it("recognizes an HTML Artifact result without requiring a media URL", () => {
+    const value = {
+      ...record("completed"),
+      media_type: "html",
+      result: { artifact_id: "page-a", version: 3, title: "Page" },
+    } as FreezoneGenerationHistoryRecord;
+    expect(historyRecordHtmlIdentity(value)).toEqual({ artifactId: "page-a", version: 3 });
+  });
+
+  it("rejects malformed or non-HTML results", () => {
+    expect(historyRecordHtmlIdentity(record("completed"))).toBeNull();
   });
 });

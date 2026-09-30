@@ -1,0 +1,46 @@
+{
+  "$id": "https://dramaclaw.com/schemas/workflow/v1/stable-contract.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "action": {
+      "enum": [
+        "generate_text",
+        "generate_story_script",
+        "generate_image",
+        "generate_video",
+        "generate_text_video",
+        "generate_audio",
+        "generate_3gs_world",
+        "auto_compose_video"
+      ]
+    },
+    "link_type": {
+      "enum": [
+        "context_for",
+        "prompt_for",
+        "dependency_for",
+        "media_input_for",
+        "derived_from",
+        "composition_input_for"
+      ]
+    },
+    "node_type": {
+      "enum": [
+        "textAnnotationNode",
+        "scriptNode",
+        "beatContextNode",
+        "imageGenNode",
+        "videoNode",
+        "audioNode",
+        "htmlArtifactNode",
+        "videoComposeNode"
+      ]
+    },
+    "schema_version": {
+      "const": "freezone_workflow_plan.v1"
+    }
+  },
+  "title": "DramaClaw Workflow stable MCP contract",
+  "type": "object",
+  "x-source-sha256": "1d3add9e7fc736e3ae534db40069e84882b9f00159bcb1bdf22e04a48c5f1666"
+}

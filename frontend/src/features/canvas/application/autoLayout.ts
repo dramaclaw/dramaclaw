@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { DEFAULT_NODE_WIDTH, type CanvasEdge, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
+import {
+  CANVAS_NODE_TYPES,
+  DEFAULT_NODE_WIDTH,
+  type CanvasEdge,
+  type CanvasNode,
+} from '@/features/canvas/domain/canvasNodes';
 
-const DEFAULT_NODE_HEIGHT = 200;
+const DEFAULT_NODE_HEIGHT = 320;
 const COLUMN_GAP = 80;
 const ROW_GAP = 48;
 // 同一行内两个连通分量之间的水平间距，比纵向间距略大以便视觉分隔。
@@ -23,11 +28,33 @@ interface NodeSize {
   height: number;
 }
 
+// Chat-created workflows are laid out before React Flow has measured the new
+// nodes. Use the component design sizes in that first pass so large media cards
+// do not overlap; a measured pass may refine these values afterward.
+const FALLBACK_NODE_SIZES: Partial<Record<string, NodeSize>> = {
+  [CANVAS_NODE_TYPES.video]: { width: 580, height: 380 },
+  [CANVAS_NODE_TYPES.imageGen]: { width: 580, height: 360 },
+  [CANVAS_NODE_TYPES.textAnnotation]: { width: 440, height: 320 },
+  [CANVAS_NODE_TYPES.audio]: { width: 480, height: 210 },
+  [CANVAS_NODE_TYPES.upload]: { width: 320, height: 350 },
+  [CANVAS_NODE_TYPES.script]: { width: 480, height: 320 },
+  [CANVAS_NODE_TYPES.skill]: { width: 380, height: 320 },
+};
+
 function getNodeSize(node: CanvasNode): NodeSize {
+  const fallback = node.type ? FALLBACK_NODE_SIZES[node.type] : undefined;
+  const styleWidth = typeof node.style?.width === 'number' ? node.style.width : undefined;
+  const styleHeight = typeof node.style?.height === 'number' ? node.style.height : undefined;
   const width = node.measured?.width
-    ?? (typeof node.width === 'number' ? node.width : DEFAULT_NODE_WIDTH);
+    ?? (typeof node.width === 'number' ? node.width : undefined)
+    ?? styleWidth
+    ?? fallback?.width
+    ?? DEFAULT_NODE_WIDTH;
   const height = node.measured?.height
-    ?? (typeof node.height === 'number' ? node.height : DEFAULT_NODE_HEIGHT);
+    ?? (typeof node.height === 'number' ? node.height : undefined)
+    ?? styleHeight
+    ?? fallback?.height
+    ?? DEFAULT_NODE_HEIGHT;
   return { width, height };
 }
 

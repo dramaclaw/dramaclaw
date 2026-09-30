@@ -167,6 +167,11 @@ def test_newapi_cognee_env_maps_to_openai_compatible_gateway(monkeypatch):
 
     monkeypatch.setenv("NEWAPI_BASE_URL", "http://127.0.0.1:3000/v1")
     monkeypatch.setenv("NEWAPI_API_KEY", "newapi-token")
+    monkeypatch.setattr(
+        cognee_config,
+        "_effective_newapi_gateway",
+        lambda: ("newapi-token", "http://127.0.0.1:3000/v1"),
+    )
     monkeypatch.delenv("COGNEE_LLM_ENDPOINT", raising=False)
     monkeypatch.delenv("COGNEE_EMBEDDING_ENDPOINT", raising=False)
     monkeypatch.delenv("LLM_ENDPOINT", raising=False)
@@ -199,6 +204,33 @@ def test_newapi_cognee_env_maps_to_openai_compatible_gateway(monkeypatch):
     assert os.environ["EMBEDDING_MODEL"] == "openai/gemini-embedding-001"
 
 
+def test_cognee_legacy_gateway_is_independent_from_brainclaw_selector(monkeypatch):
+    from novelvideo.cognee import config as cognee_config
+    from novelvideo import model_gateway_settings
+
+    def fail_if_brainclaw_selector_is_used():
+        raise AssertionError("Cognee legacy must not consult the BrainClaw selector")
+
+    monkeypatch.setattr(
+        model_gateway_settings,
+        "get_effective_llm_config",
+        fail_if_brainclaw_selector_is_used,
+    )
+    monkeypatch.setattr(
+        cognee_config,
+        "_effective_newapi_gateway",
+        lambda: ("cognee-key", "https://cognee-gateway.example/v1"),
+    )
+    monkeypatch.delenv("COGNEE_LLM_ENDPOINT", raising=False)
+    monkeypatch.delenv("LLM_ENDPOINT", raising=False)
+
+    assert cognee_config._resolve_llm_api_key("newapi", "DC-cognee-LLM") == "cognee-key"
+    assert (
+        cognee_config._get_endpoint_env("newapi", "COGNEE_LLM_ENDPOINT", "LLM_ENDPOINT")
+        == "https://cognee-gateway.example/v1"
+    )
+
+
 def test_gemini_direct_does_not_inherit_newapi_endpoint(monkeypatch):
     from novelvideo.cognee import config as cognee_config
 
@@ -212,31 +244,6 @@ def test_gemini_direct_does_not_inherit_newapi_endpoint(monkeypatch):
     assert os.environ["LLM_PROVIDER"] == "gemini"
     assert os.environ["LLM_MODEL"] == "gemini/gemini-3.5-flash"
     assert "LLM_ENDPOINT" not in os.environ
-
-
-def test_cognee_gateway_structured_output_disables_reasoning(monkeypatch):
-    import asyncio
-    from types import SimpleNamespace
-
-    from cognee.infrastructure.llm.LLMGateway import LLMGateway
-
-    from novelvideo.cognee.pipeline import extract_episodes_from_text
-
-    calls: list[dict] = []
-
-    async def fake_structured_output(*args, **kwargs):
-        calls.append(kwargs)
-        return SimpleNamespace(episodes=[])
-
-    monkeypatch.setattr(LLMGateway, "acreate_structured_output", fake_structured_output)
-
-    assert asyncio.run(extract_episodes_from_text("text", target_episodes=1)) == []
-    assert calls == [
-        {
-            "reasoning_effort": "none",
-            "allowed_openai_params": ["reasoning_effort"],
-        }
-    ]
 
 
 def test_cognee_litellm_structured_output_disables_reasoning(monkeypatch, tmp_path):

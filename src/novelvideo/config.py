@@ -13,7 +13,7 @@ from novelvideo.official_defaults import (
     DEFAULT_TEXT_MODEL_BY_ENV,
     OFFICIAL_NEWAPI_BASE_URL,
 )
-from novelvideo.shared.runtime_env import is_ce_effective
+from novelvideo.shared.runtime_env import is_ce_effective, uses_local_ce_runtime
 
 # 加载环境变量（必须在任何其他导入之前）
 load_dotenv()
@@ -90,6 +90,8 @@ def _env_bool(name: str, default: bool) -> bool:
 def get_pydantic_model(
     provider_override: str | None = None,
     model_name_override: str | None = None,
+    *,
+    brainclaw_profile=None,
 ):
     """Return a PydanticAI model routed through the effective NewAPI gateway.
 
@@ -111,7 +113,7 @@ def get_pydantic_model(
     if provider not in PROVIDER_PRESETS:
         available = list(PROVIDER_PRESETS.keys()) + list(PROVIDER_ALIASES.keys())
         raise ValueError(
-            f"Unknown provider: {provider}. " f"Available: {', '.join(available)}"
+            f"Unknown provider: {provider}. Available: {', '.join(available)}"
         )
 
     preset = PROVIDER_PRESETS[provider]
@@ -126,6 +128,7 @@ def get_pydantic_model(
         "MODEL_NAME",
         preset["default_model"],
         model_name_override=model_name,
+        brainclaw_profile=brainclaw_profile,
         capability="text.generate.agent",
         timeout_seconds_override=_env_float(
             "MODEL_TIMEOUT",
@@ -151,6 +154,40 @@ def get_newapi_text_model_name(model_env: str, default_model: str) -> str:
     )
 
 
+def get_effective_newapi_text_model_name(
+    model_env: str,
+    default_model: str | None = None,
+    *,
+    model_name_override: str | None = None,
+) -> str:
+    """Resolve one text route without silently falling back across editions."""
+    from novelvideo.model_gateway_settings import get_effective_llm_config
+    from novelvideo.official_defaults import ADVANCED_TEXT_MODEL_BY_ENV
+
+    explicit_model = str(model_name_override or "").strip()
+    env_model = _clean_env_value(model_env)
+    if not uses_local_ce_runtime():
+        # EE never binds a route to BrainClaw. The deployment environment owns
+        # the choice: each task's model env selects the alias, and BrainClaw is
+        # reached by pointing that env at the BrainClaw alias. Fixed EE task
+        # call sites omit ``default_model`` so a missing route fails fast;
+        # generic/provider entry points may still supply an explicit default as
+        # part of their public API.
+        selected = explicit_model or env_model or default_model
+        if selected:
+            return selected
+        raise ValueError(f"Missing required EE model route: {model_env}")
+
+    if get_effective_llm_config().is_brainclaw:
+        return "brainclaw"
+    selected = explicit_model or env_model or ADVANCED_TEXT_MODEL_BY_ENV.get(model_env)
+    if selected:
+        return selected
+    if default_model:
+        return default_model
+    raise ValueError(f"Missing required CE Advanced model route: {model_env}")
+
+
 def _get_newapi_text_model_profile(model_name: str):
     """Attach Gemini-compatible model profile while routing through newAPI."""
     normalized = (model_name or "").strip()
@@ -171,7 +208,20 @@ def _newapi_text_http_client_factory(
     def factory():
         import httpx
 
-        kwargs: dict[str, Any] = {"timeout": timeout_seconds}
+        from novelvideo.brainclaw_control_context_transport import (
+            sign_brainclaw_control_context,
+        )
+        from novelvideo.brainclaw_outcome_runtime import capture_brainclaw_receipt
+
+        kwargs: dict[str, Any] = {
+            "timeout": timeout_seconds,
+            # The request hook signs the serialised body; it is the last point
+            # where the exact bytes BrainClaw will digest are still visible.
+            "event_hooks": {
+                "request": [sign_brainclaw_control_context],
+                "response": [capture_brainclaw_receipt],
+            },
+        }
         if not trust_env:
             kwargs["trust_env"] = False
         return httpx.AsyncClient(**kwargs)
@@ -184,6 +234,7 @@ def _newapi_text_openai_provider(
     api_key: str,
     base_url: str,
     timeout_seconds: float,
+    default_headers: dict[str, str] | None = None,
 ):
     from openai import AsyncOpenAI
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -201,6 +252,7 @@ def _newapi_text_openai_provider(
                     timeout=timeout_seconds,
                     max_retries=0,
                     http_client=http_client,
+                    default_headers=default_headers,
                 ),
             )
             self._own_http_client = http_client
@@ -216,6 +268,7 @@ def _newapi_text_openai_model(
     base_url: str,
     timeout_seconds: float,
     profile: Any,
+    default_headers: dict[str, str] | None = None,
 ):
     from contextlib import asynccontextmanager
 
@@ -223,14 +276,43 @@ def _newapi_text_openai_model(
 
     class _AutoClosingOpenAIChatModel(OpenAIChatModel):
         async def request(self, *args: Any, **kwargs: Any) -> Any:
-            async with self:
-                return await super().request(*args, **kwargs)
+            from novelvideo.brainclaw_outcome_runtime import (
+                begin_request_outcomes,
+                report_request_outcomes,
+                reset_request_outcomes,
+            )
+
+            token = begin_request_outcomes()
+            try:
+                async with self:
+                    result = await super().request(*args, **kwargs)
+                report_request_outcomes(passed=True)
+                return result
+            except BaseException:
+                report_request_outcomes(passed=False)
+                raise
+            finally:
+                reset_request_outcomes(token)
 
         @asynccontextmanager
         async def request_stream(self, *args: Any, **kwargs: Any):
-            async with self:
-                async with super().request_stream(*args, **kwargs) as response:
-                    yield response
+            from novelvideo.brainclaw_outcome_runtime import (
+                begin_request_outcomes,
+                report_request_outcomes,
+                reset_request_outcomes,
+            )
+
+            token = begin_request_outcomes()
+            try:
+                async with self:
+                    async with super().request_stream(*args, **kwargs) as response:
+                        yield response
+                report_request_outcomes(passed=True)
+            except BaseException:
+                report_request_outcomes(passed=False)
+                raise
+            finally:
+                reset_request_outcomes(token)
 
     return _AutoClosingOpenAIChatModel(
         model_name,
@@ -238,6 +320,7 @@ def _newapi_text_openai_model(
             api_key=api_key,
             base_url=base_url,
             timeout_seconds=timeout_seconds,
+            default_headers=default_headers,
         ),
         profile=profile,
     )
@@ -245,15 +328,23 @@ def _newapi_text_openai_model(
 
 def get_newapi_text_pydantic_model(
     model_env: str,
-    default_model: str,
+    default_model: str | None = None,
     *,
     model_name_override: str | None = None,
     timeout_seconds_override: float | None = None,
+    brainclaw_profile=None,
+    brainclaw_profile_variant=None,
     capability: str = "text.generate",
 ):
     """Create a PydanticAI OpenAI-compatible model that routes through newAPI."""
-    model_name = str(model_name_override or "").strip() or get_newapi_text_model_name(
-        model_env, default_model
+    from novelvideo.brainclaw_contract import brainclaw_profile_headers
+    from novelvideo.model_gateway_settings import get_effective_llm_config
+
+    llm_config = get_effective_llm_config()
+    model_name = get_effective_newapi_text_model_name(
+        model_env,
+        default_model,
+        model_name_override=model_name_override,
     )
     timeout_seconds = (
         float(timeout_seconds_override)
@@ -264,7 +355,16 @@ def get_newapi_text_pydantic_model(
         )
     )
     profile = _get_newapi_text_model_profile(model_name)
-    if not is_ce_effective():
+    # CE resolves its own route from the settings database, so it knows when
+    # Advanced mode should stay clean. EE only hands a logical alias to NewAPI
+    # and cannot know which upstream NewAPI maps it to, so it always declares
+    # the Profile and lets NewAPI/BrainClaw decide whether to act on it.
+    default_headers = brainclaw_profile_headers(
+        brainclaw_profile,
+        profile_variant=brainclaw_profile_variant,
+        brainclaw_active=llm_config.is_brainclaw if uses_local_ce_runtime() else True,
+    )
+    if not uses_local_ce_runtime():
         from novelvideo.model_gateway_runtime import (
             create_request_scoped_gateway_model,
         )
@@ -274,14 +374,19 @@ def get_newapi_text_pydantic_model(
             capability=capability,
             timeout_seconds=timeout_seconds,
             profile=profile,
+            default_headers=default_headers,
             delegate_factory=_newapi_text_openai_model,
             platform_credential_factory=lambda: get_newapi_runtime_credentials(
+                api_key_override=llm_config.api_key,
+                base_url_override=llm_config.base_url,
                 env_api_key="MODEL_API_KEY",
                 env_base_url="MODEL_BASE_URL",
             ),
         )
 
     api_key, base_url = get_newapi_runtime_credentials(
+        api_key_override=llm_config.api_key,
+        base_url_override=llm_config.base_url,
         env_api_key="MODEL_API_KEY",
         env_base_url="MODEL_BASE_URL",
     )
@@ -293,6 +398,7 @@ def get_newapi_text_pydantic_model(
         base_url=base_url,
         timeout_seconds=timeout_seconds,
         profile=profile,
+        default_headers=default_headers,
     )
 
 
@@ -320,6 +426,7 @@ def get_superpower_pydantic_model(
     *,
     feature_provider_env: str | None = None,
     feature_model_env: str | None = None,
+    brainclaw_profile=None,
 ):
     """Return the multimodal model used by SuperPower prompt builders.
 
@@ -343,6 +450,7 @@ def get_superpower_pydantic_model(
     return get_pydantic_model(
         provider_override=provider_override,
         model_name_override=model_name_override,
+        brainclaw_profile=brainclaw_profile,
     )
 
 

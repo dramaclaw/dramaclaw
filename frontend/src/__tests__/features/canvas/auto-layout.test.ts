@@ -3,7 +3,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { computeAutoLayout } from '@/features/canvas/application/autoLayout';
-import type { CanvasEdge, CanvasNode } from '@/features/canvas/domain/canvasNodes';
+import {
+  CANVAS_NODE_TYPES,
+  type CanvasEdge,
+  type CanvasNode,
+} from '@/features/canvas/domain/canvasNodes';
 
 const NODE_W = 320;
 const NODE_H = 200;
@@ -67,6 +71,29 @@ describe('computeAutoLayout', () => {
 
   it('returns no positions when there are no top-level nodes', () => {
     expect(computeAutoLayout([], []).positions).toEqual({});
+  });
+
+  it('uses media-card design sizes before React Flow measures new nodes', () => {
+    const nodes = [
+      {
+        id: 'video-a',
+        type: CANVAS_NODE_TYPES.video,
+        position: { x: 0, y: 0 },
+        data: {},
+      },
+      {
+        id: 'video-b',
+        type: CANVAS_NODE_TYPES.video,
+        position: { x: 0, y: 100 },
+        data: {},
+      },
+    ] as unknown as CanvasNode[];
+
+    const { positions } = computeAutoLayout(nodes, []);
+    const firstBottom = positions['video-a'].y + 380;
+    const secondTop = positions['video-b'].y;
+
+    expect(secondTop - firstBottom).toBeGreaterThanOrEqual(96);
   });
 
   it('terminates on a cyclic graph reachable from a root (no infinite loop)', () => {

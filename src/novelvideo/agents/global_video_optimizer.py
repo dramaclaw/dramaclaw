@@ -14,6 +14,7 @@ from pydantic_ai import Agent, BinaryContent
 from pydantic_ai.output import NativeOutput
 from PIL import Image as PILImage
 
+from novelvideo.brainclaw_contract import BrainClawProfile
 from novelvideo.utils.source_language import asset_language_instruction
 
 
@@ -166,6 +167,7 @@ def create_global_video_reviewer_agent(language: str = "en") -> Agent:
     model = get_superpower_pydantic_model(
         feature_provider_env="GLOBAL_VIDEO_PROVIDER",
         feature_model_env="GLOBAL_VIDEO_MODEL",
+        brainclaw_profile=BrainClawProfile.GLOBAL_VIDEO_MOTION_PLANNING,
     )
     return Agent(
         model,
@@ -184,7 +186,8 @@ def create_global_video_optimizer_agent(language: str = "zh") -> Agent:
     return Agent(
         get_newapi_text_pydantic_model(
             "GLOBAL_VIDEO_OPTIMIZER_MODEL",
-            legacy_model or "gemini-3.5-flash",
+            model_name_override=legacy_model or None,
+            brainclaw_profile=BrainClawProfile.GLOBAL_VIDEO_MOTION_PLANNING,
             capability="text.generate.agent",
         ),
         system_prompt=(
@@ -225,7 +228,7 @@ class GlobalVideoPromptOptimizer:
         ratio = (1 - compressed_size / original_size) * 100 if original_size > 0 else 0
         print(
             f"[GlobalVideoOptimizer] 压缩图片: {os.path.basename(image_path)}: "
-            f"{original_size/1024:.0f}KB → {compressed_size/1024:.0f}KB "
+            f"{original_size / 1024:.0f}KB → {compressed_size / 1024:.0f}KB "
             f"({ratio:.0f}% 压缩)"
         )
         return image_bytes
@@ -542,7 +545,7 @@ Output the {output_label} motion prompt directly. No JSON, explanation, or markd
 
                 dialogue_hint = ""
                 if audio_type == "dialogue":
-                    dialogue_hint = f"\n- ⚠️ 此 Beat 为角色台词，prompt 中需描述说话动作（张嘴说话等）。台词由系统追加。"
+                    dialogue_hint = "\n- ⚠️ 此 Beat 为角色台词，prompt 中需描述说话动作（张嘴说话等）。台词由系统追加。"
 
                 review_task = f"""审核 Beat {beat_num} 的视频提示词是否与草图画面吻合。
 
@@ -749,7 +752,8 @@ def _create_identity_detector_agent() -> Agent:
     return Agent(
         get_newapi_text_pydantic_model(
             "GLOBAL_VIDEO_IDENTITY_DETECTOR_MODEL",
-            legacy_model or "gemini-3.5-flash",
+            model_name_override=legacy_model or None,
+            brainclaw_profile=BrainClawProfile.GLOBAL_VIDEO_IDENTITY_DETECTION,
             capability="text.generate.agent",
         ),
         system_prompt=AI_IDENTITY_DETECTOR_INSTRUCTIONS,

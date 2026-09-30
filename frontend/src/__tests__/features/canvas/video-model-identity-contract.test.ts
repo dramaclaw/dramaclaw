@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { selectVideoModel } from "@/features/canvas/domain/catalogVideoModels";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
@@ -8,8 +9,8 @@ import {
   isSeedance2VideoModel,
 } from "@/features/canvas/nodes/shared/videoModelCapabilities";
 
-const nodeSource = readFileSync(
-  "src/features/canvas/nodes/VideoNode.tsx",
+const videoFormSource = readFileSync(
+  "src/features/canvas/nodes/shared/useVideoGenerationForm.ts",
   "utf8",
 );
 
@@ -59,21 +60,53 @@ describe("video model family detection against EE catalog rows", () => {
  */
 describe("VideoNode feeds capability helpers the api model, not the catalog id", () => {
   it("isSeedance20Model 走 selectedVideoModelId", () => {
-    expect(nodeSource).toContain(
+    expect(videoFormSource).toContain(
       "const isSeedance20Model = isSeedance2VideoModel(selectedVideoModelId);",
     );
     // 组件作用域里 `modelId` 就是那个 ULID，喂给家族判定必然判错。
     // （文件里其它作用域的同名 `modelId` 是 apiModel-first 的局部/入参，不在此列。）
-    expect(nodeSource).not.toContain("isSeedance2VideoModel(modelId)");
+    expect(videoFormSource).not.toContain("isSeedance2VideoModel(modelId)");
   });
 
   it("isHappyHorseModel 同样走 selectedVideoModelId", () => {
-    expect(nodeSource).toContain(
+    expect(videoFormSource).toContain(
       "const isHappyHorseModel = isHappyHorseVideoModel(selectedVideoModelId);",
     );
   });
 
   it("modelId 只作为 catalogId 的兜底出现在提交参数里", () => {
-    expect(nodeSource).toContain("selectedVideoModel?.catalogId ?? modelId");
+    expect(videoFormSource).toContain("selectedVideoModel?.catalogId ?? modelId");
+  });
+});
+
+describe("video catalog model selection", () => {
+  it("preserves an exact EE catalog id even when model names are duplicated", () => {
+    const other = {
+      ...EE_SEEDANCE2_ROW,
+      id: "another-route",
+      catalogId: "another-route",
+      providerId: "huimeng",
+      label: "Other route",
+    } as const;
+    const selected = { ...EE_SEEDANCE2_ROW, providerId: "newapi", label: "Selected route" } as const;
+    expect(selectVideoModel([other, selected], EE_CATALOG_ULID)).toBe(selected);
+  });
+
+  it("resolves a workflow alias to a unique live catalog row and retains its submission id", () => {
+    const row = { ...EE_SEEDANCE2_ROW, providerId: "newapi", label: "Standard" } as const;
+    expect(selectVideoModel([row], "newapi_seedance-2.0")?.catalogId).toBe(EE_CATALOG_ULID);
+  });
+
+  it("does not guess a provider route from an ambiguous model alias", () => {
+    const row = { ...EE_SEEDANCE2_ROW, providerId: "newapi", label: "Standard" } as const;
+    const other = { ...row, id: "another-route", catalogId: "another-route" };
+    expect(selectVideoModel([row, other], "seedance-2.0")).toBeUndefined();
+  });
+
+  it("preserves the existing default for missing or unavailable models", () => {
+    const row = { ...EE_SEEDANCE2_ROW, providerId: "newapi", label: "Standard" } as const;
+    expect(selectVideoModel([row], undefined)).toBe(row);
+    expect(selectVideoModel([row], "unknown-model")).toBe(row);
+    expect(selectVideoModel([], undefined)).toBeUndefined();
   });
 });

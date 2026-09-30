@@ -34,6 +34,8 @@ jobs:
       # 规则集冻结在 pyproject，ruff 版本锁定于 dev 依赖组，CI 与本地同版。
       - name: Lint (ruff)
         run: uv run ruff check --output-format=github .
+      - name: Verify Workflow MCP contracts
+        run: uv run python scripts/check_workflow_agent_contracts.py --json
       # 单元测试：pytest 默认 addopts 已排除 ee/e2e；-n auto 走 xdist 并行。
       - name: Run tests
         run: uv run pytest -n auto
