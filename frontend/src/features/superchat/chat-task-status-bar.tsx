@@ -936,11 +936,11 @@ export function ChatTaskStatusBar({
   return (
     <section
       className={cn(
-        "mx-auto mb-2 w-full overflow-hidden rounded-lg border border-white/10 bg-background/92 shadow-sm backdrop-blur-xl",
+        "@container mx-auto mb-2 w-full overflow-hidden rounded-lg border border-white/10 bg-background/92 shadow-sm backdrop-blur-xl",
         scope === "project" && "max-w-[760px]",
       )}
     >
-      <div className="flex h-10 min-w-0 items-center gap-2 px-2.5">
+      <div className="grid min-h-10 min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1 px-2.5 py-1.5 @[420px]:flex @[420px]:h-10 @[420px]:py-0">
         {hasActiveStatus ? (
           <LoaderCircle className="size-4 shrink-0 animate-spin text-primary" />
         ) : hasFailedStatus ? (
@@ -967,55 +967,57 @@ export function ChatTaskStatusBar({
             )}
           />
         </button>
-        {workflowRun &&
-        isStatusBarWorkflowContinuable(workflowRun) &&
-        resumeNodeIds.length > 0 ? (
+        <div className="col-span-2 flex min-w-0 items-center justify-end gap-1 pl-6 @[420px]:contents">
+          {workflowRun &&
+          isStatusBarWorkflowContinuable(workflowRun) &&
+          resumeNodeIds.length > 0 ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              className="h-7 shrink-0 gap-1 px-2 text-xs"
+              disabled={resuming}
+              title={t("taskCenter.chatStatus.resume")}
+              onClick={() => void resumeWorkflow()}
+            >
+              {resuming ? (
+                <LoaderCircle className="size-3.5 animate-spin" />
+              ) : (
+                <Play className="size-3.5" />
+              )}
+              {resuming
+                ? t("taskCenter.chatStatus.resuming")
+                : workflowRun.status === "failed"
+                  ? t("taskCenter.chatStatus.continueDownstream")
+                  : t("taskCenter.chatStatus.resume")}
+            </Button>
+          ) : null}
+          {showCancelAll ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 shrink-0 gap-1 px-2 text-xs text-destructive hover:text-destructive"
+              disabled={cancelling}
+              title={t("taskCenter.cancelAll.short", { defaultValue: "全部取消" })}
+              onClick={() => void cancelAll()}
+            >
+              {cancelling ? <LoaderCircle className="size-3.5 animate-spin" /> : <X className="size-3.5" />}
+              {t("taskCenter.cancelAll.short", { defaultValue: "全部取消" })}
+            </Button>
+          ) : null}
           <Button
             type="button"
-            size="sm"
-            variant="secondary"
-            className="h-7 shrink-0 gap-1 px-2 text-xs"
-            disabled={resuming}
-            title={t("taskCenter.chatStatus.resume")}
-            onClick={() => void resumeWorkflow()}
-          >
-            {resuming ? (
-              <LoaderCircle className="size-3.5 animate-spin" />
-            ) : (
-              <Play className="size-3.5" />
-            )}
-            {resuming
-              ? t("taskCenter.chatStatus.resuming")
-              : workflowRun.status === "failed"
-                ? t("taskCenter.chatStatus.continueDownstream")
-                : t("taskCenter.chatStatus.resume")}
-          </Button>
-        ) : null}
-        {showCancelAll ? (
-          <Button
-            type="button"
-            size="sm"
+            size="icon"
             variant="ghost"
-            className="h-7 shrink-0 gap-1 px-2 text-xs text-destructive hover:text-destructive"
-            disabled={cancelling}
-            title={t("taskCenter.cancelAll.short", { defaultValue: "全部取消" })}
-            onClick={() => void cancelAll()}
+            className="size-7 shrink-0"
+            title={t("taskCenter.panel.open")}
+            aria-label={t("taskCenter.panel.open")}
+            onClick={openTaskCenter}
           >
-            {cancelling ? <LoaderCircle className="size-3.5 animate-spin" /> : <X className="size-3.5" />}
-            {t("taskCenter.cancelAll.short", { defaultValue: "全部取消" })}
+            <ListTodo className="size-4" />
           </Button>
-        ) : null}
-        <Button
-          type="button"
-          size="icon"
-          variant="ghost"
-          className="size-7 shrink-0"
-          title={t("taskCenter.panel.open")}
-          aria-label={t("taskCenter.panel.open")}
-          onClick={openTaskCenter}
-        >
-          <ListTodo className="size-4" />
-        </Button>
+        </div>
       </div>
 
       {expanded ? (

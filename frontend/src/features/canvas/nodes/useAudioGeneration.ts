@@ -20,10 +20,12 @@ import {
   generationTaskDescriptor,
 } from '@/features/canvas/application/resumeGeneration';
 import {
+  extractExplicitSpeakableAudioText,
   extractSpeakableAudioText,
   isSpeechGenerationInstruction,
   resolveAudioKind,
   resolveMusicLengthMs,
+  resolveSafeSpeechSubmissionText,
 } from '@/features/canvas/application/audioSpeechText';
 import { useNodeGenerationTaskState } from '@/features/canvas/application/useNodeGenerationTaskState';
 import { useUpstreamContents } from '@/features/canvas/application/useUpstreamGraph';
@@ -184,40 +186,70 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
       generationError: null,
     });
     try {
-      let trimmed = runtimeIsMusic
-        ? await compileWorkflowNodePrompt({
-            nodeId,
-            nodeData: runtimeData,
-            nodeKind: 'audio',
-            nodePrompt: runtimeOwnText,
-            // Music prompts describe the soundtrack itself.  Do not feed the
-            // full upstream script/beat text into the music compiler: the
-            // Eleven music endpoint caps input at 4100 characters and the
-            // node prompt already contains the intended musical direction.
-            upstreamText: '',
-            upstreamContents: [],
-            fallbackPrompt,
-            onCompileMetadata: ({ mode, prompt: compiledPrompt, recipeIds }) => updateNodeData(nodeId, {
-              workflowRecipeCompileMode: mode,
-              workflowRecipeCompiledAt: new Date().toISOString(),
-              workflowRecipeCompiledPrompt: compiledPrompt,
-              text: compiledPrompt,
-              workflowRecipeIds: recipeIds,
-            }),
-          })
-        : (() => {
-            // A workflow may leave a label such as “这是短剧的第一段旁白”
-            // in the audio node while the real narration is provided by an
-            // upstream script/text node.  Strip the label first, then fall
-            // back to the upstream narration instead of sending the label to
-            // TTS verbatim.
-            const ownNarration = extractSpeakableAudioText(runtimeOwnText.trim());
-            const upstreamNarration = extractSpeakableAudioText(
-              selectWorkflowUpstreamText(runtimeData, upstreamContents, upstreamTextJoined),
-            );
-            return ownNarration || upstreamNarration;
-          })();
-      if (runtimeIsMusic) trimmed = normalizeMusicPrompt(trimmed);
+      const selectedUpstreamText = runtimeIsMusic
+        ? ''
+        : selectWorkflowUpstreamText(runtimeData, upstreamContents, upstreamTextJoined);
+      // drama-shot-voice is admitted as literal TTS without a compile receipt.
+      // Other catalog-backed audio Recipes still compile before submission.
+      const speechFallbackPrompt = runtimeIsMusic
+        ? fallbackPrompt
+        : extractExplicitSpeakableAudioText(runtimeOwnText.trim())
+          || extractSpeakableAudioText(runtimeOwnText.trim())
+          || extractExplicitSpeakableAudioText(selectedUpstreamText)
+          || extractSpeakableAudioText(selectedUpstreamText);
+      const catalog = runtimeData.workflowCatalog;
+      const directVoiceRecipe = !runtimeIsMusic
+        && typeof catalog === 'object'
+        && catalog !== null
+        && !Array.isArray(catalog)
+        && 'recipeId' in catalog
+        && catalog.recipeId === 'drama-shot-voice';
+      let workflowRecipeCompileMode: string | null = null;
+      let workflowRecipeIds: string[] = [];
+      const compiledPrompt = directVoiceRecipe
+        ? speechFallbackPrompt
+        : await compileWorkflowNodePrompt({
+        nodeId,
+        nodeData: runtimeData,
+        nodeKind: 'audio',
+        nodePrompt: runtimeOwnText,
+        // Music prompts describe the soundtrack itself. Do not feed the full
+        // upstream script/beat text into the music compiler: the Eleven music
+        // endpoint caps input at 4100 characters and the node prompt already
+        // contains the intended musical direction.
+        upstreamText: selectedUpstreamText,
+        upstreamContents: runtimeIsMusic ? [] : upstreamContents,
+        fallbackPrompt: speechFallbackPrompt,
+        onCompileMetadata: ({ mode, prompt: compiledPrompt, recipeIds }) => {
+          workflowRecipeCompileMode = mode;
+          workflowRecipeIds = recipeIds;
+          const persistedPrompt = runtimeIsMusic
+            ? compiledPrompt
+            : resolveSafeSpeechSubmissionText({
+                compileMode: mode,
+                compiledPrompt,
+                recipeIds,
+                safeFallbackPrompt: speechFallbackPrompt,
+              });
+          updateNodeData(nodeId, {
+            workflowRecipeCompileMode: mode,
+            workflowRecipeCompiledAt: new Date().toISOString(),
+            workflowRecipeCompiledPrompt: compiledPrompt,
+            text: persistedPrompt,
+            workflowRecipeIds: recipeIds,
+          });
+        },
+      });
+      const trimmed = directVoiceRecipe
+        ? speechFallbackPrompt
+        : runtimeIsMusic
+          ? normalizeMusicPrompt(compiledPrompt)
+          : resolveSafeSpeechSubmissionText({
+              compileMode: workflowRecipeCompileMode,
+              compiledPrompt,
+              recipeIds: workflowRecipeIds,
+              safeFallbackPrompt: speechFallbackPrompt,
+            });
       if (!trimmed) {
         throw new Error('没有可朗读的旁白或对白');
       }

@@ -153,6 +153,13 @@ def resolve_generation_recommendations(
                 and str(data[field]).strip().casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
             )
         }
+        if "aspectRatio" in candidates and not _catalog_string_options(entry, "ratioOptions"):
+            # The catalog leaves the ratio unconstrained: runtime preflight treats
+            # aspectRatio as optional for exactly this case, so a missing
+            # ``ratioOptions`` must not abandon every other recommendation.
+            # Recommend the product default ratio instead; the frontend offers the
+            # same built-in ratio list when a model declares none (issue #674).
+            candidates["aspectRatio"] = _RECOMMENDED_OPTIONS["aspectRatio"][0]
         if any(value is None for value in candidates.values()):
             blockers.append({
                 "path": f"runtime.models.{node.get('id') or kind}",
@@ -195,6 +202,222 @@ def _catalog_string_options(entry: dict[str, Any], key: str) -> list[str]:
     if not isinstance(values, list):
         return []
     return [str(value).strip() for value in values if str(value).strip()]
+
+
+# Recipe ids / timeline roles that mark a video shot as carrying dialogue or
+# voice-over. There is no first-class "voiced" flag on plan nodes yet, so this
+# is the narrow, explicit signal preflight can act on (issue #677).
+_VOICED_RECIPE_MARKERS = ("dialog", "voice", "speech", "narrat", "lipsync", "lip-sync")
+_VOICED_TIMELINE_ROLES = frozenset({"voiceover", "narration", "shot_voice", "dialogue"})
+
+
+def _video_node_is_voiced(node: dict[str, Any]) -> bool:
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    catalog = data.get("workflowCatalog") if isinstance(data.get("workflowCatalog"), dict) else {}
+    if catalog.get("requiresGeneratedAudio") is True:
+        return True
+    role = str(catalog.get("timelineRole") or "").strip().casefold()
+    if role in _VOICED_TIMELINE_ROLES:
+        return True
+    recipe_ids = [str(catalog.get("recipeId") or "")]
+    pipeline = catalog.get("recipePipeline")
+    if isinstance(pipeline, list):
+        recipe_ids.extend(
+            str(item.get("id") if isinstance(item, dict) else item or "") for item in pipeline
+        )
+    return any(
+        marker in recipe_id.casefold() for recipe_id in recipe_ids for marker in _VOICED_RECIPE_MARKERS
+    )
+
+
+def _video_duration_blockers(node: dict[str, Any]) -> list[dict[str, Any]]:
+    """A video node must state a positive durationSec before its draft is ready.
+
+    The standard planner writes it from user preferences; an agent-authored
+    plan may omit it and the runtime then renders a 0-second shot. Duration
+    existence does not depend on model capabilities, so this runs for every
+    video node even when the live catalog is unavailable. The blocker carries
+    ``required_choices`` in the canvas-write preflight shape so the agent asks
+    the user through one clarification card (issue #677).
+    """
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    node_id = str(node.get("id") or "video").strip()
+    duration = data.get("durationSec")
+    if isinstance(duration, (int, float)) and not isinstance(duration, bool) and duration > 0:
+        return []
+    return [
+        {
+            "path": f"runtime.models.{node_id}.durationSec",
+            "code": "generation_parameters_required",
+            "message": "video node has no planned duration; set data.durationSec (seconds)",
+            "required_choices": {"video": ["duration_seconds"]},
+        }
+    ]
+
+
+def _video_audio_intent_blockers(node: dict[str, Any]) -> list[dict[str, Any]]:
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    catalog = data.get("workflowCatalog") if isinstance(data.get("workflowCatalog"), dict) else {}
+    if catalog.get("requiresGeneratedAudio") is not True or data.get("generateAudio") is not False:
+        return []
+    node_id = str(node.get("id") or "video").strip()
+    return [{
+        "path": f"runtime.models.{node_id}.generateAudio",
+        "code": "generation_parameter_conflict",
+        "message": "this shot requires generated dialogue or sound; set generateAudio=true",
+    }]
+
+
+def _video_runtime_parameter_blockers(
+    node: dict[str, Any], catalog_entry: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Catalog-dependent runtime fields: a voiced shot on an audio-capable model
+    must state generateAudio, or the runtime default renders it silent."""
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    node_id = str(node.get("id") or "video").strip()
+    blockers: list[dict[str, Any]] = []
+    catalog = data.get("workflowCatalog") if isinstance(data.get("workflowCatalog"), dict) else {}
+    if catalog.get("requiresGeneratedAudio") is True:
+        if catalog_entry.get("supportsGenerateAudio") is False:
+            blockers.append({
+                "path": f"runtime.models.{node_id}.generateAudio",
+                "code": "model_capability_unsupported",
+                "message": "this video model cannot generate the audio required by the shot",
+            })
+    if (
+        _video_node_is_voiced(node)
+        and catalog_entry.get("supportsGenerateAudio") is not False
+        and not isinstance(data.get("generateAudio"), bool)
+    ):
+        blockers.append(
+            {
+                "path": f"runtime.models.{node_id}.generateAudio",
+                "code": "generation_parameters_required",
+                "message": (
+                    "dialogue or voice-over shot must state generateAudio explicitly; "
+                    "the runtime default renders it silent"
+                ),
+                "required_choices": {"video": ["generate_audio"]},
+            }
+        )
+    return blockers
+
+
+# Portable choice names used in required_choices -> canvas data field.
+_PORTABLE_CHOICE_DATA_FIELDS = {
+    "model": "model",
+    "aspect_ratio": "aspectRatio",
+    "resolution": "size",  # videoNode stores its resolution in data.quality
+    "quality": "quality",
+    "duration_seconds": "durationSec",
+    "generate_audio": "generateAudio",
+    "count": "count",
+}
+_MEDIA_NODE_TYPES = {"image": "imageGenNode", "video": "videoNode"}
+
+
+_MODEL_BLOCKER_PATH_PREFIX = "runtime.models."
+
+
+def _blocker_node_id(path: str) -> str:
+    """Node id from a ``runtime.models.<node_id>.<field>`` blocker path.
+
+    Node ids may contain dots, so split on the known prefix and the trailing
+    field name rather than on every dot.
+    """
+    if not path.startswith(_MODEL_BLOCKER_PATH_PREFIX):
+        return path
+    rest = path[len(_MODEL_BLOCKER_PATH_PREFIX) :]
+    node_id, separator, _field = rest.rpartition(".")
+    return node_id if separator else rest
+
+
+def preflight_failure_blocker(preflight: dict[str, Any]) -> dict[str, Any]:
+    """The blocker to report when a blocked preflight is not a clarification.
+
+    A missing generation choice is answerable; a disabled queue or an
+    unavailable model/catalog is not. When both kinds are present the
+    non-answerable one is reported first so the agent does not ask the user a
+    question whose answer cannot unblock the draft.
+    """
+    blockers = [b for b in preflight.get("blockers") or [] if isinstance(b, dict)]
+    for blocker in blockers:
+        if blocker.get("code") != "generation_parameters_required":
+            return blocker
+    return blockers[0] if blockers else {}
+
+
+def generation_clarification_request(preflight: dict[str, Any]) -> dict[str, Any] | None:
+    """Merge generation_parameters_required blockers into one clarification request.
+
+    Returns ``None`` when the preflight has no such blocker, and also when any
+    other blocker is present: a clarification is retryable, so returning one
+    while a ``queue_disabled`` / ``model_unavailable`` blocker sits beside it
+    would make the agent ask the user a question and only then fail. Mixed
+    preflights stay a ``workflow_preflight_failed`` error that reports the
+    non-answerable blocker first (``preflight_failure_blocker``). Otherwise
+    the result carries the same ``media_types`` / ``missing_parameters`` /
+    ``required_choices`` shape as the canvas-write preflight, so every entry
+    point (HTTP drafts API, server-owned MCP operations, legacy plugin
+    handlers) can hand the agent a single clarification card (issue #677).
+    """
+    blockers = [b for b in preflight.get("blockers") or [] if isinstance(b, dict)]
+    if any(
+        blocker.get("code") != "generation_parameters_required" for blocker in blockers
+    ):
+        return None
+    by_node: dict[str, dict[str, Any]] = {}
+    for blocker in blockers:
+        choices = blocker.get("required_choices")
+        if not isinstance(choices, dict):
+            continue
+        node_id = _blocker_node_id(str(blocker.get("path") or ""))
+        for media, portable_fields in choices.items():
+            node_type = _MEDIA_NODE_TYPES.get(str(media))
+            if node_type is None or not isinstance(portable_fields, list):
+                continue
+            item = by_node.setdefault(
+                f"{node_type}:{node_id}",
+                {"node_id": node_id, "node_type": node_type, "fields": []},
+            )
+            for portable in portable_fields:
+                field = _PORTABLE_CHOICE_DATA_FIELDS.get(str(portable), str(portable))
+                if node_type == "videoNode" and portable == "resolution":
+                    field = "quality"
+                if field not in item["fields"]:
+                    item["fields"].append(field)
+    if not by_node:
+        return None
+    # Canonical field order (model, ratio, resolution, ..., duration, audio,
+    # count) so the request is stable regardless of blocker emission order.
+    field_rank = {field: index for index, field in enumerate(_PORTABLE_CHOICE_DATA_FIELDS.values())}
+    missing = list(by_node.values())
+    for item in missing:
+        item["fields"].sort(key=lambda field: (field_rank.get(field, len(field_rank)), field))
+    required_choices: dict[str, list[str]] = {}
+    data_to_portable = {v: k for k, v in _PORTABLE_CHOICE_DATA_FIELDS.items()}
+    for item in missing:
+        media = "image" if item["node_type"] == "imageGenNode" else "video"
+        bucket = required_choices.setdefault(media, [])
+        for field in item["fields"]:
+            portable = "resolution" if media == "video" and field == "quality" else (
+                data_to_portable.get(field, field)
+            )
+            if portable not in bucket:
+                bucket.append(portable)
+    portable_rank = {name: index for index, name in enumerate(_PORTABLE_CHOICE_DATA_FIELDS)}
+    for bucket in required_choices.values():
+        bucket.sort(key=lambda name: (portable_rank.get(name, len(portable_rank)), name))
+    return {
+        "ok": False,
+        "status": "clarification_required",
+        "code": "generation_parameters_required",
+        "error": "image/video generation parameters require user clarification",
+        "media_types": sorted(required_choices),
+        "missing_parameters": missing,
+        "required_choices": required_choices,
+        "clarification": {"title": "确认图片和视频生成参数", "allow_skip": False},
+    }
 
 
 def _catalog_option_supported(
@@ -252,6 +475,7 @@ def workflow_parameter_type_blockers(node: dict[str, Any]) -> list[dict[str, Any
 def _workflow_node_capability_blockers(
     node: dict[str, Any],
     catalog_entry: dict[str, Any],
+    catalog: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     node_type = str(node.get("node_type") or "").strip()
     data = node.get("data") if isinstance(node.get("data"), dict) else {}
@@ -323,15 +547,34 @@ def _workflow_node_capability_blockers(
                 mode for mode, catalog_mode in _VIDEO_CATALOG_MODES.items()
                 if catalog_mode in supported_modes
             ]
+            # The mode is what the user asked for (issue #711): imageToVideo and
+            # firstFrame consume the same single image differently, so recovery
+            # keeps the mode and switches to a model that supports it.
+            compatible = [
+                str(entry.get("id") or "").strip()
+                for entry in catalog or []
+                if isinstance(entry, dict)
+                and str(entry.get("id") or "").strip()
+                and isinstance(entry.get("supportedModes"), list)
+                and catalog_mode in entry["supportedModes"]
+            ]
             blockers.append({
                 "path": f"runtime.models.{node_id}.genMode",
                 "message": (
                     f"genMode value {selected_mode!r} is not supported by model "
-                    f"{model_id}; supported values: {allowed!r}"
+                    f"{model_id}; supported values: {allowed!r}. "
+                    + (
+                        f"Keep genMode {selected_mode!r} and select one of the "
+                        f"compatible_models; do not substitute another mode."
+                        if compatible
+                        else "No available model supports this mode; ask the user "
+                        "instead of substituting another mode."
+                    )
                 ),
                 "code": "model_capability_unsupported",
                 "allowed_values": allowed,
-                "recovery": "choose_supported_value",
+                "compatible_models": compatible,
+                "recovery": "choose_compatible_model" if compatible else "ask_user",
             })
     duration_value = data.get("durationSec")
     invalid_duration = any(
@@ -492,6 +735,7 @@ def evaluate_workflow_preflight(
                                     "minDuration",
                                     "maxDuration",
                                     "supportsGenerateAudio",
+                                    "supportedModes",
                                 )
                                 if key in entry
                             },
@@ -506,8 +750,12 @@ def evaluate_workflow_preflight(
                 catalog_entry = _catalog_entry_for_model(catalog, model)
                 if catalog_entry is not None:
                     blockers.extend(
-                        _workflow_node_capability_blockers(node, catalog_entry)
+                        _workflow_node_capability_blockers(node, catalog_entry, catalog)
                     )
+                    if node_type == "videoNode":
+                        blockers.extend(
+                            _video_runtime_parameter_blockers(node, catalog_entry)
+                        )
         lane_demand = {
             "default": sum(
                 1
@@ -576,6 +824,13 @@ def evaluate_workflow_preflight(
                             "message": f"{lane} generation queue is currently full; tasks will wait",
                         }
                     )
+    # Duration existence is model-independent: check every video node whether
+    # or not the live catalog was reachable (after catalog-level blockers so an
+    # unavailable catalog is still reported first).
+    for node in nodes:
+        if isinstance(node, dict) and node.get("node_type") == "videoNode":
+            blockers.extend(_video_duration_blockers(node))
+            blockers.extend(_video_audio_intent_blockers(node))
     return {
         **base,
         "status": "blocked" if blockers else "ready",

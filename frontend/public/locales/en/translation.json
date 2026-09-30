@@ -928,6 +928,10 @@
       "canvasConfirmExecution": "Confirm execution",
       "canvasTimeoutCancelled": "The canvas operation timed out and was cancelled without being applied.",
       "canvasManuallyCancelled": "The canvas operation was manually cancelled without being applied.",
+      "workflowOutputSyncPendingLabel": "Output syncing",
+      "workflowOutputSyncPendingMessage": "The workflow finished, but the canvas output is still syncing. Refresh the canvas later to check the result; do not generate it again yet.",
+      "workflowReconciliationPendingLabel": "Reconciling",
+      "workflowReconciliationPendingMessage": "The canvas output is visible, but the server is still verifying the task artifact. Check the run status later; do not generate it again yet.",
       "canvasRetryPrompt": "Recheck and continue the unfinished canvas operation. Preserve completed results, verify existing nodes and run state, then complete generation parameters before requesting approval again.",
       "canvasRetryDisplay": "Recheck and continue the unfinished canvas operation",
       "generationParams": {
@@ -3252,6 +3256,7 @@
       },
       "submitting": "Submitting task…",
       "queued": "Task queued",
+      "workflowDraftDeliveryFailed": "Agent workflow draft delivery failed",
       "characters": {
         "chunking": "Splitting the source text…",
         "nothingToAnalyze": "Nothing to analyze",

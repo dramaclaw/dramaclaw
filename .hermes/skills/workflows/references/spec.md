@@ -48,6 +48,10 @@
 ```json
 {
   "schema_version": "freezone_workflow_plan.v1",
+  "skill": {
+    "id": "<selected production skill id>",
+    "version": "<selected production skill version>"
+  },
   "workflow_type": "dynamic.short-drama",
   "mode": "analysis_only",
   "summary": "",

@@ -338,6 +338,45 @@ describe("WorkflowRunRecoveryBar", () => {
     });
   });
 
+  it("resumes a lease-interrupted run without regenerating finished outputs", async () => {
+    // Issue #730: the lease expired while the image result was landing, so the
+    // record still says running. Continuing must reuse that canvas output and
+    // only resubmit the video that was never admitted.
+    useCanvasStore.getState().updateNodeData("image-1", {
+      imageUrl: "/static/project/image.png",
+    });
+    vi.mocked(listFreezoneWorkflowRuns).mockResolvedValue({
+      runs: [{
+        ...failedRun,
+        run_id: "run-interrupted",
+        status: "interrupted",
+        actions: [
+          { node_id: "image-1", action: "generate_image", status: "running" },
+          { node_id: "video-1", action: "generate_video", status: "running" },
+          { node_id: "compose-1", action: "open_video_compose_modal", status: "pending" },
+        ],
+      }],
+    });
+    render(<WorkflowRunRecoveryBar projectId="project-a" canvasId="canvas-a" />);
+
+    expect(await screen.findByText("发现未完成的工作流")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "继续下游" }));
+
+    await waitFor(() => {
+      expect(applyCanvasChatCommandsAsync).toHaveBeenCalledWith(
+        [expect.objectContaining({
+          commands: [{
+            type: "run_workflow",
+            node_ids: ["video-1"],
+            direction: "downstream",
+            regenerate: false,
+          }],
+        })],
+        { projectId: "project-a", canvasId: "canvas-a" },
+      );
+    });
+  });
+
   it("keeps the old run resumable when a resume attempt cannot start", async () => {
     vi.mocked(applyCanvasChatCommandsAsync).mockResolvedValueOnce({
       applied: 0,

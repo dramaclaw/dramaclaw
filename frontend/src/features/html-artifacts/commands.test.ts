@@ -1,14 +1,14 @@
 import {registerFreezoneCanvasRuntime} from '@/features/freezone/canvasSyncRuntime';
 import {beforeEach,describe,expect,it,vi} from 'vitest';
 import {useCanvasStore} from '@/stores/canvasStore';
-import {applyCanvasChatCommandsAsync,extractCanvasChatCommandEnvelopes,partitionCanvasChatCommandEnvelopes} from '@/features/freezone/canvasChatCommands';
+import {applyCanvasChatCommandsAsync,extractCanvasChatCommandEnvelopes} from '@/features/freezone/canvasChatCommands';
 import * as api from './api';
 import {parseHtmlArtifactCommand} from './commands';
 import {subscribeNodeAction,publishNodeActionAccepted,publishNodeActionSuccess} from '@/features/canvas/application/nodeActionResult';
 import {executeWorkflowHtmlNode} from '@/features/canvas/application/workflowHtmlRuntime';
 vi.mock('@/features/canvas/application/workflowHtmlRuntime',()=>({executeWorkflowHtmlNode:vi.fn()}));
 vi.mock('@/api/tasks',()=>({getProjectTaskLimits:vi.fn(async()=>({}))}));
-vi.mock('@/api/canvas',async(importOriginal)=>({...await importOriginal<typeof import('@/api/canvas')>(),createFreezoneWorkflowRun:vi.fn(async()=>({run_id:'run-html',actions:[]})),updateFreezoneWorkflowRun:vi.fn(async()=>({run_id:'run-html'}))}));
+vi.mock('@/api/canvas',async(importOriginal)=>({...await importOriginal<typeof import('@/api/canvas')>(),createFreezoneWorkflowRun:vi.fn(async()=>({run_id:'run-html',status:'running',actions:[]})),updateFreezoneWorkflowRun:vi.fn(async(_project,_canvas,_run,body)=>({run_id:'run-html',status:body.status==='completed'?'completed':'running',actions:[]})),getFreezoneWorkflowRun:vi.fn(async()=>({run_id:'run-html',status:'completed',actions:[]}))}));
 vi.mock('./api',()=>({createHtmlArtifact:vi.fn(),saveHtmlArtifact:vi.fn(),restoreHtmlVersion:vi.fn(),readHtmlArtifact:vi.fn(),announceHtmlArtifact:vi.fn(),recordHtmlNodeHistory:vi.fn()}));
 const artifact = {id:'a1',title:'Hello',html:'<h1>Hello</h1>',version:1,created_at:'now',updated_at:'now'};
 const envelope=(command:unknown)=>({schema_version:'canvas_chat_commands.v1',project_id:'p',canvas_id:'c',commands:[command]});
@@ -192,10 +192,9 @@ describe('director HTML commands',()=>{
   expect(useCanvasStore.getState().nodes.filter(node=>node.type==='htmlArtifactNode')).toHaveLength(1);
   expect(useCanvasStore.getState().nodes.filter(node=>node.type==='imageGenNode')).toHaveLength(1);
  });
- it('requires approval and creates artifact and node only on execution',async()=>{
+ it('creates artifact and node only on execution',async()=>{
   const envelopes=extractCanvasChatCommandEnvelopes([envelope({type:'html_artifact',action:'create',title:'Hello',html:artifact.html})]);
   expect(envelopes).toHaveLength(1);
-  expect(partitionCanvasChatCommandEnvelopes(envelopes).requiresApproval).toHaveLength(1);
   expect(api.createHtmlArtifact).not.toHaveBeenCalled();
   vi.mocked(api.createHtmlArtifact).mockResolvedValue(artifact);
   const result=await applyCanvasChatCommandsAsync(envelopes,{projectId:'p',canvasId:'c'});

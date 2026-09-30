@@ -1032,16 +1032,54 @@ def run_project_task_core_sync(
                         "operation_status": exc.status,
                         "settlement_status": "awaiting_reconciliation",
                     }
-                    manager.fail_task_for_project(
-                        ctx,
-                        task_type,
-                        episode,
-                        beat_num=beat_num,
-                        scope=scope,
-                        error="产品结果仍在等待对账",
-                        metadata={**run_metadata, **failure_payload},
-                        expected_task_id=run_task_id,
-                    )
+                    if task_type == "freezone_agent_workflow_result":
+                        # The worker is intentionally released while the Agent prepares
+                        # and delivers the workflow draft. This is a durable waiting
+                        # state, not a task failure. Agent-product waiters are excluded
+                        # from lane counters, so keeping the logical task running does
+                        # not block the work that will produce its delivery receipt.
+                        logger.info(
+                            "agent_product_pending.projecting_task_running "
+                            "task_type=%s task_id=%s operation_id=%s "
+                            "operation_status=%s settlement_status=%s",
+                            task_type,
+                            run_task_id,
+                            exc.operation_id,
+                            exc.status,
+                            failure_payload["settlement_status"],
+                        )
+                        manager.update_progress_for_project(
+                            ctx,
+                            task_type,
+                            episode,
+                            beat_num=beat_num,
+                            scope=scope,
+                            status="running",
+                            current_task="等待 Agent 交付工作流草稿",
+                            metadata={**run_metadata, **failure_payload},
+                            expected_task_id=run_task_id,
+                        )
+                    else:
+                        logger.warning(
+                            "agent_product_pending.projecting_task_failed "
+                            "task_type=%s task_id=%s operation_id=%s "
+                            "operation_status=%s settlement_status=%s",
+                            task_type,
+                            run_task_id,
+                            exc.operation_id,
+                            exc.status,
+                            failure_payload["settlement_status"],
+                        )
+                        manager.fail_task_for_project(
+                            ctx,
+                            task_type,
+                            episode,
+                            beat_num=beat_num,
+                            scope=scope,
+                            error="产品结果仍在等待对账",
+                            metadata={**run_metadata, **failure_payload},
+                            expected_task_id=run_task_id,
+                        )
                     asyncio.run(
                         _emit_project_task_metrics(
                             ctx,

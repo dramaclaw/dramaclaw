@@ -43,6 +43,31 @@ def test_agent_product_operation_is_durable_and_idempotent(tmp_path):
     )
 
 
+def test_workflow_result_requires_canvas_and_rejects_canvas_rebinding(tmp_path):
+    with pytest.raises(ValueError, match="canvas_id is required"):
+        create_agent_product_operation(
+            project_dir=tmp_path,
+            project_id="project-a",
+            product_kind="workflow_result",
+            idempotency_key="missing-canvas",
+            generation_session_id="generation-a",
+            artifact_id="video-ad@1",
+        )
+
+    _create(tmp_path, key="canvas-bound")
+    with pytest.raises(ValueError, match="bound to another operation"):
+        create_agent_product_operation(
+            project_dir=tmp_path,
+            project_id="project-a",
+            product_kind="workflow_result",
+            idempotency_key="canvas-bound",
+            generation_session_id="generation-a",
+            canvas_id="canvas-b",
+            artifact_id="artifact-a",
+            metadata={"source": "agent"},
+        )
+
+
 @pytest.mark.parametrize(
     "mode", ["timeout_fallback", "memory_cache", "persistent_cache", "deterministic"]
 )
@@ -568,8 +593,8 @@ async def test_catalog_result_tool_binds_its_generation_operation(
 
 
 @pytest.mark.asyncio
-async def test_product_task_waits_for_durable_delivery_before_success(
-    tmp_path, monkeypatch
+async def test_workflow_result_waiter_releases_slot_before_late_delivery(
+    tmp_path, monkeypatch, caplog
 ):
     from novelvideo.task_backend.runners import freezone as freezone_runner
 
@@ -580,40 +605,51 @@ async def test_product_task_waits_for_durable_delivery_before_success(
         task_id="task-a",
         root_task_id="task-a",
     )
-    sleep_calls = 0
 
-    async def deliver_after_wait(_seconds):
-        nonlocal sleep_calls
-        sleep_calls += 1
-        bind_agent_product_model_execution(
-            project_dir=tmp_path,
-            operation_id=operation["operation_id"],
-            model_call_id="response-a",
-            executed_at=1.0,
-            source="server_observed_agent_turn",
-        )
-        finish_agent_product_operation(
-            project_dir=tmp_path,
-            operation_id=operation["operation_id"],
-            outcome="delivered",
-            expected_task_id="task-a",
-            result_ref={"kind": "workflow_draft", "id": "draft-a"},
-        )
+    async def must_not_wait(_seconds):
+        raise AssertionError("workflow result waiter held the default worker slot")
 
-    monkeypatch.setattr(freezone_runner.asyncio, "sleep", deliver_after_wait)
-    result = await freezone_runner._run_freezone_agent_product_async(
-        {
-            "task_type": "freezone_agent_workflow_result",
-            "__run_task_id": "task-a",
-            "payload": {
-                "operation_id": operation["operation_id"],
-                "product_kind": "workflow_result",
-            },
+    monkeypatch.setattr(freezone_runner.asyncio, "sleep", must_not_wait)
+    envelope = {
+        "task_type": "freezone_agent_workflow_result",
+        "__run_task_id": "task-a",
+        "payload": {
+            "operation_id": operation["operation_id"],
+            "product_kind": "workflow_result",
         },
-        SimpleNamespace(state_dir=tmp_path),
+    }
+    with pytest.raises(AgentProductSettlementPending) as exc_info:
+        await freezone_runner._run_freezone_agent_product_async(
+            envelope, SimpleNamespace(state_dir=tmp_path)
+        )
+    assert exc_info.value.status == "awaiting_delivery"
+    assert "agent_product_waiter.deferred" in caplog.text
+    assert operation["operation_id"] in caplog.text
+    assert "task_projection=running" in caplog.text
+    assert (
+        read_agent_product_operation(
+            project_dir=tmp_path, operation_id=operation["operation_id"]
+        )["status"]
+        == "reserved"
     )
 
-    assert sleep_calls == 1
+    bind_agent_product_model_execution(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        model_call_id="response-a",
+        executed_at=1.0,
+        source="server_observed_agent_turn",
+    )
+    finish_agent_product_operation(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        outcome="delivered",
+        expected_task_id="task-a",
+        result_ref={"kind": "workflow_draft", "id": "draft-a"},
+    )
+    result = await freezone_runner._run_freezone_agent_product_async(
+        envelope, SimpleNamespace(state_dir=tmp_path)
+    )
     assert result["delivery_status"] == "delivered"
     assert result["result_ref"]["id"] == "draft-a"
 
@@ -729,6 +765,63 @@ async def test_recipe_waiter_releases_worker_after_workflow_ends(
         envelope, SimpleNamespace(state_dir=tmp_path)
     )
     assert result["delivery_status"] == "delivered"
+
+
+@pytest.mark.asyncio
+async def test_recipe_waiter_does_not_hold_worker_slot_while_run_is_live(
+    tmp_path, monkeypatch
+):
+    # Issue #700: the waiter shares the default lane with the media task it
+    # waits for. Holding the slot while the Run is live deadlocks small lanes.
+    from novelvideo.freezone import workflow_runs
+    from novelvideo.task_backend.runners import freezone as freezone_runner
+
+    operation = create_agent_product_operation(
+        project_dir=tmp_path,
+        project_id="project-a",
+        product_kind="recipe_result",
+        idempotency_key="recipe-live-run",
+        generation_session_id="run-a",
+        canvas_id="canvas-a",
+        artifact_id="image-a",
+        metadata={"workflow_run_id": "run-a", "node_id": "image-a"},
+    )
+    bind_agent_product_task(
+        project_dir=tmp_path,
+        operation_id=operation["operation_id"],
+        task_id="task-a",
+        root_task_id="task-a",
+    )
+    monkeypatch.setattr(
+        workflow_runs,
+        "read_workflow_run",
+        lambda **_kwargs: {
+            "status": "running",
+            "lease_expires_at": "2999-01-01T00:00:00Z",
+        },
+    )
+
+    async def must_not_wait(_seconds):
+        raise AssertionError("recipe waiter held its worker slot")
+
+    monkeypatch.setattr(freezone_runner.asyncio, "sleep", must_not_wait)
+
+    with pytest.raises(AgentProductSettlementPending) as exc_info:
+        await freezone_runner._run_freezone_agent_product_async(
+            {
+                "task_type": "freezone_agent_recipe_result",
+                "__run_task_id": "task-a",
+                "payload": {
+                    "operation_id": operation["operation_id"],
+                    "product_kind": "recipe_result",
+                },
+            },
+            SimpleNamespace(state_dir=tmp_path),
+        )
+    assert exc_info.value.status == "awaiting_delivery"
+    assert read_agent_product_operation(
+        project_dir=tmp_path, operation_id=operation["operation_id"]
+    )["status"] == "reserved"
 
 
 def test_product_task_timeout_preserves_pending_operation(tmp_path, monkeypatch):

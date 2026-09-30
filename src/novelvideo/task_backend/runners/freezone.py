@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
@@ -27,6 +28,9 @@ from novelvideo.task_backend.envelope import InvalidTaskEnvelope
 from novelvideo.task_backend.projection import read_projection
 from novelvideo.task_identity import project_task_state_key
 from novelvideo.task_state import get_task_manager
+
+
+logger = logging.getLogger(__name__)
 
 
 async def _run_image_output(envelope: dict[str, Any], ctx: ProjectContext, *, vectorize: bool) -> dict[str, Any]:
@@ -90,6 +94,13 @@ async def _run_freezone_agent_product_async(
     run_task_id = str(envelope.get("__run_task_id") or "").strip()
     if not operation_id or not product_kind or not run_task_id:
         raise ValueError("agent product task payload is incomplete")
+    logger.info(
+        "agent_product_waiter.start task_type=%s task_id=%s operation_id=%s product_kind=%s",
+        str(envelope.get("task_type") or ""),
+        run_task_id,
+        operation_id,
+        product_kind,
+    )
     while True:
         operation = await asyncio.to_thread(
             read_agent_product_operation,
@@ -104,6 +115,18 @@ async def _run_freezone_agent_product_async(
         if bound_task_id and bound_task_id != run_task_id:
             raise RuntimeError("agent product operation is bound to another task")
         status = str(operation.get("status") or "")
+        logger.info(
+            "agent_product_waiter.observed task_id=%s operation_id=%s "
+            "product_kind=%s operation_status=%s bound_task_id=%s "
+            "has_model_evidence=%s has_result_ref=%s",
+            run_task_id,
+            operation_id,
+            product_kind,
+            status,
+            bound_task_id or "none",
+            bool((operation.get("model_evidence") or {}).get("model_call_id")),
+            bool(operation.get("result_ref")),
+        )
         if status == "delivered":
             evidence = operation.get("model_evidence") or {}
             result_ref = operation.get("result_ref") or {}
@@ -175,6 +198,28 @@ async def _run_freezone_agent_product_async(
                             operation_id=operation_id,
                             status="workflow_lease_expired",
                         )
+            # The media task this waits for runs on the same lane. Polling here
+            # would hold the slot it needs (#700); delivery paths settle late.
+            raise AgentProductSettlementPending(
+                operation_id=operation_id,
+                status="awaiting_delivery",
+            )
+        if product_kind == "workflow_result":
+            # Draft delivery reconciles this operation independently. Waiting
+            # here can occupy every default-lane slot before media work runs.
+            logger.warning(
+                "agent_product_waiter.deferred task_id=%s operation_id=%s "
+                "product_kind=%s operation_status=%s reason=awaiting_delivery "
+                "task_projection=running",
+                run_task_id,
+                operation_id,
+                product_kind,
+                status,
+            )
+            raise AgentProductSettlementPending(
+                operation_id=operation_id,
+                status="awaiting_delivery",
+            )
         await asyncio.sleep(0.2)
 
 

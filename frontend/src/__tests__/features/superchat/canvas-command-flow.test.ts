@@ -463,6 +463,19 @@ describe("canvas command flow placement", () => {
     })).toBe("warning");
 
     expect(canvasCommandFeedbackVisualToneForTest({
+      key: "bridge:result-sync",
+      applied: 1,
+      openedUiActions: 0,
+      errors: [],
+      commandResults: [{
+        commandIndex: 0,
+        type: "run_node_action",
+        status: "pending",
+        label: "生成图片（产物待同步）",
+      }],
+    })).toBe("warning");
+
+    expect(canvasCommandFeedbackVisualToneForTest({
       key: "bridge:execution",
       applied: 0,
       openedUiActions: 0,

@@ -22,6 +22,8 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
+import portalocker
+
 from novelvideo.chat import display_fallback, media_presentation, message_repository, presentation, presentation_mapping, runtime_event_mapper, session_registry
 from novelvideo.chat.backend_sdk import (
     ClaudeSdkClient,
@@ -31,10 +33,12 @@ from novelvideo.chat.backend_sdk import (
     interrupt_live_codex_turn,
 )
 from novelvideo.chat.canvas_outcome import (
+    CANVAS_FORMAT_REPAIR_PROMPT,
     CANVAS_REPLY_SCHEMA,
     CANVAS_FINAL_RESPONSE_INSTRUCTIONS,
     finalize_canvas_reply,
     recover_unstructured_canvas_message,
+    needs_canvas_format_repair,
     receipt_reference,
 )
 from novelvideo.chat.display_fallback import (
@@ -144,7 +148,12 @@ from novelvideo.chat.runtime_event_evidence import (
     _GENERATION_RETRY_DATA_FIELDS as _GENERATION_RETRY_DATA_FIELDS,
     _FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS as _FREEZONE_WORKFLOW_DRAFT_PREPARE_TOOLS,
     _codex_freezone_clarification_answered as _codex_freezone_clarification_answered,
+    _codex_freezone_argument_retry_expectation,
+    _codex_freezone_argument_retry_signature,
+    _codex_freezone_confirmed_execution_policy,
+    _codex_freezone_execution_policy_requirement,
     _codex_freezone_generation_retry_key,
+    _codex_freezone_is_execution_policy_rejection,
     _codex_freezone_is_generation_preflight_rejection,
     _codex_freezone_is_write_event,
     _codex_freezone_ready_workflow_draft,
@@ -243,9 +252,16 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "sequence. When the user explicitly specifies exact nodes and dependencies, follow the Skill's "
     "custom-topology reference and call freezone_prepare_workflow_plan_draft once instead; do not "
     "route that request through the compact Intent compiler merely because a "
-    "production Skill matches. Explicit Beat, shot, node-count, or dependency requirements must "
-    "remain one complete WorkflowPlan even when they exceed the compact planner limit. Copy exact "
-    "user totals into expected_node_count and expected_node_counts. For episodic short-drama, Beat, "
+    "production Skill matches. Beat counts, shot counts, episode counts, and other business totals "
+    "belong in the compact Intent or standard planner inputs and must not by themselves trigger an "
+    "agent-authored Plan. Use a complete WorkflowPlan only when the user explicitly enumerates "
+    "canvas nodes and a dependency graph that deviates from the selected Skill's standard topology; "
+    "then copy exact user node totals into expected_node_count and expected_node_counts. Every "
+    "complete Plan must carry "
+    "top-level schema_version plus skill.id and skill.version copied from the selected production "
+    "Skill; generation_answers supplements that Plan and never replaces it. On recipe-backed text "
+    "nodes, never use the reserved input/resource/asset stages, which identify recipe-less user "
+    "resources. For episodic short-drama, Beat, "
     "voice-over, or background-music workflows, prefer the short-drama production Skill over the "
     "generic text-to-image-video Skill. After any validation error, never submit a reduced sample, "
     "smoke test, or placeholder graph such as A/B or T1/T2 to the real canvas; diagnose with the "
@@ -259,7 +275,9 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "types through repeated compiler calls. dependency_for only controls execution order and never "
     "consumes source output. A target that uses actual upstream output must not use dependency_for: "
     "use context_for for consumed text context, prompt_for for consumed text prompts, and "
-    "media_input_for for consumed media. Self-check every claimed upstream input before submission. "
+    "media_input_for for consumed media. A textAnnotationNode or scriptNode feeding an audioNode "
+    "must use prompt_for, never context_for. Self-check every claimed upstream input before "
+    "submission. "
     "Do not use workflow_graph_compile as routine preflight "
     "before the first graph write. After a recovery compile succeeds, immediately submit that exact "
     "corrected Plan with freezone_prepare_workflow_plan_draft instead of stopping at compile success. "
@@ -280,9 +298,13 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "implicit false default. For structured clarification, call only the dramaclaw MCP tool "
     "freezone_request_user_clarification; never use "
     "the built-in request_user_input tool. Never call create_goal for a canvas request. For a "
-    "workflow confirmation or graph call with run_after_create=true, that same approved batch is "
+    "workflow draft prepared with run_after_create=true, its confirmation, or a graph call with "
+    "run_after_create=true, that same approved batch is "
     "the one and only run request. If its result says accepted or reports a run_workflow command, "
-    "never call freezone_run_workflow again in the same turn. "
+    "never call freezone_run_workflow again in the same turn. Decide run_after_create when you "
+    "prepare or patch the draft: when the user asks to start generation right after approving "
+    "the plan, pass run_after_create=true at prepare time; freezone_confirm_workflow_draft does "
+    "not accept run_after_create, so a confirmation never changes execution policy. "
     "Only a later explicit user retry after a terminal failure may start another run. For a "
     "Freezone speech uses custom/reference voices only and must never use a preset/system voice. "
     "Preserve a valid voiceRef. If no valid custom voice is selected, skip that audio node without "
@@ -315,14 +337,22 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "as 'recommended settings'. The clarification tool constructs one question per "
     "required field and the frontend resolves exact live options, including 480P "
     "whenever the selected video model supports it. Do not write, approve, or start the workflow "
-    "until the answer is returned. This rule applies to generation or run requests, including "
+    "until the answer is returned. If the clarification tool returns "
+    "clarification_frontend_timeout, tell the user the card is still waiting and will reappear "
+    "on their next message; when they reply, call the tool again with the same clarification_id "
+    "to resume that card instead of building a new one. This rule applies to generation or run requests, including "
     "run_after_create=true; it does not apply when the user only asks to create empty nodes, connect, "
     "group, lay out, or edit them without generation. It is an explicit exception to any general "
     "instruction not to ask about model parameters, and it applies only to image and video for now. "
     "Store confirmed shared choices in workflow intent.inputs using portable image_model, "
     "image_aspect_ratio, image_resolution, image_quality, image_variants_per_node, video_model, "
     "video_aspect_ratio, video_resolution, video_duration_seconds, video_generate_audio, "
-    "video_generation_mode, and video_variants_per_node keys. The Skill-specific "
+    "video_generation_mode, and video_variants_per_node keys. When the user names a video "
+    "mode, store it as video_generation_mode and keep every video node's genMode equal to it; "
+    "imageToVideo (whole-picture image reference) and firstFrame (locked first frame) are "
+    "different modes, never substitute one for the other. A node genMode without a shared "
+    "video_generation_mode blocks the draft. If the selected model does not "
+    "support the mode, choose a model that does, or ask the user. The Skill-specific "
     "image_count/video_count fields describe "
     "workflow deliverable or node counts and must never be copied to a node's data.count. If a "
     "canvas write returns code=generation_parameters_required, never retry unchanged. Pass "
@@ -390,7 +420,7 @@ _CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS = (
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
 _CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v2"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v28"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v29"
 
 
 def _codex_developer_instructions(tool_mode: str | None) -> str:
@@ -649,8 +679,14 @@ Canvas write contract:
   references/custom-topology.md and call freezone_prepare_workflow_plan_draft once with one complete
   freezone_workflow_plan.v1. Exact means the user names the nodes and their dependency order; do not
   route it through the normal draft flow or compact Intent compiler merely because a production
-  Skill matches. Explicit Beat, shot, or node totals must be copied into expected_node_count and
-  expected_node_counts and must remain unchanged during recovery. Episodic short-drama, Beat,
+  Skill matches. The Plan must include top-level schema_version plus skill.id and skill.version
+  copied from the selected production Skill; generation_answers supplements the complete Plan and
+  never replaces it. Recipe-backed text nodes must not use the reserved input/resource/asset stages,
+  which identify recipe-less user resources. Beat counts, shot counts, episode counts, and other
+  business totals stay in compact Intent or standard-planner inputs and do not by themselves require
+  a raw Plan. Only explicit canvas nodes plus a nonstandard dependency graph take the exact-topology
+  path; on that path, copy exact node totals into expected_node_count and expected_node_counts and
+  keep them unchanged during recovery. Episodic short-drama, Beat,
   voice-over, or background-music workflows should use the short-drama production Skill rather than
   the generic text-to-image-video Skill.
   Graph completeness is the Agent's responsibility. Before submission, verify that all Plan nodes
@@ -662,7 +698,8 @@ Canvas write contract:
   link types through repeated compiler calls. dependency_for only controls execution order and never
   consumes source output. A target that uses actual upstream output must not use dependency_for:
   use context_for for consumed text context, prompt_for for consumed text prompts, and
-  media_input_for for consumed media. Self-check every claimed upstream input before submission.
+  media_input_for for consumed media. A textAnnotationNode or scriptNode feeding an audioNode must
+  use prompt_for, never context_for. Self-check every claimed upstream input before submission.
   The graph write already validates, so do not use
   workflow_graph_compile as a routine preflight before the first write. After a recovery compile
   succeeds, immediately prepare the exact same Plan with freezone_prepare_workflow_plan_draft.
@@ -1778,6 +1815,15 @@ def _skill_sources() -> list[tuple[str, Path]]:
 
 def _sync_project_skills(skills_dir: Path, *, agent_profile: str = "main") -> None:
     skills_dir.mkdir(parents=True, exist_ok=True)
+    # Multiple Codex turns can initialize the same project/profile at once.
+    # Hold one cross-process lock across the digest, replacement and manifest
+    # write so neither turn sees or removes the other's half-published Skill.
+    lock_path = skills_dir / ".dramaclaw-managed-skills.lock"
+    with portalocker.Lock(str(lock_path), timeout=30):
+        _sync_project_skills_locked(skills_dir, agent_profile=agent_profile)
+
+
+def _sync_project_skills_locked(skills_dir: Path, *, agent_profile: str) -> None:
     profile = str(agent_profile or "main").strip() or "main"
     allowed = (
         {"freezone", "workflows", "dramaclaw-workflows", "interactive-story"}
@@ -2707,6 +2753,61 @@ def reset_codex_scope_thread(
         write_json_atomic=write_json_atomic,
     )
     _set_active_codex_turn(username, scope_key, None)
+
+
+async def archive_codex_scope_thread(
+    username: str,
+    project: str,
+    *,
+    agent_profile: str = "main",
+    canvas_id: str | None = None,
+    project_state_dir: str | Path | None = None,
+) -> int:
+    """Archive one scope's thread before forgetting its local binding.
+
+    A plain index reset leaves the App Server free to retain thread-owned MCP
+    processes and tool state for the same project workspace.  Archiving first
+    gives the runtime an explicit lifecycle boundary while preserving managed
+    Skills and other durable workspace files.
+    """
+
+    from novelvideo.utils.state_index_files import index_file_lock, write_json_atomic
+
+    scope_key = _codex_scope_key(
+        project, agent_profile=agent_profile, canvas_id=canvas_id
+    )
+    state_path = _codex_session_state_path(
+        username, project, project_state_dir=project_state_dir
+    )
+    thread_id = session_registry.get_codex_thread_id(state_path, scope_key)
+    if thread_id:
+        archived = await asyncio.to_thread(_control_codex_thread, "archive", thread_id)
+        if not archived:
+            raise RuntimeError(f"Codex thread could not be archived: {thread_id}")
+
+    with index_file_lock(state_path):
+        latest = _load_codex_session_state(
+            username, project, project_state_dir=project_state_dir
+        )
+        if thread_id is None or latest.get(scope_key) == thread_id:
+            latest.pop(scope_key, None)
+            _save_codex_session_state(
+                username, project, latest, project_state_dir=project_state_dir
+            )
+    if thread_id is not None:
+        active_turn_key = (username, scope_key)
+        with _ACTIVE_CODEX_TURNS_LOCK:
+            active_turn = _ACTIVE_CODEX_TURNS.get(active_turn_key)
+            if active_turn is not None and active_turn[0] == thread_id:
+                _ACTIVE_CODEX_TURNS.pop(active_turn_key, None)
+        session_registry.clear_active_codex_turn_if_thread(
+            _active_codex_turns_path(username),
+            scope_key,
+            thread_id,
+            index_file_lock=index_file_lock,
+            write_json_atomic=write_json_atomic,
+        )
+    return int(thread_id is not None)
 
 
 def _active_codex_turns_path(username: str) -> Path:
@@ -3877,6 +3978,35 @@ async def authorize_hermes_launch(
     )
 
 
+def _canvas_background_result_context(previous_trace: list[str]) -> str:
+    notes = [
+        item
+        for item in previous_trace
+        if item.startswith("[CANVAS_BACKGROUND_RESULT]")
+        and item.endswith("[/CANVAS_BACKGROUND_RESULT]")
+    ]
+    if not notes:
+        return ""
+    return (
+        "\n\n[PRIOR_CANVAS_BACKGROUND_RESULTS]\n"
+        "These are asynchronous results from earlier canvas commands. "
+        "Check current canvas and workflow state before acting.\n"
+        + "\n".join(notes[-5:])
+        + "\n[/PRIOR_CANVAS_BACKGROUND_RESULTS]"
+    )
+
+
+async def _canvas_background_result_context_for_scope(
+    username: str, store_scope: Any | None
+) -> str:
+    if store_scope is None:
+        return ""
+    notifications = await _store_history_contents_async(
+        username, store_scope, "agent_notification"
+    )
+    return _canvas_background_result_context(notifications)
+
+
 async def _stream_assistant_reply_hermes(
     username: str,
     project: str,
@@ -3975,6 +4105,10 @@ async def _stream_assistant_reply_hermes(
     else:
         previous_assistant = []
         previous_trace = []
+    if tool_mode == "freezone_canvas":
+        agent_prompt += await _canvas_background_result_context_for_scope(
+            username, store_scope
+        )
     assistant_prefix_candidates = _assistant_prefix_candidates(previous_assistant)
     trace_prefix_candidates = _assistant_prefix_candidates(previous_trace)
     assistant_text = ""
@@ -4682,6 +4816,12 @@ async def _stream_assistant_reply_codex(
     )
     stage_confirmation_attempted = False
     stage_confirmation_succeeded = False
+    # call_id -> run_after_create the agent requested when the draft policy
+    # guard rejected it; only a receipt reporting that policy may supersede it.
+    canvas_policy_requirements: dict[str, bool] = {}
+    # call_id -> the exact corrected arguments that would prove a write the MCP
+    # input schema rejected was only a slip; a receipt for them supersedes it.
+    canvas_argument_rejections: dict[str, str] = {}
     ready_workflow_draft: dict[str, Any] | None = None
     authorization = await authorize_hermes_launch(
         egress_context=egress_context,
@@ -4768,7 +4908,49 @@ async def _stream_assistant_reply_codex(
             turn_id=business_turn_id,
             require_generation_parameter_preflight=tool_mode == "freezone_canvas",
         )
-        async for event in thread.stream(agent_prompt):
+        if tool_mode == "freezone_canvas":
+            agent_prompt += await _canvas_background_result_context_for_scope(
+                username, store_scope
+            )
+
+        async def turn_events():
+            nonlocal assistant_text, turn_disposition
+            async for event in thread.stream(agent_prompt):
+                yield event
+            if not (
+                structured_canvas_reply
+                and turn_disposition == "completed"
+                and needs_canvas_format_repair(
+                    assistant_text,
+                    attempts=canvas_write_attempts,
+                    receipts=canvas_receipts,
+                    draft_ready=ready_workflow_draft is not None,
+                )
+            ):
+                return
+            # A no-write turn answered outside the envelope (#680). Ask once,
+            # on the same thread, for the same answer in the required format;
+            # its events go through the same write tracking as the first turn.
+            logger.info(
+                "codex canvas reply format repair user=%s project=%s turn=%s",
+                username,
+                project or "<home>",
+                business_turn_id,
+            )
+            original_text, original_disposition = assistant_text, turn_disposition
+            assistant_text, turn_disposition = "", _DEFAULT_TURN_DISPOSITION
+            try:
+                async for event in thread.stream(CANVAS_FORMAT_REPAIR_PROMPT):
+                    yield event
+            except Exception:
+                logger.warning("codex canvas reply format repair failed", exc_info=True)
+                turn_disposition = "failed"
+            if turn_disposition not in {"completed", "cancelled"}:
+                # A failed repair must not surface a transport error in place
+                # of the original contract failure.
+                assistant_text, turn_disposition = original_text, original_disposition
+
+        async for event in turn_events():
             logger.debug(
                 "codex event user=%s project=%s profile=%s type=%s thread=%s turn=%s",
                 username,
@@ -4955,24 +5137,66 @@ async def _stream_assistant_reply_codex(
                                     )
                                 }
                                 if retry_key is not None:
+                                    confirmed_policy = (
+                                        _codex_freezone_confirmed_execution_policy(event)
+                                    )
                                     for rejected_call, rejected_key in list(
                                         canvas_generation_preflights.items()
                                     ):
+                                        if rejected_key != retry_key or rejected_call == call_id:
+                                            continue
+                                        required_policy = canvas_policy_requirements.get(
+                                            rejected_call
+                                        )
+                                        # A policy-guard rejection is resolved only by a
+                                        # confirmation whose receipt verifiably applied
+                                        # the requested run_after_create. An unverified
+                                        # or downgraded confirmation keeps it on record.
                                         if (
-                                            rejected_key == retry_key
-                                            and rejected_call != call_id
+                                            required_policy is not None
+                                            and confirmed_policy != required_policy
                                         ):
-                                            canvas_write_attempts.pop(rejected_call, None)
-                                            canvas_write_failures.pop(rejected_call, None)
-                                            canvas_generation_preflights.pop(
-                                                rejected_call, None
-                                            )
+                                            continue
+                                        canvas_write_attempts.pop(rejected_call, None)
+                                        canvas_write_failures.pop(rejected_call, None)
+                                        canvas_generation_preflights.pop(rejected_call, None)
+                                        canvas_policy_requirements.pop(rejected_call, None)
+                                signature = _codex_freezone_argument_retry_signature(event)
+                                for rejected_call, expected in list(
+                                    canvas_argument_rejections.items()
+                                ):
+                                    if (
+                                        signature is None
+                                        or rejected_call == call_id
+                                        or expected != signature
+                                    ):
+                                        continue
+                                    canvas_write_attempts.pop(rejected_call, None)
+                                    canvas_write_failures.pop(rejected_call, None)
+                                    canvas_argument_rejections.pop(rejected_call, None)
                             elif (
                                 canvas_write_attempts[call_id] == "failed"
                                 and retry_key is not None
                                 and _codex_freezone_is_generation_preflight_rejection(event)
                             ):
-                                canvas_generation_preflights[call_id] = retry_key
+                                if _codex_freezone_is_execution_policy_rejection(event):
+                                    required_policy = (
+                                        _codex_freezone_execution_policy_requirement(event)
+                                    )
+                                    # A non-boolean request cannot be matched to a
+                                    # receipt, so that rejection is never superseded.
+                                    if required_policy is not None:
+                                        canvas_generation_preflights[call_id] = retry_key
+                                        canvas_policy_requirements[call_id] = required_policy
+                                else:
+                                    canvas_generation_preflights[call_id] = retry_key
+                            elif canvas_write_attempts[call_id] == "failed":
+                                # Rejected before the handler ran, so nothing was
+                                # written; only the provably corrected call may
+                                # supersede it.
+                                expected = _codex_freezone_argument_retry_expectation(event)
+                                if expected is not None:
+                                    canvas_argument_rejections[call_id] = expected
                             failure = _codex_freezone_write_result_error(event)
                             if failure:
                                 canvas_write_failures[call_id] = failure
@@ -5110,7 +5334,18 @@ async def _stream_assistant_reply_codex(
                 canvas_id=canvas_id,
                 project_state_dir=project_state_dir,
             )
-            if raw_assistant_text:
+            # Preserve an unstructured proposal only when there were no tool
+            # results to ground a format repair. Contradictory receipt claims
+            # and failed repairs of a tool-backed answer stay contract errors.
+            if (
+                raw_assistant_text
+                and not tool_text.strip()
+                and needs_canvas_format_repair(
+                    raw_assistant_text,
+                    attempts=canvas_write_attempts,
+                    receipts=canvas_receipts,
+                )
+            ):
                 recovered_message = recover_unstructured_canvas_message(
                     raw_assistant_text
                 )

@@ -239,6 +239,9 @@ async def clear_chat_scope(
             409, "当前对话仍在进行，请等待完成或先停止后再清空"
         ) from exc
 
+    heartbeat_task = asyncio.create_task(
+        chat_service._chat_run_lock_heartbeat_loop(username, lock_project, lock_id)
+    )
     try:
         project_state_dir = project_ctx.state_dir if project_ctx is not None else None
         execution_context = (
@@ -246,7 +249,7 @@ async def clear_chat_scope(
             if project_ctx is not None
             else None
         )
-        chat_service.reset_codex_scope_thread(
+        archived_threads = await chat_service.archive_codex_scope_thread(
             username,
             project,
             agent_profile=(
@@ -255,14 +258,20 @@ async def clear_chat_scope(
             canvas_id=execution_context.canvas_id if execution_context else None,
             project_state_dir=project_state_dir,
         )
+        if not chat_service._heartbeat_chat_run_lock(username, lock_project, lock_id):
+            raise HTTPException(409, "清空操作已失去对话锁，请刷新后重试")
         storage_scope = _chat_store_scope_for_project_context(scope, project_ctx)
         if project_ctx is not None and not _is_freezone_scope(scope):
             storage_scope = replace(storage_scope, state_dir=str(project_state_dir))
         cleared = await chat_store.clear_messages_async(username, storage_scope)
     finally:
+        heartbeat_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await heartbeat_task
         chat_service._release_chat_run_lock(username, lock_project, lock_id)
     logger.info(
-        "chat scope cleared user=%s kind=%s project=%s surface=%s canvas=%s agent=%s messages=%d",
+        "chat scope cleared user=%s kind=%s project=%s surface=%s canvas=%s agent=%s "
+        "messages=%d archived_threads=%d",
         username,
         scope.kind,
         project or "<home>",
@@ -270,8 +279,15 @@ async def clear_chat_scope(
         scope.canvas_id or "-",
         scope.agent_id or "-",
         cleared,
+        archived_threads,
     )
-    return {"ok": True, "data": {"cleared_messages": cleared}}
+    return {
+        "ok": True,
+        "data": {
+            "cleared_messages": cleared,
+            "archived_threads": archived_threads,
+        },
+    }
 
 
 class ChatAttachmentIn(BaseModel):
@@ -335,6 +351,7 @@ class PendingCanvasCommandsIn(BaseModel):
 class CanvasCommandToolResultIn(BaseModel):
     turn_id: str | None = None
     bridge_key: str
+    followup: bool = False
     project_id: str | None = None
     canvas_id: str | None = None
     agent_id: str | None = Field(
@@ -1628,6 +1645,51 @@ async def resolve_canvas_command_tool_result(
         )
     username = str(user["username"])
     project_state_dir = await _bridge_project_state_dir(user, payload)
+    if payload.followup:
+        project_id = str(payload.project_id or "").strip()
+        canvas_id = str(payload.canvas_id or "").strip()
+        turn_id = str(payload.turn_id or "").strip()
+        if not all((payload.bridge_key.strip(), project_id, canvas_id, turn_id)):
+            raise HTTPException(
+                400, "background canvas result requires bridge and scope"
+            )
+        scope = ChatScope(
+            kind="project",
+            id=project_id,
+            surface="freezone",
+            canvas_id=canvas_id,
+            agent_id=_freezone_agent_id_from_payload(payload),
+        )
+        project_ctx = await _project_context_for_scope(user, scope)
+        store_scope = _chat_store_scope_for_project_context(scope, project_ctx)
+        if payload.canvas_apply_status == "pending":
+            instruction = (
+                "The background canvas workflow is still syncing or reconciling its result. "
+                "Do not claim the artifact is ready and do not rerun generation. "
+                "Ask the user to check the canvas and workflow status later."
+            )
+        elif payload.canvas_apply_status in {"failed", "cancelled_by_user"}:
+            instruction = (
+                "The background canvas workflow did not finish successfully. "
+                "Check the current canvas and workflow state before taking another action."
+            )
+        else:
+            instruction = (
+                "The background canvas workflow returned a result. "
+                "Verify the current canvas output before claiming the artifact is ready."
+            )
+        await chat_store.append_message_async(
+            username,
+            store_scope,
+            "agent_notification",
+            f"[CANVAS_BACKGROUND_RESULT] {instruction} [/CANVAS_BACKGROUND_RESULT]",
+            turn_id=turn_id,
+            idempotency_key=f"canvas-background-result:{payload.bridge_key.strip()}",
+        )
+        return {
+            "ok": True,
+            "data": {"canvas_apply_status": payload.canvas_apply_status},
+        }
     workflow_draft_receipt = _pending_workflow_draft_receipt(
         username, payload, project_state_dir=project_state_dir
     )
@@ -2191,7 +2253,17 @@ async def _send_json_best_effort(
             async with send_lock:
                 await websocket.send_json(payload)
         return True
-    except Exception:
+    except Exception as exc:
+        # 发送失败必须留痕。这里以前是静默 `return False`，调用方也不看返回值，于是
+        # 「终态帧根本没送出去」在线上完全不可观测——CORE-INF-02 的排查有一整天花在
+        # 后端找一个不存在的缺口上，就是因为这条路径无声。
+        # 脱敏：只记帧类型与轮次标识，payload 里可能带用户内容，不入日志。
+        logger.warning(
+            "dropped chat ws frame type=%s turn_id=%s: %s",
+            payload.get("type"),
+            payload.get("turn_id"),
+            exc.__class__.__name__,
+        )
         return False
 
 

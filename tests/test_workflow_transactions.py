@@ -9,8 +9,10 @@ from novelvideo.freezone.workflow_transactions import (
     WorkflowOperationError,
     bind_workflow_inputs,
     prepare_workflow_source,
+    revise_workflow_source,
     update_workflow_steps,
 )
+from novelvideo.freezone.workflow_preflight import evaluate_workflow_preflight
 
 
 def _plan():
@@ -257,18 +259,25 @@ def test_prepared_exact_plan_applies_confirmed_shared_inputs_to_media_nodes():
     }
 
 
-def test_prepared_exact_plan_rejects_shared_input_and_node_setting_conflict():
+@pytest.mark.parametrize("node_key", ["duration_seconds", "durationSec"])
+def test_prepared_exact_plan_node_setting_wins_over_shared_input(node_key):
+    """Issue #677: shared plan inputs only fill fields a node leaves unset, so the
+    server entry point agrees with the plugin entry point and the standard
+    planner: an explicit node value (either spelling) is never overridden."""
     plan = _exact_media_plan()
-    plan["inputs"] = {"video_duration_seconds": 10}
+    video_data = plan["nodes"][1]["data"]
+    video_data.pop("duration_seconds", None)
+    video_data[node_key] = 3
+    plan["inputs"] = {"video_duration_seconds": 10, "video_generation_mode": "firstLastFrame"}
 
-    with pytest.raises(
-        WorkflowOperationError,
-        match=(
-            "conflicting plan input video_duration_seconds and node setting "
-            "duration_seconds for video"
-        ),
-    ):
-        prepare_workflow_source({"plan": plan}, username="tester")
+    prepared = prepare_workflow_source({"plan": plan}, username="tester")
+
+    video = prepared["compiled"]["plan"]["nodes"][1]
+    assert video["data"]["durationSec"] == 3
+    # A field the node did not state is still filled from the shared inputs
+    # (the fixture states generation_mode itself, so it keeps its own value).
+    assert video["data"]["genMode"] == "imageToVideo"
+    assert "duration_seconds" not in video["data"]
 
 
 def test_binding_preserves_planning_and_is_idempotent():
@@ -417,6 +426,25 @@ def test_authenticated_catalog_isolation_and_scope_cleanup(monkeypatch):
         assert b.result() == ["bob"]
 
 
+def test_exact_plan_restating_the_template_becomes_the_standard_compilation(monkeypatch):
+    """Issue #678: the draft's source plan is the standard planner's output,
+    so intent and compiled agree when the draft is claimed."""
+    compiled = catalog.compile_workflow_intent(
+        {"skill_id": "text-to-image-video", "user_goal": "赛博城市",
+         "planner": {"mode": "standard", "item_count": 1}}
+    )
+    plan = deepcopy(compiled["plan"])
+    plan.pop("planner", None)
+    plan.pop("layout", None)
+
+    prepared = prepare_workflow_source({"plan": plan}, username="tester")
+
+    assert prepared["compiled"]["planner"]["selected_by"] == "template_isomorphic"
+    assert prepared["intent"]["schema_version"] == "freezone_workflow_plan_draft.v1"
+    assert prepared["intent"]["plan"] == prepared["compiled"]["plan"]
+    assert prepared["intent"]["plan"]["planner"]["mode"] == "deterministic_standard"
+
+
 def test_source_rejects_mixed_input_without_compiling(monkeypatch):
     monkeypatch.setattr(catalog, "list_user_agent_config_items", lambda *_: [])
     with pytest.raises(WorkflowOperationError, match="exactly one"):
@@ -508,3 +536,153 @@ def test_legacy_patch_execution_policy_does_not_recompile_source():
     assert result["run_after_create"] is True
     assert result["compiled"] == payload["compiled"]
     assert result["intent"] == payload["intent"]
+
+
+def _mode_codes(compiled):
+    return [
+        blocker["code"]
+        for blocker in (compiled.get("preflight") or {}).get("blockers") or []
+        if str(blocker.get("path", "")).endswith(".genMode")
+    ]
+
+
+def _video_runtime_models():
+    return {
+        "videoNode": {
+            "ok": True,
+            "data": [
+                {
+                    "id": "seedance-2.0",
+                    "ratioOptions": ["16:9"],
+                    "resolutionOptions": ["720P"],
+                    "minDuration": 4,
+                    "maxDuration": 15,
+                    "supportsGenerateAudio": True,
+                    "supportedModes": [
+                        "text_to_video", "first_frame", "image_to_video", "first_last_frame",
+                    ],
+                }
+            ],
+        }
+    }
+
+
+def test_issue_711_node_mode_without_stated_mode_is_not_ready():
+    """Issue #711 r210 shape: the agent dropped video_generation_mode and pinned
+    firstFrame on the node. Plan and runtime preflight must both block, even
+    though the selected model supports first_frame."""
+    plan = _exact_media_plan()
+    plan["nodes"][1]["data"]["generation_mode"] = "firstFrame"
+
+    prepared = prepare_workflow_source({"plan": plan}, username="tester")
+
+    compiled = prepared["compiled"]
+    assert compiled["plan"]["nodes"][1]["data"]["genMode"] == "firstFrame"
+    assert _mode_codes(compiled) == ["video_generation_mode_unconfirmed"]
+    runtime = evaluate_workflow_preflight(
+        compiled,
+        model_responses=_video_runtime_models(),
+        limits={"ok": True, "data": {"video": {"limit": 2, "remaining": 2}}},
+    )
+    assert runtime["status"] == "blocked"
+    assert "video_generation_mode_unconfirmed" in [b["code"] for b in runtime["blockers"]]
+
+
+@pytest.mark.parametrize("mode", ["imageToVideo", "firstFrame"])
+def test_stated_video_mode_keeps_input_and_node_consistent(mode):
+    plan = _exact_media_plan()
+    plan["nodes"][1]["data"].pop("generation_mode")
+    plan["inputs"] = {"video_generation_mode": mode}
+
+    prepared = prepare_workflow_source({"plan": plan}, username="tester")
+
+    compiled = prepared["compiled"]
+    assert compiled["plan"]["nodes"][1]["data"]["genMode"] == mode
+    assert _mode_codes(compiled) == []
+    runtime = evaluate_workflow_preflight(
+        compiled,
+        model_responses=_video_runtime_models(),
+        limits={"ok": True, "data": {"video": {"limit": 2, "remaining": 2}}},
+    )
+    assert not [b for b in runtime["blockers"] if b["path"].endswith(".genMode")]
+
+
+def test_revised_node_mode_is_recorded_as_that_nodes_confirmed_mode():
+    """A step revision is how one shot legitimately differs from the shared
+    mode; the server records it instead of tripping the #711 check."""
+    plan = _exact_media_plan()
+    plan["nodes"][1]["data"].pop("generation_mode")
+    plan["inputs"] = {"video_generation_mode": "imageToVideo"}
+    prepared = prepare_workflow_source({"plan": plan}, username="tester")
+
+    revised = revise_workflow_source(
+        prepared,
+        {"step_updates": [
+            {"node_id": "video", "settings": {"generation_mode": "firstLastFrame"}}
+        ]},
+        username="tester",
+    )
+
+    video = revised["compiled"]["plan"]["nodes"][1]["data"]
+    assert video["genMode"] == "firstLastFrame"
+    # Recorded server-side, outside the caller-writable plan.
+    assert revised["compiled"]["mode_confirmations"] == {"video": "firstLastFrame"}
+    assert "video_generation_mode" not in video["workflowCatalog"].get("confirmedInputs", {})
+    assert _mode_codes(revised["compiled"]) == []
+
+
+@pytest.mark.parametrize(
+    ("shared", "code"),
+    [
+        ("imageToVideo", "video_generation_mode_conflict"),
+        (None, "video_generation_mode_unconfirmed"),
+    ],
+)
+def test_caller_written_node_mode_confirmation_is_not_trusted(shared, code):
+    """Review of #714: a submitted plan cannot confirm its own swapped mode by
+    filling workflowCatalog.confirmedInputs; only a stored-draft revision can."""
+    plan = _exact_media_plan()
+    video = plan["nodes"][1]["data"]
+    video["generation_mode"] = "firstFrame"
+    video["workflowCatalog"]["confirmedInputs"] = {"video_generation_mode": "firstFrame"}
+    if shared:
+        plan["inputs"] = {"video_generation_mode": shared}
+
+    prepared = prepare_workflow_source({"plan": plan}, username="tester")
+
+    compiled = prepared["compiled"]
+    node = compiled["plan"]["nodes"][1]["data"]
+    assert node["genMode"] == "firstFrame"
+    assert "video_generation_mode" not in node["workflowCatalog"].get("confirmedInputs", {})
+    assert _mode_codes(compiled) == [code]
+    runtime = evaluate_workflow_preflight(
+        compiled,
+        model_responses=_video_runtime_models(),
+        limits={"ok": True, "data": {"video": {"limit": 2, "remaining": 2}}},
+    )
+    assert runtime["status"] == "blocked"
+    assert code in [b["code"] for b in runtime["blockers"]]
+
+
+def test_revised_node_mode_confirmation_survives_later_revisions():
+    plan = _exact_media_plan()
+    plan["nodes"][1]["data"].pop("generation_mode")
+    plan["inputs"] = {"video_generation_mode": "imageToVideo"}
+    prepared = prepare_workflow_source({"plan": plan}, username="tester")
+    revised = revise_workflow_source(
+        prepared,
+        {"step_updates": [
+            {"node_id": "video", "settings": {"generation_mode": "firstLastFrame"}}
+        ]},
+        username="tester",
+    )
+
+    again = revise_workflow_source(
+        revised,
+        {"step_updates": [{"node_id": "video", "prompt": "make a calmer video"}]},
+        username="tester",
+    )
+
+    video = again["compiled"]["plan"]["nodes"][1]["data"]
+    assert video["genMode"] == "firstLastFrame"
+    assert _mode_codes(again["compiled"]) == []

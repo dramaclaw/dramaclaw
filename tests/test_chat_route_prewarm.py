@@ -415,6 +415,59 @@ def test_canvas_command_tool_result_accepts_background_workflow(
 
 
 @pytest.mark.anyio
+async def test_canvas_background_followup_is_saved_for_agent_without_reresolving_bridge(
+    monkeypatch,
+) -> None:
+    saved: dict[str, object] = {}
+
+    async def fake_state_dir(_user, _payload):
+        return None
+
+    async def fake_project_context(_user, _scope):
+        return None
+
+    async def fake_append(username, scope, role, content, **kwargs):
+        saved.update(
+            username=username, scope=scope, role=role, content=content, **kwargs
+        )
+        return {"id": 1}
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", fake_state_dir)
+    monkeypatch.setattr(chat_route, "_project_context_for_scope", fake_project_context)
+    monkeypatch.setattr(chat_route.chat_store, "append_message_async", fake_append)
+    monkeypatch.setattr(
+        chat_route,
+        "resolve_canvas_command",
+        lambda *_args, **_kwargs: pytest.fail(
+            "settled bridge must not be resolved again"
+        ),
+    )
+    payload = chat_route.CanvasCommandToolResultIn(
+        bridge_key="bridge-workflow",
+        turn_id="turn-a",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        agent_id="agent-1",
+        followup=True,
+        tool_call_status="completed",
+        canvas_apply_status="pending",
+        applied=False,
+        agent_hint="Do not rerun generation.",
+    )
+
+    response = await chat_route.resolve_canvas_command_tool_result(
+        payload,
+        {"username": "admin"},
+    )
+
+    assert response["data"]["canvas_apply_status"] == "pending"
+    assert saved["role"] == "agent_notification"
+    assert "do not rerun generation" in str(saved["content"])
+    assert saved["idempotency_key"] == "canvas-background-result:bridge-workflow"
+    assert getattr(saved["scope"], "agent_id") == "agent-1"
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     "receipt_revision,receipt_task,expected_status",
     [
@@ -1891,6 +1944,85 @@ async def test_watch_pending_clarification_events_emits_freezone_bridge_event(
     assert messages[-1]["ui_events"][0]["type"] == "assistant.clarification.request"
     assert messages[-1]["ui_events"][0]["clarification_id"] == "clarify_01"
     assert messages[-1]["ui_events"][0]["bridge_key"] == "clarify-key-1"
+
+
+async def test_watch_pending_clarification_events_redelivers_unanswered_card_to_next_turn(
+    monkeypatch, tmp_path
+) -> None:
+    """A card nobody answered before the tool timed out reappears in the next turn."""
+    import asyncio
+    import sqlite3
+
+    from novelvideo.freezone import canvas_command_bridge
+
+    class CapturingWebSocket:
+        def __init__(self) -> None:
+            self.sent = []
+
+        async def send_json(self, payload):
+            self.sent.append(payload)
+            raise RuntimeError("stop watcher after first send")
+
+    bridge_dir = tmp_path / "bridge"
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: bridge_dir
+    )
+    event = {
+        "type": "assistant.clarification.request",
+        "clarification_id": "clarify_resume",
+        "questions": [{"id": "image_model", "options": []}],
+    }
+    put_pending_clarification_event(
+        key="clarify-key-resume",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        event=event,
+        bridge_dir=bridge_dir,
+    )
+    scope = ChatScope(
+        kind="project", id="project-a", surface="freezone",
+        canvas_id="canvas-a", agent_id="agent-1",
+    )
+    first = CapturingWebSocket()
+    await chat_route._watch_pending_clarification_events(
+        websocket=first, username="admin", scope=scope, turn_id="turn-a",
+        send_lock=None, emitted_bridge_keys=set(), started_at=0,
+    )
+    assert [frame["turn_id"] for frame in first.sent] == ["turn-a"]
+
+    # The delivery lease is still live: a second turn must not duplicate the card.
+    second = CapturingWebSocket()
+    watcher = asyncio.ensure_future(chat_route._watch_pending_clarification_events(
+        websocket=second, username="admin", scope=scope, turn_id="turn-b",
+        send_lock=None, emitted_bridge_keys=set(), started_at=0,
+    ))
+    await asyncio.sleep(1.0)
+    watcher.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await watcher
+    assert second.sent == []
+
+    # Once the lease lapses without an answer, the next turn shows the same card again.
+    with sqlite3.connect(canvas_command_bridge._bridge_db_path(bridge_dir)) as conn:
+        conn.execute(
+            "UPDATE canvas_command_messages SET lease_expires_at = 0 "
+            "WHERE bridge_key = 'clarify-key-resume'"
+        )
+    third = CapturingWebSocket()
+    await chat_route._watch_pending_clarification_events(
+        websocket=third, username="admin", scope=scope, turn_id="turn-c",
+        send_lock=None, emitted_bridge_keys=set(), started_at=0,
+    )
+    assert len(third.sent) == 1
+    assert third.sent[0]["turn_id"] == "turn-c"
+    assert third.sent[0]["bridge_key"] == "clarify-key-resume"
+    assert third.sent[0]["event"] == event
+    found = canvas_command_bridge.find_clarification_bridge_message(
+        project_id="project-a", canvas_id="canvas-a",
+        clarification_id="clarify_resume", bridge_dir=bridge_dir,
+    )
+    assert found is not None and found["key"] == "clarify-key-resume"
 
 
 def test_resolve_clarification_tool_result_writes_bridge_result(

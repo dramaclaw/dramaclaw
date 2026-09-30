@@ -41,6 +41,7 @@ def test_story_asset_targets_require_saved_plan_and_map_generated_image() -> Non
     ]}
     validated = validate_agent_workflow_plan(plan)
     assert validated["ok"] is True, validated
+    assert not validated["preflight"]["blockers"], validated["preflight"]
     assert validated["plan"]["source_context"] == plan["source_context"]
     validate_story_asset_targets(validated["plan"], canvas)
     graph = build_workflow_graph_commands({"plan": validated["plan"]})
@@ -77,6 +78,40 @@ def _frame_node(segment_id: str) -> dict:
             },
         },
     }
+
+
+@pytest.mark.parametrize("mapping", ["absent", "story_id_only", "partial", "duplicate"])
+def test_incomplete_story_mapping_keeps_standard_workflow_stage_gate(mapping) -> None:
+    targets = [
+        {"plan_node_id": f"frame_{segment}", "story_segment_id": segment,
+         "video_node_id": f"video-{segment}"}
+        for segment in ("opening", "ending")
+    ]
+    plan = {
+        "schema_version": "freezone_workflow_plan.v1",
+        "skill": {"id": SKILL_ID},
+        "nodes": [
+            {"id": "brief", "node_type": "textAnnotationNode", "stage": "input",
+             "data": {"content": "已确认的视觉简报"}},
+            _frame_node("opening"), _frame_node("ending"),
+        ],
+        "edges": [
+            {"source": "brief", "target": f"frame_{segment}", "link_type": "prompt_for"}
+            for segment in ("opening", "ending")
+        ],
+    }
+    if mapping != "absent":
+        plan["source_context"] = {"story_id": "story-1"}
+    if mapping == "partial":
+        plan["source_context"]["targets"] = targets[:1]
+    elif mapping == "duplicate":
+        plan["source_context"]["targets"] = [*targets, targets[0]]
+
+    validated = validate_agent_workflow_plan(plan)
+
+    assert validated["ok"] is True, validated
+    assert {item["stage"] for item in validated["preflight"]["blockers"]
+            if item["code"] == "skill_stage_missing"} == {"planning", "video"}
 
 
 def test_existing_workflow_skill_supports_story_frame_recipe() -> None:
@@ -119,6 +154,7 @@ def test_story_frames_compile_as_one_group_and_one_run() -> None:
 
     validated = validate_agent_workflow_plan(plan)
     assert validated["ok"] is True, validated
+    assert not validated["preflight"]["blockers"], validated["preflight"]
     assert validated["plan"]["source_context"] == plan["source_context"]
 
     binding = resolve_external_image_inputs(

@@ -509,6 +509,9 @@ async def test_skill_reference_is_resolved_without_exposing_a_filesystem_path():
     assert "context_for" in payload["content"]
     assert "prompt_for" in payload["content"]
     assert "media_input_for" in payload["content"]
+    assert 'skill: {"id":"<selected skill_id>"' in payload["content"]
+    assert "generation_answers" in payload["content"]
+    assert "reserved for recipe-less" in payload["content"]
 
     resource = await workflow_mcp.read_resource(
         "dramaclaw-workflow://skills/short-drama-quick/references/custom-topology.md"

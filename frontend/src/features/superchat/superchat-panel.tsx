@@ -158,12 +158,14 @@ import type { ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
 import type { CanvasOntologyContext } from "@/features/canvas/ontology/canvasOntology";
 import { resolveNodeDisplayName } from "@/features/canvas/domain/nodeDisplay";
 import { useCanvasStore, type CanvasNode } from "@/stores/canvasStore";
-import type {
-  AudioVoiceRef,
-  CanvasEdge,
-  CanvasNodeType,
-  VideoGenQuality,
+import {
+  CANVAS_NODE_TYPES,
+  type AudioVoiceRef,
+  type CanvasEdge,
+  type CanvasNodeType,
+  type VideoGenQuality,
 } from "@/features/canvas/domain/canvasNodes";
+import { getDownstreamSpawnTypes } from "@/features/canvas/domain/nodeRegistry";
 import { VIDEO_GENERATION_ASPECT_RATIOS } from "@/features/canvas/application/imageData";
 import {
   VIDEO_UPSCALE_DENOISE_OPTIONS,
@@ -188,6 +190,7 @@ import {
   directGenerationTargetsForPreflight,
   FREEZONE_CANVAS_COMMAND_APPROVAL_EVENT,
   FREEZONE_CANVAS_COMMAND_RESULT_EVENT,
+  isGeneratedCanvasClientId,
   subscribeCanvasCommandApprovals,
   waitForImmediateCanvasCommandResult,
   workflowGenerationTargetsForPreflight,
@@ -487,6 +490,7 @@ const AGENT_TOOL_TITLE_OVERRIDES: Record<string, string> = {
   get_workflow_skill: "加载 Workflow Skill",
   "get workflow skill": "加载 Workflow Skill",
   freezone_prepare_workflow_draft: "生成工作流草稿",
+  freezone_prepare_workflow_plan_draft: "生成工作流草稿",
   freezone_confirm_workflow_draft: "提交到画布",
   freezone_list_agent_catalog: "读取 Skill / Recipe 列表",
   freezone_get_saved_skill: "读取 Skill 配置",
@@ -1723,7 +1727,8 @@ function FreezoneToolActivityCard({ message }: { message: ChatMessage }) {
 function genericToolTitle(message: ChatMessage): string {
   const raw = toolRawRecord(message);
   const name = typeof raw?.name === "string" ? raw.name.trim() : "";
-  const override = AGENT_TOOL_TITLE_OVERRIDES[name.toLowerCase()];
+  const normalizedName = name.toLowerCase().split(".").pop() ?? "";
+  const override = AGENT_TOOL_TITLE_OVERRIDES[normalizedName];
   if (override) return override;
   if (!name) return "执行工具";
   return name
@@ -1994,6 +1999,7 @@ const PERSISTENT_SETTLED_TOOL_STATUS_NAMES = new Set<string>([
   "skill",
   "freezone_get_workflow_skill",
   "freezone_prepare_workflow_draft",
+  "freezone_prepare_workflow_plan_draft",
   "freezone_confirm_workflow_draft",
   "freezone_list_agent_catalog",
   "freezone_get_saved_skill",
@@ -2011,8 +2017,22 @@ function shouldPersistSettledToolStatus(toolMessage: ChatMessage): boolean {
     raw?.functionName,
   ];
   return candidates.some((candidate) =>
-    typeof candidate === "string" && PERSISTENT_SETTLED_TOOL_STATUS_NAMES.has(candidate),
+    typeof candidate === "string" && PERSISTENT_SETTLED_TOOL_STATUS_NAMES.has(
+      candidate.toLowerCase().split(".").pop() ?? "",
+    ),
   );
+}
+
+function workflowPlanDraftOperationId(toolMessage: ChatMessage): string {
+  const raw = toolRawRecord(toolMessage);
+  const name = typeof raw?.name === "string"
+    ? raw.name.toLowerCase().split(".").pop() ?? ""
+    : "";
+  if (name !== "freezone_prepare_workflow_plan_draft") return "";
+  const input = raw?.input && typeof raw.input === "object"
+    ? raw.input as Record<string, unknown>
+    : null;
+  return typeof input?.operation_id === "string" ? input.operation_id.trim() : "";
 }
 
 function toolStatusRuntimeText(params: {
@@ -2104,6 +2124,15 @@ function agentRuntimeDisplayParts(
   parts: ChatMessagePart[],
   options: { streaming: boolean; hideSettledToolStatus?: boolean },
 ): RuntimeDisplayPart[] {
+  const deliveredWorkflowDraftOperations = new Set<string>();
+  for (const part of parts) {
+    if (part.type !== "tool_status") continue;
+    const toolMessage = part.event as ChatMessage;
+    const operationId = workflowPlanDraftOperationId(toolMessage);
+    if (operationId && freezoneToolStatus(toolMessage) === "done") {
+      deliveredWorkflowDraftOperations.add(operationId);
+    }
+  }
   return mergeAdjacentToolStatusParts(
     mergeAdjacentAgentThoughtParts(
       [...parts]
@@ -2113,6 +2142,14 @@ function agentRuntimeDisplayParts(
           const toolMessage = part.event as ChatMessage;
           if (shouldHideInternalToolMessage(toolMessage)) return false;
           const status = freezoneToolStatus(toolMessage);
+          const operationId = workflowPlanDraftOperationId(toolMessage);
+          if (
+            status === "failed" &&
+            operationId &&
+            deliveredWorkflowDraftOperations.has(operationId)
+          ) {
+            return false;
+          }
           if (
             (options.hideSettledToolStatus || !options.streaming)
             && status !== "failed"
@@ -2340,7 +2377,7 @@ function generationCommandNodeIds(
 ): string[] {
   const nodeIds = new Set<string>();
   const createNodeNeedsAction = (
-    command: Extract<CanvasChatCommand, { type: "create_node" }>,
+    command: Extract<CanvasChatCommand, { type: "create_node" | "add_next_node" }>,
   ): boolean => {
     const data = command.data as Record<string, unknown> | undefined;
     if (expectedAction === "generate_image") return !data?.imageUrl && !data?.image_url;
@@ -2378,6 +2415,22 @@ function generationCommandNodeIds(
         && createNodeNeedsAction(command)
       ) {
         nodeIds.add(command.client_id);
+      }
+      // add_next_node 同样会在 run_workflow 里被执行；省略 node_type 时按执行器的
+      // 规则从源节点推断类型，否则参数审批卡不会出现。
+      if (hasWorkflowRun && command.type === "add_next_node" && command.client_id) {
+        const nodeType = approvalCommandNodeType(
+          envelopes,
+          useCanvasStore.getState().nodes,
+          command.client_id,
+        );
+        if (
+          nodeType
+          && APPROVAL_GENERATION_ACTION_BY_NODE_TYPE[nodeType] === expectedAction
+          && createNodeNeedsAction(command)
+        ) {
+          nodeIds.add(command.client_id);
+        }
       }
       if (command.type === "run_workflow") {
         try {
@@ -2571,8 +2624,10 @@ function approvalNodeData(
     : {};
   for (const envelope of approval.envelopes) {
     for (const command of envelope.commands) {
+      // add_next_node 与 create_node 一样新建节点并携带 data；漏掉它会让确认卡
+      // 读不到 Agent 给的比例/分辨率而回落默认值，确认时再把默认值写回节点（#685）。
       if (
-        command.type === "create_node"
+        (command.type === "create_node" || command.type === "add_next_node")
         && command.client_id === nodeId
         && command.data
       ) {
@@ -2586,20 +2641,50 @@ function approvalNodeData(
   return data;
 }
 
+/**
+ * 解析审批批次里某个节点（画布已有节点或本批 client_id）的节点类型。
+ *
+ * add_next_node 可以省略 node_type，执行器按源节点推断（canvasChatCommands 的
+ * chooseNextNodeType：取源节点类型的第一个下游可生成类型）；审批阶段节点还没建出来，
+ * 这里按同一规则推断，源节点本身也可能是本批新建的节点，所以递归解析。
+ */
+function approvalCommandNodeType(
+  envelopes: CanvasChatCommandEnvelope[],
+  canvasNodes: readonly CanvasNode[],
+  nodeId: string,
+  visited: Set<string> = new Set(),
+): CanvasNodeType | undefined {
+  const existingType = canvasNodes.find((node) => node.id === nodeId)?.type;
+  if (existingType) return existingType as CanvasNodeType;
+  if (visited.has(nodeId)) return undefined;
+  visited.add(nodeId);
+  for (const envelope of envelopes) {
+    for (const command of envelope.commands) {
+      if (command.type === "create_node" && command.client_id === nodeId) {
+        return command.node_type;
+      }
+      if (command.type === "add_next_node" && command.client_id === nodeId) {
+        if (command.node_type) return command.node_type;
+        const sourceType = approvalCommandNodeType(
+          envelopes,
+          canvasNodes,
+          command.source_node_id,
+          visited,
+        );
+        if (!sourceType) return undefined;
+        return getDownstreamSpawnTypes(sourceType)[0] ?? CANVAS_NODE_TYPES.textAnnotation;
+      }
+    }
+  }
+  return undefined;
+}
+
 function approvalNodeType(
   approval: PendingCanvasCommandApproval,
   canvasNodes: CanvasNode[],
   nodeId: string,
 ): string {
-  const existingType = canvasNodes.find((node) => node.id === nodeId)?.type;
-  if (existingType) return existingType;
-  for (const envelope of approval.envelopes) {
-    const createCommand = envelope.commands.find(
-      (command) => command.type === "create_node" && command.client_id === nodeId,
-    );
-    if (createCommand?.type === "create_node") return createCommand.node_type;
-  }
-  return "";
+  return approvalCommandNodeType(approval.envelopes, canvasNodes, nodeId) ?? "";
 }
 
 function isImageSourceNode(
@@ -2918,6 +3003,7 @@ function amendCanvasApprovalWithGenerationData(
   action: string,
   data: Record<string, unknown>,
 ): PendingCanvasCommandApproval {
+  const targets = new Set(nodeIds);
   const remaining = new Set(nodeIds);
   if (remaining.size === 0) return approval;
   const withCreatedNodeData: PendingCanvasCommandApproval = {
@@ -2925,8 +3011,16 @@ function amendCanvasApprovalWithGenerationData(
     envelopes: approval.envelopes.map((envelope) => ({
       ...envelope,
       commands: envelope.commands.map((command) => {
+        // 同一批里 Agent 对该节点的 update_node_data 会在创建之后执行；确认值也要
+        // 合并进去，否则后续更新会把用户在审批卡上确认的参数覆盖回旧值。
+        if (command.type === "update_node_data" && targets.has(command.node_id)) {
+          return {
+            ...command,
+            data: { ...(command.data ?? {}), ...data },
+          };
+        }
         if (
-          command.type === "create_node"
+          (command.type === "create_node" || command.type === "add_next_node")
           && command.client_id
           && remaining.has(command.client_id)
         ) {
@@ -3904,6 +3998,15 @@ function canvasCommandFeedbackHasFailure(feedback: CanvasCommandFeedback): boole
   return feedback.errors.length > 0 || (feedback.commandResults ?? []).some((step) => step.status !== "success");
 }
 
+function canvasCommandFeedbackHasPending(feedback: CanvasCommandFeedback): boolean {
+  return (feedback.commandResults ?? []).some((step) => step.status === "pending");
+}
+
+function canvasCommandFeedbackReconciliationPending(feedback: CanvasCommandFeedback): boolean {
+  return (feedback.commandResults ?? []).some((step) =>
+    step.status === "pending" && step.output?.reason === "workflow_server_reconciliation_pending");
+}
+
 function canvasCommandFeedbackIsInvalidCommand(feedback: CanvasCommandFeedback): boolean {
   return (feedback.commandResults ?? []).some((step) => step.label === "画布命令无效");
 }
@@ -3932,6 +4035,7 @@ export const canvasContextActivityVisualToneForTest = canvasContextActivityVisua
 function canvasCommandFeedbackVisualTone(feedback: CanvasCommandFeedback): CanvasFeedbackVisualTone {
   const failed = canvasCommandFeedbackHasFailure(feedback);
   if (!failed) return feedback.warnings?.length ? "warning" : "success";
+  if (canvasCommandFeedbackHasPending(feedback)) return "warning";
   if (canvasCommandFeedbackIsUserCancelled(feedback)) return "muted";
   if (canvasCommandFeedbackIsTimeoutCancelled(feedback)) return "warning";
   return canvasCommandFeedbackIsValidationOnly(feedback) ? "muted" : "destructive";
@@ -3939,11 +4043,14 @@ function canvasCommandFeedbackVisualTone(feedback: CanvasCommandFeedback): Canva
 
 export const canvasCommandFeedbackVisualToneForTest = canvasCommandFeedbackVisualTone;
 
-function canvasCommandFeedbackCompactTitle(feedback: CanvasCommandFeedback): string {
+function canvasCommandFeedbackCompactTitle(feedback: CanvasCommandFeedback, t: TFunction): string {
   const firstFailedStep = (feedback.commandResults ?? []).find((step) => step.status !== "success");
   const firstPlan = feedback.plans?.[0];
   if (canvasCommandFeedbackIsTimeoutCancelled(feedback)) return "画布操作已过期";
   if (firstFailedStep?.label === "已取消" || canvasCommandFeedbackIsUserCancelled(feedback)) return "画布操作已取消";
+  if (canvasCommandFeedbackHasPending(feedback)) return canvasCommandFeedbackReconciliationPending(feedback)
+    ? t("freezone.chat.workflowReconciliationPendingLabel", { defaultValue: "对账中" })
+    : t("freezone.chat.workflowOutputSyncPendingLabel", { defaultValue: "产物待同步" });
   if (firstPlan?.type === "run_node_action" && firstPlan.label.includes("生成图片")) return "生成图片失败";
   if (firstPlan?.type === "run_node_action" && firstPlan.label.includes("生成视频")) return "生成视频失败";
   if (firstFailedStep?.label) return firstFailedStep.label;
@@ -3992,6 +4099,7 @@ function CanvasCommandFeedbackCard({
   const successfulCount = feedback.applied + feedback.openedUiActions;
   if (steps.length === 0 && successfulCount === 0 && feedback.errors.length === 0 && warnings.length === 0) return null;
   const failed = canvasCommandFeedbackHasFailure(feedback);
+  const pending = canvasCommandFeedbackHasPending(feedback);
   const invalidCommand = canvasCommandFeedbackIsInvalidCommand(feedback);
   const visualTone = canvasCommandFeedbackVisualTone(feedback);
   const mutedFailure = failed && visualTone === "muted";
@@ -3999,7 +4107,7 @@ function CanvasCommandFeedbackCard({
   const warningOnly = !failed && warnings.length > 0;
   const initiallyCompact = failed && successfulCount === 0;
   const collapseSuccessfulDetails = !failed && !warningOnly && steps.length > 2 && !steps.some(step => step.output?.html_artifact);
-  const compactTitle = canvasCommandFeedbackCompactTitle(feedback);
+  const compactTitle = canvasCommandFeedbackCompactTitle(feedback, t);
   const canRetry = feedback.cancelled && feedback.envelopes && feedback.envelopes.length > 0;
   const cancellationMessage = canvasCommandFeedbackIsTimeoutCancelled(feedback)
     ? t("freezone.chat.canvasTimeoutCancelled", {
@@ -4010,7 +4118,15 @@ function CanvasCommandFeedbackCard({
           defaultValue: "画布操作已手动取消，没有应用到画布。",
         })
       : null;
-  const userFailureMessage = failed
+  const userFailureMessage = pending
+    ? canvasCommandFeedbackReconciliationPending(feedback)
+      ? t("freezone.chat.workflowReconciliationPendingMessage", {
+          defaultValue: "画布产物已生成，服务端仍在核对任务产物；请稍后检查运行状态，暂勿重复生成。",
+        })
+      : t("freezone.chat.workflowOutputSyncPendingMessage", {
+          defaultValue: "工作流已完成，画布节点产物待同步；请稍后刷新画布核对结果，暂勿重复生成。",
+        })
+    : failed
     ? cancellationMessage ?? canvasCommandUserMessageFromResult(
         feedback.errors,
         feedback.commandResults.map((step) => ({ error: step.error })),
@@ -4062,7 +4178,7 @@ function CanvasCommandFeedbackCard({
         {(initiallyCompact || collapseSuccessfulDetails) && (
           <button type="button" onClick={() => setExpanded(false)} className="ml-auto rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-white/[0.06] hover:text-foreground">收起</button>
         )}
-        {successfulCount > 0 && <span className={cn("text-[11px] text-muted-foreground", !initiallyCompact && "ml-auto")}>已执行 {successfulCount} 项</span>}
+        {successfulCount > 0 && !pending && <span className={cn("text-[11px] text-muted-foreground", !initiallyCompact && "ml-auto")}>已执行 {successfulCount} 项</span>}
       </div>
       {expanded && <CanvasCommandPlanList plans={feedback.plans} />}
       <div className="space-y-1 px-3 py-2">
@@ -11174,7 +11290,8 @@ function canvasCommandPlanLabel(command: CanvasChatCommand): string {
 function canvasCommandPlanPrimary(command: CanvasChatCommand): string | undefined {
   switch (command.type) {
     case "create_node":
-      return command.client_id;
+      // 规范化补的合成 client_id 只是内部标识，不展示给用户。
+      return isGeneratedCanvasClientId(command.client_id) ? undefined : command.client_id;
     case "add_next_node":
       return command.source_node_id;
     case "update_node_data":
@@ -13537,17 +13654,16 @@ export function SuperChatPanel({
           await flushFreezoneCanvasRuntime(params.project, effectiveFreezoneCanvasId);
         }
 
-        if (!backgroundAccepted) {
-          reportCanvasCommandToolResult({
-            bridgeKey: approval.bridgeKey,
-            turnId: approval.turnId,
-            anchorTextPrefix: approval.anchorTextPrefix,
-            projectId: params.project,
-            canvasId: effectiveFreezoneCanvasId,
-            agentId: approval.agentId ?? effectiveFreezoneAgentId,
-            result,
-          });
-        }
+        reportCanvasCommandToolResult({
+          bridgeKey: approval.bridgeKey,
+          turnId: approval.turnId,
+          anchorTextPrefix: approval.anchorTextPrefix,
+          projectId: params.project,
+          canvasId: effectiveFreezoneCanvasId,
+          agentId: approval.agentId ?? effectiveFreezoneAgentId,
+          result,
+          followup: backgroundAccepted,
+        });
         const feedbackKey = canvasCommandFeedbackKey(approval.bridgeKey, approval.turnId, undefined, approval.key);
         appendCanvasCommandFeedback(
           approval.messageId,

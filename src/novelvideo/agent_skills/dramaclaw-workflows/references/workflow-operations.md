@@ -13,8 +13,22 @@ accepted under node `data` for step-local pins:
 `video_duration_seconds`, `video_generate_audio`, `video_generation_mode`, and
 `video_variants_per_node`. Preparation converts them to the canvas runtime fields before validation
 and persistence. The shorter semantic setting names used by revision are also accepted under node
-`data` during exact plan preparation. A shared value that conflicts with a node pin, or two aliases
-for the same setting with different values, is rejected; the server never silently chooses one.
+`data` during exact plan preparation. Shared `plan.inputs` values only fill fields a node leaves
+unset: an explicit node pin (either spelling) wins over the shared value. Two aliases for the same
+setting with different values on one node are still rejected; the server never silently chooses
+between them.
+
+`video_generation_mode` is the exception to "the node wins": it records the mode the user asked
+for, and modes are not interchangeable (`imageToVideo` uses the image as a whole-picture
+reference, `firstFrame` locks it as the opening frame). State the mode as the shared
+`video_generation_mode`; a video node `genMode` that differs from it blocks the draft with
+`video_generation_mode_conflict`, and a node `genMode` with no shared mode blocks it with
+`video_generation_mode_unconfirmed`. A single shot may differ only through a
+`freezone_revise_workflow` step update of `generation_mode`, which the server records for that node
+outside the plan; a `confirmedInputs.video_generation_mode` inside any plan (including a draft
+stored earlier) is never treated as a confirmation. When a
+model rejects the mode (`model_capability_unsupported` on `genMode`), keep the mode and switch to
+one of the returned `compatible_models`; if there are none, ask the user.
 
 Bindings refer to existing plan node IDs:
 

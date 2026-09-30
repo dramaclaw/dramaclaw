@@ -283,6 +283,7 @@ def test_browser_cannot_complete_generation_without_durable_artifact(
     [
         ("HTTP 503 upstream unavailable", "transient_upstream", True),
         ("read ECONNRESET", "transient_upstream", True),
+        ("Recipe 文本生成超时：模型未返回结果", "transient_upstream", True),
         ("HTTP 401: Invalid token", "authentication", False),
         ("model_not_found", "model_unavailable", False),
         ("HTTP 429: token-plan quota has been exhausted", "quota_exhausted", False),
@@ -1010,6 +1011,37 @@ def test_stale_running_workflow_is_marked_interrupted(tmp_path: Path) -> None:
     assert recovered is not None
     assert recovered["status"] == "interrupted"
     assert recovered["metadata"]["interrupt_reason"] == "runner_heartbeat_expired"
+
+
+def test_runner_lease_survives_background_timer_throttling(tmp_path: Path) -> None:
+    run = create_workflow_run(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="default",
+        actions=[{"node_id": "video-1", "action": "generate_video"}],
+        runner_id="runner-a",
+    )
+    last_heartbeat = datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00"))
+
+    # Background tabs fire the 15s heartbeat about once per minute (issue #730).
+    assert (
+        interrupt_stale_workflow_runs(
+            project_dir=tmp_path,
+            canvas_id="default",
+            stale_after_seconds=60,
+            now=last_heartbeat + timedelta(seconds=60),
+        )
+        == []
+    )
+    assert (
+        interrupt_stale_workflow_runs(
+            project_dir=tmp_path,
+            canvas_id="default",
+            stale_after_seconds=60,
+            now=last_heartbeat + timedelta(seconds=181),
+        )
+        == [run["run_id"]]
+    )
 
 
 def test_cancelled_run_skips_unfinished_actions_without_runner_lease(

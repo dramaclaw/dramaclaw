@@ -114,6 +114,143 @@ def test_reset_codex_scope_thread_preserves_other_scopes(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_archive_codex_scope_thread_releases_only_selected_scope(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        chat_service,
+        "_active_codex_turns_path",
+        lambda _username: tmp_path / "active_codex_turns.json",
+    )
+    selected_key = chat_service._codex_scope_key(
+        "project-1", agent_profile="freezone:main", canvas_id="canvas-1"
+    )
+    chat_service._set_codex_thread_id(
+        "alice",
+        "project-1",
+        "thread-selected",
+        agent_profile="freezone:main",
+        canvas_id="canvas-1",
+        project_state_dir=tmp_path,
+    )
+    chat_service._set_codex_thread_id(
+        "alice",
+        "project-1",
+        "thread-other",
+        agent_profile="freezone:other",
+        canvas_id="canvas-1",
+        project_state_dir=tmp_path,
+    )
+    chat_service._set_active_codex_turn(
+        "alice", selected_key, ("thread-selected", "turn-1")
+    )
+    calls = []
+    monkeypatch.setattr(
+        chat_service,
+        "_control_codex_thread",
+        lambda operation, thread_id, turn_id=None: calls.append(
+            (operation, thread_id, turn_id)
+        )
+        or True,
+    )
+
+    count = await chat_service.archive_codex_scope_thread(
+        "alice",
+        "project-1",
+        agent_profile="freezone:main",
+        canvas_id="canvas-1",
+        project_state_dir=tmp_path,
+    )
+
+    assert count == 1
+    assert calls == [("archive", "thread-selected", None)]
+    assert (
+        chat_service._get_codex_thread_id(
+            "alice",
+            "project-1",
+            agent_profile="freezone:main",
+            canvas_id="canvas-1",
+            project_state_dir=tmp_path,
+        )
+        is None
+    )
+    assert (
+        chat_service._get_codex_thread_id(
+            "alice",
+            "project-1",
+            agent_profile="freezone:other",
+            canvas_id="canvas-1",
+            project_state_dir=tmp_path,
+        )
+        == "thread-other"
+    )
+    assert selected_key not in chat_service._load_active_codex_turns("alice")
+
+
+@pytest.mark.asyncio
+async def test_archive_codex_scope_thread_preserves_newer_active_turn(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        chat_service,
+        "_active_codex_turns_path",
+        lambda _username: tmp_path / "active_codex_turns.json",
+    )
+    scope_key = chat_service._codex_scope_key(
+        "project-1", agent_profile="freezone:main", canvas_id="canvas-1"
+    )
+    chat_service._set_codex_thread_id(
+        "alice",
+        "project-1",
+        "thread-old",
+        agent_profile="freezone:main",
+        canvas_id="canvas-1",
+        project_state_dir=tmp_path,
+    )
+
+    def archive(_operation, _thread_id, _turn_id=None):
+        chat_service._set_codex_thread_id(
+            "alice",
+            "project-1",
+            "thread-new",
+            agent_profile="freezone:main",
+            canvas_id="canvas-1",
+            project_state_dir=tmp_path,
+        )
+        chat_service._set_active_codex_turn(
+            "alice", scope_key, ("thread-new", "turn-new")
+        )
+        return True
+
+    monkeypatch.setattr(chat_service, "_control_codex_thread", archive)
+
+    assert (
+        await chat_service.archive_codex_scope_thread(
+            "alice",
+            "project-1",
+            agent_profile="freezone:main",
+            canvas_id="canvas-1",
+            project_state_dir=tmp_path,
+        )
+        == 1
+    )
+    assert chat_service._load_active_codex_turns("alice")[scope_key] == {
+        "thread_id": "thread-new",
+        "turn_id": "turn-new",
+    }
+    assert (
+        chat_service._get_codex_thread_id(
+            "alice",
+            "project-1",
+            agent_profile="freezone:main",
+            canvas_id="canvas-1",
+            project_state_dir=tmp_path,
+        )
+        == "thread-new"
+    )
+
+
+@pytest.mark.asyncio
 async def test_clear_route_rejects_active_turn_before_mutating(monkeypatch):
     monkeypatch.setattr(chat_service, "get_chat_backend_name", lambda: "codex")
 
@@ -123,11 +260,12 @@ async def test_clear_route_rejects_active_turn_before_mutating(monkeypatch):
     monkeypatch.setattr(chat_service, "_acquire_chat_run_lock", locked)
     called = False
 
-    def reset(*_args, **_kwargs):
+    async def archive(*_args, **_kwargs):
         nonlocal called
         called = True
+        return 1
 
-    monkeypatch.setattr(chat_service, "reset_codex_scope_thread", reset)
+    monkeypatch.setattr(chat_service, "archive_codex_scope_thread", archive)
     with pytest.raises(HTTPException) as error:
         await chat_routes.clear_chat_scope(
             chat_routes.ClearChatRequest(scope={"kind": "home"}),
@@ -191,9 +329,14 @@ async def test_clear_route_holds_freezone_lock_until_clear_finishes(
             (username, project, lock_id)
         ),
     )
-    monkeypatch.setattr(
-        chat_service, "reset_codex_scope_thread", lambda *_args, **_kwargs: None
-    )
+    monkeypatch.setattr(chat_service, "_heartbeat_chat_run_lock", lambda *_: True)
+
+    async def archive(*_args, **_kwargs):
+        assert acquired == [("alice", "freezone:project-1:canvas:canvas-1:agent:main")]
+        assert released == []
+        return 1
+
+    monkeypatch.setattr(chat_service, "archive_codex_scope_thread", archive)
 
     async def clear(username, scope):
         assert acquired == [("alice", "freezone:project-1:canvas:canvas-1:agent:main")]
@@ -214,7 +357,33 @@ async def test_clear_route_holds_freezone_lock_until_clear_finishes(
         user={"username": "alice"},
     )
     assert result["data"]["cleared_messages"] == 2
+    assert result["data"]["archived_threads"] == 1
     assert released == [("alice", acquired[0][1], "lock-1")]
+
+
+@pytest.mark.asyncio
+async def test_clear_route_does_not_delete_messages_after_losing_lock(monkeypatch):
+    monkeypatch.setattr(chat_service, "get_chat_backend_name", lambda: "codex")
+    monkeypatch.setattr(chat_service, "_acquire_chat_run_lock", lambda *_: "lock-1")
+    monkeypatch.setattr(chat_service, "_release_chat_run_lock", lambda *_: None)
+    monkeypatch.setattr(chat_service, "_heartbeat_chat_run_lock", lambda *_: False)
+
+    async def archive(*_args, **_kwargs):
+        return 1
+
+    async def clear(*_args, **_kwargs):
+        pytest.fail("messages must not be cleared after lock ownership is lost")
+
+    monkeypatch.setattr(chat_service, "archive_codex_scope_thread", archive)
+    monkeypatch.setattr(chat_routes.chat_store, "clear_messages_async", clear)
+
+    with pytest.raises(HTTPException) as error:
+        await chat_routes.clear_chat_scope(
+            chat_routes.ClearChatRequest(scope={"kind": "home"}),
+            user={"username": "alice"},
+        )
+
+    assert error.value.status_code == 409
 
 
 @pytest.mark.asyncio
@@ -249,6 +418,8 @@ async def test_clear_route_resets_default_canvas_thread(
     monkeypatch.setattr(chat_routes, "resolve_project_context", resolve)
     monkeypatch.setattr(chat_service, "_acquire_chat_run_lock", lambda *_: "lock-1")
     monkeypatch.setattr(chat_service, "_release_chat_run_lock", lambda *_: None)
+    monkeypatch.setattr(chat_service, "_heartbeat_chat_run_lock", lambda *_: True)
+    monkeypatch.setattr(chat_service, "_control_codex_thread", lambda *_args: True)
 
     async def clear(_username, _scope):
         return 1

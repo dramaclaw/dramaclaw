@@ -310,34 +310,61 @@ def _intent_for_recipe(
     }
     if items:
         target_item["reference_inputs"] = ["source_anchor"]
+    includes_speech = False
     if target_kind == "audio":
-        target_item["audio_kind"] = "music"
-        target_item["music_length_ms"] = 3000
+        searchable = " ".join(
+            [
+                target_id,
+                str(target.get("name") or ""),
+                *[str(item) for item in target.get("action_keys") or []],
+            ]
+        ).lower()
+        if any(token in searchable for token in ("music", "bgm", "音乐", "配乐")):
+            target_item["audio_kind"] = "music"
+            target_item["music_length_ms"] = 3000
+        else:
+            target_item["audio_kind"] = "speech"
+            target_item["narration"] = "这是用于验证配音工作流的朗读正文。"
+            includes_speech = True
     items.append(target_item)
+    if skill_id == "short-drama-quick" and target_kind == "audio" and not includes_speech:
+        speech_recipe = next(
+            (
+                recipe
+                for recipe in available_recipes
+                if str(recipe.get("output_kind") or "") == "audio"
+                and not any(
+                    token
+                    in " ".join(
+                        [
+                            str(recipe.get("id") or ""),
+                            str(recipe.get("name") or ""),
+                            *[str(item) for item in recipe.get("action_keys") or []],
+                        ]
+                    ).lower()
+                    for token in ("music", "bgm", "音乐", "配乐")
+                )
+            ),
+            None,
+        )
+        if speech_recipe is not None:
+            items.append(
+                {
+                    "id": "speech_companion",
+                    "title": "诊断短剧配音",
+                    "prompt": "用于验证短剧配音节点",
+                    "recipe_id": str(speech_recipe.get("id") or ""),
+                    "audio_kind": "speech",
+                    "narration": "这是用于验证配音工作流的朗读正文。",
+                }
+            )
     return (
         {
             "schema_version": "freezone_workflow_intent.v1",
             "skill_id": skill_id,
             "user_goal": f"诊断 Recipe {target_id}",
             "items": items,
-            "include_audio": any(
-                str(recipe.get("output_kind") or "") == "audio"
-                for recipe in (
-                    target,
-                    *(
-                        [
-                            next(
-                                item
-                                for item in available_recipes
-                                if str(item.get("id") or "")
-                                == items[0]["recipe_id"]
-                            )
-                        ]
-                        if len(items) > 1
-                        else []
-                    ),
-                )
-            ),
+            "include_audio": target_kind == "audio",
             "include_compose": False,
         },
         None,

@@ -10,6 +10,54 @@ from __future__ import annotations
 from typing import Any
 
 
+def is_story_image_production_plan(plan: dict[str, Any]) -> bool:
+    """Recognize a complete image batch targeting an already authored story.
+
+    The saved story supplies planning and video destinations outside this
+    graph. API draft creation, revision and claim still validate every target
+    against the live canvas before admitting any generation task.
+    """
+    skill = plan.get("skill")
+    context = plan.get("source_context")
+    if (
+        not isinstance(skill, dict)
+        or skill.get("id") != "text-to-image-video"
+        or not isinstance(context, dict)
+        or not isinstance(context.get("story_id"), str)
+        or not context["story_id"].strip()
+    ):
+        return False
+    image_ids: set[str] = set()
+    for node in plan.get("nodes") or []:
+        if not isinstance(node, dict):
+            return False
+        node_type = node.get("node_type")
+        if node_type == "imageGenNode":
+            image_ids.add(node.get("id"))
+            continue
+        data = node.get("data") or {}
+        catalog = data.get("workflowCatalog") or {}
+        if (
+            node_type != "textAnnotationNode"
+            or (node.get("stage") or data.get("stage")) not in {"input", "resource", "asset"}
+            or catalog.get("recipeId")
+        ):
+            return False
+    mapped: set[str] = set()
+    for field in ("targets", "asset_targets"):
+        targets = context.get(field, [])
+        if not isinstance(targets, list):
+            return False
+        for target in targets:
+            if not isinstance(target, dict):
+                return False
+            node_id = target.get("plan_node_id")
+            if node_id not in image_ids or node_id in mapped:
+                return False
+            mapped.add(node_id)
+    return bool(image_ids) and mapped == image_ids
+
+
 def validate_story_asset_targets(
     plan: dict[str, Any], canvas: dict[str, Any] | None
 ) -> None:

@@ -41,6 +41,17 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
   `freezone_create_edge`, `freezone_group_nodes`, or other single-operation tools.
 - Never fall back to repeated single-operation writes after a workflow validation or schema error.
   Correct the workflow intent/plan or report the blocking error.
+- Never resubmit an unchanged workflow payload. After one correction, if the same validation path
+  fails again in the same turn, stop retrying and report that blocker instead of increasing the
+  failure counter.
+- Treat the Workflow Intent schema as the serialization allowlist. Recipe discovery fields such as
+  `requires_source_media` are selection metadata only: use them to choose and connect Recipes, but
+  never copy them into `intent.items[]`. The server derives authoritative Recipe constraints from
+  `recipe_id`.
+- For `short-drama-quick`, preserve screenplay-first planning: when narration/dialogue will be
+  produced by an upstream shot/script Recipe, keep the `drama-shot-voice` item and reference that
+  text item. Do not invent literal narration at draft time, and never delete requested voiceover
+  merely to pass validation; the runtime resolves the spoken text through the `prompt_for` edge.
 - A failure from an earlier chat turn is diagnostic history, not proof that the current adapter is
   still blocked. When the user repeats the original create/run request, explicitly asks to retry,
   or has restarted the service, retry the same complete workflow write once in the current turn.
@@ -129,17 +140,23 @@ portable supported values are `1`, `2`, and `4`.
 
 Use only the image or video keys relevant to the selected plan. For an exact custom topology,
 shared confirmed choices may remain in `plan.inputs`; preparation applies each image/video choice
-to every matching generated node. Node `data` may instead pin the equivalent canvas or portable
-field for a step, but a value that conflicts with the shared choice is rejected rather than
-silently overriding either value. If a write returns
+to every matching generated node that leaves the field unset. Node `data` may instead pin the
+equivalent canvas or portable field for a step, and an explicit node value always takes
+precedence over the shared choice (the same rule the standard planner follows); only two aliases
+of the same setting with different values on one node are rejected. If a write returns
 `code="generation_parameters_required"`, do not retry unchanged. Call
 `freezone_request_user_clarification` once for all returned missing choices, passing already
 confirmed choices (at least the model) in `answers` so the recommendation comes from the same
 catalog entry. The clarification result carries `node_data.<node_type>` with the exact canvas
 fields; copy them verbatim into each matching node of the same intent/plan and retry the same
-operation. A recommended action always returns concrete values; a result with
-`status="generation_answers_incomplete"` means the choice is still missing and must be asked
-again, never defaulted. Approval behavior remains controlled by the execution mode.
+operation. Draft preparation, patching and confirmation all run this preflight, so the
+clarification can also come back at confirm time. It comes back only when every blocker is a
+missing generation choice; a preflight that also reports a blocker no answer can fix (a disabled
+queue, an unavailable model or catalog) fails with `status="workflow_preflight_failed"` naming
+that blocker first, so resolve it before asking. A recommended action always returns concrete
+values; a result with `status="generation_answers_incomplete"` means the choice is still missing
+and must be asked again, never defaulted. Approval behavior remains controlled by the execution
+mode.
 
 When the user does not specify internal media settings, use `"recommended"` only for the media
 model preference in the portable intent or Plan. The authorized preflight resolves it to a concrete
@@ -175,12 +192,45 @@ including `480P` whenever the schema lists it.
 6. After explicit user confirmation, call `freezone_confirm_workflow_draft` once with the exact
    `draft_id` and `revision`.
 
-When the user explicitly names the required nodes and their dependency order, or has confirmed
-an interactive-story production plan with an exact shot-to-existing-video mapping, use the exact
-topology path in [references/custom-topology.md](references/custom-topology.md), preparing the complete Plan
-as a persisted draft even when a production Skill
-also matches. For error recovery, read
-[references/error-recovery.md](references/error-recovery.md).
+Route between the normal draft flow and the exact topology path in this priority order:
+
+1. An explicit planner instruction wins. When the user names the standard planner or a Skill's
+   standard flow ("use the standard planner", "按标准模板"), submit a compact Intent to
+   `freezone_prepare_workflow(intent=...)` even if the message also lists nodes and dependencies:
+   compare the listed topology with that Skill's standard template first, and treat a same-shape
+   list (same stages, order, and dependencies) as a restatement of the template, not a custom
+   request.
+2. Otherwise, when the user explicitly names required nodes and their dependency order that
+   deviate from the matching Skill's template, or has confirmed an interactive-story
+   production plan with an exact shot-to-existing-video mapping, use the exact topology path in
+   [references/custom-topology.md](references/custom-topology.md), preparing the complete Plan as
+   a persisted draft even when a production Skill also matches. The Plan must include top-level
+   `schema_version` and `skill.id`/`skill.version` copied from the selected production Skill;
+   `generation_answers` never substitutes for the complete Plan.
+   Episode totals, Beat totals, shot totals, duration, and other business counts alone do not enter
+   this path. Keep them in compact Intent inputs or the standard planner. Only treat them as exact
+   topology when the user explicitly requires those items to exist as individual canvas nodes and
+   specifies a dependency graph that differs from the standard template.
+3. When an explicit planner instruction and the listed topology genuinely conflict (for example
+   the standard planner is named but a mandatory template stage is dropped), ask one
+   single-question clarification with `freezone_request_user_clarification` before choosing a
+   path; never pick a side silently.
+
+The prepared draft records which path was taken (`preview.planner.mode` is
+`deterministic_standard` or `agent_authored`) so the choice can be audited. The server compares
+every agent-authored topology with the Skill's standard template before compiling it: a plan or
+item list that restates the template (every executable node fills a template stage, required
+stages present and fed, no edge from a later stage back to an earlier one; node counts and
+prompts are parameters) is compiled by the standard planner with the briefs as its units, but
+only when that compilation reproduces the plan node for node (same prompts per stage, same
+recipes and execution parameters, same dependencies, same narration and music, the same user
+material and compose order when the plan states them); the agent's nodes are then carried into
+that compilation as written (id and data), so only the planner's own additions (input and
+compose nodes, production shape, layout) are new, and the draft shows
+`preview.planner.selected_by = template_isomorphic`. A genuine deviation, or a plan the standard
+units cannot express, stays agent-authored and `preview.planner.template_match.reason` names it.
+For error recovery,
+read [references/error-recovery.md](references/error-recovery.md).
 
 When packaging this Skill for another agent host, read
 [references/integration.md](references/integration.md).

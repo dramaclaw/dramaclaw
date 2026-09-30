@@ -3,10 +3,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  extractExplicitSpeakableAudioText,
   extractSpeakableAudioText,
   isSpeechGenerationInstruction,
   resolveAudioKind,
   resolveMusicLengthMs,
+  resolveSafeSpeechSubmissionText,
 } from '@/features/canvas/application/audioSpeechText';
 
 describe('extractSpeakableAudioText', () => {
@@ -65,6 +67,127 @@ describe('extractSpeakableAudioText', () => {
   it('rejects workflow narration placeholders instead of speaking them literally', () => {
     expect(extractSpeakableAudioText('这是短剧的第一段旁白')).toBe('');
     expect(extractSpeakableAudioText('This is the second narration')).toBe('');
+  });
+
+  it('uses only the pre-filtered narration when Recipe compilation times out', () => {
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'timeout_fallback',
+      compiledPrompt: '你是短剧配音导演。请根据脚本生成旁白。\n\n真正的旁白。',
+      safeFallbackPrompt: '真正的旁白。',
+    })).toBe('真正的旁白。');
+  });
+
+  it('stops timeout fallback submission when no safe narration exists', () => {
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'timeout_fallback',
+      compiledPrompt: '你是短剧配音导演。请根据脚本生成旁白。',
+      safeFallbackPrompt: '',
+    })).toBe('');
+  });
+
+  it('uses a successful Recipe compilation result for speech', () => {
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'model',
+      compiledPrompt: '【旁白】编译后的安全旁白。',
+      safeFallbackPrompt: '原始旁白。',
+    })).toBe('编译后的安全旁白。');
+  });
+
+  it('extracts only explicitly labelled speech from a general-audio production brief', () => {
+    const compiled = '女声普通话旁白，情绪温柔，时长 3 秒。朗读文本：欢迎使用。';
+    expect(extractExplicitSpeakableAudioText(compiled)).toBe('欢迎使用。');
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'model',
+      compiledPrompt: compiled,
+      recipeIds: ['general-audio'],
+      safeFallbackPrompt: '原始文本。',
+    })).toBe('欢迎使用。');
+  });
+
+  it('stops explicit speech collection when another production field starts', () => {
+    const compiled = [
+      '朗读文本：',
+      '<speech_text>',
+      '欢迎使用。',
+      '他说：快跑。',
+      '</speech_text>',
+      '情感：温柔',
+      '音色描述：温柔女声',
+    ].join('\n');
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'model',
+      compiledPrompt: compiled,
+      recipeIds: ['general-audio'],
+      safeFallbackPrompt: '原始文本。',
+    })).toBe('欢迎使用。\n\n他说：快跑。');
+  });
+
+  it('falls back safely when structured speech markers are missing', () => {
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'model',
+      compiledPrompt: '朗读文本：\n他说：快跑。\n情感：温柔',
+      recipeIds: ['general-audio'],
+      safeFallbackPrompt: '原始旁白。',
+    })).toBe('原始旁白。');
+  });
+
+  it('accepts a speech start marker on the same line as its label', () => {
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'model',
+      compiledPrompt: '朗读文本：<speech_text>\n欢迎使用。\n</speech_text>\n情感：温柔',
+      recipeIds: ['general-audio'],
+      safeFallbackPrompt: '原始旁白。',
+    })).toBe('欢迎使用。');
+  });
+
+  it('rejects incomplete speech markers before legacy fallback', () => {
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'model',
+      compiledPrompt: '朗读文本：<speech_text>\n欢迎使用。',
+      recipeIds: ['general-audio'],
+      safeFallbackPrompt: '原始旁白。',
+    })).toBe('原始旁白。');
+  });
+
+  it('accepts an unlabelled model result from the direct-speech Recipe', () => {
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'model',
+      compiledPrompt: '他说：快跑。',
+      recipeIds: ['drama-shot-voice'],
+      safeFallbackPrompt: '原始旁白。',
+    })).toBe('他说：快跑。');
+  });
+
+  it('rejects labelled production output from the direct-speech Recipe', () => {
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'model',
+      compiledPrompt: '【音色】温柔女声',
+      recipeIds: ['drama-shot-voice'],
+      safeFallbackPrompt: '原始旁白。',
+    })).toBe('原始旁白。');
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'model',
+      compiledPrompt: '制作要求：句尾自然收音。',
+      recipeIds: ['drama-shot-voice'],
+      safeFallbackPrompt: '原始旁白。',
+    })).toBe('原始旁白。');
+  });
+
+  it('does not accept unlabelled production output from a general audio Recipe', () => {
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'model',
+      compiledPrompt: '温柔女声，节奏舒缓。',
+      recipeIds: ['general-audio'],
+      safeFallbackPrompt: '原始旁白。',
+    })).toBe('原始旁白。');
+  });
+
+  it('falls back to source speech when a model result has no explicit speech field', () => {
+    expect(resolveSafeSpeechSubmissionText({
+      compileMode: 'model',
+      compiledPrompt: '女声普通话旁白，情绪温柔，时长 3 秒。',
+      safeFallbackPrompt: '欢迎使用。',
+    })).toBe('欢迎使用。');
   });
 
   it('sets BGM one second longer than the requested video duration', () => {

@@ -8,6 +8,7 @@ at this boundary while callers migrate to provider-neutral event names.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from novelvideo.chat.tool_policy import (
@@ -32,7 +33,9 @@ def _json_objects_from_codex_tool_value(value: Any) -> list[dict[str, Any]]:
     elif isinstance(value, str):
         try:
             parsed = json.loads(value)
-        except (TypeError, json.JSONDecodeError):
+        except (TypeError, ValueError):
+            # ValueError also covers a digit string beyond int()'s digit limit,
+            # which json.loads raises as a plain ValueError, not a decode error.
             return objects
         objects.extend(_json_objects_from_codex_tool_value(parsed))
     return objects
@@ -297,21 +300,237 @@ def _codex_freezone_generation_retry_key(event: Any) -> str | None:
     return None
 
 
+# ASCII only: str.isdigit() also accepts characters such as "²" that int()
+# rejects, and those must stay distinct rather than raise.
+_ASCII_INTEGER = re.compile(r"-?[0-9]+", re.ASCII)
+
+
+def _argument_path_parent(root: Any, path: Any) -> tuple[Any, Any] | None:
+    """The container and key/index a server-reported argument path names."""
+    if not isinstance(path, list) or not path:
+        return None
+    target = root
+    for part in path[:-1]:
+        if isinstance(target, dict) and isinstance(part, str):
+            target = target.get(part)
+        elif (
+            isinstance(target, list)
+            and isinstance(part, int)
+            and not isinstance(part, bool)
+            and 0 <= part < len(target)
+        ):
+            target = target[part]
+        else:
+            return None
+    key = path[-1]
+    if isinstance(target, dict) and isinstance(key, str) and key in target:
+        return target, key
+    if (
+        isinstance(target, list)
+        and isinstance(key, int)
+        and not isinstance(key, bool)
+        and 0 <= key < len(target)
+    ):
+        return target, key
+    return None
+
+
+def _codex_freezone_tool_arguments(event: Any) -> dict[str, Any] | None:
+    payload = getattr(event, "input", None)
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except (TypeError, ValueError):
+            return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _argument_retry_signature(name: str, arguments: dict[str, Any]) -> str | None:
+    try:
+        return json.dumps([name, arguments], sort_keys=True, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return None
+
+
+def _codex_freezone_tool_argument_rejection(event: Any) -> dict[str, Any] | None:
+    """The payload of a write the MCP input schema refused before its handler ran."""
+    if _codex_freezone_tool_name(event) not in _FREEZONE_CANVAS_WRITE_TOOLS:
+        return None
+    rejection = None
+    for value in (
+        getattr(event, "structured", None),
+        getattr(event, "output", None),
+        getattr(event, "error", None),
+    ):
+        for payload in _json_objects_from_codex_tool_value(value):
+            if (
+                payload.get("ok") is False
+                and payload.get("error") == "tool_arguments_invalid"
+                and payload.get("phase") == "tool_validation"
+            ):
+                # structuredContent keeps only output-schema keys; prefer the
+                # raw copy that still carries the reported corrections.
+                if "unexpected_fields" in payload or "integer_string_fields" in payload:
+                    return payload
+                rejection = rejection or payload
+    return rejection
+
+
+def _codex_freezone_is_tool_argument_rejection(event: Any) -> bool:
+    return _codex_freezone_tool_argument_rejection(event) is not None
+
+
+def _codex_freezone_argument_retry_expectation(event: Any) -> str | None:
+    """The exact retry that would prove a schema rejection was a correctable slip.
+
+    A rejected call is superseded only by a successful call of the same tool
+    whose complete, ordered arguments equal the rejected ones after the
+    corrections the MCP server reported from its schema: dropping the fields
+    no variant allows, and coercing numeric strings at paths the schema
+    declares integer. Any other change (coordinates, open data, targets, count
+    or order of commands) may be a different operation, so the rejection
+    stays failed (#686).
+    """
+    rejection = _codex_freezone_tool_argument_rejection(event)
+    arguments = _codex_freezone_tool_arguments(event)
+    if rejection is None or arguments is None:
+        return None
+    try:
+        expected = json.loads(json.dumps(arguments))
+    except (TypeError, ValueError):
+        return None
+    coercions = rejection.get("integer_string_fields") or []
+    removals = rejection.get("unexpected_fields") or []
+    if not isinstance(coercions, list) or not isinstance(removals, list):
+        return None
+    # Coerce before removing: both are reported against the original arguments,
+    # and removal only deletes object keys, so list indices stay valid.
+    for path in coercions:
+        located = _argument_path_parent(expected, path)
+        if located is None:
+            return None
+        container, key = located
+        value = container[key]
+        if not isinstance(value, str) or not _ASCII_INTEGER.fullmatch(value):
+            return None
+        try:
+            container[key] = int(value)
+        except ValueError:
+            # Beyond the int conversion digit limit: not a provable correction.
+            return None
+    for correction in removals:
+        if not isinstance(correction, dict):
+            return None
+        path, fields = correction.get("path"), correction.get("fields")
+        if not isinstance(path, list) or not isinstance(fields, list):
+            return None
+        if path:
+            located = _argument_path_parent(expected, path)
+            if located is None:
+                return None
+            container, key = located
+            target = container[key]
+        else:
+            target = expected
+        if not isinstance(target, dict):
+            return None
+        for field in fields:
+            if not isinstance(field, str) or field not in target:
+                return None
+            del target[field]
+    return _argument_retry_signature(_codex_freezone_tool_name(event), expected)
+
+
+def _codex_freezone_argument_retry_signature(event: Any) -> str | None:
+    """The normalized, ordered arguments of a write call, for exact comparison."""
+    arguments = _codex_freezone_tool_arguments(event)
+    if arguments is None:
+        return None
+    return _argument_retry_signature(_codex_freezone_tool_name(event), arguments)
+
+
+# Workflow draft confirmation guard that rejects before any claim or dispatch.
+# The plugin answers it from a single GET of the draft, and the only way forward
+# is the agent's own patch of run_after_create in this turn, so a later
+# confirmation of the same draft that reports the requested policy is the real
+# outcome of that call (see _codex_freezone_execution_policy_requirement). A
+# workflow_draft_revision_conflict is deliberately excluded: the new revision
+# may hold changes the user never reviewed, so it needs a fresh confirmation
+# rather than a silent retry.
+_FREEZONE_DRAFT_CONFIRM_GUARD_STATUSES = frozenset(
+    {"workflow_draft_execution_policy_changed"}
+)
+
+
 def _codex_freezone_is_generation_preflight_rejection(event: Any) -> bool:
-    """Only this explicit, side-effect-free rejection may be superseded."""
+    """Only explicit, side-effect-free rejections may be superseded by a retry."""
     if getattr(event, "error", None) or str(
         getattr(event, "status", "") or ""
     ).lower() not in {"completed", "success", "succeeded"}:
         return False
     for value in (getattr(event, "structured", None), getattr(event, "output", None)):
         for payload in _json_objects_from_codex_tool_value(value):
+            if payload.get("ok") is not False:
+                continue
+            status = str(payload.get("status") or "")
             if (
-                payload.get("ok") is False
-                and payload.get("status") == "clarification_required"
+                status == "clarification_required"
                 and payload.get("code") == "generation_parameters_required"
             ):
                 return True
+            if (
+                status in _FREEZONE_DRAFT_CONFIRM_GUARD_STATUSES
+                and _codex_freezone_tool_name(event)
+                == "freezone_confirm_workflow_draft"
+            ):
+                return True
     return False
+
+
+def _codex_freezone_is_execution_policy_rejection(event: Any) -> bool:
+    """A draft confirmation the plugin refused because run_after_create differed."""
+    if _codex_freezone_tool_name(event) != "freezone_confirm_workflow_draft":
+        return False
+    for value in (getattr(event, "structured", None), getattr(event, "output", None)):
+        for payload in _json_objects_from_codex_tool_value(value):
+            if (
+                payload.get("ok") is False
+                and str(payload.get("status") or "")
+                in _FREEZONE_DRAFT_CONFIRM_GUARD_STATUSES
+            ):
+                return True
+    return False
+
+
+def _codex_freezone_execution_policy_requirement(event: Any) -> bool | None:
+    """The run_after_create the agent asked for in a policy-guard rejection.
+
+    Only a boolean request can be honoured later. The rejection is superseded
+    solely by a confirmation of the same draft whose receipt reports this same
+    policy; a confirmation that silently kept the old policy (the agent skipped
+    the patch and simply omitted run_after_create) leaves the rejection on
+    record, because the user's request was not executed.
+    """
+    if not _codex_freezone_is_execution_policy_rejection(event):
+        return None
+    for payload in _json_objects_from_codex_tool_value(getattr(event, "input", None)):
+        requested = payload.get("run_after_create")
+        if isinstance(requested, bool):
+            return requested
+    return None
+
+
+def _codex_freezone_confirmed_execution_policy(event: Any) -> bool | None:
+    """The run_after_create a successful draft confirmation receipt reports."""
+    if _codex_freezone_tool_name(event) != "freezone_confirm_workflow_draft":
+        return None
+    for value in (getattr(event, "structured", None), getattr(event, "output", None)):
+        for payload in _json_objects_from_codex_tool_value(value):
+            if payload.get("ok") is True and isinstance(
+                payload.get("run_after_create"), bool
+            ):
+                return payload["run_after_create"]
+    return None
 
 
 def _codex_freezone_clarification_answered(event: Any) -> bool:

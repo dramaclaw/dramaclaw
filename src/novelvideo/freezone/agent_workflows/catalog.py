@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from novelvideo.freezone.workflow_schema import (
+    PORTABLE_VIDEO_GENERATION_MODES,
     WORKFLOW_INTENT_SCHEMA_VERSION,
     WORKFLOW_PLAN_SCHEMA_VERSION,
 )
@@ -26,12 +27,16 @@ try:
     from novelvideo.freezone.workflow_plan import (
         ALLOWED_LINK_TYPES,
         ALLOWED_NODE_TYPES,
+        _IGNORED_VIDEO_DURATION_KEYS,
+        _build_plan_preflight,
         validate_workflow_plan,
     )
 except Exception:  # pragma: no cover - Hermes can run before app imports are available.
     validate_workflow_plan = None
+    _build_plan_preflight = None
     ALLOWED_LINK_TYPES = set()
     ALLOWED_NODE_TYPES = set()
+    _IGNORED_VIDEO_DURATION_KEYS = ()
 
 _REQUEST_CATALOG: ContextVar[dict[str, list[dict[str, Any]]] | None] = ContextVar(
     "workflow_request_catalog", default=None
@@ -129,32 +134,1153 @@ _TEXT_FIRST_BUILTIN_RECIPE_IDS = {
     "video-storyboard-script",
 }
 
+def _stage(
+    stage_id: str, node_type: str, recipes: list[str], *, required: bool
+) -> dict[str, Any]:
+    """One stage of a standard planner template (see ``stages`` below)."""
+    return {
+        "id": stage_id,
+        "node_type": node_type,
+        "recipes": list(recipes),
+        "required": required,
+    }
+
+
+# ``stages`` is the machine-comparable shape of what ``_standard_skill_items``
+# emits for the skill: one entry per planner stage, in template order, with the
+# recipes the planner (and its catalog siblings) use for it. ``required`` marks
+# the stages the planner emits for every deliverable / include_audio choice;
+# an agent-authored plan for the skill must contain each of them or its draft
+# preflight reports ``skill_stage_missing`` (issue #677). ``edges`` lists which
+# stage's output the next stage consumes: every node of the downstream stage
+# must be reachable from a node of the upstream stage over consuming edges
+# (any link type but ``dependency_for``, which only orders execution), or the
+# preflight reports ``skill_stage_unused`` (a shot-planning node nothing
+# consumes is not a shot-planning stage). Text-to-media ``dependency_for``
+# gating (a planning document ahead of a media stage) is deliberately not an
+# edge here. The table is locked to the planner output by
+# tests/test_workflow_plan.py.
 _DETERMINISTIC_SKILL_PLANNERS = {
     "ecommerce-ad": {
         "default_item_count": 3,
         "deliverables": ["images", "video", "mixed"],
         "default_deliverable": "video",
         "default_include_audio": True,
+        "stages": [
+            _stage(
+                "planning",
+                "textAnnotationNode",
+                [
+                    "video-ad-creative-outline",
+                    "video-ad-brief",
+                    "video-storyboard-script",
+                    "ecommerce-text-plan",
+                    "digital-product-text-plan",
+                    "general-text",
+                ],
+                required=True,
+            ),
+            _stage(
+                "assets",
+                "imageGenNode",
+                ["general-image", "ecommerce-style-reference"],
+                required=True,
+            ),
+            _stage(
+                "images",
+                "imageGenNode",
+                [
+                    "ecommerce-scene-image",
+                    "ecommerce-ad-image",
+                    "ecommerce-remix-image",
+                    "digital-product-ad-image",
+                ],
+                required=True,
+            ),
+            _stage("video", "videoNode", ["video-clip-generation"], required=False),
+            _stage("audio", "audioNode", ["general-audio"], required=False),
+        ],
+        "edges": [["planning", "assets"], ["assets", "images"], ["images", "video"]],
     },
     "text-to-image-video": {
         "default_item_count": 3,
         "deliverables": ["video"],
         "default_deliverable": "video",
         "default_include_audio": False,
+        "stages": [
+            _stage(
+                "planning",
+                "textAnnotationNode",
+                ["video-creative-outline", "general-text"],
+                required=True,
+            ),
+            _stage(
+                "images",
+                "imageGenNode",
+                ["general-image", "video-storyboard-grid"],
+                required=True,
+            ),
+            _stage("video", "videoNode", ["general-video"], required=True),
+        ],
+        "edges": [["planning", "images"], ["images", "video"]],
     },
     "video-tutorial": {
         "default_item_count": 3,
         "deliverables": ["video"],
         "default_deliverable": "video",
         "default_include_audio": True,
+        "stages": [
+            _stage("planning", "textAnnotationNode", ["general-text"], required=True),
+            _stage("images", "imageGenNode", ["general-image"], required=True),
+            _stage("video", "videoNode", ["general-video"], required=True),
+            _stage("audio", "audioNode", ["general-audio"], required=False),
+        ],
+        "edges": [["planning", "images"], ["images", "video"]],
     },
     "short-drama-quick": {
         "default_item_count": 3,
         "deliverables": ["video"],
         "default_deliverable": "video",
         "default_include_audio": True,
+        "stages": [
+            _stage(
+                "planning",
+                "textAnnotationNode",
+                ["drama-plot-outline", "general-text"],
+                required=True,
+            ),
+            _stage(
+                "characters",
+                "textAnnotationNode",
+                ["drama-character-extraction"],
+                required=True,
+            ),
+            _stage(
+                "character_assets",
+                "imageGenNode",
+                ["drama-character-turnaround"],
+                required=True,
+            ),
+            _stage(
+                "scenes",
+                "textAnnotationNode",
+                ["drama-scene-extraction"],
+                required=True,
+            ),
+            _stage(
+                "scene_assets",
+                "imageGenNode",
+                ["drama-scene-image"],
+                required=True,
+            ),
+            _stage(
+                "props",
+                "textAnnotationNode",
+                ["drama-prop-extraction"],
+                required=True,
+            ),
+            _stage(
+                "prop_assets",
+                "imageGenNode",
+                ["drama-prop-image"],
+                required=True,
+            ),
+            _stage(
+                "shots",
+                "textAnnotationNode",
+                [
+                    "drama-shot-group-detail",
+                    "drama-shot-planning",
+                    "drama-shot-group-storyboard",
+                    "keyframe-scene-script",
+                ],
+                required=True,
+            ),
+            _stage("frames", "imageGenNode", ["general-image"], required=True),
+            _stage("video", "videoNode", ["general-video"], required=True),
+            _stage(
+                "audio",
+                "audioNode",
+                ["drama-shot-voice", "drama-background-music"],
+                required=False,
+            ),
+        ],
+        "edges": [
+            ["planning", "characters"],
+            ["characters", "character_assets"],
+            ["planning", "scenes"],
+            ["scenes", "scene_assets"],
+            ["planning", "props"],
+            ["props", "prop_assets"],
+            ["planning", "shots"],
+            ["shots", "frames"],
+            ["character_assets", "frames"],
+            ["scene_assets", "frames"],
+            ["prop_assets", "frames"],
+            ["frames", "video"],
+        ],
     },
 }
+
+_TEXT_NODE_TYPES = {"textAnnotationNode", "scriptNode", "beatContextNode"}
+_USER_MATERIAL_STAGES = {"input", "resource", "asset"}
+
+
+def standard_skill_stages(skill_id: str) -> list[dict[str, Any]]:
+    """The standard planner's stage template for ``skill_id`` ([] without one)."""
+    profile = _DETERMINISTIC_SKILL_PLANNERS.get(skill_id) or {}
+    return [deepcopy(stage) for stage in profile.get("stages") or []]
+
+
+def standard_skill_stage_edges(skill_id: str) -> list[tuple[str, str]]:
+    """``(upstream_stage, downstream_stage)`` feeding pairs of the template."""
+    profile = _DETERMINISTIC_SKILL_PLANNERS.get(skill_id) or {}
+    return [(str(edge[0]), str(edge[1])) for edge in profile.get("edges") or []]
+
+
+def canonical_recipe_stage(skill_id: str, recipe_id: str) -> str:
+    """Return the unique standard-planner stage for a Recipe, when one exists."""
+    matches = {
+        _text(stage.get("id"))
+        for stage in standard_skill_stages(skill_id)
+        if recipe_id and recipe_id in (stage.get("recipes") or [])
+    }
+    return next(iter(matches)) if len(matches) == 1 else ""
+
+
+_ORDER_ONLY_LINK_TYPE = "dependency_for"
+
+
+def _downstream_node_ids(node_ids: set[str], edges: Any) -> set[str]:
+    """Every node that consumes ``node_ids`` output, directly or transitively.
+
+    Only consuming edges count: ``dependency_for`` orders execution without
+    handing the source output to the target (the runtime skips such edges when
+    it gathers upstream text), so it cannot make a stage's result "used".
+    """
+    successors: dict[str, set[str]] = {}
+    for edge in edges if isinstance(edges, list) else []:
+        if not isinstance(edge, dict):
+            continue
+        if _text(edge.get("link_type")) == _ORDER_ONLY_LINK_TYPE:
+            continue
+        source = _text(edge.get("source"))
+        target = _text(edge.get("target"))
+        if source and target:
+            successors.setdefault(source, set()).add(target)
+    reached: set[str] = set()
+    pending = list(node_ids)
+    while pending:
+        current = pending.pop()
+        for target in successors.get(current, ()):
+            if target not in reached:
+                reached.add(target)
+                pending.append(target)
+    return reached
+
+
+def _node_kind(node_type: str) -> str:
+    """Text node types are interchangeable for stage matching; media are exact."""
+    return "text" if node_type in _TEXT_NODE_TYPES else node_type
+
+
+def _node_fills_stage(
+    node: Any, stage: dict[str, Any], *, kind_is_unique: bool
+) -> bool:
+    if not isinstance(node, dict):
+        return False
+    node_type = _text(node.get("node_type") or node.get("type"))
+    if _node_kind(node_type) != _node_kind(_text(stage["node_type"])):
+        return False
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    label = _text(node.get("stage") or data.get("stage")).lower()
+    if label == stage["id"]:
+        return True
+    if label in _USER_MATERIAL_STAGES:
+        return False
+    catalog = data.get("workflowCatalog") if isinstance(data.get("workflowCatalog"), dict) else {}
+    recipe_id = _text(catalog.get("recipeId"))
+    if recipe_id in stage["recipes"]:
+        return True
+    # When the skill has a single stage of this kind, any executable node of
+    # the kind fills it (node_type + recipe family, issue #678 tolerance); a
+    # kind shared by two stages needs the stage label or a family recipe.
+    return kind_is_unique and bool(recipe_id)
+
+
+def skill_stage_blockers(
+    skill_id: str, nodes: Any, edges: Any = None
+) -> list[dict[str, Any]]:
+    """Preflight blockers for standard-planner stages a plan skips or bypasses.
+
+    The standard planner always emits the ``required`` stages and wires them
+    in template order; an agent-authored plan (raw plan or intent items) that
+    skips one, such as a short drama without its shot-planning stage, compiled
+    and reached ``ready`` before issue #677 (``skill_stage_missing``). A stage
+    node that exists but feeds nothing downstream is no better: every node of
+    a downstream stage must be reachable from a node of the upstream stage
+    (``skill_stage_unused``), and only consuming edges count for that: a
+    ``dependency_for`` edge orders execution without feeding the target.
+    Skills without a standard planner have no template and are not checked.
+    """
+    stages = standard_skill_stages(skill_id)
+    if not stages or not isinstance(nodes, list):
+        return []
+    kind_counts: dict[str, int] = {}
+    for stage in stages:
+        kind = _node_kind(_text(stage["node_type"]))
+        kind_counts[kind] = kind_counts.get(kind, 0) + 1
+    filled: dict[str, list[str]] = {}
+    for stage in stages:
+        kind_is_unique = kind_counts[_node_kind(_text(stage["node_type"]))] == 1
+        filled[stage["id"]] = [
+            _text(node.get("id"))
+            for node in nodes
+            if _node_fills_stage(node, stage, kind_is_unique=kind_is_unique)
+        ]
+    blockers: list[dict[str, Any]] = []
+    for stage in stages:
+        if not stage.get("required") or filled[stage["id"]]:
+            continue
+        recipes = ", ".join(stage["recipes"])
+        blockers.append(
+            {
+                "path": f"plan.stages.{stage['id']}",
+                "code": "skill_stage_missing",
+                "message": (
+                    f"Skill {skill_id} requires a {stage['id']} stage; no "
+                    f"{stage['node_type']} node carries stage=\"{stage['id']}\" or one of "
+                    f"its recipes ({recipes})"
+                ),
+                "stage": stage["id"],
+                "node_type": stage["node_type"],
+                "recipes": list(stage["recipes"]),
+                "hint": (
+                    f"Add a {stage['node_type']} node for the {stage['id']} stage (set its "
+                    f"stage to \"{stage['id']}\" or use one of {recipes}) and feed the "
+                    "downstream nodes from it, or drop the custom items and let the "
+                    "standard planner (planner.mode=standard) produce every required stage."
+                ),
+            }
+        )
+    for upstream, downstream in standard_skill_stage_edges(skill_id):
+        sources = filled.get(upstream) or []
+        targets = filled.get(downstream) or []
+        if not sources or not targets:
+            continue  # a missing stage is reported above; an absent optional one is fine
+        reached = _downstream_node_ids(set(sources), edges)
+        unfed = [node_id for node_id in targets if node_id not in reached]
+        if not unfed:
+            continue
+        blockers.append(
+            {
+                "path": f"plan.stages.{upstream}.feeds.{downstream}",
+                "code": "skill_stage_unused",
+                "message": (
+                    f"Skill {skill_id} requires the {upstream} stage to feed the "
+                    f"{downstream} stage; {downstream} node(s) {', '.join(unfed)} do not "
+                    f"consume any {upstream} node ({', '.join(sources)}) through a "
+                    "consuming edge (dependency_for only orders execution)"
+                ),
+                "stage": upstream,
+                "downstream_stage": downstream,
+                "node_ids": unfed,
+                "hint": (
+                    f"Connect a {upstream} node to each listed {downstream} node (directly "
+                    "or through its inputs) with an edge the target consumes: prompt_for "
+                    "from text to generated media, context_for between text nodes, "
+                    "media_input_for from media. dependency_for does not count; a "
+                    f"{upstream} node nothing downstream reads does not satisfy the stage."
+                ),
+            }
+        )
+    return blockers
+
+
+def _attach_skill_stage_blockers(result: dict[str, Any], skill_id: str) -> None:
+    """Fold stage blockers into ``result['preflight']`` (status → blocked)."""
+    from novelvideo.freezone.workflow_story_targets import is_story_image_production_plan
+
+    plan = result.get("plan") if isinstance(result.get("plan"), dict) else {}
+    if is_story_image_production_plan(plan):
+        return
+    _attach_preflight_blockers(
+        result,
+        skill_stage_blockers(skill_id, plan.get("nodes") or [], plan.get("edges") or []),
+    )
+
+
+def _attach_preflight_blockers(result: dict[str, Any], blockers: list[dict[str, Any]]) -> None:
+    if not blockers:
+        return
+    preflight = result.get("preflight") if isinstance(result.get("preflight"), dict) else {}
+    result["preflight"] = {
+        **preflight,
+        "status": "blocked",
+        "blockers": [*(preflight.get("blockers") or []), *blockers],
+        "warnings": list(preflight.get("warnings") or []),
+    }
+
+
+_MAX_STANDARD_PLANNER_UNITS = 12
+_TEMPLATE_ISOMORPHIC = "template_isomorphic"
+
+
+def _node_template_stage(
+    node: Any, stages: list[dict[str, Any]], kind_counts: dict[str, int]
+) -> dict[str, Any] | None:
+    """The template stage an executable node fills, preferring its stage label."""
+    if not isinstance(node, dict):
+        return None
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    label = _text(node.get("stage") or data.get("stage")).lower()
+    matches = [
+        stage
+        for stage in stages
+        if _node_fills_stage(
+            node,
+            stage,
+            kind_is_unique=kind_counts[_node_kind(_text(stage["node_type"]))] == 1,
+        )
+    ]
+    for stage in matches:
+        if stage["id"] == label:
+            return stage
+    return matches[0] if matches else None
+
+
+def _node_text(node: dict[str, Any], *keys: str) -> str:
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    for key in keys:
+        for source in (node, data):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
+
+
+def template_isomorphism(skill_id: str, plan: Any) -> dict[str, Any]:
+    """Compare an agent-authored plan with the Skill's standard planner template.
+
+    Issue #678: a plan whose executable nodes all fill template stages, whose
+    required stages are present and fed (``skill_stage_blockers`` is empty)
+    and whose edges never run from a later stage back to an earlier one
+    restates the template rather than customising it; node counts and prompts
+    are parameters, not topology. User-material nodes (``input`` /
+    ``resource`` / ``asset``) and the planner-added compose node are ignored.
+    The result carries ``isomorphic`` plus a machine-readable ``reason`` for
+    the first deviation, or the standard planner ``units`` / ``deliverable`` /
+    ``include_audio`` recovered from the nodes when it matches. This is the
+    cheap structural screen; before a plan is actually rerouted the standard
+    compilation is compared with it node for node
+    (``_template_round_trip_reason``), so per-node dependencies, per-stage
+    prompts, narration pairing and music are never changed silently.
+    """
+    stages = standard_skill_stages(skill_id)
+    if not stages:
+        return {"isomorphic": False, "reason": "no_standard_planner"}
+    if not isinstance(plan, dict):
+        return {"isomorphic": False, "reason": "plan_not_an_object"}
+    if plan.get("external_inputs"):
+        return {"isomorphic": False, "reason": "external_inputs"}
+    nodes = [node for node in plan.get("nodes") or [] if isinstance(node, dict)]
+    edges = plan.get("edges") if isinstance(plan.get("edges"), list) else []
+    kind_counts: dict[str, int] = {}
+    for stage in stages:
+        kind = _node_kind(_text(stage["node_type"]))
+        kind_counts[kind] = kind_counts.get(kind, 0) + 1
+    stage_index = {stage["id"]: index for index, stage in enumerate(stages)}
+    node_stage: dict[str, str] = {}
+    by_stage: dict[str, list[dict[str, Any]]] = {stage["id"]: [] for stage in stages}
+    for node in nodes:
+        node_id = _text(node.get("id"))
+        node_type = _text(node.get("node_type") or node.get("type"))
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        label = _text(node.get("stage") or data.get("stage")).lower()
+        if node_type == "videoComposeNode" or (
+            node_type in _TEXT_NODE_TYPES and label in _USER_MATERIAL_STAGES
+        ):
+            continue
+        stage = _node_template_stage(node, stages, kind_counts)
+        if stage is None:
+            return {"isomorphic": False, "reason": f"node_outside_template:{node_id}"}
+        node_stage[node_id] = stage["id"]
+        by_stage[stage["id"]].append(node)
+    for blocker in skill_stage_blockers(skill_id, nodes, edges):
+        if blocker["code"] == "skill_stage_missing":
+            return {"isomorphic": False, "reason": f"stage_missing:{blocker['stage']}"}
+        return {
+            "isomorphic": False,
+            "reason": f"stage_unused:{blocker['stage']}->{blocker['downstream_stage']}",
+        }
+    for edge in edges:
+        if not isinstance(edge, dict):
+            continue
+        source = node_stage.get(_text(edge.get("source")))
+        target = node_stage.get(_text(edge.get("target")))
+        if source and target and stage_index[source] > stage_index[target]:
+            return {
+                "isomorphic": False,
+                "reason": f"stage_order:{_text(edge.get('source'))}->{_text(edge.get('target'))}",
+            }
+    video_nodes = by_stage.get("video") or []
+    image_nodes = by_stage.get("images") or []
+    unit_nodes = video_nodes or image_nodes
+    if not unit_nodes:
+        return {"isomorphic": False, "reason": "unit_stage_empty"}
+    if len(unit_nodes) > _MAX_STANDARD_PLANNER_UNITS:
+        return {"isomorphic": False, "reason": f"unit_count:{len(unit_nodes)}"}
+    speech_nodes = [
+        node
+        for node in by_stage.get("audio") or []
+        if _text((node.get("data") or {}).get("audioKind") or "speech") != "music"
+    ]
+    narrations = _narrations_by_unit(unit_nodes, speech_nodes, edges)
+    units: list[dict[str, Any]] = []
+    for index, node in enumerate(unit_nodes):
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        unit: dict[str, Any] = {
+            "title": _node_text(node, "title", "name", "label", "displayName")
+            or f"内容段 {index + 1}",
+            "prompt": _node_text(node, "prompt", "description", "content")
+            or f"内容段 {index + 1}",
+        }
+        if narrations[index] is not None:
+            unit["narration"] = narrations[index]
+        duration = _positive_duration_seconds(data.get("durationSec"))
+        if video_nodes and duration is not None:
+            unit["duration_seconds"] = duration
+        units.append(unit)
+    return {
+        "isomorphic": True,
+        "reason": None,
+        "deliverable": "video" if video_nodes else "images",
+        "include_audio": bool(speech_nodes),
+        "unit_count": len(units),
+        "units": units,
+    }
+
+
+def _edge_predecessors(edges: Any) -> dict[str, set[str]]:
+    """target -> sources over every edge, order-only ones included.
+
+    Used for attachment (which unit a node belongs to), not consumption: a
+    voice-over the planner gates behind its shot plan with ``dependency_for``
+    is still that shot's voice-over.
+    """
+    predecessors: dict[str, set[str]] = {}
+    for edge in edges if isinstance(edges, list) else []:
+        if not isinstance(edge, dict):
+            continue
+        source = _text(edge.get("source"))
+        target = _text(edge.get("target"))
+        if source and target:
+            predecessors.setdefault(target, set()).add(source)
+    return predecessors
+
+
+def _narrations_by_unit(
+    unit_nodes: list[dict[str, Any]],
+    speech_nodes: list[dict[str, Any]],
+    edges: Any,
+) -> list[str | None]:
+    """Pair speech nodes with units by what they are attached to, not by order.
+
+    A speech node attached (by any edge) to a unit's video node or to that
+    unit's own source (its frame / shot plan) narrates that unit; only speech
+    nodes attached to nothing unit-specific (an ecommerce voice-over that
+    reads the creative outline) fall back to list order. A wrong pairing can
+    never be applied silently: the standard compilation is compared with the
+    plan afterwards, edges included.
+    """
+    predecessors = _edge_predecessors(edges)
+    unit_ids = [_text(node.get("id")) for node in unit_nodes]
+    unit_scope: list[set[str]] = [
+        {unit_id, *predecessors.get(unit_id, set())} for unit_id in unit_ids
+    ]
+    narrations: list[str | None] = [None] * len(unit_nodes)
+    unattached: list[str] = []
+    for node in speech_nodes:
+        text = _node_text(node, "text", "prompt", "content")
+        upstream = predecessors.get(_text(node.get("id")), set())
+        owners = [index for index, scope in enumerate(unit_scope) if scope & upstream]
+        if len(owners) == 1 and narrations[owners[0]] is None:
+            narrations[owners[0]] = text
+        else:
+            unattached.append(text)
+    for index in range(len(narrations)):
+        if narrations[index] is None and unattached:
+            narrations[index] = unattached.pop(0)
+    return narrations
+
+
+# Node data that describes the node rather than what it generates: labels,
+# the prompt / text (compared separately, whitespace-normalised) and the
+# catalog bookkeeping the compiler derives. Everything else in ``data`` is an
+# execution parameter (model, ratio, quality, duration, speechMode, voiceId,
+# voiceAvailable, presetVoice, makeInstrumental, ...) and must match exactly.
+_PRESENTATION_DATA_KEYS = {
+    "displayName",
+    "title",
+    "name",
+    "label",
+    "description",
+    "content",
+    "prompt",
+    "text",
+    "stage",
+    "workflowCatalog",
+    "workflowCatalogRole",
+}
+# ``workflowCatalog`` keys the compiler derives from the recipe / skill / node
+# id; everything else in it (recipeId, recipeVersion, recipePipeline,
+# promptStrategy, inputStrategy, confirmedInputs, operationType, timelineRole,
+# ...) reaches the runtime prompt compiler and must match exactly.
+_DERIVED_CATALOG_KEYS = {
+    "recipeName",
+    "stepId",
+    "promptBuilder",  # compared through its userGoal only; planItem repeats the brief
+}
+
+
+def _hashable(value: Any) -> Any:
+    if isinstance(value, dict):
+        return tuple(sorted((str(k), _hashable(v)) for k, v in value.items()))
+    if isinstance(value, (list, tuple)):
+        return tuple(_hashable(v) for v in value)
+    return value
+
+
+_COMPOSE_ORDER_KEY = "compositionInputOrder"
+_MAPPING_SEARCH_BUDGET = 20000
+
+
+class _MappingBudgetExceeded(Exception):
+    """The node-mapping search gave up; the plan is treated as not expressible."""
+
+
+def _node_role(node: Any) -> str:
+    """``material`` (user input / resource / asset), ``compose``, ``executable`` or ``""``."""
+    if not isinstance(node, dict):
+        return ""
+    node_type = _text(node.get("node_type") or node.get("type"))
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    label = _text(node.get("stage") or data.get("stage")).lower()
+    if node_type == "videoComposeNode":
+        return "compose"
+    if node_type in _TEXT_NODE_TYPES and label in _USER_MATERIAL_STAGES:
+        return "material"
+    return "executable"
+
+
+def _node_signature(node: dict[str, Any]) -> tuple:
+    """What a node says, independent of id, label and layout.
+
+    Executable nodes: kind, prompt / text, the workflowCatalog fields the
+    runtime prompt compiler reads (recipe, version, pipeline, promptStrategy,
+    inputStrategy, confirmedInputs, ...) and every execution parameter in
+    ``data``. User material: its text. The compose node: its settings other
+    than the input order, which is compared under the node mapping.
+    """
+    node_type = _text(node.get("node_type") or node.get("type"))
+    data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    role = _node_role(node)
+    kind = "material" if role == "material" else _node_kind(node_type)
+    if kind == "audioNode":
+        text = _node_text(node, "text", "prompt", "content")
+    elif kind == "material":
+        text = _node_text(node, "content", "text", "prompt", "description")
+    elif role == "compose":
+        text = ""  # the planner writes a fixed caption; not a user decision
+    else:
+        text = _node_text(node, "prompt", "description", "content")
+    catalog = (
+        data.get("workflowCatalog")
+        if isinstance(data.get("workflowCatalog"), dict)
+        else {}
+    )
+    pipeline = (
+        catalog.get("recipePipeline")
+        if isinstance(catalog.get("recipePipeline"), list)
+        else []
+    )
+    prompt_builder = (
+        catalog.get("promptBuilder")
+        if isinstance(catalog.get("promptBuilder"), dict)
+        else {}
+    )
+    recipe = (
+        _text(catalog.get("recipeId")),
+        tuple(
+            _text(step.get("id") if isinstance(step, dict) else step)
+            for step in pipeline
+        ),
+        tuple(
+            sorted(
+                (key, _hashable(value))
+                for key, value in catalog.items()
+                if key not in _DERIVED_CATALOG_KEYS and key != "recipePipeline"
+            )
+        ),
+        _text(prompt_builder.get("userGoal")),
+    )
+    settings = tuple(
+        sorted(
+            (key, _hashable(value))
+            for key, value in data.items()
+            if key not in _PRESENTATION_DATA_KEYS and key != _COMPOSE_ORDER_KEY
+        )
+    )
+    return (kind, re.sub(r"\s+", " ", text), recipe, settings)
+
+
+def _plan_signature(
+    plan: dict[str, Any], *, include_material: bool, include_compose: bool
+) -> tuple[dict[str, tuple], dict[tuple[str, str, str], int], dict[str, list[str]]]:
+    """Per-node signatures, the edge multiset (by node id) and compose orders.
+
+    Node ids, titles and layout are presentation; what a plan says is each
+    node's signature and which node is wired to which, consuming
+    (``prompt_for`` / ``context_for`` / ``media_input_for`` ...) or order-only
+    (``dependency_for``). User-material and compose nodes are included only
+    when the agent's plan has them (``include_*``): the planner adds its own
+    input and compose nodes, which must not count as differences when the
+    agent left them out, but an input / resource note or a compose order the
+    agent did write has to survive the round trip.
+    """
+    signatures: dict[str, tuple] = {}
+    compose_orders: dict[str, list[str]] = {}
+    for node in plan.get("nodes") or []:
+        role = _node_role(node)
+        if not role:
+            continue
+        if role == "material" and not include_material:
+            continue
+        if role == "compose" and not include_compose:
+            continue
+        node_id = _text(node.get("id"))
+        signatures[node_id] = _node_signature(node)
+        if role == "compose":
+            data = node.get("data") if isinstance(node.get("data"), dict) else {}
+            order = data.get(_COMPOSE_ORDER_KEY)
+            compose_orders[node_id] = (
+                [_text(item) for item in order] if isinstance(order, list) else []
+            )
+    edges: dict[tuple[str, str, str], int] = {}
+    for edge in plan.get("edges") or []:
+        if not isinstance(edge, dict):
+            continue
+        source = _text(edge.get("source"))
+        target = _text(edge.get("target"))
+        if source not in signatures or target not in signatures:
+            continue
+        link_class = (
+            "order"
+            if _text(edge.get("link_type")) == _ORDER_ONLY_LINK_TYPE
+            else "consume"
+        )
+        edges[(source, target, link_class)] = (
+            edges.get((source, target, link_class), 0) + 1
+        )
+    return signatures, edges, compose_orders
+
+
+def _degree_profile(
+    node_ids: dict[str, tuple], edges: dict[tuple[str, str, str], int]
+) -> dict[str, tuple]:
+    """Signature refined by in/out degree per link class: a cheap invariant
+    any node-for-node mapping has to respect."""
+    out_deg: dict[str, dict[str, int]] = {n: {} for n in node_ids}
+    in_deg: dict[str, dict[str, int]] = {n: {} for n in node_ids}
+    for (source, target, link_class), count in edges.items():
+        out_deg[source][link_class] = out_deg[source].get(link_class, 0) + count
+        in_deg[target][link_class] = in_deg[target].get(link_class, 0) + count
+    return {
+        n: (sig, tuple(sorted(out_deg[n].items())), tuple(sorted(in_deg[n].items())))
+        for n, sig in node_ids.items()
+    }
+
+
+def _match_plan_nodes(
+    agent: tuple,
+    standard: tuple,
+    *,
+    budget: int = _MAPPING_SEARCH_BUDGET,
+) -> dict[str, str] | None:
+    """A node-for-node mapping under which both plans have the same edges.
+
+    Nodes with identical signatures are still distinct identities: a frame
+    both clips read maps to one standard frame only, so the second clip's
+    edge cannot be satisfied and no mapping exists. Candidates are filtered
+    by signature *and* degree first (that alone rejects a shared frame), then
+    a backtracking search extends the mapping one node at a time, always
+    picking the unmapped node with the most already-mapped neighbours so an
+    inconsistent edge is found immediately instead of after permuting every
+    look-alike node. ``budget`` bounds the number of search steps; exceeding
+    it raises ``_MappingBudgetExceeded``.
+    """
+    agent_sigs, agent_edges = agent[0], agent[1]
+    standard_sigs, standard_edges = standard[0], standard[1]
+    if len(agent_sigs) != len(standard_sigs) or sum(agent_edges.values()) != sum(
+        standard_edges.values()
+    ):
+        return None
+    agent_profile = _degree_profile(agent_sigs, agent_edges)
+    standard_profile = _degree_profile(standard_sigs, standard_edges)
+    by_profile: dict[tuple, list[str]] = {}
+    for node_id, profile in standard_profile.items():
+        by_profile.setdefault(profile, []).append(node_id)
+    candidates = {n: list(by_profile.get(p, [])) for n, p in agent_profile.items()}
+    if any(not options for options in candidates.values()):
+        return None
+    neighbours: dict[str, dict[str, list[tuple[str, int]]]] = {
+        n: {} for n in agent_sigs
+    }
+    for (source, target, link_class), count in agent_edges.items():
+        neighbours[source].setdefault(target, []).append((f"out:{link_class}", count))
+        neighbours[target].setdefault(source, []).append((f"in:{link_class}", count))
+    mapping: dict[str, str] = {}
+    used: set[str] = set()
+    steps = 0
+
+    def consistent(node_id: str, candidate: str) -> bool:
+        for other, links in neighbours[node_id].items():
+            if other not in mapping:
+                continue
+            for direction, count in links:
+                kind, _, link_class = direction.partition(":")
+                key = (
+                    (candidate, mapping[other], link_class)
+                    if kind == "out"
+                    else (mapping[other], candidate, link_class)
+                )
+                if standard_edges.get(key, 0) != count:
+                    return False
+        return True
+
+    def next_node() -> str:
+        return max(
+            (n for n in agent_sigs if n not in mapping),
+            key=lambda n: (
+                sum(1 for other in neighbours[n] if other in mapping),
+                -len(candidates[n]),
+            ),
+        )
+
+    def assign() -> bool:
+        nonlocal steps
+        if len(mapping) == len(agent_sigs):
+            mapped = {
+                (mapping[s], mapping[t], c): n for (s, t, c), n in agent_edges.items()
+            }
+            return mapped == standard_edges
+        node_id = next_node()
+        for candidate in candidates[node_id]:
+            if candidate in used:
+                continue
+            steps += 1
+            if steps > budget:
+                raise _MappingBudgetExceeded()
+            if not consistent(node_id, candidate):
+                continue
+            mapping[node_id] = candidate
+            used.add(candidate)
+            if assign():
+                return True
+            used.discard(candidate)
+            del mapping[node_id]
+        return False
+
+    return dict(mapping) if assign() else None
+
+
+def _template_round_trip_reason(
+    agent_plan: dict[str, Any], standard_plan: dict[str, Any]
+) -> tuple[str | None, dict[str, str]]:
+    """Why the standard compilation is not the agent's plan, or None if it is,
+    together with the agent-id -> standard-id node mapping when it is.
+
+    Rerouting must never change what the user planned: every node of the
+    agent's plan (kind, prompt / text, recipe, execution parameters; user
+    material and compose settings when the agent wrote them) has to map onto
+    exactly one node of the standard planner's output with the same
+    signature, nothing may be added, under that mapping the edges have to be
+    the same (consuming or order-only), a compose node's input order has to
+    match and a stated plan summary / title (the draft title) is kept. Node
+    ids and list order do not count.
+    """
+    for field in ("summary", "title"):
+        stated = agent_plan.get(field)
+        if isinstance(stated, str) and stated.strip():
+            produced = standard_plan.get(field)
+            if not isinstance(produced, str) or stated.strip() != produced.strip():
+                # The draft is titled from the plan summary: not the planner's to rename.
+                return f"not_expressible:{field}", {}
+    nodes = agent_plan.get("nodes") or []
+    include_material = any(_node_role(node) == "material" for node in nodes)
+    include_compose = any(_node_role(node) == "compose" for node in nodes)
+    agent = _plan_signature(
+        agent_plan, include_material=include_material, include_compose=include_compose
+    )
+    standard = _plan_signature(
+        standard_plan,
+        include_material=include_material,
+        include_compose=include_compose,
+    )
+    agent_sigs, agent_edges, agent_orders = agent
+    standard_sigs, standard_edges, standard_orders = standard
+    remaining: dict[tuple, int] = {}
+    for signature in standard_sigs.values():
+        remaining[signature] = remaining.get(signature, 0) + 1
+    for node_id, signature in agent_sigs.items():
+        if remaining.get(signature, 0) <= 0:
+            return f"not_expressible:node:{node_id}", {}
+        remaining[signature] -= 1
+    for node_id, signature in standard_sigs.items():
+        if remaining.get(signature, 0) > 0:
+            return f"not_expressible:extra_node:{node_id}", {}
+    try:
+        mapping = _match_plan_nodes(agent, standard)
+    except _MappingBudgetExceeded:
+        return "not_expressible:mapping_budget", {}
+    if mapping is not None:
+        for node_id, order in agent_orders.items():
+            mapped = [mapping.get(item, item) for item in order]
+            if mapped != standard_orders.get(mapping[node_id], []):
+                return f"not_expressible:compose_order:{node_id}", {}
+        return None, mapping
+    # Same nodes, different wiring: name the first agent edge that no
+    # signature-preserving mapping can place (by node identity, not content).
+    standard_pairs: dict[tuple, int] = {}
+    for (source, target, link_class), count in standard_edges.items():
+        key = (standard_sigs[source], standard_sigs[target], link_class)
+        standard_pairs[key] = standard_pairs.get(key, 0) + count
+    agent_pairs: dict[tuple, int] = {}
+    for (source, target, link_class), count in agent_edges.items():
+        key = (agent_sigs[source], agent_sigs[target], link_class)
+        agent_pairs[key] = agent_pairs.get(key, 0) + count
+        if standard_pairs.get(key, 0) < agent_pairs[key]:
+            return f"not_expressible:edge:{source}->{target}", {}
+    for (source, target, link_class), count in standard_edges.items():
+        key = (standard_sigs[source], standard_sigs[target], link_class)
+        if agent_pairs.get(key, 0) < standard_pairs[key]:
+            return f"not_expressible:extra_edge:{source}->{target}", {}
+    # Same content pairs, but no consistent node mapping: some node is wired
+    # to more targets than any node of its kind in the template (a frame both
+    # clips read where the template has one frame per clip).
+    agent_profile = _degree_profile(agent_sigs, agent_edges)
+    standard_profiles = set(_degree_profile(standard_sigs, standard_edges).values())
+    for source, target, _link_class in agent_edges:
+        if agent_profile[source] not in standard_profiles:
+            return f"not_expressible:edge:{source}->{target}", {}
+    return "not_expressible:wiring", {}
+
+
+def _merge_agent_nodes_into_standard(
+    agent_plan: dict[str, Any],
+    standard_plan: dict[str, Any],
+    mapping: dict[str, str],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """The standard compilation with the agent's mapped nodes carried over verbatim.
+
+    A reroute may only add what the planner adds (its input and compose
+    nodes, the plan-level production shape, layout) and must never touch a
+    node the agent wrote: each mapped standard node is replaced by the
+    agent's node itself, id and ``data`` included, so no field the runtime
+    might read (``promptBuilder.planItem.audio_kind``, a voice id, anything
+    added later) can be lost or reset. The agent's edges are kept as written
+    (their ``link_type`` too); the planner's edges are added only where they
+    touch a node it added, and its compose input order and layout groups are
+    rewritten to the agent's ids. Returns ``(None, reason)`` when an agent id
+    collides with a node the planner added.
+    """
+    reverse = {standard_id: agent_id for agent_id, standard_id in mapping.items()}
+    agent_nodes = {
+        _text(node.get("id")): node
+        for node in agent_plan.get("nodes") or []
+        if isinstance(node, dict)
+    }
+    merged = deepcopy(standard_plan)
+    nodes: list[dict[str, Any]] = []
+    kept_ids: set[str] = set()
+    for node in merged.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        standard_id = _text(node.get("id"))
+        if standard_id in reverse:
+            carried = deepcopy(agent_nodes[reverse[standard_id]])
+            if not _text(carried.get("stage")) and _text(node.get("stage")):
+                carried["stage"] = node["stage"]  # the planner's label, when none given
+            nodes.append(carried)
+        else:
+            nodes.append(node)
+            kept_ids.add(standard_id)
+    collision = kept_ids & set(reverse.values())
+    if collision:
+        return None, f"not_expressible:id_collision:{sorted(collision)[0]}"
+
+    def translate(node_id: Any) -> Any:
+        return reverse.get(_text(node_id), node_id)
+
+    merged["nodes"] = nodes
+    # The agent's own edges stay as written, link_type included (derived_from
+    # and media_input_for mean different things on the canvas); the planner
+    # contributes only the edges that touch a node it added.
+    edges: list[Any] = [
+        deepcopy(edge)
+        for edge in agent_plan.get("edges") or []
+        if isinstance(edge, dict)
+        and _text(edge.get("source")) in agent_nodes
+        and _text(edge.get("target")) in agent_nodes
+    ]
+    seen = {
+        (_text(e.get("source")), _text(e.get("target")), _text(e.get("link_type")))
+        for e in edges
+    }
+    for edge in merged.get("edges") or []:
+        if not isinstance(edge, dict):
+            continue
+        if (
+            _text(edge.get("source")) not in kept_ids
+            and _text(edge.get("target")) not in kept_ids
+        ):
+            continue
+        added = {
+            **edge,
+            "source": translate(edge.get("source")),
+            "target": translate(edge.get("target")),
+        }
+        key = (
+            _text(added["source"]),
+            _text(added["target"]),
+            _text(added.get("link_type")),
+        )
+        if key not in seen:
+            seen.add(key)
+            edges.append(added)
+    merged["edges"] = edges
+    for node in nodes:
+        if _text(node.get("id")) in kept_ids and _node_role(node) == "compose":
+            data = node.get("data") if isinstance(node.get("data"), dict) else {}
+            order = data.get(_COMPOSE_ORDER_KEY)
+            if isinstance(order, list):
+                data[_COMPOSE_ORDER_KEY] = [translate(item) for item in order]
+    layout = merged.get("layout") if isinstance(merged.get("layout"), dict) else None
+    if layout:
+        for group in layout.get("groups") or []:
+            if isinstance(group, dict) and isinstance(group.get("node_ids"), list):
+                group["node_ids"] = [translate(item) for item in group["node_ids"]]
+    return merged, None
+
+
+def _plan_goal_text(plan: dict[str, Any]) -> str:
+    """The user goal a raw plan states, or the closest thing it carries.
+
+    Raw plans are not required to repeat ``user_goal``; the standard planner
+    writes the goal into ``summary`` and into the user-material input node.
+    """
+    goal = _workflow_goal_text(plan)
+    if goal:
+        return goal
+    summary = plan.get("summary")
+    if isinstance(summary, str) and summary.strip():
+        return re.sub(r"\s+", " ", summary.strip())
+    for node in plan.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        label = _text(node.get("stage") or data.get("stage")).lower()
+        if label in _USER_MATERIAL_STAGES:
+            text = _node_text(node, "content", "prompt", "description", "text")
+            if text:
+                return text
+    for node in plan.get("nodes") or []:
+        if isinstance(node, dict):
+            text = _node_text(node, "prompt", "description", "content")
+            if text:
+                return text
+    return ""
+
+
+def _standard_intent_from_match(
+    *,
+    skill_id: str,
+    user_goal: str,
+    inputs: Any,
+    match: dict[str, Any],
+    assumptions: Any = None,
+) -> dict[str, Any]:
+    return {
+        "schema_version": WORKFLOW_INTENT_SCHEMA_VERSION,
+        "skill_id": skill_id,
+        "user_goal": user_goal,
+        "inputs": dict(inputs) if isinstance(inputs, dict) else {},
+        **(
+            {"assumptions": [str(item) for item in assumptions]}
+            if isinstance(assumptions, list) and assumptions
+            else {}
+        ),
+        "planner": {
+            "mode": "standard",
+            "deliverable": match["deliverable"],
+            "item_count": match["unit_count"],
+            "include_audio": match["include_audio"],
+            "units": deepcopy(match["units"]),
+        },
+    }
+
+
+def _template_match_audit(match: dict[str, Any]) -> dict[str, Any]:
+    """The part of a template comparison that goes into ``planner`` metadata."""
+    audit: dict[str, Any] = {"isomorphic": bool(match.get("isomorphic"))}
+    if match.get("reason"):
+        audit["reason"] = match["reason"]
+    if match.get("isomorphic"):
+        audit["unit_count"] = match.get("unit_count")
+    return audit
+
+
+def _template_planner_metadata(
+    compiled_planner: dict[str, Any],
+    *,
+    source: str,
+    requested_mode: str,
+    match: dict[str, Any],
+) -> dict[str, Any]:
+    metadata = {
+        **compiled_planner,
+        "selected_by": _TEMPLATE_ISOMORPHIC,
+        "source": source,
+        "template_match": _template_match_audit(match),
+    }
+    if requested_mode:
+        metadata["requested_mode"] = requested_mode
+    return metadata
+
+
+def _compile_isomorphic_plan_through_template(
+    *,
+    skill_id: str,
+    user_goal: str,
+    inputs: Any,
+    match: dict[str, Any],
+    assumptions: Any = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Compile the recovered standard intent; on failure return the reason instead."""
+    intent = _standard_intent_from_match(
+        skill_id=skill_id,
+        user_goal=user_goal,
+        inputs=inputs,
+        match=match,
+        assumptions=assumptions,
+    )
+    compiled = compile_workflow_intent(intent)
+    if not compiled.get("ok"):
+        return None, {
+            "isomorphic": False,
+            "reason": f"standard_compile_failed:{_text(compiled.get('error'))}",
+        }
+    return compiled, match
 
 _UNIVERSAL_GENERATION_INPUT_KEYS = {
     "aspect_ratio",
@@ -173,13 +1299,7 @@ _UNIVERSAL_GENERATION_INPUT_KEYS = {
 }
 
 _PORTABLE_GENERATION_VARIANT_COUNTS = {1, 2, 4}
-_PORTABLE_VIDEO_GENERATION_MODES = {
-    "allReference",
-    "firstLastFrame",
-    "imageReference",
-    "imageToVideo",
-    "textToVideo",
-}
+_PORTABLE_VIDEO_GENERATION_MODES = frozenset(PORTABLE_VIDEO_GENERATION_MODES)
 
 
 def _portable_generation_input_error(parameter_id: str, value: Any) -> str | None:
@@ -718,7 +1838,23 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
 
     compiled_intent = deepcopy(intent)
     planner_metadata: dict[str, Any] | None = None
-    if not _intent_items(compiled_intent):
+    plan_metadata: dict[str, Any] | None = None
+    requested_mode = (
+        _text((intent.get("planner") or {}).get("mode"))
+        if isinstance(intent.get("planner"), dict)
+        else ""
+    )
+    if _intent_items(compiled_intent):
+        # Agent-authored items take precedence over the standard planner; record
+        # that choice (and whether a standard planner was available) so the
+        # draft shows why the template path was not taken (issue #678).
+        planner_metadata = _agent_authored_planner_metadata(
+            skill_id,
+            source="intent_items",
+            requested_mode=requested_mode,
+            item_count=len(_intent_items(compiled_intent)),
+        )
+    else:
         compiled_intent, planner_metadata, planner_error = (
             _expand_standard_skill_intent(
                 intent=compiled_intent,
@@ -729,6 +1865,7 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
         )
         if planner_error is not None:
             return planner_error
+        plan_metadata = planner_metadata
 
     compiled = _compile_dynamic_recipe_items_intent(
         intent=compiled_intent,
@@ -737,11 +1874,92 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
         resolved_inputs=input_contract["resolved"],
     )
     if compiled.get("ok") and planner_metadata is not None:
+        if planner_metadata.get("mode") == "agent_authored":
+            # Items that merely restate the Skill's standard template are the
+            # template: compile them through the standard planner so the draft
+            # gets its production shape, and record why (issue #678).
+            match = template_isomorphism(skill_id, compiled.get("plan"))
+            if match["isomorphic"]:
+                rerouted, match = _compile_isomorphic_plan_through_template(
+                    skill_id=skill_id,
+                    user_goal=user_goal,
+                    inputs=intent.get("inputs"),
+                    match=match,
+                    assumptions=intent.get("assumptions"),
+                )
+                if rerouted is not None:
+                    mismatch, mapping = _template_round_trip_reason(
+                        compiled["plan"], rerouted["plan"]
+                    )
+                    merged = None
+                    if mismatch is None:
+                        merged, mismatch = _merge_agent_nodes_into_standard(
+                            compiled["plan"], rerouted["plan"], mapping
+                        )
+                    if merged is not None:
+                        checked = validate_agent_workflow_plan(
+                            merged, allow_template_reroute=False
+                        )
+                        if checked.get("ok"):
+                            rerouted["plan"] = checked["plan"]
+                            rerouted["preflight"] = checked.get("preflight") or {}
+                            rerouted["planner"] = _template_planner_metadata(
+                                rerouted["planner"],
+                                source="intent_items",
+                                requested_mode=requested_mode,
+                                match=match,
+                            )
+                            return rerouted
+                        mismatch = (
+                            f"standard_validate_failed:{_text(checked.get('error'))}"
+                        )
+                    match = {"isomorphic": False, "reason": mismatch}
+            planner_metadata = _agent_authored_planner_metadata(
+                skill_id,
+                source="intent_items",
+                requested_mode=requested_mode,
+                item_count=len(_intent_items(compiled_intent)),
+                template_match=match,
+            )
         compiled["planner"] = planner_metadata
         plan = compiled.get("plan")
-        if isinstance(plan, dict):
-            plan["planner"] = deepcopy(planner_metadata)
+        # Only the deterministic planner stamps the plan itself; the plan JSON
+        # schema does not declare ``planner`` for agent-authored graphs.
+        if isinstance(plan, dict) and plan_metadata is not None:
+            plan["planner"] = deepcopy(plan_metadata)
+    # Agent-authored items that skip a stage the Skill's standard planner
+    # always emits surface as a ``skill_stage_missing`` preflight blocker; the
+    # check runs in validate_agent_workflow_plan, which compilation goes through.
     return compiled
+
+
+def _agent_authored_planner_metadata(
+    skill_id: str,
+    *,
+    source: str,
+    requested_mode: str = "",
+    item_count: int | None = None,
+    template_match: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Audit record for a topology the agent authored instead of the standard planner.
+
+    ``template_match`` says why the standard planner was not used for a Skill
+    that has one: the first deviation from its template (issue #678).
+    """
+    metadata: dict[str, Any] = {
+        "mode": "agent_authored",
+        "source": source,
+        "skill_id": skill_id,
+        "selected_by": "agent",
+        "standard_planner_available": skill_id in _DETERMINISTIC_SKILL_PLANNERS,
+    }
+    if requested_mode:
+        metadata["requested_mode"] = requested_mode
+    if item_count is not None:
+        metadata["item_count"] = item_count
+    if template_match is not None and skill_id in _DETERMINISTIC_SKILL_PLANNERS:
+        metadata["template_match"] = _template_match_audit(template_match)
+    return metadata
 
 
 def _standard_skill_items(
@@ -771,6 +1989,7 @@ def _standard_skill_items(
                 prompt=f"{user_goal}，生成稳定一致的商品主体参考图",
                 recipe_id="general-image",
                 depends_on=["creative_outline"],
+                reference_inputs=["creative_outline"],
                 stage="assets",
             )
         )
@@ -829,6 +2048,70 @@ def _standard_skill_items(
             stage="planning",
         )
     )
+    if skill_id == "short-drama-quick":
+        asset_specs = (
+            (
+                "characters",
+                "角色设定",
+                "提取主要角色、身份、外形、服装和跨镜头连续性要求",
+                "drama-character-extraction",
+                "character_assets",
+                "角色身份图",
+                "根据角色设定生成稳定的角色身份与转面参考图",
+                "drama-character-turnaround",
+            ),
+            (
+                "scenes",
+                "场景设定",
+                "提取主要场景、空间关系、时代信息和统一视觉风格",
+                "drama-scene-extraction",
+                "scene_assets",
+                "场景参考图",
+                "根据场景设定生成稳定的场景视觉参考图",
+                "drama-scene-image",
+            ),
+            (
+                "props",
+                "道具设定",
+                "提取关键道具、外观细节、持有关系和剧情用途",
+                "drama-prop-extraction",
+                "prop_assets",
+                "道具参考图",
+                "根据道具设定生成稳定的关键道具参考图",
+                "drama-prop-image",
+            ),
+        )
+        for (
+            text_id,
+            text_title,
+            text_prompt,
+            text_recipe,
+            image_id,
+            image_title,
+            image_prompt,
+            image_recipe,
+        ) in asset_specs:
+            items.append(
+                _planned_item(
+                    item_id=text_id,
+                    title=text_title,
+                    prompt=f"{user_goal}。{text_prompt}",
+                    recipe_id=text_recipe,
+                    depends_on=["outline"],
+                    stage=text_id,
+                )
+            )
+            items.append(
+                _planned_item(
+                    item_id=image_id,
+                    title=image_title,
+                    prompt=image_prompt,
+                    recipe_id=image_recipe,
+                    depends_on=[text_id],
+                    reference_inputs=[text_id],
+                    stage=image_id,
+                )
+            )
     for index, unit in enumerate(units, 1):
         if skill_id == "short-drama-quick":
             source_id = f"shot_plan_{index}"
@@ -838,10 +2121,33 @@ def _standard_skill_items(
                     title=f"{unit['title']}镜头设计",
                     prompt=unit["prompt"],
                     recipe_id="drama-shot-group-detail",
-                    depends_on=["outline"],
+                    depends_on=["outline", "characters", "scenes", "props"],
                     stage="shots",
                 )
             )
+            frame_id = f"frame_{index}"
+            items.append(
+                _planned_item(
+                    item_id=frame_id,
+                    title=f"{unit['title']}首帧",
+                    prompt=unit["prompt"],
+                    recipe_id="general-image",
+                    depends_on=[
+                        source_id,
+                        "character_assets",
+                        "scene_assets",
+                        "prop_assets",
+                    ],
+                    reference_inputs=[
+                        source_id,
+                        "character_assets",
+                        "scene_assets",
+                        "prop_assets",
+                    ],
+                    stage="frames",
+                )
+            )
+            video_source_id = frame_id
         else:
             source_id = f"frame_{index}"
             items.append(
@@ -851,34 +2157,59 @@ def _standard_skill_items(
                     prompt=unit["prompt"],
                     recipe_id="general-image",
                     depends_on=["outline"],
+                    reference_inputs=(
+                        ["outline"]
+                        if skill_id in {"text-to-image-video", "video-tutorial"}
+                        else None
+                    ),
                     stage="images",
                 )
             )
+            video_source_id = source_id
         items.append(
             _planned_item(
                 item_id=f"clip_{index}",
                 title=f"{unit['title']}视频",
                 prompt=unit["prompt"],
                 recipe_id="general-video",
-                depends_on=[source_id],
+                depends_on=[video_source_id],
                 stage="video",
+                # The shot plan is what the clip renders, not a gate ahead of
+                # it: reference it so the edge is prompt_for and the runtime
+                # feeds the shot text into the video prompt (issue #677).
+                reference_inputs=(
+                    [video_source_id, source_id]
+                    if skill_id == "short-drama-quick"
+                    else None
+                ),
                 timeline_role="visual",
                 duration_seconds=unit.get("duration_seconds"),
             )
         )
         if include_audio and skill_id in {"video-tutorial", "short-drama-quick"}:
+            narration = _text(unit.get("narration"))
+            deferred_short_drama_speech = (
+                skill_id == "short-drama-quick" and not narration
+            )
             items.append(
                 _planned_item(
                     item_id=f"voice_{index}",
                     title=f"{unit['title']}旁白",
-                    prompt=unit["narration"],
-                    narration=unit["narration"],
+                    prompt=(
+                        narration
+                        or "只朗读上游镜头设计输出中的 narration、voiceover、"
+                        "dialogue 或 speech_text 正文，不朗读制作说明。"
+                    ),
+                    narration=narration,
                     recipe_id=(
                         "drama-shot-voice"
                         if skill_id == "short-drama-quick"
                         else "general-audio"
                     ),
                     depends_on=[source_id],
+                    reference_inputs=(
+                        [source_id] if deferred_short_drama_speech else None
+                    ),
                     stage="audio",
                     timeline_role="voiceover",
                 )
@@ -979,6 +2310,7 @@ def _planned_item(
     recipe_id: str,
     depends_on: list[str],
     stage: str,
+    reference_inputs: list[str] | None = None,
     narration: str = "",
     timeline_role: str = "",
     duration_seconds: int | None = None,
@@ -990,6 +2322,7 @@ def _planned_item(
         "recipe_id": recipe_id,
         "depends_on": depends_on,
         "stage": stage,
+        **({"reference_inputs": reference_inputs} if reference_inputs else {}),
         **({"narration": narration} if narration else {}),
         **({"timeline_role": timeline_role} if timeline_role else {}),
         **(
@@ -1055,12 +2388,12 @@ def _expand_standard_skill_intent(
                 path="planner.item_count",
             ),
         )
-    if not 1 <= item_count <= 12:
+    if not 1 <= item_count <= 25:
         return (
             intent,
             None,
             _intent_error(
-                "planner.item_count must be between 1 and 12",
+                "planner.item_count must be between 1 and 25",
                 path="planner.item_count",
             ),
         )
@@ -1094,6 +2427,24 @@ def _expand_standard_skill_intent(
             else profile["default_include_audio"]
         ),
     )
+    top_level_include_audio = intent.get("include_audio")
+    if (
+        isinstance(top_level_include_audio, bool)
+        and isinstance(planner_include_audio, bool)
+        and top_level_include_audio != planner_include_audio
+    ):
+        return (
+            intent,
+            None,
+            _intent_error(
+                "intent.include_audio conflicts with planner.include_audio",
+                path="planner.include_audio",
+                hint=(
+                    "Use intent.include_audio as the single workflow audio policy, "
+                    "or make both values identical. Do not retry with conflicting values."
+                ),
+            ),
+        )
     if deliverable == "images":
         include_audio = False
     units = _standard_planner_units(
@@ -1106,6 +2457,11 @@ def _expand_standard_skill_intent(
         for index, unit in enumerate(units):
             narration = _text(unit.get("narration"))
             title = _text(unit.get("title"))
+            if not narration and skill_id == "short-drama-quick":
+                # Screenplay-first short drama resolves narration/dialogue from
+                # the executable shot-plan output at runtime. The speech node
+                # receives that text over a prompt_for edge below.
+                continue
             if not narration:
                 return (
                     intent,
@@ -1315,10 +2671,20 @@ def _compile_dynamic_recipe_items_intent(
                 f"Recipe {canonical_recipe_id} has unsupported output_kind",
                 path=f"items.{index}.recipe_id",
             )
+        speech_uses_upstream_text = any(
+            node_types.get(_text(source_id))
+            in {"textAnnotationNode", "scriptNode", "beatContextNode"}
+            for source_id in (
+                item.get("reference_inputs")
+                or item.get("referenceInputs")
+                or []
+            )
+        )
         if (
             node_type == "audioNode"
             and _intent_audio_kind(item, recipe) == "speech"
             and not _text(item.get("narration"))
+            and not speech_uses_upstream_text
             and _looks_like_speech_generation_instruction(item.get("prompt"))
         ):
             return _intent_error(
@@ -1358,6 +2724,25 @@ def _compile_dynamic_recipe_items_intent(
             for candidate in [recipe, *recipe_pipeline]
         )
         item_by_id[item_id] = item
+
+    if (
+        _text(skill.get("id")) == "short-drama-quick"
+        and intent.get("include_audio") is True
+        and not any(
+            node_types.get(item_id) == "audioNode"
+            and _intent_audio_kind(item, node_recipes.get(item_id)) == "speech"
+            for item_id, item in item_by_id.items()
+        )
+    ):
+        return _intent_error(
+            "short-drama audio was requested but the workflow has no speech node",
+            path="items",
+            hint=(
+                "Keep a drama-shot-voice item. It may carry literal narration, or "
+                "reference an upstream shot/script text item so narration is resolved "
+                "at runtime. Do not remove requested voiceover to bypass validation."
+            ),
+        )
 
     edges: list[dict[str, str]] = []
     item_order = {item_id: index for index, item_id in enumerate(item_by_id)}
@@ -1559,7 +2944,9 @@ def _compile_dynamic_recipe_items_intent(
             "handoff_tool": "freezone_prepare_workflow_draft",
         },
     }
-    validated = validate_agent_workflow_plan(plan)
+    # The intent compiler decides the planner path itself (compile_workflow_intent
+    # reroutes template-shaped items); never reroute from inside compilation.
+    validated = validate_agent_workflow_plan(plan, allow_template_reroute=False)
     if not validated.get("ok"):
         return {
             **validated,
@@ -1723,7 +3110,9 @@ _INTENT_FIX_INSTRUCTION = (
     "Fix the intent fields listed in `errors` and call this tool again with the "
     "corrected freezone_workflow_intent.v1. Each error message (and `hint`, when "
     "present) already contains everything needed to fix the payload — do NOT "
-    "search or read plugin/source code to debug validation rules."
+    "search or read plugin/source code to debug validation rules. Never resubmit an "
+    "unchanged payload. If the same error path repeats after one correction, stop "
+    "retrying in this turn and report the blocker."
 )
 
 
@@ -1786,7 +3175,10 @@ def _intent_items(intent: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(raw_items, list):
         return []
     items: list[dict[str, Any]] = []
-    for raw_item in raw_items[:24]:
+    # Public agent-authored intents are capped by the JSON schema. Standard
+    # planners expand one compact unit into several deterministic items, so
+    # their internal item list must retain the complete expansion.
+    for raw_item in raw_items[:200]:
         if isinstance(raw_item, str) and raw_item.strip():
             items.append({"title": raw_item.strip(), "prompt": raw_item.strip()})
         elif isinstance(raw_item, dict):
@@ -1892,6 +3284,11 @@ def _intent_items(intent: dict[str, Any]) -> list[dict[str, Any]]:
                                 raw_item.get("timeline_role")
                                 or raw_item.get("timelineRole")
                             )
+                            else {}
+                        ),
+                        **(
+                            {"requires_generated_audio": raw_item["requires_generated_audio"]}
+                            if isinstance(raw_item.get("requires_generated_audio"), bool)
                             else {}
                         ),
                         **(
@@ -2055,6 +3452,12 @@ def _intent_item_node(
         item_prompt = _text(item.get("narration")) or item_prompt
     prompt = item_prompt or label
     timeline_role = _text(item.get("timeline_role") or item.get("timelineRole"))
+    deferred_speech = (
+        node_type == "audioNode"
+        and audio_kind == "speech"
+        and not _text(item.get("narration"))
+        and bool(item.get("reference_inputs") or item.get("referenceInputs"))
+    )
     recipe_id = _text(recipe.get("id") if recipe else "")
     operation_type = next(
         (
@@ -2076,6 +3479,12 @@ def _intent_item_node(
             "confirmedInputs": resolved_inputs,
             "stepId": item_id,
             **({"timelineRole": timeline_role} if timeline_role else {}),
+            **(
+                {"requiresGeneratedAudio": item["requires_generated_audio"]}
+                if node_type == "videoNode"
+                and isinstance(item.get("requires_generated_audio"), bool)
+                else {}
+            ),
             "operationType": operation_type,
             "recipeId": recipe_id,
             "recipeName": _text(recipe.get("name") if recipe else ""),
@@ -2148,7 +3557,8 @@ def _intent_item_node(
         if isinstance(video_variants, int) and not isinstance(video_variants, bool):
             data["count"] = video_variants
     if node_type == "audioNode":
-        data["text"] = prompt
+        if not deferred_speech:
+            data["text"] = prompt
         if audio_kind == "music":
             data["audioKind"] = "music"
             data["makeInstrumental"] = True
@@ -2187,10 +3597,231 @@ def _dedupe_intent_edges(edges: list[dict[str, str]]) -> list[dict[str, str]]:
     return result
 
 
+# Portable generation preferences the standard planner writes into node data
+# (see _intent_item_node). An agent-authored plan gets the same runtime fields
+# backfilled from the Skill input contract so both paths produce comparable
+# nodes: an explicit node value always wins, only absent fields are filled.
+_PLAN_RUNTIME_BACKFILL_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
+    "imageGenNode": (
+        ("image_model", "model"),
+        ("image_aspect_ratio", "aspectRatio"),
+        ("image_resolution", "size"),
+        ("image_quality", "quality"),
+        ("image_variants_per_node", "count"),
+    ),
+    "videoNode": (
+        ("video_model", "model"),
+        ("video_aspect_ratio", "aspectRatio"),
+        ("video_resolution", "quality"),
+        ("video_duration_seconds", "durationSec"),
+        ("video_generation_mode", "genMode"),
+        ("video_generate_audio", "generateAudio"),
+        ("video_variants_per_node", "count"),
+    ),
+}
+
+
+def _drop_caller_mode_confirmations(
+    nodes: list[Any], resolved_inputs: dict[str, Any]
+) -> None:
+    """Discard per-node video mode confirmations carried inside a plan.
+
+    A plan is caller-writable (and a draft stored before #711 kept whatever the
+    caller wrote), so ``confirmedInputs.video_generation_mode`` there is never a
+    confirmation; a value that differs from the shared mode is removed (the
+    standard planner's copy equals it). Server-recorded per-node revisions
+    travel separately as ``mode_confirmations``.
+    """
+    requested = (
+        _text(resolved_inputs.get("video_generation_mode"))
+        if isinstance(resolved_inputs, dict)
+        else ""
+    )
+    for node in nodes:
+        if not isinstance(node, dict) or _text(node.get("node_type")) != "videoNode":
+            continue
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        workflow_catalog = data.get("workflowCatalog")
+        confirmed = (
+            workflow_catalog.get("confirmedInputs")
+            if isinstance(workflow_catalog, dict)
+            else None
+        )
+        if (
+            isinstance(confirmed, dict)
+            and "video_generation_mode" in confirmed
+            and _text(confirmed.get("video_generation_mode")) != requested
+        ):
+            confirmed.pop("video_generation_mode")
+
+
+def _effective_mode_confirmations(
+    nodes: list[Any], mode_confirmations: Any
+) -> dict[str, str]:
+    """Server-recorded per-node video modes that still name a video node."""
+    if not isinstance(mode_confirmations, dict):
+        return {}
+    video_ids = {
+        _text(node.get("id"))
+        for node in nodes
+        if isinstance(node, dict) and _text(node.get("node_type")) == "videoNode"
+    }
+    return {
+        node_id: _text(mode)
+        for node_id, mode in mode_confirmations.items()
+        if node_id in video_ids and _text(mode)
+    }
+
+
+def _video_generation_mode_blockers(
+    nodes: list[Any],
+    resolved_inputs: dict[str, Any],
+    mode_confirmations: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Video nodes whose genMode is not a mode the draft states as confirmed.
+
+    Issue #711: modes are not interchangeable (imageToVideo references the
+    whole picture, firstFrame locks the opening frame), so unlike other node
+    pins a genMode never silently wins. It must equal the plan's shared
+    ``video_generation_mode`` or the node's server-recorded per-node revision
+    in ``mode_confirmations``; otherwise the draft is blocked instead of
+    becoming ready.
+    """
+    requested = (
+        _text(resolved_inputs.get("video_generation_mode"))
+        if isinstance(resolved_inputs, dict)
+        else ""
+    )
+    blockers: list[dict[str, Any]] = []
+    for node in nodes:
+        if not isinstance(node, dict) or _text(node.get("node_type")) != "videoNode":
+            continue
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        mode = _text(data.get("genMode"))
+        if not mode or mode == requested:
+            continue
+        node_id = _text(node.get("id")) or "videoNode"
+        if _text(mode_confirmations.get(node_id)) == mode:
+            continue
+        if requested:
+            blockers.append(
+                {
+                    "path": f"runtime.models.{node_id}.genMode",
+                    "code": "video_generation_mode_conflict",
+                    "message": (
+                        f"genMode {mode!r} contradicts plan input video_generation_mode "
+                        f"{requested!r}; set the node to {requested!r} (choose a model that "
+                        "supports it) or ask the user before changing the mode."
+                    ),
+                    "allowed_values": [requested],
+                    "recovery": "align_generation_mode",
+                }
+            )
+        else:
+            blockers.append(
+                {
+                    "path": f"runtime.models.{node_id}.genMode",
+                    "code": "video_generation_mode_unconfirmed",
+                    "message": (
+                        f"genMode {mode!r} is not a confirmed mode: state the mode the user "
+                        "asked for as plan input video_generation_mode (or ask the user) and "
+                        "keep every video node's genMode equal to it."
+                    ),
+                    "recovery": "state_generation_mode",
+                }
+            )
+    return blockers
+
+
+def _backfill_plan_runtime_fields(
+    nodes: list[Any], resolved_inputs: dict[str, Any]
+) -> dict[str, list[str]]:
+    """Fill absent generation fields on plan nodes from resolved Skill inputs.
+
+    Returns ``{node_id: [field, ...]}`` for every field that was written, so the
+    draft can show which values came from preferences rather than the plan.
+    """
+    filled: dict[str, list[str]] = {}
+    if not isinstance(resolved_inputs, dict) or not resolved_inputs:
+        return filled
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        node_type = _text(node.get("node_type") or node.get("type"))
+        fields = _PLAN_RUNTIME_BACKFILL_FIELDS.get(node_type)
+        if not fields:
+            continue
+        data = node.get("data")
+        if not isinstance(data, dict):
+            data = {}
+            node["data"] = data
+        for input_key, field in fields:
+            if data.get(field) is not None:
+                continue
+            if field == "durationSec" and any(
+                alias in data for alias in _IGNORED_VIDEO_DURATION_KEYS
+            ):
+                # An apparent per-node duration must not be shadowed by a
+                # different global default. Leave the runtime field absent so
+                # the plan is blocked with an actionable field diagnostic.
+                continue
+            raw = resolved_inputs.get(input_key)
+            if field == "aspectRatio" and not _text(raw):
+                # Same precedence as _intent_item_node: the media-specific
+                # ratio first, then the universal aspect_ratio preference.
+                raw = resolved_inputs.get("aspect_ratio")
+            value: Any
+            if field == "durationSec":
+                value = _positive_duration_seconds(raw)
+            elif field == "generateAudio":
+                value = raw if isinstance(raw, bool) else None
+            elif field == "count":
+                value = raw if isinstance(raw, int) and not isinstance(raw, bool) else None
+            else:
+                value = _text(raw) or None
+            if value is None:
+                continue
+            data[field] = value
+            filled.setdefault(_text(node.get("id")) or node_type, []).append(field)
+    return filled
+
+
+def _noncanonical_video_duration_blockers(nodes: list[Any]) -> list[dict[str, str]]:
+    blockers: list[dict[str, str]] = []
+    for index, node in enumerate(nodes):
+        if not isinstance(node, dict) or node.get("node_type") != "videoNode":
+            continue
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        canonical = data.get("durationSec")
+        for alias in _IGNORED_VIDEO_DURATION_KEYS:
+            if alias not in data or (canonical is not None and data[alias] == canonical):
+                continue
+            blockers.append({
+                "path": f"nodes[{index}].data.{alias}",
+                "code": "noncanonical_video_duration",
+                "message": f"{alias} is ignored by workflow runtime; set data.durationSec explicitly",
+            })
+    return blockers
+
+
 def validate_agent_workflow_plan(
-    plan: Any, *, username: str | None = None
+    plan: Any,
+    *,
+    username: str | None = None,
+    allow_template_reroute: bool = True,
+    mode_confirmations: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Strictly validate an agent-authored plan against the live catalog."""
+    """Strictly validate an agent-authored plan against the live catalog.
+
+    A raw plan that restates the Skill's standard template (issue #678) is
+    compiled through the standard planner instead and returned in the same
+    validated shape with ``planner.selected_by = template_isomorphic``;
+    ``allow_template_reroute=False`` skips that (used when validating the
+    standard planner's own output). ``mode_confirmations`` maps video node
+    ids to modes a server-side revision recorded (issue #711); only the server
+    passes it, from a stored draft's ``compiled`` payload, and the result
+    carries the ones still in effect for the next revision or claim.
+    """
     if validate_workflow_plan is None:
         return {
             "ok": False,
@@ -2336,11 +3967,111 @@ def validate_agent_workflow_plan(
             "error": errors[0]["message"],
             "errors": errors,
         }
+    validated_plan = validated.get("plan") if isinstance(validated.get("plan"), dict) else {}
+    backfilled = _backfill_plan_runtime_fields(
+        validated_plan.get("nodes") or [], input_contract["resolved"]
+    )
+    if backfilled:
+        validated["backfilled_runtime_fields"] = backfilled
+        if _build_plan_preflight is not None:
+            # Planned duration and warnings must reflect the backfilled nodes.
+            validated["preflight"] = _build_plan_preflight(validated_plan.get("nodes") or [])
+    _drop_caller_mode_confirmations(
+        validated_plan.get("nodes") or [], input_contract["resolved"]
+    )
+    confirmations = _effective_mode_confirmations(
+        validated_plan.get("nodes") or [], mode_confirmations
+    )
+    _attach_preflight_blockers(
+        validated,
+        _video_generation_mode_blockers(
+            validated_plan.get("nodes") or [], input_contract["resolved"], confirmations
+        ),
+    )
+    if confirmations:
+        validated["mode_confirmations"] = confirmations
     validated["resolved_inputs"] = input_contract["resolved"]
     validated["execution_mode"] = input_contract["execution_mode"]
     validated["recommended_run_after_create"] = input_contract[
         "recommended_run_after_create"
     ]
+    # A raw plan that skips a stage the Skill's standard planner always emits
+    # (e.g. a short drama without shot planning) is a preflight blocker, not a
+    # schema error: the draft can be revised or re-planned (issue #677).
+    _attach_skill_stage_blockers(validated, skill_id)
+    duration_blockers = _noncanonical_video_duration_blockers(
+        validated_plan.get("nodes") or []
+    )
+    if duration_blockers:
+        preflight = validated.get("preflight") or {}
+        validated["preflight"] = {
+            **preflight,
+            "status": "blocked",
+            "blockers": [*(preflight.get("blockers") or []), *duration_blockers],
+        }
+    stamped = plan.get("planner") if isinstance(plan.get("planner"), dict) else None
+    if stamped and _text(stamped.get("mode")) == "deterministic_standard":
+        # The standard planner's own output keeps its audit record.
+        validated["planner"] = deepcopy(stamped)
+        return validated
+    match = template_isomorphism(skill_id, plan) if allow_template_reroute else None
+    if match is not None and match["isomorphic"]:
+        compiled, match = _compile_isomorphic_plan_through_template(
+            skill_id=skill_id,
+            user_goal=_plan_goal_text(plan),
+            inputs=plan.get("inputs"),
+            match=match,
+            assumptions=plan.get("assumptions"),
+        )
+        if compiled is not None:
+            rerouted = validate_agent_workflow_plan(
+                compiled["plan"],
+                username=username,
+                allow_template_reroute=False,
+                mode_confirmations=mode_confirmations,
+            )
+            if rerouted.get("ok"):
+                # Only when the standard planner reproduces the agent's plan node
+                # for node: a plan it cannot express stays agent-authored. The
+                # agent's nodes are then carried over verbatim into the standard
+                # compilation, which is validated once more.
+                mismatch, mapping = _template_round_trip_reason(
+                    validated_plan, rerouted["plan"]
+                )
+                merged = None
+                if mismatch is None:
+                    merged, mismatch = _merge_agent_nodes_into_standard(
+                        validated_plan, rerouted["plan"], mapping
+                    )
+                if merged is not None:
+                    rerouted = validate_agent_workflow_plan(
+                        merged,
+                        username=username,
+                        allow_template_reroute=False,
+                        mode_confirmations=mode_confirmations,
+                    )
+                if merged is not None and rerouted.get("ok"):
+                    rerouted["planner"] = _template_planner_metadata(
+                        compiled["planner"],
+                        source="exact_plan",
+                        requested_mode="",
+                        match=match,
+                    )
+                    return rerouted
+                if merged is not None:
+                    mismatch = f"standard_validate_failed:{_text(rerouted.get('error'))}"
+                match = {"isomorphic": False, "reason": mismatch}
+            else:
+                match = {
+                    "isomorphic": False,
+                    "reason": f"standard_validate_failed:{_text(rerouted.get('error'))}",
+                }
+    validated["planner"] = _agent_authored_planner_metadata(
+        skill_id,
+        source="exact_plan",
+        item_count=len(validated_plan.get("nodes") or []),
+        template_match=match,
+    )
     return validated
 
 

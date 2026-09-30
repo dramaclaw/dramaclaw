@@ -454,7 +454,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
         raise ValueError(f"unknown workflow tool: {name}")
     errors = list(Draft202012Validator(tool.inputSchema).iter_errors(args))
     if errors:
-        diagnostics = workflow_plan_schema_diagnostics(args)
+        diagnostics = workflow_plan_schema_diagnostics(args, tool.inputSchema)
         return _result(name, {
             "ok": False,
             "status": "tool_arguments_invalid",

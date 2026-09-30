@@ -53,6 +53,19 @@ RECIPE_COMPILE_MESSAGES = {
     "deterministic": "Recipe 已使用模板提示词；本次 Recipe 正常计费",
 }
 
+DIRECT_VOICE_RECIPE_ID = "drama-shot-voice"
+
+
+def is_direct_voice_recipe_action(
+    *, recipe_id: str, action: str, task_type: str
+) -> bool:
+    """The built-in voice Recipe sends literal text to TTS without an LLM compile."""
+    return (
+        recipe_id == DIRECT_VOICE_RECIPE_ID
+        and action == "generate_audio"
+        and task_type == "freezone_audio_speech"
+    )
+
 
 def is_recipe_compile_receipt(
     product_kind: str, operation_id: str, result: dict[str, Any]
@@ -110,6 +123,12 @@ CREATE TABLE IF NOT EXISTS freezone_agent_product_operations (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_product_session
 ON freezone_agent_product_operations(generation_session_id, product_kind);
+CREATE TABLE IF NOT EXISTS freezone_recipe_model_prompts (
+    operation_id          TEXT PRIMARY KEY,
+    model_call_id         TEXT NOT NULL,
+    prompt                TEXT NOT NULL,
+    created_at            REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS freezone_agent_generation_sessions (
     generation_session_id TEXT PRIMARY KEY,
     project_id            TEXT NOT NULL,
@@ -199,8 +218,11 @@ def create_agent_product_operation(
         raise ValueError("unsupported agent product kind")
     clean_key = str(idempotency_key or "").strip()
     clean_session = str(generation_session_id or "").strip()
+    clean_canvas = str(canvas_id or "").strip()
     if not clean_key or not clean_session:
         raise ValueError("idempotency_key and generation_session_id are required")
+    if kind == "workflow_result" and not clean_canvas:
+        raise ValueError("canvas_id is required for workflow_result operations")
     now = time.time()
     operation_id = f"agent_product_{uuid.uuid4().hex}"
     with _connect(project_dir) as conn:
@@ -215,6 +237,7 @@ def create_agent_product_operation(
                 payload["project_id"] != project_id
                 or payload["product_kind"] != kind
                 or payload["generation_session_id"] != clean_session
+                or payload["canvas_id"] != clean_canvas
                 or payload["artifact_id"] != str(artifact_id or "").strip()
             ):
                 raise ValueError(
@@ -241,7 +264,7 @@ def create_agent_product_operation(
                 kind,
                 task_type,
                 project_id,
-                str(canvas_id or "").strip(),
+                clean_canvas,
                 clean_session,
                 str(artifact_id or "").strip(),
                 json.dumps(metadata or {}, ensure_ascii=False, separators=(",", ":")),
@@ -334,12 +357,14 @@ def bind_agent_product_model_execution(
     turn_id: str = "",
     tool_call_id: str = "",
     compile_mode: str = "",
+    compiled_prompt: str = "",
 ) -> dict[str, Any]:
     """Persist model execution observed by trusted server-side orchestration.
 
     Result submission routes deliberately cannot write this record.  They may
     only consume evidence that the chat runtime or Recipe compiler recorded
-    after observing the actual model/tool call.
+    after observing the actual model/tool call. ``compiled_prompt`` keeps the
+    Recipe compiler's output so a media retry replays it (issue #681).
     """
     clean_model_call_id = str(model_call_id or "").strip()
     clean_source = str(source or "").strip()
@@ -379,6 +404,7 @@ def bind_agent_product_model_execution(
                     "agent product operation is bound to another model execution"
                 )
             return payload
+        now = time.time()
         conn.execute(
             """
             UPDATE freezone_agent_product_operations
@@ -387,16 +413,50 @@ def bind_agent_product_model_execution(
             """,
             (
                 json.dumps(evidence, ensure_ascii=False, separators=(",", ":")),
-                time.time(),
+                now,
                 operation_id,
             ),
         )
+        if str(compiled_prompt or "").strip():
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO freezone_recipe_model_prompts (
+                    operation_id, model_call_id, prompt, created_at
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (operation_id, clean_model_call_id, compiled_prompt, now),
+            )
         row = conn.execute(
             "SELECT * FROM freezone_agent_product_operations WHERE operation_id = ?",
             (operation_id,),
         ).fetchone()
     assert row is not None
     return _payload(row)
+
+
+def read_recipe_model_prompt(*, project_dir: Path, operation_id: str) -> str:
+    """Return the Recipe compiler prompt bound to the operation's model execution."""
+    with _connect(project_dir) as conn:
+        row = conn.execute(
+            """
+            SELECT p.prompt, p.model_call_id, o.model_evidence_json
+              FROM freezone_recipe_model_prompts AS p
+              JOIN freezone_agent_product_operations AS o
+                ON o.operation_id = p.operation_id
+             WHERE p.operation_id = ?
+            """,
+            (operation_id,),
+        ).fetchone()
+    if row is None:
+        return ""
+    evidence = _json_object(row["model_evidence_json"])
+    if (
+        evidence.get("source") != "server_recipe_compiler"
+        or evidence.get("compile_mode") != "model"
+        or evidence.get("model_call_id") != row["model_call_id"]
+    ):
+        return ""
+    return str(row["prompt"] or "")
 
 
 def finish_agent_product_operation(
@@ -407,6 +467,7 @@ def finish_agent_product_operation(
     expected_task_id: str,
     result_ref: dict[str, Any] | None = None,
     server_recipe_compile: bool = False,
+    server_recipe_direct_audio: bool = False,
 ) -> dict[str, Any]:
     status = str(outcome or "").strip()
     if status not in PENDING_STATUSES | TERMINAL_STATUSES:
@@ -426,6 +487,36 @@ def finish_agent_product_operation(
         recipe_delivery = is_recipe_compile_receipt(
             payload["product_kind"], operation_id, result
         )
+        direct_audio_delivery = (
+            server_recipe_direct_audio
+            and payload["product_kind"] == "recipe_result"
+            and payload["metadata"].get("recipe_id") == DIRECT_VOICE_RECIPE_ID
+            and result.get("kind") == "recipe_result"
+            and result.get("workflow_run_id")
+            == payload["metadata"].get("workflow_run_id")
+            and result.get("node_id") == payload["metadata"].get("node_id")
+            and result.get("recipe_id") == DIRECT_VOICE_RECIPE_ID
+            and bool(result.get("id"))
+        )
+        if direct_audio_delivery:
+            linked_action = conn.execute(
+                """SELECT job_id, task_type, recipe_id, recipe_version
+                   FROM workflow_run_actions
+                   WHERE run_id = ? AND node_id = ? AND product_operation_id = ?""",
+                (
+                    result["workflow_run_id"],
+                    result["node_id"],
+                    operation_id,
+                ),
+            ).fetchone()
+            direct_audio_delivery = bool(
+                linked_action
+                and linked_action["job_id"] == result["id"]
+                and linked_action["task_type"] == "freezone_audio_speech"
+                and linked_action["recipe_id"] == DIRECT_VOICE_RECIPE_ID
+                and linked_action["recipe_version"]
+                == payload["metadata"].get("recipe_version")
+            )
         if result.get("kind") == "recipe_compile_result" and (
             not server_recipe_compile or not recipe_delivery or status != "delivered"
         ):
@@ -442,8 +533,12 @@ def finish_agent_product_operation(
             return payload
         evidence = payload["model_evidence"]
         if status == "delivered":
-            if not recipe_delivery and (
-                not evidence.get("model_call_id") or not evidence.get("executed_at")
+            if (
+                not recipe_delivery
+                and not direct_audio_delivery
+                and (
+                    not evidence.get("model_call_id") or not evidence.get("executed_at")
+                )
             ):
                 raise ValueError(
                     "delivered result requires trusted model execution evidence"
@@ -451,6 +546,7 @@ def finish_agent_product_operation(
             if (
                 payload["product_kind"] == "recipe_result"
                 and not recipe_delivery
+                and not direct_audio_delivery
                 and evidence.get("compile_mode") != "model"
             ):
                 raise ValueError(

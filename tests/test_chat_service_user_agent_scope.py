@@ -1,6 +1,9 @@
 import asyncio
 import json
 import os
+import re
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +15,46 @@ from novelvideo.chat import backend_sdk
 from novelvideo.chat import hermes_sdk
 from novelvideo.chat import service as chat_service
 from novelvideo.chat.store import ChatScope, chat_store
+
+
+def test_background_canvas_result_is_added_to_next_agent_prompt() -> None:
+    note = (
+        "[CANVAS_BACKGROUND_RESULT] The workflow is pending. "
+        "Do not rerun generation. [/CANVAS_BACKGROUND_RESULT]"
+    )
+    prompt = chat_service._canvas_background_result_context(
+        ["ordinary trace", note],
+    )
+    assert "Do not rerun generation" in prompt
+    assert "ordinary trace" not in prompt
+    assert chat_service._canvas_background_result_context(["ordinary trace"]) == ""
+
+
+def test_background_canvas_agent_notification_is_hidden_from_chat_history(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path))
+    scope = ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="agent-1",
+    )
+    chat_store.append_message(
+        "admin", scope, "user", "Generate an image", turn_id="turn-a"
+    )
+    chat_store.append_message(
+        "admin",
+        scope,
+        "agent_notification",
+        "Do not rerun generation.",
+        turn_id="turn-a",
+        idempotency_key="canvas-background-result:bridge-a",
+    )
+
+    assert [item["role"] for item in chat_store.list_messages("admin", scope)] == ["user"]
 
 
 @pytest.fixture
@@ -1145,6 +1188,12 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
     history_sentinel = "CHATDB_HISTORY_MUST_NOT_REACH_CODEX"
     if store_scope is not None:
         chat_store.append_message("admin", store_scope, "assistant", history_sentinel)
+        chat_store.append_message(
+            "admin",
+            store_scope,
+            "agent_notification",
+            "[CANVAS_BACKGROUND_RESULT] Do not rerun generation. [/CANVAS_BACKGROUND_RESULT]",
+        )
 
     class FakeAuthPort:
         async def revoke_agent_session(self, token):
@@ -1263,6 +1312,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
     assert not Path(captured["agent_token_file"]).exists()
     assert revoked == ["agent-token"]
     if tool_mode == "freezone_canvas":
+        assert "Do not rerun generation" in captured["prompt"]
         assert "[FREEZONE_CANVAS_ASSISTANT]" in captured["prompt"]
         assert "[FREEZONE_CANVAS_CONTEXT]" in captured["prompt"]
         assert "canvas_id: canvas-a" in captured["prompt"]
@@ -1278,6 +1328,13 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "scope-filtered concrete operations" in developer_instructions
         assert "call the selected tool directly" in developer_instructions
         assert "custom-topology reference" in developer_instructions
+        assert "top-level schema_version plus skill.id and skill.version" in developer_instructions
+        assert "reserved input/resource/asset stages" in developer_instructions
+        assert "business totals belong in the compact Intent" in developer_instructions
+        assert (
+            "explicitly enumerates canvas nodes and a dependency graph"
+            in developer_instructions
+        )
         assert "freezone_prepare_workflow_plan_draft once" in developer_instructions
         assert (
             "dependency_for only controls execution order and never consumes source output"
@@ -1533,6 +1590,10 @@ def test_codex_freezone_instructions_forbid_invented_resource_uris():
     assert "freezone_get_canvas_ontology" in instructions
     assert "one and only run request" in instructions
     assert "never call freezone_run_workflow again in the same turn" in instructions
+    assert "pass run_after_create=true at prepare time" in instructions
+    assert (
+        "freezone_confirm_workflow_draft does not accept run_after_create" in instructions
+    )
     assert "not a Workflow catalog skill_id" in instructions
     assert "text-to-image-video" in instructions
     assert "Never ask for a duplicate 'create and run' confirmation" in instructions
@@ -1682,6 +1743,10 @@ def test_codex_clarification_requires_successful_answer(container, outcome):
         "draft_confirm_retry",
         "draft_confirm_other_success",
         "draft_confirm_only_patch",
+        "draft_confirm_policy_retry",
+        "draft_confirm_policy_only_patch",
+        "draft_confirm_policy_skip_patch",
+        "draft_confirm_policy_unverified_retry",
     ],
 )
 async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
@@ -2208,6 +2273,106 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                         },
                         error=None,
                     )
+            elif tool_outcome in {
+                "draft_confirm_policy_retry",
+                "draft_confirm_policy_only_patch",
+                "draft_confirm_policy_skip_patch",
+                "draft_confirm_policy_unverified_retry",
+            }:
+                # Issue #672: the execution-policy guard rejects before
+                # claim/dispatch; the agent's own patch in this turn resolves it.
+                name = "dramaclaw.freezone_confirm_workflow_draft"
+                first_input = {
+                    "project_id": "project-a",
+                    "canvas_id": "canvas-a",
+                    "draft_id": "workflow_draft_a",
+                    "revision": 1,
+                    "run_after_create": True,
+                }
+                yield SimpleNamespace(
+                    type="tool_updated",
+                    text=f"[mcp:completed] {name}",
+                    name=name,
+                    call_id="call-preflight",
+                    status="completed",
+                    input=first_input,
+                    output=None,
+                    structured={
+                        "ok": False,
+                        "status": "workflow_draft_execution_policy_changed",
+                        "error": (
+                            "Patch the draft and confirm its new revision to change "
+                            "run_after_create."
+                        ),
+                        "user_message": "工作流草稿的执行方式需要先更新草稿再确认。",
+                        "retryable": True,
+                        "current_revision": 1,
+                        "run_after_create": False,
+                    },
+                    error=None,
+                )
+                # skip_patch: the agent ignores the patch instruction and simply
+                # omits run_after_create on the retry, so the guard no longer
+                # fires and the draft is confirmed with the old policy.
+                if tool_outcome != "draft_confirm_policy_skip_patch":
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        text="[mcp:completed] dramaclaw.freezone_patch_workflow_draft",
+                        name="dramaclaw.freezone_patch_workflow_draft",
+                        call_id="call-patch",
+                        status="completed",
+                        input={
+                            "draft_id": "workflow_draft_a",
+                            "expected_revision": 1,
+                            "changes": {"run_after_create": True},
+                        },
+                        output=None,
+                        structured={
+                            "ok": True,
+                            "status": "workflow_draft_ready",
+                            "draft_id": "workflow_draft_a",
+                            "revision": 2,
+                            "run_after_create": True,
+                        },
+                        error=None,
+                    )
+                if tool_outcome != "draft_confirm_policy_only_patch":
+                    retry_structured = {
+                        "ok": True,
+                        "canvas_apply_status": "accepted",
+                        "applied": True,
+                        "bridge_key": "bridge-call-1",
+                        "project_id": "project-a",
+                        "canvas_id": "canvas-a",
+                        "draft_id": "workflow_draft_a",
+                    }
+                    if tool_outcome == "draft_confirm_policy_retry":
+                        # The plugin reports the frozen policy with the receipt.
+                        retry_structured["run_after_create"] = True
+                    elif tool_outcome == "draft_confirm_policy_skip_patch":
+                        retry_structured["run_after_create"] = False
+                    # unverified_retry: an older plugin receipt without the
+                    # policy field cannot prove the request was honoured.
+                    yield SimpleNamespace(
+                        type="tool_updated",
+                        text=f"[mcp:completed] {name}",
+                        name=name,
+                        call_id="call-retry",
+                        status="completed",
+                        input={
+                            "project_id": "project-a",
+                            "canvas_id": "canvas-a",
+                            "draft_id": "workflow_draft_a",
+                            "revision": (
+                                1
+                                if tool_outcome == "draft_confirm_policy_skip_patch"
+                                else 2
+                            ),
+                        },
+                        output=None,
+                        structured=retry_structured,
+                        error=None,
+                    )
             elif tool_outcome not in {
                 "missing",
                 "blocked",
@@ -2292,7 +2457,12 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 assistant_reply = "已提交视频生成任务。"
             if tool_outcome in {"single_run_retry", "workflow_run_retry"}:
                 assistant_reply = "已提交生成任务。"
-            if tool_outcome == "draft_confirm_retry":
+            if tool_outcome in {
+                "draft_confirm_retry",
+                "draft_confirm_policy_retry",
+                "draft_confirm_policy_skip_patch",
+                "draft_confirm_policy_unverified_retry",
+            }:
                 assistant_reply = "工作流已提交创建。"
             receipts = []
             if tool_outcome in {
@@ -2311,6 +2481,9 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
                 "workflow_run_retry",
                 "draft_confirm_retry",
                 "draft_confirm_other_success",
+                "draft_confirm_policy_retry",
+                "draft_confirm_policy_skip_patch",
+                "draft_confirm_policy_unverified_retry",
             }:
                 receipts.append({"bridge_key": "bridge-call-1", "revision": None})
             if tool_outcome in {"story_retry", "story_create_missing_id_retry", "story_wrong_retry"}:
@@ -2404,8 +2577,20 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
     elif tool_outcome in {"single_run_retry", "workflow_run_retry"}:
         assert result["content"] == "已提交生成任务。"
         assert assistant_deltas == [result["content"]]
-    elif tool_outcome == "draft_confirm_retry":
+    elif tool_outcome in {"draft_confirm_retry", "draft_confirm_policy_retry"}:
         assert result["content"] == "工作流已提交创建。"
+        assert assistant_deltas == [result["content"]]
+    elif tool_outcome in {
+        "draft_confirm_policy_only_patch",
+        "draft_confirm_policy_skip_patch",
+        "draft_confirm_policy_unverified_retry",
+    }:
+        # The guard rejection stays a failure unless a confirming receipt of the
+        # same draft verifiably applied the requested run_after_create: no
+        # receipt at all, a receipt that kept the old policy (patch skipped), or
+        # a receipt that does not report the policy. The user sees the localized
+        # message rather than the agent hint.
+        assert result["content"] == "画布操作未完成：工作流草稿的执行方式需要先更新草稿再确认。"
         assert assistant_deltas == [result["content"]]
     elif tool_outcome in {
         "preflight_only", "preflight_other_success", "single_run_only_update",
@@ -2485,6 +2670,389 @@ async def test_codex_freezone_write_cannot_claim_success_without_tool_receipt(
         assert result["content"] == ("未能创建工作流：找不到匹配的 Workflow Skill。")
         assert assistant_deltas == [result["content"]]
     assert revoked == ["agent-token"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "argument_retry",
+        "argument_retry_dropped_command",
+        "argument_only",
+        "handler_failure_retry",
+        "argument_retry_duplicate_dropped",
+        "argument_retry_other_draft",
+        "argument_retry_other_move_target",
+        "argument_retry_other_html_artifact",
+        "argument_retry_other_projection",
+        "argument_retry_move_corrected",
+        "argument_retry_draft_revision_corrected",
+        "argument_retry_other_draft_revision",
+        "argument_retry_other_html_version",
+        "argument_retry_non_ascii_revision",
+        "argument_retry_huge_revision",
+        "argument_retry_projection_episode_corrected",
+        "argument_retry_reordered_batch",
+        "argument_retry_with_extra_command",
+        "argument_retry_same_target_moves_reordered",
+        "argument_retry_correction_plus_data_change",
+        "argument_retry_unreported_field_dropped",
+        "argument_retry_open_data_integer_changed",
+    ],
+)
+async def test_codex_freezone_argument_rejection_superseded_by_corrected_retry(
+    monkeypatch,
+    tmp_path,
+    scenario,
+):
+    """#686: a schema-rejected write retried successfully is not a failed turn.
+
+    Only the exact rejected call, minus the fields the MCP server reported as
+    unexpected and with numeric strings coerced in integer fields, supersedes
+    the rejection. Any other difference keeps the turn failed.
+    """
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    events = []
+
+    async def fake_authorize(**_kwargs):
+        return None
+
+    async def fake_create_token(*_args, **_kwargs):
+        return "agent-token"
+
+    class FakeAuthPort:
+        async def revoke_agent_session(self, token):
+            return None
+
+    commands = [
+        {
+            "type": "add_next_node",
+            "source_node_id": "upload-a",
+            "client_id": "watercolor",
+            "node_type": "imageGenNode",
+            "data": {"prompt": "水彩风格"},
+        },
+        {
+            "type": "run_node_action",
+            "node_id": "watercolor",
+            "action": "generate_image",
+        },
+    ]
+    rejected_commands = [dict(command) for command in commands]
+    rejected_commands[0]["position"] = {"x": 640, "y": 120}
+    if scenario == "handler_failure_retry":
+        rejected_commands = commands
+        rejection = {"ok": False, "error": "源节点不存在"}
+    else:
+        # Shape of dramaclaw_mcp._mcp_error_result for an input-schema failure.
+        rejection = {
+            "ok": False,
+            "error": "tool_arguments_invalid",
+            "tool_name": "freezone_emit_canvas_command",
+            "message": "{...} is not valid under any of the given schemas",
+            "path": "commands[0]",
+            "status": "tool_arguments_invalid",
+            "phase": "tool_validation",
+            "retryable": False,
+        }
+    retry_commands = (
+        commands[:1] if scenario == "argument_retry_dropped_command" else commands
+    )
+    tool = "freezone_emit_canvas_command"
+    rejected_input = {
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "commands": rejected_commands,
+    }
+    retry_input = {
+        "project_id": "project-a",
+        "canvas_id": "canvas-a",
+        "commands": retry_commands,
+    }
+    if scenario == "argument_retry_duplicate_dropped":
+        # Two identical anonymous creates must not collapse into one identity.
+        note = {"type": "create_node", "node_type": "textAnnotationNode"}
+        rejected_input["commands"] = [
+            {**note, "data": {"text": "甲"}, "bogus": 1},
+            {**note, "data": {"text": "乙"}},
+        ]
+        retry_input["commands"] = [{**note, "data": {"text": "甲"}}]
+    elif scenario in {
+        "argument_retry_draft_revision_corrected",
+        "argument_retry_other_draft_revision",
+    }:
+        # A numeric-string revision is a schema error; retrying it as the same
+        # integer is the correction, a different revision is another version.
+        tool = "freezone_confirm_workflow_draft"
+        rejected_input = {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "draft_id": "draft-a",
+            "revision": "1",
+        }
+        retry_input = {
+            **rejected_input,
+            "revision": (
+                1 if scenario == "argument_retry_draft_revision_corrected" else 2
+            ),
+        }
+    elif scenario in {
+        "argument_retry_non_ascii_revision",
+        "argument_retry_huge_revision",
+    }:
+        # "²".isdigit() is true but int("²") raises, and int() refuses strings
+        # beyond its digit limit; the turn must still fail cleanly.
+        tool = "freezone_confirm_workflow_draft"
+        rejected_input = {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "draft_id": "draft-a",
+            "revision": (
+                "²" if scenario == "argument_retry_non_ascii_revision" else "9" * 5000
+            ),
+        }
+        retry_input = {**rejected_input, "revision": 2}
+    elif scenario == "argument_retry_same_target_moves_reordered":
+        # Both commands target node-a; only their coordinates and order differ.
+        first = {"type": "move_nodes", "positions": {"node-a": {"x": 10, "y": 10}}}
+        second = {"type": "move_nodes", "positions": {"node-a": {"x": 20, "y": 20}}}
+        rejected_input["commands"] = [{**first, "bogus": 1}, second]
+        retry_input["commands"] = [second, first]
+    elif scenario == "argument_retry_correction_plus_data_change":
+        retry_input["commands"] = [
+            {**commands[0], "data": {"prompt": "油画风格"}},
+            commands[1],
+        ]
+    elif scenario in {
+        "argument_retry_reordered_batch",
+        "argument_retry_with_extra_command",
+    }:
+        # Commands run in array order: set (10,10) then shift +5 gives (15,10),
+        # the reverse gives (10,10). Neither reordering nor an extra command is
+        # a provable correction.
+        absolute = {"type": "move_nodes", "positions": {"node-a": {"x": 10, "y": 10}}}
+        relative = {"type": "move_nodes", "deltas": {"node-a": {"x": 5, "y": 0}}}
+        rejected_input["commands"] = [{**absolute, "bogus": 1}, relative]
+        retry_input["commands"] = (
+            [relative, absolute]
+            if scenario == "argument_retry_reordered_batch"
+            else [absolute, {"type": "select_nodes", "node_ids": ["node-a"]}, relative]
+        )
+    elif scenario == "argument_retry_projection_episode_corrected":
+        # The single-step tool declares episode an integer; a batch command's
+        # request is an open object where "1" is never rejected at all.
+        tool = "freezone_open_mainline_projection"
+        rejected_input = {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "scope": "episode",
+            "episode": "1",
+        }
+        retry_input = {**rejected_input, "episode": 1}
+    elif scenario == "argument_retry_open_data_integer_changed":
+        # data is open: the server reports only bogus, so changing the type of
+        # data.episode is a different node, not a correction.
+        beat_context = {
+            "type": "create_node",
+            "node_type": "beatContextNode",
+            "data": {"projectId": "project-a", "episode": "1", "beat": 1},
+        }
+        rejected_input["commands"] = [{**beat_context, "bogus": 1}]
+        retry_input["commands"] = [
+            {**beat_context, "data": {**beat_context["data"], "episode": 1}}
+        ]
+    elif scenario == "argument_retry_other_html_version":
+        restore = {"type": "html_artifact", "action": "restore", "artifact_id": "a"}
+        rejected_input["commands"] = [{**restore, "version": 1, "bogus": 1}]
+        retry_input["commands"] = [{**restore, "version": 2}]
+    elif scenario == "argument_retry_other_draft":
+        # Confirming draft B says nothing about the rejected draft A.
+        tool = "freezone_confirm_workflow_draft"
+        rejected_input = {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "draft_id": "draft-a",
+            "revision": "1",
+        }
+        retry_input = {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "draft_id": "draft-b",
+            "revision": 1,
+        }
+    elif scenario in {
+        "argument_retry_other_move_target",
+        "argument_retry_other_html_artifact",
+        "argument_retry_other_projection",
+        "argument_retry_move_corrected",
+    }:
+        # The target lives in a map key, artifact_id, or a nested request
+        # rather than a plain id field; another target must not match.
+        rejected_command, retry_command = {
+            "argument_retry_other_move_target": (
+                {"type": "move_nodes", "positions": {"node-a": {"x": 1, "y": 2}}},
+                {"type": "move_nodes", "positions": {"node-b": {"x": 1, "y": 2}}},
+            ),
+            "argument_retry_other_html_artifact": (
+                {"type": "html_artifact", "action": "update", "artifact_id": "a"},
+                {"type": "html_artifact", "action": "update", "artifact_id": "b"},
+            ),
+            "argument_retry_move_corrected": (
+                {"type": "move_nodes", "positions": {"node-a": {"x": 1, "y": 2}}},
+                {"type": "move_nodes", "positions": {"node-a": {"x": 9, "y": 8}}},
+            ),
+            "argument_retry_other_projection": (
+                {
+                    "type": "open_mainline_projection",
+                    "request": {"scope": "beat", "episode": 1, "beat": 1},
+                },
+                {
+                    "type": "open_mainline_projection",
+                    "request": {"scope": "beat", "episode": 1, "beat": 2},
+                },
+            ),
+        }[scenario]
+        rejected_input["commands"] = [{**rejected_command, "bogus": 1}]
+        retry_input["commands"] = [retry_command]
+    if tool != "freezone_emit_canvas_command":
+        rejection = {**rejection, "tool_name": tool}
+    if rejection.get("error") == "tool_arguments_invalid" and (
+        scenario != "argument_retry_unreported_field_dropped"
+    ):
+        # What dramaclaw_mcp._unexpected_argument_fields reports for these inputs.
+        unexpected = [
+            {"path": ["commands", index], "fields": fields}
+            for index, command in enumerate(rejected_input.get("commands") or [])
+            if (
+                fields := [
+                    field
+                    for field in sorted(command)
+                    if field == "bogus"
+                    or (field == "position" and command["type"] == "add_next_node")
+                ]
+            )
+        ]
+        if unexpected:
+            rejection = {**rejection, "unexpected_fields": unexpected}
+        # Top-level fields these tools' schemas declare integer; nested open
+        # objects (node data, batch requests) declare nothing.
+        integer_strings = [
+            [field]
+            for field in ("revision", "episode", "beat")
+            if isinstance(rejected_input.get(field), str)
+            and re.fullmatch(r"-?[0-9]+", rejected_input[field], re.ASCII)
+        ]
+        if integer_strings:
+            rejection = {**rejection, "integer_string_fields": integer_strings}
+
+    class FakeThread:
+        async def stream(self, _prompt):
+            yield SimpleNamespace(
+                type="thread_started",
+                thread_id="codex-thread",
+                turn_id="codex-turn",
+            )
+            yield SimpleNamespace(
+                type="tool_updated",
+                text=f"[mcp:failed] dramaclaw.{tool}",
+                name=f"dramaclaw.{tool}",
+                call_id="call-rejected",
+                status="failed",
+                input=rejected_input,
+                output={
+                    "content": [{"type": "text", "text": json.dumps(rejection)}]
+                },
+                structured=rejection,
+                error=None,
+            )
+            receipts = []
+            if scenario != "argument_only":
+                receipts.append({"bridge_key": "bridge-retry", "revision": None})
+                yield SimpleNamespace(
+                    type="tool_updated",
+                    text=f"[mcp:completed] dramaclaw.{tool}",
+                    name=f"dramaclaw.{tool}",
+                    call_id="call-retry",
+                    status="completed",
+                    input=retry_input,
+                    output=None,
+                    structured={
+                        "ok": True,
+                        "canvas_apply_status": "accepted",
+                        "applied": True,
+                        "errors": [],
+                        "bridge_key": "bridge-retry",
+                        "project_id": "project-a",
+                        "canvas_id": "canvas-a",
+                    },
+                    error=None,
+                )
+            yield SimpleNamespace(
+                type="assistant_delta",
+                text=json.dumps(
+                    {
+                        "message": "已创建水彩风格图片节点并提交生成。",
+                        "mode": "mutation",
+                        "canvas_receipts": receipts,
+                    }
+                ),
+            )
+            yield SimpleNamespace(type="complete", thread_id="codex-thread", text="")
+
+    monkeypatch.setattr(chat_service, "authorize_hermes_launch", fake_authorize)
+    monkeypatch.setattr(
+        chat_service, "_create_page_agent_session_token", fake_create_token
+    )
+    monkeypatch.setattr(
+        chat_service, "_build_codex_thread", lambda *_args, **_kwargs: FakeThread()
+    )
+    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
+    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **_kwargs: None)
+
+    async def collect_event(event):
+        events.append(event)
+
+    scope = ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="main",
+        state_dir=str(tmp_path / "state" / "admin" / "project-a"),
+    )
+    result = await chat_service._stream_assistant_reply_codex(
+        "admin",
+        "project-a",
+        "把选中的图片转成水彩风格",
+        collect_event,
+        project_state_dir=tmp_path / "state" / "admin" / "project-a",
+        tool_mode="freezone_canvas",
+        surface_context={"freezone_canvas_id": "canvas-a"},
+        store_scope=scope,
+        turn_id="business-turn",
+        route_prompt="把选中的图片转成水彩风格",
+    )
+
+    if scenario in {
+        "argument_retry",
+        "argument_retry_draft_revision_corrected",
+        "argument_retry_projection_episode_corrected",
+    }:
+        assert result["content"] == "已创建水彩风格图片节点并提交生成。"
+    elif scenario == "handler_failure_retry":
+        # Only a pre-handler schema rejection is side-effect free; a business
+        # failure from the handler keeps the turn failed.
+        assert result["content"] == "画布操作未完成：源节点不存在"
+    else:
+        # No retry, or a retry that differs beyond the provable corrections:
+        # dropped, added or reordered commands, other targets, coordinates or
+        # data, or a field the server never reported as unexpected.
+        assert result["content"] == "画布操作未完成：tool_arguments_invalid"
+    assistant_deltas = [
+        event["text"] for event in events if event["type"] == "assistant_delta"
+    ]
+    assert assistant_deltas == [result["content"]]
 
 
 @pytest.mark.anyio
@@ -2808,6 +3376,51 @@ def test_freezone_skill_sync_refreshes_managed_skills_and_preserves_user_skills(
     manifest = json.loads(
         (skills_dir / ".dramaclaw-managed-skills.json").read_text(encoding="utf-8")
     )
+    assert set(manifest["skills"]) == {"dramaclaw-workflows"}
+
+
+def test_concurrent_codex_skill_sync_publishes_one_complete_copy(monkeypatch, tmp_path):
+    source = tmp_path / "sources" / "dramaclaw-workflows"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("# Workflow\n", encoding="utf-8")
+    monkeypatch.setattr(chat_service, "_skill_sources", lambda: [("dramaclaw-workflows", source)])
+    skills_dir = tmp_path / "project" / ".agents" / "skills"
+    copytree = chat_service.shutil.copytree
+    first_copy_started = threading.Event()
+    second_copy_started = threading.Event()
+    count_lock = threading.Lock()
+    copy_count = 0
+
+    def observed_copytree(src, dst, *args, **kwargs):
+        nonlocal copy_count
+        with count_lock:
+            copy_count += 1
+            call = copy_count
+        if call == 1:
+            first_copy_started.set()
+            second_copy_started.wait(timeout=1)
+            return copytree(src, dst, *args, **kwargs)
+        second_copy_started.set()
+        raise AssertionError("two turns tried to publish the same Skill directory")
+
+    monkeypatch.setattr(chat_service.shutil, "copytree", observed_copytree)
+    start = threading.Barrier(2)
+
+    def sync():
+        start.wait(timeout=3)
+        chat_service._sync_project_skills(skills_dir, agent_profile="freezone:main")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(sync) for _ in range(2)]
+        for future in futures:
+            future.result(timeout=5)
+
+    assert first_copy_started.is_set()
+    assert copy_count == 1
+    assert (skills_dir / "dramaclaw-workflows" / "SKILL.md").read_text(
+        encoding="utf-8"
+    ) == "# Workflow\n"
+    manifest = json.loads((skills_dir / ".dramaclaw-managed-skills.json").read_text())
     assert set(manifest["skills"]) == {"dramaclaw-workflows"}
 
 
@@ -4165,6 +4778,9 @@ def test_freezone_prompt_allows_creative_ideation_canvas_framework_without_mainl
     assert "command catalog" in prompt
     assert "node create schema" in prompt
     assert "link type catalog" in prompt
+    assert (
+        "feeding an audioNode must\n  use prompt_for, never context_for" in prompt
+    )
     assert "call a Freezone write tool" in prompt
     assert "first assistant output MUST be that" in prompt
     assert "Skill/catalog reads required by the next rule" in prompt
@@ -6798,3 +7414,235 @@ def test_fmv_skill_guidance_is_only_appended_to_canvas_instructions():
     assert "stage-guidance" in guidance
     assert "without treating 'next step' alone as confirmation" in guidance
     assert "proposal-only" not in guidance.lower()
+
+
+def _codex_turn_events(text, *, tool=None, disposition="completed"):
+    events = [
+        SimpleNamespace(type="thread_started", thread_id="codex-thread", turn_id="t")
+    ]
+    if tool is not None:
+        events.append(tool)
+    events += [
+        SimpleNamespace(
+            type="turn_completed",
+            thread_id="codex-thread",
+            turn_id="t",
+            status=disposition,
+            disposition=disposition,
+            error=None,
+        ),
+        SimpleNamespace(type="complete", thread_id="codex-thread", text=text),
+    ]
+    return events
+
+
+_READ_NODE_DETAIL = SimpleNamespace(
+    type="tool_updated",
+    text="[mcp:completed] dramaclaw.freezone_get_node_detail",
+    name="dramaclaw.freezone_get_node_detail",
+    call_id="call-read",
+    status="completed",
+    input={"node_id": "image-a"},
+    output={"content": [{"type": "text", "text": "{}"}]},
+    structured={"ok": True, "status": "failed"},
+    error=None,
+)
+
+_READ_ONLY_ANSWER = "工作流失败，未生成视频。"
+_FORMAT_FAILURE = "回复未通过操作结果校验：未返回结构化结果，请重试。"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("repair", "expected"),
+    [
+        (
+            _codex_turn_events(
+                json.dumps(
+                    {
+                        "message": _READ_ONLY_ANSWER,
+                        "mode": "read_only",
+                        "canvas_receipts": [],
+                    },
+                    ensure_ascii=False,
+                )
+            ),
+            _READ_ONLY_ANSWER,
+        ),
+        # The repair cannot turn a no-write turn into a claimed mutation.
+        (
+            _codex_turn_events(
+                json.dumps(
+                    {
+                        "message": "图片节点已创建成功。",
+                        "mode": "mutation",
+                        "canvas_receipts": [{"bridge_key": "forged", "revision": None}],
+                    },
+                    ensure_ascii=False,
+                )
+            ),
+            "画布操作未完成：本轮没有可验证的画布写入回执，请重试。",
+        ),
+        (_codex_turn_events(_READ_ONLY_ANSWER), _FORMAT_FAILURE),
+        (_codex_turn_events("", disposition="timeout"), _FORMAT_FAILURE),
+        (RuntimeError("Codex turn failed with status failed"), _FORMAT_FAILURE),
+    ],
+    ids=["repaired", "forged_mutation", "still_plain", "timeout", "error"],
+)
+async def test_codex_freezone_read_only_plain_reply_is_repaired_once(
+    monkeypatch, tmp_path, repair, expected
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    prompts = []
+    events = []
+    revoked = []
+
+    async def fake_authorize(**_kwargs):
+        return None
+
+    async def fake_create_token(*_args, **_kwargs):
+        return "agent-token"
+
+    class FakeAuthPort:
+        async def revoke_agent_session(self, token):
+            revoked.append(token)
+
+    class FakeThread:
+        async def stream(self, prompt):
+            prompts.append(prompt)
+            if len(prompts) == 1:
+                turn = _codex_turn_events(_READ_ONLY_ANSWER, tool=_READ_NODE_DETAIL)
+            elif isinstance(repair, Exception):
+                raise repair
+            else:
+                turn = repair
+            for event in turn:
+                yield event
+
+    monkeypatch.setattr(chat_service, "authorize_hermes_launch", fake_authorize)
+    monkeypatch.setattr(
+        chat_service, "_create_page_agent_session_token", fake_create_token
+    )
+    monkeypatch.setattr(
+        chat_service, "_build_codex_thread", lambda *_args, **_kwargs: FakeThread()
+    )
+    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
+    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **_kwargs: None)
+
+    async def collect_event(event):
+        events.append(event)
+
+    scope = ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="main",
+        state_dir=str(tmp_path / "state" / "admin" / "project-a"),
+    )
+    request_prompt = "检查刚才工作流的真实状态，只回答一句话。"
+    result = await chat_service._stream_assistant_reply_codex(
+        "admin",
+        "project-a",
+        request_prompt,
+        collect_event,
+        project_state_dir=tmp_path / "state" / "admin" / "project-a",
+        tool_mode="freezone_canvas",
+        surface_context={"freezone_canvas_id": "canvas-a"},
+        store_scope=scope,
+        turn_id="business-turn",
+        route_prompt=request_prompt,
+    )
+
+    assert prompts[1:] == [chat_service.CANVAS_FORMAT_REPAIR_PROMPT]
+    assert result["content"] == expected
+    assert [
+        event["text"] for event in events if event["type"] == "assistant_delta"
+    ] == [expected]
+    assert revoked == ["agent-token"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "first_turn",
+    [
+        _codex_turn_events(
+            json.dumps(
+                {"message": "建议保持布局。", "mode": "read_only", "canvas_receipts": []},
+                ensure_ascii=False,
+            )
+        ),
+        _codex_turn_events(
+            json.dumps(
+                {
+                    "message": "图片节点已创建成功。",
+                    "mode": "read_only",
+                    "canvas_receipts": [{"bridge_key": "forged", "revision": None}],
+                },
+                ensure_ascii=False,
+            )
+        ),
+        _codex_turn_events(_READ_ONLY_ANSWER, disposition="timeout"),
+        _codex_turn_events(_READ_ONLY_ANSWER, disposition="interrupted"),
+    ],
+    ids=["valid_envelope", "forged_read_only_receipts", "timeout", "interrupted"],
+)
+async def test_codex_freezone_format_repair_only_follows_completed_contract_failure(
+    monkeypatch, tmp_path, first_turn
+):
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    prompts = []
+
+    async def fake_authorize(**_kwargs):
+        return None
+
+    async def fake_create_token(*_args, **_kwargs):
+        return "agent-token"
+
+    class FakeAuthPort:
+        async def revoke_agent_session(self, _token):
+            return None
+
+    class FakeThread:
+        async def stream(self, prompt):
+            prompts.append(prompt)
+            for event in first_turn:
+                yield event
+
+    monkeypatch.setattr(chat_service, "authorize_hermes_launch", fake_authorize)
+    monkeypatch.setattr(
+        chat_service, "_create_page_agent_session_token", fake_create_token
+    )
+    monkeypatch.setattr(
+        chat_service, "_build_codex_thread", lambda *_args, **_kwargs: FakeThread()
+    )
+    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: FakeAuthPort())
+    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **_kwargs: None)
+
+    async def collect_event(_event):
+        return None
+
+    result = await chat_service._stream_assistant_reply_codex(
+        "admin",
+        "project-a",
+        "只给我布局建议",
+        collect_event,
+        project_state_dir=tmp_path / "state" / "admin" / "project-a",
+        tool_mode="freezone_canvas",
+        surface_context={"freezone_canvas_id": "canvas-a"},
+        store_scope=ChatScope(
+            kind="project",
+            id="project-a",
+            surface="freezone",
+            canvas_id="canvas-a",
+            agent_id="main",
+            state_dir=str(tmp_path / "state" / "admin" / "project-a"),
+        ),
+        turn_id="business-turn",
+        route_prompt="只给我布局建议",
+    )
+
+    assert len(prompts) == 1
+    assert "已创建成功" not in result["content"]

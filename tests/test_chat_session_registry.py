@@ -13,6 +13,7 @@ from novelvideo.chat.session_registry import (
     _chat_run_lock_key,
     _chat_run_lock_project_for_turn,
     acquire_chat_run_lock,
+    clear_active_codex_turn_if_thread,
     codex_scope_key,
     get_codex_thread_id,
     heartbeat_chat_run_lock,
@@ -147,3 +148,19 @@ def test_active_codex_turn_state_retains_business_turn_and_other_scope(
     assert load_active_codex_turns(path) == {
         "scope-b": {"thread_id": "thread-b", "turn_id": "turn-b"}
     }
+
+
+def test_clear_active_codex_turn_requires_matching_thread(tmp_path: Path) -> None:
+    path = tmp_path / "turns.json"
+    options = {
+        "index_file_lock": index_file_lock,
+        "write_json_atomic": write_json_atomic,
+    }
+    set_active_codex_turn(path, "scope-a", ("thread-new", "turn-new"), **options)
+
+    assert not clear_active_codex_turn_if_thread(
+        path, "scope-a", "thread-old", **options
+    )
+    assert load_active_codex_turns(path)["scope-a"]["thread_id"] == "thread-new"
+    assert clear_active_codex_turn_if_thread(path, "scope-a", "thread-new", **options)
+    assert load_active_codex_turns(path) == {}

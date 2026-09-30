@@ -164,9 +164,9 @@ def _recipe_compiler_timeout_seconds() -> float:
 def _recipe_text_generation_timeout_seconds() -> float:
     """Allow long Recipe text deliverables without changing global model timeouts."""
     try:
-        value = float(os.getenv("FREEZONE_RECIPE_TEXT_TIMEOUT_SECONDS", "300"))
+        value = float(os.getenv("FREEZONE_RECIPE_TEXT_TIMEOUT_SECONDS", "540"))
     except (TypeError, ValueError):
-        value = 300.0
+        value = 540.0
     return min(max(value, 30.0), 540.0)
 
 

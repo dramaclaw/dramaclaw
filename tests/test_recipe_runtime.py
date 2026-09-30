@@ -611,7 +611,7 @@ async def test_generate_recipe_text_executes_compiled_instruction(monkeypatch):
 
     assert result == "# 详情页方案"
     assert captured["model_env"] == "FREEZONE_TEXT_WRITER_MODEL"
-    assert captured["timeout_seconds_override"] == 300.0
+    assert captured["timeout_seconds_override"] == 540.0
     assert captured["capability"] == "freezone.text.generate"
     assert captured["brainclaw_profile"] is (
         BrainClawProfile.FREEZONE_RECIPE_TEXT_GENERATION

@@ -110,6 +110,7 @@ _JSON_WORKFLOW_CATALOG_IMPORT_ERROR: Exception | None = None
 try:
     from novelvideo.freezone.agent_workflows.catalog import (
         _recipe_node_type,
+        canonical_recipe_stage,
         compile_workflow_intent,
         get_workflow_skill,
         validate_agent_workflow_plan,
@@ -117,6 +118,7 @@ try:
 except Exception as exc:
     _JSON_WORKFLOW_CATALOG_IMPORT_ERROR = exc
     _recipe_node_type = None
+    canonical_recipe_stage = None
     compile_workflow_intent = None
     get_workflow_skill = None
     validate_agent_workflow_plan = None
@@ -138,6 +140,7 @@ try:
         canvas_command_idempotency_key,
         canvas_context_bridge_key,
         clarification_bridge_key,
+        find_clarification_bridge_message,
         put_pending_clarification_event,
         put_pending_canvas_command,
         put_pending_canvas_context,
@@ -154,6 +157,7 @@ except Exception as exc:
     canvas_command_idempotency_key = None
     canvas_context_bridge_key = None
     clarification_bridge_key = None
+    find_clarification_bridge_message = None
     put_pending_clarification_event = None
     put_pending_canvas_command = None
     put_pending_canvas_context = None
@@ -472,6 +476,31 @@ def _http_error_result(status_code: int, text: str, reason: str) -> dict[str, An
         result["error"] = _safe_error_string(detail, 300) or result["error"]
     if isinstance(source.get("retryable"), bool):
         result["retryable"] = source["retryable"]
+    if result.get("code") == "generation_parameters_required":
+        # Bounded copy of the standard clarification request so the agent can
+        # answer it; anything malformed is dropped rather than forwarded.
+        missing = source.get("missing_parameters")
+        safe_missing: list[dict[str, Any]] = []
+        if isinstance(missing, list):
+            for item in missing[:50]:
+                if not isinstance(item, dict):
+                    continue
+                node_type = _safe_error_string(item.get("node_type"), 40)
+                node_id = _safe_error_string(item.get("node_id"), 160)
+                fields = item.get("fields")
+                if node_type not in {"imageGenNode", "videoNode"} or not isinstance(fields, list):
+                    continue
+                safe_fields = [
+                    value
+                    for value in (_safe_error_string(field, 40) for field in fields[:12])
+                    if value and re.fullmatch(r"[A-Za-z0-9_]+", value)
+                ]
+                if node_id and safe_fields:
+                    safe_missing.append(
+                        {"node_id": node_id, "node_type": node_type, "fields": safe_fields}
+                    )
+        if safe_missing:
+            result["missing_parameters"] = safe_missing
     errors = source.get("errors")
     if isinstance(errors, list):
         safe_errors = []
@@ -852,36 +881,77 @@ def _emit_clarification_event(
         canvas_id=canvas,
         event=event,
     )
+    return _await_clarification_result(key, project, canvas, event)
+
+
+def _clarification_timeout_seconds() -> int:
     try:
-        timeout_seconds = max(
+        return max(
             1,
             int(
                 os.environ.get("DRAMACLAW_CLARIFICATION_RESULT_TIMEOUT_SECONDS", "240")
             ),
         )
     except ValueError:
-        timeout_seconds = 240
-    resolved = wait_clarification_result(key, timeout_seconds=timeout_seconds)
+        return 240
+
+
+def _clarification_timeout_result(
+    key: str, project: str | None, canvas: str | None, event: dict[str, Any]
+) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "status": "clarification_frontend_timeout",
+        "tool_call_status": "completed",
+        "clarification_status": "pending_user_input",
+        "bridge_key": key,
+        "project_id": project,
+        "canvas_id": canvas,
+        "type": event.get("type"),
+        "clarification_id": event.get("clarification_id"),
+        "message": (
+            "Clarification UI is still waiting for the user's frontend response. "
+            "The card stays answerable for ten minutes and reappears on the user's "
+            "next message."
+        ),
+        "agent_instruction": (
+            "Do not continue, guess, or summarize the user's choices. Tell the user "
+            "briefly that the parameter card is still waiting at the bottom of the chat "
+            "and will reappear when they send their next message. When they reply, call "
+            "freezone_request_user_clarification again with this exact clarification_id "
+            "(and the same project, canvas and workflow draft arguments) to resume waiting "
+            "on the same card; do not build a new card or repeat the questions."
+        ),
+    }
+
+
+def _await_clarification_result(
+    key: str, project: str | None, canvas: str | None, event: dict[str, Any]
+) -> str:
+    resolved = wait_clarification_result(
+        key, timeout_seconds=_clarification_timeout_seconds()
+    )
     if resolved is not None:
         return tool_result(resolved)
-    return tool_result(
-        {
-            "ok": False,
-            "status": "clarification_frontend_timeout",
-            "tool_call_status": "completed",
-            "clarification_status": "pending_user_input",
-            "bridge_key": key,
-            "project_id": project,
-            "canvas_id": canvas,
-            "type": event.get("type"),
-            "clarification_id": event.get("clarification_id"),
-            "message": "Clarification UI is still waiting for the user's frontend response.",
-            "agent_instruction": (
-                "Do not continue or summarize the user's choices until the frontend returns "
-                "a clarification tool result."
-            ),
-        }
-    )
+    return tool_result(_clarification_timeout_result(key, project, canvas, event))
+
+
+def _resume_clarification(
+    project: str | None, canvas: str | None, clarification_id: str
+) -> tuple[str, dict[str, Any], dict[str, Any] | None] | None:
+    """Return (key, stored event, result-or-None) for a card the agent already showed."""
+    if find_clarification_bridge_message is None or not clarification_id:
+        return None
+    try:
+        found = find_clarification_bridge_message(
+            project_id=project, canvas_id=canvas, clarification_id=clarification_id
+        )
+    except Exception:  # noqa: BLE001 - a lookup failure only means a fresh card
+        return None
+    if not isinstance(found, dict) or not isinstance(found.get("event"), dict):
+        return None
+    result = found.get("result")
+    return str(found["key"]), found["event"], result if isinstance(result, dict) else None
 
 
 def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
@@ -895,6 +965,14 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     clarification_id = str(
         args.get("clarification_id") or args.get("request_id") or ""
     ).strip()
+    # The bridge directory is shared per user/profile and may hold cards from
+    # other projects; never look one up outside this session's bound scope.
+    mismatch = _bound_scope_mismatch(project, canvas)
+    if mismatch is not None:
+        return tool_result(mismatch)
+    # An id the agent already holds may name a card that is still waiting (or
+    # was answered late). Resolve it first so a bare resume call needs no questions.
+    resumed = _resume_clarification(project, canvas, clarification_id)
     if not clarification_id:
         context_id = str(
             args.get("skill_studio_session_id") or canvas or "default"
@@ -1029,6 +1107,70 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     answers = args.get("answers")
     if not isinstance(answers, dict):
         answers = {}
+    generation_preferences = args.get("generation_preferences")
+    if generation_preferences is None:
+        generation_preferences = {}
+    if not isinstance(generation_preferences, dict) or any(
+        key not in {
+            "image_aspect_ratio", "video_aspect_ratio", "video_resolution",
+            "video_duration_seconds", "video_generate_audio",
+            "video_shot_durations_seconds", "delivery_resolution",
+        }
+        for key in generation_preferences
+    ):
+        return tool_result({
+            "ok": False, "status": "generation_clarification_args_invalid",
+            "error": "generation_preferences contains unsupported fields",
+        })
+    scalar_text_fields = (
+        "image_aspect_ratio", "video_aspect_ratio", "video_resolution",
+        "delivery_resolution",
+    )
+    if any(
+        field in generation_preferences
+        and (not isinstance(generation_preferences[field], str)
+             or not generation_preferences[field].strip())
+        for field in scalar_text_fields
+    ) or (
+        "video_generate_audio" in generation_preferences
+        and not isinstance(generation_preferences["video_generate_audio"], bool)
+    ) or (
+        "video_duration_seconds" in generation_preferences
+        and (
+            not isinstance(generation_preferences["video_duration_seconds"], (int, float))
+            or isinstance(generation_preferences["video_duration_seconds"], bool)
+            or not math.isfinite(generation_preferences["video_duration_seconds"])
+            or not 0 < generation_preferences["video_duration_seconds"] <= 600
+        )
+    ):
+        return tool_result({
+            "ok": False, "status": "generation_clarification_args_invalid",
+            "error": "generation_preferences contains an invalid value",
+        })
+    shot_durations = generation_preferences.get("video_shot_durations_seconds")
+    if shot_durations is not None and (
+        not isinstance(shot_durations, list) or not shot_durations
+        or any(
+            not isinstance(value, (int, float)) or isinstance(value, bool)
+            or not math.isfinite(value) or not 0 < value <= 600
+            for value in shot_durations
+        )
+    ):
+        return tool_result({
+            "ok": False, "status": "generation_clarification_args_invalid",
+            "error": "video_shot_durations_seconds must contain positive durations",
+        })
+    if shot_durations is not None and "video_duration_seconds" in generation_preferences:
+        return tool_result({
+            "ok": False, "status": "generation_clarification_args_invalid",
+            "error": "Pass either a shared video duration or per-shot durations",
+        })
+    if generation_media_types is not None and shot_durations is not None:
+        questions = [
+            question for question in questions
+            if not isinstance(question, dict)
+            or question.get("id") != "video_duration_seconds"
+        ]
     question_ids = {
         str(question.get("id") or "").strip().lower()
         for question in questions
@@ -1051,7 +1193,7 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
                     "the user's confirmed model in answers before retrying."
                 ),
             })
-    if not questions:
+    if not questions and resumed is None:
         return tool_result(
             {
                 "ok": False,
@@ -1134,39 +1276,67 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
         )
         if draft_error is not None:
             return tool_result(draft_error)
+    if resumed is not None:
+        # The card already exists from an earlier call that timed out. Reuse its
+        # questions and recommendations, and collect the answer the user gave
+        # (or keep waiting) instead of showing a second card.
+        key, stored_event, stored_result = resumed
+        questions = _safe_list(stored_event.get("questions")) or questions
+        recommended_answers = (
+            stored_event.get("recommended_answers")
+            if isinstance(stored_event.get("recommended_answers"), dict)
+            else {}
+        )
+        result = (
+            tool_result(stored_result)
+            if stored_result is not None
+            else _await_clarification_result(key, project, canvas, stored_event)
+        )
     generation_question_ids = [
         str(question.get("id") or "")
         for question in questions
         if isinstance(question, dict)
         and str(question.get("id") or "") in _GENERATION_ANSWER_DATA_FIELDS
     ]
-    recommended_answers: dict[str, Any] = {}
-    if generation_question_ids:
-        recommended_answers = _generation_clarification_recommendations(
-            project, generation_question_ids, answers
+    if resumed is None:
+        recommended_answers = {}
+        if generation_question_ids:
+            recommended_answers = _generation_clarification_recommendations(
+                project, generation_question_ids, answers, generation_preferences
+            )
+            # A recommended action is offered only with concrete values resolved from
+            # the caller's current Catalog; an empty "use recommended" is never valid.
+            args = {**args, "allow_recommended": bool(recommended_answers)}
+        description_parts = [str(args.get("description") or "").strip()]
+        delivery_resolution = generation_preferences.get("delivery_resolution")
+        if isinstance(delivery_resolution, str) and delivery_resolution.strip():
+            description_parts.append(
+                f"{delivery_resolution.strip()} 是成片交付清晰度；视频节点生成分辨率按模型能力单独选择。"
+            )
+        if generation_preferences and not recommended_answers:
+            description_parts.append(
+                "当前推荐模型无法满足已明确的声音或画面规格，请逐项选择兼容配置。"
+            )
+        result = _emit_clarification_event(
+            project,
+            canvas,
+            {
+                "type": "assistant.clarification.request",
+                "clarification_id": clarification_id,
+                "title": str(args.get("title") or "").strip(),
+                "description": " ".join(part for part in description_parts if part),
+                "questions": questions,
+                "answers": answers,
+                "allow_recommended": bool(args.get("allow_recommended", False)),
+                **({"recommended_answers": recommended_answers} if recommended_answers else {}),
+                "allow_skip": bool(args.get("allow_skip", True)),
+            },
         )
-        # A recommended action is offered only with concrete values resolved from
-        # the caller's current Catalog; an empty "use recommended" is never valid.
-        args = {**args, "allow_recommended": bool(recommended_answers)}
-    result = _emit_clarification_event(
-        project,
-        canvas,
-        {
-            "type": "assistant.clarification.request",
-            "clarification_id": clarification_id,
-            "title": str(args.get("title") or "").strip(),
-            "description": str(args.get("description") or "").strip(),
-            "questions": questions,
-            "answers": answers,
-            "allow_recommended": bool(args.get("allow_recommended", False)),
-            **({"recommended_answers": recommended_answers} if recommended_answers else {}),
-            "allow_skip": bool(args.get("allow_skip", True)),
-        },
-    )
     response = _tool_result_payload(result)
     if generation_question_ids:
         finalized = _finalize_generation_clarification_result(
-            response, generation_question_ids, recommended_answers
+            response, generation_question_ids, recommended_answers,
+            require_recommendation=bool(generation_preferences),
         )
         if finalized is not None:
             response = finalized
@@ -3515,6 +3685,7 @@ _GENERATION_MEDIA_NODE_TYPES = {"image": "imageGenNode", "video": "videoNode"}
 
 def _generation_clarification_recommendations(
     project: str | None, question_ids: list[str], answers: Any = None,
+    preferences: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return concrete option ids for one current scoped Catalog snapshot.
 
@@ -3525,7 +3696,11 @@ def _generation_clarification_recommendations(
     model question or a confirmed model there is nothing authoritative to
     recommend, and the caller must not offer a recommended action.
     """
-    from novelvideo.freezone.workflow_preflight import resolve_generation_recommendations
+    from novelvideo.freezone.workflow_preflight import (
+        _catalog_entry_for_model,
+        _workflow_node_capability_blockers,
+        resolve_generation_recommendations,
+    )
 
     if not project:
         return {}
@@ -3539,6 +3714,20 @@ def _generation_clarification_recommendations(
     ]
     if not media:
         return {}
+    preferences = preferences or {}
+    if set(media) == {"image", "video"}:
+        # A single supplied ratio is the safest recommendation for both parts
+        # of one image-to-video workflow. Explicitly distinct ratios remain
+        # distinct, and catalog capability checks below may still disable the
+        # one-click recommendation if either model cannot support that ratio.
+        if "video_aspect_ratio" in preferences and "image_aspect_ratio" not in preferences:
+            preferences = {
+                **preferences, "image_aspect_ratio": preferences["video_aspect_ratio"],
+            }
+        elif "image_aspect_ratio" in preferences and "video_aspect_ratio" not in preferences:
+            preferences = {
+                **preferences, "video_aspect_ratio": preferences["image_aspect_ratio"],
+            }
     confirmed: dict[str, Any] = {}
     if isinstance(answers, dict):
         for question_id, selection in answers.items():
@@ -3561,6 +3750,23 @@ def _generation_clarification_recommendations(
             data["model"] = "recommended"
         elif not (isinstance(data.get("model"), str) and data["model"].strip()):
             return {}
+        for question_id in asked:
+            if question_id not in preferences:
+                continue
+            target_type, field = _GENERATION_ANSWER_DATA_FIELDS[question_id]
+            if target_type != node_type:
+                continue
+            value = preferences[question_id]
+            if question_id == "video_generate_audio":
+                if not isinstance(value, bool):
+                    return {}
+            elif question_id == "video_duration_seconds":
+                if (not isinstance(value, (int, float)) or isinstance(value, bool)
+                    or not math.isfinite(value) or not 0 < value <= 600):
+                    return {}
+            elif not isinstance(value, str) or not value.strip():
+                return {}
+            data[field] = value
         nodes.append({"node_type": node_type, "data": data})
     responses: dict[str, dict[str, Any]] = {}
     try:
@@ -3575,6 +3781,28 @@ def _generation_clarification_recommendations(
         return {}
     if resolve_generation_recommendations(nodes, responses, fill_missing=True):
         return {}
+    for node in nodes:
+        entry = _catalog_entry_for_model(
+            [item for item in responses[node["node_type"]]["data"] if isinstance(item, dict)],
+            str(node["data"].get("model") or ""),
+        )
+        if entry is None:
+            return {}
+        # The catalog may use a different case for an otherwise valid option.
+        for field, catalog_key in (
+            ("size", "resolutionOptions"), ("quality", "resolutionOptions")
+        ):
+            if field not in node["data"]:
+                continue
+            wanted = str(node["data"][field]).casefold()
+            canonical = next(
+                (str(value) for value in entry.get(catalog_key) or []
+                 if str(value).casefold() == wanted), None
+            )
+            if canonical is not None:
+                node["data"][field] = canonical
+        if _workflow_node_capability_blockers(node, entry):
+            return {}
     data_by_type = {node["node_type"]: node["data"] for node in nodes}
     recommended: dict[str, Any] = {}
     for question_id in asked:
@@ -3605,6 +3833,7 @@ def _generation_required_choices_for_questions(question_ids: list[str]) -> dict[
 
 def _finalize_generation_clarification_result(
     response: Any, question_ids: list[str], recommended_answers: dict[str, Any],
+    *, require_recommendation: bool = False,
 ) -> dict[str, Any] | None:
     """Turn a submitted generation card into concrete node data, or fail closed.
 
@@ -3629,8 +3858,12 @@ def _finalize_generation_clarification_result(
         response.get("answers"), dict
     ) else {}
     if used_recommended:
+        # A stale frontend must not turn a disabled recommendation into a valid
+        # receipt by echoing old per-field selections.
+        if require_recommendation and not recommended_answers:
+            answers = {}
         for question_id in question_ids:
-            if question_id not in answers and question_id in recommended_answers:
+            if question_id in recommended_answers:
                 answers[question_id] = recommended_answers[question_id]
     choices: dict[str, Any] = {}
     missing: list[str] = []
@@ -3673,11 +3906,15 @@ def _finalize_generation_clarification_result(
         "generation_choices": choices,
         "node_data": node_data,
         "agent_instruction": (
-            "Concrete generation values are in node_data keyed by node type. Copy every "
-            "field of node_data.<node_type> verbatim into each matching image/video node's "
-            "data on the retried canvas write or WorkflowPlan; do not translate question ids "
-            "yourself or drop a field. For a workflow draft, pass answers unchanged as "
-            "generation_answers, or use the draft id and revision so the tool applies them."
+            "Concrete generation values are in node_data keyed by node type. Apply each "
+            "node_data.<node_type> field only where the matching image/video node does not "
+            "already state an explicit value; retain each shot's own duration and audio "
+            "requirement. Do not translate question ids yourself. For a new workflow draft, "
+            "pass only this result's "
+            "answers field: generation_answers = result['answers']; do not pass the entire "
+            "clarification result. If using plan, put the user goal in plan.summary, never "
+            "plan.user_goal (which is only valid on intent). For an existing draft, use its "
+            "draft id and revision so the tool applies the answers."
         ),
     }
 
@@ -3975,6 +4212,52 @@ def _workflow_generation_target_ids(
     return visited
 
 
+def _preflight_clarification_result(
+    preflight: dict[str, Any], **extra: Any
+) -> dict[str, Any] | None:
+    """Fold generation_parameters_required preflight blockers into the standard
+    clarification result the agent already knows how to recover from.
+
+    Draft preflight (issue #677) reports a video node without durationSec or a
+    voiced shot without generateAudio as ``generation_parameters_required``
+    blockers carrying ``required_choices``. Returning them inside a generic
+    ``workflow_preflight_failed`` would stop the agent; merging them into one
+    ``clarification_required`` result lets it ask through a single card. The
+    merge itself lives in CE (``generation_clarification_request``) so the
+    HTTP drafts API returns the same structure; it declines (``None``) when
+    any non-answerable blocker sits beside the questions, so those preflights
+    fail below instead of asking a question that cannot unblock the draft.
+    """
+    from novelvideo.freezone.workflow_preflight import generation_clarification_request
+
+    request = generation_clarification_request(preflight)
+    if request is None:
+        return None
+    return {
+        **_generation_parameters_required_result(request["missing_parameters"]),
+        "preflight": preflight,
+        **extra,
+    }
+
+
+def _workflow_preflight_failure(
+    preflight: dict[str, Any], **extra: Any
+) -> dict[str, Any]:
+    """Standard failure payload for a blocked draft preflight."""
+    from novelvideo.freezone.workflow_preflight import preflight_failure_blocker
+
+    clarification = _preflight_clarification_result(preflight, **extra)
+    if clarification is not None:
+        return clarification
+    return {
+        "ok": False,
+        "status": "workflow_preflight_failed",
+        "error": preflight_failure_blocker(preflight)["message"],
+        "preflight": preflight,
+        **extra,
+    }
+
+
 def _generation_parameters_required_result(
     missing: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -4035,10 +4318,10 @@ def _generation_parameters_required_result(
             + (
                 "Stop before every canvas write. Call freezone_request_user_clarification "
                 "exactly once for the required image/video choices listed in required_choices, "
-                "passing them as generation_required_choices and every already confirmed choice "
+                "passing them as generation_required_choices and every already confirmed choice (at least the model) "
                 "in answers. Do not add a duration question for interactive story segments. "
                 "After the user answers, copy each returned node_data.<node_type> field verbatim "
-                "into matching nodes and retry with the per-segment durations. For a WorkflowPlan, "
+                "into missing matching node fields without replacing explicit per-shot values, and retry with the per-segment durations. For a WorkflowPlan, "
                 "put them in each image/video node data. For a workflow draft, pass its id and "
                 "revision so the tool applies the choices. Do not claim success and do not "
                 "silently choose defaults."
@@ -5571,13 +5854,20 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
     if "generation_answers" in args:
         source_plan = _clone_json(source_plan)
         choices, answers_error = _generation_choices_from_answers(
-            args["generation_answers"]
+            args["generation_answers"], plan=source_plan
         )
         if answers_error is not None:
             return tool_result(answers_error)
         _apply_generation_choices_to_plan(source_plan, choices)
     validated = validate_agent_workflow_plan(source_plan)
     if not validated.get("ok"):
+        # One model turn can submit two plan variants concurrently under the
+        # same admitted operation. Once either variant has delivered a durable
+        # draft, every duplicate must converge on that receipt instead of
+        # reporting a contradictory validation failure.
+        delivered = _delivered_workflow_draft_for_operation(args)
+        if delivered is not None:
+            return tool_result(delivered)
         return tool_result(validated)
     project, canvas, scope_error = _workflow_draft_scope(args)
     if scope_error:
@@ -5589,14 +5879,7 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
     )
     validated["preflight"] = preflight
     if preflight["blockers"]:
-        return tool_result(
-            {
-                "ok": False,
-                "status": "workflow_preflight_failed",
-                "error": preflight["blockers"][0]["message"],
-                "preflight": preflight,
-            }
-        )
+        return tool_result(_workflow_preflight_failure(preflight))
     run_after_create = _run_after_create_arg(args)
     operation_id = str(args.get("operation_id") or "").strip()
     if not operation_id and _available():
@@ -5633,14 +5916,67 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
             )
         return tool_result(error)
     result = public_workflow_draft(payload)
+    planner = validated.get("planner") if isinstance(validated.get("planner"), dict) else {}
+    if planner.get("selected_by") == "template_isomorphic":
+        preview_instruction = (
+            "The plan restated the Skill's standard template, so the server compiled it "
+            "through the standard planner (preview.planner.selected_by=template_isomorphic); "
+            "present that standard preview and its node/edge counts. "
+        )
+    else:
+        preview_instruction = (
+            "Present the exact custom topology preview and its node/edge counts. "
+        )
     result["agent_instruction"] = (
-        "Present the exact custom topology preview and its node/edge counts. "
-        "Do not mention credits, billing, pricing, or editions. "
+        preview_instruction
+        + "Do not mention credits, billing, pricing, or editions. "
         "Wait for user confirmation, then call freezone_confirm_workflow_draft with the exact "
         "draft_id and revision. To change the topology, prepare a new complete Plan draft; never "
         "fall back to direct canvas commands."
     )
     return tool_result(result)
+
+
+def _delivered_workflow_draft_for_operation(
+    args: dict[str, Any],
+) -> dict[str, Any] | None:
+    operation_id = str(args.get("operation_id") or "").strip()
+    project_id, canvas_id, scope_error = _workflow_draft_scope(args)
+    if not operation_id or scope_error or project_id is None or canvas_id is None:
+        return None
+    operation_response = _request(
+        "GET",
+        _agent_product_operation_api_path(project_id, operation_id),
+    )
+    operation = (
+        operation_response.get("data")
+        if isinstance(operation_response.get("data"), dict)
+        else None
+    )
+    if (
+        operation is None
+        or operation.get("status") != "delivered"
+        or operation.get("product_kind") != "workflow_result"
+    ):
+        return None
+    result_ref = (
+        operation.get("result_ref")
+        if isinstance(operation.get("result_ref"), dict)
+        else {}
+    )
+    draft_id = str(result_ref.get("id") or "").strip()
+    if result_ref.get("kind") != "workflow_draft" or not draft_id:
+        return None
+    payload, _error = _workflow_draft_response(
+        _request(
+            "GET",
+            _workflow_draft_api_path(project_id, canvas_id, draft_id),
+            query={"view": "summary"},
+        )
+    )
+    if payload is None:
+        return None
+    return public_workflow_draft(payload)
 
 
 def _workflow_draft_dependencies_available() -> bool:
@@ -6063,24 +6399,185 @@ def _handle_workflow_operation(args: dict[str, Any], *, action: str) -> str:
             }
         )
     request_args = args
-    if action == "prepare" and "generation_answers" in args:
-        choices, answers_error = _generation_choices_from_answers(
-            args["generation_answers"]
-        )
-        if answers_error is not None:
-            return tool_result(answers_error)
-        request_args = dict(args)
-        if isinstance(args.get("intent"), dict) and "plan" not in args:
-            intent = _clone_json(args["intent"])
+    generation_choices: dict[str, Any] | None = None
+    if action == "prepare":
+        has_intent = isinstance(args.get("intent"), dict)
+        has_plan = isinstance(args.get("plan"), dict)
+        if has_intent == has_plan:
+            return tool_result(
+                {
+                    "ok": False,
+                    "status": "workflow_source_required",
+                    "error": (
+                        "Provide exactly one complete intent or plan; "
+                        "generation_answers only supplements it"
+                    ),
+                    "errors": [
+                        {
+                            "path": "intent|plan",
+                            "message": "exactly one complete workflow source is required",
+                        }
+                    ],
+                    "retryable": False,
+                    "next_action": "submit_complete_workflow_source",
+                }
+            )
+        if "generation_answers" in args:
+            generation_choices, answers_error = _generation_choices_from_answers(
+                args["generation_answers"], plan=args.get("plan")
+            )
+            if answers_error is not None:
+                return tool_result(answers_error)
+        if has_plan:
+            plan = _clone_json(args["plan"])
+            plan.setdefault("schema_version", "freezone_workflow_plan.v1")
+            skill = plan.get("skill") if isinstance(plan.get("skill"), dict) else {}
+            skill = dict(skill)
+            operation_id = str(args.get("operation_id") or "").strip()
+            inferred_id = ""
+            inferred_version = ""
+            if operation_id:
+                operation_response = _request(
+                    "GET", _agent_product_operation_api_path(project_id, operation_id)
+                )
+                operation = (
+                    operation_response.get("data")
+                    if isinstance(operation_response.get("data"), dict)
+                    else {}
+                )
+                operation_canvas_id = str(operation.get("canvas_id") or "").strip()
+                if (
+                    operation.get("product_kind") != "workflow_result"
+                    or operation_canvas_id != canvas_id
+                ):
+                    return tool_result(
+                        {
+                            "ok": False,
+                            "status": "workflow_result_operation_scope_mismatch",
+                            "error": (
+                                "The admitted workflow_result operation does not belong "
+                                "to this project canvas"
+                            ),
+                            "retryable": False,
+                            "next_action": "begin_workflow_result_generation",
+                        }
+                    )
+                metadata = (
+                    operation.get("metadata")
+                    if isinstance(operation.get("metadata"), dict)
+                    else {}
+                )
+                artifact_id = str(operation.get("artifact_id") or "").strip()
+                artifact_skill_id, separator, artifact_version = artifact_id.partition("@")
+                metadata_skill_id = str(metadata.get("skill_id") or "").strip()
+                metadata_version = str(metadata.get("skill_version") or "").strip()
+                artifact_skill_id = artifact_skill_id.strip()
+                artifact_version = artifact_version.strip() if separator else ""
+                identity_conflict = (
+                    metadata_skill_id
+                    and artifact_skill_id
+                    and metadata_skill_id != artifact_skill_id
+                ) or (
+                    metadata_version
+                    and artifact_version
+                    and metadata_version != artifact_version
+                )
+                if identity_conflict:
+                    return tool_result(
+                        {
+                            "ok": False,
+                            "status": "workflow_result_skill_identity_mismatch",
+                            "error": "The admitted operation contains conflicting Skill identity",
+                            "retryable": False,
+                            "next_action": "begin_workflow_result_generation",
+                        }
+                    )
+                inferred_id = metadata_skill_id or artifact_skill_id
+                inferred_version = metadata_version or artifact_version
+            explicit_id = str(skill.get("id") or "").strip()
+            explicit_version = str(skill.get("version") or "").strip()
+            if (explicit_id and inferred_id and explicit_id != inferred_id) or (
+                explicit_version
+                and inferred_version
+                and explicit_version != inferred_version
+            ):
+                return tool_result(
+                    {
+                        "ok": False,
+                        "status": "workflow_result_skill_identity_mismatch",
+                        "error": "The Plan Skill identity conflicts with the admitted operation",
+                        "retryable": False,
+                        "next_action": "submit_complete_workflow_plan",
+                    }
+                )
+            if not explicit_id and inferred_id:
+                skill["id"] = inferred_id
+            if not explicit_version and inferred_version:
+                skill["version"] = inferred_version
+            missing_identity = (
+                ["plan.skill.id"] if not str(skill.get("id") or "").strip() else []
+            )
+            if missing_identity:
+                return tool_result(
+                    {
+                        "ok": False,
+                        "status": "workflow_plan_identity_required",
+                        "error": (
+                            "Workflow Plan identity could not be recovered from "
+                            "the admitted operation"
+                        ),
+                        "errors": [
+                            {"path": field, "message": "field is required"}
+                            for field in missing_identity
+                        ],
+                        "retryable": False,
+                        "next_action": "submit_complete_workflow_plan",
+                    }
+                )
+            plan["skill"] = skill
+            for node in plan.get("nodes") or []:
+                if not isinstance(node, dict) or node.get("node_type") != "textAnnotationNode":
+                    continue
+                data = node.get("data") if isinstance(node.get("data"), dict) else {}
+                catalog = (
+                    data.get("workflowCatalog")
+                    if isinstance(data.get("workflowCatalog"), dict)
+                    else {}
+                )
+                if not str(catalog.get("recipeId") or "").strip():
+                    continue
+                reserved_stage = (
+                    node.get("stage") in {"input", "resource", "asset"}
+                    or data.get("stage") in {"input", "resource", "asset"}
+                )
+                if reserved_stage:
+                    canonical_stage = (
+                        canonical_recipe_stage(
+                            str(skill.get("id") or "").strip(),
+                            str(catalog.get("recipeId") or "").strip(),
+                        )
+                        if canonical_recipe_stage is not None
+                        else ""
+                    )
+                    node.pop("stage", None)
+                    data.pop("stage", None)
+                    if canonical_stage:
+                        node["stage"] = canonical_stage
+            request_args = dict(args)
+            request_args["plan"] = plan
+    if action == "prepare" and generation_choices is not None:
+        request_args = dict(request_args)
+        if isinstance(request_args.get("intent"), dict) and "plan" not in request_args:
+            intent = _clone_json(request_args["intent"])
             current_inputs = intent.get("inputs")
             intent["inputs"] = {
                 **(current_inputs if isinstance(current_inputs, dict) else {}),
-                **choices,
+                **generation_choices,
             }
             request_args["intent"] = intent
-        elif isinstance(args.get("plan"), dict) and "intent" not in args:
-            plan = _clone_json(args["plan"])
-            _apply_generation_choices_to_plan(plan, choices)
+        elif isinstance(request_args.get("plan"), dict) and "intent" not in request_args:
+            plan = _clone_json(request_args["plan"])
+            _apply_generation_choices_to_plan(plan, generation_choices)
             request_args["plan"] = plan
         else:
             return tool_result({
@@ -6121,6 +6618,24 @@ def _handle_workflow_operation(args: dict[str, Any], *, action: str) -> str:
     if error:
         if action in {"revise", "get"}:
             error.setdefault("draft_id", draft_id)
+        if error.get("code") == "generation_parameters_required" and isinstance(
+            error.get("missing_parameters"), list
+        ):
+            # The drafts API already merged the missing generation choices;
+            # attach the agent recovery contract so this entry point behaves
+            # like the legacy handlers (issue #677).
+            standard = _generation_parameters_required_result(error["missing_parameters"])
+            error = {
+                **{key: value for key, value in error.items() if key != "status_code"},
+                "status": standard["status"],
+                "error": standard["error"],
+                "media_types": standard["media_types"],
+                "required_choices": standard["required_choices"],
+                "clarification": standard["clarification"],
+                "agent_instruction": standard["agent_instruction"],
+                "retryable": True,
+                "next_action": "request_user_clarification",
+            }
         error.setdefault("retryable", False)
         error.setdefault(
             "next_action",
@@ -6241,14 +6756,7 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     preflight = _workflow_runtime_preflight(compiled, project_id=project_id)
     compiled["preflight"] = preflight
     if preflight["blockers"]:
-        return tool_result(
-            {
-                "ok": False,
-                "status": "workflow_preflight_failed",
-                "error": preflight["blockers"][0]["message"],
-                "preflight": preflight,
-            }
-        )
+        return tool_result(_workflow_preflight_failure(preflight))
     run_after_create = _run_after_create_arg(args)
     operation_id = str(args.get("operation_id") or "").strip()
     if not operation_id and _available():
@@ -6468,9 +6976,33 @@ def _generation_answer_value(question_id: str, selection: Any) -> Any:
     return value
 
 
+def _plan_has_explicit_video_durations(plan: Any) -> bool:
+    if not isinstance(plan, dict) or not isinstance(plan.get("nodes"), list):
+        return False
+    video_nodes = [
+        node for node in plan["nodes"]
+        if isinstance(node, dict) and node.get("node_type") == "videoNode"
+    ]
+    return bool(video_nodes) and all(
+        isinstance(node.get("data"), dict)
+        and _generation_parameter_value_present("durationSec", node["data"].get("durationSec"))
+        for node in video_nodes
+    )
+
+
 def _generation_choices_from_answers(
-    answers: Any,
+    answers: Any, *, plan: Any = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    receipt_choices: Any = None
+    if isinstance(answers, dict) and "answers" in answers:
+        unknown = set(answers) - {"answers", "generation_choices"}
+        if unknown:
+            return {}, {
+                "ok": False, "status": "generation_answers_incomplete",
+                "error": f"unsupported generation receipt field: {sorted(unknown)[0]}",
+            }
+        receipt_choices = answers.get("generation_choices")
+        answers = answers["answers"]
     if not isinstance(answers, dict) or not answers:
         return {}, {
             "ok": False, "status": "generation_answers_incomplete",
@@ -6482,6 +7014,13 @@ def _generation_choices_from_answers(
             if question_id not in _GENERATION_ANSWER_DATA_FIELDS:
                 raise ValueError(f"unsupported generation answer: {question_id}")
             choices[question_id] = _generation_answer_value(question_id, selection)
+        if receipt_choices is not None:
+            if not isinstance(receipt_choices, dict):
+                raise ValueError("generation_choices must be an object")
+            for question_id, value in receipt_choices.items():
+                expected = choices.get(question_id)
+                if type(value) is not type(expected) or value != expected:
+                    raise ValueError(f"conflicting generation choice: {question_id}")
         for media, mandatory in {
             "image": ("model", "aspect_ratio", "resolution", "variants_per_node"),
             "video": (
@@ -6492,6 +7031,8 @@ def _generation_choices_from_answers(
             if any(key.startswith(f"{media}_") for key in choices):
                 for field in mandatory:
                     key = f"{media}_{field}"
+                    if key == "video_duration_seconds" and _plan_has_explicit_video_durations(plan):
+                        continue
                     if key not in choices:
                         raise ValueError(f"missing generation answer: {key}")
     except ValueError as exc:
@@ -6503,7 +7044,7 @@ def _generation_choices_from_answers(
 
 
 def _apply_generation_choices_to_plan(
-    plan: dict[str, Any], choices: dict[str, Any], *, missing_only: bool = False
+    plan: dict[str, Any], choices: dict[str, Any], *, missing_only: bool = True
 ) -> None:
     for node in plan.get("nodes") or []:
         if not isinstance(node, dict):
@@ -6518,7 +7059,12 @@ def _apply_generation_choices_to_plan(
             continue
         data = node.get("data") if isinstance(node.get("data"), dict) else {}
         for field, value in node_choices:
-            if missing_only and _generation_parameter_value_present(field, data.get(field)):
+            current = data.get(field)
+            symbolic = (
+                isinstance(current, str)
+                and current.strip().casefold() in _RECOMMENDED_GENERATION_MODEL_VALUES
+            )
+            if missing_only and not symbolic and _generation_parameter_value_present(field, current):
                 continue
             data[field] = value
         node["data"] = data
@@ -6564,7 +7110,7 @@ def _apply_workflow_generation_answers(
                     "error": "WorkflowPlan validation is unavailable"}
         source = _clone_json(intent)
         plan = source.get("plan") if isinstance(source.get("plan"), dict) else {}
-        _apply_generation_choices_to_plan(plan, choices, missing_only=missing_only)
+        _apply_generation_choices_to_plan(plan, choices, missing_only=True)
         compiled = validate_agent_workflow_plan(plan)
         if not compiled.get("ok"):
             return compiled
@@ -6585,11 +7131,9 @@ def _apply_workflow_generation_answers(
     assert project is not None and canvas is not None
     preflight = _workflow_runtime_preflight(compiled, project_id=project)
     if preflight["blockers"]:
-        return {
-            "ok": False, "status": "workflow_preflight_failed",
-            "error": preflight["blockers"][0]["message"],
-            "preflight": preflight, "draft_id": draft_id,
-        }
+        return _workflow_preflight_failure(
+            preflight, draft_id=draft_id, current_revision=expected_revision
+        )
     compiled["preflight"] = preflight
     if draft.get("run_after_create"):
         verified = (compiled.get("external_inputs_verified") or {})
@@ -6644,6 +7188,21 @@ def _tool_result_payload(value: Any) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
+def _with_confirmed_execution_policy(
+    result: Any, payload: dict[str, Any], *, draft_id: str, run_after_create: bool
+) -> Any:
+    """Attach the draft's frozen execution policy to a successful confirmation.
+
+    The chat evidence layer uses it to verify that a retry after
+    workflow_draft_execution_policy_changed really applied the policy the user
+    asked for, instead of silently confirming the old one (issue #672).
+    """
+    merged = {**payload, "draft_id": draft_id, "run_after_create": bool(run_after_create)}
+    if isinstance(result, dict):
+        return merged
+    return _structured_tool_result(merged, tool_name="freezone_confirm_workflow_draft")
+
+
 def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     if not _workflow_draft_dependencies_available():
         return _workflow_draft_unavailable()
@@ -6688,23 +7247,50 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     if current_payload is None:
         return tool_result(current_error)
     if int(current_payload.get("revision") or 0) != revision:
+        # Rejected from the GET above only: nothing was claimed or dispatched.
+        # The user confirmed an exact revision, and the current one may carry
+        # changes they never reviewed, so it must not be confirmed silently.
         return tool_result(
             {
                 "ok": False,
                 "status": "workflow_draft_revision_conflict",
                 "error": "workflow draft revision changed before confirmation",
+                "user_message": "工作流草稿在你确认后已被修改，本次确认未创建任何节点，请查看最新方案后重新确认。",
+                "retryable": False,
                 "current_revision": current_payload.get("revision"),
+                "agent_instruction": (
+                    "Nothing was created. The draft changed after the user reviewed it. "
+                    "Read the draft with freezone_get_workflow, show the current "
+                    "revision's preview to the user, and call "
+                    "freezone_confirm_workflow_draft only after they explicitly confirm "
+                    "that exact revision. Never confirm current_revision on your own."
+                ),
             }
         )
     if "run_after_create" in args and (
         not isinstance(args["run_after_create"], bool)
         or args["run_after_create"] != bool(current_payload.get("run_after_create"))
     ):
+        # The tool schema no longer admits run_after_create, so this only fires
+        # for callers that bypass schema validation. It still rejects before
+        # claim or dispatch, so the follow-up patch + confirmation of this draft
+        # supersedes this rejection.
         return tool_result(
             {
                 "ok": False,
                 "status": "workflow_draft_execution_policy_changed",
                 "error": "Patch the draft and confirm its new revision to change run_after_create.",
+                "user_message": "工作流草稿的执行方式需要先更新草稿再确认，本次确认未创建任何节点。",
+                "retryable": True,
+                "current_revision": current_payload.get("revision"),
+                "run_after_create": bool(current_payload.get("run_after_create")),
+                "agent_instruction": (
+                    "Nothing was created. Execution policy is frozen in the draft: call "
+                    "freezone_patch_workflow_draft with changes.run_after_create set to the "
+                    "value the user asked for, then call freezone_confirm_workflow_draft with "
+                    "the new revision and without run_after_create. Do not report failure to "
+                    "the user."
+                ),
             }
         )
     # Check turn-scoped generation choices before admitting a durable task.
@@ -6799,12 +7385,9 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             revision=revision,
         )
         return tool_result(
-            {
-                "ok": False,
-                "status": "workflow_preflight_failed",
-                "error": preflight["blockers"][0]["message"],
-                "preflight": preflight,
-            }
+            _workflow_preflight_failure(
+                preflight, draft_id=draft_id, current_revision=revision
+            )
         )
     plan = compiled.get("plan")
     built = checked_graph or build_workflow_graph_commands(
@@ -6901,6 +7484,9 @@ def _handle_confirm_workflow_draft(args: dict[str, Any], **_: Any) -> str:
             outcome=outcome,
             task_id=confirmation_task_id,
             revision=revision,
+        )
+        result = _with_confirmed_execution_policy(
+            result, result_payload, draft_id=draft_id, run_after_create=run_after_create
         )
     else:
         _finish_workflow_draft(
@@ -7464,6 +8050,7 @@ _RESULT_COMMON_PROPERTIES: dict[str, Any] = {
     "tool_name": {"type": ["string", "null"]},
     "path": {"type": ["string", "null"]},
     "phase": {"type": ["string", "null"]},
+    "user_message": {"type": ["string", "null"]},
     "retryable": {"type": "boolean"},
     "next_action": {"type": ["string", "null"]},
     "agent_instruction": {"type": ["string", "null"]},
@@ -8353,8 +8940,6 @@ def _schema(
         "required": required or [],
     }
     parameters["additionalProperties"] = not reject_unknown
-    if name == "freezone_prepare_workflow":
-        parameters["oneOf"] = [{"required": ["intent"]}, {"required": ["plan"]}]
     return {
         "name": name,
         "description": description,
@@ -8585,7 +9170,7 @@ _WORKFLOW_INTENT_OBJECT_SCHEMA = {
                     "type": "string",
                     "enum": ["images", "video", "mixed"],
                 },
-                "item_count": {"type": "integer", "minimum": 1, "maximum": 12},
+                "item_count": {"type": "integer", "minimum": 1, "maximum": 25},
                 "total_duration_seconds": {
                     "type": "integer",
                     "minimum": 1,
@@ -8598,7 +9183,7 @@ _WORKFLOW_INTENT_OBJECT_SCHEMA = {
                 "include_audio": {"type": "boolean"},
                 "units": {
                     "type": "array",
-                    "maxItems": 12,
+                    "maxItems": 25,
                     "items": {
                         "type": "object",
                         "properties": {
@@ -8694,7 +9279,7 @@ _WORKFLOW_RUN_AFTER_CREATE_PROPS = {
             "Required execution decision. Set true when the user asked to create and generate/run, "
             "or when a terse confirmation such as 可以/确认 approves a preceding proposal that "
             "included generation. Set false only when the approved request is create-only. Never "
-            "omit this field or rely on an implicit false default."
+            "omit this field or rely on an implicit false default. Decide it when preparing or patching the draft; freezone_confirm_workflow_draft does not accept it."
         ),
     },
 }
@@ -8706,6 +9291,11 @@ if workflow_plan_json_schema is not None:
     _WORKFLOW_PLAN_OBJECT_SCHEMA = workflow_plan_json_schema()
 if workflow_intent_json_schema is not None:
     _WORKFLOW_INTENT_OBJECT_SCHEMA = workflow_intent_json_schema()
+
+# The persisted Plan contract remains strict, while this prepare-tool boundary
+# accepts identity fields that can be recovered from the admitted operation.
+_WORKFLOW_PREPARE_PLAN_OBJECT_SCHEMA = deepcopy(_WORKFLOW_PLAN_OBJECT_SCHEMA)
+_WORKFLOW_PREPARE_PLAN_OBJECT_SCHEMA["required"] = ["nodes", "edges"]
 
 _WORKFLOW_BINDINGS_SCHEMA = {
     "type": "array",
@@ -9350,20 +9940,27 @@ _CANVAS_COMMAND_ITEM_SCHEMA = {
             },
             ["node_type"],
         ),
-        _command_variant(
-            "add_next_node",
-            {
-                "client_id": _NON_EMPTY_STRING,
-                "source_node_id": _NON_EMPTY_STRING,
-                "node_type": {
-                    "type": "string",
-                    "enum": _AGENT_CREATABLE_NODE_TYPE_VALUES,
+        {
+            **_command_variant(
+                "add_next_node",
+                {
+                    "client_id": _NON_EMPTY_STRING,
+                    "source_node_id": _NON_EMPTY_STRING,
+                    "node_type": {
+                        "type": "string",
+                        "enum": _AGENT_CREATABLE_NODE_TYPE_VALUES,
+                    },
+                    "data": {"type": "object"},
+                    "connect": {"type": "boolean"},
                 },
-                "data": {"type": "object"},
-                "connect": {"type": "boolean"},
-            },
-            ["source_node_id"],
-        ),
+                ["source_node_id"],
+            ),
+            "description": (
+                "Creates a node downstream of source_node_id. It is placed next to "
+                "the source automatically and takes no position field; use "
+                "create_node when an explicit position is needed."
+            ),
+        },
         _command_variant(
             "update_node_data",
             {"node_id": _NON_EMPTY_STRING, "data": {"type": "object"}},
@@ -9645,11 +10242,11 @@ TOOLS = (
         "freezone_request_user_clarification",
         _schema(
             "freezone_request_user_clarification",
-            "Ask the user structured clarification questions in the Freezone frontend and wait for their submitted answers, including Skill Studio setup questions. For image/video generation pass generation_media_types to ask every field, or pass generation_required_choices returned by preflight to ask only missing fields; the server assembles canonical questions and the frontend resolves live options. With workflow_draft_id and workflow_expected_revision, submitted answers are validated and saved to that draft before returning its new preview. For legacy canonical generation questions, title and options may be omitted. Do not hand-build generation questions. For other clarifications, decide the next step from the current context. This tool never creates or runs canvas nodes.",
+            "Ask the user structured clarification questions in the Freezone frontend and wait for their submitted answers, including Skill Studio setup questions. For image/video generation pass generation_media_types to ask every field, or pass generation_required_choices returned by preflight to ask only missing fields; pass generation_preferences for specs the user already stated, keeping per-shot durations and final delivery resolution distinct from global video parameters. The server assembles canonical questions and the frontend resolves live options. With workflow_draft_id and workflow_expected_revision, submitted answers are validated and saved to that draft before returning its new preview. For legacy canonical generation questions, title and options may be omitted. Do not hand-build generation questions. For other clarifications, decide the next step from the current context. This tool never creates or runs canvas nodes.",
             {
                 "clarification_id": {
                     "type": "string",
-                    "description": "Optional stable id for this clarification request. Omit this unless you already have one; Freezone will generate it automatically.",
+                    "description": "Optional stable id for this clarification request. Omit it for a new card; Freezone will generate it automatically. Pass the clarification_id from a clarification_frontend_timeout result to resume waiting on that same card and collect the user's answer instead of showing a second card.",
                 },
                 "skill_studio_session_id": {
                     "type": "string",
@@ -9679,6 +10276,34 @@ TOOLS = (
                     "properties": {
                         "image": {"type": "array", "items": {"type": "string"}},
                         "video": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "additionalProperties": False,
+                },
+                "generation_preferences": {
+                    "type": "object",
+                    "description": (
+                        "Only generation specs explicitly stated by the user. Pass image/video "
+                        "aspect ratios and whether video shots need generated speech/audio. "
+                        "When both media types are requested, one supplied aspect ratio is "
+                        "recommended for both if supported; pass both when intentionally distinct. "
+                        "Use video_shot_durations_seconds for distinct shot lengths; each "
+                        "WorkflowPlan video node must also carry its own durationSec. "
+                        "delivery_resolution describes final output and does not set video_resolution. "
+                        "No BGM does not mean video_generate_audio=false."
+                    ),
+                    "properties": {
+                        "image_aspect_ratio": {"type": "string"},
+                        "video_aspect_ratio": {"type": "string"},
+                        "video_resolution": {"type": "string"},
+                        "video_duration_seconds": {
+                            "type": "number", "exclusiveMinimum": 0, "maximum": 600,
+                        },
+                        "video_generate_audio": {"type": "boolean"},
+                        "video_shot_durations_seconds": {
+                            "type": "array", "minItems": 1,
+                            "items": {"type": "number", "exclusiveMinimum": 0, "maximum": 600},
+                        },
+                        "delivery_resolution": {"type": "string"},
                     },
                     "additionalProperties": False,
                 },
@@ -10323,14 +10948,14 @@ TOOLS = (
         "freezone_prepare_workflow",
         _schema(
             "freezone_prepare_workflow",
-            "Prepare a persisted workflow using server-owned compilation. Provide exactly one of intent or plan; optional bindings declare prompt/context/reference/dependency/composition usage. A planning-to-generator prompt binding requires actual prompt text and preserves the original planning role. Returns compact preview; does not create canvas nodes or execute. Follow normal product admission and confirm the returned revision via freezone_confirm_workflow_draft.",
+            "Prepare a persisted workflow using server-owned compilation. Provide exactly one of intent or plan; user_goal belongs in intent, while a plan can use summary for the user goal and does not accept user_goal. Optional bindings declare prompt/context/reference/dependency/composition usage. A planning-to-generator prompt binding requires actual prompt text and preserves the original planning role. Returns compact preview; does not create canvas nodes or execute. Follow normal product admission and confirm the returned revision via freezone_confirm_workflow_draft.",
             {
                 **_SCOPE_PROPS,
                 "intent": _WORKFLOW_INTENT_OBJECT_SCHEMA,
-                "plan": _WORKFLOW_PLAN_OBJECT_SCHEMA,
+                "plan": _WORKFLOW_PREPARE_PLAN_OBJECT_SCHEMA,
                 "generation_answers": {
                     "type": "object",
-                    "description": "Pass submitted generation answers unchanged; the server maps them into the selected intent or plan.",
+                    "description": "Pass the clarification result's answers field itself (generation_answers = result['answers']), not the whole result. A receipt envelope with answers and generation_choices is also accepted. The server maps answers into the selected intent or plan.",
                 },
                 "bindings": _WORKFLOW_BINDINGS_SCHEMA,
                 "operation_id": {"type": "string"},
@@ -10444,7 +11069,9 @@ TOOLS = (
                 "Create the exact persisted workflow draft after the user confirms its preview. "
                 "Requires the shown revision, prevents duplicate confirmation, and delegates "
                 "node creation, approval, and optional execution to the deterministic canvas path. "
-                "Execution policy is frozen in the draft; patch it before confirming a policy change."
+                "Execution policy (run_after_create) is frozen in the draft when it is prepared or "
+                "patched and is not accepted here: to change it, call "
+                "freezone_patch_workflow_draft first and confirm the new revision."
             ),
             {
                 **_SCOPE_PROPS,
@@ -10453,7 +11080,6 @@ TOOLS = (
                     "type": "integer",
                     "description": "Exact draft revision confirmed by the user.",
                 },
-                **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
             },
             ["draft_id", "revision"],
             reject_unknown=True,
@@ -10485,7 +11111,7 @@ TOOLS = (
                         "Required execution decision. Set true to append run_workflow after graph "
                         "creation in the same approved frontend batch. A terse confirmation such "
                         "as 可以/确认 inherits true from a preceding create-and-generate proposal. "
-                        "Set false only for create-only; never omit this field."
+                        "Set false only for create-only; never omit this field. Decide it here; freezone_confirm_workflow_draft does not accept it."
                     ),
                 },
             },

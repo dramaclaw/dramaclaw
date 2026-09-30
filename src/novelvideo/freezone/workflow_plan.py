@@ -340,10 +340,29 @@ def validate_workflow_plan(
             if role_error:
                 errors.append(_issue(path, role_error))
             if not _link_allowed(link_type, node_types[source], node_types[target]):
+                compatible_link_types = _compatible_link_types(
+                    node_types[source], node_types[target]
+                )
+                compatibility_hint = (
+                    f"; allowed link types: {', '.join(compatible_link_types)}"
+                    if compatible_link_types
+                    else ""
+                )
+                if (
+                    _OBJECT_TYPE_BY_NODE_TYPE.get(node_types[source])
+                    in {"TextNode", "ScriptNode"}
+                    and node_types[target] == "audioNode"
+                    and "prompt_for" in compatible_link_types
+                ):
+                    compatibility_hint += (
+                        "; use prompt_for when the audio node consumes the source text"
+                    )
                 errors.append(
                     _issue(
                         path,
-                        f"{link_type} is incompatible with {node_types[source]} -> {node_types[target]}",
+                        f"{link_type} is incompatible with "
+                        f"{node_types[source]} -> {node_types[target]}"
+                        f"{compatibility_hint}",
                     )
                 )
             else:
@@ -511,6 +530,18 @@ def validate_workflow_plan(
     }
 
 
+_IGNORED_VIDEO_DURATION_KEYS = (
+    "duration",
+    "durationSeconds",
+    "duration_seconds",
+    "durationMs",
+    "duration_ms",
+    "lengthSec",
+    "length_seconds",
+    "seconds",
+)
+
+
 def _build_plan_preflight(nodes: list[Any]) -> dict[str, Any]:
     counts = {
         "text": 0,
@@ -562,6 +593,18 @@ def _build_plan_preflight(nodes: list[Any]) -> dict[str, Any]:
                             "video duration exceeds 15 seconds and will be split or clamped by the runtime",
                         )
                     )
+            else:
+                # A duration written under a key the compiler never reads is
+                # silently dropped and the planned duration stays 0; say so.
+                for alias in _IGNORED_VIDEO_DURATION_KEYS:
+                    if alias in data:
+                        warnings.append(
+                            _issue(
+                                f"nodes[{index}].data.{alias}",
+                                f"video duration key {alias} is ignored by the compiler; "
+                                "set data.durationSec (seconds)",
+                            )
+                        )
             if not model:
                 warnings.append(
                     _issue(
@@ -858,6 +901,14 @@ def _link_allowed(link_type: str, source_type: str, target_type: str) -> bool:
     )
 
 
+def _compatible_link_types(source_type: str, target_type: str) -> list[str]:
+    return sorted(
+        link_type
+        for link_type in ALLOWED_LINK_TYPES
+        if _link_allowed(link_type, source_type, target_type)
+    )
+
+
 def _find_cycle(adjacency: dict[str, list[str]]) -> str | None:
     visiting: set[str] = set()
     visited: set[str] = set()
@@ -893,12 +944,18 @@ def _oversized_planning_text_issues(value: Any) -> list[dict[str, str]]:
 
     issues: list[dict[str, str]] = []
     total_chars = 0
+    aggregated_values: set[str] = set()
 
     def visit(item: Any, path: str, *, aggregate: bool = False) -> None:
         nonlocal total_chars
         if isinstance(item, str):
             chars = count_billable_text_chars(item)
-            if aggregate:
+            # Compiler-owned plans intentionally repeat the same short brief in
+            # display, prompt-builder and runtime fields. Count each distinct
+            # value once so deterministic expansion does not look like hidden
+            # prose, while split distinct payloads remain bounded.
+            if aggregate and item not in aggregated_values:
+                aggregated_values.add(item)
                 total_chars += chars
             if chars > MAX_WORKFLOW_PLANNING_TEXT_CHARS:
                 issues.append(

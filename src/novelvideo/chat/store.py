@@ -270,7 +270,7 @@ class ChatStore:
                 """
                 SELECT content, created_at
                   FROM chat_messages
-                 WHERE role <> 'trace'
+                 WHERE role NOT IN ('trace', 'agent_notification')
                  ORDER BY id DESC
                  LIMIT 1
                 """
@@ -370,7 +370,7 @@ class ChatStore:
                 """
                 SELECT content, created_at
                   FROM chat_messages
-                 WHERE role <> 'trace'
+                 WHERE role NOT IN ('trace', 'agent_notification')
                  ORDER BY id DESC
                  LIMIT 1
                 """
@@ -1084,7 +1084,7 @@ class ChatStore:
                 """
                 SELECT id, role, content, media_json, turn_id, metadata_json, created_at
                   FROM chat_messages
-                 WHERE role <> 'trace'
+                 WHERE role NOT IN ('trace', 'agent_notification')
                  ORDER BY id DESC
                  LIMIT ?
                 """,
@@ -1158,7 +1158,7 @@ class ChatStore:
                 """
                 SELECT id, role, content, media_json, turn_id, metadata_json, created_at
                   FROM chat_messages
-                 WHERE role <> 'trace'
+                 WHERE role NOT IN ('trace', 'agent_notification')
                  ORDER BY id DESC
                  LIMIT ?
                 """,

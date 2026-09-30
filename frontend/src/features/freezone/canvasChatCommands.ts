@@ -34,8 +34,10 @@ import {
 } from "@/features/canvas/application/nodeActionResult";
 import {
   createFreezoneWorkflowRun,
+  getFreezoneWorkflowRun,
   updateFreezoneWorkflowRun,
   type FreezonePresetCanvasRequest,
+  type FreezoneWorkflowRun,
   type WorkflowRunActionStatus,
 } from "@/api/canvas";
 import {
@@ -230,7 +232,7 @@ export type CanvasChatCommandApplyResult = {
 export type CanvasChatCommandApplyStep = {
   commandIndex: number;
   type: CanvasChatCommand["type"] | "validate";
-  status: "success" | "error";
+  status: "success" | "pending" | "error";
   label: string;
   nodeId?: string;
   action?: string;
@@ -540,6 +542,13 @@ const WORKFLOW_ACTION_CONCURRENCY = 3;
 const WORKFLOW_ACTION_MAX_RETRIES = 2;
 const WORKFLOW_STOPPED_MESSAGE = "工作流已停止，未启动后续节点。";
 const WORKFLOW_LEASE_LOST_MESSAGE = "工作流执行租约已失效，已停止启动后续节点。"; // i18n-exempt
+const STOPPED_WORKFLOW_RUN_STATUSES = new Set<string>([
+  "failed",
+  "cancelled",
+  "interrupted",
+]);
+const workflowRunEndedMessage = (status: string) =>
+  `工作流运行已结束（${status}），已停止启动后续节点；请继续工作流以完成未完成的部分。`; // i18n-exempt
 const workflowPersistenceFailureMessage = (error: unknown) =>
   `工作流状态保存失败，已停止启动后续节点：${errorMessage(error)}`; // i18n-exempt
 const workflowCreationFailureMessage = (error: unknown) =>
@@ -1170,64 +1179,11 @@ export function extractCanvasChatCommandEnvelopes(values: unknown[]): CanvasChat
     });
 }
 
-function commandRequiresApproval(command: CanvasChatCommand): boolean {
-  if (command.type === "html_artifact") return true;
-  // Creating a node changes the user's canvas and can trigger generation or
-  // billing once the node is run. Keep it behind the same confirmation card
-  // as other mutating workflow operations. Legacy envelopes may still contain
-  // an auto-apply field, but interactive Freezone never bypasses confirmation.
-  if (command.type === "create_node" || command.type === "add_next_node") return true;
-  if (command.type === "clear_canvas") return true;
-  if (command.type === "delete_nodes") return command.node_ids.length > 0;
-  if (command.type === "delete_edges") return (command.edge_ids?.length ?? 0) > 0 || (command.pairs?.length ?? 0) > 0;
-  if (command.type === "layout_nodes") return !command.node_ids || command.node_ids.length === 0 || command.node_ids.length >= 4;
-  if (command.type === "open_mainline_projection") return true;
-  if (command.type === "run_workflow") return true;
-  return false;
-}
-
-function envelopeWithCommands(
-  commands: CanvasChatCommand[],
-  source?: CanvasChatCommandEnvelope,
-): CanvasChatCommandEnvelope | null {
-  if (commands.length === 0) return null;
-  return {
-    ...source,
-    schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
-    commands,
-  };
-}
-
 export function canvasCommandEnvelopeMatchesCanvas(
   envelope: CanvasChatCommandEnvelope,
   canvasId: string | null | undefined,
 ): boolean {
   return !envelope.canvas_id || !canvasId || envelope.canvas_id === canvasId;
-}
-
-export function partitionCanvasChatCommandEnvelopes(
-  envelopes: CanvasChatCommandEnvelope[],
-): CanvasChatCommandPartition {
-  const immediate: CanvasChatCommandEnvelope[] = [];
-  const requiresApproval: CanvasChatCommandEnvelope[] = [];
-
-  for (const envelope of envelopes) {
-    const safeCommands: CanvasChatCommand[] = [];
-    const approvalCommands: CanvasChatCommand[] = [];
-    for (const command of envelope.commands) {
-      if (commandRequiresApproval(command)) {
-        approvalCommands.push(command);
-      } else {
-        safeCommands.push(command);
-      }
-    }
-    const safeEnvelope = envelopeWithCommands(safeCommands, envelope);
-    const approvalEnvelope = envelopeWithCommands(approvalCommands, envelope);
-    if (safeEnvelope) immediate.push(safeEnvelope);
-    if (approvalEnvelope) requiresApproval.push(approvalEnvelope);
-  }
-
-  return { immediate, requiresApproval };
 }
 
 function nodeById(id: string): CanvasNode | null {
@@ -2940,6 +2896,8 @@ async function executeQueuedNodeActions(
         ? `canvas-runner:${crypto.randomUUID()}`
         : `canvas-runner:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 10)}`;
     let workflowLeaseLost = false;
+    let workflowServerCompleted = false;
+    let workflowServerReconciliationPending = false;
     let workflowPersistenceError: string | null = null;
     let workflowHeartbeat: ReturnType<typeof setInterval> | null = null;
     let workflowHeartbeatQueue: Promise<void> = Promise.resolve();
@@ -2959,9 +2917,28 @@ async function executeQueuedNodeActions(
       workflowHeartbeatQueue = queued.catch(() => undefined);
       return queued;
     };
+    // A terminal run PATCH still returns 200 with the unchanged record, so the
+    // runner must read the status back instead of treating 200 as a renewed
+    // lease (issue #730).
+    const observeWorkflowRunStatus = (run: FreezoneWorkflowRun) => {
+      if (run.status === "completed") {
+        workflowServerCompleted = true;
+        return;
+      }
+      if (!STOPPED_WORKFLOW_RUN_STATUSES.has(run.status)) return;
+      workflowLeaseLost = true;
+      workflowPersistenceError = workflowRunEndedMessage(run.status);
+    };
+    let workflowVisibilityListener: (() => void) | null = null;
+    // Renews the lease and resolves once the server's run status is observed.
+    let confirmWorkflowRunActive: () => Promise<void> = async () => undefined;
     const stopWorkflowHeartbeat = () => {
       if (workflowHeartbeat !== null) clearInterval(workflowHeartbeat);
       workflowHeartbeat = null;
+      if (workflowVisibilityListener && typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", workflowVisibilityListener);
+      }
+      workflowVisibilityListener = null;
     };
     if (projectId && canvasId) {
       try {
@@ -3020,19 +2997,30 @@ async function executeQueuedNodeActions(
           }));
         }
         const runId = workflowRunId;
-        workflowHeartbeat = setInterval(() => {
-          void enqueueWorkflowHeartbeat(async () => {
-            await updateFreezoneWorkflowRun(projectId, canvasId, runId, {
+        const sendWorkflowHeartbeat = async (): Promise<void> => {
+          if (workflowLeaseLost) return;
+          await enqueueWorkflowHeartbeat(async () => {
+            const heartbeatRun = await updateFreezoneWorkflowRun(projectId, canvasId, runId, {
               status: "running",
               runner_id: workflowRunnerId,
             });
+            observeWorkflowRunStatus(heartbeatRun);
           }).catch((error) => {
             if (error instanceof ApiError && error.status === 409) workflowLeaseLost = true;
             workflowPersistenceError = error instanceof ApiError && error.status === 409
               ? WORKFLOW_LEASE_LOST_MESSAGE
               : workflowPersistenceFailureMessage(error);
           });
-        }, 15_000);
+        };
+        confirmWorkflowRunActive = sendWorkflowHeartbeat;
+        workflowHeartbeat = setInterval(() => void sendWorkflowHeartbeat(), 15_000);
+        if (typeof document !== "undefined") {
+          // Background tabs throttle or freeze timers; renew as soon as the page is back.
+          workflowVisibilityListener = () => {
+            if (document.visibilityState === "visible") void sendWorkflowHeartbeat();
+          };
+          document.addEventListener("visibilitychange", workflowVisibilityListener);
+        }
       } catch (error) {
         if (error instanceof ApiError && error.status === 409) {
           const message = "当前画布已有工作流正在执行，请等待其完成后再试。";
@@ -3082,14 +3070,29 @@ async function executeQueuedNodeActions(
               ...(status ? { status } : {}),
               runner_id: workflowRunnerId,
             });
+            let confirmedRun = updatedRun;
+            if (status === "completed" && updatedRun.status === "running") {
+              // PATCH records browser progress; GET also reconciles durable task artifacts.
+              confirmedRun = await getFreezoneWorkflowRun(projectId, canvasId, runId, 10);
+            }
+            observeWorkflowRunStatus(confirmedRun);
+            if (status === "completed") {
+              workflowServerReconciliationPending = confirmedRun.status === "running";
+            }
+            if (status && confirmedRun.status !== status
+              && !(status === "completed" && confirmedRun.status === "running")
+              && !workflowPersistenceError) {
+              workflowPersistenceError =
+                `工作流最终状态未确认（请求 ${status}，服务端返回 ${confirmedRun.status}）。`;
+            }
             if (typeof window !== "undefined") {
               window.dispatchEvent(new CustomEvent(FREEZONE_WORKFLOW_RUN_UPDATED_EVENT, {
                 detail: {
                   projectId,
                   canvasId,
                   runId,
-                  status: updatedRun.status,
-                  run: updatedRun,
+                  status: confirmedRun.status,
+                  run: confirmedRun,
                 },
               }));
             }
@@ -3198,6 +3201,26 @@ async function executeQueuedNodeActions(
     }
     const generationActions = pendingActions.filter((action) =>
       GENERATION_NODE_ACTIONS.has(action.action));
+    const completedServerActionOutcome = (action: PendingNodeAction, retryCount: number) => {
+      const output = generatedResultOutputFromNode(action.nodeId, action.action);
+      if (
+        action.action !== "run_skill" &&
+        GENERATION_NODE_ACTIONS.has(action.action) &&
+        (!hasGeneratedResult(action.nodeId, action.action) || !output)
+      ) {
+        return { action, failed: null, pending: true, retryCount };
+      }
+      return {
+        action,
+        failed: null,
+        output: {
+          skipped: true,
+          reason: "workflow_run_already_completed",
+          ...(output ?? {}),
+        },
+        retryCount,
+      };
+    };
     const generationCountByLane = generationActions.reduce<Record<WorkflowActionLane, number>>(
       (counts, action) => {
         const lane = workflowActionLane(action.action);
@@ -3242,7 +3265,7 @@ async function executeQueuedNodeActions(
       }
       if (workflowLeaseLost) {
         runFailed = true;
-        result.errors.push(WORKFLOW_LEASE_LOST_MESSAGE);
+        result.errors.push(workflowPersistenceError ?? WORKFLOW_LEASE_LOST_MESSAGE);
         break;
       }
       if (workflowPersistenceError) {
@@ -3343,7 +3366,7 @@ async function executeQueuedNodeActions(
                 projectId,
                 lane,
                 options.actionTimeoutMs ?? DEFAULT_NODE_ACTION_TIMEOUT_MS,
-                () => workflowLeaseLost || workflowCancelled(),
+                () => workflowLeaseLost || workflowServerCompleted || workflowCancelled(),
                 () => {
                   void persistRunUpdate([{
                     node_id: action.nodeId,
@@ -3354,6 +3377,9 @@ async function executeQueuedNodeActions(
                 },
               );
               if (!capacityReady) {
+                if (workflowServerCompleted) {
+                  return completedServerActionOutcome(action, retryCount);
+                }
                 return {
                   action,
                   failed: workflowCancelled()
@@ -3379,6 +3405,10 @@ async function executeQueuedNodeActions(
               phase: "preparing",
               retry_count: retryCount,
             }]);
+
+            if (workflowServerCompleted) {
+              return completedServerActionOutcome(action, retryCount);
+            }
 
             if (action.action === "generate_html") {
               if (!projectId || !options.canvasId) return {action,failed:"HTML generation requires an active project and canvas"};
@@ -3414,6 +3444,24 @@ async function executeQueuedNodeActions(
               return {
                 action,
           failed: "旁白节点缺少上游生成的文本，已停止提交 TTS 请求；请先完成剧本/Beat 文本生成后重试。", // i18n-exempt -- workflow error payload
+                retryCount,
+              };
+            }
+
+            // Tail-frame capture and input hydration await, and the page may have
+            // been frozen past the lease meanwhile. Wait for a server-confirmed
+            // status (queued behind any in-flight heartbeat) before dispatch; a
+            // failed confirmation is not a confirmation, so it blocks dispatch too.
+            await confirmWorkflowRunActive();
+            if (workflowServerCompleted) {
+              return completedServerActionOutcome(action, retryCount);
+            }
+            if (workflowLeaseLost || workflowPersistenceError || workflowCancelled()) {
+              return {
+                action,
+                failed: workflowCancelled()
+                  ? WORKFLOW_STOPPED_MESSAGE
+                  : workflowPersistenceError ?? WORKFLOW_LEASE_LOST_MESSAGE,
                 retryCount,
               };
             }
@@ -3660,24 +3708,41 @@ async function executeQueuedNodeActions(
           releaseActionSlot();
         }
         })();
-        await persistRunUpdate([{
-          node_id: settled.action.nodeId,
-          action: settled.action.action,
-          status: settled.failed
-            ? settled.failed === WORKFLOW_STOPPED_MESSAGE
-              ? "skipped"
-              : settled.failed.startsWith("跳过 ") ? "blocked" : "failed"
-            : isRecord(settled.output) && settled.output.skipped === true
-              ? "skipped"
-              : "completed",
-          ...(settled.failed ? { error: settled.failed } : {}),
-          retry_count: settled.retryCount ?? 0,
-          ...workflowTaskReference(settled.output),
-        }]);
+        if (!("pending" in settled && settled.pending)) {
+          await persistRunUpdate([{
+            node_id: settled.action.nodeId,
+            action: settled.action.action,
+            status: settled.failed
+              ? settled.failed === WORKFLOW_STOPPED_MESSAGE
+                ? "skipped"
+                : settled.failed.startsWith("跳过 ") ? "blocked" : "failed"
+              : isRecord(settled.output) && settled.output.skipped === true
+                ? "skipped"
+                : "completed",
+            ...(settled.failed ? { error: settled.failed } : {}),
+            retry_count: settled.retryCount ?? 0,
+            ...workflowTaskReference(settled.output),
+          }]);
+        }
         return settled;
       }));
 
-      for (const { action, failed, output } of levelResults) {
+      for (const settled of levelResults) {
+        const { action, failed, output } = settled;
+        if ("pending" in settled && settled.pending) {
+          result.commandResults.push({
+            commandIndex: action.commandIndex,
+            type: "run_node_action",
+            status: "pending",
+            label: `${action.label}（${i18next.t("freezone.chat.workflowOutputSyncPendingLabel", {
+              defaultValue: "产物待同步",
+            })}）`,
+            nodeId: action.nodeId,
+            action: action.action,
+            output: { pending: true, reason: "workflow_result_sync_pending" },
+          });
+          continue;
+        }
         if (failed === WORKFLOW_STOPPED_MESSAGE) {
           runCancelled = true;
           continue;
@@ -3727,6 +3792,15 @@ async function executeQueuedNodeActions(
         [],
         runCancelled ? "cancelled" : runFailed || blockedNodeIds.size > 0 ? "failed" : "completed",
       );
+      if (workflowServerReconciliationPending) {
+        for (const step of result.commandResults) {
+          if (step.type !== "run_node_action" || step.status !== "success") continue;
+          if (!pendingActions.some((action) => action.nodeId === step.nodeId && action.action === step.action)) continue;
+          step.status = "pending";
+          step.output = { pending: true, reason: "workflow_server_reconciliation_pending" };
+          result.openedUiActions = Math.max(0, result.openedUiActions - 1);
+        }
+      }
     } catch (error) {
       if (!workflowPersistenceError) throw error;
       runFailed = true;
@@ -4021,13 +4095,24 @@ function commandNodeRefs(command: CanvasChatCommand): string[] {
   }
 }
 
+/**
+ * 规范化时给未带 client_id 的新建命令补的合成 id 前缀。审批卡按 client_id 收集并改写
+ * 新节点的生成参数，执行器再用同一个 id 找回建出的节点；没有它，这类节点在审批阶段
+ * 无法被识别（#685）。格式不匹配 Agent 可引用的 `auto:N`，不会与其混淆。
+ */
+const GENERATED_CLIENT_ID_PREFIX = "auto:new:";
+
+export function isGeneratedCanvasClientId(id: string | undefined): boolean {
+  return typeof id === "string" && id.startsWith(GENERATED_CLIENT_ID_PREFIX);
+}
+
 export function normalizeCanvasChatCommandEnvelopesForValidation(
   envelopes: CanvasChatCommandEnvelope[],
   initialNodeIds?: Iterable<string>,
 ): CanvasChatCommandEnvelope[] {
   const baseNodeIds = new Set(initialNodeIds ?? useCanvasStore.getState().nodes.map((node) => node.id));
 
-  return envelopes.map((envelope) => {
+  return envelopes.map((envelope, envelopeIndex) => {
     const knownRefs = new Set(baseNodeIds);
     const referencedAutoClientIds = new Set(
       envelope.commands
@@ -4069,7 +4154,14 @@ export function normalizeCanvasChatCommandEnvelopesForValidation(
         ? [...new Set(commandNodeRefs(nextCommand))]
           .filter((ref) => ref.trim().length > 0 && !knownRefs.has(ref))
         : [];
-      if (nextUnknownRefs.length !== 1) return command;
+      if (nextUnknownRefs.length !== 1) {
+        const generatedClientId = `${GENERATED_CLIENT_ID_PREFIX}${envelopeIndex}:${index}`;
+        knownRefs.add(generatedClientId);
+        return {
+          ...command,
+          client_id: generatedClientId,
+        };
+      }
 
       const clientId = nextUnknownRefs[0];
       knownRefs.add(clientId);
