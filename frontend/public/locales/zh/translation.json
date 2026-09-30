@@ -1386,6 +1386,22 @@
     }
   },
   "credits": {
+    "transactionSource": {
+      "orgAllocate": "组织分配积分",
+      "orgReduce": "组织收回积分",
+      "orgDepartureSweep": "离职积分回收",
+      "orgRefundSweep": "离职后退款积分回收",
+      "orgTransfer": "组织积分调整",
+
+      "orgRecharge": "组织积分充值",
+      "personalRecharge": "积分充值",
+      "paymentReceived": "支付成功，积分到账",
+      "adminIncrease": "管理员增加积分",
+      "adminDecrease": "管理员扣减积分",
+      "adminRecharge": "管理员充值",
+      "adminAdjustment": "管理员手动调整",
+      "adminRechargeReceived": "管理员手动充值到账"
+    },
     "balance": "当前积分余额",
     "availableBalance": "可用积分余额",
     "short": "积分",
