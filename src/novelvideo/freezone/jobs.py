@@ -685,6 +685,9 @@ async def _run_video_processing_model(
         processing_metadata=processing_metadata,
         egress_context=egress_context,
         task_type="freezone_video_upscale",
+        # Preserve the existing upscale identity; frame-rate processing is a
+        # separate paid operation within the same root task.
+        scope="video_frame_rate" if mode == "video_frame_rate" else "task",
         project_output_dir=str(project_dir),
     )
     if not result or result.status.value != "done":
