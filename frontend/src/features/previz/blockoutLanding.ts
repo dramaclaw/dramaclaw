@@ -33,6 +33,8 @@ export interface PrevizHeldBlockout {
 
 /** 提示里最多列几条检查意见，多了 toast 撑不下。 */
 const SHOWN_WARNINGS = 3;
+/** 多行意见按默认 2.2 秒根本读不完；给的时间同 SkillNode 里提交被拒的那条。 */
+const WARNINGS_TOAST_MS = 8_000;
 
 /** 任务结果是跨仓库契约上的不可信输入：形状不对就当成空结果，由导入那一步统一拒绝。 */
 export function readBlockoutResult(body: unknown): {
@@ -59,12 +61,20 @@ function holdOrDrop(jobId: string, rejection: PrevizBlockoutRejection): PrevizHe
 }
 
 function reportLanded(count: number, warnings: string[]): void {
-  toast.success(i18n.t('previz.blockout.done', { count }));
-  if (warnings.length > 0) {
-    toast.warning(i18n.t('previz.blockout.warnings', { count: warnings.length }), {
-      description: warnings.slice(0, SHOWN_WARNINGS).join('\n'),
-    });
+  const done = i18n.t('previz.blockout.done', { count });
+  if (warnings.length === 0) {
+    toast.success(done);
+    return;
   }
+  // 全局 toaster 一次只显示一条：分成「已生成」+「意见」两条，后一条会把前一条顶掉。
+  // 合成一条，「已生成」做标题、意见做正文。
+  toast.warning(done, {
+    description: [
+      i18n.t('previz.blockout.warnings', { count: warnings.length }),
+      ...warnings.slice(0, SHOWN_WARNINGS),
+    ].join('\n'),
+    duration: WARNINGS_TOAST_MS,
+  });
 }
 
 /**

@@ -79,9 +79,29 @@ describe("landBlockoutResult with the editor open on that node", () => {
     expect(storeIds()).toEqual(["blockout-box_0", "blockout-box_1", "blockout-box_2"]);
     expect(usePrevizStore.getState().past).toHaveLength(1);
     expect(patch).toEqual({ blockoutHeld: null });
-    expect(toast.success).toHaveBeenCalledWith('previz.blockout.done:{"count":3}');
-    expect(toast.warning).toHaveBeenCalledWith('previz.blockout.warnings:{"count":1}', {
-      description: "a 悬空",
+    // 全局 toaster 只显示一条、只停 2.2 秒：意见和「已生成」合成一条，给够时间读。
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.warning).toHaveBeenCalledTimes(1);
+    expect(toast.warning).toHaveBeenCalledWith('previz.blockout.done:{"count":3}', {
+      description: 'previz.blockout.warnings:{"count":1}\na 悬空',
+      duration: 8_000,
+    });
+  });
+
+  it("lists at most three warnings, in order", () => {
+    usePrevizStore.getState().loadScene(createDefaultScene(), "previz-1");
+
+    landBlockoutResult({
+      nodeId: "previz-1",
+      nodeData: { scene: null },
+      jobId: "job-1",
+      body: result(1, ["w1", "w2", "w3", "w4"]),
+      mode: "replace",
+    });
+
+    expect(toast.warning).toHaveBeenCalledWith('previz.blockout.done:{"count":1}', {
+      description: 'previz.blockout.warnings:{"count":4}\nw1\nw2\nw3',
+      duration: 8_000,
     });
   });
 
@@ -124,6 +144,7 @@ describe("landBlockoutResult with the editor closed", () => {
     expect(patch.blockoutHeld).toBeNull();
     expect(storeIds()).toEqual([]);
     expect(toast.success).toHaveBeenCalledWith('previz.blockout.done:{"count":2}');
+    expect(toast.warning).not.toHaveBeenCalled();
   });
 
   it("appends to the scene stored on the node", () => {
