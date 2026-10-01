@@ -2953,18 +2953,47 @@ def _compile_dynamic_recipe_items_intent(
             node_types.get(node_id) == "videoNode" for node_id in compose_sources
         ):
             compose_id = "final_compose"
+            has_music = False
+            has_voiceover = False
+            for source_id in compose_sources:
+                if node_types.get(source_id) != "audioNode":
+                    continue
+                source_item = item_by_id.get(source_id) or {}
+                source_role = _text(
+                    source_item.get("timeline_role")
+                    or source_item.get("timelineRole")
+                ).lower()
+                source_kind = _intent_audio_kind(
+                    source_item, node_recipes.get(source_id)
+                )
+                if source_kind == "music" or source_role in {
+                    "music",
+                    "bgm",
+                    "background_music",
+                }:
+                    has_music = True
+                else:
+                    has_voiceover = True
+            compose_parts = ["视频片段"]
+            if has_music:
+                compose_parts.append("配乐")
+            if has_voiceover:
+                compose_parts.append("旁白")
+            compose_description = (
+                f"汇总{'、'.join(compose_parts)}，进入时间线完成最终编排。"
+            )
             nodes.append(
                 {
                     "id": compose_id,
                     "node_type": "videoComposeNode",
                     "name": "成片合成",
-                    "description": "汇总视频片段、配乐和旁白，进入时间线完成最终编排。",
+                    "description": compose_description,
                     "stage": "compose",
                     "data": {
                         "displayName": "成片合成",
                         "title": "成片合成",
-                        "content": "汇总视频片段、配乐和旁白，进入时间线完成最终编排。",
-                        "prompt": "汇总视频片段、配乐和旁白，进入时间线完成最终编排。",
+                        "content": compose_description,
+                        "prompt": compose_description,
                         # Keep the intent's semantic source order. Canvas node ids
                         # are allocated later, so the frontend resolves these plan
                         # ids through each node's workflowPlanNodeId.
