@@ -2902,6 +2902,43 @@ def test_compiler_keeps_timeline_audio_out_of_video_references(monkeypatch):
     }
 
 
+def test_compiler_does_not_describe_missing_bgm_in_final_compose(monkeypatch):
+    catalog = _load_catalog_module()
+    monkeypatch.setattr(catalog, "list_user_agent_config_items", None)
+
+    compiled = catalog.compile_workflow_intent(
+        {
+            "skill_id": "video-tutorial",
+            "user_goal": "制作一条不含背景音乐的中文教程视频",
+            "items": [
+                {
+                    "id": "clip",
+                    "title": "教程视频",
+                    "prompt": "生成教程视频片段",
+                    "recipe_id": "general-video",
+                },
+                {
+                    "id": "voice",
+                    "title": "中文旁白",
+                    "prompt": "欢迎观看本期教程",
+                    "narration": "欢迎观看本期教程",
+                    "recipe_id": "general-audio",
+                    "timeline_role": "voiceover",
+                },
+            ],
+        }
+    )
+
+    assert compiled["ok"] is True
+    compose = next(
+        node
+        for node in compiled["plan"]["nodes"]
+        if node["id"] == "final_compose"
+    )
+    for field in ("description", "content", "prompt"):
+        assert "配乐" not in compose.get(field, compose["data"].get(field, ""))
+
+
 def test_compiler_uses_execution_only_edge_between_generated_video_steps(monkeypatch):
     catalog = _load_catalog_module()
     monkeypatch.setattr(catalog, "list_user_agent_config_items", None)
