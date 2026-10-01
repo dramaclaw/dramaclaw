@@ -1270,7 +1270,7 @@ def _compile_isomorphic_plan_through_template(
         match=match,
         assumptions=assumptions,
     )
-    compiled = compile_workflow_intent(intent)
+    compiled = compile_workflow_intent(intent, _include_unit_facts=False)
     if not compiled.get("ok"):
         return None, {
             "isomorphic": False,
@@ -1789,7 +1789,9 @@ def get_workflow_skill(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def compile_workflow_intent(intent: Any) -> dict[str, Any]:
+def compile_workflow_intent(
+    intent: Any, *, _include_unit_facts: bool = True
+) -> dict[str, Any]:
     """Compile a compact Agent decision into a complete, validated dynamic plan."""
     if not isinstance(intent, dict):
         return _intent_error("intent must be an object", path="intent")
@@ -1860,6 +1862,7 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
                 skill_id=skill_id,
                 user_goal=user_goal,
                 resolved_inputs=input_contract["resolved"],
+                include_unit_facts=_include_unit_facts,
             )
         )
         if planner_error is not None:
@@ -1964,6 +1967,39 @@ def _agent_authored_planner_metadata(
     return metadata
 
 
+def _standard_outline_prompt(
+    *,
+    skill_id: str,
+    user_goal: str,
+    units: list[dict[str, Any]],
+) -> str:
+    """Keep standard tutorial outline input connected to each planned unit.
+
+    The standard planner keeps step facts in ``planner.units`` so image/video
+    items can consume them. The outline is the upstream text source for those
+    items and must receive the same facts; using only the compact user goal
+    silently drops numeric instructions before the first Recipe runs.
+    """
+    if skill_id != "video-tutorial" or not units:
+        return user_goal
+    briefs: list[str] = []
+    for index, unit in enumerate(units, 1):
+        if not isinstance(unit, dict):
+            continue
+        title = _text(unit.get("title")) or f"第{index}段"
+        prompt = _text(unit.get("prompt"))
+        narration = _text(unit.get("narration"))
+        parts = [f"{title}："]
+        if prompt:
+            parts.append(prompt)
+        if narration:
+            parts.append(f"旁白：{narration}")
+        briefs.append(" ".join(parts))
+    if not briefs:
+        return user_goal
+    return f"{user_goal}\n逐段事实与旁白（必须完整保留）：\n" + "\n".join(briefs)
+
+
 def _standard_skill_items(
     *,
     skill_id: str,
@@ -1971,6 +2007,7 @@ def _standard_skill_items(
     include_audio: bool,
     units: list[dict[str, Any]],
     user_goal: str,
+    include_unit_facts: bool = True,
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     if skill_id == "ecommerce-ad":
@@ -2044,7 +2081,13 @@ def _standard_skill_items(
         _planned_item(
             item_id="outline",
             title="内容规划",
-            prompt=user_goal,
+            prompt=(
+                _standard_outline_prompt(
+                    skill_id=skill_id, user_goal=user_goal, units=units
+                )
+                if include_unit_facts
+                else user_goal
+            ),
             recipe_id=outline_recipe,
             depends_on=["workflow_input"],
             stage="planning",
@@ -2380,6 +2423,7 @@ def _expand_standard_skill_intent(
     skill_id: str,
     user_goal: str,
     resolved_inputs: dict[str, Any],
+    include_unit_facts: bool = True,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any] | None]:
     profile = _DETERMINISTIC_SKILL_PLANNERS.get(skill_id)
     if profile is None:
@@ -2551,6 +2595,7 @@ def _expand_standard_skill_intent(
         include_audio=include_audio,
         units=units,
         user_goal=user_goal,
+        include_unit_facts=include_unit_facts,
     )
     expanded = {
         **intent,
