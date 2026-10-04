@@ -21,6 +21,10 @@ from uuid import uuid4
 
 from tools.registry import tool_error, tool_result
 
+# The MCP host supplies this before exec; native Hermes includes stories by default.
+_INCLUDE_INTERACTIVE_STORY = not bool(globals().get("_MCP_EXCLUDE_INTERACTIVE_STORY", False))
+
+
 TOOLSET = "dramaclaw"
 ACP_TOOLSET = "hermes-acp"
 REGISTER_TOOLSETS = (ACP_TOOLSET,)
@@ -3053,7 +3057,24 @@ def _load_interactive_story_tools():
     )
 
 
-INTERACTIVE_STORY_TOOLS = _load_interactive_story_tools()
+INTERACTIVE_STORY_TOOLS = _load_interactive_story_tools() if _INCLUDE_INTERACTIVE_STORY else ()
+
+
+_STORY_CANVAS_TOOLS = (
+    (
+        "dramaclaw_get_freezone_canvas",
+        _schema(
+            "dramaclaw_get_freezone_canvas",
+            "Read one persisted Freezone canvas, including its authoritative revision. If the revision is unavailable, stop; never infer it from an empty canvas. Create a new canvas with dramaclaw_create_freezone_canvas_from_preset.",
+            {
+                "project_id": {"type": "string", "description": "Defaults to DRAMACLAW_PROJECT_ID."},
+                "canvas_id": {"type": "string", "description": "Canvas id."},
+            },
+            ["canvas_id"],
+        ),
+        _handle_get_freezone_canvas,
+    ),
+) if _INCLUDE_INTERACTIVE_STORY else ()
 
 
 TOOLS = (
@@ -3168,19 +3189,7 @@ TOOLS = (
         ),
         _handle_list_freezone_canvases,
     ),
-    (
-        "dramaclaw_get_freezone_canvas",
-        _schema(
-            "dramaclaw_get_freezone_canvas",
-            "Read one persisted Freezone canvas, including its authoritative revision. If the revision is unavailable, stop; never infer it from an empty canvas. Create a new canvas with dramaclaw_create_freezone_canvas_from_preset.",
-            {
-                "project_id": {"type": "string", "description": "Defaults to DRAMACLAW_PROJECT_ID."},
-                "canvas_id": {"type": "string", "description": "Canvas id."},
-            },
-            ["canvas_id"],
-        ),
-        _handle_get_freezone_canvas,
-    ),
+    *_STORY_CANVAS_TOOLS,
     *INTERACTIVE_STORY_TOOLS,
     (
         "dramaclaw_save_freezone_canvas",

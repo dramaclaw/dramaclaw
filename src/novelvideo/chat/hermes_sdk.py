@@ -251,7 +251,7 @@ def _has_content_filter_signal(value: object) -> bool:
 
 def _canonical_tool_name(name: object) -> str:
     normalized = str(name or "").strip()
-    if normalized.startswith("dramaclaw."):
+    if normalized.startswith(("dramaclaw.", "dramaclaw_interactive_story.")):
         return normalized.partition(".")[2]
     return normalized
 

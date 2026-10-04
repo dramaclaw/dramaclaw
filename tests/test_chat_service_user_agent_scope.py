@@ -1625,6 +1625,26 @@ def test_codex_freezone_instructions_forbid_invented_resource_uris():
         ("场景还没完成", False),
         ("分镜需要返工重做", False),
         ("视频已经生成完成", False),
+        ("角色图片做好了，帮我看下下载地址。", False),
+        ("继续生成角色参考图", False),
+        ("角色参考图已经做好了", False),
+        ("继续查看角色素材", False),
+        ("继续写角色介绍", False),
+        ("确认角色阶段完成", True),
+        ("确认角色阶段完成，再生成场景参考图", True),
+        ("先不要确认角色阶段完成", False),
+        ("先别确认场景阶段完成", False),
+        ("暂时不确认分镜阶段完成", False),
+        ("不用确认交付阶段通过", False),
+        ("无需确认验收阶段完成", False),
+        ("不需要确认角色阶段完成", False),
+        ("先不要马上确认角色阶段完成", False),
+        ("先不要 再 确认角色阶段完成", False),
+        ("当前角色阶段已完成，先不要确认", False),
+        ("确认角色阶段完成，不用再生成角色图片", True),
+        ("别再生成角色图片，确认角色阶段完成", True),
+        ("分别确认角色和场景阶段完成", True),
+        ("请特别确认角色阶段完成", True),
     ],
 )
 def test_interactive_story_manual_stage_confirmation_intent(prompt, expected):
@@ -1643,6 +1663,153 @@ def test_interactive_story_manual_stage_confirmation_intent(prompt, expected):
 )
 def test_stage_confirmation_failure_uses_prompt_language(prompt, expected):
     assert chat_service._stage_confirmation_not_written_message(prompt).startswith(expected)
+
+
+@pytest.mark.parametrize(
+    ("canvas_kind", "prompt", "confirm_written", "blocked"),
+    [
+        ("ordinary", "角色图片做好了，帮我看下下载地址。", False, False),
+        ("ordinary", "继续生成角色参考图", False, False),
+        ("ordinary", "当前角色和场景都完成了", False, False),
+        ("missing", "当前角色和场景都完成了", False, False),
+        ("outline", "当前角色和场景都完成了", False, False),
+        ("other_canvas", "当前角色和场景都完成了", False, False),
+        ("other_project", "当前角色和场景都完成了", False, False),
+        ("fake_group", "当前角色和场景都完成了", False, False),
+        ("corrupt", "当前角色和场景都完成了", False, False),
+        ("story", "角色图片做好了，帮我看下下载地址。", False, False),
+        ("story", "继续生成角色参考图", False, False),
+        ("story", "先不要确认角色阶段完成", False, False),
+        ("story", "先别确认场景阶段完成", False, False),
+        ("story", "确认角色阶段完成，不用再生成角色图片", False, True),
+        ("story", "分别确认角色和场景阶段完成", False, True),
+        ("story", "当前角色和场景都完成了", False, True),
+        ("story", "当前角色和场景都完成了", True, False),
+    ],
+)
+async def test_codex_stage_confirmation_is_bound_to_existing_story_and_user_intent(
+    monkeypatch, tmp_path, canvas_kind, prompt, confirm_written, blocked
+):
+    from novelvideo.freezone import canvas_store
+
+    state_dir = tmp_path / "state" / "project-a"
+    project_dir = tmp_path / "managed-output" / "project-a"
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("NOVELVIDEO_RUNTIME_DIR", str(tmp_path / "runtime"))
+    story_node = {
+        "id": "story-group",
+        "type": "groupNode",
+        "data": {"storyGroup": True, "interactiveStoryId": "story-a"},
+    }
+    payload = {"revision": 1, "nodes": [], "edges": []}
+    if canvas_kind == "story":
+        payload["nodes"] = [story_node]
+    elif canvas_kind == "fake_group":
+        payload["nodes"] = [{**story_node, "data": {"storyGroup": False}}]
+    elif canvas_kind == "outline":
+        payload["metadata"] = {"interactiveStoryOutline": {"status": "confirmed"}}
+    if canvas_kind != "missing":
+        path = canvas_store.canvas_path(project_dir, "canvas-a")
+        path.parent.mkdir(parents=True)
+        path.write_text("{" if canvas_kind == "corrupt" else json.dumps(payload))
+    if canvas_kind in {"other_canvas", "other_project"}:
+        other_project = (
+            project_dir if canvas_kind == "other_canvas" else tmp_path / "project-b"
+        )
+        other_canvas = "canvas-b" if canvas_kind == "other_canvas" else "canvas-a"
+        path = canvas_store.canvas_path(other_project, other_canvas)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({**payload, "nodes": [story_node]}))
+
+    async def authorize(**kwargs):
+        return None
+
+    async def create_token(*args, **kwargs):
+        return "agent-token"
+
+    class AuthPort:
+        async def revoke_agent_session(self, token):
+            assert token == "agent-token"
+
+    reply = {"message": "正常画布回复。", "mode": "read_only", "canvas_receipts": []}
+    confirmation = None
+    if confirm_written:
+        receipt = {
+            "ok": True,
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "story_id": "story-a",
+            "revision": 2,
+            "refresh_canvas": True,
+            "confirmed_stages": ["characters", "scenes"],
+        }
+        confirmation = SimpleNamespace(
+            type="tool_updated",
+            name="dramaclaw_interactive_story.dramaclaw_confirm_interactive_story_stages",
+            text="[mcp:completed] stage confirmation",
+            call_id="confirm-call",
+            status="completed",
+            input={"story_id": "story-a"},
+            output=receipt,
+            structured=receipt,
+            error=None,
+        )
+        reply.update(
+            mode="mutation", canvas_receipts=[{"bridge_key": None, "revision": 2}]
+        )
+
+    class Thread:
+        async def stream(self, request):
+            for event in _codex_turn_events(json.dumps(reply), tool=confirmation):
+                yield event
+
+    monkeypatch.setattr(chat_service, "authorize_hermes_launch", authorize)
+    monkeypatch.setattr(chat_service, "_create_page_agent_session_token", create_token)
+    monkeypatch.setattr(chat_service, "_build_codex_thread", lambda *a, **kw: Thread())
+    monkeypatch.setattr(chat_service, "get_auth_session_port", lambda: AuthPort())
+    monkeypatch.setattr(hermes_sdk, "_issue_turn_capability", lambda **kw: None)
+    scope = ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="main",
+        state_dir=str(state_dir),
+    )
+    events = []
+
+    async def collect(event):
+        events.append(event)
+
+    result = await chat_service._stream_assistant_reply_codex(
+        "admin",
+        "project-a",
+        prompt,
+        collect,
+        project_dir=project_dir,
+        project_state_dir=state_dir,
+        tool_mode="freezone_canvas",
+        store_scope=scope,
+        turn_id="business-turn",
+        # Client metadata must never make an ordinary persisted canvas a story.
+        surface_context={"freezone_canvas_id": "canvas-a", "nodes": [story_node]},
+    )
+
+    if blocked:
+        assert result["content"].startswith("阶段确认未写入")
+    else:
+        assert result["content"] == reply["message"]
+    assert [
+        event["text"] for event in events if event["type"] == "assistant_delta"
+    ] == [result["content"]]
+    thread_id = chat_service._get_codex_thread_id(
+        "admin",
+        "project-a",
+        agent_profile="freezone:main",
+        canvas_id="canvas-a",
+        project_state_dir=state_dir,
+    )
+    assert thread_id == (None if blocked else "codex-thread")
 
 
 def test_codex_freezone_write_result_error_preserves_canvas_validation_reason():
@@ -3499,7 +3666,18 @@ def test_freezone_adds_independent_workflow_mcp_without_changing_default():
     freezone_servers = chat_service._dramaclaw_mcp_servers("freezone_canvas")
 
     assert set(default_servers) == {"dramaclaw"}
-    assert freezone_servers["dramaclaw"] == default_servers["dramaclaw"]
+    assert freezone_servers["dramaclaw"]["args"] == [
+        *default_servers["dramaclaw"]["args"], "--exclude-interactive-story"
+    ]
+    assert freezone_servers["dramaclaw_interactive_story"] == {
+        "type": "stdio",
+        "command": __import__("sys").executable,
+        "args": ["-m", "novelvideo.chat.interactive_story_mcp"],
+        "env_vars": [
+            "DRAMACLAW_API_URL", "DRAMACLAW_AGENT_TOKEN_FILE",
+            "DRAMACLAW_PROJECT_ID", "DRAMACLAW_CANVAS_ID", "PYTHONPATH",
+        ],
+    }
     assert freezone_servers["dramaclaw_workflows"] == {
         "type": "stdio",
         "command": __import__("sys").executable,
@@ -3799,7 +3977,9 @@ def test_codex_env_uses_effective_gateway_and_isolates_codex_home(
     )
 
     assert env["NOVELVIDEO_OUTPUT_DIR"] == str(tmp_path / "authoritative-output")
-    for server in chat_service._dramaclaw_mcp_servers("freezone_canvas").values():
+    for name, server in chat_service._dramaclaw_mcp_servers("freezone_canvas").items():
+        if name == "dramaclaw_interactive_story":
+            continue  # This HTTP-only MCP has no filesystem asset tools.
         assert "NOVELVIDEO_OUTPUT_DIR" in server["env_vars"]
     assert env["CODEX_HOME"] == str(tmp_path / "state" / ".codex-app-server")
     assert env["DRAMACLAW_AGENT_SCOPE"] == "project"

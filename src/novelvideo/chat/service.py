@@ -420,7 +420,7 @@ _CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS = (
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
 _CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v2"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v29"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v30"
 
 
 def _codex_developer_instructions(tool_mode: str | None) -> str:
@@ -926,18 +926,42 @@ def _interactive_story_stage_confirmation_requested(prompt: str | None) -> bool:
     if not text or not re.search(r"(?:角色|场景|分镜|交付|验收)", text):
         return False
     if re.search(
-        r"(?:还没|没有|尚未|未完成|没完成|不确认|撤回|返工|重做)",
+        r"(?:还没|没有|尚未|未完成|没完成|撤回|返工|重做)"
+        r"|(?:不(?:要|用|必|需要|再)?|无需|(?<![分特])别)\s*"
+        r"(?:(?:立即|马上|直接|继续|再|急着)\s*)*确认",
         text,
     ):
         return False
     if re.search(r"(?:吗|么|是否|是不是|有没有|为何|为什么|怎么|如何|进度)", text):
         return False
+    if re.search(r"确认[^，。！？\n]*(?:完成|通过)", text):
+        return True
+    # Completed media and requests to inspect or generate it are not approval
+    # of a creative-pipeline stage, even on a canvas that contains a story.
+    if re.search(r"(?:下载|查看|看下|看看|展示|显示|生成|制作|参考图|图片|素材)", text):
+        return False
     return bool(
         re.search(
-            r"(?:已完成|完成了|做好了|已经做好|确认完成|确认通过|可以进入|可以做|继续(?:做|进入)?)",
+            r"(?:已完成|完成了|做好了|已经做好|可以进入|可以做|"
+            r"继续(?:做|进入)(?:角色|场景|分镜|交付|验收|视频))",
             text,
         )
     )
+
+
+def _canvas_has_interactive_story(project_dir: Path, canvas_id: str) -> bool:
+    """Gate story-stage postconditions on the bound canvas's persisted story."""
+    from novelvideo.freezone import canvas_store
+    from novelvideo.interactive_story.stage_progress import find_first_story_group
+
+    try:
+        canvas = canvas_store.read_canvas(project_dir, canvas_id)
+    except (canvas_store.CanvasStoreError, OSError, ValueError):
+        logger.warning(
+            "cannot establish story-stage context for canvas=%s", canvas_id, exc_info=True
+        )
+        return False
+    return canvas is not None and find_first_story_group(canvas) is not None
 
 
 def _stage_confirmation_not_written_message(prompt: str | None) -> str:
@@ -3361,6 +3385,19 @@ def _dramaclaw_mcp_servers(
         }
     }
     if str(tool_mode or "").strip() == "freezone_canvas":
+        servers["dramaclaw"]["args"].append("--exclude-interactive-story")
+        servers["dramaclaw_interactive_story"] = {
+            "type": "stdio",
+            "command": sys.executable,
+            "args": ["-m", "novelvideo.chat.interactive_story_mcp"],
+            "env_vars": [
+                "DRAMACLAW_API_URL",
+                "DRAMACLAW_AGENT_TOKEN_FILE",
+                "DRAMACLAW_PROJECT_ID",
+                "DRAMACLAW_CANVAS_ID",
+                "PYTHONPATH",
+            ],
+        }
         # The shared Workflow MCP owns portable discovery and deterministic
         # compilation only. Protected canvas writes stay on the existing
         # DramaClaw MCP server, preserving the Hermes approval boundary.
@@ -4810,10 +4847,7 @@ async def _stream_assistant_reply_codex(
     ] = {}
     canvas_write_failures: dict[str, str] = {}
     canvas_generation_preflights: dict[str, str] = {}
-    stage_confirmation_expected = (
-        structured_canvas_reply
-        and _interactive_story_stage_confirmation_requested(prompt)
-    )
+    stage_confirmation_expected = False
     stage_confirmation_attempted = False
     stage_confirmation_succeeded = False
     # call_id -> run_after_create the agent requested when the draft policy
@@ -4871,6 +4905,21 @@ async def _stream_assistant_reply_codex(
         business_turn_id,
     )
     try:
+        if (
+            structured_canvas_reply
+            and project
+            and _interactive_story_stage_confirmation_requested(prompt)
+        ):
+            bound_project_dir = (
+                Path(project_dir)
+                if project_dir is not None
+                else _output_root() / username / project
+            )
+            stage_confirmation_expected = await asyncio.to_thread(
+                _canvas_has_interactive_story,
+                bound_project_dir,
+                canvas_id or "default",
+            )
         agent_token = await _create_page_agent_session_token(
             username,
             project,

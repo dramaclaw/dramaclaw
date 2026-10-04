@@ -25,6 +25,7 @@ path,license_expression,copyright,evidence
 .hermes/plugins/dramaclaw/interactive_story.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .hermes/plugins/dramaclaw/plugin.yaml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .hermes/plugins/freezone/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+.hermes/plugins/freezone/_agent_api_errors.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .hermes/plugins/freezone/json_workflow_catalog.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .hermes/plugins/freezone/plugin.yaml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 .hermes/plugins/freezone/workflow_drafts.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -180,6 +181,7 @@ docs/freezone-workflow-agent-determinism-handoff.md,Elastic-2.0,2026 SuperTale c
 docs/freezone-workflow-validation-boundary.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/html-workflow-recipes.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/image-derived-outputs.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+docs/interactive-story-mcp.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/releasing.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/reviews/issue-480-acceptance-matrix.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 docs/superpowers/plans/2026-08-21-ee-config-ce-provisioner-isolation.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2022,6 +2024,7 @@ scripts/migrate_docker_output.py,Elastic-2.0,2026 SuperTale contributors,REUSE.t
 scripts/publish_official_media_catalog.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/setup-hermes.sh,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 scripts/start-ce.sh,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+scripts/sync_interactive_story_tools.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/agent_skills/dramaclaw-workflows/SKILL.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/agent_skills/dramaclaw-workflows/references/custom-topology.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2121,6 +2124,7 @@ src/novelvideo/brainclaw_control_context.py,Elastic-2.0,2026 SuperTale contribut
 src/novelvideo/brainclaw_control_context_transport.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/brainclaw_outcome_runtime.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/__init__.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/chat/agent_api_errors.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/agent_kit_contract.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/backend_sdk.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/canvas_outcome.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2137,7 +2141,9 @@ src/novelvideo/chat/hermes_operation.py,Elastic-2.0,2026 SuperTale contributors,
 src/novelvideo/chat/hermes_pool.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/hermes_sdk.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/hermes_workspace.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/chat/interactive_story_mcp.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/live_events.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/chat/mcp_runtime.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/media_presentation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/message_repository.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/presentation.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2150,6 +2156,8 @@ src/novelvideo/chat/runtime_port.py,Elastic-2.0,2026 SuperTale contributors,REUS
 src/novelvideo/chat/service.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/session_registry.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/store.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/chat/story_mcp_policy.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/chat/story_tools.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/tool_policy.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/workflow_contract.generated.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/chat/workflow_mcp.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2885,6 +2893,7 @@ tests/test_indextts2_fal_smoke.py,Elastic-2.0,2026 SuperTale contributors,REUSE.
 tests/test_ingest_progress.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_interactive_ad.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_interactive_story_frame_workflow.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_interactive_story_mcp.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_interactive_story_models.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_interactive_story_outline.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_interactive_story_semantics_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2897,6 +2906,7 @@ tests/test_local_runtime_dependency_isolation.py,Elastic-2.0,2026 SuperTale cont
 tests/test_m10_final_gate.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_manual_shots.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_mcp_ce_owner.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_mcp_runtime.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_media_io_probe_concurrency.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_media_model_request_schema.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_media_read_authorization.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

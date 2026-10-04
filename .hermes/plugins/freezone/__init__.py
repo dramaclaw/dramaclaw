@@ -26,6 +26,10 @@ from urllib.request import Request, urlopen
 
 from tools.registry import tool_error, tool_result
 
+# The MCP host supplies this before exec; native Hermes includes stories by default.
+_INCLUDE_INTERACTIVE_STORY = not bool(globals().get("_MCP_EXCLUDE_INTERACTIVE_STORY", False))
+
+
 
 _STRUCTURED_RESULT_INPUT_HASH: ContextVar[Any] = ContextVar(
     "freezone_structured_result_input_hash", default=None
@@ -420,108 +424,10 @@ def _maybe_json(text: str) -> Any:
         return stripped
 
 
-def _safe_error_string(value: Any, limit: int) -> str:
-    if not isinstance(value, str):
-        return ""
-    cleaned = " ".join(value.split())[:limit]
-    if re.search(r"traceback|authorization|bearer\s|api[_-]?key|secret|password", cleaned, re.I):
-        return ""
-    return cleaned
-
-
 def _http_error_result(status_code: int, text: str, reason: str) -> dict[str, Any]:
-    """Expose only bounded validation diagnostics from the project API."""
-    result: dict[str, Any] = {
-        "ok": False,
-        "status": "failed",
-        "status_code": status_code,
-        "error": _safe_error_string(reason, 300) or "HTTP request failed",
-    }
-    if len(text) > 65536:
-        return result
-    data = _maybe_json(text)
-    if 500 <= status_code < 600:
-        if isinstance(data, dict):
-            for field in ("error", "message", "detail"):
-                value = _safe_error_string(data.get(field), 300)
-                if value:
-                    result["error"] = value
-                    break
-        elif isinstance(data, str) and not data.lstrip().startswith("<"):
-            result["error"] = _safe_error_string(data, 300) or result["error"]
-        return result
-    if not 400 <= status_code < 500:
-        return result
-    if not isinstance(data, dict):
-        return result
-    detail = data.get("detail")
-    source = detail if isinstance(detail, dict) else data
-    for field in ("status", "code", "next_action"):
-        value = _safe_error_string(source.get(field), 80)
-        if value and re.fullmatch(r"[A-Za-z0-9_.-]+", value):
-            result[field] = value
-    for field in ("error", "message"):
-        value = _safe_error_string(source.get(field), 300)
-        if value:
-            result[field] = value
-    if result.get("code") in {"revision_conflict", "canvas_revision_conflict"}:
-        revision = source.get("current_revision")
-        if type(revision) is int and revision >= 0:
-            result["current_revision"] = revision
-        if result.get("code") == "revision_conflict":
-            story_id = _safe_error_string(source.get("story_id"), 128)
-            if story_id and re.fullmatch(r"[A-Za-z0-9_.:-]+", story_id):
-                result["story_id"] = story_id
-    if isinstance(detail, str):
-        result["error"] = _safe_error_string(detail, 300) or result["error"]
-    if isinstance(source.get("retryable"), bool):
-        result["retryable"] = source["retryable"]
-    if result.get("code") == "generation_parameters_required":
-        # Bounded copy of the standard clarification request so the agent can
-        # answer it; anything malformed is dropped rather than forwarded.
-        missing = source.get("missing_parameters")
-        safe_missing: list[dict[str, Any]] = []
-        if isinstance(missing, list):
-            for item in missing[:50]:
-                if not isinstance(item, dict):
-                    continue
-                node_type = _safe_error_string(item.get("node_type"), 40)
-                node_id = _safe_error_string(item.get("node_id"), 160)
-                fields = item.get("fields")
-                if node_type not in {"imageGenNode", "videoNode"} or not isinstance(fields, list):
-                    continue
-                safe_fields = [
-                    value
-                    for value in (_safe_error_string(field, 40) for field in fields[:12])
-                    if value and re.fullmatch(r"[A-Za-z0-9_]+", value)
-                ]
-                if node_id and safe_fields:
-                    safe_missing.append(
-                        {"node_id": node_id, "node_type": node_type, "fields": safe_fields}
-                    )
-        if safe_missing:
-            result["missing_parameters"] = safe_missing
-    errors = source.get("errors")
-    if isinstance(errors, list):
-        safe_errors = []
-        for item in errors[:5]:
-            if not isinstance(item, dict):
-                continue
-            path = _safe_error_string(item.get("path"), 160)
-            if not path and type(item.get("index")) is int and 0 <= item["index"] <= 9999:
-                path = f"edges[{item['index']}]"
-            message = _safe_error_string(item.get("message") or item.get("reason"), 240)
-            if not path or not re.fullmatch(r"[A-Za-z0-9_.\[\]-]+", path):
-                continue
-            safe_errors.append({"path": path, **({"message": message} if message else {})})
-        if safe_errors:
-            result["errors"] = safe_errors
-    while (
-        len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > 4096
-        and result.get("errors")
-    ):
-        result["errors"].pop()
-    return result
+    if _SHARED_API_ERRORS is None:
+        return {"ok": False, "status": "failed", "status_code": status_code, "error": "HTTP request failed"}
+    return _SHARED_API_ERRORS._http_error_result(status_code, text, reason)
 
 
 def _scope_meta(project: str, canvas: str | None = None) -> dict[str, Any]:
@@ -8277,16 +8183,47 @@ def _result_field_schema(field: str) -> dict[str, Any]:
     return {"type": ["object", "array", "string", "number", "boolean", "null"]}
 
 
+def _load_stdlib_tool_module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load agent tool module from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_STORY_TOOL_MODULE_ERROR: Exception | None = None
+_SHARED_STORY_TOOLS = None
+if _INCLUDE_INTERACTIVE_STORY:
+    try:
+        _SHARED_STORY_TOOLS = _load_stdlib_tool_module(
+            "_freezone_interactive_story_tools", _PLUGIN_DIR.parent / "dramaclaw" / "interactive_story.py"
+        )
+    except Exception as exc:
+        _STORY_TOOL_MODULE_ERROR = exc
+        _SHARED_STORY_TOOLS = None
+try:
+    _SHARED_API_ERRORS = _load_stdlib_tool_module(
+        "_freezone_agent_api_errors", _PLUGIN_DIR / "_agent_api_errors.py"
+    )
+except Exception:
+    _SHARED_API_ERRORS = None
+
+# A partial native deployment without the optional story sibling must still
+# load ordinary canvas tools. The one persisted-canvas read reports the missing
+# dependency; story mutations are omitted by the guarded loader below.
+_STORY_RESULT_FIELDS = (
+    _SHARED_STORY_TOOLS.STORY_RESULT_FIELDS if _SHARED_STORY_TOOLS is not None
+    else ({"dramaclaw_get_freezone_canvas": ("canvas_id", "nodes", "edges", "revision")} if _INCLUDE_INTERACTIVE_STORY else {})
+)
+_STORY_SUCCESS_REQUIRED = (
+    _SHARED_STORY_TOOLS.STORY_SUCCESS_REQUIRED if _SHARED_STORY_TOOLS is not None
+    else _STORY_RESULT_FIELDS
+)
+
+
 _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
-    "dramaclaw_get_freezone_canvas": ("canvas_id", "nodes", "edges", "revision"),
-    "dramaclaw_create_interactive_story": ("project_id", "canvas_id", "story_id", "revision", "issues", "current_revision", "idempotent", "refresh_canvas"),
-    "dramaclaw_patch_interactive_story": ("project_id", "canvas_id", "story_id", "revision", "issues", "current_revision", "idempotent", "refresh_canvas"),
-    "dramaclaw_get_interactive_story": ("canvas_id", "story_id", "revision", "issues", "current_revision", "story"),
-    "dramaclaw_validate_interactive_story": ("canvas_id", "story_id", "revision", "issues", "current_revision", "valid"),
-    "dramaclaw_save_interactive_story_outline": ("project_id", "canvas_id", "outline_id", "status", "revision", "current_revision", "idempotent", "refresh_canvas"),
-    "dramaclaw_get_interactive_story_outline": ("canvas_id", "revision", "outline", "current_revision"),
-    "dramaclaw_get_interactive_story_progress": ("canvas_id", "revision", "kind", "stages", "current_stage_id", "evidence"),
-    "dramaclaw_confirm_interactive_story_stages": ("project_id", "canvas_id", "story_id", "revision", "confirmed_stages", "current_revision", "idempotent", "refresh_canvas"),
+    **_STORY_RESULT_FIELDS,
     "freezone_observe_workflow_run": (
         "run_id",
         "run_status",
@@ -8570,15 +8507,7 @@ _SKILL_STUDIO_FRONTEND_REQUIRED = (
 )
 
 _RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
-    "dramaclaw_get_freezone_canvas": ("canvas_id", "nodes", "edges", "revision"),
-    "dramaclaw_create_interactive_story": ("project_id", "canvas_id", "story_id", "revision", "refresh_canvas"),
-    "dramaclaw_patch_interactive_story": ("project_id", "canvas_id", "story_id", "revision", "refresh_canvas"),
-    "dramaclaw_get_interactive_story": ("canvas_id", "story"),
-    "dramaclaw_validate_interactive_story": ("canvas_id", "story_id", "revision", "valid", "issues"),
-    "dramaclaw_save_interactive_story_outline": ("project_id", "canvas_id", "outline_id", "status", "revision", "refresh_canvas"),
-    "dramaclaw_get_interactive_story_outline": ("canvas_id", "revision"),
-    "dramaclaw_get_interactive_story_progress": ("canvas_id", "revision", "kind", "stages", "evidence"),
-    "dramaclaw_confirm_interactive_story_stages": ("project_id", "canvas_id", "story_id", "revision", "confirmed_stages", "refresh_canvas"),
+    **_STORY_SUCCESS_REQUIRED,
     "freezone_observe_workflow_run": (
         "run_id",
         "run_status",
@@ -8841,6 +8770,8 @@ _CANVAS_CONTEXT_RESPONSE_TYPES = {
 
 
 def _output_schema(name: str) -> dict[str, Any]:
+    if _SHARED_STORY_TOOLS is not None and name in _SHARED_STORY_TOOLS.STORY_TOOL_NAMES:
+        return _SHARED_STORY_TOOLS.output_schema(name)
     fields = _RESULT_FIELDS.get(name)
     if fields is None:
         raise RuntimeError(f"missing output contract for {name}")
@@ -10074,65 +10005,27 @@ _CANVAS_COMMAND_TOOL_SCOPE_PROPS = {
 
 
 def _bound_story_args(args: dict[str, Any]) -> dict[str, Any]:
-    """Keep story operations inside this Freezone worker's bound canvas."""
-    project, canvas = _default_project_id(), _default_canvas_id()
-    if not project or not canvas:
-        raise ValueError("interactive stories require a bound project and canvas")
-    if _project_from_args(args) != project or _canvas_from_args(args) != canvas:
-        raise ValueError("interactive stories must use the bound project and canvas")
-    return {**args, "project_id": project, "canvas_id": canvas}
+    if _SHARED_STORY_TOOLS is None:
+        raise RuntimeError("interactive-story tool definitions are unavailable")
+    return _SHARED_STORY_TOOLS.bound_story_args(args)
 
 
 def _handle_get_story_canvas(args: dict[str, Any], **_: Any) -> Any:
     try:
-        args = _bound_story_args(args)
-        project, canvas = args["project_id"], args["canvas_id"]
-        result = _request(
-            "GET",
-            f"/api/v1/projects/{quote(project, safe='')}/freezone/canvases/{quote(canvas, safe='')}",
-        )
-        if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
-            raise ValueError("canvas read returned an invalid API response")
-        if result["ok"] is True:
-            data = result.get("data")
-            revision = data.get("revision") if isinstance(data, dict) else None
-            if (
-                not isinstance(revision, int)
-                or isinstance(revision, bool)
-                or revision < 1
-            ):
-                return _structured_tool_result(
-                    {
-                        "ok": False,
-                        "status": "canvas_not_created",
-                        "code": "canvas_not_created",
-                        "error": (
-                            "当前画布尚未创建，无法读取有效的 revision；请先保存大纲 "
-                            "或创建画布后再重试。"
-                        ),
-                    },
-                    tool_name="dramaclaw_get_freezone_canvas",
-                )
-            data.setdefault("canvas_id", canvas)
-        return _structured_tool_result(
-            result, tool_name="dramaclaw_get_freezone_canvas"
-        )
+        if _SHARED_STORY_TOOLS is None:
+            raise RuntimeError("interactive-story tool definitions are unavailable")
+        result = _SHARED_STORY_TOOLS.get_bound_canvas(args, _request)
     except Exception as exc:
-        return _structured_tool_result(
-            {"ok": False, "error": str(exc)},
-            tool_name="dramaclaw_get_freezone_canvas",
-        )
+        result = {"ok": False, "error": str(exc)}
+    return _structured_tool_result(result, tool_name="dramaclaw_get_freezone_canvas")
 
 
 def _load_interactive_story_tools():
     # Resolve the repo-pinned sibling even when Hermes symlinks only Freezone
     # into its workspace. Do not load/register the director's generic REST tools.
-    path = _PLUGIN_DIR.parent / "dramaclaw" / "interactive_story.py"
-    spec = importlib.util.spec_from_file_location("_freezone_interactive_story_tools", path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load interactive-story tools from {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = _SHARED_STORY_TOOLS
+    if module is None:
+        raise _STORY_TOOL_MODULE_ERROR or RuntimeError("interactive-story tools are unavailable")
 
     def schema(
         name, description, properties, required=None, *, additional_properties=False
@@ -10166,15 +10059,15 @@ def _load_interactive_story_tools():
 
 
 _INTERACTIVE_STORY_IMPORT_ERROR: Exception | None = None
-try:
-    _INTERACTIVE_STORY_TOOLS = _load_interactive_story_tools()
-except Exception as exc:
-    _INTERACTIVE_STORY_IMPORT_ERROR = exc
-    _INTERACTIVE_STORY_TOOLS = ()
+_INTERACTIVE_STORY_TOOLS = ()
+if _INCLUDE_INTERACTIVE_STORY:
+    try:
+        _INTERACTIVE_STORY_TOOLS = _load_interactive_story_tools()
+    except Exception as exc:
+        _INTERACTIVE_STORY_IMPORT_ERROR = exc
+        _INTERACTIVE_STORY_TOOLS = ()
 
-
-TOOLS = (
-    *_INTERACTIVE_STORY_TOOLS,
+_STORY_CANVAS_TOOLS = (
     (
         "dramaclaw_get_freezone_canvas",
         _schema(
@@ -10184,6 +10077,12 @@ TOOLS = (
         ),
         _handle_get_story_canvas,
     ),
+) if _INCLUDE_INTERACTIVE_STORY else ()
+
+
+TOOLS = (
+    *_INTERACTIVE_STORY_TOOLS,
+    *_STORY_CANVAS_TOOLS,
     (
         "freezone_import_external_skill",
         _schema("freezone_import_external_skill", "Convert user-provided external Skill Markdown into native Skill JSON plus Recipes in a background task. Only submit when the user asks to import/convert. Provide the complete Markdown; for ZIP packages with references use the settings upload. Does not install or modify the canvas.", {
