@@ -46,7 +46,19 @@
     "drama-shot-voice",
     "drama-background-music"
   ],
-  "input_parameters": [],
+  "input_parameters": [
+    {
+      "id": "visual_style",
+      "label": "视觉风格",
+      "type": "single_select",
+      "required": false,
+      "options": [
+        "写实",
+        "电影感",
+        "动画"
+      ]
+    }
+  ],
   "evaluation": {
     "rating_bands": [
       {

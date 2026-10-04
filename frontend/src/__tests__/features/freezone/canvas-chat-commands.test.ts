@@ -4679,9 +4679,6 @@ describe("canvas chat commands", () => {
             resolution: expect.objectContaining({
               options: ["1080p", "2k", "4k"],
             }),
-            denoise: expect.objectContaining({
-              options: ["none", "1x", "2x"],
-            }),
           }),
         }),
         result_effect: expect.objectContaining({
@@ -4690,6 +4687,7 @@ describe("canvas chat commands", () => {
       }),
     ]);
     expect(nodeActionCatalog?.data?.editable_schema).toBeUndefined();
+    expect(nodeActionCatalog?.data?.actions?.[0]?.parameters?.parameter_schema).not.toHaveProperty("denoise");
     expect(nodeActionCatalog?.data?.instruction).toContain(
       "do not answer from the source node parameters",
     );
@@ -4755,11 +4753,7 @@ describe("canvas chat commands", () => {
       current_value: "1080p",
       options: ["1080p", "2k", "4k"],
     });
-    expect(parameters.upscaleDenoise).toMatchObject({
-      label: "降噪",
-      current_value: "1x",
-      options: ["none", "1x", "2x"],
-    });
+    expect(parameters.upscaleDenoise).toBeUndefined();
     expect(parameters.model).toBeUndefined();
     expect(parameters.quality).toBeUndefined();
     expect(parameters.durationSec).toBeUndefined();
@@ -6591,6 +6585,63 @@ describe("canvas chat commands", () => {
             node_id: imageNodeId,
             status: "completed",
             retry_count: 2,
+          })],
+        }),
+      );
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("asks for a rerun instead of retrying an ended Recipe attempt", async () => {
+    const store = useCanvasStore.getState();
+    const imageNodeId = store.addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { prompt: "商品主图" },
+    );
+    let attempts = 0;
+    // "(503)" would look transient; the ended marker must still win.
+    const ended = "recipe attempt ended (failed); rerun the node to start a new attempt (503)";
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      if (!payload.requestId) return;
+      attempts += 1;
+      canvasEventBus.publish("freezone/node-action-result", {
+        requestId: payload.requestId,
+        nodeId: payload.nodeId,
+        action: payload.action,
+        status: "error",
+        error: ended,
+      });
+    });
+
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_workflow", node_ids: [imageNodeId] }],
+        }]),
+        {
+          projectId: "project-a",
+          canvasId: "canvas-a",
+          actionTimeoutMs: 100,
+          actionRetryDelayMs: 1,
+        },
+      );
+
+      expect(attempts).toBe(1);
+      const expected = `本次节点执行已结束，请重新运行该节点以开始新的执行（${ended}）`;
+      expect(result.errors.join("\n")).toContain(expected);
+      expect(updateFreezoneWorkflowRun).toHaveBeenCalledWith(
+        "project-a",
+        "canvas-a",
+        "run-test",
+        expect.objectContaining({
+          action_updates: [expect.objectContaining({
+            node_id: imageNodeId,
+            status: "failed",
+            error: expected,
+            retry_count: 0,
           })],
         }),
       );

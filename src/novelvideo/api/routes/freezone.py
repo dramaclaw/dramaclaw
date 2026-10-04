@@ -97,6 +97,7 @@ from novelvideo.api.schemas import (
     FreezoneVideoCharacterLibraryItemRequest,
     FreezoneVideoComposeRequest,
     FreezoneVideoEditRequest,
+    FreezoneVideoExtendRequest,
     FreezoneVideoEraseRequest,
     FreezoneVideoGenRequest,
     FreezoneVideoOmniGenRequest,
@@ -113,6 +114,7 @@ from novelvideo.chat.hermes_workspace import (
     sync_freezone_hermes_workflow_skills,
 )
 from novelvideo.api.task_start_errors import handle_task_start_runtime_error
+from novelvideo.api.upload_workers import run_asset_upload_operation
 from novelvideo.config import (
     IMAGE_GENERATION_SELECTIONS,
     image_generation_selection_options,
@@ -120,6 +122,7 @@ from novelvideo.config import (
 )
 from novelvideo.director_world import DirectorWorldService
 from novelvideo.director_world.staging_prop_ai import generate_ai_staging_prop
+from novelvideo.generators.render_identity_guard import render_ai_detection_error
 from novelvideo.freezone import canvas_store
 from novelvideo.freezone.agent_bundle_store import (
     export_agent_bundle,
@@ -201,6 +204,8 @@ from novelvideo.freezone.agent_product_operations import (
     save_agent_generation_session,
 )
 from novelvideo.freezone.workflow_runs import (
+    RECIPE_ATTEMPT_ENDED_MARKER,
+    RECIPE_ATTEMPT_ENDED_STATUSES,
     _validate_action_artifact,
     WorkflowRunIdempotencyConflict,
     WorkflowRunLeaseConflict,
@@ -217,6 +222,7 @@ from novelvideo.freezone.workflow_runs import (
     reconcile_workflow_runs_with_canvas_nodes,
     reconcile_workflow_runs_with_canvas_results,
     reconcile_workflow_runs_with_tasks,
+    recipe_attempt_ended_message,
     update_workflow_run,
     workflow_media_failure_awaits_retry,
 )
@@ -368,6 +374,7 @@ from novelvideo.freezone.video_node import (
     build_freezone_image_to_video_prompt,
     build_freezone_keyframe_video_prompt,
     build_freezone_omni_video_prompt,
+    build_freezone_video_extend_prompt,
     build_freezone_video_prompt,
     delete_video_character_folder,
     delete_video_character_library_item,
@@ -391,13 +398,12 @@ from novelvideo.freezone.video_node import (
     summarize_omni_reference_counts,
     update_video_character_folder,
     validate_omni_reference_audio_durations,
-    validate_omni_reference_image_dimensions,
     validate_omni_reference_limits,
     MAX_OMNI_REFERENCE_AUDIO_SECONDS,
     MAX_OMNI_REFERENCE_AUDIO_TOTAL_SECONDS,
     MIN_OMNI_REFERENCE_AUDIO_SECONDS,
 )
-from novelvideo.models import CharacterIdentity, beat_scene_id
+from novelvideo.models import CharacterIdentity, beat_scene_id, real_detected_identities
 from novelvideo.project_config import (
     load_effective_narration_style_for_voice_from_state_dir,
     load_narrator_reference_audio_from_state_dir,
@@ -436,6 +442,7 @@ from novelvideo.utils.path_resolver import (
     canonical_scene_reverse_master_path,
 )
 from novelvideo.utils.static_urls import project_static_url
+from novelvideo.utils.upload_safety import create_staged_upload_file
 
 
 async def _resolve_freezone_project(
@@ -479,6 +486,26 @@ def _handle_task_start_runtime_error(message: str, exc: RuntimeError) -> None:
     handle_task_start_runtime_error(logger, message, exc)
 
 
+def _raise_if_recipe_attempt_ended(operation: dict[str, Any]) -> None:
+    """Refuse further work on a settled Recipe attempt; only a rerun can proceed."""
+    status = str(operation.get("status") or "")
+    if status in RECIPE_ATTEMPT_ENDED_STATUSES:
+        raise HTTPException(409, recipe_attempt_ended_message(status))
+
+
+async def _raise_if_recipe_attempt_ended_now(state_dir: Path, operation_id: str) -> None:
+    """Re-read the operation so a concurrently settled attempt reports as ended."""
+    current = await asyncio.to_thread(
+        read_agent_product_operation, project_dir=state_dir, operation_id=operation_id
+    )
+    if current is not None:
+        _raise_if_recipe_attempt_ended(current)
+
+
+def _is_recipe_attempt_ended(exc: HTTPException) -> bool:
+    return exc.status_code == 409 and RECIPE_ATTEMPT_ENDED_MARKER in str(exc.detail)
+
+
 def _verified_workflow_media_link(
     *,
     ctx: ProjectContext,
@@ -501,7 +528,6 @@ def _verified_workflow_media_link(
     if (
         operation is None
         or operation.get("product_kind") != "recipe_result"
-        or operation.get("status") in {"failed", "cancelled"}
         or operation.get("project_id") != ctx.project_id
         or operation.get("canvas_id") != canvas_id
         or operation.get("artifact_id") != node_id
@@ -512,6 +538,7 @@ def _verified_workflow_media_link(
         raise HTTPException(
             409, "workflow media link does not match admitted Recipe attempt"
         )
+    _raise_if_recipe_attempt_ended(operation)
     return {
         "product_operation_id": operation_id,
         "generation_attempt_id": attempt_id,
@@ -772,6 +799,23 @@ async def _start_or_enqueue_freezone_video_gen(
             attempt_id=generation_attempt_id,
         )
 
+    from novelvideo.freezone.reference_validation import validate_reference_media
+
+    validation_items = list(reference_items)
+    if last_frame_path and not any(
+        item.get("path") == last_frame_path for item in validation_items
+    ):
+        validation_items.append(
+            {"type": "image", "path": last_frame_path, "role": "last_frame"}
+        )
+    reference_errors = await asyncio.to_thread(
+        validate_reference_media, validation_items, capabilities or {}, project_dir
+    )
+    if reference_errors:
+        raise HTTPException(
+            400, detail={"code": "REFERENCE_MEDIA_INVALID", "errors": reference_errors}
+        )
+
     # Catalog fields are optional for backward compatibility. Missing means
     # the legacy behavior (native audio supported); an explicit false is an
     # authoritative capability boundary and cannot be bypassed by old clients.
@@ -821,30 +865,6 @@ async def _start_or_enqueue_freezone_video_gen(
             )
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-    # 参考图尺寸在入队前就拦：厂商必拒的图没必要先预扣积分、上传 relay 再退款。
-    # 组织账号的出口路径会把厂商原文抹成 EGRESS_OPERATION_UNKNOWN，这里是用户唯一
-    # 能看懂原因的地方（3060 2026-08-26：338x191 被 HeightTooSmall 连拒 8 次）。
-    if is_freezone_seedance_backend(backend):
-        image_input_paths = [
-            str(item.get("path") or "").strip()
-            for item in reference_items
-            if str(item.get("type") or "image").strip().lower() == "image"
-            and str(item.get("path") or "").strip()
-        ]
-        if last_frame_path:
-            image_input_paths.append(str(last_frame_path).strip())
-        # 关键帧路由把尾帧同时放进 reference_items 和 last_frame_path，去重后
-        # 同一文件只读一次头、报错也只列一次。
-        image_input_paths = list(dict.fromkeys(path for path in image_input_paths if path))
-        if image_input_paths:
-            try:
-                # 读文件头走线程：/data/output 在 s3fs 上，同步 IO 会卡住事件循环。
-                await asyncio.to_thread(
-                    validate_omni_reference_image_dimensions, image_input_paths
-                )
-            except ValueError as exc:
-                raise HTTPException(400, str(exc)) from exc
-
     normalized_mode = str(gen_mode or "").strip()
     if normalized_mode == "video_edit":
         if not video_input_paths or input_video_duration_seconds <= 0:
@@ -1351,11 +1371,17 @@ def _standalone_identity_prompt_parts(identity_name: str) -> tuple[str, str, str
     return identity_name, identity_name, f"{identity_name}_{identity_name}"
 
 
-def _standalone_beat_context_prompt_identity_map(beat_context: dict) -> dict[str, str]:
-    identity_names = _list_text_values(
-        beat_context.get("detected_identities")
-        or beat_context.get("detectedIdentities")
+def _standalone_beat_context_identity_names(beat_context: dict) -> list[str]:
+    # 「无角色出场」哨兵以下划线开头，不能按「角色_身份」拆分，也不是真实角色。
+    return real_detected_identities(
+        _list_text_values(
+            beat_context.get("detected_identities") or beat_context.get("detectedIdentities")
+        )
     )
+
+
+def _standalone_beat_context_prompt_identity_map(beat_context: dict) -> dict[str, str]:
+    identity_names = _standalone_beat_context_identity_names(beat_context)
     return {
         identity_name: _standalone_identity_prompt_parts(identity_name)[2]
         for identity_name in identity_names
@@ -1378,10 +1404,7 @@ def _standalone_beat_context_prompt_visual_description(
 
 def _standalone_beat_context_character_map(beat_context: dict) -> dict[str, dict]:
     sketch_colors = _standalone_beat_context_sketch_colors(beat_context)
-    identity_names = _list_text_values(
-        beat_context.get("detected_identities")
-        or beat_context.get("detectedIdentities")
-    )
+    identity_names = _standalone_beat_context_identity_names(beat_context)
     character_map: dict[str, dict] = {}
     for identity_name in identity_names:
         char_name, suffix, _prompt_identity_id = _standalone_identity_prompt_parts(
@@ -1913,6 +1936,25 @@ async def _start_or_enqueue_mainline_sketch_from_context_job(
     _raise_project_context_required(task_type)
 
 
+def _raise_if_frame_identity_detection_missing(
+    beats: list[dict],
+    *,
+    standalone_beat_context: bool = False,
+) -> None:
+    """Reject before billing/enqueue what the render worker would reject anyway."""
+    detection_error = render_ai_detection_error(
+        beats,
+        standalone_beat_context=standalone_beat_context,
+    )
+    if detection_error:
+        _raise_skill_error(
+            422,
+            code="render_identity_detection_required",
+            category="validation",
+            message=detection_error,
+        )
+
+
 async def _start_or_enqueue_mainline_frame_from_context_job(
     *,
     ctx: ProjectContext,
@@ -1978,6 +2020,9 @@ async def _start_or_enqueue_mainline_frame_from_context_job(
         effective_beat["episode_number"] = int(episode)
         effective_beat["beat_number"] = int(beat)
         config["beats"] = [effective_beat]
+    _raise_if_frame_identity_detection_missing(
+        [_beat_by_number(config.get("beats") or [], int(beat))]
+    )
     config["promote_selected_regen"] = False
     config["image_quality"] = _normalize_mainline_frame_quality(quality)
     config["canvas_sketch_paths"] = {str(int(beat)): sketch_paths[0]}
@@ -2230,6 +2275,10 @@ async def _start_or_enqueue_standalone_frame_from_context_job(
         mode_key=mode_key,
         aspect_ratio=inferred_aspect_ratio,
         quality=quality,
+    )
+    _raise_if_frame_identity_detection_missing(
+        config.get("beats") or [],
+        standalone_beat_context=True,
     )
     config["canvas_sketch_paths"] = {"0": sketch_paths[0]}
     canvas_refs: list[dict] = []
@@ -5417,31 +5466,56 @@ async def _record_recipe_compile_product_evidence(
     if operation.get("status") == "delivered":
         await _reconcile_recipe_delivery(ctx=ctx, operation=operation)
         return
-    if operation.get("status") in {"failed", "cancelled"}:
-        return
-    if (
-        compiled.mode == "model"
-        and str(compiled.model_call_id or "").strip()
-        and compiled.executed_at
-    ):
-        await asyncio.to_thread(
-            bind_agent_product_model_execution,
-            project_dir=state_dir,
-            operation_id=operation_id,
-            model_call_id=compiled.model_call_id,
-            executed_at=compiled.executed_at,
-            source="server_recipe_compiler",
-            compile_mode="model",
-            compiled_prompt="" if deliver_text else compiled.prompt,
-        )
-        if deliver_text:
-            # Synchronous text generation has no separate media task. Persist
-            # the actual server-produced text in the operation's immutable
-            # result receipt, rather than waiting for a nonexistent task key.
-            # finish_agent_product_operation atomically stores this receipt and
-            # transitions to delivered; reconcile even if the worker timed out.
-            if body.node_kind != "text" or not compiled.prompt.strip():
-                raise ValueError("text delivery requires a non-empty text result")
+    # A concurrent request (e.g. a timed-out earlier compile) may have failed
+    # this attempt while we compiled. Returning the prompt would send the
+    # runner on to a media submission that can only 409.
+    _raise_if_recipe_attempt_ended(operation)
+    try:
+        if (
+            compiled.mode == "model"
+            and str(compiled.model_call_id or "").strip()
+            and compiled.executed_at
+        ):
+            await asyncio.to_thread(
+                bind_agent_product_model_execution,
+                project_dir=state_dir,
+                operation_id=operation_id,
+                model_call_id=compiled.model_call_id,
+                executed_at=compiled.executed_at,
+                source="server_recipe_compiler",
+                compile_mode="model",
+                compiled_prompt="" if deliver_text else compiled.prompt,
+            )
+            if deliver_text:
+                # Synchronous text generation has no separate media task. Persist
+                # the actual server-produced text in the operation's immutable
+                # result receipt, rather than waiting for a nonexistent task key.
+                # finish_agent_product_operation atomically stores this receipt and
+                # transitions to delivered; reconcile even if the worker timed out.
+                if body.node_kind != "text" or not compiled.prompt.strip():
+                    raise ValueError("text delivery requires a non-empty text result")
+                operation = await asyncio.to_thread(
+                    finish_agent_product_operation,
+                    project_dir=state_dir,
+                    operation_id=operation_id,
+                    outcome="delivered",
+                    expected_task_id=str(operation.get("task_id") or ""),
+                    result_ref={
+                        "kind": "recipe_text_result",
+                        "id": operation_id,
+                        "content": compiled.prompt,
+                    },
+                )
+                await _reconcile_recipe_delivery(ctx=ctx, operation=operation)
+            return
+        if compiled.prompt.strip() and compiled.mode in {
+            "timeout_fallback",
+            "memory_cache",
+            "persistent_cache",
+            "deterministic",
+        }:
+            # Recipe use is billable regardless of compilation mode. Persist the
+            # usable prompt as server-owned delivery evidence, not fake model evidence.
             operation = await asyncio.to_thread(
                 finish_agent_product_operation,
                 project_dir=state_dir,
@@ -5449,44 +5523,27 @@ async def _record_recipe_compile_product_evidence(
                 outcome="delivered",
                 expected_task_id=str(operation.get("task_id") or ""),
                 result_ref={
-                    "kind": "recipe_text_result",
+                    "kind": "recipe_compile_result",
                     "id": operation_id,
+                    "reason": compiled.mode,
                     "content": compiled.prompt,
                 },
+                server_recipe_compile=True,
             )
             await _reconcile_recipe_delivery(ctx=ctx, operation=operation)
-        return
-    if compiled.prompt.strip() and compiled.mode in {
-        "timeout_fallback",
-        "memory_cache",
-        "persistent_cache",
-        "deterministic",
-    }:
-        # Recipe use is billable regardless of compilation mode. Persist the
-        # usable prompt as server-owned delivery evidence, not fake model evidence.
-        operation = await asyncio.to_thread(
+            return
+        await asyncio.to_thread(
             finish_agent_product_operation,
             project_dir=state_dir,
             operation_id=operation_id,
-            outcome="delivered",
+            outcome="failed",
             expected_task_id=str(operation.get("task_id") or ""),
-            result_ref={
-                "kind": "recipe_compile_result",
-                "id": operation_id,
-                "reason": compiled.mode,
-                "content": compiled.prompt,
-            },
-            server_recipe_compile=True,
         )
-        await _reconcile_recipe_delivery(ctx=ctx, operation=operation)
-        return
-    await asyncio.to_thread(
-        finish_agent_product_operation,
-        project_dir=state_dir,
-        operation_id=operation_id,
-        outcome="failed",
-        expected_task_id=str(operation.get("task_id") or ""),
-    )
+    except ValueError:
+        # The terminal check above and these writes are separate steps; an
+        # attempt settled in between surfaces as ended, not a 500/503.
+        await _raise_if_recipe_attempt_ended_now(state_dir, operation_id)
+        raise
 
 
 async def _require_recipe_compile_product_admission(
@@ -5542,8 +5599,14 @@ async def _require_recipe_compile_product_admission(
         replayed = await _replayed_recipe_compilation(
             body=body, operation=operation, state_dir=state_dir
         )
-        if replayed is not None or not metered:
+        if replayed is not None:
+            # The saved prompt is read after the status above; never replay an
+            # attempt that was settled failed/cancelled in between.
+            await _raise_if_recipe_attempt_ended_now(state_dir, operation_id)
             return replayed
+        if not metered:
+            return None
+    _raise_if_recipe_attempt_ended(operation)
     if operation.get("status") not in {"reserved", "running", "accepted", "submitted"}:
         raise HTTPException(409, "Recipe result operation is not admitted")
     return None
@@ -5700,22 +5763,35 @@ async def compile_freezone_recipe_batch(
     """Compile several independent node prompts without one failure cancelling the batch."""
     username = str(user.get("username") or "")
     replays: dict[int, RecipeCompileResult] = {}
+    # An ended attempt only stops its own node; the other items still compile.
+    ended: dict[int, str] = {}
     for index, item in enumerate(body.items):
-        replayed = await _require_recipe_compile_product_admission(
-            body=item, user=user, allow_compile_replay=True
-        )
+        try:
+            replayed = await _require_recipe_compile_product_admission(
+                body=item, user=user, allow_compile_replay=True
+            )
+        except HTTPException as exc:
+            if not _is_recipe_attempt_ended(exc):
+                raise
+            ended[index] = str(exc.detail)
+            continue
         if replayed is not None:
             replays[index] = replayed
     pending_compiles = [
         _recipe_compile_args(item, username)
         for index, item in enumerate(body.items)
-        if index not in replays
+        if index not in replays and index not in ended
     ]
     compiled_outcomes = iter(
         await compile_recipe_prompt_batch(pending_compiles) if pending_compiles else []
     )
     items: list[dict[str, Any]] = []
     for index, request in enumerate(body.items):
+        if index in ended:
+            items.append(
+                {"request_id": request.request_id, "ok": False, "error": ended[index]}
+            )
+            continue
         if index in replays:
             items.append(
                 {"request_id": request.request_id, **_recipe_compile_response(replays[index])}
@@ -5748,11 +5824,19 @@ async def compile_freezone_recipe_batch(
                 }
             )
             continue
-        await _record_recipe_compile_product_evidence(
-            body=request,
-            compiled=outcome,
-            user=user,
-        )
+        try:
+            await _record_recipe_compile_product_evidence(
+                body=request,
+                compiled=outcome,
+                user=user,
+            )
+        except HTTPException as exc:
+            if not _is_recipe_attempt_ended(exc):
+                raise
+            items.append(
+                {"request_id": request.request_id, "ok": False, "error": str(exc.detail)}
+            )
+            continue
         items.append(
             {
                 "request_id": request.request_id,
@@ -5870,6 +5954,23 @@ async def _read_upload_contents(
     return b"".join(chunks)
 
 
+def _persist_freezone_upload(target: Path, contents: bytes) -> None:
+    """Write one upload to a staging file and atomically publish it."""
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staged_path = create_staged_upload_file(
+        target.parent,
+        prefix=".upload-",
+        suffix=".tmp",
+        destination=target,
+    )
+    try:
+        staged_path.write_bytes(contents)
+        staged_path.replace(target)
+    finally:
+        staged_path.unlink(missing_ok=True)
+
+
 async def _save_freezone_upload(
     project: str,
     file: UploadFile,
@@ -5877,15 +5978,14 @@ async def _save_freezone_upload(
     *,
     max_bytes: int | None = None,
 ) -> dict[str, Any]:
-    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
     target_dir = uploads_dir(project_dir)
-    target_dir.mkdir(parents=True, exist_ok=True)
     filename = safe_upload_filename(file.filename)
     target = target_dir / filename
     contents = await _read_upload_contents(file, max_bytes=max_bytes)
-    target.write_bytes(contents)
+    await run_asset_upload_operation(_persist_freezone_upload, target, contents)
     rel = target.relative_to(project_dir).as_posix()
     return {
         "ok": True,
@@ -6114,6 +6214,21 @@ async def freezone_gen(
         raise HTTPException(
             400,
             f"image model supports at most {reference_image_max} reference images",
+        )
+    from novelvideo.freezone.reference_validation import validate_reference_media
+
+    reference_errors = await asyncio.to_thread(
+        validate_reference_media,
+        [
+            {"type": "image", "path": path}
+            for path in _resolve_url_list(project_dir, list(body.reference_urls or []))
+        ],
+        catalog_entry or {},
+        project_dir,
+    )
+    if reference_errors:
+        raise HTTPException(
+            400, detail={"code": "REFERENCE_MEDIA_INVALID", "errors": reference_errors}
         )
     return await _start_or_enqueue_freezone_gen_job(
         ctx=ctx,
@@ -7864,7 +7979,11 @@ def _video_upscale_output_path(project_dir: Path, job_id: str) -> Path:
 
 
 def _audio_separate_audio_output_path(project_dir: Path, job_id: str) -> Path:
-    return outputs_dir(project_dir, "freezone_audio_separate") / f"{job_id}.m4a"
+    output_dir = outputs_dir(project_dir, "freezone_audio_separate")
+    audio_path = output_dir / f"{job_id}.mp3"
+    legacy_path = output_dir / f"{job_id}.m4a"
+    # 历史任务产出的是 .m4a，结果查询继续可用。
+    return legacy_path if not audio_path.exists() and legacy_path.exists() else audio_path
 
 
 def _audio_separate_mute_video_output_path(project_dir: Path, job_id: str) -> Path:
@@ -8093,6 +8212,7 @@ def _start_freezone_video_upscale_task(
     job_id: str,
     source_path: Path,
     body: FreezoneVideoUpscaleRequest,
+    processing_models: dict[str, Any],
 ) -> None:
     task_type = "freezone_video_upscale"
     task_manager = get_task_manager()
@@ -8124,8 +8244,12 @@ def _start_freezone_video_upscale_task(
                 job_id=job_id,
                 source_path=str(source_path),
                 resolution=body.resolution,
-                frame_interpolation=body.frame_interpolation,
-                denoise_strength=body.denoise_strength,
+                target_fps=body.target_fps,
+                smart_interpolation=body.smart_interpolation,
+                slowdown=body.slowdown,
+                scene=body.scene,
+                face_enhance=body.face_enhance,
+                **processing_models,
             )
             rel = output_path.relative_to(project_dir).as_posix()
             task_manager.complete_task(
@@ -9578,6 +9702,93 @@ def _catalog_duration_bounds(
     return _bound("minDuration"), _bound("maxDuration")
 
 
+VIDEO_PROCESSING_MODES = frozenset({"video_upscale", "video_frame_rate"})
+VIDEO_UPSCALE_TARGET_LONG_EDGES = {"1080p": 1920, "2k": 2560, "4k": 3840}
+
+
+def _is_processing_only_video_model(entry: dict[str, Any]) -> bool:
+    modes = entry.get("supportedModes")
+    return isinstance(modes, list) and bool(modes) and set(modes).issubset(VIDEO_PROCESSING_MODES)
+
+
+def _video_processing_entry(
+    catalog: list[dict[str, Any]] | None,
+    mode: str,
+) -> dict[str, Any] | None:
+    return next(
+        (item for item in catalog or [] if mode in (item.get("supportedModes") or [])),
+        None,
+    )
+
+
+def _video_processing_resolutions(entry: dict[str, Any] | None) -> list[str]:
+    options = _catalog_resolution_options(entry)
+    return [value for value in VIDEO_UPSCALE_TARGET_LONG_EDGES if value in (options or [])]
+
+
+async def _resolve_video_processing_model(
+    mode: str,
+    *,
+    requester_user_id: str,
+) -> dict[str, Any]:
+    catalog = await _scoped_media_model_catalog(
+        "video",
+        requester_user_id=requester_user_id,
+    )
+    entry = _video_processing_entry(catalog, mode)
+    if entry is None:
+        label = "视频超分" if mode == "video_upscale" else "视频帧率调整"
+        raise HTTPException(409, f"当前没有可用的{label}模型，请联系管理员配置")
+    identifier = _catalog_entry_id(entry)
+    schema, params, resolved = await _resolve_catalog_request(
+        "video",
+        identifier,
+        {},
+        mode=mode,
+        requester_user_id=requester_user_id,
+    )
+    selected = resolved or entry
+    return {
+        "catalog_id": identifier,
+        "backend": str(selected.get("apiModel") or selected.get("api_model") or ""),
+        "request_schema": schema,
+        "model_params": params,
+        "resolution_options": _video_processing_resolutions(selected),
+    }
+
+
+def _video_enhance_billing(
+    body: FreezoneVideoUpscaleRequest,
+    source_meta: dict[str, Any],
+    upscale: dict[str, Any],
+    frame_rate: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build the same trusted feature price input for quote and task submission."""
+    from novelvideo.freezone.video_slowdown import slowdown_factor
+
+    factor = slowdown_factor(body.slowdown)
+    source_seconds = max(1, math.ceil(float(source_meta["duration"])))
+    stages = [{
+        "mode": "video_upscale",
+        "catalog_id": upscale["catalog_id"],
+        "resolution": body.resolution,
+        "duration_seconds": source_seconds,
+    }]
+    if frame_rate is not None:
+        source_fps = float(source_meta["fps"])
+        stages.append({
+            "mode": "video_frame_rate",
+            "catalog_id": frame_rate["catalog_id"],
+            "resolution": body.resolution,
+            "duration_seconds": max(1, math.ceil(float(source_meta["duration"]) * factor)),
+            "source_fps": source_fps,
+            "target_fps": body.target_fps or max(1, round(source_fps, 3)),
+            "smart_interpolation": body.smart_interpolation,
+            "slowdown": body.slowdown,
+        })
+    return {"feature_key": "freezone.video_enhance", "pricing_stages": stages}
+
+
 async def _resolve_catalog_video_backend(
     model: str | None,
     *,
@@ -9629,7 +9840,9 @@ async def freezone_video_models(
         "data": (
             get_freezone_video_model_options()
             if catalog is None
-            else _public_media_model_catalog(catalog)
+            else _public_media_model_catalog(
+                [item for item in catalog if not _is_processing_only_video_model(item)]
+            )
         ),
     }
 
@@ -11049,6 +11262,105 @@ async def freezone_video_edit(
         ) from exc
 
 
+@router.post("/projects/{project}/freezone/video/video-extend", tags=[TAG_FREEZONE_VIDEO])
+async def freezone_video_extend(
+    project: str,
+    body: FreezoneVideoExtendRequest,
+    user: dict = Depends(get_api_user),
+):
+    """视频处理：从一个源视频的结尾继续生成指定时长。"""
+
+    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
+        project, user
+    )
+    if not body.prompt.strip():
+        raise HTTPException(400, "prompt is required")
+    if body.camera_template_id and not get_video_camera_template(body.camera_template_id):
+        raise HTTPException(400, f"unknown camera_template_id: {body.camera_template_id}")
+    try:
+        backend = await _resolve_catalog_video_backend(
+            body.model,
+            requester_user_id=ctx.requester_user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    request_schema, model_params, capabilities = await _resolve_catalog_request(
+        "video",
+        body.model,
+        body.model_params,
+        mode=body.gen_mode,
+        requester_user_id=ctx.requester_user_id,
+    )
+    if _catalog_mode_enabled(capabilities, "video_extend") is not True:
+        raise HTTPException(400, "this model does not support video_extend mode")
+
+    if not body.video_url.strip():
+        raise HTTPException(400, "video_url is required")
+    video_paths = _resolve_url_list(project_dir, [body.video_url])
+    if not video_paths:
+        raise HTTPException(400, "video_url could not be resolved")
+    reference_limits = _catalog_reference_limits(
+        capabilities,
+        image_default=0,
+        video_default=1,
+        audio_default=0,
+    )
+    if reference_limits["video"] < 1:
+        raise HTTPException(400, "this model does not support video references")
+
+    reference_items = [
+        {"type": "video", "path": video_paths[0], "role": "视频延长源"}
+    ]
+    final_prompt = build_freezone_video_extend_prompt(
+        user_prompt=body.prompt,
+        camera_template_id=body.camera_template_id,
+    )
+    job_id = _new_job_id()
+    try:
+        return await _start_or_enqueue_freezone_video_gen(
+            ctx=ctx,
+            username=username,
+            project=project_name,
+            project_dir=project_dir,
+            output_dir=output_dir,
+            job_id=job_id,
+            prompt=final_prompt,
+            reference_items=reference_items,
+            # 延长任务沿用源视频画幅，但时长表示新生成片段的长度。
+            aspect_ratio="auto",
+            resolution=normalize_video_resolution_for_backend(
+                backend,
+                body.resolution,
+                _catalog_resolution_options(capabilities),
+            ),
+            duration_seconds=normalize_video_duration_for_backend(
+                backend,
+                body.duration_seconds,
+                *_catalog_duration_bounds(capabilities),
+            ),
+            generate_audio=body.generate_audio,
+            human_review=body.human_review,
+            scene_optimize=None,
+            backend=backend,
+            canvas_id=body.canvas_id or None,
+            node_id=body.node_id or None,
+            model_id=body.model,
+            catalog_id=_catalog_entry_id(capabilities) or None,
+            gen_mode="video_extend",
+            requested_gen_mode=body.gen_mode,
+            model_params=model_params,
+            request_schema=request_schema,
+            capabilities=capabilities,
+        )
+    except RuntimeError as exc:
+        _handle_task_start_runtime_error(
+            "failed to start freezone video extend task", exc
+        )
+        raise HTTPException(
+            503, f"failed to start freezone video extend task: {exc}"
+        ) from exc
+
+
 @router.post(
     "/projects/{project}/freezone/video/erase",
     response_model=FreezoneJobAcceptedResponse,
@@ -11128,6 +11440,86 @@ async def freezone_video_erase(
     )
 
 
+async def _prepare_video_upscale(
+    *,
+    body: FreezoneVideoUpscaleRequest,
+    project_dir: Path,
+    requester_user_id: str,
+) -> tuple[Path, dict[str, Any], dict[str, Any], dict[str, Any]]:
+    try:
+        source_path = resolve_static_url_to_path(body.source_url, project_dir)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not source_path.exists():
+        raise HTTPException(404, f"video source not found: {source_path}")
+
+    from novelvideo.freezone.jobs import probe_video_stream
+
+    try:
+        source_meta = await probe_video_stream(str(source_path))
+    except RuntimeError as exc:
+        raise HTTPException(400, f"无法读取源视频信息: {exc}") from exc
+    target_long_edge = VIDEO_UPSCALE_TARGET_LONG_EDGES[body.resolution]
+    if max(int(source_meta["width"]), int(source_meta["height"])) >= target_long_edge:
+        raise HTTPException(400, "目标分辨率必须高于源视频分辨率")
+
+    upscale = await _resolve_video_processing_model(
+        "video_upscale",
+        requester_user_id=requester_user_id,
+    )
+    frame_rate: dict[str, Any] | None = None
+    if body.target_fps is not None or body.slowdown != "auto":
+        frame_rate = await _resolve_video_processing_model(
+            "video_frame_rate",
+            requester_user_id=requester_user_id,
+        )
+    for label, model in (("视频超分", upscale), ("视频帧率调整", frame_rate)):
+        if model is not None and body.resolution not in model["resolution_options"]:
+            raise HTTPException(400, f"当前{label}模型不支持 {body.resolution} 分辨率")
+    processing_models = {
+        "upscale_backend": upscale["backend"],
+        "upscale_model_params": upscale["model_params"],
+        "upscale_request_schema": upscale["request_schema"],
+        "frame_rate_backend": frame_rate["backend"] if frame_rate else None,
+        "frame_rate_model_params": frame_rate["model_params"] if frame_rate else None,
+        "frame_rate_request_schema": (frame_rate["request_schema"] if frame_rate else None),
+    }
+    billing = _video_enhance_billing(body, source_meta, upscale, frame_rate)
+    return source_path, source_meta, processing_models, billing
+
+
+@router.post(
+    "/projects/{project}/freezone/video/upscale/quote",
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_video_upscale_quote(
+    project: str,
+    body: FreezoneVideoUpscaleRequest,
+    user: dict = Depends(get_api_user),
+):
+    from novelvideo.ports import get_credit_quote
+
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user, required_role="viewer"
+    )
+    _source_path, _source_meta, _processing_models, billing = await _prepare_video_upscale(
+        body=body, project_dir=project_dir, requester_user_id=ctx.requester_user_id,
+    )
+    quote = await get_credit_quote().generation_credit_quote(
+        kind="feature", model="freezone.video_enhance", params=billing,
+        quantity=1, product_surface="freezone",
+        user_id=str(user.get("id") or user.get("user_id") or ""),
+    )
+    original_cost = quote.original_total_cost
+    display = quote.display
+    if quote.discount_amount > 0 and original_cost is not None:
+        display = f"{original_cost}→{quote.total_cost}"
+    data = {"cost": quote.total_cost, "display": display}
+    if quote.promotion:
+        data["promotion"] = quote.promotion
+    return {"ok": True, "data": data}
+
+
 @router.post(
     "/projects/{project}/freezone/video/upscale",
     response_model=FreezoneJobAcceptedResponse,
@@ -11138,23 +11530,13 @@ async def freezone_video_upscale(
     body: FreezoneVideoUpscaleRequest,
     user: dict = Depends(get_api_user),
 ):
-    """视频处理：基础版高清增强。
-
-    当前实现使用 ffmpeg 做传统缩放、轻度降噪和锐化：
-    - 保持原始画面比例
-    - 按 `resolution` 对长边缩放
-    - 保留原视频音轨
-    """
-    ctx, username, project_name, project_dir, _output_dir = (
-        await _resolve_freezone_project(project, user)
+    """视频处理：目录驱动的视频超分、慢放与补帧流水线。"""
+    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user
     )
-
-    try:
-        source_path = resolve_static_url_to_path(body.source_url, project_dir)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    if not source_path.exists():
-        raise HTTPException(404, f"video source not found: {source_path}")
+    source_path, source_meta, processing_models, billing = await _prepare_video_upscale(
+        body=body, project_dir=project_dir, requester_user_id=ctx.requester_user_id,
+    )
 
     try:
         job_id = _new_job_id()
@@ -11169,8 +11551,14 @@ async def freezone_video_upscale(
                 payload={
                     "source_path": source_path.as_posix(),
                     "resolution": body.resolution,
-                    "frame_interpolation": body.frame_interpolation,
-                    "denoise_strength": body.denoise_strength,
+                    "target_fps": body.target_fps,
+                    "smart_interpolation": body.smart_interpolation,
+                    "slowdown": body.slowdown,
+                    "scene": body.scene,
+                    "face_enhance": body.face_enhance,
+                    "source_meta": source_meta,
+                    "billing": billing,
+                    **processing_models,
                 },
             )
         _start_freezone_video_upscale_task(
@@ -11181,6 +11569,7 @@ async def freezone_video_upscale(
             job_id=job_id,
             source_path=source_path,
             body=body,
+            processing_models=processing_models,
         )
     except RuntimeError as exc:
         _handle_task_start_runtime_error(
@@ -11197,6 +11586,43 @@ async def freezone_video_upscale(
         project=project_name,
         job_id=job_id,
     )
+
+
+@router.get(
+    "/projects/{project}/freezone/video/upscale/probe",
+    tags=[TAG_FREEZONE_VIDEO],
+)
+async def freezone_video_upscale_probe(
+    project: str,
+    source_url: str = Query(...),
+    user: dict = Depends(get_api_user),
+):
+    """读取源视频参数，供增强面板过滤无效的目标档位。"""
+    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user, required_role="viewer"
+    )
+    try:
+        source_path = resolve_static_url_to_path(source_url, project_dir)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not source_path.exists():
+        raise HTTPException(404, "video source not found")
+    from novelvideo.freezone.jobs import probe_video_stream
+
+    try:
+        metadata = await probe_video_stream(str(source_path))
+    except RuntimeError as exc:
+        raise HTTPException(400, f"无法读取源视频信息: {exc}") from exc
+    catalog = await _scoped_media_model_catalog(
+        "video", requester_user_id=ctx.requester_user_id,
+    )
+    metadata["upscale_resolutions"] = _video_processing_resolutions(
+        _video_processing_entry(catalog, "video_upscale")
+    )
+    metadata["frame_rate_resolutions"] = _video_processing_resolutions(
+        _video_processing_entry(catalog, "video_frame_rate")
+    )
+    return {"ok": True, "data": metadata}
 
 
 @router.post(
@@ -13793,6 +14219,9 @@ async def build_projection_from_preset(
         project_dir=project_dir,
         body=body,
     )
+    # 前端「同步更新」把这些节点直接写进内存画布，不经过读画布的补全；
+    # beat 上下文缺 projectId 会被当成 standalone，这里和读画布保持一致。
+    _stamp_canvas_mainline_context_project_id(payload, ctx.project_id)
     metadata = payload.get("metadata")
     return {
         "ok": True,
@@ -16058,7 +16487,10 @@ async def get_canvas_workflow_runs(
                     "recipe_id": action.get("recipe_id"),
                 }
             elif task_status == "failed" and workflow_media_failure_awaits_retry(
-                run=run, action=action, error=task.get("error")
+                project_dir=canvas_project_dir,
+                run=run,
+                action=action,
+                error=task.get("error"),
             ):
                 # The runner is about to resubmit this attempt (issue #681).
                 continue

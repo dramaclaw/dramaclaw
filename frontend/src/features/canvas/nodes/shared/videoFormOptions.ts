@@ -43,6 +43,7 @@ export const REFERENCE_CAPS_BY_MODE: Partial<
   imageToVideo: { image: 1, video: 0, audio: 0 },
   imageReference: { image: 9, video: 0, audio: 0 },
   videoEdit: { image: 5, video: 1, audio: 0 },
+  videoExtend: { image: 0, video: 1, audio: 0 },
   allReference: { image: 9, video: 3, audio: 3 },
   firstLastFrame: { image: 2, video: 0, audio: 0 },
 };
@@ -72,7 +73,7 @@ export function referenceCapsForMode(
   if (!defaults) return null;
   return {
     image: FIXED_IMAGE_CAP_BY_MODE[mode] ?? model?.referenceImageMax ?? defaults.image,
-    video: model?.referenceVideoMax ?? defaults.video,
+    video: mode === "videoExtend" ? 1 : model?.referenceVideoMax ?? defaults.video,
     audio: model?.referenceAudioMax ?? defaults.audio,
   };
 }

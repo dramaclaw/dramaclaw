@@ -854,6 +854,9 @@ def test_m05_l2_exercises_happy_path_route_contracts(m05_client_factory):
     assert executed["task_type"] == "render_plan"
     assert len(executed["task_ids"]) == 1
     assert executed["task_ids"][0].startswith("task-inline-selected_regen-1x1_2-3__")
+    sketch = project_dir / "sketches" / "ep001" / "beat_01.png"
+    sketch.parent.mkdir(parents=True, exist_ok=True)
+    sketch.write_bytes(_png_bytes())
     _assert_task_shape(
         client.post(
             f"/api/v1/projects/{_PROJECT}/episodes/1/beats/regenerate",
@@ -1122,11 +1125,21 @@ def test_m05_task_responses_are_ce_ee_isomorphic_without_celery_only_fields(
         client, task_backend, project_dir, _store = m05_client_factory(backend)
         _seed_stage_files(project_dir)
         _seed_labels(project_dir)
+        sketch = project_dir / "sketches" / "ep001" / "beat_01.png"
+        sketch.parent.mkdir(parents=True, exist_ok=True)
+        sketch.write_bytes(_png_bytes())
 
         cases = [
             (
                 "episode_scene_planner",
                 client.post(f"/api/v1/projects/{_PROJECT}/episodes/1/scenes/plan"),
+            ),
+            (
+                "selected_regen",
+                client.post(
+                    f"/api/v1/projects/{_PROJECT}/episodes/1/beats/regenerate",
+                    json={"beat_indices": [1]},
+                ),
             ),
             (
                 "sketch_grid_generation",
@@ -1142,13 +1155,6 @@ def test_m05_task_responses_are_ce_ee_isomorphic_without_celery_only_fields(
                 ),
             ),
             (
-                "selected_regen",
-                client.post(
-                    f"/api/v1/projects/{_PROJECT}/episodes/1/beats/regenerate",
-                    json={"beat_indices": [1]},
-                ),
-            ),
-            (
                 "sketch_edit_execute",
                 client.post(
                     f"/api/v1/projects/{_PROJECT}/episodes/1/verify/sketch-edit-execute/start",
@@ -1158,14 +1164,14 @@ def test_m05_task_responses_are_ce_ee_isomorphic_without_celery_only_fields(
         ]
 
         for task_type, response in cases:
-            assert response.status_code == 200
+            assert response.status_code == 200, (task_type, response.json())
             _assert_task_shape(response.json(), backend=backend, task_type=task_type)
 
         assert [call["task_type"] for call in task_backend.calls] == [
             "episode_scene_planner",
+            "selected_regen",
             "sketch_grid_generation",
             "sketch_regen",
-            "selected_regen",
             "sketch_edit_execute",
         ]
 

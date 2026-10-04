@@ -1908,3 +1908,160 @@ async def test_newapi_organization_submit_response_keeps_safe_error_and_terminal
     assert result.error == expected_error
     assert "secret-canary" not in repr(result)
     assert [name for name, _ in operation_port.events] == ["claim", expected_transition]
+
+
+@pytest.fixture
+def enhancement_context():
+    return replace(_context(), task_type="freezone_video_upscale")
+
+
+@pytest.fixture
+def enhancement_operations():
+    from tests.support.egress_ledger import LedgerDouble
+
+    return LedgerDouble()
+
+
+@pytest.fixture
+def enhancement_gateway(monkeypatch, enhancement_context, enhancement_operations):
+    from novelvideo.freezone import jobs
+    from novelvideo.generators import video_generator as video
+
+    submitted = []
+    _install_newapi_ports(monkeypatch, enhancement_context, enhancement_operations, [])
+
+    async def post(self, url, payload, *, headers):
+        submitted.append(payload)
+        return {"id": f"provider-job-{len(submitted)}"}
+
+    async def poll(self, url, *, headers):
+        return {"status": "completed", "video_url": f"https://result.example/{self.model}.mp4"}
+
+    async def download(self, url, output_path):
+        data = self.model.encode()
+        Path(output_path).write_bytes(data)
+        return data
+
+    async def relay(self, path, **kwargs):
+        assert Path(path).exists()
+        return "https://relay.example/source.mp4"
+
+    async def revalidate(self, context):
+        return None
+
+    async def probe(*args, **kwargs):
+        return {"width": 1280, "height": 720, "fps": 24.0, "duration": 10.0}
+
+    async def slow(source, output, **kwargs):
+        output.write_bytes(source.read_bytes() + b"-slowed")
+
+    # Keep the stage helper, generator, operation identity and claim/transition
+    # path real. Only media I/O and unrelated credential/billing services are stubbed.
+    monkeypatch.setattr(video.NewApiVideoGenerator, "_post_json", post)
+    monkeypatch.setattr(video.NewApiVideoGenerator, "_get_json", poll)
+    monkeypatch.setattr(video.NewApiVideoGenerator, "_download_video", download)
+    monkeypatch.setattr(video.NewApiVideoGenerator, "_relay_media_input", relay)
+    monkeypatch.setattr(video.NewApiVideoGenerator, "_revalidate_organization", revalidate)
+    monkeypatch.setattr(video, "get_video_result_delivery", lambda: None)
+    monkeypatch.setattr(jobs, "probe_video_stream", probe)
+    monkeypatch.setattr(jobs, "_slow_video", slow)
+    return submitted
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("target_fps", "slowdown", "smart_interpolation", "stage_count"),
+    [(None, "auto", True, 1), (60, "auto", True, 2), (60, "auto", False, 2), (None, "2x", True, 2)],
+)
+async def test_video_enhancement_pipeline_has_distinct_durable_operations(
+    tmp_path,
+    enhancement_context,
+    enhancement_operations,
+    enhancement_gateway,
+    target_fps,
+    slowdown,
+    smart_interpolation,
+    stage_count,
+):
+    from novelvideo.freezone.jobs import run_freezone_video_upscale
+    from novelvideo.generators.video_generator import VideoEgressError
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    kwargs = dict(
+        project_dir=tmp_path,
+        job_id="enhance-1",
+        source_path=str(source),
+        resolution="1080p",
+        target_fps=target_fps,
+        slowdown=slowdown,
+        smart_interpolation=smart_interpolation,
+        upscale_backend="newapi_video-super-resolution",
+        frame_rate_backend="newapi_video-frame-rate",
+        egress_context=enhancement_context,
+    )
+    output, _ = await run_freezone_video_upscale(**kwargs)
+    models = ["video-super-resolution", "video-frame-rate"][:stage_count]
+    assert output.read_bytes() == models[-1].encode()
+    assert [payload["model"] for payload in enhancement_gateway] == models
+    specs = list(enhancement_operations.claims)
+    assert len(specs) == stage_count
+    assert len({spec.operation_key for spec in specs}) == stage_count
+    # Preserve the deployed upscale identity so old operations still replay.
+    assert specs[0].business_task_id == (
+        "freezone_video_upscale:episode:0:beat:0:scope:task:generate"
+    )
+    for spec in specs:
+        existing = await enhancement_operations.claim(spec=spec)
+        assert not existing.won
+        assert existing.operation.state is OperationState.COMPLETED
+
+    # A retry of the same task must not submit or charge for another upscale.
+    with pytest.raises(VideoEgressError) as error:
+        await run_freezone_video_upscale(**kwargs)
+    assert error.value.code == "EGRESS_OPERATION_REPLAYED"
+    assert len(enhancement_gateway) == stage_count
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["video_upscale", "video_frame_rate"])
+async def test_video_enhancement_stage_retry_keeps_its_operation_identity(
+    tmp_path,
+    enhancement_context,
+    enhancement_operations,
+    enhancement_gateway,
+    mode,
+):
+    from novelvideo.freezone.jobs import _run_video_processing_model
+    from novelvideo.generators.video_generator import VideoEgressError
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    model = "video-super-resolution" if mode == "video_upscale" else "video-frame-rate"
+    kwargs = dict(
+        project_dir=tmp_path,
+        job_id="enhance-stage",
+        source_path=source,
+        output_path=tmp_path / "output.mp4",
+        backend=f"newapi_{model}",
+        mode=mode,
+        duration=10,
+        resolution="1080p",
+        processing_metadata={"target_fps": 60},
+        model_params=None,
+        request_schema=None,
+        egress_context=enhancement_context,
+    )
+    await _run_video_processing_model(**kwargs)
+    # Redelivery has a new envelope but the same root task and stage.
+    kwargs["egress_context"] = replace(enhancement_context, envelope_id="redelivered")
+    with pytest.raises(VideoEgressError) as replay:
+        await _run_video_processing_model(**kwargs)
+    assert replay.value.code == "EGRESS_OPERATION_REPLAYED"
+
+    kwargs["processing_metadata"] = {"target_fps": 120}
+    with pytest.raises(VideoEgressError) as conflict:
+        await _run_video_processing_model(**kwargs)
+    assert conflict.value.code == "EGRESS_OPERATION_CONFLICT"
+    assert len(enhancement_gateway) == 1
+    assert len({spec.operation_key for spec in enhancement_operations.claims}) == 1

@@ -64,6 +64,7 @@ beforeAll(async () => {
                 lockedLightTooltip: "锁图光：使用场景图自带光线，不重新打光。",
                 lockedLightLabel: "锁图光",
                 renderCurrentSketch: "Render 当前草图",
+                sketchRequired: "请先生成或上传草图",
                 regenDesc: "重生 Beat #{{n}}",
                 regenFailed: "重生失败",
                 regenStarted: "已启动重生",
@@ -240,6 +241,7 @@ vi.mock("@/features/viewer-kit/three-d/ThreeDDirectorDialog", () => ({
 const beat = {
   beat_number: 5,
   narration_segment: "beat text",
+  sketch_url: "/static/current-sketch.png",
   scene_ref: { scene_id: "卫生间", variant_id: "夜" },
   time_of_day: "白天",
   frame_url: "/static/current-render.png",
@@ -368,6 +370,23 @@ beforeEach(() => {
 });
 
 describe("RenderSection", () => {
+  it("blocks Render generation when the beat has no sketch", () => {
+    render(
+      <I18nextProvider i18n={i18n}>
+        <RenderSection
+          beat={{ ...beat, sketch_url: "" }}
+          project="demo"
+          episode={1}
+          images={[renderImage, sketchImage]}
+          assignments={{ "5": "render-5" }}
+        />
+      </I18nextProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: /重新生成/ })).toBeDisabled();
+    expect(screen.getByText("请先生成或上传草图")).toBeInTheDocument();
+  });
+
   it("does not expose removed render detail or bad-image analysis actions", () => {
     render(
       <I18nextProvider i18n={i18n}>

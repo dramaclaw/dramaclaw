@@ -12,6 +12,7 @@ from novelvideo.api.schemas import (
     FreezoneImageToVideoRequest,
     FreezoneKeyframeVideoRequest,
     FreezoneVideoEditRequest,
+    FreezoneVideoExtendRequest,
     FreezoneVideoGenRequest,
     FreezoneVideoOmniGenRequest,
 )
@@ -145,6 +146,39 @@ async def test_video_edit_forwards_configured_independent_audio(
         },
     ]
     assert captured["validated_audio_items"] == captured["start"]["reference_items"]
+
+
+@pytest.mark.asyncio
+async def test_video_extend_uses_source_video_auto_ratio_and_requested_duration(
+    monkeypatch, tmp_path: Path
+) -> None:
+    capabilities = _catalog("video_extend")
+    capabilities["referenceVideoMax"] = 1
+    captured = await _install_route_fakes(monkeypatch, tmp_path, capabilities)
+
+    await freezone_routes.freezone_video_extend(
+        "project",
+        FreezoneVideoExtendRequest(
+            video_url="https://example.com/source.mp4",
+            prompt="继续生成五秒，人物走出房门",
+            duration_seconds=7,
+            model="catalog-video",
+        ),
+        {"username": "admin"},
+    )
+
+    assert captured["request_mode"] == "videoExtend"
+    assert captured["start"]["gen_mode"] == "video_extend"
+    assert captured["start"]["aspect_ratio"] == "auto"
+    assert captured["start"]["duration_seconds"] == 7
+    assert captured["start"]["reference_items"] == [
+        {
+            "type": "video",
+            "path": "https://example.com/source.mp4",
+            "role": "视频延长源",
+        }
+    ]
+    assert "视频延长要求" in captured["start"]["prompt"]
 
 
 @pytest.mark.asyncio

@@ -9,6 +9,7 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { submitFreezoneGen } from "@/api/ops";
 import { CANVAS_NODE_TYPES, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { useImageGenerationForm } from "@/features/canvas/nodes/shared/useImageGenerationForm";
 import { InsufficientCreditsError } from "@/lib/api-errors";
@@ -88,6 +89,24 @@ function nodeData(): Record<string, unknown> {
 describe("ImageGen error notification contract", () => {
   beforeEach(() => {
     seed();
+  });
+
+  it("shows structured reference validation errors from the shared image form", async () => {
+    const issue = {
+      media: "image", index: 1, name: "small.png", reference_key: "freezone/small.png",
+      code: "minWidth", actual: 200, expected: 300,
+    };
+    vi.mocked(submitFreezoneGen).mockRejectedValueOnce({
+      body: { detail: { code: "REFERENCE_MEDIA_INVALID", errors: [issue] } },
+    });
+    const { result } = renderHook(() => useImageGenerationForm("img-1"));
+    await waitFor(() => expect(result.current.submitDisabled).toBe(false));
+    await result.current.submit().catch(() => undefined);
+    await waitFor(() => expect(result.current.referenceErrors).toHaveLength(1));
+    expect(result.current.referenceErrors[0]).toMatchObject(issue);
+    expect(result.current.referenceErrorsOpen).toBe(true);
+    expect(nodeData().generationError).toBe("translated:referenceValidation.title");
+    expect(nodeData().isGenerating).toBe(false);
   });
 
   it("stores the raw backend error separately from the displayed message", async () => {

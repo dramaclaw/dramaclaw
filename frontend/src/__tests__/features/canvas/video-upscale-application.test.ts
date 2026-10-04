@@ -61,7 +61,6 @@ describe('videoUpscale application（高清结果节点 + 提交编排）', () =
       sourceUrl: '/static/v.mp4',
       displayName: '高清（2K）',
       resolution: '2k',
-      denoise: '1x',
     });
 
     const state = useCanvasStore.getState();
@@ -75,7 +74,6 @@ describe('videoUpscale application（高清结果节点 + 提交编排）', () =
       isUpscaleNode: true,
       upscaleSourceUrl: '/static/v.mp4',
       upscaleResolution: '2k',
-      upscaleDenoise: '1x',
       isGenerating: false,
     });
     expect(
@@ -88,7 +86,6 @@ describe('videoUpscale application（高清结果节点 + 提交编排）', () =
       sourceUrl: '/static/v.mp4',
       displayName: '高清（1080P）',
       resolution: '1080p',
-      denoise: 'none',
     }) as string;
     submitFreezoneVideoUpscale.mockResolvedValue(JOB_REF);
     awaitTaskCompletion.mockResolvedValue({ result: {} });
@@ -97,14 +94,11 @@ describe('videoUpscale application（高清结果节点 + 提交编排）', () =
     await submitVideoUpscale(upscaleId, {
       sourceUrl: '/static/v.mp4?sig=abc',
       resolution: '1080p',
-      denoise: 'none',
     });
 
     expect(submitFreezoneVideoUpscale).toHaveBeenCalledWith('proj-1', {
       sourceUrl: '/static/v.mp4',
       resolution: '1080p',
-      frameInterpolation: 'none',
-      denoiseStrength: 'none',
       canvasId: 'canvas-1',
       nodeId: upscaleId,
     });
@@ -129,14 +123,12 @@ describe('videoUpscale application（高清结果节点 + 提交编排）', () =
       sourceUrl: '/static/v.mp4',
       displayName: '高清（4K）',
       resolution: '4k',
-      denoise: '2x',
     }) as string;
     submitFreezoneVideoUpscale.mockRejectedValue(new Error('backend down'));
 
     await submitVideoUpscale(upscaleId, {
       sourceUrl: '/static/v.mp4',
       resolution: '4k',
-      denoise: '2x',
     });
 
     const failed = useCanvasStore.getState().nodes.find((node) => node.id === upscaleId);

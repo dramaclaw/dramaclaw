@@ -23,6 +23,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   fetchFreezoneVideoModels,
   submitFreezoneVideoEdit,
+  submitFreezoneVideoExtend,
   submitFreezoneVideoGen,
   submitFreezoneVideoI2v,
   submitFreezoneVideoKeyframes,
@@ -103,6 +104,11 @@ vi.mock("@/api/ops", async (importOriginal) => {
         catalogId: "catalog-sd2",
       },
       {
+        id: "video-extend-model", providerId: "newapi", label: "Extend",
+        apiModel: "extend-api", catalogId: "catalog-extend",
+        supportedModes: ["video_extend"],
+      },
+      {
         id: "huimeng/happyhorse-1.0",
         providerId: "huimeng",
         apiModel: "happyhorse-1.0",
@@ -116,6 +122,7 @@ vi.mock("@/api/ops", async (importOriginal) => {
     submitFreezoneVideoKeyframes: vi.fn(nextRef("freezone_video_keyframes")),
     submitFreezoneVideoI2v: vi.fn(nextRef("freezone_video_i2v")),
     submitFreezoneVideoEdit: vi.fn(nextRef("freezone_video_edit")),
+    submitFreezoneVideoExtend: vi.fn(nextRef("freezone_video_extend")),
     submitFreezoneVideoOmniGen: vi.fn(nextRef("freezone_video_omni_gen")),
     fetchFreezoneJobResult: vi.fn(async () => ({ url: "/static/fallback.mp4" })),
   };
@@ -198,6 +205,7 @@ const ALL_ENDPOINTS = [
   submitFreezoneVideoKeyframes,
   submitFreezoneVideoI2v,
   submitFreezoneVideoEdit,
+  submitFreezoneVideoExtend,
   submitFreezoneVideoOmniGen,
 ] as const;
 
@@ -277,6 +285,23 @@ describe("视频节点：genMode → 提交端点的分派", () => {
       model: "catalog-sd2",
       canvasId: "canvas-9",
       nodeId: "vid-1",
+    });
+  });
+
+  it("视频延长 → /video/video-extend，保留单一源视频和提示词", async () => {
+    useCanvasStore.getState().setCanvasData(
+      [videoNode({ model: "video-extend-model", genMode: "videoExtend" }),
+        upstreamVideoNode("source-1", "/static/source.mp4")],
+      [edge("e1", "source-1")],
+    );
+
+    await submitAndSettle();
+
+    expectOnlyEndpointCalled(submitFreezoneVideoExtend);
+    expect(payloadOf(submitFreezoneVideoExtend)).toMatchObject({
+      genMode: "videoExtend", videoUrl: "/static/source.mp4",
+      prompt: "一只猫跳上桌子", model: "catalog-extend",
+      canvasId: "canvas-9", nodeId: "vid-1",
     });
   });
 

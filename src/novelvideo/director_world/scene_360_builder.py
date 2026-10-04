@@ -1053,6 +1053,9 @@ async def run(args: argparse.Namespace) -> int:
             },
             base_url=base_url,
             trace=provider_trace,
+            delivery_path=result_path,
+            delivery_state=(image_delivery_state := {}),
+            read_copied_bytes=False,
         )
     elif provider == "openrouter":
         api_key = os.environ.get("OPENROUTER_API_KEY")
@@ -1114,9 +1117,12 @@ async def run(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
 
-    if not image_bytes:
+    if not image_bytes and not (
+        provider == "newapi" and image_delivery_state.get("copied")
+    ):
         raise RuntimeError(error or "image generation returned no image")
-    result_path.write_bytes(image_bytes)
+    if not (provider == "newapi" and image_delivery_state.get("copied")):
+        result_path.write_bytes(image_bytes)
 
     make_contact_sheet(output_dir, master_refs, result_path)
 

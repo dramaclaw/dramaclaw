@@ -703,6 +703,10 @@ async def generate_scene_reference_image(
             image_config=_scene_image_config(selected_model),
             base_url=base_url,
             trace=trace,
+            delivery_path=output_path,
+            delivery_state=(image_delivery_state := {}),
+            before_delivery_copy=lambda: _archive_existing(output_path),
+            read_copied_bytes=False,
         )
     elif provider in {"huimeng", "huimengi"}:
         api_key = HUIMENGI_API_KEY or ""
@@ -732,11 +736,14 @@ async def generate_scene_reference_image(
             },
         )
 
-    if error or not image_bytes:
+    if error or not (
+        image_bytes or (provider == "newapi" and image_delivery_state.get("copied"))
+    ):
         raise RuntimeError(error or "Image API returned no image bytes")
 
-    _archive_existing(output_path)
-    output_path.write_bytes(image_bytes)
+    if not (provider == "newapi" and image_delivery_state.get("copied")):
+        _archive_existing(output_path)
+        output_path.write_bytes(image_bytes)
     output_path.with_suffix(".prompt.txt").write_text(prompt, encoding="utf-8")
     await _complete_organization_image_egress(
         organization_egress,

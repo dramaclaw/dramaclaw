@@ -1274,7 +1274,7 @@ def _compile_isomorphic_plan_through_template(
         match=match,
         assumptions=assumptions,
     )
-    compiled = compile_workflow_intent(intent)
+    compiled = compile_workflow_intent(intent, _include_unit_facts=False)
     if not compiled.get("ok"):
         return None, {
             "isomorphic": False,
@@ -1793,7 +1793,9 @@ def get_workflow_skill(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def compile_workflow_intent(intent: Any) -> dict[str, Any]:
+def compile_workflow_intent(
+    intent: Any, *, _include_unit_facts: bool = True
+) -> dict[str, Any]:
     """Compile a compact Agent decision into a complete, validated dynamic plan."""
     if not isinstance(intent, dict):
         return _intent_error("intent must be an object", path="intent")
@@ -1854,6 +1856,9 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
             requested_mode=requested_mode,
             item_count=len(_intent_items(compiled_intent)),
         )
+        _apply_confirmed_input_guidance(
+            compiled_intent.get("items") or [], skill_id, input_contract["resolved"]
+        )
     else:
         compiled_intent, planner_metadata, planner_error = (
             _expand_standard_skill_intent(
@@ -1861,11 +1866,15 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
                 skill_id=skill_id,
                 user_goal=user_goal,
                 resolved_inputs=input_contract["resolved"],
+                include_unit_facts=_include_unit_facts,
             )
         )
         if planner_error is not None:
             return planner_error
         plan_metadata = planner_metadata
+        _apply_confirmed_input_guidance(
+            compiled_intent.get("items") or [], skill_id, input_contract["resolved"]
+        )
 
     compiled = _compile_dynamic_recipe_items_intent(
         intent=compiled_intent,
@@ -1962,6 +1971,39 @@ def _agent_authored_planner_metadata(
     return metadata
 
 
+def _standard_outline_prompt(
+    *,
+    skill_id: str,
+    user_goal: str,
+    units: list[dict[str, Any]],
+) -> str:
+    """Keep standard tutorial outline input connected to each planned unit.
+
+    The standard planner keeps step facts in ``planner.units`` so image/video
+    items can consume them. The outline is the upstream text source for those
+    items and must receive the same facts; using only the compact user goal
+    silently drops numeric instructions before the first Recipe runs.
+    """
+    if skill_id != "video-tutorial" or not units:
+        return user_goal
+    briefs: list[str] = []
+    for index, unit in enumerate(units, 1):
+        if not isinstance(unit, dict):
+            continue
+        title = _text(unit.get("title")) or f"第{index}段"
+        prompt = _text(unit.get("prompt"))
+        narration = _text(unit.get("narration"))
+        parts = [f"{title}："]
+        if prompt:
+            parts.append(prompt)
+        if narration:
+            parts.append(f"旁白：{narration}")
+        briefs.append(" ".join(parts))
+    if not briefs:
+        return user_goal
+    return f"{user_goal}\n逐段事实与旁白（必须完整保留）：\n" + "\n".join(briefs)
+
+
 def _standard_skill_items(
     *,
     skill_id: str,
@@ -1969,6 +2011,7 @@ def _standard_skill_items(
     include_audio: bool,
     units: list[dict[str, Any]],
     user_goal: str,
+    include_unit_facts: bool = True,
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     if skill_id == "ecommerce-ad":
@@ -2042,7 +2085,13 @@ def _standard_skill_items(
         _planned_item(
             item_id="outline",
             title="内容规划",
-            prompt=user_goal,
+            prompt=(
+                _standard_outline_prompt(
+                    skill_id=skill_id, user_goal=user_goal, units=units
+                )
+                if include_unit_facts
+                else user_goal
+            ),
             recipe_id=outline_recipe,
             depends_on=["workflow_input"],
             stage="planning",
@@ -2302,6 +2351,45 @@ def _standard_planner_units(
     return units
 
 
+def _confirmed_input_guidance(
+    skill_id: str, resolved_inputs: dict[str, Any]
+) -> str:
+    """Return concise, user-confirmed creative constraints for node prompts.
+
+    ``confirmedInputs`` is retained as structured metadata, but prompt consumers
+    also need the decision in their task brief. Keeping this guidance in the
+    compiled item prompt makes the choice survive the planning-to-Recipe handoff.
+    """
+    if not isinstance(resolved_inputs, dict):
+        return ""
+    parts: list[str] = []
+    visual_style = _text(resolved_inputs.get("visual_style"))
+    if visual_style and skill_id == "short-drama-quick":
+        parts.append(
+            f"已确认视觉风格为「{visual_style}」；角色、场景、分镜、首帧和视频必须保持该风格。"
+        )
+    character_method = _text(resolved_inputs.get("character_input_method"))
+    if character_method and skill_id == "pixar-ip-ad-video":
+        parts.append(
+            f"已确认角色来源为「{character_method}」；不得回退到预设角色或改用未确认的角色来源。"
+        )
+    return " ".join(parts)
+
+
+def _apply_confirmed_input_guidance(
+    items: list[dict[str, Any]], skill_id: str, resolved_inputs: dict[str, Any]
+) -> None:
+    guidance = _confirmed_input_guidance(skill_id, resolved_inputs)
+    if not guidance:
+        return
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        prompt = _text(item.get("prompt"))
+        if guidance not in prompt:
+            item["prompt"] = f"{prompt} {guidance}".strip()
+
+
 def _planned_item(
     *,
     item_id: str,
@@ -2339,6 +2427,7 @@ def _expand_standard_skill_intent(
     skill_id: str,
     user_goal: str,
     resolved_inputs: dict[str, Any],
+    include_unit_facts: bool = True,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any] | None]:
     profile = _DETERMINISTIC_SKILL_PLANNERS.get(skill_id)
     if profile is None:
@@ -2510,6 +2599,7 @@ def _expand_standard_skill_intent(
         include_audio=include_audio,
         units=units,
         user_goal=user_goal,
+        include_unit_facts=include_unit_facts,
     )
     expanded = {
         **intent,

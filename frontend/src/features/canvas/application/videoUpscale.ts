@@ -3,7 +3,6 @@
 import {
   fetchFreezoneJobResult,
   submitFreezoneVideoUpscale,
-  type FreezoneVideoUpscaleDenoise,
   type FreezoneVideoUpscaleResolution,
 } from '@/api/ops';
 import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
@@ -24,11 +23,6 @@ export const VIDEO_UPSCALE_RESOLUTION_LABEL: Record<FreezoneVideoUpscaleResoluti
   '2k': '2K',
   '4k': '4K',
 };
-export const VIDEO_UPSCALE_DENOISE_OPTIONS: FreezoneVideoUpscaleDenoise[] = [
-  'none',
-  '1x',
-  '2x',
-];
 
 /**
  * 在源视频下游建「高清」结果节点（payload 与 NodeActionToolbar.handleVideoUpscale
@@ -44,7 +38,6 @@ export function createVideoUpscaleResultNode(
     sourceUrl: string;
     displayName: string;
     resolution: FreezoneVideoUpscaleResolution;
-    denoise: FreezoneVideoUpscaleDenoise;
   },
 ): string | null {
   const store = useCanvasStore.getState();
@@ -67,7 +60,6 @@ export function createVideoUpscaleResultNode(
       isUpscaleNode: true,
       upscaleSourceUrl: opts.sourceUrl,
       upscaleResolution: opts.resolution,
-      upscaleDenoise: opts.denoise,
       isGenerating: false,
     } as unknown as Parameters<typeof store.addNode>[2],
   );
@@ -86,7 +78,6 @@ export async function submitVideoUpscale(
   opts: {
     sourceUrl: string;
     resolution: FreezoneVideoUpscaleResolution;
-    denoise: FreezoneVideoUpscaleDenoise;
   },
 ): Promise<void> {
   const project = readUrl().project;
@@ -106,8 +97,6 @@ export async function submitVideoUpscale(
     const ref = await submitFreezoneVideoUpscale(project, {
       sourceUrl: opts.sourceUrl.split('?')[0],
       resolution: opts.resolution,
-      frameInterpolation: 'none',
-      denoiseStrength: opts.denoise,
       canvasId,
       nodeId,
     });

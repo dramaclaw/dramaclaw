@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { jsonWithBackendError } from "@/lib/api-errors";
 import { apiCall, apiClient } from "./client";
 import type {
   ResolvedSkillInput,
@@ -144,17 +145,21 @@ export async function runSkill(
   skillId: string,
   request: SkillRunRequest,
 ): Promise<SkillRunResponse> {
-  return await apiClient(
-    `projects/${encodeURIComponent(project)}/freezone/skills/${encodeURIComponent(skillId)}/run`,
-    { method: "POST", json: request },
-  ).json<SkillRunResponse>();
+  return await jsonWithBackendError<SkillRunResponse>(
+    apiClient(
+      `projects/${encodeURIComponent(project)}/freezone/skills/${encodeURIComponent(skillId)}/run`,
+      { method: "POST", json: request },
+    ),
+  );
 }
 
 export async function getSkillRunResult(
   project: string,
   runId: string,
 ): Promise<SkillRunResult> {
-  return await apiClient(
-    `projects/${encodeURIComponent(project)}/freezone/skills/runs/${encodeURIComponent(runId)}/result`,
-  ).json<SkillRunResult>();
+  return await jsonWithBackendError<SkillRunResult>(
+    apiClient(
+      `projects/${encodeURIComponent(project)}/freezone/skills/runs/${encodeURIComponent(runId)}/result`,
+    ),
+  );
 }

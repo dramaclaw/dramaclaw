@@ -24,6 +24,7 @@ const WITHOUT_VIDEO_EDIT = [
   "all_reference",
   "image_reference",
 ];
+const WITH_VIDEO_EXTEND = [...WITHOUT_VIDEO_EDIT, "video_extend"];
 
 describe("videoModeDisabledReason — 上游接了视频时的模式可用性", () => {
   /**
@@ -111,5 +112,26 @@ describe("videoModeDisabledReason — 上游接了视频时的模式可用性", 
     expect(videoModeDisabledReason("textToVideo", "happyhorse-1.0", { ...NONE, videos: 1 }, zhT)).toBe(
       "已连接视频节点，请使用「视频编辑」",
     );
+  });
+
+  it("视频延长要求模型声明能力且只连接一个源视频", () => {
+    expect(
+      videoModeDisabledReason(
+        "videoExtend",
+        "seedance-2.5",
+        { ...NONE, videos: 1 },
+        zhT,
+        WITH_VIDEO_EXTEND,
+      ),
+    ).toBeNull();
+    expect(
+      videoModeDisabledReason(
+        "videoExtend",
+        "seedance-2.5",
+        { ...NONE, videos: 1, images: 1 },
+        zhT,
+        WITH_VIDEO_EXTEND,
+      ),
+    ).toBe("「视频延长」只接受源视频，请移除图片或音频素材");
   });
 });

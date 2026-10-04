@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from novelvideo.config import INDEXTTS2_RECORD_MODEL, OUTPUT_DIR
+from novelvideo.media_archive_copy import copy_archived_result
 from novelvideo.generators.indextts2_fal import IndexTTS2FalClient
 from novelvideo.egress_context import (
     TrustedEgressContext,
@@ -900,29 +901,30 @@ async def _write_newapi_audio_speech(
                         "NewAPI audio response missing audio bytes or URL"
                     )
                 if result_url:
-                    audio_response = None
-                    for attempt in range(max_attempts):
-                        try:
-                            audio_response = await client.get(result_url)
-                            audio_response.raise_for_status()
-                            break
-                        except (httpx.TransportError, httpx.TimeoutException):
-                            if attempt >= max_attempts - 1:
-                                raise
-                            await asyncio.sleep(2**attempt)
-                        except httpx.HTTPStatusError as exc:
-                            if (
-                                exc.response.status_code
-                                not in {408, 425, 429, 500, 502, 503, 504}
-                                or attempt >= max_attempts - 1
-                            ):
-                                raise
-                            await asyncio.sleep(2**attempt)
-                    if audio_response is None:
-                        raise RuntimeError(
-                            "NewAPI audio download failed without a response"
-                        )
-                    output_path.write_bytes(audio_response.content)
+                    if not await copy_archived_result(payload.get("archive"), output_path):
+                        audio_response = None
+                        for attempt in range(max_attempts):
+                            try:
+                                audio_response = await client.get(result_url)
+                                audio_response.raise_for_status()
+                                break
+                            except (httpx.TransportError, httpx.TimeoutException):
+                                if attempt >= max_attempts - 1:
+                                    raise
+                                await asyncio.sleep(2**attempt)
+                            except httpx.HTTPStatusError as exc:
+                                if (
+                                    exc.response.status_code
+                                    not in {408, 425, 429, 500, 502, 503, 504}
+                                    or attempt >= max_attempts - 1
+                                ):
+                                    raise
+                                await asyncio.sleep(2**attempt)
+                        if audio_response is None:
+                            raise RuntimeError(
+                                "NewAPI audio download failed without a response"
+                            )
+                        output_path.write_bytes(audio_response.content)
         if lease is not None:
             await complete_audio_operation(lease, result_ref="audio:newapi:completed")
         return response_log_payload

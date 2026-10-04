@@ -3680,6 +3680,80 @@ def test_generation_recommendation_uses_explicit_specs_and_keeps_delivery_separa
     }
 
 
+def test_generation_recommendation_preserves_explicit_image_preferences(monkeypatch):
+    """Explicit image settings must not be rejected or replaced by defaults."""
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    events = []
+    monkeypatch.setattr(
+        plugin, "_emit_clarification_event",
+        lambda _project, _canvas, event: events.append(event) or "shown",
+    )
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: _ISSUE_637_IMAGE_CATALOG)
+
+    result = handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a",
+        "generation_media_types": ["image"],
+        "generation_preferences": {
+            "image_resolution": "2K",
+            "image_quality": "medium",
+            "image_variants_per_node": 1,
+        },
+    })
+
+    assert result == "shown"
+    assert events[0]["recommended_answers"]["image_resolution"] == {
+        "option_ids": ["2K"]
+    }
+    assert events[0]["recommended_answers"]["image_quality"] == {
+        "option_ids": ["medium"]
+    }
+    assert events[0]["recommended_answers"]["image_variants_per_node"] == {
+        "option_ids": ["1"]
+    }
+
+
+def test_generation_clarification_rejects_conflicting_shared_and_shot_duration(monkeypatch):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+
+    result = handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a",
+        "generation_media_types": ["video"],
+        "generation_preferences": {
+            "video_duration_seconds": 6,
+            "video_shot_durations_seconds": [6, 7, 6],
+        },
+    })
+
+    assert result["ok"] is False
+    assert result["status"] == "generation_clarification_args_invalid"
+    assert "conflict" in result["error"]
+
+
+def test_generation_clarification_accepts_equal_shared_and_shot_duration(monkeypatch):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    events = []
+    monkeypatch.setattr(
+        plugin, "_emit_clarification_event",
+        lambda _project, _canvas, event: events.append(event) or "shown",
+    )
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: _ISSUE_674_VIDEO_CATALOG)
+
+    result = handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a",
+        "generation_media_types": ["video"],
+        "generation_preferences": {
+            "video_duration_seconds": 6,
+            "video_shot_durations_seconds": [6, 6, 6],
+        },
+    })
+
+    assert result == "shown"
+    assert "video_duration_seconds" not in [q["id"] for q in events[0]["questions"]]
+
+
 def test_generation_recommendation_shares_one_sided_ratio_for_image_video_card(monkeypatch):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
@@ -7742,6 +7816,97 @@ def test_canvas_command_handlers_reject_legacy_scope_instead_of_using_defaults()
         assert result["status"] == "legacy_tool_argument_rejected"
         assert "canvasId" in result["error"]
         assert "project" in result["error"]
+
+
+def test_revision_conflict_blocks_follow_up_canvas_writes_until_explicit_confirmation():
+    plugin = _load_plugin_module()
+    plugin._block_canvas_after_revision_conflict("project-a", "canvas-a")
+
+    result = plugin._emit_canvas_commands(
+        "project-a",
+        "canvas-a",
+        [{"type": "run_node_action", "node_id": "image-a", "action": "generate_image"}],
+        slim_result=True,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "canvas_revision_confirmation_required"
+    assert "未执行画布操作" in result["user_message"]
+
+    plugin._clear_canvas_revision_conflict("project-a", "canvas-a")
+    # The guard is the only concern of this regression test; the next stage
+    # may fail because no local frontend bridge is running.
+    assert plugin._revision_conflict_write_error("project-a", "canvas-a") is None
+
+
+@pytest.mark.parametrize(
+    "parameters, status",
+    [
+        ({"recipe_id": "ecommerce-remix-image"}, "source_node_required"),
+        (
+            {
+                "recipe_id": "ecommerce-remix-image",
+                "source_node_id": "source-a",
+                "target_node_id": "target-b",
+            },
+            "target_node_mismatch",
+        ),
+        (
+            {
+                "recipe_id": "ecommerce-remix-image",
+                "source_node_id": "source-a",
+                "actions": ["generate_image", "generate_image"],
+            },
+            "multiple_media_actions_rejected",
+        ),
+    ],
+)
+def test_dynamic_recipe_action_requires_one_exact_source_and_target_binding(
+    parameters, status
+):
+    plugin = _load_plugin_module()
+    result = plugin._handle_run_node_action(
+        {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "node_id": "target-a",
+            "action": "generate_image",
+            "parameters": parameters,
+        }
+    )
+    assert result["ok"] is False
+    assert result["status"] == status
+
+
+def test_dynamic_recipe_action_passes_exact_binding_as_one_command(monkeypatch):
+    plugin = _load_plugin_module()
+    captured = {}
+
+    def fake_single(args, command):
+        captured.update(command)
+        return {"ok": True, "command": command}
+
+    monkeypatch.setattr(plugin, "_single_write_command", fake_single)
+    result = plugin._handle_run_node_action(
+        {
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "node_id": "target-a",
+            "action": "generate_image",
+            "parameters": {
+                "recipe_id": "ecommerce-remix-image",
+                "skill_id": "ecommerce-ad",
+                "source_node_id": "source-a",
+                "target_node_id": "target-a",
+                "actions": ["generate_image"],
+            },
+        }
+    )
+    assert result["ok"] is True
+    assert captured["type"] == "run_node_action"
+    assert captured["node_id"] == "target-a"
+    assert captured["parameters"]["recipe_id"] == "ecommerce-remix-image"
+    assert captured["parameters"]["source_node_id"] == "source-a"
 
 
 def test_agent_tool_scope_exposes_only_canonical_canvas_id():

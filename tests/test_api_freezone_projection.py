@@ -145,6 +145,55 @@ def test_build_projection_from_preset_does_not_write_canvas(
     assert not (project_dir / "freezone" / "canvases").exists()
 
 
+def test_build_projection_from_preset_stamps_mainline_context_project_id(
+    projection_client,
+    monkeypatch,
+) -> None:
+    """「同步更新」直接把这里的节点写进内存画布；缺 projectId 的 beat 上下文
+    会被前端当成 standalone，必须和读画布时一样补上。"""
+    from novelvideo.api.routes import freezone
+
+    client, _project_dir = projection_client
+
+    async def fake_build_canvas_payload_for_preset_request(**_kwargs):
+        return {
+            "nodes": [
+                {
+                    "id": "beat_ctx",
+                    "type": "beatContextNode",
+                    "position": {"x": 100, "y": 100},
+                    "style": {"width": 260, "height": 160},
+                    "data": {
+                        "preset_managed": True,
+                        "mainline_context": [
+                            {"kind": "beat", "projectId": None, "episode": 1, "beat": 4},
+                        ],
+                    },
+                },
+            ],
+            "edges": [],
+            "metadata": {},
+        }
+
+    monkeypatch.setattr(
+        freezone,
+        "_build_canvas_payload_for_preset_request",
+        fake_build_canvas_payload_for_preset_request,
+    )
+
+    status, body = _build_projection(
+        client,
+        scope="beat",
+        episode=1,
+        beat=4,
+        projection_key="beat:1:4",
+    )
+
+    assert status == 200, body
+    beat_node = next(node for node in body["data"]["nodes"] if node["id"] == "beat_ctx")
+    assert beat_node["data"]["mainline_context"][0]["projectId"] == "proj_demo"
+
+
 def test_projection_scene_asset_includes_derived_base_master_input(
     projection_client,
     monkeypatch,

@@ -50,13 +50,14 @@ import {
 import { useFreezoneCameraOptions } from '@/features/canvas/hooks/useFreezoneCameraOptions';
 import { describeStyleSelection } from '@/features/canvas/nodes/StylePickerPopover';
 import { useFreezoneStyleTemplates } from '@/features/canvas/hooks/useFreezoneStyleTemplates';
-import { joinUpstreamText } from '@/features/canvas/application/graphContentResolver';
+import { extractUpstreamContent, joinUpstreamText } from '@/features/canvas/application/graphContentResolver';
 import { useUpstreamContents } from '@/features/canvas/application/useUpstreamGraph';
 import { useNodeGenerationTaskState } from '@/features/canvas/application/useNodeGenerationTaskState';
 import { type MentionCandidate } from '@/features/canvas/nodes/PromptMentionEditor';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
 import { hasImageGenPromptOverride } from '@/features/canvas/nodes/imageGenPrompt';
-import { orderedReferenceUrlsWithOwnFirst } from '@/features/canvas/nodes/referenceOrdering';
+import { orderedReferenceUrlsWithOwnFirst, upstreamNodesInEdgeOrder } from '@/features/canvas/nodes/referenceOrdering';
+import { matchesReference, referenceIssueName, referenceIssues, type ReferenceIssue } from '@/features/canvas/nodes/shared/ReferenceValidationDialog';
 import { useReferenceMentionSync } from '@/features/canvas/nodes/useReferenceMentionSync';
 import { attachCompletedStoryAsset, attachCompletedStoryFrame } from '@/features/canvas/application/videoContinuity';
 import type { ImageGenerationFormProps } from '@/features/canvas/nodes/shared/ImageGenerationForm';
@@ -120,6 +121,10 @@ export interface UseImageGenerationFormResult {
   ) => Promise<Record<string, unknown> | undefined>;
   canAutoCommitOnGenerate: boolean;
   referenceImageUrl: string | null;
+  referenceErrors: ReferenceIssue[];
+  referenceErrorsOpen: boolean;
+  closeReferenceErrors: () => void;
+  openReferenceErrors: () => void;
   /**
    * 作废在途生成（#224）。宿主每条「用户主动换掉节点上这张图」的路径都要先调它，
    * 否则上一批还在飞的请求回来会把刚换上的图盖掉，或糊上一条对不上号的失败横幅。
@@ -194,6 +199,8 @@ export function useImageGenerationForm(
       ? data.referenceImageUrl
       : null;
   const [isTranslatingPrompt, setIsTranslatingPrompt] = useState(false);
+  const [referenceErrors, setReferenceErrors] = useState<ReferenceIssue[]>([]);
+  const [referenceErrorsOpen, setReferenceErrorsOpen] = useState(false);
 
   const {
     models: availableModels,
@@ -512,6 +519,13 @@ export function useImageGenerationForm(
     // 编号共用同一份有序列表（orderedReferenceUrls），后端按位置解释 图片N。
     // 后端 reference_urls 接受 image / video 混合数组。
     const referenceUrls = orderedReferenceUrls;
+    setReferenceErrors([]);
+    setReferenceErrorsOpen(false);
+    const canvas = useCanvasStore.getState();
+    const referenceSnapshot = [
+      ...upstreamNodesInEdgeOrder(canvas.nodes, canvas.edges, id),
+      ...canvas.nodes.filter((node) => node.id === id),
+    ];
     const hasCamera = Boolean(
       cameraSelection
       && (cameraSelection.cameraBodyId
@@ -689,6 +703,35 @@ export function useImageGenerationForm(
         // 已有同批其它图完成（主图已落）时不覆盖成功态为错误——部分失败只
         // 影响画册张数。
         if (completedUrls.length > 0) return;
+        const issues = referenceIssues(error);
+        if (issues.length > 0 && runIndex === 0) {
+          setReferenceErrors(issues.map((issue) => {
+            const matching = referenceSnapshot.filter((node) => {
+              const content = extractUpstreamContent(node);
+              const values = [
+                content.imageUrl,
+                'referenceImageUrl' in node.data ? node.data.referenceImageUrl : null,
+              ];
+              return values.some((url) =>
+                typeof url === 'string' && matchesReference(url, issue.reference_key));
+            });
+            const source = matching.length === 1 ? matching[0] : undefined;
+            return {
+              ...issue,
+              nodeId: source?.id,
+              label: referenceIssueName(issue, source?.data.sourceFileName),
+            };
+          }));
+          setReferenceErrorsOpen(true);
+          updateNodeData(id, {
+            isGenerating: false,
+            generationStartedAt: null,
+            generationError: t('referenceValidation.title'),
+            generationErrorDetails: null,
+            generationErrorRequestId: null,
+          });
+          throw error;
+        }
         // 任务仲裁（stale / shouldWrite）只对 run 0 有意义：节点上只持久化了
         // run 0 的任务句柄，其余 run 的 taskKey 必然对不上，套用仲裁会把
         // 它们的失败全部误判为「过期任务」而静默吞掉。
@@ -879,6 +922,10 @@ export function useImageGenerationForm(
     submit: handleSubmit,
     canAutoCommitOnGenerate,
     referenceImageUrl,
+    referenceErrors,
+    referenceErrorsOpen,
+    closeReferenceErrors: () => setReferenceErrorsOpen(false),
+    openReferenceErrors: () => setReferenceErrorsOpen(true),
     invalidateInFlightGeneration,
   };
 }

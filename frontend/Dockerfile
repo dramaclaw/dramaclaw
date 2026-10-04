@@ -30,9 +30,12 @@ RUN pnpm build
 FROM nginx:1.27-alpine AS nginx-config-test
 ENV BACKEND_HOST=127.0.0.1 \
     BACKEND_PORT=8780 \
-    NGINX_ENVSUBST_FILTER="^(BACKEND_HOST|BACKEND_PORT)$"
+    CSP_PAYMENT_FORM_ORIGINS="" \
+    NGINX_ENVSUBST_FILTER="^(BACKEND_HOST|BACKEND_PORT|CSP_PAYMENT_FORM_ORIGINS)$"
+COPY --chmod=755 docker/19-payment-form-csp.envsh /docker-entrypoint.d/19-payment-form-csp.envsh
 COPY docker/nginx.conf.template /etc/nginx/templates/default.conf.template
-RUN /docker-entrypoint.sh nginx -t
+RUN /docker-entrypoint.sh nginx -t \
+    && CSP_PAYMENT_FORM_ORIGINS="https://pay.example.test" /docker-entrypoint.sh nginx -t
 
 # Stage 2: serve via nginx + reverse-proxy /api /static to the backend Service.
 FROM nginx:1.27-alpine AS runtime
@@ -40,9 +43,11 @@ FROM nginx:1.27-alpine AS runtime
 # Defaults overridable per environment via Helm values -> Deployment env.
 ENV BACKEND_HOST=novelvideo-ui-staging \
     BACKEND_PORT=8780 \
-    NGINX_ENVSUBST_FILTER="^(BACKEND_HOST|BACKEND_PORT)$"
+    CSP_PAYMENT_FORM_ORIGINS="" \
+    NGINX_ENVSUBST_FILTER="^(BACKEND_HOST|BACKEND_PORT|CSP_PAYMENT_FORM_ORIGINS)$"
 
 COPY --from=builder /app/dist /usr/share/nginx/html
+COPY --chmod=755 docker/19-payment-form-csp.envsh /docker-entrypoint.d/19-payment-form-csp.envsh
 COPY docker/nginx.conf.template /etc/nginx/templates/default.conf.template
 
 EXPOSE 80

@@ -33,7 +33,7 @@ async def test_audio_separate_runner_returns_public_urls_without_internal_paths(
 
     ctx = _ctx(tmp_path)
     project_dir = Path(ctx.output_dir)
-    audio_path = project_dir / "freezone" / "_outputs" / "freezone_audio_separate" / "job.m4a"
+    audio_path = project_dir / "freezone" / "_outputs" / "freezone_audio_separate" / "job.mp3"
     mute_video_path = (
         project_dir / "freezone" / "_outputs" / "freezone_audio_separate" / "job_mute.mp4"
     )
@@ -72,3 +72,20 @@ async def test_audio_separate_runner_returns_public_urls_without_internal_paths(
     assert result["mute_video_url"].startswith("/static/projects/proj_audio_123/")
     assert "/alice/demo/" not in result["audio_url"]
     assert "/alice/demo/" not in result["mute_video_url"]
+
+
+def test_audio_separate_output_path_prefers_mp3_and_keeps_legacy_m4a(tmp_path: Path) -> None:
+    from novelvideo.api.routes import freezone as freezone_routes
+    from novelvideo.freezone.paths import outputs_dir
+
+    project_dir = tmp_path / "project"
+    output_dir = outputs_dir(project_dir, "freezone_audio_separate")
+    output_dir.mkdir(parents=True)
+
+    assert freezone_routes._audio_separate_audio_output_path(project_dir, "new").name == "new.mp3"
+
+    (output_dir / "old.m4a").write_bytes(b"legacy")
+    assert freezone_routes._audio_separate_audio_output_path(project_dir, "old").name == "old.m4a"
+
+    (output_dir / "old.mp3").write_bytes(b"audio")
+    assert freezone_routes._audio_separate_audio_output_path(project_dir, "old").name == "old.mp3"

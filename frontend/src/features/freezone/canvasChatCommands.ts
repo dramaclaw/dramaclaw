@@ -710,10 +710,27 @@ function workflowGraphSignature(actions: PendingNodeAction[]): string {
   return JSON.stringify({ nodes, edges });
 }
 
+// Mirrors RECIPE_ATTEMPT_ENDED_MARKER (workflow_runs.py): the admitted Recipe
+// attempt was settled failed/cancelled, so resubmitting it can only 409.
+const RECIPE_ATTEMPT_ENDED_MARKER = "recipe attempt ended";
+
+function isRecipeAttemptEndedError(error: string | null | undefined): boolean {
+  return String(error ?? "").toLowerCase().includes(RECIPE_ATTEMPT_ENDED_MARKER);
+}
+
+/** Keep the raw reason (and marker) so the server still classifies it as final. */
+function recipeAttemptEndedMessage(error: string): string {
+  return i18next.t("freezone.chat.workflowRecipeAttemptEnded", {
+    reason: error,
+    interpolation: { escapeValue: false },
+  });
+}
+
 function isRetryableWorkflowActionError(error: string | null | undefined): boolean {
   const normalized = String(error ?? "").trim().toLowerCase();
   if (!normalized) return false;
   if (
+    normalized.includes(RECIPE_ATTEMPT_ENDED_MARKER) ||
     normalized.includes("invalid token") ||
     normalized.includes("model_not_found") ||
     normalized.includes("sensitivecontent") ||
@@ -3668,7 +3685,7 @@ async function executeQueuedNodeActions(
                 actionResult.output.requires_user_action === true);
             const actionWasSkipped =
               isRecord(actionResult.output) && actionResult.output.skipped === true;
-            const failed = actionResult.status === "error"
+            const rawFailed = actionResult.status === "error"
               ? actionResult.error || "节点动作执行失败"
               : outputIssue
                 ? outputIssue
@@ -3676,6 +3693,9 @@ async function executeQueuedNodeActions(
                 ? nodeGenerationError(action.nodeId) ??
                   `节点动作完成但未产出 ${mediaRequirementLabel(action.action)}。`
                 : null;
+            const failed = rawFailed && isRecipeAttemptEndedError(rawFailed)
+              ? recipeAttemptEndedMessage(rawFailed)
+              : rawFailed;
 
             clearNodeActionRunning(action.nodeId, action.action);
             if (

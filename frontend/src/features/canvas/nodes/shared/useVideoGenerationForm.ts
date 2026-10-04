@@ -95,6 +95,7 @@ import { useCanvasStore } from "@/stores/canvasStore";
 import {
   fetchFreezoneJobResult,
   submitFreezoneVideoEdit,
+  submitFreezoneVideoExtend,
   submitFreezoneVideoGen,
   submitFreezoneVideoI2v,
   submitFreezoneVideoKeyframes,
@@ -1112,9 +1113,10 @@ export function useVideoGenerationForm(
   // 与音频的「0→≥1 transition」不同，这里每次都纠正，确保视频在场期间无法切走。
   useEffect(() => {
     if (upstreamCounts.videos === 0) return;
+    if (videoModelsLoading) return;
     if (isHappyHorseModel) return;
     if (!isSeedance20Model) return;
-    if (genMode === "allReference") return;
+    if (genMode === "allReference" || (genMode === "videoExtend" && isVideoModeSupportedByModel("videoExtend", selectedVideoModel))) return;
     updateNodeData(id, { genMode: "allReference" });
   }, [
     upstreamCounts.videos,
@@ -1122,6 +1124,8 @@ export function useVideoGenerationForm(
     id,
     isHappyHorseModel,
     isSeedance20Model,
+    selectedVideoModel,
+    videoModelsLoading,
     updateNodeData,
   ]);
 
@@ -1168,7 +1172,7 @@ export function useVideoGenerationForm(
     return sources.length === 1 && Boolean(sources[0]?.data.videoUrl) && !sources[0]?.data.isGenerating;
   });
   const hasRequiredMediaForMode =
-    genMode === "videoEdit"
+    genMode === "videoEdit" || genMode === "videoExtend"
       ? upstreamCounts.videos > 0
       : upstreamCounts.images > 0;
   const mediaRejectionReasonKey = videoSubmitMediaRejectionReason(
@@ -1451,6 +1455,28 @@ export function useVideoGenerationForm(
             model: selectedVideoModel?.catalogId ?? modelId,
             genMode,
             modelParams: data.modelParams,
+            canvasId,
+            nodeId: targetId,
+          });
+      } else if (genMode === "videoExtend") {
+        const videoUrl = collectUpstream()
+          .map((node) => referenceVideoUrl(node) ?? "")
+          .find((url) => url.length > 0) ?? "";
+        if (!videoUrl) {
+          updateNodeData(id, { isGenerating: false, generationStartedAt: null });
+          return {};
+        }
+        doSubmit = (targetId) =>
+          submitFreezoneVideoExtend(projectId, {
+            videoUrl,
+            prompt: composedPrompt,
+            cameraTemplateId,
+            resolution: qualityToResolution(quality),
+            durationSeconds: durationClamped,
+            generateAudio,
+            model: selectedVideoModel?.catalogId ?? modelId,
+            genMode,
+            humanReview: supportsHumanReview && humanReview,
             canvasId,
             nodeId: targetId,
           });
@@ -1844,9 +1870,12 @@ export function useVideoGenerationForm(
       return completedUrls[0] ? { videoUrl: completedUrls[0] } : {};
     } catch (error) {
       console.error("[video-node] video gen failed", error);
-      updateNodeData(id, usesFmvContinuity
-        ? { ...CLEARED_GENERATION_TASK_FIELDS, generationError: error instanceof Error ? error.message : String(error) }
-        : CLEARED_GENERATION_TASK_FIELDS);
+      // Failures before any run starts (e.g. Recipe compilation) must land on
+      // the node too, or the workflow runner only sees "no videoUrl".
+      updateNodeData(id, {
+        ...CLEARED_GENERATION_TASK_FIELDS,
+        generationError: backendErrorToastMessage(error, t),
+      });
       setAlbumPendingTotal(id, 0);
     }
     } finally {

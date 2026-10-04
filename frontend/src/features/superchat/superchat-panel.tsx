@@ -151,7 +151,6 @@ import type { ApprovalDecision, ApprovalRequest, ChatAttachment } from "@/featur
 import { FormatCheckDetailsDialog } from "@/components/ingest/FormatCheckDetailsDialog";
 import type { FormatCheck, UploadResult } from "@/lib/queries/ingest";
 import type {
-  FreezoneVideoUpscaleDenoise,
   FreezoneVideoUpscaleResolution,
 } from "@/api/ops";
 import type { ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
@@ -168,7 +167,6 @@ import {
 import { getDownstreamSpawnTypes } from "@/features/canvas/domain/nodeRegistry";
 import { VIDEO_GENERATION_ASPECT_RATIOS } from "@/features/canvas/application/imageData";
 import {
-  VIDEO_UPSCALE_DENOISE_OPTIONS,
   VIDEO_UPSCALE_RESOLUTIONS,
   VIDEO_UPSCALE_RESOLUTION_LABEL,
 } from "@/features/canvas/application/videoUpscale";
@@ -2607,12 +2605,6 @@ function normalizeVideoUpscaleResolutionForApproval(value: unknown): FreezoneVid
     : "1080p";
 }
 
-function normalizeVideoUpscaleDenoiseForApproval(value: unknown): FreezoneVideoUpscaleDenoise {
-  return typeof value === "string" && VIDEO_UPSCALE_DENOISE_OPTIONS.includes(value as FreezoneVideoUpscaleDenoise)
-    ? (value as FreezoneVideoUpscaleDenoise)
-    : "1x";
-}
-
 function approvalNodeData(
   approval: PendingCanvasCommandApproval,
   canvasNodes: CanvasNode[],
@@ -2947,7 +2939,6 @@ function videoUpscaleApprovalInitialParams(
   return {
     nodeId,
     resolution: normalizeVideoUpscaleResolutionForApproval(nodeData.upscaleResolution),
-    denoise: normalizeVideoUpscaleDenoiseForApproval(nodeData.upscaleDenoise),
   };
 }
 
@@ -3147,7 +3138,6 @@ function amendCanvasApprovalWithVideoUpscaleParams(
   let inserted = false;
   const videoData = {
     upscaleResolution: params.resolution,
-    upscaleDenoise: params.denoise,
   };
   return {
     ...approval,
@@ -3639,7 +3629,6 @@ function CanvasCommandApprovalCard({
         ...current,
         ...patch,
         resolution: normalizeVideoUpscaleResolutionForApproval(patch.resolution ?? current.resolution),
-        denoise: normalizeVideoUpscaleDenoiseForApproval(patch.denoise ?? current.denoise),
       };
     });
   }, []);
@@ -3881,20 +3870,6 @@ function CanvasCommandApprovalCard({
                 value,
                 label: VIDEO_UPSCALE_RESOLUTION_LABEL[value] ?? value,
               }))}
-            />
-            <span className="h-4 w-px bg-white/[0.12]" />
-            <CanvasApprovalImageParamSelect
-              ariaLabel="高清降噪"
-              disabled={isExecuting}
-              value={videoUpscaleParams.denoise}
-              onChange={(value) => updateVideoUpscaleParams({
-                denoise: normalizeVideoUpscaleDenoiseForApproval(value),
-              })}
-              options={[
-                { value: "none", label: "不降噪" },
-                { value: "1x", label: "1x" },
-                { value: "2x", label: "2x" },
-              ]}
             />
           </div>
         </div>
@@ -11020,7 +10995,6 @@ type CanvasApprovalVideoParams = {
 type CanvasApprovalVideoUpscaleParams = {
   nodeId: string;
   resolution: FreezoneVideoUpscaleResolution;
-  denoise: FreezoneVideoUpscaleDenoise;
 };
 
 type CanvasApprovalTextParams = {

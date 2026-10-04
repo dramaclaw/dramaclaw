@@ -17,7 +17,6 @@ import { getFreezoneVideoModelsSnapshot } from "@/features/canvas/hooks/useFreez
 import { isVideoModeSupportedByModel } from "@/features/canvas/nodes/shared/videoModelCapabilities";
 import type { ModelOption } from "@/features/canvas/ui/ProviderModelPicker";
 import {
-  VIDEO_UPSCALE_DENOISE_OPTIONS,
   VIDEO_UPSCALE_RESOLUTIONS,
   VIDEO_UPSCALE_RESOLUTION_LABEL,
 } from "@/features/canvas/application/videoUpscale";
@@ -223,23 +222,11 @@ const VIDEO_UPSCALE_PARAMETER_SCHEMA = {
     },
     description: "默认 1080p。",
   },
-  denoise: {
-    type: "enum",
-    label: "降噪",
-    options: VIDEO_UPSCALE_DENOISE_OPTIONS,
-    option_labels: {
-      none: "不降噪",
-      "1x": "1x",
-      "2x": "2x",
-    },
-    description: "默认 1x。",
-  },
 };
 
 function videoUpscaleEditableSchema(node: CanvasNode): Record<string, CanvasEditableFieldSchema> {
   const data = node.data as {
     upscaleResolution?: unknown;
-    upscaleDenoise?: unknown;
   };
   return {
     displayName: { type: "string", label: "显示名称" },
@@ -250,18 +237,6 @@ function videoUpscaleEditableSchema(node: CanvasNode): Record<string, CanvasEdit
       option_labels: VIDEO_UPSCALE_RESOLUTION_LABEL,
       current_value: typeof data.upscaleResolution === "string" ? data.upscaleResolution : "1080p",
       description: "视频高清处理面板里的目标分辨率；修改高清分辨率时更新 upscaleResolution。",
-    },
-    upscaleDenoise: {
-      type: "enum",
-      label: "降噪",
-      options: VIDEO_UPSCALE_DENOISE_OPTIONS,
-      option_labels: {
-        none: "不降噪",
-        "1x": "1x",
-        "2x": "2x",
-      },
-      current_value: typeof data.upscaleDenoise === "string" ? data.upscaleDenoise : "1x",
-      description: "视频高清处理面板里的降噪强度；修改降噪时更新 upscaleDenoise。",
     },
   };
 }

@@ -242,7 +242,7 @@ describe('AssetBoard 详情工具条（第一批装配）', () => {
     fireEvent.click(within(detail).getByRole('button', { name: '高清' }));
     expect(within(detail).getByText('分辨率')).toBeInTheDocument();
     expect(within(detail).getByRole('button', { name: '2K' })).toBeInTheDocument();
-    expect(within(detail).getByText('降噪')).toBeInTheDocument();
+    expect(within(detail).queryByText('降噪')).not.toBeInTheDocument();
     expect(within(detail).getByRole('button', { name: '提交高清' })).toBeInTheDocument();
   });
 

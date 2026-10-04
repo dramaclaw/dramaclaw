@@ -155,9 +155,10 @@ export function RenderSection({
       const tb = b.generated_at ? Date.parse(b.generated_at) : 0;
       return tb - ta;
     })[0] ?? null;
-  const sourceSketchAspect = useImageAspectRatio(
-    beat.sketch_url || currentSketch?.cell_url || latestSketch?.cell_url || null,
-  );
+  const sourceSketchUrl =
+    beat.sketch_url || currentSketch?.cell_url || latestSketch?.cell_url || null;
+  const sourceSketchAspect = useImageAspectRatio(sourceSketchUrl);
+  const hasCurrentSketch = Boolean(beat.sketch_url?.trim());
   const singleRenderModeKey =
     (sourceSketchAspect ?? aspectSpec.renderAspect) === "16:9"
       ? "1x1_16-9"
@@ -570,7 +571,7 @@ export function RenderSection({
                   // entry, so starting a second run would repoint its scope/
                   // task id/beat coverage and the in-flight beat would lose its
                   // progress bar and Stop button.
-                  disabled={regenerate.isPending || regenTask.started}
+                  disabled={!hasCurrentSketch || regenerate.isPending || regenTask.started}
                   className={MEDIA_PRIMARY_ACTION_BUTTON_CLASS}
                 >
                   {regenerate.isPending ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
@@ -587,6 +588,11 @@ export function RenderSection({
                     promotion={renderRegenCost.data?.data.promotion}
                   />
                 </Button>
+              )}
+              {!hasCurrentSketch && (
+                <span className="text-xs text-muted-foreground">
+                  {t("episode.workbench.render.sketchRequired")}
+                </span>
               )}
               {renderPlatePreview ? (
                 <RenderRelightBadge

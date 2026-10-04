@@ -1519,6 +1519,44 @@ def test_short_drama_standard_planner_defers_missing_narration_to_shot_output(mo
     } >= {("shot_plan_1", "voice_1", "prompt_for")}
 
 
+def test_video_tutorial_standard_outline_consumes_unit_facts(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+
+    result = catalog.compile_workflow_intent({
+        "skill_id": "video-tutorial",
+        "user_goal": "准备三步手冲教程 Draft。",
+        "planner": {
+            "mode": "standard",
+            "item_count": 2,
+            "include_audio": True,
+            "units": [
+                {
+                    "title": "准备滤杯",
+                    "prompt": "使用15克咖啡粉和透明V60滤杯。",
+                    "narration": "先放入十五克咖啡粉。",
+                    "duration_seconds": 6,
+                },
+                {
+                    "title": "闷蒸",
+                    "prompt": "用92摄氏度热水注入30克并等待30秒。",
+                    "narration": "注入三十克热水，等待三十秒。",
+                    "duration_seconds": 6,
+                },
+            ],
+        },
+    })
+
+    assert result["ok"] is True, result
+    outline = next(node for node in result["plan"]["nodes"] if node["id"] == "outline")
+    prompt = outline["data"]["prompt"]
+    assert "15克" in prompt
+    assert "92摄氏度" in prompt
+    assert "30克" in prompt
+    assert "30秒" in prompt
+    assert "十五克咖啡粉" in prompt
+
+
 def test_non_screenplay_planner_still_requires_literal_narration(monkeypatch):
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)
@@ -4324,6 +4362,7 @@ def test_retro_kungfu_skill_keeps_style_while_recipes_stay_stage_focused(monkeyp
 
     assert "1980s 复古香港功夫喜剧" in planning["prompt_guide"]
     assert "35mm 旧胶片颗粒" in planning["prompt_guide"]
+    assert "每个视频节点都必须针对当前镜头的每个核心动作逐项写出预备、运动、完成三段" in planning["prompt_guide"]
     assert "港式普通话口音" in planning["prompt_guide"]
     assert "剧本大纲" in planning["planning_notes"]
     assert "分镜规划" in planning["planning_notes"]

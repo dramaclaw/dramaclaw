@@ -424,6 +424,10 @@ async def _run_selected_regen_async(
 ) -> dict[str, Any]:
     from novelvideo.generators.nanobanana_grid import regenerate_selected_beats
     from novelvideo.generators.pool_indexer import save_grid_and_split
+    from novelvideo.generators.render_identity_guard import (
+        RenderIdentityDetectionRequired,
+        render_ai_detection_error,
+    )
     from novelvideo.models import beat_scene_id
     from novelvideo.task_identity import selection_scope
     from novelvideo.utils.path_resolver import PathResolver
@@ -570,6 +574,15 @@ async def _run_selected_regen_async(
             "scene_refs_override": scene_refs_override,
             "prop_refs_override": prop_refs_override,
         }
+        if render_sketch_dir:
+            # Same gate generate_grid applies per grid; failing here skips the
+            # scene-ref work and surfaces a typed, user-actionable task failure.
+            detection_error = render_ai_detection_error(
+                selected_beats,
+                standalone_beat_context=standalone_beat_context,
+            )
+            if detection_error:
+                raise RenderIdentityDetectionRequired(detection_error)
 
     log(f"模式: {mode_key}, 选中 {len(selected_beats)} 个 beats: {selected_beat_numbers}")
     image_selection = normalize_image_generation_selection(

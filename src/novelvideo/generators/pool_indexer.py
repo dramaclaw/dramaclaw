@@ -5,6 +5,7 @@
 
 import hashlib
 import json
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Union
@@ -258,7 +259,12 @@ def _pool_index_payload(pool: PoolIndex) -> dict:
 
 def _save_pool_index_unlocked(pool: PoolIndex, index_path: Path) -> Path:
     write_json_atomic(index_path, _pool_index_payload(pool))
-    print(f"[PoolIndexer] 索引已保存: {index_path}")
+    try:
+        print(f"[PoolIndexer] 索引已保存: {index_path}")
+    except OSError:
+        # The atomic replace has committed. A closed log pipe must not make
+        # callers roll back files referenced by this successfully saved index.
+        pass
     return index_path
 
 
@@ -666,27 +672,7 @@ def save_grid_and_split(
         prompt_file.write_text(prompt_text, encoding="utf-8")
         prompt_path = prompt_file.relative_to(grids_dir).as_posix()
 
-    # 3. 注册整图
-    if pool is None:
-        pool = load_pool_index(grids_dir)
-    if pool is None:
-        # 从目录名推断 episode 号（如 ep001 -> 1）
-        import re as _re
-
-        _m = _re.search(r"ep(\d+)", grids_dir.name)
-        _episode = int(_m.group(1)) if _m else 1
-        pool = build_pool_index(grids_dir, _episode)
-
     grid_rel = dst_grid.relative_to(grids_dir).as_posix()
-    register_grid_entry(
-        pool=pool,
-        grid_type=grid_type,
-        mode_key=mode_key,
-        beat_nums=beat_nums,
-        preset=preset,
-        grid_path=grid_rel,
-        prompt_path=prompt_path,
-    )
 
     # 4. 切割到 render/ 或 sketch/ 目录（flat，beat 中心命名）
     target_dir = grids_dir / grid_type  # "render" or "sketch"
@@ -698,7 +684,7 @@ def save_grid_and_split(
         rows=rows,
         cols=cols,
         output_format="png",
-        prefix=f"tmp_{ts}_",
+        prefix=f"tmp_{ts}_{uuid.uuid4().hex}_",
     )
 
     # 5. 预计算 beat content hash（用于 sketch stale 判断）
@@ -711,57 +697,80 @@ def save_grid_and_split(
                     beat, sketch_colors=sketch_colors
                 )
 
-    # 6. 重命名为 beat-centric + 去重入池
-    added = 0
-    skipped = 0
-    final_cell_paths = []
-    for i, raw_path in enumerate(cell_paths_raw):
-        if i >= len(beat_nums):
-            # padding cell
-            raw_path.unlink(missing_ok=True)
-            continue
-        beat_num = beat_nums[i]
-        cell_name = f"beat_{beat_num:02d}_t{ts}.png"
-        cell_path = target_dir / cell_name
-        raw_path.replace(cell_path)
+    # 6. 索引更新必须在同一把锁下完成，避免并发任务覆盖彼此的条目。
+    index_path = _state_pool_index_path(grids_dir)
+    with index_file_lock(index_path):
+        index_path, latest_pool = _load_pool_index_for_update(grids_dir)
+        if latest_pool is not None:
+            pool = latest_pool
+        elif pool is None:
+            import re as _re
 
-        result = add_cell_with_dedup(
+            match = _re.search(r"ep(\d+)", grids_dir.name)
+            episode = int(match.group(1)) if match else 1
+            pool = build_pool_index(grids_dir, episode)
+
+        register_grid_entry(
             pool=pool,
-            cell_path=cell_path,
-            episode_grids_dir=grids_dir,
-            beat_num=beat_num,
-            ts=ts,
-            img_type=grid_type,
-            mode=mode_key,
-            grid_index=0,
-            cell_index=i + 1,
+            grid_type=grid_type,
+            mode_key=mode_key,
+            beat_nums=beat_nums,
+            preset=preset,
             grid_path=grid_rel,
-            row=i // cols,
-            col=i % cols,
-            beat_content_hash=beat_hash_map.get(beat_num, ""),
+            prompt_path=prompt_path,
         )
-        if result:
-            added += 1
-        else:
-            skipped += 1
 
-        final_cell_paths.append(cell_path)
+        # 6. 重命名为 beat-centric + 去重入池
+        added = 0
+        skipped = 0
+        final_cell_paths = []
+        for i, raw_path in enumerate(cell_paths_raw):
+            if i >= len(beat_nums):
+                # padding cell
+                raw_path.unlink(missing_ok=True)
+                continue
+            beat_num = beat_nums[i]
+            cell_name = f"beat_{beat_num:02d}_t{ts}.png"
+            cell_path = target_dir / cell_name
+            raw_path.replace(cell_path)
 
-        # 7. Promote
-        # force_promote=True: regen/render 等用户明确指定的操作，覆盖已有
-        # force_promote=False: 批量抽卡草图，不覆盖用户手动选图结果
-        if promote_dir and cell_path.exists():
-            promote = Path(promote_dir)
-            promote.mkdir(parents=True, exist_ok=True)
-            dst = promote / f"beat_{beat_num:02d}.png"
-            if force_promote or not dst.exists():
-                shutil.copy2(str(cell_path), str(dst))
+            result = add_cell_with_dedup(
+                pool=pool,
+                cell_path=cell_path,
+                episode_grids_dir=grids_dir,
+                beat_num=beat_num,
+                ts=ts,
+                img_type=grid_type,
+                mode=mode_key,
+                grid_index=0,
+                cell_index=i + 1,
+                grid_path=grid_rel,
+                row=i // cols,
+                col=i % cols,
+                beat_content_hash=beat_hash_map.get(beat_num, ""),
+            )
+            if result:
+                added += 1
+            else:
+                skipped += 1
 
-        # 重复则删除新 cell（promote 之后再删）
-        if not result:
-            cell_path.unlink(missing_ok=True)
+            final_cell_paths.append(cell_path)
 
-    save_pool_index(pool, grids_dir)
+            # 7. Promote
+            # force_promote=True: regen/render 等用户明确指定的操作，覆盖已有
+            # force_promote=False: 批量抽卡草图，不覆盖用户手动选图结果
+            if promote_dir and cell_path.exists():
+                promote = Path(promote_dir)
+                promote.mkdir(parents=True, exist_ok=True)
+                dst = promote / f"beat_{beat_num:02d}.png"
+                if force_promote or not dst.exists():
+                    shutil.copy2(str(cell_path), str(dst))
+
+            # 重复则删除新 cell（promote 之后再删）
+            if not result:
+                cell_path.unlink(missing_ok=True)
+
+        _save_pool_index_unlocked(pool, index_path)
 
     return {
         "grid_path": str(dst_grid),
@@ -902,6 +911,76 @@ def add_cell_with_dedup(
     )
     pool.images.append(pool_image)
     return pool_image
+
+
+def persist_uploaded_grid(
+    grids_dir: Path,
+    episode_num: int,
+    grid_index: int,
+    grid_type: str,
+    mode_key: str,
+    parsed_beats: list[int],
+    filename: str,
+    content: bytes,
+) -> Path:
+    """Publish an upload and its index under one cross-process index lock.
+
+    Ordinary write failures restore the prior image. Cancellation is handled by
+    the bounded upload worker, which waits for this transaction before returning.
+    """
+    import os
+    import shutil
+    import tempfile
+
+    upload_dir = grids_dir / "custom"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    grid_path = upload_dir / filename
+    grid_rel = grid_path.relative_to(grids_dir).as_posix()
+    # Stage outside the index lock so large writes do not hold up index readers.
+    with tempfile.TemporaryDirectory(prefix=".grid-upload-", dir=upload_dir) as staging:
+        staged = Path(staging) / "image"
+        staged.write_bytes(content)
+        backup = Path(staging) / "previous"
+        with index_file_lock(_state_pool_index_path(grids_dir)):
+            index_path, pool = _load_pool_index_for_update(grids_dir)
+            pool = pool or build_pool_index(grids_dir, episode_num)
+            entry = pool.find_grid(grid_type, mode_key, parsed_beats) if parsed_beats else None
+            if entry is None:
+                entry = register_grid_entry(
+                    pool=pool,
+                    grid_type=grid_type,
+                    mode_key=mode_key,
+                    beat_nums=parsed_beats,
+                    preset="custom",
+                    grid_path=grid_rel,
+                    prompt_path="",
+                )
+            else:
+                entry.grid_path = grid_rel
+                entry.preset = "custom"
+                entry.generated_at = datetime.now()
+
+            for image in pool.images:
+                if image.type != grid_type or image.grid_index != grid_index:
+                    continue
+                if parsed_beats and image.original_beat not in parsed_beats:
+                    continue
+                image.grid_path = grid_rel
+                image.mode = mode_key
+
+            existed = grid_path.exists()
+            if existed:
+                shutil.copyfile(grid_path, backup)
+            os.replace(staged, grid_path)
+            try:
+                _save_pool_index_unlocked(pool, index_path)
+            except BaseException:
+                if existed:
+                    os.replace(backup, grid_path)
+                else:
+                    grid_path.unlink(missing_ok=True)
+                raise
+    return grid_path
 
 
 def register_grid_entry(

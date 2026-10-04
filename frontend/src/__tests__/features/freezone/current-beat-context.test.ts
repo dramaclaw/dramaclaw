@@ -55,6 +55,28 @@ describe("getCurrentBeatContextFromNode", () => {
     });
   });
 
+  it("keeps standalone no-character and no-prop markers that never appear in visual markers", () => {
+    expect(
+      getCurrentBeatContextFromNode({
+        id: "context",
+        type: "beatContextNode",
+        data: {
+          context_scope: "standalone",
+          beat_context: {
+            schema: "beat_context.v1",
+            source: "standalone",
+            visual_description: "雨夜便利店门口，空无一人",
+            detected_identities: ["__NO_CHARACTER__"],
+            detected_props: ["__NO_PROP__"],
+          },
+        },
+      }),
+    ).toMatchObject({
+      detected_identities: ["__NO_CHARACTER__"],
+      detected_props: ["__NO_PROP__"],
+    });
+  });
+
   it("uses snapshot plus local edit fields for mainline BeatContextNode and ignores leaked standalone data", () => {
     expect(
       getCurrentBeatContextFromNode({
