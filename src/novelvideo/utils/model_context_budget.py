@@ -7,6 +7,11 @@ for byte-tokenized text, leaving room for protocol framing and the response.
 This deliberately overestimates Chinese text and requires no tokenizer download.
 It never truncates the input. Deployments should set a budget no larger than
 the verified window of every text model behind their gateway aliases.
+
+Image URLs and inline Base64 are transport representations, not text tokens.
+Exclude only URLs in typed image content parts from this text estimate;
+visual tokens depend on the routed model and are validated by the provider.
+This is not a bound on the combined text and visual token usage.
 """
 
 from __future__ import annotations
@@ -15,6 +20,26 @@ import json
 import os
 from dataclasses import dataclass
 from typing import Any
+
+
+def _text_budget_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Copy message content for counting without modifying the real request."""
+    messages = []
+    for message in payload.get("messages", []):
+        content = message.get("content")
+        if isinstance(content, list):
+            content = [
+                {
+                    **part,
+                    "image_url": {**part["image_url"], "url": "[image]"},
+                }
+                if part.get("type") == "image_url"
+                and isinstance(part.get("image_url"), dict)
+                else part
+                for part in content
+            ]
+        messages.append({**message, "content": content})
+    return {**payload, "messages": messages}
 
 
 @dataclass(frozen=True)
@@ -54,16 +79,18 @@ class TextContextBudget:
                 output_tokens = max(output_tokens, requested)
         input_upper_bound = (
             len(
-                json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(
-                    "utf-8"
-                )
+                json.dumps(
+                    _text_budget_payload(payload),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
             )
             + self.framing_tokens
         )
         if input_upper_bound + output_tokens > self.context_tokens:
             raise ValueError(
                 "MODEL_CONTEXT_BUDGET_EXCEEDED: "
-                f"输入 token 保守上界 {input_upper_bound:,} + 输出预算 {output_tokens:,} "
+                f"文本输入 token 保守上界 {input_upper_bound:,} + 输出预算 {output_tokens:,} "
                 f"> 请求上下文预算 {self.context_tokens:,}。"
                 "请分批处理，或核实网关模型窗口后调整请求预算；原文未截断。"
             )

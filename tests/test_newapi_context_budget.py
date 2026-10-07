@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import io
+import random
 from typing import Literal
 
 import httpx
@@ -157,3 +159,97 @@ async def test_context_budget_includes_explicit_output_limit(monkeypatch, max_ou
         await Agent(
             _model(monkeypatch, forbidden), output_type=Result, model_settings=settings
         ).run("short")
+
+
+@pytest.mark.asyncio
+async def test_context_budget_preserves_large_visual_input(monkeypatch, tmp_path):
+    """JPEG transport encoding must not be treated as text tokens."""
+    import base64
+
+    from PIL import Image
+    from novelvideo.agents import global_video_optimizer
+    from novelvideo import config
+
+    pixels = random.Random(7).randbytes(1024 * 1536 * 3)
+    image_path = tmp_path / "sketch.png"
+    Image.frombytes("RGB", (1024, 1536), pixels).save(image_path)
+    requests = []
+
+    def handler(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        return httpx.Response(
+            200,
+            json={
+                "id": "vision-budget-test",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "DC-budget-test",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": '{"response":[{"beat_number":1,"identities":["Hero_Main"]}]}',
+                        },
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 2500,
+                    "completion_tokens": 20,
+                    "total_tokens": 2520,
+                },
+            },
+        )
+
+    model = _model(monkeypatch, handler)
+    monkeypatch.setattr(
+        config, "get_newapi_text_pydantic_model", lambda *a, **kw: model
+    )
+    result = await global_video_optimizer.detect_identities_by_ai(
+        sketch_image_paths=[str(image_path)],
+        color_identity_map={"#ff0000 RED": "Hero_Main"},
+        total_beats=1,
+    )
+
+    assert result == {1: ["Hero_Main"]}
+    parts = requests[0]["messages"][-1]["content"]
+    image_url = next(
+        part["image_url"]["url"] for part in parts if part["type"] == "image_url"
+    )
+    encoded = image_url.split(",", 1)[1]
+    assert len(encoded) > 500_000
+    actual_image = base64.b64decode(encoded)
+    expected = io.BytesIO()
+    with Image.open(image_path) as image:
+        image.save(expected, format="JPEG", quality=70, optimize=True)
+    assert actual_image == expected.getvalue()
+    assert requests[0]["max_completion_tokens"] == 512
+
+
+@pytest.mark.asyncio
+async def test_context_budget_still_blocks_large_text_next_to_image(monkeypatch):
+    from pydantic_ai import BinaryContent
+
+    def forbidden(_request):
+        pytest.fail("oversized text with an image must not reach transport")
+
+    with pytest.raises(ValueError, match="MODEL_CONTEXT_BUDGET_EXCEEDED"):
+        await Agent(_model(monkeypatch, forbidden), output_type=Result).run(
+            [
+                "正文" * 2000,
+                BinaryContent(data=b"image-bytes", media_type="image/jpeg"),
+            ]
+        )
+
+
+@pytest.mark.asyncio
+async def test_context_budget_counts_data_uri_when_sent_as_text(monkeypatch):
+    def forbidden(_request):
+        pytest.fail("data URI in text is still text, not a visual content part")
+
+    with pytest.raises(ValueError, match="MODEL_CONTEXT_BUDGET_EXCEEDED"):
+        await Agent(_model(monkeypatch, forbidden), output_type=Result).run(
+            "data:image/jpeg;base64," + "a" * 5000
+        )
