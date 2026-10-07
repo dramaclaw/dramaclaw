@@ -34,6 +34,7 @@ from novelvideo.task_identity import project_task_state_key
 from novelvideo.utils.document_parsers import (
     DocumentParseError,
     MAX_NOVEL_IMPORT_CHARS,
+    MAX_STRUCTURED_NOVEL_IMPORT_CHARS,
     is_supported_novel_path,
     supported_novel_extensions_label,
 )
@@ -42,6 +43,7 @@ from novelvideo.utils.async_ops import run_sync_bounded
 from novelvideo.utils.upload_safety import (
     MAX_NOVEL_IMPORT_BYTES,
     MAX_NOVEL_UPLOAD_BYTES,
+    MAX_STRUCTURED_NOVEL_BYTES,
     UploadTooLargeError,
     create_staged_upload_file,
     is_safe_upload_target,
@@ -151,16 +153,18 @@ def _file_too_large_response(
     }
 
 
-def _text_too_large_response(actual_chars: int) -> dict:
+def _text_too_large_response(
+    actual_chars: int, limit_chars: int = MAX_NOVEL_IMPORT_CHARS
+) -> dict:
     return {
         "ok": False,
         "error": (
             f"正文共 {actual_chars:,} 字，超过单次导入上限 "
-            f"{MAX_NOVEL_IMPORT_CHARS:,} 字。请拆分后重新上传。"
+            f"{limit_chars:,} 字。请拆分后重新上传。"
         ),
         "error_type": "text_too_large",
         "data": {
-            "limit_chars": MAX_NOVEL_IMPORT_CHARS,
+            "limit_chars": limit_chars,
             "actual_chars": actual_chars,
         },
     }
@@ -195,21 +199,30 @@ def _upload_novel_sync(
     )
     try:
         try:
-            size = stream_to_file_with_limit(upload_stream, staged_path)
+            structured = is_structured_pipeline(state_dir)
+            byte_limit = (
+                MAX_STRUCTURED_NOVEL_BYTES if structured else MAX_NOVEL_UPLOAD_BYTES
+            )
+            char_limit = (
+                MAX_STRUCTURED_NOVEL_IMPORT_CHARS
+                if structured
+                else MAX_NOVEL_IMPORT_CHARS
+            )
+            size = stream_to_file_with_limit(
+                upload_stream, staged_path, max_bytes=byte_limit
+            )
         except UploadTooLargeError:
-            return _file_too_large_response()
+            return _file_too_large_response(byte_limit)
 
         data = {"filename": safe_name, "size": size}
         try:
             content = load_novel_text(staged_path)
             billable_chars = count_billable_novel_chars(content)
-            if billable_chars > MAX_NOVEL_IMPORT_CHARS:
-                return _text_too_large_response(billable_chars)
+            if billable_chars > char_limit:
+                return _text_too_large_response(billable_chars, char_limit)
             project_config = load_project_config_file_from_state_dir(state_dir)
             requested_spine_template = str(
-                spine_template
-                or project_config.get("spine_template")
-                or "drama"
+                spine_template or project_config.get("spine_template") or "drama"
             ).strip()
             preview = build_chapter_preview(
                 content,
@@ -327,9 +340,14 @@ async def start_ingest(
     if not novel_path.exists():
         return {"ok": False, "error": f"File '{body.filename}' not found in uploads/"}
 
+    structured = is_structured_pipeline(resolved.state_dir)
+    byte_limit = MAX_STRUCTURED_NOVEL_BYTES if structured else MAX_NOVEL_IMPORT_BYTES
+    char_limit = (
+        MAX_STRUCTURED_NOVEL_IMPORT_CHARS if structured else MAX_NOVEL_IMPORT_CHARS
+    )
     try:
-        if novel_path.stat().st_size > MAX_NOVEL_IMPORT_BYTES:
-            return _file_too_large_response(MAX_NOVEL_IMPORT_BYTES)
+        if novel_path.stat().st_size > byte_limit:
+            return _file_too_large_response(byte_limit)
     except OSError:
         logger.warning("[%s] failed to stat uploaded novel", project, exc_info=True)
         return {"ok": False, "error": "无法读取上传文件，请重新上传后再导入"}
@@ -337,8 +355,8 @@ async def start_ingest(
     try:
         content = load_novel_text(novel_path)
         billable_chars = count_billable_novel_chars(content)
-        if billable_chars > MAX_NOVEL_IMPORT_CHARS:
-            return _text_too_large_response(billable_chars)
+        if billable_chars > char_limit:
+            return _text_too_large_response(billable_chars, char_limit)
     except DocumentParseError as exc:
         return {
             "ok": False,

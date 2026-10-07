@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import os
 import stat
 import threading
@@ -49,6 +50,14 @@ def _legacy_resolution(project_dir):
     )
 
 
+def _structured_config(project_dir):
+    state_dir = project_dir / "state"
+    state_dir.mkdir(exist_ok=True)
+    (state_dir / "project_config.json").write_text(
+        json.dumps({"knowledge_pipeline": "structured_v1"})
+    )
+
+
 def _project_scope_resolver(project_dir):
     async def resolve(*args, **kwargs):
         return _legacy_resolution(project_dir)
@@ -65,12 +74,8 @@ def _docx_bytes(paragraphs: list[str]) -> bytes:
   <w:body>{document_body}</w:body>
 </w:document>
 """
-    document_content_type = (
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
-    )
-    office_document_rel = (
-        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
-    )
+    document_content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
+    office_document_rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
         archive.writestr(
@@ -255,13 +260,9 @@ def test_chapter_preview_includes_scene_blocks_within_each_episode():
         "content_start_line": 3,
         "content_end_line": 4,
     }
-    assert (
-        _preview_lines(data["chapters"][0]["content"])[
-            first_scenes[0]["content_start_line"]
-            : first_scenes[0]["content_end_line"]
-        ]
-        == ["△ 林昭停在屋檐下。"]
-    )
+    assert _preview_lines(data["chapters"][0]["content"])[
+        first_scenes[0]["content_start_line"] : first_scenes[0]["content_end_line"]
+    ] == ["△ 林昭停在屋檐下。"]
     assert [scene["location"] for scene in second_scenes] == ["码头"]
 
 
@@ -529,9 +530,7 @@ async def test_upload_novel_preserves_anyio_cancel_scope_marker_and_cleans_stagi
 
 
 @pytest.mark.asyncio
-async def test_upload_novel_new_file_respects_restrictive_umask(
-    tmp_path, monkeypatch
-):
+async def test_upload_novel_new_file_respects_restrictive_umask(tmp_path, monkeypatch):
     from novelvideo.api.routes import ingest
 
     monkeypatch.setattr(
@@ -593,9 +592,7 @@ async def test_upload_narrated_novel_skips_scene_preview(tmp_path, monkeypatch):
         "resolve_project_scope",
         _project_scope_resolver(tmp_path),
     )
-    raw = (
-        "第一章 初遇\n1-1 雨巷 夜 外\n人物：林昭\n△ 林昭停在屋檐下。"
-    ).encode()
+    raw = ("第一章 初遇\n1-1 雨巷 夜 外\n人物：林昭\n△ 林昭停在屋檐下。").encode()
 
     response = await ingest.upload_novel(
         project="demo",
@@ -712,6 +709,100 @@ async def test_upload_novel_parse_failure_preserves_existing_same_name(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("body_chars", [159_901, 999_997])
+async def test_upload_novel_accepts_complete_long_novel(
+    tmp_path, monkeypatch, body_chars
+):
+    from novelvideo.api.routes import ingest
+
+    _structured_config(tmp_path)
+    monkeypatch.setattr(
+        ingest, "resolve_project_scope", _project_scope_resolver(tmp_path)
+    )
+    text = "第一章\n" + "字" * body_chars
+    upload = UploadFile(
+        file=io.BytesIO(text.encode("utf-8")), filename="long-novel.txt"
+    )
+
+    response = await ingest.upload_novel(
+        project="demo",
+        file=upload,
+        spine_template="narrated",
+        user={"username": "admin"},
+    )
+
+    assert response["ok"] is True, response
+    assert response["data"]["billable_chars"] == body_chars + 3
+    assert response["data"]["count"] == 1
+    assert response["data"]["chapters"][0]["content"] == text
+    assert (tmp_path / "uploads" / "long-novel.txt").read_text() == text
+
+
+@pytest.mark.asyncio
+async def test_start_ingest_queues_complete_long_novel(tmp_path, monkeypatch):
+    from novelvideo.api.routes import ingest
+    from novelvideo.project_context import ProjectContext
+
+    _structured_config(tmp_path)
+    uploads_dir = tmp_path / "uploads"
+    uploads_dir.mkdir()
+    # Larger than both historical guards: 100,000 characters and 1MB.
+    text = "第一章\n" + "字" * 400_000
+    novel_path = uploads_dir / "long-novel.txt"
+    novel_path.write_text(text, encoding="utf-8")
+    ctx = ProjectContext(
+        project_id="project-long",
+        project_name="demo",
+        owner_type="user",
+        owner_id="user-admin",
+        owner_username="admin",
+        requester_user_id="user-admin",
+        requester_username="admin",
+        requester_principals=(("user", "user-admin"),),
+        effective_role="owner",
+        home_node_id="local",
+        is_home_node=True,
+        output_dir=tmp_path,
+        state_dir=tmp_path / "state",
+        runtime_dir=tmp_path / "runtime",
+    )
+    resolved = _legacy_resolution(tmp_path)
+    resolved.ctx = ctx
+
+    async def resolve(*_args, **_kwargs):
+        return resolved
+
+    class Backend:
+        payload = None
+
+        async def enqueue_project_task(self, queued_ctx, **kwargs):
+            self.payload = kwargs["payload"]
+            return SimpleNamespace(
+                task_state=SimpleNamespace(task_id="long-import"),
+                backend="inline",
+                queue="default",
+            )
+
+    backend = Backend()
+    monkeypatch.setattr(ingest, "resolve_project_scope", resolve)
+    monkeypatch.setattr(ingest, "get_task_backend", lambda: backend)
+
+    response = await ingest.start_ingest(
+        project="demo",
+        body=IngestStart(
+            filename="long-novel.txt", rebuild=True, spine_template="narrated"
+        ),
+        user={"username": "admin"},
+    )
+
+    assert response["ok"] is True, response
+    assert response["task_id"] == "long-import"
+    assert backend.payload["novel_path"] == str(novel_path)
+    assert backend.payload["billing"]["billable_chars"] == 400_003
+    assert novel_path.read_text() == text
+
+
+@pytest.mark.asyncio
 async def test_upload_novel_text_too_large_preserves_existing_same_name(
     tmp_path, monkeypatch
 ):
@@ -810,7 +901,9 @@ async def test_upload_novel_rejects_empty_preview(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_start_ingest_rejects_unsupported_extension_before_ray(tmp_path, monkeypatch):
+async def test_start_ingest_rejects_unsupported_extension_before_ray(
+    tmp_path, monkeypatch
+):
     from novelvideo.api.routes import ingest
 
     uploads_dir = tmp_path / "uploads"
@@ -1061,3 +1154,90 @@ async def test_start_ingest_preserves_legacy_canonical_novel_for_reimport(
     preserved = tmp_path / "uploads" / "novel.txt"
     assert preserved.read_text(encoding="utf-8") == NOVEL_TEXT
     assert canonical.read_text(encoding="utf-8") == NOVEL_TEXT
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pipeline", [None, "cognee_legacy"])
+async def test_legacy_long_novel_remains_limited_before_queue(
+    tmp_path, monkeypatch, pipeline
+):
+    import json
+    from novelvideo.api.routes import ingest
+
+    if pipeline:
+        state = tmp_path / "state"
+        state.mkdir()
+        (state / "project_config.json").write_text(
+            json.dumps({"knowledge_pipeline": pipeline})
+        )
+    monkeypatch.setattr(
+        ingest, "resolve_project_scope", _project_scope_resolver(tmp_path)
+    )
+    text = "第一章\n" + "字" * 110_000
+    upload = UploadFile(file=io.BytesIO(text.encode()), filename="legacy.txt")
+    response = await ingest.upload_novel(
+        project="demo",
+        file=upload,
+        spine_template="narrated",
+        user={"username": "admin"},
+    )
+    assert response["ok"] is False
+    assert response["data"]["limit_chars"] == 100_000
+    uploads = tmp_path / "uploads"
+    uploads.mkdir(exist_ok=True)
+    (uploads / "legacy.txt").write_text(text)
+    monkeypatch.setattr(
+        ingest, "get_task_backend", lambda: pytest.fail("must reject before queue")
+    )
+    response = await ingest.start_ingest(
+        project="demo",
+        body=IngestStart(filename="legacy.txt", spine_template="narrated"),
+        user={"username": "admin"},
+    )
+    assert response["ok"] is False
+    assert response["data"]["limit_chars"] == 100_000
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["characters", "bytes"])
+async def test_structured_import_limits_match_upload_and_start(
+    tmp_path, monkeypatch, kind
+):
+    from novelvideo.api.routes import ingest
+
+    _structured_config(tmp_path)
+    monkeypatch.setattr(
+        ingest, "resolve_project_scope", _project_scope_resolver(tmp_path)
+    )
+    data = (
+        ("第一章\n" + "字" * 1_000_001).encode()
+        if kind == "characters"
+        else b"x" * (8 * 1024 * 1024 + 1)
+    )
+    response = await ingest.upload_novel(
+        project="demo",
+        file=UploadFile(file=io.BytesIO(data), filename="oversized.txt"),
+        spine_template="narrated",
+        user={"username": "admin"},
+    )
+    expected_type = "text_too_large" if kind == "characters" else "file_too_large"
+    expected_limit = (
+        {"limit_chars": 1_000_000, "actual_chars": 1_000_004}
+        if kind == "characters"
+        else {"limit_bytes": 8 * 1024 * 1024}
+    )
+    assert response["error_type"] == expected_type
+    assert response["data"] == expected_limit
+    uploads = tmp_path / "uploads"
+    uploads.mkdir(exist_ok=True)
+    (uploads / "oversized.txt").write_bytes(data)
+    monkeypatch.setattr(
+        ingest, "get_task_backend", lambda: pytest.fail("must reject before queue")
+    )
+    response = await ingest.start_ingest(
+        project="demo",
+        body=IngestStart(filename="oversized.txt", spine_template="narrated"),
+        user={"username": "admin"},
+    )
+    assert response["error_type"] == expected_type
+    assert response["data"] == expected_limit

@@ -1064,7 +1064,8 @@ def _create_character_appearance_agent(agent: Any = None):
 # retires stored results rather than mixing two contracts.
 #
 # 2: ``is_main`` left the payload for the cast-level key below.
-CHARACTER_APPEARANCE_CACHE_VERSION = 3
+# 4: pass verified extraction evidence_text into appearance prompts.
+CHARACTER_APPEARANCE_CACHE_VERSION = 4
 
 CHARACTER_APPEARANCE_CACHE_TYPE = "character_appearance"
 
@@ -1130,7 +1131,9 @@ def character_appearance_cache_key(
 def _appearance_quotes(item: "MergedCharacter") -> list[str]:
     quotes: list[str] = []
     for entry in item.evidence:
-        quote = str((entry or {}).get("quote") or "").strip()
+        quote = str(
+            (entry or {}).get("evidence_text") or (entry or {}).get("quote") or ""
+        ).strip()
         if quote:
             quotes.append(quote)
         if len(quotes) >= _APPEARANCE_SAMPLE_QUOTES:

@@ -11,6 +11,8 @@ SUPPORTED_NOVEL_EXTENSIONS = TEXT_NOVEL_EXTENSIONS | {".docx"}
 SUPPORTED_NOVEL_EXTENSION_ORDER = (".txt", ".md", ".docx")
 _BILLABLE_WHITESPACE_RE = re.compile(r"[\s\u3000]+")
 MAX_NOVEL_IMPORT_CHARS = 100_000
+# Storage/analysis-plan limit, not a claim about any model's context window.
+MAX_STRUCTURED_NOVEL_IMPORT_CHARS = 1_000_000
 
 
 @dataclass
