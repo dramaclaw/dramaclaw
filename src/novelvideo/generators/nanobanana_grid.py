@@ -307,7 +307,7 @@ def _newapi_safe_request_context(
     payload: dict[str, object],
     prompt: str,
 ) -> dict[str, object]:
-    reference_images = payload.get("image")
+    reference_images = payload.get("image") or payload.get("images")
     reference_image_count = len(reference_images) if isinstance(reference_images, list) else 0
     raw_metadata = payload.get("metadata")
     metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
@@ -3623,6 +3623,13 @@ async def _call_newapi_image_api(
         return None, "", "DramaClawAPI API key is missing"
 
     image_config = image_config or {}
+    reference_image_format = str(
+        image_config.get("reference_image_format")
+        or os.environ.get("NEWAPI_IMAGE_EDIT_REFERENCE_FORMAT")
+        or "dc-media"
+    ).strip().lower()
+    if reference_images and reference_image_format not in {"dc-media", "images"}:
+        return None, "", "Unsupported reference image format; use dc-media or images"
     aspect_ratio = str(image_config.get("aspect_ratio") or "1:1").strip().lower() or "1:1"
     image_size = normalize_image_size(str(image_config.get("image_size") or "1K"), "newapi")
     request_schema = image_config.get("request_schema") or {}
@@ -3681,12 +3688,18 @@ async def _call_newapi_image_api(
         try:
             relay_helper = _relay_reference_images_for_newapi
             if relay_helper is _ORIGINAL_RELAY_REFERENCE_IMAGES_FOR_NEWAPI:
-                payload["image"] = await relay_helper(
+                relayed_images = await relay_helper(
                     reference_images,
                     egress_context=context,
                 )
             else:
-                payload["image"] = await relay_helper(reference_images)
+                relayed_images = await relay_helper(reference_images)
+            # DC-Media uses image: [URL]; Cockpit's JSON edit parser accepts
+            # images: [{image_url: URL}]. Select explicitly per deployment.
+            if reference_image_format == "images":
+                payload["images"] = [{"image_url": url} for url in relayed_images]
+            else:
+                payload["image"] = relayed_images
         except Exception as exc:
             if context is not None and context.is_organization:
                 # The organization path hides `exc` because an arbitrary
