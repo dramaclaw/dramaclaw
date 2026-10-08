@@ -7,6 +7,7 @@ import {
   PREVIZ_OBJECT_BASE_NAME,
   createPrevizObject,
   nextObjectName,
+  pastedObjectOverrides,
   PREVIZ_CHARACTER_COLORS,
 } from "@/features/previz/domain/objects";
 import type {
@@ -155,5 +156,37 @@ describe("createPrevizObject", () => {
 
     expect(nextObjectName(objects, "camera")).toBe(`${PREVIZ_OBJECT_BASE_NAME.camera} 8`);
     expect(nextObjectName(objects, "light")).toBe(`${PREVIZ_OBJECT_BASE_NAME.light} 1`);
+  });
+});
+
+describe("pastedObjectOverrides", () => {
+  it("drops the id, shifts the position and resets visible/locked", () => {
+    const source = {
+      ...createPrevizObject("prop", [], { name: "椅子", assetUrl: "https://cdn/x.glb" }),
+      visible: false,
+      locked: true,
+    };
+    source.transform.position = [1, 0, 2];
+
+    const overrides = pastedObjectOverrides(source);
+
+    expect(overrides).not.toHaveProperty("id");
+    expect(overrides).toMatchObject({
+      name: "椅子",
+      assetUrl: "https://cdn/x.glb",
+      visible: true,
+      locked: false,
+      transform: { position: [1.5, 0, 2.5] },
+    });
+    // 深拷贝：改副本不许牵动原件。
+    overrides.transform!.scale[0] = 9;
+    expect(source.transform.scale[0]).toBe(1);
+  });
+
+  it("lets an auto-numbered name renumber on paste", () => {
+    const source = createPrevizObject("character", []);
+    expect(source.name).toBe(`${PREVIZ_OBJECT_BASE_NAME.character} 1`);
+
+    expect(pastedObjectOverrides(source)).not.toHaveProperty("name");
   });
 });

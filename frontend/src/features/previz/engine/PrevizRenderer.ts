@@ -9,6 +9,7 @@ import { aspectRatio, outputPixelSize, coverFovDeg, DEG_TO_RAD } from '../domain
 import type { PrevizCameraDraft } from '../domain/cameraDraft';
 import type { PrevizCharacterDraft } from '../domain/characterDraft';
 import { dropPositionY, dropRayOriginY } from '../domain/drop';
+import { previzSnapOffset, type PrevizSnapAxes, type PrevizSnapBox } from '../domain/snap';
 import { evaluateSceneAt, type EvaluatedMotion } from '../domain/evaluate';
 import { isPrevizLibraryModelUrl } from '../domain/modelLibrary';
 import type { PrevizPropExtent } from '../domain/moveAssist';
@@ -71,6 +72,9 @@ import { PrevizViewOverlays, type PrevizViewOverlayOptions } from './viewOverlay
 
 // 上限 2：3x DPR 设备按原生比例渲染是 9 倍像素，收益远小于开销。
 const MAX_PIXEL_RATIO = 2;
+
+/** 拖动吸附的触发距离，屏幕像素。十来个像素是常见编辑器的手感：够得着，又不会拽着不放。 */
+const SNAP_THRESHOLD_PX = 12;
 
 /**
  * 导入动作下载的超时上限。一条卡住的下载（服务端挂起、CDN 抽风）不设超时的话会一直占着
@@ -256,6 +260,14 @@ export class PrevizRenderer {
   private capturing = false;
   /** 懒建：从不点画布的会话不需要它。Raycaster 没有 dispose()，纯数学对象，不用还。 */
   private raycaster: THREE.Raycaster | null = null;
+  /** 拖动吸附开关，编辑器右上角那颗磁铁按钮。 */
+  private snapEnabled = true;
+  /**
+   * 这一次拖拽的吸附底稿：别的物件的盒子在拖动期间不会动，拖拽开始时量一次；被拖的
+   * 那件记的是盒子相对自身位置的偏移，每次移动加上当前位置就是它此刻的盒子——平移不改
+   * 形状，不必每帧重走一遍子树。
+   */
+  private snapDraft: { relative: PrevizSnapBox; others: PrevizSnapBox[] } | null = null;
   private currentScene: PrevizScene | null = null;
   private selectionId: string | null = null;
   /**
@@ -535,6 +547,10 @@ export class PrevizRenderer {
       orbit: controls,
       three,
       dropToSurface: (objectId) => instance.dropToSurface(objectId),
+      snap: {
+        begin: (objectId) => instance.beginSnap(objectId),
+        offset: (objectId, axes) => instance.snapOffset(objectId, axes),
+      },
       // helper 挂在 scene 而不是 objectRoot 下：objectRoot 是拾取与聚焦的取值范围，
       // 手柄挂进去会被射线命中，也会被算进「框全场景」的包围盒里。
       root: scene,
@@ -975,6 +991,64 @@ export class PrevizRenderer {
     // 空地上拖东西永远不落地，正是最常见的那种拖法。
     const surfaceY = hits[0]?.point.y ?? 0;
     return dropPositionY(node.position.y, box.min.y, surfaceY);
+  }
+
+  setSnapEnabled(enabled: boolean): void {
+    this.snapEnabled = enabled;
+  }
+
+  /** 平移拖拽开始：量好吸附要用的盒子。只有物件参与吸附，人物、机位、灯都不吸。 */
+  private beginSnap(objectId: string): void {
+    this.snapDraft = null;
+    if (!this.snapEnabled || this.disposed) return;
+    const object = this.currentScene?.objects.find((entry) => entry.id === objectId);
+    const node = this.graph.nodeFor(objectId);
+    if (object?.kind !== 'prop' || !node) return;
+    const box = new this.three.Box3().setFromObject(node);
+    if (box.isEmpty()) return;
+
+    const others: PrevizSnapBox[] = [];
+    this.measureProps((other, otherBox) => {
+      if (other.id === objectId) return;
+      others.push({
+        minX: otherBox.min.x,
+        maxX: otherBox.max.x,
+        minZ: otherBox.min.z,
+        maxZ: otherBox.max.z,
+      });
+    });
+    if (others.length === 0) return;
+    this.snapDraft = {
+      relative: {
+        minX: box.min.x - node.position.x,
+        maxX: box.max.x - node.position.x,
+        minZ: box.min.z - node.position.z,
+        maxZ: box.max.z - node.position.z,
+      },
+      others,
+    };
+  }
+
+  /**
+   * 这一刻还要额外挪多少米才贴上。阈值按屏幕像素定（`SNAP_THRESHOLD_PX`），折算到被拖
+   * 物件所在的深度：写死成米的话，拉远看全景时几米的缝都吸不上，凑近摆细节时又吸得
+   * 松不开手。
+   */
+  private snapOffset(objectId: string, axes: PrevizSnapAxes): { dx: number; dz: number } | null {
+    const draft = this.snapDraft;
+    const node = this.graph.nodeFor(objectId);
+    if (!draft || !node) return null;
+    const { x, z } = node.position;
+    const moving: PrevizSnapBox = {
+      minX: draft.relative.minX + x,
+      maxX: draft.relative.maxX + x,
+      minZ: draft.relative.minZ + z,
+      maxZ: draft.relative.maxZ + z,
+    };
+    const distance = this.camera.position.distanceTo(node.position);
+    const metresPerPixel =
+      (2 * distance * Math.tan((this.camera.fov * Math.PI) / 360)) / (this.canvas.clientHeight || 1);
+    return previzSnapOffset(moving, draft.others, SNAP_THRESHOLD_PX * metresPerPixel, axes);
   }
 
   /**

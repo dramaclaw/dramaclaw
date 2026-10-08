@@ -6,6 +6,7 @@ import {
   Crosshair,
   Cuboid,
   Grid2x2,
+  Magnet,
   RotateCcw,
   Shapes,
   type LucideIcon,
@@ -46,6 +47,8 @@ export interface PrevizViewportControlsProps {
   hasSelection: boolean;
   /** 四视图（右侧那两块俯视 / 侧视预览）是否开着。 */
   quadView: boolean;
+  /** 拖动物件时是否贴边吸附。 */
+  snapEnabled: boolean;
   onDisplayMode: (mode: DisplayMode) => void;
   onResetView: () => void;
   onPathSpacing: (metres: number) => void;
@@ -53,6 +56,7 @@ export interface PrevizViewportControlsProps {
   onViewDirection: (direction: PrevizViewDirection) => void;
   onFocus: () => void;
   onQuadView: (open: boolean) => void;
+  onSnapEnabled: (enabled: boolean) => void;
 }
 
 /** 半透明底 + 毛玻璃：底下是三维视口，不铺底的话图标压在浅色模型上就看不见了。 */
@@ -150,6 +154,7 @@ export function PrevizViewportControls({
   view,
   hasSelection,
   quadView,
+  snapEnabled,
   onDisplayMode,
   onResetView,
   onPathSpacing,
@@ -157,6 +162,7 @@ export function PrevizViewportControls({
   onViewDirection,
   onFocus,
   onQuadView,
+  onSnapEnabled,
 }: PrevizViewportControlsProps) {
   const { t } = useTranslation();
   const spacingLabel = t("previz.viewport.pathSpacing");
@@ -303,6 +309,14 @@ export function PrevizViewportControls({
             label={t("previz.viewport.resetView")}
             shortcut="H"
             onClick={onResetView}
+          />
+
+          <ControlButton
+            icon={Magnet}
+            label={t("previz.viewport.snap")}
+            on={snapEnabled}
+            aria-pressed={snapEnabled}
+            onClick={() => onSnapEnabled(!snapEnabled)}
           />
         </div>
       </div>

@@ -23,7 +23,7 @@ type ToolbarProps = ComponentProps<typeof PrevizToolbar>;
  * 只有图标没有可见文字，图标就是它们对用户的全部身份，所以也得逐个锁住。
  */
 const KINDS = [
-  { kind: "prop", limit: 20, icon: "lucide-box" },
+  { kind: "prop", limit: 200, icon: "lucide-box" },
   { kind: "camera", limit: 30, icon: "lucide-camera" },
   { kind: "light", limit: 12, icon: "lucide-lightbulb" },
   { kind: "character", limit: 50, icon: "lucide-user" },

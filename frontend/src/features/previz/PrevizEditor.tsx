@@ -64,7 +64,7 @@ import {
 } from "./domain/characterDraft";
 import type { EvaluatedMotion } from "./domain/evaluate";
 import { canAddObject } from "./domain/limits";
-import { propSpawnTransform } from "./domain/objects";
+import { pastedObjectOverrides, propSpawnTransform } from "./domain/objects";
 import type { PrevizLibraryEntry } from "./domain/modelLibrary";
 import { drawPlaneHeight } from "./domain/pathDraw";
 import { liveCameraAt } from "./domain/program";
@@ -94,7 +94,7 @@ import { PrevizHoverTip } from "./ui/PrevizHoverTip";
 import { PrevizViewportControls } from "./ui/PrevizViewportControls";
 import type { PrevizViewSource } from "./ui/PrevizAxisGizmo";
 import type { PrevizAxisView } from "./domain/axisGizmo";
-import type { PrevizObjectKind, PrevizScene, Vec3 } from "./domain/scene";
+import type { PrevizObject, PrevizObjectKind, PrevizScene, Vec3 } from "./domain/scene";
 import { PREVIZ_DEFAULT_VIEW, type PrevizViewDirection } from "./domain/view";
 
 interface PrevizEditorProps {
@@ -254,6 +254,11 @@ export function PrevizEditor({
     y: number;
     objectId: string | null;
   } | null>(null);
+  /**
+   * 复制下来的对象快照（深拷贝）。只活在编辑器里、不进系统剪贴板：场景对象不是文本，
+   * 跨应用贴出去没有意义。每粘一次就换成刚贴出的那份，连按 ⌘V 会一路错开而不是叠在一处。
+   */
+  const [clipboard, setClipboard] = useState<PrevizObject | null>(null);
   // 渲染器也进 state 而不是 ref：面板的回调要在它就绪后重新绑定，ref 变化不会触发重渲染。
   const [renderer, setRenderer] = useState<PrevizRenderer | null>(null);
   /**
@@ -311,6 +316,8 @@ export function PrevizEditor({
    * 大部分时间只看透视那一块。
    */
   const [quadView, setQuadView] = useState(false);
+  /** 拖动物件时贴边吸附（见 `domain/snap.ts`）。默认开：拼地块、靠墙摆放是最常见的摆法。 */
+  const [snapEnabled, setSnapEnabled] = useState(true);
   /** 正在录的那一路；null 就是没在录。 */
   const [recording, setRecording] = useState<PrevizRecordMode | null>(null);
   /** 录制进度 0..1，只喂按钮上的读数。 */
@@ -656,6 +663,10 @@ export function PrevizEditor({
   }, [renderer, showOutline, showNamePlate]);
 
   useEffect(() => {
+    renderer?.setSnapEnabled(snapEnabled);
+  }, [renderer, snapEnabled]);
+
+  useEffect(() => {
     renderer?.setMonitorSize(monitorSize);
   }, [renderer, monitorSize]);
 
@@ -871,6 +882,24 @@ export function PrevizEditor({
     [addObject, renderer, t],
   );
 
+  const copyObject = useCallback((id: string) => {
+    const object = usePrevizStore.getState().scene.objects.find((candidate) => candidate.id === id);
+    if (object) setClipboard(structuredClone(object));
+  }, []);
+
+  const pasteObject = useCallback(() => {
+    if (!clipboard) return;
+    const overrides = pastedObjectOverrides(clipboard);
+    // `addObject` 走 applyScene（进撤销栈）、查上限、建完即选中新对象。
+    const id = addObject(clipboard.kind, overrides);
+    if (!id) {
+      toast.error(t("previz.editor.limitReached"));
+      return;
+    }
+    const pasted = usePrevizStore.getState().scene.objects.find((object) => object.id === id);
+    if (pasted) setClipboard(structuredClone(pasted));
+  }, [addObject, clipboard, t]);
+
   // 引用要稳：CanvasContextMenu 拿 onClose 当 effect 依赖，每次渲染换一个会反复重挂监听。
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
@@ -889,7 +918,14 @@ export function PrevizEditor({
           onSelect: () => handleAdd(kind),
         }),
       );
-      return [add, history];
+      const paste: CanvasContextMenuItem = {
+        key: "paste",
+        label: t("previz.contextMenu.paste"),
+        shortcut: "⌘V",
+        disabled: !clipboard,
+        onSelect: pasteObject,
+      };
+      return [add, [paste], history];
     }
     const tracked = scene.timeline.tracks.some((track) => track.objectId === object.id);
     return [
@@ -916,6 +952,19 @@ export function PrevizEditor({
           key: "locked",
           label: t(object.locked ? "previz.contextMenu.unlock" : "previz.contextMenu.lock"),
           onSelect: () => updateObject(object.id, { locked: !object.locked }),
+        },
+        {
+          key: "copy",
+          label: t("previz.contextMenu.copy"),
+          shortcut: "⌘C",
+          onSelect: () => copyObject(object.id),
+        },
+        {
+          key: "paste",
+          label: t("previz.contextMenu.paste"),
+          shortcut: "⌘V",
+          disabled: !clipboard,
+          onSelect: pasteObject,
         },
         {
           key: "remove",
@@ -1582,6 +1631,19 @@ export function PrevizEditor({
         else store.undo();
         return;
       }
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey) {
+        const key = event.key.toLowerCase();
+        if (key === "c" && store.selectedObjectId) {
+          event.preventDefault();
+          copyObject(store.selectedObjectId);
+          return;
+        }
+        if (key === "v") {
+          event.preventDefault();
+          pasteObject();
+          return;
+        }
+      }
       if (event.metaKey || event.ctrlKey || event.altKey) return;
 
       // 1–9 按机位在对象列表里的顺序切镜；没有那一台就当没按。
@@ -1656,7 +1718,7 @@ export function PrevizEditor({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, renderer, cutToCamera, handleAdd]);
+  }, [open, renderer, cutToCamera, handleAdd, copyObject, pasteObject]);
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -1929,6 +1991,7 @@ export function PrevizEditor({
                 view={viewSource}
                 hasSelection={Boolean(selectedObjectId)}
                 quadView={quadView}
+                snapEnabled={snapEnabled}
                 onDisplayMode={setDisplayMode}
                 onResetView={() => renderer?.resetView()}
                 onPathSpacing={setPathSpacing}
@@ -1938,6 +2001,7 @@ export function PrevizEditor({
                   if (selectedObjectId) renderer?.focusObject(selectedObjectId);
                 }}
                 onQuadView={setQuadView}
+                onSnapEnabled={setSnapEnabled}
               />
 
               {/*
