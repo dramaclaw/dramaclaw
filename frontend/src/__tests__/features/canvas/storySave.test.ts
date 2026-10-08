@@ -4,6 +4,7 @@ import {
   readStorySave,
   writeStorySave,
   clearStorySave,
+  storySaveFingerprint,
 } from '@/features/canvas/story/storySave';
 
 describe('storySave', () => {
@@ -26,6 +27,22 @@ describe('storySave', () => {
 
   it('read 不存在的 key 返回 null', () => {
     expect(readStorySave(storySaveKey('cv1', 'missing'))).toBeNull();
+  });
+
+  it('带故事指纹的存档只向相同版本返回 Ink 运行态', () => {
+    const key = storySaveKey('cv1', 'g1');
+    const fingerprint = storySaveFingerprint('story-v1');
+    writeStorySave(key, '{"state":1}', fingerprint);
+    expect(readStorySave(key, fingerprint)).toBe('{"state":1}');
+    expect(readStorySave(key, storySaveFingerprint('story-v2'))).toBeNull();
+    expect(readStorySave(key)).toBeTruthy();
+  });
+
+  it('旧格式、损坏格式和未知版本都不当作兼容存档', () => {
+    for (const raw of ['{"state":1}', 'not-json', 'null', '{"version":2,"storyFingerprint":"v1","inkState":"{}"}']) {
+      writeStorySave('key', raw);
+      expect(readStorySave('key', 'v1')).toBeNull();
+    }
   });
 
   it('clear 后 read 返回 null', () => {

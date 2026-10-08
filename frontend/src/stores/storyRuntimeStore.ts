@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { Compiler, Story } from 'inkjs/full';
 import type { CompiledStory, StoryChoiceInteraction, StoryStateChange, StoryEnding } from '@/features/canvas/story/storyTypes';
-import { readStorySave, writeStorySave, clearStorySave } from '@/features/canvas/story/storySave';
+import { readStorySave, writeStorySave, clearStorySave, storySaveFingerprint } from '@/features/canvas/story/storySave';
 import { recordChoice, recordEnding, statsKeyFromSaveKey } from '@/features/canvas/story/storyStats';
 
 type InkStory = ReturnType<Compiler['Compile']>;
@@ -60,6 +60,8 @@ interface StoryRuntimeState {
   error: string | null;
   /** 本次试玩的存档 key(localStorage),null = 不存档。 */
   saveKey: string | null;
+  /** 编译后的 Ink 指纹；存档中的选项标签和执行指针必须属于同一故事版本。 */
+  saveFingerprint: string | null;
   /** 本次试玩的统计 key(localStorage,由 saveKey 派生),null = 不统计。 */
   statsKey: string | null;
   /** 本次试玩的故事组 id;播放器据此从画布派生剧情树,叠加统计画「路径回顾图」。null = 无(如导入的独立故事)。 */
@@ -221,8 +223,8 @@ function advanceToClip(
 }
 
 /** 存档当前 inkjs 运行态(仅当有 saveKey 时)。 */
-function persist(saveKey: string | null, story: InkStory): void {
-  if (saveKey) writeStorySave(saveKey, story.state.toJson());
+function persist(saveKey: string | null, story: InkStory, fingerprint: string | null): void {
+  if (saveKey && fingerprint) writeStorySave(saveKey, story.state.toJson(), fingerprint);
 }
 
 const INITIAL_RUNTIME = {
@@ -249,6 +251,7 @@ const INITIAL_RUNTIME = {
   phase: 'idle' as StoryPhase,
   error: null as string | null,
   saveKey: null as string | null,
+  saveFingerprint: null as string | null,
   statsKey: null as string | null,
   groupId: null as string | null,
   resumeAvailable: false,
@@ -262,6 +265,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
     try {
       const story = opts?.storyJson ? new Story(opts.storyJson) : new Compiler(compiled.ink).Compile();
       const saveKey = opts?.saveKey ?? null;
+      const saveFingerprint = saveKey ? storySaveFingerprint(story.ToJson() ?? compiled.ink) : null;
       const statsKey = statsKeyFromSaveKey(saveKey);
       const groupId = opts?.groupId ?? null;
       const playKind = opts?.playKind ?? 'entertainment';
@@ -295,6 +299,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
           currentPlaceholder: null,
           phase: 'idle',
           saveKey,
+          saveFingerprint,
           statsKey,
           groupId,
           resumeAvailable: true,
@@ -310,6 +315,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
         ...tables,
         error: null,
         saveKey,
+        saveFingerprint,
         statsKey,
         groupId,
         resumeAvailable: false,
@@ -325,7 +331,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
           compiled.choiceInteractionById,
         ),
       });
-      persist(saveKey, story);
+      persist(saveKey, story, saveFingerprint);
     } catch (err) {
       set({ mode: 'play', ...INITIAL_RUNTIME, embedded: opts?.embedded ?? false, phase: 'error', error: err instanceof Error ? err.message : String(err) });
     }
@@ -333,11 +339,11 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
 
   resumeSaved: () => {
     const {
-      story, saveKey, clipByNodeId,
+      story, saveKey, saveFingerprint, clipByNodeId,
       choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId, choiceFeedbackById, choiceStateChangesById, choiceInteractionById,
     } = get();
-    if (!story || !saveKey) return false;
-    const json = readStorySave(saveKey);
+    if (!story || !saveKey || !saveFingerprint) return false;
+    const json = readStorySave(saveKey, saveFingerprint);
     try {
       if (json === null) throw new Error('no save');
       story.state.LoadJson(json);
@@ -351,7 +357,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
       get().startFresh();
       return false;
     }
-    persist(saveKey, story);
+    persist(saveKey, story, saveFingerprint);
     return true;
   },
 
@@ -366,7 +372,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
       resumeAvailable: false,
       ...advanceToClip(story, clipByNodeId, choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId, choiceFeedbackById, choiceStateChangesById, choiceInteractionById),
     });
-    persist(saveKey, story);
+    persist(saveKey, story, get().saveFingerprint);
   },
 
   choose: (index) => {
@@ -420,7 +426,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
         recordEnding(statsKey, { nodeId: endNodeId, title: ending.title, label: ending.label });
       }
     }
-    persist(get().saveKey, story);
+    persist(get().saveKey, story, get().saveFingerprint);
   },
 
   advanceAutomatic: () => {
@@ -446,7 +452,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
         recordEnding(state.statsKey, { nodeId: endNodeId, title: ending.title, label: ending.label });
       }
     }
-    persist(state.saveKey, story);
+    persist(state.saveKey, story, state.saveFingerprint);
   },
 
   restart: () => {
@@ -476,7 +482,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
         choiceInteractionById,
       ),
     );
-    persist(get().saveKey, story);
+    persist(get().saveKey, story, get().saveFingerprint);
   },
 
   // 退出仅清运行态;存档保留,下次试玩可续。

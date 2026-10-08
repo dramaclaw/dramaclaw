@@ -84,6 +84,69 @@ describe('storyRuntimeStore 存档/续玩', () => {
     expect(s.phase).toBe('ended');
   });
 
+  it('补上锚定后试玩丢弃旧选项存档，使用与实时模式一致的最新互动规格', () => {
+    const store = useStoryRuntimeStore.getState();
+    store.enterPlay(fixture(), { saveKey: KEY });
+    store.exitPlay();
+
+    const edge = e('intro', 'meet', '去见面', 0);
+    edge.data = {
+      ...edge.data,
+      interaction: {
+        presentation: 'object-anchor',
+        anchor: { x: 0.3, y: 0.6 },
+        uiStyle: 'tag',
+        motion: 'pulse',
+      },
+    };
+    const compiled = compileGraphToInk(
+      [v('intro', 'intro.mp4', 'start'), v('meet', 'meet.mp4')], [edge],
+    );
+    store.enterPlay(compiled, { playKind: 'live' });
+    const liveChoices = useStoryRuntimeStore.getState().currentChoices;
+    store.exitPlay();
+    store.enterPlay(compiled, { saveKey: KEY });
+
+    const resumed = store.resumeSaved();
+    expect(useStoryRuntimeStore.getState().currentChoices).toEqual(liveChoices);
+    expect(resumed).toBe(false);
+    store.choose(0);
+    expect(useStoryRuntimeStore.getState().currentNodeId).toBe('meet');
+  });
+
+  it('只调整锚点位置时保留续玩进度，并读取最新位置', () => {
+    const nodes = [v('intro', 'intro.mp4', 'start'), v('meet', 'meet.mp4'), v('end', 'end.mp4')];
+    const edge = e('meet', 'end', '继续', 0);
+    edge.data = { ...edge.data, interaction: { presentation: 'object-anchor', anchor: { x: 0.3, y: 0.6 } } };
+    const edges = [e('intro', 'meet', '去见面', 0), edge];
+    const store = useStoryRuntimeStore.getState();
+    store.enterPlay(compileGraphToInk(nodes, edges), { saveKey: KEY });
+    store.choose(0);
+    store.exitPlay();
+
+    edge.data = { ...edge.data, interaction: { presentation: 'object-anchor', anchor: { x: 0.7, y: 0.4 } } };
+    store.enterPlay(compileGraphToInk(nodes, edges), { saveKey: KEY });
+    expect(store.resumeSaved()).toBe(true);
+    expect(useStoryRuntimeStore.getState().currentNodeId).toBe('meet');
+    expect(useStoryRuntimeStore.getState().currentChoices[0].interaction?.anchor).toEqual({ x: 0.7, y: 0.4 });
+    store.choose(0);
+    expect(useStoryRuntimeStore.getState().currentNodeId).toBe('end');
+  });
+
+  it('没有故事指纹的历史存档安全回到起点，不恢复旧选项标签', () => {
+    const store = useStoryRuntimeStore.getState();
+    store.enterPlay(fixture());
+    store.choose(0);
+    writeStorySave(KEY, useStoryRuntimeStore.getState().story!.state.toJson());
+    store.exitPlay();
+    store.enterPlay(fixture(), { saveKey: KEY });
+    expect(store.resumeSaved()).toBe(false);
+    expect(useStoryRuntimeStore.getState().currentNodeId).toBe('intro');
+    store.exitPlay();
+    store.enterPlay(fixture(), { saveKey: KEY });
+    expect(store.resumeSaved()).toBe(true);
+  });
+
   it('续玩自动跳转片段时停在存档片段，等待该片段播放完成', () => {
     const compiled = compileGraphToInk(
       [v('intro', '', 'start'), v('middle', ''), v('end', '')],

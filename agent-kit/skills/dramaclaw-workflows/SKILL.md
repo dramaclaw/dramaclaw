@@ -41,6 +41,7 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
   `freezone_create_edge`, `freezone_group_nodes`, or other single-operation tools.
 - Never fall back to repeated single-operation writes after a workflow validation or schema error.
   Correct the workflow intent/plan or report the blocking error.
+- Follow the selected Skill's current planning contract. A request for a finished result does not authorize collapsing required stages or marking prerequisites complete. When the requested operation cannot run yet, explain the missing prerequisite in creation terms and guide the user to the next supported step. Agent-authored schema/topology errors are the Agent's responsibility to correct, not user mistakes; never ask the user to design internal nodes or links.
 - Never resubmit an unchanged workflow payload. After one correction, if the same validation path
   fails again in the same turn, stop retrying and report that blocker instead of increasing the
   failure counter.
