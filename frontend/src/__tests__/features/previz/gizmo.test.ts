@@ -54,7 +54,12 @@ function fakeNode(id: string) {
   } as never;
 }
 
-function setup(deps: { dropToSurface?: (objectId: string) => number | null } = {}) {
+function setup(
+  deps: {
+    dropToSurface?: (objectId: string) => number | null;
+    snap?: ConstructorParameters<typeof PrevizGizmo>[0]["snap"];
+  } = {},
+) {
   const controls = new FakeTransformControls();
   const added: unknown[] = [];
   const removed: unknown[] = [];
@@ -560,5 +565,55 @@ describe("PrevizGizmo 松手落地", () => {
       rotation: [0, 90, 0],
       scale: [2, 2, 2],
     });
+  });
+});
+
+describe("PrevizGizmo 拖动吸附", () => {
+  function snapSetup(offset = { dx: 0.25, dz: -0.5 }) {
+    const snap = { begin: vi.fn(), offset: vi.fn(() => offset) };
+    const ctx = setup({ snap });
+    const node = {
+      userData: { previzObjectId: "a" },
+      position: { x: 1, y: 0, z: 3 },
+      rotation: { x: 0, y: 0, z: 0 },
+      scale: { x: 1, y: 1, z: 1 },
+    };
+    ctx.gizmo.attach(node as never);
+    return { ...ctx, snap, node };
+  }
+
+  it("measures once at drag start and nudges the node on every move", () => {
+    const { controls, snap, node } = snapSetup();
+
+    controls.axis = "XZ";
+    controls.emit("dragging-changed", { value: true });
+    controls.emit("objectChange");
+
+    expect(snap.begin).toHaveBeenCalledWith("a");
+    expect(snap.offset).toHaveBeenCalledWith("a", { x: true, z: true });
+    expect(node.position).toEqual({ x: 1.25, y: 0, z: 2.5 });
+  });
+
+  it("only snaps the axes being dragged", () => {
+    const { controls, snap } = snapSetup();
+
+    controls.axis = "X";
+    controls.emit("dragging-changed", { value: true });
+    controls.emit("objectChange");
+
+    expect(snap.offset).toHaveBeenCalledWith("a", { x: true, z: false });
+  });
+
+  it("does not snap while rotating", () => {
+    const { controls, gizmo, snap, node } = snapSetup();
+    gizmo.setMode("rotate");
+
+    controls.axis = "XYZ";
+    controls.emit("dragging-changed", { value: true });
+    controls.emit("objectChange");
+
+    expect(snap.begin).not.toHaveBeenCalled();
+    expect(snap.offset).not.toHaveBeenCalled();
+    expect(node.position.x).toBe(1);
   });
 });

@@ -8155,6 +8155,7 @@
     },
     "viewport": {
       "resetView": "Reset view",
+      "snap": "Snap: align edges while dragging props",
       "display": {
         "solid": "Solid",
         "translucent": "Translucent",
@@ -8206,7 +8207,9 @@
       "hide": "Hide",
       "show": "Show",
       "lock": "Lock",
-      "unlock": "Unlock"
+      "unlock": "Unlock",
+      "copy": "Copy",
+      "paste": "Paste"
     },
     "cameraCreate": {
       "title": "Create camera",

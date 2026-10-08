@@ -4,6 +4,7 @@ import type * as THREE from 'three';
 
 import { RAD_TO_DEG } from '../domain/camera';
 import type { PrevizTransform } from '../domain/scene';
+import type { PrevizSnapAxes } from '../domain/snap';
 import { emphasizeTranslateHandles } from './gizmoEmphasis';
 import type { ThreeModule } from './sceneGraph';
 
@@ -59,6 +60,15 @@ export interface PrevizGizmoDeps {
    * 包围盒和射线）。不接这根线时行为与接线之前逐字一致，塞假控件的那批用例照跑。
    */
   dropToSurface?: (objectId: string) => number | null;
+  /**
+   * 拖动吸附（见 `domain/snap.ts`）。`begin` 在平移拖拽开始时调一次，让渲染器把别的
+   * 物件的包围盒量好存下；`offset` 每次 objectChange 调，返回这一刻还要额外挪多少米，
+   * null 表示不吸（吸附关着、对象不是物件、模型还没加载）。可选的理由同 `dropToSurface`。
+   */
+  snap?: {
+    begin: (objectId: string) => void;
+    offset: (objectId: string, axes: PrevizSnapAxes) => { dx: number; dz: number } | null;
+  };
 }
 
 /**
@@ -118,6 +128,7 @@ export class PrevizGizmo {
         // 开始时清标记，而不是提交后清：留着上一次的 true，下一次「点一下不拖」
         // 也会提交一步什么都没改的历史。
         this.movedDuringDrag = false;
+        if (this.mode === 'translate' && this.attachedId) deps.snap?.begin(this.attachedId);
         return;
       }
       // 提交那段原先是三个条件、两条 early return。改成嵌套的 if 再套一层 finally，为的是
@@ -151,6 +162,7 @@ export class PrevizGizmo {
 
     deps.controls.addEventListener('objectChange', () => {
       this.movedDuringDrag = true;
+      this.snapWhileDragging();
       deps.onChange();
     });
   }
@@ -221,6 +233,26 @@ export class PrevizGizmo {
     // null 是「这次不该落地」，不是「落到 0」：当成 0 用的话，一个还在加载的模型
     // 松手就被拍到地面上。
     if (typeof y === 'number') node.position.y = y;
+  }
+
+  /**
+   * 拖动中吸附。three 每次指针移动都按「起点 + 位移」重算位置，而不是在上一帧的位置上
+   * 累加，所以这里在它算完之后再推一把不会越推越远：下一次移动又从干净的位置起算。
+   *
+   * 只吸正在拖的那几个轴：拖 X 轴手柄的人要的是「只动 X」，被吸得在 Z 上跳一下就失控了。
+   */
+  private snapWhileDragging(): void {
+    if (!this.dragging || this.mode !== 'translate' || !this.attachedId || !this.deps.snap) return;
+    const axis = this.deps.controls.axis ?? '';
+    const node = this.deps.controls.object as THREE.Object3D | null;
+    if (!node) return;
+    const offset = this.deps.snap.offset(this.attachedId, {
+      x: axis.includes('X'),
+      z: axis.includes('Z'),
+    });
+    if (!offset) return;
+    node.position.x += offset.dx;
+    node.position.z += offset.dz;
   }
 
   private applyMode(mode: GizmoMode | null): void {

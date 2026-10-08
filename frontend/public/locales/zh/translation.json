@@ -8155,6 +8155,7 @@
     },
     "viewport": {
       "resetView": "重置视角",
+      "snap": "吸附：拖动物件时自动贴边对齐",
       "display": {
         "solid": "实体",
         "translucent": "半透",
@@ -8206,7 +8207,9 @@
       "hide": "隐藏",
       "show": "显示",
       "lock": "锁定",
-      "unlock": "解锁"
+      "unlock": "解锁",
+      "copy": "复制",
+      "paste": "粘贴"
     },
     "cameraCreate": {
       "title": "摄影机创建",

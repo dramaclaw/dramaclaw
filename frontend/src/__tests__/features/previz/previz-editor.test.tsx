@@ -70,6 +70,7 @@ const renderQuadPreview = vi.fn();
 const renderCameraView = vi.fn();
 const setViewOverlays = vi.fn();
 const setMonitorSize = vi.fn();
+const setSnapEnabled = vi.fn();
 // 真实现返回 Promise，编辑器直接在返回值上 `.then`，桩成 `vi.fn()` 会当场炸。
 const whenModelsSettled = vi.fn(async () => {});
 const setMotionStatusListener = vi.fn();
@@ -121,6 +122,7 @@ function fakeRenderer() {
     renderCameraView,
     setViewOverlays,
     setMonitorSize,
+    setSnapEnabled,
     whenModelsSettled,
     setMotionStatusListener,
     startRecording,
@@ -1794,6 +1796,39 @@ describe("PrevizEditor timeline", () => {
     fireEvent.keyDown(input, { key: "t" });
 
     expect(screen.queryByRole("dialog", { name: "previz.library.title" })).toBeNull();
+  });
+
+  it("⌘C 复制选中对象，⌘V 连贴两次各自错开并选中新对象", async () => {
+    await renderEditor();
+    const sourceId = usePrevizStore.getState().addObject("light", {
+      transform: { position: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    })!;
+
+    fireEvent.keyDown(window, { key: "c", metaKey: true });
+    fireEvent.keyDown(window, { key: "v", metaKey: true });
+    fireEvent.keyDown(window, { key: "v", ctrlKey: true });
+
+    const lights = usePrevizStore.getState().scene.objects.filter((o) => o.kind === "light");
+    expect(lights.map((o) => o.transform.position)).toEqual([
+      [1, 2, 3],
+      [1.5, 2, 3.5],
+      [2, 2, 4],
+    ]);
+    expect(usePrevizStore.getState().selectedObjectId).toBe(lights[2]!.id);
+    expect(lights[2]!.id).not.toBe(sourceId);
+
+    // 一步 undo 撤掉一次粘贴。
+    fireEvent.keyDown(window, { key: "z", metaKey: true });
+    expect(usePrevizStore.getState().scene.objects.filter((o) => o.kind === "light")).toHaveLength(2);
+  });
+
+  it("没复制过时 ⌘V 什么都不做", async () => {
+    await renderEditor();
+    const before = usePrevizStore.getState().scene.objects.length;
+
+    fireEvent.keyDown(window, { key: "v", metaKey: true });
+
+    expect(usePrevizStore.getState().scene.objects).toHaveLength(before);
   });
 
   it("switches tool with the W and Q keys, matching Blender", async () => {
@@ -3713,6 +3748,26 @@ describe("PrevizEditor 右键菜单", () => {
     rightClick(screen.getByTestId("previz-canvas"), 20, 20, 80);
 
     noMenu();
+  });
+
+  it("右键复制对象，再右键空地粘贴", async () => {
+    const { renderer } = await renderEditor();
+    const objectId = usePrevizStore.getState().addObject("light")!;
+    renderer.pickAt.mockReturnValueOnce(objectId);
+    const canvas = screen.getByTestId("previz-canvas");
+
+    rightClick(canvas, 20, 20);
+    // 还没复制过，粘贴是灰的。
+    expect(menu().getByRole("button", { name: /previz\.contextMenu\.paste/ })).toBeDisabled();
+    fireEvent.click(menu().getByRole("button", { name: /previz\.contextMenu\.copy/ }));
+
+    renderer.pickAt.mockReturnValueOnce(null);
+    rightClick(canvas, 20, 20);
+    fireEvent.click(menu().getByRole("button", { name: /previz\.contextMenu\.paste/ }));
+
+    const { scene, selectedObjectId } = usePrevizStore.getState();
+    expect(scene.objects.filter((o) => o.kind === "light")).toHaveLength(2);
+    expect(selectedObjectId).not.toBe(objectId);
   });
 
   it("Esc 只关菜单，不关预演台", async () => {

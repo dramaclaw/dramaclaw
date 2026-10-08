@@ -7,7 +7,9 @@ export const PREVIZ_OBJECT_LIMITS: Record<PrevizObjectKind, number> = {
   character: 50,
   camera: 30,
   light: 12,
-  prop: 20,
+  // 物件常拿来拼布景（地块、路灯、围栏），一条街就是几十块。同一个模型只下载一次，
+  // 副本共用几何体与材质，多一件的代价是一次绘制调用和几百字节的场景 JSON。
+  prop: 200,
 };
 
 /**
