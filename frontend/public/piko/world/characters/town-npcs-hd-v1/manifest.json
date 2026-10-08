@@ -2,7 +2,8 @@
   "residents": [
     "m01",
     "f01",
-    "m02"
+    "m02",
+    "f02"
   ],
   "frameSize": 256,
   "logicalFrameSize": 64,

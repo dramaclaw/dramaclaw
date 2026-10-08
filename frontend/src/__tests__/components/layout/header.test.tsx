@@ -7,6 +7,7 @@ import { cloneElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Header } from "@/components/layout/header";
+import { featureEntrySeenKey } from "@/lib/feature-entry-state";
 
 const runtimeState = vi.hoisted(() => ({ authRequired: true, isCe: false, phoneVisible: false }));
 const authState = vi.hoisted(() => ({ username: "local", logout: vi.fn() }));
@@ -123,20 +124,6 @@ vi.mock("@/components/ui/tooltip", () => ({
   TooltipContent: ({ children }: React.PropsWithChildren) => <>{children}</>,
 }));
 
-vi.mock("@/components/ui/dropdown-menu", () => ({
-  DropdownMenu: ({ children }: React.PropsWithChildren) => <>{children}</>,
-  DropdownMenuTrigger: ({ children }: React.PropsWithChildren) => <>{children}</>,
-  DropdownMenuContent: ({ children }: React.PropsWithChildren) => <>{children}</>,
-  DropdownMenuGroup: ({ children }: React.PropsWithChildren) => <>{children}</>,
-  DropdownMenuLabel: ({ children }: React.PropsWithChildren) => <div>{children}</div>,
-  DropdownMenuSeparator: () => <hr />,
-  DropdownMenuItem: ({ children, ...props }: React.ComponentProps<"button">) => (
-    <button type="button" {...props}>
-      {children}
-    </button>
-  ),
-}));
-
 function renderHeader() {
   return render(
     <QueryClientProvider client={new QueryClient()}>
@@ -147,6 +134,7 @@ function renderHeader() {
 
 describe("Header runtime gating", () => {
   beforeEach(() => {
+    localStorage.clear();
     runtimeState.authRequired = true;
     runtimeState.isCe = false;
     runtimeState.phoneVisible = false;
@@ -156,6 +144,37 @@ describe("Header runtime gating", () => {
     brandingState.enabled = null;
     brandingState.data = undefined;
     securityState.data = undefined;
+  });
+
+  it("keeps the Piko reminder on hover, then dismisses and persists it on entry click", async () => {
+    const user = userEvent.setup();
+    const view = renderHeader();
+    const entry = screen.getByRole("button", { name: "Piko Piko" });
+    const dot = () => entry.querySelector('[data-slot="notification-dot"]');
+    expect(dot()).not.toBeNull();
+
+    await user.hover(entry);
+    expect(await screen.findByText("New")).toBeInTheDocument();
+    expect(screen.queryByText("Beta")).not.toBeInTheDocument();
+    expect(dot()).not.toBeNull();
+
+    await user.click(entry);
+    expect(dot()).toBeNull();
+    expect(localStorage.getItem(featureEntrySeenKey("piko-hub-v1", "local"))).toBe("seen");
+
+    view.unmount();
+    renderHeader();
+    expect(screen.getByRole("button", { name: "Piko Piko" }).querySelector('[data-slot="notification-dot"]')).toBeNull();
+  });
+
+  it.each(["{Enter}", " ", "{ArrowDown}"])("dismisses the Piko reminder on keyboard activation (%s)", async (key) => {
+    const user = userEvent.setup();
+    renderHeader();
+    const entry = screen.getByRole("button", { name: "Piko Piko" });
+    entry.focus();
+    await user.keyboard(key);
+    expect(await screen.findByText("New")).toBeInTheDocument();
+    expect(entry.querySelector('[data-slot="notification-dot"]')).toBeNull();
   });
 
   it("reads branding only for an authenticated EE session and renders it in the home link", () => {

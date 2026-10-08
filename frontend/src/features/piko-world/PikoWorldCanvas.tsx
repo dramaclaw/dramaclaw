@@ -367,13 +367,14 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
           world.addChild(occluder.container);
         }
         if (mapId === "town-hall-interior") {
-          const [clean, fire] = await Promise.all([
+          const [clean, fire, cat] = await Promise.all([
             loadTexture(resolvePikoMapAssetUrl(mapId, "effects/firebox-clean.png")),
             loadTexture(resolvePikoMapAssetUrl(mapId, "effects/hearth-fire.png")),
+            loadTexture(resolvePikoMapAssetUrl(mapId, "effects/sleeping-cat-v1.png")),
           ]);
-          if (!clean || !fire || disposed) return;
-          hallAmbience = createTownHallAmbience(nextApp.ticker, clean, fire);
-          world.addChild(hallAmbience.container);
+          if (!clean || !fire || !cat || disposed) return;
+          hallAmbience = createTownHallAmbience(nextApp.ticker, clean, fire, cat);
+          world.addChild(hallAmbience.container, hallAmbience.cat);
         }
         const environment = await loadPikoMapEnvironment(mapId, manifest.data.environment, abortController.signal);
         if (disposed) return;

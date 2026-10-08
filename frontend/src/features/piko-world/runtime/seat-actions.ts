@@ -5,8 +5,8 @@ export type PikoSeatAction = { seat: Point; approach: Point; radius: number; dep
 
 /** Seat coordinates are authored separately from the visible hit polygon. */
 const SEATS: Record<string, PikoSeatAction> = {
-  "hall-west-seat": { seat: { x: 1572, y: 700 }, approach: { x: 1572, y: 815 }, radius: 58, depthY: 765 },
-  "hall-east-seat": { seat: { x: 1682, y: 700 }, approach: { x: 1682, y: 815 }, radius: 58, depthY: 765 },
+  "hall-west-seat": { seat: { x: 1572, y: 680 }, approach: { x: 1572, y: 815 }, radius: 58, depthY: 765 },
+  "hall-east-seat": { seat: { x: 1682, y: 680 }, approach: { x: 1682, y: 815 }, radius: 58, depthY: 765 },
   "welcome-east-bench": { seat: { x: 1490, y: 496 }, approach: { x: 1490, y: 566 }, radius: 78 },
   "market-west-bench": { seat: { x: 560, y: 730 }, approach: { x: 560, y: 786 }, radius: 78 },
   // This seat is in front of the overhanging east canopy (depth 783).

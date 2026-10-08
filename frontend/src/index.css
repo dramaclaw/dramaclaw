@@ -73,6 +73,10 @@
   --text-rgb: 0 0 0;
   --text-muted-rgb: 102 102 102;
   --accent-rgb: 59 130 246;
+  --notification-dot: #e77e73;
+  --feature-new-background: #e8f3ed;
+  --feature-new-foreground: #28674e;
+  --feature-new-border: #a3c7b4;
   --ui-surface-panel: rgba(255, 255, 255, 0.96);
   --ui-surface-modal: rgba(255, 255, 255, 0.98);
   --ui-surface-field: rgba(248, 250, 252, 0.95);
@@ -146,6 +150,9 @@
   --text-rgb: 232 234 240;
   --text-muted-rgb: 111 112 121;
   --accent-rgb: 91 160 255;
+  --feature-new-background: #203c36;
+  --feature-new-foreground: #a6dac3;
+  --feature-new-border: #416a5b;
   --ui-surface-panel: rgba(21, 22, 29, 0.78);
   --ui-surface-modal: rgba(27, 28, 35, 0.98);
   --ui-surface-field: rgba(13, 14, 20, 0.85);

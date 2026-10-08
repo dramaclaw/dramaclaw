@@ -84,5 +84,17 @@
   .panel.panel[data-open], .panel.panel[data-closed] { animation: none; }
 }
 
-.pikoLabel { display: block; width: 60px; white-space: nowrap; font-weight: 400; }
+.pikoLabel { position: relative; display: block; width: 60px; white-space: nowrap; font-weight: 400; }
+.pikoDot { position: absolute; top: -2px; right: -7px; }
+.newBadge {
+  flex-shrink: 0;
+  border: 1px solid var(--feature-new-border);
+  border-radius: var(--ui-radius-pill);
+  padding: 1px 5px;
+  background: var(--feature-new-background);
+  color: var(--feature-new-foreground);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 12px;
+}
 :global(.light) .pikoLabel { color: var(--foreground); }

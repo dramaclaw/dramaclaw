@@ -12,6 +12,11 @@ export interface PikoExitMarkerDefinition {
   action?: "sail" | "returnShore" | "ascend" | "returnSlope" | "enterHall";
   /** Local vertical adjustment for both destination text and action buttons. */
   labelOffsetY?: number;
+  /** Optional local distances and ground-decal placement for compact entrances. */
+  labelDistance?: number;
+  interactionDistance?: number;
+  groundPosition?: PikoPoint;
+  groundSize?: number;
 }
 
 export const COURTYARD_EXIT_MARKER: PikoExitMarkerDefinition = {
@@ -29,7 +34,8 @@ export const MAP_EXIT_MARKERS: Record<PikoMapId, readonly PikoExitMarkerDefiniti
   "welcome-courtyard": [
     COURTYARD_EXIT_MARKER,
     { exitId: "to-town-hall-interior", targetMapId: "town-hall-interior",
-      position: { x: 1054, y: 388 }, direction: "north", action: "enterHall", labelOffsetY: -70 },
+      position: { x: 1054, y: 388 }, direction: "north", action: "enterHall", labelOffsetY: -70,
+      labelDistance: 135, interactionDistance: 110, groundPosition: { x: 1158, y: 408 }, groundSize: 88 },
     { exitId: "to-lantern-canal-street", targetMapId: "lantern-canal-street",
       position: { x: 1995, y: 505 }, direction: "east" },
     { exitId: "to-cloudtop-slope", targetMapId: "cloudtop-slope",

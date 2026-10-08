@@ -12,7 +12,7 @@ from build_piko_player_three_frame_motion import extract_row, head_width, normal
 ROOT = Path(__file__).resolve().parents[1]
 ART = ROOT / "frontend/public/piko/world/characters/town-npcs-hd-v1"
 SOURCES = ROOT / "piko-world/art/source/town-npcs-hd-v1"
-RESIDENTS = ("m01", "f01", "m02")
+RESIDENTS = ("m01", "f01", "m02", "f02")
 
 
 def build(resident: str) -> Image.Image:

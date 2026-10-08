@@ -55,6 +55,8 @@ it("keeps every hall interaction reachable and both seat exits outside furniture
     let previous=a; for(const step of path){expect(clearWalkSegment(previous,step,nav)).toBe(true);previous=step;}
   }
   expect(canStand({x:1200,y:375},nav)).toBe(false);
+  expect(canStand({x:740,y:408},nav)).toBe(false);
+  expect(canStand({x:740,y:439},nav)).toBe(true);
   expect(canStand({x:400,y:1070},nav)).toBe(false);
 });
 it("requires a deliberate hall entry rather than triggering beside the mayor", () => {
@@ -72,22 +74,46 @@ it("pauses indoor effects while hidden or reduced and removes all ticker work on
   const ticker={add:vi.fn(),remove:vi.fn()};
   const clean=new Texture({source:new TextureSource({width:1672,height:941})});
   const atlas=new Texture({source:new TextureSource({width:2172,height:724})});
-  const runtime=createTownHallAmbience(ticker as never,clean,atlas);
+  const catAtlas=new Texture({source:new TextureSource({width:1254,height:1254})});
+  let seed = 19;
+  const random = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  const runtime=createTownHallAmbience(ticker as never,clean,atlas,catAtlas,random);
   expect(ticker.add).toHaveBeenCalledTimes(1);
   const fire = runtime.container.getChildByLabel("hearth-fire", true) as Sprite;
   const firstFrame = fire.texture;
+  const firstCatFrame = runtime.cat.texture;
+  const dust = runtime.container.getChildByLabel("hall-window-dust")!;
+  const startPositions = dust.children.map(mote => ({ x: mote.x, y: mote.y, alpha: mote.alpha }));
   const tick = ticker.add.mock.calls[0][0];
   for (let i = 0; i < 4; i++) tick({ deltaMS: 100 });
   expect(fire.texture).not.toBe(firstFrame);
   expect(fire.alpha).toBe(1);
   expect(fire.parent!.children.filter(child => child.label === "hearth-fire")).toHaveLength(1);
+  for (let i = 0; i < 4; i++) tick({ deltaMS: 100 });
+  expect(runtime.cat.texture).not.toBe(firstCatFrame);
+  expect(runtime.cat.alpha).toBe(1);
+  const moved = dust.children.map((mote, index) => ({ x: mote.x - startPositions[index].x, y: mote.y - startPositions[index].y }));
+  expect(moved.some(delta => delta.x > 0 && delta.y > 0)).toBe(true);
+  expect(moved.some(delta => delta.x < 0 && delta.y < 0)).toBe(true);
+  const visibleMoves = moved.filter((_, index) => startPositions[index].alpha > 0.1 && dust.children[index].alpha > 0.1);
+  expect(visibleMoves.length).toBeGreaterThan(0);
+  expect(visibleMoves.every(delta => Math.abs(delta.x) <= 3 && Math.abs(delta.y) <= 2)).toBe(true);
+  // Cover several direction changes, edge exits and particle rebirths in the marked window area.
+  for (let i = 0; i < 400; i++) {
+    tick({ deltaMS: 100 });
+    expect(dust.children.every(mote => mote.x >= 515 && mote.x <= 965 && mote.y >= 170 && mote.y <= 480)).toBe(true);
+  }
+  const pausedFrame = runtime.cat.texture;
   hidden.mockReturnValue(true);document.dispatchEvent(new Event('visibilitychange'));
   expect(ticker.remove).toHaveBeenCalledTimes(1);
+  expect(runtime.cat.texture).toBe(pausedFrame);
   hidden.mockReturnValue(false);document.dispatchEvent(new Event('visibilitychange'));
   expect(ticker.add).toHaveBeenCalledTimes(2);
   reduced=true;change();expect(ticker.remove).toHaveBeenCalledTimes(2);
   expect(fire.texture).toBe(firstFrame); expect(fire.alpha).toBe(1);
+  expect(runtime.cat.texture).toBe(firstCatFrame);
+  expect(dust.children.every(mote => !mote.visible)).toBe(true);
   reduced=false;change();expect(ticker.add).toHaveBeenCalledTimes(3);
   runtime.destroy();runtime.destroy();expect(ticker.remove).toHaveBeenCalledTimes(3);expect(remove).toHaveBeenCalledOnce();
-  clean.destroy(true);atlas.destroy(true);
+  clean.destroy(true);atlas.destroy(true);catAtlas.destroy(true);
 });

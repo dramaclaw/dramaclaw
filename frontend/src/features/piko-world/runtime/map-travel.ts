@@ -20,7 +20,8 @@ export function enabledMapExits(navigation: PikoNavigation): MapExit[] {
 export const TRANSPORT_INTERACTION_DISTANCE = 140;
 export function canActivateTransport(marker: PikoExitMarkerDefinition, position: PikoPoint, active: boolean) {
   return active && Boolean(marker.action)
-    && Math.hypot(position.x - marker.position.x, position.y - marker.position.y) <= TRANSPORT_INTERACTION_DISTANCE;
+    && Math.hypot(position.x - marker.position.x, position.y - marker.position.y)
+      <= (marker.interactionDistance ?? TRANSPORT_INTERACTION_DISTANCE);
 }
 
 /** A held/re-entered trigger cannot submit another transfer until the player leaves it. */

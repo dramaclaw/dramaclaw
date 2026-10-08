@@ -17,7 +17,7 @@ export function PikoMapExitMarker({ definition, fit, player, onActivate }: {
   const { t } = useTranslation();
   if (fit.scale <= 0) return null;
   const title = PIKO_MAP_TRANSITIONS[definition.targetMapId].title;
-  const near = Math.hypot(player.x - definition.position.x, player.y - definition.position.y) <= 220;
+  const near = Math.hypot(player.x - definition.position.x, player.y - definition.position.y) <= (definition.labelDistance ?? 220);
 
   return (
     <div className={styles.anchor} data-exit-id={definition.exitId} data-near={near}

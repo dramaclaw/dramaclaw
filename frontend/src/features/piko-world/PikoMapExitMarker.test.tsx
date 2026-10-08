@@ -24,3 +24,18 @@ it("keeps walking destination labels passive", () => {
   expect(screen.queryByRole("button")).toBeNull();
   expect(screen.getByRole("img", { name: "匠作市集" })).toBeInTheDocument();
 });
+
+it("reveals the hall label near the door and enables entry only within its smaller reach", () => {
+  const definition = MAP_EXIT_MARKERS["welcome-courtyard"].find(marker => marker.action === "enterHall")!;
+  const activate = vi.fn();
+  const props = { definition, fit: { x: 0, y: 0, scale: 1 }, onActivate: activate };
+  const { container, rerender } = render(<PikoMapExitMarker {...props} player={{ x: 1054, y: 530 }} />);
+  expect(container.firstChild).toHaveAttribute("data-near", "false");
+  expect(screen.queryByRole("button")).toBeNull();
+  rerender(<PikoMapExitMarker {...props} player={{ x: 1054, y: 510 }} />);
+  expect(container.firstChild).toHaveAttribute("data-near", "true");
+  expect(screen.queryByRole("button")).toBeNull();
+  rerender(<PikoMapExitMarker {...props} player={definition.groundPosition!} />);
+  fireEvent.click(screen.getByRole("button"));
+  expect(activate).toHaveBeenCalledOnce();
+});

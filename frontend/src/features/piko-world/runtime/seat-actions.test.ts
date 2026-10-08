@@ -10,6 +10,7 @@ import { pointInPolygon } from "./navigation-geometry";
 import { RESIDENT_WORLD_SCALE } from "./resident-actor";
 import { pikoSeatAction } from "./seat-actions";
 import { SEATED_FOOT_OFFSET, SEATED_POSE } from "./seated-pose";
+import { mapPerspectiveScale } from "./map-perspective";
 
 const read = (map: string, name: string) => JSON.parse(readFileSync(`public/piko/world/maps/${map}/data/${name}.json`, "utf8"));
 
@@ -17,6 +18,8 @@ it.each([
   { map: "welcome-courtyard", id: "welcome-east-bench", surface: { x: 1490, y: 518 } },
   { map: "artisan-market", id: "market-west-bench", surface: { x: 560, y: 743 } },
   { map: "artisan-market", id: "market-east-bench", surface: { x: 1330, y: 708 } },
+  { map: "town-hall-interior", id: "hall-west-seat", surface: { x: 1572, y: 694 } },
+  { map: "town-hall-interior", id: "hall-east-seat", surface: { x: 1682, y: 694 } },
 ])("reaches $id from map entrances and keeps seated head and legs visible", ({ map, id, surface }) => {
   const navigation = PikoNavigationSchema.parse(read(map, "navigation"));
   const interactions = PikoInteractionsSchema.parse(read(map, "interactions"));
@@ -38,7 +41,7 @@ it.each([
       previous = point;
     }
   }
-  const scale = RESIDENT_WORLD_SCALE * SEATED_POSE.scale;
+  const scale = RESIDENT_WORLD_SCALE * SEATED_POSE.scale * mapPerspectiveScale(map, action.seat.y);
   const depthY = action.depthY ?? action.seat.y + SEATED_FOOT_OFFSET * scale;
   const actor = new Container(); actor.position.copyFrom(action.seat); actor.zIndex = depthY;
   const masking = createBakedActorOcclusion(actor, occlusion.occluders, { width: 2048, height: 1152 }, () => actor.zIndex);

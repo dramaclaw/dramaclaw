@@ -24,6 +24,9 @@ export const PIKO_TOWN_NPCS: readonly PikoTownNpc[] = [
   { id: "town-m02", residentId: "m02", nickname: "阿川", bio: "住在灯河街，随身带着修补工具。",
     greeting: "河边风大，我再去看看灯笼挂牢了没有。",
     mapId: "lantern-canal-street", position: { x: 1420, y: 432 }, scale: 0.9, idleOffsetMs: 1300 },
+  { id: "hall-bookkeeper", residentId: "f02", nickname: "书禾", bio: "照看大厅的书架，喜欢收集小镇的旧故事。",
+    greeting: "这本书里藏着小镇的旧故事，要不要一起翻几页？",
+    mapId: "town-hall-interior", position: { x: 1630, y: 425 }, idleOffsetMs: 700 },
 ];
 
 export const townNpcsForMap = (mapId: string) => PIKO_TOWN_NPCS.filter(npc => npc.mapId === mapId);

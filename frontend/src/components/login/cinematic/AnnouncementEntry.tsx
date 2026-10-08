@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import { Bell, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { NotificationDot } from "@/components/ui/notification-dot";
 import styles from "@/components/login/login.module.css";
 import { AnnouncementCard as SharedAnnouncementCard } from "@/components/notifications/announcement-card";
 import {
@@ -50,7 +51,7 @@ export function AnnouncementEntry() {
         >
           <span className={styles.announcementIcon} aria-hidden="true">
             <Bell />
-            {unread > 0 ? <span className={styles.announcementDot} /> : null}
+            {unread > 0 ? <NotificationDot className={styles.announcementDot} /> : null}
           </span>
           <span>{t("loginCinematic.announcement.label")}</span>
         </Dialog.Trigger>

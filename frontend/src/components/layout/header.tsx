@@ -25,6 +25,8 @@ import { capturePikoTaskEntry } from "@/features/piko-world/piko-task-entry";
 import { enterPikoWorld } from "@/features/piko-world/piko-entry-transition";
 import { playPikoUiSound } from "@/features/piko-world/piko-audio";
 import { Button } from "@/components/ui/button";
+import { NotificationDot } from "@/components/ui/notification-dot";
+import { useFeatureEntrySeen } from "@/lib/feature-entry-state";
 import { AvatarUploadDialog } from "@/components/account/avatar-upload-dialog";
 import { PasswordChangeDialog } from "@/components/account/password-change-dialog";
 import { PhoneBindingDialog } from "@/components/account/phone-binding-dialog";
@@ -97,6 +99,8 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
   const accountPanelPinnedRef = useRef(false);
   const settingsAnchorRef = useRef<HTMLDivElement | null>(null);
   const { username, displayName: storedDisplayName, logout } = useAuthStore();
+  const { seen: pikoEntrySeen, markSeen: markPikoEntrySeen } =
+    useFeatureEntrySeen("piko-hub-v1", username);
   const queryClient = useQueryClient();
   // 退出登录是 SPA 内部跳转（不刷新页面），必须一并清掉 React Query 缓存和
   // 用户级 zustand/localStorage 状态，否则换账号登录后 projectSummaries 等
@@ -405,25 +409,32 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
               </Button>
             </div>
           ) : null}
-          <DropdownMenu modal={false}>
-            <DropdownMenuTrigger openOnHover delay={100} closeDelay={180}
+          <DropdownMenu modal={false} onOpenChange={(open, details) => {
+            if (open && (details.reason === "trigger-press" || details.reason === "list-navigation")) {
+              markPikoEntrySeen();
+            }
+          }}>
+            <DropdownMenuTrigger openOnHover delay={100} closeDelay={180} onClick={markPikoEntrySeen}
               render={<Button id="piko-hub-entry" variant="ghost" size="sm" className={`${entryStyles.trigger} px-2 text-xs font-medium`} />}>
-              <span className={entryStyles.pikoLabel}>Piko Piko</span>
+              <span className={entryStyles.pikoLabel}>
+                Piko Piko
+                {!pikoEntrySeen ? <NotificationDot className={entryStyles.pikoDot} /> : null}
+              </span>
             </DropdownMenuTrigger>
             <HeaderMenuPanel dropdown>
               <HeaderMenuRow menuItem
                 icon={<Map className="size-3.5" />}
                 label={t("header.pikoHub.world")}
-                badge="Beta"
-                onClick={() => { capturePikoTaskEntry(username, window.location.href); playPikoUiSound("open"); void enterPikoWorld(() => navigate({ to: "/piko-world" })); }} />
+                badge="New"
+                onClick={() => { markPikoEntrySeen(); capturePikoTaskEntry(username, window.location.href); playPikoUiSound("open"); void enterPikoWorld(() => navigate({ to: "/piko-world" })); }} />
               <HeaderMenuRow menuItem id="mybuddy-companion-entry"
                 icon={<Users className="size-3.5" />}
                 label={t("header.pikoHub.companion")}
-                onClick={() => setCompanionOpen(true)} />
+                onClick={() => { markPikoEntrySeen(); setCompanionOpen(true); }} />
               <HeaderMenuRow menuItem
                 icon={<Gamepad2 className="size-3.5" />}
                 label={t("header.pikoHub.play")}
-                onClick={() => window.dispatchEvent(new Event("piko-open-station"))} />
+                onClick={() => { markPikoEntrySeen(); window.dispatchEvent(new Event("piko-open-station")); }} />
             </HeaderMenuPanel>
           </DropdownMenu>
           <CreditBalanceBadge />
@@ -457,10 +468,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
                 )}
               </span>
               {hasUnreadNotification ? (
-                <span
-                  className="absolute right-0 top-0 size-1.5 rounded-full border border-background bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.72)]"
-                  aria-hidden="true"
-                />
+                <NotificationDot className="absolute right-0 top-0" />
               ) : null}
             </Button>
           </div>
@@ -777,16 +785,13 @@ function HeaderMenuRow({
       </span>
       <span className={`${entryStyles.menuLabel} flex min-w-0 flex-1 items-center gap-1.5`}>
         <span className="truncate">{label}</span>
-        {badge && <span className="shrink-0 rounded-full border border-current/20 px-1 py-px text-[10px] font-normal leading-3 text-muted-foreground">{badge}</span>}
+        {badge && <span className={entryStyles.newBadge}>{badge}</span>}
       </span>
       {meta ? (
         <span className="max-w-16 truncate text-[11px] text-slate-400">{meta}</span>
       ) : null}
       {unread ? (
-        <span
-          className="size-1.5 shrink-0 rounded-full bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.62)]"
-          aria-hidden="true"
-        />
+        <NotificationDot />
       ) : null}
       <ChevronRight
         className={`${entryStyles.menuChevron} mr-1 size-3.5 shrink-0 transition-transform duration-150 motion-reduce:transition-none ${

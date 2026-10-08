@@ -20,11 +20,12 @@ export async function createMapExitMarker(ticker: Ticker, definition: PikoExitMa
   const frames = Array.from({ length: 8 }, (_, index) => new Texture({ source: atlas.source,
     frame: new Rectangle(index % 4 * 512, Math.floor(index / 4) * 512, 512, 512) }));
   const container = new Container({ label: "map-exit-ground-marker", eventMode: "none", zIndex: -1 });
-  container.position.set(definition.position.x, definition.position.y);
+  const position = definition.groundPosition ?? definition.position;
+  container.position.set(position.x, position.y);
   container.scale.y = 0.72;
   const sprite = new Sprite({ texture: frames[0], eventMode: "none" });
   sprite.anchor.set(0.5);
-  sprite.scale.set(120 / 512);
+  sprite.scale.set((definition.groundSize ?? 120) / 512);
   sprite.rotation = ROTATION[definition.direction];
   container.addChild(sprite);
   container.visible = isVisible();

@@ -32,11 +32,6 @@
   position: absolute;
   top: -1px;
   right: -1px;
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: #ff4d4f;
-  box-shadow: 0 0 0 1.5px rgba(9, 10, 16, 0.92);
 }
 
 .content {

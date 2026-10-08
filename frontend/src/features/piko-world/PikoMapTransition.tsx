@@ -104,7 +104,11 @@ export function PikoMapTransition({
       data-phase={phase}
     >
       <img
-        style={{ transitionDuration: `${phase === "revealing" ? PIKO_MAP_TRANSITION_TIMING.exitMs : 400}ms` }}
+        style={{
+          transitionDuration: `${phase === "revealing" ? PIKO_MAP_TRANSITION_TIMING.exitMs : 400}ms`,
+          // Match the courtyard lettering; both titles have similarly cropped artwork.
+          maxWidth: mapId === "town-hall-interior" ? "min(57.6vw, calc(24vh * 1891 / 832))" : undefined,
+        }}
         src={definition.src}
         alt=""
         fetchPriority="high"

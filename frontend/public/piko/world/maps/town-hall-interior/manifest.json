@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "mapId": "town-hall-interior",
-  "revision": 1,
+  "revision": 3,
   "coordinateSpace": "map-pixels-top-left",
   "size": {
     "width": 2048,
