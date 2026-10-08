@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from novelvideo.director_world.blockout.scene_ir import MAX_COMPILED_OBJECTS
 
-BLOCKOUT_PROMPT_VERSION = 9
+BLOCKOUT_PROMPT_VERSION = 10
 MAX_DESCRIPTION_CHARS = 500
 SUGGESTED_OBJECT_COUNT = 40
 
@@ -116,7 +116,7 @@ def _instructions(*, picture_check: bool) -> str:
   `scene.box(id, on, size=(宽, 高, 深), semantic_type, label, shift=(0, 0), rotation_y)`
   `scene.cylinder(id, on, radius, height, semantic_type, label, shift=(0, 0))`
   on 写下面那件的 id。物件落在它的顶面上，默认在正中间，朝向跟着它。
-  shift=(dx, dz) 是相对它中心挪开的距离，dx 向右为正，dz 向远处为正，不能挪到顶面外面。
+  shift=(dx, dz) 是相对它中心挪开的距离：dx 沿下面那件的宽、dz 沿它的深，和它的 size 同一口径（贴墙的柜台宽沿着墙，沿柜台摆就只写 dx），不能挪到顶面外面。
   下面那件必须写在这一行的上面，只能是 box 或 cylinder。
 - 只有不靠墙、也不放在别的物件上的，才用 position 写坐标：
   `scene.box(id, position=(x, y, z), size=(宽, 高, 深), semantic_type, label, rotation_y=0)`

@@ -160,8 +160,15 @@ def test_review_prompt_shows_the_program_and_the_render_and_asks_for_a_full_rewr
     assert "完整的程序" in prompt and "不要只输出改动的部分" in prompt
 
 
+def test_prompt_says_shift_follows_the_base_piece_not_the_scene():
+    prompt = build_blockout_prompt()
+
+    assert "dx 沿下面那件的宽" in prompt and "dz 沿它的深" in prompt
+    assert "dx 向右为正，dz 向远处为正，不能" not in prompt
+
+
 def test_prompt_version_moves_with_the_wording():
-    assert BLOCKOUT_PROMPT_VERSION == 9
+    assert BLOCKOUT_PROMPT_VERSION == 10
 
 
 def test_prompt_asks_for_relations_instead_of_coordinates_where_it_can():

@@ -422,7 +422,7 @@ def test_piece_on_another_rests_on_its_top_and_follows_its_rotation():
     solids = _anchored(
         'scene.box(id="desk", against="room_left", offset=1.0, size=(2.0, 0.8, 0.6), semantic_type="desk")\n'
         'scene.box(id="book", on="desk", size=(0.3, 0.05, 0.2), semantic_type="prop")\n'
-        'scene.cylinder(id="vase", on="desk", shift=(0.1, 0.8), radius=0.1, height=0.3, semantic_type="prop")\n'
+        'scene.cylinder(id="vase", on="desk", shift=(0.8, 0.1), radius=0.1, height=0.3, semantic_type="prop")\n'
         'scene.box(id="tray", on="desk", rotation_y=20, size=(0.3, 0.02, 0.2), semantic_type="prop")\n'
     )
 
@@ -430,9 +430,25 @@ def test_piece_on_another_rests_on_its_top_and_follows_its_rotation():
     assert desk.position == pytest.approx((-3.1, 0.0, -0.9))
     assert solids["book"].position == pytest.approx((-3.1, 0.8, -0.9))
     assert solids["book"].rotation_y == pytest.approx(90.0)
-    # shift is written in scene axes: x to the right, z away from the camera.
-    assert solids["vase"].position == pytest.approx((-3.0, 0.8, -0.1))
+    # shift runs along the base's own width and depth, the way its size is
+    # written: the desk stands against the left wall, so its width runs along z.
+    assert solids["vase"].position == pytest.approx((-3.2, 0.8, -0.1))
     assert solids["tray"].rotation_y == 20.0
+
+
+def test_shift_along_the_width_of_a_piece_against_a_wall_stays_on_its_top():
+    # The shape every "would not rest on" failure took in the field: a counter
+    # against the left wall, a jar shifted along the counter's width. Read in
+    # scene axes that shift would run across the counter's depth and fall off.
+    solids = _anchored(
+        'scene.box(id="counter", against="room_left", offset=1.35, size=(2.8, 1.05, 0.95), semantic_type="counter")\n'
+        'scene.cylinder(id="jar", on="counter", shift=(-0.75, 0), radius=0.2, height=0.36, semantic_type="prop")\n'
+    )
+
+    counter, jar = solids["counter"], solids["jar"]
+    assert jar.position[1] == pytest.approx(counter.position[1] + 1.05)
+    assert jar.position[0] == pytest.approx(counter.position[0])
+    assert jar.position[2] == pytest.approx(counter.position[2] - 0.75)
 
 
 def test_pieces_stack():

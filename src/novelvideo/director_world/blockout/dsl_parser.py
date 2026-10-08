@@ -583,15 +583,15 @@ def _on_top(call: _Call, solid: SolidIR, above: dict[str, SolidIR]) -> SolidIR:
             "stairs has no flat top; use position=(x, y, z) instead",
             call.line,
         )
-    shift_x, shift_z = _vector(call, "shift", 2, default=(0.0, 0.0))
+    # shift is written along the base's own width and depth, the way its size
+    # is: a piece against a wall is turned with the wall, and the model thinks
+    # of "along the counter" in the counter's terms, not the scene's. Turning
+    # the shift into scene axes here is what keeps that reading right.
+    across, deep = _vector(call, "shift", 2, default=(0.0, 0.0))
     if base.shape == "cylinder":
-        outside = math.hypot(shift_x, shift_z) > base.size[0] / 2.0 + 1e-9
+        outside = math.hypot(across, deep) > base.size[0] / 2.0 + 1e-9
         top = f"{base.size[0]:g} across"
     else:
-        # shift is written in scene axes; the top of the base is turned with it.
-        angle = math.radians(base.rotation_y)
-        across = shift_x * math.cos(angle) + shift_z * math.sin(angle)
-        deep = shift_z * math.cos(angle) - shift_x * math.sin(angle)
         outside = (
             abs(across) > base.size[0] / 2.0 + 1e-9
             or abs(deep) > base.size[2] / 2.0 + 1e-9
@@ -600,10 +600,13 @@ def _on_top(call: _Call, solid: SolidIR, above: dict[str, SolidIR]) -> SolidIR:
     if outside:
         raise _fail(
             f"scene.{call.op}: '{solid.id}' would not rest on '{base_id}': shift "
-            f"({shift_x:g}, {shift_z:g}) puts its centre outside the top of "
+            f"({across:g}, {deep:g}) puts its centre outside the top of "
             f"'{base_id}', which is {top}",
             call.line,
         )
+    angle = math.radians(base.rotation_y)
+    shift_x = across * math.cos(angle) - deep * math.sin(angle)
+    shift_z = across * math.sin(angle) + deep * math.cos(angle)
     if solid.shape == "cylinder":
         rotation_y = 0.0
     elif "rotation_y" in call.args:
