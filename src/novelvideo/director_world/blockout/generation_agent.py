@@ -40,6 +40,7 @@ from novelvideo.director_world.blockout.scene_ir import (
 from novelvideo.egress_context import TrustedEgressContext
 
 BLOCKOUT_MODEL_ENV = "PREVIZ_BLOCKOUT_MODEL"
+BLOCKOUT_REASONING_EFFORT_ENV = "PREVIZ_BLOCKOUT_REASONING_EFFORT"
 BLOCKOUT_TIMEOUT_SECONDS = 300.0
 BLOCKOUT_MAX_ATTEMPTS = 3
 # 渲染核对的轮数：每轮把当前场景渲染成图，和参考图一起交给模型改。第一轮修构图，
@@ -57,6 +58,20 @@ def resolve_blockout_model() -> str:
     from novelvideo.freezone.vision_gateway import resolve_freezone_vision_model
 
     return resolve_freezone_vision_model(os.environ.get(BLOCKOUT_MODEL_ENV))
+
+
+def resolve_blockout_model_settings() -> dict | None:
+    """`PREVIZ_BLOCKOUT_REASONING_EFFORT` as PydanticAI model settings, else None.
+
+    Same wire contract as `config.get_newapi_structured_output_model_settings`:
+    the gateway serves opaque aliases, so the OpenAI-compatible
+    ``reasoning_effort`` field is the only thing that reliably reaches the
+    upstream model. Unset means whatever the gateway does by default.
+    """
+    effort = os.environ.get(BLOCKOUT_REASONING_EFFORT_ENV, "").strip().lower()
+    if not effort:
+        return None
+    return {"openai_reasoning_effort": effort}
 
 
 def extract_program(text: str) -> str:
@@ -89,6 +104,7 @@ async def _ask_model(
     prompt: str,
     images: list,
     model: str,
+    model_settings: dict | None,
     egress_context: TrustedEgressContext | None,
 ) -> str:
     from novelvideo.freezone import vision_gateway
@@ -113,6 +129,7 @@ async def _ask_model(
             prompt=prompt,
             images=images,
             model_override=model,
+            model_settings=model_settings,
             timeout_seconds=BLOCKOUT_TIMEOUT_SECONDS,
             transport_context=(
                 vision_egress.transport_context if vision_egress else None
@@ -188,6 +205,7 @@ async def generate_blockout_from_image(
     )
 
     model = resolve_blockout_model()
+    model_settings = resolve_blockout_model_settings()
 
     def unreadable(reason: str, *, sha256: str) -> BlockoutGenerationError:
         # 原始异常里带着服务器上的绝对路径，不该原样走到用户面前。
@@ -232,7 +250,11 @@ async def generate_blockout_from_image(
     async def ask(prompt: str, *images) -> tuple[str, float]:
         started = time.monotonic()
         text = await _ask_model(
-            prompt=prompt, images=list(images), model=model, egress_context=egress_context
+            prompt=prompt,
+            images=list(images),
+            model=model,
+            model_settings=model_settings,
+            egress_context=egress_context,
         )
         return extract_program(text), round(time.monotonic() - started, 3)
 

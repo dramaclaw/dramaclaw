@@ -218,8 +218,14 @@ async def call_freezone_vision_model(
     timeout_seconds: float,
     model_override: str | None = None,
     transport_context: VisionTransportContext | None = None,
+    model_settings: dict | None = None,
 ) -> tuple[str, str]:
-    """Run a PydanticAI vision Agent through the effective NewAPI gateway."""
+    """Run a PydanticAI vision Agent through the effective NewAPI gateway.
+
+    ``model_settings`` are PydanticAI model settings handed straight to the
+    Agent (e.g. ``{"openai_reasoning_effort": "low"}``); ``None`` keeps the
+    gateway defaults.
+    """
     if not images:
         raise ValueError("at least one image is required")
 
@@ -251,6 +257,7 @@ async def call_freezone_vision_model(
         transport_model,
         output_type=str,
         name="Freezone Vision Analyzer",
+        model_settings=model_settings,
     )
     result = await agent.run(
         [

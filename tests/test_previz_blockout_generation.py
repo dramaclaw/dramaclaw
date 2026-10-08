@@ -20,6 +20,7 @@ from novelvideo.director_world.blockout.generation_agent import (
     extract_program,
     generate_blockout_from_image,
     resolve_blockout_model,
+    resolve_blockout_model_settings,
 )
 from novelvideo.freezone import presets, vision_gateway
 
@@ -56,6 +57,7 @@ class FakeModel:
 def default_model_names(monkeypatch):
     monkeypatch.delenv("PREVIZ_BLOCKOUT_MODEL", raising=False)
     monkeypatch.delenv("FREEZONE_VISION_MODEL", raising=False)
+    monkeypatch.delenv("PREVIZ_BLOCKOUT_REASONING_EFFORT", raising=False)
 
 
 @pytest.fixture
@@ -75,7 +77,9 @@ def model(monkeypatch):
     return install
 
 
-async def test_a_valid_program_becomes_previz_objects_on_the_first_try(image_path, model):
+async def test_a_valid_program_becomes_previz_objects_on_the_first_try(
+    image_path, model
+):
     fake = model(GOLDEN_PROGRAM)
 
     generation = await generate_blockout_from_image(
@@ -284,7 +288,9 @@ async def test_an_implausible_scene_is_retried(image_path, model):
     assert "looks toward -z" in fake.calls[1]["prompt"]
 
 
-async def test_a_scene_that_stays_implausible_is_delivered_with_warnings(image_path, model):
+async def test_a_scene_that_stays_implausible_is_delivered_with_warnings(
+    image_path, model
+):
     fake = model(LOOKS_AWAY, LOOKS_AWAY, LOOKS_AWAY)
 
     generation = await generate_blockout_from_image(image_path=image_path)
@@ -319,6 +325,33 @@ async def test_a_hostile_program_is_never_run(image_path, model, tmp_path, monke
 
     assert not marker.exists()
     assert list(tmp_path.iterdir()) == [image_path]
+
+
+def test_reasoning_effort_comes_from_the_environment_as_the_openai_wire_setting(
+    monkeypatch,
+):
+    assert resolve_blockout_model_settings() is None
+
+    monkeypatch.setenv("PREVIZ_BLOCKOUT_REASONING_EFFORT", "  ")
+    assert resolve_blockout_model_settings() is None
+
+    monkeypatch.setenv("PREVIZ_BLOCKOUT_REASONING_EFFORT", " Low ")
+    assert resolve_blockout_model_settings() == {"openai_reasoning_effort": "low"}
+
+
+async def test_every_model_call_carries_the_reasoning_effort(
+    image_path, model, monkeypatch
+):
+    fake = model(GOLDEN_PROGRAM, REVIEWED_PROGRAM, REVIEWED_AGAIN)
+    await generate_blockout_from_image(image_path=image_path, render_check=True)
+    assert [call["model_settings"] for call in fake.calls] == [None] * 3
+
+    monkeypatch.setenv("PREVIZ_BLOCKOUT_REASONING_EFFORT", "low")
+    fake = model(GOLDEN_PROGRAM, REVIEWED_PROGRAM, REVIEWED_AGAIN)
+    await generate_blockout_from_image(image_path=image_path, render_check=True)
+    assert [call["model_settings"] for call in fake.calls] == [
+        {"openai_reasoning_effort": "low"}
+    ] * 3
 
 
 def test_the_model_falls_back_to_the_freezone_vision_model(monkeypatch):
@@ -417,7 +450,9 @@ async def test_artifacts_of_a_finished_job(image_path, model, tmp_path):
     assert result["reference_camera_id"] == "blockout-cam"
     assert result["counts"] == {"prop": 15, "camera": 1}
     assert result["warnings"] == []
-    assert (out_dir / "scene.blockout.dsl").read_text(encoding="utf-8") == GOLDEN_PROGRAM
+    assert (out_dir / "scene.blockout.dsl").read_text(
+        encoding="utf-8"
+    ) == GOLDEN_PROGRAM
     scene_ir = json.loads((out_dir / "scene_ir.json").read_text(encoding="utf-8"))
     assert scene_ir["compiler_version"] == 1
     record = json.loads((out_dir / "generation.json").read_text(encoding="utf-8"))
@@ -603,7 +638,9 @@ async def test_the_render_check_starts_from_the_fallback_when_no_draft_was_clean
     assert generation.warnings == ()
 
 
-async def test_every_review_round_settles_its_own_egress(image_path, model, monkeypatch):
+async def test_every_review_round_settles_its_own_egress(
+    image_path, model, monkeypatch
+):
     egress = FakeEgress(monkeypatch)
     fake = model(GOLDEN_PROGRAM, REVIEWED_PROGRAM, REVIEWED_AGAIN)
 
