@@ -3727,6 +3727,9 @@ def test_server_workflow_prepare_revise_and_compact_query(workflow_run_client):
     draft = response.json()["data"]
     assert draft["revision"] == 1
     assert not {"plan", "intent", "compiled"} & draft.keys()
+    assert "nodes" not in draft["preview"]
+    assert "recipe_pipelines" not in draft["preview"]
+    assert draft["preview"]["node_count"] == 1
     target = f"{base}/{draft['draft_id']}"
     changes = {"step_updates": [{"node_id": "brief", "prompt": "新广告要求"}]}
     revised = workflow_run_client.patch(
@@ -3741,6 +3744,7 @@ def test_server_workflow_prepare_revise_and_compact_query(workflow_run_client):
     assert revised.json()["data"]["revision"] == 2
     full = workflow_run_client.get(target).json()["data"]
     assert full["compiled"]["plan"]["nodes"][0]["data"]["content"] == "新广告要求"
+    assert len(full["preview"]["nodes"]) == 1
     stale = workflow_run_client.patch(
         target, json={"expected_revision": 1, "changes": changes}
     )

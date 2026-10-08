@@ -1061,7 +1061,9 @@ def test_duplicate_invalid_plan_reuses_delivered_operation_draft(monkeypatch):
             "error": "aggregate workflow planning text exceeds 4000 characters",
         },
     )
-    monkeypatch.setattr(plugin, "public_workflow_draft", lambda payload: payload)
+    monkeypatch.setattr(
+        plugin, "public_workflow_draft", lambda payload, **_kwargs: payload
+    )
 
     def request(method, path, **kwargs):
         calls.append((method, path, kwargs))
@@ -1573,6 +1575,10 @@ def test_dynamic_workflow_plan_uses_draft_before_canvas_bridge(monkeypatch, tmp_
     assert prepared["ok"] is True
     assert prepared["status"] == "workflow_draft_ready"
     assert prepared["preview"]["node_count"] == 0
+    assert "nodes" not in prepared["preview"]
+    assert "recipe_pipelines" not in prepared["preview"]
+    assert prepared["next_action"] == "review_and_confirm"
+    assert "Do not call freezone_get_workflow" in prepared["agent_instruction"]
     assert captured.get("commands") is None
     assert captured["preflight_plan"] is plan
     assert captured["preflight_project"] == "project-a"
@@ -1769,6 +1775,10 @@ def test_workflow_draft_can_be_prepared_patched_and_confirmed_once(
     assert prepared["ok"] is True
     assert prepared["revision"] == 1
     assert prepared["preview"]["node_count"] == 3
+    assert "nodes" not in prepared["preview"]
+    assert "recipe_pipelines" not in prepared["preview"]
+    assert prepared["next_action"] == "review_and_confirm"
+    assert "freezone_get_workflow" in prepared["agent_instruction"]
     assert prepared["run_after_create"] is True
     assert "do not mention credits" in prepared["agent_instruction"].lower()
     _assert_real_mcp_output(plugin, "freezone_prepare_workflow_draft", prepared)
@@ -1784,6 +1794,9 @@ def test_workflow_draft_can_be_prepared_patched_and_confirmed_once(
     assert patched["ok"] is True
     assert patched["revision"] == 2
     assert patched["preview"]["node_count"] == 4
+    assert "nodes" not in patched["preview"]
+    assert "recipe_pipelines" not in patched["preview"]
+    assert patched["next_action"] == "review_and_confirm"
     _assert_real_mcp_output(plugin, "freezone_patch_workflow_draft", patched)
 
     stale_patch = plugin._handle_patch_workflow_draft(

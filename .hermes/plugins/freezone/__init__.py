@@ -5770,7 +5770,8 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
                 "validation error recurs without new information.",
             )
         return tool_result(error)
-    result = public_workflow_draft(payload)
+    result = public_workflow_draft(payload, compact_preview=True)
+    result["next_action"] = "review_and_confirm"
     planner = validated.get("planner") if isinstance(validated.get("planner"), dict) else {}
     if planner.get("selected_by") == "template_isomorphic":
         preview_instruction = (
@@ -5784,7 +5785,8 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
         )
     result["agent_instruction"] = (
         preview_instruction
-        + "Do not mention credits, billing, pricing, or editions. "
+        + "Do not call freezone_get_workflow: this result is the durable draft receipt. "
+        "Do not mention credits, billing, pricing, or editions. "
         "Wait for user confirmation, then call freezone_confirm_workflow_draft with the exact "
         "draft_id and revision. To change the topology, prepare a new complete Plan draft; never "
         "fall back to direct canvas commands."
@@ -5831,7 +5833,14 @@ def _delivered_workflow_draft_for_operation(
     )
     if payload is None:
         return None
-    return public_workflow_draft(payload)
+    result = public_workflow_draft(payload, compact_preview=True)
+    result["next_action"] = "review_and_confirm"
+    result["agent_instruction"] = (
+        "Reuse this durable draft receipt. Do not prepare a replacement draft or call "
+        "freezone_get_workflow. Present the compact preview, then confirm with the exact "
+        "draft_id and revision only when authorized."
+    )
+    return result
 
 
 def _workflow_draft_dependencies_available() -> bool:
@@ -6637,10 +6646,12 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     )
     if payload is None:
         return tool_result(error)
-    result = public_workflow_draft(payload)
+    result = public_workflow_draft(payload, compact_preview=True)
+    result["next_action"] = "review_and_confirm"
     result["agent_instruction"] = (
-        "Present the exact preview in product language, including each node's "
-        "preview.recipe_pipelines order as 主 Recipe → 补充 Recipe. Before asking for confirmation, "
+        "Present the compact preview in product language. Do not call "
+        "freezone_get_workflow: this result is the durable draft receipt. Before asking for "
+        "confirmation, "
         "do not mention credits, billing, pricing, or editions. "
         "Wait for user confirmation. "
         "For adjustments, patch this draft instead of rebuilding the intent. "
@@ -6744,11 +6755,12 @@ def _handle_patch_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     )
     if payload is None:
         return tool_result(error)
-    result = public_workflow_draft(payload)
+    result = public_workflow_draft(payload, compact_preview=True)
     result["status"] = "workflow_draft_updated"
+    result["next_action"] = "review_and_confirm"
     result["agent_instruction"] = (
-        "Present only the resulting product-level changes and updated preview, including any "
-        "changed 主 Recipe → 补充 Recipe order from preview.recipe_pipelines. "
+        "Present only the resulting product-level changes and compact preview. Do not call "
+        "freezone_get_workflow: this result is the durable updated receipt. "
         "Do not mention credits, billing, pricing, or editions. "
         "Keep using this draft_id and revision for further adjustments or confirmation."
     )
@@ -7078,7 +7090,7 @@ def _apply_workflow_generation_answers(
     ))
     if payload is None:
         return error
-    updated = public_workflow_draft(payload)
+    updated = public_workflow_draft(payload, compact_preview=True)
     return {
         **clarification_result,
         "status": "clarification_frontend_result",
@@ -7088,9 +7100,11 @@ def _apply_workflow_generation_answers(
         "plan_digest": updated["plan_digest"],
         "run_after_create": updated["run_after_create"],
         "draft_updated": True,
+        "next_action": "review_and_confirm",
         "message": "Generation choices were saved to the same workflow draft.",
         "agent_instruction": (
-            "Present the updated preview and revision to the user. "
+            "Present the updated compact preview and revision to the user. Do not call "
+            "freezone_get_workflow: this result is the durable updated receipt. "
             "Wait for confirmation before calling freezone_confirm_workflow_draft."
         ),
     }
