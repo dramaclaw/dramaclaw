@@ -103,7 +103,7 @@ async def run_freezone_gen(
             "provider": "newapi",
             "api_key": "request-scoped",
             "base_url": "https://request-scoped.invalid/v1",
-            "model": model or "gpt-image-2",
+            "model": model or "LingShan-G2",
             "mode": "1x1",
             "rows": 1,
             "cols": 1,
@@ -187,7 +187,7 @@ async def run_freezone_mask_edit(
             "provider": "newapi",
             "api_key": "request-scoped",
             "base_url": "https://request-scoped.invalid/v1",
-            "model": model or "gpt-image-2",
+            "model": model or "LingShan-G2",
             "mode": "1x1",
             "rows": 1,
             "cols": 1,
@@ -347,7 +347,7 @@ async def run_freezone_edit(
             "provider": "newapi",
             "api_key": "request-scoped",
             "base_url": "https://request-scoped.invalid/v1",
-            "model": model or "gpt-image-2",
+            "model": model or "LingShan-G2",
             "mode": "1x1",
             "rows": 1,
             "cols": 1,
@@ -685,6 +685,9 @@ async def _run_video_processing_model(
         processing_metadata=processing_metadata,
         egress_context=egress_context,
         task_type="freezone_video_upscale",
+        # Preserve the existing upscale identity; frame-rate processing is a
+        # separate paid operation within the same root task.
+        scope="video_frame_rate" if mode == "video_frame_rate" else "task",
         project_output_dir=str(project_dir),
     )
     if not result or result.status.value != "done":

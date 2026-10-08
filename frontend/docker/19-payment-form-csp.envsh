@@ -1,0 +1,28 @@
+#!/bin/sh
+# Sourced before the official Nginx envsubst entrypoint. Accept only explicit
+# HTTPS origins, never arbitrary CSP syntax or Nginx configuration fragments.
+CSP_PAYMENT_FORM_ORIGINS=${CSP_PAYMENT_FORM_ORIGINS:-}
+if ! printf '%s\n' "$CSP_PAYMENT_FORM_ORIGINS" | awk '
+    {
+        for (i = 1; i <= NF; i++) {
+            origin = $i
+            if (origin !~ /^https:\/\//) exit 1
+            sub(/^https:\/\//, "", origin)
+            count = split(origin, parts, ":")
+            if (count > 2) exit 1
+            if (count == 2 && (parts[2] !~ /^[0-9]+$/ || parts[2] + 0 < 1 || parts[2] + 0 > 65535)) exit 1
+            labels = split(parts[1], host, ".")
+            if (length(parts[1]) < 1 || length(parts[1]) > 253) exit 1
+            for (j = 1; j <= labels; j++) {
+                if (length(host[j]) < 1 || length(host[j]) > 63 ||
+                    host[j] !~ /^[A-Za-z0-9][A-Za-z0-9-]*$/ || host[j] ~ /-$/) exit 1
+            }
+        }
+    }
+'; then
+    echo >&2 'CSP_PAYMENT_FORM_ORIGINS must contain space-separated HTTPS origins without paths or wildcards'
+    return 1
+fi
+# Collapse whitespace so a multiline environment value cannot break the header.
+CSP_PAYMENT_FORM_ORIGINS=$(printf '%s\n' "$CSP_PAYMENT_FORM_ORIGINS" | awk '{for (i=1; i<=NF; i++) {printf "%s%s", sep, $i; sep=" "}}')
+export CSP_PAYMENT_FORM_ORIGINS

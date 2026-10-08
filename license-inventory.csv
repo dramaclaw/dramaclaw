@@ -128,6 +128,8 @@ frontend/README.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate 
 frontend/REUSE.toml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/THIRD-PARTY-LICENSES.txt,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/components.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/docker/19-payment-form-csp.envsh,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/docker/README.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/docker/nginx.conf.template,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/index.html,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/package.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -387,6 +389,7 @@ frontend/src/__tests__/components/themed-toaster.test.tsx,Elastic-2.0,2026 Super
 frontend/src/__tests__/components/ui/header-refresh-button.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/components/viewport-lazy-image.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/deployment/org-brand-assets.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/deployment/payment-form-csp.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/anchored-menu-placement.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/asset-drag-director-bundle.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/asset-drag-hydrate.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2296,8 +2299,8 @@ tests/test_video_archive_delivery.py,Elastic-2.0,2026 SuperTale contributors,REU
 tests/test_video_billing.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_video_composer_result_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_video_pool_static_urls.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-tests/test_video_prompt_language.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_video_processing_request.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_video_prompt_language.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_wysiwyg_consistency.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_wysiwyg_neo4j.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 uv.lock,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
