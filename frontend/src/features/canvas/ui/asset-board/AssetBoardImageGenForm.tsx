@@ -2,9 +2,11 @@
 // Copyright (c) 2026 ClaymoreLab
 import { useCallback, useState, type ReactElement } from 'react';
 import { X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 import { ImageGenerationForm } from '@/features/canvas/nodes/shared/ImageGenerationForm';
 import { useImageGenerationForm } from '@/features/canvas/nodes/shared/useImageGenerationForm';
+import { ReferenceValidationDialog } from '@/features/canvas/nodes/shared/ReferenceValidationDialog';
 import { useImageOpFormProps } from '@/features/canvas/nodes/shared/useImageOpFormProps';
 import { spawnAssetLibraryReferences } from '@/features/canvas/nodes/shared/assetLibraryReferenceSpawn';
 import { resolveImageDisplayUrl } from '@/features/canvas/application/imageData';
@@ -46,7 +48,8 @@ const FORM_HEIGHT_PX = 184;
  * 参考图就会从详情里消失——所以这里在表单顶部补一枚自带参考 chip（与上游 chip 紧邻、
  * 同款样式），只在宿主渲染、共用表单零改动。 */
 export function AssetBoardImageGenForm({ nodeId }: { nodeId: string }): ReactElement {
-  const { formProps, isGenerating, referenceImageUrl } = useImageGenerationForm(nodeId);
+  const { t } = useTranslation();
+  const { formProps, isGenerating, referenceImageUrl, referenceErrors, referenceErrorsOpen, closeReferenceErrors, openReferenceErrors } = useImageGenerationForm(nodeId);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const [isAssetLibraryOpen, setIsAssetLibraryOpen] = useState(false);
 
@@ -65,6 +68,11 @@ export function AssetBoardImageGenForm({ nodeId }: { nodeId: string }): ReactEle
 
   return (
     <div className="flex w-full flex-col">
+      <ReferenceValidationDialog issues={referenceErrors} open={referenceErrorsOpen} onClose={closeReferenceErrors} />
+      {referenceErrors.length > 0 && (
+        <button type="button" className="self-start text-xs text-red-400"
+          onClick={openReferenceErrors}>{t('referenceValidation.title')}</button>
+      )}
       {/* 参考区放置层：从左列表把节点卡片拖进来 → addEdge 接成当前节点的上游引用，
           回流后经表单既有 upstream 派生显示为参考缩略图 chip（工作流零改动）。 */}
       <AssetBoardReferenceDropZone nodeId={nodeId}>

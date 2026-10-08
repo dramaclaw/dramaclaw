@@ -944,12 +944,18 @@ def _oversized_planning_text_issues(value: Any) -> list[dict[str, str]]:
 
     issues: list[dict[str, str]] = []
     total_chars = 0
+    aggregated_values: set[str] = set()
 
     def visit(item: Any, path: str, *, aggregate: bool = False) -> None:
         nonlocal total_chars
         if isinstance(item, str):
             chars = count_billable_text_chars(item)
-            if aggregate:
+            # Compiler-owned plans intentionally repeat the same short brief in
+            # display, prompt-builder and runtime fields. Count each distinct
+            # value once so deterministic expansion does not look like hidden
+            # prose, while split distinct payloads remain bounded.
+            if aggregate and item not in aggregated_values:
+                aggregated_values.add(item)
                 total_chars += chars
             if chars > MAX_WORKFLOW_PLANNING_TEXT_CHARS:
                 issues.append(

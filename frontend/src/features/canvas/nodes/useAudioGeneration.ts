@@ -189,20 +189,26 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
       const selectedUpstreamText = runtimeIsMusic
         ? ''
         : selectWorkflowUpstreamText(runtimeData, upstreamContents, upstreamTextJoined);
-      // Speech nodes must compile their Recipe too: workflow media admission
-      // requires the server-owned compile receipt before accepting the TTS
-      // request. Keep a safe fallback for legacy/manual nodes whose catalog is
-      // absent, and filter the compiled result again so production directions
-      // can never become spoken text.
+      // drama-shot-voice is admitted as literal TTS without a compile receipt.
+      // Other catalog-backed audio Recipes still compile before submission.
       const speechFallbackPrompt = runtimeIsMusic
         ? fallbackPrompt
         : extractExplicitSpeakableAudioText(runtimeOwnText.trim())
           || extractSpeakableAudioText(runtimeOwnText.trim())
           || extractExplicitSpeakableAudioText(selectedUpstreamText)
           || extractSpeakableAudioText(selectedUpstreamText);
+      const catalog = runtimeData.workflowCatalog;
+      const directVoiceRecipe = !runtimeIsMusic
+        && typeof catalog === 'object'
+        && catalog !== null
+        && !Array.isArray(catalog)
+        && 'recipeId' in catalog
+        && catalog.recipeId === 'drama-shot-voice';
       let workflowRecipeCompileMode: string | null = null;
       let workflowRecipeIds: string[] = [];
-      const compiledPrompt = await compileWorkflowNodePrompt({
+      const compiledPrompt = directVoiceRecipe
+        ? speechFallbackPrompt
+        : await compileWorkflowNodePrompt({
         nodeId,
         nodeData: runtimeData,
         nodeKind: 'audio',
@@ -234,14 +240,16 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
           });
         },
       });
-      const trimmed = runtimeIsMusic
-        ? normalizeMusicPrompt(compiledPrompt)
-        : resolveSafeSpeechSubmissionText({
-            compileMode: workflowRecipeCompileMode,
-            compiledPrompt,
-            recipeIds: workflowRecipeIds,
-            safeFallbackPrompt: speechFallbackPrompt,
-          });
+      const trimmed = directVoiceRecipe
+        ? speechFallbackPrompt
+        : runtimeIsMusic
+          ? normalizeMusicPrompt(compiledPrompt)
+          : resolveSafeSpeechSubmissionText({
+              compileMode: workflowRecipeCompileMode,
+              compiledPrompt,
+              recipeIds: workflowRecipeIds,
+              safeFallbackPrompt: speechFallbackPrompt,
+            });
       if (!trimmed) {
         throw new Error('没有可朗读的旁白或对白');
       }

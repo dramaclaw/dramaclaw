@@ -1260,6 +1260,14 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "scope-filtered concrete operations" in developer_instructions
         assert "call the selected tool directly" in developer_instructions
         assert "custom-topology reference" in developer_instructions
+        assert "top-level schema_version plus skill.id and skill.version" in developer_instructions
+        assert "Never invent, abbreviate, or reconstruct an operation_id" in developer_instructions
+        assert "reserved input/resource/asset stages" in developer_instructions
+        assert "business totals belong in the compact Intent" in developer_instructions
+        assert (
+            "explicitly enumerates canvas nodes and a dependency graph"
+            in developer_instructions
+        )
         assert "freezone_prepare_workflow_plan_draft once" in developer_instructions
         assert (
             "dependency_for only controls execution order and never consumes source output"
@@ -1268,6 +1276,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "must not use dependency_for" in developer_instructions
         assert "expected_node_count" in developer_instructions
         assert "placeholder graph such as A/B" in developer_instructions
+        assert "a user selection cannot authorize that bypass" in developer_instructions
         assert "short-drama production Skill" in developer_instructions
         assert "not a Workflow catalog skill_id" in developer_instructions
         assert (
@@ -1275,6 +1284,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
             in developer_instructions
         )
         assert "call freezone_request_user_clarification once" in developer_instructions
+        assert "never include questions in the same call" in developer_instructions
         assert "applies only to image and video for now" in developer_instructions
         assert "run_after_create=true" in developer_instructions
         assert "video_generation_mode" in developer_instructions

@@ -56,10 +56,16 @@ NON_RETRYABLE_ERROR_MARKERS = {
 RETRYABLE_ERROR_MARKERS = {
     "timed out",
     "timeout",
+    "超时",
     "econnreset",
     "connection reset",
     "bad_response_body",
 }
+# A failed/cancelled Recipe operation never reopens: its credit reservation is
+# settled. Resubmitting the same attempt can only 409, so the runner stops and
+# the node must be rerun, which admits a new attempt and operation.
+RECIPE_ATTEMPT_ENDED_MARKER = "recipe attempt ended"
+RECIPE_ATTEMPT_ENDED_STATUSES = frozenset({"failed", "cancelled"})
 REQUEST_ID_RE = re.compile(
     r"(?:request[_\s-]*id\s*[=:]\s*|request\s+id\s*:\s*)" r"([a-zA-Z0-9._:-]+)",
     re.IGNORECASE,
@@ -156,10 +162,16 @@ def _lease_expires_at(now: datetime) -> str:
     return _timestamp(now + timedelta(seconds=WORKFLOW_RUN_LEASE_SECONDS))
 
 
+def recipe_attempt_ended_message(status: str) -> str:
+    return f"{RECIPE_ATTEMPT_ENDED_MARKER} ({status}); rerun the node to start a new attempt"
+
+
 def classify_workflow_error(error: str | None) -> tuple[str, bool]:
     normalized = str(error or "").strip().lower()
     if not normalized:
         return "unknown", False
+    if RECIPE_ATTEMPT_ENDED_MARKER in normalized:
+        return "attempt_ended", False
     if (
         "invalidparameter" in normalized
         or "invalid parameter" in normalized
@@ -242,6 +254,8 @@ def workflow_error_diagnostics(error: str | None) -> dict[str, Any]:
             user_message = "生成参数不符合当前模型要求，请调整节点参数后重试。"
     elif category == "artifact_missing":
         user_message = "任务已结束但没有找到有效产物，请重新生成该节点。"
+    elif category == "attempt_ended":
+        user_message = "本次节点执行已结束，无法继续提交，请重新运行该节点。"
     elif category == "transient_upstream":
         user_message = "上游模型服务暂时不可用，系统可稍后重试。"
     elif category == "unknown":
@@ -773,11 +787,12 @@ def claim_workflow_media_action(
             or operation["artifact_id"] != node_id
             or metadata.get("generation_attempt_id") != attempt_id
             or metadata.get("node_id") != node_id
-            or operation["status"] in {"failed", "cancelled"}
         ):
             raise ValueError(
                 "workflow media link does not match admitted Recipe attempt"
             )
+        if operation["status"] in RECIPE_ATTEMPT_ENDED_STATUSES:
+            raise ValueError(recipe_attempt_ended_message(operation["status"]))
         existing = str(action["media_request_fingerprint"] or "")
         if existing:
             if existing != fingerprint or action["task_type"] not in (None, task_type):
@@ -1515,25 +1530,40 @@ def update_workflow_run(
 
 
 def workflow_media_failure_awaits_retry(
-    *, run: dict[str, Any], action: dict[str, Any], error: str | None
+    *, project_dir: Path, run: dict[str, Any], action: dict[str, Any], error: str | None
 ) -> bool:
     """Whether a failed media task still belongs to its live runner's retry loop.
 
     The runner either resubmits or records the final outcome itself, so
     reconciliation and product settlement must not end the action or its
     Recipe operation first (issue #681). An expired lease, a non-retryable
-    error or exhausted retries all fall through to the usual failure.
+    error or exhausted media claims all fall through to the usual failure.
     """
     lease_expires_at = _parse_timestamp(run.get("lease_expires_at"))
-    return (
+    if not (
         run.get("status") == "running"
         and bool(str(run.get("runner_id") or "").strip())
         and lease_expires_at is not None
         and lease_expires_at > datetime.now(timezone.utc)
         and action.get("status") in {"pending", "running"}
-        and int(action.get("retry_count") or 0) < WORKFLOW_ACTION_MAX_RETRIES
         and bool(workflow_error_diagnostics(error)["retryable"])
-    )
+    ):
+        return False
+    retry_count = int(action.get("retry_count") or 0)
+    if retry_count < WORKFLOW_ACTION_MAX_RETRIES:
+        return True
+    if retry_count != WORKFLOW_ACTION_MAX_RETRIES:
+        return False
+    # The runner records the final retry before compiling/submitting media.
+    # Read the internal claim counter only at this boundary; it is not part
+    # of the public workflow action response.
+    with _connect(project_dir) as conn:
+        claim = conn.execute(
+            "SELECT media_claim_retry_count FROM workflow_run_actions "
+            "WHERE run_id = ? AND node_id = ?",
+            (run["run_id"], action["node_id"]),
+        ).fetchone()
+    return claim is not None and claim["media_claim_retry_count"] == retry_count - 1
 
 
 def reconcile_workflow_runs_with_tasks(
@@ -1590,7 +1620,7 @@ def reconcile_workflow_runs_with_tasks(
                 if task_status in {"failed", "cancelled"}:
                     error = str(task.get("error") or "生成任务失败").strip()
                     if task_status == "failed" and workflow_media_failure_awaits_retry(
-                        run=payload, action=item, error=error
+                        project_dir=project_dir, run=payload, action=item, error=error
                     ):
                         continue
                     updates = {

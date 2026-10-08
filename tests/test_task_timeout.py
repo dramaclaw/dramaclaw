@@ -179,7 +179,17 @@ def test_run_project_task_core_injects_deadline_for_runner(monkeypatch):
     assert isinstance(captured["__deadline_monotonic"], float)
 
 
-def test_agent_product_pending_timeout_is_reviewed_without_refund(monkeypatch):
+@pytest.mark.parametrize(
+    ("task_type", "expected_projection"),
+    [
+        ("freezone_agent_recipe_result", "failed"),
+        ("freezone_agent_workflow_result", "running"),
+    ],
+)
+def test_agent_product_pending_timeout_is_reviewed_without_refund(
+    monkeypatch, caplog, task_type, expected_projection
+):
+    caplog.set_level("INFO", logger="novelvideo.task_backend.run_core")
     from novelvideo.chat import evidence_metrics
     from novelvideo.freezone.agent_product_operations import (
         AgentProductSettlementPending,
@@ -234,14 +244,12 @@ def test_agent_product_pending_timeout_is_reviewed_without_refund(monkeypatch):
         run_core, "_set_project_task_metrics_context", lambda *_args, **_kwargs: None
     )
     monkeypatch.setattr(run_core, "_clear_project_task_metrics_context", lambda: None)
-    register_project_task_runner(
-        "freezone_agent_recipe_result", pending_runner, requires_home_node=True
-    )
+    register_project_task_runner(task_type, pending_runner, requires_home_node=True)
 
     manager = _FakeTaskManager()
     result = run_core.run_project_task_core_sync(
         _verified_delivery(
-            task_type="freezone_agent_recipe_result",
+            task_type=task_type,
             billing_metadata={"feature_credit_reservation_id": "reservation_1"},
         ),
         SimpleNamespace(
@@ -254,10 +262,20 @@ def test_agent_product_pending_timeout_is_reviewed_without_refund(monkeypatch):
     assert result["pending"] is True
     assert result["settlement_status"] == "awaiting_reconciliation"
     assert events == [("review", "reservation_1")]
-    assert manager.failed[0]["metadata"]["error_code"] == (
-        "AGENT_PRODUCT_SETTLEMENT_PENDING"
-    )
+    if expected_projection == "running":
+        assert manager.failed == []
+        assert manager.updates[-1]["status"] == "running"
+        assert manager.updates[-1]["metadata"]["error_code"] == (
+            "AGENT_PRODUCT_SETTLEMENT_PENDING"
+        )
+        assert "agent_product_pending.projecting_task_running" in caplog.text
+    else:
+        assert manager.failed[0]["metadata"]["error_code"] == (
+            "AGENT_PRODUCT_SETTLEMENT_PENDING"
+        )
+        assert "agent_product_pending.projecting_task_failed" in caplog.text
     assert observed_metrics == ["agent_product_awaiting_reconciliation"]
+    assert "operation_status=submitted" in caplog.text
 
 
 @pytest.mark.parametrize(

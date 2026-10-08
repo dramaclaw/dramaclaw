@@ -251,9 +251,21 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "sequence. When the user explicitly specifies exact nodes and dependencies, follow the Skill's "
     "custom-topology reference and call freezone_prepare_workflow_plan_draft once instead; do not "
     "route that request through the compact Intent compiler merely because a "
-    "production Skill matches. Explicit Beat, shot, node-count, or dependency requirements must "
-    "remain one complete WorkflowPlan even when they exceed the compact planner limit. Copy exact "
-    "user totals into expected_node_count and expected_node_counts. For episodic short-drama, Beat, "
+    "production Skill matches. Beat counts, shot counts, episode counts, and other business totals "
+    "belong in the compact Intent or standard planner inputs and must not by themselves trigger an "
+    "agent-authored Plan. Use a complete WorkflowPlan only when the user explicitly enumerates "
+    "canvas nodes and a dependency graph that deviates from the selected Skill's standard topology; "
+    "then copy exact user node totals into expected_node_count and expected_node_counts. Every "
+    "complete Plan must carry "
+    "top-level schema_version plus skill.id and skill.version copied from the selected production "
+    "Skill; generation_answers supplements that Plan and never replaces it. "
+    "Before authoring or submitting any workflow result, call "
+    "freezone_begin_agent_product_generation and copy its returned operation_id exactly. Never "
+    "invent, abbreviate, or reconstruct an operation_id, and never call a workflow prepare tool "
+    "before that admission succeeds. "
+    "On recipe-backed text nodes, never use the reserved input/resource/asset stages, which "
+    "identify recipe-less user "
+    "resources. For episodic short-drama, Beat, "
     "voice-over, or background-music workflows, prefer the short-drama production Skill over the "
     "generic text-to-image-video Skill. After any validation error, never submit a reduced sample, "
     "smoke test, or placeholder graph such as A/B or T1/T2 to the real canvas; diagnose with the "
@@ -273,8 +285,10 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "Do not use workflow_graph_compile as routine preflight "
     "before the first graph write. After a recovery compile succeeds, immediately submit that exact "
     "corrected Plan with freezone_prepare_workflow_plan_draft instead of stopping at compile success. "
-    "Correct the same complete plan once, then report the blocking error. The "
-    "failure result must come from the current turn: historical failures are diagnostic context, "
+    "Correct the same complete plan once, then report the blocking error. "
+    "Never offer direct canvas commands, standalone node writes, or a user clarification choice "
+    "as a way to bypass WorkflowPlan validation; a user selection cannot authorize that bypass. "
+    "The failure result must come from the current turn: historical failures are diagnostic context, "
     "not proof that the current adapter remains blocked. When the user repeats the create/run "
     "request or asks to retry after a restart, submit the same complete workflow write once in "
     "that turn instead of repeating an old blocking conclusion. The "
@@ -303,7 +317,8 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "required; do not infer that policy from conversation history. When that contract requires a "
     "selection, call freezone_request_user_clarification once for the current request "
     "with generation_media_types listing image and/or video. Do not hand-build the "
-    "generation questions; the tool includes every required field. Pass the returned "
+    "generation questions and never include questions in the same call; generation clarification "
+    "is one exclusive server-owned mode that includes every required field. Pass the returned "
     "answers object unchanged as generation_answers to the workflow prepare tool; "
     "the server maps it into node parameters. If a draft already exists, instead pass "
     "workflow_draft_id and workflow_expected_revision to the clarification tool so "
@@ -323,8 +338,10 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "clarification_frontend_timeout, tell the user the card is still waiting and will reappear "
     "on their next message; when they reply, call the tool again with the same clarification_id "
     "to resume that card instead of building a new one. This rule applies to generation or run requests, including "
-    "run_after_create=true; it does not apply when the user only asks to create empty nodes, connect, "
-    "group, lay out, or edit them without generation. It is an explicit exception to any general "
+    "run_after_create=true. It also applies when run_after_create=false if the user explicitly asks "
+    "to configure image/video node parameters. It does not apply when the user only asks to create "
+    "empty nodes, connect, group, lay out, or edit them without generation parameters. It is an "
+    "explicit exception to any general "
     "instruction not to ask about model parameters, and it applies only to image and video for now. "
     "Store confirmed shared choices in workflow intent.inputs using portable image_model, "
     "image_aspect_ratio, image_resolution, image_quality, image_variants_per_node, video_model, "
@@ -369,7 +386,7 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
 _CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v2"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v24"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v26"
 
 
 def _codex_developer_instructions(tool_mode: str | None) -> str:
@@ -585,8 +602,14 @@ Canvas write contract:
   references/custom-topology.md and call freezone_prepare_workflow_plan_draft once with one complete
   freezone_workflow_plan.v1. Exact means the user names the nodes and their dependency order; do not
   route it through the normal draft flow or compact Intent compiler merely because a production
-  Skill matches. Explicit Beat, shot, or node totals must be copied into expected_node_count and
-  expected_node_counts and must remain unchanged during recovery. Episodic short-drama, Beat,
+  Skill matches. The Plan must include top-level schema_version plus skill.id and skill.version
+  copied from the selected production Skill; generation_answers supplements the complete Plan and
+  never replaces it. Recipe-backed text nodes must not use the reserved input/resource/asset stages,
+  which identify recipe-less user resources. Beat counts, shot counts, episode counts, and other
+  business totals stay in compact Intent or standard-planner inputs and do not by themselves require
+  a raw Plan. Only explicit canvas nodes plus a nonstandard dependency graph take the exact-topology
+  path; on that path, copy exact node totals into expected_node_count and expected_node_counts and
+  keep them unchanged during recovery. Episodic short-drama, Beat,
   voice-over, or background-music workflows should use the short-drama production Skill rather than
   the generic text-to-image-video Skill.
   Graph completeness is the Agent's responsibility. Before submission, verify that all Plan nodes

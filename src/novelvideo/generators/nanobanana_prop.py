@@ -406,6 +406,7 @@ async def _generate_via_newapi(
 ) -> Optional[str]:
     """通过 newAPI 生成道具参考图。"""
 
+    image_delivery_state: dict[str, bool] = {}
     image_bytes, _text_content, error_text = await _call_newapi_image_api(
         api_key=api_key,
         model=model,
@@ -417,12 +418,16 @@ async def _generate_via_newapi(
             "output_format": "png",
         },
         base_url=base_url,
+        delivery_path=output_path,
+        delivery_state=image_delivery_state,
+        read_copied_bytes=False,
     )
 
-    if image_bytes:
+    if image_bytes or image_delivery_state.get("copied"):
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        with open(output_path, "wb") as f:
-            f.write(image_bytes)
+        if not image_delivery_state.get("copied"):
+            with open(output_path, "wb") as f:
+                f.write(image_bytes)
         return output_path
 
     print(f"[PropRefGen] DramaClawAPI 生成失败: {error_text or 'No response'}")

@@ -512,15 +512,13 @@ describe("canvas action catalog", () => {
           resolution: expect.objectContaining({
             options: ["1080p", "2k", "4k"],
           }),
-          denoise: expect.objectContaining({
-            options: ["none", "1x", "2x"],
-          }),
         },
       },
       result_effect: {
         target: "downstream video upscale node",
       },
     });
+    expect(action?.parameters?.parameter_schema).not.toHaveProperty("denoise");
     expect(action?.description).toContain("downstream video upscale node");
     expect(action?.description).toContain("source video node's editable parameters");
   });

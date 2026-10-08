@@ -17,6 +17,20 @@
     "confirmRun": "Confirm and run",
     "confirm": "Confirm creation"
   },
+  "referenceValidation": {
+    "firstFrame": "First frame", "lastFrame": "Last frame",
+    "title": "Reference media does not meet model requirements", "hint": "Correct the listed media before generating. Locate opens the corresponding canvas node.", "locate": "Locate media",
+    "image": "Image", "audio": "Audio", "video": "Video",
+    "format": "Actual format: {{actual}}; supported: {{expected}}.",
+    "unreadable": "Unable to read or identify this media. Please upload a valid file.",
+    "maxMB": "Actual size: {{actual}} MB; maximum: {{expected}} MB.",
+    "minWidth": "Width: {{actual}} px; minimum: {{expected}} px.", "maxWidth": "Width: {{actual}} px; maximum: {{expected}} px.",
+    "minHeight": "Height: {{actual}} px; minimum: {{expected}} px.", "maxHeight": "Height: {{actual}} px; maximum: {{expected}} px.",
+    "minAspectRatio": "Aspect ratio: {{actual}}; minimum: {{expected}}.", "maxAspectRatio": "Aspect ratio: {{actual}}; maximum: {{expected}}.",
+    "minFPS": "Frame rate: {{actual}} fps; minimum: {{expected}} fps.", "maxFPS": "Frame rate: {{actual}} fps; maximum: {{expected}} fps.",
+    "minDuration": "Duration: {{actual}} s; each clip must be at least {{expected}} s.", "maxDuration": "Duration: {{actual}} s; each clip must be at most {{expected}} s.",
+    "totalMinDuration": "Total reference duration: {{actual}} s; minimum: {{expected}} s.", "totalMaxDuration": "Total reference duration: {{actual}} s; maximum: {{expected}} s."
+  },
   "app": {
     "title": "SuperTale",
     "subtitle": "SuperTale candidate generation and asset commit workbench",
@@ -929,6 +943,7 @@
       "canvasTimeoutCancelled": "The canvas operation timed out and was cancelled without being applied.",
       "canvasManuallyCancelled": "The canvas operation was manually cancelled without being applied.",
       "workflowOutputSyncPendingLabel": "Output syncing",
+      "workflowRecipeAttemptEnded": "This node's run has ended. Rerun the node to start a new attempt ({{reason}})",
       "workflowOutputSyncPendingMessage": "The workflow finished, but the canvas output is still syncing. Refresh the canvas later to check the result; do not generate it again yet.",
       "workflowReconciliationPendingLabel": "Reconciling",
       "workflowReconciliationPendingMessage": "The canvas output is visible, but the server is still verifying the task artifact. Check the run status later; do not generate it again yet.",
@@ -3203,6 +3218,7 @@
       },
       "submitting": "Submitting task…",
       "queued": "Task queued",
+      "workflowDraftDeliveryFailed": "Agent workflow draft delivery failed",
       "characters": {
         "chunking": "Splitting the source text…",
         "nothingToAnalyze": "Nothing to analyze",
@@ -3977,7 +3993,7 @@
         },
         "mode": "Generation mode",
         "duration": "Duration",
-        "resolution": "Resolution",
+        "resolution": "Upscale resolution",
         "ratio": "Aspect ratio",
         "generateAudio": "Generate audio",
         "returnLastFrame": "Return last frame",
@@ -4186,6 +4202,7 @@
       },
       "render": {
         "generateNew": "Generate new",
+        "sketchRequired": "Generate or upload a sketch first",
         "switched": "Render switched",
         "switchFailed": "Switch failed",
         "forcedUse": "Force-applied this render",
@@ -6206,6 +6223,20 @@
         "frameInterpolationLockedHint": "Base version supports no interpolation only",
         "denoise": "Denoise",
         "denoiseNone": "Off",
+        "targetFps": "Frame rate (optional)",
+        "targetFpsAuto": "Adaptive (source FPS)",
+        "slowdown": "Slow motion (optional)",
+        "speedAuto": "Original speed",
+        "speedMultiplier": "{{multiplier}}× slow motion",
+        "scene": "Video scene",
+        "sceneRealistic": "Live action / realistic",
+        "sceneAnime": "Anime / illustration",
+        "smartInterpolation": "Smart frame interpolation (when raising FPS)",
+        "faceEnhance": "Face enhancement",
+        "sourceInfo": "Source {{width}}×{{height}} · {{fps}}fps",
+        "noHigherResolution": "The source is already 4K; no higher resolution is available",
+        "noConfiguredResolution": "The available model does not support a higher resolution; ask an administrator to check its settings",
+        "probeError": "Unable to inspect source video: {{error}}",
         "submit": "Generate HD video"
       }
     },
@@ -6223,7 +6254,8 @@
         "firstFrame": "First Frame",
         "firstLastFrame": "First/Last Frame",
         "imageReference": "Image Reference",
-        "videoEdit": "Video Edit"
+        "videoEdit": "Video Edit",
+        "videoExtend": "Video Extend"
       },
       "placeholder": "Describe the video to generate.",
       "submit": "Submit",
@@ -6450,7 +6482,8 @@
         "grokImageLimit": "Grok Video Channel supports at most 1 first frame and 7 reference images",
         "maxImages": "This model supports at most {{count}} image assets",
         "maxVideos": "This model supports at most {{count}} video assets",
-        "maxAudios": "This model supports at most {{count}} audio assets"
+        "maxAudios": "This model supports at most {{count}} audio assets",
+        "videoExtendSourceOnly": "Video extend accepts exactly one source video and no image or audio assets"
       }
     },
     "scriptNode": {
@@ -6700,6 +6733,7 @@
         "imageReference": "Multi-image reference",
         "firstLastFrame": "First & last frame",
         "videoEdit": "Video editing",
+        "videoExtend": "Video extend",
         "allReference": "All-purpose reference",
         "current": "the current mode"
       },
@@ -6736,8 +6770,11 @@
         "imageReferenceMax9": "“Image reference” supports at most 9 images",
         "needOneVideo": "Connect a video node (exactly 1)",
         "videoEditSingleVideo": "“Video edit” supports exactly 1 connected video node",
+        "videoExtendSingleVideo": "“Video extend” supports exactly 1 source video node",
+        "videoExtendSourceOnly": "“Video extend” accepts only the source video; remove image or audio assets",
         "happyHorseUnsupported": "HappyHorse doesn't support this mode",
         "modelNoVideoEdit": "This model doesn't support “Video edit”",
+        "modelNoVideoExtend": "This model doesn't support “Video extend”",
         "videoUpstreamAllRefOrEdit": "With video upstream, only “All reference” or “Video edit” are available",
         "videoUpstreamAllRefOnly": "With video upstream, only “All reference” is available",
         "hasImageOrAudioRefs": "Unavailable while image/audio assets are referenced",

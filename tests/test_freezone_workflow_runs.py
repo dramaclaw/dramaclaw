@@ -283,6 +283,7 @@ def test_browser_cannot_complete_generation_without_durable_artifact(
     [
         ("HTTP 503 upstream unavailable", "transient_upstream", True),
         ("read ECONNRESET", "transient_upstream", True),
+        ("Recipe 文本生成超时：模型未返回结果", "transient_upstream", True),
         ("HTTP 401: Invalid token", "authentication", False),
         ("model_not_found", "model_unavailable", False),
         ("HTTP 429: token-plan quota has been exhausted", "quota_exhausted", False),

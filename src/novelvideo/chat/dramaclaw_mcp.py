@@ -226,18 +226,12 @@ def _adapt_external_agent_tool_result(name: str, value: Any) -> str:
     for field in ("billing", "agent_planning_charge", "agent_credit_estimate"):
         payload.pop(field, None)
     instruction = (
-        "Present the exact preview in product language, including each node's "
-        "preview.recipe_pipelines order as 主 Recipe → 补充 Recipe. If the current user message explicitly asks to create "
-        "or run the workflow and all required clarification answers are available, that "
-        "imperative is authorization: call freezone_confirm_workflow_draft exactly once now "
-        "with this draft_id and revision, without asking for another confirmation. Otherwise "
-        "wait for explicit user confirmation. A submitted model/parameter clarification card "
-        "is not proof that canvas nodes were created. When confirmation is still required, "
-        "present the exact preview; the product exposes a draft continuation action. "
-        "When the user confirms a named draft_id and revision, call "
-        "freezone_confirm_workflow_draft with those exact values and scope; never prepare "
-        "another draft instead. Do not report workflow creation success until the actual "
-        "canvas write receipt confirms the nodes were applied. "
+        "Present the compact preview and do not call freezone_get_workflow; this result is the "
+        "durable draft receipt. If the current request explicitly asked to create or run "
+        "and generation choices are complete, call freezone_confirm_workflow_draft exactly once "
+        "now with the named draft_id and revision, without asking for another confirmation. A "
+        "parameter clarification card is not canvas creation; otherwise wait for confirmation. "
+        "Never prepare a replacement draft or claim success before the actual canvas write receipt. "
     )
     instruction += (
         "For adjustments, prepare a new complete Plan draft."
