@@ -24,6 +24,7 @@ type Submit = (
     description?: string;
     pictureCheck?: boolean;
     renderCheck?: boolean;
+    model?: string;
     canvasId?: string;
     nodeId?: string;
   },
@@ -137,6 +138,7 @@ const request = (mode: "replace" | "append" = "replace") => ({
   description: "",
   pictureCheck: false,
   renderCheck: false,
+  model: "",
   mode,
 });
 
@@ -164,6 +166,7 @@ describe("useBlockoutGeneration submits and hands the task to the canvas", () =>
         description: "  门宽 0.9 米  ",
         pictureCheck: true,
         renderCheck: true,
+        model: "GPT-6-Astra",
         mode: "append",
       });
     });
@@ -177,6 +180,7 @@ describe("useBlockoutGeneration submits and hands the task to the canvas", () =>
       description: "门宽 0.9 米",
       pictureCheck: true,
       renderCheck: true,
+      model: "GPT-6-Astra",
       canvasId: "board-1",
       nodeId: id,
     });
@@ -195,6 +199,15 @@ describe("useBlockoutGeneration submits and hands the task to the canvas", () =>
     expect(objectIds()).toEqual([]);
     expect(toast.info).toHaveBeenCalledWith("previz.blockout.queued");
     expect(hook.current.stage).toBe("generating");
+  });
+
+  it("leaves the model to the server when the dialog kept the default", async () => {
+    const id = addPrevizNode();
+    const { result: hook } = setup(id);
+
+    await act(() => hook.current.start(request()));
+
+    expect(submitFreezoneImageToBlockout.mock.calls[0]![1]).not.toHaveProperty("model");
   });
 
   it("falls back to the default canvas when the URL names none", async () => {

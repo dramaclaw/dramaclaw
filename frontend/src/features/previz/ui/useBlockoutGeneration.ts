@@ -32,6 +32,8 @@ export interface PrevizBlockoutRequest {
   /** 对话框里的「画面核对」「渲染核对」勾选，原样交给后端。 */
   pictureCheck: boolean;
   renderCheck: boolean;
+  /** 下拉里选的网关模型；空串表示用服务端默认，不随请求发出。 */
+  model: string;
   mode: PrevizBlockoutImportMode;
 }
 
@@ -69,7 +71,7 @@ export function useBlockoutGeneration(nodeId: string): BlockoutGeneration {
   const held = (nodeData?.blockoutHeld ?? null) as PrevizHeldBlockout | null;
 
   const start = useCallback(
-    async ({ file, description, pictureCheck, renderCheck, mode }: PrevizBlockoutRequest) => {
+    async ({ file, description, pictureCheck, renderCheck, model, mode }: PrevizBlockoutRequest) => {
       if (readNodeData(nodeId).isGenerating === true) return false;
       const verdict = isAcceptedBlockoutImage(file.name, file.size);
       if (verdict === 'extension') {
@@ -107,6 +109,7 @@ export function useBlockoutGeneration(nodeId: string): BlockoutGeneration {
           description: description.trim().slice(0, PREVIZ_BLOCKOUT_DESCRIPTION_MAX_CHARS),
           pictureCheck,
           renderCheck,
+          ...(model ? { model } : {}),
           canvasId: canvas ?? 'default',
           nodeId,
         });

@@ -20,6 +20,7 @@ from novelvideo.director_world.blockout.generation_agent import (
     extract_program,
     generate_blockout_from_image,
     resolve_blockout_model,
+    resolve_blockout_model_choices,
     resolve_blockout_model_settings,
     resolve_blockout_timeout_seconds,
 )
@@ -57,6 +58,7 @@ class FakeModel:
 @pytest.fixture(autouse=True)
 def default_model_names(monkeypatch):
     monkeypatch.delenv("PREVIZ_BLOCKOUT_MODEL", raising=False)
+    monkeypatch.delenv("PREVIZ_BLOCKOUT_MODELS", raising=False)
     monkeypatch.delenv("FREEZONE_VISION_MODEL", raising=False)
     monkeypatch.delenv("PREVIZ_BLOCKOUT_REASONING_EFFORT", raising=False)
     monkeypatch.delenv("PREVIZ_BLOCKOUT_TIMEOUT_SECONDS", raising=False)
@@ -380,19 +382,50 @@ async def test_every_model_call_uses_the_configured_timeout(
     assert [call["timeout_seconds"] for call in fake.calls] == [900.0] * 3
 
 
-def test_the_model_falls_back_to_the_freezone_vision_model(monkeypatch):
+def test_the_model_has_its_own_settings_row(monkeypatch):
+    """白模在设置页「业务模型映射」里是独立一行，不再借用看图那行。"""
     monkeypatch.delenv("PREVIZ_BLOCKOUT_MODEL", raising=False)
-    monkeypatch.delenv("FREEZONE_VISION_MODEL", raising=False)
-    assert resolve_blockout_model() == "DC-freezone-vision-LLM"
-
     monkeypatch.setenv("FREEZONE_VISION_MODEL", "self-hosted-vision-model")
-    assert resolve_blockout_model() == "self-hosted-vision-model"
+    assert resolve_blockout_model() == "DC-previz-blockout-LLM"
 
     monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "  ")
-    assert resolve_blockout_model() == "self-hosted-vision-model"
+    assert resolve_blockout_model() == "DC-previz-blockout-LLM"
 
     monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "candidate-b")
     assert resolve_blockout_model() == "candidate-b"
+
+
+def test_a_requested_model_wins_over_the_configured_one(monkeypatch):
+    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "candidate-b")
+    assert resolve_blockout_model("candidate-c") == "candidate-c"
+    assert resolve_blockout_model("  ") == "candidate-b"
+    assert resolve_blockout_model(None) == "candidate-b"
+
+
+def test_the_choices_start_with_the_default_and_drop_repeats(monkeypatch):
+    """`PREVIZ_BLOCKOUT_MODELS` 是下拉框的候选；默认模型永远排第一，不重复。"""
+    monkeypatch.delenv("PREVIZ_BLOCKOUT_MODELS", raising=False)
+    assert resolve_blockout_model_choices() == ["DC-previz-blockout-LLM"]
+
+    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODELS", " GPT-6-Astra, ,candidate-b,GPT-6-Astra ")
+    assert resolve_blockout_model_choices() == [
+        "DC-previz-blockout-LLM",
+        "GPT-6-Astra",
+        "candidate-b",
+    ]
+
+    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "GPT-6-Astra")
+    assert resolve_blockout_model_choices() == ["GPT-6-Astra", "candidate-b"]
+
+
+async def test_the_requested_model_is_the_one_called(image_path, model, monkeypatch):
+    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "candidate-b")
+    fake = model(GOLDEN_PROGRAM)
+
+    generation = await generate_blockout_from_image(image_path=image_path, model="candidate-c")
+
+    assert fake.calls[0]["model_override"] == "candidate-c"
+    assert generation.model == "candidate-c"
 
 
 async def test_the_configured_model_is_the_one_called(image_path, model, monkeypatch):
@@ -437,9 +470,9 @@ async def test_every_attempt_claims_and_settles_its_own_egress(
     await generate_blockout_from_image(image_path=image_path, egress_context="org")
 
     assert egress.events == [
-        ("prepare", "DC-freezone-vision-LLM", "org"),
+        ("prepare", "DC-previz-blockout-LLM", "org"),
         ("complete", BROKEN),
-        ("prepare", "DC-freezone-vision-LLM", "org"),
+        ("prepare", "DC-previz-blockout-LLM", "org"),
         ("complete", GOLDEN_PROGRAM),
     ]
     assert [call["transport_context"] for call in fake.calls] == ["transport"] * 2
@@ -482,7 +515,7 @@ async def test_artifacts_of_a_finished_job(image_path, model, tmp_path):
     scene_ir = json.loads((out_dir / "scene_ir.json").read_text(encoding="utf-8"))
     assert scene_ir["compiler_version"] == 1
     record = json.loads((out_dir / "generation.json").read_text(encoding="utf-8"))
-    assert record["model"] == "DC-freezone-vision-LLM"
+    assert record["model"] == "DC-previz-blockout-LLM"
     assert record["retries"] == 1
     assert record["error"] is None
     assert record["image"] == {

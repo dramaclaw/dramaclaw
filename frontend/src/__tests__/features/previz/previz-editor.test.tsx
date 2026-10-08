@@ -213,6 +213,7 @@ vi.mock("@/api/ops", () => ({
   submitFreezoneImageToBlockout: (...args: unknown[]) => submitFreezoneImageToBlockout(...args),
   fetchFreezoneImageToBlockoutResult: (...args: unknown[]) =>
     fetchFreezoneImageToBlockoutResult(...args),
+  fetchFreezoneBlockoutModels: (...args: unknown[]) => fetchFreezoneBlockoutModels(...args),
 }));
 
 // 「从参考图生成」那条线：编辑器这层只验接线——提交出去、句柄写到节点上、对话框关掉。
@@ -228,6 +229,12 @@ const fetchFreezoneImageToBlockoutResult = vi.fn(async (..._args: unknown[]): Pr
   reference_camera_id: null,
   warnings: [],
 }));
+// 白模对话框的模型下拉：第一项是服务端解析出的默认模型，其余是网关上还能选的。
+const blockoutModel = (id: string) => ({ id, providerId: "newapi", apiModel: id, label: id });
+const fetchFreezoneBlockoutModels = vi.fn(async (..._args: unknown[]): Promise<unknown> => [
+  blockoutModel("DC-previz-blockout-LLM"),
+  blockoutModel("GPT-6-Astra"),
+]);
 
 // 本文件不挂 QueryClientProvider，真的报价 hook 一调用就抛。
 vi.mock("@/lib/queries/generation-credit-cost", () => ({
@@ -3614,6 +3621,8 @@ describe("PrevizEditor reference-image blockout", () => {
       "demo",
       expect.objectContaining({ sourceUrl: "/static/shot.png", nodeId: "previz-1" }),
     );
+    // 没动下拉就不发 model：由服务端按当时的配置解析默认。
+    expect(submitFreezoneImageToBlockout.mock.calls[0]![1]).not.toHaveProperty("model");
     expect(previzNodeData()).toMatchObject({
       isGenerating: true,
       generationTaskKey: "freezone_image_to_blockout:job-1",
@@ -3624,6 +3633,24 @@ describe("PrevizEditor reference-image blockout", () => {
     // 不在这里等结果：场景不动，也不取结果。
     expect(usePrevizStore.getState().scene.objects).toHaveLength(0);
     expect(fetchFreezoneImageToBlockoutResult).not.toHaveBeenCalled();
+  });
+
+  it("sends the model the user picked from the dropdown", async () => {
+    const user = userEvent.setup();
+    await renderEditor();
+
+    await openBlockout(user);
+    await pickImage();
+    // 下拉的第一项是服务端给的默认模型，按钮上显示的也是它。
+    await user.click(
+      await screen.findByRole("button", { name: /previz\.blockout\.modelDefault/ }),
+    );
+    await user.click(await screen.findByRole("button", { name: "GPT-6-Astra" }));
+    await user.click(screen.getByRole("button", { name: "previz.blockout.submit" }));
+
+    await waitFor(() => expect(submitFreezoneImageToBlockout).toHaveBeenCalled());
+    expect(fetchFreezoneBlockoutModels).toHaveBeenCalledWith("demo");
+    expect(submitFreezoneImageToBlockout.mock.calls[0]![1]).toMatchObject({ model: "GPT-6-Astra" });
   });
 
   it("keeps the dialog open when the submit fails", async () => {

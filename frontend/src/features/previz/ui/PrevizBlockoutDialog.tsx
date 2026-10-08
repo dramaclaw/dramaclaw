@@ -5,6 +5,7 @@ import { ImageUp, Loader2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { CreditCostInline } from "@/components/credit-cost-inline";
+import { ProviderModelPicker } from "@/features/canvas/ui/ProviderModelPicker";
 import type { PrevizBlockoutImportMode } from "@/features/previz/domain/blockout";
 import {
   PREVIZ_BLOCKOUT_DESCRIPTION_MAX_CHARS,
@@ -20,6 +21,7 @@ import {
   blockoutRejectionMessage,
 } from "@/features/previz/ui/blockoutMessages";
 import type { PrevizHeldBlockout } from "@/features/previz/blockoutLanding";
+import { useBlockoutModels } from "@/features/previz/ui/useBlockoutModels";
 import type {
   PrevizBlockoutRequest,
   PrevizBlockoutStage,
@@ -107,6 +109,7 @@ function BlockoutPanel({
   const pictureCheckHintId = useId();
   const renderCheckId = useId();
   const renderCheckHintId = useId();
+  const modelLabelId = useId();
   const guideId = useId();
   const hintId = useId();
   const heldId = useId();
@@ -116,6 +119,18 @@ function BlockoutPanel({
   const [description, setDescription] = useState("");
   const [pictureCheck, setPictureCheck] = useState(false);
   const [renderCheck, setRenderCheck] = useState(false);
+  // 下拉里的选择。空串 = 还没动过 = 第一项（默认）；提交时默认不随请求发出，
+  // 让服务端按当时的配置解析，免得页面开着的时候设置页改了默认。
+  const [modelId, setModelId] = useState("");
+  const models = useBlockoutModels();
+  const defaultModel = models[0];
+  const modelOptions = models.map((model, index) =>
+    index === 0
+      ? { ...model, label: t("previz.blockout.modelDefault", { name: model.label }) }
+      : model,
+  );
+  const chosenModel = models.find((model) => model.id === modelId) ?? defaultModel;
+  const requestedModel = chosenModel && chosenModel !== defaultModel ? chosenModel.id : "";
   const [mode, setMode] = useState<PrevizBlockoutImportMode>("replace");
   const [dragging, setDragging] = useState(false);
   /** 量尺寸是异步的：连着选两张图时，先选那张的结果不能盖到后选那张头上。 */
@@ -309,6 +324,20 @@ function BlockoutPanel({
           </span>
         </div>
 
+        {models.length > 0 && (
+          <div className="flex items-center justify-between gap-2">
+            <span id={modelLabelId} className="text-[12px] text-white/60">
+              {t("previz.blockout.model")}
+            </span>
+            <ProviderModelPicker
+              selectedModelId={chosenModel?.id ?? ""}
+              onChange={setModelId}
+              models={modelOptions}
+              popoverPlacement="bottom"
+            />
+          </div>
+        )}
+
         <div className="flex items-start gap-2">
           <input
             id={pictureCheckId}
@@ -411,7 +440,16 @@ function BlockoutPanel({
             disabled={!canStart}
             className={PRIMARY_BUTTON}
             onClick={() => {
-              if (file) onStart({ file, description, pictureCheck, renderCheck, mode });
+              if (file) {
+                onStart({
+                  file,
+                  description,
+                  pictureCheck,
+                  renderCheck,
+                  model: requestedModel,
+                  mode,
+                });
+              }
             }}
           >
             {t("previz.blockout.submit")}

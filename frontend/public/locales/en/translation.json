@@ -7237,6 +7237,7 @@
           "EPISODE_SCENE_RECONCILE": "Reconcile and complete base scene assets",
           "NARRATED_SCENE_ASSET": "Plan narrated-drama scene assets",
           "STAGING_PROP": "Plan temporary Director World props",
+          "PREVIZ_BLOCKOUT": "Build Previz blockouts from reference images",
           "COGNEE": "① Content Understanding & Knowledge Extraction (LLM)"
         }
       },
@@ -7864,6 +7865,8 @@
       "pictureCheckHint": "Project the blockout back onto the picture and check that positions, sizes and camera agree; one or two extra model rounds, so slower",
       "renderCheck": "Render check",
       "renderCheckHint": "Render the blockout and let the model compare it with the picture and rewrite, twice; two extra model rounds, so slower",
+      "model": "Model",
+      "modelDefault": "{{name}} (default)",
       "badExtension": "Only png / jpg / jpeg / webp files are supported",
       "tooLarge": "Reference images must be 20 MB or smaller",
       "noProject": "This page has no project context, so nothing can be generated",

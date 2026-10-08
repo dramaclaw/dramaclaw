@@ -1428,6 +1428,11 @@ class FreezoneImageToBlockoutRequest(BaseModel):
         default=False,
         description="可选：渲染核对——把白模渲染成图和参考图放在一起让模型对照修改，多耗两轮模型调用",
     )
+    model: str = Field(
+        default="",
+        max_length=200,
+        description="可选：本次使用的网关模型，须在 /freezone/blockout/models 列表内；空为默认",
+    )
 
 
 class FreezoneImageReversePromptData(BaseModel):

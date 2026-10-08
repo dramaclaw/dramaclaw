@@ -38,8 +38,11 @@ from novelvideo.director_world.blockout.scene_ir import (
     SceneIR,
 )
 from novelvideo.egress_context import TrustedEgressContext
+from novelvideo.official_defaults import DEFAULT_PREVIZ_BLOCKOUT_MODEL
 
 BLOCKOUT_MODEL_ENV = "PREVIZ_BLOCKOUT_MODEL"
+# 下拉框里除默认之外还能选的网关模型，逗号分隔。
+BLOCKOUT_MODELS_ENV = "PREVIZ_BLOCKOUT_MODELS"
 BLOCKOUT_REASONING_EFFORT_ENV = "PREVIZ_BLOCKOUT_REASONING_EFFORT"
 BLOCKOUT_TIMEOUT_ENV = "PREVIZ_BLOCKOUT_TIMEOUT_SECONDS"
 BLOCKOUT_TIMEOUT_SECONDS = 300.0
@@ -54,11 +57,29 @@ _FENCE_LINE = re.compile(r"^[ \t]*```[^\n]*$", re.MULTILINE)
 _MAX_KEPT_PROGRAM_CHARS = MAX_PROGRAM_CHARS * 2
 
 
-def resolve_blockout_model() -> str:
-    """`PREVIZ_BLOCKOUT_MODEL` if set, otherwise whatever Freezone vision uses."""
-    from novelvideo.freezone.vision_gateway import resolve_freezone_vision_model
+def resolve_blockout_model(model_override: str | None = None) -> str:
+    """The model one job runs on.
 
-    return resolve_freezone_vision_model(os.environ.get(BLOCKOUT_MODEL_ENV))
+    A non-blank `model_override` (the user's pick in the dialog) wins; otherwise
+    `PREVIZ_BLOCKOUT_MODEL`, otherwise the logical name the settings page maps
+    for this feature, like every other business model.
+    """
+    from novelvideo.config import get_newapi_text_model_name
+
+    override = (model_override or "").strip()
+    if override:
+        return override
+    return get_newapi_text_model_name(BLOCKOUT_MODEL_ENV, DEFAULT_PREVIZ_BLOCKOUT_MODEL)
+
+
+def resolve_blockout_model_choices() -> list[str]:
+    """What the dialog may pick from: the default first, then `PREVIZ_BLOCKOUT_MODELS`."""
+    choices = [resolve_blockout_model()]
+    for name in os.environ.get(BLOCKOUT_MODELS_ENV, "").split(","):
+        name = name.strip()
+        if name and name not in choices:
+            choices.append(name)
+    return choices
 
 
 def resolve_blockout_model_settings() -> dict | None:
@@ -204,9 +225,13 @@ async def generate_blockout_from_image(
     description: str = "",
     picture_check: bool = False,
     render_check: bool = False,
+    model: str | None = None,
     egress_context: TrustedEgressContext | None = None,
 ) -> BlockoutGeneration:
     """Write a blockout for one picture.
+
+    `model` is the gateway model the user picked for this job; None means the
+    configured default (see `resolve_blockout_model`).
 
     `picture_check` and `render_check` are the user's choices, made per job in
     the dialog, and both cost extra model calls, so they are off unless asked for.
@@ -229,7 +254,7 @@ async def generate_blockout_from_image(
         load_compact_vision_inputs,
     )
 
-    model = resolve_blockout_model()
+    model = resolve_blockout_model(model)
     model_settings = resolve_blockout_model_settings()
     timeout_seconds = resolve_blockout_timeout_seconds()
 

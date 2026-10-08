@@ -103,7 +103,10 @@ export const FEATURE_MODEL_GROUPS: readonly FeatureModelGroup[] = [
   },
   {
     key: "directorWorld",
-    features: [{ id: "STAGING_PROP", defaultModel: "DC-staging-prop-planner-LLM" }],
+    features: [
+      { id: "STAGING_PROP", defaultModel: "DC-staging-prop-planner-LLM" },
+      { id: "PREVIZ_BLOCKOUT", defaultModel: "DC-previz-blockout-LLM", requiresVision: true },
+    ],
   },
   {
     key: "novelImport",
@@ -134,6 +137,7 @@ export const FEATURE_MODEL_PRODUCT_GROUPS: readonly FeatureModelGroup[] = [
       productFeature("FREEZONE_STORY_SCRIPT"),
       productFeature("FREEZONE_VISION"),
       productFeature("STAGING_PROP"),
+      productFeature("PREVIZ_BLOCKOUT"),
     ],
   },
   {

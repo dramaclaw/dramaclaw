@@ -8341,6 +8341,31 @@ async def freezone_image_models(
     return {"ok": True, "data": data}
 
 
+@router.get("/projects/{project}/freezone/blockout/models", tags=[TAG_FREEZONE_IMAGE])
+async def freezone_blockout_models(
+    project: str,
+    user: dict = Depends(get_api_user),
+):
+    """预演台：参考图转白模可选的网关模型，默认排第一；形状与图片模型列表一致。"""
+    from novelvideo.director_world.blockout.generation_agent import (
+        resolve_blockout_model_choices,
+    )
+
+    await _resolve_freezone_project(project, user, required_role="viewer")
+    data = [
+        {
+            "id": name,
+            "providerId": "newapi",
+            "provider": "newapi",
+            "apiModel": name,
+            "api_model": name,
+            "label": name,
+        }
+        for name in resolve_blockout_model_choices()
+    ]
+    return {"ok": True, "data": data}
+
+
 @router.post(
     "/projects/{project}/freezone/marks/detect",
     response_model=FreezoneMarkDetectResponse,
@@ -8582,10 +8607,17 @@ async def freezone_image_to_blockout(
     from novelvideo.api.routes.model_credits import (
         freezone_image_to_blockout_task_billing,
     )
+    from novelvideo.director_world.blockout.generation_agent import (
+        resolve_blockout_model,
+        resolve_blockout_model_choices,
+    )
 
     ctx, _username, _project_name, project_dir, _output_dir = (
         await _resolve_freezone_project(project, user)
     )
+    model = resolve_blockout_model(body.model)
+    if model not in resolve_blockout_model_choices():
+        raise HTTPException(400, "model does not match configured blockout model")
     try:
         source_path = resolve_static_url_to_path(body.source_url, project_dir)
     except ValueError as exc:
@@ -8608,8 +8640,9 @@ async def freezone_image_to_blockout(
                 "render_check": body.render_check,
                 "canvas_id": body.canvas_id or "",
                 "node_id": body.node_id or "",
+                "model": model,
                 "billing": freezone_image_to_blockout_task_billing(
-                    {"operation": "image_to_blockout"}
+                    {"operation": "image_to_blockout", "model": model}
                 ),
             },
         )

@@ -847,6 +847,8 @@ export interface FreezoneImageToBlockoutPayload
   description?: string;
   pictureCheck?: boolean;
   renderCheck?: boolean;
+  /** 用户在对话框里选的网关模型（`fetchFreezoneBlockoutModels` 列表里的 id）；不传用服务端默认。 */
+  model?: string;
 }
 
 export async function submitFreezoneImageToBlockout(
@@ -862,10 +864,24 @@ export async function submitFreezoneImageToBlockout(
         description: payload.description ?? "",
         picture_check: payload.pictureCheck ?? false,
         render_check: payload.renderCheck ?? false,
+        ...(payload.model ? { model: payload.model } : {}),
         ...nodeContextBody(payload),
       },
     },
   );
+}
+
+/**
+ * 白模可选的网关模型，第一项是服务端解析出的默认模型。形状与图片模型列表一致，
+ * 所以同一个 `ProviderModelPicker` 直接能用。
+ */
+export async function fetchFreezoneBlockoutModels(
+  project: string,
+): Promise<FreezoneImageModelInfo[]> {
+  const payload = await apiCall<unknown>(
+    `projects/${encodeURIComponent(project)}/freezone/blockout/models`,
+  );
+  return coerceModelList(payload);
 }
 
 /**

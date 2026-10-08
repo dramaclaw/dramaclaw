@@ -118,6 +118,7 @@ def runner_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
             description="",
             picture_check=False,
             render_check=False,
+            model=None,
             egress_context=None,
         ):
             calls.append(
@@ -126,6 +127,7 @@ def runner_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
                     "description": description,
                     "picture_check": picture_check,
                     "render_check": render_check,
+                    "model": model,
                     "egress_context": egress_context,
                 }
             )
@@ -170,6 +172,7 @@ async def test_runner_writes_the_artifacts_and_returns_a_summary(runner_env):
             "description": "层高 3 米",
             "picture_check": False,
             "render_check": False,
+            "model": None,
             "egress_context": None,
         }
     ]
@@ -302,3 +305,25 @@ async def test_runner_passes_the_render_check_option_to_the_leaf(runner_env):
     )
 
     assert runner_env.calls[0]["render_check"] is True
+
+
+async def test_runner_passes_the_chosen_model_to_the_leaf(runner_env):
+    runner_env.install(_generation())
+
+    await freezone_runners._run_freezone_image_to_blockout_async(
+        {"task_type": TASK_TYPE, "payload": {**runner_env.payload, "model": "candidate-c"}},
+        runner_env.ctx,
+    )
+
+    assert runner_env.calls[0]["model"] == "candidate-c"
+
+
+async def test_runner_leaves_the_model_to_the_leaf_when_none_was_chosen(runner_env):
+    runner_env.install(_generation())
+
+    await freezone_runners._run_freezone_image_to_blockout_async(
+        {"task_type": TASK_TYPE, "payload": {**runner_env.payload, "model": ""}},
+        runner_env.ctx,
+    )
+
+    assert runner_env.calls[0]["model"] is None

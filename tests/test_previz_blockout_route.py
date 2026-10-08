@@ -114,9 +114,11 @@ async def test_route_enqueues_the_job_with_feature_billing(route_env, monkeypatc
         "render_check": True,
         "canvas_id": "canvas_1",
         "node_id": "node_1",
+        "model": "blockout-model",
         "billing": {
             "feature_key": "freezone.image_to_blockout",
             "operation": "image_to_blockout",
+            "model": "blockout-model",
             "pricing_kind": "text",
             "pricing_model": "blockout-model",
             "pricing_params": {},
@@ -184,6 +186,67 @@ async def test_route_accepts_an_image_of_any_size_and_shape(route_env):
 
     assert result["ok"] is True
     assert len(route_env.captured) == 1
+
+
+async def test_route_lists_the_default_model_first_then_the_choices(
+    route_env, monkeypatch
+):
+    """下拉框数据源：与 /freezone/image/models 同形，默认模型排第一。"""
+    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "blockout-model")
+    monkeypatch.setenv(
+        "PREVIZ_BLOCKOUT_MODELS", "candidate-b, blockout-model ,candidate-c"
+    )
+
+    result = await freezone_routes.freezone_blockout_models(
+        project="58", user={"username": "admin"}
+    )
+
+    assert result["ok"] is True
+    assert [row["id"] for row in result["data"]] == [
+        "blockout-model",
+        "candidate-b",
+        "candidate-c",
+    ]
+    first = result["data"][0]
+    assert first["providerId"] == first["provider"] == "newapi"
+    assert first["apiModel"] == first["api_model"] == "blockout-model"
+    assert first["label"] == "blockout-model"
+
+
+async def test_route_refuses_a_model_that_is_not_on_the_list(route_env, monkeypatch):
+    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODELS", "candidate-b")
+    source_url = route_env.write("reference.png")
+
+    with pytest.raises(HTTPException) as caught:
+        await freezone_routes.freezone_image_to_blockout(
+            project="58",
+            body=FreezoneImageToBlockoutRequest(
+                source_url=source_url, model="not-on-the-list"
+            ),
+            user={"username": "admin"},
+        )
+
+    assert caught.value.status_code == 400
+    assert route_env.captured == []
+
+
+async def test_route_bills_and_runs_the_chosen_model(route_env, monkeypatch):
+    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "blockout-model")
+    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODELS", "candidate-b")
+    source_url = route_env.write("reference.png")
+
+    await freezone_routes.freezone_image_to_blockout(
+        project="58",
+        body=FreezoneImageToBlockoutRequest(
+            source_url=source_url, model=" candidate-b "
+        ),
+        user={"username": "admin"},
+    )
+
+    (call,) = route_env.captured
+    assert call["payload"]["model"] == "candidate-b"
+    assert call["payload"]["billing"]["pricing_model"] == "candidate-b"
+    assert call["payload"]["billing"]["pricing_quantity"] == 1
 
 
 def test_request_refuses_an_oversized_description():

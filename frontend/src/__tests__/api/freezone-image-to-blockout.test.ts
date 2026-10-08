@@ -3,7 +3,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { apiCall } from "@/api/client";
-import { fetchFreezoneImageToBlockoutResult, submitFreezoneImageToBlockout } from "@/api/ops";
+import {
+  fetchFreezoneBlockoutModels,
+  fetchFreezoneImageToBlockoutResult,
+  submitFreezoneImageToBlockout,
+} from "@/api/ops";
 
 vi.mock("@/api/client", () => ({
   apiCall: vi.fn(),
@@ -27,6 +31,7 @@ describe("image to blockout api", () => {
       description: "层高 3 米",
       pictureCheck: true,
       renderCheck: true,
+      model: "GPT-6-Astra",
       canvasId: "default",
       nodeId: "previz-1",
     });
@@ -38,6 +43,7 @@ describe("image to blockout api", () => {
         description: "层高 3 米",
         picture_check: true,
         render_check: true,
+        model: "GPT-6-Astra",
         canvas_id: "default",
         node_id: "previz-1",
       },
@@ -59,6 +65,38 @@ describe("image to blockout api", () => {
         render_check: false,
       },
     });
+  });
+
+  it("lists the selectable models in the shape the picker reads", async () => {
+    vi.mocked(apiCall).mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          id: "DC-previz-blockout-LLM",
+          providerId: "newapi",
+          provider: "newapi",
+          apiModel: "DC-previz-blockout-LLM",
+          api_model: "DC-previz-blockout-LLM",
+          label: "DC-previz-blockout-LLM",
+        },
+        {
+          id: "GPT-6-Astra",
+          providerId: "newapi",
+          provider: "newapi",
+          apiModel: "GPT-6-Astra",
+          api_model: "GPT-6-Astra",
+          label: "GPT-6-Astra",
+        },
+      ],
+    });
+
+    const models = await fetchFreezoneBlockoutModels("project a");
+
+    expect(apiCall).toHaveBeenCalledWith("projects/project%20a/freezone/blockout/models");
+    expect(models.map((model) => [model.id, model.providerId, model.apiModel, model.label])).toEqual([
+      ["DC-previz-blockout-LLM", "newapi", "DC-previz-blockout-LLM", "DC-previz-blockout-LLM"],
+      ["GPT-6-Astra", "newapi", "GPT-6-Astra", "GPT-6-Astra"],
+    ]);
   });
 
   it("reads the object list from the job result endpoint", async () => {

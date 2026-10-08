@@ -547,7 +547,7 @@ def freezone_image_to_blockout_billing_params(params: dict) -> dict:
         resolved.update(
             {
                 "pricing_kind": "text",
-                "pricing_model": resolve_blockout_model(),
+                "pricing_model": resolve_blockout_model(resolved.get("model")),
                 "pricing_params": {},
             }
         )

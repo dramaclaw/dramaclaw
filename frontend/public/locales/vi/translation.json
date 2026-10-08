@@ -7141,6 +7141,7 @@
           "EPISODE_SCENE_RECONCILE": "Đối chiếu và bổ sung asset bối cảnh gốc",
           "NARRATED_SCENE_ASSET": "Lên kế hoạch asset bối cảnh cho phim có lời dẫn",
           "STAGING_PROP": "Lên kế hoạch đạo cụ tạm thời trong Director World",
+          "PREVIZ_BLOCKOUT": "Dựng mô hình thô Previz từ ảnh tham chiếu",
           "COGNEE": "① Hiểu nội dung & trích xuất tri thức (LLM)"
         }
       },
@@ -7768,6 +7769,8 @@
       "pictureCheckHint": "Chiếu mô hình thô ngược lại ảnh tham chiếu để kiểm tra vị trí, kích thước và máy quay có khớp nhau; tốn thêm một hai vòng tạo nên chậm hơn",
       "renderCheck": "Đối chiếu bản dựng",
       "renderCheckHint": "Dựng mô hình thô thành ảnh, để mô hình so với ảnh tham chiếu rồi sửa lại, hai vòng; tốn thêm hai vòng tạo nên chậm hơn",
+      "model": "Mô hình",
+      "modelDefault": "{{name}} (mặc định)",
       "badExtension": "Only png / jpg / jpeg / webp files are supported",
       "tooLarge": "Reference images must be 20 MB or smaller",
       "noProject": "This page has no project context, so nothing can be generated",
