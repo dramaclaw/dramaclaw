@@ -39,6 +39,16 @@ LOOKS_AWAY = (
     "scene.box(id='a', position=(0, 0, 0), size=(1, 1, 1), semantic_type='prop')\n"
     "scene.camera(id='cam', position=(0, 1.6, 3), target=(0, 1, -1))\n"
 )
+# LOOKS_AWAY plus a box hanging in the air: one error, one warning.
+LOOKS_AWAY_FLOATING = (
+    LOOKS_AWAY
+    + "scene.box(id='b', position=(2, 1, 0), size=(0.5, 0.5, 0.5), semantic_type='prop')\n"
+)
+# LOOKS_AWAY plus a box under the floor: two errors.
+LOOKS_AWAY_SUNKEN = (
+    LOOKS_AWAY
+    + "scene.box(id='b', position=(2, -1, 0), size=(0.5, 0.5, 0.5), semantic_type='prop')\n"
+)
 
 
 class FakeModel:
@@ -310,6 +320,32 @@ async def test_a_parseable_attempt_wins_over_a_later_broken_one(image_path, mode
     generation = await generate_blockout_from_image(image_path=image_path)
 
     assert generation.program == LOOKS_AWAY.strip()
+
+
+async def test_the_fallback_is_the_attempt_with_the_fewest_errors(image_path, model):
+    # Errors against errors: the first attempt's warning must not make it look
+    # worse than a second attempt that has more errors and no warnings.
+    model(LOOKS_AWAY_FLOATING, LOOKS_AWAY_SUNKEN, BROKEN)
+
+    generation = await generate_blockout_from_image(image_path=image_path)
+
+    assert [len(attempt.errors) for attempt in generation.attempts] == [1, 2, 1]
+    assert generation.program == LOOKS_AWAY_FLOATING.strip()
+
+
+async def test_a_transport_failure_after_a_usable_attempt_delivers_that_attempt(
+    image_path, model
+):
+    # The first call bought a scene that only failed the plausibility check; a
+    # gateway failure on the retry must not throw that away.
+    fake = model(LOOKS_AWAY, TimeoutError("gateway timed out"))
+
+    generation = await generate_blockout_from_image(image_path=image_path)
+
+    assert len(fake.calls) == 2
+    assert generation.program == LOOKS_AWAY.strip()
+    assert "looks toward -z" in generation.warnings[0]
+    assert len(generation.attempts) == 1
 
 
 async def test_a_hostile_program_is_never_run(image_path, model, tmp_path, monkeypatch):

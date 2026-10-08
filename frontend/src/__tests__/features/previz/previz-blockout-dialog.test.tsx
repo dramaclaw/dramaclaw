@@ -347,7 +347,7 @@ describe("PrevizBlockoutDialog replace or append", () => {
 });
 
 describe("PrevizBlockoutDialog while working", () => {
-  it.each(["uploading", "generating"] as const)("locks the form while %s", async (stage) => {
+  it.each(["uploading", "generating", "importing"] as const)("locks the form while %s", async (stage) => {
     const { rerender, props, onStart } = setup();
     await pick(image());
 
@@ -558,7 +558,7 @@ describe("PrevizBlockoutDialog drag and drop", () => {
     expect(notCancelled).toBe(false);
   });
 
-  it.each(["uploading", "generating"] as const)(
+  it.each(["uploading", "generating", "importing"] as const)(
     "leaves the picture alone when one is dropped while %s",
     async (stage) => {
       const { rerender, props } = setup();

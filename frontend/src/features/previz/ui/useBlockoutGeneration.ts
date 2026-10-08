@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
@@ -24,7 +24,7 @@ import {
 import { PREVIZ_PRIMITIVE_LIMIT, canAddPrimitive } from '../domain/limits';
 import { usePrevizStore } from '../store';
 
-export type PrevizBlockoutStage = 'idle' | 'uploading' | 'generating';
+export type PrevizBlockoutStage = 'idle' | 'uploading' | 'generating' | 'importing';
 
 export interface PrevizBlockoutRequest {
   file: File;
@@ -62,6 +62,10 @@ const readNodeData = (nodeId: string) =>
 export function useBlockoutGeneration(nodeId: string): BlockoutGeneration {
   const { t } = useTranslation();
   const [uploading, setUploading] = useState(false);
+  const [importing, setImporting] = useState(false);
+  // 「重新导入」在途标记。state 驱动按钮禁用，但 React 的那一拍到之前第二次点击已经
+  // 进来了；ref 当场就能看到。
+  const importingRef = useRef(false);
   const nodeData = useCanvasStore(
     (state) =>
       state.nodes.find((node) => node.id === nodeId)?.data as Record<string, unknown> | undefined,
@@ -138,6 +142,8 @@ export function useBlockoutGeneration(nodeId: string): BlockoutGeneration {
 
   const retryImport = useCallback(
     async (mode: PrevizBlockoutImportMode) => {
+      // 同一份结果取两次就会导入两次，白模翻倍；在途时第二次直接拒绝。
+      if (importingRef.current) return false;
       const pending = (readNodeData(nodeId).blockoutHeld ?? null) as PrevizHeldBlockout | null;
       if (!pending) return false;
       const { project } = readUrl();
@@ -145,28 +151,39 @@ export function useBlockoutGeneration(nodeId: string): BlockoutGeneration {
         toast.error(t('previz.blockout.noProject'));
         return false;
       }
-      let body: unknown;
+      importingRef.current = true;
+      setImporting(true);
       try {
-        body = await fetchFreezoneImageToBlockoutResult(project, pending.jobId);
-      } catch (error) {
-        toast.error(t('previz.blockout.failed', { message: backendErrorToastMessage(error, t) }));
-        return false;
+        let body: unknown;
+        try {
+          body = await fetchFreezoneImageToBlockoutResult(project, pending.jobId);
+        } catch (error) {
+          toast.error(t('previz.blockout.failed', { message: backendErrorToastMessage(error, t) }));
+          return false;
+        }
+        // 等结果的这段时间里节点上留的可能已经不是这一份了（又生成了一次、清掉了、
+        // 节点没了）：取回来的那份就不该再写进去。
+        const current = (readNodeData(nodeId).blockoutHeld ?? null) as PrevizHeldBlockout | null;
+        if (!current || current.jobId !== pending.jobId) return false;
+        const patch = landBlockoutResult({
+          nodeId,
+          nodeData: readNodeData(nodeId),
+          jobId: pending.jobId,
+          body,
+          mode,
+        });
+        useCanvasStore.getState().updateNodeData(nodeId, patch);
+        return patch.blockoutHeld === null;
+      } finally {
+        importingRef.current = false;
+        setImporting(false);
       }
-      const patch = landBlockoutResult({
-        nodeId,
-        nodeData: readNodeData(nodeId),
-        jobId: pending.jobId,
-        body,
-        mode,
-      });
-      useCanvasStore.getState().updateNodeData(nodeId, patch);
-      return patch.blockoutHeld === null;
     },
     [nodeId, t],
   );
 
   return {
-    stage: uploading ? 'uploading' : generating ? 'generating' : 'idle',
+    stage: uploading ? 'uploading' : importing ? 'importing' : generating ? 'generating' : 'idle',
     held,
     start,
     retryImport,

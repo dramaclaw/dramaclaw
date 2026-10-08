@@ -53,6 +53,7 @@ function flatten(tree: unknown, prefix: string): string[] {
 const STAGES: Record<Exclude<PrevizBlockoutStage, "idle">, true> = {
   uploading: true,
   generating: true,
+  importing: true,
 };
 const MODES: Record<PrevizBlockoutImportMode, true> = { replace: true, append: true };
 
@@ -87,6 +88,7 @@ const PLACEHOLDERS: Record<string, string[]> = {
   "previz.blockout.warnings": ["count"],
   "previz.blockout.rejected.primitiveLimit": ["missing", "limit"],
   "previz.blockout.rejected.cameraLimit": ["missing", "limit"],
+  "previz.blockout.rejected.fetchFailed": ["message"],
 };
 
 describe("previz.blockout 文案", () => {

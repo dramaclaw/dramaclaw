@@ -143,6 +143,25 @@ describe("resumeNodeGeneration for a previz node", () => {
     expect(usePrevizStore.getState().dirty).toBe(true);
   });
 
+  it("holds the finished job when its result cannot be fetched, so the paid result is not lost", async () => {
+    fetchFreezoneImageToBlockoutResult.mockRejectedValueOnce(new Error("502"));
+
+    const { promise, updateNodeData } = resume(previzNode());
+    await promise;
+
+    expect(updateNodeData).toHaveBeenCalledTimes(1);
+    const patch = updateNodeData.mock.calls[0]![1] as Record<string, unknown>;
+    expect(patch).toMatchObject({
+      isGenerating: false,
+      generationTaskJobId: null,
+      blockoutHeld: { jobId: "job-7", rejection: { reason: "fetch-failed", message: "502" } },
+    });
+    expect(patch.scene).toBeUndefined();
+    expect(toast.error).toHaveBeenCalledWith(
+      'previz.blockout.rejected.fetchFailed:{"message":"502"}',
+    );
+  });
+
   it("clears the generating state and says so when the task failed", async () => {
     awaitTaskCompletion.mockRejectedValueOnce(
       new TaskCompletionError("model said no", "failed", TASK_KEY),

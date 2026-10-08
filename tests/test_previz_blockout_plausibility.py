@@ -423,3 +423,21 @@ def test_sightings_are_ignored_unless_the_picture_check_is_on():
 
     assert check_plausibility(scene).errors == ()
     assert check_plausibility(scene, picture_check=True).errors != ()
+
+
+def test_a_piece_turned_with_a_diagonal_wall_lands_where_the_wall_does():
+    # `against=` turns the counter by the angle of its wall, in the frame the
+    # compiler defines (rotation_y counter-clockwise seen from above, +x turning
+    # toward +z). Projected through the camera, the counter must then span about
+    # the same part of the picture as the partition it stands against. The spans
+    # below come from that projection: wall 0.18..1.0, counter 0.15..0.98. With the
+    # rotation mirrored the counter's far end swings toward the camera and it lands
+    # a fifth of the picture too far to the left.
+    errors = _sightings(
+        "scene.wall(id='w', start=(-3, 2.5), end=(3, -1.5), height=3)\n"
+        "scene.box(id='counter', against='w', offset=0.5, size=(6, 1, 0.6), semantic_type='table')\n",
+        "scene.seen(id='w', left=0.18, right=1.0)\n"
+        "scene.seen(id='counter', left=0.15, right=0.98)\n",
+    )
+
+    assert errors == []

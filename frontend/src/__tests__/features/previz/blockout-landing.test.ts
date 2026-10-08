@@ -199,7 +199,7 @@ describe("landBlockoutResult with the editor closed", () => {
     expect(toast.error).toHaveBeenCalledWith("previz.blockout.rejected.empty");
   });
 
-  it("refuses a node scene written by a newer version instead of overwriting it", () => {
+  it("holds the result instead of overwriting a node scene written by a newer version", () => {
     const patch = landBlockoutResult({
       nodeId: "previz-1",
       nodeData: { scene: { schemaVersion: 999 } },
@@ -208,9 +208,11 @@ describe("landBlockoutResult with the editor closed", () => {
       mode: "replace",
     });
 
-    expect(patch).toEqual({ blockoutHeld: null });
+    expect(patch).toEqual({
+      blockoutHeld: { jobId: "job-1", rejection: { reason: "version-too-new" } },
+    });
     expect(patch.scene).toBeUndefined();
-    expect(toast.error).toHaveBeenCalledWith("previz.node.versionTooNew");
+    expect(toast.error).toHaveBeenCalledWith("previz.blockout.rejected.versionTooNew");
   });
 });
 

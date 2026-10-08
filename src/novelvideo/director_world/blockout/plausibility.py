@@ -166,8 +166,10 @@ def _solid_corners(solid: SolidIR) -> tuple[list[_Point], list[tuple[int, int]]]
             (half_w, half_d),
             (-half_w, half_d),
         ):
-            # rotation_y is counter-clockwise seen from above: +x turns toward -z
-            corners.append((x + dx * cos + dz * sin, level, z - dx * sin + dz * cos))
+            # rotation_y is counter-clockwise seen from above in the DSL frame,
+            # where +x turns toward +z: the same turn the compiler gives a wall
+            # (`atan2(dz, dx)`) and the parser gives `against=` / `on_top=`.
+            corners.append((x + dx * cos - dz * sin, level, z + dx * sin + dz * cos))
     edges = [(i, (i + 1) % 4) for i in range(4)]
     edges += [(4 + i, 4 + (i + 1) % 4) for i in range(4)]
     edges += [(i, 4 + i) for i in range(4)]

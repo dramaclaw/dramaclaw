@@ -43,6 +43,17 @@ export type PrevizBlockoutRejection =
   /** 写进去之后场景会大到触发整张画布停止自动保存的那一档。 */
   | { reason: 'too-large'; bytes: number };
 
+/**
+ * 结果本身没问题、却没能写进场景的全部理由：导入计划的拒绝，加上落地之前的两道门。
+ * 哪一种都该把任务号留着——结果在后端，按号再取不用再花一次积分。
+ */
+export type PrevizBlockoutHoldReason =
+  | PrevizBlockoutRejection
+  /** 任务已经完成，结果这一趟没取回来（网络、网关）；`message` 是给人看的那句。 */
+  | { reason: 'fetch-failed'; message: string }
+  /** 节点场景由更新的版本写入，这个前端不能拿旧结构盖掉它。 */
+  | { reason: 'version-too-new' };
+
 export type PrevizBlockoutPlan =
   | {
       ok: true;

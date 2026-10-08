@@ -40,7 +40,11 @@ import {
   isStaleGenerationTask,
   shouldWriteGenerationError,
 } from '@/features/canvas/application/generationTaskArbitration';
-import { landBlockoutResult, reportBlockoutFailure } from '@/features/previz/blockoutLanding';
+import {
+  holdUnfetchedBlockout,
+  landBlockoutResult,
+  reportBlockoutFailure,
+} from '@/features/previz/blockoutLanding';
 
 type FreezoneTaskType = FreezoneJobRef['task_type'];
 
@@ -358,9 +362,20 @@ async function buildSuccessPatch(
       };
     }
     case 'blockout': {
-      const body: unknown = await fetchFreezoneImageToBlockoutResult(projectId, jobId);
       const nodeData = context.readNodeData();
       const mode = nodeData.blockoutImportMode === 'append' ? 'append' : 'replace';
+      let body: unknown;
+      try {
+        body = await fetchFreezoneImageToBlockoutResult(projectId, jobId);
+      } catch (error) {
+        // 到这里任务已经完成、积分已经扣了，失败的只是取结果这一趟。走通用错误分支会把
+        // 节点清成什么都没发生，花了钱的结果就丢了；留着任务号让人按号再取。
+        return {
+          ...CLEARED_TASK_FIELDS,
+          blockoutImportMode: null,
+          blockoutHeld: holdUnfetchedBlockout(jobId, error),
+        };
+      }
       return {
         ...CLEARED_TASK_FIELDS,
         blockoutImportMode: null,

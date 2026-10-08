@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from novelvideo.models import SceneRef
+from novelvideo.director_world.blockout.prompts import MAX_DESCRIPTION_CHARS
 from novelvideo.freezone.asset_copy import MAX_SOURCE_URL_LENGTH, MAX_SOURCES_PER_REQUEST
 from novelvideo.freezone.slots import PushTarget
 
@@ -1415,7 +1416,7 @@ class FreezoneImageToBlockoutRequest(BaseModel):
     source_url: str = Field(description="参考图静态地址")
     description: str = Field(
         default="",
-        max_length=2000,
+        max_length=MAX_DESCRIPTION_CHARS,
         description="可选：对场景的补充说明，如真实尺寸、要保留的物件",
     )
     canvas_id: str = Field(default="", description="可选：来源画布 id")

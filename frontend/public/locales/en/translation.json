@@ -7899,13 +7899,16 @@
       },
       "stage": {
         "uploading": "Uploading reference image…",
-        "generating": "Generating blockout, this may take a few minutes…"
+        "generating": "Generating blockout, this may take a few minutes…",
+        "importing": "Fetching the blockout and placing it in the scene…"
       },
       "rejected": {
         "empty": "Nothing usable was generated this time; try another image or add notes",
         "primitiveLimit": "Not enough room: {{missing}} more slots needed (primitive limit {{limit}})",
         "cameraLimit": "No room for the reference camera: {{missing}} more slots needed (camera limit {{limit}})",
-        "tooLarge": "The scene data is too large for this node; remove some objects before importing"
+        "tooLarge": "The scene data is too large for this node; remove some objects before importing",
+        "fetchFailed": "The blockout is ready but its result could not be fetched: {{message}}. Import it again later without being charged",
+        "versionTooNew": "This scene was written by a newer version, so this build cannot place the blockout in it. Update, then import again"
       },
       "held": {
         "title": "The blockout is ready but not in the scene yet",

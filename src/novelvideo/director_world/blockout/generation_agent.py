@@ -300,7 +300,15 @@ async def generate_blockout_from_image(
 
     chosen: _Candidate | None = None
     for _ in range(BLOCKOUT_MAX_ATTEMPTS):
-        program, seconds = await ask(prompt, image)
+        try:
+            program, seconds = await ask(prompt, image)
+        except Exception:
+            # A retry that never reaches the model must not throw away a scene
+            # an earlier call already paid for; without one there is nothing
+            # to deliver and the failure is the caller's to see.
+            if fallback is None:
+                raise
+            break
         try:
             candidate, errors = _evaluate(
                 program, image_aspect=image_aspect, picture_check=picture_check
@@ -313,8 +321,7 @@ async def generate_blockout_from_image(
             chosen = candidate
             break
         if candidate is not None and (
-            fallback is None
-            or len(errors) <= len(fallback.errors) + len(fallback.warnings)
+            fallback is None or len(errors) <= len(fallback.errors)
         ):
             fallback = candidate
         prompt = build_blockout_retry_prompt(

@@ -7899,13 +7899,16 @@
       },
       "stage": {
         "uploading": "正在上传参考图…",
-        "generating": "正在生成白模，可能需要几分钟…"
+        "generating": "正在生成白模，可能需要几分钟…",
+        "importing": "正在取回白模并放进场景…"
       },
       "rejected": {
         "empty": "这一次没有生成出可用的几何体，换一张图或补充说明再试",
         "primitiveLimit": "放不下：还差 {{missing}} 个名额（几何体上限 {{limit}} 个）",
         "cameraLimit": "放不下参考机位：还差 {{missing}} 个名额（机位上限 {{limit}} 个）",
-        "tooLarge": "场景数据过大，放不进这个节点；先删掉一些对象再导入"
+        "tooLarge": "场景数据过大，放不进这个节点；先删掉一些对象再导入",
+        "fetchFailed": "白模已生成，但结果没有取回来：{{message}}。稍后可以直接重新导入，不会再次扣费",
+        "versionTooNew": "场景由更新的版本写入，这个版本放不进白模；升级后可以直接重新导入"
       },
       "held": {
         "title": "白模已生成，但还没放进场景",

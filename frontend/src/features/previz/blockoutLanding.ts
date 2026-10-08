@@ -15,7 +15,7 @@ import {
   planBlockoutImport,
   type PrevizBlockoutImportMode,
   type PrevizBlockoutPayload,
-  type PrevizBlockoutRejection,
+  type PrevizBlockoutHoldReason,
 } from './domain/blockout';
 import { createDefaultScene } from './domain/scene';
 import { buildNodeScenePatch, loadNodeScene } from './nodeScene';
@@ -28,7 +28,7 @@ import { blockoutRejectionMessage } from './ui/blockoutMessages';
  */
 export interface PrevizHeldBlockout {
   jobId: string;
-  rejection: PrevizBlockoutRejection;
+  rejection: PrevizBlockoutHoldReason;
 }
 
 /** 提示里最多列几条检查意见，多了 toast 撑不下。 */
@@ -55,9 +55,22 @@ export function readBlockoutResult(body: unknown): {
 }
 
 /** 空结果留着也没用，其余的拒绝都是「这份结果本身没问题，只是现在放不进去」。 */
-function holdOrDrop(jobId: string, rejection: PrevizBlockoutRejection): PrevizHeldBlockout | null {
+function holdOrDrop(jobId: string, rejection: PrevizBlockoutHoldReason): PrevizHeldBlockout | null {
   toast.error(blockoutRejectionMessage(rejection, i18n.t));
   return rejection.reason === 'empty' ? null : { jobId, rejection };
+}
+
+/**
+ * 任务已经完成、积分已经扣了，只是结果这一趟没取回来：留着任务号，「重新导入」按号
+ * 再取一次。清成什么都没发生过，这份花了钱的结果就找不回来了。
+ */
+export function holdUnfetchedBlockout(jobId: string, error: unknown): PrevizHeldBlockout {
+  const rejection = {
+    reason: 'fetch-failed',
+    message: backendErrorToastMessage(error, i18n.t),
+  } as const;
+  toast.error(blockoutRejectionMessage(rejection, i18n.t));
+  return { jobId, rejection };
 }
 
 function reportLanded(count: number, warnings: string[]): void {
@@ -115,9 +128,9 @@ export function landBlockoutResult(params: {
   } else {
     const loaded = loadNodeScene(nodeData.scene);
     if (!loaded.ok) {
-      // 节点场景是更新版本写的，这个前端读不了，更不能拿旧结构盖掉它。
-      toast.error(i18n.t('previz.node.versionTooNew'));
-      return { blockoutHeld: null };
+      // 节点场景是更新版本写的，这个前端读不了，更不能拿旧结构盖掉它。结果本身
+      // 没问题，留着：升级之后同一个任务号还能导入。
+      return { blockoutHeld: holdOrDrop(jobId, { reason: 'version-too-new' }) };
     }
     scene = loaded.scene;
   }

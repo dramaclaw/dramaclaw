@@ -2,7 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import type { TFunction } from 'i18next';
 
-import type { PrevizBlockoutRejection } from '../domain/blockout';
+import type { PrevizBlockoutHoldReason } from '../domain/blockout';
 import type { PrevizBlockoutImageHint } from '../domain/blockoutImage';
 
 /**
@@ -16,11 +16,13 @@ export const PREVIZ_BLOCKOUT_HINT_KEY: Record<PrevizBlockoutImageHint, string> =
   unreadable: 'previz.blockout.hint.unreadable',
 };
 
-export const PREVIZ_BLOCKOUT_REJECTION_KEY: Record<PrevizBlockoutRejection['reason'], string> = {
+export const PREVIZ_BLOCKOUT_REJECTION_KEY: Record<PrevizBlockoutHoldReason['reason'], string> = {
   empty: 'previz.blockout.rejected.empty',
   'primitive-limit': 'previz.blockout.rejected.primitiveLimit',
   'camera-limit': 'previz.blockout.rejected.cameraLimit',
   'too-large': 'previz.blockout.rejected.tooLarge',
+  'fetch-failed': 'previz.blockout.rejected.fetchFailed',
+  'version-too-new': 'previz.blockout.rejected.versionTooNew',
 };
 
 /** 对话框开着时一直摆在那儿的选图建议。只是建议：不符合的图照样能生成。 */
@@ -32,10 +34,13 @@ export const PREVIZ_BLOCKOUT_GUIDE_KEYS = [
 ] as const;
 
 /** toast 和对话框说的是同一句话。 */
-export function blockoutRejectionMessage(rejection: PrevizBlockoutRejection, t: TFunction): string {
+export function blockoutRejectionMessage(rejection: PrevizBlockoutHoldReason, t: TFunction): string {
   const key = PREVIZ_BLOCKOUT_REJECTION_KEY[rejection.reason];
   if (rejection.reason === 'primitive-limit' || rejection.reason === 'camera-limit') {
     return t(key, { missing: rejection.missing, limit: rejection.limit });
+  }
+  if (rejection.reason === 'fetch-failed') {
+    return t(key, { message: rejection.message });
   }
   return t(key);
 }

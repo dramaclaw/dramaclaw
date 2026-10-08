@@ -425,6 +425,58 @@ describe("useBlockoutGeneration keeps a paid result that did not fit", () => {
     expect(hook.current.held).toBeNull();
   });
 
+  it("imports a held result only once when asked twice before the first fetch returns", async () => {
+    const fetch = deferred<unknown>();
+    fetchFreezoneImageToBlockoutResult.mockImplementationOnce(() => fetch.promise);
+    const id = addPrevizNode({ blockoutHeld: held });
+    usePrevizStore.getState().loadScene(createDefaultScene(), id);
+    const { result: hook } = setup(id);
+
+    let first!: Promise<boolean>;
+    let second!: Promise<boolean>;
+    act(() => {
+      first = hook.current.retryImport("append");
+      second = hook.current.retryImport("append");
+    });
+    await waitFor(() => expect(hook.current.stage).toBe("importing"));
+
+    let outcome: boolean[] = [];
+    await act(async () => {
+      fetch.resolve(result(3));
+      outcome = await Promise.all([first, second]);
+    });
+
+    expect(outcome).toEqual([true, false]);
+    expect(fetchFreezoneImageToBlockoutResult).toHaveBeenCalledTimes(1);
+    expect(objectIds()).toEqual(["blockout-box_0", "blockout-box_1", "blockout-box_2"]);
+    expect(hook.current.stage).toBe("idle");
+  });
+
+  it("drops the fetched result when the hold was cleared meanwhile", async () => {
+    const fetch = deferred<unknown>();
+    fetchFreezoneImageToBlockoutResult.mockImplementationOnce(() => fetch.promise);
+    const id = addPrevizNode({ blockoutHeld: held });
+    usePrevizStore.getState().loadScene(createDefaultScene(), id);
+    const { result: hook } = setup(id);
+
+    let run!: Promise<boolean>;
+    act(() => {
+      run = hook.current.retryImport("append");
+    });
+    act(() => {
+      useCanvasStore.getState().updateNodeData(id, { blockoutHeld: null });
+    });
+    let imported = true;
+    await act(async () => {
+      fetch.resolve(result(3));
+      imported = await run;
+    });
+
+    expect(imported).toBe(false);
+    expect(objectIds()).toEqual([]);
+    expect(hook.current.stage).toBe("idle");
+  });
+
   it("keeps holding when the retry still does not fit", async () => {
     const id = addPrevizNode({ blockoutHeld: held });
     const scene = createDefaultScene();

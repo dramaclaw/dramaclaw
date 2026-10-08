@@ -10,7 +10,7 @@ from __future__ import annotations
 from novelvideo.director_world.blockout.scene_ir import MAX_COMPILED_OBJECTS
 
 BLOCKOUT_PROMPT_VERSION = 11
-MAX_DESCRIPTION_CHARS = 500
+MAX_DESCRIPTION_CHARS = 2000
 SUGGESTED_OBJECT_COUNT = 40
 
 BLOCKOUT_EXAMPLE_PROGRAM = """\

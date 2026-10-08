@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
+from novelvideo.api.schemas import FreezoneImageToBlockoutRequest
 from novelvideo.director_world.blockout.dsl_parser import (
     _SPEC,
     parse_blockout_program,
@@ -14,6 +18,7 @@ from novelvideo.director_world.blockout.prompts import (
     build_blockout_prompt,
     build_blockout_retry_prompt,
     build_blockout_review_prompt,
+    clean_description,
 )
 
 
@@ -66,11 +71,23 @@ def test_prompt_without_a_description_has_no_user_section():
 
 
 def test_description_is_flattened_and_capped():
-    prompt = build_blockout_prompt(description="门宽\n0.9 米\n\n" + "长" * 1000)
+    prompt = build_blockout_prompt(description="门宽\n0.9 米\n\n" + "长" * 3000)
 
     note = prompt.split("## 用户补充说明", 1)[1]
     assert "门宽 0.9 米 长" in note
     assert note.count("长") == MAX_DESCRIPTION_CHARS - len("门宽 0.9 米 ")
+
+
+def test_the_description_limit_is_the_one_the_request_accepts():
+    # The dialog, the request schema and the prompt must agree, or a note the
+    # request accepted is silently cut before the model sees it.
+    note = "长" * MAX_DESCRIPTION_CHARS
+
+    assert clean_description(note) == note
+    accepted = FreezoneImageToBlockoutRequest(source_url="/static/a.png", description=note)
+    assert accepted.description == note
+    with pytest.raises(ValidationError):
+        FreezoneImageToBlockoutRequest(source_url="/static/a.png", description=note + "长")
 
 
 def test_prompt_states_the_aspect_ratio_of_the_image_that_is_sent():
