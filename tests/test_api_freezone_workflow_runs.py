@@ -3727,8 +3727,15 @@ def test_server_workflow_prepare_revise_and_compact_query(workflow_run_client):
     draft = response.json()["data"]
     assert draft["revision"] == 1
     assert not {"plan", "intent", "compiled"} & draft.keys()
-    assert "nodes" not in draft["preview"]
-    assert "recipe_pipelines" not in draft["preview"]
+    assert draft["preview"]["nodes"] == [
+        {
+            "id": "brief",
+            "name": "广告",
+            "stage": "input",
+            "node_type": "textAnnotationNode",
+        }
+    ]
+    assert draft["preview"]["recipe_pipelines"] == []
     assert draft["preview"]["node_count"] == 1
     target = f"{base}/{draft['draft_id']}"
     changes = {"step_updates": [{"node_id": "brief", "prompt": "新广告要求"}]}

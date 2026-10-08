@@ -114,6 +114,8 @@ def _compact_preview(value: Any) -> dict[str, Any]:
             "skill_id",
             "inputs",
             "phases",
+            "nodes",
+            "recipe_pipelines",
             "external_inputs",
             "node_count",
             "edge_count",

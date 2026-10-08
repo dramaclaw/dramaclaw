@@ -1575,8 +1575,8 @@ def test_dynamic_workflow_plan_uses_draft_before_canvas_bridge(monkeypatch, tmp_
     assert prepared["ok"] is True
     assert prepared["status"] == "workflow_draft_ready"
     assert prepared["preview"]["node_count"] == 0
-    assert "nodes" not in prepared["preview"]
-    assert "recipe_pipelines" not in prepared["preview"]
+    assert prepared["preview"]["nodes"] == []
+    assert prepared["preview"]["recipe_pipelines"] == []
     assert prepared["next_action"] == "review_and_confirm"
     assert "Do not call freezone_get_workflow" in prepared["agent_instruction"]
     assert captured.get("commands") is None
@@ -1786,8 +1786,12 @@ def test_workflow_draft_can_be_prepared_patched_and_confirmed_once(
     assert prepared["ok"] is True
     assert prepared["revision"] == 1
     assert prepared["preview"]["node_count"] == 3
-    assert "nodes" not in prepared["preview"]
-    assert "recipe_pipelines" not in prepared["preview"]
+    assert [node["id"] for node in prepared["preview"]["nodes"]] == [
+        "workflow_input",
+        "shot_1",
+        "shot_2",
+    ]
+    assert prepared["preview"]["recipe_pipelines"] == []
     assert prepared["next_action"] == "review_and_confirm"
     assert "freezone_get_workflow" in prepared["agent_instruction"]
     assert prepared["run_after_create"] is True
@@ -1805,8 +1809,13 @@ def test_workflow_draft_can_be_prepared_patched_and_confirmed_once(
     assert patched["ok"] is True
     assert patched["revision"] == 2
     assert patched["preview"]["node_count"] == 4
-    assert "nodes" not in patched["preview"]
-    assert "recipe_pipelines" not in patched["preview"]
+    assert [node["id"] for node in patched["preview"]["nodes"]] == [
+        "workflow_input",
+        "shot_1",
+        "shot_2",
+        "shot_3",
+    ]
+    assert patched["preview"]["recipe_pipelines"] == []
     assert patched["next_action"] == "review_and_confirm"
     _assert_real_mcp_output(plugin, "freezone_patch_workflow_draft", patched)
 
