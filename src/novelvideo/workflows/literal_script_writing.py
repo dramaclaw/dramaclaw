@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from hashlib import sha256
 from typing import Any, Callable, Optional
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
@@ -12,6 +13,7 @@ from novelvideo.config import (
     get_newapi_structured_output_model_settings,
     get_newapi_text_pydantic_model,
 )
+from novelvideo.cognee.screenplay_normalizer import clean_scene_name_and_time
 from novelvideo.model_gateway_runtime import model_gateway_output_retries
 from novelvideo.models import (
     NarrationScript,
@@ -207,7 +209,7 @@ class LiteralBeatMetaOutput(BaseModel):
         if not scene_id:
             return ""
         valid_scene_ids = set((info.context or {}).get("valid_scene_ids") or [])
-        if valid_scene_ids and scene_id not in valid_scene_ids:
+        if "valid_scene_ids" in (info.context or {}) and scene_id not in valid_scene_ids:
             return ""
         return scene_id
 
@@ -238,7 +240,7 @@ class LiteralBeatMetaOutput(BaseModel):
         valid_prop_ids = set((info.context or {}).get("valid_prop_ids") or [])
 
         markers = extract_char_identities_from_markers(text, strict=True)
-        if valid_identity_ids:
+        if "valid_identity_ids" in (info.context or {}):
             invalid_identity_ids = sorted(
                 identity_id
                 for identity_id in markers.values()
@@ -250,7 +252,7 @@ class LiteralBeatMetaOutput(BaseModel):
                 )
 
         prop_marker_ids = extract_prop_ids_from_markers(text, strict=True)
-        if valid_prop_ids:
+        if "valid_prop_ids" in (info.context or {}):
             invalid_prop_ids = sorted(
                 prop_id for prop_id in prop_marker_ids if prop_id not in valid_prop_ids
             )
@@ -400,6 +402,7 @@ class LiteralScriptWritingWorkflow:
         self._valid_identity_ids: set[str] = set()
         self._valid_scene_ids: set[str] = set()
         self._scene_menu_split: dict[str, tuple[str, str, str]] = {}
+        self._scene_aliases: dict[str, set[str]] = {}
         self._valid_prop_ids: set[str] = set()
         self._identity_section = ""
         self._scene_section = ""
@@ -479,6 +482,19 @@ class LiteralScriptWritingWorkflow:
         if not source_text.strip():
             raise ValueError("当前集原文为空，无法逐行生成脚本")
         self._output_language = detect_asset_language(source_text)
+        source_text_sha256 = sha256(source_text.encode("utf-8")).hexdigest()
+
+        # Every script entry point shares this workflow. Prepare the episode
+        # scope before narrowing candidates or asking for line metadata.
+        from novelvideo.agents.asset_compiler import AssetCompiler
+
+        compiler = AssetCompiler(self.cognee_store)
+        compiler.spine_template = (
+            "narrated" if self.audio_type_mode == "narrated" else "drama"
+        )
+        await compiler.ensure_episode_menus(
+            episode, source_text=source_text, on_log=log
+        )
 
         quality_report = check_screenplay_import_quality(source_text)
         for issue in quality_report.blocking_issues:
@@ -494,6 +510,7 @@ class LiteralScriptWritingWorkflow:
             self._build_identity_menu_for_episode(episode_num)
         )
         self._scene_section = self._build_scene_menu_for_episode(episode)
+        await self._load_scene_aliases_for_episode()
         self._prop_section = self._build_prop_menu_for_episode(episode)
         episode_identity_ids = set(self._valid_identity_ids)
         episode_identity_default_map = dict(
@@ -754,6 +771,7 @@ class LiteralScriptWritingWorkflow:
                     beat_number=len(beats) + 1,
                     narration_segment=narration_segment,
                     visual_description=visual_description,
+                    source_text_sha256=source_text_sha256,
                     time_of_day=time_of_day,
                     scene_ref=self._canonical_scene_ref_for_menu_choice(
                         resolved_scene_id
@@ -945,6 +963,7 @@ class LiteralScriptWritingWorkflow:
         scene_menu = list(getattr(episode, "scene_menu", []) or [])
         self._valid_scene_ids.clear()
         self._scene_menu_split.clear()
+        self._scene_aliases.clear()
         for item in scene_menu:
             scene_id = str(getattr(item, "scene_id", "") or "").strip()
             if not scene_id:
@@ -965,6 +984,19 @@ class LiteralScriptWritingWorkflow:
         for item in scene_menu:
             lines.append(f"- `{item.scene_id}`")
         return "\n".join(lines) + "\n"
+
+    async def _load_scene_aliases_for_episode(self) -> None:
+        list_scenes = getattr(self.sqlite_store, "list_scenes", None)
+        if not callable(list_scenes):
+            return
+        base_ids = self._base_ids()
+        for scene in await list_scenes():
+            if scene.name not in base_ids:
+                continue
+            for alias in scene.aliases or []:
+                key = " ".join(str(alias or "").replace("\u3000", " ").lower().split())
+                if key:
+                    self._scene_aliases.setdefault(key, set()).add(scene.name)
 
     def _base_ids(self) -> set[str]:
         derived_ids = set(self._scene_menu_split)
@@ -1421,7 +1453,7 @@ class LiteralScriptWritingWorkflow:
         )
 
     def _resolve_scene_id(self, location_label: str, episode: Any) -> str:
-        location = (location_label or "").strip()
+        location, _ = clean_scene_name_and_time(location_label)
         if not location:
             return ""
         if not self._valid_scene_ids:
@@ -1433,9 +1465,16 @@ class LiteralScriptWritingWorkflow:
         for scene_id in base_ids:
             if scene_id == location:
                 return scene_id
-        for scene_id in base_ids:
-            if location in scene_id or scene_id in location:
-                return scene_id
+        alias_key = " ".join(location.replace("\u3000", " ").lower().split())
+        alias_matches = self._scene_aliases.get(alias_key, set())
+        if alias_matches:
+            return next(iter(alias_matches)) if len(alias_matches) == 1 else ""
+        partial_matches = {
+            scene_id for scene_id in base_ids
+            if location in scene_id or scene_id in location
+        }
+        if len(partial_matches) == 1:
+            return next(iter(partial_matches))
         return ""
 
     def _resolve_unit_speaker_label(self, speaker: str) -> str:

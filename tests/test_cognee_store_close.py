@@ -8,6 +8,25 @@ from types import SimpleNamespace
 import pytest
 
 
+@pytest.fixture
+def core_ladybug_queries_without_json_download(monkeypatch):
+    """Keep lifecycle tests native without depending on the extension CDN.
+
+    These tests use core Cypher and STRING properties only. Extension
+    installation/loading has separate success and failure coverage below.
+    """
+    from ladybug import Connection
+
+    execute = Connection.execute
+
+    def execute_core_query(self, query, *args, **kwargs):
+        if query in {"INSTALL JSON;", "LOAD EXTENSION JSON;"}:
+            return None
+        return execute(self, query, *args, **kwargs)
+
+    monkeypatch.setattr(Connection, "execute", execute_core_query)
+
+
 def test_read_only_ladybug_installs_missing_json_extension_in_disposable_db(
     monkeypatch,
     tmp_path,
@@ -126,7 +145,9 @@ async def test_store_close_only_releases_owned_sqlite_store():
 
 
 @pytest.mark.asyncio
-async def test_cached_ladybug_adapter_switches_between_read_only_and_writer(tmp_path):
+async def test_cached_ladybug_adapter_switches_between_read_only_and_writer(
+    tmp_path, core_ladybug_queries_without_json_download
+):
     from cognee.infrastructure.databases.graph.ladybug.adapter import LadybugAdapter
     from ladybug import Connection
     from ladybug.database import Database
@@ -515,6 +536,7 @@ async def test_project_context_restores_native_cognee_contextvars(tmp_path):
 async def test_ladybug_query_cancellation_keeps_database_and_lock_until_native_query_stops(
     tmp_path,
     read_only,
+    core_ladybug_queries_without_json_download,
 ):
     from cognee.infrastructure.databases.graph.ladybug.adapter import LadybugAdapter
     from ladybug import Connection

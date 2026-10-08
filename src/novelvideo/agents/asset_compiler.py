@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from copy import copy
+from hashlib import sha256
 from typing import Any, Callable, Optional
 
 from pydantic import BaseModel, Field, ValidationError, ValidationInfo, model_validator
@@ -425,7 +427,9 @@ class AssetCompiler:
         self.store = getattr(cognee_store, "sqlite_store", cognee_store)
         self.spine_template = "drama"
 
-    async def _write_menus(self, episode_number: int, **menus: Any) -> None:
+    async def _write_menus(
+        self, episode_number: int, *, only_if_empty: bool = False, **menus: Any
+    ) -> Any:
         """Persist episode menus with a column-level write.
 
         Scene, prop and identity planning run at once for the same episode. Any
@@ -437,7 +441,124 @@ class AssetCompiler:
         code the legacy whole-row write uses, so an existing project's menus
         come out byte-identical.
         """
+        if only_if_empty:
+            await self.store.patch_episode(episode_number, _only_if_empty=True, **menus)
+            return await self.store.get_episode_from_graph(episode_number)
         await self.store.patch_episode(episode_number, **menus)
+
+    async def ensure_episode_menus(
+        self,
+        episode: Any,
+        *,
+        source_text: str,
+        on_log: Optional[Callable[[str], None]] = None,
+    ) -> None:
+        """Plan missing episode scopes using the exact script input.
+
+        An empty prop result is valid. Planning is performed once per script
+        run, and existing nonempty menus remain the user's selected scope.
+        Do not backfill an older script while preparing its replacement.
+        """
+        planning_episode = copy(episode)
+        planning_episode.beat_source_text = source_text
+        blocks = LiteralScriptWritingWorkflow._build_scene_blocks(
+            split_literal_source_text(source_text)
+        )
+        needs_scene_scope = self.spine_template == "narrated" or any(
+            block.header_line and block.location for block in blocks
+        )
+        if not getattr(episode, "scene_menu", None) and needs_scene_scope:
+            if on_log:
+                on_log("[AssetCompiler] Preparing missing episode scene menu")
+            scene_menu, _ = await self.compile_episode_scenes(
+                planning_episode,
+                on_log=on_log,
+                backfill_existing_beats=False,
+                allow_empty_scene_menu=self.spine_template == "narrated",
+                preserve_existing_menu=True,
+            )
+            episode.scene_menu = scene_menu
+            planning_episode.scene_menu = scene_menu
+        if not getattr(episode, "prop_menu", None):
+            if on_log:
+                on_log("[AssetCompiler] Preparing missing episode prop menu")
+            prop_menu = await self.compile_episode_props(
+                planning_episode, on_log=on_log, preserve_existing_menu=True
+            )
+            episode.prop_menu = prop_menu
+            from novelvideo.services.prop_promotion_service import (
+                promote_episode_props_to_global,
+            )
+
+            await promote_episode_props_to_global(self.cognee_store, prop_menu)
+
+    async def backfill_missing_scene_refs(
+        self,
+        episode: Any,
+        scene_menu: list[SceneMenuItem],
+        *,
+        on_log: Optional[Callable[[str], None]] = None,
+    ) -> int:
+        """Bind unchanged literal scripts after scene planning without regeneration.
+
+        Manual shots never consume a source line. Counts and saved generation
+        source hashes must establish alignment; legacy shots without provenance
+        are left for explicit selection rather than guessing from their order.
+        Storage checks emptiness again atomically to preserve concurrent edits.
+        """
+        read_beats = getattr(self.store, "get_beats_as_dicts", None)
+        fill_refs = getattr(self.store, "fill_missing_beat_scene_refs", None)
+        if not callable(read_beats) or not callable(fill_refs):
+            return 0
+        beats = sorted(
+            (
+                beat for beat in await read_beats(episode.number)
+                if not beat.get("is_manual_shot")
+            ),
+            key=lambda beat: int(beat["beat_number"]),
+        )
+        if not beats:
+            return 0
+        source_text = await self._load_source_text(episode)
+        lines = split_literal_source_text(source_text)
+        blocks = LiteralScriptWritingWorkflow._build_scene_blocks(lines)
+        contexts = LiteralScriptWritingWorkflow._build_scene_line_contexts(
+            blocks, source_lines=lines
+        )
+        if len(contexts) != len(beats):
+            if on_log:
+                on_log("[AssetCompiler] Scene backfill skipped: source/shot count mismatch")
+            return 0
+        source_text_sha256 = sha256(source_text.encode("utf-8")).hexdigest()
+        if any(
+            beat.get("source_text_sha256") != source_text_sha256
+            or int(beat["beat_number"]) != index
+            for index, beat in enumerate(beats, start=1)
+        ):
+            if on_log:
+                on_log("[AssetCompiler] Scene backfill skipped: generation source cannot be verified")
+            return 0
+        resolver = LiteralScriptWritingWorkflow(self.cognee_store)
+        scoped_episode = copy(episode)
+        scoped_episode.scene_menu = scene_menu
+        resolver._build_scene_menu_for_episode(scoped_episode)
+        await resolver._load_scene_aliases_for_episode()
+        updates = []
+        for beat, context in zip(beats, contexts):
+            if beat.get("scene_ref"):
+                continue
+            scene_id = resolver._resolve_scene_id(context.scene_block.location, scoped_episode)
+            ref = resolver._canonical_scene_ref_for_menu_choice(scene_id)
+            if ref:
+                updates.append({
+                    "beat_number": beat["beat_number"],
+                    "scene_ref": ref.model_dump(),
+                    "source_text_sha256": source_text_sha256,
+                })
+        count = await fill_refs(episode.number, updates)
+        if count and on_log:
+            on_log(f"[AssetCompiler] Filled scene references for {count} existing shots")
+        return count
 
     async def compile_single_episode(
         self,
@@ -496,6 +617,7 @@ class AssetCompiler:
             scene_menu=scene_menu,
             prop_menu=prop_menu,
         )
+        await self.backfill_missing_scene_refs(episode, scene_menu, on_log=log)
 
         report(1.0, "完成")
         return scene_menu, prop_menu, len(pending_scenes)
@@ -505,6 +627,10 @@ class AssetCompiler:
         episode: Any,
         on_log: Optional[Callable[[str], None]] = None,
         on_progress: Optional[Callable[[float, str], None]] = None,
+        *,
+        backfill_existing_beats: bool = True,
+        allow_empty_scene_menu: bool = False,
+        preserve_existing_menu: bool = False,
     ) -> tuple[list[SceneMenuItem], int]:
         """只编译并写入本集 scene_menu，不覆盖 prop_menu。"""
 
@@ -553,13 +679,19 @@ class AssetCompiler:
                     episode,
                     log,
                 )
-        if not scene_menu:
+        if not scene_menu and not allow_empty_scene_menu:
             raise ValueError("未识别到任何场景，请先生成逐行解说工作稿或补充场次地点")
 
         report(0.85, "写入本集场景规划...")
         for scene in pending_scenes:
             await self.store.add_scene(scene)
-        await self._write_menus(episode.number, scene_menu=scene_menu)
+        committed_episode = await self._write_menus(
+            episode.number, scene_menu=scene_menu, only_if_empty=preserve_existing_menu
+        )
+        if preserve_existing_menu:
+            scene_menu = list(committed_episode.scene_menu or [])
+        if backfill_existing_beats:
+            await self.backfill_missing_scene_refs(episode, scene_menu, on_log=log)
 
         report(1.0, "完成")
         return scene_menu, len(pending_scenes)
@@ -610,6 +742,8 @@ class AssetCompiler:
         episode: Any,
         on_log: Optional[Callable[[str], None]] = None,
         on_progress: Optional[Callable[[float, str], None]] = None,
+        *,
+        preserve_existing_menu: bool = False,
     ) -> list[PropMenuItem]:
         """只编译并写入本集 prop_menu，不覆盖 scene_menu。"""
 
@@ -629,7 +763,11 @@ class AssetCompiler:
         prop_menu = await self._compile_props(scene_blocks, episode, log)
 
         report(0.9, "写入本集道具规划...")
-        await self._write_menus(episode.number, prop_menu=prop_menu)
+        committed_episode = await self._write_menus(
+            episode.number, prop_menu=prop_menu, only_if_empty=preserve_existing_menu
+        )
+        if preserve_existing_menu:
+            prop_menu = list(committed_episode.prop_menu or [])
 
         report(1.0, "完成")
         return prop_menu
@@ -916,8 +1054,11 @@ class AssetCompiler:
         requirements = await self._analyze_narrated_scene_requirements(
             source_text, episode, log
         )
+        analysis_failed = requirements is None
         if not requirements:
             requirements = self._heuristic_narrated_scene_requirements(source_text)
+        if analysis_failed and not requirements:
+            raise ValueError("解说场景分析失败，且无法从原文确定场景，请重试")
         if not requirements:
             return []
 
@@ -959,7 +1100,7 @@ class AssetCompiler:
         source_text: str,
         episode: Any,
         log: Callable[[str], None],
-    ) -> list[NarratedSceneRequirement]:
+    ) -> list[NarratedSceneRequirement] | None:
         existing_scenes = await self.store.list_scenes()
         existing_scene_names = {
             str(getattr(scene, "name", "") or "").strip()
@@ -999,7 +1140,7 @@ class AssetCompiler:
             return list(result.output.scenes or [])
         except Exception as exc:
             log(f"  解说场景分析失败，改用文本规则兜底: {exc}")
-            return []
+            return None
 
     async def _enrich_scene_prompt_from_block(
         self,

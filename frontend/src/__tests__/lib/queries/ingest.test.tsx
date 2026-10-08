@@ -5,6 +5,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import ky from "ky";
+import { File as NodeFile } from "node:buffer";
 import type { ReactNode } from "react";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -23,7 +24,10 @@ import {
 const server = setupServer();
 
 beforeAll(() => server.listen());
-afterEach(() => server.resetHandlers());
+afterEach(() => {
+  server.resetHandlers();
+  vi.unstubAllGlobals();
+});
 afterAll(() => server.close());
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -53,11 +57,20 @@ describe("ingest query error contract", () => {
   });
 
   it("rejects upload responses that return ok:false with a backend error", async () => {
+    // This test sends and parses a real multipart body through Node fetch.
+    // Use its matching File/FormData pair instead of mixing jsdom brands.
+    const nativeForm = await new Response("", {
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    }).formData();
+    vi.stubGlobal("FormData", nativeForm.constructor);
+    vi.stubGlobal("File", NodeFile);
     server.use(
       http.post("http://localhost:3000/api/v1/projects/demo/ingest/upload", async ({ request }) => {
         const body = await request.formData();
         expect(body.get("spine_template")).toBe("drama");
-        expect(body.get("file")).toMatchObject({ size: 9, type: "text/plain" });
+        const file = body.get("file") as File;
+        expect(file).toMatchObject({ name: "broken.txt", size: 3, type: "text/plain" });
+        expect(await file.text()).toBe("bad");
         return HttpResponse.json({ ok: false, error: "解析章节失败: 文件编码不支持" });
       }),
     );

@@ -840,6 +840,7 @@ class VisualBeat(BaseModel):
     beat_number: int = Field(description="节拍序号（从1开始）")
     narration_segment: str = Field(description="这段解说词（中文）")
     visual_description: str = Field(description="对应画面描述（中文，创意意图描述）")
+    source_text_sha256: str = Field(default="", description="生成镜头时实际输入文本的 SHA256")
 
     time_of_day: str = Field(
         default="",
@@ -1418,6 +1419,7 @@ class NovelVisualBeat(BaseModel):
     episode_number: int = Field(..., description="所属集数")
     narration: str = Field(default="", description="TTS 文本（旁白或台词，用于嵌入索引）")
     visual_description: str = Field(default="", description="画面描述（创意意图）")
+    source_text_sha256: str = Field(default="", description="生成镜头时实际输入文本的 SHA256")
 
     time_of_day: str = Field(
         default="",

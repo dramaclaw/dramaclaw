@@ -316,6 +316,8 @@ describe("episode scene / prop planning", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
+    const referencesKey = queryKeys.assetReferenceDetail("demo", '["scene:宫门"]');
+    queryClient.setQueryData(referencesKey, { references: { "scene:宫门": [] } });
     const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
     const { result } = renderHook(() => usePlanEpisodeScenes("demo"), {
       wrapper: wrapperWithClient(queryClient),
@@ -338,6 +340,13 @@ describe("episode scene / prop planning", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: queryKeys.scenes("demo"),
     });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: queryKeys.beats("demo", 1),
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: queryKeys.script("demo", 1),
+    });
+    expect(queryClient.getQueryState(referencesKey)?.isInvalidated).toBe(true);
   });
 
   it("accepts queued episode scene planning tasks without requiring episode detail", async () => {

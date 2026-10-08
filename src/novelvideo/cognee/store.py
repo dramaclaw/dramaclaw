@@ -2213,6 +2213,7 @@ class CogneeStore:
                     episode_number=script.episode_number,
                     narration=beat.narration_segment,
                     visual_description=beat.visual_description,
+                    source_text_sha256=getattr(beat, "source_text_sha256", "") or "",
                     time_of_day=getattr(beat, "time_of_day", "") or "",
                     detected_identities_json=_json_list_payload(
                         normalize_detected_identities(detected_identities)

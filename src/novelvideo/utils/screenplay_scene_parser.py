@@ -13,6 +13,7 @@ import re
 
 
 TIME_TOKENS = {
+    "白天",
     "日",
     "夜",
     "晨",
