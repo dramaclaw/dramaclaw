@@ -17,7 +17,7 @@ from typing import Any
 
 import numpy as np
 
-RENDER_WIDTH = 1024
+RENDER_LONG_EDGE = 1024
 _SUPERSAMPLE = 2
 _NEAR = 0.05
 _BACKGROUND = "#eef1f5"
@@ -125,16 +125,25 @@ def render_blockout(
     objects: list[dict[str, Any]],
     *,
     image_aspect: float,
-    width: int = RENDER_WIDTH,
+    long_edge: int = RENDER_LONG_EDGE,
     labels: bool = True,
 ) -> bytes:
-    """PNG of the compiled objects seen from their camera, at the picture's aspect."""
+    """PNG of the compiled objects seen from their camera, at the picture's aspect.
+
+    The picture is fitted into a `long_edge` square: its long side is `long_edge`
+    pixels and the short side follows the aspect. A reference picture comes in at
+    any proportion, so the long side is what is fixed; a width that is fixed
+    turns a tall strip into a canvas millions of rows high.
+    """
     from PIL import Image, ImageDraw, ImageFont
 
     props = [o for o in objects if o.get("kind") == "prop"]
     camera = next(o for o in objects if o.get("kind") == "camera")
     position, forward, right, up, focal = _camera_basis(camera)
-    height = int(round(width / image_aspect))
+    if image_aspect >= 1:
+        width, height = long_edge, max(1, int(round(long_edge / image_aspect)))
+    else:
+        width, height = max(1, int(round(long_edge * image_aspect))), long_edge
     w, h = width * _SUPERSAMPLE, height * _SUPERSAMPLE
     light = np.array([0.35, 0.8, 0.5])
     light /= np.linalg.norm(light)

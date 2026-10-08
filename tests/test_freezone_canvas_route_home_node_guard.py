@@ -261,8 +261,9 @@ def test_only_canvas_routes_opt_out_of_the_home_node_guard() -> None:
 
     # 取证口径（`TCP-P60`）：freezone 79 条路由全过同一个解析器，画布只占 14 条；
     # 之后新增的跨项目素材拷贝路由（assets/copy）和视频延长路由也走守卫，计 81；
-    # 2026-09-29 参考图转白模路由（image-to-blockout）同样走守卫，计 82。
-    assert router_decorators == 82
+    # 2026-09-29 参考图转白模路由（image-to-blockout）同样走守卫，计 82；
+    # 2026-10-08 白模模型列表路由（blockout/models）也走守卫，计 83。
+    assert router_decorators == 83
     assert len(canvas_routes) == 14
 
     # 正向：14 条画布路由必须全部、且每一处调用都 opt-out。

@@ -138,6 +138,7 @@ async def _ask_model(
     model_settings: dict | None,
     timeout_seconds: float,
     egress_context: TrustedEgressContext | None,
+    operation_tag: str,
 ) -> str:
     from novelvideo.freezone import vision_gateway
 
@@ -155,6 +156,7 @@ async def _ask_model(
         prompt=prompt,
         images=[image.data for image in images],
         timeout_seconds=timeout_seconds,
+        operation_tag=operation_tag,
     )
     try:
         _model, text = await vision_gateway.call_freezone_vision_model(
@@ -286,7 +288,14 @@ async def generate_blockout_from_image(
             image_size=image_size,
         )
 
+    # 一个任务要问模型好几次（草稿、重试、评审、评审的补救），组织出网的操作登记
+    # 按业务任务号去重，所以每一次都要有自己的序号；序号按调用顺序编，任务重跑时
+    # 同一次调用拿到同一个号，重放的是它自己。
+    calls = 0
+
     async def ask(prompt: str, *images) -> tuple[str, float]:
+        nonlocal calls
+        calls += 1
         started = time.monotonic()
         text = await _ask_model(
             prompt=prompt,
@@ -295,6 +304,7 @@ async def generate_blockout_from_image(
             model_settings=model_settings,
             timeout_seconds=timeout_seconds,
             egress_context=egress_context,
+            operation_tag=f"call-{calls}",
         )
         return extract_program(text), round(time.monotonic() - started, 3)
 

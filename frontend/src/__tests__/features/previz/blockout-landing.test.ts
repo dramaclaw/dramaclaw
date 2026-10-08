@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-// 「参考图转白模」结果落地：编辑器开着就进 store（自动保存再写回节点），关着就直接
-// 写进节点数据。两条路都由画布的恢复路径调用，所以这里不碰任何 hook。
+// 「参考图转白模」结果落地：编辑器开着就进 store 并当场写回节点，关着就直接写进
+// 节点数据。两条路都由画布的恢复路径调用，所以这里不碰任何 hook。
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 
@@ -65,7 +65,7 @@ beforeEach(() => {
 });
 
 describe("landBlockoutResult with the editor open on that node", () => {
-  it("imports into the store as one undo step and leaves the node scene to autosave", () => {
+  it("imports into the store as one undo step and writes the scene onto the node at once", () => {
     usePrevizStore.getState().loadScene(createDefaultScene(), "previz-1");
 
     const patch = landBlockoutResult({
@@ -78,7 +78,13 @@ describe("landBlockoutResult with the editor open on that node", () => {
 
     expect(storeIds()).toEqual(["blockout-box_0", "blockout-box_1", "blockout-box_2"]);
     expect(usePrevizStore.getState().past).toHaveLength(1);
-    expect(patch).toEqual({ blockoutHeld: null });
+    // 写回不等自动保存的 600ms 窗口：任务句柄跟着这份补丁一起清，刷新页面也不会
+    // 出现「句柄没了、节点上还是旧场景」的窗口。写回之后 store 是干净的，自动保存
+    // 没有第二份要写。
+    expect(patch.blockoutHeld).toBeNull();
+    expect((patch.scene as PrevizScene).objects.map((object) => object.id)).toEqual(storeIds());
+    expect(patch.summary).toMatchObject({ objectCount: 3 });
+    expect(usePrevizStore.getState().dirty).toBe(false);
     // 全局 toaster 只显示一条、只停 2.2 秒：意见和「已生成」合成一条，给够时间读。
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.warning).toHaveBeenCalledTimes(1);
@@ -86,6 +92,27 @@ describe("landBlockoutResult with the editor open on that node", () => {
       description: 'previz.blockout.warnings:{"count":1}\na 悬空',
       duration: 8_000,
     });
+  });
+
+  it("undoes the import and holds the job when the node cannot carry the scene", () => {
+    usePrevizStore.getState().loadScene(createDefaultScene(), "previz-1");
+    const bulky = result(3);
+    for (const object of bulky.objects) object.name = "x".repeat(400_000);
+
+    const patch = landBlockoutResult({
+      nodeId: "previz-1",
+      nodeData: { scene: null },
+      jobId: "job-1",
+      body: bulky,
+      mode: "replace",
+    });
+
+    expect(storeIds()).toEqual([]);
+    expect(usePrevizStore.getState().past).toHaveLength(0);
+    expect(patch).toEqual({
+      blockoutHeld: { jobId: "job-1", rejection: { reason: "too-large", bytes: expect.any(Number) } },
+    });
+    expect(toast.error).toHaveBeenCalledTimes(1);
   });
 
   it("lists at most three warnings, in order", () => {

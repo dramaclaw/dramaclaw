@@ -135,12 +135,12 @@ describe("resumeNodeGeneration for a previz node", () => {
     await promise;
 
     const patch = updateNodeData.mock.calls[0]![1] as Record<string, unknown>;
-    expect(patch.scene).toBeUndefined();
-    expect(usePrevizStore.getState().scene.objects.map((object) => object.id)).toEqual([
-      "blockout-box_0",
-      "blockout-box_1",
-    ]);
-    expect(usePrevizStore.getState().dirty).toBe(true);
+    const storeIds = usePrevizStore.getState().scene.objects.map((object) => object.id);
+    expect(storeIds).toEqual(["blockout-box_0", "blockout-box_1"]);
+    // 场景当场写回节点，store 标为已保存：刷新页面也丢不掉付过费的结果。
+    expect((patch.scene as PrevizScene).objects.map((object) => object.id)).toEqual(storeIds);
+    expect(patch.summary).toMatchObject({ objectCount: 2 });
+    expect(usePrevizStore.getState().dirty).toBe(false);
   });
 
   it("holds the finished job when its result cannot be fetched, so the paid result is not lost", async () => {

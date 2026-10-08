@@ -93,9 +93,11 @@ function reportLanded(count: number, warnings: string[]): void {
 /**
  * 把取回的结果写进预演台节点，返回要合进 node.data 的补丁。
  *
- * 编辑器正开着这个节点时，结果进 store（一步可撤销），场景由编辑器的自动保存写回
- * 节点；补丁里就不带 `scene`，否则会跟自动保存打架。其余情形——编辑器关着、或开着
- * 别的节点——直接从节点数据里读场景、导入、写回。
+ * 编辑器正开着这个节点时，结果进 store（一步可撤销），然后当场从 store 里把场景写回
+ * 节点、把 store 标成已保存。不能把写回留给编辑器的自动保存：那要等 600ms 的防抖
+ * 窗口，而调用方拿到补丁就清任务句柄，这段时间里刷新页面，节点上是旧场景、句柄
+ * 也没了，付过费的结果就取不回来。写回之后 store 是干净的，自动保存没有第二份要写。
+ * 其余情形——编辑器关着、或开着别的节点——直接从节点数据里读场景、导入、写回。
  *
  * 放不下时把任务号留在 `blockoutHeld` 上，对话框据此提供「再试一次」。
  */
@@ -114,12 +116,20 @@ export function landBlockoutResult(params: {
     const before = new Set(store.scene.objects);
     const rejection = store.importBlockout(payload, mode);
     if (rejection) return { blockoutHeld: holdOrDrop(jobId, rejection) };
+    const imported = usePrevizStore.getState();
+    const flush = buildNodeScenePatch(imported.scene);
+    if (!flush.ok) {
+      // 节点装不下：导入是一步撤销，退掉它，不留一份只在编辑器里、存不下去的场景。
+      imported.undo();
+      return { blockoutHeld: holdOrDrop(jobId, { reason: 'too-large', bytes: flush.bytes }) };
+    }
+    imported.markSaved();
     // 数实际落进场景的几何体，而不是结果里报的数：导入会丢掉不认识的记录。
-    const count = usePrevizStore
-      .getState()
-      .scene.objects.filter((object) => object.kind === 'prop' && !before.has(object)).length;
+    const count = imported.scene.objects.filter(
+      (object) => object.kind === 'prop' && !before.has(object),
+    ).length;
     reportLanded(count, warnings);
-    return { blockoutHeld: null };
+    return { ...flush.patch, blockoutHeld: null };
   }
 
   let scene;

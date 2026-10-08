@@ -4,6 +4,8 @@ import io
 import json
 from pathlib import Path
 
+import numpy as np
+import pytest
 from PIL import Image
 
 from novelvideo.director_world.blockout.render import render_blockout
@@ -27,8 +29,30 @@ def test_render_is_a_png_with_the_aspect_of_the_reference_picture():
     assert image.size == (1024, 576)
     # A 4:3 picture gets a 4:3 render, so what the model sees lines up with the reference.
     assert _decode(
-        render_blockout(GOLDEN["compiled"]["objects"], image_aspect=4 / 3, width=400)
+        render_blockout(GOLDEN["compiled"]["objects"], image_aspect=4 / 3, long_edge=400)
     ).size == (400, 300)
+
+
+@pytest.mark.parametrize("image_aspect", [1 / 1280, 1 / 3, 3.0, 1280.0])
+def test_the_render_fits_the_picture_into_a_fixed_box(image_aspect, monkeypatch):
+    # A reference picture comes in at any proportion (the front end only hints at
+    # extreme ones), so the long side is what is fixed: a 1×1280 strip gets a
+    # 1×1024 canvas, not a 1024-wide one 1.3 million pixels tall.
+    shapes: list[tuple[int, ...]] = []
+    real_full = np.full
+
+    def counting_full(shape, *args, **kwargs):
+        shapes.append(tuple(shape))
+        return real_full(shape, *args, **kwargs)
+
+    monkeypatch.setattr(np, "full", counting_full)
+
+    image = _decode(render_blockout(GOLDEN["compiled"]["objects"], image_aspect=image_aspect))
+
+    assert max(image.size) == 1024
+    assert min(image.size) >= 1
+    assert (image.size[0] >= image.size[1]) == (image_aspect >= 1)
+    assert shapes and all(shape[0] * shape[1] <= (2 * 1024) ** 2 for shape in shapes)
 
 
 def test_render_draws_the_scene_from_the_reference_camera():

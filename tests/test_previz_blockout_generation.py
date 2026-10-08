@@ -23,7 +23,10 @@ from novelvideo.director_world.blockout.generation_agent import (
     resolve_blockout_model_settings,
     resolve_blockout_timeout_seconds,
 )
+from novelvideo.egress_context import TrustedEgressContext
 from novelvideo.freezone import presets, vision_gateway
+from novelvideo.ports.authz import BillingPrincipal
+from novelvideo.ports.model_credentials import CredentialReference
 
 FIXTURES = Path(__file__).parent / "fixtures" / "previz_blockout"
 GOLDEN_PROGRAM = (FIXTURES / "golden.blockout.dsl").read_text(encoding="utf-8")
@@ -494,6 +497,67 @@ async def test_every_attempt_claims_and_settles_its_own_egress(
         ("complete", GOLDEN_PROGRAM),
     ]
     assert [call["transport_context"] for call in fake.calls] == ["transport"] * 2
+
+
+def organization_egress_context() -> TrustedEgressContext:
+    return TrustedEgressContext(
+        envelope_id="env-blockout",
+        project_id="project-blockout",
+        task_type="freezone_image_to_blockout",
+        requester_user_id="user-blockout",
+        root_task_id="root-blockout",
+        admission_id="admission-blockout",
+        admitted_at="2026-10-08T00:00:00Z",
+        membership_id="membership-blockout",
+        authz_version=3,
+        billing_principal=BillingPrincipal(kind="organization", id="org-blockout"),
+        credential=CredentialReference(
+            source="organization",
+            credential_id="credential-blockout",
+            key_version=7,
+            org_id="org-blockout",
+        ),
+    )
+
+
+async def test_every_model_call_of_an_organization_job_claims_its_own_operation(
+    image_path, model, monkeypatch
+):
+    # Through the real prepare helper, caught where the claim is built. The registry
+    # keys an operation on root task, business task and capability, not on the
+    # request, so a second call under the task's own id is a replay however
+    # different its prompt: the retry after a broken draft and every review round
+    # need an identity of their own, and the same one again when the task is rerun.
+    from novelvideo.generators import nanobanana_grid
+
+    claims: list[dict] = []
+
+    async def capture(**kwargs):
+        claims.append(kwargs)
+        return None
+
+    monkeypatch.setattr(nanobanana_grid, "_prepare_organization_image_egress", capture)
+    context = organization_egress_context()
+    replies = (BROKEN, GOLDEN_PROGRAM, *([GOLDEN_PROGRAM] * BLOCKOUT_REVIEW_ROUNDS))
+
+    model(*replies)
+    await generate_blockout_from_image(
+        image_path=image_path, render_check=True, egress_context=context
+    )
+    first_run = [claim["business_task_id"] for claim in claims]
+
+    assert len(first_run) == len(replies)
+    assert len(set(first_run)) == len(replies)
+    assert all(task_id.startswith(f"{context.envelope_id}:") for task_id in first_run)
+    assert {claim["capability"] for claim in claims} == {"freezone.vision.analyze"}
+    assert all(claim["egress_context"] is context for claim in claims)
+
+    claims.clear()
+    model(*replies)
+    await generate_blockout_from_image(
+        image_path=image_path, render_check=True, egress_context=context
+    )
+    assert [claim["business_task_id"] for claim in claims] == first_run
 
 
 async def test_a_failed_call_abandons_its_egress_as_submitted(

@@ -1447,11 +1447,11 @@ frontend/src/features/previz/ui/PrevizTimelineTrack.tsx,Elastic-2.0,2026 SuperTa
 frontend/src/features/previz/ui/PrevizToolbar.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/previz/ui/PrevizTopDownPicker.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/previz/ui/PrevizViewportControls.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
-frontend/src/features/previz/ui/PrevizViewportHud.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/previz/ui/blockoutMessages.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/previz/ui/motionLabel.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/previz/ui/useAudioImport.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/previz/ui/useBlockoutGeneration.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/previz/ui/useBlockoutModels.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/previz/ui/useCutToCamera.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/previz/ui/useMotionPreview.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/rewards/AccessoryUnlockPrompt.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1548,6 +1548,8 @@ frontend/src/lib/login-community.ts,Elastic-2.0,2026 SuperTale contributors,REUS
 frontend/src/lib/login-posters.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/mask-highlight.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/mask-highlight.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/lib/media-model-catalog-types.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/lib/media-model-catalog-types.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/media-url.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/mention-markers.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/lib/model-task-access.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1832,6 +1834,7 @@ src/novelvideo/director_world/blockout/dsl_parser.py,Elastic-2.0,2026 SuperTale 
 src/novelvideo/director_world/blockout/generation_agent.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/director_world/blockout/plausibility.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/director_world/blockout/prompts.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+src/novelvideo/director_world/blockout/render.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/director_world/blockout/scene_ir.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/director_world/control_frame_compose.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 src/novelvideo/director_world/control_frame_layers.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -2409,6 +2412,7 @@ tests/test_previz_blockout_generation.py,Elastic-2.0,2026 SuperTale contributors
 tests/test_previz_blockout_parser.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_previz_blockout_plausibility.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_previz_blockout_prompts.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_previz_blockout_render.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_previz_blockout_route.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_previz_blockout_task.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_product_surface_routes.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
