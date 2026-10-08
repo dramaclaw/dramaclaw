@@ -17,6 +17,7 @@ import {
   removeTrack,
   rulerTicks,
   setPathAim,
+  playbackEndFrame,
   soloScene,
   splitClip,
   timelineSeconds,
@@ -500,5 +501,33 @@ describe('soloScene', () => {
     const solo = soloScene(scene, [hero.id, 'gone']);
     expect(trackFor(solo, hero.id)?.clips).toHaveLength(1);
     expect(trackFor(solo, extra.id)?.clips).toEqual([]);
+  });
+});
+
+describe('playbackEndFrame', () => {
+  const scene = sceneWith([
+    { id: 'ta', objectId: 'a', clips: [pathClip('a1', 0, 40), pathClip('a2', 50, 70)] },
+    { id: 'tb', objectId: 'b', clips: [pathClip('b1', 0, 100)] },
+    { id: 'tc', objectId: 'c', clips: [] },
+  ]);
+  const total = scene.settings.durationFrames;
+
+  it('runs the full duration when nothing is soloed', () => {
+    expect(playbackEndFrame(scene, [])).toBe(total);
+  });
+
+  it('stops at the last clip end of the soloed tracks', () => {
+    expect(playbackEndFrame(scene, ['a'])).toBe(70);
+    expect(playbackEndFrame(scene, ['a', 'b'])).toBe(100);
+  });
+
+  it('falls back to the full duration when the soloed tracks have no clips', () => {
+    expect(playbackEndFrame(scene, ['c'])).toBe(total);
+    expect(playbackEndFrame(scene, ['gone'])).toBe(total);
+  });
+
+  it('never runs past the duration', () => {
+    const long = sceneWith([{ id: 'ta', objectId: 'a', clips: [pathClip('a1', 0, total + 60)] }]);
+    expect(playbackEndFrame(long, ['a'])).toBe(total);
   });
 });

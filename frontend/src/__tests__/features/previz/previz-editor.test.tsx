@@ -56,13 +56,6 @@ const planePointAt = vi.fn(
 const setStroke = vi.fn((_points: readonly Vec3[] | null) => {});
 const setDrawing = vi.fn((_active: boolean) => {});
 const viewPose = vi.fn(() => ({ position: [6, 4, 8] as Vec3, target: [0, 1, 0] as Vec3 }));
-// 真实现交回切换前的机位；`null` = 这次没切（录制中或渲染器已拆）。默认给一份非空的，
-// 「切不成」那条用例自己用 mockReturnValueOnce(null) 覆盖。
-const applyDrawTopView = vi.fn((): { position: Vec3; target: Vec3 } | null => ({
-  position: [6, 4, 8],
-  target: [0, 1, 0],
-}));
-const applyViewPose = vi.fn((_pose: { position: Vec3; target: Vec3 }) => {});
 const propFootprints = vi.fn((): PrevizTopDownFootprint[] => []);
 const renderCameraPreview = vi.fn();
 // 真实现返回 Promise，桩也得返回一个：编辑器把它接在 void 上下文里，返回 undefined
@@ -77,6 +70,7 @@ const renderQuadPreview = vi.fn();
 const renderCameraView = vi.fn();
 const setViewOverlays = vi.fn();
 const setMonitorSize = vi.fn();
+const setSnapEnabled = vi.fn();
 // 真实现返回 Promise，编辑器直接在返回值上 `.then`，桩成 `vi.fn()` 会当场炸。
 const whenModelsSettled = vi.fn(async () => {});
 const setMotionStatusListener = vi.fn();
@@ -120,8 +114,6 @@ function fakeRenderer() {
     setStroke,
     setDrawing,
     viewPose,
-    applyDrawTopView,
-    applyViewPose,
     propFootprints,
     renderCameraPreview,
     renderCharacterPreview,
@@ -130,6 +122,7 @@ function fakeRenderer() {
     renderCameraView,
     setViewOverlays,
     setMonitorSize,
+    setSnapEnabled,
     whenModelsSettled,
     setMotionStatusListener,
     startRecording,
@@ -1515,8 +1508,6 @@ async function renderEditor(overrides: Partial<ComponentProps<typeof PrevizEdito
       setGizmoMode,
       pickAt,
       pickPathPointAt,
-      applyDrawTopView,
-      applyViewPose,
       applyViewDirection,
       resetView,
     },
@@ -1828,6 +1819,61 @@ describe("PrevizEditor timeline", () => {
 
     fireEvent.keyDown(window, { key: "ArrowLeft" });
     expect(usePrevizStore.getState().timelineFrame).toBe(10);
+  });
+
+  it("opens the model library on T", async () => {
+    await renderEditor();
+
+    fireEvent.keyDown(window, { key: "t" });
+
+    expect(screen.getByRole("dialog", { name: "previz.library.title" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "previz.toolbar.add.prop" })).toHaveAttribute(
+      "aria-keyshortcuts",
+      "T",
+    );
+  });
+
+  // 搜索框里打 t 是在打字。
+  it("does not open the model library on T typed into an input", async () => {
+    await renderEditor();
+    const input = screen.getByLabelText("previz.timeline.duration");
+
+    fireEvent.keyDown(input, { key: "t" });
+
+    expect(screen.queryByRole("dialog", { name: "previz.library.title" })).toBeNull();
+  });
+
+  it("⌘C 复制选中对象，⌘V 连贴两次各自错开并选中新对象", async () => {
+    await renderEditor();
+    const sourceId = usePrevizStore.getState().addObject("light", {
+      transform: { position: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    })!;
+
+    fireEvent.keyDown(window, { key: "c", metaKey: true });
+    fireEvent.keyDown(window, { key: "v", metaKey: true });
+    fireEvent.keyDown(window, { key: "v", ctrlKey: true });
+
+    const lights = usePrevizStore.getState().scene.objects.filter((o) => o.kind === "light");
+    expect(lights.map((o) => o.transform.position)).toEqual([
+      [1, 2, 3],
+      [1.5, 2, 3.5],
+      [2, 2, 4],
+    ]);
+    expect(usePrevizStore.getState().selectedObjectId).toBe(lights[2]!.id);
+    expect(lights[2]!.id).not.toBe(sourceId);
+
+    // 一步 undo 撤掉一次粘贴。
+    fireEvent.keyDown(window, { key: "z", metaKey: true });
+    expect(usePrevizStore.getState().scene.objects.filter((o) => o.kind === "light")).toHaveLength(2);
+  });
+
+  it("没复制过时 ⌘V 什么都不做", async () => {
+    await renderEditor();
+    const before = usePrevizStore.getState().scene.objects.length;
+
+    fireEvent.keyDown(window, { key: "v", metaKey: true });
+
+    expect(usePrevizStore.getState().scene.objects).toHaveLength(before);
   });
 
   it("switches tool with the W and Q keys, matching Blender", async () => {
@@ -3734,6 +3780,20 @@ describe("PrevizEditor reference-image blockout", () => {
 });
 
 describe("PrevizEditor model library", () => {
+  let pickedSpot: [number, number] = [0, 0];
+
+  /**
+   * 选落点那一屏：点一下选位图、再点「放置」。合成点击（`detail: 0`）让选位图落在取景
+   * 中心——jsdom 不排版，走坐标那条路拿不到 rect。落点读数回显的就是它选中的世界 XZ。
+   */
+  async function placeAtPickedSpot(user: ReturnType<typeof userEvent.setup>) {
+    fireEvent.click(screen.getByRole("button", { name: /previz\.characterCreate\.pickHint/ }));
+    const readout = screen.getByLabelText("previz.library.spotLabel").textContent ?? "";
+    pickedSpot = readout.split(" / ").map(Number) as [number, number];
+    expect(pickedSpot.every(Number.isFinite)).toBe(true);
+    await user.click(screen.getByRole("button", { name: "previz.library.place" }));
+  }
+
   function renderEditor() {
     render(
       <PrevizEditor
@@ -3757,12 +3817,25 @@ describe("PrevizEditor model library", () => {
     expect(usePrevizStore.getState().scene.objects).toHaveLength(0);
   });
 
-  it("creates the picked primitive, frames it and closes the library", async () => {
+  it("waits for a spot before creating the picked primitive", async () => {
     const user = userEvent.setup();
     renderEditor();
 
     await user.click(screen.getByRole("button", { name: "previz.toolbar.add.prop" }));
     await user.click(screen.getByRole("button", { name: /^previz\.library\.primitive\.cube/ }));
+
+    // 挑中只是换到选落点那一屏，还没建。
+    expect(usePrevizStore.getState().scene.objects).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "previz.library.place" })).toBeDisabled();
+  });
+
+  it("creates the picked primitive at the chosen spot, frames it and closes the library", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.add.prop" }));
+    await user.click(screen.getByRole("button", { name: /^previz\.library\.primitive\.cube/ }));
+    await placeAtPickedSpot(user);
 
     const objects = usePrevizStore.getState().scene.objects;
     expect(objects).toHaveLength(1);
@@ -3773,6 +3846,8 @@ describe("PrevizEditor model library", () => {
       assetFormat: "primitive",
       assetUrl: "cube",
     });
+    // 落在选位图点定的那一处，贴地。
+    expect(objects[0]!.transform.position).toEqual([pickedSpot[0], 0, pickedSpot[1]]);
     // 与本地导入同一个取景：模型换进来之后再对准，不对着占位方块取景。
     expect(focusObjectWhenReady).toHaveBeenCalledWith(objects[0]!.id);
     expect(screen.queryByRole("dialog", { name: "previz.library.title" })).toBeNull();
@@ -3800,6 +3875,9 @@ describe("PrevizEditor model library", () => {
       screen.getByLabelText("previz.library.importLocal"),
       new File(["o"], "chair.obj"),
     );
+    // 本地文件同样先选落点，选完才开始上传。
+    expect(usePrevizStore.getState().scene.objects).toHaveLength(0);
+    await placeAtPickedSpot(user);
 
     expect(screen.queryByRole("dialog", { name: "previz.library.title" })).toBeNull();
     await waitFor(() => expect(usePrevizStore.getState().scene.objects).toHaveLength(1));
@@ -3809,6 +3887,11 @@ describe("PrevizEditor model library", () => {
       assetFormat: "obj",
       assetUrl: "/static/shot.png",
     });
+    expect(usePrevizStore.getState().scene.objects[0]!.transform.position).toEqual([
+      pickedSpot[0],
+      0,
+      pickedSpot[1],
+    ]);
   });
 
   // 面板必须自己能接住焦点：没有 tabIndex 的 <section> 接不住 focus()，点它空白处时
@@ -3860,111 +3943,113 @@ describe("PrevizEditor model library", () => {
   视线与平面接近平行时落点干脆求不出来。顶视图能解决，用户也愿意切——挡路的是往返，
   画完得自己把镜头转回原来的角度，找不回来。这一组用例钉的就是那趟往返。
 */
-describe("PrevizEditor 画笔俯视", () => {
-  /** 选中一个人物：没选对象时笔画没有归属，画笔那条路会提前打住。 */
-  function selectCharacter() {
+describe("PrevizEditor 画笔视角", () => {
+  // 画笔不接管视角：以前自动切全场景俯视，人物缩成一个点，画的是谁都找不着了。
+  it("选中画笔、画完一笔，视角都不动", async () => {
+    const user = userEvent.setup();
+    const { renderer } = await renderEditor();
     const objectId = usePrevizStore.getState().addObject("character");
     act(() => usePrevizStore.getState().selectObject(objectId!));
-  }
 
-  /** 画一笔。松手会把工具落回移动工具，于是「离开画笔」那条路也一起跑到。 */
-  function drawStroke() {
+    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
     const canvas = screen.getByTestId("previz-canvas");
     fireEvent.pointerDown(canvas, { clientX: 10, clientY: 10 });
     fireEvent.pointerMove(canvas, { clientX: 40, clientY: 10 });
     fireEvent.pointerUp(canvas, { clientX: 40, clientY: 10 });
+
+    expect(renderer.applyViewDirection).not.toHaveBeenCalled();
+    expect(renderer.resetView).not.toHaveBeenCalled();
+  });
+});
+
+describe("PrevizEditor 右键菜单", () => {
+  const menu = () => within(screen.getByTestId("previz-context-menu"));
+  const noMenu = () => expect(screen.queryByTestId("previz-context-menu")).toBeNull();
+
+  function rightClick(canvas: HTMLElement, x: number, y: number, dragTo = x) {
+    fireEvent.pointerDown(canvas, { clientX: x, clientY: y, button: 2 });
+    fireEvent.pointerUp(canvas, { clientX: dragTo, clientY: y, button: 2 });
   }
 
-  it("选中画笔就切到俯视", async () => {
-    const user = userEvent.setup();
+  it("右键空地给添加对象与撤销重做", async () => {
     const { renderer } = await renderEditor();
-    selectCharacter();
+    renderer.pickAt.mockReturnValueOnce(null);
 
-    expect(renderer.applyDrawTopView).not.toHaveBeenCalled();
+    rightClick(screen.getByTestId("previz-canvas"), 20, 20);
 
-    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
+    expect(menu().getByRole("button", { name: "previz.toolbar.add.character" })).toBeInTheDocument();
+    expect(menu().getByRole("button", { name: /previz\.editor\.undo/ })).toBeDisabled();
+    const before = usePrevizStore.getState().scene.objects.length;
+    fireEvent.click(menu().getByRole("button", { name: "previz.toolbar.add.light" }));
 
-    expect(renderer.applyDrawTopView).toHaveBeenCalledTimes(1);
+    expect(usePrevizStore.getState().scene.objects).toHaveLength(before + 1);
+    // 点完就收起。
+    noMenu();
   });
 
-  it("收笔之后回到进画笔之前那个视角", async () => {
-    const user = userEvent.setup();
+  it("右键对象先选中它，菜单给对象操作", async () => {
     const { renderer } = await renderEditor();
-    selectCharacter();
-    renderer.applyDrawTopView.mockReturnValueOnce({ position: [3, 2, 9], target: [1, 0, 2] });
+    const objectId = usePrevizStore.getState().addObject("character")!;
+    renderer.pickAt.mockReturnValueOnce(objectId);
 
-    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
-    drawStroke();
+    rightClick(screen.getByTestId("previz-canvas"), 20, 20);
 
-    // 还回去的必须是渲染器交出来的那一份，不是编辑器另算的。
-    expect(renderer.applyViewPose).toHaveBeenCalledWith({ position: [3, 2, 9], target: [1, 0, 2] });
+    expect(usePrevizStore.getState().selectedObjectId).toBe(objectId);
+    expect(menu().queryByRole("button", { name: "previz.toolbar.add.character" })).toBeNull();
+    fireEvent.click(menu().getByRole("button", { name: "previz.contextMenu.hide" }));
+    expect(usePrevizStore.getState().scene.objects.find((o) => o.id === objectId)?.visible).toBe(
+      false,
+    );
   });
 
-  // 写法照搬标记工具那条 Esc 用例（"leaves the mark tool on Escape without closing the
-  // editor"）：`fireEvent.keyDown(document.body, ...)` 走的是 base-ui 真实的 Escape 派发
-  // 路径；被编辑器拦下时 `onOpenChange` 这个 prop 根本不会被调到。
-  it("按 Esc 也还原，而且不把整个预演台带走", async () => {
-    const user = userEvent.setup();
+  it("右键删除对象", async () => {
+    const { renderer } = await renderEditor();
+    const objectId = usePrevizStore.getState().addObject("character")!;
+    renderer.pickAt.mockReturnValueOnce(objectId);
+
+    rightClick(screen.getByTestId("previz-canvas"), 20, 20);
+    fireEvent.click(menu().getByRole("button", { name: /previz\.layers\.remove/ }));
+
+    expect(usePrevizStore.getState().scene.objects.some((o) => o.id === objectId)).toBe(false);
+  });
+
+  // 右键拖是 OrbitControls 的平移，拖完不该弹菜单。
+  it("右键拖动不开菜单", async () => {
+    await renderEditor();
+
+    rightClick(screen.getByTestId("previz-canvas"), 20, 20, 80);
+
+    noMenu();
+  });
+
+  it("右键复制对象，再右键空地粘贴", async () => {
+    const { renderer } = await renderEditor();
+    const objectId = usePrevizStore.getState().addObject("light")!;
+    renderer.pickAt.mockReturnValueOnce(objectId);
+    const canvas = screen.getByTestId("previz-canvas");
+
+    rightClick(canvas, 20, 20);
+    // 还没复制过，粘贴是灰的。
+    expect(menu().getByRole("button", { name: /previz\.contextMenu\.paste/ })).toBeDisabled();
+    fireEvent.click(menu().getByRole("button", { name: /previz\.contextMenu\.copy/ }));
+
+    renderer.pickAt.mockReturnValueOnce(null);
+    rightClick(canvas, 20, 20);
+    fireEvent.click(menu().getByRole("button", { name: /previz\.contextMenu\.paste/ }));
+
+    const { scene, selectedObjectId } = usePrevizStore.getState();
+    expect(scene.objects.filter((o) => o.kind === "light")).toHaveLength(2);
+    expect(selectedObjectId).not.toBe(objectId);
+  });
+
+  it("Esc 只关菜单，不关预演台", async () => {
     const onOpenChange = vi.fn();
-    const { renderer } = await renderEditor({ onOpenChange });
-    selectCharacter();
+    await renderEditor({ onOpenChange });
 
-    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
+    rightClick(screen.getByTestId("previz-canvas"), 20, 20);
     fireEvent.keyDown(document.body, { key: "Escape" });
 
-    expect(screen.getByRole("button", { name: "previz.toolbar.tool.draw" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
+    noMenu();
     expect(onOpenChange).not.toHaveBeenCalled();
-    expect(renderer.applyViewPose).toHaveBeenCalledTimes(1);
-  });
-
-  /*
-    用户自己点了视角球，就是「我要去那个视角」。这时候再把他飞回原处是跟人抢——
-    他刚亲手选的东西会当场被撤掉。
-  */
-  it("画笔期间用户自己切了视角就不还原", async () => {
-    const user = userEvent.setup();
-    const { renderer } = await renderEditor();
-    selectCharacter();
-
-    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
-    await user.click(screen.getByRole("button", { name: "previz.viewport.view.front" }));
-    drawStroke();
-
-    expect(renderer.applyViewDirection).toHaveBeenCalledWith("front");
-    expect(renderer.applyViewPose).not.toHaveBeenCalled();
-  });
-
-  /*
-    滚轮缩放、右键平移、中键环绕不算「换视角」——绘制期间只有左键被摘掉，这三样正是
-    用户在俯视里缩到合适范围的手段，把它们算成放弃还原，这个方案就没法用了。它们不经
-    编辑器的处理函数，只经 `onViewChange` 这个通知回调。
-  */
-  it("只是缩放平移，收笔照样还原", async () => {
-    const user = userEvent.setup();
-    const { renderer } = await renderEditor();
-    const instance = await vi.mocked(PrevizRenderer.create).mock.results[0]!.value;
-    selectCharacter();
-
-    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
-    act(() => instance.onViewChange?.({ position: [1, 12, 3], target: [0, 0, 0] }));
-    drawStroke();
-
-    expect(renderer.applyViewPose).toHaveBeenCalledTimes(1);
-  });
-
-  // 录制中渲染器压根不切（返回 null）；编辑器不能留一份假快照等着退出时硬写。
-  it("录制中切不成，退出时也不写回", async () => {
-    const user = userEvent.setup();
-    const { renderer } = await renderEditor();
-    selectCharacter();
-    renderer.applyDrawTopView.mockReturnValueOnce(null);
-
-    await user.click(screen.getByRole("button", { name: "previz.toolbar.tool.draw" }));
-    drawStroke();
-
-    expect(renderer.applyViewPose).not.toHaveBeenCalled();
   });
 });

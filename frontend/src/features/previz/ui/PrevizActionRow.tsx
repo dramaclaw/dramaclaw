@@ -11,6 +11,7 @@ import {
   type PrevizTrack,
 } from '../domain/scene';
 import { actionClipsOf } from '../domain/timeline';
+import { usePrevizStore } from '../store';
 import { motionErrorText, motionLabel } from './motionLabel';
 import { ClipBar, PREVIZ_TRACK_HEADER_PX } from './PrevizTimelineTrack';
 import { PrevizHoverTip } from './PrevizHoverTip';
@@ -58,7 +59,6 @@ export interface PrevizActionRowProps {
   track: PrevizTrack;
   pxPerFrame: number;
   laneWidthPx: number;
-  frame: number;
   selectedClipId: string | null;
   motions: readonly PrevizImportedMotion[];
   motionStatus: Readonly<Record<string, PrevizMotionStatus>>;
@@ -76,7 +76,6 @@ export function PrevizActionRow({
   track,
   pxPerFrame,
   laneWidthPx,
-  frame,
   selectedClipId,
   motions,
   motionStatus,
@@ -88,7 +87,10 @@ export function PrevizActionRow({
   const { t } = useTranslation();
   const clips = actionClipsOf(track);
   // 剃刀只切动作：播放头同时压着一段路径时，切哪段由按的是哪一行的剃刀决定。
-  const current = clips.find((clip) => frame > clip.startFrame && frame < clip.endFrame);
+  // 播放头自己按选择器读，理由同 `PrevizTimelineTrack`：只在压着的那段换了时才重渲。
+  const current = usePrevizStore((state) =>
+    clips.find((clip) => state.timelineFrame > clip.startFrame && state.timelineFrame < clip.endFrame),
+  );
 
   return (
     <div data-testid="previz-action-row" className="flex h-8 items-stretch bg-[#12151b]">

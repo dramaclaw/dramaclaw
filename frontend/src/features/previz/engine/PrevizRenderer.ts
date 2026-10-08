@@ -9,7 +9,9 @@ import { aspectRatio, outputPixelSize, coverFovDeg, DEG_TO_RAD } from '../domain
 import type { PrevizCameraDraft } from '../domain/cameraDraft';
 import type { PrevizCharacterDraft } from '../domain/characterDraft';
 import { dropPositionY, dropRayOriginY } from '../domain/drop';
+import { previzSnapOffset, type PrevizSnapAxes, type PrevizSnapBox } from '../domain/snap';
 import { evaluateSceneAt, type EvaluatedMotion } from '../domain/evaluate';
+import { isPrevizLibraryModelUrl } from '../domain/modelLibrary';
 import type { PrevizPropExtent } from '../domain/moveAssist';
 import type { PrevizMotionStatus } from '../domain/motionLibrary';
 import { PREVIZ_DEFAULT_HEIGHT_CM } from '../domain/objects';
@@ -27,7 +29,6 @@ import {
   PREVIZ_VIEW_NEAR_M,
   boundsCenter,
   boundsRadius,
-  drawTopPlacement,
   framingDistance,
   orbitDepthRange,
   orthoPlacement,
@@ -63,7 +64,7 @@ import { PrevizPathPreview } from './pathPreview';
 import { PrevizStrokePreview } from './strokePreview';
 import { PrevizGizmo, type GizmoMode, type TransformControlsLike } from './gizmo';
 import { createInfiniteGrid } from './grid';
-import { prepareImportedMaterials } from './importedMaterials';
+import { applyClayMaterial, prepareImportedMaterials } from './importedMaterials';
 import { buildPrimitive } from './primitiveBuilder';
 import { PropLoader } from './propLoader';
 import { PREVIZ_PLACEHOLDER_RADIUS, PrevizSceneGraph, type ThreeModule } from './sceneGraph';
@@ -71,6 +72,9 @@ import { PrevizViewOverlays, type PrevizViewOverlayOptions } from './viewOverlay
 
 // 上限 2：3x DPR 设备按原生比例渲染是 9 倍像素，收益远小于开销。
 const MAX_PIXEL_RATIO = 2;
+
+/** 拖动吸附的触发距离，屏幕像素。十来个像素是常见编辑器的手感：够得着，又不会拽着不放。 */
+const SNAP_THRESHOLD_PX = 12;
 
 /**
  * 导入动作下载的超时上限。一条卡住的下载（服务端挂起、CDN 抽风）不设超时的话会一直占着
@@ -208,6 +212,14 @@ const PLACEHOLDER_HEIGHT_M = PREVIZ_DEFAULT_HEIGHT_CM / 100;
 const PLACEHOLDER_HALF_WIDTH_M = PREVIZ_PLACEHOLDER_RADIUS;
 
 /**
+ * 开发期把一段耗时记成 User Timing（`previz:*`），在 DevTools 性能面板里和 React 的
+ * 组件轨对着看，分得清卡在界面、求值还是出图。生产构建里整段被摇掉。
+ */
+function measureDev(name: string, start: number): void {
+  if (import.meta.env.DEV) performance.measure(name, { start, end: performance.now() });
+}
+
+/**
  * 求值器会写回的那两项变了没有。
  *
  * 缩放不算：它不参与求值，跟着算的话缩放一个带轨迹的对象会把它按在原地不动。
@@ -248,6 +260,14 @@ export class PrevizRenderer {
   private capturing = false;
   /** 懒建：从不点画布的会话不需要它。Raycaster 没有 dispose()，纯数学对象，不用还。 */
   private raycaster: THREE.Raycaster | null = null;
+  /** 拖动吸附开关，编辑器右上角那颗磁铁按钮。 */
+  private snapEnabled = true;
+  /**
+   * 这一次拖拽的吸附底稿：别的物件的盒子在拖动期间不会动，拖拽开始时量一次；被拖的
+   * 那件记的是盒子相对自身位置的偏移，每次移动加上当前位置就是它此刻的盒子——平移不改
+   * 形状，不必每帧重走一遍子树。
+   */
+  private snapDraft: { relative: PrevizSnapBox; others: PrevizSnapBox[] } | null = null;
   private currentScene: PrevizScene | null = null;
   private selectionId: string | null = null;
   /**
@@ -507,7 +527,10 @@ export class PrevizRenderer {
           // `propUnitScale` 认这个数、原样放行，不用在这里兜。
           return Math.max(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z);
         },
-        prepareMaterials: (object) => prepareImportedMaterials(three, object),
+        prepareMaterials: (object, prop) =>
+          isPrevizLibraryModelUrl(prop.assetUrl)
+            ? applyClayMaterial(three, object)
+            : prepareImportedMaterials(three, object),
         buildPrimitive: (shape, tone) => buildPrimitive(three, shape, tone),
       }),
     );
@@ -524,6 +547,10 @@ export class PrevizRenderer {
       orbit: controls,
       three,
       dropToSurface: (objectId) => instance.dropToSurface(objectId),
+      snap: {
+        begin: (objectId) => instance.beginSnap(objectId),
+        offset: (objectId, axes) => instance.snapOffset(objectId, axes),
+      },
       // helper 挂在 scene 而不是 objectRoot 下：objectRoot 是拾取与聚焦的取值范围，
       // 手柄挂进去会被射线命中，也会被算进「框全场景」的包围盒里。
       root: scene,
@@ -787,6 +814,7 @@ export class PrevizRenderer {
     // 录制、出图一律按完整场景：独奏是看的工具，不该漏进导出的成片。
     const solved =
       this.recording || this.capturing ? scene : soloScene(scene, this.soloObjectIds);
+    const start = performance.now();
     const evaluated = evaluateSceneAt(solved, this.currentFrame, this.propExtents());
     for (const [objectId, state] of evaluated) {
       // 姿势不归手摆管：拖动一个正在走的人物改的是他站在哪，不是把他的腿定住。
@@ -804,7 +832,10 @@ export class PrevizRenderer {
         state.rotation[2] * DEG_TO_RAD,
       );
     }
+    measureDev('previz:evaluate', start);
+    const groundStart = performance.now();
     this.standGroundCharacters(scene);
+    measureDev('previz:ground', groundStart);
   }
 
   /**
@@ -960,6 +991,64 @@ export class PrevizRenderer {
     // 空地上拖东西永远不落地，正是最常见的那种拖法。
     const surfaceY = hits[0]?.point.y ?? 0;
     return dropPositionY(node.position.y, box.min.y, surfaceY);
+  }
+
+  setSnapEnabled(enabled: boolean): void {
+    this.snapEnabled = enabled;
+  }
+
+  /** 平移拖拽开始：量好吸附要用的盒子。只有物件参与吸附，人物、机位、灯都不吸。 */
+  private beginSnap(objectId: string): void {
+    this.snapDraft = null;
+    if (!this.snapEnabled || this.disposed) return;
+    const object = this.currentScene?.objects.find((entry) => entry.id === objectId);
+    const node = this.graph.nodeFor(objectId);
+    if (object?.kind !== 'prop' || !node) return;
+    const box = new this.three.Box3().setFromObject(node);
+    if (box.isEmpty()) return;
+
+    const others: PrevizSnapBox[] = [];
+    this.measureProps((other, otherBox) => {
+      if (other.id === objectId) return;
+      others.push({
+        minX: otherBox.min.x,
+        maxX: otherBox.max.x,
+        minZ: otherBox.min.z,
+        maxZ: otherBox.max.z,
+      });
+    });
+    if (others.length === 0) return;
+    this.snapDraft = {
+      relative: {
+        minX: box.min.x - node.position.x,
+        maxX: box.max.x - node.position.x,
+        minZ: box.min.z - node.position.z,
+        maxZ: box.max.z - node.position.z,
+      },
+      others,
+    };
+  }
+
+  /**
+   * 这一刻还要额外挪多少米才贴上。阈值按屏幕像素定（`SNAP_THRESHOLD_PX`），折算到被拖
+   * 物件所在的深度：写死成米的话，拉远看全景时几米的缝都吸不上，凑近摆细节时又吸得
+   * 松不开手。
+   */
+  private snapOffset(objectId: string, axes: PrevizSnapAxes): { dx: number; dz: number } | null {
+    const draft = this.snapDraft;
+    const node = this.graph.nodeFor(objectId);
+    if (!draft || !node) return null;
+    const { x, z } = node.position;
+    const moving: PrevizSnapBox = {
+      minX: draft.relative.minX + x,
+      maxX: draft.relative.maxX + x,
+      minZ: draft.relative.minZ + z,
+      maxZ: draft.relative.maxZ + z,
+    };
+    const distance = this.camera.position.distanceTo(node.position);
+    const metresPerPixel =
+      (2 * distance * Math.tan((this.camera.fov * Math.PI) / 360)) / (this.canvas.clientHeight || 1);
+    return previzSnapOffset(moving, draft.others, SNAP_THRESHOLD_PX * metresPerPixel, axes);
   }
 
   /**
@@ -1248,42 +1337,6 @@ export class PrevizRenderer {
       this.camera.aspect,
     );
     this.moveCamera(placement.position, placement.target);
-  }
-
-  /**
-   * 画笔接管视角用的一次性切换：切到俯视，并把切换前的机位交回去，由调用方留着还原。
-   *
-   * 框的是全场景而不是 [currentBounds]，且半径有兜底——理由见 `drawTopPlacement`。
-   * 视角球上那颗「顶视图」照旧走 [applyViewDirection]，框选中对象，两者不是一回事。
-   *
-   * 返回 `null` = 这次没切（已经拆了，或者正在录制）。录制期间 [moveCamera] 本来就不动
-   * 相机，这时候还交出一份快照，调用方会在退出画笔时拿它硬写一次，等于凭空跳一下机位。
-   *
-   * **不幂等**：已经在画笔俯视里再调一次，交回来的就是俯视本身，原机位会丢。调用方
-   * 只该在自己那份快照为空时才写入——`main.tsx` 开着 `StrictMode`，dev 下 effect
-   * 双跑正好会踩这一点。
-   */
-  applyDrawTopView(): PrevizViewPlacement | null {
-    if (this.disposed || this.recording) return null;
-    const previous = this.viewPose();
-    const placement = drawTopPlacement(this.sceneBounds(), EDITOR_FOV_DEG, this.camera.aspect);
-    this.moveCamera(placement.position, placement.target);
-    return previous;
-  }
-
-  /**
-   * 把一份机位快照原样写回相机。画笔退出时的还原走这条。
-   *
-   * 不直接暴露 [moveCamera]：录制拦截、`controls.update()`、`requestRender()` 那三件事都在
-   * 那条唯一的写机位路径上，绕开一次就少一样。传进来的两个数组不留引用——调用方那份
-   * 快照可能还要再用一次（用户切回画笔）。
-   *
-   * 录制中这次还原会被 [moveCamera] 静默丢掉——这里只挡 `disposed`，`recording` 交给
-   * `moveCamera` 兜。
-   */
-  applyViewPose(pose: PrevizViewPlacement): void {
-    if (this.disposed) return;
-    this.moveCamera([...pose.position], [...pose.target]);
   }
 
   /** 聚焦某个对象（F 键）。对象不存在时什么都不做，别把相机甩到原点。 */
@@ -1862,8 +1915,21 @@ export class PrevizRenderer {
   private renderFrame(): void {
     this.needsRender = false;
     this.syncDepthRange();
+    const start = performance.now();
     this.renderer.render(this.scene, this.camera);
-    this.renderMonitor();
+    measureDev('previz:render-main', start);
+    // 监看框复用主视图刚画好的阴影图，不再画第二遍：主光是平行光，阴影相机钉在光上，
+    // 与从哪台相机看无关；监看时藏起来的那些辅助物与机身本来就不投影（见
+    // `sceneGraph.ts` 的 `enableShadows`）。整张 2048² 深度图要把所有投影网格再画一遍，
+    // 大模型一多，这一遍就是每帧里白花的大头。
+    const monitorStart = performance.now();
+    this.renderer.shadowMap.autoUpdate = false;
+    try {
+      this.renderMonitor();
+    } finally {
+      this.renderer.shadowMap.autoUpdate = true;
+    }
+    measureDev('previz:render-monitor', monitorStart);
   }
 
   /**

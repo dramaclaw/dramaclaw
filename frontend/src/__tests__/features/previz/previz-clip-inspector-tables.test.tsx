@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultScene } from '@/features/previz/domain/scene';
 import { usePrevizStore } from '@/features/previz/store';
 import { PrevizClipInspector } from '@/features/previz/ui/PrevizClipInspector';
+import { pickOption } from './previzSelect';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -61,7 +62,7 @@ describe('PrevizClipInspector cut panel', () => {
     const { cutId, camB } = seedCut();
     render(<PrevizClipInspector />);
     const camera = screen.getByRole('combobox', { name: 'previz.clip.cut.camera' });
-    await user.selectOptions(camera, camB);
+    await pickOption(user, camera, camB);
     expect(usePrevizStore.getState().scene.timeline.program[0]).toMatchObject({
       id: cutId,
       cameraId: camB,

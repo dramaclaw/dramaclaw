@@ -76,6 +76,7 @@ type Overrides = Partial<
     | "view"
     | "hasSelection"
     | "quadView"
+    | "snapEnabled"
   >
 >;
 
@@ -88,6 +89,7 @@ function makeHandlers() {
     onViewDirection: vi.fn<ControlsProps["onViewDirection"]>(),
     onFocus: vi.fn<ControlsProps["onFocus"]>(),
     onQuadView: vi.fn<ControlsProps["onQuadView"]>(),
+    onSnapEnabled: vi.fn<ControlsProps["onSnapEnabled"]>(),
   };
 }
 
@@ -103,6 +105,7 @@ function setup(overrides: Overrides = {}): Handlers {
       view={makeViewSource(FRONT_VIEW).source}
       hasSelection
       quadView={false}
+      snapEnabled
       {...overrides}
       {...handlers}
     />,
@@ -181,8 +184,8 @@ describe("PrevizViewportControls", () => {
         .getAllByRole("spinbutton")
         .map((field) => (field as HTMLInputElement).value),
     ).toEqual(["0.5", "1.4"]);
-    // 三个显示模式 + 重置视角。
-    expect(within(groups[3]).getAllByRole("button")).toHaveLength(4);
+    // 三个显示模式 + 重置视角 + 吸附。
+    expect(within(groups[3]).getAllByRole("button")).toHaveLength(5);
   });
 
   /*
@@ -235,6 +238,7 @@ describe("PrevizViewportControls", () => {
         view={makeViewSource(FRONT_VIEW).source}
         hasSelection
         quadView={false}
+        snapEnabled
         {...handlers}
       />,
     );
@@ -307,13 +311,14 @@ describe("PrevizViewportControls", () => {
 
   // 三个模式「有哪几个、按什么顺序」是用户直接看到的东西：只逐个断言「每个都在」的话，
   // 多长一个或换个先后顺序都是全绿。重置视角排在它们后面，隔着一条分隔线。
-  it("lists the three display modes in order, then reset view", () => {
+  it("lists the three display modes in order, then reset view and snap", () => {
     setup();
 
     const cluster = within(screen.getByRole("group", { name: "previz.viewport.group.display" }));
     const expected = [
       ...DISPLAY_MODES.map((mode) => `previz.viewport.display.${mode}`),
       "previz.viewport.resetView",
+      "previz.viewport.snap",
     ];
     expect(
       cluster.getAllByRole("button").map((control) => control.getAttribute("aria-label")),
@@ -512,5 +517,18 @@ describe("PrevizViewportControls", () => {
     expect(handlers.onQuadView).toHaveBeenCalledTimes(1);
     expect(handlers.onQuadView).toHaveBeenCalledWith(next);
     expectOnly(handlers, "onQuadView");
+  });
+});
+
+describe("PrevizViewportControls 吸附开关", () => {
+  it("shows the snap state and toggles it", async () => {
+    const user = userEvent.setup();
+    const handlers = setup({ snapEnabled: true });
+
+    const button = screen.getByRole("button", { name: "previz.viewport.snap" });
+    expect(button).toHaveAttribute("aria-pressed", "true");
+    await user.click(button);
+
+    expect(handlers.onSnapEnabled).toHaveBeenCalledWith(false);
   });
 });

@@ -20,6 +20,7 @@ import {
 } from "@/features/previz/domain/topDownMap";
 import { PREVIZ_TOP_DOWN_PICKER_SIZE } from "@/features/previz/ui/PrevizTopDownPicker";
 import { PrevizCharacterCreateDialog } from "@/features/previz/ui/PrevizCharacterCreateDialog";
+import { pickOption } from "./previzSelect";
 
 // 回显 key，与 previz-camera-create-dialog.test.tsx 同一个做法：断言里出现的是 key
 // 本身，改一句中文文案不该让这个文件变红。带插值的 key 把参数一起回显：三根姿态轴的
@@ -199,9 +200,9 @@ describe("PrevizCharacterCreateDialog", () => {
     fireEvent.change(screen.getByLabelText("previz.characterCreate.customColor"), {
       target: { value: "#0a1b2c" },
     });
-    await user.selectOptions(screen.getByLabelText("previz.inspector.bodyType"), "heavy");
-    await user.selectOptions(screen.getByLabelText("previz.inspector.basePose"), "crouching");
-    await user.selectOptions(screen.getByLabelText("previz.inspector.heightPolicy"), "plane");
+    await pickOption(user, screen.getByLabelText("previz.inspector.bodyType"), "heavy");
+    await pickOption(user, screen.getByLabelText("previz.inspector.basePose"), "crouching");
+    await pickOption(user, screen.getByLabelText("previz.inspector.heightPolicy"), "plane");
     fireEvent.change(screen.getByLabelText("previz.inspector.heightCm"), {
       target: { value: "191" },
     });

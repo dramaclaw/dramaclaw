@@ -123,6 +123,14 @@ function identityTransform(): PrevizTransform {
 }
 
 /**
+ * 新物件落在俯视图点定的那一处（世界 XZ）。y 取 0：物件与人物一样落在地面层，
+ * 要搁到桌面上靠手柄松手时的落地吸附。
+ */
+export function propSpawnTransform(spot: readonly [number, number]): PrevizTransform {
+  return { ...identityTransform(), position: [spot[0], 0, spot[1]] };
+}
+
+/**
  * 同类对象里取「基名 + 空格 + 数字」的最大编号加一。用户改过名的对象匹配不上这个
  * 模式，自然不参与编号——这正是想要的行为，见测试里的说明。
  */
@@ -137,6 +145,28 @@ export function nextObjectName(objects: readonly PrevizObject[], kind: PrevizObj
     if (matched) highest = Math.max(highest, Number(matched[1]));
   }
   return `${base} ${highest + 1}`;
+}
+
+/** 粘贴落点相对原件在 XZ 上各挪这么多米：叠在原地的话，用户看不出已经贴上了。 */
+export const PREVIZ_PASTE_OFFSET_M = 0.5;
+
+/**
+ * 按剪贴板里的对象算出粘贴时交给 `addObject` 的字段：id 由新建重发；位置挪开一格；
+ * 显隐和锁定复位（贴出来的对象是要接着摆的，锁着没法拖）。自动编号的名字（「人物 3」）
+ * 丢掉，让新建按序续号；用户起过的名字（「椅子」）原样保留。时间轴轨道不带——轨道
+ * 挂在对象 id 上，属于场景而不是对象本身。
+ */
+export function pastedObjectOverrides(source: PrevizObject): PrevizObjectOverrides<PrevizObjectKind> {
+  const { id: _id, kind, name, transform, ...rest } = structuredClone(source);
+  const [x, y, z] = transform.position;
+  const autoNamed = new RegExp(`^${PREVIZ_OBJECT_BASE_NAME[kind]} \\d+$`).test(name);
+  return {
+    ...rest,
+    ...(autoNamed ? {} : { name }),
+    transform: { ...transform, position: [x + PREVIZ_PASTE_OFFSET_M, y, z + PREVIZ_PASTE_OFFSET_M] },
+    visible: true,
+    locked: false,
+  };
 }
 
 function baseFields(objects: readonly PrevizObject[], kind: PrevizObjectKind) {

@@ -187,7 +187,8 @@ describe("PropLoader material preparation", () => {
 
     // 改的是缓存里那份源模型，不是某个克隆体：`clone` 对材质是浅克隆，所有克隆体
     // 共用这一批材质，改一次就够。
-    expect(prepareMaterials).toHaveBeenCalledWith(model);
+    // 连同物件一起交出去：渲染器按 URL 决定模型库的模型走白模。
+    expect(prepareMaterials).toHaveBeenCalledWith(model, prop());
   });
 
   it("does it once per url, before anything can clone the model", async () => {
@@ -207,6 +208,6 @@ describe("PropLoader material preparation", () => {
 
     await loader.load({ ...prop(), assetFormat: "glb" } as PrevizProp);
 
-    expect(prepareMaterials).toHaveBeenCalledWith(model);
+    expect(prepareMaterials).toHaveBeenCalledWith(model, expect.anything());
   });
 });

@@ -10,16 +10,33 @@ import {
 
 describe("previz primitive catalogue", () => {
   // 键序就是模型库里卡片的展示顺序，写成字面量：跟着被测模块一起变的断言等于没有断言。
-  it("lists the eight shapes in display order", () => {
+  it("lists the 25 shapes in display order", () => {
     expect(Object.keys(PREVIZ_PRIMITIVE_SHAPES)).toEqual([
       "cube",
+      "cuboid",
+      "roundedBox",
       "sphere",
+      "hemisphere",
+      "ellipsoid",
       "cylinder",
+      "tube",
+      "disc",
       "cone",
-      "plane",
+      "frustum",
+      "pyramid",
+      "squareFrustum",
+      "bipyramid",
       "capsule",
       "wedge",
+      "triangularPrism",
+      "hexagonalPrism",
+      "octagonalPrism",
+      "starPrism",
+      "tetrahedron",
+      "octahedron",
+      "icosahedron",
       "torus",
+      "plane",
     ]);
   });
 

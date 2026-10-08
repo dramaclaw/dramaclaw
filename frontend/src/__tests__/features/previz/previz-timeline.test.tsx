@@ -11,6 +11,7 @@ import {
   PrevizTimeline,
   clampTimelineHeight,
 } from '@/features/previz/ui/PrevizTimeline';
+import { optionValues, pickOption } from './previzSelect';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -88,7 +89,7 @@ describe('PrevizTimeline transport', () => {
     const user = userEvent.setup();
     render(<PrevizTimeline />);
 
-    await user.selectOptions(screen.getByLabelText('previz.timeline.rate'), '2');
+    await pickOption(user, screen.getByLabelText('previz.timeline.rate'), '2');
 
     expect(usePrevizStore.getState().timelineRate).toBe(2);
   });
@@ -279,18 +280,20 @@ describe('PrevizTimeline tracks', () => {
     const objectId = usePrevizStore.getState().addObject('character');
     render(<PrevizTimeline />);
 
-    await user.selectOptions(screen.getByLabelText('previz.timeline.addObject'), objectId!);
+    await pickOption(user, screen.getByLabelText('previz.timeline.addObject'), objectId!);
 
     expect(usePrevizStore.getState().scene.timeline.tracks[0].objectId).toBe(objectId);
   });
 
-  it('offers only objects that have no track yet', () => {
+  it('offers only objects that have no track yet', async () => {
+    const user = userEvent.setup();
     const { objectId } = seedWalk();
+    usePrevizStore.getState().addObject('camera');
     render(<PrevizTimeline />);
 
     // 已经在时间轴上的对象再加一次会撞上「一个对象一条轨道」，下拉框里就不该出现。
-    const picker = screen.getByLabelText('previz.timeline.addObject') as HTMLSelectElement;
-    expect([...picker.options].map((option) => option.value)).not.toContain(objectId);
+    const picker = screen.getByLabelText('previz.timeline.addObject');
+    expect(await optionValues(user, picker)).not.toContain(objectId);
   });
 });
 

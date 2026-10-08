@@ -33,7 +33,7 @@ export interface PropLoaderDeps {
    * 做成注入而不是在这里做，与 `measure` 同理：这一层至今只 import three 的类型、
    * 不碰它的实现——保住这一点，它就还能在没有 WebGL 的环境里测。
    */
-  prepareMaterials: (object: THREE.Object3D) => void;
+  prepareMaterials: (object: THREE.Object3D, prop: PrevizProp) => void;
   /**
    * 按形状名现造一件基础几何体（`assetFormat: 'primitive'`）。渲染器用
    * `primitiveBuilder.ts` 实现。做成注入的理由同 `measure`：这一层只 import three 的类型。
@@ -100,7 +100,7 @@ export class PropLoader {
     this.applyUnitScale(model);
     // 和单位换算同理，烙在缓存里那份源模型上：`clone` 对材质是浅克隆，所有克隆体
     // 共用这一批材质，改一次就够。
-    this.deps.prepareMaterials(model);
+    this.deps.prepareMaterials(model, prop);
     return model;
   }
 

@@ -1,12 +1,24 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
 import type { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { ChevronLeft, ChevronRight, Monitor } from "lucide-react";
 import { toast } from "sonner";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  CanvasContextMenu,
+  type CanvasContextMenuItem,
+} from "@/features/canvas/ui/CanvasContextMenu";
 import {
   Dialog,
   DialogContent,
@@ -53,6 +65,7 @@ import {
 import { hasBlockout } from "./domain/blockout";
 import type { EvaluatedMotion } from "./domain/evaluate";
 import { canAddObject, canAddPrimitive } from "./domain/limits";
+import { pastedObjectOverrides, propSpawnTransform } from "./domain/objects";
 import type { PrevizLibraryEntry } from "./domain/modelLibrary";
 import { drawPlaneHeight } from "./domain/pathDraw";
 import { liveCameraAt } from "./domain/program";
@@ -84,8 +97,8 @@ import { PrevizHoverTip } from "./ui/PrevizHoverTip";
 import { PrevizViewportControls } from "./ui/PrevizViewportControls";
 import type { PrevizViewSource } from "./ui/PrevizAxisGizmo";
 import type { PrevizAxisView } from "./domain/axisGizmo";
-import type { PrevizObjectKind, PrevizScene, Vec3 } from "./domain/scene";
-import { PREVIZ_DEFAULT_VIEW, type PrevizViewDirection, type PrevizViewPlacement } from "./domain/view";
+import type { PrevizObject, PrevizObjectKind, PrevizScene, Vec3 } from "./domain/scene";
+import { PREVIZ_DEFAULT_VIEW, type PrevizViewDirection } from "./domain/view";
 
 interface PrevizEditorProps {
   open: boolean;
@@ -196,6 +209,18 @@ const TOOL_GIZMO_MODE: Record<PrevizTool, GizmoMode | null> = {
  * （鼠标在别处松开、笔离开数位板都能造出这种时序），而捕获失败只是「画出视口那段丢了」，
  * 不该把整笔轨迹连同后面的 pointerup 一起吞掉。
  */
+/**
+ * 把播放头帧号交给子节点，只让这一小块跟着播放头重渲。
+ *
+ * 编辑器本身不订阅帧号：播放时它每秒变几十次，订在根上就是整个编辑器（对象列表、
+ * 属性面板、整条时间轴）每帧重渲一遍，场景一大播放就卡。三维视图那头走 store 订阅
+ * 直接推给渲染器，见下面同步播放头的那两个 effect。
+ */
+function AtPlayhead({ children }: { children: (frame: number) => ReactNode }) {
+  const frame = usePrevizStore((state) => state.timelineFrame);
+  return children(frame);
+}
+
 function capturePointer(event: PointerEvent<HTMLCanvasElement>): void {
   try {
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -223,6 +248,20 @@ export function PrevizEditor({
   // 正好压在画中画的角上，React 这边得跟着量一份画布尺寸——两边都走
   // `monitorViewportRect`，位置才不会各算各的。
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+  /**
+   * 视口右键菜单：`x`/`y` 相对视口那一格，`objectId` 是右键点中的对象（点空地为 null），
+   * 决定菜单给「对象操作」还是「添加对象」。
+   */
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    objectId: string | null;
+  } | null>(null);
+  /**
+   * 复制下来的对象快照（深拷贝）。只活在编辑器里、不进系统剪贴板：场景对象不是文本，
+   * 跨应用贴出去没有意义。每粘一次就换成刚贴出的那份，连按 ⌘V 会一路错开而不是叠在一处。
+   */
+  const [clipboard, setClipboard] = useState<PrevizObject | null>(null);
   // 渲染器也进 state 而不是 ref：面板的回调要在它就绪后重新绑定，ref 变化不会触发重渲染。
   const [renderer, setRenderer] = useState<PrevizRenderer | null>(null);
   /**
@@ -252,13 +291,6 @@ export function PrevizEditor({
    */
   const strokeHeight = useRef(0);
   /**
-   * 画笔接管视角期间，进画笔之前那台相机停在哪。
-   *
-   * `null` = 没有要还的东西：不在画笔里、录制中没切成、或者用户自己又切了视角
-   * （那之后再飞回去就是跟人抢）。
-   */
-  const drawReturnPose = useRef<PrevizViewPlacement | null>(null);
-  /**
    * 正在逐点打的那条轨迹：给哪个对象打、落进了哪条片段、点投在多高的平面上。null 表示
    * 还没打第一个点。
    *
@@ -287,6 +319,8 @@ export function PrevizEditor({
    * 大部分时间只看透视那一块。
    */
   const [quadView, setQuadView] = useState(false);
+  /** 拖动物件时贴边吸附（见 `domain/snap.ts`）。默认开：拼地块、靠墙摆放是最常见的摆法。 */
+  const [snapEnabled, setSnapEnabled] = useState(true);
   /** 正在录的那一路；null 就是没在录。 */
   const [recording, setRecording] = useState<PrevizRecordMode | null>(null);
   /** 录制进度 0..1，只喂按钮上的读数。 */
@@ -372,7 +406,6 @@ export function PrevizEditor({
   const setPathSpacing = usePrevizStore((state) => state.setPathSpacing);
   const pathSpeedMps = usePrevizStore((state) => state.pathSpeedMps);
   const setPathSpeed = usePrevizStore((state) => state.setPathSpeed);
-  const timelineFrame = usePrevizStore((state) => state.timelineFrame);
   const soloObjectIds = usePrevizStore((state) => state.soloObjectIds);
   const timelinePlaying = usePrevizStore((state) => state.timelinePlaying);
   const timelineRate = usePrevizStore((state) => state.timelineRate);
@@ -491,7 +524,7 @@ export function PrevizEditor({
   const quadCameraId = quadCamera?.id ?? null;
 
   /**
-   * 道具在地面上占的那几块地，只在创建人物对话框开着时量。
+   * 道具在地面上占的那几块地，只在创建人物对话框或模型库（选落点那一步）开着时量。
    *
    * 量的时机是「打开那一刻」：对话框是模态的，开着的时候场景不会变，而每渲染一次量
    * 一遍要对整个布景重跑 `Box3.setFromObject`（遍历每棵子树的全部几何体）。交出来的
@@ -500,9 +533,9 @@ export function PrevizEditor({
    * 依赖里只有这两个：`renderer` 是因为首帧它还是 null（异步建出来的），关掉时回到
    * 空数组则是顺手把这份快照丢掉，免得下次打开先闪一帧旧数据。
    */
-  const characterFootprints = useMemo(
-    () => (characterCreateOpen ? (renderer?.propFootprints() ?? []) : []),
-    [characterCreateOpen, renderer],
+  const topDownFootprints = useMemo(
+    () => (characterCreateOpen || libraryOpen ? (renderer?.propFootprints() ?? []) : []),
+    [characterCreateOpen, libraryOpen, renderer],
   );
 
   const canAdd = useMemo(
@@ -645,6 +678,10 @@ export function PrevizEditor({
   }, [renderer, showOutline, showNamePlate]);
 
   useEffect(() => {
+    renderer?.setSnapEnabled(snapEnabled);
+  }, [renderer, snapEnabled]);
+
+  useEffect(() => {
     renderer?.setMonitorSize(monitorSize);
   }, [renderer, monitorSize]);
 
@@ -658,13 +695,26 @@ export function PrevizEditor({
 
   // 视口里那圈直播红框标的是「此刻正在播的是谁」，所以它认镜头轨与播放头，而不是监看：
   // 手选脱离跟随之后，监看看的是 A、正在播的仍是 B，两者本来就该各画各的。
-  // 依赖只列 `scene.timeline.program`：`liveCameraAt` 就读这一条，挂整个 `scene` 会让
+  // 场景只比 `scene.timeline.program`：`liveCameraAt` 就读这一条，比整个 `scene` 会让
   // 拖一下物件也重算一遍。
+  //
+  // 走 store 订阅而不是订阅帧号再挂 effect：后者会让整个编辑器每帧重渲（见 `AtPlayhead`）。
   useEffect(() => {
-    renderer?.setLiveCamera(liveCameraAt(scene, timelineFrame));
-    // （`program` 换了引用不等于真的换了内容：删对象会顺手重建 timeline，于是这条
-    // effect 白跑一次。`setLiveCamera` 首行同 id 就 return，白跑不要钱。）
-  }, [renderer, scene.timeline.program, timelineFrame]);
+    if (!renderer) return undefined;
+    const sync = (state: ReturnType<typeof usePrevizStore.getState>) =>
+      renderer.setLiveCamera(liveCameraAt(state.scene, state.timelineFrame));
+    sync(usePrevizStore.getState());
+    return usePrevizStore.subscribe((state, previous) => {
+      // （`program` 换了引用不等于真的换了内容：删对象会顺手重建 timeline，于是这里
+      // 白跑一次。`setLiveCamera` 首行同 id 就 return，白跑不要钱。）
+      if (
+        state.timelineFrame !== previous.timelineFrame ||
+        state.scene.timeline.program !== previous.scene.timeline.program
+      ) {
+        sync(state);
+      }
+    });
+  }, [renderer]);
 
   useEffect(() => {
     renderer?.setGizmoMode(gizmoMode);
@@ -674,29 +724,6 @@ export function PrevizEditor({
   // 一笔没画完就切走工具，收尾那一下就不一定跑得到，左键会一直卡在摘掉的状态。
   useEffect(() => {
     renderer?.setDrawing(tool === "draw");
-  }, [renderer, tool]);
-
-  /*
-    画笔画不准的根子是掠射视角：镜头贴近水平时，屏幕上一个像素对应地面上很大一段距离。
-    顶视图能解决，挡路的是往返——画完得自己把镜头转回原来的角度，找不回来。这条 effect
-    把往返自动化。
-
-    挂在 `tool` 上而不是 pointerdown/up 里开关一次，理由同上面的 `setDrawing`：离开画笔
-    有三条路（收笔自动落回移动工具、Esc、手动点别的工具），挂在工具上，三条一起覆盖。
-  */
-  useEffect(() => {
-    if (!renderer || tool !== "draw") return undefined;
-    const previous = renderer.applyDrawTopView();
-    // 切不动就别留快照：录制期间相机本来就不许动，留一份等退出时硬写，画面上就是
-    // 凭空跳一下机位。
-    if (!previous) return undefined;
-    drawReturnPose.current = previous;
-    return () => {
-      const pose = drawReturnPose.current;
-      drawReturnPose.current = null;
-      // 清空的那条路（用户自己切了视角）把 ref 置成了 null，这里就什么都不做。
-      if (pose) renderer.applyViewPose(pose);
-    };
   }, [renderer, tool]);
 
   // 切走标记工具就是这一轮打完了；再切回来是重新起手（改播放头下的那条轨迹），不是接着
@@ -748,9 +775,14 @@ export function PrevizEditor({
     };
   }, [renderer]);
 
+  // 播放头推给渲染器。同上，走订阅，不让编辑器每帧重渲。
   useEffect(() => {
-    renderer?.setFrame(timelineFrame);
-  }, [renderer, timelineFrame]);
+    if (!renderer) return undefined;
+    renderer.setFrame(usePrevizStore.getState().timelineFrame);
+    return usePrevizStore.subscribe((state, previous) => {
+      if (state.timelineFrame !== previous.timelineFrame) renderer.setFrame(state.timelineFrame);
+    });
+  }, [renderer]);
 
   useEffect(() => {
     renderer?.setSoloObjects(soloObjectIds);
@@ -875,6 +907,101 @@ export function PrevizEditor({
     setBlockoutOpen(true);
   }, []);
 
+  const copyObject = useCallback((id: string) => {
+    const object = usePrevizStore.getState().scene.objects.find((candidate) => candidate.id === id);
+    if (object) setClipboard(structuredClone(object));
+  }, []);
+
+  const pasteObject = useCallback(() => {
+    if (!clipboard) return;
+    const overrides = pastedObjectOverrides(clipboard);
+    // `addObject` 走 applyScene（进撤销栈）、查上限、建完即选中新对象。
+    const id = addObject(clipboard.kind, overrides);
+    if (!id) {
+      toast.error(t("previz.editor.limitReached"));
+      return;
+    }
+    const pasted = usePrevizStore.getState().scene.objects.find((object) => object.id === id);
+    if (pasted) setClipboard(structuredClone(pasted));
+  }, [addObject, clipboard, t]);
+
+  // 引用要稳：CanvasContextMenu 拿 onClose 当 effect 依赖，每次渲染换一个会反复重挂监听。
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+
+  const contextMenuSections = (objectId: string | null): CanvasContextMenuItem[][] => {
+    const history: CanvasContextMenuItem[] = [
+      { key: "undo", label: t("previz.editor.undo"), shortcut: "⌘Z", disabled: !canUndo, onSelect: undo },
+      { key: "redo", label: t("previz.editor.redo"), shortcut: "⇧⌘Z", disabled: !canRedo, onSelect: redo },
+    ];
+    const object = objectId ? scene.objects.find((candidate) => candidate.id === objectId) : undefined;
+    if (!object) {
+      const add = (["character", "camera", "light", "prop"] as const).map(
+        (kind): CanvasContextMenuItem => ({
+          key: `add-${kind}`,
+          label: t(`previz.toolbar.add.${kind}`),
+          disabled: !canAdd[kind],
+          onSelect: () => handleAdd(kind),
+        }),
+      );
+      const paste: CanvasContextMenuItem = {
+        key: "paste",
+        label: t("previz.contextMenu.paste"),
+        shortcut: "⌘V",
+        disabled: !clipboard,
+        onSelect: pasteObject,
+      };
+      return [add, [paste], history];
+    }
+    const tracked = scene.timeline.tracks.some((track) => track.objectId === object.id);
+    return [
+      [
+        {
+          key: "focus",
+          label: t("previz.viewport.focus"),
+          shortcut: "F",
+          onSelect: () => renderer?.focusObject(object.id),
+        },
+        {
+          key: "timeline",
+          label: t("previz.contextMenu.addToTimeline"),
+          // 一个对象一条轨道，已经在时间轴上的再加只会加到原来那条上。
+          disabled: tracked,
+          onSelect: () => usePrevizStore.getState().addObjectToTimeline(object.id),
+        },
+        {
+          key: "visible",
+          label: t(object.visible ? "previz.contextMenu.hide" : "previz.contextMenu.show"),
+          onSelect: () => updateObject(object.id, { visible: !object.visible }),
+        },
+        {
+          key: "locked",
+          label: t(object.locked ? "previz.contextMenu.unlock" : "previz.contextMenu.lock"),
+          onSelect: () => updateObject(object.id, { locked: !object.locked }),
+        },
+        {
+          key: "copy",
+          label: t("previz.contextMenu.copy"),
+          shortcut: "⌘C",
+          onSelect: () => copyObject(object.id),
+        },
+        {
+          key: "paste",
+          label: t("previz.contextMenu.paste"),
+          shortcut: "⌘V",
+          disabled: !clipboard,
+          onSelect: pasteObject,
+        },
+        {
+          key: "remove",
+          label: t("previz.layers.remove"),
+          shortcut: "Del",
+          onSelect: () => removeObject(object.id),
+        },
+      ],
+      history,
+    ];
+  };
+
   const handleCreateCamera = useCallback(
     (draft: PrevizCameraDraft) => {
       setCameraPose(null);
@@ -904,7 +1031,7 @@ export function PrevizEditor({
    * 把真布景从上往下画进选位图那块画布。渲染器没就绪、或正在录制时回 `null`，
    * 选位图自己回落到那张 2D 示意图。引用要稳的理由同下面那个预览回调。
    */
-  const handleRenderCharacterTopDown = useCallback(
+  const handleRenderTopDown = useCallback(
     (mapCanvas: HTMLCanvasElement) => renderer?.renderTopDownMap(mapCanvas) ?? null,
     [renderer],
   );
@@ -964,7 +1091,7 @@ export function PrevizEditor({
   );
 
   const handleImportProp = useCallback(
-    async (file: File) => {
+    async (file: File, spot: [number, number]) => {
       const project = readUrl().project;
       if (!project) {
         toast.error(t("previz.editor.noProject"));
@@ -1022,6 +1149,7 @@ export function PrevizEditor({
         name: result.name,
         assetUrl: result.assetUrl,
         assetFormat: result.assetFormat,
+        transform: propSpawnTransform(spot),
       });
       if (!id) {
         toast.error(t("previz.editor.limitReached"));
@@ -1035,13 +1163,14 @@ export function PrevizEditor({
     [addObject, renderer, t],
   );
 
-  const handlePickLibraryEntry = useCallback(
-    (entry: PrevizLibraryEntry) => {
+  const handlePlaceLibraryEntry = useCallback(
+    (entry: PrevizLibraryEntry, spot: [number, number]) => {
       setLibraryOpen(false);
       const id = addObject("prop", {
         name: t(entry.nameKey),
         assetUrl: entry.assetUrl,
         assetFormat: entry.assetFormat,
+        transform: propSpawnTransform(spot),
       });
       if (!id) {
         toast.error(t("previz.editor.limitReached"));
@@ -1232,8 +1361,8 @@ export function PrevizEditor({
           // 场景：录制自己在推播放头，每帧重读 store 只会把中途的编辑读进成片。
           const programScene = freshStore.scene;
           const mixed = playback;
-          // 播放头只按约 10Hz 推进：每推一次整棵编辑器都要重渲一遍，再经 timelineFrame 那个
-          // effect 把这一帧重新解算一次，30fps 下这占掉了每帧预算的一大块；录制是模态的，
+          // 播放头只按约 10Hz 推进：每推一次时间轴上跟着播放头的那几块都要重渲，再经播放头
+          // 订阅把这一帧重新解算一次，30fps 下这占掉了每帧预算的一大块；录制是模态的，
           // 播放头只要看得出在走就够了。首帧与末帧必推：开录播放头要跳回开头（那一帧画在
           // 计时开始之前，不占预算），录完时间轴得停在结尾。
           let lastPushed = Number.NEGATIVE_INFINITY;
@@ -1448,11 +1577,14 @@ export function PrevizEditor({
       // 的 Dialog 收到。开着任意一层时先把它们关掉、吞掉这次 Esc，不然选到一半模型按
       // 一下 Esc 会把整个预演台带走。要放在标记工具那条判断前面：两者都可能同时满足
       // （比如浮层开着、工具还留在上一次的选择上），浮层是「最上面那层」，该它先接。
-      if (
-        !next &&
-        details?.reason === "escape-key" &&
-        (libraryOpen || characterCreateOpen || cameraPose || blockoutOpen)
-      ) {
+      // 右键菜单是最上面那层：它自己在 document 捕获阶段接 Esc 关掉，这里只负责别让同一下
+      // Esc 再把整个预演台带走。
+      if (!next && details?.reason === "escape-key" && contextMenu) {
+        details.cancel();
+        setContextMenu(null);
+        return;
+      }
+      if (!next && details?.reason === "escape-key" && (libraryOpen || characterCreateOpen || cameraPose || blockoutOpen)) {
         details.cancel();
         setLibraryOpen(false);
         setCharacterCreateOpen(false);
@@ -1461,8 +1593,7 @@ export function PrevizEditor({
         return;
       }
       /*
-        画笔下的 Esc 是「这一下不算」，不该把整个预演台带走。落在这里还有一层：退出画笔
-        会顺带把视角还原回去（见上面那条 effect），Esc 于是成了「不画了，把视角也还我」。
+        画笔下的 Esc 是「这一下不算」，不该把整个预演台带走。
 
         笔画还按着时不拦——中途换工具会让 `setDrawing` 把左键重新挂回轨道旋转，视口就在
         笔下转起来了，和 W/Q/G/R/S 那五条守卫是同一个坑。
@@ -1493,6 +1624,7 @@ export function PrevizEditor({
       cameraPose,
       blockoutOpen,
       closeBlockout,
+      contextMenu,
     ],
   );
 
@@ -1535,6 +1667,19 @@ export function PrevizEditor({
         else store.undo();
         return;
       }
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey) {
+        const key = event.key.toLowerCase();
+        if (key === "c" && store.selectedObjectId) {
+          event.preventDefault();
+          copyObject(store.selectedObjectId);
+          return;
+        }
+        if (key === "v") {
+          event.preventDefault();
+          pasteObject();
+          return;
+        }
+      }
       if (event.metaKey || event.ctrlKey || event.altKey) return;
 
       // 1–9 按机位在对象列表里的顺序切镜；没有那一台就当没按。
@@ -1553,8 +1698,6 @@ export function PrevizEditor({
           if (store.selectedObjectId) renderer.focusObject(store.selectedObjectId);
           break;
         case "h":
-          // 用户自己要去别的视角了，画笔那份快照作废——再飞回去就是跟人抢。
-          drawReturnPose.current = null;
           renderer.resetView();
           break;
         // 键位对齐 Blender：W/Q 选指针工具，G/R/S 选变换工具。五颗都在同一条互斥
@@ -1583,6 +1726,12 @@ export function PrevizEditor({
           if (stroke.current) break;
           setTool("scale");
           break;
+        // T 开模型库，和工具栏那颗「模型库」同一条路（上限检查、浮层互斥都在 handleAdd 里）。
+        // 同样挡笔画：浮层盖上来时这一笔就收不了尾了。
+        case "t":
+          if (stroke.current) break;
+          handleAdd("prop");
+          break;
         case " ":
           // 空格是播放/暂停。上面已经挡掉了输入框里的按键，这里不会抢走打字的空格。
           event.preventDefault();
@@ -1605,7 +1754,7 @@ export function PrevizEditor({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, renderer, cutToCamera]);
+  }, [open, renderer, cutToCamera, handleAdd, copyObject, pasteObject]);
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -1660,9 +1809,12 @@ export function PrevizEditor({
                 ref={setCanvas}
                 data-testid="previz-canvas"
                 className="block h-full w-full"
+                // 系统菜单一律压掉：自己的菜单在 pointerup 里按「点还是拖」决定开不开。
+                onContextMenu={(event) => event.preventDefault()}
                 onPointerDown={(event) => {
                   pointerDownAt.current = { x: event.clientX, y: event.clientY };
-                  if (tool !== "draw" || !renderer) return;
+                  // 只有左键落笔：右键留给菜单，中键留给轨道旋转。
+                  if (tool !== "draw" || !renderer || event.button !== 0) return;
                   // 画笔按下这一下不能同时走拾取，否则一笔画完选中的对象已经换人了。
                   pointerDownAt.current = null;
                   capturePointer(event);
@@ -1714,6 +1866,22 @@ export function PrevizEditor({
                   const down = pointerDownAt.current;
                   pointerDownAt.current = null;
                   if (!renderer || !down) return;
+                  // 右键：点一下开菜单，拖开了就是在平移视角（OrbitControls 的右键），不开。
+                  // 点中对象先选中它，菜单里的操作与右侧面板对的是同一个对象。
+                  if (event.button === 2) {
+                    if (Math.hypot(event.clientX - down.x, event.clientY - down.y) > CLICK_SLOP_PX) {
+                      return;
+                    }
+                    const objectId = renderer.pickAt(event.clientX, event.clientY);
+                    if (objectId) selectObject(objectId);
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    setContextMenu({
+                      x: event.clientX - rect.left,
+                      y: event.clientY - rect.top,
+                      objectId,
+                    });
+                    return;
+                  }
                   // 导航工具只负责转视角：点一下不选也不清选中，转到一半误点不会把面板换掉。
                   if (tool === "navigate") return;
                   // 轨道拖拽也会经过 pointerdown/up；位移超过阈值就是在转视角。
@@ -1759,6 +1927,17 @@ export function PrevizEditor({
                   selectObject(renderer.pickAt(event.clientX, event.clientY));
                 }}
               />
+              {contextMenu && (
+                // 包一层不定位的 div 只为测试能圈住菜单（工具栏上有同名按钮）；菜单本身按
+                // offsetParent 定位，落在的仍是视口这一格。
+                <div data-testid="previz-context-menu">
+                  <CanvasContextMenu
+                    position={contextMenu}
+                    sections={contextMenuSections(contextMenu.objectId)}
+                    onClose={closeContextMenu}
+                  />
+                </div>
+              )}
 
               {monitoredCamera && (
                 <PrevizMonitorFrame
@@ -1850,23 +2029,17 @@ export function PrevizEditor({
                 view={viewSource}
                 hasSelection={Boolean(selectedObjectId)}
                 quadView={quadView}
+                snapEnabled={snapEnabled}
                 onDisplayMode={setDisplayMode}
-                onResetView={() => {
-                  // 同 H 键：显式切视角 = 放弃还原。
-                  drawReturnPose.current = null;
-                  renderer?.resetView();
-                }}
+                onResetView={() => renderer?.resetView()}
                 onPathSpacing={setPathSpacing}
                 onPathSpeed={setPathSpeed}
-                onViewDirection={(direction) => {
-                  // 同「重置视角」。视角球任一面都算显式切视角。
-                  drawReturnPose.current = null;
-                  renderer?.applyViewDirection(direction);
-                }}
+                onViewDirection={(direction) => renderer?.applyViewDirection(direction)}
                 onFocus={() => {
                   if (selectedObjectId) renderer?.focusObject(selectedObjectId);
                 }}
                 onQuadView={setQuadView}
+                onSnapEnabled={setSnapEnabled}
               />
 
               {/*
@@ -1887,8 +2060,8 @@ export function PrevizEditor({
               <PrevizCharacterCreateDialog
                 open={characterCreateOpen}
                 objects={scene.objects}
-                footprints={characterFootprints}
-                onRenderTopDown={handleRenderCharacterTopDown}
+                footprints={topDownFootprints}
+                onRenderTopDown={handleRenderTopDown}
                 onRenderPreview={handleRenderCharacterPreview}
                 onCreate={handleCreateCharacter}
                 onClose={() => setCharacterCreateOpen(false)}
@@ -1896,10 +2069,13 @@ export function PrevizEditor({
 
               <PrevizModelLibraryDialog
                 open={libraryOpen}
-                onPick={handlePickLibraryEntry}
-                onImportFile={(file) => {
+                objects={scene.objects}
+                footprints={topDownFootprints}
+                onRenderTopDown={handleRenderTopDown}
+                onPlace={handlePlaceLibraryEntry}
+                onImportFile={(file, spot) => {
                   setLibraryOpen(false);
-                  void handleImportProp(file);
+                  void handleImportProp(file, spot);
                 }}
                 onClose={() => setLibraryOpen(false)}
               />
@@ -1921,21 +2097,25 @@ export function PrevizEditor({
                 }}
                 onClose={closeBlockout}
               />
-              <PrevizMotionLibraryDialog
-                request={motionDialog}
-                scene={scene}
-                frame={timelineFrame}
-                motionStatus={motionStatus}
-                onRenderPreview={handleRenderCharacterPreview}
-                onAdd={addActionClip}
-                onReplace={setClipMotion}
-                onClose={closeMotionDialog}
-                onStageImport={handleStageMotionImport}
-                onCommitImport={handleCommitMotionImport}
-                onDiscardImport={handleDiscardMotionImport}
-                onRenameMotion={renameMotion}
-                onRemoveMotion={removeMotion}
-              />
+              <AtPlayhead>
+                {(frame) => (
+                  <PrevizMotionLibraryDialog
+                    request={motionDialog}
+                    scene={scene}
+                    frame={frame}
+                    motionStatus={motionStatus}
+                    onRenderPreview={handleRenderCharacterPreview}
+                    onAdd={addActionClip}
+                    onReplace={setClipMotion}
+                    onClose={closeMotionDialog}
+                    onStageImport={handleStageMotionImport}
+                    onCommitImport={handleCommitMotionImport}
+                    onDiscardImport={handleDiscardMotionImport}
+                    onRenameMotion={renameMotion}
+                    onRemoveMotion={removeMotion}
+                  />
+                )}
+              </AtPlayhead>
             </div>
           </TooltipProvider>
 
@@ -1945,15 +2125,19 @@ export function PrevizEditor({
             需要这两张参照图留着。
           */}
           {quadView && (
-            <PrevizQuadPreview
-              scene={scene}
-              frame={timelineFrame}
-              cameraId={quadCameraId}
-              cameraName={quadCamera?.name ?? null}
-              subscribeDrag={subscribeDrag}
-              onRenderOrtho={handleQuadPreview}
-              onRenderCamera={handleQuadCamera}
-            />
+            <AtPlayhead>
+              {(frame) => (
+                <PrevizQuadPreview
+                  scene={scene}
+                  frame={frame}
+                  cameraId={quadCameraId}
+                  cameraName={quadCamera?.name ?? null}
+                  subscribeDrag={subscribeDrag}
+                  onRenderOrtho={handleQuadPreview}
+                  onRenderCamera={handleQuadCamera}
+                />
+              )}
+            </AtPlayhead>
           )}
 
           {panelsOpen && (

@@ -57,7 +57,7 @@ describe("PropLoader with primitive props", () => {
     await loader.load(primitive("sphere"));
 
     expect(deps.measure).toHaveBeenCalledWith(built);
-    expect(deps.prepareMaterials).toHaveBeenCalledWith(built);
+    expect(deps.prepareMaterials).toHaveBeenCalledWith(built, expect.anything());
     expect(built.userData.previzModelSizeM).toBe(1);
   });
 

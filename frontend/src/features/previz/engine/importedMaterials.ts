@@ -4,6 +4,46 @@ import type * as THREE from 'three';
 
 import type { ThreeModule } from './sceneGraph';
 
+/** 全灰模式与模型库白模共用的颜色。 */
+export const CLAY_COLOR = 0xb9bec8;
+
+/**
+ * 模型库的模型一律换成白模：整棵子树的材质换成一份不带贴图的水泥灰 standard 材质。
+ *
+ * 预演台要的是体块与构图，不是素材包自带的配色——一辆红消防车摆进一片灰场景里，
+ * 抢走的是看镜头的注意力。粗糙度与金属度抄占位体那组，同一个场景里的白模受光一致。
+ *
+ * 一个模型一份材质，不做全局共享：显示模式会改材质上的 `transparent` / `color`，
+ * 共享的话哪天某条路径单独 dispose 一个模型，别的模型就一起丢了材质。
+ *
+ * 换下来的材质与贴图当场还掉：源模型只活在加载缓存里，这批资源再没人引用。
+ */
+export function applyClayMaterial(three: ThreeModule, root: THREE.Object3D): void {
+  const clay = new three.MeshStandardMaterial({
+    color: CLAY_COLOR,
+    roughness: 0.7,
+    metalness: 0.05,
+    // 双面的理由同 `prepareImportedMaterials`。
+    side: three.DoubleSide,
+  });
+  const retired = new Set<THREE.Material>();
+  root.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    const material = mesh.material;
+    if (!material) return;
+    for (const entry of Array.isArray(material) ? material : [material]) retired.add(entry);
+    // 多材质的 mesh 换成单份：几何体上的 group 仍指向下标 0 以外的槽位的话会画不出来，
+    // 所以数组保留原长度，每一格都放同一份。
+    mesh.material = Array.isArray(material) ? material.map(() => clay) : clay;
+  });
+  for (const material of retired) {
+    for (const value of Object.values(material)) {
+      if ((value as THREE.Texture | null)?.isTexture) (value as THREE.Texture).dispose();
+    }
+    material.dispose();
+  }
+}
+
 /**
  * 把刚导进来的模型的材质改成预演台照得亮的样子：整棵子树改双面，并把 Phong / Lambert
  * 换成 `MeshStandardMaterial`。

@@ -36,9 +36,9 @@ function sceneWith(models: number, primitives: number): PrevizScene {
 }
 
 describe("previz primitive limit", () => {
-  it("is 150 and leaves the imported-model limit at 20", () => {
+  it("is 150 and leaves the imported-model limit alone", () => {
     expect(PREVIZ_PRIMITIVE_LIMIT).toBe(150);
-    expect(PREVIZ_OBJECT_LIMITS.prop).toBe(20);
+    expect(PREVIZ_OBJECT_LIMITS.prop).toBe(200);
   });
 
   it("counts primitives and imported models apart", () => {
@@ -48,8 +48,8 @@ describe("previz primitive limit", () => {
     expect(countPrimitives(scene)).toBe(7);
   });
 
-  it("lets primitives past the imported-model limit", () => {
-    const scene = sceneWith(0, PREVIZ_OBJECT_LIMITS.prop);
+  it("counts primitives against their own limit only", () => {
+    const scene = sceneWith(0, PREVIZ_PRIMITIVE_LIMIT - 1);
 
     expect(canAddPrimitive(scene)).toBe(true);
     expect(canAddObject(scene, "prop")).toBe(true);
@@ -63,7 +63,7 @@ describe("previz primitive limit", () => {
     expect(canAddObject(scene, "prop")).toBe(true);
   });
 
-  it("stops models at 20 without blocking primitives", () => {
+  it("stops models at their limit without blocking primitives", () => {
     const scene = sceneWith(PREVIZ_OBJECT_LIMITS.prop, 0);
 
     expect(canAddObject(scene, "prop")).toBe(false);
