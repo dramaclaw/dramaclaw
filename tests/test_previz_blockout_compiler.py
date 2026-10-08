@@ -100,6 +100,43 @@ def test_window_adds_a_sill_piece():
     assert pieces[2]["transform"]["scale"] == [2.0, 0.9, 0.2]
 
 
+def test_a_window_above_a_door_cuts_the_wall_into_lintel_sills_and_spandrel():
+    result = _compile(
+        "scene.wall(id='w', start=(-4, 3), end=(4, 3), height=5, thickness=0.2)\n"
+        "scene.opening(id='door', wall='w', offset=3, width=1, height=2)\n"
+        "scene.opening(id='win', wall='w', kind='window', offset=2.5, width=2, height=1, sill=3)\n"
+    )
+
+    pieces = [item for item in result["objects"] if item["kind"] == "prop"]
+    # Left of both, one lintel over the whole window, sills either side of the
+    # door, the spandrel between door and window, right of both.
+    assert [p["name"] for p in pieces] == [
+        "墙 1-段 1",
+        "墙 1-门楣 1",
+        "墙 1-窗台 1",
+        "墙 1-腰墙 1",
+        "墙 1-窗台 2",
+        "墙 1-段 2",
+    ]
+    assert [p["transform"]["position"] for p in pieces] == [
+        [-2.75, 0.0, -3.0],
+        [-0.5, 4.0, -3.0],
+        [-1.25, 0.0, -3.0],
+        [-0.5, 2.0, -3.0],
+        [0.25, 0.0, -3.0],
+        [2.25, 0.0, -3.0],
+    ]
+    assert [p["transform"]["scale"] for p in pieces] == [
+        [2.5, 5.0, 0.2],
+        [2.0, 1.0, 0.2],
+        [0.5, 3.0, 0.2],
+        [1.0, 1.0, 0.2],
+        [0.5, 3.0, 0.2],
+        [3.5, 5.0, 0.2],
+    ]
+    assert [p["id"] for p in pieces] == [f"blockout-w-{i}" for i in range(1, 7)]
+
+
 def test_pieces_thinner_than_a_centimetre_are_dropped():
     result = _compile(
         "scene.wall(id='w', start=(0, 3), end=(4, 3), height=3, thickness=0.2)\n"

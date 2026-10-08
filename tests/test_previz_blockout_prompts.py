@@ -167,8 +167,15 @@ def test_prompt_says_shift_follows_the_base_piece_not_the_scene():
     assert "dx 向右为正，dz 向远处为正，不能" not in prompt
 
 
+def test_prompt_allows_a_high_window_right_above_a_door():
+    prompt = build_blockout_prompt()
+
+    assert "门正上方" in prompt
+    assert "同一面墙上的洞口不能重叠。" not in prompt
+
+
 def test_prompt_version_moves_with_the_wording():
-    assert BLOCKOUT_PROMPT_VERSION == 10
+    assert BLOCKOUT_PROMPT_VERSION == 11
 
 
 def test_prompt_asks_for_relations_instead_of_coordinates_where_it_can():

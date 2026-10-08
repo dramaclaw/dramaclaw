@@ -153,22 +153,70 @@ def _prop(
 
 
 def _wall_pieces(wall: WallIR) -> list[tuple[str, float, float, float, float]]:
-    """(label, along_from, along_to, bottom, top) for every solid part of a wall."""
+    """(label, along_from, along_to, bottom, top) for every solid part of a wall.
+
+    The wall face is a rectangle (along the wall x up) with the openings cut
+    out. It is swept in columns between opening edges; in each column the solid
+    parts are what is left of the wall's height once the openings covering that
+    column are removed. Neighbouring columns whose parts span the same heights
+    are merged back into one piece, so a lintel runs the whole width of its
+    window even when a door stands under part of it.
+    """
     length = math.hypot(wall.end[0] - wall.start[0], wall.end[1] - wall.start[1])
+    edges = sorted(
+        {
+            0.0,
+            length,
+            *(o.offset for o in wall.openings),
+            *(o.offset + o.width for o in wall.openings),
+        }
+    )
+    columns: list[tuple[float, float, float, float]] = []  # (from, to, bottom, top)
+    for along_from, along_to in zip(edges, edges[1:]):
+        if along_to - along_from < 1e-9:
+            continue
+        covering = sorted(
+            (
+                o
+                for o in wall.openings
+                if o.offset < along_to - 1e-9 and along_from < o.offset + o.width - 1e-9
+            ),
+            key=lambda o: o.sill,
+        )
+        bottom = 0.0
+        for opening in covering:
+            if opening.sill - bottom > 1e-9:
+                columns.append((along_from, along_to, bottom, opening.sill))
+            bottom = max(bottom, opening.sill + opening.height)
+        if wall.height - bottom > 1e-9:
+            columns.append((along_from, along_to, bottom, wall.height))
+    merged: list[list[float]] = []
+    for along_from, along_to, bottom, top in columns:
+        for piece in merged:
+            if (
+                abs(piece[1] - along_from) < 1e-9
+                and piece[2] == bottom
+                and piece[3] == top
+            ):
+                piece[1] = along_to
+                break
+        else:
+            merged.append([along_from, along_to, bottom, top])
     pieces: list[tuple[str, float, float, float, float]] = []
-    cursor = 0.0
-    for opening in wall.openings:
-        if opening.offset - cursor >= MIN_PIECE_METERS:
-            pieces.append(("段", cursor, opening.offset, 0.0, wall.height))
-        right = opening.offset + opening.width
-        top = opening.sill + opening.height
-        if wall.height - top >= MIN_PIECE_METERS:
-            pieces.append(("门楣", opening.offset, right, top, wall.height))
-        if opening.sill >= MIN_PIECE_METERS:
-            pieces.append(("窗台", opening.offset, right, 0.0, opening.sill))
-        cursor = right
-    if length - cursor >= MIN_PIECE_METERS:
-        pieces.append(("段", cursor, length, 0.0, wall.height))
+    for along_from, along_to, bottom, top in sorted(
+        merged, key=lambda m: (m[0], -m[3])
+    ):
+        if along_to - along_from < MIN_PIECE_METERS or top - bottom < MIN_PIECE_METERS:
+            continue
+        if bottom == 0.0 and top == wall.height:
+            label = "段"
+        elif top == wall.height:
+            label = "门楣"
+        elif bottom == 0.0:
+            label = "窗台"
+        else:
+            label = "腰墙"
+        pieces.append((label, along_from, along_to, bottom, top))
     return pieces
 
 

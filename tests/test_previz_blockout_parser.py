@@ -83,6 +83,16 @@ def test_opening_may_be_written_before_its_wall():
     assert scene.walls[0].openings[0].id == "a"
 
 
+def test_a_high_window_may_sit_right_above_a_door():
+    scene = _parse(
+        'scene.wall(id="w", start=(-4, 3), end=(4, 3), height=5)\n'
+        'scene.opening(id="door", wall="w", offset=3, width=1, height=2)\n'
+        'scene.opening(id="win", wall="w", kind="window", offset=2.5, width=2, height=1, sill=3)\n'
+    )
+
+    assert [opening.id for opening in scene.walls[0].openings] == ["win", "door"]
+
+
 def test_comments_and_blank_lines_are_ignored():
     scene = _parse('\n# a note\nscene.box(id="b", position=(0, 0, 0), size=(1, 1, 1), semantic_type="prop")\n')
 
@@ -169,6 +179,13 @@ BOX = 'scene.box(id="b", position=(0, 0, 0), size=(1, 1, 1), semantic_type="prop
             "scene.opening(id='o1', wall='w', offset=1, width=1, height=2)\n"
             "scene.opening(id='o2', wall='w', offset=1.5, width=1, height=2)",
             "'o2' overlaps 'o1'",
+        ),
+        (
+            # A window that reaches down into the door below it.
+            "scene.wall(id='w', start=(0, 0), end=(4, 0), height=4)\n"
+            "scene.opening(id='door', wall='w', offset=1, width=1, height=2.1)\n"
+            "scene.opening(id='win', wall='w', kind='window', offset=0.5, width=2, height=1, sill=2)",
+            "'win' overlaps 'door'",
         ),
         (
             "scene.repeat(primitive='sphere', ids=['a'], positions=[(0, 0, 0)], size=(1, 1, 1), semantic_type='prop')",

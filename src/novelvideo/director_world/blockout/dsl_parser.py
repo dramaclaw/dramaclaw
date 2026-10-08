@@ -649,6 +649,14 @@ def _place(
     return placed
 
 
+def _openings_cross(a: OpeningIR, b: OpeningIR) -> bool:
+    along = (
+        a.offset < b.offset + b.width - 1e-9 and b.offset < a.offset + a.width - 1e-9
+    )
+    up = a.sill < b.sill + b.height - 1e-9 and b.sill < a.sill + a.height - 1e-9
+    return along and up
+
+
 def _attach_openings(
     walls: list[WallIR], opening_calls: list[_Call], ids: _Ids
 ) -> list[WallIR]:
@@ -712,14 +720,18 @@ def _attach_openings(
 
     result: list[WallIR] = []
     for wall in walls:
-        entries = sorted(by_wall.get(wall.id, []), key=lambda entry: entry[1].offset)
-        for (_, previous), (call, current) in zip(entries, entries[1:]):
-            if current.offset < previous.offset + previous.width - 1e-9:
-                raise _fail(
-                    f"scene.opening: '{current.id}' overlaps '{previous.id}' on "
-                    f"wall '{wall.id}'",
-                    call.line,
-                )
+        entries = by_wall.get(wall.id, [])
+        # 洞口是墙面上的矩形：沿墙和竖直两个方向都有交集才算重叠，
+        # 门正上方的高窗不算（编译器会把门窗之间的墙切成一块腰墙）。
+        for index, (call, current) in enumerate(entries):
+            for _, previous in entries[:index]:
+                if _openings_cross(current, previous):
+                    raise _fail(
+                        f"scene.opening: '{current.id}' overlaps '{previous.id}' on "
+                        f"wall '{wall.id}'",
+                        call.line,
+                    )
+        entries = sorted(entries, key=lambda entry: entry[1].offset)
         result.append(
             wall.model_copy(
                 update={"openings": tuple(opening for _, opening in entries)}

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from novelvideo.director_world.blockout.scene_ir import MAX_COMPILED_OBJECTS
 
-BLOCKOUT_PROMPT_VERSION = 10
+BLOCKOUT_PROMPT_VERSION = 11
 MAX_DESCRIPTION_CHARS = 500
 SUGGESTED_OBJECT_COUNT = 40
 
@@ -100,7 +100,7 @@ def _instructions(*, picture_check: bool) -> str:
   从 start 到 end 的一段墙，可以是斜的。
 - `scene.opening(id, wall, offset, width, height, kind="door", sill=0)`
   在墙上开洞。kind 取 door、window、arch。offset 是洞口近端到墙起点（start）的距离，沿墙的方向量。sill 是洞口下沿离地高度，窗户默认 0.9。
-  offset + width 不能超过墙长，sill + height 不能超过墙高，同一面墙上的洞口不能重叠。
+  offset + width 不能超过墙长，sill + height 不能超过墙高。同一面墙上的洞口不能互相重叠：沿墙和竖直两个方向都有交集才算重叠，门正上方开一扇高窗是可以的，只要窗的 sill 不低于门的顶。
   墙上的门窗一律用它开洞，不要拿薄盒子贴在墙上冒充。
 
 物件。box 和 cylinder 的位置有三种写法，每件选一种。能写关系就写关系，坐标由程序去算：
