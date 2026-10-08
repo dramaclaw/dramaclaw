@@ -8,8 +8,24 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
 
-def _load_plugin_module():
+
+@pytest.fixture(autouse=True)
+def restore_tools_registry_modules():
+    sentinel = object()
+    previous = {
+        name: sys.modules.get(name, sentinel) for name in ("tools", "tools.registry")
+    }
+    yield
+    for name, value in previous.items():
+        if value is sentinel:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = value
+
+
+def _load_plugin_module(plugin_name="dramaclaw"):
     tools_module = types.ModuleType("tools")
     registry_module = types.ModuleType("tools.registry")
     registry_module.tool_error = lambda value: value
@@ -17,7 +33,7 @@ def _load_plugin_module():
     sys.modules["tools"] = tools_module
     sys.modules["tools.registry"] = registry_module
 
-    path = Path(__file__).resolve().parents[1] / ".hermes" / "plugins" / "dramaclaw" / "__init__.py"
+    path = Path(__file__).resolve().parents[1] / ".hermes" / "plugins" / plugin_name / "__init__.py"
     spec = importlib.util.spec_from_file_location("test_dramaclaw_plugin", path)
     assert spec is not None
     module = importlib.util.module_from_spec(spec)
@@ -54,9 +70,13 @@ for index, path in enumerate(sys.argv[1:]):
     spec.loader.exec_module(module)
     assert module._current_agent_token() == 'isolated-token'
     names = {name for name, _, _ in module.TOOLS}
-    assert {'dramaclaw_create_interactive_story', 'dramaclaw_get_interactive_story',
-            'dramaclaw_patch_interactive_story', 'dramaclaw_validate_interactive_story',
-            'dramaclaw_get_freezone_canvas'} <= names
+    assert 'dramaclaw_get_freezone_canvas' in names
+    stories = {'dramaclaw_create_interactive_story', 'dramaclaw_get_interactive_story',
+               'dramaclaw_patch_interactive_story', 'dramaclaw_validate_interactive_story'}
+    if index == 0:
+        assert not stories & names
+    else:
+        assert stories <= names
 assert not any(name == 'novelvideo' or name.startswith('novelvideo.') for name in sys.modules)
 """
     token_file = tmp_path / "turn.token"
@@ -87,7 +107,7 @@ assert not any(name == 'novelvideo' or name.startswith('novelvideo.') for name i
 
 
 def test_interactive_story_tools_use_typed_api_routes(monkeypatch):
-    plugin = _load_plugin_module()
+    plugin = _load_plugin_module("freezone")
     calls = []
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
     monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "canvas-a")

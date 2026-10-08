@@ -95,7 +95,11 @@ DRAMACLAW_WRITE_TOOLS: frozenset[str] = frozenset(
         "dramaclaw_confirm_interactive_story_stages",
     }
 )
-"""Mainline write tools. A Hermes turn stops after one of these has run (one-step rule)."""
+"""Legacy one-step write classification, including canvas-only story writes.
+
+This set governs Hermes lifecycle, not tool exposure. Story entries remain for
+the native Freezone adapter; the mainline plugin does not publish them.
+"""
 
 FREEZONE_CANVAS_WRITE_TOOLS: frozenset[str] = frozenset(
     {

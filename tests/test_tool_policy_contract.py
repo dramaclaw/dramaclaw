@@ -94,8 +94,13 @@ def test_freezone_policy_names_are_published_by_the_freezone_plugin() -> None:
 
 def test_mainline_policy_names_are_published_by_the_dramaclaw_plugin() -> None:
     published = _published_tool_names(_load_hermes_plugin("dramaclaw"))
+    # Legacy write classification still governs story lifecycle in Hermes,
+    # while story tools are now published exclusively by the canvas plugin.
+    canvas_published = _published_tool_names(_load_hermes_plugin("freezone"))
     for policy in (tool_policy.DRAMACLAW_WRITE_TOOLS, tool_policy.DISPLAY_TOOL_NAMES):
-        assert set(policy) <= published, sorted(set(policy) - published)
+        canvas_writes = set(policy) & tool_policy.FREEZONE_CANVAS_WRITE_TOOLS
+        assert canvas_writes <= canvas_published
+        assert set(policy) - canvas_writes <= published
 
 
 def test_every_plugin_canvas_mutation_is_classified_as_a_canvas_write() -> None:

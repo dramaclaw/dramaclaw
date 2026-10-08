@@ -7,7 +7,6 @@ Python's stdlib HTTP client and the DramaClaw agent environment injected by
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -15,15 +14,11 @@ import threading
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode, urlparse
+from urllib.parse import quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from tools.registry import tool_error, tool_result
-
-# The MCP host supplies this before exec; native Hermes includes stories by default.
-_INCLUDE_INTERACTIVE_STORY = not bool(globals().get("_MCP_EXCLUDE_INTERACTIVE_STORY", False))
-
 
 TOOLSET = "dramaclaw"
 ACP_TOOLSET = "hermes-acp"
@@ -464,6 +459,33 @@ def _validate_ingest_api_path(path: str) -> None:
         raise ValueError(INGEST_PATH_ERROR)
 
 
+def _deny_interactive_story_api_path(path: str) -> None:
+    """Keep mainline HTTP calls within the existing canvas capability boundary."""
+    parts = [
+        part for part in unquote(urlparse(path).path).split("/")
+        if part and part != "."
+    ]
+    if ".." in parts:
+        raise ValueError("path traversal is not allowed")
+    if parts[:2] != ["api", "v1"] or len(parts) < 3:
+        return
+    story_route = parts[2] == "public-stories"
+    if parts[2] == "projects" and len(parts) >= 5:
+        route = parts[4:]
+        story_route = route[0] in {
+            "interactive-stories", "interactive-story-outline", "interactive-story-progress",
+        } or (
+            len(route) >= 5
+            and route[0] == "canvases"
+            and route[2] == "stories"
+            and route[4] == "publication"
+        )
+    if story_route:
+        raise ValueError(
+            "interactive_story_canvas_only: 影游仅在虾画画布中使用，请进入虾画继续创作。"
+        )
+
+
 def _query_string(params: Any) -> str:
     if not isinstance(params, dict) or not params:
         return ""
@@ -477,6 +499,7 @@ def _query_string(params: Any) -> str:
 
 def _request(method: str, path: str, *, query: Any = None, body: Any = None) -> dict[str, Any]:
     api_path = _normalize_api_path(path)
+    _deny_interactive_story_api_path(api_path)
     url = f"{_base_url()}{api_path}{_query_string(query)}"
     payload = None
     headers = _request_headers("dramaclaw-plugin/0.1.0")
@@ -2586,14 +2609,6 @@ def _result_field_schema(field: str) -> dict[str, Any]:
     return {"type": ["string", "null"]}
 
 _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
-    "dramaclaw_create_interactive_story": ("project_id", "canvas_id", "story_id", "revision", "issues", "current_revision", "idempotent", "refresh_canvas"),
-    "dramaclaw_patch_interactive_story": ("project_id", "canvas_id", "story_id", "revision", "issues", "current_revision", "idempotent", "refresh_canvas"),
-    "dramaclaw_get_interactive_story": ("canvas_id", "story_id", "revision", "issues", "current_revision", "story"),
-    "dramaclaw_validate_interactive_story": ("canvas_id", "story_id", "revision", "issues", "current_revision", "valid"),
-    "dramaclaw_save_interactive_story_outline": ("project_id", "canvas_id", "outline_id", "status", "revision", "current_revision", "idempotent", "refresh_canvas"),
-    "dramaclaw_get_interactive_story_outline": ("canvas_id", "revision", "outline", "current_revision"),
-    "dramaclaw_get_interactive_story_progress": ("canvas_id", "revision", "kind", "stages", "current_stage_id", "evidence"),
-    "dramaclaw_confirm_interactive_story_stages": ("project_id", "canvas_id", "story_id", "revision", "confirmed_stages", "current_revision", "idempotent", "refresh_canvas"),
     "dramaclaw_control_episode_auto": (
         "episode",
         "run_id",
@@ -2733,14 +2748,6 @@ _RESULT_FIELDS: dict[str, tuple[str, ...]] = {
 # table is deliberately separate so dropping a tool's business payload cannot be
 # hidden by a generic MCP envelope.
 _RESULT_SUCCESS_REQUIRED: dict[str, tuple[str, ...]] = {
-    "dramaclaw_create_interactive_story": ("project_id", "canvas_id", "story_id", "revision", "refresh_canvas"),
-    "dramaclaw_patch_interactive_story": ("project_id", "canvas_id", "story_id", "revision", "refresh_canvas"),
-    "dramaclaw_get_interactive_story": ("canvas_id", "story"),
-    "dramaclaw_validate_interactive_story": ("canvas_id", "story_id", "revision", "valid", "issues"),
-    "dramaclaw_save_interactive_story_outline": ("project_id", "canvas_id", "outline_id", "status", "revision", "refresh_canvas"),
-    "dramaclaw_get_interactive_story_outline": ("canvas_id", "revision"),
-    "dramaclaw_get_interactive_story_progress": ("canvas_id", "revision", "kind", "stages", "evidence"),
-    "dramaclaw_confirm_interactive_story_stages": ("project_id", "canvas_id", "story_id", "revision", "confirmed_stages", "refresh_canvas"),
     "dramaclaw_control_episode_auto": ("run_id", "episode"),
     "dramaclaw_get": ("response",),
     "dramaclaw_post": ("response",),
@@ -3038,29 +3045,7 @@ _PRESET_CANVAS_SCHEMA = {
 }
 
 
-def _load_interactive_story_tools():
-    module_path = Path(__file__).with_name("interactive_story.py")
-    spec = importlib.util.spec_from_file_location(
-        "_dramaclaw_interactive_story_tools",
-        module_path,
-    )
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load interactive-story tools from {module_path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.build_tools(
-        schema=_schema,
-        request=lambda *args, **kwargs: _request(*args, **kwargs),
-        project_from_args=lambda args: _project_from_args(args),
-        tool_result=tool_result,
-        tool_error=tool_error,
-    )
-
-
-INTERACTIVE_STORY_TOOLS = _load_interactive_story_tools() if _INCLUDE_INTERACTIVE_STORY else ()
-
-
-_STORY_CANVAS_TOOLS = (
+_CANVAS_READ_TOOLS = (
     (
         "dramaclaw_get_freezone_canvas",
         _schema(
@@ -3074,7 +3059,7 @@ _STORY_CANVAS_TOOLS = (
         ),
         _handle_get_freezone_canvas,
     ),
-) if _INCLUDE_INTERACTIVE_STORY else ()
+)
 
 
 TOOLS = (
@@ -3189,8 +3174,7 @@ TOOLS = (
         ),
         _handle_list_freezone_canvases,
     ),
-    *_STORY_CANVAS_TOOLS,
-    *INTERACTIVE_STORY_TOOLS,
+    *_CANVAS_READ_TOOLS,
     (
         "dramaclaw_save_freezone_canvas",
         _schema(

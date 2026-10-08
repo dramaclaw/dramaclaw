@@ -461,6 +461,8 @@ def _skill_resource_path(uri: str) -> Path:
         relative_parts[-1] != "SKILL.md" and "references" not in relative_parts[1:-1]
     ):
         raise ValueError("resource is not a skill document")
+    if relative_parts[0] == "interactive-story" and not _freezone_canvas_mode():
+        raise ValueError("interactive-story resources are only available in the Freezone canvas")
     roots = _skill_resource_roots()
     if raw_target.is_absolute() and raw_target.exists():
         existing_target = raw_target.resolve()

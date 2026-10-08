@@ -201,13 +201,25 @@ _CODEX_GATEWAY_KEY_METADATA = "dramaclaw_gateway_api_key"
 _CODEX_CONTROL_CAPABILITY_METADATA = "dramaclaw_control_context_capability"
 _ACTIVE_CODEX_TURNS: dict[tuple[str, str], tuple[str, str] | tuple[str, str, str]] = {}
 _ACTIVE_CODEX_TURNS_LOCK = threading.Lock()
+_MAINLINE_ASSISTANT_SCOPE_INSTRUCTIONS = (
+    "This conversation is the DramaClaw mainline assistant (虾导). When asked who you are, "
+    "answer briefly: 我是虾导. Describe current capabilities from the available mainline "
+    "tools: bound-project production, progress, tasks, media generation and delivery, plus "
+    "the existing canvas management and Skill operations. Interactive stories/FMV, branching "
+    "story canvas creation/editing, story stage guidance and interactive playback are available "
+    "only inside Xi画/Freezone. Do not advertise them as capabilities of this mainline "
+    "conversation, even if another Skill or earlier conversation describes them; direct users "
+    "to Xi画 for those features. Ordinary creative discussion may be answered as text without "
+    "claiming a story or canvas was created."
+)
 _CODEX_DEVELOPER_INSTRUCTIONS = (
     "You are the DramaClaw creative assistant. Use the required dramaclaw MCP "
     "server for all DramaClaw data reads and writes. Inspect the available scope-filtered "
     "concrete MCP tools and their schemas, then call the selected tool directly. Do not guess "
     "a tool name or argument schema. "
     "Do not use shell commands, "
-    "local file editing, web search, or other external tools."
+    "local file editing, web search, or other external tools. "
+    + _MAINLINE_ASSISTANT_SCOPE_INSTRUCTIONS
 )
 _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "You are the DramaClaw creative assistant inside the Xi画/Freezone canvas. "
@@ -419,7 +431,7 @@ _CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS = (
 # when it was created. Bump the relevant value whenever MCP discovery or the
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
-_CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v2"
+_CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v4"
 _CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v30"
 
 
@@ -1606,7 +1618,10 @@ def _prompt_with_user_context(
         f"{_freezone_skill_studio_context(username, route_prompt if route_prompt is not None else prompt)}"
         f"{canvas_context}"
         if tool_mode == "freezone_canvas"
-        else ""
+        else (
+            f"\n\n[DRAMACLAW_MAINLINE_SCOPE]\n{_MAINLINE_ASSISTANT_SCOPE_INSTRUCTIONS}"
+            "\n[/DRAMACLAW_MAINLINE_SCOPE]"
+        )
     )
     continuation_source = route_prompt if route_prompt is not None else prompt
     continuation_instructions = _pipeline_continuation_instructions(
@@ -1849,9 +1864,10 @@ def _sync_project_skills(skills_dir: Path, *, agent_profile: str = "main") -> No
 
 def _sync_project_skills_locked(skills_dir: Path, *, agent_profile: str) -> None:
     profile = str(agent_profile or "main").strip() or "main"
+    canvas_profile = profile.startswith("freezone")
     allowed = (
         {"freezone", "workflows", "dramaclaw-workflows", "interactive-story"}
-        if profile.startswith("freezone")
+        if canvas_profile
         else None
     )
     manifest_path = skills_dir / ".dramaclaw-managed-skills.json"
@@ -1877,7 +1893,11 @@ def _sync_project_skills_locked(skills_dir: Path, *, agent_profile: str) -> None
         if dst is None:
             continue
         src = sources.get(skill_name)
-        if src is None or (allowed is not None and skill_name not in allowed):
+        if (
+            src is None
+            or (allowed is not None and skill_name not in allowed)
+            or (not canvas_profile and skill_name == "interactive-story")
+        ):
             _remove_managed_skill_path(dst, root=skills_dir)
             continue
         source_digest = _skill_tree_digest(src)

@@ -37,8 +37,13 @@ Claude 的应用内对话尚未自动接入独立影游 MCP；可以在外部 MC
 配置上述 stdio 入口，并提供绑定的项目、画布和 API 凭证。若同时配置原
 `dramaclaw` 服务，应为原服务添加 `--exclude-interactive-story`。
 
-原有主线 MCP 配置保持兼容。原入口不带排除参数时仍可提供影游工具。
-Hermes 原生 Freezone 插件继续在其既有审批边界内使用影游工具。两种接入共用
+主线插件不再加载或注册影游工具，通用 API 工具也拒绝影游创作与发布专属接口；
+原有画布管理、画布读取和 Skill 能力保留。原入口不带排除参数时，仅在画布
+模式下提供原生影游工具。主线工作区也不安装托管的 `interactive-story` Agent
+Skill，并在下次初始化时移除旧副本；MCP 不向主线暴露它的 Skill 文档。
+主线能力说明按当前会话限定，影游请求引导进入虾画。
+Hermes 原生 Freezone 插件继续在其既有审批边界内
+使用影游工具，不新增影游会话、工作目录或权限体系。两种接入共用
 `novelvideo.chat.story_tools` 中的定义、作用域绑定和画布读取逻辑，API 与业务
 模型仍位于现有影游模块；MCP 仅负责传输和凭证注入。
 
@@ -61,14 +66,20 @@ Codex 自动挂载的三个服务均保持 `required=true`。其中任一服务�
 运行 `python scripts/sync_interactive_story_tools.py` 更新标准库插件文件；
 `--check` 和回归测试会检查这两份发布文件是否与共享源文件一致。
 
-Freezone 的 Codex 线程协议版本更新为 `canvas-workflows-v30`，旧线程会重新
-建立，避免继续使用拆分前缓存的工具入口。现有故事与大纲数据无需迁移。
+Freezone 的 Codex 线程协议版本为 `canvas-workflows-v30`；主线协议更新为
+`tool-discovery-v4`，旧主线线程会重新建立，避免使用缓存的影游工具入口及
+Skill 能力描述。
+现有故事与大纲数据无需迁移。
 
 回归覆盖真实 stdio 工具集合、在禁止旧 MCP/Freezone 导入时的影游调用、
-排除模式下跳过影游插件加载、原入口与 Hermes 的兼容，以及凭证、作用域、
-revision 和幂等契约：
+主线不加载影游、通用 API 无法绕路调用、画布模式与 Hermes 的兼容、空画布
+创建，以及凭证、作用域、revision 和幂等契约：
 
 ```sh
 uv run python scripts/sync_interactive_story_tools.py --check
-uv run pytest tests/test_mcp_runtime.py tests/test_interactive_story_mcp.py tests/test_dramaclaw_mcp.py tests/test_dramaclaw_mcp_progressive.py tests/test_hermes_dramaclaw_plugin.py tests/test_workflow_mcp.py
+uv run pytest tests/test_mcp_runtime.py tests/test_interactive_story_mcp.py \
+  tests/test_dramaclaw_mcp.py tests/test_dramaclaw_mcp_progressive.py \
+  tests/test_hermes_dramaclaw_plugin.py tests/test_workflow_mcp.py \
+  tests/test_mainline_story_boundary.py tests/test_api_interactive_stories.py \
+  tests/test_chat_service_user_agent_scope.py tests/test_tool_policy_contract.py
 ```

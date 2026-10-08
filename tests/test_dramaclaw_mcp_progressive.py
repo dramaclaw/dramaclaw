@@ -945,6 +945,9 @@ async def test_concrete_tool_completes_real_mcp_output_contract_round_trip():
     env = {
         **os.environ,
         "DRAMACLAW_PROJECT_ID": "project-a",
+        "DRAMACLAW_TOOL_MODE": "default",
+        "DRAMACLAW_CHAT_SURFACE": "",
+        "DRAMACLAW_AGENT_PROFILE": "main",
         "DRAMACLAW_USERNAME": "local",
         "PYTHONDONTWRITEBYTECODE": "1",
     }
@@ -959,6 +962,15 @@ async def test_concrete_tool_completes_real_mcp_output_contract_round_trip():
         async with ClientSession(reader, writer) as session:
             await session.initialize()
             tools = {tool.name: tool for tool in (await session.list_tools()).tools}
+            assert not any("_interactive_story" in name for name in tools)
+            assert "dramaclaw_get_freezone_canvas" in tools
+            denied = await session.call_tool("dramaclaw_get_interactive_story", {})
+            assert denied.isError is True
+            bypass = await session.call_tool("dramaclaw_post", {
+                "path": "/projects/project-a/interactive-stories", "body": {},
+            })
+            assert bypass.isError is True
+            assert "interactive_story_canvas_only" in bypass.content[0].text
             result = await session.call_tool(
                 "dramaclaw_prepare_system_voices",
                 {"episode": 1, "confirmed": False},
@@ -1251,7 +1263,7 @@ async def test_native_tool_call_does_not_block_mcp_event_loop(monkeypatch):
 ])
 def test_interactive_story_results_survive_strict_mcp_contract(monkeypatch, operation, payload, required_field):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
-    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "default")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
     name = f"dramaclaw_{operation}_interactive_story"
     payload = {
         "ok": True,
@@ -1278,7 +1290,7 @@ def test_interactive_story_results_survive_strict_mcp_contract(monkeypatch, oper
 
 def test_interactive_story_validation_details_survive_mcp_normalization(monkeypatch):
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "project-a")
-    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "default")
+    monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
     result = dramaclaw_mcp._structured_tool_result(
         "dramaclaw_patch_interactive_story",
         json.dumps(
@@ -1384,7 +1396,11 @@ async def test_synced_story_skill_loads_through_existing_mcp_resources(monkeypat
     parameters = StdioServerParameters(
         command=sys.executable,
         args=["-m", "novelvideo.chat.dramaclaw_mcp"],
-        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        env={
+            **os.environ,
+            "DRAMACLAW_TOOL_MODE": "freezone_canvas",
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
         cwd=str(CE_ROOT),
     )
     source = Path(chat_service.__file__).resolve().parents[1] / "agent_skills" / "interactive-story"

@@ -149,7 +149,8 @@ def test_excluded_plugins_skip_story_loading_and_keep_mode_specific_caches(
     monkeypatch.setattr(importlib.util, "spec_from_file_location", reject_story)
     monkeypatch.setattr(dramaclaw_mcp, "_EXCLUDE_STORY_TOOLS", True)
     excluded = dramaclaw_mcp._plugin_tools(plugin_name)
-    assert not set(excluded) & story_tools.STORY_TOOL_NAMES
+    story_only_names = story_tools.STORY_TOOL_NAMES - {"dramaclaw_get_freezone_canvas"}
+    assert not set(excluded) & story_only_names
     assert story_loads == []
     expected = (
         "freezone_prepare_workflow_plan_draft"
@@ -158,11 +159,15 @@ def test_excluded_plugins_skip_story_loading_and_keep_mode_specific_caches(
     )
     assert expected in excluded
 
-    # Legacy and native callers must still get the complete provider, even if
-    # this process previously built an excluded instance.
+    # Only the canvas provider includes stories, even without the split flag.
     monkeypatch.setattr(importlib.util, "spec_from_file_location", original)
     monkeypatch.setattr(dramaclaw_mcp, "_EXCLUDE_STORY_TOOLS", False)
-    assert story_tools.STORY_TOOL_NAMES <= set(dramaclaw_mcp._plugin_tools(plugin_name))
+    native = set(dramaclaw_mcp._plugin_tools(plugin_name))
+    if plugin_name == "freezone":
+        assert story_tools.STORY_TOOL_NAMES <= native
+    else:
+        assert not story_only_names & native
+        assert "dramaclaw_get_freezone_canvas" in native
 
 
 @pytest.mark.asyncio

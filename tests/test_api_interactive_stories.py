@@ -51,10 +51,11 @@ def _story_payload() -> dict:
     return json.loads(EXAMPLE_PATH.read_text(encoding="utf-8"))
 
 
-def test_freezone_mcp_story_tools_persist_and_validate_real_story(
-    interactive_story_client, monkeypatch,
+@pytest.mark.parametrize("transport", ["native_freezone", "independent_mcp"])
+def test_canvas_story_tools_create_on_empty_canvas_and_persist_real_story(
+    interactive_story_client, monkeypatch, transport,
 ) -> None:
-    from novelvideo.chat import dramaclaw_mcp
+    from novelvideo.chat import dramaclaw_mcp, interactive_story_mcp
     from novelvideo.chat.service import _codex_freezone_write_result_succeeded
     from novelvideo.freezone import canvas_store
 
@@ -62,17 +63,22 @@ def test_freezone_mcp_story_tools_persist_and_validate_real_story(
     monkeypatch.setenv("DRAMACLAW_PROJECT_ID", "proj_demo")
     monkeypatch.setenv("DRAMACLAW_CANVAS_ID", "default")
     monkeypatch.setenv("DRAMACLAW_TOOL_MODE", "freezone_canvas")
-    plugin = dramaclaw_mcp._plugin("freezone")
+    host = (
+        dramaclaw_mcp._plugin("freezone")
+        if transport == "native_freezone"
+        else interactive_story_mcp
+    )
 
     def request(method, path, *, query=None, body=None):
         response = client.request(method, path, params=query, json=body)
         assert response.status_code == 200, response.text
         return response.json()
 
-    monkeypatch.setattr(plugin, "_request", request)
+    monkeypatch.setattr(host, "_request", request)
 
     def call(name, args):
-        result = asyncio.run(dramaclaw_mcp.call_tool(name, args))
+        server = dramaclaw_mcp if transport == "native_freezone" else interactive_story_mcp
+        result = asyncio.run(server.call_tool(name, args))
         assert result.isError is False, result
         return result.structuredContent
 
@@ -82,6 +88,11 @@ def test_freezone_mcp_story_tools_persist_and_validate_real_story(
     })
     assert created["revision"] == 1
     assert created["refresh_canvas"] is True
+    repeated = call("dramaclaw_create_interactive_story", {
+        "base_revision": 0, "idempotency_key": "mcp-story-create-01", "story": story,
+    })
+    assert repeated["idempotent"] is True
+    assert repeated["revision"] == 1
     assert _codex_freezone_write_result_succeeded(SimpleNamespace(
         name="dramaclaw.dramaclaw_create_interactive_story", status="completed",
         error=None, structured=created, output=None,

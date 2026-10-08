@@ -1038,8 +1038,13 @@ def test_codex_main_thread_key_is_discovery_protocol_scoped():
     assert chat_service._codex_scope_key("") == f'["main","home",null,"{protocol}"]'
 
 
+@pytest.mark.parametrize("old_key", [
+    "project:project-a",
+    '["main","project","project-a","tool-discovery-v2"]',
+    '["main","project","project-a","tool-discovery-v3"]',
+])
 def test_codex_discovery_upgrade_does_not_resume_legacy_main_thread(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, old_key
 ):
     monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
     state_file = (
@@ -1053,7 +1058,7 @@ def test_codex_discovery_upgrade_does_not_resume_legacy_main_thread(
     )
     state_file.parent.mkdir(parents=True)
     state_file.write_text(
-        json.dumps({"project:project-a": "legacy-thread"}), encoding="utf-8"
+        json.dumps({old_key: "legacy-thread"}), encoding="utf-8"
     )
 
     assert chat_service._get_codex_thread_id("admin", "project-a") is None
@@ -3473,6 +3478,7 @@ def test_user_agent_workspace_is_not_project_workspace(monkeypatch, tmp_path):
     assert (
         codex_workspace / ".agents" / "skills" / "dramaclaw-workflows" / "SKILL.md"
     ).is_file()
+    assert not (codex_workspace / ".agents" / "skills" / "interactive-story").exists()
     assert (
         freezone_workspace / ".agents" / "skills" / "dramaclaw-workflows" / "SKILL.md"
     ).is_file()
