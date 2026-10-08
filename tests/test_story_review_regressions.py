@@ -57,6 +57,7 @@ def test_plugin_receipt_roundtrip_after_scalar_coercion(monkeypatch, tmp_path):
 
 def test_fastapi_path_matches_arguments(monkeypatch):
     monkeypatch.setenv('DRAMACLAW_PROJECT_ID', 'p')
+    monkeypatch.setenv('DRAMACLAW_TOOL_MODE', 'freezone_canvas')
     result = dramaclaw_mcp._structured_tool_result('dramaclaw_create_interactive_story',
         json.dumps({'ok': False, 'error': 'invalid', 'data': {'detail': [
             {'loc': ['body', 'story', 'title'], 'msg': 'required', 'input': 'secret'}]}}))
