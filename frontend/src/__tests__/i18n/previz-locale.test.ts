@@ -20,6 +20,7 @@ const TIMELINE_KEYS = [
   'razor',
   'pinTrack',
   'removeTrack',
+  'solo',
   'expandTrack',
   'collapseTrack',
   'motionPath',
