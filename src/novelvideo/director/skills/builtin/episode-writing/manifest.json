@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 2,
+  "key": "studio/episode-writing",
+  "stage": "M11",
+  "version": "2.2.0",
+  "purpose": "Single-episode literary drafting with explicit runtime-adapter boundaries.",
+  "applicable": [
+    "original",
+    "adaptation"
+  ],
+  "excluded": [
+    "omni",
+    "directing"
+  ],
+  "method": "method.md",
+  "inputSchema": "schemas/input.json",
+  "outputSchema": "schemas/output.json",
+  "template": "templates/request.md",
+  "fixtures": "fixtures/contracts.json",
+  "provenance": "provenance.json",
+  "requiredReferences": [
+    {
+      "path": "references/episode-writing.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/episode-writing.md",
+      "sha256": "524b3fd13cce2493caa86ce914ba566df20ea53bda2340989025b9d06cb4c298",
+      "when": "always"
+    },
+    {
+      "path": "references/ai-producibility.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/ai-producibility.md",
+      "sha256": "9c16eef426382dc375bde8c76a0db2a9ed8f8b6da3c5d16c42cd79c33a0f2e84",
+      "when": "always"
+    },
+    {
+      "path": "references/rhythm-curve.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/rhythm-curve.md",
+      "sha256": "c462669c3224020604e627aa3d6a0c9fb72a5fd41ca730759232dfc073eaea98",
+      "when": "always"
+    },
+    {
+      "path": "references/satisfaction-matrix.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/satisfaction-matrix.md",
+      "sha256": "1eba44d3d2701bb14073e55c6a563cf0a013d76e503da33b3dfacf02b80a46c6",
+      "when": "always"
+    },
+    {
+      "path": "references/opening-rules.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/opening-rules.md",
+      "sha256": "72b43ff9ca3d6eaaf91ad1a47f3328de010a8e9c06eb2a6e5819732a94b1b971",
+      "when": "first_episode"
+    },
+    {
+      "path": "references/hook-design.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/hook-design.md",
+      "sha256": "1f7bf12fe600968ab6ff7fb707ead2020f2fea99232e05d4dc7c012d0cb8cd2a",
+      "when": "next_hook"
+    }
+  ],
+  "ruleIds": [
+    "G03",
+    "G05",
+    "G06",
+    "G07",
+    "G08",
+    "G09",
+    "G10",
+    "G11",
+    "G12",
+    "G13"
+  ],
+  "allowedTools": [],
+  "validators": [
+    "markdown.nonempty"
+  ],
+  "costClasses": [
+    "text.generate"
+  ],
+  "checkpointKinds": [
+    "WAIT_EPISODE"
+  ],
+  "maxSchemaRepairAttempts": 0,
+  "maxAutomaticRevisionAttempts": 0,
+  "compatibility": "markdown-to-canonical-ast; episode-plan/source-audit pipeline not yet connected",
+  "files": {
+    "method.md": "95fee830ebf048f7b7420f5a99ab75d65c5167a8739bafca7e7dccdfe58bf47a",
+    "templates/request.md": "2f078b14424349adffdeed296d21e014c2bb624f71f76dd66b9efcbabdf959f9",
+    "schemas/input.json": "245bec3439cc8e2f3d6ae9ed7a2aff423c5cd7d6a197f87454d106201493027c",
+    "schemas/output.json": "ce596debd59ac86dbaa8b4ad5375a520b09570b7da64b293bdacc0aa7e46f9ae",
+    "fixtures/contracts.json": "fa217ad404fabf9282ca9469e887f29820e63f78230d1dfc102446176dfdec83",
+    "LICENSE": "a42977a69c8c05840da8a8e2f9d8dff9f5c8346f236eeabf8c97fb0812f5fe50",
+    "references/episode-writing.md": "524b3fd13cce2493caa86ce914ba566df20ea53bda2340989025b9d06cb4c298",
+    "references/ai-producibility.md": "9c16eef426382dc375bde8c76a0db2a9ed8f8b6da3c5d16c42cd79c33a0f2e84",
+    "references/rhythm-curve.md": "c462669c3224020604e627aa3d6a0c9fb72a5fd41ca730759232dfc073eaea98",
+    "references/satisfaction-matrix.md": "1eba44d3d2701bb14073e55c6a563cf0a013d76e503da33b3dfacf02b80a46c6",
+    "references/opening-rules.md": "72b43ff9ca3d6eaaf91ad1a47f3328de010a8e9c06eb2a6e5819732a94b1b971",
+    "references/hook-design.md": "1f7bf12fe600968ab6ff7fb707ead2020f2fea99232e05d4dc7c012d0cb8cd2a",
+    "provenance.json": "81478c8909382fa0ba05282d2ddc8d5338d7659e1f7da033f4ec1c5788db2e9a",
+    "SKILL.md": "d42deb0a0019b9a845cc6bdac5601841f5a7bb52ead83b501798155ba7f7b313"
+  }
+}

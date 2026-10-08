@@ -18,17 +18,16 @@
  * 任何一步失败都返回原文件——转码是尽力而为的兼容性优化，不能挡住上传。
  */
 
-import {
-  ALL_FORMATS,
-  BlobSource,
-  BufferTarget,
-  canEncodeVideo,
-  Conversion,
-  Input,
-  Mp4OutputFormat,
-  Output,
-  QUALITY_HIGH,
-} from "mediabunny";
+// mediabunny 预打包后 1.33MB，而绝大多数会话根本不会上传需要转码的视频。静态
+// import 会让它跟着 VideoNode 进入画布路由的模块图、每次打开画布都解析一遍，
+// 所以这里改成首次真正要转码时才拉（同目录 audioTranscode.ts 对 lamejs 也是这么做的）。
+// Promise 缓存住，并发调用只加载一次。
+type MediabunnyModule = typeof import("mediabunny");
+let mediabunnyPromise: Promise<MediabunnyModule> | null = null;
+function loadMediabunny(): Promise<MediabunnyModule> {
+  mediabunnyPromise ??= import("mediabunny");
+  return mediabunnyPromise;
+}
 
 export interface EnsureWebSafeVideoResult {
   file: File;
@@ -51,6 +50,16 @@ async function transcodeWithWebCodecs(
   file: File,
   onProgress?: (progress: number) => void,
 ): Promise<File> {
+  const {
+    ALL_FORMATS,
+    BlobSource,
+    BufferTarget,
+    Conversion,
+    Input,
+    Mp4OutputFormat,
+    Output,
+    QUALITY_HIGH,
+  } = await loadMediabunny();
   const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
   try {
     const audioTrack = await input.getPrimaryAudioTrack();
@@ -80,7 +89,7 @@ async function transcodeWithWebCodecs(
     }
     conversion.onProgress = (progress) => onProgress?.(progress);
     await conversion.execute();
-    const buffer = (output.target as BufferTarget).buffer;
+    const buffer = (output.target as InstanceType<MediabunnyModule["BufferTarget"]>).buffer;
     if (!buffer || buffer.byteLength === 0) {
       throw new Error("conversion produced empty output");
     }
@@ -133,6 +142,7 @@ export async function ensureWebSafeVideo(
   let width = 0;
   let height = 0;
   let probeFailed = false;
+  const { ALL_FORMATS, BlobSource, canEncodeVideo, Input } = await loadMediabunny();
   const probe = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
   try {
     const track = await probe.getPrimaryVideoTrack();

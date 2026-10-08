@@ -64,6 +64,7 @@ import {
 } from '@/features/canvas/application/imageData';
 import { useNaturalSizeRecordTrust } from '@/features/canvas/hooks/useNaturalSizeRecordTrust';
 import { useNodeBodyVariantBudget } from '@/features/canvas/hooks/useNodeBodyVariantBudget';
+import { useDecodedNodeImage } from '@/features/canvas/hooks/useDecodedNodeImage';
 import { uploadLocalImageToBackend } from '@/features/canvas/application/uploadToolOutput';
 import { CanvasNodeImage } from '@/features/canvas/ui/CanvasNodeImage';
 import { DirectorControlBundleBadge } from '@/features/canvas/ui/DirectorControlBundleBadge';
@@ -82,7 +83,7 @@ import { getBeatDirectorStageManifest } from '@/api/viewerManifests';
 import {
   ThreeDDirectorDialog,
   type ThreeDDirectorCaptureMeta,
-} from '@/features/viewer-kit/three-d/ThreeDDirectorDialog';
+} from '@/features/viewer-kit/three-d/ThreeDDirectorDialogLazy';
 import type { ThreeDSceneSnapshot } from '@/features/viewer-kit/three-d/engine/viewerApp';
 import type {
   DirectorControlFrameBundle,
@@ -804,7 +805,7 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
 
   // 本地刚选的文件用 blob: 直出，不走变体：那是本机内存里的东西，后端没有它的
   // 副本，也马上会被上传完成的稳定图换掉（clearTransientPreview）。
-  const bodyImage = useMemo(() => {
+  const requestedBodyImage = useMemo(() => {
     if (transientPreviewUrl) return null;
     const picked = preferOriginalImage
       ? data.imageUrl || data.previewImageUrl
@@ -828,6 +829,12 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
     transientPreviewUrl,
   ]);
 
+  const previewDisplay = useDecodedNodeImage(
+    requestedBodyImage,
+    JSON.stringify([id, recordSubject, data.imageUrl, data.previewImageUrl, transientPreviewUrl]),
+    JSON.stringify([preferOriginalImage, distrusted, recordedNaturalSize?.width, recordedNaturalSize?.height]),
+  );
+  const bodyImage = previewDisplay.displayed;
   const imageSource = transientPreviewUrl ?? bodyImage?.src ?? null;
 
   /**
@@ -841,6 +848,7 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
    * 「显示尺寸对不上」这两个触发点，这次写回纯粹是补记事实，不该进撤销栈。
    */
   const recordNaturalSize = useCallback((image: HTMLImageElement) => {
+    previewDisplay.onLoad(image);
     // 瞬时 blob: 预览：稳定图随后会把它换掉，那一轮才有变体上下文可判。
     if (!bodyImage) return;
     // 记录描述的不是这张图：降采样副本上量不出源图真尺寸。先退回原图重测。
@@ -873,7 +881,7 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
       { imageNaturalWidth: measured.width, imageNaturalHeight: measured.height },
       { recordHistory: recordWrite.recordHistory },
     );
-  }, [bodyImage, distrustRecord, id, preferOriginalImage, recordedNaturalSize, trustAgain, updateNodeData]);
+  }, [bodyImage, distrustRecord, id, preferOriginalImage, previewDisplay.onLoad, recordedNaturalSize, trustAgain, updateNodeData]);
 
   useEffect(() => {
     updateNodeInternals(id);

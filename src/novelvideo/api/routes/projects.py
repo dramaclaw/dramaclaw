@@ -23,6 +23,7 @@ from novelvideo.api.deps import (
 from novelvideo.api.routes._project_audit import emit_project_audit
 from novelvideo.api.schemas import (
     CharacterVoiceRecordRequest,
+    LiblibProjectPreview,
     NarratorVoiceCopyRequest,
     NarratorVoiceTrimRequest,
     ProjectCreate,
@@ -31,6 +32,11 @@ from novelvideo.api.schemas import (
     ProjectUpdate,
 )
 from novelvideo.config import ensure_project_dirs_at_paths
+from novelvideo.freezone.liblib_import import (
+    LiblibImportError,
+    fetch_liblib_canvas_detail,
+    parse_liblib_share_url,
+)
 from novelvideo.knowledge_pipeline import KNOWLEDGE_PIPELINE_KEY, KNOWLEDGE_PIPELINE_STRUCTURED
 from novelvideo.novel_source import has_imported_novel
 from novelvideo.ports import get_project_access, get_project_registry
@@ -652,6 +658,44 @@ async def create_project(
     return {"ok": True, "data": {"id": record.id, "project_id": record.id, "name": body.name}}
 
 
+@router.post("/projects/liblib-preview")
+async def preview_liblib_project(
+    body: LiblibProjectPreview,
+    user: dict = Depends(require_scope("projects:write")),
+):
+    """Read a title before creation so the first directory can use its pinyin."""
+    try:
+        share = parse_liblib_share_url(body.share_url)
+        detail = await fetch_liblib_canvas_detail(share)
+    except LiblibImportError as exc:
+        raise HTTPException(exc.status_code, {"code": exc.code, "message": str(exc)}) from exc
+    return {"ok": True, "data": {"name": detail["projectMeta"]["name"], "source_url": share.url}}
+
+
+@router.post("/projects/{project}/rename")
+async def rename_project(
+    project: str,
+    body: ProjectCreate,
+    user: dict = Depends(require_scope("projects:write")),
+):
+    ctx = await resolve_project_context(user=user, project_id=project, required_role="owner")
+    validate_project_name(body.name)
+    rename = getattr(get_project_registry(), "rename_project", None)
+    if not callable(rename):
+        raise HTTPException(501, "Project renaming is not supported by this registry")
+    try:
+        record = await rename(ctx.project_id, body.name)
+    except (ValueError, asyncpg.exceptions.UniqueViolationError) as exc:
+        raise HTTPException(409, "Project name already exists") from exc
+    if record is None:
+        raise HTTPException(404, "Project not found")
+    await emit_project_audit(
+        action="project.rename", ctx=ctx,
+        metadata={"previous_name": ctx.project_name, "name": record.name},
+    )
+    return {"ok": True, "data": {"id": record.id, "name": record.name}}
+
+
 @router.get("/projects/{project}")
 async def get_project(project: str, user: dict = Depends(get_api_user)):
     """获取项目配置。"""
@@ -738,7 +782,9 @@ async def update_project(
     if body.visual_style is not None:
         from novelvideo.services.style_service import StyleService
 
-        valid = StyleService.get_style_labels(username=ctx.owner_username, project=ctx.project_name)
+        valid = StyleService.get_style_labels(
+            username=ctx.owner_username, project=ctx.project_name, state_dir=ctx.state_dir
+        )
         if body.visual_style not in valid:
             return JSONResponse(
                 status_code=400,

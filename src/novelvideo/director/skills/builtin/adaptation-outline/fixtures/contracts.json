@@ -1,0 +1,319 @@
+[
+  {
+    "valid": true,
+    "value": {
+      "contract": "adaptation-outline/3.0.0",
+      "overview": {
+        "title": "The Garden",
+        "logline": {
+          "text": "A visitor discovers that unchanging comfort is not a living home.",
+          "claimIds": [
+            "claim-1"
+          ],
+          "eventIds": [
+            "event-1"
+          ],
+          "nature": "source"
+        },
+        "synopsis": [
+          {
+            "text": "The visitor watches a painted garden.",
+            "claimIds": [
+              "claim-1"
+            ],
+            "eventIds": [
+              "event-1"
+            ],
+            "nature": "source"
+          },
+          {
+            "text": "The guide gives a warning, whose truth remains uncertain.",
+            "claimIds": [
+              "claim-2"
+            ],
+            "eventIds": [
+              "event-2"
+            ],
+            "nature": "source"
+          },
+          {
+            "text": "A friend knocks, and only then does the visitor return.",
+            "claimIds": [
+              "claim-3"
+            ],
+            "eventIds": [
+              "event-3"
+            ],
+            "nature": "source"
+          }
+        ],
+        "protagonist": {
+          "text": "The visitor wants rest.",
+          "claimIds": [
+            "claim-1"
+          ],
+          "eventIds": [
+            "event-1"
+          ],
+          "nature": "source"
+        },
+        "resistance": {
+          "text": "The unchanging surroundings feel confining.",
+          "claimIds": [
+            "claim-1"
+          ],
+          "eventIds": [
+            "event-1"
+          ],
+          "nature": "source"
+        },
+        "emotionalCurve": {
+          "text": "Curiosity turns to relief on returning.",
+          "claimIds": [
+            "claim-3"
+          ],
+          "eventIds": [
+            "event-3"
+          ],
+          "nature": "source"
+        }
+      },
+      "adaptation": {
+        "approach": [
+          {
+            "text": "Keep the guide's warning attributed.",
+            "claimIds": [
+              "claim-2"
+            ],
+            "eventIds": [
+              "event-2"
+            ],
+            "nature": "interpretation"
+          }
+        ],
+        "preserveClaimIds": [
+          "claim-1",
+          "claim-2",
+          "claim-3"
+        ],
+        "proposedChanges": [],
+        "unresolvedClaimIds": [
+          "claim-2"
+        ]
+      },
+      "chapters": [
+        {
+          "key": "arrival",
+          "title": "Arrival",
+          "episodeIds": [
+            "ep-1"
+          ],
+          "story": [
+            {
+              "text": "The visitor watches the garden.",
+              "claimIds": [
+                "claim-1"
+              ],
+              "eventIds": [
+                "event-1"
+              ],
+              "nature": "source"
+            }
+          ],
+          "position": {
+            "text": "Opening curiosity.",
+            "claimIds": [
+              "claim-1"
+            ],
+            "eventIds": [
+              "event-1"
+            ],
+            "nature": "source"
+          },
+          "mustKeepEventIds": [
+            "event-1"
+          ]
+        },
+        {
+          "key": "warning",
+          "title": "Warning",
+          "episodeIds": [
+            "ep-1"
+          ],
+          "story": [
+            {
+              "text": "The guide gives the warning.",
+              "claimIds": [
+                "claim-2"
+              ],
+              "eventIds": [
+                "event-2"
+              ],
+              "nature": "source"
+            }
+          ],
+          "position": {
+            "text": "Doubt grows.",
+            "claimIds": [
+              "claim-2"
+            ],
+            "eventIds": [
+              "event-2"
+            ],
+            "nature": "source"
+          },
+          "mustKeepEventIds": [
+            "event-2"
+          ]
+        },
+        {
+          "key": "return",
+          "title": "Return",
+          "episodeIds": [
+            "ep-1"
+          ],
+          "story": [
+            {
+              "text": "The friend knocks before the visitor returns.",
+              "claimIds": [
+                "claim-3"
+              ],
+              "eventIds": [
+                "event-3"
+              ],
+              "nature": "source"
+            }
+          ],
+          "position": {
+            "text": "A closed resolution.",
+            "claimIds": [
+              "claim-3"
+            ],
+            "eventIds": [
+              "event-3"
+            ],
+            "nature": "source"
+          },
+          "mustKeepEventIds": [
+            "event-3"
+          ]
+        }
+      ],
+      "hooks": {
+        "episodeHighlights": [
+          {
+            "episodeId": "ep-1",
+            "highlight": {
+              "text": "Returning to ordinary life.",
+              "claimIds": [
+                "claim-3"
+              ],
+              "eventIds": [
+                "event-3"
+              ],
+              "nature": "source"
+            }
+          }
+        ],
+        "openings": [
+          {
+            "key": "opening-1",
+            "episodeId": "ep-1",
+            "image": {
+              "text": "The visitor watches the painted garden.",
+              "claimIds": [
+                "claim-1"
+              ],
+              "eventIds": [
+                "event-1"
+              ],
+              "nature": "source"
+            },
+            "question": "Can unchanging comfort be enough?"
+          }
+        ],
+        "setups": [
+          {
+            "key": "setup-1",
+            "plant": {
+              "text": "The painted garden attracts attention.",
+              "claimIds": [
+                "claim-1"
+              ],
+              "eventIds": [
+                "event-1"
+              ],
+              "nature": "source"
+            },
+            "payoff": {
+              "text": "The friend knocks and the visitor returns.",
+              "claimIds": [
+                "claim-3"
+              ],
+              "eventIds": [
+                "event-3"
+              ],
+              "nature": "source"
+            },
+            "openReason": null
+          }
+        ],
+        "inapplicableReason": null
+      },
+      "boundaries": [
+        {
+          "text": "Keep the guide's statement uncertain.",
+          "claimIds": [
+            "claim-2"
+          ],
+          "eventIds": [
+            "event-2"
+          ],
+          "nature": "source"
+        }
+      ],
+      "craftNotes": {
+        "causalChain": [
+          "event-1",
+          "event-2",
+          "event-3"
+        ],
+        "emotionalBeats": [
+          {
+            "text": "Relief at returning.",
+            "claimIds": [
+              "claim-3"
+            ],
+            "eventIds": [
+              "event-3"
+            ],
+            "nature": "source"
+          }
+        ],
+        "resistanceKind": "condition",
+        "oppositionStrategy": {
+          "applicability": "not_applicable",
+          "evidence": null,
+          "reason": "No intentional opponent or reversal is established in this source."
+        },
+        "actualCost": {
+          "applicability": "not_applicable",
+          "evidence": null,
+          "reason": "No intentional opponent or reversal is established in this source."
+        },
+        "reversal": {
+          "applicability": "not_applicable",
+          "evidence": null,
+          "reason": "No intentional opponent or reversal is established in this source."
+        },
+        "productionRisks": [
+          "Duration is a target, not a measured runtime."
+        ]
+      }
+    }
+  },
+  {
+    "valid": false,
+    "value": {}
+  }
+]

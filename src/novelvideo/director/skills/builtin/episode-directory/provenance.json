@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 2,
+  "stage": "M09",
+  "privateLibTVSourceObtained": false,
+  "license": "MIT",
+  "copyright": "2025 0xsline",
+  "sources": [
+    {
+      "path": "references/rhythm-curve.md",
+      "sha256": "c462669c3224020604e627aa3d6a0c9fb72a5fd41ca730759232dfc073eaea98"
+    },
+    {
+      "path": "references/episode-writing.md",
+      "sha256": "524b3fd13cce2493caa86ce914ba566df20ea53bda2340989025b9d06cb4c298"
+    }
+  ],
+  "adaptation": "Independent host planning contracts, informed by observable LibTV checkpoints and routed short-drama methods. Full semantic quality remains subject to review."
+}

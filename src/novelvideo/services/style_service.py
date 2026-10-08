@@ -658,6 +658,7 @@ class StyleService:
         username: str | None = None,
         project: str | None = None,
         project_dir: str | Path | None = None,
+        state_dir: str | Path | None = None,
     ) -> dict[str, str]:
         """获取风格 ID -> 显示标签的映射。
 
@@ -667,7 +668,9 @@ class StyleService:
             {style_id: label} 字典
         """
         labels = {}
-        for style in cls.list_all_styles(username=username, project=project, project_dir=project_dir):
+        for style in cls.list_all_styles(
+            username=username, project=project, project_dir=project_dir, state_dir=state_dir
+        ):
             labels[style["id"]] = style["label"]
         return labels
 

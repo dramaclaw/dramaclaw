@@ -13,7 +13,7 @@ import aiosqlite
 from ulid import ULID
 
 from novelvideo.ports.project import Principal, ProjectRecord
-from novelvideo.shared.project_dirs import default_project_dirs
+from novelvideo.shared.project_dirs import default_project_dirs, project_directory_name
 
 
 def _now_iso() -> str:
@@ -56,6 +56,46 @@ async def _fetchall(db: aiosqlite.Connection, sql: str, params: tuple = ()) -> l
         return await cursor.fetchall()
     finally:
         await cursor.close()
+
+
+async def _allocate_project_dirs(
+    db: aiosqlite.Connection,
+    owner_username: str,
+    name: str,
+    overrides: tuple[str | None, str | None, str | None],
+) -> tuple[str, str, str]:
+    """Reserve defaults inside the create transaction so homophones stay isolated.
+
+    Include archived/deleted records and unregistered files. Case folding also
+    keeps the result safe when a project is moved to a Windows filesystem.
+    Explicit migration/import paths remain authoritative.
+    """
+    output_dir, state_dir, runtime_dir = overrides
+    if output_dir and state_dir and runtime_dir:
+        return output_dir, state_dir, runtime_dir
+    rows = await _fetchall(db, "SELECT output_dir, state_dir, runtime_dir FROM projects")
+    occupied = {
+        str(Path(row[column]).resolve()).casefold()
+        for row in rows
+        for column in ("output_dir", "state_dir", "runtime_dir")
+    }
+    base = project_directory_name(name)
+    sequence = 1
+    while True:
+        suffix = f"_{sequence}" if sequence > 1 else ""
+        directory = base[: 64 - len(suffix)] + suffix
+        defaults = default_project_dirs(owner_username, directory)
+        candidates = [Path(path) for path, override in zip(defaults, overrides) if not override]
+        if all(
+            str(path).casefold() not in occupied and not path.exists() and not path.is_symlink()
+            for path in candidates
+        ):
+            return (
+                overrides[0] or defaults[0],
+                overrides[1] or defaults[1],
+                overrides[2] or defaults[2],
+            )
+        sequence += 1
 
 
 class SQLiteProjectRegistry:
@@ -176,13 +216,15 @@ class SQLiteProjectRegistry:
         if not owner_user_id or not name:
             raise ValueError("owner_user_id and name are required")
         owner_username = owner_username.strip() if owner_username else _local_username()
-        default_output, default_state, default_runtime = default_project_dirs(owner_username, name)
         now = _now_iso()
         project_id = str(ULID())
         db = await self._connect()
         try:
             try:
                 await db.execute("BEGIN IMMEDIATE")
+                project_dirs = await _allocate_project_dirs(
+                    db, owner_username, name, (output_dir, state_dir, runtime_dir)
+                )
                 await db.execute(
                     """
                     INSERT INTO projects (
@@ -195,9 +237,7 @@ class SQLiteProjectRegistry:
                         project_id,
                         owner_username,
                         name,
-                        output_dir or default_output,
-                        state_dir or default_state,
-                        runtime_dir or default_runtime,
+                        *project_dirs,
                         now,
                         now,
                     ),
@@ -257,6 +297,28 @@ class SQLiteProjectRegistry:
             )
             await db.commit()
             row = await _fetchone(db, "SELECT * FROM projects WHERE id = ?", (project_id,))
+        finally:
+            await db.close()
+        return _row_to_record(row) if row else None
+
+    async def rename_project(self, project_id: str, name: str) -> ProjectRecord | None:
+        """Names are labels; changing one must never move persisted media paths."""
+        db = await self._connect()
+        try:
+            try:
+                await db.execute("BEGIN IMMEDIATE")
+                await db.execute(
+                    "UPDATE projects SET name = ?, updated_at = ? WHERE id = ? AND purged_at IS NULL",
+                    (name, _now_iso(), project_id),
+                )
+                row = await _fetchone(db, "SELECT * FROM projects WHERE id = ?", (project_id,))
+                await db.commit()
+            except sqlite3.IntegrityError as exc:
+                await db.rollback()
+                raise ValueError(f"Project '{name}' already exists") from exc
+            except Exception:
+                await db.rollback()
+                raise
         finally:
             await db.close()
         return _row_to_record(row) if row else None

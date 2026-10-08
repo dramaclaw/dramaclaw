@@ -1,0 +1,1 @@
+Return only the JSON object matching responseSchema. Never print the schema, source, workflow state or a replacement full document outside the requested patch contract. Host validation will check the exact target blocks and current version.

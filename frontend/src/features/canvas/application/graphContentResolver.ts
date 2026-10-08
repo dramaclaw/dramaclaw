@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import {
+  CANVAS_NODE_TYPES,
   isAudioNode,
   isExportImageNode,
   isImageEditNode,
@@ -13,6 +14,7 @@ import {
   type CanvasEdge,
   type CanvasNode,
   type CanvasNodeType,
+  type LiblibMediaNodeData,
 } from '../domain/canvasNodes';
 import type { GraphContentResolver, UpstreamContent } from './ports';
 
@@ -60,6 +62,13 @@ export function extractUpstreamContent(node: CanvasNode): UpstreamContent {
 
   if (isTextAnnotationNode(node)) {
     return { ...base, text: nonEmpty(node.data.content) };
+  }
+  if (node.type === CANVAS_NODE_TYPES.liblibMedia) {
+    const data = node.data as LiblibMediaNodeData;
+    if (data.mediaKind === 'image') return { ...base, imageUrl: nonEmpty(data.imageUrl) };
+    if (data.mediaKind === 'video') return { ...base, videoUrl: nonEmpty(data.videoUrl) };
+    if (data.mediaKind === 'audio') return { ...base, audioUrl: nonEmpty(data.audioUrl) };
+    return base;
   }
   if (isUploadNode(node)) {
     // 上传节点不一定装的是图：早期版本从资产库选入的视频就是 upload 节点，地址写在

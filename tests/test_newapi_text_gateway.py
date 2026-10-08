@@ -150,6 +150,24 @@ def test_newapi_text_provider_can_disable_system_proxy(monkeypatch):
             asyncio.run(http_client.aclose())
 
 
+def test_loopback_text_provider_defaults_direct_but_respects_override(monkeypatch):
+    import asyncio
+
+    import novelvideo.config as config
+
+    for address in ("http://127.0.0.1:3001/v1", "http://localhost:3001/v1", "http://[::1]:3001/v1"):
+        for override, expected in ((None, False), ("true", True), ("false", False)):
+            if override is None:
+                monkeypatch.delenv("NEWAPI_TEXT_TRUST_ENV", raising=False)
+            else:
+                monkeypatch.setenv("NEWAPI_TEXT_TRUST_ENV", override)
+            provider = config._newapi_text_openai_provider(api_key="test", base_url=address, timeout_seconds=12.0)
+            try:
+                assert provider._own_http_client.trust_env is expected
+            finally:
+                asyncio.run(provider._own_http_client.aclose())
+
+
 def test_newapi_text_model_closes_owned_http_client_after_request(monkeypatch):
     import asyncio
 

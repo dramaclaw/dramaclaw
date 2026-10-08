@@ -1,0 +1,252 @@
+version = 1
+slug = "project-chinese-names"
+ledger = "docs/agent/tasks/project-chinese-names.md"
+baseline = "60c22be"
+
+[[claims]]
+path = "src/novelvideo/api/deps.py"
+mode = "exclusive"
+reason = "Chinese display names and collision-safe pinyin directories; preserve persisted paths."
+
+[[claims]]
+path = "src/novelvideo/ports/local/project.py"
+mode = "exclusive"
+reason = "Chinese display names and collision-safe pinyin directories; preserve persisted paths."
+
+[[claims]]
+path = "src/novelvideo/shared/project_dirs.py"
+mode = "exclusive"
+reason = "Chinese display names and collision-safe pinyin directories; preserve persisted paths."
+
+[[claims]]
+path = "src/novelvideo/api/routes/projects.py"
+mode = "exclusive"
+reason = "Chinese display names and collision-safe pinyin directories; preserve persisted paths."
+
+[[claims]]
+path = "src/novelvideo/services/style_service.py"
+mode = "exclusive"
+reason = "Chinese display names and collision-safe pinyin directories; preserve persisted paths."
+
+[[claims]]
+path = "frontend/src/routes/_app/index.tsx"
+mode = "shared"
+shared_with = ["legacy-unassigned-diff", "liblib-canvas-parity", "liblib-first-import"]
+reason = "Chinese display names and collision-safe pinyin directories; preserve persisted paths."
+
+[[claims]]
+path = "frontend/public/locales/zh/translation.json"
+mode = "shared"
+shared_with = ["liblib-import-recovery", "asset-replacement-picker", "canvas-audio-actions", "canvas-audio-split", "creative-intro-blend", "creative-intro-implementation", "depth-motion-da3", "h3-prompt-optimizer", "liblib-canvas-parity", "local-stack", "multi-provider-models", "shot-breakdown", "story-writer", "storyboard-dual-view", "sync-main-remotes", "tv-director-implementation", "video-prompt-split"]
+reason = "Chinese display names and collision-safe pinyin directories; preserve persisted paths."
+
+[[claims]]
+path = "frontend/public/locales/en/translation.json"
+mode = "shared"
+shared_with = ["liblib-import-recovery", "asset-replacement-picker", "canvas-audio-actions", "canvas-audio-split", "creative-intro-blend", "creative-intro-implementation", "depth-motion-da3", "h3-prompt-optimizer", "liblib-canvas-parity", "local-stack", "multi-provider-models", "shot-breakdown", "story-writer", "storyboard-dual-view", "sync-main-remotes", "tv-director-implementation", "video-prompt-split"]
+reason = "Chinese display names and collision-safe pinyin directories; preserve persisted paths."
+
+[[claims]]
+path = "frontend/public/locales/vi/translation.json"
+mode = "shared"
+shared_with = ["liblib-import-recovery", "asset-replacement-picker", "canvas-audio-actions", "canvas-audio-split", "creative-intro-blend", "creative-intro-implementation", "depth-motion-da3", "h3-prompt-optimizer", "liblib-canvas-parity", "local-stack", "multi-provider-models", "shot-breakdown", "story-writer", "storyboard-dual-view", "sync-main-remotes", "tv-director-implementation", "video-prompt-split"]
+reason = "Chinese display names and collision-safe pinyin directories; preserve persisted paths."
+
+[[claims]]
+path = "tests/test_project_name_validation.py"
+mode = "exclusive"
+reason = "Chinese display names and collision-safe pinyin directories; preserve persisted paths."
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Plan, shared-path coordination and handoff."
+
+[[claims]]
+path = "docs/agent/tasks/project-chinese-names.md"
+mode = "coordination"
+reason = "Plan, shared-path coordination and handoff."
+
+[[claims]]
+path = "docs/agent/claims/project-chinese-names.toml"
+mode = "coordination"
+reason = "Plan, shared-path coordination and handoff."
+
+[[claims]]
+path = "docs/agent/tasks/h3-prompt-optimizer.md"
+mode = "coordination"
+reason = "Plan, shared-path coordination and handoff."
+
+[[claims]]
+path = "docs/agent/claims/h3-prompt-optimizer.toml"
+mode = "coordination"
+reason = "Plan, shared-path coordination and handoff."
+
+[[claims]]
+path = "docs/agent/tasks/legacy-unassigned-diff.md"
+mode = "coordination"
+reason = "Plan, shared-path coordination and handoff."
+
+[[claims]]
+path = "docs/agent/claims/legacy-unassigned-diff.toml"
+mode = "coordination"
+reason = "Plan, shared-path coordination and handoff."
+
+[[claims]]
+path = "docs/agent/tasks/liblib-canvas-parity.md"
+mode = "coordination"
+reason = "Plan, shared-path coordination and handoff."
+
+[[claims]]
+path = "docs/agent/claims/liblib-canvas-parity.toml"
+mode = "coordination"
+reason = "Plan, shared-path coordination and handoff."
+
+[[claims]]
+path = "docs/agent/tasks/liblib-first-import.md"
+mode = "coordination"
+reason = "Plan, shared-path coordination and handoff."
+
+[[claims]]
+path = "docs/agent/claims/liblib-first-import.toml"
+mode = "coordination"
+reason = "Plan, shared-path coordination and handoff."
+
+[[claims]]
+path = "docs/agent/tasks/storyboard-dual-view.md"
+mode = "coordination"
+reason = "Plan, shared-path coordination and handoff."
+
+[[claims]]
+path = "docs/agent/claims/storyboard-dual-view.toml"
+mode = "coordination"
+reason = "Plan, shared-path coordination and handoff."
+
+[[claims]]
+path = "docs/agent/tasks/video-prompt-split.md"
+mode = "coordination"
+reason = "Plan, shared-path coordination and handoff."
+
+[[claims]]
+path = "docs/agent/claims/video-prompt-split.toml"
+mode = "coordination"
+reason = "Plan, shared-path coordination and handoff."
+
+[[claims]]
+path = "tests/ports/test_project_chinese_names.py"
+mode = "exclusive"
+reason = "User-authorized Chinese project-name regression coverage."
+
+[[claims]]
+path = "frontend/src/__tests__/routes/project-name-validation.test.tsx"
+mode = "exclusive"
+reason = "User-authorized Chinese project-name regression coverage."
+
+[[claims]]
+path = "frontend/src/__tests__/routes/project-chinese-names.test.tsx"
+mode = "exclusive"
+reason = "User-authorized Chinese project-name regression coverage."
+
+[[claims]]
+path = "src/novelvideo/ports/project.py"
+mode = "exclusive"
+reason = "Project rename and LibTV original-name/source-link integration."
+
+[[claims]]
+path = "src/novelvideo/api/schemas.py"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "canvas-audio-split", "depth-motion-da3", "h3-prompt-optimizer", "multi-provider-models", "shot-breakdown", "text-node-liblib-visual-parity", "sync-main-remotes"]
+reason = "Project rename and LibTV original-name/source-link integration."
+
+[[claims]]
+path = "frontend/src/lib/project-naming.ts"
+mode = "exclusive"
+reason = "Project rename and LibTV original-name/source-link integration."
+
+[[claims]]
+path = "frontend/src/components/projects/project-name-dialog.tsx"
+mode = "exclusive"
+reason = "Project rename and LibTV original-name/source-link integration."
+
+[[claims]]
+path = "frontend/src/features/freezone/createProjectLiblibImport.ts"
+mode = "shared"
+shared_with = ["liblib-import-recovery", "liblib-canvas-parity", "minimax-h3-canvas-defaults"]
+reason = "Project rename and LibTV original-name/source-link integration."
+
+[[claims]]
+path = "frontend/src/features/freezone/CanvasesTab.tsx"
+mode = "shared"
+shared_with = ["liblib-import-recovery", "legacy-unassigned-diff", "liblib-canvas-parity", "minimax-h3-canvas-defaults"]
+reason = "Project rename and LibTV original-name/source-link integration."
+
+[[claims]]
+path = "frontend/src/__tests__/routes/project-first-liblib-import.test.tsx"
+mode = "shared"
+shared_with = ["liblib-first-import"]
+reason = "Project rename and LibTV original-name/source-link integration."
+
+[[claims]]
+path = "tests/test_project_rename.py"
+mode = "exclusive"
+reason = "Project rename and LibTV original-name/source-link integration."
+
+[[claims]]
+path = "docs/agent/tasks/canvas-audio-actions.md"
+mode = "coordination"
+reason = "Serial shared-path coordination."
+
+[[claims]]
+path = "docs/agent/claims/canvas-audio-actions.toml"
+mode = "coordination"
+reason = "Serial shared-path coordination."
+
+[[claims]]
+path = "docs/agent/tasks/canvas-audio-split.md"
+mode = "coordination"
+reason = "Serial shared-path coordination."
+
+[[claims]]
+path = "docs/agent/claims/canvas-audio-split.toml"
+mode = "coordination"
+reason = "Serial shared-path coordination."
+
+[[claims]]
+path = "docs/agent/tasks/depth-motion-da3.md"
+mode = "coordination"
+reason = "Serial shared-path coordination."
+
+[[claims]]
+path = "docs/agent/claims/depth-motion-da3.toml"
+mode = "coordination"
+reason = "Serial shared-path coordination."
+
+[[claims]]
+path = "docs/agent/tasks/minimax-h3-canvas-defaults.md"
+mode = "coordination"
+reason = "Serial shared-path coordination."
+
+[[claims]]
+path = "docs/agent/claims/minimax-h3-canvas-defaults.toml"
+mode = "coordination"
+reason = "Serial shared-path coordination."
+
+[[claims]]
+path = "docs/agent/tasks/shot-breakdown.md"
+mode = "coordination"
+reason = "Serial shared-path coordination."
+
+[[claims]]
+path = "docs/agent/claims/shot-breakdown.toml"
+mode = "coordination"
+reason = "Serial shared-path coordination."
+
+[[claims]]
+path = "docs/agent/tasks/text-node-liblib-visual-parity.md"
+mode = "coordination"
+reason = "Serial shared-path coordination."
+
+[[claims]]
+path = "docs/agent/claims/text-node-liblib-visual-parity.toml"
+mode = "coordination"
+reason = "Serial shared-path coordination."

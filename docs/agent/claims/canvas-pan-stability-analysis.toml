@@ -1,0 +1,24 @@
+version = 1
+slug = "canvas-pan-stability-analysis"
+ledger = "docs/agent/tasks/canvas-pan-stability-analysis.md"
+baseline = "4c9dee4"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Register this documentation-only investigation."
+
+[[claims]]
+path = "docs/agent/tasks/canvas-pan-stability-analysis.md"
+mode = "coordination"
+reason = "Analysis scope and handoff ledger."
+
+[[claims]]
+path = "docs/agent/claims/canvas-pan-stability-analysis.toml"
+mode = "coordination"
+reason = "Machine-readable documentation scope."
+
+[[claims]]
+path = "docs/guides/canvas-pan-stability-analysis.md"
+mode = "exclusive"
+reason = "Evidence-based canvas pan stability report and implementation proposal."

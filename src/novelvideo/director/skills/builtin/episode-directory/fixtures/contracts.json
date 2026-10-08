@@ -1,0 +1,61 @@
+[
+  {
+    "valid": true,
+    "value": {
+      "entries": [
+        {
+          "episodeId": "ep-1",
+          "orderKey": 1,
+          "deliveryLabel": "EP01",
+          "question": "Can Lin read?",
+          "actions": [
+            "Unlock box",
+            "Take glasses",
+            "Read letter"
+          ],
+          "result": "Reads",
+          "hook": null,
+          "characterIds": [
+            "char-1"
+          ],
+          "locationIds": [
+            "location-1"
+          ],
+          "targetDuration": 30
+        }
+      ]
+    }
+  },
+  {
+    "valid": false,
+    "value": {}
+  },
+  {
+    "valid": false,
+    "value": {
+      "entries": [
+        {
+          "episodeId": "ep-1",
+          "orderKey": 1,
+          "deliveryLabel": "EP01",
+          "question": "Can Lin read?",
+          "actions": [
+            "Unlock box",
+            "Take glasses",
+            "Read letter"
+          ],
+          "result": "Reads",
+          "hook": null,
+          "characterIds": [
+            "char-1"
+          ],
+          "locationIds": [
+            "location-1"
+          ],
+          "targetDuration": 30
+        }
+      ],
+      "approved": true
+    }
+  }
+]

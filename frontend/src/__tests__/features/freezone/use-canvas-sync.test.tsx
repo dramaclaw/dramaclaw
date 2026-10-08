@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getFreezoneCanvas, putFreezoneCanvas } from "@/api/canvas";
 import { ApiError } from "@/api/client";
+import { errorFromBackendBody } from "@/lib/api-errors";
 import {
   FREEZONE_HYDRATE_RELEASE_GRACE_MS,
   FREEZONE_HYDRATE_SETTLED_REUSE_MS,
@@ -64,6 +65,25 @@ describe("useCanvasSync hydrate lifecycle", () => {
   // Canvas 现在跨项目常驻（_app.tsx 不再按项目重挂 freezone），所以 hydrate 必须
   // 显式落相机 —— 新建画布存的就是 viewport: null，不落位就沿用上一张画布的坐标
   // 和缩放，节点可能整个飘出屏幕，lowDetail 档也是错的。
+  it('hydrates a first-use canvas from the real structured 404 error', async () => {
+    vi.mocked(getFreezoneCanvas).mockRejectedValue(errorFromBackendBody(404, {
+      detail: { code: 'canvas_not_found', message: 'Canvas not found' },
+    }, 'HTTP 404'));
+    const { result } = renderHook(() => useCanvasSync('first-use', 'user_structured_404'));
+    await waitFor(() => expect(result.current.hydratedCanvasId).toBe('user_structured_404'));
+    expect(result.current.error).toBeNull();
+    expect(useCanvasStore.getState().nodes).toEqual([]);
+  });
+
+  it('does not treat a structured permission failure as an empty canvas', async () => {
+    vi.mocked(getFreezoneCanvas).mockRejectedValue(errorFromBackendBody(403, {
+      detail: { message: 'Forbidden' },
+    }, 'HTTP 403'));
+    const { result } = renderHook(() => useCanvasSync('forbidden-project', 'forbidden-canvas'));
+    await waitFor(() => expect(result.current.status).toBe('error'));
+    expect(result.current.error).toBeTruthy();
+  });
+
   it("resets the camera to the default when the canvas has no saved viewport", async () => {
     vi.mocked(getFreezoneCanvas).mockResolvedValue({
       nodes: [],

@@ -1,0 +1,19 @@
+[
+  {
+    "id": "nonempty-candidate",
+    "value": "# Scene 1\nAda opens the box with a red key.",
+    "valid": true
+  },
+  {
+    "id": "empty-candidate",
+    "value": "  \n",
+    "valid": false
+  },
+  {
+    "id": "not-text",
+    "value": {
+      "approved": true
+    },
+    "valid": false
+  }
+]

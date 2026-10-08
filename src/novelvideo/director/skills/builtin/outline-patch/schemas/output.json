@@ -1,0 +1,205 @@
+{
+  "$defs": {
+    "ChangeSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Text",
+          "type": "string"
+        },
+        "hunkIds": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Hunkids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "text",
+        "hunkIds"
+      ],
+      "title": "ChangeSummary",
+      "type": "object"
+    },
+    "OutlineHunk": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "sectionKey": {
+          "enum": [
+            "overview",
+            "adaptation",
+            "chapters",
+            "hooks",
+            "boundaries"
+          ],
+          "title": "Sectionkey",
+          "type": "string"
+        },
+        "targetBlockIds": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Targetblockids",
+          "type": "array"
+        },
+        "beforeHash": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Beforehash",
+          "type": "string"
+        },
+        "afterBlocks": {
+          "items": {
+            "$ref": "#/$defs/PatchTextBlock"
+          },
+          "title": "Afterblocks",
+          "type": "array"
+        },
+        "changedClaimIds": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Changedclaimids",
+          "type": "array"
+        },
+        "reason": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "sectionKey",
+        "targetBlockIds",
+        "beforeHash",
+        "afterBlocks",
+        "changedClaimIds",
+        "reason"
+      ],
+      "title": "OutlineHunk",
+      "type": "object"
+    },
+    "PatchTextBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "heading",
+            "paragraph",
+            "list"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "level": {
+          "anyOf": [
+            {
+              "maximum": 6,
+              "minimum": 3,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Level"
+        },
+        "lineBreak": {
+          "title": "Linebreak",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "text",
+        "level",
+        "lineBreak"
+      ],
+      "title": "PatchTextBlock",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract": {
+      "const": "outline-patch/1.0.0",
+      "title": "Contract",
+      "type": "string"
+    },
+    "baseVersion": {
+      "minimum": 1,
+      "title": "Baseversion",
+      "type": "integer"
+    },
+    "baseAstHash": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Baseasthash",
+      "type": "string"
+    },
+    "baseSemanticHash": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Basesemantichash",
+      "type": "string"
+    },
+    "hunks": {
+      "items": {
+        "$ref": "#/$defs/OutlineHunk"
+      },
+      "title": "Hunks",
+      "type": "array"
+    },
+    "changeSummary": {
+      "items": {
+        "$ref": "#/$defs/ChangeSummary"
+      },
+      "title": "Changesummary",
+      "type": "array"
+    },
+    "unresolvedRequests": {
+      "items": {
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "title": "Unresolvedrequests",
+      "type": "array"
+    }
+  },
+  "required": [
+    "contract",
+    "baseVersion",
+    "baseAstHash",
+    "baseSemanticHash",
+    "hunks",
+    "changeSummary",
+    "unresolvedRequests"
+  ],
+  "title": "OutlinePatchDraft",
+  "type": "object"
+}

@@ -1,0 +1,443 @@
+{
+  "$defs": {
+    "Character": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "names": {
+          "items": {
+            "maxLength": 12000,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Names",
+          "type": "array"
+        },
+        "appearance": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Appearance",
+          "type": "string"
+        },
+        "motive": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Motive",
+          "type": "string"
+        },
+        "knowledge": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Knowledge",
+          "type": "string"
+        },
+        "voice": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Voice",
+          "type": "string"
+        },
+        "arc": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Arc",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "protagonist",
+            "main",
+            "supporting"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "setting": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Setting",
+          "type": "string"
+        },
+        "dramaticFunction": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Dramaticfunction",
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "maxLength": 12000,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "title": "Tags",
+          "type": "array"
+        },
+        "speechFlaw": {
+          "anyOf": [
+            {
+              "maxLength": 12000,
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Speechflaw"
+        },
+        "memorableDetail": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Memorabledetail",
+          "type": "string"
+        },
+        "pressureResponse": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Pressureresponse",
+          "type": "string"
+        },
+        "addressRules": {
+          "anyOf": [
+            {
+              "maxLength": 12000,
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Addressrules"
+        },
+        "firstEpisodeId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Firstepisodeid",
+          "type": "string"
+        },
+        "keyEpisodeIds": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+            "type": "string"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "title": "Keyepisodeids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "names",
+        "appearance",
+        "motive",
+        "knowledge",
+        "voice",
+        "arc",
+        "role",
+        "setting",
+        "dramaticFunction",
+        "tags",
+        "speechFlaw",
+        "memorableDetail",
+        "pressureResponse",
+        "addressRules",
+        "firstEpisodeId",
+        "keyEpisodeIds"
+      ],
+      "title": "Character",
+      "type": "object"
+    },
+    "Prop": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Type",
+          "type": "string"
+        },
+        "dramaticFunction": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Dramaticfunction",
+          "type": "string"
+        },
+        "usageBoundary": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Usageboundary",
+          "type": "string"
+        },
+        "firstEpisodeId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Firstepisodeid",
+          "type": "string"
+        },
+        "keyEpisodeIds": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+            "type": "string"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "title": "Keyepisodeids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "type",
+        "dramaticFunction",
+        "usageBoundary",
+        "firstEpisodeId",
+        "keyEpisodeIds"
+      ],
+      "title": "Prop",
+      "type": "object"
+    },
+    "Relation": {
+      "additionalProperties": false,
+      "properties": {
+        "fromId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Fromid",
+          "type": "string"
+        },
+        "toId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Toid",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fromId",
+        "toId",
+        "description"
+      ],
+      "title": "Relation",
+      "type": "object"
+    },
+    "Scene": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "interior",
+            "exterior",
+            "mixed",
+            "unknown"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "dramaticFunction": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Dramaticfunction",
+          "type": "string"
+        },
+        "spatialConstraints": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Spatialconstraints",
+          "type": "string"
+        },
+        "reusablePositions": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Reusablepositions",
+          "type": "string"
+        },
+        "keyEpisodeIds": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+            "type": "string"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "title": "Keyepisodeids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "type",
+        "dramaticFunction",
+        "spatialConstraints",
+        "reusablePositions",
+        "keyEpisodeIds"
+      ],
+      "title": "Scene",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "propVersion": {
+      "const": 1,
+      "title": "Propversion",
+      "type": "integer"
+    },
+    "props": {
+      "items": {
+        "$ref": "#/$defs/Prop"
+      },
+      "maxItems": 100,
+      "title": "Props",
+      "type": "array"
+    },
+    "emptyReason": {
+      "anyOf": [
+        {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Emptyreason"
+    },
+    "sceneVersion": {
+      "const": 1,
+      "title": "Sceneversion",
+      "type": "integer"
+    },
+    "locations": {
+      "items": {
+        "$ref": "#/$defs/Scene"
+      },
+      "maxItems": 100,
+      "minItems": 1,
+      "title": "Locations",
+      "type": "array"
+    },
+    "characterVersion": {
+      "const": 2,
+      "title": "Characterversion",
+      "type": "integer"
+    },
+    "characters": {
+      "items": {
+        "$ref": "#/$defs/Character"
+      },
+      "maxItems": 100,
+      "minItems": 1,
+      "title": "Characters",
+      "type": "array"
+    },
+    "relations": {
+      "items": {
+        "$ref": "#/$defs/Relation"
+      },
+      "title": "Relations",
+      "type": "array"
+    },
+    "worldRules": {
+      "items": {
+        "maxLength": 12000,
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "title": "Worldrules",
+      "type": "array"
+    }
+  },
+  "required": [
+    "propVersion",
+    "props",
+    "emptyReason",
+    "sceneVersion",
+    "locations",
+    "characterVersion",
+    "characters",
+    "relations",
+    "worldRules"
+  ],
+  "title": "Bible",
+  "type": "object"
+}

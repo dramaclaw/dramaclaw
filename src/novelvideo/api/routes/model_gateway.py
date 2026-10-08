@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 from novelvideo import config as app_config
 from novelvideo.model_gateway_settings import (
@@ -63,6 +63,105 @@ from novelvideo.newapi_provisioner import (
 )
 
 router = APIRouter(prefix="/model-gateway")
+
+
+def _local_catalog():
+    from novelvideo.local_model_catalog import LocalModelCatalog, active_root
+    try:
+        require_ce_gateway_management()
+    except PermissionError as exc:
+        raise _permission_error(exc) from None
+    root = active_root()
+    if root is None:
+        raise HTTPException(409, "local gateway is not configured")
+    return LocalModelCatalog(root)
+
+
+class LocalModelChange(BaseModel):
+    id: str
+    enabled: bool
+
+
+class LocalModelPreferences(BaseModel):
+    models: list[LocalModelChange] = Field(default_factory=list)
+    defaults: dict[str, str] = Field(default_factory=dict)
+
+
+class LocalProviderKey(BaseModel):
+    api_key: SecretStr
+
+
+@router.get("/local/catalog")
+async def local_model_catalog() -> dict[str, Any]:
+    return {"ok": True, "data": _local_catalog().snapshot()}
+
+
+@router.post("/local/preferences")
+async def local_model_preferences(body: LocalModelPreferences) -> dict[str, Any]:
+    catalog = _local_catalog()
+    try:
+        catalog.update([m.model_dump() for m in body.models], body.defaults)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    return {"ok": True, "data": catalog.snapshot()}
+
+
+@router.post("/local/providers/{provider}/refresh")
+async def refresh_local_provider(provider: str) -> dict[str, Any]:
+    try:
+        result = await _local_catalog().refresh(provider)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    return {"ok": True, "data": result}
+
+
+@router.post("/local/providers/{provider}/key")
+async def save_local_provider_key(provider: str, body: LocalProviderKey) -> dict[str, Any]:
+    import os
+    import tempfile
+    from novelvideo.local_model_catalog import secret_path
+    catalog = _local_catalog()
+    try:
+        target = secret_path(catalog.root, provider)
+        key = body.api_key.get_secret_value().strip()
+        if not key or len(key) > 4096 or any(c.isspace() for c in key):
+            raise ValueError("invalid API key")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=target.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(key)
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, target)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    catalog.set_setting(f"error:{provider}", "")
+    return {"ok": True, "data": catalog.snapshot()}
+
+
+@router.post("/local/providers/{provider}/check")
+async def check_local_provider(provider: str) -> dict[str, Any]:
+    import time
+    from novelvideo.local_provider_api import provider_request
+    catalog = _local_catalog()
+    if provider not in {"ark", "siliconflow"}:
+        raise HTTPException(400, "unsupported provider")
+    started = time.monotonic()
+    try:
+        await provider_request(catalog, provider, "chat/completions", {
+            "model": "doubao-seed-evolving" if provider == "ark" else "deepseek-ai/DeepSeek-V4-Flash",
+            "messages": [{"role": "user", "content": "Reply OK"}], "max_tokens": 32,
+            **({"thinking": {"type": "disabled"}} if provider == "ark" else {"enable_thinking": False}),
+        })
+    except (HTTPException, ValueError) as exc:
+        code = "authentication_failed" if isinstance(exc, HTTPException) and exc.status_code in {401, 403} else "connection_failed"
+        catalog.set_setting(f"error:{provider}", code)
+        return {"ok": True, "data": {"connected": False, "error": code, "seconds": round(time.monotonic() - started, 2)}}
+    catalog.set_setting(f"error:{provider}", "")
+    return {"ok": True, "data": {"connected": True, "error": "", "seconds": round(time.monotonic() - started, 2)}}
 
 
 OFFICIAL_ONLY_MEDIA_MODEL_NAMES = {

@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "caseId": "F03",
+  "source": "synthetic",
+  "scope": "foundation_guard_only_not_full_ui_or_workflow_acceptance",
+  "variants": [
+    {
+      "id": "source-label-not-ordinal",
+      "operation": "episode_binding",
+      "input": {
+        "original": {
+          "id": "ep-one",
+          "workId": "work-one",
+          "documentId": "doc-one",
+          "ordinal": 1,
+          "sourceEpisodeLabel": "EP02",
+          "deliveryLabel": "EP02"
+        },
+        "candidate": {
+          "id": "ep-one",
+          "workId": "work-one",
+          "documentId": "doc-one",
+          "ordinal": 1,
+          "sourceEpisodeLabel": "EP02",
+          "deliveryLabel": "EP02"
+        }
+      },
+      "expected": {
+        "ordinal": 1,
+        "sourceEpisodeLabel": "EP02",
+        "deliveryLabel": "EP02"
+      }
+    },
+    {
+      "id": "reorder-keeps-source",
+      "operation": "episode_binding",
+      "input": {
+        "original": {
+          "id": "ep-one",
+          "workId": "work-one",
+          "documentId": "doc-one",
+          "ordinal": 1,
+          "sourceEpisodeLabel": "EP02",
+          "deliveryLabel": "EP02"
+        },
+        "candidate": {
+          "id": "ep-one",
+          "workId": "work-one",
+          "documentId": "doc-one",
+          "ordinal": 2,
+          "sourceEpisodeLabel": "EP02",
+          "deliveryLabel": "EP02"
+        }
+      },
+      "expected": {
+        "ordinal": 2,
+        "sourceEpisodeLabel": "EP02"
+      }
+    },
+    {
+      "id": "source-number-overwritten",
+      "operation": "episode_binding",
+      "input": {
+        "original": {
+          "id": "ep-one",
+          "workId": "work-one",
+          "documentId": "doc-one",
+          "ordinal": 1,
+          "sourceEpisodeLabel": "EP02",
+          "deliveryLabel": "EP02"
+        },
+        "candidate": {
+          "id": "ep-one",
+          "workId": "work-one",
+          "documentId": "doc-one",
+          "ordinal": 1,
+          "sourceEpisodeLabel": "EP01",
+          "deliveryLabel": "EP02"
+        }
+      },
+      "expectedError": "EPISODE_IDENTITY_MISMATCH"
+    },
+    {
+      "id": "cross-work-binding",
+      "operation": "episode_binding",
+      "input": {
+        "original": {
+          "id": "ep-one",
+          "workId": "work-one",
+          "documentId": "doc-one",
+          "ordinal": 1,
+          "sourceEpisodeLabel": "EP02",
+          "deliveryLabel": "EP02"
+        },
+        "candidate": {
+          "id": "ep-one",
+          "workId": "other-work",
+          "documentId": "doc-one",
+          "ordinal": 1,
+          "sourceEpisodeLabel": "EP02",
+          "deliveryLabel": "EP02"
+        }
+      },
+      "expectedError": "EPISODE_IDENTITY_MISMATCH"
+    }
+  ]
+}

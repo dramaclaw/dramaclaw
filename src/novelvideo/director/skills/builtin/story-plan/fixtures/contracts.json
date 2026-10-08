@@ -1,0 +1,405 @@
+[
+  {
+    "valid": true,
+    "value": {
+      "titleCandidates": [
+        "The Box",
+        "The Key",
+        "The Glasses"
+      ],
+      "logline": "Open box and retrieve glasses",
+      "worldRules": [],
+      "structureId": "three_act",
+      "segments": [
+        {
+          "name": "Complete action",
+          "episodeIds": [
+            "ep-1"
+          ],
+          "action": "Unlock and take",
+          "result": "Can read",
+          "position": "The complete single-episode story.",
+          "carryIn": "No prior episode.",
+          "stageGoal": "From being unable to read to understanding the message.",
+          "mainConflict": "Lin needs glasses locked in the box.",
+          "secondaryConflicts": [],
+          "oppositionTactic": "A physical lock blocks access.",
+          "characterArcs": [
+            "Lin accepts help and thanks Chen."
+          ],
+          "setupIds": [
+            "fs-01"
+          ],
+          "informationRelease": "Chen has repaired the glasses.",
+          "cost": "Lin has to ask for help.",
+          "audienceReward": "A small act of care is received.",
+          "distinction": "Only one self-contained segment.",
+          "carryOut": "The greeting is read and the action resolved."
+        }
+      ],
+      "conflicts": [
+        "Box is locked"
+      ],
+      "arcs": [
+        "Lin moves from frustration to gratitude."
+      ],
+      "setupsPayoffs": [
+        "Unreadable note becomes readable after obtaining glasses."
+      ],
+      "ending": "Reads a letter",
+      "totalDurationSeconds": 30,
+      "productionRisks": [],
+      "assumptions": [],
+      "outlineVersion": 2,
+      "coreHighlights": [
+        "An ordinary gift restores the ability to read."
+      ],
+      "emotionalCurve": "Frustration becomes relief and gratitude.",
+      "synopsis": "Lin takes the key from Chen, unlocks the box, puts on the repaired glasses and reads the birthday note. Lin smiles in thanks.",
+      "setting": "A contemporary repair room, evening.",
+      "protagonist": "Lin",
+      "mainResistance": "The locked box and unreadable note.",
+      "genreTreatment": "Warm silent everyday drama.",
+      "pressure": {
+        "protagonistGoal": "Read the note.",
+        "cannotRetreat": "The birthday message matters to Lin.",
+        "habitualStrategy": "Ask through gestures, then act.",
+        "opposition": "The box requires Chen's key.",
+        "extraPressures": []
+      },
+      "whyWatch": [
+        {
+          "episodeId": "ep-1",
+          "reason": "Discover what is in the locked box and see the message become readable."
+        }
+      ],
+      "hooks": [
+        {
+          "id": "hk-01",
+          "imageOrLine": "Lin holds a blurred note beside a locked box.",
+          "question": "Can Lin read the message?",
+          "episodeId": "ep-1"
+        }
+      ],
+      "setups": [
+        {
+          "id": "fs-01",
+          "plant": "An unreadable note.",
+          "plantEpisodeId": "ep-1",
+          "visibleForm": "Lin squints at the paper.",
+          "payoffEpisodeId": "ep-1",
+          "payoff": "After putting on the glasses, Lin reads the birthday greeting."
+        }
+      ],
+      "setupsNote": null,
+      "reversals": [],
+      "reversalsNote": "No reversal is needed; the gift is an earned resolution, not a hidden identity.",
+      "creativeBans": [
+        "No relatives, third character or second location.",
+        "The note is read only after the glasses are worn.",
+        "Resolve within this episode, without a sequel."
+      ]
+    }
+  },
+  {
+    "valid": false,
+    "value": {}
+  },
+  {
+    "valid": false,
+    "value": {
+      "titleCandidates": [
+        "The Box",
+        "The Key",
+        "The Glasses"
+      ],
+      "logline": "Open box and retrieve glasses",
+      "worldRules": [],
+      "structureId": "three_act",
+      "segments": [
+        {
+          "name": "Complete action",
+          "episodeIds": [
+            "ep-1"
+          ],
+          "action": "Unlock and take",
+          "result": "Can read",
+          "position": "The complete single-episode story.",
+          "carryIn": "No prior episode.",
+          "stageGoal": "From being unable to read to understanding the message.",
+          "mainConflict": "Lin needs glasses locked in the box.",
+          "secondaryConflicts": [],
+          "oppositionTactic": "A physical lock blocks access.",
+          "characterArcs": [
+            "Lin accepts help and thanks Chen."
+          ],
+          "setupIds": [
+            "fs-01"
+          ],
+          "informationRelease": "Chen has repaired the glasses.",
+          "cost": "Lin has to ask for help.",
+          "audienceReward": "A small act of care is received.",
+          "distinction": "Only one self-contained segment.",
+          "carryOut": "The greeting is read and the action resolved."
+        }
+      ],
+      "conflicts": [
+        "Box is locked"
+      ],
+      "arcs": [
+        "Lin moves from frustration to gratitude."
+      ],
+      "setupsPayoffs": [
+        "Unreadable note becomes readable after obtaining glasses."
+      ],
+      "ending": "Reads a letter",
+      "totalDurationSeconds": 30,
+      "productionRisks": [],
+      "assumptions": [],
+      "outlineVersion": 2,
+      "coreHighlights": [
+        "An ordinary gift restores the ability to read."
+      ],
+      "emotionalCurve": "Frustration becomes relief and gratitude.",
+      "synopsis": "Lin takes the key from Chen, unlocks the box, puts on the repaired glasses and reads the birthday note. Lin smiles in thanks.",
+      "setting": "A contemporary repair room, evening.",
+      "protagonist": "Lin",
+      "mainResistance": "The locked box and unreadable note.",
+      "genreTreatment": "Warm silent everyday drama.",
+      "pressure": {
+        "protagonistGoal": "Read the note.",
+        "cannotRetreat": "The birthday message matters to Lin.",
+        "habitualStrategy": "Ask through gestures, then act.",
+        "opposition": "The box requires Chen's key.",
+        "extraPressures": []
+      },
+      "whyWatch": [
+        {
+          "episodeId": "ep-1",
+          "reason": "Discover what is in the locked box and see the message become readable."
+        }
+      ],
+      "hooks": [
+        {
+          "id": "hk-01",
+          "imageOrLine": "Lin holds a blurred note beside a locked box.",
+          "question": "Can Lin read the message?",
+          "episodeId": "ep-1"
+        }
+      ],
+      "setups": [
+        {
+          "id": "fs-01",
+          "plant": "An unreadable note.",
+          "plantEpisodeId": "ep-1",
+          "visibleForm": "Lin squints at the paper.",
+          "payoffEpisodeId": "ep-1",
+          "payoff": "After putting on the glasses, Lin reads the birthday greeting."
+        }
+      ],
+      "setupsNote": null,
+      "reversals": [],
+      "reversalsNote": "No reversal is needed; the gift is an earned resolution, not a hidden identity.",
+      "creativeBans": [
+        "No relatives, third character or second location.",
+        "The note is read only after the glasses are worn.",
+        "Resolve within this episode, without a sequel."
+      ],
+      "approved": true
+    }
+  },
+  {
+    "valid": false,
+    "value": {
+      "titleCandidates": [
+        "The Box",
+        "The Key",
+        "The Glasses"
+      ],
+      "logline": "Open box and retrieve glasses",
+      "worldRules": [],
+      "structureId": "three_act",
+      "segments": [
+        {
+          "name": "Complete action",
+          "episodeIds": [
+            "ep-1"
+          ],
+          "action": "Unlock and take",
+          "result": "Can read",
+          "position": "The complete single-episode story.",
+          "carryIn": "No prior episode.",
+          "stageGoal": "From being unable to read to understanding the message.",
+          "mainConflict": "Lin needs glasses locked in the box.",
+          "secondaryConflicts": [],
+          "oppositionTactic": "A physical lock blocks access.",
+          "characterArcs": [
+            "Lin accepts help and thanks Chen."
+          ],
+          "setupIds": [
+            "fs-01"
+          ],
+          "informationRelease": "Chen has repaired the glasses.",
+          "cost": "Lin has to ask for help.",
+          "audienceReward": "A small act of care is received.",
+          "distinction": "Only one self-contained segment.",
+          "carryOut": "The greeting is read and the action resolved."
+        }
+      ],
+      "conflicts": [
+        "Box is locked"
+      ],
+      "arcs": [
+        "Lin moves from frustration to gratitude."
+      ],
+      "setupsPayoffs": [
+        "Unreadable note becomes readable after obtaining glasses."
+      ],
+      "ending": "Reads a letter",
+      "totalDurationSeconds": 30,
+      "productionRisks": [],
+      "assumptions": [],
+      "outlineVersion": 2,
+      "coreHighlights": [
+        "An ordinary gift restores the ability to read."
+      ],
+      "emotionalCurve": "Frustration becomes relief and gratitude.",
+      "setting": "A contemporary repair room, evening.",
+      "protagonist": "Lin",
+      "mainResistance": "The locked box and unreadable note.",
+      "genreTreatment": "Warm silent everyday drama.",
+      "pressure": {
+        "protagonistGoal": "Read the note.",
+        "cannotRetreat": "The birthday message matters to Lin.",
+        "habitualStrategy": "Ask through gestures, then act.",
+        "opposition": "The box requires Chen's key.",
+        "extraPressures": []
+      },
+      "whyWatch": [
+        {
+          "episodeId": "ep-1",
+          "reason": "Discover what is in the locked box and see the message become readable."
+        }
+      ],
+      "hooks": [
+        {
+          "id": "hk-01",
+          "imageOrLine": "Lin holds a blurred note beside a locked box.",
+          "question": "Can Lin read the message?",
+          "episodeId": "ep-1"
+        }
+      ],
+      "setups": [
+        {
+          "id": "fs-01",
+          "plant": "An unreadable note.",
+          "plantEpisodeId": "ep-1",
+          "visibleForm": "Lin squints at the paper.",
+          "payoffEpisodeId": "ep-1",
+          "payoff": "After putting on the glasses, Lin reads the birthday greeting."
+        }
+      ],
+      "setupsNote": null,
+      "reversals": [],
+      "reversalsNote": "No reversal is needed; the gift is an earned resolution, not a hidden identity.",
+      "creativeBans": [
+        "No relatives, third character or second location.",
+        "The note is read only after the glasses are worn.",
+        "Resolve within this episode, without a sequel."
+      ]
+    }
+  },
+  {
+    "valid": false,
+    "value": {
+      "titleCandidates": [
+        "The Box",
+        "The Key",
+        "The Glasses"
+      ],
+      "logline": "Open box and retrieve glasses",
+      "worldRules": [],
+      "structureId": "three_act",
+      "segments": [
+        {
+          "name": "Complete action",
+          "episodeIds": [
+            "ep-1"
+          ],
+          "action": "Unlock and take",
+          "result": "Can read",
+          "position": "The complete single-episode story.",
+          "carryIn": "No prior episode.",
+          "stageGoal": "From being unable to read to understanding the message.",
+          "mainConflict": "Lin needs glasses locked in the box.",
+          "secondaryConflicts": [],
+          "oppositionTactic": "A physical lock blocks access.",
+          "characterArcs": [
+            "Lin accepts help and thanks Chen."
+          ],
+          "setupIds": [
+            "fs-01"
+          ],
+          "informationRelease": "Chen has repaired the glasses.",
+          "cost": "Lin has to ask for help.",
+          "audienceReward": "A small act of care is received.",
+          "distinction": "Only one self-contained segment.",
+          "carryOut": "The greeting is read and the action resolved."
+        }
+      ],
+      "conflicts": [
+        "Box is locked"
+      ],
+      "arcs": [
+        "Lin moves from frustration to gratitude."
+      ],
+      "setupsPayoffs": [
+        "Unreadable note becomes readable after obtaining glasses."
+      ],
+      "ending": "Reads a letter",
+      "totalDurationSeconds": 30,
+      "productionRisks": [],
+      "assumptions": [],
+      "outlineVersion": 2,
+      "coreHighlights": [
+        "An ordinary gift restores the ability to read."
+      ],
+      "emotionalCurve": "Frustration becomes relief and gratitude.",
+      "synopsis": "Lin takes the key from Chen, unlocks the box, puts on the repaired glasses and reads the birthday note. Lin smiles in thanks.",
+      "setting": "A contemporary repair room, evening.",
+      "protagonist": "Lin",
+      "mainResistance": "The locked box and unreadable note.",
+      "genreTreatment": "Warm silent everyday drama.",
+      "pressure": {
+        "protagonistGoal": "Read the note.",
+        "cannotRetreat": "The birthday message matters to Lin.",
+        "habitualStrategy": "Ask through gestures, then act.",
+        "opposition": "The box requires Chen's key.",
+        "extraPressures": []
+      },
+      "whyWatch": [
+        {
+          "episodeId": "ep-1",
+          "reason": "Discover what is in the locked box and see the message become readable."
+        }
+      ],
+      "hooks": [
+        {
+          "id": "hk-01",
+          "imageOrLine": "Lin holds a blurred note beside a locked box.",
+          "question": "Can Lin read the message?",
+          "episodeId": "ep-1"
+        }
+      ],
+      "setups": [],
+      "setupsNote": null,
+      "reversals": [],
+      "reversalsNote": "No reversal is needed; the gift is an earned resolution, not a hidden identity.",
+      "creativeBans": [
+        "No relatives, third character or second location.",
+        "The note is read only after the glasses are worn.",
+        "Resolve within this episode, without a sequel."
+      ]
+    }
+  }
+]

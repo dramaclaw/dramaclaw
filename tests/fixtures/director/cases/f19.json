@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "caseId": "F19",
+  "source": "synthetic",
+  "scope": "foundation_guard_only_not_full_ui_or_workflow_acceptance",
+  "variants": [
+    {
+      "id": "unknown-no-task-id",
+      "operation": "recovery",
+      "input": {
+        "operationId": "operation-one",
+        "requestHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "unknown",
+        "providerTaskId": null
+      },
+      "expected": "manual_reconciliation"
+    },
+    {
+      "id": "accepted-reconnect",
+      "operation": "recovery",
+      "input": {
+        "operationId": "operation-one",
+        "requestHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "accepted",
+        "providerTaskId": "provider-one"
+      },
+      "expected": "query_existing"
+    },
+    {
+      "id": "still-dispatching",
+      "operation": "recovery",
+      "input": {
+        "operationId": "operation-one",
+        "requestHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "dispatching",
+        "providerTaskId": null
+      },
+      "expected": "wait_for_dispatch"
+    },
+    {
+      "id": "unknown-but-id-known",
+      "operation": "recovery",
+      "input": {
+        "operationId": "operation-one",
+        "requestHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "unknown",
+        "providerTaskId": "provider-one"
+      },
+      "expected": "query_existing"
+    },
+    {
+      "id": "ingestion-retry-not-generate",
+      "operation": "recovery",
+      "input": {
+        "operationId": "operation-one",
+        "requestHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "ingestion_failed",
+        "providerTaskId": "provider-one"
+      },
+      "expected": "retry_ingestion"
+    },
+    {
+      "id": "accepted-without-id",
+      "operation": "recovery",
+      "input": {
+        "operationId": "operation-one",
+        "requestHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "accepted",
+        "providerTaskId": null
+      },
+      "expectedError": "SCHEMA_INVALID"
+    },
+    {
+      "id": "accepted-disguised-as-approved",
+      "operation": "recovery",
+      "input": {
+        "operationId": "operation-one",
+        "requestHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "approved",
+        "providerTaskId": "provider-one"
+      },
+      "expectedError": "SCHEMA_INVALID"
+    }
+  ]
+}

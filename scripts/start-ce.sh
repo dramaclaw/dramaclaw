@@ -10,6 +10,9 @@ api_host="${NOVELVIDEO_API_HOST:-0.0.0.0}"
 frontend_port="${SUPERTALE_FE_PORT:-5173}"
 frontend_host="${SUPERTALE_FE_HOST:-0.0.0.0}"
 api_ready_timeout="${NOVELVIDEO_API_READY_TIMEOUT:-90}"
+# Preserve a caller-supplied Vite target.  ``.env`` is useful for standalone
+# defaults but must not disconnect an explicitly selected local API port.
+requested_vite_api_url="${VITE_API_URL:-}"
 api_pid=""
 fe_pid=""
 
@@ -73,8 +76,17 @@ export NOVELVIDEO_API_PORT="$api_port"
 export NOVELVIDEO_API_URL="http://127.0.0.1:${api_port}"
 export DRAMACLAW_API_URL="$NOVELVIDEO_API_URL"
 export SUPERTALE_API_URL="$NOVELVIDEO_API_URL"
+if [ -n "$requested_vite_api_url" ]; then
+  export VITE_API_URL="$requested_vite_api_url"
+fi
+# The update-safe local-router profile owns routing itself.  Do not revive the
+# obsolete in-app NewAPI provisioner from .env after the wrapper selected it.
+if [ -n "${DRAMACLAW_LOCAL_CONFIG_DIR:-}" ]; then
+  export NEWAPI_PROVISIONER_ENABLED=false
+fi
 
-if [ "${NEWAPI_API_KEY:-}" = "your_newapi_token" ] || [ -z "${NEWAPI_API_KEY:-}" ]; then
+if { [ "${NEWAPI_API_KEY:-}" = "your_newapi_token" ] || [ -z "${NEWAPI_API_KEY:-}" ]; } \
+  && [ -z "${DRAMACLAW_LOCAL_CONFIG_DIR:-}" ]; then
   echo "Warning: NEWAPI_API_KEY is not configured. API can start, but AI generation will fail." >&2
 fi
 

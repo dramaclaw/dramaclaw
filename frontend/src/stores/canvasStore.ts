@@ -38,7 +38,19 @@ import {
   isStoryboardGroupNode,
   isStoryboardSplitNode,
   isStyleNode,
+  isVideoNode,
 } from '@/features/canvas/domain/canvasNodes';
+import { placeVideoSplitSegments } from '@/features/canvas/application/videoSplitPlacement';
+import { extractUpstreamContent } from '@/features/canvas/application/graphContentResolver';
+import {
+  hasVideoPromptTimeline,
+  splitTimedVideoPrompt,
+  videoSplitTextOverrides,
+  VideoPromptSplitError,
+  type VideoPromptSplitPlan,
+  type VideoPromptSplitMetadata,
+} from '@/features/canvas/application/videoPromptSplit';
+import { inheritMainlineFields, type MainlineFieldsSource } from '@/features/canvas/domain/inheritMainlineFields';
 import {
   DEFAULT_STORYBOARD_ASPECT,
   computeStoryboardBoardLayout,
@@ -257,6 +269,7 @@ interface CanvasState {
    * active selection. Returns the created node ids.
    */
   duplicateNodesAsSiblings: (nodeIds: string[]) => string[];
+  splitVideoNodeByPrompt: (nodeId: string) => VideoPromptSplitPlan;
 
   /**
    * Turn a batch of panorama screenshots into image nodes laid out in a grid to
@@ -708,6 +721,12 @@ function normalizeNodes(rawNodes: CanvasNode[]): CanvasNode[] {
             mergedData.generationStartedAt = null;
           }
         }
+      }
+
+      // 拉片没有持久化 task key，刷新后无法恢复监听。把保存下来的进行态复位，
+      // 否则按钮会永久禁用；任务本身仍在任务中心执行，不把复位误写成失败。
+      if ('isBreakingDown' in mergedData && mergedData.isBreakingDown) {
+        mergedData.isBreakingDown = false;
       }
 
       const normalizedNode = {
@@ -1640,6 +1659,113 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       ...trackEdit(state),
     });
     return newNode.id;
+  },
+
+  splitVideoNodeByPrompt: (nodeId) => {
+    const state = get();
+    const source = state.nodes.find((node) => node.id === nodeId);
+    if (!source || !isVideoNode(source) || source.data.preset_managed
+      || source.data.isUpscaleNode || source.data.depthMotionRole || source.data.referenceOnly) {
+      throw new VideoPromptSplitError('unsupported');
+    }
+    if (source.data.isGenerating || source.data.isUploading || source.data.isAnalyzing
+      || source.data.isBreakingDown || source.data.isSeparatingAv || source.data.depthPending) {
+      throw new VideoPromptSplitError('busy');
+    }
+    const ownPrompt = source.data.prompt ?? '';
+    const overrides = videoSplitTextOverrides(source.data);
+    const nodeMap = new Map(state.nodes.map((node) => [node.id, node]));
+    const incoming = state.edges.filter((edge) => edge.target === nodeId);
+    const documents: { id: string | null; text: string }[] = [{ id: null, text: ownPrompt }];
+    for (const sourceId of new Set(incoming.map((edge) => edge.source))) {
+      const input = nodeMap.get(sourceId);
+      if (!input) continue;
+      const text = overrides[sourceId] ?? extractUpstreamContent(input).text;
+      if (text) documents.push({ id: sourceId, text });
+    }
+    const timelines = documents.filter((document) => hasVideoPromptTimeline(document.text));
+    if (!timelines.length) throw new VideoPromptSplitError('noTimeline');
+    if (timelines.length !== 1) throw new VideoPromptSplitError('multipleTimelines');
+    const timeline = timelines[0];
+    const plan = splitTimedVideoPrompt(timeline.text);
+
+    const originalName = (source.data.videoPromptSplit as VideoPromptSplitMetadata | undefined)?.originalName
+      ?? source.data.displayName ?? source.id;
+    const size = getNodeSize(source);
+    const origin = resolveAbsolutePosition(source, nodeMap);
+    let anchor: CanvasNode = source;
+    const ancestors = new Set<string>();
+    while (anchor.parentId && !ancestors.has(anchor.parentId)) {
+      ancestors.add(anchor.parentId);
+      const parent = nodeMap.get(anchor.parentId);
+      if (!parent) break;
+      anchor = parent;
+    }
+    const anchorPos = resolveAbsolutePosition(anchor, nodeMap);
+    const occupied = state.nodes.map((node) => ({ ...resolveAbsolutePosition(node, nodeMap), ...getNodeSize(node) }));
+    const positions = placeVideoSplitSegments(
+      { x: anchorPos.x + getNodeSize(anchor).width + 48, y: origin.y },
+      size, plan.segments.length - 1, occupied,
+    );
+    const newNodes: CanvasNode[] = [];
+    const newEdges: CanvasEdge[] = [];
+    let first = source;
+    for (let index = 0; index < plan.segments.length; index += 1) {
+      const segment = plan.segments[index];
+      const copied = JSON.parse(JSON.stringify(source.data)) as typeof source.data;
+      const data = {
+        ...inheritMainlineFields({ data: source.data as MainlineFieldsSource }, copied),
+        preset_managed: false,
+        projection_key: undefined,
+        displayName: i18n.t('videoPromptSplit.segmentName', { name: originalName, index: index + 1, count: plan.segments.length }),
+        prompt: timeline.id === null ? segment.prompt : ownPrompt,
+        // Generation controls use whole seconds; round up to retain the last shot.
+        durationSec: Math.ceil(segment.durationSec),
+        videoPromptSplit: {
+          sourceNodeId: source.id, originalName, index: index + 1, count: plan.segments.length,
+          startSec: segment.startSec, endSec: segment.endSec, totalDurationSec: plan.totalDurationSec,
+          upstreamTextOverrides: timeline.id === null ? overrides : { ...overrides, [timeline.id]: segment.prompt },
+        } satisfies VideoPromptSplitMetadata,
+        isGenerating: false, isUploading: false, isAnalyzing: false, isBreakingDown: false,
+        isSeparatingAv: false, isClipMode: false, depthPending: null,
+        generationStartedAt: null, generationJobId: null, generationProviderId: null,
+        generationClientSessionId: null, generationTaskKey: null, generationTaskType: null,
+        generationTaskJobId: null, generationStoryboardMetadata: undefined,
+        generationError: null, generationErrorDetails: null, generationErrorRequestId: null,
+        generationDebugContext: undefined, analysisError: null, breakdownError: null,
+      };
+      if (index === 0) {
+        first = { ...source, data, selected: false };
+        continue;
+      }
+      // Root-level segments follow the source row without moving existing nodes.
+      const { x, y } = positions[index - 1];
+      const node = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.video, { x, y }, {
+        ...data, videoUrl: null, previewImageUrl: null, generationBatch: null,
+        // Imported media URLs otherwise recreate the original poster in LOD.
+        liblibImport: data.liblibImport
+          ? { ...data.liblibImport, sourceUrl: '', importedLocalUrl: '' }
+          : undefined,
+        sourceFileName: null, durationMs: null, widthPx: null, heightPx: null,
+      });
+      node.width = size.width;
+      node.height = size.height;
+      node.style = { width: size.width, height: size.height };
+      node.selected = index === 1;
+      newNodes.push(node);
+      for (const edge of incoming) {
+        newEdges.push({ ...edge, id: `split-${node.id}-${edge.id}`, target: node.id, selected: false });
+      }
+    }
+    set({
+      nodes: [...state.nodes.map((node) => node.id === source.id ? first : { ...node, selected: false }), ...newNodes],
+      edges: [...state.edges, ...newEdges],
+      selectedNodeId: newNodes[0]?.id ?? source.id,
+      history: { past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)), future: [] },
+      dragHistorySnapshot: null,
+      ...trackEdit(state),
+    });
+    return plan;
   },
 
   duplicateNodeAsSibling: (sourceNodeId, index, dataOverrides = {}) => {

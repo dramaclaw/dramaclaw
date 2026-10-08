@@ -1,0 +1,332 @@
+{
+  "schemaVersion": 1,
+  "caseId": "F05",
+  "source": "synthetic",
+  "scope": "foundation_guard_only_not_full_ui_or_workflow_acceptance",
+  "variants": [
+    {
+      "id": "independent-audit-ready",
+      "operation": "source_audit",
+      "input": {
+        "sourceVersion": "source-v1",
+        "normalizedText": "A enters.\nA gives the key to B.\nB opens the door.\n",
+        "chunks": [
+          {
+            "id": "chunk-0",
+            "start": 0,
+            "end": 10,
+            "textHash": "6b4bc42d35e01b9e2efef3fd64cc9de11118621f5e389f98efc94a562bb48fca",
+            "status": "succeeded"
+          },
+          {
+            "id": "chunk-1",
+            "start": 10,
+            "end": 32,
+            "textHash": "53c16126941355ce909772305540bdb31e7e8f9f1bd26e684c65d45af5eead77",
+            "status": "succeeded"
+          },
+          {
+            "id": "chunk-2",
+            "start": 32,
+            "end": 50,
+            "textHash": "a19393f58f44abf97e1b1dad08153301f644596000a381399bea0cd285598dab",
+            "status": "succeeded"
+          }
+        ],
+        "extractionRunId": "extract-one",
+        "auditRunId": "audit-one",
+        "auditCompleted": true,
+        "extractedEventIds": [
+          "entry",
+          "key-transfer",
+          "unlock"
+        ],
+        "auditedCriticalIds": [
+          "key-transfer",
+          "unlock"
+        ],
+        "unresolvedCriticalIds": []
+      },
+      "expected": {
+        "readCoverage": 1,
+        "auditComplete": true,
+        "readyForPlanning": true,
+        "missingCriticalIds": []
+      }
+    },
+    {
+      "id": "all-read-key-missing",
+      "operation": "source_audit",
+      "input": {
+        "sourceVersion": "source-v1",
+        "normalizedText": "A enters.\nA gives the key to B.\nB opens the door.\n",
+        "chunks": [
+          {
+            "id": "chunk-0",
+            "start": 0,
+            "end": 10,
+            "textHash": "6b4bc42d35e01b9e2efef3fd64cc9de11118621f5e389f98efc94a562bb48fca",
+            "status": "succeeded"
+          },
+          {
+            "id": "chunk-1",
+            "start": 10,
+            "end": 32,
+            "textHash": "53c16126941355ce909772305540bdb31e7e8f9f1bd26e684c65d45af5eead77",
+            "status": "succeeded"
+          },
+          {
+            "id": "chunk-2",
+            "start": 32,
+            "end": 50,
+            "textHash": "a19393f58f44abf97e1b1dad08153301f644596000a381399bea0cd285598dab",
+            "status": "succeeded"
+          }
+        ],
+        "extractionRunId": "extract-one",
+        "auditRunId": "audit-one",
+        "auditCompleted": true,
+        "extractedEventIds": [
+          "entry",
+          "unlock"
+        ],
+        "auditedCriticalIds": [
+          "key-transfer",
+          "unlock"
+        ],
+        "unresolvedCriticalIds": []
+      },
+      "expected": {
+        "readCoverage": 1,
+        "readyForPlanning": false,
+        "missingCriticalIds": [
+          "key-transfer"
+        ]
+      }
+    },
+    {
+      "id": "last-chunk-failed",
+      "operation": "source_audit",
+      "input": {
+        "sourceVersion": "source-v1",
+        "normalizedText": "A enters.\nA gives the key to B.\nB opens the door.\n",
+        "chunks": [
+          {
+            "id": "chunk-0",
+            "start": 0,
+            "end": 10,
+            "textHash": "6b4bc42d35e01b9e2efef3fd64cc9de11118621f5e389f98efc94a562bb48fca",
+            "status": "succeeded"
+          },
+          {
+            "id": "chunk-1",
+            "start": 10,
+            "end": 32,
+            "textHash": "53c16126941355ce909772305540bdb31e7e8f9f1bd26e684c65d45af5eead77",
+            "status": "succeeded"
+          },
+          {
+            "id": "chunk-2",
+            "start": 32,
+            "end": 50,
+            "textHash": "a19393f58f44abf97e1b1dad08153301f644596000a381399bea0cd285598dab",
+            "status": "failed"
+          }
+        ],
+        "extractionRunId": "extract-one",
+        "auditRunId": "audit-one",
+        "auditCompleted": true,
+        "extractedEventIds": [
+          "entry",
+          "key-transfer",
+          "unlock"
+        ],
+        "auditedCriticalIds": [
+          "key-transfer",
+          "unlock"
+        ],
+        "unresolvedCriticalIds": []
+      },
+      "expected": {
+        "readyForPlanning": false
+      }
+    },
+    {
+      "id": "critical-unknown",
+      "operation": "source_audit",
+      "input": {
+        "sourceVersion": "source-v1",
+        "normalizedText": "A enters.\nA gives the key to B.\nB opens the door.\n",
+        "chunks": [
+          {
+            "id": "chunk-0",
+            "start": 0,
+            "end": 10,
+            "textHash": "6b4bc42d35e01b9e2efef3fd64cc9de11118621f5e389f98efc94a562bb48fca",
+            "status": "succeeded"
+          },
+          {
+            "id": "chunk-1",
+            "start": 10,
+            "end": 32,
+            "textHash": "53c16126941355ce909772305540bdb31e7e8f9f1bd26e684c65d45af5eead77",
+            "status": "succeeded"
+          },
+          {
+            "id": "chunk-2",
+            "start": 32,
+            "end": 50,
+            "textHash": "a19393f58f44abf97e1b1dad08153301f644596000a381399bea0cd285598dab",
+            "status": "succeeded"
+          }
+        ],
+        "extractionRunId": "extract-one",
+        "auditRunId": "audit-one",
+        "auditCompleted": true,
+        "extractedEventIds": [
+          "entry",
+          "key-transfer",
+          "unlock"
+        ],
+        "auditedCriticalIds": [
+          "key-transfer",
+          "unlock"
+        ],
+        "unresolvedCriticalIds": [
+          "key-transfer"
+        ]
+      },
+      "expected": {
+        "readyForPlanning": false
+      }
+    },
+    {
+      "id": "same-run-self-review",
+      "operation": "source_audit",
+      "input": {
+        "sourceVersion": "source-v1",
+        "normalizedText": "A enters.\nA gives the key to B.\nB opens the door.\n",
+        "chunks": [
+          {
+            "id": "chunk-0",
+            "start": 0,
+            "end": 10,
+            "textHash": "6b4bc42d35e01b9e2efef3fd64cc9de11118621f5e389f98efc94a562bb48fca",
+            "status": "succeeded"
+          },
+          {
+            "id": "chunk-1",
+            "start": 10,
+            "end": 32,
+            "textHash": "53c16126941355ce909772305540bdb31e7e8f9f1bd26e684c65d45af5eead77",
+            "status": "succeeded"
+          },
+          {
+            "id": "chunk-2",
+            "start": 32,
+            "end": 50,
+            "textHash": "a19393f58f44abf97e1b1dad08153301f644596000a381399bea0cd285598dab",
+            "status": "succeeded"
+          }
+        ],
+        "extractionRunId": "extract-one",
+        "auditRunId": "extract-one",
+        "auditCompleted": true,
+        "extractedEventIds": [
+          "entry",
+          "key-transfer",
+          "unlock"
+        ],
+        "auditedCriticalIds": [
+          "key-transfer",
+          "unlock"
+        ],
+        "unresolvedCriticalIds": []
+      },
+      "expectedError": "AUDIT_MUST_BE_INDEPENDENT"
+    },
+    {
+      "id": "tail-not-accounted",
+      "operation": "source_audit",
+      "input": {
+        "sourceVersion": "source-v1",
+        "normalizedText": "A enters.\nA gives the key to B.\nB opens the door.\n",
+        "chunks": [
+          {
+            "id": "chunk-0",
+            "start": 0,
+            "end": 10,
+            "textHash": "6b4bc42d35e01b9e2efef3fd64cc9de11118621f5e389f98efc94a562bb48fca",
+            "status": "succeeded"
+          },
+          {
+            "id": "chunk-1",
+            "start": 10,
+            "end": 32,
+            "textHash": "53c16126941355ce909772305540bdb31e7e8f9f1bd26e684c65d45af5eead77",
+            "status": "succeeded"
+          }
+        ],
+        "extractionRunId": "extract-one",
+        "auditRunId": "audit-one",
+        "auditCompleted": true,
+        "extractedEventIds": [
+          "entry",
+          "key-transfer",
+          "unlock"
+        ],
+        "auditedCriticalIds": [
+          "key-transfer",
+          "unlock"
+        ],
+        "unresolvedCriticalIds": []
+      },
+      "expectedError": "SOURCE_TAIL_MISSING"
+    },
+    {
+      "id": "faked-span-hash",
+      "operation": "source_audit",
+      "input": {
+        "sourceVersion": "source-v1",
+        "normalizedText": "A enters.\nA gives the key to B.\nB opens the door.\n",
+        "chunks": [
+          {
+            "id": "chunk-0",
+            "start": 0,
+            "end": 10,
+            "textHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "status": "succeeded"
+          },
+          {
+            "id": "chunk-1",
+            "start": 10,
+            "end": 32,
+            "textHash": "53c16126941355ce909772305540bdb31e7e8f9f1bd26e684c65d45af5eead77",
+            "status": "succeeded"
+          },
+          {
+            "id": "chunk-2",
+            "start": 32,
+            "end": 50,
+            "textHash": "a19393f58f44abf97e1b1dad08153301f644596000a381399bea0cd285598dab",
+            "status": "succeeded"
+          }
+        ],
+        "extractionRunId": "extract-one",
+        "auditRunId": "audit-one",
+        "auditCompleted": true,
+        "extractedEventIds": [
+          "entry",
+          "key-transfer",
+          "unlock"
+        ],
+        "auditedCriticalIds": [
+          "key-transfer",
+          "unlock"
+        ],
+        "unresolvedCriticalIds": []
+      },
+      "expectedError": "SOURCE_SPAN_HASH_MISMATCH"
+    }
+  ]
+}

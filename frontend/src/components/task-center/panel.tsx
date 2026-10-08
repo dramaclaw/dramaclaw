@@ -68,9 +68,13 @@ export function TaskPanel() {
   return (
     <>
       <div
+        data-testid="task-panel-backdrop"
         className={cn(
-          "absolute inset-x-0 top-0 bottom-9 z-30 bg-background/10 backdrop-blur-sm transition-opacity duration-500 ease-[var(--ease-out-quint)]",
-          open ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0",
+          // An opacity-only full-page blur can retain its compositing surface
+          // over the moving canvas. Hide it after fading out, as the canvas
+          // file-drop overlay does, and restore visibility as soon as it opens.
+          "absolute inset-x-0 top-0 bottom-9 z-30 bg-background/10 backdrop-blur-sm transition-[opacity,visibility] duration-500 ease-[var(--ease-out-quint)] motion-reduce:transition-none",
+          open ? "pointer-events-auto visible opacity-100" : "pointer-events-none invisible opacity-0",
         )}
         onClick={() => setOpen(false)}
         aria-hidden

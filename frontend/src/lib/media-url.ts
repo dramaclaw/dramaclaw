@@ -31,27 +31,34 @@ export function resolveMediaUrl(
   return withMediaVariant(resolved, options.variant);
 }
 
-// The single downscaled copy the frontend may request.
-// The frontend intentionally requests only the variant prewarmed by the
-// production history write path. Larger display budgets use the original.
-export type MediaVariant = "thumb";
+// 阶梯必须和后端 `novelvideo/utils/thumbnails.py` 的 VARIANTS 一致。
+//
+// 这里一度只有 `thumb` 一档,理由是「只请求生成历史写入路径预热过的那一档」。
+// 代价比预期大得多:一个 480 CSS px 宽的节点在 2x 屏上要 960 设备像素,320 档喂不饱,
+// `pickMediaVariant` 返回 null 就回落原图——于是画布上一张 3840x2160 被解码进
+// 169x95 的框里,约 33MB 位图。降采样这套机制在节点主体上等于从没生效过。
+//
+// 现在三档齐全,预热侧也跟着补齐(history.py 与 liblib_assets.py 都改为预热全档位)。
+export type MediaVariant = "thumb" | "thumb2x" | "card";
 
 export const MEDIA_VARIANT_MAX_EDGE: Record<MediaVariant, number> = {
   thumb: 320,
+  thumb2x: 640,
+  card: 1280,
 };
 
-const MEDIA_VARIANT_LADDER: MediaVariant[] = ["thumb"];
+// 由小到大:`pickMediaVariant` 取第一个够用的,也就是最省的那一档。
+const MEDIA_VARIANT_LADDER: MediaVariant[] = ["thumb", "thumb2x", "card"];
 
 /**
- * Return ``thumb`` when its 320px edge can fill the requested device pixels,
- * or ``null`` so the caller uses the original.
+ * Return the smallest sufficient 320/640/1280px tier, or null for the original.
  *
  * Device pixels, not CSS pixels: a 320px copy in a 315 CSS px box is crisp on a
  * 1x display and visibly soft on a 2x one, and that difference is exactly what
  * a fixed budget per call site cannot express. Callers compute the requirement
  * as `displayEdge * zoom * devicePixelRatio` and let this pick.
  *
- * `null` means "serve the original". Upscaling the 320px thumbnail is avoided
+ * `null` means "serve the original". Upscaling the largest thumbnail is avoided
  * because its decode saving would come with visible blur.
  */
 export function pickMediaVariant(requiredEdge: number): MediaVariant | null {
@@ -70,6 +77,40 @@ const MEDIA_VARIANT_PARAM = "st_thumb";
 // Mirrors the formats the backend will downscale; anything else is passed
 // through untouched so the URL does not gain a parameter that does nothing.
 const THUMBNAILABLE_EXTENSION_RE = /\.(png|jpe?g|webp|bmp|tiff?)$/i;
+
+/**
+ * 远端对象存储图片的降采样地址。不适用时原样返回。
+ *
+ * 为什么需要:本地素材有 `st_thumb` 阶梯,远端素材什么都没有,只能吃原图。导入进来的
+ * 画布在本地化成功之前(或者本地化失败时)全是远端地址,一张 3840x2160 被解码进
+ * 169x95 的框里约 33MB 位图,拖动直接卡死。LibTV 自己的画布就是这么解的——实测它给
+ * 同一张图挂的是 `w_200/w_400/w_800` 三档 srcset。
+ *
+ * 仅对已知 OSS 来源或已有 image/resize 的地址使用此语法；未知 CDN 原样保留。
+ * `ignore-error,1` 允许 OSS 转换失败时回落原图，不能据此认定实际返回了小图。
+ *
+ * **只在没有任何查询参数时才加**。预签名地址的签名覆盖 query,多加一个参数会让签名
+ * 失效、图直接裂掉;而预签名地址必然带 query,这条规则正好把它们排除干净。
+ * 仅含 `x-oss-process` 的图片缩放地址可换宽度；它与任何其它 query 组合时都不改。
+ */
+export function withRemoteImageVariant(url: string, maxEdge: number): string {
+  if (!Number.isFinite(maxEdge) || maxEdge <= 0) return url;
+  if (!/^https?:\/\//i.test(url)) return url;
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return url; }
+  const process = `image/resize,w_${Math.round(maxEdge)},m_lfit/format,webp/ignore-error,1`;
+  const params = parsed.searchParams;
+  if ([...params.keys()].some(key => key !== 'x-oss-process')) return url;
+  const existing = params.get('x-oss-process');
+  // 视频抽帧(video/snapshot,...)不是图片缩放,别拿图片参数覆盖掉它。
+  if (existing !== null && !existing.startsWith('image/resize')) return url;
+  if (existing === null) {
+    const knownOss = parsed.hostname === 'libtv-res.liblib.art' || parsed.hostname.endsWith('.aliyuncs.com');
+    if (!knownOss || !THUMBNAILABLE_EXTENSION_RE.test(parsed.pathname)) return url;
+  }
+  params.set('x-oss-process', process);
+  return parsed.toString();
+}
 
 // Exported for callers that have already resolved a URL through some other
 // path (canvas nodes go through resolveImageDisplayUrl + withImageCacheBust)

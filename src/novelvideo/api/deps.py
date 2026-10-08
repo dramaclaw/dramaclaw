@@ -147,10 +147,15 @@ def validate_project_name(name: str):
             status_code=400,
             detail="Project name must be at most 64 characters long",
         )
-    if not name or not re.match(r"^[a-zA-Z0-9_]+$", name):
+    if (
+        not name.strip()
+        or name != name.strip()
+        or name in {".", ".."}
+        or re.search(r'[\\/:*?"<>|\x00-\x1f\x7f]', name)
+    ):
         raise HTTPException(
             status_code=400,
-            detail="Project name must contain only letters, digits, and underscores",
+            detail="Project name must not be blank or contain path separators or control characters",
         )
     if name.startswith(RESERVED_PROJECT_PREFIX):
         raise HTTPException(

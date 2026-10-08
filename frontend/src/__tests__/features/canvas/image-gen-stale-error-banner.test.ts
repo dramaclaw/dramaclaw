@@ -126,6 +126,7 @@ vi.mock("@/features/canvas/hooks/useFreezoneStyleTemplates", () => ({
 vi.mock("@/features/canvas/application/useUpstreamGraph", () => ({
   useUpstreamContents: () => [],
   useUpstreamNodes: () => [],
+  useUpstreamReferenceNodes: () => [],
 }));
 vi.mock("@/features/canvas/application/useNodeGenerationTaskState", () => ({
   useNodeGenerationTaskState: () => ({ isGenerating: false }),

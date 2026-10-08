@@ -845,7 +845,7 @@ def test_history_record_prewarms_its_output_image(tmp_path, monkeypatch):
     )
 
     assert queued == 1
-    assert calls == [(source, ("thumb",))]
+    assert calls == [(source, ())]
 
 
 def test_history_record_only_prewarms_the_displayed_output(tmp_path, monkeypatch):
@@ -866,7 +866,7 @@ def test_history_record_only_prewarms_the_displayed_output(tmp_path, monkeypatch
         ),
     )
 
-    assert calls == [(tmp_path / "freezone" / "_outputs" / "0.png", ("thumb",))]
+    assert calls == [(tmp_path / "freezone" / "_outputs" / "0.png", ())]
 
 
 def test_history_record_ignores_non_image_payload_strings(tmp_path, monkeypatch):
@@ -941,7 +941,7 @@ def test_history_record_skips_an_invalid_candidate_url(tmp_path, monkeypatch):
     )
 
     assert queued == 1
-    assert calls == [(source, ("thumb",))]
+    assert calls == [(source, ())]
 
 
 def test_non_image_history_never_prewarms_a_thumbnail(tmp_path, monkeypatch):
@@ -988,7 +988,7 @@ def test_appending_a_history_record_prewarms_its_media(tmp_path, monkeypatch):
         ),
     )
 
-    assert calls == [(source, ("thumb",))]
+    assert calls == [(source, ())]
 
 
 def test_a_broken_prewarm_never_breaks_the_history_write(tmp_path, monkeypatch):

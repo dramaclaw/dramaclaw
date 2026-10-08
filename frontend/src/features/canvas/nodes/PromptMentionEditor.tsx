@@ -26,6 +26,11 @@ import { MentionReplacePopover } from './MentionReplacePopover';
 export interface MentionCandidate {
   key: string;
   name: string;
+  /**
+   * 写回 prompt 的完整协议 token。缺省仍是 `@${name}`；MiniMax H3 使用
+   * `{{Mixed N}}`，因此不能再由编辑器擅自补 `@`。
+   */
+  serializedToken?: string;
   imageUrl: string;
   index: number;
   /**
@@ -96,13 +101,36 @@ function escapeRegex(input: string): string {
 // 前端展示用：把 mention 的「图片1 / 音频2」去掉尾号，统一显示为「图片 / 音频」。
 // 仅影响显示——序列化仍用 dataset.name（含编号），传给后端的 prompt 保持 @图片N。
 export function mentionDisplayLabel(name: string): string {
-  return name.replace(/\d+$/, '') || name;
+  return name.replace(/\s*\d+$/, '').trim() || name;
+}
+
+function mentionSerializedToken(candidate: MentionCandidate): string {
+  return candidate.serializedToken ?? `@${candidate.name}`;
+}
+
+function mentionCandidatesSignature(candidates: MentionCandidate[]): string {
+  return candidates
+    .map((candidate) =>
+      [
+        candidate.key,
+        mentionSerializedToken(candidate),
+        candidate.imageUrl,
+        candidate.videoUrl ?? '',
+        candidate.audioUrl ?? '',
+        candidate.displayName ?? '',
+      ].join('\u001f'),
+    )
+    .join('\u001e');
 }
 
 // 音频 chip 展示为「音频_文件名」（图片/视频有缩略图，无需文件名）。序列化不受
 // 影响（仍走 dataset.name）。这是「完整」标签，用于 title / 候选列表。
 export function mentionChipLabel(candidate: MentionCandidate): string {
-  const base = mentionDisplayLabel(candidate.name);
+  // 自定义协议 token（当前是 H3 的 Mixed N）必须把全局编号留在 chip 上；
+  // 否则提示词里多个缩略图都会只显示 Mixed，用户无法核对它与上方节点顺序。
+  const base = candidate.serializedToken
+    ? candidate.name
+    : mentionDisplayLabel(candidate.name);
   const file = candidate.displayName?.trim();
   if (candidate.audioUrl && file) {
     return `${base}_${file}`;
@@ -124,6 +152,7 @@ function buildChipElement(candidate: MentionCandidate): HTMLElement {
   span.contentEditable = 'false';
   span.dataset.mention = candidate.key;
   span.dataset.name = candidate.name;
+  span.dataset.token = mentionSerializedToken(candidate);
   span.dataset.imageUrl = candidate.imageUrl;
   if (candidate.videoUrl) span.dataset.videoUrl = candidate.videoUrl;
   if (candidate.audioUrl) span.dataset.audioUrl = candidate.audioUrl;
@@ -244,23 +273,25 @@ function rebuildDOM(root: HTMLElement, text: string, candidates: MentionCandidat
     root.removeChild(root.firstChild);
   }
   if (!text) return;
-  const names = candidates
-    .map((c) => c.name)
-    .filter((n) => n.length > 0)
+  const tokens = candidates
+    .map((candidate) => mentionSerializedToken(candidate))
+    .filter((token) => token.length > 0)
     .sort((a, b) => b.length - a.length);
-  if (names.length === 0) {
+  if (tokens.length === 0) {
     appendTextWithLineBreaks(root, text);
     return;
   }
-  const pattern = new RegExp('@(' + names.map(escapeRegex).join('|') + ')', 'g');
+  const pattern = new RegExp('(' + tokens.map(escapeRegex).join('|') + ')', 'g');
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text)) !== null) {
     if (match.index > lastIndex) {
       appendTextWithLineBreaks(root, text.slice(lastIndex, match.index));
     }
-    const name = match[1];
-    const candidate = candidates.find((c) => c.name === name);
+    const token = match[1];
+    const candidate = candidates.find(
+      (item) => mentionSerializedToken(item) === token,
+    );
     if (candidate) {
       root.appendChild(buildChipElement(candidate));
     } else {
@@ -283,7 +314,7 @@ function serialize(root: HTMLElement): string {
     if (node.nodeType !== Node.ELEMENT_NODE) return;
     const el = node as HTMLElement;
     if (el.dataset.mention) {
-      out += '@' + (el.dataset.name ?? '');
+      out += el.dataset.token ?? ('@' + (el.dataset.name ?? ''));
       return;
     }
     if (el.tagName === 'BR') {
@@ -362,6 +393,7 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
   ) {
     const editorRef = useRef<HTMLDivElement | null>(null);
     const lastSerializedRef = useRef<string>('');
+    const lastCandidatesSignatureRef = useRef<string>('');
     const isComposingRef = useRef(false);
     // 单个共享 <audio>：点击音频 chip 播放/暂停该引用；切到别条会先停掉上一条。
     const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -385,13 +417,29 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
     // External value → DOM sync. Only re-render if the incoming value
     // differs from our own last-emitted serialization, otherwise we'd
     // wipe the caret on every keystroke.
+    const candidatesSignature = useMemo(
+      () => mentionCandidatesSignature(candidates),
+      [candidates],
+    );
     useLayoutEffect(() => {
       const el = editorRef.current;
       if (!el) return;
-      if (value === lastSerializedRef.current) return;
+      const candidatesChanged =
+        candidatesSignature !== lastCandidatesSignatureRef.current;
+      const pending = pendingAttachRef.current;
+      // A newly attached canvas material enters candidates before the passive
+      // replacement effect runs. Rebuilding here would detach pending.el, so
+      // preserve that chip for one commit and let the effect replace it first.
+      if (
+        candidatesChanged
+        && pending
+        && candidates.some((candidate) => candidate.key === pending.key)
+      ) return;
+      if (value === lastSerializedRef.current && !candidatesChanged) return;
       rebuildDOM(el, value, candidates);
       lastSerializedRef.current = value;
-    }, [value, candidates]);
+      lastCandidatesSignatureRef.current = candidatesSignature;
+    }, [value, candidates, candidatesSignature]);
 
     const commitChange = useCallback(() => {
       const el = editorRef.current;

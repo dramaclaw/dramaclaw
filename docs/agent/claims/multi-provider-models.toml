@@ -1,0 +1,185 @@
+version = 1
+slug = "multi-provider-models"
+ledger = "docs/agent/tasks/multi-provider-models.md"
+baseline = "53ca321"
+
+[[claims]]
+path = "src/novelvideo/local_model_catalog.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Serial integration of approved provider catalog and routing."
+
+[[claims]]
+path = "src/novelvideo/local_provider_api.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Serial integration of approved provider catalog and routing."
+
+[[claims]]
+path = "src/novelvideo/local_gateway.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Serial integration of approved provider catalog and routing."
+
+[[claims]]
+path = "src/novelvideo/api/routes/model_gateway.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Serial integration of approved provider catalog and routing."
+
+[[claims]]
+path = "src/novelvideo/api/routes/freezone.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Serial integration of approved provider catalog and routing."
+
+[[claims]]
+path = "src/novelvideo/freezone/text_node.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Serial integration of approved provider catalog and routing."
+
+[[claims]]
+path = "src/novelvideo/generators/nanobanana_grid.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Serial integration of approved provider catalog and routing."
+
+[[claims]]
+path = "frontend/src/api/ops.ts"
+mode = "shared"
+shared_with = ["*"]
+reason = "Serial integration of approved provider catalog and routing."
+
+[[claims]]
+path = "frontend/src/components/settings/settings-dialog.tsx"
+mode = "shared"
+shared_with = ["*"]
+reason = "Serial integration of approved provider catalog and routing."
+
+[[claims]]
+path = "frontend/src/components/settings/local-model-catalog.tsx"
+mode = "shared"
+shared_with = ["*"]
+reason = "Serial integration of approved provider catalog and routing."
+
+[[claims]]
+path = "frontend/src/lib/local-model-catalog.ts"
+mode = "shared"
+shared_with = ["*"]
+reason = "Serial integration of approved provider catalog and routing."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/shared/TextModelPicker.tsx"
+mode = "shared"
+shared_with = ["*"]
+reason = "Serial integration of approved provider catalog and routing."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/shared/H3PromptOptimizer.tsx"
+mode = "shared"
+shared_with = ["*"]
+reason = "Serial integration of approved provider catalog and routing."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/TextAnnotationNode.tsx"
+mode = "shared"
+shared_with = ["*"]
+reason = "Serial integration of approved provider catalog and routing."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/ProviderModelPicker.tsx"
+mode = "shared"
+shared_with = ["*"]
+reason = "Serial integration of approved provider catalog and routing."
+
+[[claims]]
+path = "tests/test_local_model_catalog.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Serial integration of approved provider catalog and routing."
+
+[[claims]]
+path = "tests/test_local_provider_api.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Serial integration of approved provider catalog and routing."
+
+[[claims]]
+path = "frontend/src/__tests__/local-model-catalog.test.tsx"
+mode = "shared"
+shared_with = ["*"]
+reason = "Serial integration of approved provider catalog and routing."
+
+[[claims]]
+path = "frontend/public/locales/zh/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Serial integration of approved provider catalog and routing."
+
+[[claims]]
+path = "frontend/public/locales/en/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Serial integration of approved provider catalog and routing."
+
+[[claims]]
+path = "frontend/public/locales/vi/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Serial integration of approved provider catalog and routing."
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Plan and handoff."
+
+[[claims]]
+path = "docs/agent/tasks/multi-provider-models.md"
+mode = "coordination"
+reason = "Plan and handoff."
+
+[[claims]]
+path = "docs/agent/claims/multi-provider-models.toml"
+mode = "coordination"
+reason = "Plan and handoff."
+
+[[claims]]
+path = "src/novelvideo/generators/video_generator.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Cloud first-frame transport and strict routing regression."
+
+[[claims]]
+path = "tests/test_local_gateway.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Cloud first-frame transport and strict routing regression."
+
+[[claims]]
+path = "frontend/src/features/canvas/application/nodeFactory.ts"
+mode = "shared"
+shared_with = ["*"]
+reason = "Apply configured defaults only when creating a new node."
+
+[[claims]]
+path = "src/novelvideo/api/schemas.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "H3 format reference contract and actionable HTTP errors."
+
+[[claims]]
+path = "frontend/src/lib/api-errors.ts"
+mode = "shared"
+shared_with = ["*"]
+reason = "H3 format reference contract and actionable HTTP errors."
+
+[[claims]]
+path = "tests/test_text_reference_contract.py"
+mode = "exclusive"
+reason = "H3 format reference contract and actionable HTTP errors."
+
+[[claims]]
+path = "frontend/src/__tests__/h3-request-contract.test.ts"
+mode = "exclusive"
+reason = "H3 format reference contract and actionable HTTP errors."

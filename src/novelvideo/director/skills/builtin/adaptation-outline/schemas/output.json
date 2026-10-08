@@ -1,0 +1,505 @@
+{
+  "$defs": {
+    "AdaptationTreatment": {
+      "additionalProperties": false,
+      "properties": {
+        "approach": {
+          "items": {
+            "$ref": "#/$defs/GroundedText"
+          },
+          "minItems": 1,
+          "title": "Approach",
+          "type": "array"
+        },
+        "preserveClaimIds": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Preserveclaimids",
+          "type": "array"
+        },
+        "proposedChanges": {
+          "items": {
+            "$ref": "#/$defs/GroundedText"
+          },
+          "title": "Proposedchanges",
+          "type": "array"
+        },
+        "unresolvedClaimIds": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Unresolvedclaimids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "approach",
+        "preserveClaimIds",
+        "proposedChanges",
+        "unresolvedClaimIds"
+      ],
+      "title": "AdaptationTreatment",
+      "type": "object"
+    },
+    "ChapterDraft": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Key",
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Title",
+          "type": "string"
+        },
+        "episodeIds": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Episodeids",
+          "type": "array"
+        },
+        "story": {
+          "items": {
+            "$ref": "#/$defs/GroundedText"
+          },
+          "minItems": 1,
+          "title": "Story",
+          "type": "array"
+        },
+        "position": {
+          "$ref": "#/$defs/GroundedText"
+        },
+        "mustKeepEventIds": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Mustkeepeventids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "title",
+        "episodeIds",
+        "story",
+        "position",
+        "mustKeepEventIds"
+      ],
+      "title": "ChapterDraft",
+      "type": "object"
+    },
+    "CraftNotes": {
+      "additionalProperties": false,
+      "properties": {
+        "causalChain": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Causalchain",
+          "type": "array"
+        },
+        "emotionalBeats": {
+          "items": {
+            "$ref": "#/$defs/GroundedText"
+          },
+          "title": "Emotionalbeats",
+          "type": "array"
+        },
+        "resistanceKind": {
+          "enum": [
+            "person",
+            "condition",
+            "internal",
+            "mixed",
+            "none"
+          ],
+          "title": "Resistancekind",
+          "type": "string"
+        },
+        "oppositionStrategy": {
+          "$ref": "#/$defs/CraftPoint"
+        },
+        "actualCost": {
+          "$ref": "#/$defs/CraftPoint"
+        },
+        "reversal": {
+          "$ref": "#/$defs/CraftPoint"
+        },
+        "productionRisks": {
+          "items": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "title": "Productionrisks",
+          "type": "array"
+        }
+      },
+      "required": [
+        "causalChain",
+        "emotionalBeats",
+        "resistanceKind",
+        "oppositionStrategy",
+        "actualCost",
+        "reversal",
+        "productionRisks"
+      ],
+      "title": "CraftNotes",
+      "type": "object"
+    },
+    "CraftPoint": {
+      "additionalProperties": false,
+      "properties": {
+        "applicability": {
+          "enum": [
+            "applicable",
+            "not_applicable",
+            "uncertain"
+          ],
+          "title": "Applicability",
+          "type": "string"
+        },
+        "evidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GroundedText"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "applicability",
+        "evidence",
+        "reason"
+      ],
+      "title": "CraftPoint",
+      "type": "object"
+    },
+    "EpisodeHighlight": {
+      "additionalProperties": false,
+      "properties": {
+        "episodeId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Episodeid",
+          "type": "string"
+        },
+        "highlight": {
+          "$ref": "#/$defs/GroundedText"
+        }
+      },
+      "required": [
+        "episodeId",
+        "highlight"
+      ],
+      "title": "EpisodeHighlight",
+      "type": "object"
+    },
+    "GroundedText": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Text",
+          "type": "string"
+        },
+        "claimIds": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Claimids",
+          "type": "array"
+        },
+        "eventIds": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Eventids",
+          "type": "array"
+        },
+        "nature": {
+          "enum": [
+            "source",
+            "interpretation",
+            "proposed_change"
+          ],
+          "title": "Nature",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "claimIds",
+        "eventIds",
+        "nature"
+      ],
+      "title": "GroundedText",
+      "type": "object"
+    },
+    "HookDraft": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Key",
+          "type": "string"
+        },
+        "episodeId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Episodeid",
+          "type": "string"
+        },
+        "image": {
+          "$ref": "#/$defs/GroundedText"
+        },
+        "question": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Question",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "episodeId",
+        "image",
+        "question"
+      ],
+      "title": "HookDraft",
+      "type": "object"
+    },
+    "HooksDraft": {
+      "additionalProperties": false,
+      "properties": {
+        "episodeHighlights": {
+          "items": {
+            "$ref": "#/$defs/EpisodeHighlight"
+          },
+          "minItems": 1,
+          "title": "Episodehighlights",
+          "type": "array"
+        },
+        "openings": {
+          "items": {
+            "$ref": "#/$defs/HookDraft"
+          },
+          "title": "Openings",
+          "type": "array"
+        },
+        "setups": {
+          "items": {
+            "$ref": "#/$defs/SetupDraft"
+          },
+          "title": "Setups",
+          "type": "array"
+        },
+        "inapplicableReason": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Inapplicablereason"
+        }
+      },
+      "required": [
+        "episodeHighlights",
+        "openings",
+        "setups",
+        "inapplicableReason"
+      ],
+      "title": "HooksDraft",
+      "type": "object"
+    },
+    "OverviewDraft": {
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Title",
+          "type": "string"
+        },
+        "logline": {
+          "$ref": "#/$defs/GroundedText"
+        },
+        "synopsis": {
+          "items": {
+            "$ref": "#/$defs/GroundedText"
+          },
+          "minItems": 1,
+          "title": "Synopsis",
+          "type": "array"
+        },
+        "protagonist": {
+          "$ref": "#/$defs/GroundedText"
+        },
+        "resistance": {
+          "$ref": "#/$defs/GroundedText"
+        },
+        "emotionalCurve": {
+          "$ref": "#/$defs/GroundedText"
+        }
+      },
+      "required": [
+        "title",
+        "logline",
+        "synopsis",
+        "protagonist",
+        "resistance",
+        "emotionalCurve"
+      ],
+      "title": "OverviewDraft",
+      "type": "object"
+    },
+    "SetupDraft": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Key",
+          "type": "string"
+        },
+        "plant": {
+          "$ref": "#/$defs/GroundedText"
+        },
+        "payoff": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GroundedText"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "openReason": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Openreason"
+        }
+      },
+      "required": [
+        "key",
+        "plant",
+        "payoff",
+        "openReason"
+      ],
+      "title": "SetupDraft",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract": {
+      "const": "adaptation-outline/3.0.0",
+      "title": "Contract",
+      "type": "string"
+    },
+    "overview": {
+      "$ref": "#/$defs/OverviewDraft"
+    },
+    "adaptation": {
+      "$ref": "#/$defs/AdaptationTreatment"
+    },
+    "chapters": {
+      "items": {
+        "$ref": "#/$defs/ChapterDraft"
+      },
+      "minItems": 1,
+      "title": "Chapters",
+      "type": "array"
+    },
+    "hooks": {
+      "$ref": "#/$defs/HooksDraft"
+    },
+    "boundaries": {
+      "items": {
+        "$ref": "#/$defs/GroundedText"
+      },
+      "minItems": 1,
+      "title": "Boundaries",
+      "type": "array"
+    },
+    "craftNotes": {
+      "$ref": "#/$defs/CraftNotes"
+    }
+  },
+  "required": [
+    "contract",
+    "overview",
+    "adaptation",
+    "chapters",
+    "hooks",
+    "boundaries",
+    "craftNotes"
+  ],
+  "title": "AdaptationOutlineDraft",
+  "type": "object"
+}

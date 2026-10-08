@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { describe, expect, it } from "vitest";
-import { render } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render } from "@testing-library/react";
 
 import {
   PromptMentionEditor,
@@ -17,6 +17,16 @@ const audioCandidate: MentionCandidate = {
   index: 1,
   audioUrl: "/static/projects/p/audio/long-voice-clip-name.mp3",
   displayName: "long-voice-clip-name.mp3",
+};
+
+const mixedCandidate: MentionCandidate = {
+  key: "mixed-audio",
+  name: "Mixed 2",
+  serializedToken: "{{Mixed 2}}",
+  imageUrl: "",
+  index: 2,
+  audioUrl: "/static/projects/p/audio/voice.mp3",
+  displayName: "voice.mp3",
 };
 
 describe("PromptMentionEditor — 音频引用 chip", () => {
@@ -56,5 +66,49 @@ describe("PromptMentionEditor — 音频引用 chip", () => {
     expect(truncateChipLabel("音频_long-voice-clip-name.mp3")).toBe("音频_long-vo…");
     expect(truncateChipLabel("音频_短")).toBe("音频_短");
     expect(truncateChipLabel("1234567890")).toBe("1234567890"); // exactly 10, no ellipsis
+  });
+
+  it("renders and serializes an H3 Mixed token without adding an @ prefix", () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <PromptMentionEditor
+        value="使用 {{Mixed 2}}"
+        onChange={onChange}
+        candidates={[mixedCandidate]}
+      />,
+    );
+    const chip = container.querySelector<HTMLElement>(".mention-chip");
+    expect(chip?.dataset.name).toBe("Mixed 2");
+    expect(chip?.dataset.token).toBe("{{Mixed 2}}");
+    expect(chip?.querySelector(".mention-chip-label")?.textContent).toBe(
+      "Mixed 2_vo…",
+    );
+
+    const editor = container.querySelector<HTMLElement>("[contenteditable=true]");
+    editor?.appendChild(document.createTextNode(" 收尾"));
+    if (editor) fireEvent.input(editor);
+    expect(onChange).toHaveBeenLastCalledWith("使用 {{Mixed 2}} 收尾");
+  });
+
+  it("upgrades a loaded Mixed placeholder to a chip when references arrive", () => {
+    const { container, rerender } = render(
+      <PromptMentionEditor
+        value="使用 {{Mixed 2}}"
+        onChange={() => {}}
+        candidates={[]}
+      />,
+    );
+    expect(container.querySelector(".mention-chip")).toBeNull();
+
+    rerender(
+      <PromptMentionEditor
+        value="使用 {{Mixed 2}}"
+        onChange={() => {}}
+        candidates={[mixedCandidate]}
+      />,
+    );
+    expect(container.querySelector<HTMLElement>(".mention-chip")?.dataset.token).toBe(
+      "{{Mixed 2}}",
+    );
   });
 });

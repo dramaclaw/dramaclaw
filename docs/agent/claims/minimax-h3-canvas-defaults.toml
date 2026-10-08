@@ -1,0 +1,82 @@
+version = 1
+slug = "minimax-h3-canvas-defaults"
+ledger = "docs/agent/tasks/minimax-h3-canvas-defaults.md"
+baseline = "762591d"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Register this H3 default-parameter follow-up and its shared path order."
+
+[[claims]]
+path = "docs/agent/tasks/minimax-h3-canvas-defaults.md"
+mode = "coordination"
+reason = "Plan, scope, progress, and handoff for H3 canvas defaults."
+
+[[claims]]
+path = "docs/agent/claims/minimax-h3-canvas-defaults.toml"
+mode = "coordination"
+reason = "Machine-readable scope for this follow-up."
+
+[[claims]]
+path = "docs/agent/claims/minimax-h3-liblib-parity.toml"
+mode = "coordination"
+reason = "Declare the completed H3 workstream's narrow shared follow-up."
+
+[[claims]]
+path = "docs/agent/claims/sync-main-remotes.toml"
+mode = "coordination"
+reason = "Declare the narrow post-merge product change to the official catalog."
+
+[[claims]]
+path = "docs/agent/tasks/sync-main-remotes.md"
+mode = "coordination"
+reason = "Record that the H3-only parameter hunk preserves all other merged upstream content."
+
+[[claims]]
+path = "src/novelvideo/official_media_models.json"
+mode = "shared"
+shared_with = ["minimax-h3-liblib-parity", "sync-main-remotes"]
+reason = "Change only MiniMax-H3 parameter defaults and resolution options while preserving imported catalog content."
+
+[[claims]]
+path = "src/novelvideo/generators/minimax_h3_workbench.py"
+mode = "shared"
+shared_with = ["minimax-h3-liblib-parity", "h3-completion-recovery"]
+reason = "Add validated default LoRA forwarding to H3 workbench payloads."
+
+[[claims]]
+path = "frontend/src/features/canvas/ui/ProviderModelPicker.tsx"
+mode = "shared"
+shared_with = ["multi-provider-models"]
+reason = "Set the static fallback video model for newly created nodes to MiniMax-H3."
+
+[[claims]]
+path = "src/novelvideo/api/routes/freezone.py"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "canvas-audio-split", "depth-motion-da3", "h3-prompt-optimizer", "liblib-canvas-parity", "local-stack", "shot-breakdown", "text-node-liblib-visual-parity", "multi-provider-models"]
+reason = "Skip source-duration probing only for MiniMax-H3 all-reference requests with no duration bounds; preserve other models and video_edit behavior."
+
+[[claims]]
+path = ".dramaclaw-local/local.env"
+mode = "shared"
+shared_with = ["local-stack"]
+reason = "Correct only the local ComfyUI portable paths so the requested local stack can restart."
+
+[[claims]]
+path = "frontend/src/features/canvas/domain/nodeRegistry.ts"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Prefer H3 for new and imported video nodes."
+
+[[claims]]
+path = "frontend/src/features/freezone/createProjectLiblibImport.ts"
+mode = "shared"
+shared_with = ["liblib-import-recovery", "liblib-canvas-parity", "project-chinese-names"]
+reason = "Prefer H3 for new and imported video nodes."
+
+[[claims]]
+path = "frontend/src/features/freezone/CanvasesTab.tsx"
+mode = "shared"
+shared_with = ["liblib-import-recovery", "liblib-canvas-parity", "legacy-unassigned-diff", "project-chinese-names"]
+reason = "Prefer H3 for new and imported video nodes."

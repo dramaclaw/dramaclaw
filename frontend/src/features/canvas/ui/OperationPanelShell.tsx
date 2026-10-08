@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { useNodeId } from '@xyflow/react';
+import { useStoryboardView } from '@/features/storyboard/storyboardStore';
+import { useCanvasStore } from '@/stores/canvasStore';
 import { useEffect, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -21,6 +24,13 @@ interface OperationPanelShellProps {
 
 function stopPropagation(event: { stopPropagation: () => void }): void {
   event.stopPropagation();
+}
+
+function StoryboardPanel({ host, children }: { host: HTMLElement; children: ReactNode }) {
+  const nodeId = useNodeId();
+  const selectedId = useCanvasStore(s => s.selectedNodeId);
+  if (nodeId !== selectedId) return null;
+  return createPortal(<div className="sb-editor-panel nodrag nowheel" onClick={stopPropagation} onPointerDown={stopPropagation}>{children}</div>, host);
 }
 
 // 节点激活时，操作区从节点下方淡入+轻微下滑出现（而非生硬地直接出现）。
@@ -49,6 +59,8 @@ export function OperationPanelShell({
   modalStyle,
   children,
 }: OperationPanelShellProps) {
+  const host = useStoryboardView(s => s.host);
+  const mode = useStoryboardView(s => s.mode);
   useEffect(() => {
     if (!expanded) return;
     const onKey = (event: KeyboardEvent) => {
@@ -61,6 +73,9 @@ export function OperationPanelShell({
     return () => window.removeEventListener('keydown', onKey, true);
   }, [expanded, onCollapse]);
 
+  if (mode === 'storyboard' && host && !expanded) {
+    return <StoryboardPanel host={host}>{children}</StoryboardPanel>;
+  }
   if (!expanded) {
     return (
       <div

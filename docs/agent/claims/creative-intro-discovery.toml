@@ -1,0 +1,46 @@
+version = 1
+slug = "creative-intro-discovery"
+ledger = "docs/agent/tasks/creative-intro-discovery.md"
+baseline = "ea019785"
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Register discovery lifecycle and handoff state."
+
+[[claims]]
+path = "docs/agent/tasks/creative-intro-discovery.md"
+mode = "coordination"
+reason = "Plan, evidence log, decisions, and handoff for the creative-intro spike."
+
+[[claims]]
+path = "docs/agent/claims/creative-intro-discovery.toml"
+mode = "coordination"
+reason = "Machine-readable scope for this workstream."
+
+[[claims]]
+path = "docs/agent/claims/liblib-canvas-parity.toml"
+mode = "coordination"
+reason = "Reciprocal declaration for the shared LibTV evidence guide."
+
+[[claims]]
+path = "docs/agent/claims/agent-collaboration-protocol.toml"
+mode = "coordination"
+reason = "Reciprocal declaration for the stable agent login-state rule."
+
+[[claims]]
+path = "AGENTS.md"
+mode = "shared"
+shared_with = ["agent-collaboration-protocol"]
+reason = "Tell future agents how to load the ignored local LibTV browser state without exposing credentials."
+
+[[claims]]
+path = "liblib.cookie.local.json"
+mode = "exclusive"
+reason = "Ignored, machine-local Playwright storage state supplied by the user; never commit or print."
+
+[[claims]]
+path = "docs/guides/liblib-canvas-parity.md"
+mode = "shared"
+shared_with = ["liblib-canvas-parity", "canvas-audio-split", "creative-intro-blend", "creative-intro-implementation"]
+reason = "Record controlled runtime evidence and the resulting implementation recommendation."

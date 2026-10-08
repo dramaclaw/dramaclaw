@@ -1,0 +1,677 @@
+{
+  "$defs": {
+    "StoryHook": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "imageOrLine": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Imageorline",
+          "type": "string"
+        },
+        "question": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Question",
+          "type": "string"
+        },
+        "episodeId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Episodeid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "imageOrLine",
+        "question",
+        "episodeId"
+      ],
+      "title": "StoryHook",
+      "type": "object"
+    },
+    "StoryPressure": {
+      "additionalProperties": false,
+      "properties": {
+        "protagonistGoal": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Protagonistgoal",
+          "type": "string"
+        },
+        "cannotRetreat": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Cannotretreat",
+          "type": "string"
+        },
+        "habitualStrategy": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Habitualstrategy",
+          "type": "string"
+        },
+        "opposition": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Opposition",
+          "type": "string"
+        },
+        "extraPressures": {
+          "items": {
+            "maxLength": 12000,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "title": "Extrapressures",
+          "type": "array"
+        }
+      },
+      "required": [
+        "protagonistGoal",
+        "cannotRetreat",
+        "habitualStrategy",
+        "opposition",
+        "extraPressures"
+      ],
+      "title": "StoryPressure",
+      "type": "object"
+    },
+    "StoryReversal": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "episodeId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Episodeid",
+          "type": "string"
+        },
+        "expectation": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Expectation",
+          "type": "string"
+        },
+        "truth": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Truth",
+          "type": "string"
+        },
+        "evidence": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Evidence",
+          "type": "string"
+        },
+        "consequence": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Consequence",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "episodeId",
+        "expectation",
+        "truth",
+        "evidence",
+        "consequence"
+      ],
+      "title": "StoryReversal",
+      "type": "object"
+    },
+    "StorySegment": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Name",
+          "type": "string"
+        },
+        "episodeIds": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+            "type": "string"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "title": "Episodeids",
+          "type": "array"
+        },
+        "action": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Action",
+          "type": "string"
+        },
+        "result": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Result",
+          "type": "string"
+        },
+        "position": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Position",
+          "type": "string"
+        },
+        "carryIn": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Carryin",
+          "type": "string"
+        },
+        "stageGoal": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Stagegoal",
+          "type": "string"
+        },
+        "mainConflict": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Mainconflict",
+          "type": "string"
+        },
+        "secondaryConflicts": {
+          "items": {
+            "maxLength": 12000,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "title": "Secondaryconflicts",
+          "type": "array"
+        },
+        "oppositionTactic": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Oppositiontactic",
+          "type": "string"
+        },
+        "characterArcs": {
+          "items": {
+            "maxLength": 12000,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Characterarcs",
+          "type": "array"
+        },
+        "setupIds": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Setupids",
+          "type": "array"
+        },
+        "informationRelease": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Informationrelease",
+          "type": "string"
+        },
+        "cost": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Cost",
+          "type": "string"
+        },
+        "audienceReward": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Audiencereward",
+          "type": "string"
+        },
+        "distinction": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Distinction",
+          "type": "string"
+        },
+        "carryOut": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Carryout",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "episodeIds",
+        "action",
+        "result",
+        "position",
+        "carryIn",
+        "stageGoal",
+        "mainConflict",
+        "secondaryConflicts",
+        "oppositionTactic",
+        "characterArcs",
+        "setupIds",
+        "informationRelease",
+        "cost",
+        "audienceReward",
+        "distinction",
+        "carryOut"
+      ],
+      "title": "StorySegment",
+      "type": "object"
+    },
+    "StorySetup": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "plant": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Plant",
+          "type": "string"
+        },
+        "plantEpisodeId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Plantepisodeid",
+          "type": "string"
+        },
+        "visibleForm": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Visibleform",
+          "type": "string"
+        },
+        "payoffEpisodeId": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Payoffepisodeid"
+        },
+        "payoff": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Payoff",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "plant",
+        "plantEpisodeId",
+        "visibleForm",
+        "payoffEpisodeId",
+        "payoff"
+      ],
+      "title": "StorySetup",
+      "type": "object"
+    },
+    "WatchReason": {
+      "additionalProperties": false,
+      "properties": {
+        "episodeId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Episodeid",
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "episodeId",
+        "reason"
+      ],
+      "title": "WatchReason",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "outlineVersion": {
+      "const": 2,
+      "title": "Outlineversion",
+      "type": "integer"
+    },
+    "titleCandidates": {
+      "items": {
+        "maxLength": 12000,
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "maxItems": 3,
+      "minItems": 3,
+      "title": "Titlecandidates",
+      "type": "array"
+    },
+    "logline": {
+      "maxLength": 12000,
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Logline",
+      "type": "string"
+    },
+    "worldRules": {
+      "items": {
+        "maxLength": 12000,
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "title": "Worldrules",
+      "type": "array"
+    },
+    "structureId": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+      "title": "Structureid",
+      "type": "string"
+    },
+    "segments": {
+      "items": {
+        "$ref": "#/$defs/StorySegment"
+      },
+      "maxItems": 100,
+      "minItems": 1,
+      "title": "Segments",
+      "type": "array"
+    },
+    "conflicts": {
+      "items": {
+        "maxLength": 12000,
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Conflicts",
+      "type": "array"
+    },
+    "arcs": {
+      "items": {
+        "maxLength": 12000,
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "title": "Arcs",
+      "type": "array"
+    },
+    "setupsPayoffs": {
+      "items": {
+        "maxLength": 12000,
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "title": "Setupspayoffs",
+      "type": "array"
+    },
+    "ending": {
+      "maxLength": 12000,
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Ending",
+      "type": "string"
+    },
+    "totalDurationSeconds": {
+      "minimum": 1,
+      "title": "Totaldurationseconds",
+      "type": "integer"
+    },
+    "productionRisks": {
+      "items": {
+        "maxLength": 12000,
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "title": "Productionrisks",
+      "type": "array"
+    },
+    "assumptions": {
+      "items": {
+        "maxLength": 12000,
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "title": "Assumptions",
+      "type": "array"
+    },
+    "coreHighlights": {
+      "items": {
+        "maxLength": 12000,
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Corehighlights",
+      "type": "array"
+    },
+    "emotionalCurve": {
+      "maxLength": 12000,
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Emotionalcurve",
+      "type": "string"
+    },
+    "synopsis": {
+      "maxLength": 12000,
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Synopsis",
+      "type": "string"
+    },
+    "setting": {
+      "maxLength": 12000,
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Setting",
+      "type": "string"
+    },
+    "protagonist": {
+      "maxLength": 12000,
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Protagonist",
+      "type": "string"
+    },
+    "mainResistance": {
+      "maxLength": 12000,
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Mainresistance",
+      "type": "string"
+    },
+    "genreTreatment": {
+      "maxLength": 12000,
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Genretreatment",
+      "type": "string"
+    },
+    "pressure": {
+      "$ref": "#/$defs/StoryPressure"
+    },
+    "whyWatch": {
+      "items": {
+        "$ref": "#/$defs/WatchReason"
+      },
+      "maxItems": 100,
+      "minItems": 1,
+      "title": "Whywatch",
+      "type": "array"
+    },
+    "hooks": {
+      "items": {
+        "$ref": "#/$defs/StoryHook"
+      },
+      "minItems": 1,
+      "title": "Hooks",
+      "type": "array"
+    },
+    "setups": {
+      "items": {
+        "$ref": "#/$defs/StorySetup"
+      },
+      "title": "Setups",
+      "type": "array"
+    },
+    "setupsNote": {
+      "anyOf": [
+        {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Setupsnote"
+    },
+    "reversals": {
+      "items": {
+        "$ref": "#/$defs/StoryReversal"
+      },
+      "title": "Reversals",
+      "type": "array"
+    },
+    "reversalsNote": {
+      "anyOf": [
+        {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reversalsnote"
+    },
+    "creativeBans": {
+      "items": {
+        "maxLength": 12000,
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Creativebans",
+      "type": "array"
+    }
+  },
+  "required": [
+    "outlineVersion",
+    "titleCandidates",
+    "logline",
+    "worldRules",
+    "structureId",
+    "segments",
+    "conflicts",
+    "arcs",
+    "setupsPayoffs",
+    "ending",
+    "totalDurationSeconds",
+    "productionRisks",
+    "assumptions",
+    "coreHighlights",
+    "emotionalCurve",
+    "synopsis",
+    "setting",
+    "protagonist",
+    "mainResistance",
+    "genreTreatment",
+    "pressure",
+    "whyWatch",
+    "hooks",
+    "setups",
+    "setupsNote",
+    "reversals",
+    "reversalsNote",
+    "creativeBans"
+  ],
+  "title": "StoryPlan",
+  "type": "object"
+}

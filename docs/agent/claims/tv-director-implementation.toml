@@ -1,0 +1,798 @@
+version = 1
+slug = "tv-director-implementation"
+ledger = "docs/agent/tasks/tv-director-implementation.md"
+baseline = "0d7b609f"
+
+[[claims]]
+path = "tests/director/test_outline_stream.py"
+mode = "exclusive"
+reason = "Structured stream previews, truncation, unicode, duplicate keys and durable replay safety."
+
+[[claims]]
+path = "frontend/src/__tests__/director-outline-patch.test.tsx"
+mode = "exclusive"
+reason = "S1 partial outline review UI contract and interactions"
+
+[[claims]]
+path = "tests/director/test_outline_patch.py"
+mode = "exclusive"
+reason = "Stable-block outline patches, host dependency groups and unchanged content."
+
+[[claims]]
+path = "tests/director/test_outline_changes.py"
+mode = "exclusive"
+reason = "Durable partial acceptance, idempotence and version conflict regression."
+
+[[claims]]
+path = "tests/director/test_outline_source.py"
+mode = "exclusive"
+reason = "Immutable source evidence and independent extraction audit regressions."
+
+[[claims]]
+path = "tests/director/test_outline_pipeline.py"
+mode = "exclusive"
+reason = "Real production workflow integration for gated five-section adaptation outlines."
+
+[[claims]]
+path = "tests/director/seed_outline_parity.py"
+mode = "exclusive"
+reason = "Opt-in Seed production-path evidence capture without credentials."
+
+[[claims]]
+path = "tests/fixtures/director/outline-v3/source.json"
+mode = "exclusive"
+reason = "Anonymous source extraction and independent audit fixture."
+
+[[claims]]
+path = "tests/fixtures/director/outline-v3/projections.json"
+mode = "exclusive"
+reason = "Host-produced multilingual golden text shared with real rich-text component tests."
+
+[[claims]]
+path = "frontend/src/__tests__/director-outline-delivery.test.tsx"
+mode = "exclusive"
+reason = "B01 five-section rich-text rendering and safe text without automatic saving."
+
+[[claims]]
+path = "tests/director/test_outline_delivery.py"
+mode = "exclusive"
+reason = "B00/B01 anonymous delivery failures, references, projections and legacy compatibility."
+
+[[claims]]
+path = "tests/fixtures/director/outline-v3/delivery.json"
+mode = "exclusive"
+reason = "Synthetic source and valid delivery; no private story or account data."
+
+[[claims]]
+path = "docs/guides/tv-director/outline-delivery-progress.md"
+mode = "exclusive"
+reason = "B01 actual implementation and test evidence, separate from frozen plan audit."
+
+[[claims]]
+path = "docs/guides/tv-director/seed-outline-parity-implementation.md"
+mode = "shared"
+shared_with = ["liblib-tv-director-discovery"]
+reason = "Code-level outline delivery, source fidelity, patch review and Seed parity implementation plan."
+
+[[claims]]
+path = "tests/director/test_output_budget.py"
+mode = "exclusive"
+reason = "Automatic stage budgets, legacy explicit limits and no source truncation."
+
+[[claims]]
+path = "tests/director/test_model_catalog.py"
+mode = "exclusive"
+reason = "Director model selection resolves the shared catalog without fallback or secret exposure."
+
+[[claims]]
+path = "frontend/src/__tests__/director-models.test.tsx"
+mode = "exclusive"
+reason = "Catalog model labels, choice, restoration and wire identity."
+
+[[claims]]
+path = "docs/guides/tv-director/agent-plan-outline.md"
+mode = "exclusive"
+reason = "Bounded paired outline quality and UI evidence with Agent Plan models."
+
+[[claims]]
+path = "tests/director/test_media_batch.py"
+mode = "exclusive"
+reason = "Atomic batch planning, approval subset, nodes and recovery."
+
+[[claims]]
+path = "tests/director/test_episode_facts.py"
+mode = "exclusive"
+reason = "Full episode evidence coverage and state-transition audit."
+
+[[claims]]
+path = "tests/director/live_episode_facts.py"
+mode = "exclusive"
+reason = "Explicit bounded real-model full-episode audit evidence."
+
+[[claims]]
+path = "tests/director/pixel_compare.py"
+mode = "exclusive"
+reason = "Reproducible unmasked full-page pixel comparison."
+
+[[claims]]
+path = "frontend/src/__tests__/director-media-batch.test.tsx"
+mode = "exclusive"
+reason = "Batch plan to persistent canvas nodes and approval."
+
+[[claims]]
+path = "frontend/src/__tests__/director-facts.test.tsx"
+mode = "exclusive"
+reason = "Full episode fact report and individual review evidence."
+
+[[claims]]
+path = "docs/guides/tv-director/batch-facts-pixels.md"
+mode = "exclusive"
+reason = "Three-gap implementation and evidence matrix."
+
+[[claims]]
+path = "tests/director/test_fact_guard.py"
+mode = "exclusive"
+reason = "Source evidence validation for high-risk design fields."
+
+[[claims]]
+path = "tests/director/test_media.py"
+mode = "exclusive"
+reason = "Frozen Director media intents and idempotent submission."
+
+[[claims]]
+path = "frontend/src/__tests__/director-media.test.tsx"
+mode = "exclusive"
+reason = "Media selection, parameters, approval and request recovery."
+
+[[claims]]
+path = "frontend/src/__tests__/director-autosave.test.tsx"
+mode = "exclusive"
+reason = "Serialized autosave, idempotent recovery, conflicts and editor navigation."
+
+[[claims]]
+path = "docs/guides/tv-director/interaction-closure.md"
+mode = "exclusive"
+reason = "Verified editor, media and source-fact interaction closure."
+
+[[claims]]
+path = "tests/director/test_streaming.py"
+mode = "exclusive"
+reason = "True provider deltas, durable recovery and interrupted-output tests."
+
+[[claims]]
+path = "tests/director/test_episode_format.py"
+mode = "exclusive"
+reason = "Episode delivery elements and continuity context tests."
+
+[[claims]]
+path = "tests/director/live_episodes.py"
+mode = "exclusive"
+reason = "Bounded explicit live episode and revision evidence."
+
+[[claims]]
+path = "frontend/src/__tests__/director-streaming.test.tsx"
+mode = "exclusive"
+reason = "Streaming conversation, recovery and targeted episode actions."
+
+[[claims]]
+path = "docs/guides/tv-director/episode-parity.md"
+mode = "exclusive"
+reason = "Observed episode format and streaming parity evidence."
+
+[[claims]]
+path = "tests/director/test_props.py"
+mode = "exclusive"
+reason = "Prop element contracts, projection, approvals and downstream continuity."
+
+[[claims]]
+path = "tests/director/live_props.py"
+mode = "exclusive"
+reason = "Explicit bounded synthetic prop quality tests with full request evidence."
+
+[[claims]]
+path = "docs/guides/tv-director/prop-parity.md"
+mode = "exclusive"
+reason = "Observed prop elements, UI geometry and honest parity findings."
+
+[[claims]]
+path = "tests/director/test_scenes.py"
+mode = "exclusive"
+reason = "Scene contract, projection, draft and downstream context regressions."
+
+[[claims]]
+path = "tests/director/live_scenes.py"
+mode = "exclusive"
+reason = "Explicit bounded scene generation with isolated complete request evidence."
+
+[[claims]]
+path = "docs/guides/tv-director/scene-parity.md"
+mode = "exclusive"
+reason = "Observed scene elements, geometry and tested parity boundaries."
+
+[[claims]]
+path = "tests/director/test_characters.py"
+mode = "exclusive"
+reason = "Character element, projection, source and execution regression contracts."
+
+[[claims]]
+path = "tests/director/live_characters.py"
+mode = "exclusive"
+reason = "Opt-in bounded character sample with complete safe request and response evidence."
+
+[[claims]]
+path = "docs/guides/tv-director/character-parity.md"
+mode = "exclusive"
+reason = "Observed character fields, measured UI and verified parity boundaries."
+
+[[claims]]
+path = "docs/agent/archive/git-sync-preparation.md"
+mode = "coordination"
+reason = "Retain completed commit audit for the Director implementation."
+
+[[claims]]
+path = "docs/agent/tasks/git-sync-preparation.md"
+mode = "coordination"
+reason = "Cover removal of the completed active ledger during archival."
+
+[[claims]]
+path = "docs/agent/claims/git-sync-preparation.toml"
+mode = "coordination"
+reason = "Cover removal of the completed preparation scope."
+
+[[claims]]
+path = "tests/director/test_outline_review.py"
+mode = "exclusive"
+reason = "Outline review obligations, evidence separation, retained failures and execution integration."
+
+[[claims]]
+path = "tests/director/live_outline_review.py"
+mode = "exclusive"
+reason = "Explicit single paid review of retained synthetic outlines without regenerating drafts."
+
+[[claims]]
+path = "tests/director/outline_benchmark.py"
+mode = "exclusive"
+reason = "Opt-in multi-genre real outline benchmark with isolated evidence and grounded independent review."
+
+[[claims]]
+path = "tests/director/test_outline_benchmark.py"
+mode = "exclusive"
+reason = "Zero-network checks for benchmark scope, evidence grounding and no paid retries."
+
+[[claims]]
+path = "docs/guides/tv-director/literary-benchmark.md"
+mode = "exclusive"
+reason = "Evidence-led literary findings with separated schema, quality and reference parity results."
+
+[[claims]]
+path = "tests/director/test_outline.py"
+mode = "exclusive"
+reason = "Complete observed outline elements, frozen episode references, legacy reads and projection regressions."
+
+[[claims]]
+path = "tests/director/live_outline.py"
+mode = "exclusive"
+reason = "Single bounded real outline call with complete safe request and response evidence."
+
+[[claims]]
+path = "docs/guides/tv-director/outline-parity.md"
+mode = "exclusive"
+reason = "Observed outline element mapping to maintained short-drama methods and verified output contract."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-00.webp"
+mode = "exclusive"
+reason = "User-requested observed public preset decoration; provenance tracked, no account media."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-01.webp"
+mode = "exclusive"
+reason = "User-requested observed public preset decoration; provenance tracked, no account media."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-02.webp"
+mode = "exclusive"
+reason = "User-requested observed public preset decoration; provenance tracked, no account media."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-03.webp"
+mode = "exclusive"
+reason = "User-requested observed public preset decoration; provenance tracked, no account media."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-04.webp"
+mode = "exclusive"
+reason = "User-requested observed public preset decoration; provenance tracked, no account media."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-05.webp"
+mode = "exclusive"
+reason = "User-requested observed public preset decoration; provenance tracked, no account media."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-06.webp"
+mode = "exclusive"
+reason = "User-requested observed public preset decoration; provenance tracked, no account media."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-07.webp"
+mode = "exclusive"
+reason = "User-requested observed public preset decoration; provenance tracked, no account media."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-08.webp"
+mode = "exclusive"
+reason = "User-requested observed public preset decoration; provenance tracked, no account media."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-09.webp"
+mode = "exclusive"
+reason = "User-requested observed public preset decoration; provenance tracked, no account media."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-10.webp"
+mode = "exclusive"
+reason = "User-requested observed public preset decoration; provenance tracked, no account media."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-11.webp"
+mode = "exclusive"
+reason = "User-requested observed public preset decoration; provenance tracked, no account media."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-12.webp"
+mode = "exclusive"
+reason = "User-requested observed public preset decoration; provenance tracked, no account media."
+
+[[claims]]
+path = "frontend/public/director-reference/genre-13.webp"
+mode = "exclusive"
+reason = "User-requested observed public preset decoration; provenance tracked, no account media."
+
+[[claims]]
+path = "frontend/src/__tests__/director-ui.test.tsx"
+mode = "exclusive"
+reason = "UI parity interactions, draft preservation and scoped layout regressions."
+
+[[claims]]
+path = "docs/guides/tv-director/ui-parity.md"
+mode = "exclusive"
+reason = "Measured reference geometry, screenshots and honest visual acceptance gaps."
+
+[[claims]]
+path = "tests/director/test_skill_runtime.py"
+mode = "exclusive"
+reason = "Pinned executable method assets, source routing, corruption and pre-dispatch guards."
+
+[[claims]]
+path = "tests/director/test_revisions.py"
+mode = "exclusive"
+reason = "Explicit settings impact, reopen, archive, CAS and preserved finalization history."
+
+[[claims]]
+path = "tests/director/test_quality.py"
+mode = "exclusive"
+reason = "Independent review, frozen evidence, versioned human attestations and finalization transactions."
+
+[[claims]]
+path = "tests/director/test_context.py"
+mode = "exclusive"
+reason = "Frozen stage references, budget and source authority regressions."
+
+[[claims]]
+path = "tests/director/test_rule_resolver.py"
+mode = "exclusive"
+reason = "18 conditional short-drama rules, disabled reasons and verified knowledge constraints."
+
+[[claims]]
+path = "tests/director/test_documents.py"
+mode = "exclusive"
+reason = "Canonical AST, stable identity, selection and invalidation integration."
+
+[[claims]]
+path = "tests/director/test_migrations.py"
+mode = "exclusive"
+reason = "Explicit additive legacy import, backups, CAS, rollback and replay."
+
+[[claims]]
+path = "src/novelvideo/config.py"
+mode = "shared"
+shared_with = ["local-stack"]
+reason = "Loopback text transport defaults to bypassing system proxy, preserve explicit override and remote behavior."
+
+[[claims]]
+path = "tests/test_newapi_text_gateway.py"
+mode = "exclusive"
+reason = "Regression for loopback-only text proxy default discovered during real Director validation."
+
+[[claims]]
+path = "docs/agent/tasks/local-stack.md"
+mode = "coordination"
+reason = "Record serial shared config integration; no launcher or credential changes."
+
+[[claims]]
+path = "tests/director/live_execution.py"
+mode = "exclusive"
+reason = "Opt-in three-call bounded real model validation with synthetic stories."
+
+[[claims]]
+path = "docs/guides/tv-director/runtime-validation.md"
+mode = "exclusive"
+reason = "Actual runtime, browser and model evidence, explicitly separated from full parity."
+
+[[claims]]
+path = "tests/director/preview_execution.py"
+mode = "exclusive"
+reason = "Loopback-only synthetic provider browser fixture; never production credentials."
+
+[[claims]]
+path = "frontend/director-preview.local.html"
+mode = "exclusive"
+reason = "Temporary component browser harness; remove after verification."
+
+[[claims]]
+path = "frontend/director-preview.local.tsx"
+mode = "exclusive"
+reason = "Temporary isolated component entry; remove after verification."
+
+[[claims]]
+path = "tests/director/test_execution.py"
+mode = "exclusive"
+reason = "Durable execution, cost consent, idempotency, failure injection and authenticated API."
+
+[[claims]]
+path = "frontend/src/api/director-execution.ts"
+mode = "exclusive"
+reason = "Versioned execution and consent client, preserving legacy reads."
+
+[[claims]]
+path = "frontend/src/__tests__/director-execution.test.tsx"
+mode = "exclusive"
+reason = "Execution UI and parameter/intent contract regressions."
+
+[[claims]]
+path = "tests/director/test_foundation.py"
+mode = "exclusive"
+reason = "WP00/WP01 executable synthetic fixture and deterministic contract regression."
+
+[[claims]]
+path = "tests/fixtures/director/cases/f01.json"
+mode = "exclusive"
+reason = "WP00/WP01 executable synthetic fixture and deterministic contract regression."
+
+[[claims]]
+path = "tests/fixtures/director/cases/f03.json"
+mode = "exclusive"
+reason = "WP00/WP01 executable synthetic fixture and deterministic contract regression."
+
+[[claims]]
+path = "tests/fixtures/director/cases/f05.json"
+mode = "exclusive"
+reason = "WP00/WP01 executable synthetic fixture and deterministic contract regression."
+
+[[claims]]
+path = "tests/fixtures/director/cases/f11.json"
+mode = "exclusive"
+reason = "WP00/WP01 executable synthetic fixture and deterministic contract regression."
+
+[[claims]]
+path = "tests/fixtures/director/cases/f17.json"
+mode = "exclusive"
+reason = "WP00/WP01 executable synthetic fixture and deterministic contract regression."
+
+[[claims]]
+path = "tests/fixtures/director/cases/f19.json"
+mode = "exclusive"
+reason = "WP00/WP01 executable synthetic fixture and deterministic contract regression."
+
+[[claims]]
+path = "tests/fixtures/director/cases/f23.json"
+mode = "exclusive"
+reason = "WP00/WP01 executable synthetic fixture and deterministic contract regression."
+
+[[claims]]
+path = "tests/fixtures/director/cases/f27.json"
+mode = "exclusive"
+reason = "WP00/WP01 executable synthetic fixture and deterministic contract regression."
+
+[[claims]]
+path = "tests/fixtures/director/cases/f28.json"
+mode = "exclusive"
+reason = "WP00/WP01 executable synthetic fixture and deterministic contract regression."
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Register this workstream without changing the discovery line."
+
+[[claims]]
+path = "docs/agent/tasks/tv-director-implementation.md"
+mode = "coordination"
+reason = "Plan and handoff for this workstream."
+
+[[claims]]
+path = "docs/agent/claims/tv-director-implementation.toml"
+mode = "coordination"
+reason = "Machine-readable write boundaries."
+
+[[claims]]
+path = "docs/guides/tv-director-skill-fusion.md"
+mode = "exclusive"
+reason = "Detailed fusion contract for short-drama methods and observed TV Director behavior."
+
+[[claims]]
+path = "docs/guides/tv-director/feature-contracts.md"
+mode = "shared"
+shared_with = ["liblib-tv-director-discovery"]
+reason = "Complete button and capability traceability specification."
+
+[[claims]]
+path = "docs/guides/tv-director/implementation-map.json"
+mode = "shared"
+shared_with = ["liblib-tv-director-discovery"]
+reason = "Machine-readable complete design traceability, not runtime completion."
+
+[[claims]]
+path = "docs/guides/tv-director/source-inventory.json"
+mode = "exclusive"
+reason = "Relative source identities, hashes and stage mappings; no local absolute paths."
+
+[[claims]]
+path = "docs/guides/tv-director/verify-spec.mjs"
+mode = "shared"
+shared_with = ["liblib-tv-director-discovery"]
+reason = "Read-only specification consistency checks and mutation self-tests."
+
+[[claims]]
+path = "docs/guides/tv-director/implementation-closure.md"
+mode = "shared"
+shared_with = ["liblib-tv-director-discovery"]
+reason = "Resolved evidence limits, code work packages and API migration handoff."
+
+[[claims]]
+path = "docs/guides/tv-director/skill-contracts.md"
+mode = "shared"
+shared_with = ["liblib-tv-director-discovery"]
+reason = "Individual method package inputs, outputs, rules and failure contracts."
+
+[[claims]]
+path = "docs/guides/tv-director/workflow-contracts.md"
+mode = "shared"
+shared_with = ["liblib-tv-director-discovery"]
+reason = "Authoritative state, approval, cost and recovery specification."
+
+[[claims]]
+path = "docs/guides/tv-director/document-semantics.md"
+mode = "shared"
+shared_with = ["liblib-tv-director-discovery"]
+reason = "Document authority, source semantics, dependent revisions and duration contracts."
+
+[[claims]]
+path = "docs/guides/tv-director/acceptance-contracts.md"
+mode = "shared"
+shared_with = ["liblib-tv-director-discovery"]
+reason = "User-approved review fixes shared serially with discovery; implementation resumes after its handoff."
+
+[[claims]]
+path = "docs/guides/liblib-tv-director-development.md"
+mode = "shared"
+shared_with = ["liblib-tv-director-discovery"]
+reason = "Implementation line serially supersedes conflicting design only; preserve research observations."
+
+[[claims]]
+path = "docs/agent/tasks/liblib-tv-director-discovery.md"
+mode = "coordination"
+reason = "Record shared design ownership and handoff; do not change research facts."
+
+[[claims]]
+path = "docs/agent/claims/liblib-tv-director-discovery.toml"
+mode = "coordination"
+reason = "Symmetric sharing for the historical development guide."
+
+[[claims]]
+path = "src/novelvideo/director/**"
+mode = "exclusive"
+reason = "New independent TV Director domain."
+
+[[claims]]
+path = "src/novelvideo/api/routes/director.py"
+mode = "exclusive"
+reason = "New director API adapter."
+
+[[claims]]
+path = "src/novelvideo/api/__init__.py"
+mode = "shared"
+shared_with = ["*"]
+reason = "Append only new router import and mount."
+
+[[claims]]
+path = "tests/test_tv_director.py"
+mode = "exclusive"
+reason = "Focused director regressions."
+
+[[claims]]
+path = "frontend/src/features/director/**"
+mode = "exclusive"
+reason = "New independent director UI."
+
+[[claims]]
+path = "frontend/src/api/director.ts"
+mode = "exclusive"
+reason = "Typed director API client."
+
+[[claims]]
+path = "frontend/src/routes/_app/projects.$project/director.lazy.tsx"
+mode = "exclusive"
+reason = "Dedicated project route."
+
+[[claims]]
+path = "frontend/src/routeTree.gen.ts"
+mode = "shared"
+shared_with = ["story-writer"]
+reason = "Router generator output, merge existing routes."
+
+[[claims]]
+path = "frontend/src/components/layout/project-navigation-routes.ts"
+mode = "shared"
+shared_with = ["story-writer"]
+reason = "Append a director project section without replacing story."
+
+[[claims]]
+path = "frontend/src/components/layout/project-header-navigation.tsx"
+mode = "shared"
+shared_with = ["story-writer"]
+reason = "Expose the director route in the existing project menu."
+
+[[claims]]
+path = "frontend/public/locales/zh/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Add director Chinese keys only."
+
+[[claims]]
+path = "frontend/public/locales/en/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Add director English keys only."
+
+[[claims]]
+path = "frontend/public/locales/vi/translation.json"
+mode = "shared"
+shared_with = ["*"]
+reason = "Add director Vietnamese keys only."
+
+[[claims]]
+path = "DESIGN.md"
+mode = "shared"
+shared_with = ["canvas-lod-perf", "liblib-canvas-parity"]
+reason = "Document new director-scoped tokens."
+
+[[claims]]
+path = "tests/director/test_workflow.py"
+mode = "exclusive"
+reason = "Bounded parent planning, durable decisions and atomic adoption regression."
+
+[[claims]]
+path = "frontend/package.json"
+mode = "exclusive"
+reason = "Scoped rich-text editor dependencies."
+
+[[claims]]
+path = "frontend/pnpm-lock.yaml"
+mode = "exclusive"
+reason = "Pinned rich-text dependencies; no unrelated upgrades."
+
+[[claims]]
+path = "frontend/src/__tests__/director-richtext.test.tsx"
+mode = "exclusive"
+reason = "Editor formatting and safe Markdown roundtrip."
+
+[[claims]]
+path = "tests/director/test_history.py"
+mode = "exclusive"
+reason = "Title and reversible history archive without changing text or costs."
+
+[[claims]]
+path = "frontend/public/director-reference/style-00.webp"
+mode = "exclusive"
+reason = "Observed public style thumbnail, pinned provenance and no hotlinks."
+
+[[claims]]
+path = "frontend/public/director-reference/style-01.webp"
+mode = "exclusive"
+reason = "Observed public style thumbnail, pinned provenance and no hotlinks."
+
+[[claims]]
+path = "frontend/public/director-reference/style-02.png"
+mode = "exclusive"
+reason = "Observed public style thumbnail, pinned provenance and no hotlinks."
+
+[[claims]]
+path = "frontend/public/director-reference/style-03.webp"
+mode = "exclusive"
+reason = "Observed public style thumbnail, pinned provenance and no hotlinks."
+
+[[claims]]
+path = "frontend/public/director-reference/style-04.webp"
+mode = "exclusive"
+reason = "Observed public style thumbnail, pinned provenance and no hotlinks."
+
+[[claims]]
+path = "frontend/public/director-reference/style-05.webp"
+mode = "exclusive"
+reason = "Observed public style thumbnail, pinned provenance and no hotlinks."
+
+[[claims]]
+path = "frontend/public/director-reference/style-06.webp"
+mode = "exclusive"
+reason = "Observed public style thumbnail, pinned provenance and no hotlinks."
+
+[[claims]]
+path = "frontend/public/director-reference/style-07.webp"
+mode = "exclusive"
+reason = "Observed public style thumbnail, pinned provenance and no hotlinks."
+
+[[claims]]
+path = "frontend/public/director-reference/style-08.webp"
+mode = "exclusive"
+reason = "Observed public style thumbnail, pinned provenance and no hotlinks."
+
+[[claims]]
+path = "frontend/public/director-reference/style-09.webp"
+mode = "exclusive"
+reason = "Observed public style thumbnail, pinned provenance and no hotlinks."
+
+[[claims]]
+path = "frontend/public/director-reference/style-10.webp"
+mode = "exclusive"
+reason = "Observed public style thumbnail, pinned provenance and no hotlinks."
+
+[[claims]]
+path = "frontend/public/director-reference/style-11.webp"
+mode = "exclusive"
+reason = "Observed public style thumbnail, pinned provenance and no hotlinks."
+
+[[claims]]
+path = "frontend/public/director-reference/style-12.webp"
+mode = "exclusive"
+reason = "Observed public style thumbnail, pinned provenance and no hotlinks."
+
+[[claims]]
+path = "frontend/public/director-reference/style-13.webp"
+mode = "exclusive"
+reason = "Observed public style thumbnail, pinned provenance and no hotlinks."
+
+[[claims]]
+path = "frontend/public/director-reference/style-14.webp"
+mode = "exclusive"
+reason = "Observed public style thumbnail, pinned provenance and no hotlinks."
+
+[[claims]]
+path = "frontend/public/director-reference/style-15.webp"
+mode = "exclusive"
+reason = "Observed public style thumbnail, pinned provenance and no hotlinks."
+
+[[claims]]
+path = "frontend/public/director-reference/style-16.webp"
+mode = "exclusive"
+reason = "Observed public style thumbnail, pinned provenance and no hotlinks."
+
+[[claims]]
+path = "frontend/public/director-reference/style-17.webp"
+mode = "exclusive"
+reason = "Observed public style thumbnail, pinned provenance and no hotlinks."
+
+[[claims]]
+path = "frontend/public/director-reference/style-18.webp"
+mode = "exclusive"
+reason = "Observed public style thumbnail, pinned provenance and no hotlinks."
+
+[[claims]]
+path = "frontend/public/director-reference/style-19.webp"
+mode = "exclusive"
+reason = "Observed public style thumbnail, pinned provenance and no hotlinks."
+
+[[claims]]
+path = "frontend/public/director-reference/style-20.webp"
+mode = "exclusive"
+reason = "Observed public style thumbnail, pinned provenance and no hotlinks."

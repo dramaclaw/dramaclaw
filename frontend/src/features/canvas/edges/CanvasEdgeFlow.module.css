@@ -1,0 +1,36 @@
+.line {
+  transition: stroke var(--duration-fast, 150ms) ease-out, stroke-width var(--duration-fast, 150ms) ease-out;
+}
+
+.flow {
+  stroke: #64b4ff;
+  animation: edgeFlowTravel 0.8s linear infinite;
+}
+
+/* The original RF SVG still owns pointer events and labels. The shared SVG
+   only paints, so neither the clone nor its children can intercept a drag. */
+:global(.dc-canvas [data-canvas-single-svg-source='true']) {
+  opacity: 0 !important;
+}
+
+:global(.dc-canvas [data-canvas-single-svg-layer='true']),
+:global(.dc-canvas [data-canvas-single-svg-layer='true'] *) {
+  pointer-events: none !important;
+}
+
+@keyframes edgeFlowTravel {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -100; }
+}
+
+/* Panning moves existing paint; it must not wake edge animations. */
+:global(.dc-canvas--panning) .flow,
+:global([data-canvas-tool='hand']) .flow {
+  display: none;
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .line { transition: none; }
+  .flow { display: none; animation: none; }
+}

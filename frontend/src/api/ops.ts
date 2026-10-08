@@ -1,6 +1,8 @@
+import { rememberTextModels, rememberMediaDefault, type CatalogModel } from '@/lib/local-model-catalog';
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { apiCall, apiCallEnvelope, apiClient } from "./client";
+import { responseWithBackendError } from '@/lib/api-errors';
 import { readReferenceMediaLimits, type ReferenceMediaLimits } from "./referenceMediaLimits";
 
 // Per-node generation history -------------------------------------------- //
@@ -167,6 +169,8 @@ export interface FreezoneJobRef {
     | "freezone_video_erase"
     | "freezone_video_compose"
     | "freezone_video_upscale"
+    | "freezone_depth_motion"
+    | "freezone_audio_transform"
     | "freezone_audio_separate"
     | "freezone_audio_speech"
     | "freezone_audio_eleven_music"
@@ -311,6 +315,29 @@ export async function submitFreezoneVideoUpscale(
   );
 }
 
+/** 逐帧拉片：把参考视频反编译成可复用的素材（首尾帧 / 镜头片段 / 参考音轨）。 */
+export async function submitFreezoneShotBreakdown(
+  project: string,
+  payload: {
+    videoUrl: string;
+    durationSec?: number;
+    /** 留空表示三个维度全做。 */
+    dimensions?: ("storyboard" | "cameraMoves" | "musicRef")[];
+  },
+): Promise<FreezoneJobRef> {
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/shot-breakdown`,
+    {
+      method: "POST",
+      json: {
+        video_url: payload.videoUrl,
+        ...(payload.durationSec ? { duration_sec: payload.durationSec } : {}),
+        ...(payload.dimensions ? { dimensions: payload.dimensions } : {}),
+      },
+    },
+  );
+}
+
 export async function quoteFreezoneVideoUpscale(
   project: string,
   payload: FreezoneVideoUpscalePayload,
@@ -329,6 +356,20 @@ export async function quoteFreezoneVideoUpscale(
         face_enhance: payload.faceEnhance ?? false,
       },
     },
+  );
+}
+
+/** Depth Anything 3 project-local capture; model/runtime configuration is server-side. */
+export async function submitFreezoneDepthMotion(
+  project: string,
+  payload: { sourceUrl: string; resolution: "480p" | "720p" },
+): Promise<FreezoneJobRef> {
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/video/depth-motion`,
+    { method: "POST", json: {
+      source_url: payload.sourceUrl,
+      resolution: payload.resolution,
+    } },
   );
 }
 
@@ -850,6 +891,37 @@ export async function fetchFreezoneAudioSeparateResult(
   );
 }
 
+// /freezone/audio/transform ---------------------------------------------- //
+
+export interface FreezoneAudioTransformPayload {
+  sourceUrl: string;
+  startSec: number;
+  endSec: number;
+  speed: number;
+}
+
+/**
+ * Create a derived audio asset without mutating the source node. The backend
+ * keeps pitch stable while applying speed through ffmpeg's `atempo` filter.
+ */
+export async function submitFreezoneAudioTransform(
+  project: string,
+  payload: FreezoneAudioTransformPayload,
+): Promise<FreezoneJobRef> {
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/audio/transform`,
+    {
+      method: "POST",
+      json: {
+        source_url: payload.sourceUrl,
+        start_sec: payload.startSec,
+        end_sec: payload.endSec,
+        speed: payload.speed,
+      },
+    },
+  );
+}
+
 // /freezone/image/reverse-prompt ----------------------------------------- //
 
 /**
@@ -1004,6 +1076,8 @@ export interface MediaModelRequestSchema {
 }
 
 export interface FreezoneImageModelInfo extends ReferenceMediaLimits {
+  providerLabel?: string;
+  sourceProvider?: string;
   /** Opaque database identity used by new billing and task records. */
   catalogId?: string;
   /** Stable picker id, e.g. `"huimeng/gpt-image-2"`. */
@@ -1117,6 +1191,8 @@ function modelEntryFromObject(entry: Record<string, unknown>): FreezoneImageMode
     providerId,
     apiModel,
     label,
+    providerLabel: pickString(entry, "providerLabel") ?? undefined,
+    sourceProvider: pickString(entry, "sourceProvider") ?? undefined,
     resolutionOptions: pickStringArray(entry, "resolutionOptions", "resolution_options"),
     qualityOptions: pickStringArray(entry, "qualityOptions", "quality_options"),
     ratioOptions: pickStringArray(entry, "ratioOptions", "ratio_options"),
@@ -1188,6 +1264,7 @@ export async function fetchFreezoneImageModels(
   const payload = await apiCall<unknown>(
     `projects/${encodeURIComponent(project)}/freezone/image/models`,
   );
+  rememberMediaDefault('image', payload);
   return coerceModelList(payload);
 }
 
@@ -1197,6 +1274,8 @@ export async function fetchFreezoneImageModels(
 export type FreezoneVideoProvider = "newapi" | "seedance" | "huimeng";
 
 export interface FreezoneVideoModelInfo extends ReferenceMediaLimits {
+  providerLabel?: string;
+  sourceProvider?: string;
   /** Opaque database identity used by new billing and task records. */
   catalogId?: string;
   /** Stable picker id, e.g. `"seedance_2"` (backend currently keys by api id). */
@@ -1298,6 +1377,8 @@ function videoModelEntryFromObject(
     providerId,
     apiModel,
     label,
+    providerLabel: pickString(entry, "providerLabel") ?? undefined,
+    sourceProvider: pickString(entry, "sourceProvider") ?? undefined,
     ...(resolutionOptions.length > 0 ? { resolutionOptions } : {}),
     humanReview: pickBoolean(entry, "humanReview", "human_review"),
     supportsGenerateAudio: pickBoolean(
@@ -1422,6 +1503,7 @@ export async function fetchFreezoneVideoModels(
   const payload = await apiCall<unknown>(
     `projects/${encodeURIComponent(project)}/freezone/video/models`,
   );
+  rememberMediaDefault('video', payload);
   return coerceVideoModelList(payload);
 }
 
@@ -2022,6 +2104,15 @@ export async function submitFreezoneTemplateEdit(
 export interface FreezoneJobResult {
   url: string;
   size: number;
+  manifest_url?: string;
+  meta?: {
+    model?: string;
+    frame_count?: number;
+    fps?: string;
+    width?: number;
+    height?: number;
+    [key: string]: unknown;
+  };
 }
 
 export async function fetchFreezoneJobResult(
@@ -2044,6 +2135,8 @@ export async function fetchFreezoneJobResult(
     | "freezone_video_erase"
     | "freezone_video_compose"
     | "freezone_video_upscale"
+    | "freezone_depth_motion"
+    | "freezone_audio_transform"
     | "freezone_audio_separate"
     | "freezone_audio_speech"
     | "freezone_audio_eleven_music"
@@ -2057,6 +2150,42 @@ export async function fetchFreezoneJobResult(
 ): Promise<FreezoneJobResult> {
   return await apiCall<FreezoneJobResult>(
     `projects/${encodeURIComponent(project)}/freezone/jobs/${encodeURIComponent(taskType)}/${encodeURIComponent(jobId)}/result`,
+  );
+}
+
+export interface FreezoneAudioSplitPreviewPayload {
+  sourceUrl: string;
+  silenceThresholdDb?: number;
+  minSilenceSec?: number;
+  minSegmentSec?: number;
+  maxSegments?: number;
+}
+
+export interface FreezoneAudioSplitPreviewResult {
+  duration_sec: number;
+  segments: Array<{ start_sec: number; end_sec: number }>;
+  detected_silence_count: number;
+  limited: boolean;
+}
+
+/** Analyze local audio without creating files or mutating the canvas graph. */
+export async function previewFreezoneAudioSplit(
+  project: string,
+  payload: FreezoneAudioSplitPreviewPayload,
+): Promise<FreezoneAudioSplitPreviewResult> {
+  return await apiCall<FreezoneAudioSplitPreviewResult>(
+    `projects/${encodeURIComponent(project)}/freezone/audio/split-preview`,
+    {
+      method: "POST",
+      timeout: 130_000,
+      json: {
+        source_url: payload.sourceUrl,
+        silence_threshold_db: payload.silenceThresholdDb ?? -35,
+        min_silence_sec: payload.minSilenceSec ?? 0.45,
+        min_segment_sec: payload.minSegmentSec ?? 0.75,
+        max_segments: payload.maxSegments ?? 24,
+      },
+    },
   );
 }
 
@@ -2304,6 +2433,27 @@ export async function createFreezoneAudioVoice(
 
 export interface FreezoneTextGeneratePayload extends FreezoneNodeContext {
   prompt: string;
+  model?: string;
+  references?: Array<{ node_id: string; text?: string; image_url?: string; video_url?: string }>;
+  h3Options?: {
+    mode: string;
+    duration_sec: number;
+    reference_order: Array<'image' | 'video' | 'audio'>;
+  };
+}
+
+export interface FreezoneTextModels {
+  entries?: CatalogModel[];
+  models: string[];
+  defaultModel: string;
+}
+
+export async function fetchFreezoneTextModels(project: string): Promise<FreezoneTextModels> {
+  const catalog = await apiCall<FreezoneTextModels>(
+    `projects/${encodeURIComponent(project)}/freezone/text/models`,
+  );
+  rememberTextModels(catalog.entries);
+  return catalog;
 }
 
 export async function submitFreezoneTextGenerate(
@@ -2316,6 +2466,9 @@ export async function submitFreezoneTextGenerate(
       method: "POST",
       json: {
         prompt: payload.prompt,
+        model: payload.model ?? '',
+        references: payload.references ?? [],
+        h3_options: payload.h3Options ?? null,
         ...nodeContextBody(payload),
       },
     },
@@ -2325,6 +2478,35 @@ export async function submitFreezoneTextGenerate(
 export interface FreezoneTextGenerateResult {
   generated_text: string;
   model: string;
+}
+
+export async function streamFreezoneH3(
+  project: string,
+  payload: FreezoneTextGeneratePayload,
+  onText: (text: string) => void,
+  signal: AbortSignal,
+): Promise<FreezoneTextGenerateResult> {
+  const { readH3Stream } = await import('./h3-stream');
+  const response = await responseWithBackendError(apiClient(`projects/${encodeURIComponent(project)}/freezone/text/stream-h3`, {
+    method: 'POST', timeout: false, retry: 0, signal,
+    json: { prompt: payload.prompt, model: payload.model ?? '',
+      references: payload.references ?? [], h3_options: payload.h3Options },
+  }));
+  return readH3Stream(response, onText);
+}
+
+export async function formatFreezoneH3Locally(
+  project: string,
+  payload: FreezoneTextGeneratePayload,
+): Promise<FreezoneTextGenerateResult> {
+  return await apiCall<FreezoneTextGenerateResult>(
+    `projects/${encodeURIComponent(project)}/freezone/text/format-h3`,
+    { method: 'POST', json: {
+      prompt: payload.prompt,
+      references: payload.references ?? [],
+      h3_options: payload.h3Options,
+    } },
+  );
 }
 
 export async function fetchFreezoneTextGenerateResult(

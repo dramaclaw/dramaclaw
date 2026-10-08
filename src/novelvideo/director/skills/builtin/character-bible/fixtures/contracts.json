@@ -1,0 +1,97 @@
+[
+  {
+    "valid": true,
+    "value": {
+      "characterVersion": 2,
+      "sceneVersion": 1,
+      "propVersion": 1,
+      "emptyReason": null,
+      "characters": [
+        {
+          "id": "char-1",
+          "names": [
+            "Lin"
+          ],
+          "appearance": "Not established",
+          "motive": "Read letter",
+          "knowledge": "Key fits box",
+          "voice": "Silent; responds by gesture.",
+          "arc": "Cannot read the note, accepts help, then thanks the repairer after reading it.",
+          "role": "protagonist",
+          "setting": "Lin cannot read the birthday note before receiving her repaired glasses; she asks the unrelated repairer for the box key. Appearance is not established.",
+          "dramaticFunction": "Receives the key, opens the box and puts on the repaired glasses before reading the note.",
+          "tags": ["Reserved", "Attentive"],
+          "speechFlaw": null,
+          "memorableDetail": "Tries to focus on the note, then smiles after putting on the glasses.",
+          "pressureResponse": "Asks for help through a gesture; no additional reaction established.",
+          "addressRules": null,
+          "firstEpisodeId": "ep-1",
+          "keyEpisodeIds": ["ep-1"]
+        }
+      ],
+      "relations": [],
+      "locations": [
+        {
+          "id": "location-1",
+          "name": "Room",
+          "type": "interior",
+          "dramaticFunction": "Lin receives the key and opens the box to retrieve her repaired glasses, then reads the note.",
+          "spatialConstraints": "The box and note remain on the table by the window; the key must reach Lin before she can open the box. Entrances are not established.",
+          "reusablePositions": "One appearance: the table holding the note and box. No repeat visit established.",
+          "keyEpisodeIds": ["ep-1"]
+        }
+      ],
+      "props": [
+        {
+          "id": "prop-1",
+          "name": "Box",
+          "type": "Container",
+          "dramaticFunction": "Lin opens the box with the received key before retrieving her repaired glasses.",
+          "usageBoundary": "Starts locked on the table by the window with glasses inside. Lin opens it and removes the glasses; its final location and legal owner are not established.",
+          "firstEpisodeId": "ep-1",
+          "keyEpisodeIds": ["ep-1"]
+        }
+      ],
+      "worldRules": []
+    }
+  },
+  {
+    "valid": false,
+    "value": {}
+  },
+  {
+    "valid": false,
+    "value": {
+      "characters": [
+        {
+          "id": "char-1",
+          "names": [
+            "Lin"
+          ],
+          "appearance": "Blue shirt",
+          "motive": "Read letter",
+          "knowledge": "Key fits box",
+          "voice": "Quiet",
+          "arc": "Gains confidence"
+        }
+      ],
+      "relations": [],
+      "locations": [
+        {
+          "id": "location-1",
+          "name": "Room",
+          "description": "Table by window"
+        }
+      ],
+      "props": [
+        {
+          "id": "prop-1",
+          "name": "Box",
+          "description": "Contains glasses"
+        }
+      ],
+      "worldRules": [],
+      "approved": true
+    }
+  }
+]

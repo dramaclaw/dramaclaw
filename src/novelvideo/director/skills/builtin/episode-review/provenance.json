@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 2,
+  "stage": "M12",
+  "privateLibTVSourceObtained": false,
+  "license": "MIT",
+  "copyright": "2025 0xsline",
+  "sources": [
+    {
+      "path": "references/episode-writing.md",
+      "sha256": "524b3fd13cce2493caa86ce914ba566df20ea53bda2340989025b9d06cb4c298"
+    },
+    {
+      "path": "references/ai-producibility.md",
+      "sha256": "9c16eef426382dc375bde8c76a0db2a9ed8f8b6da3c5d16c42cd79c33a0f2e84"
+    }
+  ],
+  "adaptation": "Host-owned methods and safety contracts; exact short-drama references are lower-priority craft context. No evidence of private LibTV prompts. Runtime remains the explicitly named adapter."
+}

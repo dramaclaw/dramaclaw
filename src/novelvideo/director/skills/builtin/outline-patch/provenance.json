@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 2,
+  "stage": "M14",
+  "privateLibTVSourceObtained": false,
+  "license": "MIT",
+  "copyright": "2025 0xsline",
+  "adaptation": "Host AST patch protocol plus source fidelity and event coverage; not recovered private LibTV instructions.",
+  "sources": [
+    {
+      "path": "references/adaptation-core.md"
+    },
+    {
+      "path": "references/event-coverage.md"
+    }
+  ],
+  "version": "3.0.0"
+}

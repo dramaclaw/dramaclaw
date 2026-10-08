@@ -1,0 +1,32 @@
+[
+  {
+    "valid": true,
+    "value": {
+      "contract": "outline-source/1.0.0",
+      "readUnitIds": [
+        "unit-demo"
+      ],
+      "claims": [
+        {
+          "assertion": "A visitor leaves.",
+          "kind": "observed",
+          "speaker": null,
+          "subjects": [
+            "visitor"
+          ],
+          "evidence": [
+            {
+              "unitId": "unit-demo",
+              "quote": "A visitor leaves."
+            }
+          ],
+          "critical": true
+        }
+      ]
+    }
+  },
+  {
+    "valid": false,
+    "value": {}
+  }
+]

@@ -1,0 +1,275 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-09-25",
+  "sourceId": "user-short-drama",
+  "comparedCopies": [
+    "user-supplied-source",
+    "installed-skill"
+  ],
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "a42977a69c8c05840da8a8e2f9d8dff9f5c8346f236eeabf8c97fb0812f5fe50",
+      "bytes": 1064,
+      "originMatch": true,
+      "methodIds": [],
+      "disposition": "移植前核验并保留适用许可；不因用户本机有副本而抹去来源"
+    },
+    {
+      "path": "README.md",
+      "sha256": "ba83398ad1a825fa9d6e3c702aaf04838d005a1124f1253a3c009df5bf72f0ee",
+      "bytes": 15318,
+      "originMatch": true,
+      "methodIds": [],
+      "disposition": "来源元信息/安装说明；不直接编译为运行指令"
+    },
+    {
+      "path": "SKILL.md",
+      "sha256": "44c9f3d54ccd5d9ecd78c2ae041cdb1cb809b0a67fce9bea1eb0eee966d02235",
+      "bytes": 17171,
+      "originMatch": true,
+      "methodIds": [
+        "M01",
+        "M13",
+        "M15",
+        "M17",
+        "M18",
+        "M19",
+        "M21",
+        "M22",
+        "M23"
+      ],
+      "disposition": "stage-routed-reference"
+    },
+    {
+      "path": "agents/openai.yaml",
+      "sha256": "6b241128e00104ce732c0e1d2ebcd77ef332c6f00e0f82e1e048fd46aecab256",
+      "bytes": 193,
+      "originMatch": true,
+      "methodIds": [],
+      "disposition": "来源元信息/安装说明；不直接编译为运行指令"
+    },
+    {
+      "path": "evolution/exemplars.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "originMatch": true,
+      "methodIds": [],
+      "disposition": "只读知识快照；校验manifest哈希后限量查询"
+    },
+    {
+      "path": "evolution/manifest.json",
+      "sha256": "1906f2aa4ae37fe66ded060e54c35316031a2b6741eba0358a1ca1ff8eafdb42",
+      "bytes": 350,
+      "originMatch": true,
+      "methodIds": [
+        "M23"
+      ],
+      "disposition": "stage-routed-reference"
+    },
+    {
+      "path": "evolution/rules.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "originMatch": true,
+      "methodIds": [],
+      "disposition": "只读知识快照；校验manifest哈希后限量查询"
+    },
+    {
+      "path": "references/adaptation-core.md",
+      "sha256": "1e517e696c0ed19354683dcb37824f61059a06544f34aa0359ef60f7f59e0761",
+      "bytes": 669,
+      "originMatch": true,
+      "methodIds": [
+        "M02",
+        "M04",
+        "M05",
+        "M06",
+        "M15",
+        "M24"
+      ],
+      "disposition": "stage-routed-reference"
+    },
+    {
+      "path": "references/ai-producibility.md",
+      "sha256": "9c16eef426382dc375bde8c76a0db2a9ed8f8b6da3c5d16c42cd79c33a0f2e84",
+      "bytes": 224,
+      "originMatch": true,
+      "methodIds": [
+        "M10",
+        "M11",
+        "M12",
+        "M16"
+      ],
+      "disposition": "stage-routed-reference"
+    },
+    {
+      "path": "references/compliance-checklist.md",
+      "sha256": "9cdec4081cffa0b645b41ad9e54c3e2018875c1b5675650ec8c4a6fdfb207d2f",
+      "bytes": 10785,
+      "originMatch": true,
+      "methodIds": [
+        "M20"
+      ],
+      "disposition": "stage-routed-reference"
+    },
+    {
+      "path": "references/episode-writing.md",
+      "sha256": "524b3fd13cce2493caa86ce914ba566df20ea53bda2340989025b9d06cb4c298",
+      "bytes": 2232,
+      "originMatch": true,
+      "methodIds": [
+        "M10",
+        "M11",
+        "M12",
+        "M14"
+      ],
+      "disposition": "stage-routed-reference"
+    },
+    {
+      "path": "references/event-coverage.md",
+      "sha256": "eb0947c3c7714df690c0d16c4ba39cec9b6865fa5545fbd7be74328bd952d9ef",
+      "bytes": 234,
+      "originMatch": true,
+      "methodIds": [
+        "M02",
+        "M04",
+        "M05",
+        "M12"
+      ],
+      "disposition": "stage-routed-reference"
+    },
+    {
+      "path": "references/genre-guide.md",
+      "sha256": "6e9ebf184dd824fcdeacfc0aec113e86aeccc42e50b53b36db469fd0fa149230",
+      "bytes": 9619,
+      "originMatch": true,
+      "methodIds": [
+        "M03"
+      ],
+      "disposition": "stage-routed-reference"
+    },
+    {
+      "path": "references/hook-design.md",
+      "sha256": "1f7bf12fe600968ab6ff7fb707ead2020f2fea99232e05d4dc7c012d0cb8cd2a",
+      "bytes": 11131,
+      "originMatch": true,
+      "methodIds": [
+        "M11"
+      ],
+      "disposition": "stage-routed-reference"
+    },
+    {
+      "path": "references/opening-rules.md",
+      "sha256": "72b43ff9ca3d6eaaf91ad1a47f3328de010a8e9c06eb2a6e5819732a94b1b971",
+      "bytes": 6760,
+      "originMatch": true,
+      "methodIds": [
+        "M03",
+        "M07",
+        "M11"
+      ],
+      "disposition": "stage-routed-reference"
+    },
+    {
+      "path": "references/paywall-design.md",
+      "sha256": "3a37bfbac32056e0a62d584f3a473c61e91284b77ad55d9f92e42794049e2bfb",
+      "bytes": 7030,
+      "originMatch": true,
+      "methodIds": [
+        "M07",
+        "M09"
+      ],
+      "disposition": "stage-routed-reference"
+    },
+    {
+      "path": "references/reversal-registry.md",
+      "sha256": "34ec4ebef5b8b43966f6f8c48d2fff70208c809586ebea92759cfa53b5d4cae4",
+      "bytes": 179,
+      "originMatch": true,
+      "methodIds": [
+        "M06",
+        "M24"
+      ],
+      "disposition": "stage-routed-reference"
+    },
+    {
+      "path": "references/rhythm-curve.md",
+      "sha256": "c462669c3224020604e627aa3d6a0c9fb72a5fd41ca730759232dfc073eaea98",
+      "bytes": 9341,
+      "originMatch": true,
+      "methodIds": [
+        "M07",
+        "M09"
+      ],
+      "disposition": "stage-routed-reference"
+    },
+    {
+      "path": "references/satisfaction-matrix.md",
+      "sha256": "1eba44d3d2701bb14073e55c6a563cf0a013d76e503da33b3dfacf02b80a46c6",
+      "bytes": 12275,
+      "originMatch": true,
+      "methodIds": [
+        "M07"
+      ],
+      "disposition": "stage-routed-reference"
+    },
+    {
+      "path": "references/villain-design.md",
+      "sha256": "ad86d396cc519879045c095b1357071f87fdbcceca43d17e2e338c8b7308e100",
+      "bytes": 12150,
+      "originMatch": true,
+      "methodIds": [
+        "M08"
+      ],
+      "disposition": "stage-routed-reference"
+    },
+    {
+      "path": "scripts/knowledge-snapshot.mjs",
+      "sha256": "8f2db0e66b54bc8e50a33e9ae7a7d39e4eba715864333019e2b99503a25982b9",
+      "bytes": 2301,
+      "originMatch": true,
+      "methodIds": [],
+      "disposition": "离线知识快照构建/测试支持；不得作为模型任意shell工具"
+    },
+    {
+      "path": "scripts/query-knowledge.mjs",
+      "sha256": "35a39009356606a0b229ac78602c0b5359b0caf6218d8fc4966f105a6ffba50f",
+      "bytes": 4085,
+      "originMatch": true,
+      "methodIds": [
+        "M23"
+      ],
+      "disposition": "stage-routed-reference"
+    },
+    {
+      "path": "scripts/test-knowledge.mjs",
+      "sha256": "e367499d0ab8202f74e20141069cabee5764c62ef92df6bbb9dd45208b3f1dc1",
+      "bytes": 3296,
+      "originMatch": true,
+      "methodIds": [],
+      "disposition": "离线知识快照构建/测试支持；不得作为模型任意shell工具"
+    },
+    {
+      "path": "scripts/validate-knowledge.mjs",
+      "sha256": "30d80913b8028241c72c50c5700fe656961c9d5933d0d7a59324f3d241a1c4c0",
+      "bytes": 638,
+      "originMatch": true,
+      "methodIds": [
+        "M19"
+      ],
+      "disposition": "stage-routed-reference"
+    }
+  ],
+  "originOnlyPaths": [],
+  "knowledge": {
+    "schemaVersion": 2,
+    "knowledgeVersion": "2026.09.23.4",
+    "generatedAt": "2026-09-23T11:14:26.846Z",
+    "source": "huobao-drama",
+    "rulesSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "exemplarsSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "ruleCount": 0,
+    "exemplarCount": 0
+  }
+}

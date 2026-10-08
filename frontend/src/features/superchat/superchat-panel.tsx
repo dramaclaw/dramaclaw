@@ -64,6 +64,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/shadcn/dropdown-menu";
+import { useAssistantDraftStore } from "@/stores/assistant-draft-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { cn } from "@/lib/utils";
 import { resolveMediaUrl } from "@/lib/media-url";
@@ -2501,6 +2502,14 @@ export function SuperChatPanel({
   const params = useParams({ strict: false }) as { project?: string };
   const displayName = useAuthStore((s) => s.displayName);
   const [draft, setDraft] = useState("");
+  // 外部投递的草稿（例如虾本页的「找虾导打磨」）。一次性消费，取走即清空，
+  // 所以不会在面板重挂时把同一段内容反复塞回输入框。
+  const pendingAssistantDraft = useAssistantDraftStore((s) => s.pending);
+  useEffect(() => {
+    if (pendingAssistantDraft === null) return;
+    const text = useAssistantDraftStore.getState().consumeDraft();
+    if (text) setDraft(text);
+  }, [pendingAssistantDraft]);
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [detailMessage, setDetailMessage] = useState<ChatMessage | null>(null);

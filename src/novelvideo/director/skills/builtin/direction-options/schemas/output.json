@@ -1,0 +1,142 @@
+{
+  "$defs": {
+    "Direction": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "logline": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Logline",
+          "type": "string"
+        },
+        "goal": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Goal",
+          "type": "string"
+        },
+        "obstacle": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Obstacle",
+          "type": "string"
+        },
+        "stakes": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Stakes",
+          "type": "string"
+        },
+        "tone": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Tone",
+          "type": "string"
+        },
+        "difference": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Difference",
+          "type": "string"
+        },
+        "productionRisks": {
+          "items": {
+            "maxLength": 12000,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "title": "Productionrisks",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "logline",
+        "goal",
+        "obstacle",
+        "stakes",
+        "tone",
+        "difference",
+        "productionRisks"
+      ],
+      "title": "Direction",
+      "type": "object"
+    },
+    "SpecQuestion": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "question": {
+          "maxLength": 12000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Question",
+          "type": "string"
+        },
+        "choices": {
+          "items": {
+            "maxLength": 12000,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "maxItems": 6,
+          "title": "Choices",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "question"
+      ],
+      "title": "SpecQuestion",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "options": {
+      "items": {
+        "$ref": "#/$defs/Direction"
+      },
+      "maxItems": 4,
+      "minItems": 4,
+      "title": "Options",
+      "type": "array"
+    },
+    "specQuestions": {
+      "items": {
+        "$ref": "#/$defs/SpecQuestion"
+      },
+      "maxItems": 12,
+      "title": "Specquestions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "options",
+    "specQuestions"
+  ],
+  "title": "DirectionSet",
+  "type": "object"
+}

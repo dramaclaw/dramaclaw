@@ -384,12 +384,32 @@ export function computeAutoLayout(
     return { positions: {}, changedCount: 0 };
   }
 
+  const nodeById = new Map(nodes.map((node) => [node.id, node] as const));
   const topLevelIds = new Set(topLevelNodes.map((node) => node.id));
-  const edgePairs: Array<[string, string]> = [];
-  for (const edge of edges) {
-    if (topLevelIds.has(edge.source) && topLevelIds.has(edge.target)) {
-      edgePairs.push([edge.source, edge.target]);
+  const topLevelAncestor = (id: string): string | undefined => {
+    const seen = new Set<string>();
+    let node = nodeById.get(id);
+    while (node?.parentId) {
+      if (seen.has(node.id)) {
+        return undefined;
+      }
+      seen.add(node.id);
+      node = nodeById.get(node.parentId);
     }
+    return node && topLevelIds.has(node.id) ? node.id : undefined;
+  };
+  const edgePairs: Array<[string, string]> = [];
+  const seenPairs = new Set<string>();
+  for (const edge of edges) {
+    // Group children move with their parent. Their cross-group edges must still
+    // determine where the parent belongs, or all groups look disconnected.
+    const source = topLevelAncestor(edge.source);
+    const target = topLevelAncestor(edge.target);
+    if (!source || !target || source === target) continue;
+    const pairKey = JSON.stringify([source, target]);
+    if (seenPairs.has(pairKey)) continue;
+    seenPairs.add(pairKey);
+    edgePairs.push([source, target]);
   }
 
   const anchorX = topLevelNodes.reduce(

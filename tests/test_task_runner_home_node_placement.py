@@ -24,16 +24,19 @@ from novelvideo.task_backend.projection import PROJECTION_REQUIREMENTS
 
 
 PLACEMENT_FREE_TASKS = {
+    "freezone_depth_motion",
     "freezone_analyze",
     "freezone_audio_eleven_music",
     "freezone_audio_separate",
     "freezone_audio_speech",
+    "freezone_audio_transform",
     "freezone_edit",
     "freezone_extract",
     "freezone_gen",
     "freezone_image_reverse_prompt",
     "freezone_image_to_3gs",
     "freezone_mask_edit",
+    "freezone_shot_breakdown",
     "freezone_story_script",
     "freezone_text_generate",
     "freezone_text_translate",

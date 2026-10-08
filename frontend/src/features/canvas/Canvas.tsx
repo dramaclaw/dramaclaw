@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { storyboardActive } from '@/features/storyboard/storyboardStore';
 import {
   useState,
   useCallback,
   useEffect,
   useMemo,
   useRef,
+  lazy,
+  Suspense,
+  Profiler,
+  type ProfilerProps,
   type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -39,6 +44,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { CreditDisplayHiddenProvider } from '@/components/credits/credit-visual';
 import { isCeRuntime } from '@/lib/runtime-config';
 import { resolveAbsolutePosition, useCanvasStore } from '@/stores/canvasStore';
+import { deriveNodeDropInfo, useAssetDropStore } from '@/stores/assetDropStore';
 import { useAppStore } from '@/stores/app-store';
 import { getSkillRegistry } from '@/api/skills';
 import { SKILL_SCHEMA_VERSION, type SkillDefinition } from '@/features/freezone/context/skillRoles';
@@ -76,10 +82,13 @@ import {
   CANVAS_LOW_DETAIL_CLASS,
   CANVAS_PANNING_CLASS,
   PANNING_CLASS_RELEASE_DELAY_MS,
+  isLowDetailActive,
+  isCanvasGestureActive,
   isLowDetailZoom,
   onCanvasHydrateViewport,
   setCanvasGestureActive,
   setCanvasLowDetail,
+  updateLowDetailFromZoom,
 } from '@/features/canvas/application/canvasLod';
 import { isSupportedMediaFile } from '@/features/canvas/application/videoFileTypes';
 import { uploadLocalImageToBackend } from '@/features/canvas/application/uploadToolOutput';
@@ -113,8 +122,9 @@ import { applySkillRoleBindingConnection } from '@/features/canvas/domain/skillC
 import { videoReferenceConnectionRejection } from '@/features/canvas/domain/videoReferenceLimits';
 import { videoReferenceEnvelopeForNode } from '@/features/canvas/application/videoReferenceEnvelope';
 import { embedStoryboardImageMetadata } from '@/commands/image';
-import { nodeTypes as canvasNodeTypes } from './nodes';
+import { nodeTypes as canvasNodeTypes, preloadCanvasNodeComponents } from './nodes';
 import { edgeTypes as canvasEdgeTypes } from './edges';
+import { mountSingleSvgEdgeLayer } from './application/singleSvgEdgeLayer';
 import { NodeSelectionMenu } from './NodeSelectionMenu';
 import { SelectedNodeOverlay } from './ui/SelectedNodeOverlay';
 import { MultiSelectionToolbar } from './ui/MultiSelectionToolbar';
@@ -124,6 +134,7 @@ import {
 } from './ui/MultiSelectionConnectButton';
 import { NodeSpawnPlusOverlay } from './ui/NodeSpawnPlusOverlay';
 import { ReferencePickBanner } from './ui/ReferencePickBanner';
+import { useReferencePickStore } from './application/referencePickStore';
 import { ViewportReturnHint } from './ui/ViewportReturnHint';
 import { CanvasContextMenu } from './ui/CanvasContextMenu';
 import { CanvasFileDropOverlay } from './ui/CanvasFileDropOverlay';
@@ -136,6 +147,7 @@ import { CanvasQuickActionBar } from './ui/CanvasQuickActionBar';
 import { BackToNodesHint } from './ui/BackToNodesHint';
 import { CanvasMinimapButton } from './ui/CanvasMinimapButton';
 import { CanvasFpsMeter } from './ui/CanvasFpsMeter';
+import type { PanProfile } from './ui/CanvasPanDiagnostics';
 import { CanvasSnapAlignButton } from './snap-align/CanvasSnapAlignButton';
 import { useTrackpadPanStore } from './trackpad-pan/trackpadPanStore';
 import { useSmoothMinimapPan } from './hooks/useSmoothMinimapPan';
@@ -156,6 +168,9 @@ import {
   type PastedNodeForMigration,
 } from './application/crossProjectAssets';
 
+const panDiagnosticsEnabled = import.meta.env.DEV && new URLSearchParams(window.location.search).has('canvasPerf');
+const CanvasPanDiagnostics = lazy(() => import('./ui/CanvasPanDiagnostics'));
+const FlowProfiler = panDiagnosticsEnabled ? Profiler : ({ children }: ProfilerProps) => children;
 const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, zoom: 1 };
 const DEFAULT_EDGE_OPTIONS = { type: 'disconnectableEdge' };
 const REACT_FLOW_PRO_OPTIONS = { hideAttribution: true };
@@ -723,13 +738,17 @@ interface PendingNodePlacement {
 }
 
 interface CanvasProps {
+  interactionActive?: boolean;
   onBlankPaneClick?: () => void;
   controlsPlacement?: 'bottom-right' | 'top-right';
+  liblibImported?: boolean;
 }
 
 export function Canvas({
   onBlankPaneClick,
+  interactionActive = true,
   controlsPlacement = 'bottom-right',
+  liblibImported = false,
 }: CanvasProps = {}) {
   const { t } = useTranslation();
   const reactFlowInstance = useReactFlow();
@@ -737,6 +756,19 @@ export function Canvas({
   const nodeTypes = useMemo(() => canvasNodeTypes, []);
   const edgeTypes = useMemo(() => canvasEdgeTypes, []);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // DEV diagnostics must retain an untouched Normal renderer for comparison.
+    if (panDiagnosticsEnabled || !wrapperRef.current) return;
+    return mountSingleSvgEdgeLayer(wrapperRef.current);
+  }, []);
+  const [viewportGestureActive, setViewportGestureActive] = useState(false);
+  const panProfile = useRef<PanProfile>({ active: false, commits: 0, renderMs: 0 });
+  const diagnosticPanActiveRef = useRef(false);
+  const recordCanvasRender = useCallback((_id: string, _phase: string, actualDuration: number) => {
+    if (!panProfile.current.active) return;
+    panProfile.current.commits += 1;
+    panProfile.current.renderMs += actualDuration;
+  }, []);
   const suppressNextPaneClickRef = useRef(false);
   // After a marquee box-select we must swallow the trailing pane `click` at the capture
   // phase: React Flow's Pane onClick calls resetSelectedElements() unconditionally (right
@@ -792,18 +824,6 @@ export function Canvas({
     minimapPanCommitSuppressedRef.current = true;
     setMinimapPanning(true);
   }, []);
-  // 这里的「结束」是 hook 保证的「松手且缓动已收敛」，不是 pointerup 那一刻，
-  // 所以可以直接解除挂载保护，不需要再赌一个固定延时（收敛耗时随剩余距离变化，
-  // 180ms 盖不住，会把缓动掐断在半路）。
-  const handleMinimapPanEnd = useCallback(
-    (pointerInsideMinimap: boolean) => {
-      minimapPanCommitSuppressedRef.current = false;
-      setMinimapPanning(false);
-      // 松手在小地图内 ⇒ 继续显示；在外 ⇒ 走 hover 的同一节奏收起。
-      setMinimapHover(pointerInsideMinimap);
-    },
-    [setMinimapHover],
-  );
   useEffect(
     () => () => {
       if (minimapHideTimerRef.current !== null) {
@@ -847,6 +867,13 @@ export function Canvas({
     canUndo: boolean;
     canRedo: boolean;
     canPaste: boolean;
+  } | null>(null);
+  // 右键单个节点的菜单。与上面的画布空白处菜单分开：两者的条目集完全不同，
+  // 合在一起只会让每一条都要先判断「这次是点在节点上还是空白处」。
+  const [nodeContextMenu, setNodeContextMenu] = useState<{
+    x: number;
+    y: number;
+    nodeId: string;
   } | null>(null);
   const [previewConnectionVisual, setPreviewConnectionVisual] =
     useState<PreviewConnectionVisual | null>(null);
@@ -908,6 +935,7 @@ export function Canvas({
 
   const handleNodeMouseEnter = useCallback(
     (_event: ReactMouseEvent, node: CanvasNode) => {
+      if (isCanvasGestureActive() || useCanvasToolStore.getState().tool === 'hand') return;
       clearHoveredNodeTimer();
       setHoveredNodeId(node.id);
     },
@@ -915,6 +943,7 @@ export function Canvas({
   );
 
   const handleNodeMouseLeave = useCallback(() => {
+    if (isCanvasGestureActive() || useCanvasToolStore.getState().tool === 'hand') return;
     scheduleHoveredNodeClear();
   }, [scheduleHoveredNodeClear]);
 
@@ -1009,6 +1038,20 @@ export function Canvas({
   const spacePanActiveRef = useRef(false);
 
   const nodes = useCanvasStore((state) => state.nodes);
+  // 画布里出现了哪些节点类型 —— 返回排好序的字符串，zustand 按值比较，拖动时每帧
+  // 求值但结果不变，不会触发重渲染。
+  const presentNodeTypes = useCanvasStore((state) => {
+    const seen = new Set<string>();
+    for (const node of state.nodes) if (node.type) seen.add(node.type);
+    return [...seen].sort().join(',');
+  });
+  // 重型节点（3D 世界 / 360 查看器）的 chunk 按「画布里真的有这个类型」预热，而不是
+  // 等它渲染到 —— 后者会让用户先看到一个可见的空盒子。参照 liblib.tv：画布数据到位
+  // 后才拉第二批按需 chunk。没有这些类型的画布一个字节都不会下载。
+  useEffect(() => {
+    if (!presentNodeTypes) return;
+    preloadCanvasNodeComponents(presentNodeTypes.split(','));
+  }, [presentNodeTypes]);
   const edges = useCanvasStore((state) => state.edges);
   // 连线可见性：隐藏时只给 ReactFlow 的边打 `hidden`，真实 edges 一动不动（见
   // edgeVisibilityStore）。持久化/自动布局/导出全部照用 store 里的真实连线。
@@ -1048,7 +1091,14 @@ export function Canvas({
   // 关闭则回到默认的滚轮缩放。
   const trackpadPanEnabled = useTrackpadPanStore((state) => state.enabled);
   // 指针工具：抓手（H）下左键拖动 = 平移画布。
-  const handToolActive = useCanvasToolStore((state) => state.tool === 'hand');
+  const handToolSelected = useCanvasToolStore((state) => state.tool === 'hand');
+  const referencePickActive = useReferencePickStore((state) => state.request !== null);
+  const handToolActive = handToolSelected && !referencePickActive;
+  useEffect(() => {
+    if (!handToolSelected) return;
+    clearHoveredNodeTimer();
+    setHoveredNodeId(null);
+  }, [handToolSelected, clearHoveredNodeTimer]);
   // 底部任务中心面板展开时，让出底部空间——隐藏画布快捷操作栏，避免与面板重叠。
   const taskPanelOpen = useAppStore((state) => state.taskPanelOpen);
   // Stable signatures of the nodes that need polling / resume, so those effects
@@ -1172,6 +1222,7 @@ export function Canvas({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (storyboardActive()) return;
       if (!isSpacePanKey(event) || isTypingTarget(event.target) || isImmersiveViewerActive()) {
         return;
       }
@@ -1180,6 +1231,7 @@ export function Canvas({
     };
 
     const handleKeyUp = (event: KeyboardEvent) => {
+      if (storyboardActive()) return;
       if (!isSpacePanKey(event)) {
         return;
       }
@@ -1299,6 +1351,7 @@ export function Canvas({
   // 自动 fitView 回到节点集中区，避免用户找不到自己的内容。
   useEffect(() => {
     if (!initialViewportCorrectionPendingRef.current) return;
+    if (storyboardActive()) { initialViewportCorrectionPendingRef.current = false; return; }
     if (!nodesInitialized) return;
 
     const container = wrapperRef.current;
@@ -1348,6 +1401,11 @@ export function Canvas({
     if (!pendingFocusNodeId) return;
     const target = nodes.find((node) => node.id === pendingFocusNodeId);
     if (!target) {
+      clearPendingFocus();
+      return;
+    }
+    if (storyboardActive()) {
+      useCanvasStore.getState().setSelectedNode(target.id);
       clearPendingFocus();
       return;
     }
@@ -1610,6 +1668,8 @@ export function Canvas({
 
   const handleNodesChange = useCallback(
     (changes: NodeChange<CanvasNode>[]) => {
+      // Offscreen node measurements must never change workflow geometry.
+      if (storyboardActive()) return;
       // 拖拽时 applyNodeChanges 每帧重建 nodes 数组。这里只在事件回调里「读一次」当前快照,
       // 不把 nodes 列进依赖,避免该回调每帧重建、进而打穿下游 memo。
       const nodes = useCanvasStore.getState().nodes;
@@ -1901,10 +1961,14 @@ export function Canvas({
     [nodes, edges]
   );
 
-  // 平移/缩放期间 onMove 每帧触发。把 currentViewport 写进 store 会让所有订阅者每帧
-  // 重跑 selector(如 BackToNodesHint 的 O(n) 可见性判断)。这里节流到 ~8fps,并在
-  // onMoveEnd 必定提交最终值,既消除每帧 store 风暴,又保证落库/可见性判断及时收敛。
-  const lastViewportCommitRef = useRef(0);
+  // The live camera belongs to React Flow. Publishing it to graph state while moving
+  // wakes unrelated graph selectors; persistence and offscreen hints need only the
+  // settled value. Programmatic pans can report the same end more than once.
+  const commitSettledViewport = useCallback((viewport: Viewport) => {
+    const current = useCanvasStore.getState().currentViewport;
+    if (current.x === viewport.x && current.y === viewport.y && current.zoom === viewport.zoom) return;
+    setViewportState(viewport);
+  }, [setViewportState]);
 
   // LOD 效果类一律走 classList 直改 DOM，不进 React state：平移期间每帧 setState
   // 会把「省下来的光栅化时间」原样还给 render，得不偿失。
@@ -1914,11 +1978,16 @@ export function Canvas({
   // React state。setState 有值守卫，平移中每帧调用但值不变，不触发重渲染；只有
   // 缩放跨过阈值那一次会让 Canvas 重渲染一遍。
   const panningReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [lowDetailActive, setLowDetailActive] = useState(() =>
-    isLowDetailZoom(initialViewportRef.current.zoom)
-  );
+  const [lowDetailActive, setLowDetailActive] = useState(() => {
+    // 首屏就把低细节档的单一真值按初始缩放定下来，节点（订阅 subscribeLowDetail）
+    // 才能在第一帧就渲染对；否则真值默认 false，低缩放首屏会先全量渲染再翻成 shell。
+    updateLowDetailFromZoom(initialViewportRef.current.zoom);
+    return isLowDetailActive();
+  });
   const applyLowDetailClass = useCallback((zoom: number) => {
-    const lowDetail = isLowDetailZoom(zoom);
+    // 唯一的写入口：先更新带滞回的单一真值，再读回来驱动 CSS 类与裁剪开关。
+    updateLowDetailFromZoom(zoom);
+    const lowDetail = isLowDetailActive();
     wrapperRef.current?.classList.toggle(CANVAS_LOW_DETAIL_CLASS, lowDetail);
     setCanvasLowDetail(lowDetail);
     // 升档（退出低缩放）必须与 withLodShell 的 shell→full 交换落在同一次提交：
@@ -1937,62 +2006,73 @@ export function Canvas({
       clearTimeout(panningReleaseTimerRef.current);
       panningReleaseTimerRef.current = null;
     }
-    wrapperRef.current?.classList.add(CANVAS_PANNING_CLASS);
+    if (!wrapperRef.current?.classList.contains(CANVAS_PANNING_CLASS)) {
+      clearHoveredNodeTimer();
+      setHoveredNodeId(null);
+      setViewportGestureActive(true);
+      wrapperRef.current?.classList.add(CANVAS_PANNING_CLASS);
+    }
     setCanvasGestureActive(true);
-  }, []);
+  }, [clearHoveredNodeTimer]);
 
   const handleMoveEnd = useCallback(
     (_event: unknown, viewport: Viewport) => {
+      // A setViewport call may emit an end while the pointer is still down.
+      // Releasing the gesture here lets shell upgrades and effects flicker back
+      // between slow input frames; only the gesture owner may finish this pan.
+      if (minimapPanCommitSuppressedRef.current || edgePanGestureRef.current?.moved || diagnosticPanActiveRef.current) return;
       applyLowDetailClass(viewport.zoom);
       // 降档（进入低缩放）的裁剪关闭只在手势结束时提交：全量挂载 ~240 个 shell 的
       // 波放在缩放手势中途会有可感知的顿挫，推迟到松手后手势保持流畅；中途已跨档
       // 的可见节点由 withLodShell 的 selector 先行换成 shell，不受此影响。升档方向
       // 不能等到这里——见 applyLowDetailClass 的注释。
-      setLowDetailActive(isLowDetailZoom(viewport.zoom));
+      // 真值已在上一行 applyLowDetailClass 里按滞回更新，这里读回即可。
+      setLowDetailActive(isLowDetailActive());
       if (panningReleaseTimerRef.current) {
         clearTimeout(panningReleaseTimerRef.current);
       }
       panningReleaseTimerRef.current = setTimeout(() => {
         panningReleaseTimerRef.current = null;
         wrapperRef.current?.classList.remove(CANVAS_PANNING_CLASS);
+        setViewportGestureActive(false);
         setCanvasGestureActive(false);
       }, PANNING_CLASS_RELEASE_DELAY_MS);
-      // 小地图缓动是程序化平移：每帧一次 instance.setViewport，而 ReactFlow 对
-      // 每次 setViewport 都跑一遍 onMoveStart→onMove→onMoveEnd，结束事件只有
-      // panOnScroll 才有 150ms 合并（createPanZoomEndHandler 里写死
-      // `panOnScroll ? 150 : 0`）。用户关掉「触控板平移」后 panOnScroll=false，
-      // 合并消失，这里会变成每秒约 60 次 store 提交 —— 正是本次要消掉的东西。
-      // 跳过时连 lastViewportCommitRef 也不占，好让 handleMove 的 8fps 节流照常
-      // 供给可见性判断；最终值由 onViewportSettled 收敛时提交一次。
-      if (minimapPanCommitSuppressedRef.current) {
-        return;
-      }
-      lastViewportCommitRef.current = Date.now();
-      setViewportState(viewport);
+      commitSettledViewport(viewport);
     },
-    [applyLowDetailClass, setViewportState]
+    [applyLowDetailClass, commitSettledViewport]
   );
+
+  // The minimap hook ends only after pointer release AND animation convergence.
+  // Keep both its mounted UI and gesture protection until that point.
+  const handleMinimapPanEnd = useCallback(
+    (pointerInsideMinimap: boolean) => {
+      minimapPanCommitSuppressedRef.current = false;
+      setMinimapPanning(false);
+      setMinimapHover(pointerInsideMinimap);
+      handleMoveEnd(null, reactFlowInstance.getViewport());
+    },
+    [setMinimapHover, handleMoveEnd, reactFlowInstance],
+  );
+
+  const handleDiagnosticGesture = useCallback((active: boolean) => {
+    diagnosticPanActiveRef.current = active;
+    if (active) handleMoveStart();
+    else handleMoveEnd(null, reactFlowInstance.getViewport());
+  }, [handleMoveStart, handleMoveEnd, reactFlowInstance]);
 
   const handleMove = useCallback(
     (_event: unknown, viewport: Viewport) => {
-      // 缩放跨档要立刻生效（用户能看见节点内容切换），所以不受下面的节流限制。
+      // LOD still responds to zoom; x/y movement never publishes graph state.
       applyLowDetailClass(viewport.zoom);
-      const now = Date.now();
-      if (now - lastViewportCommitRef.current < 120) {
-        return;
-      }
-      lastViewportCommitRef.current = now;
-      setViewportState(viewport);
     },
-    [applyLowDetailClass, setViewportState]
+    [applyLowDetailClass]
   );
 
   const handleMinimapViewportSettled = useCallback(
     (viewport: Viewport) => {
-      lastViewportCommitRef.current = Date.now();
-      setViewportState(viewport);
+      commitSettledViewport(viewport);
     },
-    [setViewportState]
+    [commitSettledViewport]
   );
 
   // 小地图拖动走自己的实现，不用 MiniMap 的 pannable —— 内置增益会随视口拖离
@@ -2014,7 +2094,7 @@ export function Canvas({
     () =>
       onCanvasHydrateViewport((zoom) => {
         applyLowDetailClass(zoom);
-        setLowDetailActive(isLowDetailZoom(zoom));
+        setLowDetailActive(isLowDetailActive());
       }),
     [applyLowDetailClass]
   );
@@ -2022,7 +2102,7 @@ export function Canvas({
   // 首屏恢复的视口不会触发 onMove/onMoveEnd，低缩放档要在这里补一次。
   useEffect(() => {
     applyLowDetailClass(initialViewportRef.current.zoom);
-    setLowDetailActive(isLowDetailZoom(initialViewportRef.current.zoom));
+    setLowDetailActive(isLowDetailActive());
     return () => {
       if (panningReleaseTimerRef.current) {
         clearTimeout(panningReleaseTimerRef.current);
@@ -2030,8 +2110,13 @@ export function Canvas({
       }
       // 模块级信号要跟着画布一起复位，否则卸载时若正在手势中，下一次挂载会
       // 一直以为「还在平移」而永远不测量。
+      diagnosticPanActiveRef.current = false;
       setCanvasGestureActive(false);
       setCanvasLowDetail(false);
+      // 低细节档真值也复位成「非低细节」：否则卸载时若停在滞回带内（0.35–0.38），
+      // 下次以带内缩放挂载会沿用上一张画布的档，而不是按 ENTER 阈值重新判定。
+      // 喂一个明确的高缩放值即可确定性地复位为 false。
+      updateLowDetailFromZoom(1);
     };
   }, [applyLowDetailClass]);
 
@@ -2043,6 +2128,16 @@ export function Canvas({
 
     const edgePathSelector = '.react-flow__edge-path, .react-flow__edge-interaction';
     const dragThreshold = 4;
+    let frame: number | null = null;
+    let pendingViewport: Viewport | null = null;
+    const flushViewport = () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      frame = null;
+      const viewport = pendingViewport;
+      pendingViewport = null;
+      if (viewport) void reactFlowInstance.setViewport(viewport, { duration: 0 });
+      return viewport;
+    };
 
     const handlePointerDown = (event: PointerEvent) => {
       if (event.button !== 0) {
@@ -2093,14 +2188,14 @@ export function Canvas({
       }
 
       suppressNextEdgeClickRef.current = true;
-      reactFlowInstance.setViewport(
-        {
-          x: gesture.startViewportX + deltaX,
-          y: gesture.startViewportY + deltaY,
-          zoom: gesture.zoom,
-        },
-        { duration: 0 }
-      );
+      pendingViewport = {
+        x: gesture.startViewportX + deltaX,
+        y: gesture.startViewportY + deltaY,
+        zoom: gesture.zoom,
+      };
+      // Pointer hardware may emit several moves per display frame. Apply only
+      // the latest, and flush on release so the final few pixels are not lost.
+      if (frame === null) frame = requestAnimationFrame(flushViewport);
     };
 
     const completeEdgePanGesture = () => {
@@ -2109,13 +2204,13 @@ export function Canvas({
         return;
       }
 
-      edgePanGestureRef.current = null;
       if (!gesture.moved) {
+        edgePanGestureRef.current = null;
         return;
       }
-
-      const viewport = reactFlowInstance.getViewport();
-      setViewportState(viewport);
+      const viewport = flushViewport() ?? reactFlowInstance.getViewport();
+      edgePanGestureRef.current = null;
+      handleMoveEnd(null, viewport);
     };
 
     const handlePointerUp = (event: PointerEvent) => {
@@ -2138,16 +2233,21 @@ export function Canvas({
     window.addEventListener('pointermove', handlePointerMove, true);
     window.addEventListener('pointerup', handlePointerUp, true);
     window.addEventListener('pointercancel', handlePointerCancel, true);
+    window.addEventListener('blur', completeEdgePanGesture);
 
     return () => {
       wrapperElement.removeEventListener('pointerdown', handlePointerDown, true);
       window.removeEventListener('pointermove', handlePointerMove, true);
       window.removeEventListener('pointerup', handlePointerUp, true);
       window.removeEventListener('pointercancel', handlePointerCancel, true);
+      window.removeEventListener('blur', completeEdgePanGesture);
+      if (frame !== null) cancelAnimationFrame(frame);
+      pendingViewport = null;
+      edgePanGestureRef.current = null;
     };
   }, [
     reactFlowInstance,
-    setViewportState,
+    handleMoveEnd,
   ]);
 
   const openNodeMenuAtClientPosition = useCallback((clientPosition: { x: number; y: number }) => {
@@ -2248,6 +2348,7 @@ export function Canvas({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (storyboardActive()) return;
       if (
         event.defaultPrevented ||
         event.isComposing ||
@@ -2290,6 +2391,7 @@ export function Canvas({
   // a bare digit jumps to it, and ⌘/Ctrl+Shift+E clears them all.
   useEffect(() => {
     const handleBookmarkKeys = (event: KeyboardEvent) => {
+      if (storyboardActive()) return;
       if (isTypingTarget(event.target) || isImmersiveViewerActive()) {
         return;
       }
@@ -2332,6 +2434,7 @@ export function Canvas({
   // collides with ⌘M (minimize) or text input.
   useEffect(() => {
     const handleMinimapKey = (event: KeyboardEvent) => {
+      if (storyboardActive()) return;
       if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
         return;
       }
@@ -2354,12 +2457,14 @@ export function Canvas({
   // keyup that fires off-window (e.g. after an alt-tab) can't leave it stuck on.
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (storyboardActive()) return;
       if (event.code !== 'Space' || isTypingTarget(event.target)) {
         return;
       }
       spacePanActiveRef.current = true;
     };
     const handleKeyUp = (event: KeyboardEvent) => {
+      if (storyboardActive()) return;
       if (event.code !== 'Space') {
         return;
       }
@@ -2596,6 +2701,33 @@ export function Canvas({
     };
 
     const handleContextMenu = (event: MouseEvent) => {
+      const target = event.target as Element | null;
+      // 节点里的输入框和控件保留浏览器原生菜单：文本节点里右键就是为了复制/粘贴，
+      // 操作面板里的按钮/下拉右键弹出我们的节点菜单也只会挡住用户要点的东西。
+      const onNodeControl = Boolean(
+        target?.closest?.(
+          'input, textarea, select, button, a, [contenteditable="true"], [role="menu"], [role="dialog"], [role="listbox"]',
+        ),
+      );
+      const nodeElement = onNodeControl
+        ? null
+        : (target?.closest?.('.react-flow__node') as HTMLElement | null);
+      const nodeId = nodeElement?.dataset.id;
+      if (nodeId) {
+        if (pendingNodePlacement) {
+          event.preventDefault();
+          return;
+        }
+        event.preventDefault();
+        const nodeRect = wrapperElement.getBoundingClientRect();
+        setContextMenu(null);
+        setNodeContextMenu({
+          x: event.clientX - nodeRect.left,
+          y: event.clientY - nodeRect.top,
+          nodeId,
+        });
+        return;
+      }
       if (!isCanvasPaneTarget(event.target, wrapperElement)) {
         return;
       }
@@ -2603,6 +2735,7 @@ export function Canvas({
         event.preventDefault();
         return;
       }
+      setNodeContextMenu(null);
       // Right-click on the empty canvas opens the canvas context menu (undo/redo/paste).
       event.preventDefault();
       const containerRect = wrapperElement.getBoundingClientRect();
@@ -2661,6 +2794,13 @@ export function Canvas({
   }, [nodes, selectedNodeIds]);
 
   useEffect(() => {
+    if (storyboardActive()) {
+      const state = useCanvasStore.getState();
+      const changes = state.nodes.filter(n => Boolean(n.selected) !== (n.id === selectedNodeId))
+        .map(n => ({ id: n.id, type: 'select' as const, selected: n.id === selectedNodeId }));
+      if (changes.length) state.onNodesChange(changes);
+      return;
+    }
     if (selectedNodeIds.length === 1) {
       if (selectedNodeId !== selectedNodeIds[0]) {
         setSelectedNode(selectedNodeIds[0]);
@@ -2675,6 +2815,7 @@ export function Canvas({
 
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent) => {
+      if (storyboardActive()) return;
       pasteImageHandledRef.current = false;
       if (isTypingTarget(event.target) || isImmersiveViewerActive()) {
         return;
@@ -2781,6 +2922,7 @@ export function Canvas({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (storyboardActive()) return;
       if (isTypingTarget(event.target)) {
         return;
       }
@@ -4842,13 +4984,14 @@ export function Canvas({
       ref={wrapperRef}
       data-canvas-tool={handToolActive ? 'hand' : 'move'}
       data-node-drag-focus={isNodeDragFocusActive ? 'true' : undefined}
-      className="dc-canvas relative h-full w-full bg-background"
+      className={`dc-canvas relative h-full w-full ${liblibImported ? 'bg-surface-dark' : 'bg-background'}`}
       onDragEnter={handleCanvasDragEnter}
       onDragOver={handleCanvasDragOver}
       onDragLeave={handleCanvasDragLeave}
       onDrop={handleCanvasDrop}
       onPointerMove={handleCanvasPointerMove}
     >
+      <FlowProfiler id="canvas-flow" onRender={recordCanvasRender}>
       <ReactFlow
         nodes={renderedNodes}
         edges={renderedEdges}
@@ -4882,8 +5025,8 @@ export function Canvas({
         maxZoom={8}
         // 抓手工具下节点既不可拖也不可选：不可拖，左键落在节点上才会交给 pane 去平移；
         // 不可选，否则一次「拖着节点平移」松手时还会顺手把它选中。
-        nodesDraggable={!handToolActive}
-        elementsSelectable={!handToolActive}
+        nodesDraggable={interactionActive && !handToolActive}
+        elementsSelectable={interactionActive && !handToolActive}
         nodesConnectable
         edgesReconnectable
         panOnDrag={handToolActive ? PAN_ON_DRAG_BUTTONS_HAND : PAN_ON_DRAG_BUTTONS}
@@ -4897,12 +5040,12 @@ export function Canvas({
         // 低缩放档关掉视口裁剪：此档所有节点都是轻量 shell（见 withLodShell），
         // 全量挂载的渲染树很小；而裁剪在快速平移时每帧挂/卸边界节点，实测 4 秒
         // 拖拽 800+ 次翻腾、p99 帧时 470ms——收益早已倒挂。高缩放档维持裁剪。
-        onlyRenderVisibleElements={!lowDetailActive}
+        onlyRenderVisibleElements={interactionActive && !lowDetailActive}
         zoomOnDoubleClick={false}
         proOptions={REACT_FLOW_PRO_OPTIONS}
-        className="bg-background"
+        className={liblibImported ? 'bg-surface-dark' : 'bg-background'}
       >
-        <Background variant={BackgroundVariant.Dots} gap={20} size={2} color="#4a4a4a" />
+        {!liblibImported && <Background variant={BackgroundVariant.Dots} gap={20} size={2} color="#4a4a4a" />}
         {minimapVisible && (
           <MiniMap
             position={controlsPlacement === 'top-right' ? 'top-right' : 'bottom-right'}
@@ -4928,7 +5071,7 @@ export function Canvas({
           onBatchDragMove={handleBatchConnectDragMove}
           onBatchDragEnd={handleBatchConnectDragEnd}
         />
-        <NodeSpawnPlusOverlay
+        {!handToolSelected && !viewportGestureActive && <NodeSpawnPlusOverlay
           hoveredNodeId={hoveredNodeId}
           hidden={isPlusConnectDragging}
           onOverlayHoverStart={clearHoveredNodeTimer}
@@ -4937,9 +5080,11 @@ export function Canvas({
           onPlusDragStart={handlePlusConnectDragStart}
           onPlusDragMove={handlePlusConnectDragMove}
           onPlusDragEnd={handlePlusConnectDragEnd}
-        />
+        />}
         <SnapAlignGuides />
       </ReactFlow>
+      </FlowProfiler>
+      {panDiagnosticsEnabled && <Suspense fallback={null}><CanvasPanDiagnostics rootRef={wrapperRef} profile={panProfile} onGestureChange={handleDiagnosticGesture} /></Suspense>}
 
       <ReferencePickBanner />
       <ViewportReturnHint />
@@ -5062,6 +5207,41 @@ export function Canvas({
           ]}
         />
       )}
+
+      {nodeContextMenu && (() => {
+        const node = nodes.find((item) => item.id === nodeContextMenu.nodeId);
+        const dropInfo = node ? deriveNodeDropInfo(node) : null;
+        // 素材还没生成/上传完的节点没有可提交的地址，条目置灰而不是藏掉——
+        // 藏掉会让菜单在同类节点上时有时无。
+        const canReplace = Boolean(dropInfo?.sourceUrl);
+        return (
+          <CanvasContextMenu
+            position={{ x: nodeContextMenu.x, y: nodeContextMenu.y }}
+            onClose={() => setNodeContextMenu(null)}
+            sections={[
+              [
+                {
+                  key: 'replace-asset',
+                  label: t('canvas.contextMenu.replaceAsset'),
+                  disabled: !canReplace,
+                  onSelect: () => {
+                    if (!node || !dropInfo?.sourceUrl) return;
+                    setSelectedNode(node.id);
+                    useAssetDropStore.getState().beginPick({
+                      nodeId: node.id,
+                      mediaType: dropInfo.mediaType,
+                      sourceUrl: dropInfo.sourceUrl,
+                      thumbUrl: dropInfo.thumbUrl,
+                      label: dropInfo.label,
+                      directorControlBundle: dropInfo.directorControlBundle,
+                    });
+                  },
+                },
+              ],
+            ]}
+          />
+        );
+      })()}
 
       {nodes.length === 0 && emptyHint}
 

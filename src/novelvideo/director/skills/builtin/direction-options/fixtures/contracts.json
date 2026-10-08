@@ -1,0 +1,103 @@
+[
+  {
+    "valid": true,
+    "value": {
+      "options": [
+        {
+          "id": "option-1",
+          "logline": "Visible action 1",
+          "goal": "Retrieve glasses",
+          "obstacle": "Locked box",
+          "stakes": "Cannot read",
+          "tone": "Warm",
+          "difference": "Different solution 1",
+          "productionRisks": []
+        },
+        {
+          "id": "option-2",
+          "logline": "Visible action 2",
+          "goal": "Retrieve glasses",
+          "obstacle": "Locked box",
+          "stakes": "Cannot read",
+          "tone": "Warm",
+          "difference": "Different solution 2",
+          "productionRisks": []
+        },
+        {
+          "id": "option-3",
+          "logline": "Visible action 3",
+          "goal": "Retrieve glasses",
+          "obstacle": "Locked box",
+          "stakes": "Cannot read",
+          "tone": "Warm",
+          "difference": "Different solution 3",
+          "productionRisks": []
+        },
+        {
+          "id": "option-4",
+          "logline": "Visible action 4",
+          "goal": "Retrieve glasses",
+          "obstacle": "Locked box",
+          "stakes": "Cannot read",
+          "tone": "Warm",
+          "difference": "Different solution 4",
+          "productionRisks": []
+        }
+      ],
+      "specQuestions": []
+    }
+  },
+  {
+    "valid": false,
+    "value": {}
+  },
+  {
+    "valid": false,
+    "value": {
+      "options": [
+        {
+          "id": "option-1",
+          "logline": "Visible action 1",
+          "goal": "Retrieve glasses",
+          "obstacle": "Locked box",
+          "stakes": "Cannot read",
+          "tone": "Warm",
+          "difference": "Different solution 1",
+          "productionRisks": []
+        },
+        {
+          "id": "option-2",
+          "logline": "Visible action 2",
+          "goal": "Retrieve glasses",
+          "obstacle": "Locked box",
+          "stakes": "Cannot read",
+          "tone": "Warm",
+          "difference": "Different solution 2",
+          "productionRisks": []
+        },
+        {
+          "id": "option-3",
+          "logline": "Visible action 3",
+          "goal": "Retrieve glasses",
+          "obstacle": "Locked box",
+          "stakes": "Cannot read",
+          "tone": "Warm",
+          "difference": "Different solution 3",
+          "productionRisks": []
+        },
+        {
+          "id": "option-4",
+          "logline": "Visible action 4",
+          "goal": "Retrieve glasses",
+          "obstacle": "Locked box",
+          "stakes": "Cannot read",
+          "tone": "Warm",
+          "difference": "Different solution 4",
+          "productionRisks": []
+        }
+      ],
+      "specQuestions": [],
+      "approved": true
+    }
+  }
+]

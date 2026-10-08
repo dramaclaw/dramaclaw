@@ -1,0 +1,104 @@
+version = 1
+slug = "liblib-import-recovery"
+ledger = "docs/agent/tasks/liblib-import-recovery.md"
+baseline = "4c9dee4"
+
+[[claims]]
+path = "frontend/src/features/freezone/createProjectLiblibImport.ts"
+mode = "shared"
+shared_with = ["liblib-canvas-parity", "minimax-h3-canvas-defaults", "project-chinese-names"]
+reason = "Save graph before background media localization; preserve editing and first-use hydration."
+
+[[claims]]
+path = "frontend/src/features/freezone/CanvasesTab.tsx"
+mode = "shared"
+shared_with = ["legacy-unassigned-diff", "liblib-canvas-parity", "minimax-h3-canvas-defaults", "project-chinese-names"]
+reason = "Save graph before background media localization; preserve editing and first-use hydration."
+
+[[claims]]
+path = "frontend/src/features/freezone/CanvasLocalizeAssetsButton.tsx"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Save graph before background media localization; preserve editing and first-use hydration."
+
+[[claims]]
+path = "frontend/src/features/freezone/FreezoneShell.tsx"
+mode = "shared"
+shared_with = ["asset-replacement-picker", "liblib-canvas-parity", "storyboard-dual-view"]
+reason = "Save graph before background media localization; preserve editing and first-use hydration."
+
+[[claims]]
+path = "frontend/src/features/freezone/useCanvasSync.ts"
+mode = "shared"
+shared_with = ["freezone-entry-recovery", "storyboard-dual-view"]
+reason = "Save graph before background media localization; preserve editing and first-use hydration."
+
+[[claims]]
+path = "frontend/src/features/freezone/liblibBackgroundLocalization.ts"
+mode = "exclusive"
+reason = "Save graph before background media localization; preserve editing and first-use hydration."
+
+[[claims]]
+path = "frontend/src/features/canvas/domain/canvasRemoteMedia.ts"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Save graph before background media localization; preserve editing and first-use hydration."
+
+[[claims]]
+path = "frontend/src/__tests__/features/freezone/use-canvas-sync.test.tsx"
+mode = "exclusive"
+reason = "Save graph before background media localization; preserve editing and first-use hydration."
+
+[[claims]]
+path = "frontend/src/__tests__/features/freezone/liblib-background-localization.test.tsx"
+mode = "exclusive"
+reason = "Save graph before background media localization; preserve editing and first-use hydration."
+
+[[claims]]
+path = "frontend/src/__tests__/features/freezone/liblib-project-import.test.ts"
+mode = "exclusive"
+reason = "Save graph before background media localization; preserve editing and first-use hydration."
+
+[[claims]]
+path = "frontend/src/__tests__/canvas-remote-media-localize.test.ts"
+mode = "shared"
+shared_with = ["liblib-canvas-parity"]
+reason = "Save graph before background media localization; preserve editing and first-use hydration."
+
+[[claims]]
+path = "frontend/public/locales/zh/translation.json"
+mode = "shared"
+shared_with = ["asset-replacement-picker", "canvas-audio-actions", "canvas-audio-split", "creative-intro-blend", "creative-intro-implementation", "depth-motion-da3", "h3-prompt-optimizer", "liblib-canvas-parity", "local-stack", "minimax-h3-liblib-parity", "multi-provider-models", "project-chinese-names", "shot-breakdown", "story-writer", "storyboard-dual-view", "sync-main-remotes", "tv-director-implementation", "video-prompt-split"]
+reason = "Save graph before background media localization; preserve editing and first-use hydration."
+
+[[claims]]
+path = "frontend/public/locales/en/translation.json"
+mode = "shared"
+shared_with = ["asset-replacement-picker", "canvas-audio-actions", "canvas-audio-split", "creative-intro-blend", "creative-intro-implementation", "depth-motion-da3", "h3-prompt-optimizer", "liblib-canvas-parity", "local-stack", "minimax-h3-liblib-parity", "multi-provider-models", "project-chinese-names", "shot-breakdown", "story-writer", "storyboard-dual-view", "sync-main-remotes", "tv-director-implementation", "video-prompt-split"]
+reason = "Save graph before background media localization; preserve editing and first-use hydration."
+
+[[claims]]
+path = "frontend/public/locales/vi/translation.json"
+mode = "shared"
+shared_with = ["asset-replacement-picker", "canvas-audio-actions", "canvas-audio-split", "creative-intro-blend", "creative-intro-implementation", "depth-motion-da3", "h3-prompt-optimizer", "liblib-canvas-parity", "local-stack", "minimax-h3-liblib-parity", "multi-provider-models", "project-chinese-names", "shot-breakdown", "story-writer", "storyboard-dual-view", "sync-main-remotes", "tv-director-implementation", "video-prompt-split"]
+reason = "Save graph before background media localization; preserve editing and first-use hydration."
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Record repair and restore authorized import through revision-checked API."
+
+[[claims]]
+path = "docs/agent/tasks/liblib-import-recovery.md"
+mode = "coordination"
+reason = "Record repair and restore authorized import through revision-checked API."
+
+[[claims]]
+path = "docs/agent/claims/liblib-import-recovery.toml"
+mode = "coordination"
+reason = "Record repair and restore authorized import through revision-checked API."
+
+[[claims]]
+path = "state/local/liao_zhai_zi_yun/freezone/canvases/liblib_32e1ec7d54224dacb9cfe07e01e8043b.json"
+mode = "exclusive"
+reason = "Record repair and restore authorized import through revision-checked API."

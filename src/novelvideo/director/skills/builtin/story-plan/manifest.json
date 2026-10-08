@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 2,
+  "key": "studio/story-plan",
+  "stage": "M07",
+  "version": "2.3.2",
+  "purpose": "story-plan",
+  "applicable": [
+    "original",
+    "adaptation"
+  ],
+  "excluded": [
+    "omni",
+    "directing"
+  ],
+  "method": "method.md",
+  "inputSchema": "schemas/input.json",
+  "outputSchema": "schemas/output.json",
+  "template": "templates/request.md",
+  "fixtures": "fixtures/contracts.json",
+  "provenance": "provenance.json",
+  "requiredReferences": [
+    {
+      "path": "references/opening-rules.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/opening-rules.md",
+      "sha256": "72b43ff9ca3d6eaaf91ad1a47f3328de010a8e9c06eb2a6e5819732a94b1b971",
+      "when": "always"
+    },
+    {
+      "path": "references/rhythm-curve.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/rhythm-curve.md",
+      "sha256": "c462669c3224020604e627aa3d6a0c9fb72a5fd41ca730759232dfc073eaea98",
+      "when": "always"
+    },
+    {
+      "path": "references/satisfaction-matrix.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/satisfaction-matrix.md",
+      "sha256": "1eba44d3d2701bb14073e55c6a563cf0a013d76e503da33b3dfacf02b80a46c6",
+      "when": "always"
+    },
+    {
+      "path": "references/source-grounding.md",
+      "sourceId": "user-short-drama",
+      "originalPath": "references/adaptation-core.md + event-coverage.md (adapted)",
+      "sha256": "89388a99412cba521ed62ab619c4d9a027b6dd4ac56ada69914380a24936c2d0",
+      "when": "adaptation"
+    }
+  ],
+  "ruleIds": [
+    "G01",
+    "G03",
+    "G06",
+    "G07",
+    "G08",
+    "G11",
+    "G18"
+  ],
+  "allowedTools": [],
+  "validators": [
+    "planning.M07"
+  ],
+  "costClasses": [
+    "text.generate"
+  ],
+  "checkpointKinds": [
+    "WAIT_OUTLINE"
+  ],
+  "maxSchemaRepairAttempts": 0,
+  "maxAutomaticRevisionAttempts": 0,
+  "compatibility": "New complete story outlines use schema 2; existing stored drafts are not silently migrated. Original planning and direct original/adaptation edits share the contract; source-audit parity is not claimed.",
+  "files": {
+    "method.md": "fc77beac32378237c1de00df652a61892e2aa2d24ee6dcaf3ae5592923b33cd0",
+    "templates/request.md": "347ef66d733321822f914511c5e7d35d511cd9cb8f03fe4d38793a535c385554",
+    "schemas/input.json": "30d5e1db7558a36c191c052531ec1fc46b470f528a2d99920fc25892c004aa11",
+    "schemas/output.json": "d4b5796a635598bd3a2b94360525559cc904e4c789f6fe0fd1cfb111ddb96cc0",
+    "fixtures/contracts.json": "f1cd0a73ec2bebbd52d1e1716b32ca0dfb65c19ae072c54838eab434f92d669d",
+    "LICENSE": "a42977a69c8c05840da8a8e2f9d8dff9f5c8346f236eeabf8c97fb0812f5fe50",
+    "references/opening-rules.md": "72b43ff9ca3d6eaaf91ad1a47f3328de010a8e9c06eb2a6e5819732a94b1b971",
+    "references/rhythm-curve.md": "c462669c3224020604e627aa3d6a0c9fb72a5fd41ca730759232dfc073eaea98",
+    "references/satisfaction-matrix.md": "1eba44d3d2701bb14073e55c6a563cf0a013d76e503da33b3dfacf02b80a46c6",
+    "provenance.json": "41504d17a312988a4e8dee71482a1e882e98e28fb783ea3b2cc3adc89e8c9dea",
+    "SKILL.md": "cecf5ebb4b9cb4ca2e29aed17d696247f1f1f7fd9ab8732f3e781b544b6b92fd",
+    "references/source-grounding.md": "89388a99412cba521ed62ab619c4d9a027b6dd4ac56ada69914380a24936c2d0"
+  }
+}

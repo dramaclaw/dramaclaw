@@ -1,0 +1,31 @@
+version = 1
+slug = "liblib-first-import"
+ledger = "docs/agent/tasks/liblib-first-import.md"
+baseline = "762591d"
+
+[[claims]]
+path = "frontend/src/routes/_app/index.tsx"
+mode = "shared"
+shared_with = ["liblib-canvas-parity", "legacy-unassigned-diff", "project-chinese-names"]
+reason = "First import storage fault isolation and verification."
+
+[[claims]]
+path = "frontend/src/__tests__/routes/project-first-liblib-import.test.tsx"
+mode = "shared"
+shared_with = ["project-chinese-names"]
+reason = "First import storage fault isolation and verification."
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "First import storage fault isolation and verification."
+
+[[claims]]
+path = "docs/agent/tasks/liblib-first-import.md"
+mode = "coordination"
+reason = "First import storage fault isolation and verification."
+
+[[claims]]
+path = "docs/agent/claims/liblib-first-import.toml"
+mode = "coordination"
+reason = "First import storage fault isolation and verification."

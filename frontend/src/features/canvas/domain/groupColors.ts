@@ -23,11 +23,29 @@ export const GROUP_COLOR_PRESETS: ReadonlyArray<GroupColorPreset> = [
 
 /** 把组背景色基础 hex 叠加固定透明度，得到组卡片底色 / 边框色（8 位 hex）。 */
 export function groupColorBackground(color: string | null | undefined): string | undefined {
-  if (!color) return undefined;
-  return `${color}1f`; // ≈ 12% 透明度的底色
+  const hex = normalizeGroupColor(color);
+  return hex ? `${hex}1a` : undefined; // 10% background, matching the source canvas.
 }
 
 export function groupColorBorder(color: string | null | undefined): string | undefined {
-  if (!color) return undefined;
-  return `${color}66`; // ≈ 40% 透明度的边框
+  const hex = normalizeGroupColor(color);
+  return hex ? `${hex}33` : undefined; // 20% border.
+}
+
+export function normalizeGroupColor(value: unknown): string | undefined {
+  return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value.trim())
+    ? value.trim().toUpperCase() : undefined;
+}
+
+/** Source palette colors use opaque dark labels, independently of the translucent group surface. */
+export function groupColorLabel(color: string | null | undefined): string | undefined {
+  const hex = normalizeGroupColor(color);
+  if (!hex) return undefined;
+  const tokens: Record<string, string> = {
+    '#FF3B30': 'red', '#EF4444': 'red',
+    '#30D5C8': 'cyan', '#06B6D4': 'cyan',
+    '#34C759': 'green', '#22C55E': 'green',
+  };
+  const token = tokens[hex];
+  return token ? `var(--group-label-${token})` : `color-mix(in srgb, ${hex} 28%, #121212)`;
 }

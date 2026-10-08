@@ -1,0 +1,609 @@
+{
+  "schemaVersion": 1,
+  "caseId": "F23",
+  "source": "synthetic",
+  "scope": "foundation_guard_only_not_full_ui_or_workflow_acceptance",
+  "variants": [
+    {
+      "id": "three-of-each-media",
+      "operation": "references",
+      "input": {
+        "orderedRefIds": [
+          "ref-0",
+          "ref-1",
+          "ref-2",
+          "ref-3",
+          "ref-4",
+          "ref-5",
+          "ref-6",
+          "ref-7",
+          "ref-8",
+          "ref-9"
+        ],
+        "resolved": [
+          {
+            "refId": "ref-9",
+            "kind": "audio",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-8",
+            "kind": "video",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-7",
+            "kind": "image",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-6",
+            "kind": "video",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-5",
+            "kind": "audio",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-4",
+            "kind": "image",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-3",
+            "kind": "audio",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-2",
+            "kind": "video",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-1",
+            "kind": "image",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-0",
+            "kind": "text",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          }
+        ]
+      },
+      "expected": {
+        "refIds": [
+          "ref-0",
+          "ref-1",
+          "ref-2",
+          "ref-3",
+          "ref-4",
+          "ref-5",
+          "ref-6",
+          "ref-7",
+          "ref-8",
+          "ref-9"
+        ],
+        "mentionIndices": [
+          1,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "namespaces": [
+          "text",
+          "mixed",
+          "mixed",
+          "mixed",
+          "mixed",
+          "mixed",
+          "mixed",
+          "mixed",
+          "mixed",
+          "mixed"
+        ]
+      }
+    },
+    {
+      "id": "completion-order-irrelevant",
+      "operation": "references",
+      "input": {
+        "orderedRefIds": [
+          "ref-0",
+          "ref-1",
+          "ref-2",
+          "ref-3",
+          "ref-4",
+          "ref-5",
+          "ref-6",
+          "ref-7",
+          "ref-8",
+          "ref-9"
+        ],
+        "resolved": [
+          {
+            "refId": "ref-0",
+            "kind": "text",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-1",
+            "kind": "image",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-2",
+            "kind": "video",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-3",
+            "kind": "audio",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-4",
+            "kind": "image",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-5",
+            "kind": "audio",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-6",
+            "kind": "video",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-7",
+            "kind": "image",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-8",
+            "kind": "video",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-9",
+            "kind": "audio",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          }
+        ]
+      },
+      "expected": {
+        "refIds": [
+          "ref-0",
+          "ref-1",
+          "ref-2",
+          "ref-3",
+          "ref-4",
+          "ref-5",
+          "ref-6",
+          "ref-7",
+          "ref-8",
+          "ref-9"
+        ],
+        "mentionIndices": [
+          1,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ]
+      }
+    },
+    {
+      "id": "missing-middle",
+      "operation": "references",
+      "input": {
+        "orderedRefIds": [
+          "ref-0",
+          "ref-1",
+          "ref-2",
+          "ref-3",
+          "ref-4",
+          "ref-5",
+          "ref-6",
+          "ref-7",
+          "ref-8",
+          "ref-9"
+        ],
+        "resolved": [
+          {
+            "refId": "ref-9",
+            "kind": "audio",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-8",
+            "kind": "video",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-7",
+            "kind": "image",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-6",
+            "kind": "video",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-5",
+            "kind": "audio",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-4",
+            "kind": "image",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-2",
+            "kind": "video",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-1",
+            "kind": "image",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-0",
+            "kind": "text",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          }
+        ]
+      },
+      "expectedError": "MISSING_REFERENCE"
+    },
+    {
+      "id": "duplicate-reference",
+      "operation": "references",
+      "input": {
+        "orderedRefIds": [
+          "ref-0",
+          "ref-1",
+          "ref-2",
+          "ref-3",
+          "ref-4",
+          "ref-5",
+          "ref-6",
+          "ref-7",
+          "ref-8",
+          "ref-9",
+          "ref-2"
+        ],
+        "resolved": [
+          {
+            "refId": "ref-9",
+            "kind": "audio",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-8",
+            "kind": "video",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-7",
+            "kind": "image",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-6",
+            "kind": "video",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-5",
+            "kind": "audio",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-4",
+            "kind": "image",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-3",
+            "kind": "audio",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-2",
+            "kind": "video",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-1",
+            "kind": "image",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-0",
+            "kind": "text",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          }
+        ]
+      },
+      "expectedError": "SCHEMA_INVALID"
+    },
+    {
+      "id": "upload-not-ready",
+      "operation": "references",
+      "input": {
+        "orderedRefIds": [
+          "ref-0",
+          "ref-1",
+          "ref-2",
+          "ref-3",
+          "ref-4",
+          "ref-5",
+          "ref-6",
+          "ref-7",
+          "ref-8",
+          "ref-9"
+        ],
+        "resolved": [
+          {
+            "refId": "ref-9",
+            "kind": "audio",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": false
+          },
+          {
+            "refId": "ref-8",
+            "kind": "video",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-7",
+            "kind": "image",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-6",
+            "kind": "video",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-5",
+            "kind": "audio",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-4",
+            "kind": "image",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-3",
+            "kind": "audio",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-2",
+            "kind": "video",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-1",
+            "kind": "image",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-0",
+            "kind": "text",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          }
+        ]
+      },
+      "expectedError": "REFERENCE_NOT_READY"
+    },
+    {
+      "id": "unrequested-asset",
+      "operation": "references",
+      "input": {
+        "orderedRefIds": [
+          "ref-0",
+          "ref-1",
+          "ref-2",
+          "ref-3",
+          "ref-4",
+          "ref-5",
+          "ref-6",
+          "ref-7",
+          "ref-8"
+        ],
+        "resolved": [
+          {
+            "refId": "ref-9",
+            "kind": "audio",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-8",
+            "kind": "video",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-7",
+            "kind": "image",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-6",
+            "kind": "video",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-5",
+            "kind": "audio",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-4",
+            "kind": "image",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-3",
+            "kind": "audio",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-2",
+            "kind": "video",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-1",
+            "kind": "image",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          },
+          {
+            "refId": "ref-0",
+            "kind": "text",
+            "version": 1,
+            "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ready": true
+          }
+        ]
+      },
+      "expectedError": "UNREQUESTED_REFERENCE"
+    }
+  ]
+}

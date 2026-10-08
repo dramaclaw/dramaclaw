@@ -1,0 +1,121 @@
+version = 1
+slug = "h3-prompt-optimizer"
+ledger = "docs/agent/tasks/h3-prompt-optimizer.md"
+baseline = "762591d"
+
+[[claims]]
+path = "src/novelvideo/api/schemas.py"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "canvas-audio-split", "depth-motion-da3", "multi-provider-models", "shot-breakdown", "text-node-liblib-visual-parity", "project-chinese-names", "sync-main-remotes"]
+reason = "H3 prompt preview and complete reference images."
+
+[[claims]]
+path = "src/novelvideo/api/routes/freezone.py"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "canvas-audio-split", "depth-motion-da3", "liblib-canvas-parity", "local-stack", "minimax-h3-canvas-defaults", "multi-provider-models", "shot-breakdown", "text-node-liblib-visual-parity"]
+reason = "H3 prompt preview and complete reference images."
+
+[[claims]]
+path = "src/novelvideo/task_backend/runners/freezone.py"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "depth-motion-da3", "shot-breakdown", "text-node-liblib-visual-parity", "sync-main-remotes"]
+reason = "H3 prompt preview and complete reference images."
+
+[[claims]]
+path = "src/novelvideo/freezone/text_node.py"
+mode = "shared"
+shared_with = ["multi-provider-models", "text-node-liblib-visual-parity"]
+reason = "H3 prompt preview and complete reference images."
+
+[[claims]]
+path = "src/novelvideo/freezone/h3_prompt_optimizer.py"
+mode = "exclusive"
+reason = "H3 prompt preview and complete reference images."
+
+[[claims]]
+path = "frontend/src/api/ops.ts"
+mode = "shared"
+shared_with = ["canvas-audio-actions", "canvas-audio-split", "depth-motion-da3", "multi-provider-models", "shot-breakdown", "text-node-liblib-visual-parity", "sync-main-remotes"]
+reason = "H3 prompt preview and complete reference images."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/VideoOperationsPanel.tsx"
+mode = "exclusive"
+reason = "H3 prompt preview and complete reference images."
+
+[[claims]]
+path = "frontend/src/features/canvas/nodes/shared/H3PromptOptimizer.tsx"
+mode = "shared"
+shared_with = ["multi-provider-models"]
+reason = "H3 prompt preview and complete reference images."
+
+[[claims]]
+path = "scripts/patch_h3_reference_resize.py"
+mode = "exclusive"
+reason = "H3 prompt preview and complete reference images."
+
+[[claims]]
+path = "frontend/public/locales/zh/translation.json"
+mode = "shared"
+shared_with = ["liblib-import-recovery", "asset-replacement-picker", "canvas-audio-actions", "canvas-audio-split", "creative-intro-blend", "creative-intro-implementation", "depth-motion-da3", "liblib-canvas-parity", "local-stack", "multi-provider-models", "shot-breakdown", "story-writer", "storyboard-dual-view", "sync-main-remotes", "tv-director-implementation", "video-prompt-split", "project-chinese-names"]
+reason = "H3 prompt preview and complete reference images."
+
+[[claims]]
+path = "frontend/public/locales/en/translation.json"
+mode = "shared"
+shared_with = ["liblib-import-recovery", "asset-replacement-picker", "canvas-audio-actions", "canvas-audio-split", "creative-intro-blend", "creative-intro-implementation", "depth-motion-da3", "liblib-canvas-parity", "local-stack", "multi-provider-models", "shot-breakdown", "story-writer", "storyboard-dual-view", "sync-main-remotes", "tv-director-implementation", "video-prompt-split", "project-chinese-names"]
+reason = "H3 prompt preview and complete reference images."
+
+[[claims]]
+path = "frontend/public/locales/vi/translation.json"
+mode = "shared"
+shared_with = ["liblib-import-recovery", "asset-replacement-picker", "canvas-audio-actions", "canvas-audio-split", "creative-intro-blend", "creative-intro-implementation", "depth-motion-da3", "liblib-canvas-parity", "local-stack", "multi-provider-models", "shot-breakdown", "story-writer", "storyboard-dual-view", "sync-main-remotes", "tv-director-implementation", "video-prompt-split", "project-chinese-names"]
+reason = "H3 prompt preview and complete reference images."
+
+[[claims]]
+path = "docs/agent/STATE.md"
+mode = "coordination"
+reason = "Plan and handoff."
+
+[[claims]]
+path = "docs/agent/tasks/h3-prompt-optimizer.md"
+mode = "coordination"
+reason = "Plan and handoff."
+
+[[claims]]
+path = "docs/agent/claims/h3-prompt-optimizer.toml"
+mode = "coordination"
+reason = "Plan and handoff."
+
+[[claims]]
+path = "tests/test_h3_prompt_optimizer.py"
+mode = "shared"
+shared_with = ["pending-code-checkpoint"]
+reason = "Regression coverage for reference validation and format conversion retries."
+
+[[claims]]
+path = "src/novelvideo/local_gateway.py"
+mode = "shared"
+shared_with = ["local-stack", "multi-provider-models", "text-node-liblib-visual-parity"]
+reason = "End-to-end H3 preview streaming and latency regression coverage."
+
+[[claims]]
+path = "tests/test_local_gateway.py"
+mode = "shared"
+shared_with = ["local-stack", "multi-provider-models"]
+reason = "End-to-end H3 preview streaming and latency regression coverage."
+
+[[claims]]
+path = "frontend/src/api/h3-stream.ts"
+mode = "exclusive"
+reason = "End-to-end H3 preview streaming and latency regression coverage."
+
+[[claims]]
+path = "frontend/src/__tests__/h3-stream.test.ts"
+mode = "exclusive"
+reason = "End-to-end H3 preview streaming and latency regression coverage."
+
+[[claims]]
+path = "tests/test_h3_stream.py"
+mode = "exclusive"
+reason = "End-to-end H3 preview streaming and latency regression coverage."

@@ -1,0 +1,20 @@
+[
+  {
+    "valid": true,
+    "value": {
+      "contract": "outline-patch/1.0.0",
+      "baseVersion": 1,
+      "baseAstHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "baseSemanticHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "hunks": [],
+      "changeSummary": [],
+      "unresolvedRequests": [
+        "No supported change requested."
+      ]
+    }
+  },
+  {
+    "valid": false,
+    "value": {}
+  }
+]

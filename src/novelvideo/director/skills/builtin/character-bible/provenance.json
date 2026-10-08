@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 2,
+  "stage": "M08",
+  "privateLibTVSourceObtained": false,
+  "license": "MIT",
+  "copyright": "2025 0xsline",
+  "sources": [
+    {
+      "path": "references/ai-producibility.md",
+      "sha256": "9c16eef426382dc375bde8c76a0db2a9ed8f8b6da3c5d16c42cd79c33a0f2e84"
+    },
+    {
+      "path": "references/character-craft.md",
+      "sha256": "246db9498f0641f9e3df0c669cacafe343d995cf7201cea4324bae299cb61594",
+      "adaptedFrom": [
+        "SKILL.md#/characters",
+        "references/villain-design.md"
+      ],
+      "upstreamSha256": {
+        "SKILL.md": "44c9f3d54ccd5d9ecd78c2ae041cdb1cb809b0a67fce9bea1eb0eee966d02235",
+        "references/villain-design.md": "ad86d396cc519879045c095b1357071f87fdbcceca43d17e2e338c8b7308e100"
+      }
+    },
+    {
+      "path": "references/scene-craft.md",
+      "sha256": "f2b5eb7ff72f14a25119df792d12c68f8597009fa16f3aca1e38f5f81166c57b",
+      "adaptedFrom": [
+        "references/episode-writing.md",
+        "references/ai-producibility.md",
+        "references/adaptation-core.md",
+        "references/event-coverage.md"
+      ],
+      "upstreamSha256": {
+        "references/episode-writing.md": "524b3fd13cce2493caa86ce914ba566df20ea53bda2340989025b9d06cb4c298",
+        "references/ai-producibility.md": "9c16eef426382dc375bde8c76a0db2a9ed8f8b6da3c5d16c42cd79c33a0f2e84",
+        "references/adaptation-core.md": "1e517e696c0ed19354683dcb37824f61059a06544f34aa0359ef60f7f59e0761",
+        "references/event-coverage.md": "eb0947c3c7714df690c0d16c4ba39cec9b6865fa5545fbd7be74328bd952d9ef"
+      }
+    },
+    {
+      "path": "references/prop-craft.md",
+      "sha256": "e50a773b6d9f52c8d4bcfc5acd5aee0172a8e4047fb32ca6371c9ca110fdb835",
+      "adaptedFrom": [
+        "references/episode-writing.md",
+        "references/ai-producibility.md",
+        "references/adaptation-core.md",
+        "references/event-coverage.md"
+      ],
+      "upstreamSha256": {
+        "references/episode-writing.md": "524b3fd13cce2493caa86ce914ba566df20ea53bda2340989025b9d06cb4c298",
+        "references/ai-producibility.md": "9c16eef426382dc375bde8c76a0db2a9ed8f8b6da3c5d16c42cd79c33a0f2e84",
+        "references/adaptation-core.md": "1e517e696c0ed19354683dcb37824f61059a06544f34aa0359ef60f7f59e0761",
+        "references/event-coverage.md": "eb0947c3c7714df690c0d16c4ba39cec9b6865fa5545fbd7be74328bd952d9ef"
+      }
+    }
+  ],
+  "adaptation": "Independent host planning contracts, informed by observable LibTV checkpoints and routed short-drama methods. Version 2.4.2 narrows high-risk design fields to source excerpts after two retained proof failures; all non-unknown critical fields need matching proofs, including voice. No additional upstream/private source was obtained. Full semantic quality remains subject to review."
+}
