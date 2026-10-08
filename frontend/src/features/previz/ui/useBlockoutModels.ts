@@ -7,11 +7,11 @@ import type { ModelOption } from '@/features/canvas/ui/ProviderModelPicker';
 import { readUrl } from '@/lib/url-params';
 
 /**
- * 白模对话框的模型下拉数据：第一项是服务端解析出的默认模型，其余是网关上还能选的。
+ * 白模对话框的模型下拉数据：媒体模型目录里「白模」类型的条目，第一项是设置页的默认模型。
  *
  * 对话框关掉就整个卸载，所以每次打开拉一次，列表很短。拉不到就给空列表——
  * 下拉不显示，用默认模型照样能生成；不像图片模型那样塞一份前端兜底清单，
- * 因为这里的候选完全由部署方配置，前端猜不出来。
+ * 因为这里的候选完全由部署方在目录里配置，前端猜不出来。
  */
 export function useBlockoutModels(): ModelOption[] {
   const [models, setModels] = useState<ModelOption[]>([]);

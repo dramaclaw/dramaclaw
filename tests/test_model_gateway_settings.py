@@ -4030,3 +4030,71 @@ def test_ee_media_relay_ignores_ce_database_config(monkeypatch, tmp_path):
     assert status["endpoint"] == "ee.endpoint"
     assert status["bucket"] == "ee-bucket"
     assert status["configured"] is True
+
+
+def test_ce_media_model_catalog_lists_blockout_models_as_chat_models(
+    monkeypatch, tmp_path
+):
+    """白模模型和图片/视频走同一套目录：裸网关名、chat/completions、可停用。"""
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_newapi_media_model_mappings(
+        {
+            "GPT-6-Astra": {
+                "provider": "openrouter",
+                "upstreamModel": "openai/gpt-6-astra",
+                "mediaType": "blockout",
+                "label": "GPT-6 Astra",
+                "sortOrder": 5,
+                "config": {},
+            },
+            "off-blockout": {
+                "provider": "openrouter",
+                "upstreamModel": "off-blockout",
+                "mediaType": "blockout",
+                "enabled": False,
+                "config": {},
+            },
+        }
+    )
+
+    catalog = get_ce_media_model_catalog("blockout")
+
+    assert [entry["id"] for entry in catalog] == ["GPT-6-Astra"]
+    assert catalog[0]["apiModel"] == catalog[0]["api_model"] == "GPT-6-Astra"
+    assert catalog[0]["gatewayModel"] == "openai/gpt-6-astra"
+    assert catalog[0]["request"] == {"endpoint": "chat/completions", "parameters": []}
+    assert get_ce_media_model_catalog("image") == []
+    assert get_ce_media_model_catalog("audio") == []
+
+
+def test_ce_media_model_mappings_refuse_image_capabilities_on_blockout_models(
+    monkeypatch, tmp_path
+):
+    _isolate_settings_db(monkeypatch, tmp_path)
+    with pytest.raises(ValueError, match="incompatible fields"):
+        save_newapi_media_model_mappings(
+            {
+                "GPT-6-Astra": {
+                    "provider": "openrouter",
+                    "upstreamModel": "GPT-6-Astra",
+                    "mediaType": "blockout",
+                    "config": {"resolutionOptions": ["1K"]},
+                }
+            }
+        )
+
+
+def test_bundled_catalog_offers_the_default_blockout_model():
+    """官方包自带预演台默认白模模型，CE 装好就能在下拉里看到它。"""
+    bundled = json.loads(
+        Path(model_gateway_settings.__file__)
+        .with_name("official_media_models.json")
+        .read_text(encoding="utf-8")
+    )
+
+    model = bundled["mediaModels"]["DC-previz-blockout-LLM"]
+    assert model["mediaType"] == "blockout"
+    assert model["config"]["request"]["endpoint"] == "chat/completions"
+    blockout = get_official_media_model_catalog("blockout")
+    assert [entry["id"] for entry in blockout] == ["DC-previz-blockout-LLM"]
+    assert blockout[0]["apiModel"] == "DC-previz-blockout-LLM"

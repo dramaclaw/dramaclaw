@@ -20,7 +20,6 @@ from novelvideo.director_world.blockout.generation_agent import (
     extract_program,
     generate_blockout_from_image,
     resolve_blockout_model,
-    resolve_blockout_model_choices,
     resolve_blockout_model_settings,
     resolve_blockout_timeout_seconds,
 )
@@ -58,7 +57,6 @@ class FakeModel:
 @pytest.fixture(autouse=True)
 def default_model_names(monkeypatch):
     monkeypatch.delenv("PREVIZ_BLOCKOUT_MODEL", raising=False)
-    monkeypatch.delenv("PREVIZ_BLOCKOUT_MODELS", raising=False)
     monkeypatch.delenv("FREEZONE_VISION_MODEL", raising=False)
     monkeypatch.delenv("PREVIZ_BLOCKOUT_REASONING_EFFORT", raising=False)
     monkeypatch.delenv("PREVIZ_BLOCKOUT_TIMEOUT_SECONDS", raising=False)
@@ -400,22 +398,6 @@ def test_a_requested_model_wins_over_the_configured_one(monkeypatch):
     assert resolve_blockout_model("candidate-c") == "candidate-c"
     assert resolve_blockout_model("  ") == "candidate-b"
     assert resolve_blockout_model(None) == "candidate-b"
-
-
-def test_the_choices_start_with_the_default_and_drop_repeats(monkeypatch):
-    """`PREVIZ_BLOCKOUT_MODELS` 是下拉框的候选；默认模型永远排第一，不重复。"""
-    monkeypatch.delenv("PREVIZ_BLOCKOUT_MODELS", raising=False)
-    assert resolve_blockout_model_choices() == ["DC-previz-blockout-LLM"]
-
-    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODELS", " GPT-6-Astra, ,candidate-b,GPT-6-Astra ")
-    assert resolve_blockout_model_choices() == [
-        "DC-previz-blockout-LLM",
-        "GPT-6-Astra",
-        "candidate-b",
-    ]
-
-    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "GPT-6-Astra")
-    assert resolve_blockout_model_choices() == ["GPT-6-Astra", "candidate-b"]
 
 
 async def test_the_requested_model_is_the_one_called(image_path, model, monkeypatch):

@@ -7321,8 +7321,9 @@
         "types": {
           "image": "Image",
           "video": "Video",
-          "audio": "Audio"
-        }
+          "audio": "Audio",
+          "blockout": "Blockout"
+      }
       }
     },
     "mediaStorage": {

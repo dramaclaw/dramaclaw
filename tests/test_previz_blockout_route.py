@@ -188,64 +188,188 @@ async def test_route_accepts_an_image_of_any_size_and_shape(route_env):
     assert len(route_env.captured) == 1
 
 
-async def test_route_lists_the_default_model_first_then_the_choices(
-    route_env, monkeypatch
+def _blockout_entry(model: str, *, gateway: str | None = None, **extra) -> dict:
+    """一条白模目录条目，形状与 `_media_model_catalog` 的产出一致。"""
+    gateway = gateway or model
+    return {
+        "catalogId": model,
+        "catalog_id": model,
+        "id": model,
+        "providerId": "newapi",
+        "provider": "newapi",
+        "apiModel": model,
+        "api_model": model,
+        "gatewayModel": gateway,
+        "gateway_model": gateway,
+        "aliases": [],
+        "label": extra.pop("label", model),
+        "sortOrder": extra.pop("sortOrder", 100),
+        "request": {"endpoint": "chat/completions", "parameters": []},
+        **extra,
+    }
+
+
+@pytest.fixture
+def blockout_catalog(monkeypatch):
+    """装一份白模目录；`authoritative=True` 模拟 EE（目录说了算，不补默认项）。"""
+
+    def install(entries: list[dict], *, authoritative: bool = False):
+        seen: list[str] = []
+
+        async def fake_catalog(media_type: str, *, requester_user_id: str):
+            seen.append(media_type)
+            return list(entries)
+
+        monkeypatch.setattr(freezone_routes, "_scoped_media_model_catalog", fake_catalog)
+        monkeypatch.setattr(
+            freezone_routes,
+            "_media_model_catalog_is_authoritative",
+            lambda: authoritative,
+        )
+        return seen
+
+    return install
+
+
+async def test_route_lists_the_catalog_with_the_default_model_first(
+    route_env, blockout_catalog, monkeypatch
 ):
-    """下拉框数据源：与 /freezone/image/models 同形，默认模型排第一。"""
+    """下拉框数据源：目录里的白模模型，设置页的默认模型排第一。"""
     monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "blockout-model")
-    monkeypatch.setenv(
-        "PREVIZ_BLOCKOUT_MODELS", "candidate-b, blockout-model ,candidate-c"
+    seen = blockout_catalog(
+        [
+            _blockout_entry("candidate-b", sortOrder=1),
+            _blockout_entry("blockout-model", label="默认白模", sortOrder=2),
+            _blockout_entry("candidate-c", sortOrder=3),
+        ]
     )
 
     result = await freezone_routes.freezone_blockout_models(
         project="58", user={"username": "admin"}
     )
 
+    assert seen == ["blockout"]
     assert result["ok"] is True
     assert [row["id"] for row in result["data"]] == [
         "blockout-model",
         "candidate-b",
         "candidate-c",
     ]
+    assert result["data"][0]["label"] == "默认白模"
+
+
+async def test_ce_route_adds_the_default_model_when_the_catalog_lacks_it(
+    route_env, blockout_catalog, monkeypatch
+):
+    """CE 自己管模型表：目录里没配默认模型，也要能用默认模型生成。"""
+    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "blockout-model")
+    blockout_catalog([_blockout_entry("candidate-b")])
+
+    result = await freezone_routes.freezone_blockout_models(
+        project="58", user={"username": "admin"}
+    )
+
+    assert [row["id"] for row in result["data"]] == ["blockout-model", "candidate-b"]
     first = result["data"][0]
     assert first["providerId"] == first["provider"] == "newapi"
     assert first["apiModel"] == first["api_model"] == "blockout-model"
+    assert first["gatewayModel"] == "blockout-model"
     assert first["label"] == "blockout-model"
 
 
-async def test_route_refuses_a_model_that_is_not_on_the_list(route_env, monkeypatch):
-    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODELS", "candidate-b")
+async def test_ee_route_lists_only_what_the_catalog_allows(
+    route_env, blockout_catalog, monkeypatch
+):
+    """EE 的目录是权威的：组织没开放默认模型，就不替它补上。"""
+    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "blockout-model")
+    blockout_catalog([_blockout_entry("candidate-b")], authoritative=True)
+
+    result = await freezone_routes.freezone_blockout_models(
+        project="58", user={"username": "admin"}
+    )
+
+    assert [row["id"] for row in result["data"]] == ["candidate-b"]
+
+
+async def test_route_refuses_a_model_that_is_not_in_the_catalog(
+    route_env, blockout_catalog
+):
+    blockout_catalog([_blockout_entry("candidate-b")])
     source_url = route_env.write("reference.png")
 
     with pytest.raises(HTTPException) as caught:
         await freezone_routes.freezone_image_to_blockout(
             project="58",
             body=FreezoneImageToBlockoutRequest(
-                source_url=source_url, model="not-on-the-list"
+                source_url=source_url, model="not-in-the-catalog"
             ),
             user={"username": "admin"},
         )
 
-    assert caught.value.status_code == 400
+    assert caught.value.status_code == 409
     assert route_env.captured == []
 
 
-async def test_route_bills_and_runs_the_chosen_model(route_env, monkeypatch):
+async def test_ee_route_refuses_the_default_model_when_the_catalog_hides_it(
+    route_env, blockout_catalog, monkeypatch
+):
     monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "blockout-model")
-    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODELS", "candidate-b")
+    blockout_catalog([_blockout_entry("candidate-b")], authoritative=True)
+    source_url = route_env.write("reference.png")
+
+    with pytest.raises(HTTPException) as caught:
+        await freezone_routes.freezone_image_to_blockout(
+            project="58",
+            body=FreezoneImageToBlockoutRequest(source_url=source_url),
+            user={"username": "admin"},
+        )
+
+    assert caught.value.status_code == 409
+    assert "未对当前组织开放" in caught.value.detail
+    assert route_env.captured == []
+
+
+async def test_route_names_the_media_type_when_the_catalog_is_empty(
+    route_env, blockout_catalog
+):
+    blockout_catalog([], authoritative=True)
+    source_url = route_env.write("reference.png")
+
+    with pytest.raises(HTTPException) as caught:
+        await freezone_routes.freezone_image_to_blockout(
+            project="58",
+            body=FreezoneImageToBlockoutRequest(source_url=source_url),
+            user={"username": "admin"},
+        )
+
+    assert caught.value.status_code == 409
+    assert "白模" in caught.value.detail
+
+
+async def test_route_bills_and_runs_the_chosen_models_gateway_name(
+    route_env, blockout_catalog, monkeypatch
+):
+    """按目录条目的别名选，按它的网关模型名执行和计费。"""
+    monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "blockout-model")
+    blockout_catalog(
+        [
+            _blockout_entry("blockout-model"),
+            _blockout_entry("Astra", gateway="GPT-6-Astra", aliases=["astra-alias"]),
+        ]
+    )
     source_url = route_env.write("reference.png")
 
     await freezone_routes.freezone_image_to_blockout(
         project="58",
         body=FreezoneImageToBlockoutRequest(
-            source_url=source_url, model=" candidate-b "
+            source_url=source_url, model=" astra-alias "
         ),
         user={"username": "admin"},
     )
 
     (call,) = route_env.captured
-    assert call["payload"]["model"] == "candidate-b"
-    assert call["payload"]["billing"]["pricing_model"] == "candidate-b"
+    assert call["payload"]["model"] == "GPT-6-Astra"
+    assert call["payload"]["billing"]["pricing_model"] == "GPT-6-Astra"
     assert call["payload"]["billing"]["pricing_quantity"] == 1
 
 

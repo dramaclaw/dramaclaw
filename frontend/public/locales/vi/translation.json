@@ -7225,8 +7225,9 @@
         "types": {
           "image": "Ảnh",
           "video": "Video",
-          "audio": "Âm thanh"
-        }
+          "audio": "Âm thanh",
+          "blockout": "Khối trắng"
+      }
       }
     },
     "mediaStorage": {

@@ -808,3 +808,40 @@ def test_video_catalog_rejects_inverted_reference_duration_range():
             },
             "video",
         )
+
+
+def test_blockout_models_are_chat_models_without_media_capabilities():
+    """白模用的视觉 LLM 走 chat/completions，一个图片/视频能力字段都不能带。"""
+    from novelvideo.media_model_request_schema import (
+        MEDIA_MODEL_CATALOG_TYPES,
+        default_media_model_request,
+        media_model_api_model,
+    )
+
+    assert MEDIA_MODEL_CATALOG_TYPES == ("image", "video", "blockout")
+    assert default_media_model_request("blockout") == {
+        "endpoint": "chat/completions",
+        "parameters": [],
+    }
+    assert default_media_model_request("image")["endpoint"] == "images/generations"
+    assert default_media_model_request("video")["endpoint"] == "video/generations"
+    assert media_model_api_model("blockout", "GPT-6-Astra") == "GPT-6-Astra"
+    assert media_model_api_model("image", "LingShan-G2") == "LingShan-G2"
+    assert media_model_api_model("video", "Seedance") == "newapi_Seedance"
+
+    valid = {"request": {"endpoint": "chat/completions", "parameters": []}}
+    assert validate_media_model_catalog_config(valid, "blockout") is valid
+    assert validate_media_model_catalog_config({}, "blockout") == {}
+
+    with pytest.raises(MediaModelSchemaError, match="must be chat/completions"):
+        validate_media_model_catalog_config(
+            {"request": {"endpoint": "images/generations", "parameters": []}},
+            "blockout",
+        )
+    with pytest.raises(MediaModelSchemaError, match="incompatible fields"):
+        validate_media_model_catalog_config(
+            {**valid, "resolutionOptions": ["1K"], "minDuration": 4},
+            "blockout",
+        )
+    with pytest.raises(MediaModelSchemaError, match="media type must be"):
+        validate_media_model_catalog_config({}, "audio")

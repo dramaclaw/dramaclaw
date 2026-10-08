@@ -106,7 +106,7 @@ export interface MediaModelEntry {
   provider: FeatureModelProvider;
   /** NewAPI model_mapping 的 value；空表示使用固定模型名自身。 */
   upstreamModel: string;
-  mediaType?: 'image' | 'video' | 'audio';
+  mediaType?: 'image' | 'video' | 'blockout' | 'audio';
   label?: string;
   enabled?: boolean;
   sortOrder?: number;

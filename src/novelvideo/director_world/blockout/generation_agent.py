@@ -41,8 +41,6 @@ from novelvideo.egress_context import TrustedEgressContext
 from novelvideo.official_defaults import DEFAULT_PREVIZ_BLOCKOUT_MODEL
 
 BLOCKOUT_MODEL_ENV = "PREVIZ_BLOCKOUT_MODEL"
-# 下拉框里除默认之外还能选的网关模型，逗号分隔。
-BLOCKOUT_MODELS_ENV = "PREVIZ_BLOCKOUT_MODELS"
 BLOCKOUT_REASONING_EFFORT_ENV = "PREVIZ_BLOCKOUT_REASONING_EFFORT"
 BLOCKOUT_TIMEOUT_ENV = "PREVIZ_BLOCKOUT_TIMEOUT_SECONDS"
 BLOCKOUT_TIMEOUT_SECONDS = 300.0
@@ -70,16 +68,6 @@ def resolve_blockout_model(model_override: str | None = None) -> str:
     if override:
         return override
     return get_newapi_text_model_name(BLOCKOUT_MODEL_ENV, DEFAULT_PREVIZ_BLOCKOUT_MODEL)
-
-
-def resolve_blockout_model_choices() -> list[str]:
-    """What the dialog may pick from: the default first, then `PREVIZ_BLOCKOUT_MODELS`."""
-    choices = [resolve_blockout_model()]
-    for name in os.environ.get(BLOCKOUT_MODELS_ENV, "").split(","):
-        name = name.strip()
-        if name and name not in choices:
-            choices.append(name)
-    return choices
 
 
 def resolve_blockout_model_settings() -> dict | None:
