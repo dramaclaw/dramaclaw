@@ -58,4 +58,4 @@ description: "在 DramaClaw 中策划、创建、检查或编辑互动影游、�
 
 ## 写入边界
 
-故事持久化只用专用 story tools；不得用通用节点、连线或直接 canvas JSON 冒充故事。Create/Patch 前读取最新状态，成功后 Validate；结果不明时先回读，不重放。生产参数不属于 StoryDraft。没有绑定项目或专用工具不可用时，说明阻塞。`outline_not_confirmed` 时请用户在画布方案卡确认，不绕过门禁。
+故事持久化只用专用 story tools；不得用通用节点、连线或直接 canvas JSON 冒充故事。Create/Patch 前读取最新状态，成功后 Validate；故事和普通画布写入共用 revision，任何中间画布写入、阶段确认或媒体回填后，下一次故事写入前必须重新读取版本并核对修改，不能复用旧故事快照的 revision；结果不明时先回读，不重放。生产参数不属于 StoryDraft。没有绑定项目或专用工具不可用时，说明阻塞。`outline_not_confirmed` 时请用户在画布方案卡确认，不绕过门禁。

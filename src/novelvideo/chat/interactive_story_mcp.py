@@ -120,7 +120,8 @@ def _tools() -> mcp_runtime.ToolIndex:
             canvas_name,
             _schema(
                 canvas_name,
-                "Read the bound persisted canvas, including its revision, before creating an interactive story.",
+                "Read the bound persisted canvas and its current revision before a story write. "
+                "Refresh after intervening canvas commands or media results; earlier revisions may be stale.",
                 {
                     "project_id": {
                         "type": "string",

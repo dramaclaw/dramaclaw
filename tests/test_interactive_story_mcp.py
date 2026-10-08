@@ -423,3 +423,69 @@ async def test_real_stdio_servers_own_disjoint_story_tools(tmp_path, server):
                 )
                 assert result.isError is True
                 assert "bound" in result.structuredContent["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("apply_status", "applied", "applied_count", "errors"),
+    [
+        ("applied", True, 1, []),
+        ("accepted", True, 0, []),
+        ("pending", False, 0, []),
+        ("partially_applied", False, 1, ["one command failed"]),
+    ],
+)
+@pytest.mark.parametrize("replayed_receipt", [False, True])
+async def test_canvas_revision_refresh_survives_browser_receipt_to_mcp_result(
+    monkeypatch, tmp_path, apply_status, applied, applied_count, errors, replayed_receipt,
+):
+    """Exercise API receipt, bridge dispatch, plugin summary and external MCP rendering."""
+    from novelvideo.api.routes import chat as chat_route
+
+    plugin = dramaclaw_mcp._plugin("freezone")
+    monkeypatch.setenv("DRAMACLAW_EXTERNAL_MCP", "1")
+    # Only execution/admission are faked; the entire receipt return path stays real.
+    monkeypatch.setattr(plugin, "_resolve_canvas_scope_for_write", lambda p, c: (p, c, None))
+    monkeypatch.setattr(plugin, "_revision_conflict_write_error", lambda *_a: None)
+    monkeypatch.setattr(plugin, "_validate_write_commands_shape", lambda *_a, **_k: None)
+    monkeypatch.setattr(plugin, "_resolve_canvas_generation_recommendations", lambda *_a: None)
+    monkeypatch.setattr(plugin, "_external_generation_parameter_preflight", lambda *_a: None)
+    monkeypatch.setattr(plugin, "_mcp_direct_canvas_apply_enabled", lambda: False)
+    monkeypatch.setattr(chat_route, "_bridge_dir_for_pending_key", lambda *_a, **_k: tmp_path)
+    monkeypatch.setattr(chat_route, "resolve_canvas_command", lambda _key, result, **_k: result)
+    receipts = []
+
+    def browser_receipt(key, **_kwargs):
+        receipt = chat_route._resolve_canvas_command_tool_result_payload(
+            chat_route.CanvasCommandToolResultIn(
+                bridge_key=key, project_id="project-a", canvas_id="canvas-a",
+                canvas_apply_status=apply_status, applied=applied,
+                applied_count=applied_count, errors=errors,
+            ),
+            username="alice",
+        )
+        receipts.append(receipt)
+        return receipt
+
+    monkeypatch.setattr(plugin, "put_pending_canvas_command",
+                        lambda **kw: browser_receipt(kw["key"]) if replayed_receipt else None)
+    monkeypatch.setattr(plugin, "wait_canvas_command_result", browser_receipt)
+    tools = dramaclaw_mcp._tool_index(plugin)
+    result = await dramaclaw_mcp.call_tool("freezone_emit_canvas_command", {
+        "project_id": "project-a", "canvas_id": "canvas-a",
+        "commands": [{"type": "update_node_data", "node_id": "opening",
+                      "data": {"durationSec": 6}}],
+    }, tool_index=tools)
+
+    assert receipts[0]["requires_canvas_refresh"] is True
+    structured = result.structuredContent
+    assert structured["requires_canvas_refresh"] is True
+    assert structured["canvas_apply_status"] == apply_status
+    assert "read its current persisted state" in structured["agent_instruction"]
+    assert "Do not reuse a revision read before this command" in structured["agent_instruction"]
+    assert "replay generation" in structured["agent_instruction"]
+    assert "revision" not in structured
+    # Both MCP representations reach clients: the text must retain the same policy.
+    rendered = json.loads(result.content[0].text)
+    assert rendered["requires_canvas_refresh"] is True
+    assert rendered["agent_instruction"] == structured["agent_instruction"]

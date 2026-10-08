@@ -26,6 +26,17 @@ _VARIABLE_NAME_SCHEMA = {
     "pattern": r"^[A-Za-z_][A-Za-z0-9_]*$",
 }
 
+_BASE_REVISION_SCHEMA = {
+    "type": "integer",
+    "minimum": 0,
+    "description": (
+        "Current persisted canvas revision, shared by story and canvas writes. "
+        "After any intervening canvas command, stage confirmation, or media result, "
+        "re-read the current canvas/story before this write. Never reuse an earlier "
+        "story snapshot's revision or guess the next revision."
+    ),
+}
+
 
 def _strict_object(
     properties: dict[str, Any],
@@ -954,7 +965,7 @@ def build_tools(
                         "type": "string",
                         "description": "Defaults to DRAMACLAW_CANVAS_ID or default.",
                     },
-                    "base_revision": {"type": "integer", "minimum": 0},
+                    "base_revision": dict(_BASE_REVISION_SCHEMA),
                     "idempotency_key": {
                         "type": "string",
                         "minLength": 8,
@@ -1011,7 +1022,7 @@ def build_tools(
                         "description": "Defaults to DRAMACLAW_CANVAS_ID or default.",
                     },
                     "story_id": {"type": "string", "minLength": 1},
-                    "base_revision": {"type": "integer", "minimum": 0},
+                    "base_revision": dict(_BASE_REVISION_SCHEMA),
                     "idempotency_key": {
                         "type": "string",
                         "minLength": 8,
@@ -1070,7 +1081,7 @@ def build_tools(
                         "type": "string",
                         "description": "Defaults to DRAMACLAW_CANVAS_ID or default.",
                     },
-                    "base_revision": {"type": "integer", "minimum": 0},
+                    "base_revision": dict(_BASE_REVISION_SCHEMA),
                     "idempotency_key": {
                         "type": "string",
                         "minLength": 8,
@@ -1156,7 +1167,7 @@ def build_tools(
                         },
                     },
                     "action": {"enum": ["confirm", "reopen"]},
-                    "base_revision": {"type": "integer", "minimum": 0},
+                    "base_revision": dict(_BASE_REVISION_SCHEMA),
                     "idempotency_key": {
                         "type": "string",
                         "minLength": 8,

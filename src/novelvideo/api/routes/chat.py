@@ -1123,6 +1123,28 @@ def _resolve_canvas_command_tool_result_payload(
             )
         else:
             agent_instruction = "Canvas command applied successfully."
+    requires_canvas_refresh = bool(
+        payload.canvas_id
+        and (
+            payload.applied_count > 0
+            or (
+                not payload.cancelled
+                and (
+                    (payload.applied and not has_open_node_action)
+                    or payload.canvas_apply_status in {"accepted", "pending", "partially_applied"}
+                )
+            )
+        )
+    )
+    if requires_canvas_refresh:
+        agent_instruction += (
+            " Earlier canvas/story revisions are now stale or may become stale while "
+            "generation finishes. Before the next revision-based write on this canvas, "
+            "read its current persisted state with dramaclaw_get_freezone_canvas (or "
+            "the current story with dramaclaw_get_interactive_story), recheck the intended "
+            "changes, and use that read's revision as base_revision. Do not reuse a "
+            "revision read before this command, guess revision + 1, or replay generation."
+        )
     result = {
         "ok": command_ok,
         "turn_id": payload.turn_id,
@@ -1141,6 +1163,7 @@ def _resolve_canvas_command_tool_result_payload(
         "user_message": payload.user_message,
         "agent_instruction": agent_instruction,
         "agent_hint": payload.agent_hint,
+        "requires_canvas_refresh": requires_canvas_refresh,
     }
     return resolve_canvas_command(
         key,

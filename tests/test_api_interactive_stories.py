@@ -529,3 +529,66 @@ def test_create_route_rejects_unconfirmed_outline(
         params={"canvas_id": "default"},
     )
     assert read.json()["revision"] == 1
+
+
+def test_story_patch_after_canvas_parameter_write_requires_refreshed_revision(
+    interactive_story_client,
+):
+    from copy import deepcopy
+    from novelvideo.freezone import canvas_store
+
+    client, state_dir, _roles = interactive_story_client
+    story = _story_payload()
+    base = "/api/v1/projects/proj_demo/interactive-stories"
+    created = client.post(base, json={
+        "canvas_id": "default", "base_revision": 0,
+        "idempotency_key": "revision-chain-create", "story": story,
+    })
+    assert created.status_code == 200, created.text
+    path = f"{base}/{story['story_id']}"
+    old_revision = client.get(path, params={"canvas_id": "default"}).json()["story"]["revision"]
+
+    def update_video_parameters(canvas):
+        updated = deepcopy(canvas)
+        video = next(node for node in updated["nodes"] if node["type"] == "videoNode")
+        video["data"]["durationSec"] = 6
+        updated["revision"] = canvas["revision"] + 1
+        return updated
+
+    canvas_store.save_canvas(
+        state_dir, "default", base_revision=old_revision,
+        build_payload=update_video_parameters, save_source="agent_update_parameters",
+    )
+    patch = {
+        "canvas_id": "default", "story_id": story["story_id"],
+        "base_revision": old_revision, "idempotency_key": "revision-chain-stale",
+        "operations": [{"op": "update_story_metadata", "changes": {"title": "参数更新后的故事"}}],
+    }
+    rejected = client.patch(path, json=patch)
+    assert rejected.status_code == 409
+    assert rejected.json()["code"] == "revision_conflict"
+    assert canvas_store.read_canvas(state_dir, "default")["revision"] == old_revision + 1
+
+    # Following the receipt's refresh instruction succeeds and retains the parameter write.
+    read = client.get(path, params={"canvas_id": "default"})
+    assert read.status_code == 200
+    current = read.json()["story"]["revision"]
+    assert current == old_revision + 1
+    applied = client.patch(path, json={
+        **patch, "base_revision": current, "idempotency_key": "revision-chain-refreshed",
+    })
+    assert applied.status_code == 200, applied.text
+    saved = canvas_store.read_canvas(state_dir, "default")
+    assert saved["revision"] == current + 1
+    assert next(node for node in saved["nodes"] if node["type"] == "videoNode")["data"]["durationSec"] == 6
+
+    # A fresh read does not grant permission to overwrite a later concurrent write.
+    canvas_store.save_canvas(
+        state_dir, "default", base_revision=saved["revision"],
+        build_payload=update_video_parameters, save_source="concurrent_user_edit",
+    )
+    raced = client.patch(path, json={
+        **patch, "base_revision": saved["revision"], "idempotency_key": "revision-chain-race",
+    })
+    assert raced.status_code == 409
+    assert raced.json()["code"] == "revision_conflict"

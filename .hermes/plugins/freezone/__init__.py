@@ -5705,12 +5705,22 @@ def _summarize_canvas_command_result(
                 "canvas action has been submitted to the canvas; do not say a panel was opened. "
                 "Do not ask for or print the full commands."
             )
+    if resolved.get("requires_canvas_refresh") is True:
+        # Status-specific summaries must not erase the bridge's revision handoff.
+        refresh_instruction = resolved.get("agent_instruction")
+        agent_instruction += " " + (
+            refresh_instruction
+            if isinstance(refresh_instruction, str) and refresh_instruction.strip()
+            else "Before the next revision-based write, re-read the current persisted canvas/story "
+                 "and recheck the intended changes. Do not reuse earlier revisions or replay generation."
+        )
     return {
         "ok": bool(resolved.get("ok")),
         "tool_call_status": resolved.get("tool_call_status") or "completed",
         "canvas_apply_status": resolved.get("canvas_apply_status"),
         "applied": bool(resolved.get("applied")),
         "cancelled": bool(resolved.get("cancelled")),
+        "requires_canvas_refresh": resolved.get("requires_canvas_refresh") is True,
         "bridge_key": bridge_key,
         "project_id": resolved.get("project_id"),
         "canvas_id": resolved.get("canvas_id"),
@@ -8141,6 +8151,7 @@ _CANVAS_RESULT_FIELDS = (
     "canvas_apply_status",
     "applied",
     "cancelled",
+    "requires_canvas_refresh",
     "revision",
     "receipt",
     "durable_receipt",
@@ -8213,6 +8224,7 @@ _RESULT_ARRAY_FIELDS = frozenset(
 _RESULT_BOOLEAN_FIELDS = frozenset(
     {
         "refresh_canvas",
+        "requires_canvas_refresh",
         "idempotent",
         "valid",
         "terminal",
