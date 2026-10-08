@@ -65,14 +65,16 @@ describe("dynamic workflow node action contract", () => {
     expect(source).toContain("workflowRecipeCompiledPrompt: compiledPrompt");
   });
 
-  it("compiles catalog-backed speech workflow prompts before TTS submission", () => {
+  it("compiles non-direct speech workflow prompts before TTS submission", () => {
     const source = readSource("src/features/canvas/nodes/useAudioGeneration.ts");
     const speechTextSource = readSource("src/features/canvas/application/audioSpeechText.ts");
-    const compile = source.indexOf("const compiledPrompt = await compileWorkflowNodePrompt");
+    const compile = source.indexOf("await compileWorkflowNodePrompt({");
     const submitSpeech = source.indexOf("submitFreezoneAudioSpeech(project");
 
     expect(compile).toBeGreaterThan(-1);
     expect(submitSpeech).toBeGreaterThan(compile);
+    expect(source).toContain("const compiledPrompt = directVoiceRecipe");
+    expect(source).toContain("catalog.recipeId === 'drama-shot-voice'");
     expect(source).toContain("resolveSafeSpeechSubmissionText");
     expect(speechTextSource).toContain("compileMode === 'timeout_fallback'");
     expect(speechTextSource).toContain("extractExplicitSpeakableAudioText(compiledPrompt)");

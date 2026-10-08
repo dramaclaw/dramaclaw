@@ -250,6 +250,42 @@ _DETERMINISTIC_SKILL_PLANNERS = {
                 required=True,
             ),
             _stage(
+                "characters",
+                "textAnnotationNode",
+                ["drama-character-extraction"],
+                required=True,
+            ),
+            _stage(
+                "character_assets",
+                "imageGenNode",
+                ["drama-character-turnaround"],
+                required=True,
+            ),
+            _stage(
+                "scenes",
+                "textAnnotationNode",
+                ["drama-scene-extraction"],
+                required=True,
+            ),
+            _stage(
+                "scene_assets",
+                "imageGenNode",
+                ["drama-scene-image"],
+                required=True,
+            ),
+            _stage(
+                "props",
+                "textAnnotationNode",
+                ["drama-prop-extraction"],
+                required=True,
+            ),
+            _stage(
+                "prop_assets",
+                "imageGenNode",
+                ["drama-prop-image"],
+                required=True,
+            ),
+            _stage(
                 "shots",
                 "textAnnotationNode",
                 [
@@ -260,6 +296,7 @@ _DETERMINISTIC_SKILL_PLANNERS = {
                 ],
                 required=True,
             ),
+            _stage("frames", "imageGenNode", ["general-image"], required=True),
             _stage("video", "videoNode", ["general-video"], required=True),
             _stage(
                 "audio",
@@ -268,7 +305,20 @@ _DETERMINISTIC_SKILL_PLANNERS = {
                 required=False,
             ),
         ],
-        "edges": [["planning", "shots"], ["shots", "video"]],
+        "edges": [
+            ["planning", "characters"],
+            ["characters", "character_assets"],
+            ["planning", "scenes"],
+            ["scenes", "scene_assets"],
+            ["planning", "props"],
+            ["props", "prop_assets"],
+            ["planning", "shots"],
+            ["shots", "frames"],
+            ["character_assets", "frames"],
+            ["scene_assets", "frames"],
+            ["prop_assets", "frames"],
+            ["frames", "video"],
+        ],
     },
 }
 
@@ -286,6 +336,16 @@ def standard_skill_stage_edges(skill_id: str) -> list[tuple[str, str]]:
     """``(upstream_stage, downstream_stage)`` feeding pairs of the template."""
     profile = _DETERMINISTIC_SKILL_PLANNERS.get(skill_id) or {}
     return [(str(edge[0]), str(edge[1])) for edge in profile.get("edges") or []]
+
+
+def canonical_recipe_stage(skill_id: str, recipe_id: str) -> str:
+    """Return the unique standard-planner stage for a Recipe, when one exists."""
+    matches = {
+        _text(stage.get("id"))
+        for stage in standard_skill_stages(skill_id)
+        if recipe_id and recipe_id in (stage.get("recipes") or [])
+    }
+    return next(iter(matches)) if len(matches) == 1 else ""
 
 
 _ORDER_ONLY_LINK_TYPE = "dependency_for"
@@ -1210,7 +1270,7 @@ def _compile_isomorphic_plan_through_template(
         match=match,
         assumptions=assumptions,
     )
-    compiled = compile_workflow_intent(intent)
+    compiled = compile_workflow_intent(intent, _include_unit_facts=False)
     if not compiled.get("ok"):
         return None, {
             "isomorphic": False,
@@ -1729,7 +1789,9 @@ def get_workflow_skill(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def compile_workflow_intent(intent: Any) -> dict[str, Any]:
+def compile_workflow_intent(
+    intent: Any, *, _include_unit_facts: bool = True
+) -> dict[str, Any]:
     """Compile a compact Agent decision into a complete, validated dynamic plan."""
     if not isinstance(intent, dict):
         return _intent_error("intent must be an object", path="intent")
@@ -1790,6 +1852,9 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
             requested_mode=requested_mode,
             item_count=len(_intent_items(compiled_intent)),
         )
+        _apply_confirmed_input_guidance(
+            compiled_intent.get("items") or [], skill_id, input_contract["resolved"]
+        )
     else:
         compiled_intent, planner_metadata, planner_error = (
             _expand_standard_skill_intent(
@@ -1797,11 +1862,15 @@ def compile_workflow_intent(intent: Any) -> dict[str, Any]:
                 skill_id=skill_id,
                 user_goal=user_goal,
                 resolved_inputs=input_contract["resolved"],
+                include_unit_facts=_include_unit_facts,
             )
         )
         if planner_error is not None:
             return planner_error
         plan_metadata = planner_metadata
+        _apply_confirmed_input_guidance(
+            compiled_intent.get("items") or [], skill_id, input_contract["resolved"]
+        )
 
     compiled = _compile_dynamic_recipe_items_intent(
         intent=compiled_intent,
@@ -1898,6 +1967,39 @@ def _agent_authored_planner_metadata(
     return metadata
 
 
+def _standard_outline_prompt(
+    *,
+    skill_id: str,
+    user_goal: str,
+    units: list[dict[str, Any]],
+) -> str:
+    """Keep standard tutorial outline input connected to each planned unit.
+
+    The standard planner keeps step facts in ``planner.units`` so image/video
+    items can consume them. The outline is the upstream text source for those
+    items and must receive the same facts; using only the compact user goal
+    silently drops numeric instructions before the first Recipe runs.
+    """
+    if skill_id != "video-tutorial" or not units:
+        return user_goal
+    briefs: list[str] = []
+    for index, unit in enumerate(units, 1):
+        if not isinstance(unit, dict):
+            continue
+        title = _text(unit.get("title")) or f"第{index}段"
+        prompt = _text(unit.get("prompt"))
+        narration = _text(unit.get("narration"))
+        parts = [f"{title}："]
+        if prompt:
+            parts.append(prompt)
+        if narration:
+            parts.append(f"旁白：{narration}")
+        briefs.append(" ".join(parts))
+    if not briefs:
+        return user_goal
+    return f"{user_goal}\n逐段事实与旁白（必须完整保留）：\n" + "\n".join(briefs)
+
+
 def _standard_skill_items(
     *,
     skill_id: str,
@@ -1905,6 +2007,7 @@ def _standard_skill_items(
     include_audio: bool,
     units: list[dict[str, Any]],
     user_goal: str,
+    include_unit_facts: bool = True,
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     if skill_id == "ecommerce-ad":
@@ -1978,12 +2081,82 @@ def _standard_skill_items(
         _planned_item(
             item_id="outline",
             title="内容规划",
-            prompt=user_goal,
+            prompt=(
+                _standard_outline_prompt(
+                    skill_id=skill_id, user_goal=user_goal, units=units
+                )
+                if include_unit_facts
+                else user_goal
+            ),
             recipe_id=outline_recipe,
             depends_on=["workflow_input"],
             stage="planning",
         )
     )
+    if skill_id == "short-drama-quick":
+        asset_specs = (
+            (
+                "characters",
+                "角色设定",
+                "提取主要角色、身份、外形、服装和跨镜头连续性要求",
+                "drama-character-extraction",
+                "character_assets",
+                "角色身份图",
+                "根据角色设定生成稳定的角色身份与转面参考图",
+                "drama-character-turnaround",
+            ),
+            (
+                "scenes",
+                "场景设定",
+                "提取主要场景、空间关系、时代信息和统一视觉风格",
+                "drama-scene-extraction",
+                "scene_assets",
+                "场景参考图",
+                "根据场景设定生成稳定的场景视觉参考图",
+                "drama-scene-image",
+            ),
+            (
+                "props",
+                "道具设定",
+                "提取关键道具、外观细节、持有关系和剧情用途",
+                "drama-prop-extraction",
+                "prop_assets",
+                "道具参考图",
+                "根据道具设定生成稳定的关键道具参考图",
+                "drama-prop-image",
+            ),
+        )
+        for (
+            text_id,
+            text_title,
+            text_prompt,
+            text_recipe,
+            image_id,
+            image_title,
+            image_prompt,
+            image_recipe,
+        ) in asset_specs:
+            items.append(
+                _planned_item(
+                    item_id=text_id,
+                    title=text_title,
+                    prompt=f"{user_goal}。{text_prompt}",
+                    recipe_id=text_recipe,
+                    depends_on=["outline"],
+                    stage=text_id,
+                )
+            )
+            items.append(
+                _planned_item(
+                    item_id=image_id,
+                    title=image_title,
+                    prompt=image_prompt,
+                    recipe_id=image_recipe,
+                    depends_on=[text_id],
+                    reference_inputs=[text_id],
+                    stage=image_id,
+                )
+            )
     for index, unit in enumerate(units, 1):
         if skill_id == "short-drama-quick":
             source_id = f"shot_plan_{index}"
@@ -1993,10 +2166,33 @@ def _standard_skill_items(
                     title=f"{unit['title']}镜头设计",
                     prompt=unit["prompt"],
                     recipe_id="drama-shot-group-detail",
-                    depends_on=["outline"],
+                    depends_on=["outline", "characters", "scenes", "props"],
                     stage="shots",
                 )
             )
+            frame_id = f"frame_{index}"
+            items.append(
+                _planned_item(
+                    item_id=frame_id,
+                    title=f"{unit['title']}首帧",
+                    prompt=unit["prompt"],
+                    recipe_id="general-image",
+                    depends_on=[
+                        source_id,
+                        "character_assets",
+                        "scene_assets",
+                        "prop_assets",
+                    ],
+                    reference_inputs=[
+                        source_id,
+                        "character_assets",
+                        "scene_assets",
+                        "prop_assets",
+                    ],
+                    stage="frames",
+                )
+            )
+            video_source_id = frame_id
         else:
             source_id = f"frame_{index}"
             items.append(
@@ -2014,37 +2210,51 @@ def _standard_skill_items(
                     stage="images",
                 )
             )
+            video_source_id = source_id
         items.append(
             _planned_item(
                 item_id=f"clip_{index}",
                 title=f"{unit['title']}视频",
                 prompt=unit["prompt"],
                 recipe_id="general-video",
-                depends_on=[source_id],
+                depends_on=[video_source_id],
                 stage="video",
                 # The shot plan is what the clip renders, not a gate ahead of
                 # it: reference it so the edge is prompt_for and the runtime
                 # feeds the shot text into the video prompt (issue #677).
                 reference_inputs=(
-                    [source_id] if skill_id == "short-drama-quick" else None
+                    [video_source_id, source_id]
+                    if skill_id == "short-drama-quick"
+                    else None
                 ),
                 timeline_role="visual",
                 duration_seconds=unit.get("duration_seconds"),
             )
         )
         if include_audio and skill_id in {"video-tutorial", "short-drama-quick"}:
+            narration = _text(unit.get("narration"))
+            deferred_short_drama_speech = (
+                skill_id == "short-drama-quick" and not narration
+            )
             items.append(
                 _planned_item(
                     item_id=f"voice_{index}",
                     title=f"{unit['title']}旁白",
-                    prompt=unit["narration"],
-                    narration=unit["narration"],
+                    prompt=(
+                        narration
+                        or "只朗读上游镜头设计输出中的 narration、voiceover、"
+                        "dialogue 或 speech_text 正文，不朗读制作说明。"
+                    ),
+                    narration=narration,
                     recipe_id=(
                         "drama-shot-voice"
                         if skill_id == "short-drama-quick"
                         else "general-audio"
                     ),
                     depends_on=[source_id],
+                    reference_inputs=(
+                        [source_id] if deferred_short_drama_speech else None
+                    ),
                     stage="audio",
                     timeline_role="voiceover",
                 )
@@ -2137,6 +2347,45 @@ def _standard_planner_units(
     return units
 
 
+def _confirmed_input_guidance(
+    skill_id: str, resolved_inputs: dict[str, Any]
+) -> str:
+    """Return concise, user-confirmed creative constraints for node prompts.
+
+    ``confirmedInputs`` is retained as structured metadata, but prompt consumers
+    also need the decision in their task brief. Keeping this guidance in the
+    compiled item prompt makes the choice survive the planning-to-Recipe handoff.
+    """
+    if not isinstance(resolved_inputs, dict):
+        return ""
+    parts: list[str] = []
+    visual_style = _text(resolved_inputs.get("visual_style"))
+    if visual_style and skill_id == "short-drama-quick":
+        parts.append(
+            f"已确认视觉风格为「{visual_style}」；角色、场景、分镜、首帧和视频必须保持该风格。"
+        )
+    character_method = _text(resolved_inputs.get("character_input_method"))
+    if character_method and skill_id == "pixar-ip-ad-video":
+        parts.append(
+            f"已确认角色来源为「{character_method}」；不得回退到预设角色或改用未确认的角色来源。"
+        )
+    return " ".join(parts)
+
+
+def _apply_confirmed_input_guidance(
+    items: list[dict[str, Any]], skill_id: str, resolved_inputs: dict[str, Any]
+) -> None:
+    guidance = _confirmed_input_guidance(skill_id, resolved_inputs)
+    if not guidance:
+        return
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        prompt = _text(item.get("prompt"))
+        if guidance not in prompt:
+            item["prompt"] = f"{prompt} {guidance}".strip()
+
+
 def _planned_item(
     *,
     item_id: str,
@@ -2174,6 +2423,7 @@ def _expand_standard_skill_intent(
     skill_id: str,
     user_goal: str,
     resolved_inputs: dict[str, Any],
+    include_unit_facts: bool = True,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any] | None]:
     profile = _DETERMINISTIC_SKILL_PLANNERS.get(skill_id)
     if profile is None:
@@ -2223,12 +2473,12 @@ def _expand_standard_skill_intent(
                 path="planner.item_count",
             ),
         )
-    if not 1 <= item_count <= 12:
+    if not 1 <= item_count <= 25:
         return (
             intent,
             None,
             _intent_error(
-                "planner.item_count must be between 1 and 12",
+                "planner.item_count must be between 1 and 25",
                 path="planner.item_count",
             ),
         )
@@ -2262,6 +2512,24 @@ def _expand_standard_skill_intent(
             else profile["default_include_audio"]
         ),
     )
+    top_level_include_audio = intent.get("include_audio")
+    if (
+        isinstance(top_level_include_audio, bool)
+        and isinstance(planner_include_audio, bool)
+        and top_level_include_audio != planner_include_audio
+    ):
+        return (
+            intent,
+            None,
+            _intent_error(
+                "intent.include_audio conflicts with planner.include_audio",
+                path="planner.include_audio",
+                hint=(
+                    "Use intent.include_audio as the single workflow audio policy, "
+                    "or make both values identical. Do not retry with conflicting values."
+                ),
+            ),
+        )
     if deliverable == "images":
         include_audio = False
     units = _standard_planner_units(
@@ -2274,6 +2542,11 @@ def _expand_standard_skill_intent(
         for index, unit in enumerate(units):
             narration = _text(unit.get("narration"))
             title = _text(unit.get("title"))
+            if not narration and skill_id == "short-drama-quick":
+                # Screenplay-first short drama resolves narration/dialogue from
+                # the executable shot-plan output at runtime. The speech node
+                # receives that text over a prompt_for edge below.
+                continue
             if not narration:
                 return (
                     intent,
@@ -2322,6 +2595,7 @@ def _expand_standard_skill_intent(
         include_audio=include_audio,
         units=units,
         user_goal=user_goal,
+        include_unit_facts=include_unit_facts,
     )
     expanded = {
         **intent,
@@ -2483,10 +2757,20 @@ def _compile_dynamic_recipe_items_intent(
                 f"Recipe {canonical_recipe_id} has unsupported output_kind",
                 path=f"items.{index}.recipe_id",
             )
+        speech_uses_upstream_text = any(
+            node_types.get(_text(source_id))
+            in {"textAnnotationNode", "scriptNode", "beatContextNode"}
+            for source_id in (
+                item.get("reference_inputs")
+                or item.get("referenceInputs")
+                or []
+            )
+        )
         if (
             node_type == "audioNode"
             and _intent_audio_kind(item, recipe) == "speech"
             and not _text(item.get("narration"))
+            and not speech_uses_upstream_text
             and _looks_like_speech_generation_instruction(item.get("prompt"))
         ):
             return _intent_error(
@@ -2526,6 +2810,25 @@ def _compile_dynamic_recipe_items_intent(
             for candidate in [recipe, *recipe_pipeline]
         )
         item_by_id[item_id] = item
+
+    if (
+        _text(skill.get("id")) == "short-drama-quick"
+        and intent.get("include_audio") is True
+        and not any(
+            node_types.get(item_id) == "audioNode"
+            and _intent_audio_kind(item, node_recipes.get(item_id)) == "speech"
+            for item_id, item in item_by_id.items()
+        )
+    ):
+        return _intent_error(
+            "short-drama audio was requested but the workflow has no speech node",
+            path="items",
+            hint=(
+                "Keep a drama-shot-voice item. It may carry literal narration, or "
+                "reference an upstream shot/script text item so narration is resolved "
+                "at runtime. Do not remove requested voiceover to bypass validation."
+            ),
+        )
 
     edges: list[dict[str, str]] = []
     item_order = {item_id: index for index, item_id in enumerate(item_by_id)}
@@ -2913,7 +3216,9 @@ _INTENT_FIX_INSTRUCTION = (
     "Fix the intent fields listed in `errors` and call this tool again with the "
     "corrected freezone_workflow_intent.v1. Each error message (and `hint`, when "
     "present) already contains everything needed to fix the payload — do NOT "
-    "search or read plugin/source code to debug validation rules."
+    "search or read plugin/source code to debug validation rules. Never resubmit an "
+    "unchanged payload. If the same error path repeats after one correction, stop "
+    "retrying in this turn and report the blocker."
 )
 
 
@@ -2976,7 +3281,10 @@ def _intent_items(intent: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(raw_items, list):
         return []
     items: list[dict[str, Any]] = []
-    for raw_item in raw_items[:24]:
+    # Public agent-authored intents are capped by the JSON schema. Standard
+    # planners expand one compact unit into several deterministic items, so
+    # their internal item list must retain the complete expansion.
+    for raw_item in raw_items[:200]:
         if isinstance(raw_item, str) and raw_item.strip():
             items.append({"title": raw_item.strip(), "prompt": raw_item.strip()})
         elif isinstance(raw_item, dict):
@@ -3250,6 +3558,12 @@ def _intent_item_node(
         item_prompt = _text(item.get("narration")) or item_prompt
     prompt = item_prompt or label
     timeline_role = _text(item.get("timeline_role") or item.get("timelineRole"))
+    deferred_speech = (
+        node_type == "audioNode"
+        and audio_kind == "speech"
+        and not _text(item.get("narration"))
+        and bool(item.get("reference_inputs") or item.get("referenceInputs"))
+    )
     recipe_id = _text(recipe.get("id") if recipe else "")
     operation_type = next(
         (
@@ -3349,7 +3663,8 @@ def _intent_item_node(
         if isinstance(video_variants, int) and not isinstance(video_variants, bool):
             data["count"] = video_variants
     if node_type == "audioNode":
-        data["text"] = prompt
+        if not deferred_speech:
+            data["text"] = prompt
         if audio_kind == "music":
             data["audioKind"] = "music"
             data["makeInstrumental"] = True

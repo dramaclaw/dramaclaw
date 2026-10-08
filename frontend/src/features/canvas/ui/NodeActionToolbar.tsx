@@ -116,14 +116,10 @@ import { matteImage } from "@/features/canvas/application/matteImage";
 import { downloadAudioAs } from "@/features/canvas/application/audioDownload";
 import {
   createVideoUpscaleResultNode,
-  VIDEO_UPSCALE_DENOISE_OPTIONS,
   VIDEO_UPSCALE_RESOLUTIONS,
   VIDEO_UPSCALE_RESOLUTION_LABEL,
 } from "@/features/canvas/application/videoUpscale";
-import type {
-  FreezoneVideoUpscaleDenoise,
-  FreezoneVideoUpscaleResolution,
-} from "@/api/ops";
+import type { FreezoneVideoUpscaleResolution } from "@/api/ops";
 import { getNodeToolPlugins } from "@/features/canvas/tools";
 import type { ToolIconKey } from "@/features/canvas/tools";
 import { UiChipButton, UiPanel } from "@/components/ui";
@@ -1022,22 +1018,16 @@ export const NodeActionToolbar = memo(
         VIDEO_UPSCALE_RESOLUTIONS.includes(parameters.resolution as FreezoneVideoUpscaleResolution)
           ? (parameters.resolution as FreezoneVideoUpscaleResolution)
           : "1080p";
-      const denoise =
-        typeof parameters?.denoise === "string" &&
-        VIDEO_UPSCALE_DENOISE_OPTIONS.includes(parameters.denoise as FreezoneVideoUpscaleDenoise)
-          ? (parameters.denoise as FreezoneVideoUpscaleDenoise)
-          : "1x";
-      return { resolution, denoise };
+      return { resolution };
     }, []);
 
     const handleOpenVideoUpscale = useCallback((parameters?: Record<string, unknown>) => {
       const url = requireVideoUrl();
-      const { resolution, denoise } = resolveVideoUpscaleParams(parameters);
+      const { resolution } = resolveVideoUpscaleParams(parameters);
       const upscaleNodeId = createVideoUpscaleResultNode(node.id, {
         sourceUrl: url,
         displayName: `${t("node.videoUpscale.nodeTitle")}（${VIDEO_UPSCALE_RESOLUTION_LABEL[resolution]}）`,
         resolution,
-        denoise,
       });
       if (!upscaleNodeId) {
         throw new Error("无法创建视频高清节点");
@@ -1982,7 +1972,6 @@ export const NodeActionToolbar = memo(
                     sourceUrl: videoUrl,
                     displayName: `${t("node.videoUpscale.nodeTitle")}（1080P）`,
                     resolution: "1080p",
-                    denoise: "1x",
                   });
                   if (!upscaleNodeId) {
                     return;

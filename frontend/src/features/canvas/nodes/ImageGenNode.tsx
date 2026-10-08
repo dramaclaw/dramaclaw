@@ -106,6 +106,7 @@ import { GENERATION_ERROR_CLEARED_PATCH } from '@/features/canvas/application/ge
 import { ImageGenerationForm } from '@/features/canvas/nodes/shared/ImageGenerationForm';
 import { spawnAssetLibraryReferences } from '@/features/canvas/nodes/shared/assetLibraryReferenceSpawn';
 import { useImageGenerationForm } from '@/features/canvas/nodes/shared/useImageGenerationForm';
+import { ReferenceValidationDialog } from '@/features/canvas/nodes/shared/ReferenceValidationDialog';
 import { useImageOpFormProps } from '@/features/canvas/nodes/shared/useImageOpFormProps';
 
 type ImageGenNodeProps = NodeProps & {
@@ -166,6 +167,10 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     submit: handleSubmit,
     canAutoCommitOnGenerate,
     referenceImageUrl,
+    referenceErrors,
+    referenceErrorsOpen,
+    closeReferenceErrors,
+    openReferenceErrors,
     invalidateInFlightGeneration,
   } = useImageGenerationForm(id, { onGenerationSettled: refreshHistory });
 
@@ -633,6 +638,13 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       style={{ width: resolvedWidth, height: resolvedHeight }}
       onClick={() => setSelectedNode(id)}
     >
+      <ReferenceValidationDialog issues={referenceErrors} open={referenceErrorsOpen} onClose={closeReferenceErrors} />
+      {referenceErrors.length > 0 && (
+        <button type="button" className="tap-button nodrag absolute -top-10 left-0"
+          onClick={(event) => { event.stopPropagation(); openReferenceErrors(); }}>
+          {t('referenceValidation.title')}
+        </button>
+      )}
       {/* 叠卡画册的卡片边缘：从主图右下方探出，张数与画册一致（最多露 3 张）。
           先渲染、被后面的主卡覆盖，只露出错位的边。 */}
       {hasAlbum && !albumExpanded && previewUrl && (

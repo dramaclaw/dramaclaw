@@ -164,9 +164,9 @@ def _recipe_compiler_timeout_seconds() -> float:
 def _recipe_text_generation_timeout_seconds() -> float:
     """Allow long Recipe text deliverables without changing global model timeouts."""
     try:
-        value = float(os.getenv("FREEZONE_RECIPE_TEXT_TIMEOUT_SECONDS", "300"))
+        value = float(os.getenv("FREEZONE_RECIPE_TEXT_TIMEOUT_SECONDS", "540"))
     except (TypeError, ValueError):
-        value = 300.0
+        value = 540.0
     return min(max(value, 30.0), 540.0)
 
 
@@ -789,4 +789,29 @@ async def generate_recipe_text(**compile_args: Any) -> str:
     content = str(response.output or "").strip()
     if not content:
         raise RuntimeError("Recipe text executor returned empty content")
+    _validate_text_result_fidelity(
+        content,
+        recipe_id=str(compile_args.get("recipe_id") or ""),
+        node_prompt=str(compile_args.get("node_prompt") or ""),
+        user_goal=str(compile_args.get("user_goal") or ""),
+    )
     return content
+
+
+def _validate_text_result_fidelity(
+    content: str,
+    *,
+    recipe_id: str,
+    node_prompt: str,
+    user_goal: str,
+) -> None:
+    """Reject ad copy that drops an explicitly requested product subject.
+
+    This narrow guard applies only to the built-in general-text display-copy
+    contract. Ordinary creative text recipes remain unconstrained.
+    """
+    if recipe_id != "general-text" or "展示文案" not in user_goal:
+        return
+    source = f"{node_prompt}\n{user_goal}"
+    if "杯" in source and "杯" not in content:
+        raise RecipeRuntimeError("generated copy omitted the explicitly requested product subject")

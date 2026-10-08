@@ -39,7 +39,6 @@ import {
 } from 'lucide-react';
 
 import type {
-  FreezoneVideoUpscaleDenoise,
   FreezoneVideoUpscaleResolution,
 } from '@/api/ops';
 import {
@@ -58,7 +57,6 @@ import {
 import {
   createVideoUpscaleResultNode,
   submitVideoUpscale,
-  VIDEO_UPSCALE_DENOISE_OPTIONS,
   VIDEO_UPSCALE_RESOLUTIONS,
   VIDEO_UPSCALE_RESOLUTION_LABEL,
 } from '@/features/canvas/application/videoUpscale';
@@ -708,7 +706,6 @@ export function AssetBoardVideoDetailToolbar({
   const [upscaleOpen, setUpscaleOpen] = useState(false);
   const [upscaleResolution, setUpscaleResolution] =
     useState<FreezoneVideoUpscaleResolution>('1080p');
-  const [upscaleDenoise, setUpscaleDenoise] = useState<FreezoneVideoUpscaleDenoise>('1x');
   const [isDownloading, setIsDownloading] = useState(false);
   const [isSubmittingUpscale, setIsSubmittingUpscale] = useState(false);
   const [composeSeeds, setComposeSeeds] = useState<string[] | null>(null);
@@ -810,7 +807,6 @@ export function AssetBoardVideoDetailToolbar({
       sourceUrl: videoUrl,
       displayName,
       resolution: upscaleResolution,
-      denoise: upscaleDenoise,
     });
     if (!upscaleNodeId) return;
     // 配置行收起后，工具条「高清」按钮转为 spinner 直到 submit settle——
@@ -822,9 +818,8 @@ export function AssetBoardVideoDetailToolbar({
     void submitVideoUpscale(upscaleNodeId, {
       sourceUrl: videoUrl,
       resolution: upscaleResolution,
-      denoise: upscaleDenoise,
     }).finally(() => setIsSubmittingUpscale(false));
-  }, [isSubmittingUpscale, node.id, upscaleDenoise, upscaleResolution, videoUrl]);
+  }, [isSubmittingUpscale, node.id, upscaleResolution, videoUrl]);
 
   // 全屏：直接对正文那个活的播放器发 requestFullscreen（不是把详情面板整块放大——
   // 用户要的是「看片」）。iOS Safari 的 <video> 没有标准 API，退到它自家的
@@ -919,23 +914,6 @@ export function AssetBoardVideoDetailToolbar({
                   }`}
                 >
                   {VIDEO_UPSCALE_RESOLUTION_LABEL[value]}
-                </button>
-              ))}
-            </div>
-            <span className="text-[12px] text-white/40">降噪</span>
-            <div className="inline-flex items-center gap-0.5 rounded-md border border-white/10 bg-white/[0.04] p-0.5">
-              {VIDEO_UPSCALE_DENOISE_OPTIONS.map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setUpscaleDenoise(value)}
-                  className={`rounded px-2 py-0.5 text-[12px] transition-colors ${
-                    upscaleDenoise === value
-                      ? 'bg-white/15 text-white'
-                      : 'text-white/50 hover:bg-white/5 hover:text-white/80'
-                  }`}
-                >
-                  {value === 'none' ? '无' : value}
                 </button>
               ))}
             </div>

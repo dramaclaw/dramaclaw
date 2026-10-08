@@ -351,6 +351,7 @@ class PendingCanvasCommandsIn(BaseModel):
 class CanvasCommandToolResultIn(BaseModel):
     turn_id: str | None = None
     bridge_key: str
+    followup: bool = False
     project_id: str | None = None
     canvas_id: str | None = None
     agent_id: str | None = Field(
@@ -1644,6 +1645,51 @@ async def resolve_canvas_command_tool_result(
         )
     username = str(user["username"])
     project_state_dir = await _bridge_project_state_dir(user, payload)
+    if payload.followup:
+        project_id = str(payload.project_id or "").strip()
+        canvas_id = str(payload.canvas_id or "").strip()
+        turn_id = str(payload.turn_id or "").strip()
+        if not all((payload.bridge_key.strip(), project_id, canvas_id, turn_id)):
+            raise HTTPException(
+                400, "background canvas result requires bridge and scope"
+            )
+        scope = ChatScope(
+            kind="project",
+            id=project_id,
+            surface="freezone",
+            canvas_id=canvas_id,
+            agent_id=_freezone_agent_id_from_payload(payload),
+        )
+        project_ctx = await _project_context_for_scope(user, scope)
+        store_scope = _chat_store_scope_for_project_context(scope, project_ctx)
+        if payload.canvas_apply_status == "pending":
+            instruction = (
+                "The background canvas workflow is still syncing or reconciling its result. "
+                "Do not claim the artifact is ready and do not rerun generation. "
+                "Ask the user to check the canvas and workflow status later."
+            )
+        elif payload.canvas_apply_status in {"failed", "cancelled_by_user"}:
+            instruction = (
+                "The background canvas workflow did not finish successfully. "
+                "Check the current canvas and workflow state before taking another action."
+            )
+        else:
+            instruction = (
+                "The background canvas workflow returned a result. "
+                "Verify the current canvas output before claiming the artifact is ready."
+            )
+        await chat_store.append_message_async(
+            username,
+            store_scope,
+            "agent_notification",
+            f"[CANVAS_BACKGROUND_RESULT] {instruction} [/CANVAS_BACKGROUND_RESULT]",
+            turn_id=turn_id,
+            idempotency_key=f"canvas-background-result:{payload.bridge_key.strip()}",
+        )
+        return {
+            "ok": True,
+            "data": {"canvas_apply_status": payload.canvas_apply_status},
+        }
     workflow_draft_receipt = _pending_workflow_draft_receipt(
         username, payload, project_state_dir=project_state_dir
     )

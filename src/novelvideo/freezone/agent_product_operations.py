@@ -218,8 +218,11 @@ def create_agent_product_operation(
         raise ValueError("unsupported agent product kind")
     clean_key = str(idempotency_key or "").strip()
     clean_session = str(generation_session_id or "").strip()
+    clean_canvas = str(canvas_id or "").strip()
     if not clean_key or not clean_session:
         raise ValueError("idempotency_key and generation_session_id are required")
+    if kind == "workflow_result" and not clean_canvas:
+        raise ValueError("canvas_id is required for workflow_result operations")
     now = time.time()
     operation_id = f"agent_product_{uuid.uuid4().hex}"
     with _connect(project_dir) as conn:
@@ -234,6 +237,7 @@ def create_agent_product_operation(
                 payload["project_id"] != project_id
                 or payload["product_kind"] != kind
                 or payload["generation_session_id"] != clean_session
+                or payload["canvas_id"] != clean_canvas
                 or payload["artifact_id"] != str(artifact_id or "").strip()
             ):
                 raise ValueError(
@@ -260,7 +264,7 @@ def create_agent_product_operation(
                 kind,
                 task_type,
                 project_id,
-                str(canvas_id or "").strip(),
+                clean_canvas,
                 clean_session,
                 str(artifact_id or "").strip(),
                 json.dumps(metadata or {}, ensure_ascii=False, separators=(",", ":")),

@@ -1,9 +1,11 @@
 """API 请求/响应 Pydantic 模型。"""
 
+from decimal import Decimal
+
 from typing import Annotated, Any, Literal, Optional
 
 from fastapi import HTTPException
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from novelvideo.models import SceneRef
 from novelvideo.freezone.asset_copy import MAX_SOURCE_URL_LENGTH, MAX_SOURCES_PER_REQUEST
@@ -1287,6 +1289,39 @@ class FreezoneVideoEditRequest(FreezoneWorkflowMediaLink):
     model_params: dict[str, Any] = Field(default_factory=dict)
 
 
+class FreezoneVideoExtendRequest(BaseModel):
+    """视频延长请求。输入一个源视频，并从其结尾继续生成指定时长。"""
+
+    video_url: str = Field(description="待延长的源视频静态地址，必填")
+    prompt: str = Field(description="源视频结束后要继续生成的内容")
+    camera_template_id: Optional[str] = Field(
+        default=None,
+        description="运镜模板 id，例如 locked_off / follow_tracking / pedestal_up",
+    )
+    resolution: str = Field(default="720p", description="输出清晰度档位")
+    duration_seconds: int = Field(
+        default=5,
+        ge=1,
+        description="新生成延长片段的时长；不同模型支持的范围可能不同",
+    )
+    generate_audio: bool = Field(default=False, description="是否生成原生音频")
+    human_review: bool = Field(
+        default=False,
+        description="是否开启真人素材审核/加白流程",
+    )
+    model: str = Field(
+        default="newapi_seedance-2.5",
+        description="视频模型或模型选项 id。请传 /freezone/video/models 返回值之一",
+    )
+    canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
+    node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
+    gen_mode: Literal["videoExtend"] = Field(
+        default="videoExtend",
+        description="视频延长入口的固定业务模式",
+    )
+    model_params: dict[str, Any] = Field(default_factory=dict)
+
+
 class FreezoneVideoReferenceItem(BaseModel):
     """全能参考单条素材。"""
 
@@ -1491,23 +1526,42 @@ class FreezoneVideoEraseRequest(BaseModel):
 
 
 class FreezoneVideoUpscaleRequest(BaseModel):
-    """视频高清请求。
-
-    基础版使用 ffmpeg 做传统缩放、降噪和锐化，不调用 AI 超分模型。
-    """
+    """视频增强请求。模型由媒体目录能力动态选择。"""
 
     source_url: str = Field(description="待高清处理视频的静态地址")
     resolution: Literal["1080p", "2k", "4k"] = Field(
         default="1080p",
         description="目标清晰度档位。按长边缩放：1080p=1920，2k=2560，4k=3840",
     )
-    frame_interpolation: Literal["none"] = Field(
-        default="none",
-        description="补帧模式。基础版仅支持 none，不改变原视频帧率",
+    target_fps: Optional[float] = Field(
+        default=None,
+        ge=1,
+        le=120,
+        allow_inf_nan=False,
+        description="目标帧率 1–120，最多 3 位小数；None 表示保持原帧率",
     )
-    denoise_strength: Literal["none", "1x", "2x"] = Field(
-        default="1x",
-        description="降噪强度。none 不降噪；1x 轻度降噪；2x 中等降噪",
+
+    @field_validator("target_fps")
+    @classmethod
+    def validate_target_fps_precision(cls, value: float | None) -> float | None:
+        if value is not None and Decimal(str(value)).as_tuple().exponent < -3:
+            raise ValueError("target_fps supports at most 3 decimal places")
+        return value
+    smart_interpolation: bool = Field(
+        default=True,
+        description="调整帧率时是否启用智能插帧；默认保留既有行为",
+    )
+    slowdown: Literal["auto", "2x", "3x", "4x", "5x"] = Field(
+        default="auto",
+        description="慢放倍率；auto 表示保持原速",
+    )
+    scene: Literal["realistic", "anime"] = Field(
+        default="realistic",
+        description="源视频场景类型",
+    )
+    face_enhance: bool = Field(
+        default=False,
+        description="是否启用人脸专项增强",
     )
 
 

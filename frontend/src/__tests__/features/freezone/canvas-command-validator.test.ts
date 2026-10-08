@@ -830,7 +830,7 @@ describe("canvas command validator", () => {
     expect(result.ok).toBe(false);
     expect(result.issues.map((issue) => issue.message)).toEqual([
       "unsupported video upscale resolution: 8k",
-      "unsupported video upscale denoise: strong",
+      "video upscale denoise is no longer supported",
     ]);
   });
 

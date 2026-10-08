@@ -31,6 +31,7 @@ import {
 import { hasStructuredContent } from "@/features/superchat/spec-extract";
 import {
   FREEZONE_CANVAS_COMMAND_TOOL_RESULT_EVENT,
+  replayPendingCanvasCommandFollowups,
   type CanvasCommandToolResultPayload,
 } from "@/features/freezone/canvasCommandToolResult";
 import {
@@ -1984,9 +1985,12 @@ export function useSuperChat({
     };
     window.addEventListener(FREEZONE_CANVAS_COMMAND_TOOL_RESULT_EVENT, handleCanvasCommandToolResult);
     window.addEventListener(FREEZONE_CANVAS_CONTEXT_TOOL_RESULT_EVENT, handleCanvasContextToolResult);
+    window.addEventListener("online", replayPendingCanvasCommandFollowups);
+    replayPendingCanvasCommandFollowups();
     return () => {
       window.removeEventListener(FREEZONE_CANVAS_COMMAND_TOOL_RESULT_EVENT, handleCanvasCommandToolResult);
       window.removeEventListener(FREEZONE_CANVAS_CONTEXT_TOOL_RESULT_EVENT, handleCanvasContextToolResult);
+      window.removeEventListener("online", replayPendingCanvasCommandFollowups);
     };
   }, [sendFrame]);
 

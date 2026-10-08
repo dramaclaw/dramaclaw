@@ -25,7 +25,7 @@ compatibility: Requires Freezone/虾画 chat surface and preferably injected can
 - 读规划包：`tool_call(name="freezone_get_workflow_skill", arguments={"skill_id": ..., "inputs": {...}})`
 - 生成准入：`tool_call(name="freezone_begin_agent_product_generation", arguments={"product_kind": "workflow_result", "generation_session_id": ..., "artifact_id": "<skill_id>@<skill_version>", "skill_id": ..., "skill_version": ..., "normalized_inputs": {...}})`；`artifact_id`、`skill_id` 必须与随后提交的 `compiled.skill_id` 一致。
 - 规划草稿：`tool_call(name="freezone_prepare_workflow_draft", arguments={"canvas_id": ..., "operation_id": ..., "intent": {...}})`
-- 自定义拓扑草稿：`tool_call(name="freezone_prepare_workflow_plan_draft", arguments={"canvas_id": ..., "plan": {...}})`；返回精确预览而不直接写画布
+- 自定义拓扑草稿：`tool_call(name="freezone_prepare_workflow_plan_draft", arguments={"canvas_id": ..., "operation_id": ..., "plan": {"schema_version":"freezone_workflow_plan.v1","skill":{"id":...,"version":...},"nodes":[...],"edges":[...]}, "generation_answers": {...}})`；`generation_answers` 只能补充完整 Plan，不能替代 `plan`、`schema_version` 或 `skill`；Recipe 支持的文本执行节点不得使用仅供无 Recipe 用户资源节点使用的 `input`/`resource`/`asset` stage；返回精确预览而不直接写画布
 - 修改草稿：`freezone_patch_workflow_draft`，arguments `{"draft_id": ..., "expected_revision": ..., "changes": {...}}`
 - 确认落图：`freezone_confirm_workflow_draft`，arguments `{"draft_id": ..., "revision": ...}`
 
@@ -49,12 +49,12 @@ compatibility: Requires Freezone/虾画 chat surface and preferably injected can
 1. 使用 Hermes 本轮已经加载的原生 Workflow Skill；没有唯一 Skill 时先用 `skills_list` 展示候选，让用户通过输入框 `/` 选择。已选 Skill 不得再做语义路由或加载其它候选。
 2. 调用一次 `freezone_get_workflow_skill` 读取该 Skill 的 Recipe 规划摘要、能力约束和 `input_contract`。
 3. 使用 `input_contract.resolved` 展示用户值、工具从原话确定性提取的值和默认值；`fields[].source=inferred` 表示工具已从时长、画幅、执行模式等明确措辞中提取，不要再次分析或追问。只追问 `missing_required` 或修正 `errors`，已有素材和明确参数不要重复询问。`requires_confirmation=true` 时，在方案确认中一并确认这些值，不创建 Skill Session。
-4. 生成精简 `freezone_workflow_intent.v1`：只写 `skill_id`、`user_goal`、当前 `inputs`、PlanItems 和必要选项。每个 item 使用语义化 `id`、`title`、`prompt`、一个来自 `available_recipes` 的 `recipe_id`，并用 `depends_on` 声明真实输入依赖；需要配音时再提供只含实际朗读正文的 `narration`。当图片或视频节点需要根据上游剧本、分镜或 Shot List 生成时，必须把对应文本 PlanItem 写入 `depends_on`；当它还需要角色、场景、道具等生成素材作为实际参考时，再把这些素材写入 `reference_inputs`。每个视频 item 的 `prompt` 必须说明所对应 Shot 或 Shot Group 的具体叙事、动作和目标，不能只写“开场日常”“镜头一”等泛化标题。不要把时间码、时长、语气、环境音、音效或配乐说明写入 `narration`。调用 `freezone_prepare_workflow_draft` 编译并保存，记录返回的 `draft_id` 和 `revision`。不要生成画布 nodes/edges、UUID、连线类型、布局或分组。
+4. 生成精简 `freezone_workflow_intent.v1`：严格以 Intent Schema 为字段白名单，只写 `skill_id`、`user_goal`、当前 `inputs`、PlanItems 和必要选项。Recipe 查询中的 `requires_source_media` 等字段只用于选择 Recipe 和规划依赖，禁止复制到 `intent.items[]`；服务端会根据 `recipe_id` 推导权威约束。每个 item 使用语义化 `id`、`title`、`prompt`、一个来自 `available_recipes` 的 `recipe_id`，并用 `depends_on` 声明真实输入依赖；用户已提供实际朗读正文时写入 `narration`。短剧遵循 screenplay-first：旁白/对白将由上游剧本或镜头 Recipe 产生时，保留 `drama-shot-voice` item，并把对应文本 item 同时写入 `depends_on` 和 `reference_inputs`，由运行时 `prompt_for` 绑定正文；不要在草稿阶段虚构台词，也不能删除用户要求的配音节点来绕过校验。当图片或视频节点需要根据上游剧本、分镜或 Shot List 生成时，必须把对应文本 PlanItem 写入 `depends_on`；当它还需要角色、场景、道具等生成素材作为实际参考时，再把这些素材写入 `reference_inputs`。每个视频 item 的 `prompt` 必须说明所对应 Shot 或 Shot Group 的具体叙事、动作和目标，不能只写“开场日常”“镜头一”等泛化标题。不要把时间码、时长、语气、环境音、音效或配乐说明写入 `narration`。调用 `freezone_prepare_workflow_draft` 编译并保存，记录返回的 `draft_id` 和 `revision`。不要生成画布 nodes/edges、UUID、连线类型、布局或分组。
 5. 缺少素材但允许从文字创建时，把素材锚点作为第一个 PlanItem，选择同一 Skill 允许的、`requires_source_media=false` 且输出类型匹配的 Recipe；后续依赖项通过 `depends_on` 引用该语义 item id。
 6. 严格按草稿工具返回的 `preview` 展示节点数量、作品清单、阶段和执行方式，不展示内部 JSON、`draft_id` 或 `revision`。
 7. 用户调整方案时，只把发生变化的字段传给 `freezone_patch_workflow_draft(draft_id=..., expected_revision=..., changes=...)`；不要重建 Intent 或创建新草稿。按新预览展示结果并记录新 revision。
 8. 用户确认后调用一次 `freezone_confirm_workflow_draft(draft_id=..., revision=...)`。执行方式默认使用草稿中已经确认的 `run_after_create`。
-9. 草稿校验失败时只修正返回的输入、item 或选项字段后重试；禁止改用单节点工具绕过校验，也不要退回生成整份 Plan。
+9. 草稿校验失败时只修正返回的输入、item 或选项字段后重试；绝不原样重提。同一错误路径修正一次后仍失败，本轮停止重试并报告阻塞，避免累计“失败 ×N”。禁止改用单节点工具绕过校验，也不要退回生成整份 Plan。
 
 Plan 中的边只表示真实输入依赖，不表示时间顺序。节点 ID 必须稳定且唯一；禁止环、坏边、未知节点类型、未知 Recipe 和不兼容 Recipe。用户要求自动执行时才设置 `run_after_create=true`，否则只创建画布。
 
