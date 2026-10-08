@@ -114,6 +114,9 @@ order) stays an agent-authored draft with the difference recorded in
    template-shaped list never enters this path in the first place; see SKILL.md routing order.)
    Every edge endpoint must match an `id` in `nodes` or a declared external input alias. Never
    invent a source such as `source` or `input` without a matching declaration.
+   Never ask the user to choose a direct-canvas or standalone-node fallback after Plan validation
+   fails. Such a choice cannot authorize bypassing the validator. Add the required Skill stages to
+   the same Plan once, or report that they conflict with the user's exact topology.
 7. Call `freezone_prepare_workflow(plan=...)` once. It strictly validates the complete Plan,
    obtains an operation-bound planning quote and server receipt, then persists an exact preview
    without writing canvas nodes. After the user reviews that preview, call

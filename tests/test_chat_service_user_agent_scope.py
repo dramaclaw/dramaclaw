@@ -1275,6 +1275,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "must not use dependency_for" in developer_instructions
         assert "expected_node_count" in developer_instructions
         assert "placeholder graph such as A/B" in developer_instructions
+        assert "a user selection cannot authorize that bypass" in developer_instructions
         assert "short-drama production Skill" in developer_instructions
         assert "not a Workflow catalog skill_id" in developer_instructions
         assert (

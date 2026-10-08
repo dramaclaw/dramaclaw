@@ -40,6 +40,10 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
   `freezone_create_edge`, `freezone_group_nodes`, or other single-operation tools.
 - Never fall back to repeated single-operation writes after a workflow validation or schema error.
   Correct the workflow intent/plan or report the blocking error.
+- Never offer direct canvas commands or standalone node writes as a clarification choice for
+  bypassing WorkflowPlan validation. A user selection cannot authorize that bypass. When a Skill's
+  required stage conflicts with an exact node-only constraint, report the conflict or ask whether
+  the required stage may be added; do not offer an invalid direct-write alternative.
 - Never resubmit an unchanged workflow payload. After one correction, if the same validation path
   fails again in the same turn, stop retrying and report that blocker instead of increasing the
   failure counter.
@@ -103,11 +107,11 @@ completion.
 Offer a recommended/default option so the user does not need to understand provider-specific
 fields. In either execution mode, do not draft, commit, approve, or run until the required
 clarification result returns. This is an explicit exception to a host's general rule not to ask about model
-parameters. It applies only to image and video generation for now, and only when the operation will
-generate media (including `run_after_create=true`); do not ask when the user only wants empty nodes,
-connections, grouping, layout, or edits without generation. Choices explicit in the current user
-request, Recipe, existing node data, or history should be preselected in the card, not used to skip
-the card.
+parameters. It applies only to image and video generation for now. It also applies with
+`run_after_create=false` when the user explicitly asks to configure image/video node parameters;
+do not ask when the user only wants empty nodes, connections, grouping, layout, or edits without
+generation parameters. Choices explicit in the current user request, Recipe, existing node data,
+or history should be preselected in the card, not used to skip the card.
 
 The portable workflow intent carries confirmed shared choices in `inputs`:
 

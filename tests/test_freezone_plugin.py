@@ -1137,6 +1137,42 @@ def test_handwritten_workflow_batch_cannot_bypass_dynamic_plan():
 
     assert result["ok"] is False
     assert result["status"] == "wrong_tool_dynamic_workflow"
+    assert result["next_action"] == "correct_same_workflow_plan"
+    assert "do not ask the user" in result["agent_instruction"].lower()
+
+
+def test_clarification_cannot_offer_workflow_plan_bypass(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(
+        plugin,
+        "_emit_clarification_event",
+        lambda *_args: pytest.fail("invalid bypass choice must not reach the frontend"),
+    )
+
+    result = plugin._handle_request_user_clarification(
+        {
+            "title": "选择工作流创建方式",
+            "description": "当前 WorkflowPlan 缺少必需阶段，请选择处理方式。",
+            "questions": [
+                {
+                    "id": "creation_mode",
+                    "title": "如何创建？",
+                    "mode": "single",
+                    "options": [
+                        {
+                            "id": "direct",
+                            "label": "严格保留节点",
+                            "description": "不经过工作流草稿，直接在画布创建节点。",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert result["status"] == "workflow_clarification_bypass_rejected"
+    assert result["next_action"] == "correct_same_workflow_plan"
+    assert "never offer a direct-canvas bypass" in result["agent_instruction"]
 
 
 def test_external_canvas_write_resolves_recommended_model_from_live_catalog(
@@ -3545,6 +3581,54 @@ def test_generation_clarification_builds_complete_media_questions(monkeypatch):
     assert "questions" not in schemas["freezone_request_user_clarification"]["parameters"]["required"]
 
 
+def test_generation_clarification_adds_model_for_dependent_required_choice(monkeypatch):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    emitted = []
+    monkeypatch.setattr(
+        plugin,
+        "_emit_clarification_event",
+        lambda _project, _canvas, event: emitted.append(event) or "shown",
+    )
+
+    result = handlers["freezone_request_user_clarification"](
+        {"generation_required_choices": {"video": ["duration_seconds"]}}
+    )
+
+    assert result == "shown"
+    assert [question["id"] for question in emitted[0]["questions"]] == [
+        "video_model",
+        "video_duration_seconds",
+    ]
+    assert [question["options_source"] for question in emitted[0]["questions"]] == [
+        "video_models",
+        "selected_video_model_durations",
+    ]
+
+
+def test_generation_clarification_reuses_confirmed_model_for_dependent_choice(monkeypatch):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    emitted = []
+    monkeypatch.setattr(
+        plugin,
+        "_emit_clarification_event",
+        lambda _project, _canvas, event: emitted.append(event) or "shown",
+    )
+
+    result = handlers["freezone_request_user_clarification"](
+        {
+            "generation_required_choices": {"video": ["duration_seconds"]},
+            "answers": {"video_model": {"option_ids": ["video-a"]}},
+        }
+    )
+
+    assert result == "shown"
+    assert [question["id"] for question in emitted[0]["questions"]] == [
+        "video_duration_seconds"
+    ]
+
+
 def test_generation_clarification_recommendation_has_concrete_answers(monkeypatch):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
@@ -3972,7 +4056,7 @@ def test_generation_clarification_partial_card_recommends_for_alias_model(monkey
     }
 
 
-def test_generation_clarification_partial_card_without_model_hides_recommendation(monkeypatch):
+def test_generation_clarification_partial_card_without_model_adds_model_question(monkeypatch):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
     captured = []
@@ -3986,8 +4070,14 @@ def test_generation_clarification_partial_card_without_model_hides_recommendatio
         "allow_recommended": True,
     })
 
-    assert captured[0]["allow_recommended"] is False
-    assert "recommended_answers" not in captured[0]
+    assert [question["id"] for question in captured[0]["questions"]] == [
+        "image_model",
+        "image_aspect_ratio",
+    ]
+    assert captured[0]["allow_recommended"] is True
+    assert captured[0]["recommended_answers"]["image_model"] == {
+        "option_ids": ["LingShan-G2"]
+    }
 
 
 def test_generation_clarification_canonical_questions_offer_recommendation(monkeypatch):
@@ -4201,7 +4291,8 @@ def test_generation_clarification_builds_exact_preflight_questions(monkeypatch):
 
     assert result == "shown"
     assert [question["id"] for question in emitted[0]["questions"]] == [
-        "image_resolution", "image_variants_per_node", "video_variants_per_node",
+        "image_model", "image_resolution", "image_variants_per_node",
+        "video_variants_per_node",
     ]
 
 
@@ -4411,6 +4502,84 @@ def test_prepare_exact_plan_maps_generation_answers_into_nodes(monkeypatch, tmp_
     assert all(node["data"]["generateAudio"] is False for node in received[0]["nodes"])
 
 
+def test_prepare_exact_plan_normalizes_compact_answers_and_recipe_alias(
+    monkeypatch, tmp_path,
+):
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    received = []
+
+    def fake_validate(plan):
+        received.append(copy.deepcopy(plan))
+        return {"ok": True, "skill_id": "video-ad", "plan": plan}
+
+    monkeypatch.setattr(plugin, "validate_agent_workflow_plan", fake_validate)
+    monkeypatch.setattr(
+        plugin, "_workflow_runtime_preflight", lambda *_args, **_kwargs: {"blockers": []}
+    )
+    result = plugin._handle_prepare_workflow_plan_draft({
+        "plan": {
+            "schema_version": "freezone_workflow_plan.v1",
+            "nodes": [{
+                "id": "video-1",
+                "node_type": "videoNode",
+                "recipe_id": "general-video",
+                "data": {},
+            }],
+            "edges": [],
+        },
+        "generation_answers": {
+            "video_model": ["video-a"],
+            "video_aspect_ratio": ["16:9"],
+            "video_resolution": ["768p"],
+            "video_duration_seconds": ["4"],
+            "video_generate_audio": ["true"],
+            "video_variants_per_node": ["1"],
+        },
+    })
+
+    assert result["ok"] is True
+    node = received[0]["nodes"][0]
+    assert "recipe_id" not in node
+    assert node["data"]["workflowCatalog"]["recipeId"] == "general-video"
+    assert node["data"]["durationSec"] == 4
+    assert node["data"]["generateAudio"] is True
+
+
+@pytest.mark.parametrize(
+    ("aliases", "catalog"),
+    [
+        ({"recipe_id": "general-video", "recipeId": 123}, None),
+        ({"recipe_id": "general-video", "recipeId": ""}, None),
+        ({"recipe_id": "general-video", "recipeId": "other-video"}, None),
+        ({"recipe_id": "general-video"}, {"recipeId": 0}),
+        ({"recipe_id": "general-video"}, {"recipeId": "other-video"}),
+    ],
+)
+def test_recipe_alias_normalization_preserves_malformed_or_conflicting_input(
+    aliases, catalog,
+):
+    plugin = _load_plugin_module()
+    data = {} if catalog is None else {"workflowCatalog": catalog}
+    plan = {
+        "schema_version": "freezone_workflow_plan.v1",
+        "nodes": [{
+            "id": "video-1",
+            "node_type": "videoNode",
+            **aliases,
+            "data": data,
+        }],
+        "edges": [],
+    }
+
+    plugin._normalize_workflow_plan_recipe_aliases(plan)
+
+    node = plan["nodes"][0]
+    assert all(node[key] == value for key, value in aliases.items())
+    if catalog is not None:
+        assert node["data"]["workflowCatalog"] == catalog
+
+
 def test_prepare_exact_plan_keeps_explicit_shot_values_when_card_has_global_defaults(
     monkeypatch, tmp_path,
 ):
@@ -4544,6 +4713,58 @@ def test_prepare_exact_plan_other_preflight_blockers_still_fail(monkeypatch, tmp
 
     assert result["status"] == "workflow_preflight_failed"
     assert result["error"] == "could not verify videoNode capabilities"
+
+
+def test_prepare_exact_plan_stage_failure_returns_only_legal_recovery(
+    monkeypatch, tmp_path
+):
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    monkeypatch.setattr(
+        plugin,
+        "validate_agent_workflow_plan",
+        lambda plan: {"ok": True, "skill_id": "video-ad", "plan": plan},
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_workflow_runtime_preflight",
+        lambda *_args, **_kwargs: {
+            "status": "blocked",
+            "warnings": [],
+            "blockers": [
+                {
+                    "path": "plan.stages.planning",
+                    "code": "skill_stage_missing",
+                    "message": "Skill requires a planning stage",
+                }
+            ],
+        },
+    )
+
+    result = plugin._handle_prepare_workflow_plan_draft(
+        {
+            "plan": {
+                "schema_version": "freezone_workflow_plan.v1",
+                "nodes": [
+                    {
+                        "id": "video-1",
+                        "node_type": "videoNode",
+                        "data": {"model": "video-a", "durationSec": 5},
+                    }
+                ],
+                "edges": [],
+            }
+        }
+    )
+
+    assert result["status"] == "workflow_preflight_failed"
+    assert result["code"] == "skill_stage_missing"
+    assert result["retryable"] is True
+    assert result["next_action"] == "correct_same_workflow_plan"
+    instruction = result["agent_instruction"]
+    assert "same complete WorkflowPlan exactly once" in instruction
+    assert "Do not offer or call direct canvas commands" in instruction
+    assert "user selection cannot authorize" in instruction
 
 
 def test_prepare_exact_plan_mixed_preflight_blockers_fail_without_clarification(

@@ -971,6 +971,61 @@ def _resume_clarification(
     return str(found["key"]), found["event"], result if isinstance(result, dict) else None
 
 
+def _workflow_bypass_clarification_error(
+    args: dict[str, Any], questions: list[Any]
+) -> dict[str, Any] | None:
+    """Reject a user-facing choice that proposes bypassing WorkflowPlan validation."""
+
+    def text_values(value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, dict):
+            return [text for item in value.values() for text in text_values(item)]
+        if isinstance(value, list):
+            return [text for item in value for text in text_values(item)]
+        return []
+
+    text = " ".join(
+        text_values(
+            {
+                "title": args.get("title"),
+                "description": args.get("description"),
+                "questions": questions,
+            }
+        )
+    ).lower()
+    workflow_markers = ("workflow", "工作流", "workflowplan", "workflow plan")
+    bypass_markers = ("bypass", "绕过", "不经过", "跳过", "避开")
+    direct_canvas_markers = (
+        "direct canvas",
+        "canvas command",
+        "freezone_emit_canvas_command",
+        "直接在画布",
+        "直接创建节点",
+        "直接画布",
+    )
+    if not (
+        any(marker in text for marker in workflow_markers)
+        and any(marker in text for marker in bypass_markers)
+        and any(marker in text for marker in direct_canvas_markers)
+    ):
+        return None
+    return {
+        "ok": False,
+        "status": "workflow_clarification_bypass_rejected",
+        "code": "workflow_clarification_bypass_rejected",
+        "error": "A clarification option cannot authorize bypassing WorkflowPlan validation.",
+        "retryable": False,
+        "next_action": "correct_same_workflow_plan",
+        "agent_instruction": (
+            "Do not show this clarification card and do not call canvas command or standalone "
+            "node tools. Correct the same complete WorkflowPlan by adding every required Skill "
+            "stage and consuming edge. If that conflicts with the user's exact node-only "
+            "constraint, stop and report the conflict; never offer a direct-canvas bypass."
+        ),
+    }
+
+
 def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     project = (
         str(
@@ -1076,6 +1131,42 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
         "video_generate_audio": "视频声音",
         "video_variants_per_node": "视频生成数量",
     }
+    answers = args.get("answers")
+    if not isinstance(answers, dict):
+        answers = {}
+    # Model-dependent options cannot be resolved until the same card has a
+    # model selection. Preflight often reports only the dependent field, so
+    # add the model question unless the caller carried a confirmed answer.
+    if isinstance(generation_required_choices, dict):
+        dependent_fields = {
+            "image": {"aspect_ratio", "resolution", "quality"},
+            "video": {"aspect_ratio", "resolution", "duration_seconds", "generate_audio"},
+        }
+        for media in ("image", "video"):
+            fields = generation_required_choices.get(media)
+            model_id = f"{media}_model"
+            question_ids = {
+                str(question.get("id") or "").strip().lower()
+                for question in questions
+                if isinstance(question, dict)
+            }
+            if (
+                isinstance(fields, list)
+                and any(field in dependent_fields[media] for field in fields)
+                and model_id not in question_ids
+                and model_id not in answers
+                and not str(args.get("workflow_draft_id") or "").strip()
+            ):
+                insert_at = next(
+                    (
+                        index
+                        for index, question in enumerate(questions)
+                        if isinstance(question, dict)
+                        and str(question.get("id") or "").startswith(f"{media}_")
+                    ),
+                    len(questions),
+                )
+                questions.insert(insert_at, {"id": model_id})
     server_managed_question_ids = {"thinking_level"}
     questions = [
         question
@@ -1121,9 +1212,9 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
             }
         )
     questions = normalized_questions
-    answers = args.get("answers")
-    if not isinstance(answers, dict):
-        answers = {}
+    bypass_error = _workflow_bypass_clarification_error(args, questions)
+    if bypass_error is not None:
+        return tool_result(bypass_error)
     generation_preferences = args.get("generation_preferences")
     if generation_preferences is None:
         generation_preferences = {}
@@ -4191,13 +4282,30 @@ def _workflow_preflight_failure(
     clarification = _preflight_clarification_result(preflight, **extra)
     if clarification is not None:
         return clarification
-    return {
+    blocker = preflight_failure_blocker(preflight)
+    result = {
         "ok": False,
         "status": "workflow_preflight_failed",
-        "error": preflight_failure_blocker(preflight)["message"],
+        "error": blocker["message"],
         "preflight": preflight,
         **extra,
     }
+    if blocker.get("code") in {"skill_stage_missing", "skill_stage_unused"}:
+        result.update(
+            code=blocker["code"],
+            retryable=True,
+            next_action="correct_same_workflow_plan",
+            agent_instruction=(
+                "Correct this same complete WorkflowPlan exactly once by adding or connecting "
+                "the required Skill stage with its allowed Recipe and consuming edges, then "
+                "retry the WorkflowPlan draft tool. Do not offer or call direct canvas commands, "
+                "freezone_emit_canvas_command, or standalone node tools as a fallback. A user "
+                "selection cannot authorize bypassing WorkflowPlan validation. If the required "
+                "stage conflicts with an explicit node-only constraint, stop and report that "
+                "conflict instead of asking how to bypass it."
+            ),
+        )
+    return result
 
 
 def _generation_parameters_required_result(
@@ -5348,17 +5456,28 @@ def _emit_canvas_commands(
     if not allow_dynamic_workflow_batch and _looks_like_handwritten_workflow_batch(
         commands
     ):
-        return _emit_command_error(
-            project,
-            canvas,
-            "wrong_tool_dynamic_workflow",
-            (
+        return tool_result(
+            {
+                "ok": False,
+                "status": "wrong_tool_dynamic_workflow",
+                "code": "wrong_tool_dynamic_workflow",
+                "error": (
                 "This looks like a workflow being hand-written as canvas commands. "
                 "Do not use canvas commands to bypass dynamic WorkflowPlan validation. Select "
                 "one native Hermes Skill, load it with freezone_get_workflow_skill, "
                 "author a complete freezone_workflow_plan.v1 with explicit Recipe ids, then call "
                 "freezone_prepare_workflow_plan_draft(plan=...)."
-            ),
+                ),
+                "retryable": False,
+                "next_action": "correct_same_workflow_plan",
+                "agent_instruction": (
+                    "Do not ask the user to approve this bypass and do not split it into "
+                    "standalone node writes. Return to the same complete WorkflowPlan, add every "
+                    "required Skill stage and consuming edge, and retry that plan once; if it "
+                    "conflicts with the user's exact topology, report the conflict."
+                ),
+                **_scope_meta(project or "", canvas),
+            }
         )
     project, canvas, scope_error = _resolve_canvas_scope_for_write(project, canvas)
     if scope_error:
@@ -5585,8 +5704,10 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
             f"Import error: {_JSON_WORKFLOW_CATALOG_IMPORT_ERROR}"
         )
     source_plan = args["plan"]
-    if "generation_answers" in args:
+    if "generation_answers" in args or _workflow_plan_has_recipe_aliases(source_plan):
         source_plan = _clone_json(source_plan)
+        _normalize_workflow_plan_recipe_aliases(source_plan)
+    if "generation_answers" in args:
         choices, answers_error = _generation_choices_from_answers(
             args["generation_answers"], plan=source_plan
         )
@@ -6688,6 +6809,13 @@ def _generation_answer_value(question_id: str, selection: Any) -> Any:
         if not isinstance(option_ids, list) or len(option_ids) != 1:
             raise ValueError(f"{question_id} requires exactly one selected option")
         selection = option_ids[0]
+    elif isinstance(selection, list):
+        # Some agents compact a single-select clarification answer from
+        # {"option_ids": ["value"]} to ["value"].  Accept that lossless JSON
+        # shorthand at the tool boundary instead of failing the whole draft.
+        if len(selection) != 1:
+            raise ValueError(f"{question_id} requires exactly one selected option")
+        selection = selection[0]
     if not isinstance(selection, str) or not selection.strip():
         raise ValueError(f"{question_id} requires a selected option")
     value = selection.strip()
@@ -6708,6 +6836,64 @@ def _generation_answer_value(question_id: str, selection: Any) -> Any:
             raise ValueError("video_generate_audio must be true or false")
         return value.lower() == "true"
     return value
+
+
+def _normalize_workflow_plan_recipe_aliases(plan: Any) -> None:
+    """Move lossless top-level Recipe aliases into the canonical node data.
+
+    WorkflowPlan deliberately persists Recipe identity only at
+    ``data.workflowCatalog.recipeId``.  Agents nevertheless sometimes copy the
+    portable Intent spelling (``recipe_id``/``recipeId``) onto an exact-plan
+    node.  Normalize only an unambiguous alias; malformed or conflicting input
+    is left untouched so the authoritative schema still rejects it.
+    """
+    if not isinstance(plan, dict) or not isinstance(plan.get("nodes"), list):
+        return
+    for node in plan["nodes"]:
+        if not isinstance(node, dict):
+            continue
+        aliases = [
+            node.get(key)
+            for key in ("recipe_id", "recipeId")
+            if key in node
+        ]
+        if not aliases or any(
+            not isinstance(value, str) or not value.strip() for value in aliases
+        ):
+            continue
+        normalized = [value.strip() for value in aliases]
+        if len(set(normalized)) != 1:
+            continue
+        data = node.get("data")
+        if data is None:
+            data = {}
+            node["data"] = data
+        if not isinstance(data, dict):
+            continue
+        catalog = data.get("workflowCatalog")
+        if catalog is None:
+            catalog = {}
+            data["workflowCatalog"] = catalog
+        if not isinstance(catalog, dict):
+            continue
+        if "recipeId" in catalog:
+            existing_value = catalog["recipeId"]
+            if not isinstance(existing_value, str) or not existing_value.strip():
+                continue
+            if existing_value.strip() != normalized[0]:
+                continue
+        catalog["recipeId"] = normalized[0]
+        node.pop("recipe_id", None)
+        node.pop("recipeId", None)
+
+
+def _workflow_plan_has_recipe_aliases(plan: Any) -> bool:
+    if not isinstance(plan, dict) or not isinstance(plan.get("nodes"), list):
+        return False
+    return any(
+        isinstance(node, dict) and ("recipe_id" in node or "recipeId" in node)
+        for node in plan["nodes"]
+    )
 
 
 def _plan_has_explicit_video_durations(plan: Any) -> bool:
