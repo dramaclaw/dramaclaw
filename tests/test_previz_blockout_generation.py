@@ -21,6 +21,7 @@ from novelvideo.director_world.blockout.generation_agent import (
     generate_blockout_from_image,
     resolve_blockout_model,
     resolve_blockout_model_settings,
+    resolve_blockout_timeout_seconds,
 )
 from novelvideo.freezone import presets, vision_gateway
 
@@ -58,6 +59,7 @@ def default_model_names(monkeypatch):
     monkeypatch.delenv("PREVIZ_BLOCKOUT_MODEL", raising=False)
     monkeypatch.delenv("FREEZONE_VISION_MODEL", raising=False)
     monkeypatch.delenv("PREVIZ_BLOCKOUT_REASONING_EFFORT", raising=False)
+    monkeypatch.delenv("PREVIZ_BLOCKOUT_TIMEOUT_SECONDS", raising=False)
 
 
 @pytest.fixture
@@ -352,6 +354,30 @@ async def test_every_model_call_carries_the_reasoning_effort(
     assert [call["model_settings"] for call in fake.calls] == [
         {"openai_reasoning_effort": "low"}
     ] * 3
+
+
+def test_the_request_timeout_comes_from_the_environment(monkeypatch):
+    assert resolve_blockout_timeout_seconds() == 300.0
+
+    monkeypatch.setenv("PREVIZ_BLOCKOUT_TIMEOUT_SECONDS", " ")
+    assert resolve_blockout_timeout_seconds() == 300.0
+
+    monkeypatch.setenv("PREVIZ_BLOCKOUT_TIMEOUT_SECONDS", " 900 ")
+    assert resolve_blockout_timeout_seconds() == 900.0
+
+    for bad in ("abc", "0", "-5"):
+        monkeypatch.setenv("PREVIZ_BLOCKOUT_TIMEOUT_SECONDS", bad)
+        with pytest.raises(ValueError, match="PREVIZ_BLOCKOUT_TIMEOUT_SECONDS"):
+            resolve_blockout_timeout_seconds()
+
+
+async def test_every_model_call_uses_the_configured_timeout(
+    image_path, model, monkeypatch
+):
+    monkeypatch.setenv("PREVIZ_BLOCKOUT_TIMEOUT_SECONDS", "900")
+    fake = model(GOLDEN_PROGRAM, REVIEWED_PROGRAM, REVIEWED_AGAIN)
+    await generate_blockout_from_image(image_path=image_path, render_check=True)
+    assert [call["timeout_seconds"] for call in fake.calls] == [900.0] * 3
 
 
 def test_the_model_falls_back_to_the_freezone_vision_model(monkeypatch):

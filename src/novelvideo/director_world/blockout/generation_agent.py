@@ -41,6 +41,7 @@ from novelvideo.egress_context import TrustedEgressContext
 
 BLOCKOUT_MODEL_ENV = "PREVIZ_BLOCKOUT_MODEL"
 BLOCKOUT_REASONING_EFFORT_ENV = "PREVIZ_BLOCKOUT_REASONING_EFFORT"
+BLOCKOUT_TIMEOUT_ENV = "PREVIZ_BLOCKOUT_TIMEOUT_SECONDS"
 BLOCKOUT_TIMEOUT_SECONDS = 300.0
 BLOCKOUT_MAX_ATTEMPTS = 3
 # 渲染核对的轮数：每轮把当前场景渲染成图，和参考图一起交给模型改。第一轮修构图，
@@ -74,6 +75,27 @@ def resolve_blockout_model_settings() -> dict | None:
     return {"openai_reasoning_effort": effort}
 
 
+def resolve_blockout_timeout_seconds() -> float:
+    """Per-call request timeout: `PREVIZ_BLOCKOUT_TIMEOUT_SECONDS`, else 300.
+
+    One draft or one review round is one model call, and a reasoning model at
+    a higher effort can take minutes per call: the fixed 300 s suited the
+    default effort, a higher `PREVIZ_BLOCKOUT_REASONING_EFFORT` needs more.
+    """
+    raw = os.environ.get(BLOCKOUT_TIMEOUT_ENV, "").strip()
+    if not raw:
+        return BLOCKOUT_TIMEOUT_SECONDS
+    try:
+        seconds = float(raw)
+    except ValueError:
+        seconds = 0.0
+    if not seconds > 0:
+        raise ValueError(
+            f"{BLOCKOUT_TIMEOUT_ENV} must be a positive number of seconds, got {raw!r}"
+        )
+    return seconds
+
+
 def extract_program(text: str) -> str:
     """Return the program inside the first code fence, or the whole reply."""
     text = text.replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff")
@@ -105,6 +127,7 @@ async def _ask_model(
     images: list,
     model: str,
     model_settings: dict | None,
+    timeout_seconds: float,
     egress_context: TrustedEgressContext | None,
 ) -> str:
     from novelvideo.freezone import vision_gateway
@@ -122,7 +145,7 @@ async def _ask_model(
         model_name=model,
         prompt=prompt,
         images=[image.data for image in images],
-        timeout_seconds=BLOCKOUT_TIMEOUT_SECONDS,
+        timeout_seconds=timeout_seconds,
     )
     try:
         _model, text = await vision_gateway.call_freezone_vision_model(
@@ -130,7 +153,7 @@ async def _ask_model(
             images=images,
             model_override=model,
             model_settings=model_settings,
-            timeout_seconds=BLOCKOUT_TIMEOUT_SECONDS,
+            timeout_seconds=timeout_seconds,
             transport_context=(
                 vision_egress.transport_context if vision_egress else None
             ),
@@ -206,6 +229,7 @@ async def generate_blockout_from_image(
 
     model = resolve_blockout_model()
     model_settings = resolve_blockout_model_settings()
+    timeout_seconds = resolve_blockout_timeout_seconds()
 
     def unreadable(reason: str, *, sha256: str) -> BlockoutGenerationError:
         # 原始异常里带着服务器上的绝对路径，不该原样走到用户面前。
@@ -254,6 +278,7 @@ async def generate_blockout_from_image(
             images=list(images),
             model=model,
             model_settings=model_settings,
+            timeout_seconds=timeout_seconds,
             egress_context=egress_context,
         )
         return extract_program(text), round(time.monotonic() - started, 3)
