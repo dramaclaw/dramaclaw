@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createFreezoneWorkflowRun,
+  getFreezoneWorkflowRun,
   type FreezoneWorkflowRun,
   updateFreezoneWorkflowRun,
 } from "@/api/canvas";
@@ -90,10 +91,13 @@ vi.mock("@/api/canvas", async (importOriginal) => {
       status: "running",
       actions: [],
     })),
-    updateFreezoneWorkflowRun: vi.fn(async () => ({
+    updateFreezoneWorkflowRun: vi.fn(async (_projectId, _canvasId, _runId, body) => ({
       run_id: "run-test",
-      status: "running",
+      status: body.status && body.status !== "running" ? body.status : "running",
       actions: [],
+    })),
+    getFreezoneWorkflowRun: vi.fn(async () => ({
+      run_id: "run-test", status: "completed", actions: [],
     })),
   };
 });
@@ -120,7 +124,18 @@ describe("canvas chat commands", () => {
     captureVideoFrameBlob.mockReset();
     captureVideoFrameBlob.mockResolvedValue(new Blob(["tail"], { type: "image/png" }));
     vi.mocked(createFreezoneWorkflowRun).mockClear();
-    vi.mocked(updateFreezoneWorkflowRun).mockClear();
+    vi.mocked(getFreezoneWorkflowRun).mockReset();
+    vi.mocked(getFreezoneWorkflowRun).mockResolvedValue({
+      run_id: "run-test", status: "completed", actions: [],
+    } as unknown as Awaited<ReturnType<typeof getFreezoneWorkflowRun>>);
+    vi.mocked(updateFreezoneWorkflowRun).mockReset();
+    vi.mocked(updateFreezoneWorkflowRun).mockImplementation(async (
+      _projectId, _canvasId, _runId, body,
+    ) => ({
+      run_id: "run-test",
+      status: body.status && body.status !== "running" ? body.status : "running",
+      actions: [],
+    }) as unknown as Awaited<ReturnType<typeof updateFreezoneWorkflowRun>>);
     vi.mocked(getProjectTaskLimits).mockReset();
     vi.mocked(getProjectTaskLimits).mockResolvedValue({
       default: {
@@ -4559,9 +4574,6 @@ describe("canvas chat commands", () => {
             resolution: expect.objectContaining({
               options: ["1080p", "2k", "4k"],
             }),
-            denoise: expect.objectContaining({
-              options: ["none", "1x", "2x"],
-            }),
           }),
         }),
         result_effect: expect.objectContaining({
@@ -4570,6 +4582,7 @@ describe("canvas chat commands", () => {
       }),
     ]);
     expect(nodeActionCatalog?.data?.editable_schema).toBeUndefined();
+    expect(nodeActionCatalog?.data?.actions?.[0]?.parameters?.parameter_schema).not.toHaveProperty("denoise");
     expect(nodeActionCatalog?.data?.instruction).toContain(
       "do not answer from the source node parameters",
     );
@@ -4635,11 +4648,7 @@ describe("canvas chat commands", () => {
       current_value: "1080p",
       options: ["1080p", "2k", "4k"],
     });
-    expect(parameters.upscaleDenoise).toMatchObject({
-      label: "降噪",
-      current_value: "1x",
-      options: ["none", "1x", "2x"],
-    });
+    expect(parameters.upscaleDenoise).toBeUndefined();
     expect(parameters.model).toBeUndefined();
     expect(parameters.quality).toBeUndefined();
     expect(parameters.durationSec).toBeUndefined();
@@ -6461,6 +6470,63 @@ describe("canvas chat commands", () => {
             node_id: imageNodeId,
             status: "completed",
             retry_count: 2,
+          })],
+        }),
+      );
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("asks for a rerun instead of retrying an ended Recipe attempt", async () => {
+    const store = useCanvasStore.getState();
+    const imageNodeId = store.addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { prompt: "商品主图" },
+    );
+    let attempts = 0;
+    // "(503)" would look transient; the ended marker must still win.
+    const ended = "recipe attempt ended (failed); rerun the node to start a new attempt (503)";
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      if (!payload.requestId) return;
+      attempts += 1;
+      canvasEventBus.publish("freezone/node-action-result", {
+        requestId: payload.requestId,
+        nodeId: payload.nodeId,
+        action: payload.action,
+        status: "error",
+        error: ended,
+      });
+    });
+
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_workflow", node_ids: [imageNodeId] }],
+        }]),
+        {
+          projectId: "project-a",
+          canvasId: "canvas-a",
+          actionTimeoutMs: 100,
+          actionRetryDelayMs: 1,
+        },
+      );
+
+      expect(attempts).toBe(1);
+      const expected = `本次节点执行已结束，请重新运行该节点以开始新的执行（${ended}）`;
+      expect(result.errors.join("\n")).toContain(expected);
+      expect(updateFreezoneWorkflowRun).toHaveBeenCalledWith(
+        "project-a",
+        "canvas-a",
+        "run-test",
+        expect.objectContaining({
+          action_updates: [expect.objectContaining({
+            node_id: imageNodeId,
+            status: "failed",
+            error: expected,
+            retry_count: 0,
           })],
         }),
       );
@@ -8475,6 +8541,257 @@ describe("canvas chat commands", () => {
         "工作流运行已结束（interrupted），已停止启动后续节点；请继续工作流以完成未完成的部分。",
       ]);
       expect(events).toEqual([]);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("keeps a completed server action pending until its canvas output is visible", async () => {
+    const store = useCanvasStore.getState();
+    const imageNodeId = store.addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { prompt: "商品主图" },
+    );
+    const events: string[] = [];
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      events.push(payload.nodeId);
+    });
+    vi.mocked(updateFreezoneWorkflowRun).mockImplementation(async (
+      _projectId, _canvasId, _runId, body,
+    ) => ({
+      run_id: "run-test",
+      status: body.status === "running" && !body.action_updates
+        ? "completed"
+        : body.status === "completed" ? "completed" : "running",
+      actions: [],
+    }) as unknown as Awaited<ReturnType<typeof updateFreezoneWorkflowRun>>);
+
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_workflow", node_ids: [imageNodeId] }],
+        }]),
+        { projectId: "project-a", canvasId: "canvas-a", actionTimeoutMs: 100 },
+      );
+
+      expect(events).toEqual([]);
+      expect(result.errors).toEqual([]);
+      expect(result.commandResults).toContainEqual(expect.objectContaining({
+        nodeId: imageNodeId,
+        status: "pending",
+        output: { pending: true, reason: "workflow_result_sync_pending" },
+      }));
+      expect(result.openedUiActions).toBe(0);
+      expect(store.nodes.find((node) => node.id === imageNodeId)?.data.workflowGeneratedAt)
+        .toBeUndefined();
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("accepts a completed server action once its canvas output is visible", async () => {
+    const store = useCanvasStore.getState();
+    const imageNodeId = store.addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { prompt: "商品主图" },
+    );
+    const events: string[] = [];
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      events.push(payload.nodeId);
+    });
+    vi.mocked(updateFreezoneWorkflowRun).mockImplementation(async (
+      _projectId, _canvasId, _runId, body,
+    ) => {
+      if (body.status === "running" && !body.action_updates) {
+        store.updateNodeData(imageNodeId, { imageUrl: "/static/project/image.png" });
+        return {
+          run_id: "run-test", status: "completed", actions: [],
+        } as unknown as Awaited<ReturnType<typeof updateFreezoneWorkflowRun>>;
+      }
+      return {
+        run_id: "run-test",
+        status: body.status === "completed" ? "completed" : "running",
+        actions: [],
+      } as unknown as Awaited<ReturnType<typeof updateFreezoneWorkflowRun>>;
+    });
+
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_workflow", node_ids: [imageNodeId] }],
+        }]),
+        { projectId: "project-a", canvasId: "canvas-a", actionTimeoutMs: 100 },
+      );
+
+      expect(events).toEqual([]);
+      expect(result.errors).toEqual([]);
+      expect(result.commandResults).toContainEqual(expect.objectContaining({
+        nodeId: imageNodeId,
+        status: "success",
+        output: expect.objectContaining({ imageUrl: "/static/project/image.png" }),
+      }));
+      expect(useCanvasStore.getState().nodes.find((node) => node.id === imageNodeId)?.data.workflowGeneratedAt)
+        .toEqual(expect.any(String));
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("keeps a successful final callback successful when the server already completed the run", async () => {
+    const store = useCanvasStore.getState();
+    const imageNodeId = store.addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { prompt: "商品主图" },
+    );
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      if (!payload.requestId) return;
+      canvasEventBus.publish("freezone/node-action-accepted", {
+        requestId: payload.requestId,
+        nodeId: payload.nodeId,
+        action: payload.action,
+      });
+      window.setTimeout(() => {
+        store.updateNodeData(payload.nodeId, { imageUrl: "/static/project/image.png" });
+        canvasEventBus.publish("freezone/node-action-result", {
+          requestId: payload.requestId!,
+          nodeId: payload.nodeId,
+          action: payload.action,
+          status: "success",
+        });
+      }, 0);
+    });
+    vi.mocked(updateFreezoneWorkflowRun).mockImplementation(async (
+      _projectId, _canvasId, _runId, body,
+    ) => ({
+      run_id: "run-test",
+      status: body.action_updates?.some((update) => update.phase === "syncing_result")
+        ? "completed"
+        : body.status === "completed" ? "completed" : "running",
+      actions: [],
+    }) as unknown as Awaited<ReturnType<typeof updateFreezoneWorkflowRun>>);
+
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_workflow", node_ids: [imageNodeId] }],
+        }]),
+        { projectId: "project-a", canvasId: "canvas-a", actionTimeoutMs: 100 },
+      );
+
+      expect(result.errors).toEqual([]);
+      expect(result.commandResults).toContainEqual(expect.objectContaining({
+        nodeId: imageNodeId,
+        status: "success",
+      }));
+      expect(updateFreezoneWorkflowRun).toHaveBeenCalledWith(
+        "project-a", "canvas-a", "run-test",
+        expect.objectContaining({ status: "completed" }),
+      );
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it.each([
+    [
+      "interrupted",
+      "工作流运行已结束（interrupted），已停止启动后续节点；请继续工作流以完成未完成的部分。",
+    ],
+  ])("reports %s returned by the final completed PATCH", async (serverStatus, expectedError) => {
+    const store = useCanvasStore.getState();
+    const imageNodeId = store.addNode(
+      CANVAS_NODE_TYPES.imageGen,
+      { x: 0, y: 0 },
+      { prompt: "商品主图" },
+    );
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      if (!payload.requestId) return;
+      canvasEventBus.publish("freezone/node-action-accepted", {
+        requestId: payload.requestId,
+        nodeId: payload.nodeId,
+        action: payload.action,
+      });
+      window.setTimeout(() => {
+        store.updateNodeData(payload.nodeId, { imageUrl: "/static/project/image.png" });
+        canvasEventBus.publish("freezone/node-action-result", {
+          requestId: payload.requestId!,
+          nodeId: payload.nodeId,
+          action: payload.action,
+          status: "success",
+        });
+      }, 0);
+    });
+    vi.mocked(updateFreezoneWorkflowRun).mockImplementation(async (
+      _projectId, _canvasId, _runId, body,
+    ) => ({
+      run_id: "run-test",
+      status: body.status === "completed" ? serverStatus : "running",
+      actions: [],
+    }) as unknown as Awaited<ReturnType<typeof updateFreezoneWorkflowRun>>);
+
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_workflow", node_ids: [imageNodeId] }],
+        }]),
+        { projectId: "project-a", canvasId: "canvas-a", actionTimeoutMs: 100 },
+      );
+
+      expect(updateFreezoneWorkflowRun).toHaveBeenCalledWith(
+        "project-a", "canvas-a", "run-test",
+        expect.objectContaining({ status: "completed" }),
+      );
+      expect(result.errors).toContain(expectedError);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it.each([
+    ["completed", "success"],
+    ["running", "pending"],
+  ] as const)("reports %s after reconciling a running final PATCH", async (reconciledStatus, expectedStepStatus) => {
+    const store = useCanvasStore.getState();
+    const imageNodeId = store.addNode(CANVAS_NODE_TYPES.imageGen, { x: 0, y: 0 }, { prompt: "主图" });
+    const unsubscribe = canvasEventBus.subscribe("freezone/run-node-action", (payload) => {
+      if (!payload.requestId) return;
+      canvasEventBus.publish("freezone/node-action-accepted", {
+        requestId: payload.requestId, nodeId: payload.nodeId, action: payload.action,
+      });
+      window.setTimeout(() => {
+        store.updateNodeData(payload.nodeId, { imageUrl: "/static/project/image.png" });
+        canvasEventBus.publish("freezone/node-action-result", {
+          requestId: payload.requestId!, nodeId: payload.nodeId,
+          action: payload.action, status: "success",
+        });
+      }, 0);
+    });
+    vi.mocked(updateFreezoneWorkflowRun).mockImplementation(async () => ({
+      run_id: "run-test", status: "running", actions: [],
+    }) as unknown as Awaited<ReturnType<typeof updateFreezoneWorkflowRun>>);
+    vi.mocked(getFreezoneWorkflowRun).mockResolvedValue({
+      run_id: "run-test", status: reconciledStatus, actions: [],
+    } as unknown as Awaited<ReturnType<typeof getFreezoneWorkflowRun>>);
+    try {
+      const result = await applyCanvasChatCommandsAsync(
+        extractCanvasChatCommandEnvelopes([{
+          schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+          commands: [{ type: "run_workflow", node_ids: [imageNodeId] }],
+        }]),
+        { projectId: "project-a", canvasId: "canvas-a", actionTimeoutMs: 100 },
+      );
+      expect(getFreezoneWorkflowRun).toHaveBeenCalledWith("project-a", "canvas-a", "run-test", 10);
+      expect(result.errors).toEqual([]);
+      expect(result.commandResults).toContainEqual(expect.objectContaining({
+        nodeId: imageNodeId, status: expectedStepStatus,
+      }));
     } finally {
       unsubscribe();
     }

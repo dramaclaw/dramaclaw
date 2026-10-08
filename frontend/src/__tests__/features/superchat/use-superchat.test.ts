@@ -6274,6 +6274,63 @@ describe("tool status parts", () => {
     })).toBe("已提交到画布");
   });
 
+  it("renders workflow parameter handoff as waiting instead of failed", () => {
+    const waiting = (toolStatusPartForTest("agent.tool.updated", {
+      type: "agent.tool.updated",
+      turn_id: "turn-a",
+      call_id: "call-waiting",
+      name: "freezone_prepare_workflow_draft",
+      status: "failed",
+      input: { operation_id: "operation-a" },
+      result: {
+        ok: false,
+        status: "clarification_required",
+        code: "generation_parameters_required",
+      },
+    }, "turn-a") as { event: ChatMessage }).event;
+
+    expect(toolStatusRuntimeTextForTest({
+      status: "failed",
+      title: genericToolTitleForTest(waiting),
+      toolMessage: waiting,
+    })).toBe("等待选择生成参数");
+  });
+
+  it("hides a superseded parameter handoff after the same draft operation succeeds", () => {
+    const waiting = {
+      ...toolStatusPartForTest("agent.tool.updated", {
+        type: "agent.tool.updated",
+        turn_id: "turn-a",
+        call_id: "call-waiting",
+        name: "freezone_prepare_workflow_draft",
+        status: "failed",
+        input: { operation_id: "operation-a" },
+        result: {
+          ok: false,
+          status: "clarification_required",
+          code: "generation_parameters_required",
+        },
+      }, "turn-a"),
+      seq: 1,
+    };
+    const ready = {
+      ...toolStatusPartForTest("agent.tool.updated", {
+        type: "agent.tool.updated",
+        turn_id: "turn-a",
+        call_id: "call-ready",
+        name: "freezone_prepare_workflow_draft",
+        status: "completed",
+        input: { operation_id: "operation-a" },
+        result: { ok: true, status: "workflow_draft_ready", draft_id: "draft-a" },
+      }, "turn-a"),
+      seq: 2,
+    };
+
+    const visible = agentRuntimeDisplayPartsForTest([waiting, ready], { streaming: false });
+
+    expect(visible.map((part) => part.id)).toEqual(["tool_status:turn-a:call-ready"]);
+  });
+
   it("hides non-failed tool status parts when replaying historical runtime activity", () => {
     const runningTool = {
       ...toolStatusPartForTest("agent.tool.updated", {
@@ -6421,6 +6478,40 @@ describe("tool status parts", () => {
       "tool_status:turn-a:call-skill",
       "tool_status:turn-a:call-prepare",
       "tool_status:turn-a:call-confirm",
+    ]);
+  });
+
+  it("shows the delivered plan draft and hides a duplicate failure for the same operation", () => {
+    const failedDuplicate = {
+      ...toolStatusPartForTest("agent.tool.updated", {
+        type: "agent.tool.updated",
+        turn_id: "turn-a",
+        call_id: "call-failed",
+        name: "dramaclaw.freezone_prepare_workflow_plan_draft",
+        status: "failed",
+        input: { operation_id: "operation-a" },
+        error: "aggregate workflow planning text exceeds 4000 characters",
+      }, "turn-a"),
+      seq: 1,
+    };
+    const deliveredDraft = {
+      ...toolStatusPartForTest("agent.tool.updated", {
+        type: "agent.tool.updated",
+        turn_id: "turn-a",
+        call_id: "call-completed",
+        name: "dramaclaw.freezone_prepare_workflow_plan_draft",
+        status: "completed",
+        input: { operation_id: "operation-a" },
+        output: { ok: true, status: "workflow_draft_ready", draft_id: "draft-a" },
+      }, "turn-a"),
+      seq: 2,
+    };
+
+    expect(agentRuntimeDisplayPartsForTest(
+      [failedDuplicate, deliveredDraft],
+      { streaming: false },
+    ).map((part) => part.id)).toEqual([
+      "tool_status:turn-a:call-completed",
     ]);
   });
 

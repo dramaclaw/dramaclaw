@@ -51,6 +51,21 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
   `freezone_create_edge`, `freezone_group_nodes`, or other single-operation tools.
 - Never fall back to repeated single-operation writes after a workflow validation or schema error.
   Correct the workflow intent/plan or report the blocking error.
+- Never offer direct canvas commands or standalone node writes as a clarification choice for
+  bypassing WorkflowPlan validation. A user selection cannot authorize that bypass. When a Skill's
+  required stage conflicts with an exact node-only constraint, report the conflict or ask whether
+  the required stage may be added; do not offer an invalid direct-write alternative.
+- Never resubmit an unchanged workflow payload. After one correction, if the same validation path
+  fails again in the same turn, stop retrying and report that blocker instead of increasing the
+  failure counter.
+- Treat the Workflow Intent schema as the serialization allowlist. Recipe discovery fields such as
+  `requires_source_media` are selection metadata only: use them to choose and connect Recipes, but
+  never copy them into `intent.items[]`. The server derives authoritative Recipe constraints from
+  `recipe_id`.
+- For `short-drama-quick`, preserve screenplay-first planning: when narration/dialogue will be
+  produced by an upstream shot/script Recipe, keep the `drama-shot-voice` item and reference that
+  text item. Do not invent literal narration at draft time, and never delete requested voiceover
+  merely to pass validation; the runtime resolves the spoken text through the `prompt_for` edge.
 - A failure from an earlier chat turn is diagnostic history, not proof that the current adapter is
   still blocked. When the user repeats the original create/run request, explicitly asks to retry,
   or has restarted the service, retry the same complete workflow write once in the current turn.
@@ -76,8 +91,12 @@ canvas execution mode. For every new generation request, call
 `freezone_request_user_clarification` exactly once before any canvas write in both
 `manual_confirm` and `auto_execute`. Historical clarification answers, prior-turn parameters,
 existing node values, and Recipe defaults may prefill recommended choices, but never count as the
-user's selection for the current request. After the clarification result returns for that request,
+user’s selection for the current request. After the clarification result returns for that request,
 do not ask again.
+
+When using `generation_media_types` or `generation_required_choices`, do not include agent-authored
+`questions` in the same call. Generation clarification is one exclusive server-owned mode; ask any
+unrelated business question in a separate turn only when it is actually required.
 
 - In `manual_confirm`, apply the preliminary answers to the plan, then submit the protected write.
   The normal approval card is still shown and remains the final parameter editor.
@@ -103,11 +122,11 @@ completion.
 Offer a recommended/default option so the user does not need to understand provider-specific
 fields. In either execution mode, do not draft, commit, approve, or run until the required
 clarification result returns. This is an explicit exception to a host's general rule not to ask about model
-parameters. It applies only to image and video generation for now, and only when the operation will
-generate media (including `run_after_create=true`); do not ask when the user only wants empty nodes,
-connections, grouping, layout, or edits without generation. Choices explicit in the current user
-request, Recipe, existing node data, or history should be preselected in the card, not used to skip
-the card.
+parameters. It applies only to image and video generation for now. It also applies with
+`run_after_create=false` when the user explicitly asks to configure image/video node parameters;
+do not ask when the user only wants empty nodes, connections, grouping, layout, or edits without
+generation parameters. Choices explicit in the current user request, Recipe, existing node data,
+or history should be preselected in the card, not used to skip the card.
 
 The portable workflow intent carries confirmed shared choices in `inputs`:
 
@@ -187,7 +206,8 @@ including `480P` whenever the schema lists it.
 3. Call `freezone_begin_agent_product_generation` with `product_kind="workflow_result"`, a stable
    generation session, `skill_id`, `skill_version`, `artifact_id="<skill_id>@<skill_version>"`,
    and the normalized inputs before authoring the result. These Skill identities must match the
-   later compiled result.
+   later compiled result. Copy the returned `operation_id` exactly; never invent, abbreviate, or
+   reconstruct one, and never call a prepare tool before this admission succeeds.
 4. For a normal workflow, submit one compact `freezone_workflow_intent.v1` and the admitted
    `operation_id` to `freezone_prepare_workflow`. The backend compiles and validates it; do not
    run a separate compile first.
@@ -207,7 +227,13 @@ Route between the normal draft flow and the exact topology path in this priority
 2. Otherwise, when the user explicitly names required nodes and their dependency order that
    deviate from the matching Skill's template, use the exact topology path in
    [references/custom-topology.md](references/custom-topology.md), preparing the complete Plan as
-   a persisted draft even when a production Skill also matches.
+   a persisted draft even when a production Skill also matches. The Plan must include top-level
+   `schema_version` and `skill.id`/`skill.version` copied from the selected production Skill;
+   `generation_answers` never substitutes for the complete Plan.
+   Episode totals, Beat totals, shot totals, duration, and other business counts alone do not enter
+   this path. Keep them in compact Intent inputs or the standard planner. Only treat them as exact
+   topology when the user explicitly requires those items to exist as individual canvas nodes and
+   specifies a dependency graph that differs from the standard template.
 3. When an explicit planner instruction and the listed topology genuinely conflict (for example
    the standard planner is named but a mandatory template stage is dropped), ask one
    single-question clarification with `freezone_request_user_clarification` before choosing a

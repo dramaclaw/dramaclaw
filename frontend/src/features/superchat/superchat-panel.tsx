@@ -151,7 +151,6 @@ import type { ApprovalDecision, ApprovalRequest, ChatAttachment } from "@/featur
 import { FormatCheckDetailsDialog } from "@/components/ingest/FormatCheckDetailsDialog";
 import type { FormatCheck, UploadResult } from "@/lib/queries/ingest";
 import type {
-  FreezoneVideoUpscaleDenoise,
   FreezoneVideoUpscaleResolution,
 } from "@/api/ops";
 import type { ErrorResponse, OkResponse, TaskResponse } from "@/types/api";
@@ -168,7 +167,6 @@ import {
 import { getDownstreamSpawnTypes } from "@/features/canvas/domain/nodeRegistry";
 import { VIDEO_GENERATION_ASPECT_RATIOS } from "@/features/canvas/application/imageData";
 import {
-  VIDEO_UPSCALE_DENOISE_OPTIONS,
   VIDEO_UPSCALE_RESOLUTIONS,
   VIDEO_UPSCALE_RESOLUTION_LABEL,
 } from "@/features/canvas/application/videoUpscale";
@@ -490,7 +488,9 @@ const AGENT_TOOL_TITLE_OVERRIDES: Record<string, string> = {
   get_workflow_skill: "加载 Workflow Skill",
   "get workflow skill": "加载 Workflow Skill",
   freezone_prepare_workflow_draft: "生成工作流草稿",
+  freezone_prepare_workflow_plan_draft: "生成工作流草稿",
   freezone_confirm_workflow_draft: "提交到画布",
+  freezone_request_user_clarification: "确认生成参数",
   freezone_list_agent_catalog: "读取 Skill / Recipe 列表",
   freezone_get_saved_skill: "读取 Skill 配置",
   freezone_get_saved_recipe: "读取 Recipe 配置",
@@ -506,6 +506,62 @@ function toolRawRecord(message: ChatMessage): Record<string, unknown> | null {
   return message.raw && typeof message.raw === "object"
     ? (message.raw as Record<string, unknown>)
     : null;
+}
+
+function structuredToolResultRecords(value: unknown, depth = 0): Record<string, unknown>[] {
+  if (depth > 5 || value == null) return [];
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (!text.startsWith("{") && !text.startsWith("[")) return [];
+    try {
+      return structuredToolResultRecords(JSON.parse(text), depth + 1);
+    } catch {
+      return [];
+    }
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => structuredToolResultRecords(item, depth + 1));
+  }
+  if (typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  return [
+    record,
+    ...["result", "result_json", "output", "structuredContent", "data", "content"]
+      .flatMap((key) => structuredToolResultRecords(record[key], depth + 1)),
+    ...(
+      typeof record.text === "string"
+        ? structuredToolResultRecords(record.text, depth + 1)
+        : []
+    ),
+  ];
+}
+
+function toolBusinessResult(message: ChatMessage): Record<string, unknown> | null {
+  const raw = toolRawRecord(message);
+  if (!raw) return null;
+  return structuredToolResultRecords(raw).find((candidate) =>
+    typeof candidate.status === "string" && (
+      typeof candidate.ok === "boolean"
+      || typeof candidate.code === "string"
+      || candidate.status === "clarification_frontend_timeout"
+    ),
+  ) ?? null;
+}
+
+function toolBusinessStatus(message: ChatMessage): string {
+  return String(toolBusinessResult(message)?.status ?? "").trim().toLowerCase();
+}
+
+function isRecoverableWorkflowInteraction(message: ChatMessage): boolean {
+  const result = toolBusinessResult(message);
+  if (!result) return false;
+  return (
+    result.status === "clarification_frontend_timeout"
+    || (
+      result.status === "clarification_required"
+      && result.code === "generation_parameters_required"
+    )
+  );
 }
 
 function freezoneToolName(message: ChatMessage): string {
@@ -533,6 +589,7 @@ function freezoneToolDisplay(message: ChatMessage): { title: string; description
 
 function freezoneToolStatus(message: ChatMessage): "running" | "done" | "failed" {
   const raw = toolRawRecord(message);
+  if (isRecoverableWorkflowInteraction(message)) return "done";
   const status = typeof raw?.status === "string" ? raw.status.toLowerCase() : "";
   if (
     raw?.type === "tool.call"
@@ -1726,7 +1783,8 @@ function FreezoneToolActivityCard({ message }: { message: ChatMessage }) {
 function genericToolTitle(message: ChatMessage): string {
   const raw = toolRawRecord(message);
   const name = typeof raw?.name === "string" ? raw.name.trim() : "";
-  const override = AGENT_TOOL_TITLE_OVERRIDES[name.toLowerCase()];
+  const normalizedName = name.toLowerCase().split(".").pop() ?? "";
+  const override = AGENT_TOOL_TITLE_OVERRIDES[normalizedName];
   if (override) return override;
   if (!name) return "执行工具";
   return name
@@ -1997,6 +2055,7 @@ const PERSISTENT_SETTLED_TOOL_STATUS_NAMES = new Set<string>([
   "skill",
   "freezone_get_workflow_skill",
   "freezone_prepare_workflow_draft",
+  "freezone_prepare_workflow_plan_draft",
   "freezone_confirm_workflow_draft",
   "freezone_list_agent_catalog",
   "freezone_get_saved_skill",
@@ -2014,8 +2073,26 @@ function shouldPersistSettledToolStatus(toolMessage: ChatMessage): boolean {
     raw?.functionName,
   ];
   return candidates.some((candidate) =>
-    typeof candidate === "string" && PERSISTENT_SETTLED_TOOL_STATUS_NAMES.has(candidate),
+    typeof candidate === "string" && PERSISTENT_SETTLED_TOOL_STATUS_NAMES.has(
+      candidate.toLowerCase().split(".").pop() ?? "",
+    ),
   );
+}
+
+function workflowDraftOperationId(toolMessage: ChatMessage): string {
+  const raw = toolRawRecord(toolMessage);
+  const name = typeof raw?.name === "string"
+    ? raw.name.toLowerCase().split(".").pop() ?? ""
+    : "";
+  if (![
+    "freezone_prepare_workflow",
+    "freezone_prepare_workflow_draft",
+    "freezone_prepare_workflow_plan_draft",
+  ].includes(name)) return "";
+  const input = raw?.input && typeof raw.input === "object"
+    ? raw.input as Record<string, unknown>
+    : null;
+  return typeof input?.operation_id === "string" ? input.operation_id.trim() : "";
 }
 
 function toolStatusRuntimeText(params: {
@@ -2025,6 +2102,9 @@ function toolStatusRuntimeText(params: {
 }): string {
   const { status, title, toolMessage } = params;
   const raw = toolRawRecord(toolMessage);
+  const businessStatus = toolBusinessStatus(toolMessage);
+  if (businessStatus === "clarification_required") return "等待选择生成参数";
+  if (businessStatus === "clarification_frontend_timeout") return "等待回答已暂停";
   if (
     status === "failed" &&
     (raw?.name === "freezone_put_agent_catalog_draft_outline" ||
@@ -2107,6 +2187,19 @@ function agentRuntimeDisplayParts(
   parts: ChatMessagePart[],
   options: { streaming: boolean; hideSettledToolStatus?: boolean },
 ): RuntimeDisplayPart[] {
+  const deliveredWorkflowDraftOperations = new Set<string>();
+  for (const part of parts) {
+    if (part.type !== "tool_status") continue;
+    const toolMessage = part.event as ChatMessage;
+    const operationId = workflowDraftOperationId(toolMessage);
+    if (
+      operationId
+      && freezoneToolStatus(toolMessage) === "done"
+      && toolBusinessStatus(toolMessage) === "workflow_draft_ready"
+    ) {
+      deliveredWorkflowDraftOperations.add(operationId);
+    }
+  }
   return mergeAdjacentToolStatusParts(
     mergeAdjacentAgentThoughtParts(
       [...parts]
@@ -2116,6 +2209,14 @@ function agentRuntimeDisplayParts(
           const toolMessage = part.event as ChatMessage;
           if (shouldHideInternalToolMessage(toolMessage)) return false;
           const status = freezoneToolStatus(toolMessage);
+          const operationId = workflowDraftOperationId(toolMessage);
+          if (
+            operationId &&
+            deliveredWorkflowDraftOperations.has(operationId) &&
+            (status === "failed" || toolBusinessStatus(toolMessage) === "clarification_required")
+          ) {
+            return false;
+          }
           if (
             (options.hideSettledToolStatus || !options.streaming)
             && status !== "failed"
@@ -2573,12 +2674,6 @@ function normalizeVideoUpscaleResolutionForApproval(value: unknown): FreezoneVid
     : "1080p";
 }
 
-function normalizeVideoUpscaleDenoiseForApproval(value: unknown): FreezoneVideoUpscaleDenoise {
-  return typeof value === "string" && VIDEO_UPSCALE_DENOISE_OPTIONS.includes(value as FreezoneVideoUpscaleDenoise)
-    ? (value as FreezoneVideoUpscaleDenoise)
-    : "1x";
-}
-
 function approvalNodeData(
   approval: PendingCanvasCommandApproval,
   canvasNodes: CanvasNode[],
@@ -2877,7 +2972,6 @@ function videoUpscaleApprovalInitialParams(
   return {
     nodeId,
     resolution: normalizeVideoUpscaleResolutionForApproval(nodeData.upscaleResolution),
-    denoise: normalizeVideoUpscaleDenoiseForApproval(nodeData.upscaleDenoise),
   };
 }
 
@@ -3077,7 +3171,6 @@ function amendCanvasApprovalWithVideoUpscaleParams(
   let inserted = false;
   const videoData = {
     upscaleResolution: params.resolution,
-    upscaleDenoise: params.denoise,
   };
   return {
     ...approval,
@@ -3567,7 +3660,6 @@ function CanvasCommandApprovalCard({
         ...current,
         ...patch,
         resolution: normalizeVideoUpscaleResolutionForApproval(patch.resolution ?? current.resolution),
-        denoise: normalizeVideoUpscaleDenoiseForApproval(patch.denoise ?? current.denoise),
       };
     });
   }, []);
@@ -3772,20 +3864,6 @@ function CanvasCommandApprovalCard({
                 label: VIDEO_UPSCALE_RESOLUTION_LABEL[value] ?? value,
               }))}
             />
-            <span className="h-4 w-px bg-white/[0.12]" />
-            <CanvasApprovalImageParamSelect
-              ariaLabel="高清降噪"
-              disabled={isExecuting}
-              value={videoUpscaleParams.denoise}
-              onChange={(value) => updateVideoUpscaleParams({
-                denoise: normalizeVideoUpscaleDenoiseForApproval(value),
-              })}
-              options={[
-                { value: "none", label: "不降噪" },
-                { value: "1x", label: "1x" },
-                { value: "2x", label: "2x" },
-              ]}
-            />
           </div>
         </div>
       )}
@@ -3888,6 +3966,15 @@ function canvasCommandFeedbackHasFailure(feedback: CanvasCommandFeedback): boole
   return feedback.errors.length > 0 || (feedback.commandResults ?? []).some((step) => step.status !== "success");
 }
 
+function canvasCommandFeedbackHasPending(feedback: CanvasCommandFeedback): boolean {
+  return (feedback.commandResults ?? []).some((step) => step.status === "pending");
+}
+
+function canvasCommandFeedbackReconciliationPending(feedback: CanvasCommandFeedback): boolean {
+  return (feedback.commandResults ?? []).some((step) =>
+    step.status === "pending" && step.output?.reason === "workflow_server_reconciliation_pending");
+}
+
 function canvasCommandFeedbackIsInvalidCommand(feedback: CanvasCommandFeedback): boolean {
   return (feedback.commandResults ?? []).some((step) => step.label === "画布命令无效");
 }
@@ -3916,6 +4003,7 @@ export const canvasContextActivityVisualToneForTest = canvasContextActivityVisua
 function canvasCommandFeedbackVisualTone(feedback: CanvasCommandFeedback): CanvasFeedbackVisualTone {
   const failed = canvasCommandFeedbackHasFailure(feedback);
   if (!failed) return "success";
+  if (canvasCommandFeedbackHasPending(feedback)) return "warning";
   if (canvasCommandFeedbackIsUserCancelled(feedback)) return "muted";
   if (canvasCommandFeedbackIsTimeoutCancelled(feedback)) return "warning";
   return canvasCommandFeedbackIsValidationOnly(feedback) ? "muted" : "destructive";
@@ -3923,11 +4011,14 @@ function canvasCommandFeedbackVisualTone(feedback: CanvasCommandFeedback): Canva
 
 export const canvasCommandFeedbackVisualToneForTest = canvasCommandFeedbackVisualTone;
 
-function canvasCommandFeedbackCompactTitle(feedback: CanvasCommandFeedback): string {
+function canvasCommandFeedbackCompactTitle(feedback: CanvasCommandFeedback, t: TFunction): string {
   const firstFailedStep = (feedback.commandResults ?? []).find((step) => step.status !== "success");
   const firstPlan = feedback.plans?.[0];
   if (canvasCommandFeedbackIsTimeoutCancelled(feedback)) return "画布操作已过期";
   if (firstFailedStep?.label === "已取消" || canvasCommandFeedbackIsUserCancelled(feedback)) return "画布操作已取消";
+  if (canvasCommandFeedbackHasPending(feedback)) return canvasCommandFeedbackReconciliationPending(feedback)
+    ? t("freezone.chat.workflowReconciliationPendingLabel", { defaultValue: "对账中" })
+    : t("freezone.chat.workflowOutputSyncPendingLabel", { defaultValue: "产物待同步" });
   if (firstPlan?.type === "run_node_action" && firstPlan.label.includes("生成图片")) return "生成图片失败";
   if (firstPlan?.type === "run_node_action" && firstPlan.label.includes("生成视频")) return "生成视频失败";
   if (firstFailedStep?.label) return firstFailedStep.label;
@@ -3975,13 +4066,14 @@ function CanvasCommandFeedbackCard({
   const successfulCount = feedback.applied + feedback.openedUiActions;
   if (steps.length === 0 && successfulCount === 0 && feedback.errors.length === 0) return null;
   const failed = canvasCommandFeedbackHasFailure(feedback);
+  const pending = canvasCommandFeedbackHasPending(feedback);
   const invalidCommand = canvasCommandFeedbackIsInvalidCommand(feedback);
   const visualTone = canvasCommandFeedbackVisualTone(feedback);
   const mutedFailure = failed && visualTone === "muted";
   const warningFailure = failed && visualTone === "warning";
   const initiallyCompact = failed && successfulCount === 0;
   const collapseSuccessfulDetails = !failed && steps.length > 2 && !steps.some(step => step.output?.html_artifact);
-  const compactTitle = canvasCommandFeedbackCompactTitle(feedback);
+  const compactTitle = canvasCommandFeedbackCompactTitle(feedback, t);
   const canRetry = feedback.cancelled && feedback.envelopes && feedback.envelopes.length > 0;
   const cancellationMessage = canvasCommandFeedbackIsTimeoutCancelled(feedback)
     ? t("freezone.chat.canvasTimeoutCancelled", {
@@ -3992,7 +4084,15 @@ function CanvasCommandFeedbackCard({
           defaultValue: "画布操作已手动取消，没有应用到画布。",
         })
       : null;
-  const userFailureMessage = failed
+  const userFailureMessage = pending
+    ? canvasCommandFeedbackReconciliationPending(feedback)
+      ? t("freezone.chat.workflowReconciliationPendingMessage", {
+          defaultValue: "画布产物已生成，服务端仍在核对任务产物；请稍后检查运行状态，暂勿重复生成。",
+        })
+      : t("freezone.chat.workflowOutputSyncPendingMessage", {
+          defaultValue: "工作流已完成，画布节点产物待同步；请稍后刷新画布核对结果，暂勿重复生成。",
+        })
+    : failed
     ? cancellationMessage ?? canvasCommandUserMessageFromResult(
         feedback.errors,
         feedback.commandResults.map((step) => ({ error: step.error })),
@@ -4044,7 +4144,7 @@ function CanvasCommandFeedbackCard({
         {(initiallyCompact || collapseSuccessfulDetails) && (
           <button type="button" onClick={() => setExpanded(false)} className="ml-auto rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-white/[0.06] hover:text-foreground">收起</button>
         )}
-        {successfulCount > 0 && <span className={cn("text-[11px] text-muted-foreground", !initiallyCompact && "ml-auto")}>已执行 {successfulCount} 项</span>}
+        {successfulCount > 0 && !pending && <span className={cn("text-[11px] text-muted-foreground", !initiallyCompact && "ml-auto")}>已执行 {successfulCount} 项</span>}
       </div>
       {expanded && <CanvasCommandPlanList plans={feedback.plans} />}
       <div className="space-y-1 px-3 py-2">
@@ -10878,7 +10978,6 @@ type CanvasApprovalVideoParams = {
 type CanvasApprovalVideoUpscaleParams = {
   nodeId: string;
   resolution: FreezoneVideoUpscaleResolution;
-  denoise: FreezoneVideoUpscaleDenoise;
 };
 
 type CanvasApprovalTextParams = {
@@ -13497,17 +13596,16 @@ export function SuperChatPanel({
           await flushFreezoneCanvasRuntime(params.project, effectiveFreezoneCanvasId);
         }
 
-        if (!backgroundAccepted) {
-          reportCanvasCommandToolResult({
-            bridgeKey: approval.bridgeKey,
-            turnId: approval.turnId,
-            anchorTextPrefix: approval.anchorTextPrefix,
-            projectId: params.project,
-            canvasId: effectiveFreezoneCanvasId,
-            agentId: approval.agentId ?? effectiveFreezoneAgentId,
-            result,
-          });
-        }
+        reportCanvasCommandToolResult({
+          bridgeKey: approval.bridgeKey,
+          turnId: approval.turnId,
+          anchorTextPrefix: approval.anchorTextPrefix,
+          projectId: params.project,
+          canvasId: effectiveFreezoneCanvasId,
+          agentId: approval.agentId ?? effectiveFreezoneAgentId,
+          result,
+          followup: backgroundAccepted,
+        });
         const feedbackKey = canvasCommandFeedbackKey(approval.bridgeKey, approval.turnId, undefined, approval.key);
         appendCanvasCommandFeedback(
           approval.messageId,

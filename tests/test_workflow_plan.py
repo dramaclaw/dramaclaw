@@ -817,6 +817,27 @@ def test_intent_video_item_carries_explicit_embedded_audio_requirement():
     assert node["data"]["workflowCatalog"]["requiresGeneratedAudio"] is True
 
 
+def test_workflow_intent_schema_rejects_recipe_discovery_metadata():
+    intent = {
+        "skill_id": "video-ad",
+        "user_goal": "生成广告图",
+        "items": [
+            {
+                "id": "image-1",
+                "title": "广告图",
+                "recipe_id": "general-image",
+                "requires_source_media": False,
+            }
+        ],
+    }
+
+    with pytest.raises(ValidationError) as exc_info:
+        Draft202012Validator(workflow_intent_json_schema()).validate(intent)
+
+    assert list(exc_info.value.absolute_path) == ["items", 0]
+    assert "requires_source_media" in exc_info.value.message
+
+
 def test_workflow_intent_schema_accepts_first_frame_video_mode():
     Draft202012Validator(workflow_intent_json_schema()).validate(
         {
@@ -972,8 +993,7 @@ def test_short_drama_restatement_recovers_narration_and_audio(monkeypatch):
 def test_template_restatement_that_the_standard_planner_rejects_stays_agent_authored(
     monkeypatch,
 ):
-    """Same shape but a speech node without narration text: the standard planner
-    refuses it, so the agent-authored plan stands and the record says why."""
+    """A stripped speech node stays agent-authored instead of being rewritten."""
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)
     plan = _raw_plan_from_standard(
@@ -995,8 +1015,7 @@ def test_template_restatement_that_the_standard_planner_rejects_stays_agent_auth
     assert validated["ok"] is True, validated
     assert validated["planner"]["mode"] == "agent_authored"
     reason = validated["planner"]["template_match"]["reason"]
-    assert reason.startswith("standard_compile_failed:"), reason
-    assert "narration" in reason
+    assert reason == "not_expressible:node:voice_1"
 
 
 def test_reroute_never_rewrites_what_the_plan_says(monkeypatch):
@@ -1476,11 +1495,11 @@ def test_template_isomorphism_reports_the_first_deviation(monkeypatch):
     # A node of a kind the template has no stage for.
     outside = copy.deepcopy(plan)
     outside["nodes"].append({
-        "id": "scene_ref", "node_type": "imageGenNode",
-        "data": {"prompt": "舞台全景", "workflowCatalog": {"recipeId": "drama-scene-image"}},
+        "id": "extra_html", "node_type": "htmlArtifactNode",
+        "data": {"prompt": "额外页面", "workflowCatalog": {"recipeId": "html"}},
     })
     assert catalog.template_isomorphism("short-drama-quick", outside)["reason"] == (
-        "node_outside_template:scene_ref"
+        "node_outside_template:extra_html"
     )
     # A required stage missing, or present but bypassed.
     missing = _short_drama_plan_without_shot_planning(catalog)
@@ -1493,7 +1512,7 @@ def test_template_isomorphism_reports_the_first_deviation(monkeypatch):
         for e in bypassed["edges"]
     ]
     assert catalog.template_isomorphism("short-drama-quick", bypassed)["reason"] == (
-        "stage_unused:shots->video"
+        "stage_unused:shots->frames"
     )
     # External inputs are never a template restatement.
     external = copy.deepcopy(plan)
@@ -1551,42 +1570,143 @@ def test_standard_skill_planner_uses_defaults_for_minimal_intent(monkeypatch):
     assert result["planner"]["include_audio"] is False
 
 
-def test_standard_audio_planner_rejects_missing_or_placeholder_narration(monkeypatch):
+def test_standard_audio_planner_rejects_placeholder_narration(monkeypatch):
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)
 
-    for narration in (None, "这是短剧的第一段旁白。"):
-        unit = {"title": "开场", "prompt": "建立故事场景"}
-        if narration is not None:
-            unit["narration"] = narration
-        result = catalog.compile_workflow_intent(
-            {
-                "skill_id": "short-drama-quick",
-                "user_goal": "制作短剧",
+    result = catalog.compile_workflow_intent(
+        {
+            "skill_id": "short-drama-quick",
+            "user_goal": "制作短剧",
+            "include_audio": True,
+            "planner": {
+                "mode": "standard",
+                "item_count": 1,
                 "include_audio": True,
-                "planner": {
-                    "mode": "standard",
-                    "item_count": 1,
-                    "include_audio": True,
-                    "units": [unit],
+                "units": [
+                    {
+                        "title": "开场",
+                        "prompt": "建立故事场景",
+                        "narration": "这是短剧的第一段旁白。",
+                    }
+                ],
+            },
+        }
+    )
+    assert result["ok"] is False
+    assert result["errors"][0]["path"] == "planner.units.0.narration"
+    assert "narration" in result["errors"][0]["hint"]
+    assert "do NOT" in result["agent_instruction"]
+    assert "placeholder" in result["errors"][0]["message"]
+
+
+def test_short_drama_standard_planner_defers_missing_narration_to_shot_output(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+
+    result = catalog.compile_workflow_intent(
+        {
+            "skill_id": "short-drama-quick",
+            "user_goal": "制作短剧，先生成剧本和分镜，再生成逐镜头配音",
+            "include_audio": True,
+            "planner": {
+                "mode": "standard",
+                "item_count": 1,
+                "include_audio": True,
+                "units": [{"title": "开场", "prompt": "建立故事场景"}],
+            },
+        }
+    )
+
+    assert result["ok"] is True, result
+    nodes = {node["id"]: node for node in result["plan"]["nodes"]}
+    assert "voice_1" in nodes
+    assert "text" not in nodes["voice_1"]["data"]
+    assert nodes["voice_1"]["data"]["workflowCatalog"]["recipeId"] == (
+        "drama-shot-voice"
+    )
+    assert {
+        (edge["source"], edge["target"], edge["link_type"])
+        for edge in result["plan"]["edges"]
+    } >= {("shot_plan_1", "voice_1", "prompt_for")}
+
+
+def test_video_tutorial_standard_outline_consumes_unit_facts(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+
+    result = catalog.compile_workflow_intent({
+        "skill_id": "video-tutorial",
+        "user_goal": "准备三步手冲教程 Draft。",
+        "planner": {
+            "mode": "standard",
+            "item_count": 2,
+            "include_audio": True,
+            "units": [
+                {
+                    "title": "准备滤杯",
+                    "prompt": "使用15克咖啡粉和透明V60滤杯。",
+                    "narration": "先放入十五克咖啡粉。",
+                    "duration_seconds": 6,
                 },
-            }
-        )
-        assert result["ok"] is False
-        assert result["errors"][0]["path"] == "planner.units.0.narration"
-        # The rejection must be self-contained so the agent fixes the payload
-        # instead of source-diving for the validation rules.
-        assert "narration" in result["errors"][0]["hint"]
-        assert "do NOT" in result["agent_instruction"]
-        # Missing narration and placeholder narration are different mistakes and
-        # must produce different messages: a real narration on another unit does
-        # not satisfy the per-unit requirement, and the error has to say so.
-        message = result["errors"][0]["message"]
-        if narration is None:
-            assert "missing narration" in message
-            assert "EVERY unit" in message
-        else:
-            assert "placeholder" in message
+                {
+                    "title": "闷蒸",
+                    "prompt": "用92摄氏度热水注入30克并等待30秒。",
+                    "narration": "注入三十克热水，等待三十秒。",
+                    "duration_seconds": 6,
+                },
+            ],
+        },
+    })
+
+    assert result["ok"] is True, result
+    outline = next(node for node in result["plan"]["nodes"] if node["id"] == "outline")
+    prompt = outline["data"]["prompt"]
+    assert "15克" in prompt
+    assert "92摄氏度" in prompt
+    assert "30克" in prompt
+    assert "30秒" in prompt
+    assert "十五克咖啡粉" in prompt
+
+
+def test_non_screenplay_planner_still_requires_literal_narration(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+
+    result = catalog.compile_workflow_intent(
+        {
+            "skill_id": "video-tutorial",
+            "user_goal": "制作教程",
+            "include_audio": True,
+            "planner": {
+                "mode": "standard",
+                "item_count": 1,
+                "include_audio": True,
+                "units": [{"title": "第一步", "prompt": "展示第一步"}],
+            },
+        }
+    )
+
+    assert result["ok"] is False
+    assert result["errors"][0]["path"] == "planner.units.0.narration"
+
+
+def test_standard_planner_rejects_conflicting_audio_policy(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+
+    result = catalog.compile_workflow_intent(
+        {
+            "skill_id": "short-drama-quick",
+            "user_goal": "制作短剧",
+            "include_audio": True,
+            "planner": {"mode": "standard", "include_audio": False},
+        }
+    )
+
+    assert result["ok"] is False
+    assert result["errors"][0]["path"] == "planner.include_audio"
+    assert "conflicts" in result["error"]
 
 
 def test_custom_items_take_precedence_over_standard_planner(monkeypatch):
@@ -1642,7 +1762,7 @@ def test_intent_items_restating_the_template_use_the_standard_planner(monkeypatc
         "planner": {"mode": "standard"},
         "inputs": {"video_duration_seconds": 5},
         "items": [
-            {"id": "outline", "title": "教程大纲", "prompt": "三步教你手冲咖啡；分段任务：步骤一视频：研磨咖啡豆的特写；步骤二视频：注水闷蒸的慢镜头",
+            {"id": "outline", "title": "教程大纲", "prompt": "三步教你手冲咖啡",
              "recipe_id": "general-text"},
             {"id": "frame_1", "title": "步骤一画面", "prompt": "研磨咖啡豆的特写",
              "recipe_id": "general-image", "depends_on": ["outline"],
@@ -1700,7 +1820,7 @@ def test_intent_items_the_standard_planner_cannot_reproduce_stay_agent_authored(
         "user_goal": "三步教你手冲咖啡",
         "planner": {"mode": "standard"},
         "items": [
-            {"id": "outline", "title": "教程大纲", "prompt": "三步教你手冲咖啡；分段任务：步骤一视频：研磨咖啡豆的特写",
+            {"id": "outline", "title": "教程大纲", "prompt": "三步教你手冲咖啡",
              "recipe_id": "general-text"},
             {"id": "frame_1", "title": "步骤一画面", "prompt": "研磨咖啡豆",
              "recipe_id": "general-image", "depends_on": ["outline"],
@@ -1845,7 +1965,7 @@ def test_exact_plan_without_a_required_stage_is_a_preflight_blocker(monkeypatch)
 
     def with_shot_design(node: dict, *, feeds_clips: bool, link_type: str = "prompt_for") -> dict:
         """Add a shot-planning node under the outline; optionally connect the
-        clips to it with ``link_type`` (the standard planner uses prompt_for)."""
+        first frames to it with ``link_type`` (the standard planner uses prompt_for)."""
         revised = copy.deepcopy(plan)
         revised["nodes"].append({**node, "id": "shot_design", "prompt": "拆解每个镜头"})
         revised["edges"].append(
@@ -1854,7 +1974,7 @@ def test_exact_plan_without_a_required_stage_is_a_preflight_blocker(monkeypatch)
         if feeds_clips:
             revised["edges"] = [
                 {**edge, "source": "shot_design", "link_type": link_type}
-                if edge["source"] == "outline" and edge["target"].startswith("clip_")
+                if edge["source"] == "outline" and edge["target"].startswith("frame_")
                 else edge
                 for edge in revised["edges"]
             ]
@@ -1864,39 +1984,39 @@ def test_exact_plan_without_a_required_stage_is_a_preflight_blocker(monkeypatch)
                 "data": {"workflowCatalog": {"recipeId": "general-text"}}}
     by_recipe = {"node_type": "textAnnotationNode",
                  "data": {"workflowCatalog": {"recipeId": "drama-shot-planning"}}}
-    # A shot-planning node that feeds the clips clears it: by stage label or
+    # A shot-planning node that feeds the first frames clears it: by stage label or
     # by a recipe of the stage's family without any label.
     for node in (labelled, by_recipe):
         validated = catalog.validate_agent_workflow_plan(with_shot_design(node, feeds_clips=True))
         assert validated["preflight"]["blockers"] == [], validated["preflight"]
-    # A shot-planning node on a side branch, with the clips still reading the
+    # A shot-planning node on a side branch, with the frames still reading the
     # outline directly, is not a shot-planning stage: the draft stays blocked.
     validated = catalog.validate_agent_workflow_plan(with_shot_design(labelled, feeds_clips=False))
     assert validated["ok"] is True
     (unused,) = validated["preflight"]["blockers"]
     assert unused["code"] == "skill_stage_unused"
-    assert unused["path"] == "plan.stages.shots.feeds.video"
+    assert unused["path"] == "plan.stages.shots.feeds.frames"
     assert unused["stage"] == "shots"
-    assert unused["downstream_stage"] == "video"
-    assert unused["node_ids"] == ["clip_1", "clip_2"]
+    assert unused["downstream_stage"] == "frames"
+    assert unused["node_ids"] == ["frame_1", "frame_2"]
     assert "shot_design" in unused["message"]
     assert validated["preflight"]["status"] == "blocked"
-    # Feeding one clip is not enough: the other is still bypassed.
+    # Feeding one frame is not enough: the other is still bypassed.
     partial = with_shot_design(labelled, feeds_clips=False)
     partial["edges"] = [
         {**edge, "source": "shot_design", "link_type": "prompt_for"}
-        if edge["source"] == "outline" and edge["target"] == "clip_1"
+        if edge["source"] == "outline" and edge["target"] == "frame_1"
         else edge
         for edge in partial["edges"]
     ]
     (unused,) = catalog.validate_agent_workflow_plan(partial)["preflight"]["blockers"]
-    assert unused["node_ids"] == ["clip_2"]
-    # An order-only edge does not make the clips consume the shot plan: wiring
-    # shot_design → clip with dependency_for keeps the draft blocked.
+    assert unused["node_ids"] == ["frame_2"]
+    # An order-only edge does not make the frames consume the shot plan: wiring
+    # shot_design → frame with dependency_for keeps the draft blocked.
     gated = with_shot_design(labelled, feeds_clips=True, link_type="dependency_for")
     (unused,) = catalog.validate_agent_workflow_plan(gated)["preflight"]["blockers"]
     assert unused["code"] == "skill_stage_unused"
-    assert unused["node_ids"] == ["clip_1", "clip_2"]
+    assert unused["node_ids"] == ["frame_1", "frame_2"]
     assert "dependency_for" in unused["message"]
 
 
@@ -2049,21 +2169,27 @@ def test_skill_stage_blockers_tolerance():
         )
     ]
     assert codes == ["planning"]
-    # Two text stages: two unlabeled general-text nodes fill only planning.
+    # A general-text node fills planning, not the distinct shots stage; an
+    # explicit canonical stage label resolves that ambiguity.
     drama = [
         node("outline", "textAnnotationNode", "general-text"),
         node("more_text", "textAnnotationNode", "general-text"),
         node("clip", "videoNode", "general-video"),
     ]
-    drama_edges = [
-        {"source": "outline", "target": "more_text", "link_type": "context_for"},
-        {"source": "more_text", "target": "clip", "link_type": "prompt_for"},
-    ]
-    assert [
-        b["stage"] for b in catalog.skill_stage_blockers("short-drama-quick", drama, drama_edges)
-    ] == ["shots"]
+    stages = {
+        stage["id"]: stage
+        for stage in catalog.standard_skill_stages("short-drama-quick")
+    }
+    assert catalog._node_fills_stage(
+        drama[0], stages["planning"], kind_is_unique=False
+    )
+    assert not catalog._node_fills_stage(
+        drama[1], stages["shots"], kind_is_unique=False
+    )
     drama[1]["data"]["stage"] = "Shots"
-    assert catalog.skill_stage_blockers("short-drama-quick", drama, drama_edges) == []
+    assert catalog._node_fills_stage(
+        drama[1], stages["shots"], kind_is_unique=False
+    )
     assert catalog.skill_stage_blockers("not-a-template-skill", []) == []
     assert catalog.standard_skill_stages("not-a-template-skill") == []
     assert catalog.standard_skill_stage_edges("not-a-template-skill") == []
@@ -3424,6 +3550,48 @@ def test_workflow_plan_reports_deterministic_preflight_summary():
     }
 
 
+def test_standard_short_drama_planner_supports_25_beats_and_full_asset_chain(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    units = [
+        {
+            "title": f"Beat {index:02d}",
+            "prompt": f"第 {index} 个剧情 Beat 的具体动作与画面目标",
+            "narration": f"这是第 {index} 个 Beat 的实际朗读台词。",
+        }
+        for index in range(1, 26)
+    ]
+    intent = {
+        "schema_version": "freezone_workflow_intent.v1",
+        "skill_id": "short-drama-quick",
+        "user_goal": "三集短剧大纲，并制作第一集 25 个 Beat",
+        "planner": {
+            "mode": "standard",
+            "item_count": 25,
+            "include_audio": True,
+            "units": units,
+        },
+    }
+
+    Draft202012Validator(workflow_intent_json_schema()).validate(intent)
+    compiled = catalog.compile_workflow_intent(intent)
+
+    assert compiled["ok"] is True, compiled
+    assert compiled["planner"]["mode"] == "deterministic_standard"
+    assert compiled["planner"]["item_count"] == 25
+    plan = compiled["plan"]
+    nodes = {node["id"]: node for node in plan["nodes"]}
+    assert {"characters", "character_assets", "scenes", "scene_assets"} <= set(nodes)
+    assert {"props", "prop_assets", "frame_25", "clip_25", "voice_25"} <= set(nodes)
+    assert "final_compose" in nodes
+    assert len(plan["nodes"]) == 110
+    assert len(plan["edges"]) <= 400
+    assert compiled["preflight"]["blockers"] == []
+    graph = build_workflow_graph_commands({"plan": plan, "run_after_create": False})
+    assert graph["ok"] is True, graph
+    assert sum(command["type"] == "create_node" for command in graph["commands"]) == 110
+
+
 def test_exact_short_drama_plan_supports_24_beats_and_exact_count_guards(monkeypatch):
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)
@@ -4318,6 +4486,7 @@ def test_retro_kungfu_skill_keeps_style_while_recipes_stay_stage_focused(monkeyp
 
     assert "1980s 复古香港功夫喜剧" in planning["prompt_guide"]
     assert "35mm 旧胶片颗粒" in planning["prompt_guide"]
+    assert "每个视频节点都必须针对当前镜头的每个核心动作逐项写出预备、运动、完成三段" in planning["prompt_guide"]
     assert "港式普通话口音" in planning["prompt_guide"]
     assert "剧本大纲" in planning["planning_notes"]
     assert "分镜规划" in planning["planning_notes"]
@@ -4849,3 +5018,75 @@ def test_short_drama_quick_expands_shot_voice_and_background_music(monkeypatch):
         ("clip_1", "voice_1"),
         ("clip_2", "voice_2"),
     }
+
+
+def test_custom_short_drama_speech_can_consume_upstream_script_text(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+
+    compiled = catalog.compile_workflow_intent(
+        {
+            "skill_id": "short-drama-quick",
+            "user_goal": "先生成镜头文本，再生成配音",
+            "include_audio": True,
+            "include_compose": False,
+            "items": [
+                {
+                    "id": "shot",
+                    "title": "镜头文本",
+                    "prompt": "输出镜头画面、动作和实际对白",
+                    "recipe_id": "drama-shot-group-detail",
+                },
+                {
+                    "id": "voice",
+                    "title": "镜头配音",
+                    "prompt": "只朗读上游镜头文本中的 narration 或 dialogue 正文",
+                    "recipe_id": "drama-shot-voice",
+                    "depends_on": ["shot"],
+                    "reference_inputs": ["shot"],
+                    "timeline_role": "voiceover",
+                },
+            ],
+        }
+    )
+
+    assert compiled["ok"] is True, compiled
+    voice = next(node for node in compiled["plan"]["nodes"] if node["id"] == "voice")
+    assert "text" not in voice["data"]
+    assert any(
+        edge == {"source": "shot", "target": "voice", "link_type": "prompt_for"}
+        for edge in compiled["plan"]["edges"]
+    )
+
+
+def test_custom_short_drama_cannot_drop_requested_voiceover(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+
+    compiled = catalog.compile_workflow_intent(
+        {
+            "skill_id": "short-drama-quick",
+            "user_goal": "制作带配音的短剧",
+            "include_audio": True,
+            "items": [
+                {
+                    "id": "outline",
+                    "title": "剧情大纲",
+                    "prompt": "生成剧情大纲",
+                    "recipe_id": "drama-plot-outline",
+                },
+                {
+                    "id": "music",
+                    "title": "背景音乐",
+                    "prompt": "生成悬疑纯音乐",
+                    "recipe_id": "drama-background-music",
+                    "depends_on": ["outline"],
+                },
+            ],
+        }
+    )
+
+    assert compiled["ok"] is False
+    assert compiled["errors"][0]["path"] == "items"
+    assert "no speech node" in compiled["error"]
+    assert "Do not remove requested voiceover" in compiled["errors"][0]["hint"]

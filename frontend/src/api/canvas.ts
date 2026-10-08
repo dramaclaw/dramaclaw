@@ -221,6 +221,17 @@ export async function updateFreezoneWorkflowRun(
   );
 }
 
+export function getFreezoneWorkflowRun(
+  projectId: string,
+  canvasId: string,
+  runId: string,
+  waitSeconds = 0,
+): Promise<FreezoneWorkflowRun> {
+  return apiCall<FreezoneWorkflowRun>(
+    `projects/${encodeURIComponent(projectId)}/freezone/canvases/${encodeURIComponent(canvasId)}/workflow-runs/${encodeURIComponent(runId)}?wait_seconds=${waitSeconds}`,
+  );
+}
+
 const workflowRunsInFlight = new Map<
   string,
   Promise<{ runs: FreezoneWorkflowRun[] }>

@@ -22,6 +22,12 @@ order) stays an agent-authored draft with the difference recorded in
    `freezone_get_workflow_skill(skill_id=...)`.
 2. Author one complete `freezone_workflow_plan.v1` using only that Skill's allowed node capabilities
    and Recipe IDs returned in `available_recipes`.
+   The top level must always include both
+   `schema_version: "freezone_workflow_plan.v1"` and
+   `skill: {"id":"<selected skill_id>","version":"<selected skill_version>"}`. Copy these
+   identities from the loaded production Workflow Skill and keep them identical to the admitted
+   operation. `generation_answers` supplements this complete Plan; it never replaces the Plan or
+   either required identity field.
    When the Skill has a standard planner, `planning_contract.standard_planner.stages` lists its
    stages; every stage marked `required` must appear in a custom plan too (for example the
    shot-planning stage of a short drama). A node fills a stage when it has that stage's
@@ -44,10 +50,15 @@ order) stays an agent-authored draft with the difference recorded in
    compiler owns command defaults, stable IDs, layout, grouping, and final static command validation.
    Use only canonical `node_type` for each node's portable kind. The public MCP contract rejects
    the legacy canvas-command alias `type` and all unknown top-level fields.
-   Keep input/resource `stage` at node level. Use only canonical `link_type` on edges.
+   Keep input/resource `stage` at node level. The stage names `input`, `resource`, and `asset` are
+   reserved for recipe-less user-provided text/resource nodes. A recipe-backed
+   `textAnnotationNode` is executable and must not use those reserved stage names; use the matching
+   executable stage from the loaded Skill's planning contract or omit `stage` when it is optional.
+   Use only canonical `link_type` on edges.
 3. Every executable node must contain an explicit `data.workflowCatalog.recipeId`. Input/resource
    text nodes may omit a Recipe when they only carry user-provided material, but they must set
-   `stage` to `input`, `resource`, or `asset`. A terminal `videoComposeNode` has no Recipe.
+   `stage` to `input`, `resource`, or `asset`. Those reserved stages and a Recipe are mutually
+   exclusive on a `textAnnotationNode`. A terminal `videoComposeNode` has no Recipe.
    Put executable options inside `data` as well; do not place them beside `id`/`node_type`.
    For example, a background-music node must use this shape (with the actual Recipe returned by
    the selected Skill):
@@ -96,16 +107,22 @@ order) stays an agent-authored draft with the difference recorded in
    chain those units together. Add one non-executable input/root node and fan it out to each unit's
    input node instead. This satisfies whole-plan connectivity while preserving independent execution
    branches. A user does not need to ask for this structural root or name any `link_type`.
-5. When the user states exact totals, copy them into `expected_node_count` and
+5. This path is selected only when the user explicitly requires individual canvas nodes and a
+   dependency graph that deviates from the standard template. Beat, shot, episode, duration, or
+   deliverable totals alone are standard-planner inputs and must not trigger a raw Plan. Once on
+   this path, copy exact canvas-node totals into `expected_node_count` and
    `expected_node_counts`. Counts refer to Plan/business nodes; the generated group node is not
    included. Never lower these expectations to make a partial plan validate.
-6. Once a request is on this path because its enumerated Beats, shots, nodes, or dependency order
-   deviate from the template, it stays on this full Plan path, including requests above the compact
-   Intent planner's item limit. Do not switch to `workflow_intent_compile`, a smaller sample plan, or
+6. Once a request is on this path because its explicit canvas nodes or dependency order deviate
+   from the template, it stays on this full Plan path, including requests above the compact Intent
+   planner's item limit. Do not switch to `workflow_intent_compile`, a smaller sample plan, or
    standalone node tools after a validation error. (An explicit standard-planner instruction with a
    template-shaped list never enters this path in the first place; see SKILL.md routing order.)
    Every edge endpoint must match an `id` in `nodes` or a declared external input alias. Never
    invent a source such as `source` or `input` without a matching declaration.
+   Never ask the user to choose a direct-canvas or standalone-node fallback after Plan validation
+   fails. Such a choice cannot authorize bypassing the validator. Add the required Skill stages to
+   the same Plan once, or report that they conflict with the user's exact topology.
 7. Call `freezone_prepare_workflow(plan=...)` once. It strictly validates the complete Plan,
    obtains an operation-bound planning quote and server receipt, then persists an exact preview
    without writing canvas nodes. After the user reviews that preview, call

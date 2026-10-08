@@ -9,12 +9,14 @@ vi.mock("@/lib/api", () => ({
   handleSessionExpired: handleSessionExpiredMock,
 }));
 
-import { apiCall } from "@/api/client";
+import { apiCall, apiClient } from "@/api/client";
 import {
+  BackendStatusError,
   backendErrorToastMessage,
   BillingRuleNotConfiguredError,
   errorFromBackendBody,
   InsufficientCreditsError,
+  jsonWithBackendError,
   ProjectQueueLimitError,
 } from "@/lib/api-errors";
 
@@ -425,5 +427,54 @@ describe("apiCall backend errors", () => {
 
     expect(error).toBeInstanceOf(BillingRuleNotConfiguredError);
     expect(error?.message).toBe("计费规则未配置，请联系管理员设置积分规则");
+  });
+});
+
+describe("skill run backend errors", () => {
+  function stubSkillError(status: number, detail: Record<string, unknown>) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ detail }), {
+          status,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+  }
+
+  it("surfaces the skill error envelope message instead of the ky status text", async () => {
+    stubSkillError(422, {
+      code: "render_identity_detection_required",
+      category: "validation",
+      message: "渲染分镜前请先在「镜头上下文」节点的「出场身份」里选择出场角色。",
+      retryable: false,
+      user_action_hint: null,
+    });
+
+    // runSkill 的写法；测试环境没有 baseURL，显式给 prefix。
+    const error = await jsonWithBackendError(
+      apiClient("projects/demo/freezone/skills/freezone.frame_from_context/run", {
+        prefix: "http://localhost/api/v1",
+        method: "POST",
+        json: {},
+      } as Parameters<typeof apiClient>[1]),
+    ).catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(BackendStatusError);
+    expect(error).toMatchObject({
+      status: 422,
+      message: "渲染分镜前请先在「镜头上下文」节点的「出场身份」里选择出场角色。",
+    });
+  });
+
+  it("appends the user action hint of a structured detail", () => {
+    const error = errorFromBackendBody(
+      404,
+      { detail: { code: "beat_not_found", message: "镜头不存在", user_action_hint: "请重新选择镜头" } },
+      "Not Found",
+    );
+
+    expect(error).toMatchObject({ status: 404, message: "镜头不存在 请重新选择镜头" });
   });
 });

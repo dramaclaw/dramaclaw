@@ -322,7 +322,7 @@ async def test_newapi_terminal_archive_failure_does_not_deliver_or_refund(
 
 
 @pytest.mark.asyncio
-async def test_newapi_without_archive_capability_keeps_legacy_url_delivery(
+async def test_newapi_without_copy_port_keeps_legacy_url_delivery(
     monkeypatch, tmp_path: Path
 ) -> None:
     from novelvideo.generators import video_generator as module
@@ -371,15 +371,10 @@ async def test_newapi_without_archive_capability_keeps_legacy_url_delivery(
     async def refund(*_args, **_kwargs):
         calls["refund"] += 1
 
-    def forbidden_delivery_port():
-        raise AssertionError(
-            "legacy gateway must not require the archive delivery port"
-        )
-
     monkeypatch.setattr(generator, "_post_json", submit)
     monkeypatch.setattr(generator, "_get_json", poll)
     monkeypatch.setattr(generator, "_download_video", download)
-    monkeypatch.setattr(module, "get_video_result_delivery", forbidden_delivery_port)
+    monkeypatch.setattr(module, "get_video_result_delivery", lambda: None)
     monkeypatch.setattr(module, "_reserve_video_model_call", reserve)
     monkeypatch.setattr(module, "_confirm_video_model_call", confirm)
     monkeypatch.setattr(module, "_refund_video_model_call", refund)
@@ -397,6 +392,64 @@ async def test_newapi_without_archive_capability_keeps_legacy_url_delivery(
     assert output.read_bytes() == b"legacy-video"
     assert submitted_payload["response_format"] == "url"
     assert calls == {"submit": 1, "poll": 1, "download": 1, "confirm": 1, "refund": 0}
+
+
+@pytest.mark.asyncio
+async def test_newapi_copy_enabled_requires_archive(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from novelvideo.generators import video_generator as module
+    from novelvideo.generators.video_generator import (
+        NewApiVideoGenerator,
+        VideoGenStatus,
+    )
+
+    generator = NewApiVideoGenerator(
+        api_key="test-key", endpoint="https://gateway.example/v1", model="video-model"
+    )
+    calls = {"confirm": 0, "refund": 0}
+
+    async def submit(*_args, **_kwargs):
+        return {"id": "task-without-archive"}
+
+    async def poll(*_args, **_kwargs):
+        return {
+            "status": "success",
+            "task_id": "task-without-archive",
+            "result_url": "https://upstream.example/video.mp4",
+        }
+
+    async def forbidden_download(*_args, **_kwargs):
+        raise AssertionError("copy-enabled EE must not download without archive")
+
+    async def reserve(*_args, **_kwargs):
+        return "reservation-1"
+
+    async def confirm(*_args, **_kwargs):
+        calls["confirm"] += 1
+
+    async def refund(*_args, **_kwargs):
+        calls["refund"] += 1
+
+    monkeypatch.setattr(generator, "_post_json", submit)
+    monkeypatch.setattr(generator, "_get_json", poll)
+    monkeypatch.setattr(generator, "_download_video", forbidden_download)
+    monkeypatch.setattr(module, "get_video_result_delivery", lambda: _ArchiveDelivery())
+    monkeypatch.setattr(module, "_reserve_video_model_call", reserve)
+    monkeypatch.setattr(module, "_confirm_video_model_call", confirm)
+    monkeypatch.setattr(module, "_refund_video_model_call", refund)
+
+    result = await generator.generate(
+        image_path=None,
+        prompt="test",
+        output_path=str(tmp_path / "video.mp4"),
+        poll_interval=0,
+        max_polls=1,
+    )
+
+    assert result.status is VideoGenStatus.FAILED
+    assert result.error == "VIDEO_ARCHIVE_MISSING"
+    assert calls == {"confirm": 1, "refund": 0}
 
 
 @pytest.mark.asyncio
