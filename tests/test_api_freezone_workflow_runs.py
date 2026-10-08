@@ -1158,6 +1158,131 @@ async def test_model_recipe_media_retry_survives_status_poll(
 
 
 @pytest.mark.asyncio
+async def test_model_recipe_third_media_retry_waits_for_its_claim(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    """A scheduled third try must not be settled as an exhausted second try (#757)."""
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.agent_product_operations import read_agent_product_operation
+    from novelvideo.freezone.recipe_runtime import RecipeCompileResult
+    from novelvideo.freezone.workflow_runs import read_workflow_run
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    base = "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs"
+    created = workflow_run_client.post(
+        base,
+        json={"actions": [{
+            "node_id": "image-1", "action": "generate_image",
+            "recipe_id": "product-image", "recipe_version": "1.0.0",
+            "generation_attempt_id": "attempt-image",
+        }], "runner_id": "runner-one"},
+    ).json()["data"]
+    operation_id = created["actions"][0]["product_operation_id"]
+    compile_calls = []
+
+    async def model_compile(**_kwargs):
+        compile_calls.append(1)
+        return RecipeCompileResult(
+            "model castle prompt", "model", ("product-image",),
+            model_call_id=f"recipe-compiler:{len(compile_calls)}", executed_at=1.0,
+        )
+
+    monkeypatch.setattr(freezone, "compile_recipe_prompt_result", model_compile)
+    compile_request = {
+        "project_id": "proj_demo", "product_operation_id": operation_id,
+        "recipe_id": "product-image", "node_kind": "image",
+    }
+
+    def compile_prompt():
+        return workflow_run_client.post("/api/v1/freezone/recipes/compile", json=compile_request)
+
+    def claimed_retry_count():
+        with sqlite3.connect(workflow_run_client.state_dir / "data.db") as conn:
+            row = conn.execute(
+                "SELECT media_claim_retry_count FROM workflow_run_actions "
+                "WHERE run_id = ? AND node_id = ?",
+                (created["run_id"], "image-1"),
+            ).fetchone()
+        assert row is not None
+        return row[0]
+
+    assert compile_prompt().status_code == 200
+    media = _MediaTasks(monkeypatch, workflow_run_client, operation_id)
+    media.payload["prompt"] = "model castle prompt"
+    first = await media.enqueue()
+    first_task = media.tasks[first["data"]["job_id"]]
+    first_task.status = "failed"
+    first_task.error = "HTTP 503: upstream service unavailable"
+    assert workflow_run_client.get(base).status_code == 200
+
+    _record_workflow_retry(
+        workflow_run_client, created["run_id"], 1, runner_id="runner-one"
+    )
+    assert compile_prompt().status_code == 200
+    second = await media.enqueue()
+    assert second["data"]["job_id"] != first["data"]["job_id"]
+    second_task = media.tasks[second["data"]["job_id"]]
+    second_task.status = "failed"
+    second_task.error = "HTTP 503: upstream service unavailable"
+    _record_workflow_retry(
+        workflow_run_client, created["run_id"], 2, runner_id="runner-one"
+    )
+    before_third = read_workflow_run(
+        project_dir=workflow_run_client.state_dir,
+        canvas_id="default", run_id=created["run_id"],
+    )
+    assert before_third["actions"][0]["retry_count"] == 2
+    assert claimed_retry_count() == 1
+
+    assert workflow_run_client.get(base).status_code == 200
+    waiting = read_workflow_run(
+        project_dir=workflow_run_client.state_dir,
+        canvas_id="default", run_id=created["run_id"],
+    )
+    public_action = workflow_run_client.get(base).json()["data"]["runs"][0]["actions"][0]
+    assert "media_claim_retry_count" not in public_action
+    detail_action = workflow_run_client.get(
+        f"{base}/{created['run_id']}"
+    ).json()["data"]["actions"][0]
+    assert "media_claim_retry_count" not in detail_action
+    assert waiting["status"] == "running"
+    assert waiting["actions"][0]["status"] == "running"
+    assert read_agent_product_operation(
+        project_dir=workflow_run_client.state_dir, operation_id=operation_id
+    )["status"] not in {"failed", "cancelled", "delivered"}
+    assert compile_prompt().status_code == 200
+    assert len(compile_calls) == 1
+
+    third = await media.enqueue()
+    assert third["data"]["job_id"] not in {
+        first["data"]["job_id"], second["data"]["job_id"],
+    }
+    assert (await media.enqueue())["data"]["job_id"] == third["data"]["job_id"]
+    assert len(media.enqueued) == 3
+    claimed = read_workflow_run(
+        project_dir=workflow_run_client.state_dir,
+        canvas_id="default", run_id=created["run_id"],
+    )
+    assert claimed["actions"][0]["retry_count"] == 2
+    assert claimed_retry_count() == 2
+
+    third_task = media.tasks[third["data"]["job_id"]]
+    third_task.status = "failed"
+    third_task.error = "HTTP 503: upstream service unavailable"
+    assert workflow_run_client.get(base).status_code == 200
+    exhausted = read_workflow_run(
+        project_dir=workflow_run_client.state_dir,
+        canvas_id="default", run_id=created["run_id"],
+    )
+    assert exhausted["status"] == "failed"
+    assert exhausted["actions"][0]["status"] == "failed"
+    assert read_agent_product_operation(
+        project_dir=workflow_run_client.state_dir, operation_id=operation_id
+    )["status"] == "failed"
+    assert compile_prompt().status_code == 409
+
+
+@pytest.mark.asyncio
 async def test_recipe_media_retry_follows_concurrent_reclaim(
     workflow_run_client: TestClient, monkeypatch
 ) -> None:
@@ -1788,6 +1913,51 @@ async def test_metered_html_recipe_text_generation_accepts_bound_admission(
     assert len(workflow_run_client.enqueued_tasks) == 1
 
 
+def test_workflow_result_operation_requires_and_enforces_canvas_scope(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    from novelvideo.api.routes import freezone
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    missing_canvas = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/agent-product-operations",
+        json={
+            "product_kind": "workflow_result",
+            "generation_session_id": "generation-no-canvas",
+            "artifact_id": "video-ad@1.0.0",
+            "normalized_inputs_hash": "inputs-no-canvas",
+            "metadata": {"skill_id": "video-ad", "skill_version": "1.0.0"},
+        },
+    )
+    assert missing_canvas.status_code == 400
+    assert "canvas_id is required" in missing_canvas.text
+
+    admitted = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/agent-product-operations",
+        json={
+            "product_kind": "workflow_result",
+            "generation_session_id": "generation-canvas-a",
+            "canvas_id": "canvas-a",
+            "artifact_id": "video-ad@1.0.0",
+            "normalized_inputs_hash": "inputs-canvas-a",
+            "metadata": {"skill_id": "video-ad", "skill_version": "1.0.0"},
+        },
+    )
+    assert admitted.status_code == 200
+    operation_id = admitted.json()["data"]["operation_id"]
+    response = workflow_run_client.post(
+        "/api/v1/projects/proj_demo/freezone/canvases/canvas-b/workflow-drafts",
+        json={
+            "operation_id": operation_id,
+            "intent": {"skill_id": "video-ad", "user_goal": "广告"},
+            "compiled": _valid_draft_compiled(),
+        },
+    )
+
+    assert response.status_code == 400
+    assert "does not match target canvas" in response.text
+
+
 def test_metered_workflow_result_is_delivered_once_before_canvas_confirmation(
     workflow_run_client: TestClient, monkeypatch
 ) -> None:
@@ -2071,7 +2241,7 @@ async def test_late_agent_product_delivery_confirms_reserved_credit(
     observed_metrics: list[str] = []
     task = SimpleNamespace(
         task_id="product-task-a",
-        status="failed",
+        status="running" if product_kind == "workflow_result" else "failed",
         metadata={
             "feature_credit_reservation_id": "reservation-a",
             "error_code": "AGENT_PRODUCT_SETTLEMENT_PENDING",
@@ -2115,6 +2285,44 @@ async def test_late_agent_product_delivery_confirms_reserved_credit(
     assert settlements == [("reservation-a", "confirm")]
     assert completions[0]["metadata"]["settlement_status"] == "reconciled"
     assert observed_metrics == ["agent_product_reconciled"]
+
+
+@pytest.mark.asyncio
+async def test_failed_workflow_delivery_terminalizes_waiting_task(monkeypatch) -> None:
+    from novelvideo.api.routes import freezone
+
+    task = SimpleNamespace(
+        task_id="product-task-a",
+        status="running",
+        metadata={"error_code": "AGENT_PRODUCT_SETTLEMENT_PENDING"},
+    )
+    failures: list[dict] = []
+
+    class Manager:
+        def get_task_for_project(self, *_args, **_kwargs):
+            return task
+
+        def fail_task_for_project(self, *_args, **kwargs):
+            failures.append(kwargs)
+
+    monkeypatch.setattr(freezone, "get_task_manager", lambda: Manager())
+
+    await freezone._settle_failed_agent_product_task(
+        ctx=SimpleNamespace(project_id="proj_demo"),
+        operation={
+            "operation_id": "agent_product_a",
+            "project_id": "proj_demo",
+            "task_id": "product-task-a",
+            "task_type": "freezone_agent_workflow_result",
+            "product_kind": "workflow_result",
+            "status": "failed",
+        },
+        error="draft persistence failed",
+    )
+
+    assert failures[0]["expected_task_id"] == "product-task-a"
+    assert failures[0]["error"] == "draft persistence failed"
+    assert failures[0]["metadata"]["settlement_status"] == "failed"
 
 
 @pytest.mark.asyncio
@@ -3519,6 +3727,16 @@ def test_server_workflow_prepare_revise_and_compact_query(workflow_run_client):
     draft = response.json()["data"]
     assert draft["revision"] == 1
     assert not {"plan", "intent", "compiled"} & draft.keys()
+    assert draft["preview"]["nodes"] == [
+        {
+            "id": "brief",
+            "name": "广告",
+            "stage": "input",
+            "node_type": "textAnnotationNode",
+        }
+    ]
+    assert draft["preview"]["recipe_pipelines"] == []
+    assert draft["preview"]["node_count"] == 1
     target = f"{base}/{draft['draft_id']}"
     changes = {"step_updates": [{"node_id": "brief", "prompt": "新广告要求"}]}
     revised = workflow_run_client.patch(
@@ -3533,6 +3751,7 @@ def test_server_workflow_prepare_revise_and_compact_query(workflow_run_client):
     assert revised.json()["data"]["revision"] == 2
     full = workflow_run_client.get(target).json()["data"]
     assert full["compiled"]["plan"]["nodes"][0]["data"]["content"] == "新广告要求"
+    assert len(full["preview"]["nodes"]) == 1
     stale = workflow_run_client.patch(
         target, json={"expected_revision": 1, "changes": changes}
     )
@@ -4164,3 +4383,282 @@ def test_caller_supplied_compiled_mode_confirmations_are_ignored(workflow_run_cl
     assert _genmode_blockers(created.json()["detail"]["preflight"]) == [
         "video_generation_mode_conflict"
     ]
+
+
+def _two_video_recipe_operations(client: TestClient, monkeypatch) -> list[str]:
+    """Admit two model-compiled video Recipe actions in one workflow run."""
+    from novelvideo.api.routes import freezone
+
+    monkeypatch.setattr(freezone, "get_usage_meter", lambda: object())
+    created = client.post(
+        "/api/v1/projects/proj_demo/freezone/canvases/default/workflow-runs",
+        json={"actions": [
+            {
+                "node_id": node_id, "action": "generate_video",
+                "recipe_id": "product-video", "recipe_version": "1.0.0",
+                "generation_attempt_id": f"attempt-{node_id}",
+            }
+            for node_id in ("video-1", "video-2")
+        ]},
+    ).json()["data"]
+    return [action["product_operation_id"] for action in created["actions"]]
+
+
+def _fail_recipe_operation(client: TestClient, operation_id: str) -> None:
+    from novelvideo.freezone.agent_product_operations import (
+        finish_agent_product_operation,
+        read_agent_product_operation,
+    )
+
+    operation = read_agent_product_operation(
+        project_dir=client.state_dir, operation_id=operation_id
+    )
+    finish_agent_product_operation(
+        project_dir=client.state_dir,
+        operation_id=operation_id,
+        outcome="failed",
+        expected_task_id=operation["task_id"],
+    )
+
+
+def _video_compile_item(operation_id: str, request_id: str = "") -> dict:
+    return {
+        **({"request_id": request_id} if request_id else {}),
+        "project_id": "proj_demo",
+        "product_operation_id": operation_id,
+        "recipe_id": "product-video",
+        "node_kind": "video",
+    }
+
+
+def test_recipe_compile_rejects_attempt_failed_during_compilation(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    """A retry must not get a prompt for an attempt a concurrent compile failed."""
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.recipe_runtime import RecipeCompileResult
+
+    operation_id, _other = _two_video_recipe_operations(workflow_run_client, monkeypatch)
+
+    async def compile_while_earlier_request_fails(**_kwargs):
+        # The timed-out earlier compile of this attempt fails it meanwhile.
+        _fail_recipe_operation(workflow_run_client, operation_id)
+        return RecipeCompileResult(
+            "video prompt", "model", ("product-video",),
+            model_call_id="recipe-compiler:late", executed_at=1.0,
+        )
+
+    monkeypatch.setattr(
+        freezone, "compile_recipe_prompt_result", compile_while_earlier_request_fails
+    )
+    response = workflow_run_client.post(
+        "/api/v1/freezone/recipes/compile", json=_video_compile_item(operation_id)
+    )
+    assert response.status_code == 409
+    assert "recipe attempt ended (failed)" in response.json()["detail"]
+    assert "rerun the node" in response.json()["detail"]
+
+
+def test_recipe_compile_batch_isolates_ended_attempts(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.recipe_runtime import RecipeCompileResult
+
+    admitted_failed, live = _two_video_recipe_operations(workflow_run_client, monkeypatch)
+    _fail_recipe_operation(workflow_run_client, admitted_failed)
+    compiled_items: list[int] = []
+
+    async def compile_batch(items):
+        compiled_items.append(len(items))
+        return [
+            RecipeCompileResult(
+                "video prompt", "model", ("product-video",),
+                model_call_id="recipe-compiler:live", executed_at=1.0,
+            )
+        ]
+
+    monkeypatch.setattr(freezone, "compile_recipe_prompt_batch", compile_batch)
+    response = workflow_run_client.post(
+        "/api/v1/freezone/recipes/compile-batch",
+        json={"items": [
+            _video_compile_item(admitted_failed, "ended"),
+            _video_compile_item(live, "live"),
+        ]},
+    )
+    assert response.status_code == 200, response.text
+    items = {item["request_id"]: item for item in response.json()["data"]["items"]}
+    assert compiled_items == [1]
+    assert items["ended"]["ok"] is False
+    assert "recipe attempt ended (failed)" in items["ended"]["error"]
+    assert not items["ended"].get("retryable")
+    assert items["live"]["ok"] is True
+    assert items["live"]["data"]["prompt"] == "video prompt"
+
+
+def test_recipe_compile_batch_reports_attempt_failed_during_compilation(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.recipe_runtime import RecipeCompileResult
+
+    racing, live = _two_video_recipe_operations(workflow_run_client, monkeypatch)
+
+    async def compile_batch(items):
+        _fail_recipe_operation(workflow_run_client, racing)
+        return [
+            RecipeCompileResult(
+                "video prompt", "model", ("product-video",),
+                model_call_id=f"recipe-compiler:{index}", executed_at=1.0,
+            )
+            for index, _item in enumerate(items)
+        ]
+
+    monkeypatch.setattr(freezone, "compile_recipe_prompt_batch", compile_batch)
+    response = workflow_run_client.post(
+        "/api/v1/freezone/recipes/compile-batch",
+        json={"items": [
+            _video_compile_item(racing, "racing"),
+            _video_compile_item(live, "live"),
+        ]},
+    )
+    assert response.status_code == 200, response.text
+    items = {item["request_id"]: item for item in response.json()["data"]["items"]}
+    assert items["racing"]["ok"] is False
+    assert "recipe attempt ended (failed)" in items["racing"]["error"]
+    assert items["live"]["ok"] is True
+
+
+def test_workflow_media_link_reports_ended_recipe_attempt(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.workflow_runs import (
+        claim_workflow_media_action,
+        classify_workflow_error,
+        workflow_error_diagnostics,
+    )
+
+    operation_id, _other = _two_video_recipe_operations(workflow_run_client, monkeypatch)
+    _fail_recipe_operation(workflow_run_client, operation_id)
+    link_context = SimpleNamespace(
+        project_id="proj_demo", state_dir=str(workflow_run_client.state_dir)
+    )
+    with pytest.raises(HTTPException, match=r"recipe attempt ended \(failed\)") as raised:
+        freezone._verified_workflow_media_link(
+            ctx=link_context,
+            project_dir=workflow_run_client.state_dir,
+            canvas_id="default",
+            node_id="video-1",
+            operation_id=operation_id,
+            attempt_id="attempt-video-1",
+        )
+    assert raised.value.status_code == 409
+    with pytest.raises(ValueError, match=r"recipe attempt ended \(failed\)"):
+        claim_workflow_media_action(
+            project_dir=workflow_run_client.state_dir,
+            project_id="proj_demo",
+            canvas_id="default",
+            node_id="video-1",
+            operation_id=operation_id,
+            attempt_id="attempt-video-1",
+            task_type="freezone_video_gen",
+            fingerprint="f" * 64,
+        )
+    # Identity mismatches keep their own error; only the settled status is "ended".
+    with pytest.raises(HTTPException, match="does not match admitted Recipe attempt"):
+        freezone._verified_workflow_media_link(
+            ctx=link_context,
+            project_dir=workflow_run_client.state_dir,
+            canvas_id="default",
+            node_id="video-1",
+            operation_id=operation_id,
+            attempt_id="unrelated-attempt",
+        )
+    detail = str(raised.value.detail)
+    assert classify_workflow_error(detail) == ("attempt_ended", False)
+    # The runner's localized wrapper keeps the raw reason, so it stays final too.
+    wrapped = f"本次节点执行已结束，请重新运行该节点以开始新的执行（{detail}）"
+    diagnostics = workflow_error_diagnostics(wrapped)
+    assert diagnostics["retryable"] is False
+    assert "重新运行该节点" in diagnostics["user_error"]
+
+
+@pytest.mark.parametrize("endpoint", ["compile", "compile-batch"])
+def test_recipe_compile_reports_attempt_settled_during_evidence_write(
+    workflow_run_client: TestClient, monkeypatch, endpoint: str
+) -> None:
+    """The attempt can end between the terminal check and the evidence write."""
+    from novelvideo.api.routes import freezone
+    from novelvideo.freezone.recipe_runtime import RecipeCompileResult
+
+    racing, live = _two_video_recipe_operations(workflow_run_client, monkeypatch)
+    real_bind = freezone.bind_agent_product_model_execution
+
+    def bind_after_concurrent_settle(**kwargs):
+        if kwargs["operation_id"] == racing:
+            _fail_recipe_operation(workflow_run_client, racing)
+        return real_bind(**kwargs)
+
+    def model_result(index: int) -> RecipeCompileResult:
+        return RecipeCompileResult(
+            "video prompt", "model", ("product-video",),
+            model_call_id=f"recipe-compiler:{index}", executed_at=1.0,
+        )
+
+    async def compile_one(**_kwargs):
+        return model_result(0)
+
+    async def compile_batch(items):
+        return [model_result(index) for index, _item in enumerate(items)]
+
+    monkeypatch.setattr(
+        freezone, "bind_agent_product_model_execution", bind_after_concurrent_settle
+    )
+    monkeypatch.setattr(freezone, "compile_recipe_prompt_result", compile_one)
+    monkeypatch.setattr(freezone, "compile_recipe_prompt_batch", compile_batch)
+    if endpoint == "compile":
+        response = workflow_run_client.post(
+            "/api/v1/freezone/recipes/compile", json=_video_compile_item(racing)
+        )
+        assert response.status_code == 409
+        assert "recipe attempt ended (failed)" in response.json()["detail"]
+        return
+    response = workflow_run_client.post(
+        "/api/v1/freezone/recipes/compile-batch",
+        json={"items": [
+            _video_compile_item(racing, "racing"),
+            _video_compile_item(live, "live"),
+        ]},
+    )
+    assert response.status_code == 200, response.text
+    items = {item["request_id"]: item for item in response.json()["data"]["items"]}
+    assert items["racing"]["ok"] is False
+    assert "recipe attempt ended (failed)" in items["racing"]["error"]
+    assert items["live"]["ok"] is True
+
+
+def test_recipe_compile_does_not_replay_attempt_settled_during_replay(
+    workflow_run_client: TestClient, monkeypatch
+) -> None:
+    """The saved-prompt read follows the status read; an ended attempt is not replayed."""
+    from novelvideo.api.routes import freezone
+
+    operation_id, _other = _two_video_recipe_operations(workflow_run_client, monkeypatch)
+
+    def saved_prompt_after_concurrent_settle(**_kwargs):
+        _fail_recipe_operation(workflow_run_client, operation_id)
+        return "saved video prompt"
+
+    async def forbidden_compile(**_kwargs):
+        raise AssertionError("a saved model prompt must be replayed, not recompiled")
+
+    monkeypatch.setattr(
+        freezone, "read_recipe_model_prompt", saved_prompt_after_concurrent_settle
+    )
+    monkeypatch.setattr(freezone, "compile_recipe_prompt_result", forbidden_compile)
+    response = workflow_run_client.post(
+        "/api/v1/freezone/recipes/compile", json=_video_compile_item(operation_id)
+    )
+    assert response.status_code == 409
+    assert "recipe attempt ended (failed)" in response.json()["detail"]

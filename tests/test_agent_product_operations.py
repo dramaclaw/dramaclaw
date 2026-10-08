@@ -43,6 +43,31 @@ def test_agent_product_operation_is_durable_and_idempotent(tmp_path):
     )
 
 
+def test_workflow_result_requires_canvas_and_rejects_canvas_rebinding(tmp_path):
+    with pytest.raises(ValueError, match="canvas_id is required"):
+        create_agent_product_operation(
+            project_dir=tmp_path,
+            project_id="project-a",
+            product_kind="workflow_result",
+            idempotency_key="missing-canvas",
+            generation_session_id="generation-a",
+            artifact_id="video-ad@1",
+        )
+
+    _create(tmp_path, key="canvas-bound")
+    with pytest.raises(ValueError, match="bound to another operation"):
+        create_agent_product_operation(
+            project_dir=tmp_path,
+            project_id="project-a",
+            product_kind="workflow_result",
+            idempotency_key="canvas-bound",
+            generation_session_id="generation-a",
+            canvas_id="canvas-b",
+            artifact_id="artifact-a",
+            metadata={"source": "agent"},
+        )
+
+
 @pytest.mark.parametrize(
     "mode", ["timeout_fallback", "memory_cache", "persistent_cache", "deterministic"]
 )
@@ -569,7 +594,7 @@ async def test_catalog_result_tool_binds_its_generation_operation(
 
 @pytest.mark.asyncio
 async def test_workflow_result_waiter_releases_slot_before_late_delivery(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, caplog
 ):
     from novelvideo.task_backend.runners import freezone as freezone_runner
 
@@ -598,6 +623,9 @@ async def test_workflow_result_waiter_releases_slot_before_late_delivery(
             envelope, SimpleNamespace(state_dir=tmp_path)
         )
     assert exc_info.value.status == "awaiting_delivery"
+    assert "agent_product_waiter.deferred" in caplog.text
+    assert operation["operation_id"] in caplog.text
+    assert "task_projection=running" in caplog.text
     assert (
         read_agent_product_operation(
             project_dir=tmp_path, operation_id=operation["operation_id"]

@@ -101,7 +101,33 @@ def build_workflow_draft_patch(
     return result, None
 
 
-def public_workflow_draft(payload: dict[str, Any]) -> dict[str, Any]:
+def _compact_preview(value: Any) -> dict[str, Any]:
+    """Keep the agent-facing preview useful without echoing the stored graph."""
+
+    preview = value if isinstance(value, dict) else {}
+    return {
+        key: deepcopy(preview[key])
+        for key in (
+            "planner",
+            "preflight",
+            "title",
+            "skill_id",
+            "inputs",
+            "phases",
+            "nodes",
+            "recipe_pipelines",
+            "external_inputs",
+            "node_count",
+            "edge_count",
+        )
+        if key in preview
+    }
+
+
+def public_workflow_draft(
+    payload: dict[str, Any], *, compact_preview: bool = False
+) -> dict[str, Any]:
+    preview = payload.get("preview") or {}
     return {
         "ok": True,
         "status": "workflow_draft_ready",
@@ -113,7 +139,9 @@ def public_workflow_draft(payload: dict[str, Any]) -> dict[str, Any]:
         "skill_id": payload.get("skill_id"),
         "plan_digest": payload.get("plan_digest"),
         "run_after_create": bool(payload.get("run_after_create")),
-        "preview": deepcopy(payload.get("preview") or {}),
+        "preview": (
+            _compact_preview(preview) if compact_preview else deepcopy(preview)
+        ),
         "last_changes": deepcopy(payload.get("last_changes") or {}),
         "expires_at": payload.get("expires_at"),
         "message": "工作流方案草稿已准备完成，可继续调整或确认创建。",

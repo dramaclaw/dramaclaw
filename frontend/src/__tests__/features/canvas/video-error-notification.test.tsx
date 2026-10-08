@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { submitFreezoneVideoGen } from "@/api/ops";
 import { showErrorDialog } from "@/features/canvas/application/errorDialog";
+import { compileWorkflowNodePrompt } from "@/features/canvas/application/workflowRecipeRuntime";
 import { CANVAS_NODE_TYPES, type CanvasNode } from "@/features/canvas/domain/canvasNodes";
 import { useVideoGenerationForm } from "@/features/canvas/nodes/shared/useVideoGenerationForm";
 import { useCanvasStore } from "@/stores/canvasStore";
@@ -40,6 +41,12 @@ vi.mock("@/features/canvas/application/errorDialog", async (importOriginal) => (
   ...(await importOriginal<typeof import("@/features/canvas/application/errorDialog")>()),
   showErrorDialog: vi.fn(async () => undefined),
 }));
+
+vi.mock("@/features/canvas/application/workflowRecipeRuntime", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("@/features/canvas/application/workflowRecipeRuntime")>();
+  return { ...original, compileWorkflowNodePrompt: vi.fn(original.compileWorkflowNodePrompt) };
+});
 
 const POLICY_CODE = "InputImageSensitiveContentDetected.PrivateInformation";
 const RAW_BACKEND_ERROR = `provider rejected: ${POLICY_CODE} (request_id=req-xyz789)`;
@@ -122,5 +129,23 @@ describe("VideoNode error notification contract", () => {
     const dialogCalls = vi.mocked(showErrorDialog).mock.calls;
     const [message] = dialogCalls[dialogCalls.length - 1];
     expect(String(message)).not.toContain("真人素材审核");
+  });
+
+  it("records a Recipe compilation failure on the node for the workflow runner", async () => {
+    const ended = "recipe attempt ended (failed); rerun the node to start a new attempt";
+    vi.mocked(compileWorkflowNodePrompt).mockRejectedValueOnce(new Error(ended));
+    vi.mocked(submitFreezoneVideoGen).mockClear();
+
+    const { result } = renderHook(() => useVideoGenerationForm("vid-1"));
+
+    await waitFor(() => {
+      expect(result.current.submitDisabled).toBe(false);
+    });
+    await result.current.submit().catch(() => undefined);
+
+    const data = useCanvasStore.getState().nodes.find((node) => node.id === "vid-1")?.data;
+    expect(data?.generationError).toContain(ended);
+    expect(data?.isGenerating).toBe(false);
+    expect(submitFreezoneVideoGen).not.toHaveBeenCalled();
   });
 });

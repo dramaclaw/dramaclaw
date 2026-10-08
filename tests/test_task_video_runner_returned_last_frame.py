@@ -38,6 +38,60 @@ def test_video_aspect_ratio_uses_adaptive_mode_for_first_frame():
 
 
 @pytest.mark.asyncio
+async def test_omni_video_edit_parameter_error_has_actionable_task_message(
+    tmp_path, monkeypatch
+):
+    from novelvideo.freezone import jobs
+    from novelvideo.task_backend.runners import video as video_runner
+
+    upstream_error = (
+        "The parameters `ratio` and `duration` specified in the request are not valid. "
+        "Seedance identified your task as video editing based on your prompt. "
+        "`ratio` must be `adaptive`; `duration` must be `-1`."
+    )
+    attempts = []
+    history_errors = []
+
+    async def fail_video(**kwargs):
+        attempts.append(kwargs)
+        raise RuntimeError(f"freezone video generation failed: {upstream_error}")
+
+    monkeypatch.setattr(jobs, "run_freezone_video_gen", fail_video)
+    monkeypatch.setattr(
+        video_runner,
+        "get_task_manager",
+        lambda: SimpleNamespace(update_progress_for_project=lambda *_a, **_kw: None),
+    )
+    monkeypatch.setattr(
+        video_runner,
+        "_append_freezone_video_node_history",
+        lambda **kwargs: history_errors.append(kwargs["error"]),
+    )
+
+    with pytest.raises(RuntimeError, match="视频编辑") as exc_info:
+        await video_runner._run_freezone_video_gen_async(
+            {
+                "payload": {
+                    "job_id": "job-1",
+                    "project_dir": str(tmp_path),
+                    "prompt": "保持镜头，只替换人物",
+                    "reference_items": [{"type": "video", "path": "source.mp4"}],
+                    "aspect_ratio": "16:9",
+                    "duration_seconds": 5,
+                    "backend": "newapi_seedance-2.0",
+                    "gen_mode": "all_reference",
+                }
+            },
+            _ctx(tmp_path),
+        )
+
+    assert "改用「视频编辑」模式" in str(exc_info.value)
+    assert "改写提示词" in str(exc_info.value)
+    assert history_errors == [str(exc_info.value)]
+    assert len(attempts) == 1
+
+
+@pytest.mark.asyncio
 async def test_single_video_runner_includes_returned_last_frame_in_task_result(
     tmp_path,
     monkeypatch,

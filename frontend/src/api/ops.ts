@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { apiCall, apiCallEnvelope, apiClient } from "./client";
 import { workflowProductOperation } from "@/features/canvas/application/workflowExecutionActivity";
+import { readReferenceMediaLimits, type ReferenceMediaLimits } from "./referenceMediaLimits";
 
 // Per-node generation history -------------------------------------------- //
 
@@ -494,16 +495,28 @@ export async function submitFreezoneVideoGen(
 /** Target clarity tier. Scales by long edge: 1080p=1920, 2k=2560, 4k=3840. */
 export type FreezoneVideoUpscaleResolution = "1080p" | "2k" | "4k";
 
-/** Denoise strength. none=off, 1x=light, 2x=medium. */
-export type FreezoneVideoUpscaleDenoise = "none" | "1x" | "2x";
+export type FreezoneVideoTargetFps = "auto" | number;
+export type FreezoneVideoSlowdown = "auto" | "2x" | "3x" | "4x" | "5x";
+export type FreezoneVideoScene = "realistic" | "anime";
+
+export interface FreezoneVideoProbe {
+  width: number;
+  height: number;
+  fps: number;
+  duration: number;
+  upscale_resolutions: FreezoneVideoUpscaleResolution[];
+  frame_rate_resolutions: FreezoneVideoUpscaleResolution[];
+}
 
 export interface FreezoneVideoUpscalePayload extends FreezoneNodeContext {
   /** Static URL of the source video to upscale. */
   sourceUrl: string;
   resolution?: FreezoneVideoUpscaleResolution;
-  /** Base version only supports "none" (frame rate unchanged). */
-  frameInterpolation?: "none";
-  denoiseStrength?: FreezoneVideoUpscaleDenoise;
+  targetFps?: FreezoneVideoTargetFps;
+  slowdown?: FreezoneVideoSlowdown;
+  smartInterpolation?: boolean;
+  scene?: FreezoneVideoScene;
+  faceEnhance?: boolean;
 }
 
 export async function submitFreezoneVideoUpscale(
@@ -517,11 +530,44 @@ export async function submitFreezoneVideoUpscale(
       json: {
         source_url: payload.sourceUrl,
         resolution: payload.resolution ?? "1080p",
-        frame_interpolation: payload.frameInterpolation ?? "none",
-        denoise_strength: payload.denoiseStrength ?? "1x",
+        target_fps: payload.targetFps === "auto" ? null : payload.targetFps,
+        slowdown: payload.slowdown ?? "auto",
+        smart_interpolation: payload.smartInterpolation ?? true,
+        scene: payload.scene ?? "realistic",
+        face_enhance: payload.faceEnhance ?? false,
         ...nodeContextBody(payload),
       },
     },
+  );
+}
+
+export async function quoteFreezoneVideoUpscale(
+  project: string,
+  payload: FreezoneVideoUpscalePayload,
+): Promise<{ cost: number; display: string; promotion?: { name?: string; discount_basis_points?: number; ends_at?: string | null } }> {
+  return await apiCall<{ cost: number; display: string; promotion?: { name?: string; discount_basis_points?: number; ends_at?: string | null } }>(
+    `projects/${encodeURIComponent(project)}/freezone/video/upscale/quote`,
+    {
+      method: "POST",
+      json: {
+        source_url: payload.sourceUrl,
+        resolution: payload.resolution ?? "1080p",
+        target_fps: payload.targetFps === "auto" ? null : payload.targetFps,
+        slowdown: payload.slowdown ?? "auto",
+        smart_interpolation: payload.smartInterpolation ?? true,
+        scene: payload.scene ?? "realistic",
+        face_enhance: payload.faceEnhance ?? false,
+      },
+    },
+  );
+}
+
+export async function probeFreezoneVideoUpscale(
+  project: string,
+  sourceUrl: string,
+): Promise<FreezoneVideoProbe> {
+  return await apiCall<FreezoneVideoProbe>(
+    `projects/${encodeURIComponent(project)}/freezone/video/upscale/probe?source_url=${encodeURIComponent(sourceUrl)}`,
   );
 }
 
@@ -695,6 +741,47 @@ export async function submitFreezoneVideoEdit(
         })),
         resolution: payload.resolution ?? "720p",
         audio_setting: payload.audioSetting ?? "auto",
+        generate_audio: payload.generateAudio ?? false,
+        ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
+        gen_mode: payload.genMode,
+        human_review: payload.humanReview ?? false,
+        ...nodeContextBody(payload),
+      },
+    },
+  );
+}
+
+// /freezone/video/video-extend -------------------------------------------- //
+
+export interface FreezoneVideoExtendPayload extends FreezoneNodeContext {
+  /** 待延长的源视频静态地址，必填。 */
+  videoUrl: string;
+  /** 源视频结束后要继续生成的内容。 */
+  prompt: string;
+  cameraTemplateId?: string | null;
+  resolution?: FreezoneVideoResolution;
+  /** 新生成延长片段的时长。 */
+  durationSeconds?: number;
+  generateAudio?: boolean;
+  model?: string;
+  genMode: "videoExtend";
+  humanReview?: boolean;
+}
+
+export async function submitFreezoneVideoExtend(
+  project: string,
+  payload: FreezoneVideoExtendPayload,
+): Promise<FreezoneJobRef> {
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/video/video-extend`,
+    {
+      method: "POST",
+      json: {
+        video_url: payload.videoUrl,
+        prompt: payload.prompt,
+        camera_template_id: payload.cameraTemplateId ?? null,
+        resolution: payload.resolution ?? "720p",
+        duration_seconds: Math.max(payload.durationSeconds ?? 5, 1),
         generate_audio: payload.generateAudio ?? false,
         ...(payload.model ? { model: payload.model, model_id: payload.model } : {}),
         gen_mode: payload.genMode,
@@ -1164,7 +1251,7 @@ export interface MediaModelRequestSchema {
   omitPaths?: string[];
 }
 
-export interface FreezoneImageModelInfo {
+export interface FreezoneImageModelInfo extends ReferenceMediaLimits {
   /** Opaque database identity used by new billing and task records. */
   catalogId?: string;
   /** Stable picker id, e.g. `"newapi_gpt_image2"`. */
@@ -1281,6 +1368,7 @@ function modelEntryFromObject(entry: Record<string, unknown>): FreezoneImageMode
     resolutionOptions: pickStringArray(entry, "resolutionOptions", "resolution_options"),
     qualityOptions: pickStringArray(entry, "qualityOptions", "quality_options"),
     ratioOptions: pickStringArray(entry, "ratioOptions", "ratio_options"),
+    ...readReferenceMediaLimits(entry),
     referenceImageMax: pickNumber(entry, "referenceImageMax", "reference_image_max"),
     request: pickMediaRequestSchema(entry.request),
   };
@@ -1356,7 +1444,7 @@ export async function fetchFreezoneImageModels(
 /** Provider tab id for video generation models. */
 export type FreezoneVideoProvider = "newapi" | "seedance" | "huimeng";
 
-export interface FreezoneVideoModelInfo {
+export interface FreezoneVideoModelInfo extends ReferenceMediaLimits {
   /** Opaque database identity used by new billing and task records. */
   catalogId?: string;
   /** Stable picker id, e.g. `"seedance_2"` (backend currently keys by api id). */
@@ -1472,6 +1560,7 @@ function videoModelEntryFromObject(
     ratioOptions: pickStringArray(entry, "ratioOptions", "ratio_options"),
     supportedModes: pickStringArray(entry, "supportedModes", "supported_modes"),
     referenceImageMax: pickNumber(entry, "referenceImageMax", "reference_image_max"),
+    ...readReferenceMediaLimits(entry),
     referenceVideoMax: pickNumber(entry, "referenceVideoMax", "reference_video_max"),
     referenceAudioMax: pickNumber(entry, "referenceAudioMax", "reference_audio_max"),
     referenceFileMax: pickNumber(entry, "referenceFileMax", "reference_file_max"),

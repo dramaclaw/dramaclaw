@@ -167,13 +167,13 @@ describe('AssetBoard 音频进主从详情', () => {
     expect(payload.text).toBe('真正的旁白。');
   });
 
-  it('Recipe 编译超时时只提交安全旁白，不朗读编译器制作指令', async () => {
+  it('通用语音 Recipe 编译超时时只提交安全旁白，不朗读编译器制作指令', async () => {
     vi.mocked(compileFreezoneRecipePrompt).mockImplementation(async (payload) => {
       const prompt = '你是短剧配音导演。请根据脚本生成旁白。\n\n真正的旁白。';
       payload.onCompileMetadata?.({
         mode: 'timeout_fallback',
         prompt,
-        recipeIds: ['drama-shot-voice'],
+        recipeIds: ['general-audio'],
       });
       return prompt;
     });
@@ -185,7 +185,7 @@ describe('AssetBoard 音频进主从详情', () => {
       speechMode: 'clone',
       voiceAvailable: true,
       voiceRef: { scope: 'user_custom', voiceId: 'voice-1' },
-      workflowCatalog: { recipeId: 'drama-shot-voice' },
+      workflowCatalog: { recipeId: 'general-audio' },
     })]);
     render(<AssetBoardView visible onLocateNode={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: '旁白' }));
@@ -193,6 +193,7 @@ describe('AssetBoard 音频进主从详情', () => {
     fireEvent.click(within(detailPanel()).getByRole('button', { name: /^生成$/ }));
 
     await waitFor(() => expect(submitFreezoneAudioSpeech).toHaveBeenCalled());
+    expect(compileFreezoneRecipePrompt).toHaveBeenCalledTimes(1);
     const [, payload] = vi.mocked(submitFreezoneAudioSpeech).mock.calls[0];
     expect(payload.text).toBe('真正的旁白。');
     expect(useCanvasStore.getState().nodes[0]?.data.text).toBe('真正的旁白。');
@@ -230,26 +231,18 @@ describe('AssetBoard 音频进主从详情', () => {
     fireEvent.click(within(detailPanel()).getByRole('button', { name: /^生成$/ }));
 
     await waitFor(() => expect(submitFreezoneAudioSpeech).toHaveBeenCalled());
+    expect(compileFreezoneRecipePrompt).toHaveBeenCalledTimes(1);
     const [, payload] = vi.mocked(submitFreezoneAudioSpeech).mock.calls[0];
     expect(payload.text).toBe('欢迎使用。\n\n他说：快跑。');
     expect(useCanvasStore.getState().nodes[0]?.data.text).toBe('欢迎使用。\n\n他说：快跑。');
   });
 
-  it('drama-shot-voice 正常编译后提交带中文冒号的纯正文', async () => {
-    vi.mocked(compileFreezoneRecipePrompt).mockImplementation(async (payload) => {
-      const prompt = '他说：快跑。';
-      payload.onCompileMetadata?.({
-        mode: 'model',
-        prompt,
-        recipeIds: ['drama-shot-voice'],
-      });
-      return prompt;
-    });
+  it('drama-shot-voice 逐字提交一次自定义音色 TTS，且不编译 Recipe', async () => {
     seed([audioNode({
       displayName: '旁白',
       audioKind: 'speech',
       audioUrl: null,
-      text: '原始旁白。',
+      text: '他说：快跑。',
       speechMode: 'clone',
       voiceAvailable: true,
       voiceRef: { scope: 'user_custom', voiceId: 'voice-1' },
@@ -261,9 +254,33 @@ describe('AssetBoard 音频进主从详情', () => {
     fireEvent.click(within(detailPanel()).getByRole('button', { name: /^生成$/ }));
 
     await waitFor(() => expect(submitFreezoneAudioSpeech).toHaveBeenCalled());
+    expect(compileFreezoneRecipePrompt).not.toHaveBeenCalled();
+    expect(submitFreezoneAudioSpeech).toHaveBeenCalledTimes(1);
     const [, payload] = vi.mocked(submitFreezoneAudioSpeech).mock.calls[0];
     expect(payload.text).toBe('他说：快跑。');
-    expect(useCanvasStore.getState().nodes[0]?.data.text).toBe('他说：快跑。');
+    expect(payload.speechMode).toBe('clone');
+    expect(payload.voiceRef).toEqual({ scope: 'user_custom', voiceId: 'voice-1' });
+  });
+
+  it('非精确 drama-shot-voice 绑定不得借用逐字直通', async () => {
+    vi.mocked(compileFreezoneRecipePrompt).mockResolvedValue('【旁白】他说：快跑。');
+    seed([audioNode({
+      displayName: '旁白',
+      audioKind: 'speech',
+      audioUrl: null,
+      text: '他说：快跑。',
+      voiceAvailable: true,
+      voiceRef: { scope: 'user_custom', voiceId: 'voice-1' },
+      workflowCatalog: { recipeId: 'drama-shot-voice-extra' },
+    })]);
+    render(<AssetBoardView visible onLocateNode={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: '旁白' }));
+
+    fireEvent.click(within(detailPanel()).getByRole('button', { name: /^生成$/ }));
+
+    await waitFor(() => expect(submitFreezoneAudioSpeech).toHaveBeenCalled());
+    expect(compileFreezoneRecipePrompt).toHaveBeenCalledTimes(1);
+    expect(submitFreezoneAudioSpeech).toHaveBeenCalledTimes(1);
   });
 
   it('故事板隐藏（visible=false）→ 命令波形播放器暂停内部 <audio>', () => {

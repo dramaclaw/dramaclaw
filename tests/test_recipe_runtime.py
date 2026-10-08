@@ -122,6 +122,21 @@ def test_retro_skill_keeps_entry_guard_out_of_recipe_runtime_constraints():
     assert "一次性在草稿中列出完整工作流" in skill["planning"]["planning_notes"]
 
 
+def test_kungfu_shot_recipe_requires_per_shot_action_phases():
+    recipe_path = (
+        Path(__file__).resolve().parents[1]
+        / "src/novelvideo/freezone/agent_catalog/builtins/recipes"
+        / "anthropomorphic-kungfu-shot-video.json"
+    )
+    recipe = json.loads(recipe_path.read_text(encoding="utf-8"))
+    prompt = recipe["system_prompt"]
+
+    assert "当前 Shot 的每个核心动作逐项写出" in prompt
+    assert "不得只写泛化的三段式要求" in prompt
+    assert "每个视频节点自身" in prompt
+    assert "逐动作预备/运动/完成" in recipe["must_have_items"]
+
+
 def test_outdoor_stage_duel_character_elements_use_one_turnaround_reference():
     recipe_path = (
         Path(__file__).resolve().parents[1]
@@ -132,6 +147,26 @@ def test_outdoor_stage_duel_character_elements_use_one_turnaround_reference():
 
     assert "正面、侧面、背面" in recipe["system_prompt"]
     assert "全身三视图" in "\n".join(recipe["must_have_items"])
+
+
+def test_outdoor_stage_duel_video_recipe_preserves_confirmed_beat_order():
+    recipe_path = (
+        Path(__file__).resolve().parents[1]
+        / "src/novelvideo/freezone/agent_catalog/builtins/recipes"
+        / "outdoor-stage-duel-shot-video.json"
+    )
+    recipe = json.loads(recipe_path.read_text(encoding="utf-8"))
+    prompt = recipe["system_prompt"]
+
+    assert "已确认" in prompt and "Beat" in prompt
+    assert "Beat 3 中心峰值碰撞和明确受力反馈；Beat 4 反击" not in prompt
+    assert "逐 Beat 保留已确认 Storyboard/用户顺序和动作" in prompt
+    assert "若未提供确认顺序" in prompt
+    assert "continuous handheld long take" in prompt
+    assert "Three-layer composition" in prompt
+    assert "First-person audience POV" in prompt
+    assert "no visible phone body" in prompt
+    assert "hard cuts" in prompt
 
 
 def test_recipe_compiler_uses_the_dedicated_brainclaw_profile(monkeypatch):
@@ -604,6 +639,43 @@ def test_recipe_pipeline_rejects_explicit_conflicts(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_generate_recipe_text_rejects_display_copy_that_drops_product_subject(monkeypatch):
+    monkeypatch.setattr(
+        recipe_runtime,
+        "get_recipe_for_runtime",
+        lambda **_kwargs: {
+            "id": "general-text",
+            "version": "1",
+            "output_kind": "text",
+            "system_prompt": "生成展示文案",
+            "_catalog_source": "builtin",
+        },
+    )
+
+    class FakeAgent:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def run(self, _task):
+            return SimpleNamespace(output="一抹炽热红韵，点亮每个清晨。\n温润质感，暖意蔓延。")
+
+    monkeypatch.setattr(recipe_runtime, "Agent", FakeAgent)
+    monkeypatch.setattr(
+        "novelvideo.config.get_newapi_text_pydantic_model",
+        lambda *_args, **_kwargs: object(),
+    )
+
+    with pytest.raises(recipe_runtime.RecipeRuntimeError, match="product subject"):
+        await recipe_runtime.generate_recipe_text(
+            username="local",
+            recipe_id="general-text",
+            node_kind="text",
+            node_prompt="为同一只亮红色陶瓷杯写两句展示文案",
+            user_goal="两句红杯展示文案，不要标题",
+        )
+
+
+@pytest.mark.asyncio
 async def test_generate_recipe_text_executes_compiled_instruction(monkeypatch):
     captured: dict[str, object] = {}
     monkeypatch.setattr(
@@ -643,7 +715,7 @@ async def test_generate_recipe_text_executes_compiled_instruction(monkeypatch):
 
     assert result == "# 详情页方案"
     assert captured["model_env"] == "FREEZONE_TEXT_WRITER_MODEL"
-    assert captured["timeout_seconds_override"] == 300.0
+    assert captured["timeout_seconds_override"] == 540.0
     assert captured["capability"] == "freezone.text.generate"
     assert captured["brainclaw_profile"] is (
         BrainClawProfile.FREEZONE_RECIPE_TEXT_GENERATION

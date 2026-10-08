@@ -415,6 +415,59 @@ def test_canvas_command_tool_result_accepts_background_workflow(
 
 
 @pytest.mark.anyio
+async def test_canvas_background_followup_is_saved_for_agent_without_reresolving_bridge(
+    monkeypatch,
+) -> None:
+    saved: dict[str, object] = {}
+
+    async def fake_state_dir(_user, _payload):
+        return None
+
+    async def fake_project_context(_user, _scope):
+        return None
+
+    async def fake_append(username, scope, role, content, **kwargs):
+        saved.update(
+            username=username, scope=scope, role=role, content=content, **kwargs
+        )
+        return {"id": 1}
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", fake_state_dir)
+    monkeypatch.setattr(chat_route, "_project_context_for_scope", fake_project_context)
+    monkeypatch.setattr(chat_route.chat_store, "append_message_async", fake_append)
+    monkeypatch.setattr(
+        chat_route,
+        "resolve_canvas_command",
+        lambda *_args, **_kwargs: pytest.fail(
+            "settled bridge must not be resolved again"
+        ),
+    )
+    payload = chat_route.CanvasCommandToolResultIn(
+        bridge_key="bridge-workflow",
+        turn_id="turn-a",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        agent_id="agent-1",
+        followup=True,
+        tool_call_status="completed",
+        canvas_apply_status="pending",
+        applied=False,
+        agent_hint="Do not rerun generation.",
+    )
+
+    response = await chat_route.resolve_canvas_command_tool_result(
+        payload,
+        {"username": "admin"},
+    )
+
+    assert response["data"]["canvas_apply_status"] == "pending"
+    assert saved["role"] == "agent_notification"
+    assert "do not rerun generation" in str(saved["content"])
+    assert saved["idempotency_key"] == "canvas-background-result:bridge-workflow"
+    assert getattr(saved["scope"], "agent_id") == "agent-1"
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     "receipt_revision,receipt_task,expected_status",
     [
