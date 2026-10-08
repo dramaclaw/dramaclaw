@@ -220,7 +220,9 @@ async def generate_blockout_from_image(
     rewrite each time. It corrects what the model can see is wrong (camera
     distance and height, where the big pieces stand); it does not make the
     model read the picture better. A rewrite that breaks the scene or adds
-    plausibility errors is dropped and the scene under review is kept.
+    plausibility errors is sent back once with the checker's complaints, the
+    same way a draft is; if the repair is no better either, the round is
+    dropped and the scene under review is kept.
     """
     from novelvideo.freezone.vision_gateway import (
         VisionInput,
@@ -315,6 +317,19 @@ async def generate_blockout_from_image(
         chosen = fallback
 
     renders: list[bytes] = []
+
+    def review(
+        program: str, seconds: float
+    ) -> tuple[_Candidate | None, tuple[str, ...]]:
+        try:
+            candidate, errors = _evaluate(
+                program, image_aspect=image_aspect, picture_check=picture_check
+            )
+        except BlockoutLimitError as exc:
+            errors, candidate = (str(exc),), None
+        attempts.append(BlockoutAttempt(program, errors, seconds, review=True))
+        return candidate, errors
+
     if render_check:
         for _ in range(BLOCKOUT_REVIEW_ROUNDS):
             png = await asyncio.to_thread(
@@ -328,13 +343,17 @@ async def generate_blockout_from_image(
                 image,
                 VisionInput(data=png, media_type="image/png"),
             )
-            try:
-                candidate, errors = _evaluate(
-                    program, image_aspect=image_aspect, picture_check=picture_check
+            candidate, errors = review(program, seconds)
+            if errors:
+                # 评审稿没过校验时，把错误发回去补一次（和草稿的重试同一个提示），
+                # 不然评审这一轮花的时间就白扔了。只补一次：补了还不行就按改坏处理。
+                program, seconds = await ask(
+                    build_blockout_retry_prompt(
+                        base_prompt=base_prompt, previous_program=program, errors=errors
+                    ),
+                    image,
                 )
-            except BlockoutLimitError as exc:
-                errors, candidate = (str(exc),), None
-            attempts.append(BlockoutAttempt(program, errors, seconds, review=True))
+                candidate, errors = review(program, seconds)
             # 改坏了就不要：只接受不比手里这份更差的改法。
             if candidate is not None and len(errors) <= len(chosen.errors):
                 chosen = candidate

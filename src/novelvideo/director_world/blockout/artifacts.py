@@ -33,7 +33,8 @@ class BlockoutAttempt:
     errors: tuple[str, ...]
     seconds: float
     # A render-check round, as opposed to a draft: it started from a render of
-    # the scene under review, and a bad reply is dropped instead of retried.
+    # the scene under review. A bad reply gets one repair (also marked review);
+    # if that fails too the round is dropped rather than retried further.
     review: bool = False
 
 

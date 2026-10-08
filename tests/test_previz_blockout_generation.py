@@ -617,36 +617,69 @@ async def test_the_render_check_shows_the_model_its_own_scene_and_takes_the_rewr
     assert [attempt.review for attempt in generation.attempts] == [False, True, True]
 
 
-async def test_a_review_that_breaks_the_scene_is_dropped_and_the_last_good_one_kept(
+async def test_a_review_that_breaks_the_scene_is_sent_back_once_with_its_errors(
     image_path, model
 ):
-    fake = model(GOLDEN_PROGRAM, BROKEN, REVIEWED_PROGRAM)
+    fake = model(GOLDEN_PROGRAM, BROKEN, REVIEWED_PROGRAM, REVIEWED_AGAIN)
 
     generation = await generate_blockout_from_image(
         image_path=image_path, render_check=True
     )
 
-    assert len(fake.calls) == 3
+    assert len(fake.calls) == 1 + BLOCKOUT_REVIEW_ROUNDS + 1
+    repair = fake.calls[2]
+    # The repair is the same retry as for a draft: the broken program, the
+    # checker's complaints, and the picture alone (the render is of the old scene).
+    assert "没有通过校验" in repair["prompt"]
+    assert BROKEN.strip() in repair["prompt"]
+    assert "scene.floor" in repair["prompt"]
+    assert len(repair["images"]) == 1
+    # The repaired program is the one the second review builds on.
+    assert REVIEWED_PROGRAM.strip() in fake.calls[3]["prompt"]
+    assert generation.program == REVIEWED_AGAIN.strip()
+    assert [attempt.review for attempt in generation.attempts] == [
+        False,
+        True,
+        True,
+        True,
+    ]
+    assert [len(attempt.errors) for attempt in generation.attempts] == [0, 1, 0, 0]
+    assert len(generation.renders) == BLOCKOUT_REVIEW_ROUNDS
+
+
+async def test_a_review_whose_repair_fails_too_is_dropped_and_the_last_good_one_kept(
+    image_path, model
+):
+    fake = model(GOLDEN_PROGRAM, BROKEN, BROKEN, REVIEWED_PROGRAM)
+
+    generation = await generate_blockout_from_image(
+        image_path=image_path, render_check=True
+    )
+
+    # One repair per review round, never a second one.
+    assert len(fake.calls) == 4
     # The second review still looks at the golden scene, not at the broken rewrite.
-    assert GOLDEN_PROGRAM.strip() in fake.calls[2]["prompt"]
-    assert fake.calls[2]["images"][1].data == fake.calls[1]["images"][1].data
+    assert GOLDEN_PROGRAM.strip() in fake.calls[3]["prompt"]
+    assert fake.calls[3]["images"][1].data == fake.calls[1]["images"][1].data
     assert generation.program == REVIEWED_PROGRAM.strip()
-    assert [len(attempt.errors) for attempt in generation.attempts] == [0, 1, 0]
+    assert [len(attempt.errors) for attempt in generation.attempts] == [0, 1, 1, 0]
 
 
 async def test_a_review_that_only_adds_plausibility_errors_is_dropped_too(
     image_path, model
 ):
-    fake = model(GOLDEN_PROGRAM, LOOKS_AWAY, LOOKS_AWAY)
+    fake = model(GOLDEN_PROGRAM, LOOKS_AWAY, LOOKS_AWAY, LOOKS_AWAY, LOOKS_AWAY)
 
     generation = await generate_blockout_from_image(
         image_path=image_path, render_check=True
     )
 
-    assert len(fake.calls) == 3
+    # Plausibility errors are sent back the same way as a program that does not compile.
+    assert len(fake.calls) == 5
+    assert "没有通过校验" in fake.calls[2]["prompt"]
     assert generation.program == GOLDEN_PROGRAM.strip()
     assert generation.warnings == ()
-    assert [len(attempt.errors) for attempt in generation.attempts] == [0, 1, 1]
+    assert [len(attempt.errors) for attempt in generation.attempts] == [0, 1, 1, 1, 1]
 
 
 async def test_the_render_check_starts_from_the_fallback_when_no_draft_was_clean(
@@ -681,7 +714,7 @@ async def test_every_review_round_settles_its_own_egress(
 async def test_artifacts_of_a_render_checked_job_keep_the_renders(
     image_path, model, tmp_path
 ):
-    model(GOLDEN_PROGRAM, REVIEWED_PROGRAM, BROKEN)
+    model(GOLDEN_PROGRAM, REVIEWED_PROGRAM, BROKEN, BROKEN)
     generation = await generate_blockout_from_image(
         image_path=image_path, render_check=True
     )
@@ -701,5 +734,11 @@ async def test_artifacts_of_a_render_checked_job_keep_the_renders(
     record = json.loads((out_dir / "generation.json").read_text(encoding="utf-8"))
     assert record["render_check"] is True
     assert record["retries"] == 0
-    assert [attempt["review"] for attempt in record["attempts"]] == [False, True, True]
-    assert [len(attempt["errors"]) for attempt in record["attempts"]] == [0, 0, 1]
+    # Draft, first review, broken second review, its failed repair.
+    assert [attempt["review"] for attempt in record["attempts"]] == [
+        False,
+        True,
+        True,
+        True,
+    ]
+    assert [len(attempt["errors"]) for attempt in record["attempts"]] == [0, 0, 1, 1]
