@@ -9,7 +9,7 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
 
 ## Required behavior
 
-- For interactive short dramas, branching stories, choices or multiple endings, route story structure to the `interactive-story` Skill and its dedicated tools first. This workflow Skill applies only to the requested media production. For new storyboard reference images in an approved production plan, use the existing `text-to-image-video` catalog Skill with `general-image` in one image-only WorkflowPlan; keep existing story video nodes outside that Plan and connect images after its run finishes. Never replace an unavailable story tool with ordinary canvas commands or a WorkflowPlan.
+- For interactive short dramas, branching stories, choices or multiple endings, route story structure to the `interactive-story` Skill and its dedicated tools first. This workflow Skill applies only to the requested media production. For new character, product, scene or storyboard reference images in an approved production plan, use the existing `text-to-image-video` catalog Skill with `general-image` in one image-only WorkflowPlan; keep existing story video nodes outside that Plan and connect images after its run finishes. Never replace an unavailable story tool with ordinary canvas commands or a WorkflowPlan.
 - Planning authors topology, Recipe selection, dependencies, confirmed parameters, and short
   node task briefs. Each node prompt should state its task, scope, upstream outputs, and reference
   roles in one or two concise sentences. Preserve user-provided story facts and source material.
@@ -202,8 +202,8 @@ Route between the normal draft flow and the exact topology path in this priority
    list (same stages, order, and dependencies) as a restatement of the template, not a custom
    request.
 2. Otherwise, when the user explicitly names required nodes and their dependency order that
-   deviate from the matching Skill's template, or has confirmed an interactive-story
-   production plan with an exact shot-to-existing-video mapping, use the exact topology path in
+   deviate from the matching Skill's template, or requests images for an existing interactive story
+   with exact asset or shot-to-existing-video mappings, use the exact topology path in
    [references/custom-topology.md](references/custom-topology.md), preparing the complete Plan as
    a persisted draft even when a production Skill also matches. The Plan must include top-level
    `schema_version` and `skill.id`/`skill.version` copied from the selected production Skill;

@@ -4,6 +4,8 @@
 
 ## 读取与规划
 
+用户只要求角色、产品或场景参考图时，按 [参考图图片批次](reference-images.md) 构造完整图片 Plan 并核对映射，不展开完整视频模板；该文档也规定“缺少策划／视频阶段”的正确恢复方式。
+
 先 Get 故事和画布，用真实关联找到各 Segment 的视频节点；剧情关系以故事为准，参数和引用以 `freezone_get_node_detail` 的 `parameters`、`reference_media` 为准。需要动作能力时读 `freezone_get_node_action_catalog`。收集已有视频、提示词、`model`、`genMode`、`durationSec`、`aspectRatio`、`quality`、`generateAudio` 和已连接素材；模型与时长档位、参考类型/数量、声音及清晰度按当前 options 核对，不从标题或记忆推断。
 
 制作影游素材前，先在 StoryDraft 写好 `characters`（人物、产品主角、重要物品）、`scenes`，并逐片段填写 `character_ids` 与 `scene_refs`。每个主体/场景使用稳定 ASCII ID；明确其视觉描述和使用片段。故事 Patch 完成后再提交图片工作流。工作流 `source_context` 使用 `story_id` 和 `asset_targets`：每张图片声明 `plan_node_id`、`kind: "subject"|"scene"`、`entity_id`、`segment_ids`。服务端会核对所有目标片段确实在当前故事中要求该主体/场景；生成成功后宿主再按当前规划回连。`product` 主体也用 `kind: "subject"` 的目标。分镜开场图继续使用 `targets` 的片段映射，两类目标不要混用。没有规划的旧故事可保留人工连线，不会自动猜测分配。

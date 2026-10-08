@@ -1,6 +1,6 @@
 # 互动影游生成执行
 
-仅用于用户已经批准制作方案并明确授权生成、继续或重做视频的请求。开始前读取 [production-planning.md](production-planning.md) 的逐片段就绪标准，并 Get 当前故事与受影响节点；不要仅凭提示词非空或制作备注宣称就绪。
+用于用户已经批准制作方案并明确授权图片或视频生成、继续或重做的请求。角色、产品和场景图片先按 [参考图图片批次](reference-images.md) 准备；视频开始前读取 [production-planning.md](production-planning.md) 的逐片段就绪标准，并 Get 当前故事与受影响节点；不要仅凭提示词非空或制作备注宣称就绪。
 
 ## 提交范围
 

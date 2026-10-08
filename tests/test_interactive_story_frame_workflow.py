@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+import json
+from pathlib import Path
+import re
+
 import pytest
+from jsonschema import Draft202012Validator
 
 from novelvideo.freezone.agent_workflows.catalog import (
     get_workflow_skill,
@@ -10,7 +16,148 @@ from novelvideo.freezone.agent_workflows.catalog import (
 )
 from novelvideo.freezone.agent_workflows.graph import build_workflow_graph_commands
 from novelvideo.freezone.workflow_external_inputs import resolve_external_image_inputs
-from novelvideo.freezone.workflow_story_targets import validate_story_asset_targets, validate_story_frame_targets
+from novelvideo.freezone.workflow_schema import workflow_plan_json_schema
+from novelvideo.freezone.workflow_story_targets import (
+    is_story_image_production_plan,
+    validate_story_asset_targets,
+    validate_story_frame_targets,
+)
+
+
+@pytest.fixture
+def reference_image_example() -> dict:
+    guide = (
+        Path(__file__).resolve().parents[1]
+        / "src/novelvideo/agent_skills/interactive-story/references/reference-images.md"
+    ).read_text(encoding="utf-8")
+    return json.loads(re.findall(r"```json\n(.*?)\n```", guide, re.DOTALL)[0])
+
+
+@pytest.fixture
+def reference_image_canvas() -> dict:
+    return {"nodes": [
+        {"id": "story-group", "type": "groupNode", "data": {
+            "storyGroup": True, "interactiveStoryId": "story-driving",
+            "storyCharacters": [{"id": "driver"}, {"id": "vehicle"}],
+            "storyScenes": [{"id": "cockpit"}],
+        }},
+        *({"id": f"video-{segment}", "type": "videoNode", "parentId": "story-group",
+           "data": {"storySegmentId": segment, "storyCharacterIds": ["driver", "vehicle"],
+                    "storySceneRefs": [{"scene_id": "cockpit", "usage": "setting"}]}}
+          for segment in ("opening", "escape")),
+    ]}
+
+
+def test_documented_character_images_compile_without_planning_or_video(
+    reference_image_example, reference_image_canvas,
+) -> None:
+    plan = reference_image_example
+    Draft202012Validator(workflow_plan_json_schema()).validate(plan)
+    package = get_workflow_skill({"skill_id": plan["skill"]["id"]})
+    assert package["skill"]["version"] == plan["skill"]["version"]
+    validated = validate_agent_workflow_plan(plan)
+    assert validated["ok"] is True, validated
+    assert not validated["preflight"]["blockers"], validated["preflight"]
+    assert is_story_image_production_plan(validated["plan"])
+    validate_story_asset_targets(validated["plan"], reference_image_canvas)
+    validate_story_frame_targets(validated["plan"], reference_image_canvas)
+
+    graph = build_workflow_graph_commands({"plan": validated["plan"], "run_after_create": True})
+    assert graph["ok"] is True, graph
+    created = [item for item in graph["commands"] if item["type"] == "create_node"]
+    assert [item["node_type"] for item in created].count("imageGenNode") == 2
+    assert all(item["node_type"] in {"imageGenNode", "textAnnotationNode"} for item in created)
+    brief = next(item for item in created if item["node_type"] == "textAnnotationNode")
+    assert not brief["data"].get("workflowCatalog", {}).get("recipeId")
+    assert {item["data"]["workflowPlanNodeId"]: item["data"]["storyAssetTarget"]["entityId"]
+            for item in created if item["node_type"] == "imageGenNode"} == {
+        "driver_ref": "driver", "cockpit_ref": "vehicle",
+    }
+    runs = [item for item in graph["commands"] if item["type"] == "run_workflow"]
+    assert len(runs) == 1
+    assert runs[0]["direction"] == "node"
+    assert set(runs[0]["node_ids"]) == {"brief", "driver_ref", "cockpit_ref"}
+
+
+@pytest.mark.parametrize("mistake", ["missing", "duplicate_asset", "asset_and_frame"])
+def test_character_image_mapping_repair_preserves_image_scope(
+    reference_image_example, reference_image_canvas, mistake,
+) -> None:
+    original = reference_image_example
+    plan = deepcopy(original)
+    targets = plan["source_context"]["asset_targets"]
+    if mistake == "missing":
+        targets.pop()
+    elif mistake == "duplicate_asset":
+        targets.append({**targets[1], "kind": "scene", "entity_id": "cockpit"})
+    else:
+        plan["source_context"]["targets"] = [{
+            "plan_node_id": "cockpit_ref", "story_segment_id": "opening",
+            "video_node_id": "video-opening",
+        }]
+    assert not is_story_image_production_plan(plan)
+    failed = validate_agent_workflow_plan(plan)
+    assert {item["stage"] for item in failed["preflight"]["blockers"]
+            if item["code"] == "skill_stage_missing"} == {"planning", "video"}
+    with pytest.raises(ValueError):
+        validate_story_asset_targets(plan, reference_image_canvas)
+
+    # Repair only the mapping: the images, briefs, edges and groups stay intact.
+    plan["source_context"] = deepcopy(original["source_context"])
+    assert plan == original
+    repaired = validate_agent_workflow_plan(plan)
+    assert repaired["ok"] is True, repaired
+    assert not repaired["preflight"]["blockers"], repaired["preflight"]
+    validate_story_asset_targets(repaired["plan"], reference_image_canvas)
+
+
+@pytest.mark.parametrize(("field", "value", "message"), [
+    ("kind", "character", "kind must be subject or scene"),
+    ("entity_id", "missing-driver", "absent from the story plan"),
+    ("segment_ids", ["missing-segment"], "unavailable story segment"),
+    ("segment_ids", ["opening", "opening"], "non-empty unique list"),
+])
+def test_character_image_example_requires_real_unique_story_assets(
+    reference_image_example, reference_image_canvas, field, value, message,
+) -> None:
+    reference_image_example["source_context"]["asset_targets"][0][field] = value
+    with pytest.raises(ValueError, match=message):
+        validate_story_asset_targets(reference_image_example, reference_image_canvas)
+
+
+def test_character_image_example_rejects_asset_not_used_in_segment(
+    reference_image_example, reference_image_canvas,
+) -> None:
+    reference_image_canvas["nodes"][1]["data"]["storyCharacterIds"] = ["vehicle"]
+    with pytest.raises(ValueError, match="subject is not planned for segment opening"):
+        validate_story_asset_targets(reference_image_example, reference_image_canvas)
+
+
+def test_reference_image_can_target_scene_when_that_is_its_only_use(
+    reference_image_example, reference_image_canvas,
+) -> None:
+    plan = reference_image_example
+    plan["source_context"]["asset_targets"][1].update(kind="scene", entity_id="cockpit")
+    assert is_story_image_production_plan(plan)
+    validate_story_asset_targets(plan, reference_image_canvas)
+    reference_image_canvas["nodes"][1]["data"]["storySceneRefs"] = []
+    with pytest.raises(ValueError, match="scene is not planned for segment opening"):
+        validate_story_asset_targets(plan, reference_image_canvas)
+
+
+def test_executable_planning_brief_does_not_qualify_as_story_image_batch(
+    reference_image_example,
+) -> None:
+    plan = reference_image_example
+    brief = plan["nodes"][0]
+    brief["stage"] = "planning"
+    brief["data"]["workflowCatalog"] = {
+        "skillId": SKILL_ID, "recipeId": "general-text",
+    }
+    assert not is_story_image_production_plan(plan)
+    validated = validate_agent_workflow_plan(plan)
+    assert any(item["code"] == "skill_stage_missing" and item["stage"] == "video"
+               for item in validated["preflight"]["blockers"])
 
 
 def test_story_asset_targets_require_saved_plan_and_map_generated_image() -> None:

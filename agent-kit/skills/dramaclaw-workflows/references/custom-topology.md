@@ -28,7 +28,15 @@ order) stays an agent-authored draft with the difference recorded in
    identities from the loaded production Workflow Skill and keep them identical to the admitted
    operation. `generation_answers` supplements this complete Plan; it never replaces the Plan or
    either required identity field.
-   When the Skill has a standard planner, `planning_contract.standard_planner.stages` lists its
+   Existing-story image batches are a supported exception: with `text-to-image-video`, a real
+   `source_context.story_id`, and every image mapped exactly once across `asset_targets` and
+   `targets`, the saved story supplies planning and video destinations. Include only new images
+   and optional recipe-less input briefs; keep video nodes outside the Plan. For character,
+   product or scene references, read the `interactive-story` Skill's
+   `references/reference-images.md` for a complete example and live-asset checks. If this image
+   batch reports `skill_stage_missing`, repair its mapping or extraneous executable nodes;
+   never add planning/video stages to satisfy that error.
+   For other workflows, when the Skill has a standard planner, `planning_contract.standard_planner.stages` lists its
    stages; every stage marked `required` must appear in a custom plan too (for example the
    shot-planning stage of a short drama). A node fills a stage when it has that stage's
    `node_type` and either sets `stage` to the stage id or uses one of the stage's `recipes`.

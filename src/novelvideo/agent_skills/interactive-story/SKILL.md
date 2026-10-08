@@ -46,7 +46,8 @@ description: "在 DramaClaw 中策划、创建、检查或编辑互动影游、�
 - Validate 或解释结果：读 [校验说明](references/validation.md)。
 - 询问下一步、阶段交接或人工阶段确认：读 [阶段引导](references/stage-guidance.md)。
 - 制作方案、参数、参考或镜头承接：读 [制作规划](references/production-planning.md)；写视频提示词再读 [提示词保真](references/prompt-fidelity.md)。
-- 提交图片或视频生成：读 [生成执行](references/generation-execution.md)。写入失败且考虑恢复时读 [失败恢复](references/error-recovery.md)。
+- 生成角色、产品或场景参考图：先读 [参考图图片批次](references/reference-images.md)，包含完整 Plan 范例、唯一资产映射和草稿校验恢复；保持用户要求的图片范围。
+- 提交图片或视频生成：读 [生成执行](references/generation-execution.md)。故事／画布写入失败且考虑恢复时读 [失败恢复](references/error-recovery.md)。
 
 ## 故事工作流
 
