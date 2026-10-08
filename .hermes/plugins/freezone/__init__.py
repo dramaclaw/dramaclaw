@@ -1057,15 +1057,20 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     generation_media_types = args.get("generation_media_types")
     generation_required_choices = args.get("generation_required_choices")
     if generation_media_types is not None or generation_required_choices is not None:
-        if questions or (
+        if (
             generation_media_types is not None
             and generation_required_choices is not None
         ):
             return tool_result({
                 "ok": False,
                 "status": "generation_clarification_args_invalid",
-                "error": "Pass exactly one generation mode without questions",
+                "error": "Pass exactly one generation clarification mode",
             })
+        # Generation cards are server-owned: their canonical fields and live
+        # options must not be mixed with agent-authored business questions. Be
+        # tolerant when an agent sends both, because rejecting the whole call
+        # strands the workflow before the user can select required parameters.
+        questions = []
         if generation_required_choices is not None:
             if not isinstance(generation_required_choices, dict) or not generation_required_choices:
                 return tool_result({
@@ -5676,6 +5681,72 @@ def _handle_get_workflow_skill(args: dict[str, Any], **_: Any) -> str:
     )
 
 
+_AGENT_PRODUCT_OPERATION_ID_PATTERN = re.compile(r"^agent_product_[0-9a-f]{32}$")
+
+
+def _workflow_plan_operation_admission_error(
+    args: dict[str, Any], project_id: str, canvas_id: str
+) -> dict[str, Any] | None:
+    """Reject missing, invented, stale, or cross-canvas workflow operations early."""
+    if not _available():
+        return None
+    operation_id = str(args.get("operation_id") or "").strip()
+    instruction = (
+        "Call freezone_begin_agent_product_generation first and copy its exact operation_id "
+        "into the workflow draft call. Never invent or reconstruct an operation_id."
+    )
+    if not operation_id or not _AGENT_PRODUCT_OPERATION_ID_PATTERN.fullmatch(operation_id):
+        return {
+            "ok": False,
+            "status": "workflow_result_admission_required",
+            "code": "workflow_result_admission_required",
+            "error": "A server-issued workflow_result operation_id is required.",
+            "retryable": False,
+            "next_action": "begin_workflow_result_generation",
+            "agent_instruction": instruction,
+        }
+    response = _request(
+        "GET", _agent_product_operation_api_path(project_id, operation_id)
+    )
+    operation = (
+        response.get("data") if isinstance(response.get("data"), dict) else None
+    )
+    if response.get("ok") is not True or operation is None:
+        return {
+            "ok": False,
+            "status": "workflow_result_admission_required",
+            "code": "workflow_result_admission_required",
+            "error": "The workflow_result operation_id was not admitted by the server.",
+            "retryable": False,
+            "next_action": "begin_workflow_result_generation",
+            "agent_instruction": instruction,
+        }
+    if (
+        operation.get("product_kind") != "workflow_result"
+        or str(operation.get("canvas_id") or "").strip() != canvas_id
+    ):
+        return {
+            "ok": False,
+            "status": "workflow_result_operation_scope_mismatch",
+            "code": "workflow_result_operation_scope_mismatch",
+            "error": "The admitted workflow_result operation does not belong to this canvas.",
+            "retryable": False,
+            "next_action": "begin_workflow_result_generation",
+            "agent_instruction": instruction,
+        }
+    if operation.get("status") in {"failed", "cancelled"}:
+        return {
+            "ok": False,
+            "status": "workflow_result_generation_attempt_required",
+            "code": "workflow_result_generation_attempt_required",
+            "error": "The workflow_result operation is already terminal.",
+            "retryable": False,
+            "next_action": "begin_workflow_result_generation",
+            "agent_instruction": instruction,
+        }
+    return None
+
+
 def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
     if build_workflow_graph_commands is None:
         return tool_error(
@@ -5704,9 +5775,14 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
             f"Import error: {_JSON_WORKFLOW_CATALOG_IMPORT_ERROR}"
         )
     source_plan = args["plan"]
-    if "generation_answers" in args or _workflow_plan_has_recipe_aliases(source_plan):
+    if (
+        "generation_answers" in args
+        or _workflow_plan_has_recipe_aliases(source_plan)
+        or _workflow_plan_has_unambiguous_edge_aliases(source_plan)
+    ):
         source_plan = _clone_json(source_plan)
         _normalize_workflow_plan_recipe_aliases(source_plan)
+        _normalize_workflow_plan_edge_aliases(source_plan)
     if "generation_answers" in args:
         choices, answers_error = _generation_choices_from_answers(
             args["generation_answers"], plan=source_plan
@@ -5728,6 +5804,9 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
     if scope_error:
         return tool_result(scope_error)
     assert project is not None and canvas is not None
+    admission_error = _workflow_plan_operation_admission_error(args, project, canvas)
+    if admission_error is not None:
+        return tool_result(admission_error)
     preflight = _workflow_runtime_preflight(
         validated,
         project_id=project,
@@ -6781,6 +6860,13 @@ _GENERATION_ANSWER_DATA_FIELDS = {
     "video_variants_per_node": ("videoNode", "count"),
 }
 
+# These clarification answers are shared Plan inputs rather than per-node
+# create fields.  Keep them out of the regular generation-question registry so
+# an ordinary custom clarification does not accidentally become a full media
+# settings card, while still accepting the answer when it is carried alongside
+# the card's concrete video settings at draft preparation time.
+_GENERATION_ANSWER_PLAN_INPUT_FIELDS = frozenset({"video_generation_mode"})
+
 
 def _workflow_generation_draft(
     project: str | None,
@@ -6899,6 +6985,49 @@ def _normalize_workflow_plan_recipe_aliases(plan: Any) -> None:
         node.pop("recipeId", None)
 
 
+def _workflow_plan_has_unambiguous_edge_aliases(plan: Any) -> bool:
+    """Return whether a known invalid text-to-image edge can be losslessly repaired."""
+    if not isinstance(plan, dict):
+        return False
+    node_types = {
+        str(node.get("id") or ""): str(node.get("node_type") or "")
+        for node in plan.get("nodes") or []
+        if isinstance(node, dict)
+    }
+    return any(
+        isinstance(edge, dict)
+        and edge.get("link_type") == "context_for"
+        and node_types.get(str(edge.get("source") or "")) == "textAnnotationNode"
+        and node_types.get(str(edge.get("target") or "")) == "imageGenNode"
+        for edge in plan.get("edges") or []
+    )
+
+
+def _normalize_workflow_plan_edge_aliases(plan: Any) -> None:
+    """Normalize the one deterministic compatibility alias accepted at the tool boundary.
+
+    ``context_for`` cannot connect a text annotation to an image generator.  When an
+    agent used that edge to feed the image, ``prompt_for`` is the sole consuming text
+    edge supported by the canvas ontology; ``dependency_for`` would discard the stated
+    data dependency.  Other incompatible edges remain strict validation errors.
+    """
+    if not isinstance(plan, dict):
+        return
+    node_types = {
+        str(node.get("id") or ""): str(node.get("node_type") or "")
+        for node in plan.get("nodes") or []
+        if isinstance(node, dict)
+    }
+    for edge in plan.get("edges") or []:
+        if not isinstance(edge, dict) or edge.get("link_type") != "context_for":
+            continue
+        if (
+            node_types.get(str(edge.get("source") or "")) == "textAnnotationNode"
+            and node_types.get(str(edge.get("target") or "")) == "imageGenNode"
+        ):
+            edge["link_type"] = "prompt_for"
+
+
 def _workflow_plan_has_recipe_aliases(plan: Any) -> bool:
     if not isinstance(plan, dict) or not isinstance(plan.get("nodes"), list):
         return False
@@ -6943,7 +7072,10 @@ def _generation_choices_from_answers(
     choices: dict[str, Any] = {}
     try:
         for question_id, selection in answers.items():
-            if question_id not in _GENERATION_ANSWER_DATA_FIELDS:
+            if (
+                question_id not in _GENERATION_ANSWER_DATA_FIELDS
+                and question_id not in _GENERATION_ANSWER_PLAN_INPUT_FIELDS
+            ):
                 raise ValueError(f"unsupported generation answer: {question_id}")
             choices[question_id] = _generation_answer_value(question_id, selection)
         if receipt_choices is not None:
@@ -6960,7 +7092,11 @@ def _generation_choices_from_answers(
                 "variants_per_node",
             ),
         }.items():
-            if any(key.startswith(f"{media}_") for key in choices):
+            if any(
+                key.startswith(f"{media}_")
+                and key in _GENERATION_ANSWER_DATA_FIELDS
+                for key in choices
+            ):
                 for field in mandatory:
                     key = f"{media}_{field}"
                     if key == "video_duration_seconds" and _plan_has_explicit_video_durations(plan):
@@ -6978,12 +7114,24 @@ def _generation_choices_from_answers(
 def _apply_generation_choices_to_plan(
     plan: dict[str, Any], choices: dict[str, Any], *, missing_only: bool = True
 ) -> None:
+    shared_inputs = {
+        question_id: value
+        for question_id, value in choices.items()
+        if question_id in _GENERATION_ANSWER_PLAN_INPUT_FIELDS
+    }
+    if shared_inputs:
+        current_inputs = plan.get("inputs")
+        plan["inputs"] = {
+            **(current_inputs if isinstance(current_inputs, dict) else {}),
+            **shared_inputs,
+        }
     for node in plan.get("nodes") or []:
         if not isinstance(node, dict):
             continue
         node_choices = [
             (field, value)
             for question_id, value in choices.items()
+            if question_id in _GENERATION_ANSWER_DATA_FIELDS
             for node_type, field in (_GENERATION_ANSWER_DATA_FIELDS[question_id],)
             if node.get("node_type") == node_type
         ]
@@ -10111,7 +10259,7 @@ TOOLS = (
         "freezone_request_user_clarification",
         _schema(
             "freezone_request_user_clarification",
-            "Ask the user structured clarification questions in the Freezone frontend and wait for their submitted answers, including Skill Studio setup questions. For image/video generation pass generation_media_types to ask every field, or pass generation_required_choices returned by preflight to ask only missing fields; pass generation_preferences for specs the user already stated, keeping per-shot durations and final delivery resolution distinct from global video parameters. The server assembles canonical questions and the frontend resolves live options. With workflow_draft_id and workflow_expected_revision, submitted answers are validated and saved to that draft before returning its new preview. For legacy canonical generation questions, title and options may be omitted. Do not hand-build generation questions. For other clarifications, decide the next step from the current context. This tool never creates or runs canvas nodes.",
+            "Ask the user structured clarification questions in the Freezone frontend and wait for their submitted answers, including Skill Studio setup questions. For image/video generation pass generation_media_types to ask every field, or pass generation_required_choices returned by preflight to ask only missing fields; pass generation_preferences for specs the user already stated, keeping per-shot durations and final delivery resolution distinct from global video parameters. The server assembles canonical questions and the frontend resolves live options. Generation mode is exclusive: never include questions in the same call; if questions are accidentally supplied, the server ignores them instead of failing the parameter card. With workflow_draft_id and workflow_expected_revision, submitted answers are validated and saved to that draft before returning its new preview. For legacy canonical generation questions, title and options may be omitted. Do not hand-build generation questions. For other clarifications, decide the next step from the current context. This tool never creates or runs canvas nodes.",
             {
                 "clarification_id": {
                     "type": "string",
@@ -10137,11 +10285,11 @@ TOOLS = (
                 "generation_media_types": {
                     "type": "array",
                     "items": {"type": "string", "enum": ["image", "video"]},
-                    "description": "Generate the full parameter card for the listed media types. Do not also pass questions.",
+                    "description": "Generate the full parameter card for the listed media types. This mode is exclusive; omit questions because any supplied questions are ignored.",
                 },
                 "generation_required_choices": {
                     "type": "object",
-                    "description": "Pass required_choices from a generation_parameters_required result unchanged; the server asks each missing field. Do not also pass questions.",
+                    "description": "Pass required_choices from a generation_parameters_required result unchanged; the server asks each missing field. This mode is exclusive; omit questions because any supplied questions are ignored.",
                     "properties": {
                         "image": {"type": "array", "items": {"type": "string"}},
                         "video": {"type": "array", "items": {"type": "string"}},
@@ -10832,7 +10980,13 @@ TOOLS = (
                     "description": "Pass the clarification result's answers field itself (generation_answers = result['answers']), not the whole result. A receipt envelope with answers and generation_choices is also accepted. The server maps answers into the selected intent or plan.",
                 },
                 "bindings": _WORKFLOW_BINDINGS_SCHEMA,
-                "operation_id": {"type": "string"},
+                "operation_id": {
+                    "type": "string",
+                    "description": (
+                        "Exact workflow_result operation_id returned by "
+                        "freezone_begin_agent_product_generation. Never invent or reconstruct it."
+                    ),
+                },
                 **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
             },
             ["operation_id"],
@@ -10889,7 +11043,11 @@ TOOLS = (
                 **_SCOPE_PROPS,
                 "operation_id": {
                     "type": "string",
-                    "description": "Admitted workflow_result operation from freezone_begin_agent_product_generation.",
+                    "description": (
+                        "Exact admitted workflow_result operation_id returned by "
+                        "freezone_begin_agent_product_generation in this generation attempt. "
+                        "Never invent or reconstruct it; call begin before preparing the Plan."
+                    ),
                 },
                 "intent": _WORKFLOW_INTENT_OBJECT_SCHEMA,
                 "generation_answers": {
@@ -10972,7 +11130,11 @@ TOOLS = (
                 **_SCOPE_PROPS,
                 "operation_id": {
                     "type": "string",
-                    "description": "Admitted workflow_result operation from freezone_begin_agent_product_generation.",
+                    "description": (
+                        "Exact admitted workflow_result operation_id returned by "
+                        "freezone_begin_agent_product_generation in this generation attempt. "
+                        "Never invent or reconstruct it; call begin before preparing the Plan."
+                    ),
                 },
                 "plan": _WORKFLOW_PLAN_OBJECT_SCHEMA,
                 "generation_answers": {

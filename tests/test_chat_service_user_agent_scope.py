@@ -1261,6 +1261,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "call the selected tool directly" in developer_instructions
         assert "custom-topology reference" in developer_instructions
         assert "top-level schema_version plus skill.id and skill.version" in developer_instructions
+        assert "Never invent, abbreviate, or reconstruct an operation_id" in developer_instructions
         assert "reserved input/resource/asset stages" in developer_instructions
         assert "business totals belong in the compact Intent" in developer_instructions
         assert (
@@ -1283,6 +1284,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
             in developer_instructions
         )
         assert "call freezone_request_user_clarification once" in developer_instructions
+        assert "never include questions in the same call" in developer_instructions
         assert "applies only to image and video for now" in developer_instructions
         assert "run_after_create=true" in developer_instructions
         assert "video_generation_mode" in developer_instructions

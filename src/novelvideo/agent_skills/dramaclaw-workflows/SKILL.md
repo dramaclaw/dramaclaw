@@ -80,8 +80,12 @@ canvas execution mode. For every new generation request, call
 `freezone_request_user_clarification` exactly once before any canvas write in both
 `manual_confirm` and `auto_execute`. Historical clarification answers, prior-turn parameters,
 existing node values, and Recipe defaults may prefill recommended choices, but never count as the
-user's selection for the current request. After the clarification result returns for that request,
+user’s selection for the current request. After the clarification result returns for that request,
 do not ask again.
+
+When using `generation_media_types` or `generation_required_choices`, do not include agent-authored
+`questions` in the same call. Generation clarification is one exclusive server-owned mode; ask any
+unrelated business question in a separate turn only when it is actually required.
 
 - In `manual_confirm`, apply the preliminary answers to the plan, then submit the protected write.
   The normal approval card is still shown and remains the final parameter editor.
@@ -181,7 +185,8 @@ including `480P` whenever the schema lists it.
 3. Call `freezone_begin_agent_product_generation` with `product_kind="workflow_result"`, a stable
    generation session, `skill_id`, `skill_version`, `artifact_id="<skill_id>@<skill_version>"`,
    and the normalized inputs before authoring the result. These Skill identities must match the
-   later compiled result.
+   later compiled result. Copy the returned `operation_id` exactly; never invent, abbreviate, or
+   reconstruct one, and never call a prepare tool before this admission succeeds.
 4. For a normal workflow, submit one compact `freezone_workflow_intent.v1` and the admitted
    `operation_id` to `freezone_prepare_workflow`. The backend compiles and validates it; do not
    run a separate compile first.
