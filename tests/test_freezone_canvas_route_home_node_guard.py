@@ -260,8 +260,10 @@ def test_only_canvas_routes_opt_out_of_the_home_node_guard() -> None:
     }
 
     # 取证口径（`TCP-P60`）：画布路由仍只有 14 条；新增的视频增强报价和探测
-    # 也是非画布路由，因此 freezone 路由总数由 81 增至 83。
-    assert router_decorators == 83
+    # 也是非画布路由，因此 freezone 路由总数由 81 增至 83；
+    # 参考图转白模路由（image-to-blockout）与白模模型列表路由（blockout/models）
+    # 同样走守卫，计 85。
+    assert router_decorators == 85
     assert len(canvas_routes) == 14
 
     # 正向：14 条画布路由必须全部、且每一处调用都 opt-out。

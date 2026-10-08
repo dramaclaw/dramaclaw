@@ -71,11 +71,14 @@ function canAddExcept(atLimit: string): ToolbarProps["canAdd"] {
  * `Mock | ((...) => void)`，之后取 `.mock` / `.mockClear()` 就过不了类型检查。只让状态类
  * prop 可覆盖，mock 原样返回，类型就保得住。
  */
-type ToolbarOverrides = Partial<Pick<ToolbarProps, "canAdd" | "tool" | "timelineOpen">>;
+type ToolbarOverrides = Partial<
+  Pick<ToolbarProps, "canAdd" | "canBlockout" | "tool" | "timelineOpen">
+>;
 
 function makeHandlers() {
   return {
     onAdd: vi.fn<ToolbarProps["onAdd"]>(),
+    onBlockout: vi.fn<ToolbarProps["onBlockout"]>(),
     onTool: vi.fn<ToolbarProps["onTool"]>(),
     onTimelineOpen: vi.fn<ToolbarProps["onTimelineOpen"]>(),
   };
@@ -90,6 +93,7 @@ type Handlers = ReturnType<typeof makeHandlers>;
 function makeProps(overrides: ToolbarOverrides, handlers: Handlers): ToolbarProps {
   return {
     canAdd: { character: true, camera: true, light: true, prop: true },
+    canBlockout: true,
     tool: "navigate",
     timelineOpen: true,
     ...overrides,
@@ -194,7 +198,8 @@ describe("PrevizToolbar", () => {
     expectInOrder(
       groupNamed("previz.toolbar.group.create"),
       "button",
-      KINDS.map(({ kind }) => `previz.toolbar.add.${kind}`),
+      // 「从参考图生成」排在四颗「加一件」之后：它加的是一整套，不是其中一种。
+      [...KINDS.map(({ kind }) => `previz.toolbar.add.${kind}`), "previz.toolbar.blockout"],
     );
   });
 
@@ -274,6 +279,42 @@ describe("PrevizToolbar", () => {
       if (other.kind === kind) continue;
       expect(button(`previz.toolbar.add.${other.kind}`)).toBeEnabled();
     }
+  });
+
+  it("offers the reference-image blockout button in the create group", async () => {
+    const user = userEvent.setup();
+    const handlers = setup();
+
+    const group = screen.getByRole("group", { name: "previz.toolbar.group.create" });
+    const control = within(group).getByRole("button", { name: "previz.toolbar.blockout" });
+    expect(control).toBeEnabled();
+    expect(control.querySelector("svg")).toHaveClass("lucide-boxes");
+    expect(await tooltipOf(user, control)).toBe("previz.toolbar.blockout");
+
+    await user.click(control);
+
+    expect(handlers.onBlockout).toHaveBeenCalledTimes(1);
+    expectOnly(handlers, "onBlockout");
+  });
+
+  it("disables the blockout button when no primitive fits and says why", async () => {
+    const user = userEvent.setup();
+    const handlers = setup({ canBlockout: false });
+
+    const control = button("previz.toolbar.blockout");
+    expect(control).toBeDisabled();
+    // 上限写成字面量，理由同 KINDS。
+    expect(await tooltipOf(user, control)).toBe('previz.toolbar.blockoutFull:{"count":150}');
+    await user.click(control);
+    expect(handlers.onBlockout).not.toHaveBeenCalled();
+    for (const { kind } of KINDS) expect(button(`previz.toolbar.add.${kind}`)).toBeEnabled();
+  });
+
+  it("keeps the create buttons independent of the blockout button", () => {
+    setup({ canAdd: canAddExcept("prop") });
+
+    expect(button("previz.toolbar.add.prop")).toBeDisabled();
+    expect(button("previz.toolbar.blockout")).toBeEnabled();
   });
 
   // 同 KINDS 那条的理由：这一条竖栏上的控件全都只有图标，没有可见文字。图标画错、

@@ -160,8 +160,22 @@ export interface PrevizCharacter extends PrevizObjectBase {
   stayInBounds: boolean;
 }
 
+/**
+ * 「参考图转白模」留在对象上的出身标记。带它的对象是某次白模生成的产物：
+ * 「替换现有白模」按它挑出要删的那一批，用户手摆的物件没有这个字段，一个都不会被动到。
+ *
+ * `id` 是场景程序里的名字（`counter`、`room_back`），一面开了洞的墙拆成的几段共用同一个；
+ * `semanticType` 是模型给的语义类别（`wall`、`table`…），这一版只存不用。
+ */
+export interface PrevizBlockoutTag {
+  id: string;
+  semanticType: string;
+}
+
 export interface PrevizCamera extends PrevizObjectBase {
   kind: 'camera';
+  /** 只有白模的参考机位带它，见 `PrevizBlockoutTag`。 */
+  blockout?: PrevizBlockoutTag;
   focalMm: number;
   aperture: number;
   sensor: 'ff' | 's35';
@@ -186,6 +200,8 @@ export interface PrevizProp extends PrevizObjectBase {
   /** `assetFormat` 为 `'primitive'` 时这里存的是形状名（见 `domain/primitives.ts`），不是 URL。 */
   assetUrl: string;
   assetFormat: 'glb' | 'gltf' | 'obj' | 'primitive';
+  /** 只有白模生成的几何体带它，见 `PrevizBlockoutTag`。 */
+  blockout?: PrevizBlockoutTag;
 }
 
 export type PrevizObject = PrevizCharacter | PrevizCamera | PrevizLight | PrevizProp;
@@ -517,6 +533,32 @@ function isMember<T extends string>(table: Record<T, true>, value: unknown): val
   return typeof value === 'string' && Object.prototype.hasOwnProperty.call(table, value);
 }
 
+/** 标记里两个字符串各自的长度上限。场景程序里的名字是标识符，远到不了这个数。 */
+export const PREVIZ_BLOCKOUT_TAG_MAX_CHARS = 64;
+
+function blockoutText(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  if (value.length === 0 || value.length > PREVIZ_BLOCKOUT_TAG_MAX_CHARS) return null;
+  return value;
+}
+
+/**
+ * 返回的是「要不要带这个字段」的展开片段，而不是 `PrevizBlockoutTag | undefined`：
+ * exactOptionalPropertyTypes 关着，写成 `blockout: undefined` 能过类型检查，但存量场景
+ * 序列化出来会多一个键——没有标记的对象必须跟加这个字段之前一字不差。
+ *
+ * 标记坏了只丢标记、不丢对象：丢对象是用户看得见的「东西没了」，丢标记只是下次
+ * 「替换现有白模」时这一件会被留下。
+ */
+function parseBlockoutTag(raw: unknown): { blockout: PrevizBlockoutTag } | Record<string, never> {
+  if (raw === null || typeof raw !== 'object') return {};
+  const source = raw as Record<string, unknown>;
+  const id = blockoutText(source.id);
+  const semanticType = blockoutText(source.semanticType);
+  if (id === null || semanticType === null) return {};
+  return { blockout: { id, semanticType } };
+}
+
 function num(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
@@ -646,6 +688,7 @@ export function parseObject(raw: unknown): PrevizObject | null {
         sensor: isMember(SENSORS, source.sensor) ? source.sensor : 'ff',
         cameraBody: isMember(CAMERA_BODIES, source.cameraBody) ? source.cameraBody : 'cine',
         lensSeries: isMember(LENS_SERIES, source.lensSeries) ? source.lensSeries : 'prime',
+        ...parseBlockoutTag(source.blockout),
       };
     case 'light':
       return {
@@ -661,6 +704,7 @@ export function parseObject(raw: unknown): PrevizObject | null {
         kind: 'prop',
         assetUrl: typeof source.assetUrl === 'string' ? source.assetUrl : '',
         assetFormat: isMember(ASSET_FORMATS, source.assetFormat) ? source.assetFormat : 'glb',
+        ...parseBlockoutTag(source.blockout),
       };
   }
 }

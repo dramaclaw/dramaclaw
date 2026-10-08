@@ -131,6 +131,21 @@ describe("PrevizNode", () => {
     expect(screen.getByText("previz.node.summary:4,240")).toBeInTheDocument();
   });
 
+  // 白模任务在途时卡片得说一声，不然用户只看到一个空节点，以为提交没成功。
+  // 打开按钮照常可用：结果落地时会进开着的编辑器。
+  it("says a blockout is generating while the task runs, and still opens", () => {
+    renderNode({
+      isGenerating: true,
+      generationTaskKey: "freezone_image_to_blockout:job-1",
+      generationTaskType: "freezone_image_to_blockout",
+      generationTaskJobId: "job-1",
+    });
+
+    expect(screen.getByText("previz.node.generating")).toBeInTheDocument();
+    expect(screen.queryByText("previz.node.hint")).toBeNull();
+    expect(screen.getByRole("button", { name: "previz.node.open" })).toBeEnabled();
+  });
+
   it("refuses to open a scene written by a newer version", () => {
     renderNode({ scene: { schemaVersion: PREVIZ_SCHEMA_VERSION + 1 } as never });
 

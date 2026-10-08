@@ -76,7 +76,16 @@ async def prepare_freezone_vision_egress(
     prompt: str,
     images: list[bytes],
     timeout_seconds: float,
+    operation_tag: str | None = None,
 ) -> FreezoneVisionEgress | None:
+    """Claim one organization vision call and build its transport.
+
+    ``operation_tag`` names this call within the task (``"call-2"``). The registry
+    keys an operation on the business task, not on the request, so a task that
+    calls the model more than once must claim each call as
+    ``<envelope_id>:<tag>``, or its second call is a replay of its first. Without
+    a tag the call is the task's only one and is claimed under the envelope id.
+    """
     from novelvideo.egress_context import (
         TrustedEgressContext,
         ambient_organization_egress_context,
@@ -104,6 +113,9 @@ async def prepare_freezone_vision_egress(
             "prompt": prompt,
             "image_sha256": [hashlib.sha256(image).hexdigest() for image in images],
         },
+        business_task_id=(
+            f"{egress_context.envelope_id}:{operation_tag}" if operation_tag else None
+        ),
     )
     if image_egress is None:
         return None

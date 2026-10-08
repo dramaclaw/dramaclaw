@@ -62,8 +62,9 @@ import {
   type PrevizCharacterDraft,
   type PrevizPlacedCharacterDraft,
 } from "./domain/characterDraft";
+import { hasBlockout } from "./domain/blockout";
 import type { EvaluatedMotion } from "./domain/evaluate";
-import { canAddObject } from "./domain/limits";
+import { canAddObject, canAddPrimitive } from "./domain/limits";
 import { pastedObjectOverrides, propSpawnTransform } from "./domain/objects";
 import type { PrevizLibraryEntry } from "./domain/modelLibrary";
 import { drawPlaneHeight } from "./domain/pathDraw";
@@ -76,6 +77,7 @@ import {
   type PrevizStagedMotionImport,
 } from "./motionImport";
 import { monitorCameraId, usePrevizStore } from "./store";
+import { PrevizBlockoutDialog } from "./ui/PrevizBlockoutDialog";
 import { PrevizCameraCreateDialog } from "./ui/PrevizCameraCreateDialog";
 import { PrevizCharacterCreateDialog } from "./ui/PrevizCharacterCreateDialog";
 import { PrevizClipInspector } from "./ui/PrevizClipInspector";
@@ -89,6 +91,7 @@ import { PrevizQuadPreview } from "./ui/PrevizQuadPreview";
 import { PrevizTimeline } from "./ui/PrevizTimeline";
 import { PREVIZ_DEFAULT_TOOL, PrevizToolbar } from "./ui/PrevizToolbar";
 import type { PrevizTool } from "./ui/PrevizToolbar";
+import { useBlockoutGeneration } from "./ui/useBlockoutGeneration";
 import { useCutToCamera } from "./ui/useCutToCamera";
 import { PrevizHoverTip } from "./ui/PrevizHoverTip";
 import { PrevizViewportControls } from "./ui/PrevizViewportControls";
@@ -350,6 +353,11 @@ export function PrevizEditor({
   const [characterCreateOpen, setCharacterCreateOpen] = useState(false);
   /** 模型库开着没有。物件一律从这里挑：几何体、以后的素材，或者从本地导入。 */
   const [libraryOpen, setLibraryOpen] = useState(false);
+  /** 「从参考图生成场景」开着没有。 */
+  const [blockoutOpen, setBlockoutOpen] = useState(false);
+  const blockout = useBlockoutGeneration(nodeId);
+  /** 关掉只是关掉：任务挂在节点上，由画布接回来，结果照样进场景。 */
+  const closeBlockout = useCallback(() => setBlockoutOpen(false), []);
   const pointerDownAt = useRef<{ x: number; y: number } | null>(null);
   /**
    * Web Audio 上下文按需建、整个编辑器共用一份：浏览器对 AudioContext 数量有上限，
@@ -535,10 +543,15 @@ export function PrevizEditor({
       character: canAddObject(scene, "character"),
       camera: canAddObject(scene, "camera"),
       light: canAddObject(scene, "light"),
-      prop: canAddObject(scene, "prop"),
+      // 「物件」按钮开的是模型库，里面既有导入的模型也有基础几何体，两边各有名额：
+      // 只要还有一边放得下，按钮就该是亮的。具体哪一件放不下，挑的那一刻再说。
+      prop: canAddObject(scene, "prop") || canAddPrimitive(scene),
     }),
     [scene],
   );
+  const sceneHasBlockout = useMemo(() => hasBlockout(scene), [scene]);
+  // 几何体满了也还能「替换」上一次生成的那一套，所以有白模在场时按钮照样亮着。
+  const canBlockout = sceneHasBlockout || canAddPrimitive(scene);
 
   // 同一颗把手既收也展，名字跟着当前状态换。
   const panelsLabel = t(panelsOpen ? "previz.editor.collapsePanels" : "previz.editor.expandPanels");
@@ -597,8 +610,10 @@ export function PrevizEditor({
   initialSceneRef.current = initialScene;
 
   useEffect(() => {
-    if (!open) return;
-    loadScene(initialSceneRef.current);
+    if (!open) return undefined;
+    // 带上 nodeId：白模结果落地时据此判断该进 store 还是直接写回节点。
+    loadScene(initialSceneRef.current, nodeId);
+    return () => usePrevizStore.getState().unloadScene();
   }, [open, nodeId, loadScene]);
 
   useEffect(() => {
@@ -846,6 +861,7 @@ export function PrevizEditor({
       setCameraPose(null);
       setCharacterCreateOpen(false);
       setLibraryOpen(false);
+      closeBlockout();
       // 机位不直接建：先开创建对话框，让用户定焦距、画幅与朝向。上限在开框前就查，
       // 不然填完一屏参数再告诉人家建不了。
       if (kind === "camera") {
@@ -869,7 +885,8 @@ export function PrevizEditor({
       // 物件先开模型库挑模型：直接建的话只会落一个空 URL 的占位方块，而那不是任何
       // 人要的东西。上限同样在开框前查。
       if (kind === "prop") {
-        if (!canAddObject(usePrevizStore.getState().scene, "prop")) {
+        const current = usePrevizStore.getState().scene;
+        if (!canAddObject(current, "prop") && !canAddPrimitive(current)) {
           toast.error(t("previz.editor.limitReached"));
           return;
         }
@@ -879,8 +896,16 @@ export function PrevizEditor({
       const id = addObject(kind);
       if (!id) toast.error(t("previz.editor.limitReached"));
     },
-    [addObject, renderer, t],
+    [addObject, closeBlockout, renderer, t],
   );
+
+  /** 与 `handleAdd` 同一条互斥：开这一层之前先把另外三层收掉。 */
+  const handleOpenBlockout = useCallback(() => {
+    setCameraPose(null);
+    setCharacterCreateOpen(false);
+    setLibraryOpen(false);
+    setBlockoutOpen(true);
+  }, []);
 
   const copyObject = useCallback((id: string) => {
     const object = usePrevizStore.getState().scene.objects.find((candidate) => candidate.id === id);
@@ -1559,11 +1584,12 @@ export function PrevizEditor({
         setContextMenu(null);
         return;
       }
-      if (!next && details?.reason === "escape-key" && (libraryOpen || characterCreateOpen || cameraPose)) {
+      if (!next && details?.reason === "escape-key" && (libraryOpen || characterCreateOpen || cameraPose || blockoutOpen)) {
         details.cancel();
         setLibraryOpen(false);
         setCharacterCreateOpen(false);
         setCameraPose(null);
+        closeBlockout();
         return;
       }
       /*
@@ -1589,7 +1615,17 @@ export function PrevizEditor({
       if (!next) flushIfDirty();
       onOpenChange(next);
     },
-    [flushIfDirty, onOpenChange, tool, libraryOpen, characterCreateOpen, cameraPose, contextMenu],
+    [
+      flushIfDirty,
+      onOpenChange,
+      tool,
+      libraryOpen,
+      characterCreateOpen,
+      cameraPose,
+      blockoutOpen,
+      closeBlockout,
+      contextMenu,
+    ],
   );
 
   useEffect(() => {
@@ -1977,9 +2013,11 @@ export function PrevizEditor({
 
               <PrevizToolbar
                 canAdd={canAdd}
+                canBlockout={canBlockout}
                 tool={tool}
                 timelineOpen={timelineOpen}
                 onAdd={handleAdd}
+                onBlockout={handleOpenBlockout}
                 onTool={setTool}
                 onTimelineOpen={setTimelineOpen}
               />
@@ -2040,6 +2078,24 @@ export function PrevizEditor({
                   void handleImportProp(file, spot);
                 }}
                 onClose={() => setLibraryOpen(false)}
+              />
+              <PrevizBlockoutDialog
+                open={blockoutOpen}
+                stage={blockout.stage}
+                held={blockout.held}
+                hasExisting={sceneHasBlockout}
+                onStart={(request) => {
+                  // 提交成功就关，结果由画布接回来；提交失败留着，用户改一改还能再来。
+                  void blockout.start(request).then((queued) => {
+                    if (queued) setBlockoutOpen(false);
+                  });
+                }}
+                onRetryImport={(mode) => {
+                  void blockout.retryImport(mode).then((landed) => {
+                    if (landed) setBlockoutOpen(false);
+                  });
+                }}
+                onClose={closeBlockout}
               />
               <AtPlayhead>
                 {(frame) => (

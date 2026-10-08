@@ -70,7 +70,7 @@ export interface NewApiChannelType {
 export interface SavedMediaModelConfig {
   provider: string;
   upstreamModel: string;
-  mediaType?: "image" | "video" | "audio";
+  mediaType?: "image" | "video" | "blockout" | "audio";
   label?: string;
   enabled?: boolean;
   sortOrder?: number;

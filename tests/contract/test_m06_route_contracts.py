@@ -636,6 +636,13 @@ def _freezone_task_cases(client: TestClient, assets: SimpleNamespace):
             ),
         ),
         (
+            "freezone_image_to_blockout",
+            client.post(
+                f"/api/v1/projects/{p}/freezone/image-to-blockout",
+                json={"source_url": image},
+            ),
+        ),
+        (
             "freezone_edit",
             client.post(f"/api/v1/projects/{p}/freezone/upscale", json={"source_url": image}),
         ),
@@ -807,7 +814,7 @@ def test_m06_freezone_task_backend_responses_are_ce_ee_isomorphic(
     client, task_backend, _task_manager, _project_dir, assets, _store = m06_client_factory(backend)
 
     cases = _freezone_task_cases(client, assets)
-    assert len(cases) == 29
+    assert len(cases) == 30
     for task_type, response in cases:
         assert response.status_code == 200, response.text
         _assert_freezone_http_task_shape(response.json(), task_type=task_type)

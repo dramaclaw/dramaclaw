@@ -55,6 +55,7 @@ from novelvideo.api.schemas import (
     FreezoneGenRequest,
     FreezoneImageCameraConfig,
     FreezoneImageReversePromptRequest,
+    FreezoneImageToBlockoutRequest,
     FreezoneImageStyleConfig,
     FreezoneImageTo3GSRequest,
     FreezoneImageToVideoRequest,
@@ -111,6 +112,7 @@ from novelvideo.freezone.asset_copy import (
 from novelvideo.i18n_message import log_lines_text
 from novelvideo.media_model_request_schema import (
     MediaModelSchemaError,
+    media_model_request_endpoint,
     media_request_schema_for_mode,
     normalize_media_model_mode,
     validate_media_model_params,
@@ -6622,6 +6624,10 @@ def _image_reverse_prompt_output_path(project_dir: Path, job_id: str) -> Path:
     return outputs_dir(project_dir, "freezone_image_reverse_prompt") / f"{job_id}.json"
 
 
+def _image_to_blockout_output_path(project_dir: Path, job_id: str) -> Path:
+    return outputs_dir(project_dir, "freezone_image_to_blockout") / job_id / "result.json"
+
+
 def _video_compose_output_path(project_dir: Path, job_id: str) -> Path:
     return outputs_dir(project_dir, "freezone_video_compose") / f"{job_id}.mp4"
 
@@ -7903,8 +7909,22 @@ async def _scoped_media_model_catalog(
         raise HTTPException(503, "媒体模型目录暂不可用，请稍后重试") from None
 
 
+_MEDIA_TYPE_LABELS = {"image": "图片", "video": "视频", "blockout": "白模"}
+
+
+def _media_model_catalog_is_authoritative() -> bool:
+    """EE 注册了目录端口时，目录说了算；CE 自己管模型表，没有组织策略要执行。"""
+    from novelvideo.ports.registry import PortNotRegistered, get_port
+
+    try:
+        get_port("media_model_catalog")
+    except PortNotRegistered:
+        return False
+    return True
+
+
 def _media_model_unavailable(media_type: str, catalog: list[dict[str, Any]]) -> HTTPException:
-    media_label = "图片" if media_type == "image" else "视频"
+    media_label = _MEDIA_TYPE_LABELS.get(media_type, "媒体")
     detail = (
         f"当前没有可用的{media_label}模型，请联系管理员或刷新后重试"
         if not catalog
@@ -7920,11 +7940,7 @@ async def _require_scoped_media_model(
     requester_user_id: str,
 ) -> dict[str, Any] | None:
     """Recheck model visibility immediately before billing and enqueueing."""
-    from novelvideo.ports.registry import PortNotRegistered, get_port
-
-    try:
-        get_port("media_model_catalog")
-    except PortNotRegistered:
+    if not _media_model_catalog_is_authoritative():
         # Community Edition owns its local model map and has no organization
         # policy to enforce. Keep its existing submission behavior unchanged.
         return None
@@ -8078,9 +8094,7 @@ async def _resolve_catalog_request(
         return {}, {}, None
     try:
         full_schema = validate_media_request_schema(entry.get("request"))
-        expected_endpoint = (
-            "images/generations" if media_type == "image" else "video/generations"
-        )
+        expected_endpoint = media_model_request_endpoint(media_type)
         if full_schema and full_schema.get("endpoint") != expected_endpoint:
             raise MediaModelSchemaError(f"endpoint must be {expected_endpoint}")
         schema = media_request_schema_for_mode(full_schema, mode)
@@ -8432,6 +8446,62 @@ async def freezone_image_models(
     return {"ok": True, "data": data}
 
 
+@router.get("/projects/{project}/freezone/blockout/models", tags=[TAG_FREEZONE_IMAGE])
+async def freezone_blockout_models(
+    project: str,
+    user: dict = Depends(get_api_user),
+):
+    """预演台：参考图转白模可选的模型，来自媒体模型目录的白模类型，默认模型排第一。"""
+    ctx, _username, _project_name, _project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="viewer")
+    )
+    catalog = await _blockout_model_catalog(requester_user_id=ctx.requester_user_id)
+    return {"ok": True, "data": catalog}
+
+
+async def _blockout_model_catalog(*, requester_user_id: str) -> list[dict[str, Any]]:
+    """白模目录：图片/视频同一套目录的 ``blockout`` 类型，设置页的默认模型排第一。
+
+    CE 没有组织策略，目录里缺默认模型时补一条，装好就能生成；EE 的目录是权威的，
+    组织没开放默认模型就不替它补上。
+    """
+    from novelvideo.director_world.blockout.generation_agent import resolve_blockout_model
+
+    catalog = list(
+        await _scoped_media_model_catalog(
+            "blockout",
+            requester_user_id=requester_user_id,
+        )
+        or []
+    )
+    default_model = resolve_blockout_model()
+    default_entry = next(
+        (item for item in catalog if default_model in _catalog_entry_identifiers(item)),
+        None,
+    )
+    if default_entry is None:
+        if _media_model_catalog_is_authoritative():
+            return catalog
+        default_entry = {
+            "catalogId": default_model,
+            "catalog_id": default_model,
+            "id": default_model,
+            "providerId": "newapi",
+            "provider": "newapi",
+            "apiModel": default_model,
+            "api_model": default_model,
+            "gatewayModel": default_model,
+            "gateway_model": default_model,
+            "aliases": [],
+            "label": default_model,
+            "sortOrder": 0,
+            "request": {"endpoint": "chat/completions", "parameters": []},
+        }
+    else:
+        catalog.remove(default_entry)
+    return [default_entry, *catalog]
+
+
 @router.post(
     "/projects/{project}/freezone/marks/detect",
     response_model=FreezoneMarkDetectResponse,
@@ -8657,6 +8727,67 @@ async def freezone_image_reverse_prompt(
         project=project_name,
         job_id=job_id,
     )
+
+
+@router.post(
+    "/projects/{project}/freezone/image-to-blockout",
+    response_model=FreezoneJobAcceptedResponse,
+    tags=[TAG_FREEZONE_IMAGE],
+)
+async def freezone_image_to_blockout(
+    project: str,
+    body: FreezoneImageToBlockoutRequest,
+    user: dict = Depends(get_api_user),
+):
+    """预演台：参考图转白模，异步生成一组可编辑的基础几何体。"""
+    from novelvideo.api.routes.model_credits import (
+        freezone_image_to_blockout_task_billing,
+    )
+    from novelvideo.director_world.blockout.generation_agent import resolve_blockout_model
+
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    catalog = await _blockout_model_catalog(requester_user_id=ctx.requester_user_id)
+    requested = resolve_blockout_model(body.model)
+    entry = next(
+        (item for item in catalog if requested in _catalog_entry_identifiers(item)),
+        None,
+    )
+    if entry is None:
+        raise _media_model_unavailable("blockout", catalog)
+    model = str(entry.get("gatewayModel") or entry.get("gateway_model") or requested)
+    try:
+        source_path = resolve_static_url_to_path(body.source_url, project_dir)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not source_path.exists():
+        raise HTTPException(404, f"source not found: {source_path}")
+    if source_path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+        raise HTTPException(400, f"source must be an image: {source_path}")
+
+    try:
+        return await _enqueue_freezone_background_job(
+            ctx=ctx,
+            project_dir=project_dir,
+            task_type="freezone_image_to_blockout",
+            job_id=_new_job_id(),
+            payload={
+                "source_path": source_path.as_posix(),
+                "description": body.description.strip(),
+                "picture_check": body.picture_check,
+                "render_check": body.render_check,
+                "canvas_id": body.canvas_id or "",
+                "node_id": body.node_id or "",
+                "model": model,
+                "billing": freezone_image_to_blockout_task_billing(
+                    {"operation": "image_to_blockout", "model": model}
+                ),
+            },
+        )
+    except RuntimeError as exc:
+        _handle_task_start_runtime_error("image to blockout failed", exc)
+        raise HTTPException(500, f"image to blockout failed: {exc}") from exc
 
 
 @router.get("/projects/{project}/freezone/video/character-library", tags=[TAG_FREEZONE_VIDEO])
@@ -10436,6 +10567,7 @@ async def freezone_job_result(
         "freezone_video_compose",
         "freezone_image_reverse_prompt",
         "freezone_image_to_3gs",
+        "freezone_image_to_blockout",
         "freezone_text_generate",
         "freezone_text_translate",
         "freezone_story_script",
@@ -10543,6 +10675,8 @@ async def freezone_job_result(
     out = output_path_for_job(project_dir, task_type, job_id)
     if task_type == "freezone_image_reverse_prompt":
         out = _image_reverse_prompt_output_path(project_dir, job_id)
+    if task_type == "freezone_image_to_blockout":
+        out = _image_to_blockout_output_path(project_dir, job_id)
     if task_type == "freezone_video_erase":
         out = _video_erase_output_path(project_dir, job_id)
     if task_type == "freezone_video_upscale":
@@ -10650,6 +10784,7 @@ async def freezone_job_result(
         return {"ok": False, "info": "job result not yet on disk", "status": "unknown"}
     if task_type in {
         "freezone_image_reverse_prompt",
+        "freezone_image_to_blockout",
         "freezone_text_generate",
         "freezone_text_translate",
         "freezone_story_script",

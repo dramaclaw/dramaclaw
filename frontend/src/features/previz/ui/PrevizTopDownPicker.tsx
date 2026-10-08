@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { PREVIZ_CAMERA_COLOR } from "@/features/previz/engine/cameraModel";
 import { PREVIZ_GRID_CELL_COLOR, PREVIZ_GRID_CELL_SIZE } from "@/features/previz/engine/grid";
-import { KIND_COLOR } from "@/features/previz/engine/sceneGraph";
+import { KIND_COLOR, propColor } from "@/features/previz/engine/sceneGraph";
 import type { PrevizObject, PrevizObjectKind } from "@/features/previz/domain/scene";
 import {
   canvasToWorld,
@@ -69,9 +69,10 @@ const AXIS_Z_LINE = "#60a5fa";
 const PICK_RING = "#ffd166";
 
 /**
- * 非人物对象的参照点颜色，取的就是 3D 里同一件东西的本色：灯与物件来自
+ * 灯与机位的参照点颜色，取的就是 3D 里同一件东西的本色：灯来自
  * `engine/sceneGraph.ts` 的 `KIND_COLOR`，机位来自 `engine/cameraModel.ts` 的
- * `PREVIZ_CAMERA_COLOR.body`。三种全部从源头 import，只在这里 `hex()` 成 canvas 要的
+ * `PREVIZ_CAMERA_COLOR.body`。道具不在表里：白模和手摆的道具不同色，得按件取，走的是
+ * 同一个文件的 `propColor`（见 `dotColor`）。全部从源头 import，只在这里 `hex()` 成 canvas 要的
  * CSS 字符串——本文件不再持有第二份色值，源头改色时俯视图跟着一起变，改名或删项则
  * 当场编译不过。两侧在结构上已经没法分叉，也就不该再写一条「断言两份相等」的用例：
  * 那种用例两边读的是同一个常量，改常量两边一起动，它永远绿。
@@ -85,10 +86,9 @@ const PICK_RING = "#ffd166";
  * 那是灯的色温，常是白或暖白，画成点会跟网格线、跟 `PICK_RING` 的高亮环糊在一起，
  * 四盏不同色温的灯在俯视图上几乎分不开。
  */
-const KIND_DOT_COLOR: Record<Exclude<PrevizObjectKind, "character">, string> = {
+const KIND_DOT_COLOR: Record<Exclude<PrevizObjectKind, "character" | "prop">, string> = {
   camera: hex(PREVIZ_CAMERA_COLOR.body),
   light: hex(KIND_COLOR.light),
-  prop: hex(KIND_COLOR.prop),
 };
 
 /** 参照点与高亮环的半径，CSS 像素。环大一圈，两者重合时还分得出选中的是哪个。 */
@@ -223,7 +223,10 @@ function clampToCanvas(pixel: number, size: number): number {
 }
 
 function dotColor(object: PrevizObject): string {
-  return object.kind === "character" ? object.color : KIND_DOT_COLOR[object.kind];
+  if (object.kind === "character") return object.color;
+  // 道具按件取色：白模是灰的，手摆的是分类色，和 3D 视口里那一件同色。
+  if (object.kind === "prop") return hex(propColor(object));
+  return KIND_DOT_COLOR[object.kind];
 }
 
 /** 画一条从 (x0, y0) 到 (x1, y1) 的线。 */

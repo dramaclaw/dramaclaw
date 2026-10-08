@@ -10,8 +10,13 @@ function fakeModel() {
   return { scale: { x: 1, y: 1, z: 1 }, userData: {} as Record<string, unknown> };
 }
 
-function primitive(shape: string): PrevizProp {
-  return { assetUrl: shape, assetFormat: "primitive" } as PrevizProp;
+function primitive(shape: string, semanticType?: string): PrevizProp {
+  return {
+    kind: "prop",
+    assetUrl: shape,
+    assetFormat: "primitive",
+    ...(semanticType ? { blockout: { id: "piece", semanticType } } : {}),
+  } as PrevizProp;
 }
 
 function setup() {
@@ -23,7 +28,7 @@ function setup() {
     clone: vi.fn((object: object) => ({ ...object, userData: {} }) as never),
     measure: vi.fn(() => 1),
     prepareMaterials: vi.fn(),
-    buildPrimitive: vi.fn((_shape: string) => built as never),
+    buildPrimitive: vi.fn((_shape: string, _tone: string | null) => built as never),
   };
   return { loader: new PropLoader(deps), deps, built };
 }
@@ -39,7 +44,7 @@ describe("PropLoader with primitive props", () => {
     const model = await loader.load(primitive("cube"));
 
     expect(model).not.toBeNull();
-    expect(deps.buildPrimitive).toHaveBeenCalledWith("cube");
+    expect(deps.buildPrimitive).toHaveBeenCalledWith("cube", null);
     expect(deps.loadGltf).not.toHaveBeenCalled();
     expect(deps.loadObj).not.toHaveBeenCalled();
   });
@@ -66,6 +71,24 @@ describe("PropLoader with primitive props", () => {
     expect(first).not.toBe(second);
     expect(first?.userData.previzSharedModel).toBe(true);
     expect(second?.userData.previzSharedModel).toBe(true);
+  });
+
+  // 克隆体与源模型共用材质，所以颜色不同的几何体不能出自同一份源模型：墙和桌子
+  // 都是立方体，共用一份的话，先建的那个是什么颜色，后面的就全是什么颜色。
+  it("builds the same shape once per blockout tone", async () => {
+    const { loader, deps } = setup();
+
+    await loader.load(primitive("cube"));
+    await loader.load(primitive("cube", "wall"));
+    await loader.load(primitive("cube", "table"));
+    await loader.load(primitive("cube", "floor"));
+    await loader.load(primitive("cube", "chair"));
+
+    expect(deps.buildPrimitive.mock.calls).toEqual([
+      ["cube", null],
+      ["cube", "structure"],
+      ["cube", "piece"],
+    ]);
   });
 
   // 未知形状（更新的版本写入的）按加载失败处理：返回 null，占位方块留着。缓存里

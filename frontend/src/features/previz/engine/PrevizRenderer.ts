@@ -531,7 +531,7 @@ export class PrevizRenderer {
           isPrevizLibraryModelUrl(prop.assetUrl)
             ? applyClayMaterial(three, object)
             : prepareImportedMaterials(three, object),
-        buildPrimitive: (shape) => buildPrimitive(three, shape),
+        buildPrimitive: (shape, tone) => buildPrimitive(three, shape, tone),
       }),
     );
 

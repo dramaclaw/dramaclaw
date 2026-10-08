@@ -171,6 +171,7 @@ export interface FreezoneJobRef {
     | "freezone_audio_speech"
     | "freezone_audio_eleven_music"
     | "freezone_image_reverse_prompt"
+    | "freezone_image_to_blockout"
     | "freezone_text_generate"
     | "freezone_text_translate"
     | "freezone_story_script"
@@ -874,6 +875,81 @@ export async function submitFreezoneReversePrompt(
         ...nodeContextBody(payload),
       },
     },
+  );
+}
+
+// /freezone/image-to-blockout -------------------------------------------- //
+
+/**
+ * 一张参考图转成预演台白模。`description` 是用户对这张图的补充说明（真实尺寸等），
+ * 可以不填；后端上限 2000 字，超了回 422。`pictureCheck` 让后端把白模投影回参考图
+ * 核对坐标、尺寸和相机是否自洽，多耗一到两轮模型调用；`renderCheck` 让后端把白模渲染成图、
+ * 和参考图一起交给模型对照着改，多耗两轮模型调用。两个默认都不做。
+ */
+export interface FreezoneImageToBlockoutPayload
+  extends Pick<FreezoneNodeContext, "canvasId" | "nodeId"> {
+  sourceUrl: string;
+  description?: string;
+  pictureCheck?: boolean;
+  renderCheck?: boolean;
+  /** 用户在对话框里选的网关模型（`fetchFreezoneBlockoutModels` 列表里的 id）；不传用服务端默认。 */
+  model?: string;
+}
+
+export async function submitFreezoneImageToBlockout(
+  project: string,
+  payload: FreezoneImageToBlockoutPayload,
+): Promise<FreezoneJobRef> {
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/image-to-blockout`,
+    {
+      method: "POST",
+      json: {
+        source_url: payload.sourceUrl,
+        description: payload.description ?? "",
+        picture_check: payload.pictureCheck ?? false,
+        render_check: payload.renderCheck ?? false,
+        ...(payload.model ? { model: payload.model } : {}),
+        ...nodeContextBody(payload),
+      },
+    },
+  );
+}
+
+/**
+ * 白模可选的网关模型，第一项是服务端解析出的默认模型。形状与图片模型列表一致，
+ * 所以同一个 `ProviderModelPicker` 直接能用。
+ */
+export async function fetchFreezoneBlockoutModels(
+  project: string,
+): Promise<FreezoneImageModelInfo[]> {
+  const payload = await apiCall<unknown>(
+    `projects/${encodeURIComponent(project)}/freezone/blockout/models`,
+  );
+  return coerceModelList(payload);
+}
+
+/**
+ * 白模任务的结果。对象清单只在这个端点上拿得到：SSE 的 `task.result` 里是一份不带
+ * `objects` 的摘要。
+ *
+ * `objects` 刻意留成 `unknown[]`：它是跨仓库契约上的不可信输入，由
+ * `features/previz/domain/blockout.ts` 逐条校验，这里不替它做类型担保。
+ */
+export interface FreezoneImageToBlockoutResult {
+  objects: unknown[];
+  reference_camera_id: string | null;
+  counts: Record<string, number>;
+  warnings: string[];
+  compiler_version: number;
+}
+
+export async function fetchFreezoneImageToBlockoutResult(
+  project: string,
+  jobId: string,
+): Promise<FreezoneImageToBlockoutResult> {
+  return await apiCall<FreezoneImageToBlockoutResult>(
+    `projects/${encodeURIComponent(project)}/freezone/jobs/freezone_image_to_blockout/${encodeURIComponent(jobId)}/result`,
   );
 }
 
@@ -2048,6 +2124,7 @@ export async function fetchFreezoneJobResult(
     | "freezone_audio_speech"
     | "freezone_audio_eleven_music"
     | "freezone_image_reverse_prompt"
+    | "freezone_image_to_blockout"
     | "freezone_text_generate"
     | "freezone_text_translate"
     | "freezone_story_script"

@@ -3,6 +3,7 @@
 import type { ComponentProps, ReactNode } from "react";
 import {
   Box,
+  Boxes,
   Camera,
   Lightbulb,
   Move3d,
@@ -21,7 +22,7 @@ import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { PREVIZ_OBJECT_LIMITS } from "@/features/previz/domain/limits";
+import { PREVIZ_OBJECT_LIMITS, PREVIZ_PRIMITIVE_LIMIT } from "@/features/previz/domain/limits";
 import type { PrevizObjectKind } from "@/features/previz/domain/scene";
 import { PrevizHoverTip } from "@/features/previz/ui/PrevizHoverTip";
 import { PrevizKeyCap } from "@/features/previz/ui/PrevizKeyCap";
@@ -142,10 +143,13 @@ const KINDS = inOrder(KIND_ICON);
 export interface PrevizToolbarProps {
   /** 每种对象是否还能再加（数量上限）。false 时按钮禁用而不是点了没反应。 */
   canAdd: Record<PrevizObjectKind, boolean>;
+  /** 「从参考图生成场景」还能不能用：基础几何体还有名额，或者有一份白模可以替换。 */
+  canBlockout: boolean;
   /** 当前工具，七颗按钮共用的**唯一**按下态来源。 */
   tool: PrevizTool;
   timelineOpen: boolean;
   onAdd: (kind: PrevizObjectKind) => void;
+  onBlockout: () => void;
   onTool: (tool: PrevizTool) => void;
   onTimelineOpen: (open: boolean) => void;
 }
@@ -258,9 +262,11 @@ function RailDivider() {
  */
 export function PrevizToolbar({
   canAdd,
+  canBlockout,
   tool,
   timelineOpen,
   onAdd,
+  onBlockout,
   onTool,
   onTimelineOpen,
 }: PrevizToolbarProps) {
@@ -333,6 +339,22 @@ export function PrevizToolbar({
                 />
               );
             })}
+            {/*
+              不进 KIND_ICON：那张表的键是对象类型，而这颗按钮加的不是一种对象，
+              是一次生成出来的一整套几何体外加一台机位。
+            */}
+            <RailButton
+              icon={Boxes}
+              label={t("previz.toolbar.blockout")}
+              tip={
+                canBlockout
+                  ? undefined
+                  : t("previz.toolbar.blockoutFull", { count: PREVIZ_PRIMITIVE_LIMIT })
+              }
+              disabled={!canBlockout}
+              rowStart
+              onClick={onBlockout}
+            />
           </RailGroup>
         </div>
 
