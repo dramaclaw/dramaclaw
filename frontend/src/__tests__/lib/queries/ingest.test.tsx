@@ -13,7 +13,6 @@ vi.mock("@/lib/api", () => ({
   uploadApi: ky.create({ baseUrl: "http://localhost:3000/" }),
 }));
 
-import { uploadApi } from "@/lib/api";
 import { BillingRuleNotConfiguredError } from "@/lib/api-errors";
 import {
   useChapters,
@@ -54,10 +53,13 @@ describe("ingest query error contract", () => {
   });
 
   it("rejects upload responses that return ok:false with a backend error", async () => {
-    // This contract exercises error unwrapping, not Node/jsdom multipart conversion.
-    const post = vi.spyOn(uploadApi, "post").mockResolvedValueOnce(
-      new Response(JSON.stringify({ ok: false, error: "解析章节失败: 文件编码不支持" }), {
-        headers: { "Content-Type": "application/json" },
+    server.use(
+      http.post("http://localhost:3000/api/v1/projects/demo/ingest/upload", async ({ request }) => {
+        const body = await request.clone().text();
+        expect(body).toContain('name="spine_template"');
+        expect(body).toContain("drama");
+        expect(body).toContain('name="file"');
+        return HttpResponse.json({ ok: false, error: "解析章节失败: 文件编码不支持" });
       }),
     );
 
@@ -70,8 +72,6 @@ describe("ingest query error contract", () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.error).toBeInstanceOf(Error);
     expect(result.current.error?.message).toBe("解析章节失败: 文件编码不支持");
-    expect(post).toHaveBeenCalledWith("api/v1/projects/demo/ingest/upload", expect.objectContaining({ body: expect.any(FormData) }));
-    post.mockRestore();
   });
 
   it("rejects start responses that return ok:false with a backend error", async () => {

@@ -8,7 +8,7 @@
 
 读取响应：
 - `global` 段：全局准备是否完成（ingested, configured, characters, episodes, portraits_done）
-- `episode_status` 段：当前集各步骤（identity_plan, identity_images, script, scene_anchors, sketches, coloring, global_optimize, first_frames, tts, video）
+- `episode_status` 段：当前集各步骤（identity_plan, identity_images, script, sketches, coloring, global_optimize, first_frames, tts, video）
   - 辅助任务 type：`content_rewriter`（解说改写）、`script_writer`（剧本生成）。这些辅助步骤通过 `GET /projects/{P}/tasks/{task_type}/{N}` 主动查
   - 当前后端没有场景锚图 `anchor-image/*` 和 `scene_anchor` task
 - `next_step` + `next_step_name`：从断点继续
@@ -48,16 +48,60 @@
 
 ## 恢复执行
 
-**复用用户已选运行模式**：
+**运行模式优先（但所有模式都受一步执行协议限制）**：
 - 若用户本会话已选 / 现在表示要**逐步确认模式** → `Read references/run-modes.md` 模式一，
   从断点起**每个写操作步骤前都停下问用户，一次只推进一步**。
-执行范围、是否逐步确认及连续推进统一遵循 `../references/run-modes.md`；不要额外设置每轮写操作数限制。
+- 若用户选**自动推进模式**，或当前消息包含 UI 注入的 `[DRAMACLAW_RUN_MODE] mode=episode_auto` → 按 `pipeline/status.next_step` 自动选择当前一步，不再询问每步确认，但每轮仍最多启动一个写任务，启动后立即收口；如果已有 queued/running 任务，立即告知后台正在生成中并停止。
+- 若用户只说「继续」且**未指定过模式** → 先问一句「每步确认还是自动推进（每轮一步）？」再决定（除非用户明显赶时间/已说过别问）。
 
-先根据请求范围恢复：只查进度则返回状态；明确继续则承接已有目标及运行模式，无需再次协商模式。未明确目标时先读必要状态，仅对影响执行范围的歧义询问。
+先根据用户请求判断恢复模式：
 
-全局阶段按 `init.md`，逐集阶段按 `episode.md`。当前集以 `pipeline/status?episode=N` 为主事实源，必要时补项目/角色状态。执行顺序及付费授权见 `../references/run-modes.md`；依赖任务运行时按 `../references/async-tasks.md` 等待，不重复提交。
+- **用户只是在问进度 / 想看当前做到哪一步**
+  - 展示进度表
+  - 必要时再询问交互模式（每步确认/自动推进）
+  - 暂不直接推进
+- **用户已经明确要求继续 / 恢复 / 从这里开始**
+  - 先依据 `next_step` 和任务状态判断当前一步
+  - 如果已有 queued/running 任务，只反馈“后台正在生成中”和当前任务状态，不推进下一步
+  - 如果没有运行中任务，只启动 `next_step` 对应的一个写任务，启动后立即收口
+  - 不把 continuation 当成自动续跑，不等待当前任务完成后继续启动下一步
 
-用户明确“只做下一步”时只执行该步；“继续”承接原授权范围。只读请求不扩大为写操作，整集目标不扩大为其他集或重新摄入。
+恢复路由：
+
+- 全局阶段断点 → Read playbooks/init.md
+- 逐集阶段断点 → Read playbooks/episode.md
+
+## 项目级 continuation 默认
+
+当用户只说“继续 / 帮我继续 / 恢复”，且当前断点仍在全局阶段时：
+
+- 先找当前首个缺失的全局步骤
+- 默认只启动这个首个缺失全局步骤对应的一个写任务，或在同步步骤完成后立刻停止
+- 启动异步任务后立刻停止，不轮询到完成点，不继续下一步
+- 不在同一轮里继续自动推进下一个全局步骤
+- 不自动继续到 `POST /projects/{project}/episodes/plan`、批量肖像或逐集执行；即使用户明确要求整段自动跑完，也必须分多轮，每轮一个写任务
+
+
+## 单集 continuation 默认
+
+当用户已经给出明确的单集范围，并且请求语义是：
+
+- “帮我从这里开始”
+- “从断点继续”
+- “继续做到下一步”
+- “继续”
+
+则默认按**当前集 continuation**处理，而不是先退回项目总览或模式协商。
+
+对这类单集 continuation：
+
+- 以 `GET /api/v1/projects/{P}/pipeline/status?episode=N` 作为主事实源
+- 允许补充读取项目、角色、分集等必要状态
+- 若 `next_step` 已明确，直接进入该步对应执行
+- 若用户说的是“从这里开始 / 从断点继续 / 继续做到下一步”，
+  默认只启动**当前首个缺失步骤**对应的一个写任务；如果该步已有任务运行，只汇报运行中
+- 启动或发现运行中任务后立即停止继续探测、停止额外轮询，直接汇报当前状态
+- 只有用户明确要求“先看进度/先别执行/我来决定模式”时，才停在展示或询问
 
 ## 草图图池查询规则
 

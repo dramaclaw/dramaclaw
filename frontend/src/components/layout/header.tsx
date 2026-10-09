@@ -383,9 +383,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
 
         {/* Actions */}
         <div className="flex min-w-0 flex-1 shrink-0 items-center justify-end gap-1">
-          {/* 设置仅在 CE 版显示,EE 版隐藏 */}
-          {ceRuntime ? (
-            <div ref={settingsAnchorRef} className="relative">
+          <div ref={settingsAnchorRef} className="relative">
               <Button
                 type="button"
                 variant="ghost"
@@ -407,8 +405,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
                   </span>
                 ) : null}
               </Button>
-            </div>
-          ) : null}
+          </div>
           <DropdownMenu modal={false} onOpenChange={(open, details) => {
             if (open && (details.reason === "trigger-press" || details.reason === "list-navigation")) {
               markPikoEntrySeen();
@@ -534,7 +531,7 @@ export function Header({ ambientBackground = false }: { ambientBackground?: bool
         onClose={() => setPhoneBindingOpen(false)}
         onBound={() => { void accountSecurity.refetch(); }}
       /> : null}
-      {ceRuntime ? <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} /> : null}
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
       {settingsWarningBubble
         ? createPortal(
             <div

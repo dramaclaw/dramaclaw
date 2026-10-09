@@ -4,7 +4,14 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useAuthStore } from "@/stores/auth-store";
 import { regionAbortController, resetRegionAbortController } from "@/lib/region-abort";
 
+const runtimeState = vi.hoisted(() => ({ isCe: false }));
+
+vi.mock("@/lib/runtime-config", () => ({
+  isCeRuntime: () => runtimeState.isCe,
+}));
+
 beforeEach(() => {
+  runtimeState.isCe = false;
   useAuthStore.getState().reset();
   localStorage.clear();
 });
@@ -20,6 +27,16 @@ function authMeCallCount(fetchMock: ReturnType<typeof vi.fn>): number {
 const avatarMiss = { ok: false, json: async () => ({}) };
 
 describe("auth-store", () => {
+  it("does not request the EE avatar endpoint in CE", async () => {
+    runtimeState.isCe = true;
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock;
+
+    await useAuthStore.getState().refreshAvatar();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("starts with null state", () => {
     const state = useAuthStore.getState();
     expect(state.username).toBeNull();

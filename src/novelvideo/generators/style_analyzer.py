@@ -8,6 +8,8 @@ from PIL import Image
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ImageUrl
 
+from novelvideo.brainclaw_contract import BrainClawProfile
+
 
 class StyleAnalysisResult(BaseModel):
     """结构化风格分析结果。"""
@@ -68,13 +70,13 @@ Return ONLY valid JSON with no markdown formatting:
             get_newapi_text_pydantic_model,
         )
 
-        self.model = (
-            model
-            or os.environ.get("STYLE_ANALYZER_MODEL", "").strip()
-            or "gemini-3.5-flash"
-        )
+        self.model = model or os.environ.get("STYLE_ANALYZER_MODEL", "").strip()
         self.agent = Agent(
-            get_newapi_text_pydantic_model("STYLE_ANALYZER_MODEL", self.model),
+            get_newapi_text_pydantic_model(
+                "STYLE_ANALYZER_MODEL",
+                model_name_override=self.model or None,
+                brainclaw_profile=BrainClawProfile.STYLE_ANALYSIS,
+            ),
             system_prompt="You analyze reference images and return reusable visual style settings.",
             model_settings=get_newapi_structured_output_model_settings(),
             output_type=StyleAnalysisResult,
@@ -95,7 +97,9 @@ Return ONLY valid JSON with no markdown formatting:
 
         # 压缩图片以减少 token 消耗
         compressed_bytes, _compressed_mime = self._compress_image(image_bytes)
-        image_url = await asyncio.to_thread(upload_image_bytes, compressed_bytes, ext="jpg")
+        image_url = await asyncio.to_thread(
+            upload_image_bytes, compressed_bytes, ext="jpg"
+        )
 
         response = await self.agent.run(
             [
@@ -136,8 +140,10 @@ Return ONLY valid JSON with no markdown formatting:
 
         compressed_size = len(compressed_data)
         ratio = (1 - compressed_size / original_size) * 100
-        print(f"[StyleAnalyzer压缩] "
-              f"{original_size/1024:.0f}KB → {compressed_size/1024:.0f}KB "
-              f"({ratio:.0f}% 压缩)")
+        print(
+            f"[StyleAnalyzer压缩] "
+            f"{original_size / 1024:.0f}KB → {compressed_size / 1024:.0f}KB "
+            f"({ratio:.0f}% 压缩)"
+        )
 
         return compressed_data, "image/jpeg"

@@ -9,6 +9,12 @@ type AudioWaveformPlayerProps = {
   /** 元数据加载后回传真实时长(毫秒)。 */
   onLoadedDuration?: (ms: number) => void;
   /**
+   * 命令式暂停:变为 true 时停掉内部 `<audio>`(不回绕进度、不自动续播)。
+   * optional 且默认 undefined —— 不传 = 保持现状,工作流 AudioNode 侧零影响;
+   * 故事板详情用它在整体隐藏(保活)时把音频与视频一并停下。
+   */
+  paused?: boolean;
+  /**
    * 播放态变化回调。播放态是本组件的内部 state,而画布的 LOD 换壳决策发生在
    * 节点组件之外(withLodShell),读不到,所以要往外抛一份。卸载时保证补一次
    * false,避免留下陈旧的「播放中」标记。
@@ -81,6 +87,7 @@ export function AudioWaveformPlayer({
   src,
   durationMs,
   onLoadedDuration,
+  paused,
   onPlayingChange,
 }: AudioWaveformPlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -167,6 +174,13 @@ export function AudioWaveformPlayer({
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [isPlaying]);
+
+  // ---- 命令式暂停(上层保活隐藏等) ------------------------------------------
+  // paused 变 true → 停内部 <audio>；<audio> 的 onPause 会把 isPlaying 归零。
+  // 不传(undefined)时此 effect 不产生任何动作,现有调用方行为不变。
+  useEffect(() => {
+    if (paused) audioRef.current?.pause();
+  }, [paused]);
 
   // ---- 绘制波形 ------------------------------------------------------------
   const draw = useCallback(() => {

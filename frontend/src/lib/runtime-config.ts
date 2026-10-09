@@ -8,6 +8,7 @@ export const RuntimeConfigResponse = z.object({
     edition: z.enum(["ce", "ee"]),
     auth_required: z.boolean(),
     instance_id: z.string().optional(),
+    mcp_direct_canvas_apply: z.boolean().optional(),
   }),
 });
 
@@ -23,18 +24,20 @@ export interface RuntimeConfig {
   authRequired: boolean;
   phoneOtpEntryVisible: boolean;
   instanceId?: string;
+  mcpDirectCanvasApply: boolean;
 }
 
 let runtimeConfig: RuntimeConfig = {
   edition: "ee",
   authRequired: true,
+  mcpDirectCanvasApply: false,
   phoneOtpEntryVisible: false,
 };
 
 function fallbackRuntimeConfig(): RuntimeConfig {
   return import.meta.env.VITE_EDITION === "ce"
-    ? { edition: "ce", authRequired: false, phoneOtpEntryVisible: false }
-    : { edition: "ee", authRequired: true, phoneOtpEntryVisible: false };
+    ? { edition: "ce", authRequired: false, phoneOtpEntryVisible: false, mcpDirectCanvasApply: false }
+    : { edition: "ee", authRequired: true, phoneOtpEntryVisible: false, mcpDirectCanvasApply: false };
 }
 
 async function loadPhoneOtpEntryVisibility(): Promise<boolean> {
@@ -67,6 +70,7 @@ export async function loadRuntimeConfig(): Promise<void> {
       authRequired: parsed.data.auth_required,
       phoneOtpEntryVisible,
       instanceId: parsed.data.instance_id,
+      mcpDirectCanvasApply: parsed.data.mcp_direct_canvas_apply ?? false,
     };
   } catch (error) {
     // eslint-disable-next-line no-console
@@ -81,6 +85,10 @@ export function isCeRuntime(): boolean {
 
 export function authRequired(): boolean {
   return runtimeConfig.authRequired;
+}
+
+export function mcpDirectCanvasApplyEnabled(): boolean {
+  return runtimeConfig.mcpDirectCanvasApply;
 }
 
 export function phoneOtpEntryVisible(): boolean {

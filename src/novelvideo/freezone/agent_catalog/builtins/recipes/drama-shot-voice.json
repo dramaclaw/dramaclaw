@@ -1,0 +1,15 @@
+{
+  "id": "drama-shot-voice",
+  "name": "逐镜头短剧配音",
+  "version": 1,
+  "enabled": true,
+  "output_kind": "audio",
+  "action_keys": [
+    "drama-shot-voice"
+  ],
+  "description": "将单个镜头计划中的旁白或对白转换为可朗读语音。",
+  "planning_prompt": "只使用当前镜头的 narration、voiceover、dialogue 或 speech_text 作为配音正文。",
+  "system_prompt": "你是短剧配音导演。只输出当前镜头需要实际朗读的旁白或对白，不输出时长、时间码、情绪标签、语速说明、环境音、音效、配乐或其它制作指令。",
+  "requires_source_media": false,
+  "result_summary": "已完成逐镜头短剧配音。"
+}

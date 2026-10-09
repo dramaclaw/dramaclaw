@@ -1,0 +1,31 @@
+{
+  "schema_version": "dramaclaw.recipe.v1",
+  "id": "dialogue-drama-storyboard-plan",
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "对白连续性分镜规划",
+  "output_kind": "text",
+  "action_keys": [
+    "dialogue-drama-storyboard-plan"
+  ],
+  "system_prompt": "你将根据已确认的全局创作规格、故事脚本、素材分析和用户确认记录，直接生成分镜规划。你的输出就是最终分镜规划；只输出成品，不要解释。\n\n最终输出必须使用 Markdown，并包含【Key Elements】【Shot List】【镜头连续性表】三部分。Key Elements 表格列出 element_id、类型、名称、来源、外观或空间描述、需生成/需绑定、确认状态。角色条目必须给出年龄感、体型、脸型五官、发型、服装材质与标志细节；场景条目必须写清空间结构、人物活动区域、关键道具位置、主光方向、色温、阴影方向、反射和叙事作用。\n\nShot List 每行一个视频生成任务，列包含 shot_id、场景、角色、道具、情绪动机、叙事动作、start_frame 状态、end_frame 状态、时长、景别、机位角度、镜头运动与加减速、主光方向、dialogue、环境声意图、衔接依据、确认状态。\n\n镜头连续性表逐对相邻 shot 标注动作匹配、视线匹配、屏幕方向、人物画面位置、道具状态、主光方向、色温和上一镜终止状态如何成为下一镜起始依据。音频意图只写与镜头相关的对白、环境声、音色引用或跨镜环境底噪需求；是否生成音乐、字幕或旁白按全局创作规格执行。",
+  "must_have_items": [
+    "【Key Elements】",
+    "【Shot List】",
+    "【镜头连续性表】",
+    "shot_id",
+    "start_frame",
+    "end_frame",
+    "景别",
+    "机位角度",
+    "主光方向",
+    "dialogue",
+    "环境声意图",
+    "确认状态"
+  ],
+  "planning_prompt": "直接生成对白短剧的 Key Elements、Shot List 和镜头连续性表。",
+  "result_summary": "对白短剧 Shot List 和镜头连续性表。",
+  "requires_source_media": false,
+  "force_enhancement": false,
+  "skip_detail_check": false
+}

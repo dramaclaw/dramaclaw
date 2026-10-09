@@ -115,7 +115,7 @@ def _client(monkeypatch, tmp_path):
     return TestClient(app), clean_calls, start_calls, scene_split_calls
 
 
-def test_generate_sketches_grid_index_minus_one_dispatches_all_scene_grids(
+def test_generate_sketches_grid_index_minus_one_dispatches_one_queued_batch(
     monkeypatch, tmp_path
 ):
     client, clean_calls, start_calls, _scene_split_calls = _client(monkeypatch, tmp_path)
@@ -132,8 +132,14 @@ def test_generate_sketches_grid_index_minus_one_dispatches_all_scene_grids(
     assert body["data"]["dispatched"] == 2
     assert body["data"]["scopes"] == ["grid_0", "grid_1"]
     assert len(clean_calls) == 1
+    assert len(start_calls) == 2
+    assert [call["scope"] for call in start_calls] == ["grid_0", "grid_1"]
     assert [call["payload"]["config"]["grid_index"] for call in start_calls] == [0, 1]
     assert {call["task_type"] for call in start_calls} == {"sketch_grid_generation"}
+    batch_ids = {call["payload"]["batch_id"] for call in start_calls}
+    assert len(batch_ids) == 1
+    assert next(iter(batch_ids))
+    assert {call["payload"]["batch_size"] for call in start_calls} == {2}
     for call in start_calls:
         billing = call["payload"]["billing"]
         assert billing["pricing_kind"] == "image"

@@ -414,61 +414,42 @@ async def test_episode_runner_persists_agent_plan_only_to_sqlite(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_legacy_episode_pipeline_returns_output_without_graph_write(
+async def test_episode_runner_propagates_agent_failure_without_legacy_fallback(
     monkeypatch,
 ):
-    from cognee.modules import pipelines as cognee_pipelines
-    from cognee.modules.engine.operations import setup as setup_module
-    from novelvideo.cognee import pipeline
-    from novelvideo.models import NovelEpisode
+    from novelvideo.task_backend.runners import graph_build
 
-    graph_writes = []
+    closed = []
 
-    async def unexpected_graph_write(episodes):
-        graph_writes.append(episodes)
+    class FakeStore:
+        async def replace_episodes(self, _episodes):
+            raise AssertionError("failed plans must not be persisted")
 
+        async def close(self):
+            closed.append(True)
+
+    class FakePlanner:
+        def __init__(self, store):
+            assert isinstance(store, FakeStore)
+
+        async def plan_episodes(self, **_kwargs):
+            raise RuntimeError("agent planning failed")
+
+    monkeypatch.setattr(graph_build, "require_imported_novel", lambda _path: "小说正文")
+    monkeypatch.setattr(graph_build, "_load_store", lambda _ctx: _async_value(FakeStore()))
     monkeypatch.setattr(
-        "cognee.tasks.storage.add_data_points",
-        unexpected_graph_write,
+        "novelvideo.agents.episode_planner.EpisodePlannerAgent",
+        FakePlanner,
     )
-    monkeypatch.setattr(setup_module, "setup", lambda: _async_none())
 
-    class FakeTask:
-        def __init__(self, operation):
-            self.operation = operation
-
-    async def fake_run_pipeline(*, tasks, data, datasets):
-        assert datasets == ["novel-demo"]
-        value = data
-        for task in tasks:
-            value = await task.operation(value)
-        yield value
-
-    monkeypatch.setattr(cognee_pipelines, "Task", FakeTask)
-    monkeypatch.setattr(cognee_pipelines, "run_pipeline", fake_run_pipeline)
-
-    planned = [
-        NovelEpisode(
-            number=1,
-            title="第一集",
-            content_summary="主角踏上旅程。",
+    ctx = SimpleNamespace(output_dir="/tmp/output")
+    with pytest.raises(RuntimeError, match="agent planning failed"):
+        await graph_build._run_build_episodes(
+            {"payload": {"config": {"target_episodes": 1}}},
+            ctx,
         )
-    ]
 
-    async def fake_extract(_text, _target):
-        return planned
-
-    monkeypatch.setattr(pipeline, "extract_episodes_from_text", fake_extract)
-
-    result = await pipeline.run_episode_planning_pipeline(
-        "小说正文",
-        target_episodes=1,
-        dataset_name="novel-demo",
-        project_name="alice/demo",
-    )
-
-    assert result == planned
-    assert graph_writes == []
+    assert closed == [True]
 
 
 async def _async_none():

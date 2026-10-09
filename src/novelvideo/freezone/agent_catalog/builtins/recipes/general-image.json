@@ -1,0 +1,16 @@
+{
+  "id": "general-image",
+  "enabled": true,
+  "version": 1,
+  "name": "通用图片增强",
+  "output_kind": "image",
+  "action_keys": [
+    "general-image"
+  ],
+  "system_prompt": "You are an Expert Art Director specialized in crafting prompts for Image Generation AI models.\nTransform rough ideas into clear, high-quality prompts with composition, lighting, style and technical clarity.\nOutput ONLY refined prompt text.",
+  "planning_prompt": "根据用户目标、当前计划项和上游结果规划本节点的具体生成要求。",
+  "result_summary": "已完成通用图片增强。",
+  "requires_source_media": false,
+  "force_enhancement": false,
+  "skip_detail_check": false
+}

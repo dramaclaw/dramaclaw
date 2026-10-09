@@ -62,6 +62,12 @@ import { uploadLocalImageToBackend } from '@/features/canvas/application/uploadT
 import { useUpstreamNodes } from '@/features/canvas/application/useUpstreamGraph';
 import { useCanvasStore } from '@/stores/canvasStore';
 import {
+  publishNodeActionAccepted,
+  publishNodeActionError,
+  publishNodeActionSuccess,
+  subscribeNodeAction,
+} from '@/features/canvas/application/nodeActionResult';
+import {
   uploadAndAutoCommitSelectedBackgroundCandidate,
 } from '@/features/canvas/application/selectedBackgroundSlot';
 import { getFreezoneCanvasMetadata } from '@/features/freezone/canvasMetadataContext';
@@ -320,6 +326,7 @@ export const Pano360ViewerNode = memo(({ id, data, selected, width, height }: Pa
   const { t } = useTranslation();
   const updateNodeInternals = useUpdateNodeInternals();
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
+  const requestFocusNode = useCanvasStore((state) => state.requestFocusNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const addPanoCaptureGroup = useCanvasStore((state) => state.addPanoCaptureGroup);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
@@ -840,6 +847,9 @@ export const Pano360ViewerNode = memo(({ id, data, selected, width, height }: Pa
         `pano-${id}-${Date.now()}.png`,
       );
       const nodeId = addPanoCaptureGroup(id, [{ ...cropped, uploadedUrl, label: t('node.pano360.currentView') }]);
+      if (nodeId) {
+        requestFocusNode(nodeId);
+      }
       setStatus(t(nodeId ? 'node.pano360.status.snapDone' : 'node.pano360.status.snapFailed'));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -847,7 +857,7 @@ export const Pano360ViewerNode = memo(({ id, data, selected, width, height }: Pa
     } finally {
       setIsCapturing(false);
     }
-  }, [addPanoCaptureGroup, data.imageUrl, getViewerCanvas, id]);
+  }, [addPanoCaptureGroup, data.imageUrl, getViewerCanvas, id, requestFocusNode]);
 
   // "用作背景源": 把当前 viewer 视角(yaw/pitch/fov 决定的画面)16:9 crop 后
   // 先生成当前背景候选节点,再走主线 commit 写入 selected_background。
@@ -956,6 +966,9 @@ export const Pano360ViewerNode = memo(({ id, data, selected, width, height }: Pa
           }),
         );
         const groupId = addPanoCaptureGroup(id, captures, { cols, groupName });
+        if (groupId) {
+          requestFocusNode(groupId);
+        }
         setStatus(
           groupId
             ? t('node.pano360.status.capturedCount', { count: captures.length })
@@ -970,7 +983,7 @@ export const Pano360ViewerNode = memo(({ id, data, selected, width, height }: Pa
         setIsCapturing(false);
       }
     },
-    [addPanoCaptureGroup, applyFov, captureFrame, data.imageUrl, id],
+    [addPanoCaptureGroup, applyFov, captureFrame, data.imageUrl, id, requestFocusNode],
   );
 
   const snap2x2 = useCallback(
@@ -981,6 +994,54 @@ export const Pano360ViewerNode = memo(({ id, data, selected, width, height }: Pa
     () => captureToGroup(4, GRID_4X3_FRAMES, 75, t('node.pano360.captureGroup4x3')),
     [captureToGroup],
   );
+
+  useEffect(() => {
+    return subscribeNodeAction(({ nodeId, action, requestId }) => {
+      if (nodeId !== id) return;
+
+      if (action === 'capture_pano_current_view') {
+        publishNodeActionAccepted(requestId, id, action);
+        snapCurrent()
+          .then(() => publishNodeActionSuccess(requestId, id, action, { submitted: true }))
+          .catch((error) => publishNodeActionError(requestId, id, action, error));
+        return;
+      }
+
+      if (action === 'capture_pano_2x2_views') {
+        publishNodeActionAccepted(requestId, id, action);
+        snap2x2()
+          .then(() => publishNodeActionSuccess(requestId, id, action, { submitted: true }))
+          .catch((error) => publishNodeActionError(requestId, id, action, error));
+        return;
+      }
+
+      if (action === 'capture_pano_4x3_views') {
+        publishNodeActionAccepted(requestId, id, action);
+        snap4x3()
+          .then(() => publishNodeActionSuccess(requestId, id, action, { submitted: true }))
+          .catch((error) => publishNodeActionError(requestId, id, action, error));
+        return;
+      }
+
+      if (action === 'set_pano_current_view_as_background') {
+        publishNodeActionAccepted(requestId, id, action);
+        snapAsBackgroundAnchor()
+          .then(() => publishNodeActionSuccess(requestId, id, action, { submitted: true }))
+          .catch((error) => publishNodeActionError(requestId, id, action, error));
+        return;
+      }
+
+      if (action === 'reset_pano_view') {
+        try {
+          publishNodeActionAccepted(requestId, id, action);
+          resetView();
+          publishNodeActionSuccess(requestId, id, action, { reset: true });
+        } catch (error) {
+          publishNodeActionError(requestId, id, action, error);
+        }
+      }
+    });
+  }, [id, resetView, snap2x2, snap4x3, snapAsBackgroundAnchor, snapCurrent]);
 
   const handleNodeClick = useCallback(() => {
     setSelectedNode(id);

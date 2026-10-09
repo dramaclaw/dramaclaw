@@ -134,19 +134,32 @@ async def test_ingest_novel_reuses_graph_based_build_steps(tmp_project, tmp_path
         await tmp_project.add_character(character)
         return [character]
 
-    async def fake_build_episodes(target_episodes=10, on_progress=None, on_log=None):
-        calls.append(f"episodes:{target_episodes}")
-        episode = NovelEpisode(
-            number=1,
-            title="钟楼来信",
-            content_summary="林昭发现父亲线索。",
-        )
-        await tmp_project.add_episodes([episode])
-        return [episode]
+    class FakePlanner:
+        def __init__(self, store):
+            assert store is tmp_project
+
+        async def plan_episodes(
+            self,
+            target_episodes=10,
+            on_progress=None,
+            on_log=None,
+        ):
+            del on_progress, on_log
+            calls.append(f"episodes:{target_episodes}")
+            return [
+                NovelEpisode(
+                    number=1,
+                    title="钟楼来信",
+                    content_summary="林昭发现父亲线索。",
+                )
+            ]
 
     monkeypatch.setattr(tmp_project, "ingest_novel_fast", fake_ingest_novel_fast)
     monkeypatch.setattr(tmp_project, "build_characters_from_graph", fake_build_characters_from_graph)
-    monkeypatch.setattr(tmp_project, "build_episodes", fake_build_episodes)
+    monkeypatch.setattr(
+        "novelvideo.agents.episode_planner.EpisodePlannerAgent",
+        FakePlanner,
+    )
 
     result = await tmp_project.ingest_novel(
         str(novel_path),

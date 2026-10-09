@@ -86,6 +86,7 @@ interface VoiceSelectionModalProps {
   onClose: () => void;
   currentRef: AudioVoiceRef;
   onPick: (result: VoicePickResult) => void;
+  initialTab?: TabId;
 }
 
 export function VoiceSelectionModal({
@@ -93,6 +94,7 @@ export function VoiceSelectionModal({
   onClose,
   currentRef,
   onPick,
+  initialTab = 'library',
 }: VoiceSelectionModalProps) {
   const { t } = useTranslation();
   const [tab, setTab] = useState<TabId>('library');
@@ -131,8 +133,9 @@ export function VoiceSelectionModal({
   // 打开时拉一次（音色库 + 我的音色共享同一份 references 数据）
   useEffect(() => {
     if (!open) return;
+    setTab(initialTab);
     void reload();
-  }, [open, reload]);
+  }, [initialTab, open, reload]);
 
   // 音色库 = available 完整字段；我的音色 = available 里 scope=user_custom 的子集。
   const libraryItems = items;

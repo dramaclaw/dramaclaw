@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 
@@ -102,6 +103,32 @@ def test_ce_chat_http_routes_are_mounted_and_use_local_auth(monkeypatch) -> None
     assert cancel.json()["ok"] is True
     assert ui_event.status_code == 200
     assert ui_event.json()["ok"] is True
+
+
+def test_director_auto_database_failure_does_not_block_api_startup(monkeypatch) -> None:
+    from novelvideo.api.app import create_app
+    from novelvideo.chat.director_auto import coordinator as director_auto_coordinator
+    from novelvideo.ports import registry
+
+    async def fail_resume() -> None:
+        raise sqlite3.DatabaseError("director_auto.db is unreadable")
+
+    monkeypatch.setenv("ST_EDITION", "ce")
+    monkeypatch.setenv("ST_CONTROL_PLANE_DSN", "")
+    monkeypatch.setenv("REDIS_URL", "")
+    _set_task_signing_env(monkeypatch)
+    monkeypatch.setattr(registry, "_PORTS", {})
+    monkeypatch.setattr(registry, "_BOOTSTRAPPED", False)
+    monkeypatch.setattr(director_auto_coordinator, "resume", fail_resume)
+
+    app = create_app()
+    with TestClient(app) as client:
+        health = client.get("/healthz")
+
+    assert health.status_code == 200
+    assert health.json() == {"status": "ok"}
+    assert app.state.director_auto_available is False
+    assert "unreadable" in app.state.director_auto_startup_error
 
 
 def test_ce_chat_ws_accepts_missing_cookie_via_local_auth(monkeypatch) -> None:

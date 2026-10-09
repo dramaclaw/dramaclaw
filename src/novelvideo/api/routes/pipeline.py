@@ -1,5 +1,7 @@
 """流水线聚合状态端点。"""
 
+import logging
+
 from pathlib import Path
 from typing import Optional
 
@@ -13,6 +15,7 @@ from novelvideo.task_state import get_task_manager
 from novelvideo.utils.path_resolver import compute_identity_path, compute_portrait_path
 
 router = APIRouter()
+_log = logging.getLogger(__name__)
 
 
 _STEP_MAP = {
@@ -28,6 +31,7 @@ _STEP_MAP = {
     "coloring": (None, "配色+身份/道具检测"),
     "global_optimize": ("global_optimize_video", "全局视频优化"),
     "first_frames": ("selected_regen", "首帧生成"),
+    "voice_setup": (None, "准备配音声线"),
     "tts": (None, "TTS 配音"),
     "video": ("single_video", "视频生成"),
     "compose": ("compose_episode", "合成导出"),
@@ -63,12 +67,71 @@ def _beat_file_series_complete(directory: Path, suffix: str, beats: list[dict]) 
     return all((directory / f"beat_{beat_num:02d}.{suffix}").exists() for beat_num in beat_numbers)
 
 
+def _beat_requires_audio(beat: dict) -> bool:
+    from novelvideo.seedance2_i2v.voice_clone import (
+        dialogue_text,
+        narration_beat_text,
+        normalize_seedance2_audio_type,
+    )
+
+    audio_type = normalize_seedance2_audio_type(beat)
+    if audio_type == "narration":
+        return bool(narration_beat_text(beat))
+    if audio_type == "dialogue":
+        return bool(dialogue_text(beat))
+    return False
+
+
+def _beat_audio_series_complete(directory: Path, beats: list[dict]) -> bool:
+    required_numbers = [
+        int(beat.get("beat_number", 0) or 0)
+        for beat in beats
+        if int(beat.get("beat_number", 0) or 0) > 0 and _beat_requires_audio(beat)
+    ]
+    return all((directory / f"beat_{beat_num:02d}.mp3").exists() for beat_num in required_numbers)
+
+
 def _beat_has_script_content(beat: dict) -> bool:
     return bool(
         str(beat.get("narration_segment") or "").strip()
         or str(beat.get("narration") or "").strip()
         or str(beat.get("visual_description") or "").strip()
     )
+
+
+async def _collect_voice_prereq_errors(
+    *,
+    store: SQLiteStore,
+    username: str,
+    project: str,
+    episode: int,
+) -> list[str]:
+    """Check voice references without dispatching an audio generation task."""
+
+    from novelvideo.audio.indextts2_beat_audio_task import (
+        collect_indextts2_voice_prereq_errors,
+    )
+
+    try:
+        return await collect_indextts2_voice_prereq_errors(
+            store=store,
+            username=username,
+            project=project,
+            episode=episode,
+            beat_numbers=None,
+            mode="sync_changed",
+        )
+    except AttributeError:
+        # Narrow API test stores may not implement the complete voice surface.
+        return []
+    except Exception:
+        _log.exception(
+            "failed to inspect audio voice prerequisites: user=%s project=%s episode=%s",
+            username,
+            project,
+            episode,
+        )
+        return ["暂时无法检查配音声线，请稍后重试"]
 
 
 @router.get("/projects/{project}/pipeline/status")
@@ -194,8 +257,8 @@ async def pipeline_status(
         "first_frames": _beat_file_series_complete(
             project_dir / "frames" / f"ep{target_ep:03d}", "png", beats
         ),
-        "tts": _beat_file_series_complete(
-            project_dir / "audio" / f"ep{target_ep:03d}", "mp3", beats
+        "tts": _beat_audio_series_complete(
+            project_dir / "audio" / f"ep{target_ep:03d}", beats
         ),
         "video": _beat_file_series_complete(
             project_dir / "videos" / "beats" / f"ep{target_ep:03d}", "mp4", beats
@@ -217,6 +280,32 @@ async def pipeline_status(
         if not episode_status[key]:
             next_step = key
             break
+
+    audio_prerequisites = {
+        "checked": False,
+        "ready": None,
+        "errors": [],
+    }
+    if next_step == "tts":
+        voice_errors = await _collect_voice_prereq_errors(
+            store=store,
+            username=username,
+            project=project_name,
+            episode=target_ep,
+        )
+        audio_prerequisites = {
+            "checked": True,
+            "ready": not voice_errors,
+            "errors": voice_errors,
+        }
+        if voice_errors:
+            next_step = "voice_setup"
+    elif episode_status["tts"]:
+        audio_prerequisites = {
+            "checked": True,
+            "ready": True,
+            "errors": [],
+        }
     if (
         next_step == "done"
         and not (project_dir / "videos" / "episodes" / f"ep{target_ep:03d}_final.mp4").exists()
@@ -231,6 +320,7 @@ async def pipeline_status(
             "global": global_status,
             "current_episode": target_ep,
             "episode_status": episode_status,
+            "audio_prerequisites": audio_prerequisites,
             "next_step": task_type or next_step,
             "next_step_name": step_name,
         },

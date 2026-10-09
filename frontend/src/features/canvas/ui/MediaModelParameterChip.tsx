@@ -13,16 +13,26 @@ interface Props {
   onChange: (values: Record<string, unknown>) => void;
 }
 
+const SERVER_MANAGED_PARAMETER_KEYS = new Set(["thinking_level"]);
+
+export function userSelectableMediaModelParameters(
+  parameters: MediaModelParameterDefinition[] | undefined,
+  mode?: string,
+): MediaModelParameterDefinition[] {
+  const normalizedMode = mode ? MODE_ALIASES[mode] ?? mode : "";
+  return (parameters ?? []).filter((item) => {
+    if (SERVER_MANAGED_PARAMETER_KEYS.has(item.key)) return false;
+    if (!item.modes?.length) return true;
+    return Boolean(mode && (item.modes.includes(mode) || item.modes.includes(normalizedMode)));
+  });
+}
+
 export function MediaModelParameterChip({ parameters, values = {}, mode, onChange }: Props) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const visible = useMemo(
-    () => (parameters ?? []).filter((item) => {
-      if (!item.modes?.length) return true;
-      const normalizedMode = mode ? MODE_ALIASES[mode] ?? mode : "";
-      return Boolean(mode && (item.modes.includes(mode) || item.modes.includes(normalizedMode)));
-    }),
+    () => userSelectableMediaModelParameters(parameters, mode),
     [mode, parameters],
   );
 
@@ -117,8 +127,7 @@ export function filterMediaModelParamsForMode(
 ): Record<string, unknown> {
   const normalizedMode = MODE_ALIASES[mode] ?? mode;
   const allowed = new Set(
-    (parameters ?? [])
-      .filter((item) => !item.modes?.length || item.modes.includes(normalizedMode))
+    userSelectableMediaModelParameters(parameters, normalizedMode)
       .map((item) => item.key),
   );
   return Object.fromEntries(

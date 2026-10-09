@@ -13,6 +13,7 @@
 // 本身，是因为那个模块会顺带拉进 react-i18next / HttpBackend，把它塞进这条被
 // 到处 import 的底层链路上，会让所有 mock 掉 react-i18next 的测试在 import 期炸掉。
 import i18n from 'i18next';
+import { completeDerivedMedia } from './derivedMedia';
 import type { CanvasNode, CanvasNodeType } from '@/features/canvas/domain/canvasNodes';
 import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
 import {
@@ -38,6 +39,10 @@ import {
 import {
   shouldWriteGenerationError,
 } from '@/features/canvas/application/generationTaskArbitration';
+import { resumePersistedHtmlGeneration } from './workflowHtmlRuntime';
+
+export { generationTaskDescriptor } from './generationTaskDescriptor';
+export type { GenerationTaskDescriptor } from './generationTaskDescriptor';
 
 type FreezoneTaskType = FreezoneJobRef['task_type'];
 
@@ -47,30 +52,6 @@ type FreezoneTaskType = FreezoneJobRef['task_type'];
  * latter belongs to the canvasAiGateway image-job poller in Canvas.tsx and must
  * not be confused with a freezone task job id.
  */
-export interface GenerationTaskDescriptor {
-  generationTaskKey: string;
-  generationTaskType: FreezoneTaskType;
-  generationTaskJobId: string;
-  // Index signature so the descriptor spreads cleanly into updateNodeData's
-  // Partial<CanvasNodeData> union (some node-data members carry index signatures).
-  [key: string]: unknown;
-}
-
-/**
- * Build the patch that records a freezone job on a node right after submit so the
- * generation can be resumed after a refresh. Spread alongside the
- * `{ isGenerating: true, generationStartedAt }` patch each flow already writes.
- *
- * Concurrent submit/resume waits share the task API promise.
- */
-export function generationTaskDescriptor(ref: FreezoneJobRef): GenerationTaskDescriptor {
-  return {
-    generationTaskKey: ref.task_key,
-    generationTaskType: ref.task_type,
-    generationTaskJobId: ref.job_id,
-  };
-}
-
 /**
  * 轮询脱离时写回节点的补丁。
  *
@@ -170,16 +151,21 @@ async function confirmTaskMissing(projectId: string, taskKey: string): Promise<b
 }
 
 type ResumeKind =
+  | 'derived-media'
   | 'image'
   | 'video'
   | 'audio'
   | 'ply'
   | 'script'
   | 'reverse-prompt'
-  | 'text-generate';
+  | 'text-generate'
+  | 'html';
 
 function resumeKindForNode(type: CanvasNodeType, taskType: FreezoneTaskType): ResumeKind | null {
   switch (type) {
+    case CANVAS_NODE_TYPES.vectorSvg:
+    case CANVAS_NODE_TYPES.animatedGif:
+      return 'derived-media';
     case CANVAS_NODE_TYPES.imageGen:
     case CANVAS_NODE_TYPES.imageEdit:
     case CANVAS_NODE_TYPES.exportImage:
@@ -194,6 +180,8 @@ function resumeKindForNode(type: CanvasNodeType, taskType: FreezoneTaskType): Re
       return 'script';
     case CANVAS_NODE_TYPES.textAnnotation:
       return taskType === 'freezone_text_generate' ? 'text-generate' : 'reverse-prompt';
+    case CANVAS_NODE_TYPES.htmlArtifact:
+      return taskType === 'freezone_text_generate' ? 'html' : null;
     default:
       return null;
   }
@@ -242,7 +230,7 @@ function pickPlyUrlFromResult(result: TaskState['result'] | undefined): string |
 }
 
 /** Fields cleared on every settle so the node leaves the 生成中 state cleanly. */
-const CLEARED_TASK_FIELDS = {
+export const CLEARED_GENERATION_TASK_FIELDS = {
   isGenerating: false,
   generationStartedAt: null,
   generationTaskKey: null,
@@ -258,15 +246,16 @@ async function buildSuccessPatch(
   projectId: string,
 ): Promise<Record<string, unknown>> {
   switch (kind) {
+    case 'derived-media': return {};
     case 'image': {
       let url = resolveUrlFromResult(completed.result, ['output_url', 'image_url', 'url']);
       if (!url && jobId) {
         url = await fetchFreezoneJobResult(projectId, taskType, jobId).then((r) => r.url).catch(() => null);
       }
       if (!url) {
-        return { ...CLEARED_TASK_FIELDS, generationError: i18n.t('canvas.resumeGeneration.noImageResult') };
+        return { ...CLEARED_GENERATION_TASK_FIELDS, generationError: i18n.t('canvas.resumeGeneration.noImageResult') };
       }
-      return { ...CLEARED_TASK_FIELDS, imageUrl: url, previewImageUrl: url, generationError: null };
+      return { ...CLEARED_GENERATION_TASK_FIELDS, imageUrl: url, previewImageUrl: url, generationError: null };
     }
     case 'video': {
       let url = resolveUrlFromResult(completed.result, ['video_url', 'output_url', 'url']);
@@ -274,10 +263,10 @@ async function buildSuccessPatch(
         url = await fetchFreezoneJobResult(projectId, taskType, jobId).then((r) => r.url).catch(() => null);
       }
       if (!url) {
-        return { ...CLEARED_TASK_FIELDS, generationError: i18n.t('canvas.resumeGeneration.noVideoResult') };
+        return { ...CLEARED_GENERATION_TASK_FIELDS, generationError: i18n.t('canvas.resumeGeneration.noVideoResult') };
       }
       return {
-        ...CLEARED_TASK_FIELDS,
+        ...CLEARED_GENERATION_TASK_FIELDS,
         videoUrl: url,
         sourceFileName: null,
         generationError: null,
@@ -291,69 +280,77 @@ async function buildSuccessPatch(
         url = await fetchFreezoneJobResult(projectId, taskType, jobId).then((r) => r.url).catch(() => null);
       }
       if (!url) {
-        return { ...CLEARED_TASK_FIELDS };
+        return { ...CLEARED_GENERATION_TASK_FIELDS };
       }
-      return { ...CLEARED_TASK_FIELDS, audioUrl: url, durationMs: null };
+      return { ...CLEARED_GENERATION_TASK_FIELDS, audioUrl: url, durationMs: null };
     }
     case 'ply': {
       const plyUrl = pickPlyUrlFromResult(completed.result);
       if (!plyUrl) {
-        return { ...CLEARED_TASK_FIELDS, taskKey: null, errorMessage: i18n.t('canvas.resumeGeneration.noWorldUrl') };
+        return { ...CLEARED_GENERATION_TASK_FIELDS, taskKey: null, errorMessage: i18n.t('canvas.resumeGeneration.noWorldUrl') };
       }
-      return { ...CLEARED_TASK_FIELDS, plyUrl, taskKey: null, errorMessage: null };
+      return { ...CLEARED_GENERATION_TASK_FIELDS, plyUrl, taskKey: null, errorMessage: null };
     }
     case 'script': {
       const result = await fetchFreezoneStoryScriptResult(projectId, jobId);
-      return { ...CLEARED_TASK_FIELDS, scriptResult: result, scriptTitle: result.title ?? null };
+      return { ...CLEARED_GENERATION_TASK_FIELDS, scriptResult: result, scriptTitle: result.title ?? null };
     }
     case 'reverse-prompt': {
       const { prompt } = await fetchFreezoneReversePromptResult(projectId, jobId);
       if (prompt && prompt.trim().length > 0) {
-        return { ...CLEARED_TASK_FIELDS, content: prompt };
+        return { ...CLEARED_GENERATION_TASK_FIELDS, content: prompt };
       }
-      return { ...CLEARED_TASK_FIELDS };
+      return { ...CLEARED_GENERATION_TASK_FIELDS };
     }
     case 'text-generate': {
       const result = await fetchFreezoneTextGenerateResult(projectId, jobId);
       if (!result.generated_text.trim()) {
-        return { ...CLEARED_TASK_FIELDS };
+        return { ...CLEARED_GENERATION_TASK_FIELDS };
       }
       return {
-        ...CLEARED_TASK_FIELDS,
+        ...CLEARED_GENERATION_TASK_FIELDS,
         content: result.generated_text,
         model: result.model,
       };
     }
     default:
-      return { ...CLEARED_TASK_FIELDS };
+      return { ...CLEARED_GENERATION_TASK_FIELDS };
   }
 }
 
 function buildErrorPatch(kind: ResumeKind, error: unknown): Record<string, unknown> {
   if (isTaskCancelledError(error)) {
     // 用户主动终止过的任务恢复时只清理生成态，不当错误展示。
-    return { ...CLEARED_TASK_FIELDS };
+    return { ...CLEARED_GENERATION_TASK_FIELDS };
   }
   if (kind === 'ply') {
     const message = error instanceof Error ? error.message : String(error);
-    return { ...CLEARED_TASK_FIELDS, taskKey: null, errorMessage: i18n.t('canvas.resumeGeneration.failedWithMessage', { message }) };
+    return { ...CLEARED_GENERATION_TASK_FIELDS, taskKey: null, errorMessage: i18n.t('canvas.resumeGeneration.failedWithMessage', { message }) };
   }
-  if (kind === 'image' || kind === 'video') {
+  if (kind === 'image' || kind === 'video' || kind === 'derived-media') {
     const resolved = resolveErrorContent(error, kind === 'video'
       ? i18n.t('canvas.resumeGeneration.videoFailed')
       : i18n.t('canvas.resumeGeneration.imageFailed'));
     const rawMessage = resolved.message;
     return {
-      ...CLEARED_TASK_FIELDS,
+      ...CLEARED_GENERATION_TASK_FIELDS,
       generationError: providerErrorMessage(rawMessage) ?? rawMessage,
       generationErrorDetails: resolved.details ?? rawMessage,
       generationErrorRequestId:
         extractRequestId(rawMessage) ?? extractRequestId(resolved.details),
     };
   }
+  if (kind === 'html') {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      ...CLEARED_GENERATION_TASK_FIELDS,
+      generationError: message,
+      htmlGenerationPhase: 'generation_failed',
+    };
+  }
   // audio / script / reverse-prompt / text-generate surface their own inline errors elsewhere;
   // just leave the 生成中 state.
-  return { ...CLEARED_TASK_FIELDS };
+  return { ...CLEARED_GENERATION_TASK_FIELDS };
 }
 
 /**
@@ -367,10 +364,11 @@ function buildErrorPatch(kind: ResumeKind, error: unknown): Record<string, unkno
 export async function resumeNodeGeneration(params: {
   node: CanvasNode;
   projectId: string;
+  canvasId?: string;
   updateNodeData: (id: string, patch: Record<string, unknown>) => void;
   getNodeData?: (id: string) => Record<string, unknown> | null | undefined;
 }): Promise<void> {
-  const { node, projectId, updateNodeData, getNodeData } = params;
+  const { node, projectId, canvasId, updateNodeData, getNodeData } = params;
   const data = node.data as Record<string, unknown>;
   const taskKey = typeof data.generationTaskKey === 'string' ? data.generationTaskKey : '';
   const taskType =
@@ -385,10 +383,16 @@ export async function resumeNodeGeneration(params: {
   }
 
   const readLatestNodeData = () =>
-    getNodeData ? getNodeData(node.id) : data;
-  const stillNeedsResult = () => {
+    getNodeData ? getNodeData(node.id) : (node.data as Record<string, unknown>);
+  const stillOwnsTask = () => {
     const latest = readLatestNodeData();
-    return latest?.isGenerating === true && latest.generationTaskKey === taskKey;
+    return Boolean(
+      latest
+      && latest.isGenerating === true
+      && latest.generationTaskKey === taskKey
+      && latest.generationTaskType === taskType
+      && latest.generationTaskJobId === jobId,
+    );
   };
 
   // Quick pre-check: if the task no longer exists server-side (expired/cleaned),
@@ -401,17 +405,39 @@ export async function resumeNodeGeneration(params: {
   // 连续 miss 才算数:确认窗口约 10 秒,相对 20~35 分钟的完整预算可以忽略,
   // 却足以盖住瞬时漏项。
   if (await confirmTaskMissing(projectId, taskKey)) {
-    if (!stillNeedsResult()) return;
+    if (!stillOwnsTask()) {
+      return;
+    }
+
     updateNodeData(node.id, buildErrorPatch(kind, new Error(i18n.t('canvas.resumeGeneration.taskGone'))));
     return;
   }
 
   try {
     // 按任务类型取预算，跟提交侧同一份口径（见 pollTimeoutForTaskType）。
+    if (kind === 'derived-media') {
+      await completeDerivedMedia(projectId, { task_key: taskKey, task_type: taskType, job_id: jobId }, (patch) => updateNodeData(node.id, patch));
+      return;
+    }
     const completed = await awaitTaskCompletion(taskKey, projectId, { taskType });
-    if (!stillNeedsResult()) return;
+    if (kind === 'html') {
+      if (!stillOwnsTask()) return;
+      if (!canvasId) {
+        updateNodeData(node.id, buildErrorPatch(kind, new Error('HTML canvas identity is unavailable')));
+        return;
+      }
+      await resumePersistedHtmlGeneration({
+        nodeId: node.id,
+        projectId,
+        canvasId,
+        taskKey,
+        jobId,
+      });
+      return;
+    }
     const patch = await buildSuccessPatch(kind, completed, taskType, jobId, projectId);
-    if (stillNeedsResult()) updateNodeData(node.id, patch);
+    if (!stillOwnsTask()) return;
+    updateNodeData(node.id, patch);
   } catch (error) {
     console.warn('[resume-generation] task resume failed', { nodeId: node.id, taskKey, error });
     // 轮询超时只说明这一轮不再等了，任务还在后端跑：保留 isGenerating 与句柄，
@@ -419,11 +445,12 @@ export async function resumeNodeGeneration(params: {
     if (isTaskPollTimeoutError(error)) {
       return;
     }
-    if (!stillNeedsResult()) return;
+    if (!stillOwnsTask()) return;
     if (kind === 'image' || kind === 'video') {
-      const latestNodeData = readLatestNodeData()!;
+      const latestNodeData = readLatestNodeData();
+      if (!latestNodeData) return;
       if (!shouldWriteGenerationError({ nodeData: latestNodeData, taskKey, error })) {
-        updateNodeData(node.id, { ...CLEARED_TASK_FIELDS });
+        updateNodeData(node.id, { ...CLEARED_GENERATION_TASK_FIELDS });
         return;
       }
     }
@@ -433,9 +460,10 @@ export async function resumeNodeGeneration(params: {
 }
 
 /**
- * Whether a node restored from storage needs {@link resumeNodeGeneration}.
- * This includes SPA navigation: a submit callback may have updated an old canvas
- * snapshot while the persisted node still needs its completed result.
+ * Whether a node restored from storage needs {@link resumeNodeGeneration}. Returns
+ * A same-session task can still need restoring after navigating through Piko.
+ * The task API shares waits by task key, so attaching here is safe even when
+ * the original submit flow is still awaiting the same task.
  */
 export function nodeNeedsGenerationResume(node: CanvasNode): boolean {
   const data = node.data as Record<string, unknown>;

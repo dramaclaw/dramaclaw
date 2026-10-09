@@ -1374,10 +1374,14 @@ class CogneeStore:
 
         report(0.6, "规划剧集...")
         console.print("[bold]Step 3/3: 规划剧集...[/bold]")
-        episodes = await self.build_episodes(
+        from novelvideo.agents.episode_planner import EpisodePlannerAgent
+
+        planner = EpisodePlannerAgent(self)
+        episodes = await planner.plan_episodes(
             target_episodes=target_episodes,
             on_progress=lambda p, t: report(0.6 + p * 0.4, t),
         )
+        await self.replace_episodes(episodes)
 
         report(1.0, "导入完成")
 

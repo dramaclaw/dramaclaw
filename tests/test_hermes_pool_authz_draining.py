@@ -25,8 +25,16 @@ class _Thread:
         self.release = asyncio.Event()
         self.closed = 0
 
-    async def stream(self, _prompt: str, *, current_project: str | None = None):
-        del current_project
+    async def stream(
+        self,
+        _prompt: str,
+        *,
+        current_project: str | None = None,
+        trajectory_id: str | None = None,
+        project_id: str | None = None,
+        gateway_api_key: str | None = None,
+    ):
+        del current_project, trajectory_id, project_id, gateway_api_key
         self.started.set()
         yield "started"
         await self.release.wait()

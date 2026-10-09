@@ -30,7 +30,7 @@ function stopPropagation(event: { stopPropagation: () => void }): void {
 // motion-reduce 下不做位移/缩放动画，尊重系统的「减弱动态效果」。
 //
 // 历史栏挂在面板内，随同一容器一起入场。
-const INLINE_ENTER_CLASS =
+export const NODE_OPS_PANEL_ENTER_CLASS =
   'animate-in fade-in-0 zoom-in-95 slide-in-from-top-2 duration-200 ease-out motion-reduce:animate-none';
 
 /**
@@ -65,7 +65,7 @@ export function OperationPanelShell({
   if (!expanded) {
     return (
       <div
-        className={`${inlineClassName} ${INLINE_ENTER_CLASS}`}
+        className={`${inlineClassName} ${NODE_OPS_PANEL_ENTER_CLASS}`}
         style={inlineStyle}
         onClick={stopPropagation}
       >

@@ -15,6 +15,7 @@ from typing import Optional, Callable, TYPE_CHECKING
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 from pydantic_ai import Agent
+from novelvideo.brainclaw_contract import BrainClawProfile
 from novelvideo.config import (
     get_newapi_structured_output_model_settings,
     get_newapi_text_pydantic_model,
@@ -407,10 +408,18 @@ class IdentityPlanner:
         return final_age_group, inferred_fish_voice
 
     @staticmethod
-    def _identity_model(model_env: str, default_model: str = "gemini-3.5-flash"):
+    def _identity_model(
+        model_env: str,
+        *,
+        brainclaw_profile: BrainClawProfile | None = None,
+    ):
+        profile_by_env = {
+            "IDENTITY_PLANNER_CAST_MODEL": BrainClawProfile.IDENTITY_CAST_PLANNING,
+            "IDENTITY_PLANNER_APPEARANCE_MODEL": BrainClawProfile.IDENTITY_APPEARANCE_WRITING,
+        }
         return get_newapi_text_pydantic_model(
             model_env,
-            default_model,
+            brainclaw_profile=brainclaw_profile or profile_by_env.get(model_env),
             capability="text.generate.agent",
         )
 
@@ -922,7 +931,7 @@ class IdentityPlanner:
         task = f"""分析第 {episode.number} 集《{episode.title}》中每个角色的**现实主线默认身份**。
 
 ## 出场角色
-{', '.join(cast_names)}
+{", ".join(cast_names)}
 
 ## 已有身份列表（优先复用）
 {identity_info}
@@ -944,7 +953,10 @@ class IdentityPlanner:
                 detect_asset_language(content_text)
             )
             agent = Agent(
-                self._identity_model("IDENTITY_PLANNER_ANALYSIS_MODEL"),
+                self._identity_model(
+                    "IDENTITY_PLANNER_ANALYSIS_MODEL",
+                    brainclaw_profile=BrainClawProfile.IDENTITY_DEFAULT_ANALYSIS,
+                ),
                 system_prompt=f"{DEFAULT_IDENTITY_PROMPT}\n{language_instruction}",
                 model_settings=self._identity_model_settings(),
                 output_type=EpisodeDefaultIdentities,
@@ -1003,7 +1015,7 @@ class IdentityPlanner:
         task = f"""分析第 {episode.number} 集《{episode.title}》中各角色在默认身份之外还需要的**其他身份**。
 
 ## 出场角色
-{', '.join(canonical_cast_names)}
+{", ".join(canonical_cast_names)}
 
 ## 已有身份列表（优先复用）
 {identity_info}
@@ -1027,7 +1039,10 @@ class IdentityPlanner:
                 detect_asset_language(content_text)
             )
             agent = Agent(
-                self._identity_model("IDENTITY_PLANNER_ANALYSIS_MODEL"),
+                self._identity_model(
+                    "IDENTITY_PLANNER_ANALYSIS_MODEL",
+                    brainclaw_profile=BrainClawProfile.IDENTITY_SPECIAL_ANALYSIS,
+                ),
                 system_prompt=f"{OTHER_IDENTITY_PROMPT}\n{language_instruction}",
                 model_settings=self._identity_model_settings(),
                 output_type=EpisodeIdentityRequirements,
