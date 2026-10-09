@@ -1161,6 +1161,7 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
             )
             for media, node_type in (("image", "imageGenNode"), ("video", "videoNode"))
         }
+        normalized_required_choices: dict[str, Any] = {}
         for media, fields in requested.items():
             if media in generation_fields and isinstance(fields, list):
                 # Accept the canonical question ids that tool errors report
@@ -1199,11 +1200,16 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
                         for allowed_media, allowed_fields in generation_fields.items()
                     },
                 })
+            normalized_required_choices[media] = fields
             chosen_fields = fields if fields is not None else generation_fields[media]
             questions.extend(
                 {"id": f"{media}_{'variants_per_node' if field == 'count' else field}"}
                 for field in chosen_fields
             )
+        if generation_required_choices is not None:
+            # The model-dependency check below must see the normalized field
+            # names, not the canonical ids the caller may have passed.
+            generation_required_choices = normalized_required_choices
         args = {**args, "allow_skip": False}
     generation_question_aliases = {
         "image_count": "image_variants_per_node",

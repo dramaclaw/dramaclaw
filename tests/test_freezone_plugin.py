@@ -3716,6 +3716,32 @@ def test_generation_clarification_accepts_canonical_question_ids_as_required_cho
     ]
 
 
+def test_generation_clarification_canonical_dependent_id_adds_model_question(monkeypatch):
+    """Issue #788: canonical ids must still trigger the model dependency."""
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    emitted = []
+    monkeypatch.setattr(
+        plugin,
+        "_emit_clarification_event",
+        lambda _project, _canvas, event: emitted.append(event) or "shown",
+    )
+
+    result = handlers["freezone_request_user_clarification"](
+        {"generation_required_choices": {"video": ["video_duration_seconds"]}}
+    )
+
+    assert result == "shown"
+    assert [question["id"] for question in emitted[0]["questions"]] == [
+        "video_model",
+        "video_duration_seconds",
+    ]
+    assert [question["options_source"] for question in emitted[0]["questions"]] == [
+        "video_models",
+        "selected_video_model_durations",
+    ]
+
+
 def test_generation_clarification_unsupported_required_choice_lists_allowed_fields():
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
