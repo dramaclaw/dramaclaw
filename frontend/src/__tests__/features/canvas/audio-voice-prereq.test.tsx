@@ -113,6 +113,33 @@ describe("AudioOperationsPanel voice prerequisite", () => {
     })).toBe(false);
   });
 
+  it("does not grant legacy fallback to newly compiled workflow speech", () => {
+    expect(requiresCustomVoiceSelection({
+      audioUrl: null, audioKind: "speech",
+      workflowCatalog: { recipeId: "drama-shot-voice" },
+    })).toBe(true);
+  });
+
+  it("keeps a saved legacy voice reference without requiring a refreshed availability flag", () => {
+    expect(requiresCustomVoiceSelection({
+      audioUrl: null, audioKind: "speech", speechMode: "clone",
+      voiceRef: { scope: "character_default", characterName: "主角" },
+    })).toBe(false);
+  });
+
+  it("still rejects an invalid saved custom voice reference", () => {
+    expect(requiresCustomVoiceSelection({
+      audioUrl: null, voiceRef: { scope: "user_custom", voiceId: "" },
+    })).toBe(true);
+  });
+
+  it("requires voice selection after converting another node into speech", () => {
+    const id = useCanvasStore.getState().addNode(CANVAS_NODE_TYPES.textAnnotation, { x: 0, y: 0 });
+    useCanvasStore.getState().convertNodeType(id, CANVAS_NODE_TYPES.audio, { audioKind: "speech" });
+    const data = useCanvasStore.getState().nodes.find(node => node.id === id)?.data as AudioNodeData;
+    expect(requiresCustomVoiceSelection(data)).toBe(true);
+  });
+
   it("does not apply the speech voice prerequisite to music generation", () => {
     renderPanel({
       audioKind: "music",
@@ -125,7 +152,7 @@ describe("AudioOperationsPanel voice prerequisite", () => {
     expect(screen.queryByText("音色选择")).toBeNull();
   });
 
-  it("treats legacy system speech as missing custom voice", () => {
+  it("retains legacy system speech without a custom voice prerequisite", () => {
     renderPanel({
       audioKind: "speech",
       speechMode: "preset",
@@ -134,7 +161,7 @@ describe("AudioOperationsPanel voice prerequisite", () => {
       voiceAvailable: false,
     });
 
-    expect(screen.getByTitle("生成（未选择自定义声线时跳过）")).toBeTruthy();
-    expect(screen.getByText("尚未选中可用的自定义声线")).toBeTruthy();
+    expect(screen.getByTitle("生成")).toBeTruthy();
+    expect(screen.queryByText("尚未选中可用的自定义声线")).toBeNull();
   });
 });

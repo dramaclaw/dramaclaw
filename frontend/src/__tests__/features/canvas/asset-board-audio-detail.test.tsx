@@ -237,6 +237,50 @@ describe('AssetBoard 音频进主从详情', () => {
     expect(useCanvasStore.getState().nodes[0]?.data.text).toBe('欢迎使用。\n\n他说：快跑。');
   });
 
+  it('旧预设音色节点保留原来的语音模式和音色', async () => {
+    seed([audioNode({
+      displayName: '旁白', audioKind: 'speech', audioUrl: null,
+      text: '欢迎回来。', speechMode: 'preset',
+      presetVoice: 'Serena', presetModel: 'edge-tts', voiceAvailable: false,
+    })]);
+    render(<AssetBoardView visible onLocateNode={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: '旁白' }));
+    fireEvent.click(within(detailPanel()).getByRole('button', { name: /^生成$/ }));
+    await waitFor(() => expect(submitFreezoneAudioSpeech).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(submitFreezoneAudioSpeech).mock.calls[0][1]).toMatchObject({
+      speechMode: 'preset', presetVoice: 'Serena', presetModel: 'edge-tts', text: '欢迎回来。',
+    });
+  });
+
+  it('旧节点缺少音色字段时保留项目旁白回退', async () => {
+    seed([audioNode({
+      displayName: '旁白', audioKind: 'speech', audioUrl: null, text: '欢迎回来。',
+    })]);
+    render(<AssetBoardView visible onLocateNode={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: '旁白' }));
+    fireEvent.click(within(detailPanel()).getByRole('button', { name: /^生成$/ }));
+    await waitFor(() => expect(submitFreezoneAudioSpeech).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(submitFreezoneAudioSpeech).mock.calls[0][1]).toMatchObject({
+      speechMode: 'clone', voiceRef: { scope: 'project_narrator' }, text: '欢迎回来。',
+    });
+  });
+
+  it('新建语音节点仍须先选音色，保存重载后也不会回退为旧节点', async () => {
+    seed([]);
+    const id = useCanvasStore.getState().addNode(CANVAS_NODE_TYPES.audio, { x: 0, y: 0 }, {
+      displayName: '新语音', audioKind: 'speech', text: '欢迎回来。',
+    });
+    const saved = JSON.parse(JSON.stringify(useCanvasStore.getState().nodes)) as CanvasNode[];
+    seed(saved);
+    render(<AssetBoardView visible onLocateNode={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: '新语音' }));
+    fireEvent.click(within(detailPanel()).getByRole('button', { name: /^生成$/ }));
+    await waitFor(() => expect(
+      useCanvasStore.getState().nodes.find(node => node.id === id)?.data.generationError,
+    ).toBe('node.audioNode.selectVoiceFirst'));
+    expect(submitFreezoneAudioSpeech).not.toHaveBeenCalled();
+  });
+
   it('drama-shot-voice 逐字提交一次自定义音色 TTS，且不编译 Recipe', async () => {
     seed([audioNode({
       displayName: '旁白',

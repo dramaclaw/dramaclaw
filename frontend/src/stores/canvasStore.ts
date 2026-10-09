@@ -2498,6 +2498,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const mergedData = {
       ...definition.createDefaultData(),
       ...dataOverrides,
+      ...(newType === CANVAS_NODE_TYPES.audio ? { voicePolicyConfirmed: true } : {}),
     } as CanvasNodeData;
     const nextNodes = state.nodes.map((node) =>
       node.id === nodeId
