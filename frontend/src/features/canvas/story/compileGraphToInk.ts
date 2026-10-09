@@ -378,6 +378,15 @@ export function compileGraphToInk(
 
   return {
     ink: lines.join('\n'),
+    explorationNodes: reachable.map((id) => ({
+      id,
+      label: (nodeById.get(id)!.data as { displayName?: string }).displayName?.trim() || '',
+      successors: [...new Set((choicesBySource.get(id) ?? []).map((choice) => choice.target))],
+      choices: (choicesBySource.get(id) ?? [])
+        .filter((choice) => choice.transitionMode === 'visible' && choice.text.trim())
+        .map((choice) => ({ target: choice.target, text: choice.text.trim() })),
+      isEnding: !!endingByNodeId[id],
+    })),
     clipByNodeId,
     choiceLoopClipByNodeId,
     knotByNodeId,

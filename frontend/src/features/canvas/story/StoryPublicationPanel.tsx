@@ -24,7 +24,7 @@ import { apiCall } from "@/api/client";
 import { getFreezoneCanvas } from "@/api/canvas";
 import { flushFreezoneCanvasRuntime } from "@/features/freezone/canvasSyncRuntime";
 import { readUrl } from "@/lib/url-params";
-import { StoryPlayer } from "./StoryPlayer";
+import { StoryExperience } from "./StoryExperience";
 import { useCanvasStore } from "@/stores/canvasStore";
 import { useStoryRuntimeStore } from "@/stores/storyRuntimeStore";
 import {
@@ -139,6 +139,7 @@ export function StoryPublicationPanel({
     function keydown(event: KeyboardEvent) {
       if (event.defaultPrevented || !panel?.contains(event.target as Node)) return;
       if (event.key === "Escape") {
+        if (document.fullscreenElement) return;
         useStoryRuntimeStore.getState().exitPlay();
         onClose();
       }
@@ -448,7 +449,7 @@ export function StoryPublicationPanel({
                   : t("storyPublication.pendingPreview")}
               </p>
               {previewPlaying ? (
-                <div className="publication-player-frame"><StoryPlayer t={t} /></div>
+                <div className="publication-player-frame"><StoryExperience t={t} /></div>
               ) : previewVersion && (
                 <StoryLanding release={previewVersion} preview
                   cover={authorPreviewUrl(previewVersion.cover, previewVersion, base)}>

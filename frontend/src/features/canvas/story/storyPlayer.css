@@ -36,7 +36,50 @@
 }
 .story-player [data-choice-stage] > button { flex-shrink: 0; overflow-wrap: anywhere; }
 .story-player [data-story-placeholder] { top: 12%; bottom: 54%; }
-.story-player [data-story-ending] { overflow-y: auto; padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+.story-player [data-story-ending] { justify-content: flex-start; overflow-y: auto; padding-top: 16px; padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+.story-ending-content {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 640px;
+  margin-top: auto;
+  padding: 20px;
+  border-radius: var(--radius-lg);
+  background: rgba(0, 0, 0, .8);
+  color: white;
+}
+.story-ending-label { font-size: 18px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.story-ending-progress { margin: 0; color: rgba(255, 255, 255, .75); font-size: 12px; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.story-ending-actions { display: flex; flex-wrap: wrap; align-self: stretch; justify-content: center; gap: 8px; margin-top: 4px; }
+.story-ending-actions button {
+  display: inline-flex;
+  flex: 1 1 160px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, .25);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, .06);
+  color: white;
+  font-size: 14px;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out;
+}
+.story-ending-actions button svg { flex: none; }
+.story-ending-actions button:hover { border-color: rgba(255, 255, 255, .5); background: rgba(255, 255, 255, .12); }
+.story-ending-actions button:focus-visible { outline: 2px solid white; outline-offset: 2px; }
+@container (max-width: 600px) {
+  .story-ending-content { padding: 16px; }
+  .story-ending-label { font-size: 16px; }
+  .story-ending-actions { flex-direction: column; }
+  .story-ending-actions button { flex: none; width: 100%; }
+}
 .story-player-controls {
   background: linear-gradient(to bottom, transparent, rgba(0, 0, 0, .7));
 }
@@ -53,7 +96,7 @@
   transition: opacity 300ms ease-out;
 }
 @media (prefers-reduced-motion: reduce) {
-  .story-transition-frame { transition: none; }
+  .story-transition-frame, .story-ending-actions button { transition: none; }
 }
 .story-player-seek {
   height: 2.25rem;

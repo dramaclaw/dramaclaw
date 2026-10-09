@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { Pause, Play } from 'lucide-react';
+import { Map, Pause, Play, RotateCcw, SkipForward, Undo2 } from 'lucide-react';
 import { useStoryRuntimeStore } from '@/stores/storyRuntimeStore';
 import { useChoicePointMachine } from '@/components/canvas/useChoicePointMachine';
 import { normalizeStoryChoiceInteraction, type StoryChoiceInteraction, type StoryChoiceTransition, type StoryStateChange } from './storyTypes';
@@ -8,6 +8,8 @@ import './storyPlayer.css';
 import { StoryGestureButton } from './StoryGestureButton';
 import { emitStoryEvent, safeCtaUrl } from './storyEvents';
 import { useStoryFrameTransition } from './useStoryFrameTransition';
+import { useStoryTimer } from './useStoryTimer';
+import { explorationSummary, previousChoiceCheckpoint } from './storyExploration';
 
 /** 选择确认后给玩家阅读剧情反馈的停留时间；不会改变当前或后续视频资源。 */
 export const STORY_OUTCOME_FEEDBACK_MS = 1500;
@@ -47,15 +49,17 @@ function formatPlaybackTime(seconds: number): string {
 }
 
 /** Shared player surface for editor playtests and the standalone HTML build. No canvas dependencies. */
-export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revision = 0, resolveUrl = identityUrl, onRestart, fitToMedia = true, children }: {
+export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revision = 0, resolveUrl = identityUrl, onRestart, onExplore, fitToMedia = true, paused = false, children }: {
   t: (key: string, values?: Record<string, unknown>) => string;
   /** Keep media and interactive overlays inside the same fitted viewport. */
   fitToMedia?: boolean;
+  paused?: boolean;
   shouldAutoPlay?: boolean;
   playbackRate?: number;
   revision?: number;
   resolveUrl?: (url: string) => string | null;
   onRestart?: () => void;
+  onExplore?: () => void;
   children?: ReactNode;
 }) {
   const mode = useStoryRuntimeStore((s) => s.mode);
@@ -74,6 +78,11 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
   const choose = useStoryRuntimeStore((s) => s.choose);
   const advanceAutomatic = useStoryRuntimeStore((s) => s.advanceAutomatic);
   const restart = useStoryRuntimeStore((s) => s.restart);
+  const completeCurrentNode = useStoryRuntimeStore((s) => s.completeCurrentNode);
+  const exploration = useStoryRuntimeStore((s) => s.exploration);
+  const explorationNodes = useStoryRuntimeStore((s) => s.explorationNodes);
+  const rewindPrevious = useStoryRuntimeStore((s) => s.rewindToPreviousChoice);
+  const explorationProgress = explorationSummary(explorationNodes, exploration);
   const { videoRef, canvasRef, hasFrameRef, attachVideo, revealFrame, clearFrame } = useStoryFrameTransition();
   const controlsHideTimerRef = useRef<number | null>(null);
   const keyboardFocusWithinRef = useRef(false);
@@ -94,9 +103,10 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
     return () => { observer?.disconnect(); window.removeEventListener('resize', update); };
   }, [fitToMedia, mediaAspectRatio]);
   const [endedPlaybackKey, setEndedPlaybackKey] = useState<string | null>(null);
-  const [automaticCountdown, setAutomaticCountdown] = useState<{ playbackKey: string; seconds: number } | null>(null);
   const [outcomeFeedback, setOutcomeFeedback] = useState<OutcomeFeedback | null>(null);
-  const outcomeFeedbackTimerRef = useRef<number | null>(null);
+  const pendingChoiceRef = useRef<(() => void) | null>(null);
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
   const outcomeFeedbackPendingRef = useRef(false);
   // 黑场过渡:切片段时淡出到黑,新片段可播或到结局时淡入。
   const [coverOpacity, setCoverOpacity] = useState(0);
@@ -205,26 +215,23 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
     }
     outcomeFeedbackPendingRef.current = true;
     setOutcomeFeedback({ text: feedback || undefined, stateChanges });
-    outcomeFeedbackTimerRef.current = window.setTimeout(() => {
-      outcomeFeedbackTimerRef.current = null;
-      outcomeFeedbackPendingRef.current = false;
-      setOutcomeFeedback(null);
-      commitChoice();
-    }, STORY_OUTCOME_FEEDBACK_MS);
+    pendingChoiceRef.current = commitChoice;
   }, [choose, currentChoices, currentNodeId]);
 
-  // 退出试玩时取消未完成的反馈，避免离开后仍推进故事。
-  useEffect(() => () => {
-    if (outcomeFeedbackTimerRef.current !== null) window.clearTimeout(outcomeFeedbackTimerRef.current);
-  }, []);
+  useStoryTimer({ delayMs: STORY_OUTCOME_FEEDBACK_MS, active: outcomeFeedback !== null, paused, resetKey: playbackKey,
+    onElapsed: () => {
+      const commit = pendingChoiceRef.current;
+      pendingChoiceRef.current = null;
+      outcomeFeedbackPendingRef.current = false;
+      setOutcomeFeedback(null);
+      commit?.();
+    } });
+  // A rewind can happen during feedback; never commit the outgoing visit's choice later.
   useEffect(() => {
-    if (mode === 'play') return;
-    if (outcomeFeedbackTimerRef.current !== null) window.clearTimeout(outcomeFeedbackTimerRef.current);
-    outcomeFeedbackTimerRef.current = null;
+    pendingChoiceRef.current = null;
     outcomeFeedbackPendingRef.current = false;
     setOutcomeFeedback(null);
-    setBranchTransition('fade');
-  }, [mode]);
+  }, [playbackKey, mode]);
 
   // 每次进入片段重置暂停、错误与循环加载状态；结束状态由 playbackKey 隔离。
   useEffect(() => {
@@ -240,31 +247,17 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
     if (video) video.playbackRate = playbackRate;
   }, [activeVideoUrl, playbackRate, playbackRevision, revision, visitRevision]);
 
+  const automaticActive = !resumeAvailable && phase === 'playing' && currentChoices.length === 0
+    && (videoEnded || !resolvedUrl);
+  const textLength = `${currentPlaceholder?.label ?? ''}${currentPlaceholder?.text ?? ''}`.trim().length;
+  const automaticDelay = !resolvedUrl && textLength > 0
+    ? Math.min(STORY_AUTOMATIC_PLACEHOLDER_MAX_MS, Math.max(STORY_AUTOMATIC_PLACEHOLDER_MIN_MS, textLength * 55)) : 0;
+  const automaticRemaining = useStoryTimer({ delayMs: automaticDelay, active: automaticActive, paused,
+    resetKey: playbackKey, onElapsed: advanceAutomatic });
   useEffect(() => {
-    if (resumeAvailable || phase !== 'playing' || currentChoices.length > 0) return;
-    if (!videoEnded && resolvedUrl) return;
-    // Let an ungenerated automatic clip show its story text before the next hop.
-    // Empty placeholders still advance immediately; each visit owns its timer.
-    const textLength = `${currentPlaceholder?.label ?? ''}${currentPlaceholder?.text ?? ''}`.trim().length;
-    const delay = !resolvedUrl && textLength > 0
-      ? Math.min(STORY_AUTOMATIC_PLACEHOLDER_MAX_MS, Math.max(STORY_AUTOMATIC_PLACEHOLDER_MIN_MS, textLength * 55))
-      : 0;
-    const deadline = Date.now() + delay;
-    if (delay > 0) {
-      setAutomaticCountdown({ playbackKey, seconds: Math.ceil(delay / 1000) });
-    }
-    const countdownTimer = delay > 0 ? window.setInterval(() => {
-      setAutomaticCountdown({
-        playbackKey,
-        seconds: Math.max(1, Math.ceil((deadline - Date.now()) / 1000)),
-      });
-    }, 250) : null;
-    const timer = window.setTimeout(advanceAutomatic, delay);
-    return () => {
-      window.clearTimeout(timer);
-      if (countdownTimer !== null) window.clearInterval(countdownTimer);
-    };
-  }, [advanceAutomatic, currentChoices.length, currentPlaceholder, phase, resolvedUrl, resumeAvailable, videoEnded, playbackKey]);
+    if (!resumeAvailable && !mediaError && phase !== 'error' && showChoices
+      && (resolvedUrl || currentChoices.length > 0 || phase === 'ended')) completeCurrentNode();
+  }, [completeCurrentNode, currentChoices.length, mediaError, phase, playbackKey, resolvedUrl, resumeAvailable, showChoices]);
 
   // 锚点属于原始视频画幅；播放器按 contain 完整展示横/竖屏时，要把留白偏移计入坐标。
   useEffect(() => {
@@ -328,6 +321,7 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
     mode === 'play' && phase !== 'error' && !mediaError && showChoices && currentChoices.length > 0;
   const { stage, selectedIndex, fraction, select } = useChoicePointMachine({
     active: choicesActive,
+    paused,
     resetKey: `${currentNodeId ?? currentClipUrl}:${playbackRevision}:${revision}:${visitRevision}`,
     seconds: currentChoiceTimeSec,
     defaultIndex: currentDefaultChoiceIndex,
@@ -338,8 +332,11 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
   const choiceExiting = stage === 'hide' || stage === 'timeout';
   const showCountdown = stage === 'select' && currentChoiceTimeSec != null;
 
+  const playbackAttemptedFor = useRef<HTMLVideoElement | null>(null);
   const requestPlayback = useCallback((video: HTMLVideoElement) => {
     // Catch autoplay policy rejections, including file:// on mobile browsers.
+    if (pausedRef.current) return;
+    playbackAttemptedFor.current = video;
     void video.play()?.catch(() => {
       if (videoRef.current === video) setVideoPaused(true);
     });
@@ -406,11 +403,24 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
   useEffect(() => {
     const video = videoRef.current;
     if (!video || (showChoices && !choiceLoopActive)) return;
-    if (!shouldAutoPlay) {
+    if (!shouldAutoPlay || paused) {
       video.pause();
       setVideoPaused(true);
     } else if (video.readyState >= 2) requestPlayback(video);
   }, [activeVideoUrl, shouldAutoPlay, showChoices, choiceLoopActive, requestPlayback]);
+
+  const resumeAfterMenu = useRef(false);
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (paused) {
+      resumeAfterMenu.current = !video.paused;
+      video.pause();
+    } else if (resumeAfterMenu.current && (!showChoices || choiceLoopActive)) {
+      resumeAfterMenu.current = false;
+      requestPlayback(video);
+    }
+  }, [paused, requestPlayback, videoRef]);
 
   const handleRestart = useCallback(() => {
     setBranchTransition('fade');
@@ -464,7 +474,7 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
           ref={attachVideo}
           key={`${currentNodeId}:${playbackRevision}:${revision}:${visitRevision}:${activeVideoUrl}`}
           src={activeVideoUrl}
-          autoPlay={shouldAutoPlay}
+          autoPlay={shouldAutoPlay && !paused}
           playsInline
           controls={false}
           loop={choiceLoopActive}
@@ -487,7 +497,11 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
           onCanPlay={(event) => {
             measureVideoFrame(event.currentTarget);
             if (activeVideoUrl === resolvedChoiceLoopUrl) setChoiceLoopReady(true);
-            if (!shouldAutoPlay || (showChoices && !choiceLoopActive)) {
+            // canplay may arrive while the exploration panel is holding playback.
+            // Defer the first autoplay, without reviving a manually paused video.
+            if (paused && shouldAutoPlay && (!showChoices || choiceLoopActive)
+              && playbackAttemptedFor.current !== event.currentTarget) resumeAfterMenu.current = true;
+            if (paused || !shouldAutoPlay || (showChoices && !choiceLoopActive)) {
               event.currentTarget.pause();
               setVideoPaused(!showChoices);
             } else requestPlayback(event.currentTarget);
@@ -501,7 +515,13 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
               setChoiceLoopReady(false);
             } else setMediaError(true);
           }}
-          onPlay={() => setVideoPaused(false)}
+          onPlay={(event) => {
+            if (paused) event.currentTarget.pause();
+            else {
+              playbackAttemptedFor.current = event.currentTarget;
+              setVideoPaused(false);
+            }
+          }}
           onPause={() => setVideoPaused(true)}
           onEnded={(event) => {
             if (choiceLoopActive) return;
@@ -523,6 +543,17 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
       )}
 
       <canvas ref={canvasRef} aria-hidden data-story-transition-frame className="story-transition-frame" />
+
+      {onExplore && currentNodeId && exploration.completedNodeIds.includes(currentNodeId)
+        && resolvedUrl && !showChoices && !mediaError && phase !== 'error' && !paused && playbackPosition.duration > 0 && (
+        <button type="button" className="story-player-skip" onClick={() => {
+          const video = videoRef.current;
+          if (!video || !Number.isFinite(video.duration) || video.duration <= 0) return;
+          video.pause();
+          video.currentTime = Math.max(0, video.duration - 0.35);
+          setEndedPlaybackKey(playbackKey);
+        }}><SkipForward size={16} />{t('canvas.story.exploration.skipSeen')}</button>
+      )}
 
       {phase !== 'error' && activeVideoUrl && !mediaError && !showChoices && (
         <div
@@ -689,9 +720,9 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
                 {currentChoices.length === 0 && (
                   <p className="text-sm text-white/50">
                     {t('canvas.story.automaticPlaceholderNext')}
-                    {automaticCountdown?.playbackKey === playbackKey && (
+                    {automaticActive && automaticDelay > 0 && (
                       <span data-story-auto-countdown role="timer" aria-live="off" className="ml-2 inline-block min-w-8 text-right font-medium tabular-nums text-white/80">
-                        {automaticCountdown.seconds}s
+                        {Math.max(1, Math.ceil(automaticRemaining / 1000))}s
                       </span>
                     )}
                   </p>
@@ -726,7 +757,7 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
                 interaction={interaction}
                 eventContext={{ nodeId: currentNodeId, index: choice.index, text: choice.text }}
                 onSelect={() => select(choice.index)}
-                disabled={choiceExiting}
+                disabled={choiceExiting || paused}
                 aria-label={choice.text}
                 aria-pressed={isSelected}
                 title={interaction.anchor?.objectLabel || choice.text}
@@ -809,7 +840,7 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
                 interaction={choice.interaction}
                 eventContext={{ nodeId: currentNodeId, index: choice.index, text: choice.text }}
                 onSelect={() => select(choice.index)}
-                disabled={choiceExiting}
+                disabled={choiceExiting || paused}
                 aria-pressed={isSelected}
                 className={`w-full min-h-12 max-w-xl rounded-lg border px-5 py-3 text-center text-base font-medium leading-snug text-white backdrop-blur-sm transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black disabled:cursor-default motion-reduce:transition-none ${
                   isSelected
@@ -834,11 +865,11 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
 
       {/* 结局页:叶子结局标题 + 重玩。续玩提示期间(idle)不显示。 */}
       {phase === 'ended' && !resumeAvailable && showChoices && currentChoices.length === 0 && (
-        <div data-story-ending
+        <div data-story-ending data-explorable={onExplore ? true : undefined}
           className={`absolute inset-0 z-10 flex flex-col items-center px-6 text-center ${currentEnding?.cta ? 'pb-[calc(1rem+env(safe-area-inset-bottom,0px))]' : 'pb-10'} ${currentClipUrl ? 'justify-end' : 'overflow-y-auto overscroll-contain pt-10 bg-black/55'}`}>
-          <div className={`flex w-full shrink-0 flex-col items-center ${currentEnding?.cta ? 'gap-2' : 'gap-5'} ${currentClipUrl ? '' : 'my-auto'}`}>
+          <div className={`story-ending-content ${currentClipUrl ? '' : 'my-auto'}`}>
           {currentEnding?.label && !currentEnding.cta && (
-            <span className="rounded-full border border-white/25 px-3 py-1 text-sm font-medium tracking-wide text-white/80">
+            <span className="story-ending-label">
               {t('canvas.story.endingBadge', { label: currentEnding.label })}
             </span>
           )}
@@ -855,14 +886,20 @@ export function StoryPlayer({ t, shouldAutoPlay = true, playbackRate = 1, revisi
             className="flex min-h-12 w-full max-w-xs items-center justify-center rounded-lg bg-white px-8 py-3 font-semibold text-black transition-colors hover:bg-white/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white">
             {currentEnding.cta.label}
           </a> : <p role="status" className="text-sm text-white/80">{currentEnding.cta.label} · {t('canvas.story.ctaUnconfigured', { defaultValue: '访问地址待配置' })}</p>)}
-          <button
-            onClick={handleRestart}
-            className={currentEnding?.cta
-              ? 'min-h-11 rounded-lg px-4 py-2 text-sm font-normal text-white underline decoration-white/40 underline-offset-4 [text-shadow:0_1px_4px_black] hover:decoration-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white'
-              : 'mt-2 rounded-full border border-white/30 bg-white/5 px-8 py-2.5 text-base font-medium text-white/95 backdrop-blur-sm transition-colors hover:bg-white/15'}
-          >
-            {currentEnding?.cta ? t('canvas.story.replayExperience', { defaultValue: '重新体验' }) : t('canvas.story.restart')}
-          </button>
+          {onExplore && <p className="story-ending-progress">{t('canvas.story.exploration.endingProgress', {
+            done: explorationProgress.reachedEndings, total: explorationProgress.totalEndings, percent: explorationProgress.percent,
+          })}</p>}
+          <div className="story-ending-actions">
+            {onExplore && <>
+              <button type="button" onClick={onExplore}><Map size={16} />{t('canvas.story.exploration.exploreMore')}</button>
+              {previousChoiceCheckpoint(exploration) && <button type="button" onClick={() => {
+                if (!rewindPrevious()) onExplore();
+              }}><Undo2 size={16} />{t('canvas.story.exploration.returnToDecision')}</button>}
+            </>}
+            <button type="button" onClick={handleRestart}><RotateCcw size={16} />
+              {currentEnding?.cta ? t('canvas.story.replayExperience', { defaultValue: '重新体验' }) : t('canvas.story.restart')}
+            </button>
+          </div>
           </div>
         </div>
       )}

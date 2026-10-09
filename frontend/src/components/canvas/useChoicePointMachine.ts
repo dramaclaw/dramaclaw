@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useChoiceCountdown } from './useChoiceCountdown';
+import { useStoryTimer } from '@/features/canvas/story/useStoryTimer';
 
 /**
  * 选择点四阶段状态机(参照 Bandersnatch 的 Init → Select → Timeout → Hide)。
@@ -31,6 +32,7 @@ export interface ChoicePointMachine {
 
 export function useChoicePointMachine({
   active,
+  paused = false,
   resetKey,
   seconds,
   defaultIndex,
@@ -39,6 +41,7 @@ export function useChoicePointMachine({
 }: {
   /** 选项当前应可见且可交互(false = 视频播放中/结局/退出)。 */
   active: boolean;
+  paused?: boolean;
   /** 当前这一跳的稳定标识(通常是节点 id);变化即重置状态机——连续占位卡换跳时 active 不变但 resetKey 变。 */
   resetKey: string | number | null;
   /** 选项窗口秒数(null = 不限时,不会超时)。 */
@@ -81,19 +84,17 @@ export function useChoicePointMachine({
   }, [active, resetKey]);
 
   // init → select:进入动画结束后转为可交互。
-  useEffect(() => {
-    if (stage !== 'init') return;
-    const id = window.setTimeout(() => setStage('select'), CHOICE_STAGE_TIMING.initMs);
-    return () => window.clearTimeout(id);
-  }, [stage]);
+  useStoryTimer({ delayMs: CHOICE_STAGE_TIMING.initMs, active: stage === 'init', paused, resetKey,
+    onElapsed: () => setStage('select') });
 
   const select = useCallback((index: number) => {
+    if (paused) return;
     if (lockedRef.current) return;
     if (stageRef.current !== 'init' && stageRef.current !== 'select') return;
     lockedRef.current = true;
     setSelectedIndex(index);
     setStage('hide');
-  }, []);
+  }, [paused]);
 
   // 倒计时仅在 select 阶段运行;归零走 timeout 阶段并自动选默认项。
   const handleTimeout = useCallback(() => {
@@ -107,21 +108,19 @@ export function useChoicePointMachine({
   const { fraction } = useChoiceCountdown({
     seconds,
     active: stage === 'select',
+    paused, resetKey,
     onTimeout: handleTimeout,
   });
 
   // hide/timeout:停留 confirmMs 展示选中反馈后提交一次。
-  useEffect(() => {
-    if (stage !== 'hide' && stage !== 'timeout') return;
-    if (selectedIndex == null) return;
-    const target = selectedIndex;
-    const id = window.setTimeout(() => {
+  useStoryTimer({ delayMs: CHOICE_STAGE_TIMING.confirmMs,
+    active: (stage === 'hide' || stage === 'timeout') && selectedIndex != null, paused, resetKey,
+    onElapsed: () => {
       if (committedRef.current) return;
+      if (selectedIndex == null) return;
       committedRef.current = true;
-      onCommitRef.current(target);
-    }, CHOICE_STAGE_TIMING.confirmMs);
-    return () => window.clearTimeout(id);
-  }, [stage, selectedIndex]);
+      onCommitRef.current(selectedIndex);
+    } });
 
   return { stage, selectedIndex, fraction, select };
 }

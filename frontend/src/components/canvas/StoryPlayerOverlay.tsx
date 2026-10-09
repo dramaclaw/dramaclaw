@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { BarChart3, ChevronLeft, CirclePlay, Gauge, Map, Pause, Play, Sparkles } from 'lucide-react';
+import { ChevronLeft, CirclePlay, Gauge, Pause, Play, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import { StoryCompileError } from '@/features/canvas/story/compileGraphToInk';
@@ -12,8 +12,7 @@ import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useStoryRuntimeStore } from '@/stores/storyRuntimeStore';
 import { resolveMediaUrl } from '@/lib/media-url';
-import { StoryStatsPanel } from './StoryStatsPanel';
-import { StoryPathMap } from './StoryPathMap';
+import { StoryExperience } from '@/features/canvas/story/StoryExperience';
 import { StoryPlaytestTree } from './StoryPlaytestTree';
 export { STORY_OUTCOME_FEEDBACK_MS } from '@/features/canvas/story/StoryPlayer';
 
@@ -22,9 +21,7 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
   const embedded = useStoryRuntimeStore((s) => s.embedded);
   const mode = useStoryRuntimeStore((s) => s.mode);
   const playKind = useStoryRuntimeStore((s) => s.playKind);
-  const phase = useStoryRuntimeStore((s) => s.phase);
   const currentNodeId = useStoryRuntimeStore((s) => s.currentNodeId);
-  const statsKey = useStoryRuntimeStore((s) => s.statsKey);
   const groupId = useStoryRuntimeStore((s) => s.groupId);
   const resumeAvailable = useStoryRuntimeStore((s) => s.resumeAvailable);
   const restart = useStoryRuntimeStore((s) => s.restart);
@@ -36,8 +33,6 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
     return node?.type ? resolveNodeDisplayName(node.type, node.data) : '';
   });
 
-  const [statsOpen, setStatsOpen] = useState(false);
-  const [mapOpen, setMapOpen] = useState(false);
   const [autoPlayEnabled, setAutoPlayEnabled] = useState(true);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [playbackRevision, setPlaybackRevision] = useState(0);
@@ -58,8 +53,6 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
       const saveKey = kind === 'entertainment'
         ? storySaveKey(readUrl().canvas ?? 'default', groupId)
         : undefined;
-      setStatsOpen(false);
-      setMapOpen(false);
       setPlaybackRevision((value) => value + 1);
       enterPlay(compiled, { saveKey, groupId, playKind: kind });
     } catch (err) {
@@ -111,6 +104,7 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
   }, [currentNodeId, playKind, startPlayback]);
 
   if (embedded || mode !== 'play') return null;
+  const Player = playKind === 'entertainment' ? StoryExperience : StoryPlayer;
 
   return createPortal(
     <div className="fixed inset-0 z-[220] flex flex-col bg-[#090909] text-[#e2e2e3]">
@@ -214,59 +208,14 @@ export const StoryPlayerOverlay = memo(function StoryPlayerOverlay() {
               </div>
             </div>
           )}
-          <StoryPlayer
+          <Player
             key={playbackRevision}
             t={t}
             shouldAutoPlay={playKind === 'entertainment' || autoPlayEnabled}
             playbackRate={playbackRate}
             resolveUrl={resolveMediaUrl}
             onRestart={handleRestart}
-          >
-      {/* 路径回顾图入口:有故事组上下文(画布试玩)时可用;叠加统计画「走了多少、还有什么没看」。 */}
-      {phase !== 'error' && groupId && playKind === 'entertainment' && (
-        <button
-          onClick={() => {
-            setMapOpen((v) => !v);
-            setStatsOpen(false);
-          }}
-          aria-pressed={mapOpen}
-          className={`absolute right-16 top-5 z-40 rounded-full border border-white/15 bg-black/50 p-2 backdrop-blur transition-colors hover:text-white ${
-            mapOpen ? 'text-white' : 'text-white/80'
-          }`}
-          aria-label={t('canvas.story.map.open')}
-          title={t('canvas.story.map.open')}
-        >
-          <Map className="h-5 w-5" />
-        </button>
-      )}
-
-      {/* 试玩统计入口:仅在本次试玩持久化(有 statsKey)时可用;创作者据此看选择分布/结局达成率。 */}
-      {phase !== 'error' && statsKey && playKind === 'entertainment' && (
-        <button
-          onClick={() => {
-            setStatsOpen((v) => !v);
-            setMapOpen(false);
-          }}
-          aria-pressed={statsOpen}
-          className={`absolute right-5 top-5 z-40 rounded-full border border-white/15 bg-black/50 p-2 backdrop-blur transition-colors hover:text-white ${
-            statsOpen ? 'text-white' : 'text-white/80'
-          }`}
-          aria-label={t('canvas.story.stats.open')}
-          title={t('canvas.story.stats.open')}
-        >
-          <BarChart3 className="h-5 w-5" />
-        </button>
-      )}
-
-      {statsOpen && statsKey && (
-        <StoryStatsPanel statsKey={statsKey} onClose={() => setStatsOpen(false)} />
-      )}
-
-      {mapOpen && groupId && (
-        <StoryPathMap groupId={groupId} statsKey={statsKey} onClose={() => setMapOpen(false)} />
-      )}
-
-          </StoryPlayer>
+          />
         </main>
       </div>
     </div>,

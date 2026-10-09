@@ -4,6 +4,7 @@
  *
  * key 前缀 `st.story.` 受 reset-region-state 的 SWEEP_PREFIXES 覆盖,区域切换会清存档。
  */
+import { parseExploration, type StoryExploration } from './storyExploration';
 
 export function storySaveKey(canvasId: string, groupId: string): string {
   return `st.story.save.${canvasId}.${groupId}`;
@@ -32,12 +33,22 @@ export function readStorySave(key: string, fingerprint?: string): string | null 
   }
 }
 
-export function writeStorySave(key: string, json: string, fingerprint?: string): void {
+export function readExplorationSave(key: string, fingerprint: string, nodeIds: Set<string>): StoryExploration {
+  try {
+    const saved = JSON.parse(localStorage.getItem(key) ?? 'null');
+    return parseExploration(saved?.version === 1 && saved.storyFingerprint === fingerprint ? saved.exploration : null, nodeIds);
+  } catch {
+    return parseExploration(null, nodeIds);
+  }
+}
+
+export function writeStorySave(key: string, json: string, fingerprint?: string, exploration?: StoryExploration): void {
   try {
     localStorage.setItem(key, fingerprint === undefined ? json : JSON.stringify({
       version: 1,
       storyFingerprint: fingerprint,
       inkState: json,
+      ...(exploration ? { exploration } : {}),
     }));
   } catch {
     // 隐私模式 / 配额超限:静默降级为不存档。

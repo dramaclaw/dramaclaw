@@ -1,8 +1,9 @@
 import { create } from 'zustand';
 import { Compiler, Story } from 'inkjs/full';
 import type { CompiledStory, StoryChoiceInteraction, StoryStateChange, StoryEnding } from '@/features/canvas/story/storyTypes';
-import { readStorySave, writeStorySave, clearStorySave, storySaveFingerprint } from '@/features/canvas/story/storySave';
-import { recordChoice, recordEnding, statsKeyFromSaveKey } from '@/features/canvas/story/storyStats';
+import { readStorySave, readExplorationSave, writeStorySave, clearStorySave, storySaveFingerprint } from '@/features/canvas/story/storySave';
+import { recordChoice, recordEnding, clearStoryStats, statsKeyFromSaveKey } from '@/features/canvas/story/storyStats';
+import { emptyExploration, previousChoiceCheckpoint, decisionsForCheckpoint, type ExplorationNode, type StoryExploration, type StoryCheckpoint } from '@/features/canvas/story/storyExploration';
 
 type InkStory = ReturnType<Compiler['Compile']>;
 
@@ -21,6 +22,15 @@ export interface StoryChoiceView {
 }
 
 interface StoryRuntimeState {
+  explorationNodes: ExplorationNode[];
+  exploration: StoryExploration;
+  /** Capture an arrival before any outgoing choice effects execute. */
+  captureCheckpoint: (choiceText?: string) => void;
+  completeCurrentNode: () => void;
+  rewindToNode: (nodeId: string) => boolean;
+  restoreCheckpoint: (checkpoint: StoryCheckpoint) => boolean;
+  rewindToPreviousChoice: () => boolean;
+  clearProgress: () => void;
   mode: 'edit' | 'play';
   /** Embedded players own their UI; suppress the canvas overlay. */
   embedded: boolean;
@@ -223,11 +233,13 @@ function advanceToClip(
 }
 
 /** 存档当前 inkjs 运行态(仅当有 saveKey 时)。 */
-function persist(saveKey: string | null, story: InkStory, fingerprint: string | null): void {
-  if (saveKey && fingerprint) writeStorySave(saveKey, story.state.toJson(), fingerprint);
+function persist(saveKey: string | null, story: InkStory, fingerprint: string | null, exploration: StoryExploration): void {
+  if (saveKey && fingerprint) writeStorySave(saveKey, story.state.toJson(), fingerprint, exploration);
 }
 
 const INITIAL_RUNTIME = {
+  explorationNodes: [] as ExplorationNode[],
+  exploration: emptyExploration(),
   embedded: false,
   playKind: 'entertainment' as const,
   story: null as InkStory | null,
@@ -261,6 +273,79 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
   mode: 'edit',
   ...INITIAL_RUNTIME,
 
+  captureCheckpoint: (choiceText) => {
+    const { story, currentNodeId, exploration, saveKey, saveFingerprint } = get();
+    if (!story || !currentNodeId) return;
+    const route = [...exploration.route, { nodeId: currentNodeId, visit: exploration.nextVisit, ...(choiceText ? { choiceText } : {}) }];
+    const next = {
+      ...exploration, route, nextVisit: exploration.nextVisit + 1,
+      checkpoints: { ...exploration.checkpoints, [currentNodeId]: {
+        inkState: story.state.toJson(), route, completed: false,
+        decisions: exploration.decisions.map(({ inkState, route, completed }) => ({ inkState, route, completed })),
+      } },
+    };
+    set({ exploration: next });
+    persist(saveKey, story, saveFingerprint, next);
+  },
+
+  completeCurrentNode: () => {
+    const { story, currentNodeId, exploration, saveKey, saveFingerprint, phase } = get();
+    const checkpoint = currentNodeId ? exploration.checkpoints[currentNodeId] : undefined;
+    if (!story || !currentNodeId || !checkpoint || checkpoint.completed) return;
+    const isEnding = phase === 'ended';
+    const next = {
+      ...exploration,
+      completedNodeIds: [...new Set([...exploration.completedNodeIds, currentNodeId])],
+      reachedEndingIds: isEnding ? [...new Set([...exploration.reachedEndingIds, currentNodeId])] : exploration.reachedEndingIds,
+      totalRuns: exploration.totalRuns + (isEnding ? 1 : 0),
+      checkpoints: { ...exploration.checkpoints, [currentNodeId]: { ...checkpoint, completed: true } },
+    };
+    set({ exploration: next });
+    persist(saveKey, story, saveFingerprint, next);
+  },
+
+  rewindToNode: (nodeId) => {
+    const checkpoint = get().exploration.checkpoints[nodeId];
+    return checkpoint ? get().restoreCheckpoint(checkpoint) : false;
+  },
+
+  rewindToPreviousChoice: () => {
+    const checkpoint = previousChoiceCheckpoint(get().exploration);
+    return checkpoint ? get().restoreCheckpoint(checkpoint) : false;
+  },
+
+  restoreCheckpoint: (checkpoint) => {
+    const state = get();
+    const { story, exploration } = state;
+    const nodeId = checkpoint.route[checkpoint.route.length - 1]?.nodeId;
+    if (!story || !nodeId || !exploration.completedNodeIds.includes(nodeId)) return false;
+    const previous = story.state.toJson();
+    try {
+      story.state.LoadJson(checkpoint.inkState);
+      const next = advanceToClip(story, state.clipByNodeId, state.choiceTimeByNodeId, state.defaultChoiceIndexByNodeId,
+        state.endingByNodeId, state.placeholderByNodeId, state.choiceFeedbackById, state.choiceStateChangesById,
+        state.choiceInteractionById, false);
+      if (next.currentNodeId !== nodeId) throw new Error('checkpoint mismatch');
+      const restored = {
+        ...exploration, route: checkpoint.route,
+        checkpoints: { ...exploration.checkpoints, [nodeId]: checkpoint },
+        decisions: decisionsForCheckpoint(checkpoint, exploration),
+      };
+      set({ ...next, resumeAvailable: false, exploration: restored });
+      persist(state.saveKey, story, state.saveFingerprint, restored);
+      return true;
+    } catch {
+      story.state.LoadJson(previous);
+      return false;
+    }
+  },
+
+  clearProgress: () => {
+    if (get().statsKey) clearStoryStats(get().statsKey!);
+    set({ exploration: emptyExploration() });
+    get().startFresh();
+  },
+
   enterPlay: (compiled, opts) => {
     try {
       const story = opts?.storyJson ? new Story(opts.storyJson) : new Compiler(compiled.ink).Compile();
@@ -269,7 +354,14 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
       const statsKey = statsKeyFromSaveKey(saveKey);
       const groupId = opts?.groupId ?? null;
       const playKind = opts?.playKind ?? 'entertainment';
+      const explorationNodes = compiled.explorationNodes ?? Object.keys(compiled.clipByNodeId).map((id) => ({
+        id, label: compiled.placeholderByNodeId[id]?.label ?? '', successors: [], isEnding: !!compiled.endingByNodeId[id],
+      }));
+      const exploration = saveKey && saveFingerprint
+        ? readExplorationSave(saveKey, saveFingerprint, new Set(explorationNodes.map((node) => node.id)))
+        : emptyExploration();
       const tables = {
+        explorationNodes, exploration,
         clipByNodeId: compiled.clipByNodeId,
         choiceLoopClipByNodeId: compiled.choiceLoopClipByNodeId,
         choiceTimeByNodeId: compiled.choiceTimeByNodeId,
@@ -331,7 +423,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
           compiled.choiceInteractionById,
         ),
       });
-      persist(saveKey, story, saveFingerprint);
+      get().captureCheckpoint();
     } catch (err) {
       set({ mode: 'play', ...INITIAL_RUNTIME, embedded: opts?.embedded ?? false, phase: 'error', error: err instanceof Error ? err.message : String(err) });
     }
@@ -351,28 +443,34 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
       // 整个恢复过程都必须成功，才能发布恢复后的运行态。
       const next = advanceToClip(story, clipByNodeId, choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId, choiceFeedbackById, choiceStateChangesById, choiceInteractionById, false);
       set({ resumeAvailable: false, ...next });
+      if (get().exploration.route[get().exploration.route.length - 1]?.nodeId !== next.currentNodeId
+        || !get().exploration.checkpoints[next.currentNodeId ?? '']) {
+        set({ exploration: { ...get().exploration, route: [] } });
+        get().captureCheckpoint();
+      }
     } catch {
       // 存档与当前 ink 不匹配/损坏:清档,从头开始。
       clearStorySave(saveKey);
       get().startFresh();
       return false;
     }
-    persist(saveKey, story, saveFingerprint);
+    persist(saveKey, story, saveFingerprint, get().exploration);
     return true;
   },
 
   startFresh: () => {
     const {
-      story, saveKey, clipByNodeId,
+      story, clipByNodeId,
       choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId, choiceFeedbackById, choiceStateChangesById, choiceInteractionById,
     } = get();
     if (!story) return;
     story.ResetState();
     set({
+      exploration: { ...get().exploration, route: [], decisions: [] },
       resumeAvailable: false,
       ...advanceToClip(story, clipByNodeId, choiceTimeByNodeId, defaultChoiceIndexByNodeId, endingByNodeId, placeholderByNodeId, choiceFeedbackById, choiceStateChangesById, choiceInteractionById),
     });
-    persist(saveKey, story, get().saveFingerprint);
+    get().captureCheckpoint();
   },
 
   choose: (index) => {
@@ -392,6 +490,12 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
     } = get();
     if (!story) return;
     if (phase === 'ended') return;
+    const selected = currentChoices.find((choice) => choice.index === index);
+    if (!selected) return;
+    get().completeCurrentNode();
+    const exploration = get().exploration;
+    const checkpoint = get().currentNodeId ? exploration.checkpoints[get().currentNodeId!] : undefined;
+    if (checkpoint) set({ exploration: { ...exploration, decisions: [...exploration.decisions, checkpoint] } });
     // 试玩埋点(选择分布):在推进前抓当前选择点 nodeId 与所选选项文案。
     if (statsKey) {
       const pointNodeId = nodeIdFromTags(story);
@@ -426,13 +530,14 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
         recordEnding(statsKey, { nodeId: endNodeId, title: ending.title, label: ending.label });
       }
     }
-    persist(get().saveKey, story, get().saveFingerprint);
+    get().captureCheckpoint(selected.text);
   },
 
   advanceAutomatic: () => {
     const state = get();
     const { story } = state;
     if (!story || state.currentChoices.length > 0 || !story.canContinue) return;
+    get().completeCurrentNode();
     const next = advanceToClip(
       story,
       state.clipByNodeId,
@@ -452,7 +557,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
         recordEnding(state.statsKey, { nodeId: endNodeId, title: ending.title, label: ending.label });
       }
     }
-    persist(state.saveKey, story, state.saveFingerprint);
+    get().captureCheckpoint();
   },
 
   restart: () => {
@@ -470,7 +575,7 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
     if (!story) return;
     story.ResetState();
     set(
-      advanceToClip(
+      { exploration: { ...get().exploration, route: [], decisions: [] }, ...advanceToClip(
         story,
         clipByNodeId,
         choiceTimeByNodeId,
@@ -480,9 +585,9 @@ export const useStoryRuntimeStore = create<StoryRuntimeState>()((set, get) => ({
         choiceFeedbackById,
         choiceStateChangesById,
         choiceInteractionById,
-      ),
+      ) },
     );
-    persist(get().saveKey, story, get().saveFingerprint);
+    get().captureCheckpoint();
   },
 
   // 退出仅清运行态;存档保留,下次试玩可续。

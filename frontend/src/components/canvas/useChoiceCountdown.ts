@@ -1,7 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
-
-/** 倒计时刷新间隔(ms),够顺滑又不过密。 */
-const TICK_MS = 50;
+import { useStoryTimer } from '@/features/canvas/story/useStoryTimer';
 
 export interface ChoiceCountdown {
   /** 剩余毫秒(0 = 已超时)。 */
@@ -17,40 +14,18 @@ export interface ChoiceCountdown {
 export function useChoiceCountdown({
   seconds,
   active,
+  paused = false,
+  resetKey,
   onTimeout,
 }: {
   seconds: number | null;
   active: boolean;
+  paused?: boolean;
+  resetKey?: string | number | null;
   onTimeout: () => void;
 }): ChoiceCountdown {
   const totalMs = seconds != null && seconds > 0 ? seconds * 1000 : 0;
-  const [remainingMs, setRemainingMs] = useState(totalMs);
-
-  // 用 ref 持有最新 onTimeout,避免它每次变化都重启计时器。
-  const onTimeoutRef = useRef(onTimeout);
-  useEffect(() => {
-    onTimeoutRef.current = onTimeout;
-  });
-
-  useEffect(() => {
-    if (!active || totalMs <= 0) {
-      setRemainingMs(totalMs);
-      return;
-    }
-    const start = Date.now();
-    setRemainingMs(totalMs);
-    let fired = false;
-    const id = setInterval(() => {
-      const rem = Math.max(0, totalMs - (Date.now() - start));
-      setRemainingMs(rem);
-      if (rem <= 0 && !fired) {
-        fired = true;
-        clearInterval(id);
-        onTimeoutRef.current();
-      }
-    }, TICK_MS);
-    return () => clearInterval(id);
-  }, [active, totalMs]);
+  const remainingMs = useStoryTimer({ delayMs: totalMs, active: active && totalMs > 0, paused, resetKey, onElapsed: onTimeout });
 
   const fraction = totalMs > 0 ? remainingMs / totalMs : 1;
   return { remainingMs, fraction };

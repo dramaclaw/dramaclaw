@@ -48,6 +48,9 @@ describe('compileGraphToInk', () => {
     expect(result.ink).toContain('-> END');
     expect(result.clipByNodeId.intro).toBe('intro.mp4');
     expect(result.knotByNodeId.intro).toBe('clip_intro');
+    expect(result.explorationNodes?.[0].choices).toEqual([
+      { target: 'meet', text: '先自我介绍' }, { target: 'awk', text: '直接坐下' },
+    ]);
   });
 
   it('placeholderByNodeId 收录每个节点的旁白/显示名(供无视频时占位试玩)', () => {

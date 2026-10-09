@@ -2,15 +2,13 @@ import { createLazyFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  ArrowLeft,
   AlertCircle,
   LoaderCircle,
-  Maximize,
   Play,
 } from "lucide-react";
 import { StoryLanding } from "@/features/canvas/story/StoryLanding";
 import "@/features/canvas/story/publication.css";
-import { StoryPlayer } from "@/features/canvas/story/StoryPlayer";
+import { StoryExperience } from "@/features/canvas/story/StoryExperience";
 import { useStoryRuntimeStore } from "@/stores/storyRuntimeStore";
 import {
   compilePlayback,
@@ -42,8 +40,6 @@ export function PublishedStoryPage({ publicId }: { publicId: string }) {
   const [playing, setPlaying] = useState(false);
   const [busy, setBusy] = useState(false);
   const [session, setSession] = useState(0);
-  const stageRef = useRef<HTMLElement>(null);
-  const [fullscreenError, setFullscreenError] = useState(false);
   const startRequest = useRef<AbortController | null>(null);
   const previous = savedVersion(publicId);
   const canResume =
@@ -88,13 +84,13 @@ export function PublishedStoryPage({ publicId }: { publicId: string }) {
         .getState()
         .enterPlay(compilePlayback(selected.snapshot), {
           saveKey: playerSaveKey(publicId, selected.version),
+          embedded: true,
         });
       if (resume) useStoryRuntimeStore.getState().resumeSaved();
       else useStoryRuntimeStore.getState().startFresh();
       rememberVersion(publicId, selected.version);
       setSessionRelease(selected);
       if (!resume) setRelease(selected);
-      setFullscreenError(false);
       setSession((s) => s + 1);
       setPlaying(true);
     } catch (e) {
@@ -105,14 +101,6 @@ export function PublishedStoryPage({ publicId }: { publicId: string }) {
       if (!controller.signal.aborted) setBusy(false);
     }
   }
-  async function toggleFullscreen() {
-    try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else await stageRef.current?.requestFullscreen();
-    } catch {
-      setFullscreenError(true);
-    }
-  }
   function returnToCover() {
     if (document.fullscreenElement)
       void document.exitFullscreen().catch(() => {});
@@ -121,38 +109,9 @@ export function PublishedStoryPage({ publicId }: { publicId: string }) {
   }
   if (playing)
     return (
-      <main
-        ref={stageRef}
-        className="publication-surface published-story-stage fixed inset-0"
-      >
-        <div className="published-story-stage-toolbar">
-          <Button variant="ghost" onClick={returnToCover}>
-            <ArrowLeft size={16} aria-hidden="true" />
-            {t("storyPublication.returnToCover")}
-          </Button>
-          <span className="published-story-stage-title">{sessionRelease?.title}</span>
-          {typeof document.documentElement.requestFullscreen === "function" && (
-            <Button
-              variant="ghost"
-              aria-label={t("storyPublication.fullscreen")}
-              onClick={() => void toggleFullscreen()}
-            >
-              <Maximize size={18} aria-hidden="true" />
-            </Button>
-          )}
-        </div>
-        {fullscreenError && (
-          <p role="status" className="publication-muted px-4 py-2">
-            {t("storyPublication.fullscreenFailed")}
-          </p>
-        )}
-        <div className="published-story-video">
-          <StoryPlayer
-            t={t}
-            revision={session}
-            onRestart={() => void start(false)}
-          />
-        </div>
+      <main className="publication-surface published-story-stage fixed inset-0">
+        <StoryExperience t={t} title={sessionRelease?.title} revision={session}
+          onExit={returnToCover} onRestart={() => void start(false)} />
       </main>
     );
   return (

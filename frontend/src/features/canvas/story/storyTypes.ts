@@ -202,6 +202,8 @@ export interface StoryFlag {
 export interface StoryEnding { title: string; label?: string; cta?: { label: string; url: string } }
 
 export interface CompiledStory {
+  /** Reachable playback graph only; independent of the editor canvas and safe to use in public players. */
+  explorationNodes?: import('./storyExploration').ExplorationNode[];
   ink: string;
   /** originalNodeId -> 视频 URL(可能为空串,占位片段)。 */
   clipByNodeId: Record<string, string>;
