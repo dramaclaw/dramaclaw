@@ -182,12 +182,6 @@ markers = [
     "m10: OSS split module M10",
 ]
 
-[tool.uv]
-# cognee 1.0.5 把 ladybug 钉死在 0.16.0，而 ladybug 的 JSON 扩展不在 wheel 里，是首次使用时
-# 按版本号从 extension.ladybugdb.com 现下的；上游已撤掉 0.16.0 那份（404），全新环境
-# 装不上扩展。0.17.0 是离得最近、扩展仍在线的版本。升级 cognee 时重新核对，能去掉就去掉。
-override-dependencies = ["ladybug==0.17.0"]
-
 [[tool.uv.dependency-metadata]]
 name = "da2"
 version = "0.1.0"
