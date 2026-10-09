@@ -2639,6 +2639,28 @@ def _compile_dynamic_recipe_items_intent(
         )
 
     recipes = _intent_recipe_index()
+    if _text(skill.get("id")) == "social-content-campaign":
+        supplied = _workflow_input_values(intent)
+        recipe_ids = {
+            _text(item.get("recipe_id") or item.get("recipeId"))
+            for item in items if isinstance(item, dict)
+        }
+        platform_recipes = recipe_ids & _SOCIAL_IMAGE_RECIPE_PLATFORMS.keys()
+        if platform_recipes and not {"aspect_ratio", "image_aspect_ratio"} & supplied.keys():
+            compatible = set.intersection(*(
+                _SOCIAL_IMAGE_RECIPE_RATIOS[recipe_id] for recipe_id in platform_recipes
+            ))
+            if not compatible:
+                return _intent_error(
+                    "selected platform Recipes have no common image aspect ratio",
+                    path="inputs.aspect_ratio",
+                )
+            resolved_inputs = dict(resolved_inputs)
+            default_ratio = _text(resolved_inputs.get("aspect_ratio"))
+            resolved_inputs["aspect_ratio"] = (
+                default_ratio if default_ratio in compatible else
+                "1:1" if "1:1" in compatible else sorted(compatible)[0]
+            )
     allowed_recipe_ids = {
         _text(item) for item in skill.get("allowed_recipe_ids") or [] if _text(item)
     }
@@ -3025,6 +3047,11 @@ def _compile_dynamic_recipe_items_intent(
             ))
         if "aspect_ratio" not in supplied and resolved_inputs.get("image_aspect_ratio"):
             resolved_inputs["aspect_ratio"] = resolved_inputs["image_aspect_ratio"]
+    plan_inputs = dict(resolved_inputs)
+    if (skill_id == "social-content-campaign" and "platforms" not in supplied
+            and any(recipe_id not in _SOCIAL_IMAGE_RECIPE_PLATFORMS for recipe_id in recipe_ids)):
+        # Keep an unspecified platform distinct from an explicit default choice.
+        plan_inputs.pop("platforms", None)
     plan = {
         "schema_version": PLAN_SCHEMA_VERSION,
         "workflow_type": f"dynamic.{skill_id}",
@@ -3041,7 +3068,7 @@ def _compile_dynamic_recipe_items_intent(
         "assumptions": list(intent.get("assumptions") or []),
         "missing_inputs": [],
         "expansion_rules": {"item_count": len(items)},
-        "inputs": resolved_inputs,
+        "inputs": plan_inputs,
         "external_inputs": deepcopy(external_inputs),
         "nodes": nodes,
         "edges": edges,
@@ -3928,6 +3955,13 @@ _SOCIAL_IMAGE_RECIPE_PLATFORMS = {
     "social-ig-post": "Instagram",
 }
 
+_SOCIAL_IMAGE_RECIPE_RATIOS = {
+    "social-xiaohongshu-image": {"3:4"},
+    "social-douyin-cover": {"9:16"},
+    "social-weibo-wechat-image": {"16:9", "1:1"},
+    "social-ig-post": {"1:1", "4:5"},
+}
+
 
 def _social_campaign_plan_input_errors(
     plan: dict[str, Any], resolved_inputs: dict[str, Any]
@@ -3961,17 +3995,24 @@ def _social_campaign_plan_input_errors(
         ratio = _text(data.get("aspectRatio"))
         if ratio:
             ratios.add(ratio)
+            recipe_id = recipe_ids[-1]
+            if (recipe_id in _SOCIAL_IMAGE_RECIPE_RATIOS
+                    and ratio not in _SOCIAL_IMAGE_RECIPE_RATIOS[recipe_id]):
+                errors.append({
+                    "path": "inputs.aspect_ratio",
+                    "message": f"{recipe_id} does not support image aspect ratio {ratio}",
+                })
     selected_platforms = {
         _SOCIAL_IMAGE_RECIPE_PLATFORMS[recipe_id]
         for recipe_id in recipe_ids
         if recipe_id in _SOCIAL_IMAGE_RECIPE_PLATFORMS
     }
     platforms = resolved_inputs.get("platforms")
+    explicit_platforms = "platforms" in (plan.get("inputs") or {})
     if isinstance(platforms, list):
         stated_platforms = set(platforms)
         if selected_platforms - stated_platforms or (
-            all(recipe_id in _SOCIAL_IMAGE_RECIPE_PLATFORMS for recipe_id in recipe_ids)
-            and stated_platforms != selected_platforms
+            explicit_platforms and stated_platforms != selected_platforms
         ):
             errors.append({
                 "path": "inputs.platforms",
@@ -3982,13 +4023,40 @@ def _social_campaign_plan_input_errors(
     image_aspect_ratio = resolved_inputs.get("image_aspect_ratio")
     if aspect_ratio and (
         (image_aspect_ratio and aspect_ratio != image_aspect_ratio)
-        or (len(ratios) == 1 and aspect_ratio not in ratios)
+        or any(ratio != aspect_ratio for ratio in ratios)
     ):
         errors.append({
             "path": "inputs.aspect_ratio",
             "message": "aspect_ratio must match the planned image aspect ratio",
         })
     return errors
+
+
+def _pixar_character_source_errors(
+    plan: dict[str, Any], resolved_inputs: dict[str, Any]
+) -> list[dict[str, str]]:
+    method = _text(resolved_inputs.get("character_input_method"))
+    for node in plan.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        catalog = data.get("workflowCatalog") if isinstance(data.get("workflowCatalog"), dict) else {}
+        if catalog.get("recipeId") != "ad-ip-character-anchor":
+            continue
+        confirmed = catalog.get("confirmedInputs")
+        confirmed_method = (
+            _text(confirmed.get("character_input_method"))
+            if isinstance(confirmed, dict) else ""
+        )
+        prompt = _text(data.get("prompt") or node.get("prompt"))
+        if (confirmed_method and confirmed_method != method) or (
+            "自定义角色" in prompt and method != "自定义角色"
+        ):
+            return [{
+                "path": "inputs.character_input_method",
+                "message": "character_input_method must match the character anchor source",
+            }]
+    return []
 
 
 def _quick_drama_visual_style_blockers(
@@ -4138,6 +4206,8 @@ def validate_agent_workflow_plan(
         errors.extend(
             _social_campaign_plan_input_errors(plan, input_contract["resolved"])
         )
+    if skill_id == "pixar-ip-ad-video":
+        errors.extend(_pixar_character_source_errors(plan, input_contract["resolved"]))
     for index, node in enumerate(plan.get("nodes") or []):
         node_type = (
             _text(node.get("node_type") or node.get("type"))

@@ -310,6 +310,96 @@ def test_social_intent_compiler_keeps_single_recipe_compile_contract(monkeypatch
     assert platform_compiled["plan"]["inputs"]["image_count"] == 1
 
 
+def test_social_explicit_platform_rejects_generic_recipe(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    result = catalog.compile_workflow_intent({
+        "skill_id": "social-content-campaign", "user_goal": "Instagram 配图",
+        "inputs": {"platforms": ["Instagram"], "image_count": 1},
+        "items": [{"id": "image", "title": "配图", "recipe_id": "social-content-image"}],
+        "include_compose": False,
+    })
+    assert result["ok"] is False
+    assert any(error["path"] == "inputs.platforms" for error in result["errors"])
+
+
+def test_social_rejects_mixed_image_ratios(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    result = catalog.compile_workflow_intent({
+        "skill_id": "social-content-campaign", "user_goal": "两平台配图",
+        "inputs": {"platforms": ["微博/微信", "Instagram"], "image_count": 2,
+                   "aspect_ratio": "1:1"},
+        "items": [
+            {"id": "weibo", "title": "微博版", "recipe_id": "social-weibo-wechat-image"},
+            {"id": "ig", "title": "IG版", "recipe_id": "social-ig-post"},
+        ],
+        "include_compose": False,
+    })
+    assert result["ok"] is True, result
+    plan = copy.deepcopy(result["plan"])
+    images = [node for node in plan["nodes"] if node["node_type"] == "imageGenNode"]
+    images[1]["data"]["aspectRatio"] = "16:9"
+    rejected = catalog.validate_agent_workflow_plan(plan)
+    assert rejected["ok"] is False
+    assert any(error["path"] == "inputs.aspect_ratio" for error in rejected["errors"])
+
+
+def test_social_single_instagram_recipe_uses_compatible_default_ratio(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    result = catalog.compile_workflow_intent({
+        "skill_id": "social-content-campaign", "user_goal": "Instagram 配图",
+        "items": [{"id": "ig", "title": "IG版", "recipe_id": "social-ig-post"}],
+        "include_compose": False,
+    })
+    assert result["ok"] is True, result
+    assert result["plan"]["inputs"]["aspect_ratio"] == "1:1"
+    image = next(node for node in result["plan"]["nodes"] if node["node_type"] == "imageGenNode")
+    assert image["data"]["aspectRatio"] == "1:1"
+    incompatible = copy.deepcopy(result["plan"])
+    incompatible["inputs"]["aspect_ratio"] = "3:4"
+    image = next(node for node in incompatible["nodes"] if node["node_type"] == "imageGenNode")
+    image["data"]["aspectRatio"] = "3:4"
+    rejected = catalog.validate_agent_workflow_plan(incompatible)
+    assert rejected["ok"] is False
+    assert any(error["path"] == "inputs.aspect_ratio" for error in rejected["errors"])
+
+
+def test_social_incompatible_platform_recipes_require_ratio_decision(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    result = catalog.compile_workflow_intent({
+        "skill_id": "social-content-campaign", "user_goal": "小红书和 Instagram 配图",
+        "items": [
+            {"id": "xhs", "title": "小红书版", "recipe_id": "social-xiaohongshu-image"},
+            {"id": "ig", "title": "IG版", "recipe_id": "social-ig-post"},
+        ],
+        "include_compose": False,
+    })
+    assert result["ok"] is False
+    assert result["errors"][0]["path"] == "inputs.aspect_ratio"
+
+
+def test_pixar_custom_anchor_rejects_default_character_source(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    result = catalog.compile_workflow_intent({
+        "skill_id": "pixar-ip-ad-video", "user_goal": "角色广告",
+        "inputs": {"character_input_method": "自定义角色"},
+        "items": [{"id": "character", "title": "角色锚点", "recipe_id": "ad-ip-character-anchor",
+                   "stage": "characters", "prompt": "按自定义角色设计主角"}],
+    })
+    assert result["ok"] is True, result
+    plan = copy.deepcopy(result["plan"])
+    plan["inputs"].pop("character_input_method")
+    anchor = next(node for node in plan["nodes"] if node["id"] == "character")
+    anchor["data"]["workflowCatalog"].pop("confirmedInputs", None)
+    rejected = catalog.validate_agent_workflow_plan(plan)
+    assert rejected["ok"] is False
+    assert any(error["path"] == "inputs.character_input_method" for error in rejected["errors"])
+
+
 def test_standard_video_planner_distributes_target_duration_across_clips(monkeypatch):
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)
