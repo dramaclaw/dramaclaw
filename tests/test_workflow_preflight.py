@@ -223,6 +223,74 @@ def test_video_mode_must_match_live_model_capabilities():
     )["status"] == "ready"
 
 
+@pytest.mark.parametrize("model", [None, "   "])
+def test_video_without_model_cannot_be_ready_even_when_other_parameters_are_valid(model):
+    data = {"durationSec": 5, "genMode": "textToVideo"}
+    if model is not None:
+        data["model"] = model
+    result = _check(data)
+    assert result["status"] == "blocked"
+    assert any(
+        blocker["path"] == "runtime.models.video.model"
+        and blocker["code"] == "model_selection_required"
+        for blocker in result["blockers"]
+    )
+    assert result["runtime_checks"]["videoNode.models"]["available"] is False
+
+
+@pytest.mark.parametrize("mode", [None, "textToVideo"])
+def test_video_with_consumed_image_cannot_be_ready_in_text_only_mode(mode):
+    video_data = {"model": "video-model", "durationSec": 5}
+    if mode is not None:
+        video_data["genMode"] = mode
+    result = evaluate_workflow_preflight(
+        {"plan": {
+            "nodes": [
+                {"id": "image", "node_type": "imageGenNode", "data": {"model": "image-model"}},
+                {"id": "video", "node_type": "videoNode", "data": video_data},
+            ],
+            "edges": [{"source": "image", "target": "video", "link_type": "media_input_for"}],
+        }},
+        model_responses={
+            "imageGenNode": {"ok": True, "data": [{"id": "image-model"}]},
+            "videoNode": {"ok": True, "data": [
+                {"id": "video-model", "supportedModes": ["text_to_video", "image_reference"]},
+            ]},
+        },
+        limits={"ok": True, "data": {"default": {"limit": 2, "remaining": 1},
+                                      "video": {"limit": 2, "remaining": 1}}},
+    )
+    assert result["status"] == "blocked"
+    assert any(
+        blocker["path"] == "runtime.models.video.genMode"
+        and blocker["code"] == "media_reference_mode_conflict"
+        for blocker in result["blockers"]
+    )
+
+
+def test_image_reference_mode_can_consume_image_input():
+    result = evaluate_workflow_preflight(
+        {"plan": {
+            "nodes": [
+                {"id": "image", "node_type": "imageGenNode", "data": {"model": "image-model"}},
+                {"id": "video", "node_type": "videoNode", "data": {
+                    "model": "video-model", "durationSec": 5, "genMode": "imageReference",
+                }},
+            ],
+            "edges": [{"source": "image", "target": "video", "link_type": "media_input_for"}],
+        }},
+        model_responses={
+            "imageGenNode": {"ok": True, "data": [{"id": "image-model"}]},
+            "videoNode": {"ok": True, "data": [
+                {"id": "video-model", "supportedModes": ["text_to_video", "image_reference"]},
+            ]},
+        },
+        limits={"ok": True, "data": {"default": {"limit": 2, "remaining": 1},
+                                      "video": {"limit": 2, "remaining": 1}}},
+    )
+    assert result["status"] == "ready", result["blockers"]
+
+
 def _check_catalog(data, catalog):
     return evaluate_workflow_preflight(
         {"plan": {"nodes": [{"id": "video", "node_type": "videoNode", "data": data}]}},

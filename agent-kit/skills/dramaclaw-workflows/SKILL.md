@@ -12,6 +12,17 @@ Build one coherent workflow transaction, not a sequence of standalone canvas edi
 - Planning authors topology, Recipe selection, dependencies, confirmed parameters, and short
   node task briefs. Each node prompt should state its task, scope, upstream outputs, and reference
   roles in one or two concise sentences. Preserve user-provided story facts and source material.
+  In a compact Intent, keep every user-confirmed quantity, named object, exclusion, and visual
+  continuity anchor in `user_goal`; `planner.units` may distribute steps but must not replace those
+  shared facts with a short summary. Do not invent details the user did not provide.
+  Carry a confirmed visual style into each image/video task brief, or supply it through an actual
+  consumed upstream text output; a Skill title or an unrelated node does not carry that style
+  into a media node by itself.
+  When a video consumes upstream images through `media_input_for`, select a reference-capable
+  generation mode supported by its chosen Catalog model and reference count. Do not leave the
+  mode unset or use `textToVideo`; an edge alone cannot make a text-only mode consume images.
+  If no compatible mode is available, stop on the catalog/preflight blocker instead of dropping
+  the media input or silently changing an explicit user choice.
   Do not invent finished scripts, detailed shot-by-shot storyboards, dialogue, camera choreography,
   sound cues, or final media prompts before upstream stages execute. Execution-time Recipe
   compilation uses actual upstream outputs to produce executable prompts.
@@ -166,6 +177,16 @@ that blocker first, so resolve it before asking. A recommended action always ret
 values; a result with `status="generation_answers_incomplete"` means the choice is still missing
 and must be asked again, never defaulted. Approval behavior remains controlled by the execution
 mode.
+
+For a raw custom Plan, set `plan.schema_version="freezone_workflow_plan.v1"`. A confirmed video
+reference mode belongs in `plan.inputs.video_generation_mode` and in each matching video node's
+`data.genMode`; keep them identical and verify that the selected Catalog model supports that mode.
+Put each shot's duration in `data.durationSec` (seconds), not `data.durationSeconds`. The
+`generation_answers` argument is only the unchanged `answers` object returned by
+`freezone_request_user_clarification`: never append `video_generation_mode` or hand-built fields
+to it. If preflight reports an incompatible model/mode, preserve any explicit user mode; choose a
+compatible Catalog model when available, otherwise ask the user. For an unstated mode, choose a
+reference-capable mode supported by the selected model and the actual number of incoming images.
 
 When the user does not specify internal media settings, use `"recommended"` only for the media
 model preference in the portable intent or Plan. The authorized preflight resolves it to a concrete

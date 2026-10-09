@@ -2360,7 +2360,11 @@ def _confirmed_input_guidance(
         return ""
     parts: list[str] = []
     visual_style = _text(resolved_inputs.get("visual_style"))
-    if visual_style and skill_id == "short-drama-quick":
+    if (
+        visual_style
+        and visual_style.casefold() != "未指定"
+        and skill_id == "short-drama-quick"
+    ):
         parts.append(
             f"已确认视觉风格为「{visual_style}」；角色、场景、分镜、首帧和视频必须保持该风格。"
         )
@@ -2597,6 +2601,13 @@ def _expand_standard_skill_intent(
         user_goal=user_goal,
         include_unit_facts=include_unit_facts,
     )
+    if skill_id == "video-tutorial" and deliverable != "images":
+        # The standard tutorial always needs a video model. A recommendation is
+        # resolved against the caller's live catalog during preflight; never use
+        # an unverified implicit model or silently substitute a requested mode.
+        for item in items:
+            if item.get("recipe_id") == "general-video" and not _text(item.get("model")):
+                item["model"] = "recommended"
     expanded = {
         **intent,
         "items": items,
@@ -3980,6 +3991,64 @@ def _social_campaign_plan_input_errors(
     return errors
 
 
+def _quick_drama_visual_style_blockers(
+    plan: dict[str, Any], visual_style: Any,
+) -> list[dict[str, str]]:
+    """Require a confirmed style in each executable visual task's prompt context."""
+    style = _text(visual_style)
+    if not style or style.casefold() == "未指定":
+        return []
+    nodes = plan.get("nodes") if isinstance(plan.get("nodes"), list) else []
+    edges = plan.get("edges") if isinstance(plan.get("edges"), list) else []
+    by_id = {
+        _text(node.get("id")): node for node in nodes if isinstance(node, dict)
+    }
+
+    def task_text(node: dict[str, Any]) -> str:
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        node_type = node.get("node_type")
+        if node_type in {"textAnnotationNode", "beatContextNode"}:
+            # Text nodes consume content; aliases only fill it when absent.
+            value = data.get("content") or data.get("text") or data.get("prompt")
+        else:
+            # Image, video and script revisions update data.prompt only.
+            # The compiler uses a top-level prompt only when data.prompt is empty.
+            value = data.get("prompt") or node.get("prompt")
+        return _text(value).casefold()
+
+    blockers: list[dict[str, str]] = []
+    for index, node in enumerate(nodes):
+        if not isinstance(node, dict) or node.get("node_type") not in {
+            "imageGenNode", "videoNode",
+        }:
+            continue
+        node_id = _text(node.get("id"))
+        if style.casefold() in task_text(node):
+            continue
+        consumes_style = any(
+            isinstance(edge, dict)
+            and edge.get("target") == node_id
+            and edge.get("link_type") in {"prompt_for", "context_for"}
+            and isinstance(by_id.get(_text(edge.get("source"))), dict)
+            and by_id[_text(edge["source"])].get("node_type") in {
+                "textAnnotationNode", "scriptNode", "beatContextNode",
+            }
+            and style.casefold() in task_text(by_id[_text(edge["source"])])
+            for edge in edges
+        )
+        if not consumes_style:
+            blockers.append({
+                "path": f"nodes[{index}].data.prompt",
+                "code": "confirmed_visual_style_missing",
+                "node_id": node_id,
+                "message": (
+                    "Confirmed visual style must appear in this visual task or in "
+                    "a consumed upstream text node (prompt_for/context_for)."
+                ),
+            })
+    return blockers
+
+
 def validate_agent_workflow_plan(
     plan: Any,
     *,
@@ -4085,6 +4154,18 @@ def validate_agent_workflow_plan(
         data = node.get("data") if isinstance(node, dict) else None
         catalog = data.get("workflowCatalog") if isinstance(data, dict) else None
         recipe_id = _text(catalog.get("recipeId")) if isinstance(catalog, dict) else ""
+        if skill_id == "short-drama-quick" and node_type == "videoNode" and recipe_id == "general-video":
+            shot_title = next((
+                _text(value) for value in (
+                    node.get("title"), node.get("name"), node.get("label"),
+                    data.get("title"), data.get("displayName"), data.get("label"),
+                ) if _text(value)
+            ), "")
+            if not shot_title:
+                errors.append({
+                    "path": f"nodes[{index}].data.title",
+                    "message": "short-drama-quick video shot requires a non-empty title",
+                })
         recipe_pipeline = (
             (catalog.get("recipePipeline") or []) if isinstance(catalog, dict) else []
         )
@@ -4179,6 +4260,13 @@ def validate_agent_workflow_plan(
     # (e.g. a short drama without shot planning) is a preflight blocker, not a
     # schema error: the draft can be revised or re-planned (issue #677).
     _attach_skill_stage_blockers(validated, skill_id)
+    if skill_id == "short-drama-quick":
+        _attach_preflight_blockers(
+            validated,
+            _quick_drama_visual_style_blockers(
+                validated_plan, input_contract["resolved"].get("visual_style")
+            ),
+        )
     duration_blockers = _noncanonical_video_duration_blockers(
         validated_plan.get("nodes") or []
     )

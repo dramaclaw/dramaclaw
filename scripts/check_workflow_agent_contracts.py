@@ -282,6 +282,17 @@ def _anchor_for_recipe(
     return compatible[0] if compatible else None
 
 
+def _required_diagnostic_inputs(skill: dict[str, Any]) -> dict[str, str]:
+    """Fill required Skill inputs so Recipe compile checks reach the planner."""
+    inputs: dict[str, str] = {}
+    for param in skill.get("input_parameters") or []:
+        if not isinstance(param, dict) or not param.get("required"):
+            continue
+        options = param.get("options") or []
+        inputs[str(param.get("id") or "")] = str(options[0]) if options else "未指定"
+    return inputs
+
+
 def _intent_for_recipe(
     skill_id: str,
     target: dict[str, Any],
@@ -491,6 +502,7 @@ async def _exercise_mcp(
                     report.check(error is None, error or "")
                     if intent is None:
                         continue
+                    intent["inputs"] = _required_diagnostic_inputs(skill)
                     compiled = _json_payload_from_tool(
                         await session.call_tool("workflow_intent_compile", {"intent": intent})
                     )
