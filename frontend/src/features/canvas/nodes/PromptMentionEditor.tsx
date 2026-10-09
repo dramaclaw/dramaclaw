@@ -22,6 +22,8 @@ import i18n from 'i18next';
 import type { ReferenceMaterialOption } from '@/features/canvas/application/referencePick';
 
 import { MentionReplacePopover } from './MentionReplacePopover';
+import { MediaHoverPreview } from '../ui/MediaHoverPreview';
+import { placeAnchoredMenu } from './shared/anchoredMenuPlacement';
 
 export interface MentionCandidate {
   key: string;
@@ -86,7 +88,6 @@ const POPOVER_MAX_VISIBLE = 6;
 // Each row is ~40px (py-1.5 + h-7 image + 1px borders). Computed once so the
 // max-height tracks the row count consistently.
 const POPOVER_ROW_PX = 40;
-const PREVIEW_SIZE = 140;
 const POPOVER_OFFSET_Y = 4;
 
 function escapeRegex(input: string): string {
@@ -342,6 +343,7 @@ interface HoverState {
   imageUrl: string;
   videoUrl: string;
   rect: DOMRect;
+  placement?: 'above' | 'side';
 }
 
 export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptMentionEditorProps>(
@@ -369,6 +371,9 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
     const [mention, setMention] = useState<MentionContext | null>(null);
     const [activeIdx, setActiveIdx] = useState(0);
     const [hover, setHover] = useState<HoverState | null>(null);
+    useEffect(() => {
+      setHover(current => current?.placement === 'side' ? null : current);
+    }, [mention?.query, Boolean(mention)]);
     // 双击已有的 @ chip → 打开候选列表「就地替换」该引用（锚定在被双击的 chip 上）。
     // 与 `mention`（输入 @ 触发的插入）互斥：一个开另一个必置空。
     const [replaceTarget, setReplaceTarget] = useState<{
@@ -704,6 +709,7 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
             event.preventDefault();
             setMention(null);
             setReplaceTarget(null);
+            setHover(null);
             return;
           }
         }
@@ -770,22 +776,10 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
     const popoverStyle = useMemo(() => {
       const rect = mention?.rect ?? null;
       if (!rect) return null;
-      const top = rect.bottom + POPOVER_OFFSET_Y;
-      const left = rect.left;
-      return { top, left } as { top: number; left: number };
-    }, [mention]);
-
-    const previewStyle = useMemo(() => {
-      if (!hover) return null;
-      const left = Math.min(
-        Math.max(8, hover.rect.left),
-        window.innerWidth - PREVIEW_SIZE - 8,
-      );
-      // 浮层用 -translate-y-full 把自身抬到 chip 上方,top 只需落在 chip 顶边稍上,
-      // 这样高度按图/视频原始宽高比自适应,不再裁成正方形。
-      const top = hover.rect.top - 8;
-      return { left, top };
-    }, [hover]);
+      return placeAnchoredMenu({ anchorRect: rect, width: 240,
+        preferredHeight: Math.min(filtered.length, POPOVER_MAX_VISIBLE) * POPOVER_ROW_PX,
+        gap: POPOVER_OFFSET_Y });
+    }, [mention, filtered.length]);
 
     return (
       <>
@@ -820,12 +814,15 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
           && createPortal(
             <div
               ref={popoverRef}
-              className="canvas-node-transient-ui ui-scrollbar fixed z-[10000] flex min-w-[200px] max-w-[280px] flex-col overflow-y-auto rounded-lg border border-white/10 bg-surface-dark/95 shadow-xl backdrop-blur-sm"
+              className="canvas-node-transient-ui ui-scrollbar fixed z-[10000] flex min-w-[200px] max-w-[280px] flex-col overflow-y-auto rounded-[var(--ui-radius-lg)] border border-white/10 bg-surface-dark/95 shadow-xl backdrop-blur-sm"
               style={{
                 ...popoverStyle,
-                maxHeight: POPOVER_MAX_VISIBLE * POPOVER_ROW_PX,
+                width: 240,
+                maxHeight: popoverStyle.maxHeight,
               }}
               onMouseDown={(event) => event.preventDefault()}
+              onMouseLeave={() => setHover(null)}
+              onScroll={() => setHover(null)}
             >
               {filtered.map((candidate, idx) => (
                 <button
@@ -836,8 +833,12 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
                     event.preventDefault();
                     event.stopPropagation();
                     insertChip(candidate);
+                    setHover(null);
                   }}
-                  onMouseEnter={() => setActiveIdx(idx)}
+                  onMouseEnter={(event) => {
+                    setActiveIdx(idx);
+                    setHover({ imageUrl: candidate.imageUrl, videoUrl: candidate.videoUrl ?? '', rect: event.currentTarget.getBoundingClientRect(), placement: 'side' });
+                  }}
                   className={`flex items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors ${
                     idx === activeIdx
                       ? 'bg-white/[0.08] text-text-dark'
@@ -888,36 +889,7 @@ export const PromptMentionEditor = forwardRef<PromptMentionEditorHandle, PromptM
             </div>,
             document.body,
           )}
-        {hover && previewStyle
-          && createPortal(
-            <div
-              className="canvas-node-transient-ui pointer-events-none fixed z-[10001] -translate-y-full overflow-hidden rounded-lg border border-white/15 bg-surface-dark/95 shadow-xl"
-              style={{
-                left: previewStyle.left,
-                top: previewStyle.top,
-                width: PREVIEW_SIZE,
-              }}
-            >
-              {hover.imageUrl ? (
-                <img
-                  src={hover.imageUrl}
-                  alt=""
-                  className="block h-auto max-h-[220px] w-full object-contain"
-                  draggable={false}
-                />
-              ) : (
-                <video
-                  src={hover.videoUrl}
-                  autoPlay
-                  loop
-                  muted
-                  playsInline
-                  className="block h-auto max-h-[220px] w-full object-contain"
-                />
-              )}
-            </div>,
-            document.body,
-          )}
+        <MediaHoverPreview source={hover} />
       </>
     );
   },

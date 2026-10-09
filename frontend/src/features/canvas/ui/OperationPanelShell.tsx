@@ -17,6 +17,8 @@ interface OperationPanelShellProps {
   /** 展开态：弹窗盒子的尺寸 style（width/height，可只给 width 让高度随内容）。 */
   modalStyle?: CSSProperties;
   children: ReactNode;
+  /** 内联状态下随面板定位的附属内容；展开时隐藏。 */
+  sidePanel?: ReactNode;
 }
 
 function stopPropagation(event: { stopPropagation: () => void }): void {
@@ -27,11 +29,9 @@ function stopPropagation(event: { stopPropagation: () => void }): void {
 // 收起态浮动面板挂在节点下方，故从上方滑入读起来像「从节点里展开」。
 // motion-reduce 下不做位移/缩放动画，尊重系统的「减弱动态效果」。
 //
-// 导出供节点下方的「历史记录」面板复用同一套入场动画，使三块（顶部工具栏 /
-// 操作区 / 历史记录）激活时同向同时长地浮现、视觉对齐，不再各跳各的。
-export const NODE_OPS_PANEL_ENTER_CLASS =
+// 历史栏挂在面板内，随同一容器一起入场。
+const INLINE_ENTER_CLASS =
   'animate-in fade-in-0 zoom-in-95 slide-in-from-top-2 duration-200 ease-out motion-reduce:animate-none';
-const INLINE_ENTER_CLASS = NODE_OPS_PANEL_ENTER_CLASS;
 
 /**
  * 节点操作区的「外壳」：收起时就是节点下方的浮动面板；点「放大」后改为
@@ -48,6 +48,7 @@ export function OperationPanelShell({
   inlineStyle,
   modalStyle,
   children,
+  sidePanel,
 }: OperationPanelShellProps) {
   useEffect(() => {
     if (!expanded) return;
@@ -69,6 +70,7 @@ export function OperationPanelShell({
         onClick={stopPropagation}
       >
         {children}
+        {sidePanel}
       </div>
     );
   }

@@ -3,6 +3,7 @@
 // 这里取的是 i18next 默认实例（`@/i18n` 初始化的就是它）。不 import `@/i18n`
 // 本身，是因为那个模块会顺带拉进 react-i18next / HttpBackend，把它塞进这条被
 // 到处 import 的底层链路上，会让所有 mock 掉 react-i18next 的测试在 import 期炸掉。
+import { closedImageViewer, closedVideoViewer, mediaViewerUrls, type ImageViewerState, type VideoViewerState } from "@/features/canvas/domain/mediaViewerState";
 import i18n from 'i18next';
 import { create } from 'zustand';
 import {
@@ -175,12 +176,8 @@ interface CanvasState {
   /** 10 fixed viewport bookmark slots (index 0..9 -> digit 1..9,0). Navigation
    * preference, NOT part of undo history; persisted via canvas metadata. */
   viewportBookmarks: ViewportBookmarks;
-  imageViewer: {
-    isOpen: boolean;
-    currentImageUrl: string | null;
-    imageList: string[];
-    currentIndex: number;
-  };
+  imageViewer: ImageViewerState;
+  videoViewer: VideoViewerState;
 
   onNodesChange: (changes: NodeChange<CanvasNode>[]) => void;
   onEdgesChange: (changes: EdgeChange<CanvasEdge>[]) => void;
@@ -393,9 +390,17 @@ interface CanvasState {
   clearViewportBookmarks: () => void;
   hydrateViewportBookmarks: (list: unknown) => void;
   setCanvasViewportSize: (size: { width: number; height: number }) => void;
-  openImageViewer: (imageUrl: string, imageList?: string[]) => void;
+  openImageViewer: (imageUrl: string, imageList?: Array<string | null | undefined>) => void;
   closeImageViewer: () => void;
   navigateImageViewer: (direction: 'prev' | 'next') => void;
+  selectImageViewer: (index: number) => void;
+  updateImageViewerHistory: (sessionId: number, imageList: string[]) => void;
+  openVideoViewer: (videoUrl: string, videoList?: Array<string | null | undefined>, title?: string) => void;
+  closeVideoViewer: () => void;
+  selectVideoViewer: (index: number) => void;
+  navigateVideoViewer: (direction: 'prev' | 'next') => void;
+  updateVideoViewerHistory: (sessionId: number, videoList: string[]) => void;
+  closeMediaViewers: () => void;
 
   undo: () => boolean;
   redo: () => boolean;
@@ -1273,12 +1278,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   currentViewport: { x: 0, y: 0, zoom: 1 },
   canvasViewportSize: { width: 0, height: 0 },
   viewportBookmarks: createEmptyBookmarks(),
-  imageViewer: {
-    isOpen: false,
-    currentImageUrl: null,
-    imageList: [],
-    currentIndex: 0,
-  },
+  videoViewer: closedVideoViewer(),
+  imageViewer: closedImageViewer(),
 
   onNodesChange: (changes) => {
     set((state) => {
@@ -1571,51 +1572,95 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   openImageViewer: (imageUrl, imageList = []) => {
-    const list = imageList.length > 0 ? imageList : [imageUrl];
-    const index = list.indexOf(imageUrl);
-    set({
+    const currentImageUrl = imageUrl.trim();
+    if (!currentImageUrl) return;
+    const list = mediaViewerUrls(currentImageUrl, imageList);
+    set((state) => ({
+      videoViewer: closedVideoViewer(state.videoViewer.sessionId + 1),
       imageViewer: {
         isOpen: true,
-        currentImageUrl: imageUrl,
+        sessionId: state.imageViewer.sessionId + 1,
+        currentImageUrl,
         imageList: list,
-        currentIndex: index >= 0 ? index : 0,
+        currentIndex: list.indexOf(currentImageUrl),
       },
-    });
+    }));
   },
 
   closeImageViewer: () => {
-    set({
-      imageViewer: {
-        isOpen: false,
-        currentImageUrl: null,
-        imageList: [],
-        currentIndex: 0,
-      },
-    });
+    set((state) => state.imageViewer.isOpen
+      ? { imageViewer: closedImageViewer(state.imageViewer.sessionId + 1) }
+      : state);
+  },
+
+  selectImageViewer: (index) => {
+    const { imageViewer } = get();
+    if (!imageViewer.isOpen || !Number.isInteger(index) || index < 0 || index >= imageViewer.imageList.length || index === imageViewer.currentIndex) return;
+    set({ imageViewer: { ...imageViewer, currentIndex: index, currentImageUrl: imageViewer.imageList[index] } });
   },
 
   navigateImageViewer: (direction) => {
-    const state = get();
-    const { currentIndex, imageList } = state.imageViewer;
-    if (direction === 'prev' && currentIndex > 0) {
-      const newIndex = currentIndex - 1;
-      set({
-        imageViewer: {
-          ...state.imageViewer,
-          currentIndex: newIndex,
-          currentImageUrl: imageList[newIndex],
-        },
-      });
-    } else if (direction === 'next' && currentIndex < imageList.length - 1) {
-      const newIndex = currentIndex + 1;
-      set({
-        imageViewer: {
-          ...state.imageViewer,
-          currentIndex: newIndex,
-          currentImageUrl: imageList[newIndex],
-        },
-      });
-    }
+    get().selectImageViewer(get().imageViewer.currentIndex + (direction === 'prev' ? -1 : 1));
+  },
+
+  updateImageViewerHistory: (sessionId, imageList) => {
+    set((state) => {
+      const viewer = state.imageViewer;
+      if (!viewer.isOpen || viewer.sessionId !== sessionId || !viewer.currentImageUrl) return state;
+      const list = mediaViewerUrls(viewer.currentImageUrl, imageList);
+      if (list.length === viewer.imageList.length && list.every((url, index) => url === viewer.imageList[index])) return state;
+      return { imageViewer: { ...viewer, imageList: list, currentIndex: list.indexOf(viewer.currentImageUrl) } };
+    });
+  },
+
+  openVideoViewer: (videoUrl, videoList = [], title) => {
+    const currentUrl = videoUrl.trim();
+    if (!currentUrl) return;
+    const list = mediaViewerUrls(currentUrl, videoList);
+    set((state) => ({
+      imageViewer: closedImageViewer(state.imageViewer.sessionId + 1),
+      videoViewer: {
+        isOpen: true,
+        sessionId: state.videoViewer.sessionId + 1,
+        videoUrl: currentUrl,
+        videoList: list,
+        currentIndex: list.indexOf(currentUrl),
+        title,
+      },
+    }));
+  },
+
+  closeVideoViewer: () => {
+    set((state) => state.videoViewer.isOpen
+      ? { videoViewer: closedVideoViewer(state.videoViewer.sessionId + 1) }
+      : state);
+  },
+
+  selectVideoViewer: (index) => {
+    const { videoViewer } = get();
+    if (!videoViewer.isOpen || !Number.isInteger(index) || index < 0 || index >= videoViewer.videoList.length || index === videoViewer.currentIndex) return;
+    set({ videoViewer: { ...videoViewer, currentIndex: index, videoUrl: videoViewer.videoList[index] } });
+  },
+
+  navigateVideoViewer: (direction) => {
+    get().selectVideoViewer(get().videoViewer.currentIndex + (direction === 'prev' ? -1 : 1));
+  },
+
+  updateVideoViewerHistory: (sessionId, videoList) => {
+    set((state) => {
+      const viewer = state.videoViewer;
+      if (!viewer.isOpen || viewer.sessionId !== sessionId) return state;
+      const list = mediaViewerUrls(viewer.videoUrl, videoList);
+      if (list.length === viewer.videoList.length && list.every((url, index) => url === viewer.videoList[index])) return state;
+      return { videoViewer: { ...viewer, videoList: list, currentIndex: list.indexOf(viewer.videoUrl) } };
+    });
+  },
+
+  closeMediaViewers: () => {
+    set((state) => !state.imageViewer.isOpen && !state.videoViewer.isOpen ? state : {
+      imageViewer: closedImageViewer(state.imageViewer.sessionId + 1),
+      videoViewer: closedVideoViewer(state.videoViewer.sessionId + 1),
+    });
   },
 
   addNode: (type, position, data = {}) => {

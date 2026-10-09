@@ -38,7 +38,7 @@ describe("safeLocalStorageSet", () => {
     window.localStorage.setItem("junk", "big");
 
     const setItem = vi
-      .spyOn(Storage.prototype, "setItem")
+      .spyOn(window.localStorage, "setItem")
       .mockImplementationOnce(() => {
         throw quotaError();
       });
@@ -57,7 +57,7 @@ describe("safeLocalStorageSet", () => {
     const reclaim = vi.fn();
     const unregister = registerStorageReclaimer(reclaim);
 
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
       throw new Error("SecurityError");
     });
 
@@ -73,7 +73,7 @@ describe("safeLocalStorageSet", () => {
     const unregister = registerStorageReclaimer(() => {
       /* frees nothing */
     });
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
       throw quotaError();
     });
 
@@ -86,9 +86,9 @@ describe("safeLocalStorageSet", () => {
     const unregister = registerStorageReclaimer(() => {
       /* no key this reclaimer owns is freeable */
     });
-    const real = Storage.prototype.setItem;
+    const real = window.localStorage.setItem;
     let calls = 0;
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+    vi.spyOn(window.localStorage, "setItem").mockImplementation(function (
       this: Storage,
       k: string,
       v: string,
@@ -184,7 +184,7 @@ describe("quotaSafeStateStorage", () => {
     const reclaim = vi.fn(() => window.localStorage.removeItem("junk"));
     const unregister = registerStorageReclaimer(reclaim);
     window.localStorage.setItem("junk", "big");
-    vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
+    vi.spyOn(window.localStorage, "setItem").mockImplementationOnce(() => {
       throw new DOMException("quota", "QuotaExceededError");
     });
 
@@ -196,7 +196,7 @@ describe("quotaSafeStateStorage", () => {
   });
 
   it("never throws even when storage is fully unavailable", () => {
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
       throw new DOMException("quota", "QuotaExceededError");
     });
     expect(() => quotaSafeStateStorage.setItem("k", "v")).not.toThrow();

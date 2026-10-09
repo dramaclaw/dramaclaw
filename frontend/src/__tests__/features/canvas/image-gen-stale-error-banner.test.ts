@@ -3,8 +3,22 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import React, { useSyncExternalStore } from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const generationMocks = vi.hoisted(() => ({ submit: vi.fn(), poll: vi.fn() }));
+vi.mock("@/api/ops", async (original) => ({
+  ...await original<typeof import("@/api/ops")>(),
+  submitFreezoneGen: generationMocks.submit,
+}));
+vi.mock("@/api/tasks", async (original) => ({
+  ...await original<typeof import("@/api/tasks")>(),
+  awaitTaskCompletion: generationMocks.poll,
+}));
+vi.mock("@/lib/url-params", async (original) => ({
+  ...await original<typeof import("@/lib/url-params")>(),
+  readUrl: () => ({ project: "test-project", canvas: "test-canvas" }),
+}));
 
 const canvasStoreMock = vi.hoisted(() => {
   const listeners = new Set<() => void>();
@@ -158,6 +172,30 @@ import {
 } from "@/features/canvas/application/generationTaskArbitration";
 import { ImageGenNode } from "@/features/canvas/nodes/ImageGenNode";
 
+function Harness() {
+  const data = useSyncExternalStore(
+    canvasStoreMock.subscribe,
+    () => canvasStoreMock.getState().nodeData as Record<string, unknown>,
+  );
+  return React.createElement(ImageGenNode, {
+    id: "image-1",
+    data,
+    selected: true,
+    width: 580,
+    height: 360,
+    type: "imageGenNode",
+    dragging: false,
+    zIndex: 0,
+    selectable: true,
+    deletable: true,
+    draggable: true,
+    isConnectable: true,
+    positionAbsoluteX: 0,
+    positionAbsoluteY: 0,
+  } as never);
+}
+
+
 function read(relativePath: string): string {
   return readFileSync(resolve(process.cwd(), relativePath), "utf8");
 }
@@ -218,29 +256,6 @@ describe("stale generation-error banner", () => {
       isGenerating: false,
       model: "test-model",
     });
-
-    function Harness() {
-      const data = useSyncExternalStore(
-        canvasStoreMock.subscribe,
-        () => canvasStoreMock.getState().nodeData as Record<string, unknown>,
-      );
-      return React.createElement(ImageGenNode, {
-        id: "image-1",
-        data,
-        selected: true,
-        width: 580,
-        height: 360,
-        type: "imageGenNode",
-        dragging: false,
-        zIndex: 0,
-        selectable: true,
-        deletable: true,
-        draggable: true,
-        isConnectable: true,
-        positionAbsoluteX: 0,
-        positionAbsoluteY: 0,
-      } as never);
-    }
 
     render(React.createElement(Harness));
     expect(screen.getByText("provider failed")).toBeInTheDocument();
@@ -357,5 +372,57 @@ describe("stale generation-error banner", () => {
     expect(
       submitHandler.match(/if \(!isCurrentGenerationAttempt\(\)\) return;/g),
     ).toHaveLength(3);
+  });
+});
+
+
+describe("expanded generation panel", () => {
+  beforeEach(() => {
+    generationMocks.submit.mockReset();
+    generationMocks.poll.mockReset().mockImplementation(() => new Promise(() => {}));
+    canvasStoreMock.reset({
+      displayName: "图片", imageUrl: "/static/current.png", previewImageUrl: "/static/current.png",
+      prompt: "test prompt", model: "test-model", count: 2, isGenerating: false,
+    });
+  });
+
+  it("collapses once after the first accepted task without waiting for generation, and preserves a manual reopening", async () => {
+    let acceptFirst!: (ref: { task_type: "freezone_gen"; job_id: string; task_key: string }) => void;
+    let acceptSecond!: (ref: { task_type: "freezone_gen"; job_id: string; task_key: string }) => void;
+    generationMocks.submit
+      .mockImplementationOnce(() => new Promise(resolve => { acceptFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise(resolve => { acceptSecond = resolve; }));
+    render(React.createElement(Harness));
+    fireEvent.click(screen.getByRole("button", { name: "node.operationPanel.expand" }));
+    fireEvent.click(screen.getByTitle("node.imageGen.generate"));
+    await waitFor(() => expect(generationMocks.submit).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("button", { name: "node.operationPanel.collapse" })).toBeInTheDocument();
+
+    await act(async () => acceptFirst({ task_type: "freezone_gen", job_id: "first", task_key: "first" }));
+    expect(screen.queryByRole("button", { name: "node.operationPanel.collapse" })).not.toBeInTheDocument();
+    expect(generationMocks.poll).toHaveBeenCalledWith("first", "test-project", { taskType: "freezone_gen" });
+    expect(canvasStoreMock.getState().nodeData).toMatchObject({ isGenerating: true, prompt: "test prompt" });
+
+    fireEvent.click(screen.getByRole("button", { name: "node.operationPanel.expand" }));
+    await act(async () => acceptSecond({ task_type: "freezone_gen", job_id: "second", task_key: "second" }));
+    expect(screen.getByRole("button", { name: "node.operationPanel.collapse" })).toBeInTheDocument();
+    expect(generationMocks.poll).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the expanded editor and prompt when submission fails", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    generationMocks.submit.mockRejectedValue(new Error("submission rejected"));
+    try {
+      render(React.createElement(Harness));
+      fireEvent.click(screen.getByRole("button", { name: "node.operationPanel.expand" }));
+      fireEvent.click(screen.getByTitle("node.imageGen.generate"));
+      await waitFor(() => expect(canvasStoreMock.getState().nodeData).toMatchObject({ isGenerating: false }));
+      expect(generationMocks.submit).toHaveBeenCalled();
+      expect(generationMocks.poll).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "node.operationPanel.collapse" })).toBeInTheDocument();
+      expect(canvasStoreMock.getState().nodeData).toMatchObject({ prompt: "test prompt" });
+    } finally {
+      error.mockRestore();
+    }
   });
 });

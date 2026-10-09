@@ -5479,6 +5479,7 @@
       "rows": "行数"
     },
     "nodeHistory": {
+      "compactTitle": "历史",
       "current": "当前",
       "daysAgo": "{{count}}天前",
       "hoursAgo": "{{count}}小时前",
@@ -5573,6 +5574,7 @@
       "handleLabel": "替换素材"
     },
     "reference": {
+      "preview": "引用素材预览",
       "detach": "取消引用此素材",
       "mention": "在提示词中引用「{{name}}」"
     },
@@ -6773,6 +6775,9 @@
     }
   },
   "viewer": {
+    "videoIndex": "查看第 {{index}} 个视频",
+    "imageDetails": "查看图片详情",
+    "imageIndex": "查看第 {{index}} 张图片",
     "imageAlt": "图片",
     "prev": "上一张",
     "next": "下一张",

@@ -271,6 +271,7 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
             src={imageSource ?? ''}
             alt={isExportResultNode ? t('node.imageNode.resultAlt') : t('node.imageNode.generatedAlt')}
             viewerSourceUrl={originalImageUrl}
+            viewerNodeId={id}
             onLoad={(event) => {
               // 记录描述的不是这张图：降采样副本上量不出源图真尺寸。第一次退回
               // 原图重测（preferOriginal 会让下一轮 downscaled 为 false，不会来回

@@ -26,22 +26,18 @@ import {
 import {
   AlertTriangle,
   ArrowUp,
-  Camera,
   ChevronDown,
   Download,
   Film,
   Images,
   Layers,
   Loader2,
-  Pause,
   Play,
   RotateCcw,
   Sparkles,
   Square,
   Upload as UploadIcon,
   Video as VideoIcon,
-  Volume2,
-  VolumeX,
   X as XIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -114,6 +110,7 @@ import {
   useAlbumPendingTotal,
 } from "@/features/canvas/nodes/shared/albumPendingTotals";
 import { canvasEventBus } from "@/features/canvas/application/canvasServices";
+import { nodeMediaViewerUrls, openNodeVideoViewer } from "@/features/canvas/application/nodeMediaViewer";
 import { useExternalFileHandoff } from "@/features/canvas/hooks/useExternalFileHandoff";
 import {
   extractUpstreamContent,
@@ -142,13 +139,11 @@ import {
   NODE_HEADER_FLOATING_POSITION_CLASS,
 } from "@/features/canvas/ui/NodeHeader";
 import { NodeResizeHandle } from "@/features/canvas/ui/NodeResizeHandle";
-import { NODE_OPS_PANEL_ENTER_CLASS } from "@/features/canvas/ui/OperationPanelShell";
 import { NodeGenerationOverlay } from "@/features/canvas/ui/NodeGenerationOverlay";
 import {
   CANVAS_NODE_INPUT_BODY_FRAME_CLASS,
   CANVAS_NODE_INPUT_BODY_SELECTED_FRAME_CLASS,
   CANVAS_NODE_INPUT_SURFACE_CLASS,
-  CANVAS_NODE_OPS_PANEL_CLASS,
   CANVAS_NODE_PANEL_SURFACE_CLASS,
   CANVAS_NODE_TOOLBAR_PILL_CLASS,
   canvasNodeFrameClass,
@@ -204,7 +199,6 @@ import {
 import { generationTaskDescriptor } from "@/features/canvas/application/resumeGeneration";
 import { useNodeGenerationHistory } from "@/features/canvas/hooks/useNodeGenerationHistory";
 import {
-  NodeGenerationHistory,
   hasCompletedHistoryRecords,
   historyRecordOutputUrl,
 } from "@/features/canvas/ui/NodeGenerationHistory";
@@ -212,6 +206,8 @@ import type { FreezoneGenerationHistoryRecord } from "@/api/ops";
 import { readUrl } from "@/lib/url-params";
 import type { ModelOption } from "@/features/canvas/ui/ProviderModelPicker";
 import { CreditCostPill } from "@/components/credits/credit-visual";
+import { NodeHistoryRail } from "@/features/canvas/ui/NodeHistoryRail";
+import { VideoPlayerControls } from "@/features/canvas/ui/VideoPlayerControls";
 import { VideoOperationsPanel } from "@/features/canvas/nodes/VideoOperationsPanel";
 
 type VideoNodeProps = NodeProps & {
@@ -1105,8 +1101,6 @@ export const VideoNode = memo(
     );
     // 收起态浮动面板固定基础尺寸；放大用居中弹窗（见下方 OperationPanelShell）。
     const [panelExpanded, setPanelExpanded] = useState(false);
-    const panelHeight = OPERATIONS_PANEL_HEIGHT;
-    const panelOverhang = OPERATIONS_PANEL_OVERHANG;
 
     // ── 叠卡画册（count > 1 的一组生成结果，与图片节点同构）──
     // 收拢时主视频后探出 N-1 张卡片边；hover 出现右上角数量徽标，点开展开成
@@ -2585,6 +2579,7 @@ export const VideoNode = memo(
         const total = Math.min(Math.max(count, 1), 4);
         // 各并发任务完成顺序不定，本地累积已完成的 URL，整组写回（避免读改写竞态）。
         const completedUrls: string[] = [];
+        let panelCollapsedAfterSubmit = false;
         // 收集每个子任务的失败，留到整批 settle 后统一决定是否弹错误框——避免
         // 「N 条里 1 条秒失败（如命中队列上限）、其余正常生成」时一边弹报错一边
         // 又冒加载动画的矛盾观感。
@@ -2592,6 +2587,10 @@ export const VideoNode = memo(
         const runOne = async (runIndex: number) => {
           try {
             const ref = await submitOnce(id);
+            if (!panelCollapsedAfterSubmit) {
+              panelCollapsedAfterSubmit = true;
+              setPanelExpanded(false);
+            }
             // Persist the task handle so a page refresh can resume this job.
             // N 个并发任务同节点只能存一个句柄——保留第 1 个（主视频）的。
             if (runIndex === 0) {
@@ -3035,6 +3034,13 @@ export const VideoNode = memo(
             // 画册展开时藏起节点本体——半透明的画册容器盖不严，底下的视频会透出来。
             albumExpanded && hasAlbum ? "invisible" : ""
           }`}
+          onDoubleClick={(event) => {
+            if ((event.target as HTMLElement).closest('button, input') || isClipMode || subtitleEraseMode || isUploading) return;
+            const url = isGenerating ? historyPreviewUrl : videoSource;
+            if (!url) return;
+            event.stopPropagation();
+            void openNodeVideoViewer(url, id, nodeMediaViewerUrls(url, albumUrls, historyRecords, 'video'), data.displayName ?? undefined);
+          }}
         >
           {/* 生成/上传中优先显示 loading：原地重新生成时 videoUrl 仍是上一条结果，
               若不加这层 guard，旧视频会一直占位、isGenerating 分支永远到不了。
@@ -3487,26 +3493,8 @@ export const VideoNode = memo(
             expanded={panelExpanded}
             onExpandedChange={setPanelExpanded}
             onSubmit={handleSubmit}
-          />
-        )}
-
-        {selected &&
-          !isBoxSelecting &&
-          !albumExpanded &&
-          !isClipMode &&
-          !subtitleEraseMode &&
-          !data.referenceOnly &&
-          hasCompletedHistoryRecords(historyRecords) && (
-            <div
-              className={`nodrag absolute z-[300] rounded-[var(--node-radius)] ${CANVAS_NODE_OPS_PANEL_CLASS} ${NODE_OPS_PANEL_ENTER_CLASS} px-3 py-2`}
-              style={{
-                top: `calc(100% + ${OPERATIONS_PANEL_GAP * 2 + panelHeight}px)`,
-                left: -panelOverhang,
-                right: -panelOverhang,
-              }}
-              onClick={(event) => event.stopPropagation()}
-            >
-              <NodeGenerationHistory
+            historyPanel={hasCompletedHistoryRecords(historyRecords) ? (
+              <NodeHistoryRail
                 records={historyRecords}
                 isLoading={historyLoading}
                 onRestore={handleRestoreHistory}
@@ -3521,8 +3509,9 @@ export const VideoNode = memo(
                   return url === data.videoUrl;
                 }}
               />
-            </div>
-          )}
+            ) : undefined}
+          />
+        )}
 
         {subtitleEraseMode && (
           <div
@@ -3575,207 +3564,6 @@ export type ReferenceMediaItem =
       audioUrl: string;
       displayName?: string | null;
     };
-
-// --- custom video player controls ------------------------------------------ //
-//
-// 替代 <video controls>：libtv 风格的浮层（底部一条）。订阅原生 <video>
-// 的 play/pause/timeupdate/durationchange/volumechange，写回时直接操作元素，
-// 由事件驱动 state 单向同步。隐藏时机：默认显示 0.85 透明度 + hover 加深，
-// 不做自动隐藏，避免画布上看不到「这个视频还能控制」。
-
-interface VideoPlayerControlsProps {
-  videoEl: HTMLVideoElement | null;
-  isCapturingFrame: boolean;
-  onCapture: (mode: "first" | "last" | "current") => void;
-}
-
-function formatTime(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
-  const total = Math.floor(seconds);
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-function VideoPlayerControls({
-  videoEl,
-  isCapturingFrame,
-  onCapture,
-}: VideoPlayerControlsProps) {
-  const { t } = useTranslation();
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [isMuted, setIsMuted] = useState(false);
-  const [isHoveringFrame, setIsHoveringFrame] = useState(false);
-
-  useEffect(() => {
-    if (!videoEl) return;
-    const syncAll = () => {
-      setIsPlaying(!videoEl.paused);
-      setCurrentTime(videoEl.currentTime);
-      setDuration(Number.isFinite(videoEl.duration) ? videoEl.duration : 0);
-      setIsMuted(videoEl.muted);
-    };
-    syncAll();
-    const onPlay = () => setIsPlaying(true);
-    const onPause = () => setIsPlaying(false);
-    const onTime = () => setCurrentTime(videoEl.currentTime);
-    const onDur = () => {
-      setDuration(Number.isFinite(videoEl.duration) ? videoEl.duration : 0);
-    };
-    const onVol = () => setIsMuted(videoEl.muted);
-    videoEl.addEventListener("play", onPlay);
-    videoEl.addEventListener("pause", onPause);
-    videoEl.addEventListener("timeupdate", onTime);
-    videoEl.addEventListener("durationchange", onDur);
-    videoEl.addEventListener("loadedmetadata", onDur);
-    videoEl.addEventListener("volumechange", onVol);
-    return () => {
-      videoEl.removeEventListener("play", onPlay);
-      videoEl.removeEventListener("pause", onPause);
-      videoEl.removeEventListener("timeupdate", onTime);
-      videoEl.removeEventListener("durationchange", onDur);
-      videoEl.removeEventListener("loadedmetadata", onDur);
-      videoEl.removeEventListener("volumechange", onVol);
-    };
-  }, [videoEl]);
-
-  const togglePlay = useCallback(() => {
-    if (!videoEl) return;
-    if (videoEl.paused) {
-      void videoEl.play().catch(() => undefined);
-    } else {
-      videoEl.pause();
-    }
-  }, [videoEl]);
-
-  const toggleMute = useCallback(() => {
-    if (!videoEl) return;
-    videoEl.muted = !videoEl.muted;
-  }, [videoEl]);
-
-  const onSeek = useCallback(
-    (event: ChangeEvent<HTMLInputElement>) => {
-      if (!videoEl) return;
-      const next = Number(event.target.value);
-      if (!Number.isFinite(next)) return;
-      videoEl.currentTime = next;
-      setCurrentTime(next);
-    },
-    [videoEl],
-  );
-
-  // 进度百分比（用作 range 背景的渐变锚点）。
-  const progressPct =
-    duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
-  const sliderBg = `linear-gradient(to right, rgb(var(--accent-rgb)) 0%, rgb(var(--accent-rgb)) ${progressPct}%, rgba(255,255,255,0.18) ${progressPct}%, rgba(255,255,255,0.18) 100%)`;
-
-  return (
-    <div className="nodrag absolute inset-x-0 bottom-0 z-20 flex items-center gap-2.5 bg-gradient-to-t from-black/75 via-black/45 to-transparent px-3 pb-2 pt-6 text-text-dark">
-      <button
-        type="button"
-        onClick={(event) => {
-          // 唯一的播放/暂停入口:阻止冒泡,避免点它时把节点也选中。
-          event.stopPropagation();
-          togglePlay();
-        }}
-        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-dark/90 transition-colors hover:bg-white/[0.12] hover:text-text-dark"
-        title={
-          isPlaying
-            ? t("node.videoNode.player.pause", { defaultValue: "暂停" })
-            : t("node.videoNode.player.play", { defaultValue: "播放" })
-        }
-      >
-        {isPlaying ? (
-          <Pause className="h-4 w-4" />
-        ) : (
-          <Play className="h-4 w-4" fill="currentColor" />
-        )}
-      </button>
-
-      <span className="shrink-0 text-[11px] tabular-nums text-text-dark/85">
-        {formatTime(currentTime)}
-      </span>
-
-      <input
-        type="range"
-        min={0}
-        max={duration > 0 ? duration : 0}
-        step={0.05}
-        value={currentTime}
-        onChange={onSeek}
-        onMouseDown={(event) => event.stopPropagation()}
-        className="video-player-scrubber h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full"
-        style={{ background: sliderBg }}
-      />
-
-      <span className="shrink-0 text-[11px] tabular-nums text-text-dark/85">
-        {formatTime(duration)}
-      </span>
-
-      <button
-        type="button"
-        onClick={toggleMute}
-        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-dark/90 transition-colors hover:bg-white/[0.12] hover:text-text-dark"
-        title={
-          isMuted
-            ? t("node.videoNode.player.unmute", { defaultValue: "取消静音" })
-            : t("node.videoNode.player.mute", { defaultValue: "静音" })
-        }
-      >
-        {isMuted ? (
-          <VolumeX className="h-4 w-4" />
-        ) : (
-          <Volume2 className="h-4 w-4" />
-        )}
-      </button>
-
-      <div
-        className="relative shrink-0"
-        onMouseEnter={() => setIsHoveringFrame(true)}
-        onMouseLeave={() => setIsHoveringFrame(false)}
-      >
-        <button
-          type="button"
-          disabled={isCapturingFrame}
-          onClick={() => onCapture("current")}
-          title={t("node.videoNode.frame.captureCurrent")}
-          className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
-            isCapturingFrame
-              ? "cursor-not-allowed text-text-muted/60"
-              : "text-text-dark/90 hover:bg-white/[0.12] hover:text-text-dark"
-          }`}
-        >
-          {isCapturingFrame ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Camera className="h-4 w-4" />
-          )}
-        </button>
-
-        {isHoveringFrame && !isCapturingFrame && (
-          <div className="absolute bottom-full right-0 flex flex-col gap-1 rounded-lg border border-white/10 bg-surface-dark/95 p-1 text-xs shadow-2xl backdrop-blur-md">
-            <button
-              type="button"
-              onClick={() => onCapture("first")}
-              className="whitespace-nowrap rounded-md px-3 py-1.5 text-left text-text-dark transition-colors hover:bg-white/[0.08]"
-            >
-              {t("node.videoNode.frame.captureFirst")}
-            </button>
-            <button
-              type="button"
-              onClick={() => onCapture("last")}
-              className="whitespace-nowrap rounded-md px-3 py-1.5 text-left text-text-dark transition-colors hover:bg-white/[0.08]"
-            >
-              {t("node.videoNode.frame.captureLast")}
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
 
 // --- subtitle erase: box overlay ------------------------------------------- //
 

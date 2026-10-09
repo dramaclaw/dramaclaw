@@ -5479,6 +5479,7 @@
       "rows": "Rows"
     },
     "nodeHistory": {
+      "compactTitle": "History",
       "current": "Current",
       "daysAgo": "{{count}}d ago",
       "hoursAgo": "{{count}}h ago",
@@ -5573,6 +5574,7 @@
       "handleLabel": "Replace asset"
     },
     "reference": {
+      "preview": "Reference preview",
       "detach": "Detach this reference",
       "mention": "Reference \"{{name}}\" in the prompt"
     },
@@ -6773,6 +6775,9 @@
     }
   },
   "viewer": {
+    "videoIndex": "View video {{index}}",
+    "imageDetails": "View image details",
+    "imageIndex": "View image {{index}}",
     "imageAlt": "Image",
     "prev": "Previous",
     "next": "Next",

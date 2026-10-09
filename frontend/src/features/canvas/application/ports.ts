@@ -194,6 +194,8 @@ export interface CanvasEventMap {
   'video-viewer/open': {
     videoUrl: string;
     title?: string;
+    nodeId?: string;
+    videoList?: string[];
   };
   /**
    * 节点 toolbar 上的 Commit 按钮触发：把该节点的图写回主流程对应 slot。

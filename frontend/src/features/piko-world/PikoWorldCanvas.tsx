@@ -374,7 +374,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
           ]);
           if (!clean || !fire || !cat || disposed) return;
           hallAmbience = createTownHallAmbience(nextApp.ticker, clean, fire, cat);
-          world.addChild(hallAmbience.container, hallAmbience.cat);
+          world.addChild(hallAmbience.container, hallAmbience.catContainer);
         }
         const environment = await loadPikoMapEnvironment(mapId, manifest.data.environment, abortController.signal);
         if (disposed) return;

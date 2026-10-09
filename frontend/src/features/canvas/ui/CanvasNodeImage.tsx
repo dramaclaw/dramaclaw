@@ -3,35 +3,18 @@
 import { memo, useCallback, type ImgHTMLAttributes, type MouseEvent } from 'react';
 
 import { useCanvasStore } from '@/stores/canvasStore';
+import { openNodeImageViewer } from '../application/nodeMediaViewer';
 
 export interface CanvasNodeImageProps extends ImgHTMLAttributes<HTMLImageElement> {
   viewerSourceUrl?: string | null;
+  viewerNodeId?: string;
   viewerImageList?: Array<string | null | undefined>;
   disableViewer?: boolean;
 }
 
-function normalizeViewerList(
-  imageList: Array<string | null | undefined> | undefined,
-  currentImageUrl: string
-): string[] {
-  const deduped: string[] = [];
-  for (const rawItem of imageList ?? []) {
-    const item = typeof rawItem === 'string' ? rawItem.trim() : '';
-    if (!item || deduped.includes(item)) {
-      continue;
-    }
-    deduped.push(item);
-  }
-
-  if (!deduped.includes(currentImageUrl)) {
-    deduped.unshift(currentImageUrl);
-  }
-
-  return deduped.length > 0 ? deduped : [currentImageUrl];
-}
-
 export const CanvasNodeImage = memo(({
   viewerSourceUrl,
+  viewerNodeId,
   viewerImageList,
   disableViewer = false,
   onDoubleClick,
@@ -58,8 +41,10 @@ export const CanvasNodeImage = memo(({
     }
 
     event.stopPropagation();
-    openImageViewer(resolvedSource, normalizeViewerList(viewerImageList, resolvedSource));
-  }, [disableViewer, displaySrc, onDoubleClick, openImageViewer, viewerImageList, viewerSourceUrl]);
+    const images = viewerImageList ?? [];
+    if (viewerNodeId) void openNodeImageViewer(resolvedSource, viewerNodeId, images);
+    else openImageViewer(resolvedSource, images);
+  }, [disableViewer, displaySrc, onDoubleClick, openImageViewer, viewerImageList, viewerSourceUrl, viewerNodeId]);
 
   return (
     <img

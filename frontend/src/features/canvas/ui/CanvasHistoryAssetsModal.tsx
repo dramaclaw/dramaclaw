@@ -48,6 +48,7 @@ import {
 } from '@/features/viewer-kit/three-d/directorManifest';
 import { ThreeDDirectorDialog } from '@/features/viewer-kit/three-d/ThreeDDirectorDialog';
 
+import { mediaViewerUrls } from '../domain/mediaViewerState';
 import { ImageViewerModal } from './ImageViewerModal';
 import { VideoViewerModal } from './VideoViewerModal';
 
@@ -227,7 +228,7 @@ export function CanvasHistoryAssetsModal({
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
 
   // Image lightbox state (drives the shared ImageViewerModal nav list).
-  const [imageViewerIndex, setImageViewerIndex] = useState<number | null>(null);
+  const [imageViewerUrl, setImageViewerUrl] = useState<string | null>(null);
   const [videoViewerUrl, setVideoViewerUrl] = useState<string | null>(null);
   // 世界模型「查看」：用产物 url 现搭一个最小 manifest，直接开虾境（导演台）。
   const [worldManifest, setWorldManifest] = useState<DirectorStageManifest | null>(null);
@@ -279,10 +280,13 @@ export function CanvasHistoryAssetsModal({
     () => groupAssetsByDate(activeAssets, direction),
     [activeAssets, direction],
   );
-  const orderedImageUrls = useMemo(
+  const orderedMediaUrls = useMemo(
     () => groups.flatMap((group) => group.assets).map((asset) => asset.url),
     [groups],
   );
+  const viewerImages = useMemo(() => mediaViewerUrls(imageViewerUrl ?? '', orderedMediaUrls), [imageViewerUrl, orderedMediaUrls]);
+  const viewerVideos = useMemo(() => mediaViewerUrls(videoViewerUrl ?? '', orderedMediaUrls), [videoViewerUrl, orderedMediaUrls]);
+  const imageViewerIndex = imageViewerUrl === null ? null : viewerImages.indexOf(imageViewerUrl);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -328,8 +332,7 @@ export function CanvasHistoryAssetsModal({
   // 查看：图片 / 视频放大查看。音频不走这里 —— 直接在卡片上内联播放（见 AssetCard）。
   const handleView = (asset: CanvasAsset) => {
     if (asset.kind === 'image') {
-      const index = orderedImageUrls.indexOf(asset.url);
-      setImageViewerIndex(index >= 0 ? index : 0);
+      setImageViewerUrl(asset.url.trim());
     } else if (asset.kind === 'video') {
       setVideoViewerUrl(asset.url);
     } else if (asset.kind === 'model') {
@@ -688,26 +691,28 @@ export function CanvasHistoryAssetsModal({
       {/* Viewers */}
       <ImageViewerModal
         open={imageViewerIndex !== null}
-        imageUrl={imageViewerIndex !== null ? (orderedImageUrls[imageViewerIndex] ?? '') : ''}
-        imageList={orderedImageUrls}
+        imageUrl={imageViewerUrl ?? ''}
+        imageList={viewerImages}
         currentIndex={imageViewerIndex ?? 0}
-        onClose={() => setImageViewerIndex(null)}
-        onNavigate={(dir) =>
-          setImageViewerIndex((index) => {
-            if (index === null) {
-              return index;
-            }
-            const next = dir === 'next' ? index + 1 : index - 1;
-            if (next < 0 || next >= orderedImageUrls.length) {
-              return index;
-            }
-            return next;
-          })
-        }
+        onClose={() => setImageViewerUrl(null)}
+        onSelect={(index) => setImageViewerUrl(viewerImages[index] ?? null)}
+        onNavigate={(direction) => {
+          if (imageViewerIndex === null) return;
+          const next = imageViewerIndex + (direction === 'next' ? 1 : -1);
+          if (next >= 0 && next < viewerImages.length) setImageViewerUrl(viewerImages[next]);
+        }}
       />
       <VideoViewerModal
         open={Boolean(videoViewerUrl)}
         videoUrl={videoViewerUrl ?? ''}
+        videoList={viewerVideos}
+        currentIndex={videoViewerUrl ? Math.max(0, viewerVideos.indexOf(videoViewerUrl)) : 0}
+        onSelect={(index) => setVideoViewerUrl(viewerVideos[index] ?? null)}
+        onNavigate={(direction) => {
+          const index = videoViewerUrl ? viewerVideos.indexOf(videoViewerUrl) : -1;
+          const next = index + (direction === 'next' ? 1 : -1);
+          if (index >= 0 && next >= 0 && next < viewerVideos.length) setVideoViewerUrl(viewerVideos[next]);
+        }}
         onClose={() => setVideoViewerUrl(null)}
       />
 

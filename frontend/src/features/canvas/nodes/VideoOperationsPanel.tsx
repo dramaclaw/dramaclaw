@@ -243,6 +243,7 @@ interface VideoOperationsPanelProps {
   expanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
   onSubmit: () => Promise<void>;
+  historyPanel?: ReactNode;
 }
 
 export function VideoOperationsPanel({
@@ -286,6 +287,7 @@ export function VideoOperationsPanel({
   expanded,
   onExpandedChange,
   onSubmit,
+  historyPanel,
 }: VideoOperationsPanelProps) {
     const { t } = useTranslation();
     // 能力守卫返回的是 i18n key（见 videoModelCapabilities.ts），选择器要的是文案。
@@ -764,6 +766,7 @@ export function VideoOperationsPanel({
     return (
       <>
             <OperationPanelShell
+              sidePanel={historyPanel}
               expanded={expanded}
               onCollapse={() => onExpandedChange(false)}
               inlineClassName={`nodrag absolute z-30 flex flex-col rounded-[var(--node-radius)] ${CANVAS_NODE_OPS_PANEL_CLASS}`}
@@ -2171,7 +2174,7 @@ function ReferenceImageChip({
   onDetach,
 }: ReferenceImageChipProps) {
   const { t } = useTranslation();
-  const buttonRef = useRef<HTMLButtonElement>(null);
+  const buttonRef = useRef<HTMLDivElement>(null);
   const PREVIEW_W = 140;
   const { pos, show, hide } = useHoverPreviewPos(buttonRef, PREVIEW_W);
   const label =
@@ -2181,13 +2184,10 @@ function ReferenceImageChip({
 
   return (
     <>
-      <button
+      <div
         ref={buttonRef}
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation();
-          onFocus(item.nodeId);
-        }}
+        role="group"
+        aria-label={label}
         onDoubleClick={(event) => {
           event.stopPropagation();
           hide();
@@ -2215,9 +2215,12 @@ function ReferenceImageChip({
             {slotLabel}
           </span>
         ) : null}
+        {!mentionName && <button type="button" aria-label={label} className="absolute inset-0 z-10 cursor-pointer"
+          onClick={event => { event.stopPropagation(); onFocus(item.nodeId); }} />}
         {mentionName ? (
           <ReferenceMentionButton
             mentionName={mentionName}
+            onJump={() => { hide(); onJump(item.nodeId); }}
             onInsert={() => {
               hide();
               onMention(item.nodeId);
@@ -2225,11 +2228,12 @@ function ReferenceImageChip({
           />
         ) : null}
         <ReferenceDetachButton
+          as="button"
           nodeId={item.nodeId}
           onDetach={onDetach}
           className={NODE_REFERENCE_MEDIA_DETACH_CLASS}
         />
-      </button>
+      </div>
       {pos &&
         typeof document !== "undefined" &&
         createPortal(
@@ -2273,7 +2277,7 @@ function ReferenceVideoChip({
   onDetach,
 }: ReferenceVideoChipProps) {
   const { t } = useTranslation();
-  const buttonRef = useRef<HTMLButtonElement>(null);
+  const buttonRef = useRef<HTMLDivElement>(null);
   const PREVIEW_W = 140;
   const { pos, show, hide } = useHoverPreviewPos(buttonRef, PREVIEW_W);
   const label =
@@ -2302,13 +2306,10 @@ function ReferenceVideoChip({
 
   return (
     <>
-      <button
+      <div
         ref={buttonRef}
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation();
-          onFocus(item.nodeId);
-        }}
+        role="group"
+        aria-label={label}
         onDoubleClick={(event) => {
           event.stopPropagation();
           hide();
@@ -2320,9 +2321,12 @@ function ReferenceVideoChip({
         title={label}
       >
         {thumb}
+        {!mentionName && <button type="button" aria-label={label} className="absolute inset-0 z-10 cursor-pointer"
+          onClick={event => { event.stopPropagation(); onFocus(item.nodeId); }} />}
         {mentionName ? (
           <ReferenceMentionButton
             mentionName={mentionName}
+            onJump={() => { hide(); onJump(item.nodeId); }}
             onInsert={() => {
               hide();
               onMention(item.nodeId);
@@ -2330,11 +2334,12 @@ function ReferenceVideoChip({
           />
         ) : null}
         <ReferenceDetachButton
+          as="button"
           nodeId={item.nodeId}
           onDetach={onDetach}
           className={NODE_REFERENCE_MEDIA_DETACH_CLASS}
         />
-      </button>
+      </div>
       {pos &&
         typeof document !== "undefined" &&
         createPortal(
@@ -2439,14 +2444,9 @@ function ReferenceAudioChip({
     || t("node.videoOps.chip.audioFallback", { index: index + 1 });
 
   return (
-    <button
-      type="button"
-      onClick={(event) => {
-        event.stopPropagation();
-        // 单击：切换播放；同时把焦点切到上游节点（方便用户跳过去看）。
-        onFocus(item.nodeId);
-        onToggle(!isPlaying);
-      }}
+    <div
+      role="group"
+      aria-label={label}
       onDoubleClick={(event) => {
         // 双击跳到画布上那个音频节点。播放开关被这两下点成了「开了又关」，
         // 正好回到双击前的状态，不用额外去抑制它。
@@ -2460,22 +2460,27 @@ function ReferenceAudioChip({
       }`}
       title={label}
     >
+      <button type="button" aria-label={label} className="absolute inset-0 flex items-center justify-center"
+        onClick={event => { event.stopPropagation(); onFocus(item.nodeId); onToggle(!isPlaying); }}>
       {isPlaying ? (
         <Pause className="h-4 w-4 text-accent" />
       ) : (
         <Music className="h-4 w-4 text-text-dark/90" />
       )}
+      </button>
       {mentionName ? (
         <ReferenceMentionButton
           mentionName={mentionName}
           onInsert={() => onMention(item.nodeId)}
+          appearance="badge"
         />
       ) : null}
       <ReferenceDetachButton
+        as="button"
         nodeId={item.nodeId}
         onDetach={onDetach}
         className={NODE_REFERENCE_MEDIA_DETACH_CLASS}
       />
-    </button>
+    </div>
   );
 }

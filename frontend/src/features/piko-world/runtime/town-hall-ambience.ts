@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { createLamp } from "./courtyard-lamp";
+import { createCharacterName } from "./character-presentation";
 import { Container, Graphics, Rectangle, Sprite, Texture, type Ticker } from "pixi.js";
 
 const FIRE_SEQUENCE = [0, 1, 2, 3, 2, 1] as const;
@@ -22,7 +23,7 @@ export function createTownHallAmbience(ticker: Ticker, clean: Texture, atlas: Te
   const fire = new Sprite({ texture: frames[0], label: "hearth-fire", eventMode: "none" });
   fire.anchor.set(0.5, 0.68); fire.position.set(1890, 548);
   fire.width = 90; fire.height = 118;
-  fire.rotation = 16 * Math.PI / 180;
+  fire.rotation = 30 * Math.PI / 180;
   hearth.addChild(fire); fire.mask = mask;
   container.addChild(hearth);
 
@@ -30,13 +31,16 @@ export function createTownHallAmbience(ticker: Ticker, clean: Texture, atlas: Te
   const catFrameSize = catAtlas.width / 2;
   const catFrames = Array.from({ length: 4 }, (_, i) => new Texture({ source: catAtlas.source,
     frame: new Rectangle(i % 2 * catFrameSize, Math.floor(i / 2) * catFrameSize, catFrameSize, catAtlas.height / 2) }));
-  const cat = new Sprite({ texture: catFrames[0], label: "hall-sleeping-cat", eventMode: "none", zIndex: 425 });
+  const catContainer = new Container({ label: "hall-sleeping-cat-actor", eventMode: "none", zIndex: 425 });
+  catContainer.position.set(740, 425);
+  const cat = new Sprite({ texture: catFrames[0], label: "hall-sleeping-cat", eventMode: "none" });
   // All four generated frames share the cushion's centre and floor-contact anchor.
   cat.anchor.set(314.5 / 627, 498 / 627);
-  cat.position.set(740, 425);
   cat.width = cat.height = 125;
+  catContainer.addChild(cat, createCharacterName("圆儿", -74));
 
-  const lamps = [[245, 168], [1795, 177], [1390, 263], [44, 916], [2008, 916]].map(([x, y], index) => {
+  // Foreground lantern cores sit inside the glass, below the metal shade.
+  const lamps = [[245, 168], [1795, 177], [1390, 263], [44, 936], [2008, 936]].map(([x, y], index) => {
     const lamp = createLamp({ id: `hall-light-${index}`, x, y, baseY: y,
       width: index === 2 ? 0.7 : 0.85, height: 1, haloScale: 0.75, clipBottom: 44 }, index, random);
     container.addChild(lamp.container);
@@ -109,14 +113,14 @@ export function createTownHallAmbience(ticker: Ticker, clean: Texture, atlas: Te
   document.addEventListener("visibilitychange", sync);
   window.addEventListener("focus", sync); window.addEventListener("blur", sync);
   sync();
-  return { container, cat, destroy() {
+  return { container, cat, catContainer, destroy() {
     if (destroyed) return;
     destroyed = true;
     if (attached) ticker.remove(tick);
     motion.removeEventListener("change", sync);
     document.removeEventListener("visibilitychange", sync);
     window.removeEventListener("focus", sync); window.removeEventListener("blur", sync);
-    container.destroy({ children: true }); cat.destroy();
+    container.destroy({ children: true }); catContainer.destroy({ children: true });
     [...frames, ...catFrames].forEach(frame => frame.destroy(false));
   } };
 }

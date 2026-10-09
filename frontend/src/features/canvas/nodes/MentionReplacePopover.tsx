@@ -27,6 +27,7 @@ import type {
   ReferenceMediaKind,
 } from '@/features/canvas/application/referencePick';
 import { placeAnchoredMenu } from '@/features/canvas/nodes/shared/anchoredMenuPlacement';
+import { MediaHoverPreview, type MediaHoverPreviewSource } from '../ui/MediaHoverPreview';
 
 import { mentionChipLabel, type MentionCandidate } from './PromptMentionEditor';
 
@@ -129,6 +130,10 @@ export function MentionReplacePopover({
 }: MentionReplacePopoverProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState('');
+  const [preview, setPreview] = useState<MediaHoverPreviewSource | null>(null);
+  const showPreview = (item: { imageUrl?: string | null; videoUrl?: string }, element: HTMLElement) => {
+    setPreview({ imageUrl: item.imageUrl, videoUrl: item.videoUrl, rect: element.getBoundingClientRect(), placement: 'side' });
+  };
   // 展开中的种类分组 + 它那一行的位置（右侧列表用 fixed 定位，避开选单自身的滚动裁切）。
   const [openGroup, setOpenGroup] = useState<{
     kind: ReferenceMediaKind;
@@ -198,9 +203,10 @@ export function MentionReplacePopover({
   return (
     <>
       <div
-        className="canvas-node-transient-ui fixed z-[10000] flex flex-col rounded-lg border border-white/10 bg-surface-dark/95 p-1 shadow-xl backdrop-blur-sm"
+        className="canvas-node-transient-ui fixed z-[10000] flex flex-col rounded-[var(--ui-radius-lg)] border border-white/10 bg-surface-dark/95 p-1 shadow-xl backdrop-blur-sm"
         style={{ top, left, width: POPOVER_WIDTH, maxHeight }}
         onKeyDown={handleKeyDown}
+        onMouseLeave={() => setPreview(null)}
       >
         <div className="flex items-center gap-1.5 rounded-md bg-white/[0.06] px-2 py-1.5">
           <Search className="h-3 w-3 shrink-0 text-text-muted/70" aria-hidden />
@@ -209,6 +215,7 @@ export function MentionReplacePopover({
             value={query}
             onChange={(event) => {
               setQuery(event.target.value);
+              setPreview(null);
               setOpenGroup(null);
             }}
             // 编辑器把方向键 / Enter 用于候选导航，别让这里的输入冒泡上去。
@@ -222,7 +229,7 @@ export function MentionReplacePopover({
         <div
           className="ui-scrollbar mt-1 min-h-0 overflow-y-auto"
           style={{ maxHeight: listMaxHeight }}
-          onScroll={() => setOpenGroup(null)}
+          onScroll={() => { setOpenGroup(null); setPreview(null); }}
         >
           {matchedReferenced.length > 0 && (
             <>
@@ -231,7 +238,7 @@ export function MentionReplacePopover({
                 <button
                   key={candidate.key}
                   type="button"
-                  onMouseEnter={() => setOpenGroup(null)}
+                  onMouseEnter={(event) => { setOpenGroup(null); showPreview(candidate, event.currentTarget); }}
                   onMouseDown={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -258,6 +265,7 @@ export function MentionReplacePopover({
                     <button
                       key={material.nodeId}
                       type="button"
+                      onMouseEnter={(event) => showPreview(material, event.currentTarget)}
                       onMouseDown={(event) => {
                         event.preventDefault();
                         event.stopPropagation();
@@ -283,6 +291,7 @@ export function MentionReplacePopover({
                         kind: t(KIND_LABEL_KEYS[group.kind]),
                       })}
                       onMouseEnter={(event) => {
+                        setPreview(null);
                         const rect = event.currentTarget.getBoundingClientRect();
                         setOpenGroup({
                           kind: group.kind,
@@ -322,7 +331,9 @@ export function MentionReplacePopover({
 
       {openGroup && openGroupItems.length > 0 && (
         <div
-          className="canvas-node-transient-ui ui-scrollbar fixed z-[10001] overflow-y-auto rounded-lg border border-white/10 bg-surface-dark/95 p-1 shadow-xl backdrop-blur-sm"
+          className="canvas-node-transient-ui ui-scrollbar fixed z-[10001] overflow-y-auto rounded-[var(--ui-radius-lg)] border border-white/10 bg-surface-dark/95 p-1 shadow-xl backdrop-blur-sm"
+          onMouseLeave={() => setPreview(null)}
+          onScroll={() => setPreview(null)}
           style={{
             top: Math.max(
               EDGE_GAP,
@@ -340,6 +351,7 @@ export function MentionReplacePopover({
             <button
               key={material.nodeId}
               type="button"
+              onMouseEnter={(event) => showPreview(material, event.currentTarget)}
               onMouseDown={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -357,6 +369,7 @@ export function MentionReplacePopover({
           ))}
         </div>
       )}
+      <MediaHoverPreview source={preview} />
     </>
   );
 }

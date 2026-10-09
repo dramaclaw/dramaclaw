@@ -74,7 +74,6 @@ import {
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { PanelExpandButton } from '@/features/canvas/ui/PanelExpandButton';
 import {
-  NODE_OPS_PANEL_ENTER_CLASS,
   OperationPanelShell,
 } from '@/features/canvas/ui/OperationPanelShell';
 import { NodeGenerationOverlay } from '@/features/canvas/ui/NodeGenerationOverlay';
@@ -135,7 +134,10 @@ import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImage
 import { useNodeGenerationHistory } from '@/features/canvas/hooks/useNodeGenerationHistory';
 import { MediaModelParameterChip } from '@/features/canvas/ui/MediaModelParameterChip';
 import { ReferenceTextChip } from '@/features/canvas/nodes/shared/ReferenceTextChip';
+import { ReferenceDetachButton } from '@/features/canvas/nodes/shared/ReferenceDetachButton';
 import { ReferenceMentionButton } from '@/features/canvas/nodes/shared/ReferenceMentionButton';
+import { NodeHistoryRail } from '@/features/canvas/ui/NodeHistoryRail';
+import { nodeImageViewerUrls } from '@/features/canvas/application/nodeMediaViewer';
 import { focusReferenceNode } from '@/features/canvas/application/viewportReturnStore';
 import { collectReferenceMaterials } from '@/features/canvas/application/referencePick';
 import { attachReferenceEdge } from '@/features/canvas/application/attachReference';
@@ -144,7 +146,6 @@ import {
   type AssetLibrarySelection,
 } from '@/features/canvas/ui/AssetLibraryModal';
 import {
-  NodeGenerationHistory,
   hasCompletedHistoryRecords,
   historyRecordOutputUrl,
 } from '@/features/canvas/ui/NodeGenerationHistory';
@@ -948,6 +949,10 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     return raw.filter((u): u is string => typeof u === 'string' && u.length > 0);
   }, [data.generationBatch]);
   const albumTotalSlots = Math.max(albumUrls.length, albumPendingTotal);
+  const viewerImageList = useMemo(
+    () => nodeImageViewerUrls(visiblePreviewUrl ?? '', albumUrls, historyRecords),
+    [visiblePreviewUrl, albumUrls, historyRecords],
+  );
   const albumPendingCount = Math.max(0, albumPendingTotal - albumUrls.length);
   const hasAlbum = albumTotalSlots > 1;
 
@@ -1247,6 +1252,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     const canvasId = readUrl().canvas ?? 'default';
     // 各并发任务完成顺序不定，本地累积已完成的 URL，整组写回（避免读改写竞态）。
     const completedUrls: string[] = [];
+    let panelCollapsedAfterSubmit = false;
     const runOne = async (runIndex: number) => {
       let taskKey: string | null = null;
       try {
@@ -1256,6 +1262,10 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
           nodeId: id,
         });
         taskKey = ref.task_key;
+        if (!panelCollapsedAfterSubmit && isCurrentGenerationAttempt()) {
+          panelCollapsedAfterSubmit = true;
+          setPanelExpanded(false);
+        }
         // Persist the task handle so a page refresh can resume polling this
         // job. With N concurrent runs on one node only one handle can persist —
         // keep the first (main-image) run's.
@@ -1671,6 +1681,8 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
               alt={resolvedTitle}
               // 双击进查看器的必须是原图，不能跟着 src 走降采样副本。
               viewerSourceUrl={visiblePreviewUrl}
+              viewerNodeId={id}
+              viewerImageList={viewerImageList}
               onLoad={(event) => {
                 // 记录描述的不是这张图：降采样副本上量不出源图真尺寸。第一次退回
                 // 原图重测（preferOriginal 会让下一轮 downscaled 为 false，不会来
@@ -2092,6 +2104,23 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       */}
       {showImageOpsPanel && (
         <OperationPanelShell
+          sidePanel={!stylePickerOpen && hasCompletedHistoryRecords(historyRecords) ? (
+            <NodeHistoryRail
+              records={historyRecords}
+              isLoading={historyLoading}
+              onRestore={handleRestoreHistory}
+              onRefresh={() => void refreshHistory()}
+              isActive={(record) => {
+                const url = historyRecordOutputUrl(record);
+                if (!url) return false;
+                // 预览态下高亮正在预览的历史条，否则高亮当前主图。
+                if (isGenerating && historyPreviewUrl) {
+                  return url === historyPreviewUrl;
+                }
+                return url === data.imageUrl;
+              }}
+            />
+          ) : undefined}
           expanded={panelExpanded}
           onCollapse={() => setPanelExpanded(false)}
           inlineClassName={`nodrag absolute left-1/2 z-10 flex -translate-x-1/2 flex-col rounded-[var(--node-radius)] ${CANVAS_NODE_OPS_PANEL_CLASS}`}
@@ -2193,25 +2222,16 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                         {mentionName ? (
                           <ReferenceMentionButton
                             mentionName={mentionName}
+                            onJump={() => { setRefHover(null); handleJumpToReference(content.nodeId); }}
                             onInsert={() => {
                               setRefHover(null);
                               handleMentionReference(content.nodeId);
                             }}
                           />
                         ) : null}
-                        <button
-                          type="button"
-                          title={t('node.imageGen.dropReference')}
+                        <ReferenceDetachButton as="button" nodeId={content.nodeId}
                           className={NODE_REFERENCE_MEDIA_DETACH_CLASS}
-                          onMouseDown={(event) => event.stopPropagation()}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setRefHover(null);
-                            handleDetachUpstream(content.nodeId);
-                          }}
-                        >
-                          <X className="h-3 w-3" strokeWidth={2.5} />
-                        </button>
+                          onDetach={(nodeId) => { setRefHover(null); handleDetachUpstream(nodeId); }} />
                       </div>
                     );
                   })}
@@ -2368,32 +2388,6 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
             </div>
           </div>
         </OperationPanelShell>
-      )}
-      {selected && !isBoxSelecting && !hasActiveOverlay && !panelExpanded && !stylePickerOpen && hasCompletedHistoryRecords(historyRecords) && (
-        <div
-          className={`nodrag absolute left-1/2 z-[300] -translate-x-1/2 rounded-[var(--node-radius)] ${CANVAS_NODE_OPS_PANEL_CLASS} ${NODE_OPS_PANEL_ENTER_CLASS} px-3 py-2`}
-          style={{
-            top: `calc(100% + ${OPERATIONS_PANEL_GAP * 2 + panelHeight}px)`,
-            width: panelWidth,
-          }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <NodeGenerationHistory
-            records={historyRecords}
-            isLoading={historyLoading}
-            onRestore={handleRestoreHistory}
-            onRefresh={() => void refreshHistory()}
-            isActive={(record) => {
-              const url = historyRecordOutputUrl(record);
-              if (!url) return false;
-              // 预览态下高亮正在预览的历史条，否则高亮当前主图。
-              if (isGenerating && historyPreviewUrl) {
-                return url === historyPreviewUrl;
-              }
-              return url === data.imageUrl;
-            }}
-          />
-        </div>
       )}
       {refHover && refPreviewStyle
         && createPortal(

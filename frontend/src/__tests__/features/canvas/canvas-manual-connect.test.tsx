@@ -8,6 +8,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
 import { useCanvasStore } from "@/stores/canvasStore";
 import { Canvas } from "@/features/canvas/Canvas";
+import { MediaViewerShell } from "@/features/canvas/ui/MediaViewerShell";
+import { fireEvent } from "@testing-library/react";
 
 // Canvas 用 useQueryClient()(beats/episodeDetail 预取),渲染需包 QueryClientProvider。
 function renderCanvas() {
@@ -635,4 +637,20 @@ describe("Canvas node drag focus mode", () => {
     act(() => onSelectionDragStop?.());
     expect(document.body).not.toHaveClass("canvas-node-drag-focus");
   });
+});
+
+
+it("media details protect the selected canvas node from Delete and release keyboard ownership on close", () => {
+  useCanvasStore.getState().setCanvasData([{ id: "viewer-node", type: CANVAS_NODE_TYPES.imageGen,
+    position: { x: 0, y: 0 }, selected: true, data: {} }], []);
+  const canvas = renderCanvas();
+  const media = render(<MediaViewerShell open title="audit preview" ratio={1} mediaType="image" onClose={() => {}}>
+    <img src="/static/audit.png" alt="audit" />
+  </MediaViewerShell>);
+  fireEvent.keyDown(document.body, { key: "Delete" });
+  expect(useCanvasStore.getState().nodes.some(node => node.id === "viewer-node")).toBe(true);
+  media.unmount();
+  fireEvent.keyDown(document.body, { key: "Delete" });
+  expect(useCanvasStore.getState().nodes.some(node => node.id === "viewer-node")).toBe(false);
+  canvas.unmount();
 });
