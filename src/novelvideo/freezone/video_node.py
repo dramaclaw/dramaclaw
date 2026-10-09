@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -19,16 +20,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import portalocker
+
 from novelvideo.freezone.paths import freezone_root
 from novelvideo.video_duration import (
     normalize_video_duration_for_backend as normalize_video_duration_for_backend,
     video_duration_bounds_for_backend,
 )
-
-try:
-    import fcntl
-except ImportError:  # pragma: no cover
-    fcntl = None
 
 VIDEO_CAMERA_TEMPLATES: list[dict[str, str]] = [
     {
@@ -887,24 +885,41 @@ def video_character_library_path(project_dir: Path) -> Path:
     return freezone_root(project_dir) / "video_character_library.json"
 
 
+# 关键区只是两份小 JSON 的读改写，正常毫秒级；等这么久还拿不到说明持锁方卡死了。
+_LIBRARY_LOCK_TIMEOUT_SECONDS = 30.0
+_LIBRARY_LOCK_RETRY_INTERVAL_SECONDS = 0.02
+
+
 @contextmanager
 def _library_lock(project_dir: Path) -> Iterator[None]:
     """串行化资产库两份 JSON（条目 + 文件夹）的「读→改→写」。
 
     API 多 worker 进程下，并发登记各自读到同一份旧列表、再整份写回，后写的会把
     先写的冲掉——一次上传 4 张只剩 2 张。条目和文件夹共用一把锁，因为删文件夹
-    要同时改两份文件。flock 不可重入：持锁期间不要再调用本模块其它加锁的函数。
+    要同时改两份文件。锁不可重入：持锁期间不要再调用本模块其它加锁的函数。
+
+    用 portalocker 而不是 fcntl：Windows 没有 fcntl，取不到锁就必须报错，绝不能
+    静默放行。非阻塞 + 重试是因为 Windows 的阻塞锁自带固定超时，行为和 POSIX 不一致。
     """
     lock_path = freezone_root(project_dir) / "video_character_library.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + _LIBRARY_LOCK_TIMEOUT_SECONDS
     with open(lock_path, "a+", encoding="utf-8") as lock_file:
-        if fcntl is not None:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        while True:
+            try:
+                portalocker.lock(lock_file, portalocker.LOCK_EX | portalocker.LOCK_NB)
+                break
+            except portalocker.exceptions.AlreadyLocked as exc:
+                # 仅竞争重试；其余锁故障（如不支持锁的挂载）立即上抛。
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"asset library lock busy: {lock_path}"
+                    ) from exc
+                time.sleep(_LIBRARY_LOCK_RETRY_INTERVAL_SECONDS)
         try:
             yield
         finally:
-            if fcntl is not None:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            portalocker.unlock(lock_file)
 
 
 def _write_json_atomic(path: Path, data: Any) -> None:

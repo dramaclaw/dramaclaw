@@ -7,6 +7,9 @@
 import multiprocessing
 from pathlib import Path
 
+import pytest
+
+from novelvideo.freezone import video_node
 from novelvideo.freezone.video_node import (
     add_video_character_folder,
     add_video_character_library_item,
@@ -70,3 +73,20 @@ def test_library_save_leaves_no_temp_files(tmp_path: Path) -> None:
         p.name for p in (tmp_path / "freezone").iterdir() if p.suffix == ".tmp"
     ]
     assert leftovers == []
+
+
+def test_library_write_never_proceeds_without_the_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """锁被别人占着时，写入必须等待直至报错，不能绕过锁直接写。
+
+    早先在没有 fcntl 的平台（Windows）上 _library_lock 是空操作，多进程照样互相覆盖。
+    """
+    monkeypatch.setattr(video_node, "_LIBRARY_LOCK_TIMEOUT_SECONDS", 0.2)
+
+    with video_node._library_lock(tmp_path):
+        with pytest.raises(TimeoutError):
+            add_video_character_folder(tmp_path, name="blocked")
+
+    assert load_video_character_folders(tmp_path) == []
+    assert not hasattr(video_node, "fcntl")
