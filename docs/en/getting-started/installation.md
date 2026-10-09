@@ -73,6 +73,32 @@ Docker images include the credential-safe patched Codex App Server runtime and d
 CE defaults to `ST_EDITION=ce`, no-login single local user, and in-process inline task execution
 (no Ray/Redis/Celery).
 
+### Linux source-checkout Hermes sandbox choice
+
+This applies only to Hermes; Codex does not use this sandbox switch. On Linux, Hermes
+refuses chat by default when the sandbox is missing, unusable, or not activated.
+`scripts/start-ce.sh` prints configuration guidance before installing dependencies;
+direct `novelvideo api` invocations follow the same enforcement rule.
+
+For **single-user local development**, if you accept running Hermes without a sandbox,
+explicitly add this to `.env`:
+
+```dotenv
+SUPERTALE_ALLOW_UNSANDBOXED=1
+```
+
+Or scope it to one launch:
+
+```bash
+SUPERTALE_ALLOW_UNSANDBOXED=1 scripts/start-ce.sh
+```
+
+This permits a warning-backed fallback only when the sandbox is unavailable; it does not
+disable a usable sandbox. `SUPERTALE_ENV=production` or a nonempty `ST_CONTROL_PLANE_DSN`
+still requires sandboxing, and the opt-in cannot override that boundary. Do not set
+`SUPERTALE_LINUX_SANDBOX=1` merely to suppress the error: that switch requires a deployment
+that isolates the current user's data directories through mounts.
+
 ### 3. Verify
 
 ```bash

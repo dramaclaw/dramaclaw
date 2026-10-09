@@ -72,6 +72,29 @@ scripts/start-ce.sh                      # 安装依赖并启动 API 与前端
 内置经过凭据安全修补的 Codex App Server Runtime，并默认使用 Codex。CE 默认
 `ST_EDITION=ce`、免登录单本地用户、任务进程内 inline 执行(无 Ray/Redis/Celery)。
 
+### Linux 源码运行 Hermes 的沙箱选择
+
+仅在使用 Hermes 时需要处理这一项；Codex 不使用此沙箱开关。Linux 上沙箱缺失、
+不可用或未激活时，Hermes 默认拒绝聊天。`scripts/start-ce.sh` 会在安装依赖前显示
+配置提示；直接运行 `novelvideo api` 时也遵循同一规则。
+
+如果是**单机本地开发**，并且接受 Hermes 无沙箱运行，可在 `.env` 中显式添加：
+
+```dotenv
+SUPERTALE_ALLOW_UNSANDBOXED=1
+```
+
+也可仅对本次启动设置：
+
+```bash
+SUPERTALE_ALLOW_UNSANDBOXED=1 scripts/start-ce.sh
+```
+
+该配置只允许沙箱不可用时告警降级，不会自动关闭可用的沙箱。
+`SUPERTALE_ENV=production` 或 `ST_CONTROL_PLANE_DSN` 非空时仍强制要求沙箱，
+这个开关不能绕过。不要仅为消除错误设置 `SUPERTALE_LINUX_SANDBOX=1`：
+该开关要求部署已通过挂载隔离当前用户的数据目录。
+
 ### 3. 验证
 
 ```bash
