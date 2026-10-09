@@ -1,6 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { act, cleanup, render, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { StoryGroupToolbar } from '@/features/canvas/ui/StoryGroupToolbar';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useStoryRuntimeStore } from '@/stores/storyRuntimeStore';
@@ -10,7 +9,7 @@ import { FREEZONE_DOCK_OFFSET_ANIMATED_STYLE } from '@/features/freezone/dockOff
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 afterEach(cleanup);
 
-it('故事组工具栏直接显示常用操作，仅导出保留在更多中', async () => {
+it('故事组工具栏直接显示常用操作，移除更多与导出入口', () => {
   useStoryRuntimeStore.setState({ mode: 'edit' });
   useCanvasStore.setState({ selectedNodeId: 'clip', nodes: [
     { id: 'g', type: 'groupNode', position: { x: 0, y: 0 }, data: { storyGroup: true, displayName: '小胡的故事' } },
@@ -31,13 +30,9 @@ it('故事组工具栏直接显示常用操作，仅导出保留在更多中', a
   for (const name of ['canvas.story.overview.open', 'canvas.story.states', 'canvas.story.lint.open']) {
     expect(within(toolbar).getByRole('button', { name })).toBeInTheDocument();
   }
-  expect(within(toolbar).getAllByRole('button').slice(-2).map((button) => button.textContent)).toEqual([
-    'storyPublication.publish', 'canvas.story.moreActions',
-  ]);
-  await userEvent.click(within(toolbar).getByRole('button', { name: 'canvas.story.moreActions' }));
-  expect(view.getByRole('menuitem', { name: 'canvas.story.export' })).toBeInTheDocument();
-  expect(view.queryAllByRole('menuitem')).toHaveLength(1);
-  await userEvent.keyboard('{Escape}');
+  expect(within(toolbar).getAllByRole('button').slice(-1)[0]).toHaveTextContent('storyPublication.publish');
+  expect(within(toolbar).queryByRole('button', { name: 'canvas.story.moreActions' })).not.toBeInTheDocument();
+  expect(within(toolbar).queryByText('canvas.story.export')).not.toBeInTheDocument();
   act(() => useCanvasStore.setState({ selectedNodeId: 'g' }));
   expect(view.getByRole('toolbar')).toBeInTheDocument();
   act(() => useCanvasStore.setState({ selectedNodeId: null }));

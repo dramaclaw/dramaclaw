@@ -1,11 +1,10 @@
 import { createPortal } from 'react-dom';
 import { StoryPublicationPanel } from '@/features/canvas/story/StoryPublicationPanel';
 import { StoryOverviewPanel } from '@/components/canvas/StoryOverviewPanel';
-import { memo, useCallback, useRef, useState } from 'react';
+import { memo, useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Download, ListTree, MoreHorizontal, Play, ScrollText, ShieldCheck, SlidersHorizontal } from 'lucide-react';
+import { ListTree, Play, ScrollText, ShieldCheck, SlidersHorizontal, Upload } from 'lucide-react';
 import { toast } from 'sonner';
-import { Compiler } from 'inkjs/full';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useStoryRuntimeStore } from '@/stores/storyRuntimeStore';
 import { CANVAS_NODE_TYPES, type GroupNodeData } from '@/features/canvas/domain/canvasNodes';
@@ -13,10 +12,8 @@ import { resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import { compileStoryGroup } from '@/features/canvas/story/compileStoryGroup';
 import { StoryCompileError } from '@/features/canvas/story/compileGraphToInk';
 import { storySaveKey } from '@/features/canvas/story/storySave';
-import { downloadStoryHtml } from '@/features/canvas/story/export/downloadStoryHtml';
 import { readUrl } from '@/lib/url-params';
 import { FREEZONE_DOCK_OFFSET_ANIMATED_STYLE } from '@/features/freezone/dockOffset';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/shadcn/dropdown-menu';
 
 const ACTION_CLASS = 'flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] px-2 text-xs text-text-dark transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary';
 
@@ -64,56 +61,6 @@ function StoryGroupActions({ id, data, onPublish, onOverview }: { id: string; da
     }
   }, [t]);
 
-  const exportingRef = useRef(false);
-  const [exporting, setExporting] = useState(false);
-  const handleStoryGroupExport = useCallback(async (groupId: string) => {
-    if (exportingRef.current) return;
-    exportingRef.current = true;
-    setExporting(true);
-    const progressToast = toast.loading(t('canvas.story.exportPreparing'));
-    const { nodes, edges } = useCanvasStore.getState();
-    try {
-      const compiled = compileStoryGroup(groupId, nodes, edges);
-      const story = new Compiler(compiled.ink).Compile();
-      const storyJson = story.ToJson();
-      if (!storyJson) throw new Error(t('canvas.story.error'));
-      const title = (data.displayName ?? data.label ?? '').trim();
-      const { buildPlayerHtml } = await import('@/features/canvas/story/export/buildPlayerHtml');
-      const html = buildPlayerHtml(compiled, storyJson, {
-        title,
-        labels: {
-          play: t('canvas.story.playMode.playCurrent'),
-          pause: t('canvas.story.playMode.pauseCurrent'),
-          seek: t('canvas.story.playMode.seek'),
-          mediaError: t('canvas.story.mediaError'),
-          retry: t('canvas.story.retryMedia'),
-          countdown: t('canvas.story.choiceCountdown'),
-          flagOn: t('canvas.story.flagOn'),
-          flagOff: t('canvas.story.flagOff'),
-          replayExperience: t('canvas.story.replayExperience'),
-          ctaUnconfigured: t('canvas.story.ctaUnconfigured'),
-          defaultChoice: t('canvas.story.defaultChoice'),
-          endingBadge: t('canvas.story.endingBadge', { label: '' }).replace(/[ ·]+$/, '').trim() || '结局',
-          endingFallback: t('canvas.story.endingFallback'),
-          restart: t('canvas.story.restart'),
-          loadError: t('canvas.story.error'),
-          placeholderBadge: t('canvas.story.placeholderBadge'),
-          placeholderHint: t('canvas.story.placeholderHint'),
-          automaticPlaceholderHint: t('canvas.story.automaticPlaceholderHint'),
-          automaticPlaceholderNext: t('canvas.story.automaticPlaceholderNext'),
-        },
-      });
-      downloadStoryHtml(html, title);
-      toast.success(t('canvas.story.exportDone'), { id: progressToast });
-    } catch (err) {
-      toast.error(err instanceof StoryCompileError ? err.message : t('canvas.story.exportFailed'), { id: progressToast });
-    } finally {
-      exportingRef.current = false;
-      setExporting(false);
-    }
-  }, [t, data]);
-
-
   const title = resolveNodeDisplayName(CANVAS_NODE_TYPES.group, data);
   return (
     <div
@@ -145,15 +92,9 @@ function StoryGroupActions({ id, data, onPublish, onOverview }: { id: string; da
         <button type="button" className={ACTION_CLASS} onClick={() => useCanvasStore.getState().openStoryLint(id)}>
           <ShieldCheck className="size-4" />{t('canvas.story.lint.open')}
         </button>
-        <button type="button" className={ACTION_CLASS} onClick={onPublish}>{t('storyPublication.publish')}</button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button type="button" className={ACTION_CLASS}><MoreHorizontal className="size-4" />{t('canvas.story.moreActions')}</button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent side="bottom" align="end" className="min-w-48">
-            <DropdownMenuItem disabled={exporting} onSelect={() => void handleStoryGroupExport(id)}><Download className="mr-2 size-4" />{t('canvas.story.export')}</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <button type="button" className={ACTION_CLASS} onClick={onPublish}>
+          <Upload className="size-4" aria-hidden="true" />{t('storyPublication.publish')}
+        </button>
       </div>
     </div>
   );
