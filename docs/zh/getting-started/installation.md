@@ -68,15 +68,20 @@ cp .env.example .env && $EDITOR .env     # 填网关与 Key
 scripts/start-ce.sh                      # 安装依赖并启动 API 与前端
 ```
 
-该脚本会把 Hermes 安装到隔离环境，并将其作为源码运行时的聊天后端。Docker 镜像则
-内置经过凭据安全修补的 Codex App Server Runtime，并默认使用 Codex。CE 默认
-`ST_EDITION=ce`、免登录单本地用户、任务进程内 inline 执行(无 Ray/Redis/Celery)。
+Docker 镜像和直接运行 `novelvideo api` 默认使用 Codex；镜像内置经过凭据安全修补的
+Codex App Server Runtime，源码直接运行时需配置有效的 `CODEX_BIN`。
+`scripts/start-ce.sh` 则为源码开发把 Hermes 安装到隔离环境，并在未显式配置聊天后端时
+选择 Hermes。`DRAMACLAW_CHAT_BACKEND` 优先于兼容变量 `SUPERTALE_CHAT_BACKEND`。
+CE 默认 `ST_EDITION=ce`、免登录单本地用户、任务进程内 inline 执行(无 Ray/Redis/Celery)。
 
 ### Linux 源码运行 Hermes 的沙箱选择
 
 仅在使用 Hermes 时需要处理这一项；Codex 不使用此沙箱开关。Linux 上沙箱缺失、
-不可用或未激活时，Hermes 默认拒绝聊天。`scripts/start-ce.sh` 会在安装依赖前显示
-配置提示；直接运行 `novelvideo api` 时也遵循同一规则。
+不可用或未激活时，Hermes 默认拒绝聊天。`SUPERTALE_ALLOW_UNSANDBOXED` 和
+`SUPERTALE_LINUX_SANDBOX` 都未有效开启时，
+`scripts/start-ce.sh` 会在安装依赖前显示配置提示。有效开启值为 `1/true/yes/on`，
+忽略大小写和首尾空格；`0/false` 不算开启。显式选择 Hermes 后直接运行
+`novelvideo api` 时也遵循同一沙箱规则。
 
 如果是**单机本地开发**，并且接受 Hermes 无沙箱运行，可在 `.env` 中显式添加：
 

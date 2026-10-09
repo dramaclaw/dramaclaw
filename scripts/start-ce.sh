@@ -90,10 +90,20 @@ if [ -z "${DRAMACLAW_CHAT_BACKEND:-}" ] && [ -z "${SUPERTALE_CHAT_BACKEND:-}" ];
   export DRAMACLAW_CHAT_BACKEND=hermes
 fi
 
-# Explain Linux Hermes requirements before dependency setup or the first chat.
+# Match sandbox_wrap's stripped, case-insensitive flag values for guidance.
+sandbox_flag_enabled() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Explain unconfigured Linux Hermes requirements before dependency setup.
 # This is guidance only: sandbox_wrap remains the authority for enforcement.
 if [ "$(uname -s)" = "Linux" ] && \
-   [ "${DRAMACLAW_CHAT_BACKEND:-${SUPERTALE_CHAT_BACKEND:-hermes}}" = "hermes" ]; then
+   [ "${DRAMACLAW_CHAT_BACKEND:-${SUPERTALE_CHAT_BACKEND:-hermes}}" = "hermes" ] && \
+   ! sandbox_flag_enabled "${SUPERTALE_ALLOW_UNSANDBOXED:-}" && \
+   ! sandbox_flag_enabled "${SUPERTALE_LINUX_SANDBOX:-}"; then
   echo "Linux Hermes chat: when the sandbox is unavailable or not activated, chat is refused by default." >&2
   echo "For single-user local development only, explicitly set SUPERTALE_ALLOW_UNSANDBOXED=1 in .env or the shell to allow a warning-backed fallback." >&2
   echo "This opt-in cannot bypass sandbox requirements in EE or production. See docs/en/getting-started/installation.md." >&2

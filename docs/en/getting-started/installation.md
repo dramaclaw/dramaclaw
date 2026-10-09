@@ -68,8 +68,11 @@ cp .env.example .env && $EDITOR .env     # set the gateway and key
 scripts/start-ce.sh                      # install dependencies and start API + frontend
 ```
 
-The launcher installs Hermes in an isolated environment and selects it for source-checkout chat.
-Docker images include the credential-safe patched Codex App Server runtime and default to Codex.
+Docker images and direct `novelvideo api` invocations default to Codex. Images include the
+credential-safe patched Codex App Server runtime; direct source invocations need a valid `CODEX_BIN`.
+`scripts/start-ce.sh` installs Hermes in an isolated environment for source development and selects
+Hermes only when no chat backend is explicitly configured. `DRAMACLAW_CHAT_BACKEND` takes
+precedence over the legacy `SUPERTALE_CHAT_BACKEND` variable.
 CE defaults to `ST_EDITION=ce`, no-login single local user, and in-process inline task execution
 (no Ray/Redis/Celery).
 
@@ -77,8 +80,10 @@ CE defaults to `ST_EDITION=ce`, no-login single local user, and in-process inlin
 
 This applies only to Hermes; Codex does not use this sandbox switch. On Linux, Hermes
 refuses chat by default when the sandbox is missing, unusable, or not activated.
-`scripts/start-ce.sh` prints configuration guidance before installing dependencies;
-direct `novelvideo api` invocations follow the same enforcement rule.
+When neither `SUPERTALE_ALLOW_UNSANDBOXED` nor `SUPERTALE_LINUX_SANDBOX` is enabled,
+`scripts/start-ce.sh` prints configuration guidance before installing dependencies. Enabled values are `1/true/yes/on`, ignoring case and surrounding
+whitespace; `0/false` does not enable a switch. Direct `novelvideo api` invocations with Hermes
+explicitly selected follow the same sandbox enforcement rule.
 
 For **single-user local development**, if you accept running Hermes without a sandbox,
 explicitly add this to `.env`:
