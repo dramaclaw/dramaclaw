@@ -7905,6 +7905,7 @@
       "failed": "Generation failed: {{message}}",
       "cancelled": "Generation cancelled",
       "queued": "Blockout generation started; track it in the task center. The result lands in the scene automatically",
+      "referenceNodeName": "Previz reference {{index}}",
       "done": "Generated {{count}} primitives",
       "warnings": "{{count}} spots may need manual adjustment",
       "closeDiscards": "Closing this window does not stop the generation: the task keeps running, the result lands in the scene automatically, and progress shows in the task center",

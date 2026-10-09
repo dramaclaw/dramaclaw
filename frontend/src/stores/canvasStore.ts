@@ -229,6 +229,16 @@ interface CanvasState {
     displayName?: string | null,
     durationMs?: number | null
   ) => string | null;
+  /**
+   * 在目标节点左边接一个上传图节点并连上线（图 → 目标），`addDerived*` 的镜像：
+   * 那几个把产物挂到下游，这个把用过的素材留在上游。节点和边是同一步撤销。
+   */
+  addUpstreamUploadNode: (
+    targetNodeId: string,
+    imageUrl: string,
+    aspectRatio: string,
+    displayName?: string | null
+  ) => string | null;
   addDerivedExportNode: (
     sourceNodeId: string,
     imageUrl: string,
@@ -2343,6 +2353,59 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       nodes: [...state.nodes, node],
       selectedNodeId: node.id,
       activeToolDialog: null,
+      history: {
+        past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)),
+        future: [],
+      },
+      dragHistorySnapshot: null,
+      ...trackEdit(state),
+    });
+
+    return node.id;
+  },
+
+  addUpstreamUploadNode: (targetNodeId, imageUrl, aspectRatio, displayName) => {
+    const state = get();
+    const targetNode = state.nodes.find((node) => node.id === targetNodeId);
+    // 目标已经被删掉、或者这条线本来就连不上时不建节点：留下的只会是个孤儿。
+    if (
+      !targetNode ||
+      !nodeHasTargetHandle(targetNode.type) ||
+      !isUpstreamConnectionAllowed(CANVAS_NODE_TYPES.upload, targetNode.type)
+    ) {
+      return null;
+    }
+    const size = resolveGeneratedImageNodeDimensions(aspectRatio);
+    // 已有的上游一个个往下排，新来的接在最底下那个的下面，不叠在别人身上。
+    const upstreamIds = new Set(
+      state.edges.filter((edge) => edge.target === targetNodeId).map((edge) => edge.source),
+    );
+    const upstreamBottom = state.nodes
+      .filter((node) => upstreamIds.has(node.id))
+      .map((node) => node.position.y + (node.measured?.height ?? node.height ?? 200));
+    const node = canvasNodeFactory.createNode(
+      CANVAS_NODE_TYPES.upload,
+      {
+        x: targetNode.position.x - size.width - 100,
+        y: upstreamBottom.length > 0 ? Math.max(...upstreamBottom) + 24 : targetNode.position.y,
+      },
+      { imageUrl, aspectRatio, ...(displayName ? { displayName } : {}) },
+    );
+    node.width = size.width;
+    node.height = size.height;
+    node.style = { ...(node.style ?? {}), width: size.width, height: size.height };
+    const edge: CanvasEdge = {
+      id: `e-${node.id}-${targetNodeId}`,
+      source: node.id,
+      target: targetNodeId,
+      sourceHandle: 'source',
+      targetHandle: 'target',
+      type: 'disconnectableEdge',
+    };
+
+    set({
+      nodes: [...state.nodes, node],
+      edges: [...state.edges, edge],
       history: {
         past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)),
         future: [],

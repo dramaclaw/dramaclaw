@@ -9,7 +9,9 @@ import {
   submitFreezoneImageToBlockout,
   uploadFreezoneImage,
 } from '@/api/ops';
+import { aspectRatioFromImageDimensions } from '@/features/canvas/application/imageNodeSizing';
 import { handedOffGenerationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
+import { CANVAS_NODE_TYPES, DEFAULT_ASPECT_RATIO } from '@/features/canvas/domain/canvasNodes';
 import { backendErrorToastMessage } from '@/lib/api-errors';
 import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
@@ -20,6 +22,7 @@ import {
   PREVIZ_BLOCKOUT_DESCRIPTION_MAX_CHARS,
   blockoutImageExtension,
   isAcceptedBlockoutImage,
+  type PrevizImageSize,
 } from '../domain/blockoutImage';
 import { PREVIZ_PRIMITIVE_LIMIT, canAddPrimitive } from '../domain/limits';
 import { usePrevizStore } from '../store';
@@ -28,6 +31,8 @@ export type PrevizBlockoutStage = 'idle' | 'uploading' | 'generating' | 'importi
 
 export interface PrevizBlockoutRequest {
   file: File;
+  /** 对话框量出来的像素尺寸，只用来给画布上那张参考图节点定比例；量不出来就不给。 */
+  imageSize?: PrevizImageSize | null;
   description: string;
   /** 对话框里的「画面核对」「渲染核对」勾选，原样交给后端。 */
   pictureCheck: boolean;
@@ -53,6 +58,31 @@ const readNodeData = (nodeId: string) =>
   >;
 
 /**
+ * 把这次用的参考图留在画布上：预演台左边接一个上传图节点。编辑器里看不到这张图，
+ * 退出去以后它还在，下次想对照、想换一张再生成都找得到。
+ */
+function keepReferenceOnCanvas(
+  nodeId: string,
+  imageUrl: string,
+  size: PrevizImageSize | null | undefined,
+  label: (index: number) => string,
+): void {
+  const store = useCanvasStore.getState();
+  const upstreamIds = new Set(
+    store.edges.filter((edge) => edge.target === nodeId).map((edge) => edge.source),
+  );
+  const references = store.nodes.filter(
+    (node) => upstreamIds.has(node.id) && node.type === CANVAS_NODE_TYPES.upload,
+  ).length;
+  store.addUpstreamUploadNode(
+    nodeId,
+    imageUrl,
+    (size && aspectRatioFromImageDimensions(size.width, size.height)) || DEFAULT_ASPECT_RATIO,
+    label(references + 1),
+  );
+}
+
+/**
  * 「从参考图生成场景」的提交侧：上传 → 提交任务 → 把任务句柄写到预演台节点上。
  *
  * 到这里就结束了。等结果、取结果、写进场景归画布的恢复路径（resumeGeneration），
@@ -75,7 +105,7 @@ export function useBlockoutGeneration(nodeId: string): BlockoutGeneration {
   const held = (nodeData?.blockoutHeld ?? null) as PrevizHeldBlockout | null;
 
   const start = useCallback(
-    async ({ file, description, pictureCheck, renderCheck, model, mode }: PrevizBlockoutRequest) => {
+    async ({ file, imageSize, description, pictureCheck, renderCheck, model, mode }: PrevizBlockoutRequest) => {
       if (readNodeData(nodeId).isGenerating === true) return false;
       const verdict = isAcceptedBlockoutImage(file.name, file.size);
       if (verdict === 'extension') {
@@ -125,6 +155,9 @@ export function useBlockoutGeneration(nodeId: string): BlockoutGeneration {
           blockoutImportMode: mode,
           blockoutHeld: null,
         });
+        keepReferenceOnCanvas(nodeId, upload.url, imageSize, (index) =>
+          t('previz.blockout.referenceNodeName', { index }),
+        );
         toast.info(t('previz.blockout.queued'));
         return true;
       } catch (error) {

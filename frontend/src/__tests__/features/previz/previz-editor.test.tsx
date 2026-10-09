@@ -183,10 +183,13 @@ const updateNodeData = vi.fn((id: string, patch: Record<string, unknown>) => {
   const node = canvasNodes.find((entry) => entry.id === id);
   if (node) node.data = { ...node.data, ...patch };
 });
+const addUpstreamUploadNode = vi.fn(() => "reference-1");
 const canvasState = () => ({
   nodes: canvasNodes,
+  edges: [],
   updateNodeData,
   addDerivedUploadNode,
+  addUpstreamUploadNode,
   addDerivedVideoNode,
   addEdge,
 });
@@ -3669,6 +3672,13 @@ describe("PrevizEditor reference-image blockout", () => {
     );
     // 没动下拉就不发 model：由服务端按当时的配置解析默认。
     expect(submitFreezoneImageToBlockout.mock.calls[0]![1]).not.toHaveProperty("model");
+    // 参考图留在画布上，挂在预演台的上游。
+    expect(addUpstreamUploadNode).toHaveBeenCalledWith(
+      "previz-1",
+      "/static/shot.png",
+      expect.any(String),
+      expect.any(String),
+    );
     expect(previzNodeData()).toMatchObject({
       isGenerating: true,
       generationTaskKey: "freezone_image_to_blockout:job-1",

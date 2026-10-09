@@ -154,6 +154,69 @@ beforeEach(() => {
   usePrevizStore.getState().loadScene(createDefaultScene());
 });
 
+const upstreamOf = (id: string) => {
+  const { nodes, edges } = useCanvasStore.getState();
+  return edges
+    .filter((edge) => edge.target === id)
+    .map((edge) => nodes.find((entry) => entry.id === edge.source)!);
+};
+
+describe("useBlockoutGeneration keeps the reference image on the canvas", () => {
+  it("adds an upload node upstream of the previz node holding the uploaded image", async () => {
+    const id = useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.previz, { x: 1000, y: 300 }, {})!;
+    const { result: hook } = setup(id);
+
+    await act(async () => {
+      await hook.current.start({ ...request(), imageSize: { width: 1920, height: 1080 } });
+    });
+
+    const [reference] = upstreamOf(id);
+    expect(upstreamOf(id)).toHaveLength(1);
+    expect(reference!.type).toBe(CANVAS_NODE_TYPES.upload);
+    expect(reference!.data).toMatchObject({
+      imageUrl: "/static/ref.png",
+      aspectRatio: "16:9",
+      displayName: 'previz.blockout.referenceNodeName:{"index":1}',
+    });
+    // 落在预演台左边，不压着它。
+    expect(reference!.position.x + (reference!.width ?? 0)).toBeLessThan(1000);
+    expect(reference!.position.y).toBe(300);
+  });
+
+  it("numbers a second reference and stacks it below the first", async () => {
+    const id = addPrevizNode();
+    const { result: hook } = setup(id);
+
+    await act(async () => {
+      await hook.current.start(request());
+    });
+    act(() => useCanvasStore.getState().updateNodeData(id, { isGenerating: false }));
+    await act(async () => {
+      await hook.current.start(request());
+    });
+
+    const [first, second] = upstreamOf(id);
+    expect(upstreamOf(id)).toHaveLength(2);
+    expect(second!.data.displayName).toBe('previz.blockout.referenceNodeName:{"index":2}');
+    expect(second!.position.y).toBeGreaterThanOrEqual(first!.position.y + (first!.height ?? 0));
+  });
+
+  it("leaves the canvas alone when the task was never submitted", async () => {
+    submitFreezoneImageToBlockout.mockRejectedValueOnce(new Error("no model"));
+    const id = addPrevizNode();
+    const { result: hook } = setup(id);
+
+    await act(async () => {
+      await hook.current.start(request());
+    });
+
+    expect(upstreamOf(id)).toEqual([]);
+    expect(useCanvasStore.getState().nodes).toHaveLength(1);
+  });
+});
+
 describe("useBlockoutGeneration submits and hands the task to the canvas", () => {
   it("uploads, submits and records the task on the node like any other generation", async () => {
     const id = addPrevizNode();
