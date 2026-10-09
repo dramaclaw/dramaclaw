@@ -2816,3 +2816,22 @@ def test_describe_output_failure_includes_retry_prompts():
     assert "Exceeded maximum output retries (2)" in text
     assert "final_result" in text
     assert "Field required" in text
+
+
+async def test_appearance_receives_verified_quotes_from_real_extraction_merge():
+    from novelvideo.structured_extraction import (
+        character_appearance_cache_key,
+        enrich_character_appearances,
+    )
+
+    quote = "林默黑发披肩，站在门口。"
+    chunk = _chunk(quote)
+    merged = merge_character_candidates(
+        [(chunk, ChunkCharacterOutput(characters=[_candidate("林默", quotes=[quote])]))]
+    )
+    agent = FakeAppearanceAgent({"林默": _appearance("林默")})
+    await enrich_character_appearances(merged, agent=agent)
+    assert quote in agent.prompts[0]
+    before = character_appearance_cache_key(merged[0])
+    merged[0].evidence[0]["evidence_text"] = "林默短发利落，走进房间。"
+    assert character_appearance_cache_key(merged[0]) != before

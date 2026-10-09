@@ -2611,7 +2611,7 @@
     "title": "Nguồn truyện",
     "subtitle": "Tải kịch bản lên và bắt đầu hành trình sáng tạo.",
     "dropzoneHint": "Bấm hoặc kéo thả file truyện vào đây",
-    "supportedFormats": "Hỗ trợ .txt / .md / .docx · File tối đa 512KB · Văn bản tối đa 100.000 ký tự",
+    "supportedFormats": "Hỗ trợ .txt / .md / .docx · Tối đa 8MB / 1.000.000 ký tự; giới hạn tùy dự án",
     "uploadingTitle": "Đang tải truyện lên…",
     "uploadingHint": "Vui lòng ở lại trang này cho tới khi tải lên xong. Mạng chậm có thể mất một lúc.",
     "inputMode": {
