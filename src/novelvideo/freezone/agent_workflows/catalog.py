@@ -3909,11 +3909,15 @@ def _quick_drama_visual_style_blockers(
 
     def task_text(node: dict[str, Any]) -> str:
         data = node.get("data") if isinstance(node.get("data"), dict) else {}
-        return "\n".join(
-            _text(value) for value in (
-                data.get("prompt"), data.get("content"), data.get("text"),
-            )
-        ).casefold()
+        node_type = node.get("node_type")
+        if node_type in {"textAnnotationNode", "beatContextNode"}:
+            # Text nodes consume content; aliases only fill it when absent.
+            value = data.get("content") or data.get("text") or data.get("prompt")
+        else:
+            # Image, video and script revisions update data.prompt only.
+            # The compiler uses a top-level prompt only when data.prompt is empty.
+            value = data.get("prompt") or node.get("prompt")
+        return _text(value).casefold()
 
     blockers: list[dict[str, str]] = []
     for index, node in enumerate(nodes):

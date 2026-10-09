@@ -3572,6 +3572,25 @@ def test_quick_drama_confirmed_style_reaches_every_visual_task(monkeypatch):
     )
 
 
+def test_quick_drama_ignores_stale_style_in_noncanonical_fields(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    plan = _quick_drama_visual_style_plan()
+    story, portrait, clip = plan["nodes"]
+    story["data"].update(content="短剧故事", prompt="写实的旧故事提示")
+    portrait["data"].update(content="写实的旧图片提示", text="写实的旧图片文本")
+    clip["data"].update(content="写实的旧视频提示", text="写实的旧视频文本")
+    plan["edges"].append({"source": "story", "target": "clip", "link_type": "prompt_for"})
+
+    result = catalog.validate_agent_workflow_plan(plan)
+
+    assert result["ok"] is True, result
+    assert {
+        blocker["node_id"] for blocker in result["preflight"]["blockers"]
+        if blocker["code"] == "confirmed_visual_style_missing"
+    } == {"portrait", "clip"}
+
+
 def test_exact_short_drama_plan_supports_24_beats_and_exact_count_guards(monkeypatch):
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)
