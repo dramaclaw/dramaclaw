@@ -260,10 +260,17 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "continue, or resume an existing workflow, call freezone_run_workflow directly even when it "
     "contains only one executable node; do not read node detail before starting it and never "
     "substitute freezone_run_node_action. "
+    "If the user asks to generate content through a named Recipe on one existing standalone "
+    "node, call freezone_run_node_action with the node's catalog action; never substitute "
+    "freezone_update_node_data, even if the requested content could be written directly. "
+    "If the user asks only to edit fields on one existing standalone node without generating, "
+    "use freezone_update_node_data; do not call freezone_run_node_action. "
     "For a normal workflow request, follow that Skill's discovery, draft, preview, and confirmation "
-    "sequence. When the user explicitly specifies exact nodes and dependencies, follow the Skill's "
-    "custom-topology reference and call freezone_prepare_workflow_plan_draft once instead; do not "
-    "route that request through the compact Intent compiler merely because a "
+    "sequence. A request for N standard video units chained 1→2→...→N is a compact standard "
+    "planner request: set planner.item_count=N and planner.video_dependency=sequential, and let "
+    "the tool create every node and dependency edge. For other exact nodes and dependencies, "
+    "follow the Skill's custom-topology reference and call freezone_prepare_workflow_plan_draft "
+    "once instead; do not route that request through the compact Intent compiler merely because a "
     "production Skill matches. Beat counts, shot counts, episode counts, and other business totals "
     "belong in the compact Intent or standard planner inputs and must not by themselves trigger an "
     "agent-authored Plan. Use a complete WorkflowPlan only when the user explicitly enumerates "
@@ -271,8 +278,13 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "then copy exact user node totals into expected_node_count and expected_node_counts. Every "
     "complete Plan must carry "
     "top-level schema_version plus skill.id and skill.version copied from the selected production "
-    "Skill; generation_answers supplements that Plan and never replaces it. On recipe-backed text "
-    "nodes, never use the reserved input/resource/asset stages, which identify recipe-less user "
+    "Skill; generation_answers supplements that Plan and never replaces it. "
+    "Before authoring or submitting any workflow result, call "
+    "freezone_begin_agent_product_generation and copy its returned operation_id exactly. Never "
+    "invent, abbreviate, or reconstruct an operation_id, and never call a workflow prepare tool "
+    "before that admission succeeds. "
+    "On recipe-backed text nodes, never use the reserved input/resource/asset stages, which "
+    "identify recipe-less user "
     "resources. For episodic short-drama, Beat, "
     "voice-over, or background-music workflows, prefer the short-drama production Skill over the "
     "generic text-to-image-video Skill. After any validation error, never submit a reduced sample, "
@@ -293,8 +305,10 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "Do not use workflow_graph_compile as routine preflight "
     "before the first graph write. After a recovery compile succeeds, immediately submit that exact "
     "corrected Plan with freezone_prepare_workflow_plan_draft instead of stopping at compile success. "
-    "Correct the same complete plan once, then report the blocking error. The "
-    "failure result must come from the current turn: historical failures are diagnostic context, "
+    "Correct the same complete plan once, then report the blocking error. "
+    "Never offer direct canvas commands, standalone node writes, or a user clarification choice "
+    "as a way to bypass WorkflowPlan validation; a user selection cannot authorize that bypass. "
+    "The failure result must come from the current turn: historical failures are diagnostic context, "
     "not proof that the current adapter remains blocked. When the user repeats the create/run "
     "request or asks to retry after a restart, submit the same complete workflow write once in "
     "that turn instead of repeating an old blocking conclusion. The "
@@ -328,7 +342,8 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "required; do not infer that policy from conversation history. When that contract requires a "
     "selection, call freezone_request_user_clarification once for the current request "
     "with generation_media_types listing image and/or video for ordinary media tasks. "
-    "Do not hand-build the generation questions; the tool includes every required field. "
+    "Do not hand-build the generation questions and never include questions in the same call; "
+    "generation clarification is one exclusive server-owned mode that includes every required field. "
     "Interactive-story video segments are different: the approved story production plan "
     "selects each segment's parameters, so do not call generic generation_media_types for "
     "video or ask for one shared video_duration_seconds. Keep each segment's own durationSec. "
@@ -339,7 +354,7 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "workflow_draft_id and workflow_expected_revision to the clarification tool so "
     "it saves the submitted answers into that same draft and returns a new preview. "
     "Image choices are model preference, aspect "
-    "ratio, resolution/quality, and variants per node. Video choices are model or generation mode, aspect "
+    "ratio, resolution/quality, and variants per node. Video clarification choices are model, aspect "
     "ratio, resolution, duration, sound generation, and variants per node. Show the exact live "
     "choices for each relevant field; do not submit a generic recommended preset. Never include "
     "an audio voice-source question in this preliminary "
@@ -353,14 +368,21 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "clarification_frontend_timeout, tell the user the card is still waiting and will reappear "
     "on their next message; when they reply, call the tool again with the same clarification_id "
     "to resume that card instead of building a new one. This rule applies to generation or run requests, including "
-    "run_after_create=true; it does not apply when the user only asks to create empty nodes, connect, "
-    "group, lay out, or edit them without generation. It is an explicit exception to any general "
+    "run_after_create=true. It also applies when run_after_create=false if the user explicitly asks "
+    "to configure image/video node parameters. It does not apply when the user only asks to create "
+    "empty nodes, connect, group, lay out, or edit them without generation parameters. It is an "
+    "explicit exception to any general "
     "instruction not to ask about model parameters, and it applies only to image and video for now. "
     "Store confirmed shared choices in workflow intent.inputs using portable image_model, "
     "image_aspect_ratio, image_resolution, image_quality, image_variants_per_node, video_model, "
     "video_aspect_ratio, video_resolution, video_duration_seconds, video_generate_audio, "
-    "video_generation_mode, and video_variants_per_node keys. When the user names a video "
-    "mode, store it as video_generation_mode and keep every video node's genMode equal to it; "
+    "video_generation_mode, and video_variants_per_node keys. video_generation_mode is a "
+    "workflow Plan/intent input, never a generation_answers question id: pass only the "
+    "clarification tool's returned answers unchanged, without adding that key. For a raw "
+    "Plan, keep plan.inputs.video_generation_mode and every video node's data.genMode "
+    "equal; put per-shot duration in data.durationSec, never data.durationSeconds. "
+    "When the user names a video mode, store it as video_generation_mode and keep every "
+    "video node's genMode equal to it; "
     "imageToVideo (whole-picture image reference) and firstFrame (locked first frame) are "
     "different modes, never substitute one for the other. A node genMode without a shared "
     "video_generation_mode blocks the draft. If the selected model does not "
@@ -369,7 +391,8 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "workflow deliverable or node counts and must never be copied to a node's data.count. If a "
     "canvas write returns code=generation_parameters_required, never retry unchanged. Pass "
     "the returned required_choices as generation_required_choices to "
-    "freezone_request_user_clarification, including confirmed model choices in answers "
+    "freezone_request_user_clarification; omit generation_media_types on that retry "
+    "because the two modes are mutually exclusive. Include confirmed model choices in answers "
     "so dependent options stay model-specific and the server can offer a recommendation "
     "from the same catalog entry. The clarification result returns node_data keyed by "
     "node type with the exact data fields (for example node_data.imageGenNode.aspectRatio); "
@@ -432,7 +455,7 @@ _CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS = (
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
 _CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v4"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v30"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v31"
 
 
 def _codex_developer_instructions(tool_mode: str | None) -> str:
@@ -691,7 +714,9 @@ Canvas write contract:
   references/custom-topology.md and call freezone_prepare_workflow_plan_draft once with one complete
   freezone_workflow_plan.v1. Exact means the user names the nodes and their dependency order; do not
   route it through the normal draft flow or compact Intent compiler merely because a production
-  Skill matches. The Plan must include top-level schema_version plus skill.id and skill.version
+  Skill matches. Exception: N standard video units chained 1→2→...→N use a compact Intent with
+  planner.item_count=N and planner.video_dependency=sequential; the deterministic planner creates
+  the nodes and execution-only dependency_for edges. The Plan must include top-level schema_version plus skill.id and skill.version
   copied from the selected production Skill; generation_answers supplements the complete Plan and
   never replaces it. Recipe-backed text nodes must not use the reserved input/resource/asset stages,
   which identify recipe-less user resources. Beat counts, shot counts, episode counts, and other
@@ -722,6 +747,11 @@ Canvas write contract:
   or resume an existing workflow, call freezone_run_workflow directly even when it contains only
   one executable node; do not read node detail before starting it and never substitute
   freezone_run_node_action.
+- If the user asks to generate content through a named Recipe on one existing standalone node,
+  call freezone_run_node_action with the node's catalog action; never substitute freezone_update_node_data,
+  even if the requested content could be written directly.
+- If the user asks only to edit fields on one existing standalone node without generating, use
+  freezone_update_node_data; do not call freezone_run_node_action.
 - `dramaclaw-workflows` is the Agent Skill package name, not a Workflow catalog `skill_id`. Never
   pass it to workflow_skill_get/freezone_get_workflow_skill or use it as intent.skill_id. Select the
   matching production Workflow Skill returned by the catalog, such as text-to-image-video for a

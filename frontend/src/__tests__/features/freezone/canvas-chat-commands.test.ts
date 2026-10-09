@@ -3787,6 +3787,48 @@ describe("canvas chat commands", () => {
     expect(state.pendingFocusNodeId).toBe(existingId);
   });
 
+  it("focuses the outer group after selecting newly grouped workflow nodes", () => {
+    const envelopes = extractCanvasChatCommandEnvelopes([
+      {
+        schema_version: CANVAS_CHAT_COMMANDS_SCHEMA_VERSION,
+        commands: [
+          {
+            type: "create_node",
+            client_id: "first",
+            node_type: CANVAS_NODE_TYPES.textAnnotation,
+            position: { x: 80, y: 80 },
+          },
+          {
+            type: "create_node",
+            client_id: "second",
+            node_type: CANVAS_NODE_TYPES.imageGen,
+            position: { x: 420, y: 80 },
+          },
+          {
+            type: "group_nodes",
+            node_ids: ["first", "second"],
+            label: "Generated workflow",
+          },
+          {
+            type: "select_nodes",
+            node_ids: ["first", "second"],
+            focus: true,
+          },
+        ],
+      },
+    ]);
+
+    const result = applyCanvasChatCommands(envelopes);
+    const state = useCanvasStore.getState();
+    const firstId = result.createdNodeIds[0];
+    const first = state.nodes.find((node) => node.id === firstId);
+
+    expect(result.errors).toEqual([]);
+    expect(first?.parentId).toBeTruthy();
+    expect(state.pendingFocusNodeId).toBe(first?.parentId);
+    expect(state.nodes.find((node) => node.id === first?.parentId)?.parentId).toBeUndefined();
+  });
+
   it("describes node action capabilities for model context", () => {
     const nodeId = useCanvasStore.getState().addNode(
       CANVAS_NODE_TYPES.imageGen,
@@ -4203,7 +4245,7 @@ describe("canvas chat commands", () => {
     );
   });
 
-  it("keeps canvas routing lightweight and includes summary for ordinary Freezone turns", () => {
+  it("keeps canvas routing lightweight and includes summaries only for topology-aware turns", () => {
     const store = useCanvasStore.getState();
     const nodeId = store.addNode(
       CANVAS_NODE_TYPES.imageGen,
@@ -4240,8 +4282,17 @@ describe("canvas chat commands", () => {
     expect(withSummary).toContain("[SUPERTALE_CANVAS_ONTOLOGY_SUMMARY]");
     expect(withSummary).toContain("canvas_ontology_summary.v1");
     expect(shouldIncludeCanvasSummary("基于当前画布搭一个流程")).toBe(true);
-    expect(shouldIncludeCanvasSummary("加一个图片节点")).toBe(true);
-    expect(shouldIncludeCanvasSummary("我想做个公益短片没思路")).toBe(true);
+    expect(shouldIncludeCanvasSummary("整理当前画布的节点布局")).toBe(true);
+    expect(shouldIncludeCanvasSummary("修改现有工作流的节点依赖")).toBe(true);
+    expect(shouldIncludeCanvasSummary("加一个图片节点")).toBe(false);
+    expect(shouldIncludeCanvasSummary("我想做个公益短片没思路")).toBe(false);
+    expect(shouldIncludeCanvasSummary("运行当前工作流")).toBe(false);
+    expect(shouldIncludeCanvasSummary("清空当前画布")).toBe(false);
+    expect(
+      shouldIncludeCanvasSummary("基于当前画布搭一个流程", {
+        hasCanvasContent: false,
+      }),
+    ).toBe(false);
     expect(
       shouldIncludeCanvasSummary("重新选择图片模型", {
         hasFocusedNodeContext: true,

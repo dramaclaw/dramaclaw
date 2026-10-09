@@ -1737,7 +1737,8 @@ function moveNodes(
 
 function selectNodes(rawNodeIds: string[], clientIdMap: Map<string, string>, focus = true): void {
   const store = useCanvasStore.getState();
-  const existingNodeIds = new Set(store.nodes.map((node) => node.id));
+  const nodeById = new Map(store.nodes.map((node) => [node.id, node] as const));
+  const existingNodeIds = new Set(nodeById.keys());
   const nodeIds = rawNodeIds.map((nodeId) => resolveNodeId(nodeId, clientIdMap));
   for (const nodeId of nodeIds) {
     if (!existingNodeIds.has(nodeId)) throw new Error(`node not found: ${nodeId}`);
@@ -1753,7 +1754,19 @@ function selectNodes(rawNodeIds: string[], clientIdMap: Map<string, string>, foc
   );
   store.setSelectedNode(nodeIds.length === 1 ? nodeIds[0] ?? null : null);
   if (focus && nodeIds[0]) {
-    store.requestFocusNode(nodeIds[0]);
+    // Group members store positions relative to their parent. Immediately after
+    // a workflow batch, React Flow may not have mounted the child yet, so its
+    // absolute position is unavailable and focusing it can pan to empty space.
+    // Focus the outermost group instead; its position is always canvas-absolute.
+    let focusNodeId = nodeIds[0];
+    const visited = new Set<string>();
+    while (!visited.has(focusNodeId)) {
+      visited.add(focusNodeId);
+      const parentId = nodeById.get(focusNodeId)?.parentId;
+      if (!parentId || !nodeById.has(parentId)) break;
+      focusNodeId = parentId;
+    }
+    store.requestFocusNode(focusNodeId);
   }
 }
 

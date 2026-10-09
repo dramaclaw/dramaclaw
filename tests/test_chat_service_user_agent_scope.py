@@ -1334,6 +1334,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "call the selected tool directly" in developer_instructions
         assert "custom-topology reference" in developer_instructions
         assert "top-level schema_version plus skill.id and skill.version" in developer_instructions
+        assert "Never invent, abbreviate, or reconstruct an operation_id" in developer_instructions
         assert "reserved input/resource/asset stages" in developer_instructions
         assert "business totals belong in the compact Intent" in developer_instructions
         assert (
@@ -1348,6 +1349,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
         assert "must not use dependency_for" in developer_instructions
         assert "expected_node_count" in developer_instructions
         assert "placeholder graph such as A/B" in developer_instructions
+        assert "a user selection cannot authorize that bypass" in developer_instructions
         assert "short-drama production Skill" in developer_instructions
         assert "not a Workflow catalog skill_id" in developer_instructions
         assert (
@@ -1355,6 +1357,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
             in developer_instructions
         )
         assert "call freezone_request_user_clarification once" in developer_instructions
+        assert "never include questions in the same call" in developer_instructions
         assert "applies only to image and video for now" in developer_instructions
         assert "run_after_create=true" in developer_instructions
         assert "Every workflow prepare call must explicitly pass run_after_create" in (
@@ -1364,6 +1367,7 @@ async def test_codex_stream_passes_conversation_scope_to_thread_builder(
             developer_instructions
         )
         assert "video_generation_mode" in developer_instructions
+        assert "omit generation_media_types" in developer_instructions
     else:
         assert "[FREEZONE_CANVAS_ASSISTANT]" not in captured["prompt"]
         assert "scope-filtered concrete MCP tools" in (
@@ -1815,6 +1819,26 @@ async def test_codex_stage_confirmation_is_bound_to_existing_story_and_user_inte
         project_state_dir=state_dir,
     )
     assert thread_id == (None if blocked else "codex-thread")
+
+
+def test_recipe_generation_on_an_existing_standalone_node_routes_to_node_action():
+    for instructions in (
+        chat_service._codex_developer_instructions("freezone_canvas"),
+        chat_service._FREEZONE_CANVAS_ASSISTANT_INSTRUCTIONS,
+    ):
+        assert "generate content through a named Recipe" in instructions
+        assert "freezone_run_node_action" in instructions
+        assert "never substitute freezone_update_node_data" in instructions
+
+
+def test_explicit_standalone_node_edit_does_not_trigger_recipe_generation():
+    for instructions in (
+        chat_service._codex_developer_instructions("freezone_canvas"),
+        chat_service._FREEZONE_CANVAS_ASSISTANT_INSTRUCTIONS,
+    ):
+        assert "edit fields on one existing standalone node without generating" in instructions
+        assert "freezone_update_node_data" in instructions
+        assert "do not call freezone_run_node_action" in instructions
 
 
 def test_codex_freezone_write_result_error_preserves_canvas_validation_reason():

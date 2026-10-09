@@ -1,3 +1,4 @@
+from novelvideo.freezone.agent_workflows.drafts import public_workflow_draft
 from novelvideo.freezone.workflow_drafts import (
     _plan_preview,
     bind_workflow_draft_task,
@@ -62,6 +63,12 @@ def test_plan_preview_explains_ordered_recipe_pipeline():
             ],
         }
     ]
+
+    compact = public_workflow_draft(
+        {"preview": preview}, compact_preview=True
+    )["preview"]
+    assert compact["nodes"] == preview["nodes"]
+    assert compact["recipe_pipelines"] == preview["recipe_pipelines"]
 
 
 def test_late_timeout_result_does_not_downgrade_confirmed_draft(tmp_path):

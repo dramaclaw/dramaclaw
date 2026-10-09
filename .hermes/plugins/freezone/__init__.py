@@ -188,6 +188,12 @@ except ValueError:
     DEFAULT_TIMEOUT_SECONDS = 120
 
 _PENDING_SKILL_STUDIO_DRAFTS: dict[str, dict[str, Any]] = {}
+# A generation clarification and its following draft call are separate MCP tool
+# calls. Keep the submitted receipt scoped to the current turn so a planner that
+# accidentally omits ``generation_answers`` cannot replace the user's choices
+# with values copied from the original prompt. The turn id prevents answers from
+# leaking into a later request on the same canvas.
+_PENDING_GENERATION_ANSWERS: dict[tuple[str, str, str], dict[str, Any]] = {}
 # A revision conflict is a user-authorization boundary, not a retryable canvas
 # write error. Keep the canvas blocked until the user explicitly confirms the
 # current draft revision. This process-local guard covers the follow-up tool
@@ -197,6 +203,61 @@ _SKILL_STUDIO_DEFAULT_SKILL_SCHEMA_VERSION = "dramaclaw.workflow-skill.v1"
 _SKILL_STUDIO_DEFAULT_SKILL_VERSION = "1.0.0"
 
 _SKILL_STUDIO_REAL_TOOL_CALL_INSTRUCTION = "不要用普通文本回复，不要把工具调用、参数块或代码块写进聊天内容；请直接调用对应工具。"
+
+
+def _generation_answer_scope(
+    project: str | None, canvas: str | None
+) -> tuple[str, str, str] | None:
+    project_id = str(project or "").strip()
+    canvas_id = str(canvas or "").strip()
+    turn_id = os.environ.get("DRAMACLAW_TURN_ID", "").strip()
+    if not project_id or not canvas_id or not turn_id:
+        return None
+    return project_id, canvas_id, turn_id
+
+
+def _remember_generation_answers(
+    project: str | None, canvas: str | None, answers: Any
+) -> None:
+    scope = _generation_answer_scope(project, canvas)
+    if scope is None or not isinstance(answers, dict) or not answers:
+        return
+    remembered = _PENDING_GENERATION_ANSWERS.get(scope)
+    merged = (
+        {**remembered, **answers}
+        if isinstance(remembered, dict)
+        else answers
+    )
+    _PENDING_GENERATION_ANSWERS[scope] = _clone_json(merged)
+    while len(_PENDING_GENERATION_ANSWERS) > 100:
+        _PENDING_GENERATION_ANSWERS.pop(next(iter(_PENDING_GENERATION_ANSWERS)))
+
+
+def _remembered_generation_answers(
+    project: str | None, canvas: str | None
+) -> dict[str, Any] | None:
+    scope = _generation_answer_scope(project, canvas)
+    if scope is None:
+        return None
+    answers = _PENDING_GENERATION_ANSWERS.get(scope)
+    return _clone_json(answers) if isinstance(answers, dict) else None
+
+
+def _effective_generation_answers(
+    explicit: Any, remembered: dict[str, Any] | None
+) -> Any:
+    """Overlay a follow-up choice without dropping the earlier parameter card."""
+    if explicit is None:
+        return remembered
+    if remembered and isinstance(explicit, dict) and "answers" not in explicit:
+        return {**remembered, **explicit}
+    return explicit
+
+
+def _forget_generation_answers(project: str | None, canvas: str | None) -> None:
+    scope = _generation_answer_scope(project, canvas)
+    if scope is not None:
+        _PENDING_GENERATION_ANSWERS.pop(scope, None)
 
 
 def _revision_conflict_scope(project: str | None, canvas: str | None) -> tuple[str, str] | None:
@@ -904,6 +965,61 @@ def _resume_clarification(
     return str(found["key"]), found["event"], result if isinstance(result, dict) else None
 
 
+def _workflow_bypass_clarification_error(
+    args: dict[str, Any], questions: list[Any]
+) -> dict[str, Any] | None:
+    """Reject a user-facing choice that proposes bypassing WorkflowPlan validation."""
+
+    def text_values(value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, dict):
+            return [text for item in value.values() for text in text_values(item)]
+        if isinstance(value, list):
+            return [text for item in value for text in text_values(item)]
+        return []
+
+    text = " ".join(
+        text_values(
+            {
+                "title": args.get("title"),
+                "description": args.get("description"),
+                "questions": questions,
+            }
+        )
+    ).lower()
+    workflow_markers = ("workflow", "工作流", "workflowplan", "workflow plan")
+    bypass_markers = ("bypass", "绕过", "不经过", "跳过", "避开")
+    direct_canvas_markers = (
+        "direct canvas",
+        "canvas command",
+        "freezone_emit_canvas_command",
+        "直接在画布",
+        "直接创建节点",
+        "直接画布",
+    )
+    if not (
+        any(marker in text for marker in workflow_markers)
+        and any(marker in text for marker in bypass_markers)
+        and any(marker in text for marker in direct_canvas_markers)
+    ):
+        return None
+    return {
+        "ok": False,
+        "status": "workflow_clarification_bypass_rejected",
+        "code": "workflow_clarification_bypass_rejected",
+        "error": "A clarification option cannot authorize bypassing WorkflowPlan validation.",
+        "retryable": False,
+        "next_action": "correct_same_workflow_plan",
+        "agent_instruction": (
+            "Do not show this clarification card and do not call canvas command or standalone "
+            "node tools. Correct the same complete WorkflowPlan by adding every required Skill "
+            "stage and consuming edge. If that conflicts with the user's exact node-only "
+            "constraint, stop and report the conflict; never offer a direct-canvas bypass."
+        ),
+    }
+
+
 def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     project = (
         str(
@@ -935,15 +1051,21 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     generation_media_types = args.get("generation_media_types")
     generation_required_choices = args.get("generation_required_choices")
     if generation_media_types is not None or generation_required_choices is not None:
-        if questions or (
-            generation_media_types is not None
-            and generation_required_choices is not None
-        ):
+        if generation_media_types is not None and generation_required_choices is not None:
             return tool_result({
                 "ok": False,
                 "status": "generation_clarification_args_invalid",
-                "error": "Pass exactly one generation mode without questions",
+                "error": (
+                    "generation_media_types and generation_required_choices are mutually "
+                    "exclusive; when retrying with generation_required_choices, "
+                    "omit generation_media_types"
+                ),
             })
+        # Generation cards are server-owned: their canonical fields and live
+        # options must not be mixed with agent-authored business questions. Be
+        # tolerant when an agent sends both, because rejecting the whole call
+        # strands the workflow before the user can select required parameters.
+        questions = []
         if generation_required_choices is not None:
             if not isinstance(generation_required_choices, dict) or not generation_required_choices:
                 return tool_result({
@@ -972,7 +1094,18 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
             )
             for media, node_type in (("image", "imageGenNode"), ("video", "videoNode"))
         }
+        normalized_required_choices: dict[str, Any] = {}
         for media, fields in requested.items():
+            if media in generation_fields and isinstance(fields, list):
+                # Accept the canonical question ids that tool errors report
+                # (``video_duration_seconds``) as well as the bare field names.
+                fields = [
+                    "count" if field == "variants_per_node" else field
+                    for field in (
+                        field.removeprefix(f"{media}_") if isinstance(field, str) else field
+                        for field in fields
+                    )
+                ]
             if media not in generation_fields or (
                 fields is not None
                 and (
@@ -985,12 +1118,31 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
                     "ok": False,
                     "status": "generation_clarification_args_invalid",
                     "error": "Unsupported generation media type or required choice",
+                    "unsupported_required_choices": {
+                        media: (
+                            [
+                                field for field in fields
+                                if field not in generation_fields.get(media, ())
+                            ]
+                            if isinstance(fields, list) and media in generation_fields
+                            else fields
+                        )
+                    },
+                    "allowed_required_choices": {
+                        allowed_media: list(allowed_fields)
+                        for allowed_media, allowed_fields in generation_fields.items()
+                    },
                 })
+            normalized_required_choices[media] = fields
             chosen_fields = fields if fields is not None else generation_fields[media]
             questions.extend(
                 {"id": f"{media}_{'variants_per_node' if field == 'count' else field}"}
                 for field in chosen_fields
             )
+        if generation_required_choices is not None:
+            # The model-dependency check below must see the normalized field
+            # names, not the canonical ids the caller may have passed.
+            generation_required_choices = normalized_required_choices
         args = {**args, "allow_skip": False}
     generation_question_aliases = {
         "image_count": "image_variants_per_node",
@@ -1009,6 +1161,42 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
         "video_generate_audio": "视频声音",
         "video_variants_per_node": "视频生成数量",
     }
+    answers = args.get("answers")
+    if not isinstance(answers, dict):
+        answers = {}
+    # Model-dependent options cannot be resolved until the same card has a
+    # model selection. Preflight often reports only the dependent field, so
+    # add the model question unless the caller carried a confirmed answer.
+    if isinstance(generation_required_choices, dict):
+        dependent_fields = {
+            "image": {"aspect_ratio", "resolution", "quality"},
+            "video": {"aspect_ratio", "resolution", "duration_seconds", "generate_audio"},
+        }
+        for media in ("image", "video"):
+            fields = generation_required_choices.get(media)
+            model_id = f"{media}_model"
+            question_ids = {
+                str(question.get("id") or "").strip().lower()
+                for question in questions
+                if isinstance(question, dict)
+            }
+            if (
+                isinstance(fields, list)
+                and any(field in dependent_fields[media] for field in fields)
+                and model_id not in question_ids
+                and model_id not in answers
+                and not str(args.get("workflow_draft_id") or "").strip()
+            ):
+                insert_at = next(
+                    (
+                        index
+                        for index, question in enumerate(questions)
+                        if isinstance(question, dict)
+                        and str(question.get("id") or "").startswith(f"{media}_")
+                    ),
+                    len(questions),
+                )
+                questions.insert(insert_at, {"id": model_id})
     server_managed_question_ids = {"thinking_level"}
     questions = [
         question
@@ -1054,16 +1242,17 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
             }
         )
     questions = normalized_questions
-    answers = args.get("answers")
-    if not isinstance(answers, dict):
-        answers = {}
+    bypass_error = _workflow_bypass_clarification_error(args, questions)
+    if bypass_error is not None:
+        return tool_result(bypass_error)
     generation_preferences = args.get("generation_preferences")
     if generation_preferences is None:
         generation_preferences = {}
     if not isinstance(generation_preferences, dict) or any(
         key not in {
-            "image_aspect_ratio", "image_resolution", "image_quality",
+            "image_model", "image_aspect_ratio", "image_resolution", "image_quality",
             "image_variants_per_node", "video_aspect_ratio", "video_resolution",
+            "video_model",
             "video_duration_seconds", "video_generate_audio", "video_variants_per_node",
             "video_shot_durations_seconds", "delivery_resolution",
         }
@@ -1072,18 +1261,19 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
         return tool_result({
             "ok": False, "status": "generation_clarification_args_invalid",
             "error": (
-                "generation_preferences supports image/video aspect ratio, resolution, "
+                "generation_preferences supports image/video model, aspect ratio, resolution, "
                 "quality, variants, duration, audio, per-shot durations, and delivery resolution"
             ),
         })
     scalar_text_fields = (
-        "image_aspect_ratio", "image_resolution", "image_quality",
-        "video_aspect_ratio", "video_resolution", "delivery_resolution",
+        "image_model", "image_aspect_ratio", "image_resolution", "image_quality",
+        "video_model", "video_aspect_ratio", "video_resolution", "delivery_resolution",
     )
     if any(
         field in generation_preferences
         and (not isinstance(generation_preferences[field], str)
-             or not generation_preferences[field].strip())
+             or not generation_preferences[field].strip()
+             or len(generation_preferences[field].strip()) > 160)
         for field in scalar_text_fields
     ) or (
         "video_generate_audio" in generation_preferences
@@ -1316,6 +1506,8 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
         if finalized is not None:
             response = finalized
             result = tool_result(finalized)
+            if finalized.get("ok") is True:
+                _remember_generation_answers(project, canvas, finalized.get("answers"))
     if not draft_id:
         return result
     if (
@@ -3722,7 +3914,12 @@ def _generation_clarification_recommendations(
             if target_type == node_type
         }
         if f"{name}_model" in asked:
-            data["model"] = "recommended"
+            preferred_model = preferences.get(f"{name}_model")
+            data["model"] = (
+                preferred_model.strip()
+                if isinstance(preferred_model, str) and preferred_model.strip()
+                else "recommended"
+            )
         elif not (isinstance(data.get("model"), str) and data["model"].strip()):
             return {}
         for question_id in asked:
@@ -4227,12 +4424,142 @@ def _workflow_preflight_failure(
     clarification = _preflight_clarification_result(preflight, **extra)
     if clarification is not None:
         return clarification
-    return {
+    blocker = preflight_failure_blocker(preflight)
+    result = {
         "ok": False,
         "status": "workflow_preflight_failed",
-        "error": preflight_failure_blocker(preflight)["message"],
+        "error": blocker["message"],
         "preflight": preflight,
         **extra,
+    }
+    if blocker.get("code") in {"skill_stage_missing", "skill_stage_unused"}:
+        result.update(
+            code=blocker["code"],
+            retryable=True,
+            next_action="correct_same_workflow_plan",
+            agent_instruction=(
+                "Correct this same complete WorkflowPlan exactly once by adding or connecting "
+                "the required Skill stage with its allowed Recipe and consuming edges, then "
+                "retry the WorkflowPlan draft tool. Do not offer or call direct canvas commands, "
+                "freezone_emit_canvas_command, or standalone node tools as a fallback. A user "
+                "selection cannot authorize bypassing WorkflowPlan validation. If the required "
+                "stage conflicts with an explicit node-only constraint, stop and report that "
+                "conflict instead of asking how to bypass it."
+            ),
+        )
+    return result
+
+
+_VIDEO_MODE_CATALOG_VALUES = {
+    "firstFrame": "first_frame",
+    "imageToVideo": "image_to_video",
+    "imageReference": "image_reference",
+    "allReference": "all_reference",
+}
+_VIDEO_MODE_LABELS = {
+    "firstFrame": "首帧生成视频",
+    "imageToVideo": "图片生成视频",
+    "imageReference": "图片参考生成视频",
+    "allReference": "全参考生成视频",
+}
+
+
+def _workflow_generation_mode_clarification(
+    preflight: dict[str, Any], compiled: dict[str, Any], *, project_id: str
+) -> dict[str, Any] | None:
+    """Turn the known image-stage/text-to-video conflict into one safe choice."""
+    blockers = preflight.get("blockers")
+    if not isinstance(blockers, list) or not blockers:
+        return None
+
+    def allowed_blocker(blocker: Any) -> bool:
+        return isinstance(blocker, dict) and (
+            (
+                blocker.get("code") == "skill_stage_unused"
+                and blocker.get("path") == "plan.stages.images.feeds.video"
+            )
+            or (
+                blocker.get("code") == "model_capability_unsupported"
+                and str(blocker.get("path") or "").endswith(".genMode")
+            )
+        )
+
+    if not all(allowed_blocker(blocker) for blocker in blockers):
+        return None
+    if compiled.get("skill_id") != "text-to-image-video":
+        return None
+    nodes = (compiled.get("plan") or {}).get("nodes") or []
+    video_nodes = [
+        node for node in nodes
+        if isinstance(node, dict) and node.get("node_type") == "videoNode"
+    ]
+    if not video_nodes or any(
+        str((node.get("data") or {}).get("genMode") or "textToVideo") != "textToVideo"
+        for node in video_nodes
+    ):
+        return None
+    model_ids = {
+        str((node.get("data") or {}).get("model") or "").strip()
+        for node in video_nodes
+    }
+    if not model_ids or "" in model_ids:
+        return None
+    try:
+        response = _request(
+            "GET", f"/projects/{quote(project_id, safe='')}/freezone/video/models"
+        )
+    except Exception:  # noqa: BLE001 - fall through to the original preflight error
+        return None
+    catalog = response.get("data") if response.get("ok") is not False else None
+    if not isinstance(catalog, list):
+        return None
+    from novelvideo.freezone.workflow_preflight import _catalog_entry_for_model
+
+    supported: set[str] | None = None
+    for model_id in model_ids:
+        entry = _catalog_entry_for_model(
+            [item for item in catalog if isinstance(item, dict)], model_id
+        )
+        if entry is None or not isinstance(entry.get("supportedModes"), list):
+            return None
+        model_modes = {
+            portable for portable, catalog_value in _VIDEO_MODE_CATALOG_VALUES.items()
+            if catalog_value in entry["supportedModes"]
+        }
+        supported = model_modes if supported is None else supported & model_modes
+    preference_order = ("imageReference", "firstFrame", "imageToVideo", "allReference")
+    compatible = [mode for mode in preference_order if mode in (supported or set())]
+    if not compatible:
+        return None
+    options = [
+        {
+            "id": mode,
+            "label": _VIDEO_MODE_LABELS[mode],
+            "description": "让图片节点产物作为视频节点的生成输入。",
+        }
+        for mode in compatible
+    ]
+    return {
+        "ok": True,
+        "status": "generation_mode_clarification_required",
+        "code": "generation_mode_conflict",
+        "draft_created": False,
+        "preflight": preflight,
+        "required_choice": "video_generation_mode",
+        "question": {
+            "id": "video_generation_mode",
+            "title": "确认视频生成方式",
+            "prompt": "当前技能要求图片节点实际输入视频节点，请选择兼容的视频生成方式。",
+            "mode": "single",
+            "options": options,
+        },
+        "agent_instruction": (
+            "This is a successful pre-draft clarification outcome, not a failed draft. "
+            "Call freezone_request_user_clarification exactly once with the returned question, "
+            "then retry the same draft operation once with generation_answers containing the "
+            "submitted video_generation_mode. Reuse the same operation_id. Do not change the "
+            "Skill, model, node count, or other confirmed generation values."
+        ),
     }
 
 
@@ -5548,17 +5875,28 @@ def _emit_canvas_commands(
     )
     story_candidate = _story_image_reference_batch_candidate(commands) if handwritten_batch else False
     if handwritten_batch and not story_candidate:
-        return _emit_command_error(
-            project,
-            canvas,
-            "wrong_tool_dynamic_workflow",
-            (
-                "This looks like a workflow being hand-written as canvas commands. "
-                "Do not use canvas commands to bypass dynamic WorkflowPlan validation. Select "
-                "one native Hermes Skill, load it with freezone_get_workflow_skill, "
-                "author a complete freezone_workflow_plan.v1 with explicit Recipe ids, then call "
-                "freezone_prepare_workflow_plan_draft(plan=...)."
-            ),
+        return tool_result(
+            {
+                "ok": False,
+                "status": "wrong_tool_dynamic_workflow",
+                "code": "wrong_tool_dynamic_workflow",
+                "error": (
+                    "This looks like a workflow being hand-written as canvas commands. "
+                    "Do not use canvas commands to bypass dynamic WorkflowPlan validation. Select "
+                    "one native Hermes Skill, load it with freezone_get_workflow_skill, "
+                    "author a complete freezone_workflow_plan.v1 with explicit Recipe ids, then call "
+                    "freezone_prepare_workflow_plan_draft(plan=...)."
+                ),
+                "retryable": False,
+                "next_action": "correct_same_workflow_plan",
+                "agent_instruction": (
+                    "Do not ask the user to approve this bypass and do not split it into "
+                    "standalone node writes. Return to the same complete WorkflowPlan, add every "
+                    "required Skill stage and consuming edge, and retry that plan once; if it "
+                    "conflicts with the user's exact topology, report the conflict."
+                ),
+                **_scope_meta(project or "", canvas),
+            }
         )
     project, canvas, scope_error = _resolve_canvas_scope_for_write(project, canvas)
     if scope_error:
@@ -5814,6 +6152,72 @@ def _handle_get_workflow_skill(args: dict[str, Any], **_: Any) -> str:
     )
 
 
+_AGENT_PRODUCT_OPERATION_ID_PATTERN = re.compile(r"^agent_product_[0-9a-f]{32}$")
+
+
+def _workflow_plan_operation_admission_error(
+    args: dict[str, Any], project_id: str, canvas_id: str
+) -> dict[str, Any] | None:
+    """Reject missing, invented, stale, or cross-canvas workflow operations early."""
+    if not _available():
+        return None
+    operation_id = str(args.get("operation_id") or "").strip()
+    instruction = (
+        "Call freezone_begin_agent_product_generation first and copy its exact operation_id "
+        "into the workflow draft call. Never invent or reconstruct an operation_id."
+    )
+    if not operation_id or not _AGENT_PRODUCT_OPERATION_ID_PATTERN.fullmatch(operation_id):
+        return {
+            "ok": False,
+            "status": "workflow_result_admission_required",
+            "code": "workflow_result_admission_required",
+            "error": "A server-issued workflow_result operation_id is required.",
+            "retryable": False,
+            "next_action": "begin_workflow_result_generation",
+            "agent_instruction": instruction,
+        }
+    response = _request(
+        "GET", _agent_product_operation_api_path(project_id, operation_id)
+    )
+    operation = (
+        response.get("data") if isinstance(response.get("data"), dict) else None
+    )
+    if response.get("ok") is not True or operation is None:
+        return {
+            "ok": False,
+            "status": "workflow_result_admission_required",
+            "code": "workflow_result_admission_required",
+            "error": "The workflow_result operation_id was not admitted by the server.",
+            "retryable": False,
+            "next_action": "begin_workflow_result_generation",
+            "agent_instruction": instruction,
+        }
+    if (
+        operation.get("product_kind") != "workflow_result"
+        or str(operation.get("canvas_id") or "").strip() != canvas_id
+    ):
+        return {
+            "ok": False,
+            "status": "workflow_result_operation_scope_mismatch",
+            "code": "workflow_result_operation_scope_mismatch",
+            "error": "The admitted workflow_result operation does not belong to this canvas.",
+            "retryable": False,
+            "next_action": "begin_workflow_result_generation",
+            "agent_instruction": instruction,
+        }
+    if operation.get("status") in {"failed", "cancelled"}:
+        return {
+            "ok": False,
+            "status": "workflow_result_generation_attempt_required",
+            "code": "workflow_result_generation_attempt_required",
+            "error": "The workflow_result operation is already terminal.",
+            "retryable": False,
+            "next_action": "begin_workflow_result_generation",
+            "agent_instruction": instruction,
+        }
+    return None
+
+
 def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
     if build_workflow_graph_commands is None:
         return tool_error(
@@ -5842,10 +6246,24 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
             f"Import error: {_JSON_WORKFLOW_CATALOG_IMPORT_ERROR}"
         )
     source_plan = args["plan"]
-    if "generation_answers" in args:
+    pending_answers = _remembered_generation_answers(
+        args.get("project_id") or args.get("project") or _default_project_id(),
+        args.get("canvas_id") or _default_canvas_id(),
+    )
+    generation_answers = _effective_generation_answers(
+        args.get("generation_answers"), pending_answers
+    )
+    if (
+        generation_answers is not None
+        or _workflow_plan_has_recipe_aliases(source_plan)
+        or _workflow_plan_has_unambiguous_edge_aliases(source_plan)
+    ):
         source_plan = _clone_json(source_plan)
+        _normalize_workflow_plan_recipe_aliases(source_plan)
+        _normalize_workflow_plan_edge_aliases(source_plan)
+    if generation_answers is not None:
         choices, answers_error = _generation_choices_from_answers(
-            args["generation_answers"], plan=source_plan
+            generation_answers, plan=source_plan
         )
         if answers_error is not None:
             return tool_result(answers_error)
@@ -5864,12 +6282,20 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
     if scope_error:
         return tool_result(scope_error)
     assert project is not None and canvas is not None
+    admission_error = _workflow_plan_operation_admission_error(args, project, canvas)
+    if admission_error is not None:
+        return tool_result(admission_error)
     preflight = _workflow_runtime_preflight(
         validated,
         project_id=project,
     )
     validated["preflight"] = preflight
     if preflight["blockers"]:
+        mode_clarification = _workflow_generation_mode_clarification(
+            preflight, validated, project_id=project
+        )
+        if mode_clarification is not None:
+            return tool_result(mode_clarification)
         return tool_result(_workflow_preflight_failure(preflight))
     run_after_create = _run_after_create_arg(args)
     operation_id = str(args.get("operation_id") or "").strip()
@@ -5906,7 +6332,9 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
                 "validation error recurs without new information.",
             )
         return tool_result(error)
-    result = public_workflow_draft(payload)
+    _forget_generation_answers(project, canvas)
+    result = public_workflow_draft(payload, compact_preview=True)
+    result["next_action"] = "review_and_confirm"
     planner = validated.get("planner") if isinstance(validated.get("planner"), dict) else {}
     if planner.get("selected_by") == "template_isomorphic":
         preview_instruction = (
@@ -5920,7 +6348,8 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
         )
     result["agent_instruction"] = (
         preview_instruction
-        + "Do not mention credits, billing, pricing, or editions. "
+        + "Do not call freezone_get_workflow: this result is the durable draft receipt. "
+        "Do not mention credits, billing, pricing, or editions. "
         "Wait for user confirmation, then call freezone_confirm_workflow_draft with the exact "
         "draft_id and revision. To change the topology, prepare a new complete Plan draft; never "
         "fall back to direct canvas commands."
@@ -5967,7 +6396,14 @@ def _delivered_workflow_draft_for_operation(
     )
     if payload is None:
         return None
-    return public_workflow_draft(payload)
+    result = public_workflow_draft(payload, compact_preview=True)
+    result["next_action"] = "review_and_confirm"
+    result["agent_instruction"] = (
+        "Reuse this durable draft receipt. Do not prepare a replacement draft or call "
+        "freezone_get_workflow. Present the compact preview, then confirm with the exact "
+        "draft_id and revision only when authorized."
+    )
+    return result
 
 
 def _workflow_draft_dependencies_available() -> bool:
@@ -6729,9 +7165,13 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
                 ),
             }
         )
-    if "generation_answers" in args:
+    generation_answers = _effective_generation_answers(
+        args.get("generation_answers"),
+        _remembered_generation_answers(project_id, canvas_id),
+    )
+    if generation_answers is not None:
         choices, answers_error = _generation_choices_from_answers(
-            args["generation_answers"]
+            generation_answers
         )
         if answers_error is not None:
             return tool_result(answers_error)
@@ -6747,6 +7187,11 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     preflight = _workflow_runtime_preflight(compiled, project_id=project_id)
     compiled["preflight"] = preflight
     if preflight["blockers"]:
+        mode_clarification = _workflow_generation_mode_clarification(
+            preflight, compiled, project_id=project_id
+        )
+        if mode_clarification is not None:
+            return tool_result(mode_clarification)
         return tool_result(_workflow_preflight_failure(preflight))
     run_after_create = _run_after_create_arg(args)
     operation_id = str(args.get("operation_id") or "").strip()
@@ -6773,10 +7218,13 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     )
     if payload is None:
         return tool_result(error)
-    result = public_workflow_draft(payload)
+    _forget_generation_answers(project_id, canvas_id)
+    result = public_workflow_draft(payload, compact_preview=True)
+    result["next_action"] = "review_and_confirm"
     result["agent_instruction"] = (
-        "Present the exact preview in product language, including each node's "
-        "preview.recipe_pipelines order as 主 Recipe → 补充 Recipe. Before asking for confirmation, "
+        "Present the compact preview in product language. Do not call "
+        "freezone_get_workflow: this result is the durable draft receipt. Before asking for "
+        "confirmation, "
         "do not mention credits, billing, pricing, or editions. "
         "Wait for user confirmation. "
         "For adjustments, patch this draft instead of rebuilding the intent. "
@@ -6880,11 +7328,12 @@ def _handle_patch_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     )
     if payload is None:
         return tool_result(error)
-    result = public_workflow_draft(payload)
+    result = public_workflow_draft(payload, compact_preview=True)
     result["status"] = "workflow_draft_updated"
+    result["next_action"] = "review_and_confirm"
     result["agent_instruction"] = (
-        "Present only the resulting product-level changes and updated preview, including any "
-        "changed 主 Recipe → 补充 Recipe order from preview.recipe_pipelines. "
+        "Present only the resulting product-level changes and compact preview. Do not call "
+        "freezone_get_workflow: this result is the durable updated receipt. "
         "Do not mention credits, billing, pricing, or editions. "
         "Keep using this draft_id and revision for further adjustments or confirmation."
     )
@@ -6904,6 +7353,13 @@ _GENERATION_ANSWER_DATA_FIELDS = {
     "video_generate_audio": ("videoNode", "generateAudio"),
     "video_variants_per_node": ("videoNode", "count"),
 }
+
+# These clarification answers are shared Plan inputs rather than per-node
+# create fields.  Keep them out of the regular generation-question registry so
+# an ordinary custom clarification does not accidentally become a full media
+# settings card, while still accepting the answer when it is carried alongside
+# the card's concrete video settings at draft preparation time.
+_GENERATION_ANSWER_PLAN_INPUT_FIELDS = frozenset({"video_generation_mode"})
 
 
 def _workflow_generation_draft(
@@ -6945,6 +7401,13 @@ def _generation_answer_value(question_id: str, selection: Any) -> Any:
         if not isinstance(option_ids, list) or len(option_ids) != 1:
             raise ValueError(f"{question_id} requires exactly one selected option")
         selection = option_ids[0]
+    elif isinstance(selection, list):
+        # Some agents compact a single-select clarification answer from
+        # {"option_ids": ["value"]} to ["value"].  Accept that lossless JSON
+        # shorthand at the tool boundary instead of failing the whole draft.
+        if len(selection) != 1:
+            raise ValueError(f"{question_id} requires exactly one selected option")
+        selection = selection[0]
     if not isinstance(selection, str) or not selection.strip():
         raise ValueError(f"{question_id} requires a selected option")
     value = selection.strip()
@@ -6967,18 +7430,129 @@ def _generation_answer_value(question_id: str, selection: Any) -> Any:
     return value
 
 
-def _plan_has_explicit_video_durations(plan: Any) -> bool:
+def _normalize_workflow_plan_recipe_aliases(plan: Any) -> None:
+    """Move lossless top-level Recipe aliases into the canonical node data.
+
+    WorkflowPlan deliberately persists Recipe identity only at
+    ``data.workflowCatalog.recipeId``.  Agents nevertheless sometimes copy the
+    portable Intent spelling (``recipe_id``/``recipeId``) onto an exact-plan
+    node.  Normalize only an unambiguous alias; malformed or conflicting input
+    is left untouched so the authoritative schema still rejects it.
+    """
+    if not isinstance(plan, dict) or not isinstance(plan.get("nodes"), list):
+        return
+    for node in plan["nodes"]:
+        if not isinstance(node, dict):
+            continue
+        aliases = [
+            node.get(key)
+            for key in ("recipe_id", "recipeId")
+            if key in node
+        ]
+        if not aliases or any(
+            not isinstance(value, str) or not value.strip() for value in aliases
+        ):
+            continue
+        normalized = [value.strip() for value in aliases]
+        if len(set(normalized)) != 1:
+            continue
+        data = node.get("data")
+        if data is None:
+            data = {}
+            node["data"] = data
+        if not isinstance(data, dict):
+            continue
+        catalog = data.get("workflowCatalog")
+        if catalog is None:
+            catalog = {}
+            data["workflowCatalog"] = catalog
+        if not isinstance(catalog, dict):
+            continue
+        if "recipeId" in catalog:
+            existing_value = catalog["recipeId"]
+            if not isinstance(existing_value, str) or not existing_value.strip():
+                continue
+            if existing_value.strip() != normalized[0]:
+                continue
+        catalog["recipeId"] = normalized[0]
+        node.pop("recipe_id", None)
+        node.pop("recipeId", None)
+
+
+def _workflow_plan_has_unambiguous_edge_aliases(plan: Any) -> bool:
+    """Return whether a known invalid text-to-image edge can be losslessly repaired."""
+    if not isinstance(plan, dict):
+        return False
+    node_types = {
+        str(node.get("id") or ""): str(node.get("node_type") or "")
+        for node in plan.get("nodes") or []
+        if isinstance(node, dict)
+    }
+    return any(
+        isinstance(edge, dict)
+        and edge.get("link_type") == "context_for"
+        and node_types.get(str(edge.get("source") or "")) == "textAnnotationNode"
+        and node_types.get(str(edge.get("target") or "")) == "imageGenNode"
+        for edge in plan.get("edges") or []
+    )
+
+
+def _normalize_workflow_plan_edge_aliases(plan: Any) -> None:
+    """Normalize the one deterministic compatibility alias accepted at the tool boundary.
+
+    ``context_for`` cannot connect a text annotation to an image generator.  When an
+    agent used that edge to feed the image, ``prompt_for`` is the sole consuming text
+    edge supported by the canvas ontology; ``dependency_for`` would discard the stated
+    data dependency.  Other incompatible edges remain strict validation errors.
+    """
+    if not isinstance(plan, dict):
+        return
+    node_types = {
+        str(node.get("id") or ""): str(node.get("node_type") or "")
+        for node in plan.get("nodes") or []
+        if isinstance(node, dict)
+    }
+    for edge in plan.get("edges") or []:
+        if not isinstance(edge, dict) or edge.get("link_type") != "context_for":
+            continue
+        if (
+            node_types.get(str(edge.get("source") or "")) == "textAnnotationNode"
+            and node_types.get(str(edge.get("target") or "")) == "imageGenNode"
+        ):
+            edge["link_type"] = "prompt_for"
+
+
+def _workflow_plan_has_recipe_aliases(plan: Any) -> bool:
     if not isinstance(plan, dict) or not isinstance(plan.get("nodes"), list):
         return False
-    video_nodes = [
+    return any(
+        isinstance(node, dict) and ("recipe_id" in node or "recipeId" in node)
+        for node in plan["nodes"]
+    )
+
+
+def _plan_video_nodes(plan: Any) -> list[dict[str, Any]]:
+    if not isinstance(plan, dict) or not isinstance(plan.get("nodes"), list):
+        return []
+    return [
         node for node in plan["nodes"]
         if isinstance(node, dict) and node.get("node_type") == "videoNode"
     ]
-    return bool(video_nodes) and all(
-        isinstance(node.get("data"), dict)
-        and _generation_parameter_value_present("durationSec", node["data"].get("durationSec"))
-        for node in video_nodes
-    )
+
+
+def _video_nodes_missing_duration(plan: Any) -> list[Any]:
+    return [
+        node.get("id")
+        for node in _plan_video_nodes(plan)
+        if not (
+            isinstance(node.get("data"), dict)
+            and _generation_parameter_value_present("durationSec", node["data"].get("durationSec"))
+        )
+    ]
+
+
+def _plan_has_explicit_video_durations(plan: Any) -> bool:
+    return bool(_plan_video_nodes(plan)) and not _video_nodes_missing_duration(plan)
 
 
 def _generation_choices_from_answers(
@@ -7002,8 +7576,23 @@ def _generation_choices_from_answers(
     choices: dict[str, Any] = {}
     try:
         for question_id, selection in answers.items():
-            if question_id not in _GENERATION_ANSWER_DATA_FIELDS:
-                raise ValueError(f"unsupported generation answer: {question_id}")
+            if (
+                question_id not in _GENERATION_ANSWER_DATA_FIELDS
+                and question_id not in _GENERATION_ANSWER_PLAN_INPUT_FIELDS
+            ):
+                return {}, {
+                    "ok": False,
+                    "status": "generation_answers_incomplete",
+                    "error": f"unsupported generation answer: {question_id}",
+                    "unsupported_answer": question_id,
+                    "allowed_answer_ids": sorted(
+                        set(_GENERATION_ANSWER_DATA_FIELDS) | _GENERATION_ANSWER_PLAN_INPUT_FIELDS
+                    ),
+                    "agent_instruction": (
+                        "Remove the unsupported field from generation_answers; pass only "
+                        "the answers returned by freezone_request_user_clarification."
+                    ),
+                }
             choices[question_id] = _generation_answer_value(question_id, selection)
         if receipt_choices is not None:
             if not isinstance(receipt_choices, dict):
@@ -7019,11 +7608,29 @@ def _generation_choices_from_answers(
                 "variants_per_node",
             ),
         }.items():
-            if any(key.startswith(f"{media}_") for key in choices):
+            if any(
+                key.startswith(f"{media}_")
+                and key in _GENERATION_ANSWER_DATA_FIELDS
+                for key in choices
+            ):
                 for field in mandatory:
                     key = f"{media}_{field}"
                     if key == "video_duration_seconds" and _plan_has_explicit_video_durations(plan):
                         continue
+                    if key == "video_duration_seconds" and key not in choices:
+                        missing_nodes = _video_nodes_missing_duration(plan)
+                        if missing_nodes:
+                            return {}, {
+                                "ok": False, "status": "generation_answers_incomplete",
+                                "error": f"missing generation answer: {key}",
+                                "video_nodes_missing_duration": missing_nodes,
+                                "agent_instruction": (
+                                    "Set data.durationSec on every listed videoNode in the plan "
+                                    "(required when per-shot durations were chosen), or ask the "
+                                    "user with freezone_request_user_clarification using "
+                                    'generation_required_choices={"video": ["duration_seconds"]}.'
+                                ),
+                            }
                     if key not in choices:
                         raise ValueError(f"missing generation answer: {key}")
     except ValueError as exc:
@@ -7037,12 +7644,75 @@ def _generation_choices_from_answers(
 def _apply_generation_choices_to_plan(
     plan: dict[str, Any], choices: dict[str, Any], *, missing_only: bool = True
 ) -> None:
+    shared_inputs = {
+        question_id: value
+        for question_id, value in choices.items()
+        if question_id in _GENERATION_ANSWER_PLAN_INPUT_FIELDS
+    }
+    if shared_inputs:
+        current_inputs = plan.get("inputs")
+        plan["inputs"] = {
+            **(current_inputs if isinstance(current_inputs, dict) else {}),
+            **shared_inputs,
+        }
+    video_mode = choices.get("video_generation_mode")
+    if isinstance(video_mode, str) and video_mode.strip():
+        video_mode = video_mode.strip()
+        node_types = {
+            str(node.get("id") or ""): node.get("node_type")
+            for node in plan.get("nodes") or []
+            if isinstance(node, dict)
+        }
+        image_source_ids = {
+            node_id for node_id, node_type in node_types.items()
+            if node_type == "imageGenNode"
+        }
+        image_source_ids.update(
+            str(source.get("id") or "")
+            for source in plan.get("external_inputs") or []
+            if isinstance(source, dict) and source.get("media_kind") == "image"
+        )
+        image_source_ids.discard("")
+        for node in plan.get("nodes") or []:
+            if not isinstance(node, dict) or node.get("node_type") != "videoNode":
+                continue
+            data = node.get("data") if isinstance(node.get("data"), dict) else {}
+            # This value comes from the user's dedicated conflict answer, so it
+            # intentionally replaces the earlier textToVideo request.
+            data["genMode"] = video_mode
+            node["data"] = data
+        if video_mode != "textToVideo":
+            edges = [edge for edge in plan.get("edges") or [] if isinstance(edge, dict)]
+            for video_id in (
+                node_id for node_id, node_type in node_types.items()
+                if node_type == "videoNode"
+            ):
+                # Preserve exact-plan order-only dependencies. The standard
+                # text-to-image-to-video recovery shape has one unambiguous image
+                # predecessor and no image media input yet. If a video already
+                # consumes an image (or has multiple image prerequisites), a
+                # dependency_for edge must keep its execution-order semantics.
+                image_inputs = [
+                    edge for edge in edges
+                    if edge.get("target") == video_id
+                    and edge.get("link_type") == "media_input_for"
+                    and str(edge.get("source") or "") in image_source_ids
+                ]
+                image_dependencies = [
+                    edge for edge in edges
+                    if edge.get("target") == video_id
+                    and edge.get("link_type") == "dependency_for"
+                    and str(edge.get("source") or "") in image_source_ids
+                ]
+                if not image_inputs and len(image_dependencies) == 1:
+                    image_dependencies[0]["link_type"] = "media_input_for"
     for node in plan.get("nodes") or []:
         if not isinstance(node, dict):
             continue
         node_choices = [
             (field, value)
             for question_id, value in choices.items()
+            if question_id in _GENERATION_ANSWER_DATA_FIELDS
             for node_type, field in (_GENERATION_ANSWER_DATA_FIELDS[question_id],)
             if node.get("node_type") == node_type
         ]
@@ -7149,7 +7819,7 @@ def _apply_workflow_generation_answers(
     ))
     if payload is None:
         return error
-    updated = public_workflow_draft(payload)
+    updated = public_workflow_draft(payload, compact_preview=True)
     return {
         **clarification_result,
         "status": "clarification_frontend_result",
@@ -7159,9 +7829,11 @@ def _apply_workflow_generation_answers(
         "plan_digest": updated["plan_digest"],
         "run_after_create": updated["run_after_create"],
         "draft_updated": True,
+        "next_action": "review_and_confirm",
         "message": "Generation choices were saved to the same workflow draft.",
         "agent_instruction": (
-            "Present the updated preview and revision to the user. "
+            "Present the updated compact preview and revision to the user. Do not call "
+            "freezone_get_workflow: this result is the durable updated receipt. "
             "Wait for confirmation before calling freezone_confirm_workflow_draft."
         ),
     }
@@ -8185,6 +8857,9 @@ _WORKFLOW_RESULT_FIELDS = (
     "ready_node_ids",
     "required_choices",
     "clarification",
+    "draft_created",
+    "required_choice",
+    "question",
 )
 
 _RESULT_ARRAY_FIELDS = frozenset(
@@ -8836,6 +9511,32 @@ def _success_contract(name: str) -> dict[str, Any]:
             "required": list(_SKILL_STUDIO_FRONTEND_REQUIRED),
         }
     if name in _WORKFLOW_RESULT_TOOLS:
+        if name in {
+            "freezone_prepare_workflow_draft",
+            "freezone_prepare_workflow_plan_draft",
+        }:
+            return {
+                "anyOf": [
+                    {
+                        "properties": {
+                            "status": {
+                                "const": "generation_mode_clarification_required"
+                            },
+                            "draft_created": {"const": False},
+                        },
+                        "required": [
+                            "code",
+                            "draft_created",
+                            "required_choice",
+                            "question",
+                        ],
+                    },
+                    {"required": ["draft_id"]},
+                    {"required": ["operation_id"]},
+                    {"required": ["workflow_instance_id"]},
+                    {"required": ["run_id"]},
+                ]
+            }
         if name == "freezone_confirm_workflow_draft":
             # Confirmation returns the executor's receipt after the draft was
             # committed. It need not repeat the planning/run identifiers.
@@ -9292,6 +9993,14 @@ _WORKFLOW_INTENT_OBJECT_SCHEMA = {
                     ),
                 },
                 "include_audio": {"type": "boolean"},
+                "video_dependency": {
+                    "type": "string",
+                    "enum": ["independent", "sequential"],
+                    "description": (
+                        "Use sequential for an execution-only video 1 -> 2 -> ... chain. "
+                        "The compiler creates the nodes and dependency edges; do not send items."
+                    ),
+                },
                 "units": {
                     "type": "array",
                     "maxItems": 25,
@@ -10321,7 +11030,7 @@ TOOLS = (
         "freezone_request_user_clarification",
         _schema(
             "freezone_request_user_clarification",
-            "Ask the user structured clarification questions in the Freezone frontend and wait for their submitted answers, including Skill Studio setup questions. For image/video generation pass generation_media_types to ask every field, or pass generation_required_choices returned by preflight to ask only missing fields; pass generation_preferences for specs the user already stated, keeping per-shot durations and final delivery resolution distinct from global video parameters. The server assembles canonical questions and the frontend resolves live options. With workflow_draft_id and workflow_expected_revision, submitted answers are validated and saved to that draft before returning its new preview. For legacy canonical generation questions, title and options may be omitted. Do not hand-build generation questions. For other clarifications, decide the next step from the current context. This tool never creates or runs canvas nodes.",
+            "Ask the user structured clarification questions in the Freezone frontend and wait for their submitted answers, including Skill Studio setup questions. For image/video generation pass generation_media_types to ask every field, or pass generation_required_choices returned by preflight to ask only missing fields; pass generation_preferences for specs the user already stated, keeping per-shot durations and final delivery resolution distinct from global video parameters. The server assembles canonical questions and the frontend resolves live options. Generation mode is exclusive: never include questions in the same call; if questions are accidentally supplied, the server ignores them instead of failing the parameter card. With workflow_draft_id and workflow_expected_revision, submitted answers are validated and saved to that draft before returning its new preview. For legacy canonical generation questions, title and options may be omitted. Do not hand-build generation questions. For other clarifications, decide the next step from the current context. This tool never creates or runs canvas nodes.",
             {
                 "clarification_id": {
                     "type": "string",
@@ -10347,11 +11056,11 @@ TOOLS = (
                 "generation_media_types": {
                     "type": "array",
                     "items": {"type": "string", "enum": ["image", "video"]},
-                    "description": "Generate the full parameter card for the listed media types. Do not also pass questions.",
+                    "description": "Generate the full parameter card for the listed media types. This mode is exclusive; omit questions because any supplied questions are ignored.",
                 },
                 "generation_required_choices": {
                     "type": "object",
-                    "description": "Pass required_choices from a generation_parameters_required result unchanged; the server asks each missing field. Do not also pass questions.",
+                    "description": "Pass required_choices from a generation_parameters_required result unchanged; the server asks each missing field. This mode is exclusive; omit questions because any supplied questions are ignored.",
                     "properties": {
                         "image": {"type": "array", "items": {"type": "string"}},
                         "video": {"type": "array", "items": {"type": "string"}},
@@ -10372,10 +11081,12 @@ TOOLS = (
                         "No BGM does not mean video_generate_audio=false."
                     ),
                     "properties": {
+                        "image_model": {"type": "string", "minLength": 1, "maxLength": 160},
                         "image_aspect_ratio": {"type": "string"},
                         "image_resolution": {"type": "string"},
                         "image_quality": {"type": "string"},
                         "image_variants_per_node": {"type": "integer", "enum": [1, 2, 4]},
+                        "video_model": {"type": "string", "minLength": 1, "maxLength": 160},
                         "video_aspect_ratio": {"type": "string"},
                         "video_resolution": {"type": "string"},
                         "video_duration_seconds": {
@@ -11042,7 +11753,13 @@ TOOLS = (
                     "description": "Pass the clarification result's answers field itself (generation_answers = result['answers']), not the whole result. A receipt envelope with answers and generation_choices is also accepted. The server maps answers into the selected intent or plan.",
                 },
                 "bindings": _WORKFLOW_BINDINGS_SCHEMA,
-                "operation_id": {"type": "string"},
+                "operation_id": {
+                    "type": "string",
+                    "description": (
+                        "Exact workflow_result operation_id returned by "
+                        "freezone_begin_agent_product_generation. Never invent or reconstruct it."
+                    ),
+                },
                 **_WORKFLOW_RUN_AFTER_CREATE_PROPS,
             },
             ["operation_id", "run_after_create"],
@@ -11099,7 +11816,11 @@ TOOLS = (
                 **_SCOPE_PROPS,
                 "operation_id": {
                     "type": "string",
-                    "description": "Admitted workflow_result operation from freezone_begin_agent_product_generation.",
+                    "description": (
+                        "Exact admitted workflow_result operation_id returned by "
+                        "freezone_begin_agent_product_generation in this generation attempt. "
+                        "Never invent or reconstruct it; call begin before preparing the Plan."
+                    ),
                 },
                 "intent": _WORKFLOW_INTENT_OBJECT_SCHEMA,
                 "generation_answers": {
@@ -11182,7 +11903,11 @@ TOOLS = (
                 **_SCOPE_PROPS,
                 "operation_id": {
                     "type": "string",
-                    "description": "Admitted workflow_result operation from freezone_begin_agent_product_generation.",
+                    "description": (
+                        "Exact admitted workflow_result operation_id returned by "
+                        "freezone_begin_agent_product_generation in this generation attempt. "
+                        "Never invent or reconstruct it; call begin before preparing the Plan."
+                    ),
                 },
                 "plan": _WORKFLOW_PLAN_OBJECT_SCHEMA,
                 "generation_answers": {
@@ -11322,7 +12047,13 @@ TOOLS = (
         "freezone_update_node_data",
         _schema(
             "freezone_update_node_data",
-            "Single-operation tool only: update editable data fields on exactly one existing Freezone node when the user explicitly asks for one node edit. For multi-node edits or mixed edit+layout/link workflows, use one freezone_emit_canvas_command batch. Inspect freezone_get_node_detail first when editable parameters or enum options are unclear.",
+            "Single-operation tool only: edit fields without generating on exactly one existing "
+            "Freezone node when the user explicitly asks for a node edit. This tool is not a "
+            "substitute for Recipe generation; use freezone_run_node_action when the user asks "
+            "to generate through a named Recipe on an existing standalone node. For multi-node "
+            "edits or mixed edit+layout/link workflows, use one freezone_emit_canvas_command "
+            "batch. Inspect freezone_get_node_detail first when editable parameters or enum "
+            "options are unclear.",
             {
                 **_SCOPE_PROPS,
                 "node_id": {
@@ -11566,7 +12297,17 @@ TOOLS = (
         "freezone_run_node_action",
         _schema(
             "freezone_run_node_action",
-            "Single-operation tool only: run or open exactly one standalone frontend node action listed by node_detail action_summary. A one-node workflow is still a workflow: never use this tool to run, continue, or resume a target the user identifies as a workflow; use freezone_run_workflow instead. If the standalone node has workflowConfigConfirmed=true, reuse its persisted generation parameters and do not ask the user to choose them again unless a required field is missing or the user changed it. For non-default action parameters, inspect freezone_get_node_action_catalog with the specific action first. For multiple standalone actions use one freezone_emit_canvas_command batch; never use that batch as a workflow runner.",
+            "Single-operation tool only: run or open exactly one standalone frontend node action "
+            "listed by node_detail action_summary. A one-node workflow is still a workflow: never "
+            "use this tool to run, continue, or resume a target the user identifies as a workflow; "
+            "use freezone_run_workflow instead. When the user asks to generate content through a "
+            "named Recipe on an existing standalone node, use its catalog action here; never "
+            "substitute freezone_update_node_data. If the standalone node has "
+            "workflowConfigConfirmed=true, reuse its persisted generation parameters and do not "
+            "ask the user to choose them again unless a required field is missing or the user "
+            "changed it. For non-default action parameters, inspect freezone_get_node_action_catalog "
+            "with the specific action first. For multiple standalone actions use one "
+            "freezone_emit_canvas_command batch; never use that batch as a workflow runner.",
             {
                 **_SCOPE_PROPS,
                 "node_id": {

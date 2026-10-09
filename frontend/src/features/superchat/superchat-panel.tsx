@@ -490,6 +490,7 @@ const AGENT_TOOL_TITLE_OVERRIDES: Record<string, string> = {
   freezone_prepare_workflow_draft: "生成工作流草稿",
   freezone_prepare_workflow_plan_draft: "生成工作流草稿",
   freezone_confirm_workflow_draft: "提交到画布",
+  freezone_request_user_clarification: "确认生成参数",
   freezone_list_agent_catalog: "读取 Skill / Recipe 列表",
   freezone_get_saved_skill: "读取 Skill 配置",
   freezone_get_saved_recipe: "读取 Recipe 配置",
@@ -505,6 +506,62 @@ function toolRawRecord(message: ChatMessage): Record<string, unknown> | null {
   return message.raw && typeof message.raw === "object"
     ? (message.raw as Record<string, unknown>)
     : null;
+}
+
+function structuredToolResultRecords(value: unknown, depth = 0): Record<string, unknown>[] {
+  if (depth > 5 || value == null) return [];
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (!text.startsWith("{") && !text.startsWith("[")) return [];
+    try {
+      return structuredToolResultRecords(JSON.parse(text), depth + 1);
+    } catch {
+      return [];
+    }
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => structuredToolResultRecords(item, depth + 1));
+  }
+  if (typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  return [
+    record,
+    ...["result", "result_json", "output", "structuredContent", "data", "content"]
+      .flatMap((key) => structuredToolResultRecords(record[key], depth + 1)),
+    ...(
+      typeof record.text === "string"
+        ? structuredToolResultRecords(record.text, depth + 1)
+        : []
+    ),
+  ];
+}
+
+function toolBusinessResult(message: ChatMessage): Record<string, unknown> | null {
+  const raw = toolRawRecord(message);
+  if (!raw) return null;
+  return structuredToolResultRecords(raw).find((candidate) =>
+    typeof candidate.status === "string" && (
+      typeof candidate.ok === "boolean"
+      || typeof candidate.code === "string"
+      || candidate.status === "clarification_frontend_timeout"
+    ),
+  ) ?? null;
+}
+
+function toolBusinessStatus(message: ChatMessage): string {
+  return String(toolBusinessResult(message)?.status ?? "").trim().toLowerCase();
+}
+
+function isRecoverableWorkflowInteraction(message: ChatMessage): boolean {
+  const result = toolBusinessResult(message);
+  if (!result) return false;
+  return (
+    result.status === "clarification_frontend_timeout"
+    || (
+      result.status === "clarification_required"
+      && result.code === "generation_parameters_required"
+    )
+  );
 }
 
 function freezoneToolName(message: ChatMessage): string {
@@ -532,6 +589,7 @@ function freezoneToolDisplay(message: ChatMessage): { title: string; description
 
 function freezoneToolStatus(message: ChatMessage): "running" | "done" | "failed" {
   const raw = toolRawRecord(message);
+  if (isRecoverableWorkflowInteraction(message)) return "done";
   const status = typeof raw?.status === "string" ? raw.status.toLowerCase() : "";
   if (
     raw?.type === "tool.call"
@@ -2021,12 +2079,16 @@ function shouldPersistSettledToolStatus(toolMessage: ChatMessage): boolean {
   );
 }
 
-function workflowPlanDraftOperationId(toolMessage: ChatMessage): string {
+function workflowDraftOperationId(toolMessage: ChatMessage): string {
   const raw = toolRawRecord(toolMessage);
   const name = typeof raw?.name === "string"
     ? raw.name.toLowerCase().split(".").pop() ?? ""
     : "";
-  if (name !== "freezone_prepare_workflow_plan_draft") return "";
+  if (![
+    "freezone_prepare_workflow",
+    "freezone_prepare_workflow_draft",
+    "freezone_prepare_workflow_plan_draft",
+  ].includes(name)) return "";
   const input = raw?.input && typeof raw.input === "object"
     ? raw.input as Record<string, unknown>
     : null;
@@ -2040,6 +2102,9 @@ function toolStatusRuntimeText(params: {
 }): string {
   const { status, title, toolMessage } = params;
   const raw = toolRawRecord(toolMessage);
+  const businessStatus = toolBusinessStatus(toolMessage);
+  if (businessStatus === "clarification_required") return "等待选择生成参数";
+  if (businessStatus === "clarification_frontend_timeout") return "等待回答已暂停";
   if (
     status === "failed" &&
     (raw?.name === "freezone_put_agent_catalog_draft_outline" ||
@@ -2126,8 +2191,12 @@ function agentRuntimeDisplayParts(
   for (const part of parts) {
     if (part.type !== "tool_status") continue;
     const toolMessage = part.event as ChatMessage;
-    const operationId = workflowPlanDraftOperationId(toolMessage);
-    if (operationId && freezoneToolStatus(toolMessage) === "done") {
+    const operationId = workflowDraftOperationId(toolMessage);
+    if (
+      operationId
+      && freezoneToolStatus(toolMessage) === "done"
+      && toolBusinessStatus(toolMessage) === "workflow_draft_ready"
+    ) {
       deliveredWorkflowDraftOperations.add(operationId);
     }
   }
@@ -2140,11 +2209,11 @@ function agentRuntimeDisplayParts(
           const toolMessage = part.event as ChatMessage;
           if (shouldHideInternalToolMessage(toolMessage)) return false;
           const status = freezoneToolStatus(toolMessage);
-          const operationId = workflowPlanDraftOperationId(toolMessage);
+          const operationId = workflowDraftOperationId(toolMessage);
           if (
-            status === "failed" &&
             operationId &&
-            deliveredWorkflowDraftOperations.has(operationId)
+            deliveredWorkflowDraftOperations.has(operationId) &&
+            (status === "failed" || toolBusinessStatus(toolMessage) === "clarification_required")
           ) {
             return false;
           }
@@ -14378,6 +14447,10 @@ export function SuperChatPanel({
           ? buildCanvasChatCommandContext(currentCanvasOntologyContext, {
               includeCanvasSummary: shouldIncludeCanvasSummary(text, {
                 hasFocusedNodeContext: Boolean(canvasReferenceContext),
+                hasCanvasContent:
+                  currentCanvasOntologyContext == null
+                    ? undefined
+                    : currentCanvasOntologyContext.summary.object_count > 0,
               }),
             })
           : null;

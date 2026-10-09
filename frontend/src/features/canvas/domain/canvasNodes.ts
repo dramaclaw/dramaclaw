@@ -623,6 +623,8 @@ export interface AudioNodeData extends NodeDisplayData {
   speechMode?: 'preset' | 'clone';
   presetVoice?: string;
   presetModel?: string;
+  /** New/converted nodes use explicit voice selection; absent on historical canvas nodes. */
+  voicePolicyConfirmed?: boolean;
   /** music 模式：生成长度(毫秒),范围 3000–600000,缺省按后端默认 30000。 */
   musicLengthMs?: number;
   /** music 模式：是否强制纯音乐(force_instrumental),缺省 true。 */

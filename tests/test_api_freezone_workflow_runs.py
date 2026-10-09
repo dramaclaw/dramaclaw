@@ -3727,6 +3727,16 @@ def test_server_workflow_prepare_revise_and_compact_query(workflow_run_client):
     draft = response.json()["data"]
     assert draft["revision"] == 1
     assert not {"plan", "intent", "compiled"} & draft.keys()
+    assert draft["preview"]["nodes"] == [
+        {
+            "id": "brief",
+            "name": "广告",
+            "stage": "input",
+            "node_type": "textAnnotationNode",
+        }
+    ]
+    assert draft["preview"]["recipe_pipelines"] == []
+    assert draft["preview"]["node_count"] == 1
     target = f"{base}/{draft['draft_id']}"
     changes = {"step_updates": [{"node_id": "brief", "prompt": "新广告要求"}]}
     revised = workflow_run_client.patch(
@@ -3741,6 +3751,7 @@ def test_server_workflow_prepare_revise_and_compact_query(workflow_run_client):
     assert revised.json()["data"]["revision"] == 2
     full = workflow_run_client.get(target).json()["data"]
     assert full["compiled"]["plan"]["nodes"][0]["data"]["content"] == "新广告要求"
+    assert len(full["preview"]["nodes"]) == 1
     stale = workflow_run_client.patch(
         target, json={"expected_revision": 1, "changes": changes}
     )
@@ -3783,6 +3794,10 @@ def test_workflow_claim_rechecks_story_targets_before_task_admission(
 ):
     from novelvideo.api.routes import freezone
 
+    async def image_models(*_args, **_kwargs):
+        return {"ok": True, "data": [{"id": "story-image-model"}]}
+
+    monkeypatch.setattr(freezone, "freezone_image_models", image_models)
     canvas = {"nodes": [
         {"id": "story-group", "type": "groupNode", "data": {
             "storyGroup": True, "interactiveStoryId": "story-1"}},
@@ -3798,7 +3813,7 @@ def test_workflow_claim_rechecks_story_targets_before_task_admission(
              "video_node_id": "video-opening"},
         ]},
         "nodes": [{"id": "frame-opening", "node_type": "imageGenNode",
-                   "stage": "image", "data": {"prompt": "开场分镜",
+                   "stage": "image", "data": {"prompt": "开场分镜", "model": "story-image-model",
                    "workflowCatalog": {"skillId": "text-to-image-video",
                                        "recipeId": "general-image"}}}],
         "edges": [],

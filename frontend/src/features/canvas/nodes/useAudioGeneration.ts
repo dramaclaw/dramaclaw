@@ -8,7 +8,7 @@ import {
   submitFreezoneAudioMusic,
   submitFreezoneAudioSpeech,
 } from '@/api/ops';
-import { requiresCustomVoiceSelection } from './audioVoicePolicy';
+import { requiresCustomVoiceSelection, usesLegacySpeechVoice } from './audioVoicePolicy';
 import { awaitTaskCompletion } from '@/api/tasks';
 import {
   type AudioNodeData,
@@ -130,7 +130,6 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
     .filter((segment) => segment.length > 0)
     .join('\n\n');
   const emotionPrompt = data.emotionPrompt ?? '';
-  const speechMode = 'clone';
   // 组织成员没有发起模型任务的资格时不放行。面板与节点本体的重试共用这个 hook，
   // 所以门控放在这里，两条入口都盖到。
   const modelTaskAccess = useModelTaskAccess();
@@ -148,9 +147,9 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
     const runtimeData = (latestNode?.data as AudioNodeData | undefined) ?? data;
     const runtimeAudioKind = resolveAudioKind(runtimeData);
     const runtimeIsMusic = runtimeAudioKind === 'music';
-    // Freezone speech is custom-voice only. Keep backend preset support for
-    // historical/Hermes callers, but never submit preset generation here.
-    const runtimeSpeechMode = 'clone';
+    const legacySpeechVoice = usesLegacySpeechVoice(runtimeData);
+    const runtimeSpeechMode = legacySpeechVoice && runtimeData.speechMode === 'preset'
+      ? 'preset' : 'clone';
     const runtimeOwnText = deriveAudioText(runtimeData);
     const runtimeEffectivePrompt = [upstreamTextJoined.trim(), runtimeOwnText.trim()]
       .filter((segment) => segment.length > 0)
@@ -267,8 +266,13 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
             nodeId,
             text: trimmed,
             speechMode: runtimeSpeechMode,
+            ...(runtimeSpeechMode === 'preset' ? {
+              presetVoice: runtimeData.presetVoice,
+              presetModel: runtimeData.presetModel,
+            } : {}),
             emotionPrompt: (runtimeData.emotionPrompt ?? '').trim() || undefined,
-            voiceRef: runtimeData.voiceRef,
+            voiceRef: runtimeData.voiceRef ?? (legacySpeechVoice
+              ? { scope: 'project_narrator' } : undefined),
           });
       // Persist the task handle so a page refresh can resume this job.
       updateNodeData(nodeId, generationTaskDescriptor(ref));
@@ -313,7 +317,6 @@ export function useAudioGeneration(nodeId: string, data: AudioNodeData) {
     hasInvalidSpeechInstruction,
     resolvedMusicLengthMs,
     emotionPrompt,
-    speechMode,
     nodeId,
     ownText,
     updateNodeData,

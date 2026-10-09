@@ -52,6 +52,8 @@ order) stays an agent-authored draft with the difference recorded in
    which actual upstream outputs/reference assets it must consume. Do not prewrite generated
    scripts, shot-by-shot storyboards, dialogue, or camera/sound details. Preserve user-supplied
    content and constraints; execution-time Recipe compilation produces the executable prompt.
+   A confirmed visual style must reach each image/video node in its brief or through a consuming
+   text edge; do not assume another node's unconnected brief or the Skill name will be included.
    Author semantic Plan fields only. Do not construct `canvas_chat_commands.v1` yourself: the graph
    compiler owns command defaults, stable IDs, layout, grouping, and final static command validation.
    Use only canonical `node_type` for each node's portable kind. The public MCP contract rejects
@@ -102,6 +104,10 @@ order) stays an agent-authored draft with the difference recorded in
    submission, self-check every claimed upstream input against a consuming edge; preserve
    dependency_for only for a genuine wait where the target remains independent of the source
    output.
+   For a video consuming images by `media_input_for`, set a Catalog-supported reference mode
+   and ensure its image-count limit covers the incoming references. An omitted mode defaults to
+   text-only behavior; `textToVideo` does not consume those images. If the selected model or an
+   explicit user mode cannot support the media input, keep the input and report the blocker.
    Before submission, treat graph connectivity as an Agent-owned planning invariant rather than a
    detail the user must specify. Traverse the proposed graph as undirected and make sure every node
    belongs to one connected component. When the user's requested units are intentionally independent
@@ -122,6 +128,9 @@ order) stays an agent-authored draft with the difference recorded in
    template-shaped list never enters this path in the first place; see SKILL.md routing order.)
    Every edge endpoint must match an `id` in `nodes` or a declared external input alias. Never
    invent a source such as `source` or `input` without a matching declaration.
+   Never ask the user to choose a direct-canvas or standalone-node fallback after Plan validation
+   fails. Such a choice cannot authorize bypassing the validator. Add the required Skill stages to
+   the same Plan once, or report that they conflict with the user's exact topology.
 7. Call `freezone_prepare_workflow(plan=...)` once. It strictly validates the complete Plan,
    obtains an operation-bound planning quote and server receipt, then persists an exact preview
    without writing canvas nodes. After the user reviews that preview, call

@@ -828,7 +828,13 @@ def _node_signature(node: dict[str, Any]) -> tuple:
         sorted(
             (key, _hashable(value))
             for key, value in data.items()
-            if key not in _PRESENTATION_DATA_KEYS and key != _COMPOSE_ORDER_KEY
+            if key not in _PRESENTATION_DATA_KEYS
+            and key != _COMPOSE_ORDER_KEY
+            # ``recommended`` is the planner's symbolic fallback, resolved from
+            # the live tenant catalog later. Omitting it in an otherwise exact
+            # template restatement has the same meaning; concrete model ids still
+            # participate in the signature and can never be replaced silently.
+            and not (key == "model" and _text(value).casefold() == "recommended")
         )
     )
     return (kind, re.sub(r"\s+", " ", text), recipe, settings)
@@ -2012,6 +2018,7 @@ def _standard_skill_items(
     units: list[dict[str, Any]],
     user_goal: str,
     include_unit_facts: bool = True,
+    video_dependency: str = "independent",
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     if skill_id == "ecommerce-ad":
@@ -2049,13 +2056,16 @@ def _standard_skill_items(
                 )
             )
             if deliverable != "images":
+                dependencies = [image_id]
+                if video_dependency == "sequential" and index > 1:
+                    dependencies.append(f"clip_{index - 1}")
                 items.append(
                     _planned_item(
                         item_id=f"clip_{index}",
                         title=f"{unit['title']}视频",
                         prompt=unit["prompt"],
                         recipe_id="video-clip-generation",
-                        depends_on=[image_id],
+                        depends_on=dependencies,
                         stage="video",
                         timeline_role="visual",
                         duration_seconds=unit.get("duration_seconds"),
@@ -2215,13 +2225,16 @@ def _standard_skill_items(
                 )
             )
             video_source_id = source_id
+        video_dependencies = [video_source_id]
+        if video_dependency == "sequential" and index > 1:
+            video_dependencies.append(f"clip_{index - 1}")
         items.append(
             _planned_item(
                 item_id=f"clip_{index}",
                 title=f"{unit['title']}视频",
                 prompt=unit["prompt"],
                 recipe_id="general-video",
-                depends_on=[video_source_id],
+                depends_on=video_dependencies,
                 stage="video",
                 # The shot plan is what the clip renders, not a gate ahead of
                 # it: reference it so the edge is prompt_for and the runtime
@@ -2364,7 +2377,11 @@ def _confirmed_input_guidance(
         return ""
     parts: list[str] = []
     visual_style = _text(resolved_inputs.get("visual_style"))
-    if visual_style and skill_id == "short-drama-quick":
+    if (
+        visual_style
+        and visual_style.casefold() != "未指定"
+        and skill_id == "short-drama-quick"
+    ):
         parts.append(
             f"已确认视觉风格为「{visual_style}」；角色、场景、分镜、首帧和视频必须保持该风格。"
         )
@@ -2536,6 +2553,25 @@ def _expand_standard_skill_intent(
         )
     if deliverable == "images":
         include_audio = False
+    video_dependency = _text(planner.get("video_dependency")) or "independent"
+    if video_dependency not in {"independent", "sequential"}:
+        return (
+            intent,
+            None,
+            _intent_error(
+                "planner.video_dependency must equal independent or sequential",
+                path="planner.video_dependency",
+            ),
+        )
+    if deliverable == "images" and video_dependency != "independent":
+        return (
+            intent,
+            None,
+            _intent_error(
+                "planner.video_dependency=sequential requires a video deliverable",
+                path="planner.video_dependency",
+            ),
+        )
     units = _standard_planner_units(
         planner=planner,
         item_count=item_count,
@@ -2600,7 +2636,27 @@ def _expand_standard_skill_intent(
         units=units,
         user_goal=user_goal,
         include_unit_facts=include_unit_facts,
+        video_dependency=video_dependency,
     )
+    # A deterministic standard workflow must also be executable without asking
+    # the Agent to discover model ids. Keep the symbolic value in the plan; the
+    # canvas adapter resolves it against the caller's live model catalog before
+    # dispatch. Explicit model choices in inputs/items always win.
+    recipes = _intent_recipe_index()
+    for item in items:
+        recipe = recipes.get(_text(item.get("recipe_id"))) or {}
+        node_type = _recipe_node_type(recipe)
+        input_key = (
+            "image_model"
+            if node_type == "imageGenNode"
+            else "video_model" if node_type == "videoNode" else ""
+        )
+        if (
+            input_key
+            and not _text(resolved_inputs.get(input_key))
+            and not _text(item.get("model"))
+        ):
+            item["model"] = "recommended"
     expanded = {
         **intent,
         "items": items,
@@ -2613,6 +2669,11 @@ def _expand_standard_skill_intent(
         "deliverable": deliverable,
         "item_count": len(units),
         "include_audio": include_audio,
+        **(
+            {"video_dependency": video_dependency}
+            if video_dependency != "independent"
+            else {}
+        ),
     }
     return expanded, metadata, None
 
@@ -2632,6 +2693,29 @@ def _compile_dynamic_recipe_items_intent(
         )
 
     recipes = _intent_recipe_index()
+    use_native_social_ratios = False
+    if _text(skill.get("id")) == "social-content-campaign":
+        supplied = _workflow_input_values(intent)
+        recipe_ids = {
+            _text(item.get("recipe_id") or item.get("recipeId"))
+            for item in items if isinstance(item, dict)
+        }
+        platform_recipes = recipe_ids & _SOCIAL_IMAGE_RECIPE_PLATFORMS.keys()
+        if platform_recipes and not {"aspect_ratio", "image_aspect_ratio"} & supplied.keys():
+            compatible = set.intersection(*(
+                _SOCIAL_IMAGE_RECIPE_RATIOS[recipe_id] for recipe_id in platform_recipes
+            ))
+            resolved_inputs = dict(resolved_inputs)
+            if compatible:
+                default_ratio = _text(resolved_inputs.get("aspect_ratio"))
+                resolved_inputs["aspect_ratio"] = (
+                    default_ratio if default_ratio in compatible else
+                    "1:1" if "1:1" in compatible else sorted(compatible)[0]
+                )
+            else:
+                # Different platforms may need different native image ratios.
+                resolved_inputs.pop("aspect_ratio", None)
+                use_native_social_ratios = True
     allowed_recipe_ids = {
         _text(item) for item in skill.get("allowed_recipe_ids") or [] if _text(item)
     }
@@ -2797,6 +2881,8 @@ def _compile_dynamic_recipe_items_intent(
             resolved_inputs=resolved_inputs,
             recipe_pipeline=recipe_pipeline,
         )
+        if use_native_social_ratios and recipe_id in _SOCIAL_IMAGE_NATIVE_RATIOS:
+            node["data"]["aspectRatio"] = _SOCIAL_IMAGE_NATIVE_RATIOS[recipe_id]
         explicit_stage = _text(item.get("stage"))
         if explicit_stage:
             node["stage"] = explicit_stage
@@ -2834,6 +2920,11 @@ def _compile_dynamic_recipe_items_intent(
             ),
         )
 
+    node_data_by_id = {
+        _text(candidate.get("id")): candidate.get("data")
+        for candidate in nodes
+        if isinstance(candidate, dict) and isinstance(candidate.get("data"), dict)
+    }
     edges: list[dict[str, str]] = []
     item_order = {item_id: index for index, item_id in enumerate(item_by_id)}
     for item_id, item in item_by_id.items():
@@ -2942,6 +3033,7 @@ def _compile_dynamic_recipe_items_intent(
                         else _intent_link_type(
                             node_types.get(normalized_source, ""),
                             node_types.get(item_id, ""),
+                            target_data=node_data_by_id.get(item_id),
                         )
                     ),
                 }
@@ -2998,6 +3090,31 @@ def _compile_dynamic_recipe_items_intent(
     edges = _dedupe_intent_edges(edges)
     skill_id = _text(skill.get("id"))
     title = _text(intent.get("title")) or _catalog_label(skill)
+    if skill_id == "social-content-campaign":
+        # Explicit intent items determine the deliverable. Keep the compiled
+        # Plan's Skill inputs in sync when optional values were not supplied.
+        supplied = _workflow_input_values(intent)
+        image_nodes = [node for node in nodes if node.get("node_type") == "imageGenNode"]
+        resolved_inputs = dict(resolved_inputs)
+        if image_nodes and "image_count" not in supplied:
+            resolved_inputs["image_count"] = len(image_nodes)
+        recipe_ids = [
+            _text((node.get("data") or {}).get("workflowCatalog", {}).get("recipeId"))
+            for node in image_nodes
+        ]
+        if recipe_ids and "platforms" not in supplied and all(
+            recipe_id in _SOCIAL_IMAGE_RECIPE_PLATFORMS for recipe_id in recipe_ids
+        ):
+            resolved_inputs["platforms"] = list(dict.fromkeys(
+                _SOCIAL_IMAGE_RECIPE_PLATFORMS[recipe_id] for recipe_id in recipe_ids
+            ))
+        if "aspect_ratio" not in supplied and resolved_inputs.get("image_aspect_ratio"):
+            resolved_inputs["aspect_ratio"] = resolved_inputs["image_aspect_ratio"]
+    plan_inputs = dict(resolved_inputs)
+    if (skill_id == "social-content-campaign" and "platforms" not in supplied
+            and any(recipe_id not in _SOCIAL_IMAGE_RECIPE_PLATFORMS for recipe_id in recipe_ids)):
+        # Keep an unspecified platform distinct from an explicit default choice.
+        plan_inputs.pop("platforms", None)
     plan = {
         "schema_version": PLAN_SCHEMA_VERSION,
         "workflow_type": f"dynamic.{skill_id}",
@@ -3014,7 +3131,7 @@ def _compile_dynamic_recipe_items_intent(
         "assumptions": list(intent.get("assumptions") or []),
         "missing_inputs": [],
         "expansion_rules": {"item_count": len(items)},
-        "inputs": resolved_inputs,
+        "inputs": plan_inputs,
         "external_inputs": deepcopy(external_inputs),
         "nodes": nodes,
         "edges": edges,
@@ -3456,13 +3573,27 @@ def _intent_dependency_edges(
     ]
 
 
-def _intent_link_type(source_type: str, target_type: str) -> str:
+def _intent_link_type(
+    source_type: str,
+    target_type: str,
+    *,
+    target_data: dict[str, Any] | None = None,
+) -> str:
     if target_type == "videoComposeNode":
         return "composition_input_for"
     if source_type == "videoNode" and target_type == "videoNode":
         # A previous generated shot may gate the next workflow step without
         # becoming an R2V reference. Otherwise Seedance receives every prior
         # shot and can exceed its 15.2-second total reference-video limit.
+        return "dependency_for"
+    if (
+        source_type == "imageGenNode"
+        and target_type == "videoNode"
+        and _text((target_data or {}).get("genMode")) == "textToVideo"
+    ):
+        # The standard text-to-image-video graph still prepares key images, but
+        # text-to-video clips do not consume them as media references. Preserve
+        # the execution gate without contradicting the confirmed generation mode.
         return "dependency_for"
     if source_type in {"textAnnotationNode", "scriptNode", "beatContextNode"}:
         if target_type in {"textAnnotationNode", "scriptNode", "beatContextNode"}:
@@ -3557,6 +3688,11 @@ def _intent_item_node(
         ),
         recipe_id,
     )
+    recipe_requires_audio = (
+        node_type == "videoNode"
+        and isinstance(recipe, dict)
+        and recipe.get("requires_generated_audio") is True
+    )
     data: dict[str, Any] = {
         "displayName": label,
         "title": label,
@@ -3570,10 +3706,14 @@ def _intent_item_node(
             "stepId": item_id,
             **({"timelineRole": timeline_role} if timeline_role else {}),
             **(
-                {"requiresGeneratedAudio": item["requires_generated_audio"]}
-                if node_type == "videoNode"
-                and isinstance(item.get("requires_generated_audio"), bool)
-                else {}
+                {"requiresGeneratedAudio": True}
+                if recipe_requires_audio
+                else (
+                    {"requiresGeneratedAudio": item["requires_generated_audio"]}
+                    if node_type == "videoNode"
+                    and isinstance(item.get("requires_generated_audio"), bool)
+                    else {}
+                )
             ),
             "operationType": operation_type,
             "recipeId": recipe_id,
@@ -3876,6 +4016,30 @@ def _backfill_plan_runtime_fields(
     return filled
 
 
+def _bind_recipe_audio_requirements(
+    nodes: list[Any], recipes: dict[str, dict[str, Any]]
+) -> bool:
+    """Apply trusted Recipe audio requirements to agent-authored video nodes."""
+    changed = False
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("node_type") != "videoNode":
+            continue
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        workflow_catalog = data.get("workflowCatalog")
+        if not isinstance(workflow_catalog, dict):
+            continue
+        recipe = recipes.get(_text(workflow_catalog.get("recipeId")))
+        if (
+            not isinstance(recipe, dict)
+            or recipe.get("requires_generated_audio") is not True
+        ):
+            continue
+        if workflow_catalog.get("requiresGeneratedAudio") is not True:
+            workflow_catalog["requiresGeneratedAudio"] = True
+            changed = True
+    return changed
+
+
 def _noncanonical_video_duration_blockers(nodes: list[Any]) -> list[dict[str, str]]:
     blockers: list[dict[str, str]] = []
     for index, node in enumerate(nodes):
@@ -3890,6 +4054,191 @@ def _noncanonical_video_duration_blockers(nodes: list[Any]) -> list[dict[str, st
                 "path": f"nodes[{index}].data.{alias}",
                 "code": "noncanonical_video_duration",
                 "message": f"{alias} is ignored by workflow runtime; set data.durationSec explicitly",
+            })
+    return blockers
+
+
+_SOCIAL_IMAGE_RECIPE_PLATFORMS = {
+    "social-xiaohongshu-image": "小红书",
+    "social-douyin-cover": "抖音",
+    "social-weibo-wechat-image": "微博/微信",
+    "social-ig-post": "Instagram",
+}
+
+_SOCIAL_IMAGE_RECIPE_RATIOS = {
+    "social-xiaohongshu-image": {"3:4"},
+    "social-douyin-cover": {"9:16"},
+    "social-weibo-wechat-image": {"16:9", "1:1"},
+    "social-ig-post": {"1:1", "4:5"},
+}
+
+_SOCIAL_IMAGE_NATIVE_RATIOS = {
+    "social-xiaohongshu-image": "3:4",
+    "social-douyin-cover": "9:16",
+    "social-weibo-wechat-image": "1:1",
+    "social-ig-post": "1:1",
+}
+
+
+def _social_campaign_plan_input_errors(
+    plan: dict[str, Any], resolved_inputs: dict[str, Any]
+) -> list[dict[str, str]]:
+    """Reject a ready social draft whose Skill defaults contradict its image plan."""
+    images = [
+        node
+        for node in plan.get("nodes") or []
+        if isinstance(node, dict)
+        and _text(node.get("node_type") or node.get("type")) == "imageGenNode"
+    ]
+    if not images:
+        return []
+    errors: list[dict[str, str]] = []
+    image_count = resolved_inputs.get("image_count")
+    if isinstance(image_count, int) and not isinstance(image_count, bool):
+        if image_count != len(images):
+            errors.append({
+                "path": "inputs.image_count",
+                "message": "image_count must match the number of image nodes",
+            })
+
+    recipe_ids: list[str] = []
+    ratios: set[str] = set()
+    for node in images:
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        catalog = data.get("workflowCatalog")
+        recipe_ids.append(
+            _text(catalog.get("recipeId")) if isinstance(catalog, dict) else ""
+        )
+        ratio = _text(data.get("aspectRatio"))
+        recipe_id = recipe_ids[-1]
+        if not ratio and recipe_id in _SOCIAL_IMAGE_RECIPE_RATIOS:
+            errors.append({
+                "path": "inputs.aspect_ratio",
+                "message": f"{recipe_id} requires an image aspect ratio",
+            })
+        if ratio:
+            ratios.add(ratio)
+            if (recipe_id in _SOCIAL_IMAGE_RECIPE_RATIOS
+                    and ratio not in _SOCIAL_IMAGE_RECIPE_RATIOS[recipe_id]):
+                errors.append({
+                    "path": "inputs.aspect_ratio",
+                    "message": f"{recipe_id} does not support image aspect ratio {ratio}",
+                })
+    selected_platforms = {
+        _SOCIAL_IMAGE_RECIPE_PLATFORMS[recipe_id]
+        for recipe_id in recipe_ids
+        if recipe_id in _SOCIAL_IMAGE_RECIPE_PLATFORMS
+    }
+    platforms = resolved_inputs.get("platforms")
+    explicit_platforms = "platforms" in (plan.get("inputs") or {})
+    if isinstance(platforms, list):
+        stated_platforms = set(platforms)
+        if selected_platforms - stated_platforms or (
+            explicit_platforms and stated_platforms != selected_platforms
+        ):
+            errors.append({
+                "path": "inputs.platforms",
+                "message": "platforms must match the selected platform image Recipes",
+            })
+
+    explicit_ratio = any(
+        key in (plan.get("inputs") or {})
+        for key in ("aspect_ratio", "image_aspect_ratio")
+    )
+    aspect_ratio = resolved_inputs.get("aspect_ratio")
+    image_aspect_ratio = resolved_inputs.get("image_aspect_ratio")
+    if explicit_ratio and aspect_ratio and (
+        (image_aspect_ratio and aspect_ratio != image_aspect_ratio)
+        or any(ratio != aspect_ratio for ratio in ratios)
+    ):
+        errors.append({
+            "path": "inputs.aspect_ratio",
+            "message": "aspect_ratio must match the planned image aspect ratio",
+        })
+    return errors
+
+
+def _pixar_character_source_errors(
+    plan: dict[str, Any], resolved_inputs: dict[str, Any]
+) -> list[dict[str, str]]:
+    method = _text(resolved_inputs.get("character_input_method"))
+    for node in plan.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        catalog = data.get("workflowCatalog") if isinstance(data.get("workflowCatalog"), dict) else {}
+        if catalog.get("recipeId") != "ad-ip-character-anchor":
+            continue
+        confirmed = catalog.get("confirmedInputs")
+        confirmed_method = (
+            _text(confirmed.get("character_input_method"))
+            if isinstance(confirmed, dict) else ""
+        )
+        prompt = _text(data.get("prompt") or node.get("prompt"))
+        if (confirmed_method and confirmed_method != method) or (
+            "自定义角色" in prompt and method != "自定义角色"
+        ):
+            return [{
+                "path": "inputs.character_input_method",
+                "message": "character_input_method must match the character anchor source",
+            }]
+    return []
+
+
+def _quick_drama_visual_style_blockers(
+    plan: dict[str, Any], visual_style: Any,
+) -> list[dict[str, str]]:
+    """Require a confirmed style in each executable visual task's prompt context."""
+    style = _text(visual_style)
+    if not style or style.casefold() == "未指定":
+        return []
+    nodes = plan.get("nodes") if isinstance(plan.get("nodes"), list) else []
+    edges = plan.get("edges") if isinstance(plan.get("edges"), list) else []
+    by_id = {
+        _text(node.get("id")): node for node in nodes if isinstance(node, dict)
+    }
+
+    def task_text(node: dict[str, Any]) -> str:
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        node_type = node.get("node_type")
+        if node_type in {"textAnnotationNode", "beatContextNode"}:
+            # Text nodes consume content; aliases only fill it when absent.
+            value = data.get("content") or data.get("text") or data.get("prompt")
+        else:
+            # Image, video and script revisions update data.prompt only.
+            # The compiler uses a top-level prompt only when data.prompt is empty.
+            value = data.get("prompt") or node.get("prompt")
+        return _text(value).casefold()
+
+    blockers: list[dict[str, str]] = []
+    for index, node in enumerate(nodes):
+        if not isinstance(node, dict) or node.get("node_type") not in {
+            "imageGenNode", "videoNode",
+        }:
+            continue
+        node_id = _text(node.get("id"))
+        if style.casefold() in task_text(node):
+            continue
+        consumes_style = any(
+            isinstance(edge, dict)
+            and edge.get("target") == node_id
+            and edge.get("link_type") in {"prompt_for", "context_for"}
+            and isinstance(by_id.get(_text(edge.get("source"))), dict)
+            and by_id[_text(edge["source"])].get("node_type") in {
+                "textAnnotationNode", "scriptNode", "beatContextNode",
+            }
+            and style.casefold() in task_text(by_id[_text(edge["source"])])
+            for edge in edges
+        )
+        if not consumes_style:
+            blockers.append({
+                "path": f"nodes[{index}].data.prompt",
+                "code": "confirmed_visual_style_missing",
+                "node_id": node_id,
+                "message": (
+                    "Confirmed visual style must appear in this visual task or in "
+                    "a consumed upstream text node (prompt_for/context_for)."
+                ),
             })
     return blockers
 
@@ -3979,6 +4328,24 @@ def validate_agent_workflow_plan(
         }
         for parameter_id in input_contract["missing_required"]
     )
+    if skill_id == "social-content-campaign":
+        if not {"aspect_ratio", "image_aspect_ratio"} & plan_inputs.keys():
+            ratios = {
+                _text(node.get("data", {}).get("aspectRatio"))
+                for node in plan.get("nodes") or []
+                if isinstance(node, dict) and node.get("node_type") == "imageGenNode"
+                and isinstance(node.get("data"), dict)
+                and _text(node["data"].get("aspectRatio"))
+            }
+            if len(ratios) == 1:
+                input_contract["resolved"]["aspect_ratio"] = next(iter(ratios))
+            elif len(ratios) > 1:
+                input_contract["resolved"].pop("aspect_ratio", None)
+        errors.extend(
+            _social_campaign_plan_input_errors(plan, input_contract["resolved"])
+        )
+    if skill_id == "pixar-ip-ad-video":
+        errors.extend(_pixar_character_source_errors(plan, input_contract["resolved"]))
     for index, node in enumerate(plan.get("nodes") or []):
         node_type = (
             _text(node.get("node_type") or node.get("type"))
@@ -3995,6 +4362,18 @@ def validate_agent_workflow_plan(
         data = node.get("data") if isinstance(node, dict) else None
         catalog = data.get("workflowCatalog") if isinstance(data, dict) else None
         recipe_id = _text(catalog.get("recipeId")) if isinstance(catalog, dict) else ""
+        if skill_id == "short-drama-quick" and node_type == "videoNode" and recipe_id == "general-video":
+            shot_title = next((
+                _text(value) for value in (
+                    node.get("title"), node.get("name"), node.get("label"),
+                    data.get("title"), data.get("displayName"), data.get("label"),
+                ) if _text(value)
+            ), "")
+            if not shot_title:
+                errors.append({
+                    "path": f"nodes[{index}].data.title",
+                    "message": "short-drama-quick video shot requires a non-empty title",
+                })
         recipe_pipeline = (
             (catalog.get("recipePipeline") or []) if isinstance(catalog, dict) else []
         )
@@ -4057,15 +4436,22 @@ def validate_agent_workflow_plan(
             "error": errors[0]["message"],
             "errors": errors,
         }
-    validated_plan = validated.get("plan") if isinstance(validated.get("plan"), dict) else {}
+    validated_plan = (
+        validated.get("plan") if isinstance(validated.get("plan"), dict) else {}
+    )
     backfilled = _backfill_plan_runtime_fields(
         validated_plan.get("nodes") or [], input_contract["resolved"]
     )
+    audio_requirements_bound = _bind_recipe_audio_requirements(
+        validated_plan.get("nodes") or [], recipes
+    )
     if backfilled:
         validated["backfilled_runtime_fields"] = backfilled
-        if _build_plan_preflight is not None:
-            # Planned duration and warnings must reflect the backfilled nodes.
-            validated["preflight"] = _build_plan_preflight(validated_plan.get("nodes") or [])
+    if (backfilled or audio_requirements_bound) and _build_plan_preflight is not None:
+        # Runtime fields and trusted Recipe audio requirements both affect preflight.
+        validated["preflight"] = _build_plan_preflight(
+            validated_plan.get("nodes") or []
+        )
     _drop_caller_mode_confirmations(
         validated_plan.get("nodes") or [], input_contract["resolved"]
     )
@@ -4089,6 +4475,13 @@ def validate_agent_workflow_plan(
     # (e.g. a short drama without shot planning) is a preflight blocker, not a
     # schema error: the draft can be revised or re-planned (issue #677).
     _attach_skill_stage_blockers(validated, skill_id)
+    if skill_id == "short-drama-quick":
+        _attach_preflight_blockers(
+            validated,
+            _quick_drama_visual_style_blockers(
+                validated_plan, input_contract["resolved"].get("visual_style")
+            ),
+        )
     duration_blockers = _noncanonical_video_duration_blockers(
         validated_plan.get("nodes") or []
     )
@@ -4286,7 +4679,11 @@ def _recipe_planning_summary(recipe: dict[str, Any]) -> dict[str, Any]:
         "id": _text(recipe.get("id")),
         "name": _text(recipe.get("name") or recipe.get("label")),
         "version": recipe.get("version"),
-        **({"output_format": recipe["output_format"]} if recipe.get("output_format") else {}),
+        **(
+            {"output_format": recipe["output_format"]}
+            if recipe.get("output_format")
+            else {}
+        ),
         "node_type": _recipe_node_type(recipe),
         "output_kind": _text(
             recipe.get("output_kind")
@@ -4315,6 +4712,7 @@ def _recipe_planning_summary(recipe: dict[str, Any]) -> dict[str, Any]:
         "requires_source_media": bool(
             recipe.get("requires_source_media") or recipe.get("requiresSourceMedia")
         ),
+        "requires_generated_audio": recipe.get("requires_generated_audio") is True,
         "conflicts_with": [
             _text(item) for item in recipe.get("conflicts_with") or [] if _text(item)
         ],

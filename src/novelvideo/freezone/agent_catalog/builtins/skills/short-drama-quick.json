@@ -2,7 +2,7 @@
   "id": "short-drama-quick",
   "name": "短剧（快速测试）",
   "enabled": true,
-  "version": 1,
+  "version": 2,
   "description": "用于快速验证动态短剧工作流：故事规划、角色锚点、分镜、视频、配音和自动合成。",
   "category": "drama",
   "triggers": {
@@ -19,12 +19,13 @@
     ]
   },
   "planning": {
-    "planning_notes": "这是轻量测试流程；正式复杂短剧继续使用原有 short-drama Skill。每个镜头 item 必须提供 title、prompt 和非空 narration，narration 是该镜头实际朗读的一句旁白或对白。",
-    "prompt_guide": "保持角色身份、服装、场景和叙事连续，每个计划项对应一个剧情镜头。prompt 只描述画面，narration 只写该镜头实际朗读的旁白或对白，不要包含时间码、时长、情绪标签、环境音、音效或配乐说明。",
+    "planning_notes": "这是轻量测试流程；正式复杂短剧继续使用原有 short-drama Skill。先明确 visual_style：用户已确认视觉风格时填其原意，未确认时填“未指定”，不要自行指定风格。已确认风格须进入每个图片和视频任务本身，或通过 prompt_for/context_for 消费含该风格的上游文本节点；仅靠图片素材边或 Plan 输入不算传递。每个镜头 item 必须提供 title、prompt 和非空 narration，narration 是该镜头实际朗读的一句旁白或对白。",
+    "prompt_guide": "保持角色身份、服装、场景和叙事连续，每个计划项对应一个剧情镜头。已确认视觉风格须在视觉任务的画面 prompt 或其可消费上游文本中可追踪；未确认时不要强加风格。prompt 只描述画面，narration 只写该镜头实际朗读的旁白或对白，不要包含时间码、时长、情绪标签、环境音、音效或配乐说明。",
     "conduct_rules": [
       "根据用户目标动态决定节点数量和依赖关系",
       "仅使用 allowed_recipe_ids 中声明的能力",
-      "创建画布节点前先生成并确认动态计划"
+      "创建画布节点前先生成并确认动态计划",
+      "不得省略视觉风格决定：已确认风格填 visual_style 并传到视觉任务；未确认填“未指定”，不得擅自强加"
     ]
   },
   "schema_version": "dramaclaw.workflow-skill.v1",
@@ -49,14 +50,9 @@
   "input_parameters": [
     {
       "id": "visual_style",
-      "label": "视觉风格",
-      "type": "single_select",
-      "required": false,
-      "options": [
-        "写实",
-        "电影感",
-        "动画"
-      ]
+      "label": "已确认视觉风格（未确认填“未指定”）",
+      "type": "text",
+      "required": true
     }
   ],
   "evaluation": {

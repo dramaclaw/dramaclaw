@@ -3058,6 +3058,7 @@ tests/test_sqlite_store_indextts2_migration.py,Elastic-2.0,2026 SuperTale contri
 tests/test_stage_asset_scene_360_credit.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_stage_asset_scene_360_provider.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_stage_asset_step_contract.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+tests/test_start_ce_sandbox_guidance.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_story_publication.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_story_review_regressions.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 tests/test_storyboard_prompt_visual_authority.py,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

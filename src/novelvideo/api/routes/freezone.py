@@ -5195,7 +5195,7 @@ def _workflow_draft_api_data(
         return dict(draft)
     from novelvideo.freezone.agent_workflows.drafts import public_workflow_draft
 
-    result = public_workflow_draft(draft)
+    result = public_workflow_draft(draft, compact_preview=summary)
     state = draft.get("status")
     result.update(
         status="workflow_draft_" + str(state),
