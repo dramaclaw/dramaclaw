@@ -3687,6 +3687,51 @@ def test_generation_clarification_adds_model_for_dependent_required_choice(monke
     ]
 
 
+def test_generation_clarification_accepts_canonical_question_ids_as_required_choices(
+    monkeypatch,
+):
+    """Issue #788: canonical ids from tool errors must be usable as required choices."""
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    emitted = []
+    monkeypatch.setattr(
+        plugin,
+        "_emit_clarification_event",
+        lambda _project, _canvas, event: emitted.append(event) or "shown",
+    )
+
+    result = handlers["freezone_request_user_clarification"](
+        {
+            "generation_required_choices": {
+                "video": ["video_duration_seconds", "video_variants_per_node"],
+            },
+            "answers": {"video_model": {"option_ids": ["video-a"]}},
+        }
+    )
+
+    assert result == "shown"
+    assert [question["id"] for question in emitted[0]["questions"]] == [
+        "video_duration_seconds",
+        "video_variants_per_node",
+    ]
+
+
+def test_generation_clarification_unsupported_required_choice_lists_allowed_fields():
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+
+    result = handlers["freezone_request_user_clarification"](
+        {"generation_required_choices": {"video": ["seed"]}}
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "generation_clarification_args_invalid"
+    assert result["unsupported_required_choices"] == {"video": ["seed"]}
+    assert "duration_seconds" in result["allowed_required_choices"]["video"]
+    assert "count" in result["allowed_required_choices"]["video"]
+    assert "aspect_ratio" in result["allowed_required_choices"]["image"]
+
+
 def test_generation_clarification_reuses_confirmed_model_for_dependent_choice(monkeypatch):
     plugin = _load_plugin_module()
     handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
@@ -4640,6 +4685,39 @@ def test_prepare_exact_plan_unsupported_generation_answer_returns_recovery(monke
     assert "video_seed" not in result["allowed_answer_ids"]
     assert "video_generation_mode" in result["allowed_answer_ids"]
     assert "freezone_request_user_clarification" in result["agent_instruction"]
+
+
+def test_prepare_exact_plan_missing_duration_names_nodes_without_duration(monkeypatch):
+    """Issue #788: point the agent at video nodes missing durationSec."""
+    plugin = _load_plugin_module()
+    monkeypatch.setattr(
+        plugin,
+        "validate_agent_workflow_plan",
+        lambda _plan: pytest.fail("incomplete answers must stop before validation"),
+    )
+    result = plugin._handle_prepare_workflow_plan_draft({
+        "plan": {
+            "schema_version": "freezone_workflow_plan.v1",
+            "nodes": [
+                {"id": "shot-1", "node_type": "videoNode", "data": {"durationSec": 15}},
+                {"id": "shot-2", "node_type": "videoNode", "data": {}},
+                {"id": "shot-3", "node_type": "videoNode", "data": {"durationSec": None}},
+            ],
+            "edges": [],
+        },
+        "generation_answers": {
+            "video_model": {"option_ids": ["video-a"]},
+            "video_aspect_ratio": {"option_ids": ["16:9"]},
+            "video_resolution": {"option_ids": ["720P"]},
+            "video_variants_per_node": {"option_ids": ["1"]},
+        },
+    })
+
+    assert result["status"] == "generation_answers_incomplete"
+    assert result["error"] == "missing generation answer: video_duration_seconds"
+    assert result["video_nodes_missing_duration"] == ["shot-2", "shot-3"]
+    assert "durationSec" in result["agent_instruction"]
+    assert '{"video": ["duration_seconds"]}' in result["agent_instruction"]
 
 
 def test_prepare_exact_plan_maps_generation_answers_into_nodes(monkeypatch, tmp_path):
