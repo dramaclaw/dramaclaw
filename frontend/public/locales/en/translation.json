@@ -7844,6 +7844,7 @@
         "globalNodeName": "Previz viewport recording ({{quality}})",
         "trackNodeName": "Previz track recording {{index}} ({{quality}})",
         "noAudioMix": "This browser cannot mix audio; recorded without sound",
+        "variableFrameRate": "This browser cannot encode frame by frame; the frame rate may be unsteady. Chrome is recommended",
         "waitingModels": "Waiting for models and motions to load…",
         "motionsIncomplete": "Some motions haven't finished loading; those characters will start the recording in their default pose"
       }

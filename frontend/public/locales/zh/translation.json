@@ -7844,6 +7844,7 @@
         "globalNodeName": "预演台全局录制({{quality}})",
         "trackNodeName": "预演台轨道录制 {{index}}({{quality}})",
         "noAudioMix": "本浏览器无法混音，已录制无声视频",
+        "variableFrameRate": "本浏览器不支持逐帧编码，成片帧率可能不稳，建议改用 Chrome",
         "waitingModels": "正在等待模型与动作加载…",
         "motionsIncomplete": "部分动作还没加载完，成片里这些人物会先停在默认姿势"
       }

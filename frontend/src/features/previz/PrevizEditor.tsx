@@ -1290,6 +1290,8 @@ export function PrevizEditor({
           toast.error(t("previz.editor.record.unsupported"));
           return;
         }
+        // 实时录制渲染一慢就丢帧，平均帧率掉到下游视频模型的下限以下会被拒收：先说一声。
+        if (!offline) toast.warning(t("previz.editor.record.variableFrameRate"));
 
         // 解码赶在开录之前：`startRecording()` 一调辅助物就藏了、视口也切到了输出分辨率，
         // 这期间界面看着像卡死，几百毫秒的解码不该塞进这个窗口。`load()` 自己吞掉失败

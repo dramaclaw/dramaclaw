@@ -264,6 +264,26 @@ vi.mock("@/features/previz/capture/recordTimeline", async (importOriginal) => ({
     createCanvasRecorder(...args),
 }));
 
+// jsdom 没有 WebCodecs，逐帧离线出片那条路默认走不到（`canEncodeOffline` 为 false，退回
+// 实时录制）；要验它就把这个开关翻成 true，编码器给假的，驱动循环与混音走真实实现。
+const canEncodeOffline = vi.fn(async (_size: { width: number; height: number }) => false);
+const frameEncoder = {
+  addFrame: vi.fn(async (_frame: number) => {}),
+  finish: vi.fn(async (_audio: AudioBuffer | null) => new Blob(["take"], { type: "video/mp4" })),
+  cancel: vi.fn(async () => {}),
+};
+const createCanvasFrameEncoder = vi.fn(
+  async (_canvas: HTMLCanvasElement, _options: { fps: number; audioCodec: string | null }) =>
+    frameEncoder,
+);
+vi.mock("@/features/previz/capture/encodeTimeline", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/previz/capture/encodeTimeline")>()),
+  canEncodeOffline: (...args: Parameters<typeof canEncodeOffline>) => canEncodeOffline(...args),
+  pickOfflineAudioCodec: async () => "aac",
+  createCanvasFrameEncoder: (...args: Parameters<typeof createCanvasFrameEncoder>) =>
+    createCanvasFrameEncoder(...args),
+}));
+
 // jsdom 没有 AudioContext，编辑器又只经这三个导出碰它；假一份就够，播放引擎自己的
 // 行为归 audio-playback 那组用例管。
 const audioDestination = { stream: { getAudioTracks: () => [] } };
@@ -278,6 +298,7 @@ const audioPlayback = {
   ),
   stop: vi.fn(),
   dispose: vi.fn(),
+  bufferFor: vi.fn((_url: string): AudioBuffer | undefined => undefined),
   failedUrls: new Set<string>(),
 };
 const createAudioContext = vi.fn(() => audioContext);
@@ -320,6 +341,7 @@ beforeEach(() => {
   createAudioContext.mockReset().mockImplementation(() => audioContext);
   pickRecordMimeType.mockReset().mockImplementation(defaultRecordMimeType);
   createCanvasRecorder.mockReset().mockImplementation(defaultCanvasRecorder);
+  canEncodeOffline.mockReset().mockImplementation(async () => false);
   audioPlayback.load.mockReset().mockImplementation(async () => {});
   submitFreezoneImageToBlockout.mockReset().mockImplementation(async () => BLOCKOUT_JOB);
   canvasNodes.splice(0, canvasNodes.length, { id: "previz-1", type: "previz", data: {} });
@@ -2695,7 +2717,7 @@ describe("audio playback and mix", () => {
         mimeType: "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
       }),
     );
-    expect(toast.warning).not.toHaveBeenCalled();
+    expect(toast.warning).not.toHaveBeenCalledWith("previz.editor.record.noAudioMix");
     // 一帧 @ 30fps ≈ 33ms：时长来自真正画出的帧数，不是设置里的总长。
     expect(addDerivedVideoNode).toHaveBeenLastCalledWith(
       "previz-1",
@@ -2704,6 +2726,50 @@ describe("audio playback and mix", () => {
       "previz.editor.record.globalNodeName",
       33,
     );
+  });
+
+  it("encodes frame by frame where the browser can, audio mixed offline", async () => {
+    const user = userEvent.setup();
+    canEncodeOffline.mockResolvedValueOnce(true);
+    renderOneFrame();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    act(() => {
+      usePrevizStore.getState().addAudioClip(source, 0);
+    });
+    const clips = usePrevizStore.getState().scene.timeline.audio;
+    await recordGlobal(user);
+    // 走的是离线编码器，不是 MediaRecorder：实时那条路渲染一慢就丢帧。
+    expect(createCanvasRecorder).not.toHaveBeenCalled();
+    expect(createCanvasFrameEncoder).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ fps: 30, audioCodec: "aac" }),
+    );
+    // 时间轴的每一帧各编一次，一帧不丢。
+    expect(frameEncoder.addFrame.mock.calls.map(([frame]) => frame)).toEqual([0, 1]);
+    // 声音不走实时混音节点，而是拿解码好的素材离线混。
+    expect(audioPlayback.load).toHaveBeenCalledWith(clips);
+    expect(audioPlayback.play).not.toHaveBeenCalled();
+    expect(audioPlayback.bufferFor).toHaveBeenCalledWith(clips[0].audioUrl);
+    expect(frameEncoder.finish).toHaveBeenCalledTimes(1);
+    expect(toast.warning).not.toHaveBeenCalled();
+    // 第 0、1 两帧各占一格：片长两帧 ≈ 67ms。
+    expect(addDerivedVideoNode).toHaveBeenLastCalledWith(
+      "previz-1",
+      "/static/take.mp4",
+      "16:9",
+      "previz.editor.record.globalNodeName",
+      67,
+    );
+  });
+
+  it("warns about an unsteady frame rate when it has to record in real time", async () => {
+    const user = userEvent.setup();
+    renderOneFrame();
+    await vi.waitFor(() => expect(setScene).toHaveBeenCalled());
+    await recordGlobal(user);
+    expect(createCanvasFrameEncoder).not.toHaveBeenCalled();
+    expect(createCanvasRecorder).toHaveBeenCalled();
+    expect(toast.warning).toHaveBeenCalledWith("previz.editor.record.variableFrameRate");
   });
 
   it("records silent video with a warning when the browser cannot mix", async () => {
