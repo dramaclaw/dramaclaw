@@ -41,7 +41,7 @@ const FALLBACK_NODE_SIZES: Partial<Record<string, NodeSize>> = {
   [CANVAS_NODE_TYPES.skill]: { width: 380, height: 320 },
 };
 
-function getNodeSize(node: CanvasNode): NodeSize {
+export function getNodeSize(node: CanvasNode): NodeSize {
   const fallback = node.type ? FALLBACK_NODE_SIZES[node.type] : undefined;
   const styleWidth = typeof node.style?.width === 'number' ? node.style.width : undefined;
   const styleHeight = typeof node.style?.height === 'number' ? node.style.height : undefined;

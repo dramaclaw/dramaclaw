@@ -109,6 +109,7 @@ import {
   withoutFmvContinuityNote,
 } from '@/features/canvas/domain/fmvContinuity';
 import { scopeProjectionGraphIds } from '@/features/freezone/projectionGraphIds';
+import { placeGroupsOutsideStory } from '@/features/canvas/application/storyGroupPlacement';
 import { slugifyName } from '@/features/canvas/story/variableName';
 import { storyFlagsOfNode, storyVariablesOfNode } from '@/features/canvas/story/storyVariableSelectors';
 import {
@@ -2041,7 +2042,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const normalizedCanvas = clearTransientEdgeSelection(normalizeCanvasData(nodes, edges));
 
     set({
-      nodes: normalizedCanvas.nodes,
+      nodes: placeGroupsOutsideStory(normalizedCanvas.nodes),
       edges: normalizedCanvas.edges,
       selectedNodeId: null,
       activeToolDialog: null,
@@ -2066,7 +2067,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ? "delete_to_empty"
         : "user_edit";
       return {
-        nodes: normalizedCanvas.nodes,
+        nodes: placeGroupsOutsideStory(normalizedCanvas.nodes),
         edges: normalizedCanvas.edges,
         selectedNodeId: null,
         activeToolDialog: null,
@@ -2087,7 +2088,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const normalizedCanvas = clearHydratedSelection(normalizeCanvasData(draft.nodes, draft.edges));
 
     set({
-      nodes: normalizedCanvas.nodes,
+      nodes: placeGroupsOutsideStory(normalizedCanvas.nodes),
       edges: normalizedCanvas.edges,
       selectedNodeId: null,
       activeToolDialog: null,
@@ -4529,7 +4530,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     // Pure layout correction — no history push / trackEdit so it doesn't spam
     // undo or autosave; it re-derives on next mount anyway.
-    set({ nodes: nextNodes });
+    set({ nodes: placeGroupsOutsideStory(nextNodes) });
   },
 
   arrangeGroupChildren: (groupNodeId, mode) => {
@@ -4614,7 +4615,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
 
     set({
-      nodes: nextNodes,
+      nodes: placeGroupsOutsideStory(nextNodes),
       // 用户从工具栏主动触发的重排会永久移动子节点（不像 fitGroupToChildren 那样可
       // 重新推导），必须入 undo 历史，否则排乱后 ⌘Z 无法还原。
       history: {

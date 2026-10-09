@@ -73,6 +73,11 @@ def test_documented_character_images_compile_without_planning_or_video(
             for item in created if item["node_type"] == "imageGenNode"} == {
         "driver_ref": "driver", "cockpit_ref": "vehicle",
     }
+    groups = [item for item in graph["commands"] if item["type"] == "group_nodes"]
+    assert len(groups) == 1
+    assert groups[0]["node_ids"] == ["brief", "driver_ref", "cockpit_ref"]
+    layout = next(item for item in graph["commands"] if item["type"] == "layout_nodes")
+    assert layout["node_ids"] == groups[0]["node_ids"]
     runs = [item for item in graph["commands"] if item["type"] == "run_workflow"]
     assert len(runs) == 1
     assert runs[0]["direction"] == "node"
@@ -386,7 +391,7 @@ def test_story_frames_without_reference_use_nonexecuting_input_root() -> None:
         ],
         "group": {
             "label": "影游分镜图",
-            "node_ids": ["frame_opening", "frame_ending"],
+            "node_ids": ["brief", "frame_opening", "frame_ending"],
         },
     }
 
@@ -397,7 +402,7 @@ def test_story_frames_without_reference_use_nonexecuting_input_root() -> None:
     )
     assert graph["ok"] is True, graph
     group = next(item for item in graph["commands"] if item["type"] == "group_nodes")
-    assert group["node_ids"] == ["frame_opening", "frame_ending"]
+    assert group["node_ids"] == ["brief", "frame_opening", "frame_ending"]
 
 
 def test_story_frame_targets_match_live_story_video_nodes() -> None:

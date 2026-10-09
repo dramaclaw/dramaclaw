@@ -63,6 +63,7 @@ import {
   type CanvasEdgeSemanticKind,
 } from "@/features/freezone/canvasEdgeSemantics";
 import { useCanvasStore } from "@/stores/canvasStore";
+import { placeGroupsOutsideStory } from "@/features/canvas/application/storyGroupPlacement";
 import { deterministicNodeOutputIssue } from "@/features/freezone/workflowQualityGate";
 import {
   bindWorkflowProductOperation,
@@ -1577,7 +1578,7 @@ function scheduleMeasuredLayout(
   });
 }
 
-function layoutNodes(
+function layoutNodesInternal(
   nodeIds: string[],
   mode: "horizontal" | "vertical" | "grid",
   refineAfterMeasurement = true,
@@ -1667,6 +1668,38 @@ function layoutNodes(
   if (needsMeasuredRefinement) {
     scheduleMeasuredLayout(nodeIds, mode, hermesLegacy);
   }
+}
+
+function placeWorkflowGroups(groupIds: ReadonlySet<string>): void {
+  const store = useCanvasStore.getState();
+  const placed = placeGroupsOutsideStory(store.nodes, groupIds);
+  if (placed === store.nodes) return;
+  const positions: Record<string, { x: number; y: number }> = {};
+  placed.forEach((node, index) => {
+    if (node.position !== store.nodes[index].position) positions[node.id] = node.position;
+  });
+  store.setNodePositions(positions);
+}
+
+function layoutNodes(
+  nodeIds: string[],
+  mode: "horizontal" | "vertical" | "grid",
+  refineAfterMeasurement = true,
+  hermesLegacy = false,
+): void {
+  layoutNodesInternal(nodeIds, mode, refineAfterMeasurement, hermesLegacy);
+  const nodesById = new Map(useCanvasStore.getState().nodes.map((node) => [node.id, node]));
+  const rootIds = new Set<string>();
+  for (const nodeId of nodeIds) {
+    let node = nodesById.get(nodeId);
+    const visited = new Set<string>();
+    while (node?.parentId && !visited.has(node.id)) {
+      visited.add(node.id);
+      node = nodesById.get(node.parentId);
+    }
+    if (node && !node.parentId) rootIds.add(node.id);
+  }
+  placeWorkflowGroups(rootIds);
 }
 
 function moveNodes(
@@ -4331,6 +4364,7 @@ function* applyCanvasChatCommandsInternal(
       }
       continue;
     }
+    const existingEnvelopeNodeIds = new Set(useCanvasStore.getState().nodes.map((node) => node.id));
     const envelopeCreatedNodeIds: string[] = [];
     const storyImageReferenceEnvelope = isStoryImageReferenceEnvelope(envelope);
     const envelopeSourceNodeIds = new Set<string>();
@@ -4912,6 +4946,11 @@ function* applyCanvasChatCommandsInternal(
         commandIndex += 1;
       }
     }
+    // Grouping and layout can enlarge a workflow far beyond its initial node
+    // positions. Reserve space using the final group bounds before generation.
+    placeWorkflowGroups(new Set(useCanvasStore.getState().nodes
+      .filter((node) => !existingEnvelopeNodeIds.has(node.id) && isGroupNode(node))
+      .map((node) => node.id)));
   }
 
   if (options.queueNodeActions) {

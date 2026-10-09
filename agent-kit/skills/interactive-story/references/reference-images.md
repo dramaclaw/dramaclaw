@@ -10,7 +10,7 @@
 - `source_context.story_id` 来自真实故事。人物、产品、车辆或重要物品在 `characters` 中的资产均使用 `asset_targets` 的 `kind="subject"`；场景在 `scenes` 中的资产用 `kind="scene"`。`entity_id` 必须是对应资产 ID，`segment_ids` 是实际使用它且已在故事声明该用途的非空、唯一片段列表。
 - 每个 `imageGenNode.id` 在 `asset_targets` 与 `targets` 合计恰好映射一次。镜头开场分镜才使用 `targets`，字段为 `plan_node_id`、`story_segment_id`、`video_node_id`。角色批次不为了挂接视频而添加分镜映射。
 - 同一图片即使含人物和环境，也只登记一种本次制作用途。例如车辆角色的车内控件图映射为车辆主体；若用户要求的是座舱场景图，则映射到已规划的座舱场景。不能将同一个 `cockpit_ref` 同时登记为场景、车辆主体或分镜。只有用户要求两种独立产物时才分别建图片节点；后续复用已生成图片时通过 `external_inputs` 和 `media_input_for` 引用，不重复登记目标。
-- `groups` 为数组，只分组本次图片。已有故事视频留在 Plan 外，生成后由宿主按目标回连。用户要求生成时显式传 `run_after_create=true`，只创建时为 `false`；展示返回预览并按现有草稿确认入口执行，不逐节点补跑。
+- `groups` 为数组，每个批次组必须包含本次图片及供该组专用的非执行简报；简报的 ID 同样写入 `node_ids`，不要只连线却把简报留在组外，否则移动或避让时它不会跟随。已有故事视频和外部引用素材留在 Plan 外，生成后由宿主按目标回连。跨多个组共用的简报不能重复入组，可为各组分别创建简报，或明确保留为外部共享节点。用户要求生成时显式传 `run_after_create=true`，只创建时为 `false`；展示返回预览并按现有草稿确认入口执行，不逐节点补跑。
 
 ## 完整范例：驾驶员与车辆角色参考图
 
@@ -64,7 +64,7 @@
     {"source": "brief", "target": "driver_ref", "link_type": "prompt_for"},
     {"source": "brief", "target": "cockpit_ref", "link_type": "prompt_for"}
   ],
-  "groups": [{"label": "角色参考图", "node_ids": ["driver_ref", "cockpit_ref"]}]
+  "groups": [{"label": "角色参考图", "node_ids": ["brief", "driver_ref", "cockpit_ref"]}]
 }
 ```
 
