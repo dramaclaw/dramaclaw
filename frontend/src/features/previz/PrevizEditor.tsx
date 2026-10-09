@@ -42,6 +42,15 @@ import {
   recordQualityLabel,
   recordTimeline,
 } from "./capture/recordTimeline";
+import {
+  OFFLINE_RECORD_MIME,
+  canEncodeOffline,
+  createCanvasFrameEncoder,
+  encodeTimeline,
+  mixTimelineAudio,
+  pickOfflineAudioCodec,
+} from "./capture/encodeTimeline";
+import { outputPixelSize } from "./domain/camera";
 import { PrevizRenderer } from "./engine/PrevizRenderer";
 import {
   createAudioContext,
@@ -1264,8 +1273,15 @@ export function PrevizEditor({
         // 节点恒带且只带一条音轨，两者在浏览器里不会分叉，空流只存在于测试的假引擎里。
         let playback: PrevizAudioPlayback | null =
           audioClips.length > 0 ? ensureAudioPlayback() : null;
-        let mimeType = playback ? pickRecordMimeType(undefined, true) : null;
-        if (audioClips.length > 0 && (!playback || !mimeType)) {
+        // 浏览器编得了 H.264 就逐帧离线出片（恒定帧率）；编不了才退回实时录制。
+        const offline = await canEncodeOffline(outputPixelSize(store.scene.settings.outputAspect));
+        const offlineAudioCodec = offline && playback ? await pickOfflineAudioCodec() : null;
+        let mimeType = offline
+          ? OFFLINE_RECORD_MIME
+          : playback
+            ? pickRecordMimeType(undefined, true)
+            : null;
+        if (audioClips.length > 0 && (!playback || (offline ? !offlineAudioCodec : !mimeType))) {
           toast.warning(t("previz.editor.record.noAudioMix"));
           playback = null;
         }
@@ -1378,58 +1394,87 @@ export function PrevizEditor({
             // 的概率不低），`createMediaStreamDestination()` 理论上也能抛。漏出去的话
             // `pass.end()` 就不会跑，辅助物、手柄、机位锥全留在隐藏状态，视口也卡在输出分辨
             // 率上不再跟随窗口——只能重开编辑器才能救回来。
-            // 混音出口每次录制都新开一个，不复用：`createCanvasRecorder` 收工时会把并进画布
-            // 流的那条音轨一起 stop 掉，而停掉的轨道不会再复活，复用就是一部默片。
-            const destination = mixed ? mixed.context.createMediaStreamDestination() : null;
-            const canvasRecorder = createCanvasRecorder(pass.canvas, {
-              fps: PREVIZ_RECORD_FPS,
-              mimeType,
-              audioStream: destination?.stream,
-            });
-            // 混音时录制器一开就把音频从第 0 帧、1 倍速排进混音节点；停就一起停。
-            // 这里的 1 倍速是刻意的：成片是按 30fps 逐帧画出来的实速素材，跟着时间轴当前的
-            // 播放倍速排音频只会让成片音画对不上。
-            const recorder =
-              mixed && destination
-                ? {
-                    start: () => {
-                      canvasRecorder.start();
-                      void mixed.play(audioClips, 0, 1, destination);
-                    },
-                    stop: () => {
-                      mixed.stop();
-                      return canvasRecorder.stop();
-                    },
-                  }
-                : canvasRecorder;
-            blob = await recordTimeline({
-              durationFrames,
-              fps: PREVIZ_RECORD_FPS,
-              drawFrame: (frame) => {
-                // 全局录制按镜头轨逐帧换机位；轨道录制固定一台，传 null 让 pass 用自己那台。
-                pass.drawFrame(
-                  frame,
-                  target.mode === "global" ? liveCameraAt(programScene, frame) : null,
-                );
-                drawn = frame;
-                // 顺手把播放头推到同一帧，时间轴跟着走。
-                if (frame - lastPushed >= 3 || frame >= durationFrames) {
-                  lastPushed = frame;
-                  usePrevizStore.getState().setTimelineFrame(frame);
-                }
-              },
-              recorder,
-              now: () => performance.now(),
-              schedule: (callback) => {
-                window.requestAnimationFrame(callback);
-              },
-              onProgress: (ratio) => {
-                if (ratio - lastProgress < 0.02 && ratio < 1) return;
-                lastProgress = ratio;
-                setRecordProgress(ratio);
-              },
-              shouldStop: () => recordStopped.current,
-            });
+            const drawFrame = (frame: number) => {
+              // 全局录制按镜头轨逐帧换机位；轨道录制固定一台，传 null 让 pass 用自己那台。
+              pass.drawFrame(
+                frame,
+                target.mode === "global" ? liveCameraAt(programScene, frame) : null,
+              );
+              drawn = frame;
+              // 顺手把播放头推到同一帧，时间轴跟着走。
+              if (frame - lastPushed >= 3 || frame >= durationFrames) {
+                lastPushed = frame;
+                usePrevizStore.getState().setTimelineFrame(frame);
+              }
+            };
+            const onProgress = (ratio: number) => {
+              if (ratio - lastProgress < 0.02 && ratio < 1) return;
+              lastProgress = ratio;
+              setRecordProgress(ratio);
+            };
+            const shouldStop = () => recordStopped.current;
+            if (offline) {
+              blob = await encodeTimeline({
+                durationFrames,
+                drawFrame,
+                encoder: await createCanvasFrameEncoder(pass.canvas, {
+                  fps: PREVIZ_RECORD_FPS,
+                  audioCodec: mixed ? offlineAudioCodec : null,
+                }),
+                yieldToUi: () =>
+                  new Promise<void>((resolve) => {
+                    window.requestAnimationFrame(() => resolve());
+                  }),
+                // 第 0..N 帧共 N+1 帧，片长就是这么多帧；音轨混到同样长。
+                mixAudio: mixed
+                  ? (lastFrame) =>
+                      mixTimelineAudio(
+                        audioClips,
+                        mixed.bufferFor,
+                        (lastFrame + 1) / PREVIZ_RECORD_FPS,
+                      )
+                  : undefined,
+                onProgress,
+                shouldStop,
+              });
+            } else {
+              // 混音出口每次录制都新开一个，不复用：`createCanvasRecorder` 收工时会把并进画布
+              // 流的那条音轨一起 stop 掉，而停掉的轨道不会再复活，复用就是一部默片。
+              const destination = mixed ? mixed.context.createMediaStreamDestination() : null;
+              const canvasRecorder = createCanvasRecorder(pass.canvas, {
+                fps: PREVIZ_RECORD_FPS,
+                mimeType,
+                audioStream: destination?.stream,
+              });
+              // 混音时录制器一开就把音频从第 0 帧、1 倍速排进混音节点；停就一起停。
+              // 这里的 1 倍速是刻意的：成片是按 30fps 逐帧画出来的实速素材，跟着时间轴当前的
+              // 播放倍速排音频只会让成片音画对不上。
+              const recorder =
+                mixed && destination
+                  ? {
+                      start: () => {
+                        canvasRecorder.start();
+                        void mixed.play(audioClips, 0, 1, destination);
+                      },
+                      stop: () => {
+                        mixed.stop();
+                        return canvasRecorder.stop();
+                      },
+                    }
+                  : canvasRecorder;
+              blob = await recordTimeline({
+                durationFrames,
+                fps: PREVIZ_RECORD_FPS,
+                drawFrame,
+                recorder,
+                now: () => performance.now(),
+                schedule: (callback) => {
+                  window.requestAnimationFrame(callback);
+                },
+                onProgress,
+                shouldStop,
+              });
+            }
           } finally {
             // 辅助物的可见性攥在这个句柄里，不还回去的话手柄与轨迹会一直不见。
             pass.end();
@@ -1457,7 +1502,8 @@ export function PrevizEditor({
                 : t("previz.editor.record.globalNodeName", { quality }),
             // 按真正画出的帧数算，而不是设置里的总长：中途叫停的成片比总长短，末帧后
             // 那截采样尾巴又让它比总长长，两个方向都得靠 `drawn` 才对得上。
-            durationMs: Math.round((drawn / PREVIZ_RECORD_FPS) * 1000),
+            // 离线出片每帧都占满一格，0..N 是 N+1 帧长；实时录制的帧号本身就是跨度。
+            durationMs: Math.round(((drawn + (offline ? 1 : 0)) / PREVIZ_RECORD_FPS) * 1000),
             uploadVideo: (targetProject, file, filename) =>
               uploadFreezoneVideo(targetProject, file, filename),
             addDerivedVideoNode,

@@ -45,6 +45,8 @@ export interface PrevizAudioPlayback {
   ): Promise<void>;
   stop(): void;
   dispose(): void;
+  /** 已经解码好的素材；没载过、解码失败的都是 undefined。离线出片拿它混音。 */
+  bufferFor(url: string): AudioBuffer | undefined;
   readonly failedUrls: ReadonlySet<string>;
 }
 
@@ -150,6 +152,7 @@ export function createAudioPlayback(deps: AudioPlaybackDeps): PrevizAudioPlaybac
     load: loadAll,
     play,
     stop,
+    bufferFor: (url) => buffers.get(url),
     dispose() {
       stop();
       disposed = true;
