@@ -69,17 +69,25 @@ export function measureImageFile(file: File): Promise<PrevizImageSize | null> {
   });
 }
 
-/** 与模型库对话框同一套（见 PrevizModelLibraryDialog）。 */
-const STEP_BUTTON =
-  "flex h-6 w-6 shrink-0 items-center justify-center rounded text-white/45 transition-colors hover:bg-white/10 hover:text-white/90";
+/**
+ * 圆角一律走 token（这个项目里 `rounded-sm/md/lg/xl` = 12/14/16/20px，见 DESIGN.md）：
+ * 胶囊给「可点但不是提交」的，柔和矩形给容器和提交按钮。
+ */
+const ICON_BUTTON =
+  "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white/45 transition-colors hover:bg-white/10 hover:text-white/90";
 const SECONDARY_BUTTON =
-  "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-white/10 px-3 text-[12px] text-white/70 transition-colors hover:bg-white/10 hover:text-white/90 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent";
+  "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-[var(--ui-border-strong)] bg-white/[0.04] px-3.5 text-[12px] font-medium text-white/80 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-white/[0.04]";
 const PRIMARY_BUTTON =
-  "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-white/90 px-3 text-[12px] font-medium text-black transition-colors hover:bg-white disabled:cursor-not-allowed disabled:bg-white/15 disabled:text-white/40";
+  "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-white/90 px-4 text-[13px] font-semibold text-black transition-colors hover:bg-white disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-white/35";
 const MODE_BUTTON =
-  "h-7 rounded-md px-2.5 text-[12px] text-white/60 transition-colors hover:bg-white/[0.06] hover:text-white/90 aria-pressed:bg-white/10 aria-pressed:text-white/90 disabled:cursor-not-allowed disabled:opacity-40";
+  "h-7 rounded-full px-3 text-[12px] text-white/55 transition-colors hover:text-white/90 aria-pressed:bg-white/[0.12] aria-pressed:text-white disabled:cursor-not-allowed disabled:opacity-40";
 const FIELD =
-  "w-full rounded-md border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[12px] text-white/90 outline-none placeholder:text-white/30 focus:border-white/25 disabled:cursor-not-allowed disabled:opacity-50";
+  "w-full rounded-sm border border-transparent bg-[var(--ui-surface-field)] px-3 py-2 text-[13px] leading-relaxed text-white/90 outline-none transition-colors placeholder:text-white/30 focus:border-white/20 disabled:cursor-not-allowed disabled:opacity-50";
+const LABEL = "text-[13px] font-medium text-white/80";
+const HELPER = "text-[12px] leading-relaxed text-white/45";
+/** 一组相关的设置收进一块浅底里，组与组之间靠间距分开，不画分割线。 */
+const GROUP = "rounded-lg border border-[var(--ui-border-soft)] bg-white/[0.03]";
+const CHECKBOX = "mt-[3px] h-3.5 w-3.5 shrink-0 accent-white/85 disabled:opacity-50";
 
 /**
  * 「从参考图生成场景」：选一张图、可选地补一句说明，生成一套能逐件改的基础几何体。
@@ -116,6 +124,7 @@ function BlockoutPanel({
   const [file, setFile] = useState<File | null>(null);
   const [refusal, setRefusal] = useState<string | null>(null);
   const [hints, setHints] = useState<PrevizBlockoutImageHint[]>([]);
+  const [imageSize, setImageSize] = useState<PrevizImageSize | null>(null);
   const [description, setDescription] = useState("");
   const [pictureCheck, setPictureCheck] = useState(false);
   const [renderCheck, setRenderCheck] = useState(false);
@@ -158,6 +167,7 @@ function BlockoutPanel({
     measureSerial.current += 1;
     const mine = measureSerial.current;
     setHints([]);
+    setImageSize(null);
     const verdict = isAcceptedBlockoutImage(picked.name, picked.size);
     if (verdict !== "ok") {
       // 格式和体积是硬门槛——后端不收，传上去也是白传。
@@ -173,7 +183,9 @@ function BlockoutPanel({
     void measureImage(picked)
       .catch(() => null)
       .then((size) => {
-        if (measureSerial.current === mine) setHints(blockoutImageHints(size));
+        if (measureSerial.current !== mine) return;
+        setHints(blockoutImageHints(size));
+        setImageSize(size);
       });
   };
 
@@ -227,213 +239,245 @@ function BlockoutPanel({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      <div className="flex max-h-full w-full max-w-[520px] flex-col gap-3 overflow-y-auto rounded-xl border border-white/10 bg-[#14161b] p-4 shadow-2xl">
-        <header className="flex items-center justify-between">
-          <h4 className="text-[13px] font-medium text-white/90">{t("previz.blockout.title")}</h4>
+      <div className="flex max-h-full w-full max-w-[860px] flex-col overflow-hidden rounded-xl border border-[var(--ui-border-strong)] bg-[var(--ui-surface-modal)] shadow-[var(--ui-shadow-panel)]">
+        <header className="flex shrink-0 items-center justify-between gap-3 px-6 pt-5 pb-4">
+          <h4 className="text-[15px] font-semibold text-white/95">{t("previz.blockout.title")}</h4>
           <button
             type="button"
-            className={STEP_BUTTON}
+            className={ICON_BUTTON}
             aria-label={t("previz.blockout.close")}
             onClick={onClose}
           >
-            <X className="h-3.5 w-3.5" />
+            <X className="h-4 w-4" />
           </button>
         </header>
 
-        <div className="flex flex-col gap-1 text-[12px] text-white/50">
-          <p id={guideId}>{t("previz.blockout.guide.title")}</p>
-          <ul aria-labelledby={guideId} className="list-disc pl-4">
-            {PREVIZ_BLOCKOUT_GUIDE_KEYS.map((key) => (
-              <li key={key}>{t(key)}</li>
-            ))}
-          </ul>
-        </div>
-
-        <div
-          data-testid="previz-blockout-drop-zone"
-          data-dragging={dragging}
-          className={cn(
-            "flex flex-wrap items-center gap-2 rounded-md border border-dashed border-white/15 p-3 transition-colors",
-            dragging && "border-white/60 bg-white/[0.06]",
-          )}
-        >
-          {/* sr-only + label 的理由见 PrevizModelLibraryDialog 的导入按钮。 */}
-          <input
-            id={fileInputId}
-            type="file"
-            accept={ACCEPT}
-            disabled={busy}
-            className="peer sr-only"
-            onChange={(event) => {
-              const picked = event.target.files?.[0];
-              if (picked) handlePick(picked);
-              // 清空 value：不清的话选同一个文件第二次不会触发 change。
-              event.target.value = "";
-            }}
-          />
-          <label
-            htmlFor={fileInputId}
-            className={cn(
-              SECONDARY_BUTTON,
-              "cursor-pointer peer-focus-visible:border-ring peer-focus-visible:ring-3 peer-focus-visible:ring-ring/50",
-              busy && "cursor-not-allowed opacity-40 hover:bg-transparent",
-            )}
-          >
-            <ImageUp className="h-3.5 w-3.5" />
-            {t("previz.blockout.pick")}
-          </label>
-          {file && <span className="min-w-0 truncate text-[12px] text-white/70">{file.name}</span>}
-          <span className={cn("text-[12px]", dragging ? "text-white/90" : "text-white/40")}>
-            {t(dragging ? "previz.blockout.dropNow" : "previz.blockout.dropHint")}
-          </span>
-        </div>
-
-        {refusal && (
-          <p role="alert" className="text-[12px] text-red-300">
-            {refusal}
-          </p>
-        )}
-
-        {hints.length > 0 && (
-          <div className="flex flex-col gap-1 rounded-md border border-amber-300/20 bg-amber-300/[0.06] p-2 text-[12px] text-amber-100/80">
-            <p id={hintId}>{t("previz.blockout.hint.title")}</p>
-            <ul aria-labelledby={hintId} className="list-disc pl-4">
-              {hints.map((hint) => (
-                <li key={hint}>{t(PREVIZ_BLOCKOUT_HINT_KEY[hint])}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <div className="flex flex-col gap-1">
-          <label htmlFor={noteId} className="text-[12px] text-white/60">
-            {t("previz.blockout.description")}
-          </label>
-          <textarea
-            id={noteId}
-            rows={3}
-            maxLength={PREVIZ_BLOCKOUT_DESCRIPTION_MAX_CHARS}
-            disabled={busy}
-            placeholder={t("previz.blockout.descriptionPlaceholder")}
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            className={cn(FIELD, "resize-none")}
-          />
-          <span className="self-end text-[11px] tabular-nums text-white/35">
-            {`${description.length} / ${PREVIZ_BLOCKOUT_DESCRIPTION_MAX_CHARS}`}
-          </span>
-        </div>
-
-        {models.length > 0 && (
-          <div className="flex items-center justify-between gap-2">
-            <span id={modelLabelId} className="text-[12px] text-white/60">
-              {t("previz.blockout.model")}
-            </span>
-            <ProviderModelPicker
-              selectedModelId={chosenModel?.id ?? ""}
-              onChange={setModelId}
-              models={modelOptions}
-              popoverPlacement="bottom"
-            />
-          </div>
-        )}
-
-        <div className="flex items-start gap-2">
-          <input
-            id={pictureCheckId}
-            type="checkbox"
-            disabled={busy}
-            checked={pictureCheck}
-            aria-describedby={pictureCheckHintId}
-            onChange={(event) => setPictureCheck(event.target.checked)}
-            className="mt-0.5 accent-white/80"
-          />
-          <div className="flex flex-col gap-0.5">
-            <label htmlFor={pictureCheckId} className="text-[12px] text-white/60">
-              {t("previz.blockout.pictureCheck")}
-            </label>
-            <span id={pictureCheckHintId} className="text-[11px] text-white/35">
-              {t("previz.blockout.pictureCheckHint")}
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-start gap-2">
-          <input
-            id={renderCheckId}
-            type="checkbox"
-            disabled={busy}
-            checked={renderCheck}
-            aria-describedby={renderCheckHintId}
-            onChange={(event) => setRenderCheck(event.target.checked)}
-            className="mt-0.5 accent-white/80"
-          />
-          <div className="flex flex-col gap-0.5">
-            <label htmlFor={renderCheckId} className="text-[12px] text-white/60">
-              {t("previz.blockout.renderCheck")}
-            </label>
-            <span id={renderCheckHintId} className="text-[11px] text-white/35">
-              {t("previz.blockout.renderCheckHint")}
-            </span>
-          </div>
-        </div>
-
-        {hasExisting && (
-          <div
-            role="group"
-            aria-label={t("previz.blockout.mode.title")}
-            className="flex items-center gap-1"
-          >
-            <span className="mr-1 text-[12px] text-white/60">
-              {t("previz.blockout.mode.title")}
-            </span>
-            {MODES.map((value) => (
-              <button
-                key={value}
-                type="button"
-                aria-pressed={mode === value}
-                disabled={busy}
-                className={MODE_BUTTON}
-                onClick={() => setMode(value)}
-              >
-                {t(`previz.blockout.mode.${value}`)}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {held && (
-          <section
-            aria-labelledby={heldId}
-            className="flex flex-col gap-2 rounded-md border border-white/10 bg-white/[0.04] p-2 text-[12px] text-white/70"
-          >
-            <p id={heldId} className="text-white/90">
-              {t("previz.blockout.held.title")}
-            </p>
-            <p>{blockoutRejectionMessage(held.rejection, t)}</p>
-            <p className="text-white/50">{t("previz.blockout.held.free")}</p>
-            <button
-              type="button"
-              disabled={busy}
-              className={cn(SECONDARY_BUTTON, "self-start")}
-              onClick={() => onRetryImport(mode)}
+        {/* 两栏：左边是图（选图 + 什么图好），右边是怎么生成（说明 + 设置）。窄了就叠回一栏。 */}
+        <div className="ui-scrollbar grid min-h-0 flex-1 grid-cols-1 content-start gap-x-5 gap-y-5 overflow-y-auto px-6 pb-2 md:grid-cols-2">
+          <div className="flex min-w-0 flex-col gap-4">
+            <div
+              data-testid="previz-blockout-drop-zone"
+              data-dragging={dragging}
+              className={cn(
+                "flex min-h-[220px] flex-1 flex-col items-center justify-center gap-2.5 rounded-lg border border-dashed border-white/15 bg-white/[0.02] px-4 py-8 text-center transition-colors",
+                dragging && "border-white/60 bg-white/[0.07]",
+              )}
             >
-              {t("previz.blockout.held.retry")}
-            </button>
-          </section>
-        )}
+              <span
+                aria-hidden="true"
+                className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.06] text-white/60"
+              >
+                <ImageUp className="h-5 w-5" />
+              </span>
+              {file && (
+                <span className="max-w-full truncate text-[13px] font-medium text-white/90">
+                  {file.name}
+                </span>
+              )}
+              {/* sr-only + label 的理由见 PrevizModelLibraryDialog 的导入按钮。 */}
+              <input
+                id={fileInputId}
+                type="file"
+                accept={ACCEPT}
+                disabled={busy}
+                className="peer sr-only"
+                onChange={(event) => {
+                  const picked = event.target.files?.[0];
+                  if (picked) handlePick(picked);
+                  // 清空 value：不清的话选同一个文件第二次不会触发 change。
+                  event.target.value = "";
+                }}
+              />
+              <label
+                htmlFor={fileInputId}
+                className={cn(
+                  SECONDARY_BUTTON,
+                  "cursor-pointer peer-focus-visible:border-ring peer-focus-visible:ring-3 peer-focus-visible:ring-ring/50",
+                  busy && "cursor-not-allowed opacity-40 hover:bg-white/[0.04]",
+                )}
+              >
+                {t("previz.blockout.pick")}
+              </label>
+              <span className={cn("text-[12px]", dragging ? "text-white/90" : "text-white/40")}>
+                {t(dragging ? "previz.blockout.dropNow" : "previz.blockout.dropHint")}
+              </span>
+            </div>
 
-        {busy && (
-          <div className="flex flex-col gap-1 text-[12px]">
-            <p role="status" className="flex items-center gap-1.5 text-white/80">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              {t(`previz.blockout.stage.${stage}`)}
-            </p>
-            <p className="text-white/45">{t("previz.blockout.closeDiscards")}</p>
+            {refusal && (
+              <p role="alert" className="text-[12px] text-red-300">
+                {refusal}
+              </p>
+            )}
+
+            {hints.length > 0 && (
+              <div className="flex flex-col gap-1 rounded-lg border border-amber-300/20 bg-amber-300/[0.06] px-3.5 py-3 text-[12px] leading-relaxed text-amber-100/80">
+                <p id={hintId} className="font-medium text-amber-100/95">
+                  {t("previz.blockout.hint.title")}
+                </p>
+                <ul aria-labelledby={hintId} className="list-disc pl-4">
+                  {hints.map((hint) => (
+                    <li key={hint}>{t(PREVIZ_BLOCKOUT_HINT_KEY[hint])}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div className={cn(GROUP, "flex flex-col gap-1.5 px-3.5 py-3")}>
+              <p id={guideId} className="text-[12px] font-medium text-white/70">
+                {t("previz.blockout.guide.title")}
+              </p>
+              <ul
+                aria-labelledby={guideId}
+                className={cn(HELPER, "list-disc pl-4 marker:text-white/25")}
+              >
+                {PREVIZ_BLOCKOUT_GUIDE_KEYS.map((key) => (
+                  <li key={key}>{t(key)}</li>
+                ))}
+              </ul>
+            </div>
+
           </div>
-        )}
 
-        <footer className="flex items-center justify-end gap-2 border-t border-white/10 pt-3 text-white/70">
+          <div className="flex min-w-0 flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <div className="flex items-baseline justify-between gap-2">
+                <label htmlFor={noteId} className={LABEL}>
+                  {t("previz.blockout.description")}
+                </label>
+                <span className="text-[12px] tabular-nums text-white/35">
+                  {`${description.length} / ${PREVIZ_BLOCKOUT_DESCRIPTION_MAX_CHARS}`}
+                </span>
+              </div>
+              <textarea
+                id={noteId}
+                rows={5}
+                maxLength={PREVIZ_BLOCKOUT_DESCRIPTION_MAX_CHARS}
+                disabled={busy}
+                placeholder={t("previz.blockout.descriptionPlaceholder")}
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                className={cn(FIELD, "resize-none")}
+              />
+            </div>
+
+            <div className={cn(GROUP, "flex flex-col gap-3.5 px-3.5 py-3.5")}>
+              {models.length > 0 && (
+                <div className="flex items-center justify-between gap-2">
+                  <span id={modelLabelId} className={LABEL}>
+                    {t("previz.blockout.model")}
+                  </span>
+                  <ProviderModelPicker
+                    selectedModelId={chosenModel?.id ?? ""}
+                    onChange={setModelId}
+                    models={modelOptions}
+                    popoverPlacement="bottom"
+                  />
+                </div>
+              )}
+
+              <div className="flex items-start gap-2.5">
+                <input
+                  id={pictureCheckId}
+                  type="checkbox"
+                  disabled={busy}
+                  checked={pictureCheck}
+                  aria-describedby={pictureCheckHintId}
+                  onChange={(event) => setPictureCheck(event.target.checked)}
+                  className={CHECKBOX}
+                />
+                <div className="flex min-w-0 flex-col gap-0.5">
+                  <label htmlFor={pictureCheckId} className={LABEL}>
+                    {t("previz.blockout.pictureCheck")}
+                  </label>
+                  <span id={pictureCheckHintId} className={HELPER}>
+                    {t("previz.blockout.pictureCheckHint")}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-2.5">
+                <input
+                  id={renderCheckId}
+                  type="checkbox"
+                  disabled={busy}
+                  checked={renderCheck}
+                  aria-describedby={renderCheckHintId}
+                  onChange={(event) => setRenderCheck(event.target.checked)}
+                  className={CHECKBOX}
+                />
+                <div className="flex min-w-0 flex-col gap-0.5">
+                  <label htmlFor={renderCheckId} className={LABEL}>
+                    {t("previz.blockout.renderCheck")}
+                  </label>
+                  <span id={renderCheckHintId} className={HELPER}>
+                    {t("previz.blockout.renderCheckHint")}
+                  </span>
+                </div>
+              </div>
+
+              {hasExisting && (
+                <div
+                  role="group"
+                  aria-label={t("previz.blockout.mode.title")}
+                  className="flex items-center justify-between gap-2"
+                >
+                  <span className={LABEL}>{t("previz.blockout.mode.title")}</span>
+                  <div className="flex items-center gap-0.5 rounded-full bg-white/[0.05] p-0.5">
+                    {MODES.map((value) => (
+                      <button
+                        key={value}
+                        type="button"
+                        aria-pressed={mode === value}
+                        disabled={busy}
+                        className={MODE_BUTTON}
+                        onClick={() => setMode(value)}
+                      >
+                        {t(`previz.blockout.mode.${value}`)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+          </div>
+
+          {held && (
+            <section
+              aria-labelledby={heldId}
+              className={cn(
+                GROUP,
+                "md:col-span-2 flex flex-col gap-2 px-3.5 py-3 text-[12px] leading-relaxed text-white/70",
+              )}
+            >
+              <p id={heldId} className="text-[13px] font-medium text-white/90">
+                {t("previz.blockout.held.title")}
+              </p>
+              <p>{blockoutRejectionMessage(held.rejection, t)}</p>
+              <p className="text-white/45">{t("previz.blockout.held.free")}</p>
+              <button
+                type="button"
+                disabled={busy}
+                className={cn(SECONDARY_BUTTON, "self-start")}
+                onClick={() => onRetryImport(mode)}
+              >
+                {t("previz.blockout.held.retry")}
+              </button>
+            </section>
+          )}
+
+          {busy && (
+            <div className={cn(GROUP, "flex flex-col gap-1 px-3.5 py-3 md:col-span-2")}>
+              <p role="status" className="flex items-center gap-2 text-[13px] text-white/85">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {t(`previz.blockout.stage.${stage}`)}
+              </p>
+              <p className={HELPER}>{t("previz.blockout.closeDiscards")}</p>
+            </div>
+          )}
+        </div>
+
+        <footer className="flex shrink-0 items-center justify-end gap-3 px-6 pt-4 pb-5 text-white/70">
           <CreditCostInline display={costDisplay} promotion={cost.data?.data.promotion} />
           <button
             type="button"
@@ -443,6 +487,7 @@ function BlockoutPanel({
               if (file) {
                 onStart({
                   file,
+                  imageSize,
                   description,
                   pictureCheck,
                   renderCheck,
