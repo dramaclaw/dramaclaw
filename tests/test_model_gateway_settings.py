@@ -3431,6 +3431,7 @@ def test_official_media_model_catalog_uses_ce_export_shape():
     assert minimax["gatewayModel"] == "MiniMax-H3"
     assert minimax["resolutionOptions"] == ["768p", "2k"]
     assert minimax["ratioOptions"] == [
+        "auto",
         "21:9",
         "16:9",
         "4:3",
@@ -3438,16 +3439,61 @@ def test_official_media_model_catalog_uses_ce_export_shape():
         "3:4",
         "9:16",
     ]
-    assert minimax["minDuration"] == 4
+    assert minimax["minDuration"] == 5
     assert minimax["maxDuration"] == 15
     assert minimax["supportedModes"] == [
         "text_to_video",
-        "first_frame",
-        "first_last_frame",
-        "image_to_video",
-        "image_reference",
         "all_reference",
+        "image_to_video",
+        "first_last_frame",
     ]
+    assert minimax["supportsGenerateAudio"] is False
+    parameters = {
+        item["key"]: item for item in minimax["request"]["parameters"]
+    }
+    assert list(parameters) == [
+        "quality_mode",
+        "inference_steps",
+        "model_mode",
+        "seed",
+    ]
+    assert parameters["quality_mode"] == {
+        "key": "quality_mode",
+        "label": "质量模式",
+        "control": "select",
+        "default": "fast",
+        "options": ["high", "balanced", "fast"],
+        "requestPath": "metadata.quality_mode",
+    }
+    assert parameters["inference_steps"] == {
+        "key": "inference_steps",
+        "label": "推理步数",
+        "control": "number",
+        "default": 4,
+        "min": 1,
+        "max": 50,
+        "step": 1,
+        "requestPath": "metadata.inference_steps",
+    }
+    assert parameters["model_mode"] == {
+        "key": "model_mode",
+        "label": "参考策略",
+        "control": "select",
+        "default": "ref2va",
+        "options": ["ref2va", "fl2va", "dual_pass"],
+        "requestPath": "metadata.model_mode",
+        "modes": ["all_reference"],
+    }
+    assert parameters["seed"] == {
+        "key": "seed",
+        "label": "随机种子",
+        "control": "number",
+        "default": -1,
+        "min": -1,
+        "max": 2147483647,
+        "step": 1,
+        "requestPath": "metadata.seed",
+    }
     assert minimax["referenceImageMax"] == 9
     assert minimax["referenceVideoMax"] == 3
     assert minimax["referenceAudioMax"] == 3

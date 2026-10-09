@@ -388,11 +388,20 @@
       "sortOrder": 110,
       "aliases": [],
       "config": {
-        "request": {"endpoint": "video/generations", "parameters": []},
-        "minDuration": 4,
+        "request": {
+          "endpoint": "video/generations",
+          "parameters": [
+            {"key": "quality_mode", "label": "质量模式", "control": "select", "default": "fast", "options": ["high", "balanced", "fast"], "requestPath": "metadata.quality_mode"},
+            {"key": "inference_steps", "label": "推理步数", "control": "number", "default": 4, "min": 1, "max": 50, "step": 1, "requestPath": "metadata.inference_steps"},
+            {"key": "model_mode", "label": "参考策略", "control": "select", "default": "ref2va", "options": ["ref2va", "fl2va", "dual_pass"], "requestPath": "metadata.model_mode", "modes": ["all_reference"]},
+            {"key": "seed", "label": "随机种子", "control": "number", "default": -1, "min": -1, "max": 2147483647, "step": 1, "requestPath": "metadata.seed"}
+          ]
+        },
+        "minDuration": 5,
         "maxDuration": 15,
-        "ratioOptions": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
-        "supportedModes": ["text_to_video", "first_frame", "first_last_frame", "image_to_video", "image_reference", "all_reference"],
+        "ratioOptions": ["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        "supportedModes": ["text_to_video", "all_reference", "image_to_video", "first_last_frame"],
+        "supportsGenerateAudio": false,
         "referenceAudioMax": 3,
         "referenceImageMax": 9,
         "referenceVideoMax": 3,
