@@ -861,6 +861,15 @@ def workflow_intent_json_schema() -> dict[str, Any]:
                         "maximum": 600,
                     },
                     "include_audio": {"type": "boolean"},
+                    "video_dependency": {
+                        "type": "string",
+                        "enum": ["independent", "sequential"],
+                        "description": (
+                            "How generated video units depend on each other. "
+                            "sequential adds an execution-only video 1 -> 2 -> ... chain; "
+                            "it does not consume prior clips as media references."
+                        ),
+                    },
                     "units": {"type": "array", "maxItems": 25, "items": unit},
                 },
                 "required": ["mode"],

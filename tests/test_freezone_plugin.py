@@ -3771,6 +3771,59 @@ def test_generation_recommendation_uses_explicit_specs_and_keeps_delivery_separa
     }
 
 
+def test_generation_recommendation_accepts_and_validates_explicit_model(monkeypatch):
+    plugin = _load_plugin_module()
+    handlers = {name: handler for name, _schema, handler in plugin.TOOLS}
+    events = []
+    monkeypatch.setattr(
+        plugin,
+        "_emit_clarification_event",
+        lambda _project, _canvas, event: events.append(event) or "shown",
+    )
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: {
+        "ok": True,
+        "data": [
+            {
+                "id": "default-video",
+                "ratioOptions": ["9:16"],
+                "resolutionOptions": ["720P"],
+                "minDuration": 4,
+                "maxDuration": 10,
+                "supportsGenerateAudio": False,
+            },
+            {
+                "id": "chosen-video",
+                "ratioOptions": ["16:9"],
+                "resolutionOptions": ["768p"],
+                "minDuration": 5,
+                "maxDuration": 8,
+                "supportsGenerateAudio": True,
+            },
+        ],
+    })
+
+    result = handlers["freezone_request_user_clarification"]({
+        "project_id": "project-a",
+        "generation_media_types": ["video"],
+        "generation_preferences": {
+            "video_model": "chosen-video",
+            "video_aspect_ratio": "16:9",
+            "video_resolution": "768P",
+            "video_duration_seconds": 5,
+            "video_generate_audio": True,
+        },
+    })
+
+    assert result == "shown"
+    assert events[0]["allow_recommended"] is True
+    assert events[0]["recommended_answers"]["video_model"] == {
+        "option_ids": ["chosen-video"]
+    }
+    assert events[0]["recommended_answers"]["video_resolution"] == {
+        "option_ids": ["768p"]
+    }
+
+
 def test_generation_recommendation_preserves_explicit_image_preferences(monkeypatch):
     """Explicit image settings must not be rejected or replaced by defaults."""
     plugin = _load_plugin_module()
@@ -4611,7 +4664,201 @@ def test_prepare_exact_plan_maps_generation_answers_into_nodes(monkeypatch, tmp_
     assert all(node["data"]["count"] == 2 for node in received[0]["nodes"])
     assert all(node["data"]["quality"] == "720P" for node in received[0]["nodes"])
     assert all(node["data"]["generateAudio"] is False for node in received[0]["nodes"])
+    assert all(node["data"]["genMode"] == "textToVideo" for node in received[0]["nodes"])
     assert received[0]["inputs"]["video_generation_mode"] == "textToVideo"
+
+
+def test_generation_mode_answer_restores_consuming_image_edges():
+    plugin = _load_plugin_module()
+    plan = {
+        "nodes": [
+            {"id": "frame", "node_type": "imageGenNode", "data": {}},
+            {
+                "id": "clip",
+                "node_type": "videoNode",
+                "data": {"genMode": "textToVideo"},
+            },
+        ],
+        "edges": [{
+            "source": "frame",
+            "target": "clip",
+            "link_type": "dependency_for",
+        }],
+    }
+
+    plugin._apply_generation_choices_to_plan(
+        plan, {"video_generation_mode": "firstFrame"}
+    )
+
+    assert plan["inputs"]["video_generation_mode"] == "firstFrame"
+    assert plan["nodes"][1]["data"]["genMode"] == "firstFrame"
+    assert plan["edges"][0]["link_type"] == "media_input_for"
+
+
+def test_generation_mode_answer_preserves_mixed_media_and_order_edges():
+    plugin = _load_plugin_module()
+    plan = {
+        "nodes": [
+            {"id": "reference", "node_type": "imageGenNode", "data": {}},
+            {"id": "gate", "node_type": "imageGenNode", "data": {}},
+            {
+                "id": "clip",
+                "node_type": "videoNode",
+                "data": {"genMode": "textToVideo"},
+            },
+        ],
+        "edges": [
+            {
+                "source": "reference",
+                "target": "clip",
+                "link_type": "media_input_for",
+            },
+            {
+                "source": "gate",
+                "target": "clip",
+                "link_type": "dependency_for",
+            },
+        ],
+    }
+
+    plugin._apply_generation_choices_to_plan(
+        plan, {"video_generation_mode": "imageReference"}
+    )
+
+    assert plan["nodes"][2]["data"]["genMode"] == "imageReference"
+    assert [edge["link_type"] for edge in plan["edges"]] == [
+        "media_input_for",
+        "dependency_for",
+    ]
+
+
+def test_generation_mode_answer_preserves_external_media_and_order_edges():
+    plugin = _load_plugin_module()
+    plan = {
+        "external_inputs": [
+            {"id": "source_image", "node_id": "existing-image", "media_kind": "image"},
+        ],
+        "nodes": [
+            {"id": "gate", "node_type": "imageGenNode", "data": {}},
+            {
+                "id": "clip",
+                "node_type": "videoNode",
+                "data": {"genMode": "textToVideo"},
+            },
+        ],
+        "edges": [
+            {
+                "source": "source_image",
+                "target": "clip",
+                "link_type": "media_input_for",
+            },
+            {
+                "source": "gate",
+                "target": "clip",
+                "link_type": "dependency_for",
+            },
+        ],
+    }
+
+    plugin._apply_generation_choices_to_plan(
+        plan, {"video_generation_mode": "imageReference"}
+    )
+
+    assert plan["nodes"][1]["data"]["genMode"] == "imageReference"
+    assert [edge["link_type"] for edge in plan["edges"]] == [
+        "media_input_for",
+        "dependency_for",
+    ]
+
+
+def test_prepare_exact_plan_recovers_same_turn_generation_answers(monkeypatch, tmp_path):
+    plugin = _load_plugin_module()
+    _install_workflow_draft_api(monkeypatch, plugin, tmp_path)
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-a")
+    received = []
+    monkeypatch.setattr(
+        plugin,
+        "validate_agent_workflow_plan",
+        lambda plan: (
+            received.append(copy.deepcopy(plan))
+            or {"ok": True, "skill_id": "video-ad", "plan": plan}
+        ),
+    )
+    monkeypatch.setattr(
+        plugin, "_workflow_runtime_preflight", lambda *_args, **_kwargs: {"blockers": []}
+    )
+    plugin._remember_generation_answers("project-a", "canvas-a", {
+        "video_model": {"option_ids": ["chosen-video"]},
+        "video_aspect_ratio": {"option_ids": ["16:9"]},
+        "video_resolution": {"option_ids": ["768p"]},
+        "video_duration_seconds": {"option_ids": ["5"]},
+        "video_generate_audio": {"option_ids": ["true"]},
+        "video_variants_per_node": {"option_ids": ["1"]},
+    })
+
+    result = plugin._handle_prepare_workflow_plan_draft({
+        "plan": {
+            "schema_version": "freezone_workflow_plan.v1",
+            "nodes": [{"id": "clip", "node_type": "videoNode", "data": {}}],
+            "edges": [],
+        },
+    })
+
+    assert result["ok"] is True
+    assert received[0]["nodes"][0]["data"] == {
+        "model": "chosen-video",
+        "aspectRatio": "16:9",
+        "quality": "768p",
+        "durationSec": 5,
+        "generateAudio": True,
+        "count": 1,
+    }
+    assert plugin._remembered_generation_answers("project-a", "canvas-a") is None
+
+
+def test_followup_generation_mode_overlays_remembered_parameter_card(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-a")
+    plugin._remember_generation_answers("project-a", "canvas-a", {
+        "video_model": {"option_ids": ["chosen-video"]},
+        "video_aspect_ratio": {"option_ids": ["16:9"]},
+    })
+
+    effective = plugin._effective_generation_answers(
+        {"video_generation_mode": {"option_ids": ["firstFrame"]}},
+        plugin._remembered_generation_answers("project-a", "canvas-a"),
+    )
+
+    assert effective == {
+        "video_model": {"option_ids": ["chosen-video"]},
+        "video_aspect_ratio": {"option_ids": ["16:9"]},
+        "video_generation_mode": {"option_ids": ["firstFrame"]},
+    }
+
+
+def test_supplemental_generation_card_merges_with_remembered_answers(monkeypatch):
+    plugin = _load_plugin_module()
+    monkeypatch.setenv("DRAMACLAW_TURN_ID", "turn-a")
+    plugin._remember_generation_answers("project-a", "canvas-a", {
+        "video_model": {"option_ids": ["chosen-video"]},
+        "video_aspect_ratio": {"option_ids": ["16:9"]},
+        "video_resolution": {"option_ids": ["768p"]},
+        "video_duration_seconds": {"option_ids": ["5"]},
+        "video_variants_per_node": {"option_ids": ["1"]},
+    })
+
+    plugin._remember_generation_answers("project-a", "canvas-a", {
+        "video_generate_audio": {"option_ids": ["true"]},
+    })
+
+    assert plugin._remembered_generation_answers("project-a", "canvas-a") == {
+        "video_model": {"option_ids": ["chosen-video"]},
+        "video_aspect_ratio": {"option_ids": ["16:9"]},
+        "video_resolution": {"option_ids": ["768p"]},
+        "video_duration_seconds": {"option_ids": ["5"]},
+        "video_variants_per_node": {"option_ids": ["1"]},
+        "video_generate_audio": {"option_ids": ["true"]},
+    }
 
 
 def test_prepare_exact_plan_normalizes_text_to_image_context_edge(
@@ -4940,6 +5187,62 @@ def test_prepare_exact_plan_stage_failure_returns_only_legal_recovery(
     assert "same complete WorkflowPlan exactly once" in instruction
     assert "Do not offer or call direct canvas commands" in instruction
     assert "user selection cannot authorize" in instruction
+
+
+def test_text_to_image_video_text_mode_returns_nonfailure_clarification(monkeypatch):
+    plugin = _load_plugin_module()
+    compiled = {
+        "ok": True,
+        "skill_id": "text-to-image-video",
+        "plan": {
+            "nodes": [
+                {
+                    "id": "clip-1",
+                    "node_type": "videoNode",
+                    "data": {"model": "video-a", "genMode": "textToVideo"},
+                },
+                {
+                    "id": "clip-2",
+                    "node_type": "videoNode",
+                    "data": {"model": "video-a", "genMode": "textToVideo"},
+                },
+            ],
+            "edges": [],
+        },
+    }
+    preflight = {
+        "status": "blocked",
+        "warnings": [],
+        "blockers": [{
+            "path": "plan.stages.images.feeds.video",
+            "code": "skill_stage_unused",
+            "message": "images do not feed video",
+        }],
+    }
+    monkeypatch.setattr(plugin, "_request", lambda *_args, **_kwargs: {
+        "ok": True,
+        "data": [{
+            "id": "video-a",
+            "supportedModes": ["text_to_video", "first_frame", "image_to_video"],
+        }],
+    })
+
+    result = plugin._workflow_generation_mode_clarification(
+        preflight, compiled, project_id="project-a"
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "generation_mode_clarification_required"
+    assert result["draft_created"] is False
+    assert result["required_choice"] == "video_generation_mode"
+    assert [option["id"] for option in result["question"]["options"]] == [
+        "firstFrame", "imageToVideo"
+    ]
+    assert "same operation_id" in result["agent_instruction"]
+    structured = _assert_real_mcp_output(
+        plugin, "freezone_prepare_workflow_plan_draft", result
+    )
+    assert structured["question"] == result["question"]
 
 
 def test_prepare_exact_plan_mixed_preflight_blockers_fail_without_clarification(

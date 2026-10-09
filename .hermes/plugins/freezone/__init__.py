@@ -165,6 +165,12 @@ except ValueError:
     DEFAULT_TIMEOUT_SECONDS = 120
 
 _PENDING_SKILL_STUDIO_DRAFTS: dict[str, dict[str, Any]] = {}
+# A generation clarification and its following draft call are separate MCP tool
+# calls. Keep the submitted receipt scoped to the current turn so a planner that
+# accidentally omits ``generation_answers`` cannot replace the user's choices
+# with values copied from the original prompt. The turn id prevents answers from
+# leaking into a later request on the same canvas.
+_PENDING_GENERATION_ANSWERS: dict[tuple[str, str, str], dict[str, Any]] = {}
 # A revision conflict is a user-authorization boundary, not a retryable canvas
 # write error. Keep the canvas blocked until the user explicitly confirms the
 # current draft revision. This process-local guard covers the follow-up tool
@@ -174,6 +180,61 @@ _SKILL_STUDIO_DEFAULT_SKILL_SCHEMA_VERSION = "dramaclaw.workflow-skill.v1"
 _SKILL_STUDIO_DEFAULT_SKILL_VERSION = "1.0.0"
 
 _SKILL_STUDIO_REAL_TOOL_CALL_INSTRUCTION = "不要用普通文本回复，不要把工具调用、参数块或代码块写进聊天内容；请直接调用对应工具。"
+
+
+def _generation_answer_scope(
+    project: str | None, canvas: str | None
+) -> tuple[str, str, str] | None:
+    project_id = str(project or "").strip()
+    canvas_id = str(canvas or "").strip()
+    turn_id = os.environ.get("DRAMACLAW_TURN_ID", "").strip()
+    if not project_id or not canvas_id or not turn_id:
+        return None
+    return project_id, canvas_id, turn_id
+
+
+def _remember_generation_answers(
+    project: str | None, canvas: str | None, answers: Any
+) -> None:
+    scope = _generation_answer_scope(project, canvas)
+    if scope is None or not isinstance(answers, dict) or not answers:
+        return
+    remembered = _PENDING_GENERATION_ANSWERS.get(scope)
+    merged = (
+        {**remembered, **answers}
+        if isinstance(remembered, dict)
+        else answers
+    )
+    _PENDING_GENERATION_ANSWERS[scope] = _clone_json(merged)
+    while len(_PENDING_GENERATION_ANSWERS) > 100:
+        _PENDING_GENERATION_ANSWERS.pop(next(iter(_PENDING_GENERATION_ANSWERS)))
+
+
+def _remembered_generation_answers(
+    project: str | None, canvas: str | None
+) -> dict[str, Any] | None:
+    scope = _generation_answer_scope(project, canvas)
+    if scope is None:
+        return None
+    answers = _PENDING_GENERATION_ANSWERS.get(scope)
+    return _clone_json(answers) if isinstance(answers, dict) else None
+
+
+def _effective_generation_answers(
+    explicit: Any, remembered: dict[str, Any] | None
+) -> Any:
+    """Overlay a follow-up choice without dropping the earlier parameter card."""
+    if explicit is None:
+        return remembered
+    if remembered and isinstance(explicit, dict) and "answers" not in explicit:
+        return {**remembered, **explicit}
+    return explicit
+
+
+def _forget_generation_answers(project: str | None, canvas: str | None) -> None:
+    scope = _generation_answer_scope(project, canvas)
+    if scope is not None:
+        _PENDING_GENERATION_ANSWERS.pop(scope, None)
 
 
 def _revision_conflict_scope(project: str | None, canvas: str | None) -> tuple[str, str] | None:
@@ -1226,8 +1287,9 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
         generation_preferences = {}
     if not isinstance(generation_preferences, dict) or any(
         key not in {
-            "image_aspect_ratio", "image_resolution", "image_quality",
+            "image_model", "image_aspect_ratio", "image_resolution", "image_quality",
             "image_variants_per_node", "video_aspect_ratio", "video_resolution",
+            "video_model",
             "video_duration_seconds", "video_generate_audio", "video_variants_per_node",
             "video_shot_durations_seconds", "delivery_resolution",
         }
@@ -1236,18 +1298,19 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
         return tool_result({
             "ok": False, "status": "generation_clarification_args_invalid",
             "error": (
-                "generation_preferences supports image/video aspect ratio, resolution, "
+                "generation_preferences supports image/video model, aspect ratio, resolution, "
                 "quality, variants, duration, audio, per-shot durations, and delivery resolution"
             ),
         })
     scalar_text_fields = (
-        "image_aspect_ratio", "image_resolution", "image_quality",
-        "video_aspect_ratio", "video_resolution", "delivery_resolution",
+        "image_model", "image_aspect_ratio", "image_resolution", "image_quality",
+        "video_model", "video_aspect_ratio", "video_resolution", "delivery_resolution",
     )
     if any(
         field in generation_preferences
         and (not isinstance(generation_preferences[field], str)
-             or not generation_preferences[field].strip())
+             or not generation_preferences[field].strip()
+             or len(generation_preferences[field].strip()) > 160)
         for field in scalar_text_fields
     ) or (
         "video_generate_audio" in generation_preferences
@@ -1458,6 +1521,8 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
         if finalized is not None:
             response = finalized
             result = tool_result(finalized)
+            if finalized.get("ok") is True:
+                _remember_generation_answers(project, canvas, finalized.get("answers"))
     if not draft_id:
         return result
     if (
@@ -3783,7 +3848,12 @@ def _generation_clarification_recommendations(
             if target_type == node_type
         }
         if f"{name}_model" in asked:
-            data["model"] = "recommended"
+            preferred_model = preferences.get(f"{name}_model")
+            data["model"] = (
+                preferred_model.strip()
+                if isinstance(preferred_model, str) and preferred_model.strip()
+                else "recommended"
+            )
         elif not (isinstance(data.get("model"), str) and data["model"].strip()):
             return {}
         for question_id in asked:
@@ -4312,6 +4382,119 @@ def _workflow_preflight_failure(
             ),
         )
     return result
+
+
+_VIDEO_MODE_CATALOG_VALUES = {
+    "firstFrame": "first_frame",
+    "imageToVideo": "image_to_video",
+    "imageReference": "image_reference",
+    "allReference": "all_reference",
+}
+_VIDEO_MODE_LABELS = {
+    "firstFrame": "首帧生成视频",
+    "imageToVideo": "图片生成视频",
+    "imageReference": "图片参考生成视频",
+    "allReference": "全参考生成视频",
+}
+
+
+def _workflow_generation_mode_clarification(
+    preflight: dict[str, Any], compiled: dict[str, Any], *, project_id: str
+) -> dict[str, Any] | None:
+    """Turn the known image-stage/text-to-video conflict into one safe choice."""
+    blockers = preflight.get("blockers")
+    if not isinstance(blockers, list) or not blockers:
+        return None
+
+    def allowed_blocker(blocker: Any) -> bool:
+        return isinstance(blocker, dict) and (
+            (
+                blocker.get("code") == "skill_stage_unused"
+                and blocker.get("path") == "plan.stages.images.feeds.video"
+            )
+            or (
+                blocker.get("code") == "model_capability_unsupported"
+                and str(blocker.get("path") or "").endswith(".genMode")
+            )
+        )
+
+    if not all(allowed_blocker(blocker) for blocker in blockers):
+        return None
+    if compiled.get("skill_id") != "text-to-image-video":
+        return None
+    nodes = (compiled.get("plan") or {}).get("nodes") or []
+    video_nodes = [
+        node for node in nodes
+        if isinstance(node, dict) and node.get("node_type") == "videoNode"
+    ]
+    if not video_nodes or any(
+        str((node.get("data") or {}).get("genMode") or "textToVideo") != "textToVideo"
+        for node in video_nodes
+    ):
+        return None
+    model_ids = {
+        str((node.get("data") or {}).get("model") or "").strip()
+        for node in video_nodes
+    }
+    if not model_ids or "" in model_ids:
+        return None
+    try:
+        response = _request(
+            "GET", f"/projects/{quote(project_id, safe='')}/freezone/video/models"
+        )
+    except Exception:  # noqa: BLE001 - fall through to the original preflight error
+        return None
+    catalog = response.get("data") if response.get("ok") is not False else None
+    if not isinstance(catalog, list):
+        return None
+    from novelvideo.freezone.workflow_preflight import _catalog_entry_for_model
+
+    supported: set[str] | None = None
+    for model_id in model_ids:
+        entry = _catalog_entry_for_model(
+            [item for item in catalog if isinstance(item, dict)], model_id
+        )
+        if entry is None or not isinstance(entry.get("supportedModes"), list):
+            return None
+        model_modes = {
+            portable for portable, catalog_value in _VIDEO_MODE_CATALOG_VALUES.items()
+            if catalog_value in entry["supportedModes"]
+        }
+        supported = model_modes if supported is None else supported & model_modes
+    preference_order = ("imageReference", "firstFrame", "imageToVideo", "allReference")
+    compatible = [mode for mode in preference_order if mode in (supported or set())]
+    if not compatible:
+        return None
+    options = [
+        {
+            "id": mode,
+            "label": _VIDEO_MODE_LABELS[mode],
+            "description": "让图片节点产物作为视频节点的生成输入。",
+        }
+        for mode in compatible
+    ]
+    return {
+        "ok": True,
+        "status": "generation_mode_clarification_required",
+        "code": "generation_mode_conflict",
+        "draft_created": False,
+        "preflight": preflight,
+        "required_choice": "video_generation_mode",
+        "question": {
+            "id": "video_generation_mode",
+            "title": "确认视频生成方式",
+            "prompt": "当前技能要求图片节点实际输入视频节点，请选择兼容的视频生成方式。",
+            "mode": "single",
+            "options": options,
+        },
+        "agent_instruction": (
+            "This is a successful pre-draft clarification outcome, not a failed draft. "
+            "Call freezone_request_user_clarification exactly once with the returned question, "
+            "then retry the same draft operation once with generation_answers containing the "
+            "submitted video_generation_mode. Reuse the same operation_id. Do not change the "
+            "Skill, model, node count, or other confirmed generation values."
+        ),
+    }
 
 
 def _generation_parameters_required_result(
@@ -5776,17 +5959,24 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
             f"Import error: {_JSON_WORKFLOW_CATALOG_IMPORT_ERROR}"
         )
     source_plan = args["plan"]
+    pending_answers = _remembered_generation_answers(
+        args.get("project_id") or args.get("project") or _default_project_id(),
+        args.get("canvas_id") or _default_canvas_id(),
+    )
+    generation_answers = _effective_generation_answers(
+        args.get("generation_answers"), pending_answers
+    )
     if (
-        "generation_answers" in args
+        generation_answers is not None
         or _workflow_plan_has_recipe_aliases(source_plan)
         or _workflow_plan_has_unambiguous_edge_aliases(source_plan)
     ):
         source_plan = _clone_json(source_plan)
         _normalize_workflow_plan_recipe_aliases(source_plan)
         _normalize_workflow_plan_edge_aliases(source_plan)
-    if "generation_answers" in args:
+    if generation_answers is not None:
         choices, answers_error = _generation_choices_from_answers(
-            args["generation_answers"], plan=source_plan
+            generation_answers, plan=source_plan
         )
         if answers_error is not None:
             return tool_result(answers_error)
@@ -5814,6 +6004,11 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
     )
     validated["preflight"] = preflight
     if preflight["blockers"]:
+        mode_clarification = _workflow_generation_mode_clarification(
+            preflight, validated, project_id=project
+        )
+        if mode_clarification is not None:
+            return tool_result(mode_clarification)
         return tool_result(_workflow_preflight_failure(preflight))
     run_after_create = _run_after_create_arg(args)
     operation_id = str(args.get("operation_id") or "").strip()
@@ -5850,6 +6045,7 @@ def _handle_prepare_workflow_plan_draft(args: dict[str, Any], **_: Any) -> str:
                 "validation error recurs without new information.",
             )
         return tool_result(error)
+    _forget_generation_answers(project, canvas)
     result = public_workflow_draft(payload, compact_preview=True)
     result["next_action"] = "review_and_confirm"
     planner = validated.get("planner") if isinstance(validated.get("planner"), dict) else {}
@@ -6682,9 +6878,13 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
                 ),
             }
         )
-    if "generation_answers" in args:
+    generation_answers = _effective_generation_answers(
+        args.get("generation_answers"),
+        _remembered_generation_answers(project_id, canvas_id),
+    )
+    if generation_answers is not None:
         choices, answers_error = _generation_choices_from_answers(
-            args["generation_answers"]
+            generation_answers
         )
         if answers_error is not None:
             return tool_result(answers_error)
@@ -6700,6 +6900,11 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     preflight = _workflow_runtime_preflight(compiled, project_id=project_id)
     compiled["preflight"] = preflight
     if preflight["blockers"]:
+        mode_clarification = _workflow_generation_mode_clarification(
+            preflight, compiled, project_id=project_id
+        )
+        if mode_clarification is not None:
+            return tool_result(mode_clarification)
         return tool_result(_workflow_preflight_failure(preflight))
     run_after_create = _run_after_create_arg(args)
     operation_id = str(args.get("operation_id") or "").strip()
@@ -6726,6 +6931,7 @@ def _handle_prepare_workflow_draft(args: dict[str, Any], **_: Any) -> str:
     )
     if payload is None:
         return tool_result(error)
+    _forget_generation_answers(project_id, canvas_id)
     result = public_workflow_draft(payload, compact_preview=True)
     result["next_action"] = "review_and_confirm"
     result["agent_instruction"] = (
@@ -7138,6 +7344,57 @@ def _apply_generation_choices_to_plan(
             **(current_inputs if isinstance(current_inputs, dict) else {}),
             **shared_inputs,
         }
+    video_mode = choices.get("video_generation_mode")
+    if isinstance(video_mode, str) and video_mode.strip():
+        video_mode = video_mode.strip()
+        node_types = {
+            str(node.get("id") or ""): node.get("node_type")
+            for node in plan.get("nodes") or []
+            if isinstance(node, dict)
+        }
+        image_source_ids = {
+            node_id for node_id, node_type in node_types.items()
+            if node_type == "imageGenNode"
+        }
+        image_source_ids.update(
+            str(source.get("id") or "")
+            for source in plan.get("external_inputs") or []
+            if isinstance(source, dict) and source.get("media_kind") == "image"
+        )
+        image_source_ids.discard("")
+        for node in plan.get("nodes") or []:
+            if not isinstance(node, dict) or node.get("node_type") != "videoNode":
+                continue
+            data = node.get("data") if isinstance(node.get("data"), dict) else {}
+            # This value comes from the user's dedicated conflict answer, so it
+            # intentionally replaces the earlier textToVideo request.
+            data["genMode"] = video_mode
+            node["data"] = data
+        if video_mode != "textToVideo":
+            edges = [edge for edge in plan.get("edges") or [] if isinstance(edge, dict)]
+            for video_id in (
+                node_id for node_id, node_type in node_types.items()
+                if node_type == "videoNode"
+            ):
+                # Preserve exact-plan order-only dependencies. The standard
+                # text-to-image-to-video recovery shape has one unambiguous image
+                # predecessor and no image media input yet. If a video already
+                # consumes an image (or has multiple image prerequisites), a
+                # dependency_for edge must keep its execution-order semantics.
+                image_inputs = [
+                    edge for edge in edges
+                    if edge.get("target") == video_id
+                    and edge.get("link_type") == "media_input_for"
+                    and str(edge.get("source") or "") in image_source_ids
+                ]
+                image_dependencies = [
+                    edge for edge in edges
+                    if edge.get("target") == video_id
+                    and edge.get("link_type") == "dependency_for"
+                    and str(edge.get("source") or "") in image_source_ids
+                ]
+                if not image_inputs and len(image_dependencies) == 1:
+                    image_dependencies[0]["link_type"] = "media_input_for"
     for node in plan.get("nodes") or []:
         if not isinstance(node, dict):
             continue
@@ -8275,6 +8532,9 @@ _WORKFLOW_RESULT_FIELDS = (
     "missing_parameters",
     "required_choices",
     "clarification",
+    "draft_created",
+    "required_choice",
+    "question",
 )
 
 _RESULT_ARRAY_FIELDS = frozenset(
@@ -8867,6 +9127,32 @@ def _success_contract(name: str) -> dict[str, Any]:
             "required": list(_SKILL_STUDIO_FRONTEND_REQUIRED),
         }
     if name in _WORKFLOW_RESULT_TOOLS:
+        if name in {
+            "freezone_prepare_workflow_draft",
+            "freezone_prepare_workflow_plan_draft",
+        }:
+            return {
+                "anyOf": [
+                    {
+                        "properties": {
+                            "status": {
+                                "const": "generation_mode_clarification_required"
+                            },
+                            "draft_created": {"const": False},
+                        },
+                        "required": [
+                            "code",
+                            "draft_created",
+                            "required_choice",
+                            "question",
+                        ],
+                    },
+                    {"required": ["draft_id"]},
+                    {"required": ["operation_id"]},
+                    {"required": ["workflow_instance_id"]},
+                    {"required": ["run_id"]},
+                ]
+            }
         if name == "freezone_confirm_workflow_draft":
             # Confirmation returns the executor's receipt after the draft was
             # committed. It need not repeat the planning/run identifiers.
@@ -9321,6 +9607,14 @@ _WORKFLOW_INTENT_OBJECT_SCHEMA = {
                     ),
                 },
                 "include_audio": {"type": "boolean"},
+                "video_dependency": {
+                    "type": "string",
+                    "enum": ["independent", "sequential"],
+                    "description": (
+                        "Use sequential for an execution-only video 1 -> 2 -> ... chain. "
+                        "The compiler creates the nodes and dependency edges; do not send items."
+                    ),
+                },
                 "units": {
                     "type": "array",
                     "maxItems": 25,
@@ -10323,10 +10617,12 @@ TOOLS = (
                         "No BGM does not mean video_generate_audio=false."
                     ),
                     "properties": {
+                        "image_model": {"type": "string", "minLength": 1, "maxLength": 160},
                         "image_aspect_ratio": {"type": "string"},
                         "image_resolution": {"type": "string"},
                         "image_quality": {"type": "string"},
                         "image_variants_per_node": {"type": "integer", "enum": [1, 2, 4]},
+                        "video_model": {"type": "string", "minLength": 1, "maxLength": 160},
                         "video_aspect_ratio": {"type": "string"},
                         "video_resolution": {"type": "string"},
                         "video_duration_seconds": {

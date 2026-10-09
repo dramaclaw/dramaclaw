@@ -92,7 +92,11 @@ canvas execution mode. For every new generation request, call
 `manual_confirm` and `auto_execute`. Historical clarification answers, prior-turn parameters,
 existing node values, and Recipe defaults may prefill recommended choices, but never count as the
 user’s selection for the current request. After the clarification result returns for that request,
-do not ask again.
+do not ask again for those same fields. Pass its unchanged `answers` object as
+`generation_answers` on draft preparation; the tool also retains the same-turn receipt as a
+fail-safe when the host omits that argument. Explicit `image_model` / `video_model` values may be
+included in `generation_preferences`; the server accepts them only after validating the current
+project's live Catalog entry and dependent options.
 
 When using `generation_media_types` or `generation_required_choices`, do not include agent-authored
 `questions` in the same call. Generation clarification is one exclusive server-owned mode; ask any
@@ -177,7 +181,11 @@ reference mode belongs in `plan.inputs.video_generation_mode` and in each matchi
 Put each shot's duration in `data.durationSec` (seconds), not `data.durationSeconds`. The
 `generation_answers` argument is only the unchanged `answers` object returned by
 `freezone_request_user_clarification`: never append `video_generation_mode` or hand-built fields
-to it. If preflight reports an incompatible model/mode, preserve any explicit user mode; choose a
+to it. The sole exception is a prepare result with
+`status="generation_mode_clarification_required"`: ask exactly its returned `question`, then pass
+that clarification's unchanged `answers` on the one retry while reusing the operation id. The
+server merges it with the same-turn parameter receipt. If preflight reports any other incompatible
+model/mode, preserve any explicit user mode; choose a
 compatible Catalog model when available, otherwise ask the user. For an unstated mode, choose a
 reference-capable mode supported by the selected model and the actual number of incoming images.
 
@@ -224,6 +232,10 @@ Route between the normal draft flow and the exact topology path in this priority
    compare the listed topology with that Skill's standard template first, and treat a same-shape
    list (same stages, order, and dependencies) as a restatement of the template, not a custom
    request.
+   A request for N standard video nodes chained `1→2→...→N` is also supported by the compact
+   planner: set `planner.item_count=N` and `planner.video_dependency="sequential"`. Do not author
+   `items`, nodes, or edges for that pattern. The compiler adds execution-only `dependency_for`
+   edges between consecutive clips, so earlier clips are not sent as media references.
 2. Otherwise, when the user explicitly names required nodes and their dependency order that
    deviate from the matching Skill's template, use the exact topology path in
    [references/custom-topology.md](references/custom-topology.md), preparing the complete Plan as

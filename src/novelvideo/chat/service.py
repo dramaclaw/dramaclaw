@@ -248,9 +248,11 @@ _CODEX_FREEZONE_DEVELOPER_INSTRUCTIONS = (
     "contains only one executable node; do not read node detail before starting it and never "
     "substitute freezone_run_node_action. "
     "For a normal workflow request, follow that Skill's discovery, draft, preview, and confirmation "
-    "sequence. When the user explicitly specifies exact nodes and dependencies, follow the Skill's "
-    "custom-topology reference and call freezone_prepare_workflow_plan_draft once instead; do not "
-    "route that request through the compact Intent compiler merely because a "
+    "sequence. A request for N standard video units chained 1→2→...→N is a compact standard "
+    "planner request: set planner.item_count=N and planner.video_dependency=sequential, and let "
+    "the tool create every node and dependency edge. For other exact nodes and dependencies, "
+    "follow the Skill's custom-topology reference and call freezone_prepare_workflow_plan_draft "
+    "once instead; do not route that request through the compact Intent compiler merely because a "
     "production Skill matches. Beat counts, shot counts, episode counts, and other business totals "
     "belong in the compact Intent or standard planner inputs and must not by themselves trigger an "
     "agent-authored Plan. Use a complete WorkflowPlan only when the user explicitly enumerates "
@@ -608,7 +610,9 @@ Canvas write contract:
   references/custom-topology.md and call freezone_prepare_workflow_plan_draft once with one complete
   freezone_workflow_plan.v1. Exact means the user names the nodes and their dependency order; do not
   route it through the normal draft flow or compact Intent compiler merely because a production
-  Skill matches. The Plan must include top-level schema_version plus skill.id and skill.version
+  Skill matches. Exception: N standard video units chained 1→2→...→N use a compact Intent with
+  planner.item_count=N and planner.video_dependency=sequential; the deterministic planner creates
+  the nodes and execution-only dependency_for edges. The Plan must include top-level schema_version plus skill.id and skill.version
   copied from the selected production Skill; generation_answers supplements the complete Plan and
   never replaces it. Recipe-backed text nodes must not use the reserved input/resource/asset stages,
   which identify recipe-less user resources. Beat counts, shot counts, episode counts, and other

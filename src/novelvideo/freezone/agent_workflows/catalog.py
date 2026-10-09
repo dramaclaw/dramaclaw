@@ -824,7 +824,13 @@ def _node_signature(node: dict[str, Any]) -> tuple:
         sorted(
             (key, _hashable(value))
             for key, value in data.items()
-            if key not in _PRESENTATION_DATA_KEYS and key != _COMPOSE_ORDER_KEY
+            if key not in _PRESENTATION_DATA_KEYS
+            and key != _COMPOSE_ORDER_KEY
+            # ``recommended`` is the planner's symbolic fallback, resolved from
+            # the live tenant catalog later. Omitting it in an otherwise exact
+            # template restatement has the same meaning; concrete model ids still
+            # participate in the signature and can never be replaced silently.
+            and not (key == "model" and _text(value).casefold() == "recommended")
         )
     )
     return (kind, re.sub(r"\s+", " ", text), recipe, settings)
@@ -2008,6 +2014,7 @@ def _standard_skill_items(
     units: list[dict[str, Any]],
     user_goal: str,
     include_unit_facts: bool = True,
+    video_dependency: str = "independent",
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     if skill_id == "ecommerce-ad":
@@ -2045,13 +2052,16 @@ def _standard_skill_items(
                 )
             )
             if deliverable != "images":
+                dependencies = [image_id]
+                if video_dependency == "sequential" and index > 1:
+                    dependencies.append(f"clip_{index - 1}")
                 items.append(
                     _planned_item(
                         item_id=f"clip_{index}",
                         title=f"{unit['title']}视频",
                         prompt=unit["prompt"],
                         recipe_id="video-clip-generation",
-                        depends_on=[image_id],
+                        depends_on=dependencies,
                         stage="video",
                         timeline_role="visual",
                         duration_seconds=unit.get("duration_seconds"),
@@ -2211,13 +2221,16 @@ def _standard_skill_items(
                 )
             )
             video_source_id = source_id
+        video_dependencies = [video_source_id]
+        if video_dependency == "sequential" and index > 1:
+            video_dependencies.append(f"clip_{index - 1}")
         items.append(
             _planned_item(
                 item_id=f"clip_{index}",
                 title=f"{unit['title']}视频",
                 prompt=unit["prompt"],
                 recipe_id="general-video",
-                depends_on=[video_source_id],
+                depends_on=video_dependencies,
                 stage="video",
                 # The shot plan is what the clip renders, not a gate ahead of
                 # it: reference it so the edge is prompt_for and the runtime
@@ -2532,6 +2545,25 @@ def _expand_standard_skill_intent(
         )
     if deliverable == "images":
         include_audio = False
+    video_dependency = _text(planner.get("video_dependency")) or "independent"
+    if video_dependency not in {"independent", "sequential"}:
+        return (
+            intent,
+            None,
+            _intent_error(
+                "planner.video_dependency must equal independent or sequential",
+                path="planner.video_dependency",
+            ),
+        )
+    if deliverable == "images" and video_dependency != "independent":
+        return (
+            intent,
+            None,
+            _intent_error(
+                "planner.video_dependency=sequential requires a video deliverable",
+                path="planner.video_dependency",
+            ),
+        )
     units = _standard_planner_units(
         planner=planner,
         item_count=item_count,
@@ -2596,14 +2628,27 @@ def _expand_standard_skill_intent(
         units=units,
         user_goal=user_goal,
         include_unit_facts=include_unit_facts,
+        video_dependency=video_dependency,
     )
-    if skill_id == "video-tutorial" and deliverable != "images":
-        # The standard tutorial always needs a video model. A recommendation is
-        # resolved against the caller's live catalog during preflight; never use
-        # an unverified implicit model or silently substitute a requested mode.
-        for item in items:
-            if item.get("recipe_id") == "general-video" and not _text(item.get("model")):
-                item["model"] = "recommended"
+    # A deterministic standard workflow must also be executable without asking
+    # the Agent to discover model ids. Keep the symbolic value in the plan; the
+    # canvas adapter resolves it against the caller's live model catalog before
+    # dispatch. Explicit model choices in inputs/items always win.
+    recipes = _intent_recipe_index()
+    for item in items:
+        recipe = recipes.get(_text(item.get("recipe_id"))) or {}
+        node_type = _recipe_node_type(recipe)
+        input_key = (
+            "image_model"
+            if node_type == "imageGenNode"
+            else "video_model" if node_type == "videoNode" else ""
+        )
+        if (
+            input_key
+            and not _text(resolved_inputs.get(input_key))
+            and not _text(item.get("model"))
+        ):
+            item["model"] = "recommended"
     expanded = {
         **intent,
         "items": items,
@@ -2616,6 +2661,11 @@ def _expand_standard_skill_intent(
         "deliverable": deliverable,
         "item_count": len(units),
         "include_audio": include_audio,
+        **(
+            {"video_dependency": video_dependency}
+            if video_dependency != "independent"
+            else {}
+        ),
     }
     return expanded, metadata, None
 
@@ -2837,6 +2887,11 @@ def _compile_dynamic_recipe_items_intent(
             ),
         )
 
+    node_data_by_id = {
+        _text(candidate.get("id")): candidate.get("data")
+        for candidate in nodes
+        if isinstance(candidate, dict) and isinstance(candidate.get("data"), dict)
+    }
     edges: list[dict[str, str]] = []
     item_order = {item_id: index for index, item_id in enumerate(item_by_id)}
     for item_id, item in item_by_id.items():
@@ -2945,6 +3000,7 @@ def _compile_dynamic_recipe_items_intent(
                         else _intent_link_type(
                             node_types.get(normalized_source, ""),
                             node_types.get(item_id, ""),
+                            target_data=node_data_by_id.get(item_id),
                         )
                     ),
                 }
@@ -3459,13 +3515,27 @@ def _intent_dependency_edges(
     ]
 
 
-def _intent_link_type(source_type: str, target_type: str) -> str:
+def _intent_link_type(
+    source_type: str,
+    target_type: str,
+    *,
+    target_data: dict[str, Any] | None = None,
+) -> str:
     if target_type == "videoComposeNode":
         return "composition_input_for"
     if source_type == "videoNode" and target_type == "videoNode":
         # A previous generated shot may gate the next workflow step without
         # becoming an R2V reference. Otherwise Seedance receives every prior
         # shot and can exceed its 15.2-second total reference-video limit.
+        return "dependency_for"
+    if (
+        source_type == "imageGenNode"
+        and target_type == "videoNode"
+        and _text((target_data or {}).get("genMode")) == "textToVideo"
+    ):
+        # The standard text-to-image-video graph still prepares key images, but
+        # text-to-video clips do not consume them as media references. Preserve
+        # the execution gate without contradicting the confirmed generation mode.
         return "dependency_for"
     if source_type in {"textAnnotationNode", "scriptNode", "beatContextNode"}:
         if target_type in {"textAnnotationNode", "scriptNode", "beatContextNode"}:

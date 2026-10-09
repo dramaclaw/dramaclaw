@@ -210,6 +210,112 @@ def test_standard_video_planner_distributes_target_duration_across_clips(monkeyp
     assert sum(node["data"]["durationSec"] for node in video_nodes) == 30
 
 
+def test_standard_video_planner_builds_sequential_clip_dependencies(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+
+    intent = {
+        "skill_id": "text-to-image-video",
+        "user_goal": "创建五段按顺序执行的视频，只创建节点和连线",
+        "inputs": {"video_generation_mode": "textToVideo"},
+        "planner": {
+            "mode": "standard",
+            "deliverable": "video",
+            "item_count": 5,
+            "include_audio": False,
+            "video_dependency": "sequential",
+        },
+        "include_compose": False,
+    }
+    Draft202012Validator(workflow_intent_json_schema()).validate(intent)
+    result = catalog.compile_workflow_intent(intent)
+
+    assert result["ok"] is True, result
+    assert result["planner"]["mode"] == "deterministic_standard"
+    assert result["planner"]["video_dependency"] == "sequential"
+    video_nodes = [
+        node for node in result["plan"]["nodes"] if node["node_type"] == "videoNode"
+    ]
+    assert len(video_nodes) == 5
+    edges = result["plan"]["edges"]
+    assert [
+        {
+            "source": f"clip_{index}",
+            "target": f"clip_{index + 1}",
+            "link_type": "dependency_for",
+        }
+        for index in range(1, 5)
+    ] == [
+        edge
+        for edge in edges
+        if edge["source"].startswith("clip_")
+        and edge["target"].startswith("clip_")
+    ]
+    assert [
+        edge
+        for edge in edges
+        if edge["source"].startswith("frame_")
+        and edge["target"].startswith("clip_")
+    ] == [
+        {
+            "source": f"frame_{index}",
+            "target": f"clip_{index}",
+            "link_type": "dependency_for",
+        }
+        for index in range(1, 6)
+    ]
+    image_nodes = [
+        node for node in result["plan"]["nodes"] if node["node_type"] == "imageGenNode"
+    ]
+    assert image_nodes
+    assert all(node["data"]["model"] == "recommended" for node in image_nodes)
+    assert result["plan"]["inputs"]["video_generation_mode"] == "textToVideo"
+
+
+def test_standard_image_to_video_keeps_frame_as_media_input(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+
+    result = catalog.compile_workflow_intent({
+        "skill_id": "text-to-image-video",
+        "user_goal": "先生成关键图，再用关键图生成视频",
+        "inputs": {"video_generation_mode": "imageReference"},
+        "planner": {
+            "mode": "standard",
+            "deliverable": "video",
+            "item_count": 2,
+            "include_audio": False,
+        },
+    })
+
+    assert result["ok"] is True, result
+    assert [
+        edge["link_type"]
+        for edge in result["plan"]["edges"]
+        if edge["source"].startswith("frame_")
+        and edge["target"].startswith("clip_")
+    ] == ["media_input_for", "media_input_for"]
+
+
+def test_standard_image_planner_rejects_sequential_video_dependency(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+
+    result = catalog.compile_workflow_intent({
+        "skill_id": "ecommerce-ad",
+        "user_goal": "创建三张商品图",
+        "planner": {
+            "mode": "standard",
+            "deliverable": "images",
+            "item_count": 3,
+            "video_dependency": "sequential",
+        },
+    })
+
+    assert result["ok"] is False
+    assert result["errors"][0]["path"] == "planner.video_dependency"
+
+
 def test_standard_tutorial_frames_consume_the_generated_outline(monkeypatch):
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)

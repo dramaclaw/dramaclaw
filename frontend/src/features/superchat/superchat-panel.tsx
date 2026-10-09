@@ -14317,6 +14317,10 @@ export function SuperChatPanel({
           ? buildCanvasChatCommandContext(currentCanvasOntologyContext, {
               includeCanvasSummary: shouldIncludeCanvasSummary(text, {
                 hasFocusedNodeContext: Boolean(canvasReferenceContext),
+                hasCanvasContent:
+                  currentCanvasOntologyContext == null
+                    ? undefined
+                    : currentCanvasOntologyContext.summary.object_count > 0,
               }),
             })
           : null;

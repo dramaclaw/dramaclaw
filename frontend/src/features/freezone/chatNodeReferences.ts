@@ -739,12 +739,30 @@ function normalizeCanvasCommandValidationEnvelopes(
 
 export function shouldIncludeCanvasSummary(
   text: string,
-  options: { hasFocusedNodeContext?: boolean } = {},
+  options: {
+    hasFocusedNodeContext?: boolean;
+    hasCanvasContent?: boolean;
+  } = {},
 ): boolean {
   const trimmed = text.trim();
   if (!trimmed) return false;
   if (options.hasFocusedNodeContext) return false;
-  return true;
+  if (options.hasCanvasContent === false) return false;
+
+  // i18n-exempt-start -- Chinese tokens are intent-matching protocol values, not UI copy.
+  const mentionsExistingCanvas =
+    /(?:当前|现有|已有|整个|整张|全部|全局|this|current|existing|whole|entire)[^。！？!?\n]{0,20}(?:画布|流程|工作流|节点|连线|依赖|拓扑|canvas|workflow|flow|nodes?|edges?|topology)/i.test(
+      trimmed,
+    ) ||
+    /(?:画布|流程|工作流|节点|连线|依赖|拓扑|canvas|workflow|flow|nodes?|edges?|topology)[^。！？!?\n]{0,20}(?:当前|现有|已有|整个|整张|全部|全局|this|current|existing|whole|entire)/i.test(
+      trimmed,
+    );
+  if (!mentionsExistingCanvas) return false;
+
+  return /(?:基于|根据|参照|结合|读取|查看|分析|总结|梳理|整理|布局|重排|重构|优化|调整|修改|连接|连线|依赖|拓扑|分组|检查|诊断|based\s+on|using|inspect|review|analy[sz]e|summari[sz]e|organize|layout|rearrange|refactor|optimi[sz]e|adjust|modify|connect|dependency|topology|group)/i.test(
+    trimmed,
+  );
+  // i18n-exempt-end
 }
 
 export function canvasNodeReferenceAttachmentNodeIds(
