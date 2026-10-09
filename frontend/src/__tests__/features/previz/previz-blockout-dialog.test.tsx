@@ -125,6 +125,47 @@ describe("PrevizBlockoutDialog", () => {
     expect(submit()).toBeDisabled();
   });
 
+  it("opens on the image already connected on the canvas and starts with it", async () => {
+    const user = userEvent.setup();
+    const { onStart } = setup({ referenceUrl: "/static/bath.png" });
+
+    expect(screen.getByRole("img", { name: "previz.blockout.linked" })).toHaveAttribute(
+      "src",
+      "/static/bath.png",
+    );
+    await user.click(submit());
+
+    const request = onStart.mock.calls[0]![0];
+    expect(request.file).toBeNull();
+    expect(request.sourceUrl).toBe("/static/bath.png");
+  });
+
+  it("lets a picked picture take over from the connected image", async () => {
+    const user = userEvent.setup();
+    const { onStart } = setup({ referenceUrl: "/static/bath.png" });
+    const file = image();
+
+    await pick(file);
+    expect(screen.queryByRole("img", { name: "previz.blockout.linked" })).toBeNull();
+    expect(screen.getByRole("img", { name: "room.png" })).toBeInTheDocument();
+    await user.click(submit());
+
+    const request = onStart.mock.calls[0]![0];
+    expect(request.file).toBe(file);
+    expect(request.sourceUrl).toBeNull();
+  });
+
+  it("warns about a connected image that is too small once it has loaded", () => {
+    setup({ referenceUrl: "/static/thumb.png" });
+    const preview = screen.getByRole("img", { name: "previz.blockout.linked" });
+    Object.defineProperty(preview, "naturalWidth", { value: 200 });
+    Object.defineProperty(preview, "naturalHeight", { value: 120 });
+
+    fireEvent.load(preview);
+
+    expect(screen.getByRole("list", { name: "previz.blockout.hint.title" })).toBeInTheDocument();
+  });
+
   it("starts with the picked picture, the note and replace by default", async () => {
     const user = userEvent.setup();
     const { onStart } = setup();

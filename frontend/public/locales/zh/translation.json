@@ -7905,6 +7905,7 @@
       "failed": "生成失败：{{message}}",
       "cancelled": "生成已取消",
       "queued": "白模已开始生成，进度见任务中心；完成后自动放进场景",
+      "linked": "画布上已连接的图片",
       "referenceNodeName": "预演台参考图 {{index}}",
       "done": "已生成 {{count}} 个几何体",
       "warnings": "有 {{count}} 处可能需要手动调整",

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useId, useRef, useState, type DragEvent } from "react";
+import { useEffect, useId, useRef, useState, type DragEvent } from "react";
 import { ImageUp, Loader2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -42,6 +42,8 @@ export interface PrevizBlockoutDialogProps {
   held: PrevizHeldBlockout | null;
   /** 场景里已经有白模：这次是替换它还是再加一份，得问。 */
   hasExisting: boolean;
+  /** 画布上已经接在预演台上游的图：打开时先用它，用户另选一张才换掉。 */
+  referenceUrl?: string | null;
   onStart: (request: PrevizBlockoutRequest) => void;
   onRetryImport: (mode: PrevizBlockoutImportMode) => void;
   onClose: () => void;
@@ -105,6 +107,7 @@ function BlockoutPanel({
   stage,
   held,
   hasExisting,
+  referenceUrl = null,
   onStart,
   onRetryImport,
   onClose,
@@ -122,6 +125,19 @@ function BlockoutPanel({
   const hintId = useId();
   const heldId = useId();
   const [file, setFile] = useState<File | null>(null);
+  // 打开那一刻接着的图。选了新图就让位；之后画布上再怎么改线，这次对话框里不跟着跳。
+  const [linkedUrl, setLinkedUrl] = useState<string | null>(referenceUrl);
+  const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!file) {
+      setFilePreviewUrl(null);
+      return;
+    }
+    const objectUrl = URL.createObjectURL(file);
+    setFilePreviewUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [file]);
+  const previewUrl = file ? filePreviewUrl : linkedUrl;
   const [refusal, setRefusal] = useState<string | null>(null);
   const [hints, setHints] = useState<PrevizBlockoutImageHint[]>([]);
   const [imageSize, setImageSize] = useState<PrevizImageSize | null>(null);
@@ -161,7 +177,7 @@ function BlockoutPanel({
     (billingRuleMissing ? t("common.billingRuleNotConfiguredShort") : null);
 
   const busy = stage !== "idle";
-  const canStart = file !== null && !busy && !billingRuleMissing;
+  const canStart = (file !== null || linkedUrl !== null) && !busy && !billingRuleMissing;
 
   const handlePick = (picked: File) => {
     measureSerial.current += 1;
@@ -178,6 +194,7 @@ function BlockoutPanel({
       return;
     }
     setFile(picked);
+    setLinkedUrl(null);
     setRefusal(null);
     // 尺寸、比例只提示不拦：量不出来就不提示，照样能生成。
     void measureImage(picked)
@@ -259,19 +276,35 @@ function BlockoutPanel({
               data-testid="previz-blockout-drop-zone"
               data-dragging={dragging}
               className={cn(
-                "flex min-h-[220px] flex-1 flex-col items-center justify-center gap-2.5 rounded-lg border border-dashed border-white/15 bg-white/[0.02] px-4 py-8 text-center transition-colors",
+                "flex min-h-[220px] flex-1 flex-col items-center justify-center gap-2.5 rounded-lg border border-dashed border-white/15 bg-white/[0.02] px-4 text-center transition-colors",
+                previewUrl ? "py-4" : "py-8",
                 dragging && "border-white/60 bg-white/[0.07]",
               )}
             >
-              <span
-                aria-hidden="true"
-                className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.06] text-white/60"
-              >
-                <ImageUp className="h-5 w-5" />
-              </span>
-              {file && (
+              {previewUrl ? (
+                <img
+                  src={previewUrl}
+                  alt={file ? file.name : t("previz.blockout.linked")}
+                  draggable={false}
+                  className="h-[168px] w-full rounded-sm object-contain"
+                  // 新选的图由 measureImage 量；接着的那张就借这次加载量，提示照样给。
+                  onLoad={(event) => {
+                    if (file) return;
+                    const { naturalWidth: width, naturalHeight: height } = event.currentTarget;
+                    setHints(blockoutImageHints({ width, height }));
+                  }}
+                />
+              ) : (
+                <span
+                  aria-hidden="true"
+                  className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.06] text-white/60"
+                >
+                  <ImageUp className="h-5 w-5" />
+                </span>
+              )}
+              {(file || linkedUrl) && (
                 <span className="max-w-full truncate text-[13px] font-medium text-white/90">
-                  {file.name}
+                  {file ? file.name : t("previz.blockout.linked")}
                 </span>
               )}
               {/* sr-only + label 的理由见 PrevizModelLibraryDialog 的导入按钮。 */}
@@ -484,17 +517,17 @@ function BlockoutPanel({
             disabled={!canStart}
             className={PRIMARY_BUTTON}
             onClick={() => {
-              if (file) {
-                onStart({
-                  file,
-                  imageSize,
-                  description,
-                  pictureCheck,
-                  renderCheck,
-                  model: requestedModel,
-                  mode,
-                });
-              }
+              if (!file && !linkedUrl) return;
+              onStart({
+                file,
+                sourceUrl: file ? null : linkedUrl,
+                imageSize,
+                description,
+                pictureCheck,
+                renderCheck,
+                model: requestedModel,
+                mode,
+              });
             }}
           >
             {t("previz.blockout.submit")}

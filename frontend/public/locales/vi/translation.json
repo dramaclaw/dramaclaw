@@ -7905,6 +7905,7 @@
       "failed": "Generation failed: {{message}}",
       "cancelled": "Generation cancelled",
       "queued": "Blockout generation started; track it in the task center. The result lands in the scene automatically",
+      "linked": "Ảnh đã nối trên canvas",
       "referenceNodeName": "Ảnh tham chiếu previz {{index}}",
       "done": "Generated {{count}} primitives",
       "warnings": "{{count}} spots may need manual adjustment",

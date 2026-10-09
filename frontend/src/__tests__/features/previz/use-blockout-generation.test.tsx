@@ -185,7 +185,7 @@ describe("useBlockoutGeneration keeps the reference image on the canvas", () => 
     expect(reference!.position.y).toBe(300);
   });
 
-  it("numbers a second reference and stacks it below the first", async () => {
+  it("swaps the picture of the reference already upstream instead of adding another", async () => {
     const id = addPrevizNode();
     const { result: hook } = setup(id);
 
@@ -193,14 +193,39 @@ describe("useBlockoutGeneration keeps the reference image on the canvas", () => 
       await hook.current.start(request());
     });
     act(() => useCanvasStore.getState().updateNodeData(id, { isGenerating: false }));
+    uploadFreezoneImage.mockImplementationOnce(async () => ({ url: "/static/hall.png" }));
+    await act(async () => {
+      await hook.current.start({ ...request(), imageSize: { width: 1080, height: 1920 } });
+    });
+
+    const [reference] = upstreamOf(id);
+    expect(upstreamOf(id)).toHaveLength(1);
+    expect(reference!.data).toMatchObject({
+      imageUrl: "/static/hall.png",
+      previewImageUrl: "/static/hall.png",
+      aspectRatio: "9:16",
+      displayName: 'previz.blockout.referenceNodeName:{"index":1}',
+    });
+    expect(hook.current.referenceUrl).toBe("/static/hall.png");
+  });
+
+  it("adds its own reference next to an upstream image that is someone's result", async () => {
+    const id = addPrevizNode();
+    const edited = useCanvasStore
+      .getState()
+      .addNode(CANVAS_NODE_TYPES.imageEdit, { x: -600, y: 0 }, { imageUrl: "/static/gen.png" })!;
+    useCanvasStore.getState().addEdge(edited, id);
+    const { result: hook } = setup(id);
+
     await act(async () => {
       await hook.current.start(request());
     });
 
-    const [first, second] = upstreamOf(id);
-    expect(upstreamOf(id)).toHaveLength(2);
-    expect(second!.data.displayName).toBe('previz.blockout.referenceNodeName:{"index":2}');
-    expect(second!.position.y).toBeGreaterThanOrEqual(first!.position.y + (first!.height ?? 0));
+    expect(node(edited).data.imageUrl).toBe("/static/gen.png");
+    expect(upstreamOf(id).map((entry) => entry.type)).toEqual([
+      CANVAS_NODE_TYPES.imageEdit,
+      CANVAS_NODE_TYPES.upload,
+    ]);
   });
 
   it("leaves the canvas alone when the task was never submitted", async () => {
@@ -214,6 +239,64 @@ describe("useBlockoutGeneration keeps the reference image on the canvas", () => 
 
     expect(upstreamOf(id)).toEqual([]);
     expect(useCanvasStore.getState().nodes).toHaveLength(1);
+  });
+});
+
+describe("useBlockoutGeneration reuses the image already connected on the canvas", () => {
+  it("offers the upstream image, and the latest one once it has kept another", async () => {
+    const id = addPrevizNode();
+    useCanvasStore.getState().addUpstreamUploadNode(id, "/static/bath.png", "16:9", "bath");
+    const { result: hook } = setup(id);
+
+    expect(hook.current.referenceUrl).toBe("/static/bath.png");
+
+    await act(async () => {
+      await hook.current.start(request());
+    });
+
+    expect(hook.current.referenceUrl).toBe("/static/ref.png");
+  });
+
+  it("offers nothing while no image is connected", () => {
+    const { result: hook } = setup(addPrevizNode());
+
+    expect(hook.current.referenceUrl).toBeNull();
+  });
+
+  it("submits the connected image as is: no upload, no second reference node", async () => {
+    const id = addPrevizNode();
+    useCanvasStore.getState().addUpstreamUploadNode(id, "/static/bath.png", "16:9", "bath");
+    const { result: hook } = setup(id);
+
+    let queued = false;
+    await act(async () => {
+      queued = await hook.current.start({
+        ...request(),
+        file: null,
+        sourceUrl: "/static/bath.png",
+      });
+    });
+
+    expect(queued).toBe(true);
+    expect(uploadFreezoneImage).not.toHaveBeenCalled();
+    expect(submitFreezoneImageToBlockout).toHaveBeenCalledWith(
+      "demo",
+      expect.objectContaining({ sourceUrl: "/static/bath.png", nodeId: id }),
+    );
+    expect(upstreamOf(id)).toHaveLength(1);
+    expect(nodeData(id).isGenerating).toBe(true);
+  });
+
+  it("does not start with neither a file nor a connected image", async () => {
+    const { result: hook } = setup(addPrevizNode());
+
+    let queued = true;
+    await act(async () => {
+      queued = await hook.current.start({ ...request(), file: null });
+    });
+
+    expect(queued).toBe(false);
+    expect(submitFreezoneImageToBlockout).not.toHaveBeenCalled();
   });
 });
 

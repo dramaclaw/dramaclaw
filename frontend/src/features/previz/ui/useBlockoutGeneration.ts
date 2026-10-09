@@ -10,8 +10,11 @@ import {
   uploadFreezoneImage,
 } from '@/api/ops';
 import { aspectRatioFromImageDimensions } from '@/features/canvas/application/imageNodeSizing';
+import { extractUpstreamImages } from '@/features/canvas/application/graphImageResolver';
+import { useUpstreamImages } from '@/features/canvas/application/useUpstreamGraph';
 import { handedOffGenerationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
 import { CANVAS_NODE_TYPES, DEFAULT_ASPECT_RATIO } from '@/features/canvas/domain/canvasNodes';
+import { upstreamNodesInEdgeOrder } from '@/features/canvas/nodes/referenceOrdering';
 import { backendErrorToastMessage } from '@/lib/api-errors';
 import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
@@ -30,7 +33,10 @@ import { usePrevizStore } from '../store';
 export type PrevizBlockoutStage = 'idle' | 'uploading' | 'generating' | 'importing';
 
 export interface PrevizBlockoutRequest {
-  file: File;
+  /** 这次新选的图；用画布上已经接着的那张时为 null，地址走 `sourceUrl`。 */
+  file: File | null;
+  /** 画布上已经接在预演台上游的图：不用再传一遍，也不用再接一个节点。 */
+  sourceUrl?: string | null;
   /** 对话框量出来的像素尺寸，只用来给画布上那张参考图节点定比例；量不出来就不给。 */
   imageSize?: PrevizImageSize | null;
   description: string;
@@ -45,6 +51,8 @@ export interface PrevizBlockoutRequest {
 export interface BlockoutGeneration {
   stage: PrevizBlockoutStage;
   held: PrevizHeldBlockout | null;
+  /** 画布上接在预演台上游的图（接了好几张取最后接上的那张），对话框打开时先用它。 */
+  referenceUrl: string | null;
   /** 返回 true 表示任务已经提交、句柄已经写到节点上；结果由画布接回来。 */
   start: (request: PrevizBlockoutRequest) => Promise<boolean>;
   /** 按任务号把留着的那份结果再取一次、再导入一次，不再调模型。返回 true 表示已写进场景。 */
@@ -60,6 +68,10 @@ const readNodeData = (nodeId: string) =>
 /**
  * 把这次用的参考图留在画布上：预演台左边接一个上传图节点。编辑器里看不到这张图，
  * 退出去以后它还在，下次想对照、想换一张再生成都找得到。
+ *
+ * 上游已经有一张参考图（上传图节点）时换掉它的内容，不再多接一个——对话框里那是
+ * 「换一张」，画布上也该是同一个节点换了图。上游接的是别的图片节点（生成结果之类）
+ * 就不去动人家的产物，另接一个。
  */
 function keepReferenceOnCanvas(
   nodeId: string,
@@ -68,18 +80,17 @@ function keepReferenceOnCanvas(
   label: (index: number) => string,
 ): void {
   const store = useCanvasStore.getState();
-  const upstreamIds = new Set(
-    store.edges.filter((edge) => edge.target === nodeId).map((edge) => edge.source),
-  );
-  const references = store.nodes.filter(
-    (node) => upstreamIds.has(node.id) && node.type === CANVAS_NODE_TYPES.upload,
-  ).length;
-  store.addUpstreamUploadNode(
-    nodeId,
-    imageUrl,
-    (size && aspectRatioFromImageDimensions(size.width, size.height)) || DEFAULT_ASPECT_RATIO,
-    label(references + 1),
-  );
+  const aspectRatio =
+    (size && aspectRatioFromImageDimensions(size.width, size.height)) || DEFAULT_ASPECT_RATIO;
+  const upstream = upstreamNodesInEdgeOrder(store.nodes, store.edges, nodeId);
+  // 跟对话框打开时带出来的是同一张：最后接上的那张图。
+  const shown = upstream.filter((node) => extractUpstreamImages(node).length > 0).pop();
+  if (shown?.type === CANVAS_NODE_TYPES.upload) {
+    store.updateNodeData(shown.id, { imageUrl, previewImageUrl: imageUrl, aspectRatio });
+    return;
+  }
+  const references = upstream.filter((node) => node.type === CANVAS_NODE_TYPES.upload).length;
+  store.addUpstreamUploadNode(nodeId, imageUrl, aspectRatio, label(references + 1));
 }
 
 /**
@@ -103,11 +114,23 @@ export function useBlockoutGeneration(nodeId: string): BlockoutGeneration {
   const generating =
     nodeData?.isGenerating === true && nodeData.generationTaskType === 'freezone_image_to_blockout';
   const held = (nodeData?.blockoutHeld ?? null) as PrevizHeldBlockout | null;
+  const upstreamImages = useUpstreamImages(nodeId);
+  const referenceUrl = upstreamImages[upstreamImages.length - 1] ?? null;
 
   const start = useCallback(
-    async ({ file, imageSize, description, pictureCheck, renderCheck, model, mode }: PrevizBlockoutRequest) => {
+    async ({
+      file,
+      sourceUrl,
+      imageSize,
+      description,
+      pictureCheck,
+      renderCheck,
+      model,
+      mode,
+    }: PrevizBlockoutRequest) => {
       if (readNodeData(nodeId).isGenerating === true) return false;
-      const verdict = isAcceptedBlockoutImage(file.name, file.size);
+      if (!file && !sourceUrl) return false;
+      const verdict = file ? isAcceptedBlockoutImage(file.name, file.size) : 'ok';
       if (verdict === 'extension') {
         toast.error(t('previz.blockout.badExtension'));
         return false;
@@ -132,14 +155,15 @@ export function useBlockoutGeneration(nodeId: string): BlockoutGeneration {
       setUploading(true);
       try {
         // 名字里带时间戳，理由同 useAudioImport：同名上传会覆盖上一张参考图。
-        const stamp = Date.now();
-        const upload = await uploadFreezoneImage(
-          project,
-          file,
-          `previz-blockout-${nodeId}-${stamp}.${blockoutImageExtension(file.name)}`,
-        );
+        const upload = file
+          ? await uploadFreezoneImage(
+              project,
+              file,
+              `previz-blockout-${nodeId}-${Date.now()}.${blockoutImageExtension(file.name)}`,
+            )
+          : null;
         const job = await submitFreezoneImageToBlockout(project, {
-          sourceUrl: upload.url,
+          sourceUrl: upload?.url ?? sourceUrl ?? '',
           description: description.trim().slice(0, PREVIZ_BLOCKOUT_DESCRIPTION_MAX_CHARS),
           pictureCheck,
           renderCheck,
@@ -155,9 +179,12 @@ export function useBlockoutGeneration(nodeId: string): BlockoutGeneration {
           blockoutImportMode: mode,
           blockoutHeld: null,
         });
-        keepReferenceOnCanvas(nodeId, upload.url, imageSize, (index) =>
-          t('previz.blockout.referenceNodeName', { index }),
-        );
+        // 用的是画布上已有的那张时，它本来就接在上游，画布不用动。
+        if (upload) {
+          keepReferenceOnCanvas(nodeId, upload.url, imageSize, (index) =>
+            t('previz.blockout.referenceNodeName', { index }),
+          );
+        }
         toast.info(t('previz.blockout.queued'));
         return true;
       } catch (error) {
@@ -218,6 +245,7 @@ export function useBlockoutGeneration(nodeId: string): BlockoutGeneration {
   return {
     stage: uploading ? 'uploading' : importing ? 'importing' : generating ? 'generating' : 'idle',
     held,
+    referenceUrl,
     start,
     retryImport,
   };

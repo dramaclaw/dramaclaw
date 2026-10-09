@@ -2084,6 +2084,7 @@ export function PrevizEditor({
                 stage={blockout.stage}
                 held={blockout.held}
                 hasExisting={sceneHasBlockout}
+                referenceUrl={blockout.referenceUrl}
                 onStart={(request) => {
                   // 提交成功就关，结果由画布接回来；提交失败留着，用户改一改还能再来。
                   void blockout.start(request).then((queued) => {
