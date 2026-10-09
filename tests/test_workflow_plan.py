@@ -210,6 +210,119 @@ def test_standard_video_planner_distributes_target_duration_across_clips(monkeyp
     assert sum(node["data"]["durationSec"] for node in video_nodes) == 30
 
 
+def test_standard_tutorial_frames_consume_the_generated_outline(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+
+    result = catalog.compile_workflow_intent({
+        "skill_id": "video-tutorial",
+        "user_goal": "制作三步咖啡教程：15克粉、92摄氏度水、30克预浸30秒、总水量240克",
+        "planner": {
+            "mode": "standard", "deliverable": "video", "item_count": 3,
+            "include_audio": False, "total_duration_seconds": 18,
+            "units": [
+                {"title": f"步骤{i}", "prompt": f"展示教程步骤{i}"}
+                for i in range(1, 4)
+            ],
+        },
+    })
+
+    assert result["ok"] is True, result
+    edges = result["plan"]["edges"]
+    assert all(
+        {"source": "outline", "target": f"frame_{i}", "link_type": "prompt_for"}
+        in edges for i in range(1, 4)
+    )
+    assert not any(
+        edge["source"] == "outline" and edge["target"].startswith("frame_")
+        and edge["link_type"] == "dependency_for" for edge in edges
+    )
+
+
+def test_standard_tutorial_outline_keeps_facts_supplied_in_units(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    result = catalog.compile_workflow_intent({
+        "skill_id": "video-tutorial", "user_goal": "三步手冲咖啡教程",
+        "planner": {"mode": "standard", "deliverable": "video", "item_count": 3,
+                    "include_audio": False, "total_duration_seconds": 18,
+                    "units": [
+                        {"title": "准备", "prompt": "使用15克咖啡粉"},
+                        {"title": "预浸", "prompt": "92摄氏度水注入30克，等待30秒"},
+                        {"title": "完成", "prompt": "继续注水至240克"},
+                    ]},
+    })
+    assert result["ok"] is True, result
+    outline = next(node for node in result["plan"]["nodes"] if node["id"] == "outline")
+    assert all(fact in outline["data"]["prompt"] for fact in (
+        "15克", "92摄氏度", "30克", "30秒", "240克",
+    ))
+    assert "牛奶" not in outline["data"]["prompt"]
+
+
+def test_standard_tutorial_recommends_and_verifies_a_missing_video_model(monkeypatch):
+    from novelvideo.freezone.workflow_preflight import evaluate_workflow_preflight
+
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    compiled = catalog.compile_workflow_intent({
+        "skill_id": "video-tutorial", "user_goal": "制作一段咖啡教程",
+        "inputs": {"image_model": "image-model", "video_generation_mode": "imageToVideo",
+                   "video_duration_seconds": 6},
+        "planner": {"mode": "standard", "deliverable": "video", "item_count": 1,
+                    "include_audio": False, "units": [
+                        {"title": "步骤一", "prompt": "展示咖啡冲泡步骤"},
+                    ]},
+    })
+    assert compiled["ok"] is True, compiled
+    result = evaluate_workflow_preflight(
+        compiled,
+        model_responses={
+            "imageGenNode": {"ok": True, "data": [{"id": "image-model"}]},
+            "videoNode": {"ok": True, "data": [{
+                "id": "seedance-2.0-fast", "aliases": ["newapi_seedance-2.0-fast"],
+                "supportedModes": ["image_to_video"], "minDuration": 4,
+                "maxDuration": 15, "ratioOptions": ["16:9"],
+                "resolutionOptions": ["720P"],
+            }]},
+        },
+        limits={"ok": True, "data": {"default": {"limit": 2, "remaining": 1},
+                                      "video": {"limit": 2, "remaining": 1}}},
+    )
+    assert result["status"] == "ready", result["blockers"]
+    video = next(node for node in compiled["plan"]["nodes"] if node["node_type"] == "videoNode")
+    assert video["data"]["model"] == "seedance-2.0-fast"
+    assert result["runtime_checks"]["videoNode.models"] == {
+        "requested": ["seedance-2.0-fast"], "available": True,
+    }
+
+
+def test_quick_drama_rejects_untitled_video_shots(monkeypatch):
+    catalog = _load_catalog_module()
+    _install_real_builtin_catalog(monkeypatch, catalog)
+    compiled = catalog.compile_workflow_intent({
+        "skill_id": "short-drama-quick", "user_goal": "两镜头短剧",
+        "inputs": {"visual_style": "未指定"},
+        "planner": {"mode": "standard", "deliverable": "video", "item_count": 2,
+                    "include_audio": False, "units": [
+                        {"title": "开场", "prompt": "主人公进门"},
+                        {"title": "收尾", "prompt": "主人公留下"},
+                    ]},
+    })
+    assert compiled["ok"] is True, compiled
+    valid = catalog.validate_agent_workflow_plan(compiled["plan"], allow_template_reroute=False)
+    assert valid["ok"] is True, valid
+    plan = copy.deepcopy(compiled["plan"])
+    shot = next(node for node in plan["nodes"] if node["node_type"] == "videoNode")
+    for field in ("title", "name", "label"):
+        shot.pop(field, None)
+        shot["data"].pop(field, None)
+    shot["data"].pop("displayName", None)
+    invalid = catalog.validate_agent_workflow_plan(plan, allow_template_reroute=False)
+    assert invalid["ok"] is False
+    assert any(error["path"].endswith(".data.title") for error in invalid["errors"])
+
+
 def test_custom_video_item_keeps_structured_or_prompt_duration(monkeypatch):
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)
@@ -1652,7 +1765,7 @@ def test_intent_items_restating_the_template_use_the_standard_planner(monkeypatc
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)
 
-    result = catalog.compile_workflow_intent({
+    intent = {
         "skill_id": "video-tutorial",
         "user_goal": "三步教你手冲咖啡",
         "planner": {"mode": "standard"},
@@ -1665,15 +1778,18 @@ def test_intent_items_restating_the_template_use_the_standard_planner(monkeypatc
              "reference_inputs": ["outline"]},
             {"id": "clip_1", "title": "步骤一视频", "prompt": "研磨咖啡豆的特写",
              "recipe_id": "general-video", "depends_on": ["frame_1"],
+             "model": "recommended",
              "timeline_role": "visual"},
             {"id": "frame_2", "title": "步骤二画面", "prompt": "注水闷蒸的慢镜头",
              "recipe_id": "general-image", "depends_on": ["outline"],
              "reference_inputs": ["outline"]},
             {"id": "clip_2", "title": "步骤二视频", "prompt": "注水闷蒸的慢镜头",
              "recipe_id": "general-video", "depends_on": ["frame_2"],
+             "model": "recommended",
              "timeline_role": "visual"},
         ],
-    })
+    }
+    result = catalog.compile_workflow_intent(intent)
 
     assert result["ok"] is True, result
     planner = result["planner"]
@@ -1689,6 +1805,15 @@ def test_intent_items_restating_the_template_use_the_standard_planner(monkeypatc
     assert nodes["clip_2"]["data"]["durationSec"] == 5
     assert "final_compose" in nodes
     assert result["preflight"]["blockers"] == []
+    order_only = copy.deepcopy(intent)
+    for item in order_only["items"]:
+        if item["id"].startswith("frame_"):
+            item.pop("reference_inputs")
+    alternate = catalog.compile_workflow_intent(order_only)
+    assert alternate["planner"]["mode"] == "agent_authored"
+    assert alternate["planner"]["template_match"]["reason"] == (
+        "stage_unused:planning->images"
+    )
 
 
 def test_intent_items_the_standard_planner_cannot_reproduce_stay_agent_authored(

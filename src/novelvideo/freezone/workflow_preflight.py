@@ -637,13 +637,47 @@ def evaluate_workflow_preflight(
     nodes = plan.get("nodes") if isinstance(plan.get("nodes"), list) else []
     if runtime_available:
         blockers.extend(resolve_generation_recommendations(nodes, model_responses))
+    missing_model_types: set[str] = set()
     for node in nodes:
         if (
             isinstance(node, dict)
             and node.get("node_type") in {"imageGenNode", "videoNode"}
-            and not (node.get("data") or {}).get("model")
+            and not str((node.get("data") or {}).get("model") or "").strip()
         ):
             blockers.extend(workflow_parameter_type_blockers(node))
+            node_type = node["node_type"]
+            node_id = str(node.get("id") or node_type)
+            missing_model_types.add(node_type)
+            blockers.append({
+                "path": f"runtime.models.{node_id}.model",
+                "message": "Select a concrete model from the visible catalog before running this node",
+                "code": "model_selection_required",
+                "recovery": "choose_catalog_model",
+            })
+    video_nodes = {
+        str(node.get("id")): node
+        for node in nodes
+        if isinstance(node, dict) and node.get("node_type") == "videoNode"
+    }
+    edges = plan.get("edges") if isinstance(plan.get("edges"), list) else []
+    media_targets = {
+        str(edge.get("target"))
+        for edge in edges
+        if isinstance(edge, dict) and edge.get("link_type") == "media_input_for"
+    }
+    for node_id in sorted(media_targets & video_nodes.keys()):
+        mode = (video_nodes[node_id].get("data") or {}).get("genMode") or "textToVideo"
+        if mode == "textToVideo":
+            blockers.append({
+                "path": f"runtime.models.{node_id}.genMode",
+                "message": (
+                    "This video consumes media_input_for references, but textToVideo "
+                    "does not consume media. Confirm a reference-capable mode supported "
+                    "by the selected model; do not change the mode silently."
+                ),
+                "code": "media_reference_mode_conflict",
+                "recovery": "confirm_reference_mode",
+            })
     if not runtime_available:
         checks["runtime"] = "unavailable"
         warnings.append(
@@ -756,6 +790,12 @@ def evaluate_workflow_preflight(
                         blockers.extend(
                             _video_runtime_parameter_blockers(node, catalog_entry)
                         )
+        for node_type in missing_model_types:
+            check = checks.get(f"{node_type}.models")
+            checks[f"{node_type}.models"] = {
+                "requested": check.get("requested", []) if isinstance(check, dict) else [],
+                "available": False,
+            }
         lane_demand = {
             "default": sum(
                 1

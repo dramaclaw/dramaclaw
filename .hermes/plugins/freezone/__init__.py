@@ -1057,14 +1057,15 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
     generation_media_types = args.get("generation_media_types")
     generation_required_choices = args.get("generation_required_choices")
     if generation_media_types is not None or generation_required_choices is not None:
-        if (
-            generation_media_types is not None
-            and generation_required_choices is not None
-        ):
+        if generation_media_types is not None and generation_required_choices is not None:
             return tool_result({
                 "ok": False,
                 "status": "generation_clarification_args_invalid",
-                "error": "Pass exactly one generation clarification mode",
+                "error": (
+                    "generation_media_types and generation_required_choices are mutually "
+                    "exclusive; when retrying with generation_required_choices, "
+                    "omit generation_media_types"
+                ),
             })
         # Generation cards are server-owned: their canonical fields and live
         # options must not be mixed with agent-authored business questions. Be
@@ -7076,7 +7077,19 @@ def _generation_choices_from_answers(
                 question_id not in _GENERATION_ANSWER_DATA_FIELDS
                 and question_id not in _GENERATION_ANSWER_PLAN_INPUT_FIELDS
             ):
-                raise ValueError(f"unsupported generation answer: {question_id}")
+                return {}, {
+                    "ok": False,
+                    "status": "generation_answers_incomplete",
+                    "error": f"unsupported generation answer: {question_id}",
+                    "unsupported_answer": question_id,
+                    "allowed_answer_ids": sorted(
+                        set(_GENERATION_ANSWER_DATA_FIELDS) | _GENERATION_ANSWER_PLAN_INPUT_FIELDS
+                    ),
+                    "agent_instruction": (
+                        "Remove the unsupported field from generation_answers; pass only "
+                        "the answers returned by freezone_request_user_clarification."
+                    ),
+                }
             choices[question_id] = _generation_answer_value(question_id, selection)
         if receipt_choices is not None:
             if not isinstance(receipt_choices, dict):
