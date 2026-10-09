@@ -366,7 +366,7 @@ def test_social_single_instagram_recipe_uses_compatible_default_ratio(monkeypatc
     assert any(error["path"] == "inputs.aspect_ratio" for error in rejected["errors"])
 
 
-def test_social_incompatible_platform_recipes_require_ratio_decision(monkeypatch):
+def test_social_incompatible_platform_recipes_use_native_ratios_without_global_choice(monkeypatch):
     catalog = _load_catalog_module()
     _install_real_builtin_catalog(monkeypatch, catalog)
     result = catalog.compile_workflow_intent({
@@ -377,8 +377,21 @@ def test_social_incompatible_platform_recipes_require_ratio_decision(monkeypatch
         ],
         "include_compose": False,
     })
-    assert result["ok"] is False
-    assert result["errors"][0]["path"] == "inputs.aspect_ratio"
+    assert result["ok"] is True, result
+    plan = result["plan"]
+    assert "aspect_ratio" not in plan["inputs"]
+    images = {node["id"]: node for node in plan["nodes"] if node["node_type"] == "imageGenNode"}
+    assert images["xhs"]["data"]["aspectRatio"] == "3:4"
+    assert images["ig"]["data"]["aspectRatio"] == "1:1"
+    validated = catalog.validate_agent_workflow_plan(plan)
+    assert validated["ok"] is True, validated
+    assert "aspect_ratio" not in validated["resolved_inputs"]
+
+    explicit = copy.deepcopy(plan)
+    explicit["inputs"]["aspect_ratio"] = "3:4"
+    rejected = catalog.validate_agent_workflow_plan(explicit)
+    assert rejected["ok"] is False
+    assert any(error["path"] == "inputs.aspect_ratio" for error in rejected["errors"])
 
 
 def test_pixar_custom_anchor_rejects_default_character_source(monkeypatch):

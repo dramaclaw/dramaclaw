@@ -2639,6 +2639,7 @@ def _compile_dynamic_recipe_items_intent(
         )
 
     recipes = _intent_recipe_index()
+    use_native_social_ratios = False
     if _text(skill.get("id")) == "social-content-campaign":
         supplied = _workflow_input_values(intent)
         recipe_ids = {
@@ -2650,17 +2651,17 @@ def _compile_dynamic_recipe_items_intent(
             compatible = set.intersection(*(
                 _SOCIAL_IMAGE_RECIPE_RATIOS[recipe_id] for recipe_id in platform_recipes
             ))
-            if not compatible:
-                return _intent_error(
-                    "selected platform Recipes have no common image aspect ratio",
-                    path="inputs.aspect_ratio",
-                )
             resolved_inputs = dict(resolved_inputs)
-            default_ratio = _text(resolved_inputs.get("aspect_ratio"))
-            resolved_inputs["aspect_ratio"] = (
-                default_ratio if default_ratio in compatible else
-                "1:1" if "1:1" in compatible else sorted(compatible)[0]
-            )
+            if compatible:
+                default_ratio = _text(resolved_inputs.get("aspect_ratio"))
+                resolved_inputs["aspect_ratio"] = (
+                    default_ratio if default_ratio in compatible else
+                    "1:1" if "1:1" in compatible else sorted(compatible)[0]
+                )
+            else:
+                # Different platforms may need different native image ratios.
+                resolved_inputs.pop("aspect_ratio", None)
+                use_native_social_ratios = True
     allowed_recipe_ids = {
         _text(item) for item in skill.get("allowed_recipe_ids") or [] if _text(item)
     }
@@ -2826,6 +2827,8 @@ def _compile_dynamic_recipe_items_intent(
             resolved_inputs=resolved_inputs,
             recipe_pipeline=recipe_pipeline,
         )
+        if use_native_social_ratios and recipe_id in _SOCIAL_IMAGE_NATIVE_RATIOS:
+            node["data"]["aspectRatio"] = _SOCIAL_IMAGE_NATIVE_RATIOS[recipe_id]
         explicit_stage = _text(item.get("stage"))
         if explicit_stage:
             node["stage"] = explicit_stage
@@ -3962,6 +3965,13 @@ _SOCIAL_IMAGE_RECIPE_RATIOS = {
     "social-ig-post": {"1:1", "4:5"},
 }
 
+_SOCIAL_IMAGE_NATIVE_RATIOS = {
+    "social-xiaohongshu-image": "3:4",
+    "social-douyin-cover": "9:16",
+    "social-weibo-wechat-image": "1:1",
+    "social-ig-post": "1:1",
+}
+
 
 def _social_campaign_plan_input_errors(
     plan: dict[str, Any], resolved_inputs: dict[str, Any]
@@ -3993,9 +4003,14 @@ def _social_campaign_plan_input_errors(
             _text(catalog.get("recipeId")) if isinstance(catalog, dict) else ""
         )
         ratio = _text(data.get("aspectRatio"))
+        recipe_id = recipe_ids[-1]
+        if not ratio and recipe_id in _SOCIAL_IMAGE_RECIPE_RATIOS:
+            errors.append({
+                "path": "inputs.aspect_ratio",
+                "message": f"{recipe_id} requires an image aspect ratio",
+            })
         if ratio:
             ratios.add(ratio)
-            recipe_id = recipe_ids[-1]
             if (recipe_id in _SOCIAL_IMAGE_RECIPE_RATIOS
                     and ratio not in _SOCIAL_IMAGE_RECIPE_RATIOS[recipe_id]):
                 errors.append({
@@ -4019,9 +4034,13 @@ def _social_campaign_plan_input_errors(
                 "message": "platforms must match the selected platform image Recipes",
             })
 
+    explicit_ratio = any(
+        key in (plan.get("inputs") or {})
+        for key in ("aspect_ratio", "image_aspect_ratio")
+    )
     aspect_ratio = resolved_inputs.get("aspect_ratio")
     image_aspect_ratio = resolved_inputs.get("image_aspect_ratio")
-    if aspect_ratio and (
+    if explicit_ratio and aspect_ratio and (
         (image_aspect_ratio and aspect_ratio != image_aspect_ratio)
         or any(ratio != aspect_ratio for ratio in ratios)
     ):
@@ -4203,6 +4222,18 @@ def validate_agent_workflow_plan(
         for parameter_id in input_contract["missing_required"]
     )
     if skill_id == "social-content-campaign":
+        if not {"aspect_ratio", "image_aspect_ratio"} & plan_inputs.keys():
+            ratios = {
+                _text(node.get("data", {}).get("aspectRatio"))
+                for node in plan.get("nodes") or []
+                if isinstance(node, dict) and node.get("node_type") == "imageGenNode"
+                and isinstance(node.get("data"), dict)
+                and _text(node["data"].get("aspectRatio"))
+            }
+            if len(ratios) == 1:
+                input_contract["resolved"]["aspect_ratio"] = next(iter(ratios))
+            elif len(ratios) > 1:
+                input_contract["resolved"].pop("aspect_ratio", None)
         errors.extend(
             _social_campaign_plan_input_errors(plan, input_contract["resolved"])
         )
