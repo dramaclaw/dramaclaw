@@ -3622,7 +3622,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   createStoryGroup: (nodeIds) => {
-    const groupId = get().groupNodes(nodeIds, { label: '互动影游' });
+    const groupId = get().groupNodes(nodeIds, { label: i18n.t('canvas.story.messages.storyGroup') });
     if (!groupId) return null;
     set((state) => ({
       nodes: state.nodes.map((node) =>
@@ -3672,7 +3672,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       members.map((node) => String((node.data as { displayName?: string }).displayName ?? '')),
     );
     let titleIndex = 1;
-    while (usedTitles.has(`片段 ${titleIndex}`)) titleIndex += 1;
+    while (usedTitles.has(i18n.t('canvas.story.messages.segmentTitle', { index: titleIndex }))) titleIndex += 1;
 
     const rightmost = members.reduce(
       (max, node) => Math.max(max, node.position.x + getNodeSize(node).width),
@@ -3685,7 +3685,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       CANVAS_NODE_TYPES.video,
       options?.position ?? { x: members.length > 0 ? rightmost + 28 : 36, y: top },
       {
-        displayName: `片段 ${titleIndex}`,
+        displayName: i18n.t('canvas.story.messages.segmentTitle', { index: titleIndex }),
         narration: '',
         storyProductionNotes: '',
         storyMedia: { source: 'placeholder', status: 'missing', version: 1 },

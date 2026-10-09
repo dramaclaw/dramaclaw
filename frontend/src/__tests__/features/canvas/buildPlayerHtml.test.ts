@@ -1,3 +1,5 @@
+import i18next from 'i18next';
+import { enTranslation } from '@/__tests__/helpers/i18n-fixtures';
 import { describe, expect, it } from 'vitest';
 import { buildPlayerHtml } from '@/features/canvas/story/export/buildPlayerHtml';
 import type { CompiledStory } from '@/features/canvas/story/storyTypes';
@@ -28,6 +30,27 @@ function extractData(html: string): Record<string, unknown> {
 }
 
 describe('buildPlayerHtml', () => {
+  it('resolves default labels at export time after switching languages', async () => {
+    i18next.addResourceBundle('en', 'translation', enTranslation, true, true);
+    try {
+      await i18next.changeLanguage('en');
+      const english = buildPlayerHtml(baseCompiled(), '{}');
+      expect(english).toContain('<html lang="en">');
+      expect(extractData(english).labels).toMatchObject({
+        endingBadge: 'Ending',
+        loadError: 'Failed to load the story',
+      });
+      expect(Object.values(extractData(english).labels as Record<string, string>)
+        .every((label) => !/[一-鿿]/.test(label) && !label.startsWith('canvas.'))).toBe(true);
+      await i18next.changeLanguage('zh');
+      const chinese = buildPlayerHtml(baseCompiled(), '{}');
+      expect(chinese).toContain('<html lang="zh">');
+      expect(extractData(chinese).labels).toMatchObject({ endingBadge: '结局', loadError: '故事加载失败' });
+    } finally {
+      await i18next.changeLanguage('zh');
+    }
+  });
+
   it('生成单 HTML 并内联共享播放器', () => {
     const html = buildPlayerHtml(baseCompiled(), '{"fake":1}', { origin: 'https://tale.example' });
     expect(html).toContain('<!doctype html>');

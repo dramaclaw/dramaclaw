@@ -1,3 +1,4 @@
+import i18next from 'i18next';
 import {
   CANVAS_NODE_TYPES,
   isStoryGroupNode,
@@ -65,7 +66,7 @@ export function bindChoiceLoopPatch(
   return {
     choiceLoopVideoUrl: candidate.url,
     storyChoiceLoop: {
-      description: current?.description?.trim() || '选择界面循环动画',
+      description: current?.description?.trim() || i18next.t('canvas.story.messages.choiceLoopDescription'),
       ...(current?.productionNotes ? { productionNotes: current.productionNotes } : {}),
       media: nextLoopMedia(current, candidate),
     },

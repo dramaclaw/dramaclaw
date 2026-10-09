@@ -1,3 +1,4 @@
+import i18next from 'i18next';
 import type { ImportedKnot, ImportedLink, ImportedStory } from './importTypes';
 
 /** inkjs runtime 值:字符串指令、数字、嵌套容器数组、命令对象。 */
@@ -99,7 +100,7 @@ function parseConditional(
     effects: [],
     condition,
     needsReview: true,
-    reviewNote: condition ?? '条件分支(else/自动)',
+    reviewNote: condition ?? i18next.t('canvas.story.messages.conditionalBranch'),
   });
 }
 
@@ -302,7 +303,7 @@ export function parseInkJson(text: string): ImportedStory {
       }
     };
     for (const name of knotNames) scan(knotMap[name] as InkVal);
-    if (variables.length) warnings.push('变量初值未知,默认 0(无 global decl)');
+    if (variables.length) warnings.push(i18next.t('canvas.story.messages.unknownInitialValues'));
   }
 
   const knots: ImportedKnot[] = [];
@@ -326,7 +327,7 @@ export function parseInkJson(text: string): ImportedStory {
   for (const [knot, n] of pendingDefault) {
     const link = knot.outgoing[n - 1];
     if (link) link.isDefault = true;
-    else warnings.push(`${knot.name}: # default ${n} 超出选项数,已忽略`);
+    else warnings.push(i18next.t('canvas.story.messages.invalidDefaultChoice', { name: knot.name, index: n }));
   }
 
   if (!startKnot && knots.length) startKnot = knots[0].name;

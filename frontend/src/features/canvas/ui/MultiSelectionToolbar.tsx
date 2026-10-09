@@ -415,8 +415,8 @@ export const MultiSelectionToolbar = memo(({
       return;
     }
     createStoryGroup(selectedIds);
-    toast.success('已创建互动短剧组：设置起点和选项后即可试玩');
-  }, [canCreateStoryGroup, createStoryGroup, selectedIds]);
+    toast.success(t('canvas.story.messages.storyGroupCreated'));
+  }, [canCreateStoryGroup, createStoryGroup, selectedIds, t]);
 
   useEffect(() => {
     if (!arrangeMenuOpen) {
@@ -632,11 +632,11 @@ export const MultiSelectionToolbar = memo(({
                     }}
                   >
                     <Play className="h-4 w-4 text-text-muted" />
-                    <span className="whitespace-nowrap">创建互动短剧组</span>
+                    <span className="whitespace-nowrap">{t('canvas.story.messages.createStoryGroup')}</span>
                   </button>
                   {!canCreateStoryGroup ? (
                     <div className="pointer-events-none absolute right-0 top-full z-10 mt-1.5 hidden w-max max-w-[240px] rounded-lg border border-white/10 bg-[#1c1c1e]/95 px-3 py-1.5 text-xs leading-relaxed text-white/80 shadow-[0_10px_24px_rgba(0,0,0,0.35)] backdrop-blur-2xl group-hover/story:block">
-                      互动短剧组需要至少两个视频节点
+                      {t('canvas.story.messages.storyGroupMinimum')}
                     </div>
                   ) : null}
                 </div>

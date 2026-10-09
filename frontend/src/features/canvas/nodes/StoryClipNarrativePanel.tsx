@@ -110,7 +110,7 @@ export const StoryClipNarrativePanel = memo(function StoryClipNarrativePanel({
   const handleCtaLabelChange = (label: string) => {
     // Keep the destination while editing; clearing the label removes the CTA.
     onChange({
-      endingLabel: nodeData?.endingLabel || '体验结束',
+      endingLabel: nodeData?.endingLabel || t('canvas.story.messages.experienceEnded'),
       storyCta: label.trim() ? { label, url: nodeData?.storyCta?.url ?? '' } : undefined,
     });
   };

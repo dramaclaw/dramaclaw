@@ -1,3 +1,4 @@
+import i18next from 'i18next';
 import {
   CANVAS_NODE_TYPES,
   type CanvasEdge,
@@ -23,8 +24,8 @@ import type { ImportedLink, ImportedStory } from './importTypes';
 function choiceLabel(link: ImportedLink): string {
   const text = link.text?.trim();
   if (text) return text;
-  if (link.kind === 'autoConditional') return link.condition?.trim() || '否则';
-  return '继续';
+  if (link.kind === 'autoConditional') return link.condition?.trim() || i18next.t('canvas.story.messages.otherwise');
+  return i18next.t('canvas.story.messages.continue');
 }
 
 // 故事组内边距(片段四周留白)。
@@ -144,7 +145,7 @@ export function buildStoryGroupFromImport(
       width: groupWidth,
       height: groupHeight,
       data: {
-        label: '互动影游(导入)',
+        label: i18next.t('canvas.story.messages.importedStory'),
         storyGroup: true,
         interactiveStorySchemaVersion: 'story_draft.v2',
         storyVariableDefinitions: variables,
@@ -178,7 +179,7 @@ export function buildStoryGroupFromImport(
           ...(structured ? { condition: structured } : {}),
           ...(link.isDefault ? { isDefault: true } : {}),
           ...(needsReview
-            ? { needsReview: true, reviewNote: link.reviewNote ?? link.condition ?? '需手动处理' }
+            ? { needsReview: true, reviewNote: link.reviewNote ?? link.condition ?? i18next.t('canvas.story.messages.manualReview') }
             : {}),
         },
       } as CanvasEdge);

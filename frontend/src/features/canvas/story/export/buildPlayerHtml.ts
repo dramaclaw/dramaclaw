@@ -1,3 +1,4 @@
+import i18next from 'i18next';
 import type { CompiledStory } from '@/features/canvas/story/storyTypes';
 import { resolveMediaUrl } from '@/lib/media-url';
 import { PLAYER_STYLE, PLAYER_SCRIPT } from './playerAssets';
@@ -31,27 +32,29 @@ export interface BuildPlayerHtmlOptions {
   labels?: PlayerLabels;
 }
 
-const DEFAULT_LABELS: PlayerLabels = {
-  defaultChoice: '默认',
-  endingBadge: '结局',
-  endingFallback: '全剧终',
-  restart: '重新开始',
-  loadError: '故事加载失败',
-  placeholderBadge: '占位片段',
-  placeholderHint: '此片段尚未生成视频,点选下方选项继续试玩',
-  automaticPlaceholderHint: '此片段尚未生成视频',
-  automaticPlaceholderNext: '即将自动进入下一片段',
-  play: '播放当前片段',
-  pause: '暂停当前片段',
-  seek: '播放进度',
-  mediaError: '视频加载失败，请重试。',
-  retry: '重试播放',
-  countdown: '选择倒计时',
-  flagOn: '开启',
-  flagOff: '关闭',
-  replayExperience: '重新体验',
-  ctaUnconfigured: '访问地址待配置',
-};
+function defaultLabels(): PlayerLabels {
+  return {
+    defaultChoice: i18next.t('canvas.story.defaultChoice'),
+    endingBadge: i18next.t('canvas.story.messages.endingBadge'),
+    endingFallback: i18next.t('canvas.story.endingFallback'),
+    restart: i18next.t('canvas.story.restart'),
+    loadError: i18next.t('canvas.story.messages.loadError'),
+    placeholderBadge: i18next.t('canvas.story.placeholderBadge'),
+    placeholderHint: i18next.t('canvas.story.placeholderHint'),
+    automaticPlaceholderHint: i18next.t('canvas.story.automaticPlaceholderHint'),
+    automaticPlaceholderNext: i18next.t('canvas.story.automaticPlaceholderNext'),
+    play: i18next.t('canvas.story.playMode.playCurrent'),
+    pause: i18next.t('canvas.story.playMode.pauseCurrent'),
+    seek: i18next.t('canvas.story.playMode.seek'),
+    mediaError: i18next.t('canvas.story.mediaError'),
+    retry: i18next.t('canvas.story.retryMedia'),
+    countdown: i18next.t('canvas.story.choiceCountdown'),
+    flagOn: i18next.t('canvas.story.flagOn'),
+    flagOff: i18next.t('canvas.story.flagOff'),
+    replayExperience: i18next.t('canvas.story.replayExperience'),
+    ctaUnconfigured: i18next.t('canvas.story.ctaUnconfigured'),
+  };
+}
 
 /** HTML 文本转义（用于 <title>）。 */
 function escapeHtml(s: string): string {
@@ -106,12 +109,12 @@ export function buildPlayerHtml(
     choiceFeedback: compiled.choiceFeedbackById,
     choiceStateChanges: compiled.choiceStateChangesById,
     choiceInteraction: compiled.choiceInteractionById,
-    labels: { ...DEFAULT_LABELS, ...opts.labels },
+    labels: { ...defaultLabels(), ...opts.labels },
     title,
   };
 
   return `<!doctype html>
-<html lang="zh">
+<html lang="${i18next.resolvedLanguage?.startsWith('en') ? 'en' : i18next.resolvedLanguage?.startsWith('vi') ? 'vi' : 'zh'}">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />

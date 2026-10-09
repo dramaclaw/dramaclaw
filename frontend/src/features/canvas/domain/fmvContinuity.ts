@@ -10,7 +10,7 @@ import {
 } from './canvasNodes';
 
 /** Internal prompt marker injected at generation time by auto continuity (UI 名称：自动承接). */
-export const FMV_CONTINUITY_NOTE = /\n?\[FMV自动承接\][\s\S]*?\[\/FMV自动承接\]/g;
+export const FMV_CONTINUITY_NOTE = /\n?\[FMV自动承接\][\s\S]*?\[\/FMV自动承接\]/g; // i18n-exempt: Persisted model prompt syntax/content; keep compatible with existing prompts.
 
 export const WORKFLOW_CONTINUITY_TAIL_FRAME = 'workflow_continuity_tail_frame';
 

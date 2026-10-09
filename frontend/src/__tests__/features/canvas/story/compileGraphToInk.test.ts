@@ -1,3 +1,5 @@
+import i18next from 'i18next';
+import { enTranslation } from '@/__tests__/helpers/i18n-fixtures';
 import { describe, expect, it } from 'vitest';
 import type { CanvasEdge, CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
@@ -25,6 +27,24 @@ function choiceEdge(source: string, target: string, choiceText: string, order: n
 }
 
 describe('compileGraphToInk', () => {
+  it('localizes compilation errors without changing their error codes', async () => {
+    i18next.addResourceBundle('en', 'translation', enTranslation, true, true);
+    try {
+      await i18next.changeLanguage('en');
+      expect(() => compileGraphToInk([], [])).toThrow('There are no video nodes on the canvas.');
+      try {
+        compileGraphToInk([], []);
+      } catch (error) {
+        expect(error).toBeInstanceOf(StoryCompileError);
+        expect((error as StoryCompileError).code).toBe('empty');
+      }
+      await i18next.changeLanguage('zh');
+      expect(() => compileGraphToInk([], [])).toThrow('画布上没有视频节点');
+    } finally {
+      await i18next.changeLanguage('zh');
+    }
+  });
+
   it('单起点两选项:生成入口 divert、两个 knot、叶子补 -> END', () => {
     const nodes = [
       videoNode('intro', 'intro.mp4', 'start'),

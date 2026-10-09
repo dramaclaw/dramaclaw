@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import i18next from 'i18next';
 import { useEffect, useRef, useState } from "react";
 import { useReactFlow, type Viewport } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
@@ -1033,7 +1034,7 @@ export function useCanvasSync(
           });
           setError(
             options.conflictMessage ??
-              "画布已在后台更新，但当前还有未保存的本地修改。请保留副本或刷新后继续。",
+              i18next.t('canvas.story.messages.refreshConflict'),
           );
           setSyncStatus("conflict");
           return false;

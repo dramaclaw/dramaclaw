@@ -1,3 +1,4 @@
+import i18next from 'i18next';
 import {
   isVideoNode,
   type CanvasEdge,
@@ -31,7 +32,7 @@ export function compileStoryGroup(
   if (errors.length > 0) {
     throw new StoryCompileError(
       'invalid_story',
-      `故事有 ${errors.length} 个严重问题，请先打开“检查”修复`,
+      i18next.t('canvas.story.messages.validationErrors', { total: errors.length }),
     );
   }
   const memberEdges = scopedEdges.filter((edge) => memberIds.has(edge.target));

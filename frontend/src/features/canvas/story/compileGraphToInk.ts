@@ -1,3 +1,4 @@
+import i18next from 'i18next';
 import { isVideoNode, type CanvasEdge, type CanvasNode } from '@/features/canvas/domain/canvasNodes';
 import { knotNameForNodeId } from './inkNames';
 import { resolveStartNodeId } from './resolveStart';
@@ -38,7 +39,7 @@ function guardFor(
   for (const leaf of leaves) {
     if (isVisitCondition(leaf)) {
       if (!emittedNodes.has(leaf.visitedNodeId)) {
-        warnings.push('访问条件引用了不可达/组外片段,已忽略');
+        warnings.push(i18next.t('canvas.story.messages.unreachableVisit'));
         continue;
       }
       parts.push(`${knotNameForNodeId(leaf.visitedNodeId)} ${leaf.op} ${leaf.value}`);
@@ -91,7 +92,7 @@ function resolveStartNode(
   const { startId } = resolveStartNodeId(videoNodes, choiceSources, choiceTargets);
   const node = startId ? videoNodes.find((n) => n.id === startId) : undefined;
   if (!node) {
-    throw new StoryCompileError('no_start', '请先设置故事起点(或确保只有一个根片段)');
+    throw new StoryCompileError('no_start', i18next.t('canvas.story.messages.startRequired'));
   }
   return node;
 }
@@ -107,7 +108,7 @@ export function compileGraphToInk(
 
   const videoNodes = nodes.filter(isVideoNode);
   if (videoNodes.length === 0) {
-    throw new StoryCompileError('empty', '画布上没有视频节点');
+    throw new StoryCompileError('empty', i18next.t('canvas.story.messages.noVideos'));
   }
 
   const nodeById = new Map(videoNodes.map((node) => [node.id, node] as const));
@@ -125,13 +126,13 @@ export function compileGraphToInk(
       if (isVisitCondition(leaf)) continue; // 访问叶子在 guardFor 发射时按可达集校验
       if (isFlagCondition(leaf)) {
         if (!validFlagNames.has(leaf.flag)) {
-          warnings.push(`条件引用了未注册开关「${leaf.flag}」,已忽略`);
+          warnings.push(i18next.t('canvas.story.messages.unknownConditionFlag', { name: leaf.flag }));
           return undefined;
         }
         continue;
       }
       if (typeof leaf.var !== 'string' || !validVarNames.has(leaf.var)) {
-        warnings.push(`条件引用了未注册变量「${leaf.var}」,已忽略`);
+        warnings.push(i18next.t('canvas.story.messages.unknownConditionVariable', { name: leaf.var }));
         return undefined;
       }
     }
@@ -145,13 +146,13 @@ export function compileGraphToInk(
       if (!e || typeof e !== 'object') return false;
       if ('flag' in e) {
         if (typeof e.flag !== 'string' || typeof e.value !== 'boolean' || !validFlagNames.has(e.flag)) {
-          warnings.push(`效果引用了未注册开关「${String(e.flag)}」,已忽略`);
+          warnings.push(i18next.t('canvas.story.messages.unknownEffectFlag', { name: String(e.flag) }));
           return false;
         }
         return true;
       }
       if (typeof e.var !== 'string' || typeof e.delta !== 'number' || !validVarNames.has(e.var)) {
-        warnings.push(`效果引用了未注册变量「${String(e.var)}」,已忽略`);
+        warnings.push(i18next.t('canvas.story.messages.unknownEffectVariable', { name: String(e.var) }));
         return false;
       }
       return true;
@@ -207,7 +208,7 @@ export function compileGraphToInk(
 
   const entryNodeId = options.entryNodeId ?? startNode.id;
   if (!nodeById.has(entryNodeId)) {
-    throw new StoryCompileError('start_unreachable', '所选片段已不存在或不属于当前故事');
+    throw new StoryCompileError('start_unreachable', i18next.t('canvas.story.messages.segmentUnavailable'));
   }
   // 实时生成允许直接调试孤立片段：保留正式起点的完整故事，同时补编译所选片段的后继子树。
   // 这不会改变娱乐模式的正式起点，也不会把其他无关孤立节点混入发布产物。

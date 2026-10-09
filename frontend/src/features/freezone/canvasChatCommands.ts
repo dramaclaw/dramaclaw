@@ -1341,7 +1341,7 @@ async function ensureVideoContinuityTailFrames(
         fallbackDurationSec: durationMs !== null ? durationMs / 1000 : null,
       }),
       projectId,
-      displayName: "上一镜尾帧",
+      displayName: i18next.t('canvas.story.messages.previousLastFrame'),
     });
     if (!result.nodeId) {
       throw new Error(result.error ?? "上一镜尾帧抽取失败，已停止启动下一镜视频。");
@@ -3896,13 +3896,13 @@ async function executePendingVideoFrameCaptures(
 ): Promise<boolean> {
   for (const capture of pendingCaptures) {
     const mode = capture.action === "capture_video_first_frame" ? "first" : "last";
-    const frameName = mode === "first" ? "首帧" : "尾帧";
-    const label = `截取视频${frameName}`;
+    const frameName = mode === "first" ? i18next.t('canvas.story.messages.firstFrame') : i18next.t('canvas.story.messages.lastFrame');
+    const label = i18next.t('canvas.story.messages.captureFrame', { frameName });
     const source = nodeById(capture.nodeId);
     const data = source?.data as JsonRecord | undefined;
     const videoUrl = nonEmptyString(data?.videoUrl);
     try {
-      if (!videoUrl) throw new Error(`来源视频缺失，无法截取${frameName}。`);
+      if (!videoUrl) throw new Error(i18next.t('canvas.story.messages.sourceVideoMissing', { frameName }));
       const seekSec = resolveCaptureSeekSec(mode, {
         fallbackDurationSec: isFiniteNumber(data?.durationMs) ? data.durationMs / 1000 : null,
       });
@@ -3910,9 +3910,9 @@ async function executePendingVideoFrameCaptures(
         videoUrl,
         seekSec,
         projectId: options.projectId,
-        displayName: `视频${frameName}`,
+        displayName: i18next.t('canvas.story.messages.videoFrame', { frameName }),
       });
-      if (!captured.nodeId) throw new Error(captured.error ?? `${frameName}截取失败。`);
+      if (!captured.nodeId) throw new Error(captured.error ?? i18next.t('canvas.story.messages.captureFailed', { frameName }));
       const provenance = {
         sourceVideoNodeId: capture.nodeId,
         sourceVideoUrl: videoUrl,

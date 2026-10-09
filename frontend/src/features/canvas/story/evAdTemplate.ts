@@ -4,6 +4,7 @@ import type { CanvasNode, CanvasEdge } from '@/features/canvas/domain/canvasNode
 export function buildEvAdTemplate(center = { x: 0, y: 0 }, namespace: string = crypto.randomUUID()) {
   const groupId = `ev-${namespace}`;
   const id = (name: string) => `${groupId}-${name}`;
+  // i18n-exempt-start: Authored Chinese sample screenplay and generation prompts, saved as editable story content.
   const specs = [
     ['idle', '一次启动，选择你的路', '新能源汽车互动广告 · 素材占位预演\n驾驶舱安静，中控屏未亮。长按下方按钮启动。', 0, 180, 2,
       '固定驾驶位机位，屏幕与大灯关闭，车身设计沿用品牌参考。尾帧稳定，等待阶段使用独立环境循环。'],
@@ -47,5 +48,6 @@ export function buildEvAdTemplate(center = { x: 0, y: 0 }, namespace: string = c
       },
     })),
   ];
+  // i18n-exempt-end
   return { groupId, nodes, edges };
 }

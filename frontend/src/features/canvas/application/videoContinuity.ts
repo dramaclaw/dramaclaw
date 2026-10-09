@@ -1,3 +1,4 @@
+import i18next from 'i18next';
 // SPDX-License-Identifier: Elastic-2.0
 import { useCanvasStore } from '@/stores/canvasStore';
 import { CANVAS_NODE_TYPES, STORY_CHOICE_EDGE_TYPE, type CanvasNode, type CanvasEdge } from '../domain/canvasNodes';
@@ -29,7 +30,7 @@ function submittableContinuityImage(node: CanvasNode): string | null {
   return null;
 }
 
-const FMV_REFERENCE_NOTE = /\n?\[FMV素材参考\][\s\S]*?\[\/FMV素材参考\]/g;
+const FMV_REFERENCE_NOTE = /\n?\[FMV素材参考\][\s\S]*?\[\/FMV素材参考\]/g; // i18n-exempt: Persisted model prompt syntax/content; keep compatible with existing prompts.
 
 function withoutFmvReferenceNote(prompt: unknown): string {
   return String(prompt || '').replace(FMV_REFERENCE_NOTE, '').trim();
@@ -82,14 +83,14 @@ export function syncStoryVideoReferencePrompt(targetId: string): void {
   const savedSignature = (target.data as { storyReferenceSignature?: unknown }).storyReferenceSignature;
   if (existingNote && savedSignature === signature) return;
   if (existingNote && images.length > 0) {
-    const mentions = [...existingNote.matchAll(/@图片(\d+)(?!\d)/g)].map((match) => Number(match[1]));
+    const mentions = [...existingNote.matchAll(/@图片(\d+)(?!\d)/g)].map((match) => Number(match[1])); // i18n-exempt: Persisted model prompt syntax/content; keep compatible with existing prompts.
     // A complete note may have been written by the user or Agent with precise
     // character and scene roles. Do not replace it with generic descriptions
     // merely because the canvas hydrated or autosaved.
     if (savedSignature === undefined && mentions.length === images.length && images.every((image) => {
       const index = imageIndex(image);
       if (!mentions.includes(index)) return false;
-      const namedMention = existingNote.match(new RegExp(`@图片${index}（([^）]+)）`));
+      const namedMention = existingNote.match(new RegExp(`@图片${index}（([^）]+)）`)); // i18n-exempt: Persisted model prompt syntax/content; keep compatible with existing prompts.
       return !namedMention || namedMention[1] === image.data.displayName?.trim();
     })) {
       state.updateNodeData(targetId, { storyReferenceSignature: signature });
@@ -106,35 +107,35 @@ export function syncStoryVideoReferencePrompt(targetId: string): void {
     return;
   }
   const references = images.flatMap((node) => {
-    const mention = `@图片${imageIndex(node)}`;
+    const mention = `@图片${imageIndex(node)}`; // i18n-exempt: Persisted model prompt syntax/content; keep compatible with existing prompts.
     if (new RegExp(`${mention}(?!\\d)`).test(authoredPrompt)) return [];
     const name = typeof node.data.displayName === 'string' && node.data.displayName.trim()
       ? `（${node.data.displayName.trim().replace(/\s+/g, ' ').slice(0, 80)}）` : '';
     const frame = node.data.storyFrameTarget as { videoNodeId?: unknown } | undefined;
     if (frame?.videoNodeId === targetId) {
-      return [`${mention}${name} 是本镜头独立开场的构图参考，保持主体和场景一致。`];
+      return [`${mention}${name} 是本镜头独立开场的构图参考，保持主体和场景一致。`]; // i18n-exempt: Persisted model prompt syntax/content; keep compatible with existing prompts.
     }
     const binding = (node.data as { storyAssetTarget?: { kind?: string; entityId?: string } }).storyAssetTarget;
     if (binding?.kind === 'subject') {
       const group = state.nodes.find((item) => item.id === target.parentId);
       const subjects = (group?.data as { storyCharacters?: Array<{ id?: string; kind?: string }> } | undefined)?.storyCharacters;
       const subject = subjects?.find((item) => item.id === binding.entityId);
-      return [`${mention}${name} 是${subject?.kind === 'product' ? '产品主角的外观' : subject?.kind === 'object' ? '物品主体的外观' : '人物身份'}参考，保持主体视觉特征一致。`];
+      return [`${mention}${name} 是${subject?.kind === 'product' ? '产品主角的外观' : subject?.kind === 'object' ? '物品主体的外观' : '人物身份'}参考，保持主体视觉特征一致。`]; // i18n-exempt: Persisted model prompt syntax/content; keep compatible with existing prompts.
     }
     if (binding?.kind === 'scene') {
       const usage = sceneRefs?.find((ref) => ref.scene_id === binding.entityId)?.usage;
       return [usage === 'style'
-        ? `${mention}${name} 是本镜头已规划的视觉风格参考，只借用色彩、光线和美术风格，不改变镜头所在场所或空间关系。`
-        : `${mention}${name} 是本镜头已规划的场景参考，保持环境和空间关系一致。`];
+        ? `${mention}${name} 是本镜头已规划的视觉风格参考，只借用色彩、光线和美术风格，不改变镜头所在场所或空间关系。` // i18n-exempt: Persisted model prompt syntax/content; keep compatible with existing prompts.
+        : `${mention}${name} 是本镜头已规划的场景参考，保持环境和空间关系一致。`]; // i18n-exempt: Persisted model prompt syntax/content; keep compatible with existing prompts.
     }
     switch (readKeyElementCategory(node.data)) {
-      case 'character': return [`${mention}${name} 是人物身份参考，保持面容、发型和服装一致。`];
-      case 'scene': return [`${mention}${name} 是场景参考，保持环境和空间关系一致。`];
-      case 'object': return [`${mention}${name} 是物品外观参考，保持形状、材质和细节一致。`];
-      default: return [`${mention}${name} 是补充图片参考，按该素材的实际内容使用。`];
+      case 'character': return [`${mention}${name} 是人物身份参考，保持面容、发型和服装一致。`]; // i18n-exempt: Persisted model prompt syntax/content; keep compatible with existing prompts.
+      case 'scene': return [`${mention}${name} 是场景参考，保持环境和空间关系一致。`]; // i18n-exempt: Persisted model prompt syntax/content; keep compatible with existing prompts.
+      case 'object': return [`${mention}${name} 是物品外观参考，保持形状、材质和细节一致。`]; // i18n-exempt: Persisted model prompt syntax/content; keep compatible with existing prompts.
+      default: return [`${mention}${name} 是补充图片参考，按该素材的实际内容使用。`]; // i18n-exempt: Persisted model prompt syntax/content; keep compatible with existing prompts.
     }
   });
-  const note = references.length ? `[FMV素材参考]\n${references.join('\n')}\n[/FMV素材参考]` : '';
+  const note = references.length ? `[FMV素材参考]\n${references.join('\n')}\n[/FMV素材参考]` : ''; // i18n-exempt: Persisted model prompt syntax/content; keep compatible with existing prompts.
   const prompt = [note, base].filter(Boolean).join('\n\n');
   if (prompt !== target.data.prompt || savedSignature !== signature) {
     state.updateNodeData(targetId, { prompt, storyReferenceSignature: signature });
@@ -159,7 +160,7 @@ export function attachCompletedStoryAsset(imageNodeId: string): string | null {
     binding.kind === 'scene' ? groupData?.storyScenes : undefined;
   if (!group || !entityList?.some((item) => item.id === binding.entityId) ||
       !Array.isArray(binding.segmentIds) || !binding.segmentIds.length) {
-    return '影游素材的主体或场景规划已变化，未自动连接。';
+    return i18next.t('canvas.story.messages.assetPlanChanged');
   }
   const targets: CanvasNode[] = [];
   for (const segmentId of binding.segmentIds) {
@@ -170,14 +171,14 @@ export function attachCompletedStoryAsset(imageNodeId: string): string | null {
     const matches = binding.kind === 'subject'
       ? data?.storyCharacterIds?.includes(String(binding.entityId))
       : data?.storySceneRefs?.some((ref) => ref.scene_id === binding.entityId);
-    if (!target || !matches) return `影游素材与片段 ${String(segmentId)} 的当前规划不符，未自动连接。`;
+    if (!target || !matches) return i18next.t('canvas.story.messages.segmentPlanMismatch', { segmentId: String(segmentId) });
     const currentImages = orderedStoryImages(target.id);
     const hasTail = state.edges.some((edge) => edge.target === target.id &&
       isWorkflowContinuityTailFrameEdge(edge));
     const imageLimit = Math.max(0, videoReferenceEnvelopeForNode(target).image -
       (target.data.continuityMode === 'auto' && !hasTail ? 1 : 0));
     if (currentImages.length >= imageLimit && !currentImages.some((node) => node.id === imageNodeId)) {
-      return `片段 ${String(segmentId)} 的图片参考已达上限，未自动连接。`;
+      return i18next.t('canvas.story.messages.referenceLimit', { segmentId: String(segmentId) });
     }
     targets.push(target);
   }
@@ -190,7 +191,7 @@ export function attachCompletedStoryAsset(imageNodeId: string): string | null {
       });
       if (!edgeId) {
         for (const createdId of createdEdges) state.deleteEdge(createdId);
-        return `素材已生成，但无法连接到片段 ${String(target.data.storySegmentId)}。`;
+        return i18next.t('canvas.story.messages.assetConnectionFailed', { segmentId: String(target.data.storySegmentId) });
       }
       createdEdges.push(edgeId);
     }
@@ -216,7 +217,7 @@ export function attachCompletedStoryFrame(imageNodeId: string): string | null {
   if (target?.type !== CANVAS_NODE_TYPES.video || target.data.storySegmentId !== frame.segmentId ||
       group?.type !== CANVAS_NODE_TYPES.group || group.data.storyGroup !== true ||
       group.data.interactiveStoryId !== frame.storyId) {
-    return '分镜目标已变化，未自动连接到故事视频节点。';
+    return i18next.t('canvas.story.messages.storyboardTargetChanged');
   }
   const referenceIds = Array.isArray(frame.referenceNodeIds)
     ? frame.referenceNodeIds.filter((id): id is string => typeof id === 'string' && !!id)
@@ -224,7 +225,7 @@ export function attachCompletedStoryFrame(imageNodeId: string): string | null {
   if (referenceIds.some((id) => {
     const reference = state.nodes.find((node) => node.id === id);
     return !reference || !submittableContinuityImage(reference);
-  })) return '分镜已生成，但人物或场景参考图尚不可用，未完成视频素材连接。';
+  })) return i18next.t('canvas.story.messages.referencesUnavailable');
   for (const referenceId of referenceIds) {
     if (!useCanvasStore.getState().edges.some((edge) => edge.source === referenceId &&
         edge.target === target.id && edge.data?.link_type === 'media_input_for') &&
@@ -232,7 +233,7 @@ export function attachCompletedStoryFrame(imageNodeId: string): string | null {
           link_type: 'media_input_for', edgeKind: 'story_visual_reference',
         })) {
       syncStoryVideoReferencePrompt(target.id);
-      return '分镜已生成，但人物或场景参考图无法接入目标视频。';
+      return i18next.t('canvas.story.messages.referencesConnectionFailed');
     }
   }
   if (target.data.continuityMode !== 'auto' &&
@@ -242,7 +243,7 @@ export function attachCompletedStoryFrame(imageNodeId: string): string | null {
       link_type: 'media_input_for', edgeKind: 'story_frame_reference',
     })) {
       syncStoryVideoReferencePrompt(target.id);
-      return '分镜图片已生成，但目标视频无法接入该图片参考。';
+      return i18next.t('canvas.story.messages.storyboardConnectionFailed');
     }
   }
   syncStoryVideoReferencePrompt(target.id);
@@ -278,17 +279,17 @@ export async function ensureVideoContinuity(targetId: string, projectId?: string
   }
   const sources = videoContinuitySources(targetId, state.nodes, state.edges);
   if (target.data.continuitySourceNodeId && !sources.length && target.data.storyRole !== 'start') {
-    throw new Error('指定的承接来源不在当前上游，请重新选择。');
+    throw new Error(i18next.t('canvas.story.messages.continuitySourceInvalid'));
   }
   if (!sources.length) return;
-  if (sources.length > 1) throw new Error('此镜头有多个上游，请指定承接来源或设为独立开场。');
+  if (sources.length > 1) throw new Error(i18next.t('canvas.story.messages.continuitySourceRequired'));
   const source = sources[0]!;
-  if (!source.data.videoUrl || source.data.isGenerating) throw new Error('上一镜头尚未完成，请完成后再生成连续镜头。');
+  if (!source.data.videoUrl || source.data.isGenerating) throw new Error(i18next.t('canvas.story.messages.previousShotIncomplete'));
   if (target.data.genMode === 'textToVideo' || target.data.genMode === 'videoEdit') {
-    throw new Error('连续镜头需要支持图片输入的生成模式，请选择首帧或图片参考模式。');
+    throw new Error(i18next.t('canvas.story.messages.imageInputRequired'));
   }
   const captured = await getOrCaptureVideoFrame(source.id, 'last', projectId);
-  if (!captured.nodeId) throw new Error(captured.error || '上一镜尾帧抽取失败。');
+  if (!captured.nodeId) throw new Error(captured.error || i18next.t('canvas.story.messages.previousFrameFailed'));
   state = useCanvasStore.getState();
   const currentSource = state.nodes.find((node) => node.id === source.id);
   const currentTarget = state.nodes.find((node) => node.id === targetId);
@@ -296,7 +297,7 @@ export async function ensureVideoContinuity(targetId: string, projectId?: string
       currentSource?.data.generationTaskJobId !== source.data.generationTaskJobId ||
       currentTarget.data.continuityMode !== target.data.continuityMode ||
       !videoContinuitySources(targetId, state.nodes, state.edges).some((node) => node.id === source.id)) {
-    throw new Error('承接来源已变化，请重新生成。');
+    throw new Error(i18next.t('canvas.story.messages.continuitySourceChanged'));
   }
   // Replace only automatically managed references, preserving manual references.
   const oldEdges = state.edges.filter((edge) => edge.target === targetId &&
@@ -311,7 +312,7 @@ export async function ensureVideoContinuity(targetId: string, projectId?: string
     const edgeId = state.addEdgeWithData(captured.nodeId, targetId, {
       link_type: 'media_input_for', edgeKind: 'workflow_continuity_tail_frame', keyframeSlot: 'first',
     });
-    if (!edgeId) throw new Error('尾帧参考绑定失败，未启动视频生成。');
+    if (!edgeId) throw new Error(i18next.t('canvas.story.messages.frameBindingFailed'));
   } else if (existingEdge.data?.keyframeSlot !== 'first') {
     state.replaceEdges(state.edges.map((edge) => edge.id === existingEdge.id
       ? { ...edge, data: { ...edge.data, link_type: 'media_input_for', keyframeSlot: 'first' } }
@@ -320,12 +321,12 @@ export async function ensureVideoContinuity(targetId: string, projectId?: string
   state = useCanvasStore.getState();
   const ordered = orderedStoryImages(targetId);
   const index = ordered.findIndex((node) => node.id === captured.nodeId) + 1;
-  if (index === 0) throw new Error('尾帧参考未进入图片列表，已停止视频生成。');
+  if (index === 0) throw new Error(i18next.t('canvas.story.messages.frameReferenceMissing'));
   syncStoryVideoReferencePrompt(targetId);
   const prompt = withoutFmvContinuityNote(useCanvasStore.getState().nodes.find((node) => node.id === targetId)?.data.prompt);
   const continuityNote = [
-    `[FMV自动承接]本镜头的首帧必须从 @图片${index}（上一镜视频截取的尾帧）开始；先保持截图中的人物、物品、姿态和构图，再按本镜剧情继续动作。若下文要求换场或跳时间，先呈现该截图，再通过可见转场进入新场景，不要直接以新场景开场。没有单独的人物或物品参考图时，继续沿用该尾帧中的身份和外观。`,
-    '[/FMV自动承接]',
+    `[FMV自动承接]本镜头的首帧必须从 @图片${index}（上一镜视频截取的尾帧）开始；先保持截图中的人物、物品、姿态和构图，再按本镜剧情继续动作。若下文要求换场或跳时间，先呈现该截图，再通过可见转场进入新场景，不要直接以新场景开场。没有单独的人物或物品参考图时，继续沿用该尾帧中的身份和外观。`, // i18n-exempt: Persisted model prompt syntax/content; keep compatible with existing prompts.
+    '[/FMV自动承接]', // i18n-exempt: Persisted model prompt syntax/content; keep compatible with existing prompts.
   ].join('\n');
   state.updateNodeData(targetId, {
     prompt: `${continuityNote}\n\n${prompt}`.trim(),

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import i18next from 'i18next';
 import { uploadFreezoneImage } from '@/api/ops';
 import { readUrl } from '@/lib/url-params';
 import { useCanvasStore } from '@/stores/canvasStore';
@@ -61,13 +62,13 @@ export async function getOrCaptureVideoFrame(
   sourceNodeId: string,
   mode: 'first' | 'last',
   projectId?: string | null,
-  displayName = mode === 'last' ? '上一镜尾帧' : '视频首帧',
+  displayName = mode === 'last' ? i18next.t('canvas.story.messages.previousLastFrame') : i18next.t('canvas.story.messages.videoFirstFrame'),
 ): Promise<VideoCaptureFrameResult> {
   const source = useCanvasStore.getState().nodes.find((node) => node.id === sourceNodeId);
   const data = source?.data as Record<string, unknown> | undefined;
   const videoUrl = data?.videoUrl;
   if (typeof videoUrl !== 'string' || !videoUrl) {
-    return { nodeId: null, error: '上一镜头尚无视频，请先完成上一镜头。' };
+    return { nodeId: null, error: i18next.t('canvas.story.messages.previousVideoMissing') };
   }
   const storyMedia = data?.storyMedia as { version?: unknown } | undefined;
   const provenance = {
@@ -163,7 +164,7 @@ export async function captureVideoFrameToNode(
       if (readUrl().canvas !== canvasAtStart || !current ||
           current.data.videoUrl !== data.videoUrl ||
           current.data.generationTaskJobId !== data.generationTaskJobId) {
-        return { nodeId: null, error: '画布或来源视频已变化，请重新截帧。' };
+        return { nodeId: null, error: i18next.t('canvas.story.messages.captureSourceChanged') };
       }
     }
     // exportImage（非 upload）：upload 节点没有 target handle（nodeRegistry.ts），

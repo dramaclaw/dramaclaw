@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import i18next from 'i18next';
 import { refreshRemoteFreezoneCanvas } from "@/features/freezone/canvasSyncRuntime";
 import type { ServerFrame } from "@/features/superchat/types";
 
@@ -57,6 +58,6 @@ export async function refreshInteractiveStoryCanvasFromToolFrame(
   return await refreshRemoteFreezoneCanvas(target.project, target.canvasId, {
     protectUnsavedLocalEdits: true,
     conflictMessage:
-      "Agent 已更新画布，但你还有未保存的本地修改。请保留副本或刷新后继续。",
+      i18next.t('canvas.story.messages.agentRefreshConflict'),
   });
 }
