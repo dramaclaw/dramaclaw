@@ -11,6 +11,7 @@ export const RESIDENT_MOTION_SRC = "/piko/world/characters/resident-m01-idle-v1/
 export const RESIDENT_IDLE_SRC = "/piko/world/characters/resident-m01-idle-v1/resident-m01-idle-sheet.png";
 // Resident display tuning; shared actor applies it to body and contact shadow.
 export const RESIDENT_WORLD_SCALE = (82 / 48) * 1.15;
+export const RESIDENT_INITIAL_POSITION: Point = { x: 1270, y: 480 };
 export const RESIDENT_TIMELINE = [
   { frame: 0, durationMs: 1100 }, { frame: 1, durationMs: 450 },
   { frame: 0, durationMs: 900 }, { frame: 2, durationMs: 120 },
@@ -43,7 +44,7 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
   const idleCycleMs = controls.idleCycleMs ?? 4800;
   const actor = createCharacterActor(sheet, ticker, isActive, {
     label: controls.label ?? "piko-player", frameSize: 64, frameCount: columns * FACINGS.length, columns, manual: true, pivot: { x: 32, y: 57 },
-    position: controls.position ?? { x: 1190, y: 485 }, scale: RESIDENT_WORLD_SCALE,
+    position: controls.position ?? RESIDENT_INITIAL_POSITION, scale: RESIDENT_WORLD_SCALE,
     shadow: { width: 24, height: 8 }, durationMs: idleCycleMs, frameAt: residentFrameAt,
   });
   const keyboardControlled = !controls.simulatedInput;

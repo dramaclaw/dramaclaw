@@ -1153,11 +1153,11 @@ function FreezoneChatDock({
  * localStorage 清扫误删；这只是个 UI 位置偏好，跨区域保留没问题。
  */
 const CHAT_LAUNCHER_POS_STORAGE_KEY = "st.freezone.chatLauncherPos";
-const CHAT_LAUNCHER_VISUAL_WIDTH = 90.72;
+const CHAT_LAUNCHER_VISUAL_WIDTH = 81.648;
 const CHAT_LAUNCHER_VISUAL_HEIGHT = (CHAT_LAUNCHER_VISUAL_WIDTH * 647) / 743;
 const CHAT_LAUNCHER_MARGIN = 8;
-/** 默认抬到 MiniMap（约 150px 高 + 15px 边距）上方，避免挡住画布缩略图。 */
-const CHAT_LAUNCHER_DEFAULT_POS = { right: 16, bottom: 180 };
+/** 默认抬到 MiniMap 上方并留出间距，避免挡住画布缩略图。 */
+const CHAT_LAUNCHER_DEFAULT_POS = { right: 16, bottom: 220 };
 const CHAT_LAUNCHER_DRAG_THRESHOLD = 4;
 
 function loadChatLauncherPos(): { right: number; bottom: number } {

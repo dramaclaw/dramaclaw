@@ -61,6 +61,75 @@ describe("useCanvasSync hydrate lifecycle", () => {
     useShotMetadataStore.getState().hydrate({});
   });
 
+  it("opens a saved canvas without restoring selected nodes or edges", async () => {
+    const nodes = [
+      { id: "saved-a", type: CANVAS_NODE_TYPES.upload, position: { x: 12, y: 34 }, data: {}, selected: true },
+      { id: "saved-b", type: CANVAS_NODE_TYPES.upload, position: { x: 220, y: 34 }, data: {}, selected: false },
+    ];
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({
+      nodes, edges: [{ id: "saved-edge", source: "saved-a", target: "saved-b", selected: true }], revision: 1,
+    });
+    const hook = renderHook(() => useCanvasSync("entry-project", "saved-selection"));
+    await waitFor(() => expect(hook.result.current.status).toBe("ready"));
+    const state = useCanvasStore.getState();
+    expect(state.nodes).toHaveLength(2);
+    expect(state.nodes.every(node => !node.selected)).toBe(true);
+    expect(state.edges.every(edge => !edge.selected)).toBe(true);
+    expect(state.selectedNodeId).toBeNull();
+    expect(state.nodes[0].position).toEqual({ x: 12, y: 34 });
+    expect(state.userEditsSinceHydrate).toBe(0);
+    expect(state.history.past).toHaveLength(0);
+    expect(putFreezoneCanvas).not.toHaveBeenCalled();
+    expect(nodes[0].selected).toBe(true);
+    hook.unmount();
+  });
+
+  it("clears cached selection immediately on re-entry and allows later manual selection", async () => {
+    const nodes = [{ id: "cached-node", type: CANVAS_NODE_TYPES.upload, position: { x: 0, y: 0 }, data: {} }];
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({ nodes, edges: [], revision: 1 });
+    const first = renderHook(() => useCanvasSync("entry-project", "cached-selection"));
+    await waitFor(() => expect(first.result.current.status).toBe("ready"));
+    act(() => {
+      useCanvasStore.setState(state => ({
+        nodes: state.nodes.map(node => ({ ...node, selected: true })), selectedNodeId: "cached-node",
+      }));
+    });
+    first.unmount();
+    vi.mocked(getFreezoneCanvas).mockImplementation(() => new Promise(() => {}));
+    const second = renderHook(() => useCanvasSync("entry-project", "cached-selection"));
+    expect(useCanvasStore.getState().nodes.every(node => !node.selected)).toBe(true);
+    expect(useCanvasStore.getState().selectedNodeId).toBeNull();
+    await waitFor(() => expect(second.result.current.status).toBe("ready"));
+    act(() => {
+      useCanvasStore.setState(state => ({
+        nodes: state.nodes.map(node => ({ ...node, selected: true })), selectedNodeId: "cached-node",
+      }));
+    });
+    second.rerender();
+    expect(useCanvasStore.getState().selectedNodeId).toBe("cached-node");
+    expect(useCanvasStore.getState().nodes[0].selected).toBe(true);
+    second.unmount();
+  });
+
+  it("restores a dirty local draft and its undo history without its old selection", async () => {
+    writeCanvasDraft("entry-project", "draft-selection", {
+      baseRevision: 1,
+      nodes: [{ id: "draft-selected", type: CANVAS_NODE_TYPES.upload, position: { x: 56, y: 78 }, data: {}, selected: true }],
+      edges: [], viewport: null, metadata: null, history: { past: [{ nodes: [], edges: [] }], future: [] },
+      mutation: { userEditsSinceHydrate: 2, lastMutationSource: "user_edit", pendingClearIntent: false },
+      updatedAt: Date.now(),
+    });
+    vi.mocked(getFreezoneCanvas).mockResolvedValue({ nodes: [], edges: [], revision: 1 });
+    const hook = renderHook(() => useCanvasSync("entry-project", "draft-selection"));
+    await waitFor(() => expect(hook.result.current.status).toBe("ready"));
+    const state = useCanvasStore.getState();
+    expect(state.nodes[0]).toMatchObject({ id: "draft-selected", position: { x: 56, y: 78 }, selected: false });
+    expect(state.selectedNodeId).toBeNull();
+    expect(state.history.past).toHaveLength(1);
+    expect(state.userEditsSinceHydrate).toBe(2);
+    hook.unmount();
+  });
+
   // Canvas 现在跨项目常驻（_app.tsx 不再按项目重挂 freezone），所以 hydrate 必须
   // 显式落相机 —— 新建画布存的就是 viewport: null，不落位就沿用上一张画布的坐标
   // 和缩放，节点可能整个飘出屏幕，lowDetail 档也是错的。

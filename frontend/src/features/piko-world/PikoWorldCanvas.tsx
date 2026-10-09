@@ -36,7 +36,7 @@ import { containWorldInViewport, type PikoSize } from "./runtime/viewport-fit";
 import { PikoMayor } from "./PikoMayor";
 import { PIKO_MAYOR_IDLE_SRC, PIKO_MAYOR_POSITION } from "./runtime/mayor-idle";
 import { createMayorActor } from "./runtime/mayor-actor";
-import { createResidentActor, RESIDENT_WORLD_SCALE } from "./runtime/resident-actor";
+import { createResidentActor, RESIDENT_INITIAL_POSITION, RESIDENT_WORLD_SCALE } from "./runtime/resident-actor";
 import { PikoTownNpcInteraction } from "./PikoTownNpcInteraction";
 import { townNpcsForMap, townNpcIdleSrc } from "./piko-town-npcs";
 import { createTownNpcActor } from "./runtime/town-npc-actor";
@@ -92,7 +92,7 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
   const stopPlayerRef = useRef(() => {});
   const activateTransportRef = useRef<(exitId: string) => void>(() => {});
   const npcHoverRef = useRef(new Map<string, (hovered: boolean) => void>());
-  const [playerPosition, setPlayerPosition] = useState({ x: 1190, y: 485 });
+  const [playerPosition, setPlayerPosition] = useState(RESIDENT_INITIAL_POSITION);
   const [dogGreeting, setDogGreeting] = useState<{ mapId: string; x: number; y: number; headOffset: number } | null>(null);
   const [playerSeated, setPlayerSeated] = useState(false);
   const [hallNotice, setHallNotice] = useState<{ body: string; position: { x: number; y: number } } | null>(null);

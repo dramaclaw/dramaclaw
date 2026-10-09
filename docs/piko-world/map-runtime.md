@@ -18,6 +18,7 @@
 
 长风海境从无垠海域东北出口进入，西南出口返回；城镇大厅从庭院正门进入，南侧出口返回。方向连接共34个。
 出生点、切图触发区与运行时标记由 `navigation.json` 和 `piko-map-connections.ts` 管理。
+首次进入迎宾庭院时使用 `runtime/resident-actor.ts` 的 `RESIDENT_INITIAL_POSITION`，当前脚底坐标为(1270,480)，位于大厅右前方、喷泉右上方。从其他地图返回时仍使用对应入口的 `spawnId` 和地图包出生点。
 
 ## 当前地图配置
 

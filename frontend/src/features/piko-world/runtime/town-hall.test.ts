@@ -97,7 +97,9 @@ it("pauses indoor effects while hidden or reduced and removes all ticker work on
   expect(moved.some(delta => delta.x < 0 && delta.y < 0)).toBe(true);
   const visibleMoves = moved.filter((_, index) => startPositions[index].alpha > 0.1 && dust.children[index].alpha > 0.1);
   expect(visibleMoves.length).toBeGreaterThan(0);
-  expect(visibleMoves.every(delta => Math.abs(delta.x) <= 3 && Math.abs(delta.y) <= 2)).toBe(true);
+  const averageDrift = visibleMoves.reduce((sum, delta) => sum + Math.hypot(delta.x, delta.y), 0) / visibleMoves.length;
+  expect(averageDrift).toBeGreaterThan(1.8);
+  expect(visibleMoves.every(delta => Math.abs(delta.x) <= 5 && Math.abs(delta.y) <= 3.5)).toBe(true);
   // Cover several direction changes, edge exits and particle rebirths in the marked window area.
   for (let i = 0; i < 400; i++) {
     tick({ deltaMS: 100 });

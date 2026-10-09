@@ -6,6 +6,7 @@ import { Container, Graphics, Rectangle, Sprite, Texture, type Ticker } from "pi
 const FIRE_SEQUENCE = [0, 1, 2, 3, 2, 1] as const;
 const CAT_SEQUENCE = [0, 1, 2, 3, 2, 1] as const;
 const DUST_BOUNDS = { left: 515, right: 965, top: 170, bottom: 480 } as const;
+const DUST_MAX_VELOCITY = { x: 6, y: 4 } as const;
 
 /** The clean plate is clipped to the hearth; the approved v2 room stays unchanged. */
 export function createTownHallAmbience(ticker: Ticker, clean: Texture, atlas: Texture, catAtlas: Texture,
@@ -64,7 +65,8 @@ export function createTownHallAmbience(ticker: Ticker, clean: Texture, atlas: Te
     const lifetime = between(18, 34);
     return { sprite, x: between(DUST_BOUNDS.left, DUST_BOUNDS.right),
       y: between(DUST_BOUNDS.top, DUST_BOUNDS.bottom), age: random() * lifetime, lifetime,
-      vx: between(-3.5, 3.5), vy: between(-2.5, 2.5), targetVx: between(-3.5, 3.5), targetVy: between(-2.5, 2.5),
+      vx: between(-DUST_MAX_VELOCITY.x, DUST_MAX_VELOCITY.x), vy: between(-DUST_MAX_VELOCITY.y, DUST_MAX_VELOCITY.y),
+      targetVx: between(-DUST_MAX_VELOCITY.x, DUST_MAX_VELOCITY.x), targetVy: between(-DUST_MAX_VELOCITY.y, DUST_MAX_VELOCITY.y),
       turnIn: between(2, 6), gain: between(0.25, 0.5) };
   });
   let elapsed = 0, attached = false, destroyed = false;
@@ -89,7 +91,8 @@ export function createTownHallAmbience(ticker: Ticker, clean: Texture, atlas: Te
       mote.age += delta;
       mote.turnIn -= delta;
       if (mote.turnIn <= 0) {
-        mote.targetVx = between(-3.5, 3.5); mote.targetVy = between(-2.5, 2.5); mote.turnIn = between(2, 6);
+        mote.targetVx = between(-DUST_MAX_VELOCITY.x, DUST_MAX_VELOCITY.x);
+        mote.targetVy = between(-DUST_MAX_VELOCITY.y, DUST_MAX_VELOCITY.y); mote.turnIn = between(2, 6);
       }
       mote.vx += (mote.targetVx - mote.vx) * Math.min(1, delta * 0.8);
       mote.vy += (mote.targetVy - mote.vy) * Math.min(1, delta * 0.8);

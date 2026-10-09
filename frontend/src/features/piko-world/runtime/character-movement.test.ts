@@ -4,6 +4,7 @@ import { expect, it } from "vitest";
 import { Container } from "pixi.js";
 import { PikoNavigationSchema } from "./map-package-schema";
 import { canStand, facingFor, moveCharacter } from "./character-movement";
+import { RESIDENT_INITIAL_POSITION } from "./resident-actor";
 const nav=PikoNavigationSchema.parse(JSON.parse(readFileSync("public/piko/world/maps/welcome-courtyard/data/navigation.json","utf8")));
 it("preserves real Pixi ObservablePoint coordinates while idle and moving",()=>{
   const actor=new Container();
@@ -22,7 +23,12 @@ it("preserves real Pixi ObservablePoint coordinates while idle and moving",()=>{
   actor.destroy();
 });
 it("uses actual map collision regions and permits the initial resident position",()=>{
-  expect(canStand({x:1190,y:485},nav)).toBe(true);
+  expect(canStand(RESIDENT_INITIAL_POSITION,nav)).toBe(true);
+  for(const input of [{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}]) {
+    const moved=moveCharacter(RESIDENT_INITIAL_POSITION,input,16,nav);
+    expect(moved).not.toEqual(RESIDENT_INITIAL_POSITION);
+    expect(canStand(moved,nav)).toBe(true);
+  }
   for(const point of [{x:1060,y:300},{x:1060,y:560},{x:2020,y:700},{x:-20,y:500}]) expect(canStand(point,nav)).toBe(false);
 });
 it("normalizes diagonal speed and bounds long frames",()=>{
