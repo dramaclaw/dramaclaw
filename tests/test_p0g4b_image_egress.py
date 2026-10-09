@@ -802,3 +802,74 @@ async def test_abandon_freezone_vision_egress_rejects_when_nothing_was_submitted
     await abandon_freezone_vision_egress(None, submitted=True)
 
     assert [state for state, _ in operation_port.abandoned] == ["rejected"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("job_kind", ["generate", "generate_with_refs", "mask_edit", "edit"])
+@pytest.mark.parametrize("model", [None, "", "selected-org-model"])
+async def test_organization_freezone_model_fallback_preserves_job_parameters(
+    monkeypatch, tmp_path, job_kind, model
+):
+    from pathlib import Path
+
+    from novelvideo.freezone import jobs
+    from novelvideo.generators import nanobanana_grid
+
+    context = _egress_context(kind="organization")
+    calls = []
+    base, mask, extra = (tmp_path / name for name in ("base.png", "mask.png", "extra.png"))
+    for path in (base, mask, extra):
+        path.write_bytes(b"fixture")
+
+    async def fake_generate(**kwargs):
+        calls.append(kwargs)
+        Path(kwargs["output_path"]).write_bytes(b"generated")
+
+    monkeypatch.setattr(nanobanana_grid, "generate_text_to_image", fake_generate)
+    monkeypatch.setattr(nanobanana_grid, "generate_reference_edit_image", fake_generate)
+    monkeypatch.setattr(
+        "novelvideo.config.get_grid_generation_config",
+        lambda **_kwargs: pytest.fail("organization jobs must not read local model configuration"),
+    )
+    monkeypatch.setenv("NEWAPI_IMAGE_MODEL", "local-config-only-model")
+    common = dict(project_dir=tmp_path, job_id="model-fallback", prompt="edit this image",
+                  aspect_ratio="16:9", image_size="4K", quality="high",
+                  provider="newapi", model=model, egress_context=context)
+    model_params = {"strength": 0.6}
+    schema = {"endpoint": "images/edits"}
+    if job_kind in {"generate", "generate_with_refs"}:
+        output = await jobs.run_freezone_gen(
+            **common, reference_paths=[str(extra)] if job_kind == "generate_with_refs" else None,
+            model_params=model_params, request_schema=schema,
+        )
+    elif job_kind == "mask_edit":
+        output = await jobs.run_freezone_mask_edit(**common, base_path=str(base), mask_path=str(mask))
+    else:
+        output = await jobs.run_freezone_edit(
+            **common, base_path=str(base), extra_reference_paths=[str(extra)],
+            model_params=model_params, request_schema=schema,
+        )
+
+    assert output.read_bytes() == b"generated"
+    assert len(calls) == 1
+    request = calls[0]
+    assert request["config"]["model"] == (model or "LingShan-G2")
+    assert request["config"]["provider"] == "newapi"
+    assert request["egress_context"] is context
+    assert request["egress_capability"] == "freezone.image.generate"
+    assert (request["aspect_ratio"], request["image_size"], request["quality"]) == (
+        "16:9", "4K", "high",
+    )
+    if job_kind != "mask_edit":
+        assert request["config"]["newapi_model_params"] == model_params
+        assert request["config"]["newapi_request_schema"] == schema
+        assert request["prompt"] == common["prompt"]
+    if job_kind == "mask_edit":
+        assert request["reference_images"] == [str(base), str(mask)]
+        assert "Edit ONLY the red-highlighted region" in request["prompt"]
+    elif job_kind == "edit":
+        assert request["reference_images"] == [str(base), str(extra)]
+    elif job_kind == "generate_with_refs":
+        assert request["reference_images"] == [str(extra)]
+    else:
+        assert "reference_images" not in request

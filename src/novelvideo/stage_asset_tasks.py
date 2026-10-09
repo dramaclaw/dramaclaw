@@ -286,10 +286,12 @@ def resolve_scene_360_image_model(provider: str = "", model: str = "") -> str:
     if resolved_provider == "openai":
         return os.environ.get("OPENAI_IMAGE_MODEL") or "gpt-image-2"
     if resolved_provider == "newapi":
+        from novelvideo.config import NEWAPI_IMAGE_MODEL
+
         return (
             os.environ.get("SCENE_360_IMAGE_MODEL")
             or os.environ.get("NEWAPI_IMAGE_MODEL")
-            or "gpt-image-2"
+            or NEWAPI_IMAGE_MODEL
         )
     if resolved_provider == "openrouter":
         return (
