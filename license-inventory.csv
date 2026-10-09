@@ -133,6 +133,9 @@ frontend/components.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggr
 frontend/docker/19-payment-form-csp.envsh,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/docker/README.md,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/docker/nginx.conf.template,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/e2e/playwright.config.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/e2e/previz-record.e2e.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/e2e/previz.html,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/index.html,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/package.json,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/pnpm-lock.yaml,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
@@ -1371,6 +1374,7 @@ frontend/src/features/previz/capture/publishRecording.ts,Elastic-2.0,2026 SuperT
 frontend/src/features/previz/capture/recordTarget.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/previz/capture/recordTimeline.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/previz/capture/renderCapture.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/features/previz/dev/harness.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/previz/domain/actionClips.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/previz/domain/audioTrack.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/features/previz/domain/axisGizmo.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
