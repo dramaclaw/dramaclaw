@@ -7,27 +7,34 @@ import "@testing-library/jest-dom/vitest";
 // in-memory replacement so zustand/persist and other code that relies on
 // localStorage.setItem / getItem / removeItem works correctly in tests.
 if (typeof globalThis.localStorage === "undefined" || typeof globalThis.localStorage.setItem !== "function") {
-  const store = new Map<string, string>();
-  const storage: Storage = {
+  class MemoryStorage implements Storage {
+    private readonly store = new Map<string, string>();
+
     get length() {
-      return store.size;
-    },
+      return this.store.size;
+    }
     key(index: number) {
-      return [...store.keys()][index] ?? null;
-    },
+      return [...this.store.keys()][index] ?? null;
+    }
     getItem(key: string) {
-      return store.get(key) ?? null;
-    },
+      return this.store.get(String(key)) ?? null;
+    }
     setItem(key: string, value: string) {
-      store.set(key, String(value));
-    },
+      this.store.set(String(key), String(value));
+    }
     removeItem(key: string) {
-      store.delete(key);
-    },
+      this.store.delete(String(key));
+    }
     clear() {
-      store.clear();
-    },
-  };
+      this.store.clear();
+    }
+  }
+
+  // Keep the constructor and instance aligned so prototype instrumentation
+  // (including quota/error simulations) observes the same methods as callers.
+  const storage = new MemoryStorage();
+  Object.defineProperty(globalThis, "Storage", { value: MemoryStorage, writable: true, configurable: true });
+  Object.defineProperty(window, "Storage", { value: MemoryStorage, writable: true, configurable: true });
 
   Object.defineProperty(globalThis, "localStorage", { value: storage, writable: true, configurable: true });
   Object.defineProperty(window, "localStorage", { value: storage, writable: true, configurable: true });
