@@ -143,6 +143,59 @@ describe("resumeNodeGeneration for a previz node", () => {
     expect(usePrevizStore.getState().dirty).toBe(false);
   });
 
+  it("lands on the scene saved while the result was being fetched, not the one read before", async () => {
+    const node = previzNode();
+    const manual: Record<string, unknown> = { ...piece(9), id: "manual-crate", name: "crate" };
+    delete manual.blockout;
+    const saved = createDefaultScene();
+    saved.objects = [manual] as unknown as PrevizScene["objects"];
+    fetchFreezoneImageToBlockoutResult.mockImplementationOnce(async () => {
+      // 等结果的这段时间里，用户摆了一个物件、关掉编辑器，场景存回了节点。
+      // 画布 store 写节点是换一份新的 data，不是原地改。
+      node.data = { ...node.data, scene: saved } as CanvasNode["data"];
+      return { objects: [piece(0)], reference_camera_id: null, warnings: [] };
+    });
+
+    const { promise, updateNodeData } = resume(node);
+    await promise;
+
+    const patch = updateNodeData.mock.calls[0]![1] as Record<string, unknown>;
+    expect((patch.scene as PrevizScene).objects.map((object) => object.id)).toEqual([
+      "manual-crate",
+      "blockout-box_0",
+    ]);
+  });
+
+  it("leaves the open editor alone when the task handle was replaced during the fetch", async () => {
+    usePrevizStore.getState().loadScene(createDefaultScene(), "previz-1");
+    const node = previzNode();
+    fetchFreezoneImageToBlockoutResult.mockImplementationOnce(async () => {
+      (node.data as Record<string, unknown>).generationTaskKey = "freezone_image_to_blockout:job-8";
+      return { objects: [piece(0), piece(1)], reference_camera_id: null, warnings: [] };
+    });
+
+    const { promise, updateNodeData } = resume(node);
+    await promise;
+
+    expect(updateNodeData).not.toHaveBeenCalled();
+    expect(usePrevizStore.getState().scene.objects).toEqual([]);
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("says nothing about a failed fetch once the task handle is gone", async () => {
+    const node = previzNode();
+    fetchFreezoneImageToBlockoutResult.mockImplementationOnce(async () => {
+      (node.data as Record<string, unknown>).generationTaskKey = null;
+      throw new Error("502");
+    });
+
+    const { promise, updateNodeData } = resume(node);
+    await promise;
+
+    expect(updateNodeData).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
   it("holds the finished job when its result cannot be fetched, so the paid result is not lost", async () => {
     fetchFreezoneImageToBlockoutResult.mockRejectedValueOnce(new Error("502"));
 

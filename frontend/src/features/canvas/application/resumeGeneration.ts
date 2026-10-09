@@ -281,6 +281,8 @@ const CLEARED_TASK_FIELDS = {
 interface ResumeNodeContext {
   nodeId: string;
   readNodeData: () => Record<string, unknown>;
+  /** 节点上的任务句柄还是不是这一个。取结果要等，等完得再问一次。 */
+  stillOwnsTask: () => boolean;
 }
 
 async function buildSuccessPatch(
@@ -290,7 +292,7 @@ async function buildSuccessPatch(
   jobId: string,
   projectId: string,
   context: ResumeNodeContext,
-): Promise<Record<string, unknown>> {
+): Promise<Record<string, unknown> | null> {
   switch (kind) {
     case 'image': {
       let url = resolveUrlFromResult(completed.result, ['output_url', 'image_url', 'url']);
@@ -359,12 +361,11 @@ async function buildSuccessPatch(
       };
     }
     case 'blockout': {
-      const nodeData = context.readNodeData();
-      const mode = nodeData.blockoutImportMode === 'append' ? 'append' : 'replace';
       let body: unknown;
       try {
         body = await fetchFreezoneImageToBlockoutResult(projectId, jobId);
       } catch (error) {
+        if (!context.stillOwnsTask()) return null;
         // 到这里任务已经完成、积分已经扣了，失败的只是取结果这一趟。走通用错误分支会把
         // 节点清成什么都没发生，花了钱的结果就丢了；留着任务号让人按号再取。
         return {
@@ -373,6 +374,13 @@ async function buildSuccessPatch(
           blockoutHeld: holdUnfetchedBlockout(jobId, error),
         };
       }
+      // 落地不只是算补丁：编辑器开着时它当场改 store、弹提示，事后拦不回来。任务
+      // 句柄在取结果期间被清掉或换成别的任务，这份结果就不该再进场景。
+      if (!context.stillOwnsTask()) return null;
+      // 节点数据也要等结果回来再读：等的这段时间里用户可能改了场景并关掉编辑器，
+      // 拿等之前读的那份去落地，会把刚存进节点的修改盖掉。
+      const nodeData = context.readNodeData();
+      const mode = nodeData.blockoutImportMode === 'append' ? 'append' : 'replace';
       return {
         ...CLEARED_TASK_FIELDS,
         blockoutImportMode: null,
@@ -473,8 +481,9 @@ export async function resumeNodeGeneration(params: {
     const patch = await buildSuccessPatch(kind, completed, taskType, jobId, projectId, {
       nodeId: node.id,
       readNodeData: readLatestNodeData,
+      stillOwnsTask,
     });
-    if (!stillOwnsTask()) return;
+    if (!patch || !stillOwnsTask()) return;
     updateNodeData(node.id, patch);
   } catch (error) {
     console.warn('[resume-generation] task resume failed', { nodeId: node.id, taskKey, error });
