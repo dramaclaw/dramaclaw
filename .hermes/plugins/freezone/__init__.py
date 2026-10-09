@@ -1161,7 +1161,18 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
             )
             for media, node_type in (("image", "imageGenNode"), ("video", "videoNode"))
         }
+        normalized_required_choices: dict[str, Any] = {}
         for media, fields in requested.items():
+            if media in generation_fields and isinstance(fields, list):
+                # Accept the canonical question ids that tool errors report
+                # (``video_duration_seconds``) as well as the bare field names.
+                fields = [
+                    "count" if field == "variants_per_node" else field
+                    for field in (
+                        field.removeprefix(f"{media}_") if isinstance(field, str) else field
+                        for field in fields
+                    )
+                ]
             if media not in generation_fields or (
                 fields is not None
                 and (
@@ -1174,12 +1185,31 @@ def _handle_request_user_clarification(args: dict[str, Any], **_: Any) -> str:
                     "ok": False,
                     "status": "generation_clarification_args_invalid",
                     "error": "Unsupported generation media type or required choice",
+                    "unsupported_required_choices": {
+                        media: (
+                            [
+                                field for field in fields
+                                if field not in generation_fields.get(media, ())
+                            ]
+                            if isinstance(fields, list) and media in generation_fields
+                            else fields
+                        )
+                    },
+                    "allowed_required_choices": {
+                        allowed_media: list(allowed_fields)
+                        for allowed_media, allowed_fields in generation_fields.items()
+                    },
                 })
+            normalized_required_choices[media] = fields
             chosen_fields = fields if fields is not None else generation_fields[media]
             questions.extend(
                 {"id": f"{media}_{'variants_per_node' if field == 'count' else field}"}
                 for field in chosen_fields
             )
+        if generation_required_choices is not None:
+            # The model-dependency check below must see the normalized field
+            # names, not the canonical ids the caller may have passed.
+            generation_required_choices = normalized_required_choices
         args = {**args, "allow_skip": False}
     generation_question_aliases = {
         "image_count": "image_variants_per_node",
@@ -7244,18 +7274,28 @@ def _workflow_plan_has_recipe_aliases(plan: Any) -> bool:
     )
 
 
-def _plan_has_explicit_video_durations(plan: Any) -> bool:
+def _plan_video_nodes(plan: Any) -> list[dict[str, Any]]:
     if not isinstance(plan, dict) or not isinstance(plan.get("nodes"), list):
-        return False
-    video_nodes = [
+        return []
+    return [
         node for node in plan["nodes"]
         if isinstance(node, dict) and node.get("node_type") == "videoNode"
     ]
-    return bool(video_nodes) and all(
-        isinstance(node.get("data"), dict)
-        and _generation_parameter_value_present("durationSec", node["data"].get("durationSec"))
-        for node in video_nodes
-    )
+
+
+def _video_nodes_missing_duration(plan: Any) -> list[Any]:
+    return [
+        node.get("id")
+        for node in _plan_video_nodes(plan)
+        if not (
+            isinstance(node.get("data"), dict)
+            and _generation_parameter_value_present("durationSec", node["data"].get("durationSec"))
+        )
+    ]
+
+
+def _plan_has_explicit_video_durations(plan: Any) -> bool:
+    return bool(_plan_video_nodes(plan)) and not _video_nodes_missing_duration(plan)
 
 
 def _generation_choices_from_answers(
@@ -7320,6 +7360,20 @@ def _generation_choices_from_answers(
                     key = f"{media}_{field}"
                     if key == "video_duration_seconds" and _plan_has_explicit_video_durations(plan):
                         continue
+                    if key == "video_duration_seconds" and key not in choices:
+                        missing_nodes = _video_nodes_missing_duration(plan)
+                        if missing_nodes:
+                            return {}, {
+                                "ok": False, "status": "generation_answers_incomplete",
+                                "error": f"missing generation answer: {key}",
+                                "video_nodes_missing_duration": missing_nodes,
+                                "agent_instruction": (
+                                    "Set data.durationSec on every listed videoNode in the plan "
+                                    "(required when per-shot durations were chosen), or ask the "
+                                    "user with freezone_request_user_clarification using "
+                                    'generation_required_choices={"video": ["duration_seconds"]}.'
+                                ),
+                            }
                     if key not in choices:
                         raise ValueError(f"missing generation answer: {key}")
     except ValueError as exc:
