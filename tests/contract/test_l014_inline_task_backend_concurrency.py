@@ -58,6 +58,11 @@ def _task_ports(monkeypatch):
     manager = TaskStateManager()
     monkeypatch.setattr(registry, "_PORTS", dict(registry._PORTS))
     registry.register_port("cancellation_store", InMemoryCancellationStore())
+    class ActiveProjectRegistry:
+        async def get_project(self, _project_id):
+            return None
+
+    registry.register_port("project_registry", ActiveProjectRegistry())
     monkeypatch.setattr("novelvideo.task_state._task_manager", manager)
     monkeypatch.setattr(
         "novelvideo.ports.local.tasks.get_task_manager", lambda: manager

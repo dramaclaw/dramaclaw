@@ -27,6 +27,7 @@ _EE_REQUIRED_PORTS = (
     "auth",
     "auth_session",
     "project_registry",
+    "project_output_purger",
     "project_access",
     "audit_sink",
     "credit_quote",
