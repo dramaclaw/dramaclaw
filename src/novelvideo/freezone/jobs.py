@@ -2860,6 +2860,7 @@ async def run_freezone_video_breakdown(
                 output_path=clip_path,
                 source_start=start,
                 duration=span,
+                speed=1.0,
                 width=width,
                 height=height,
                 fps=30,
