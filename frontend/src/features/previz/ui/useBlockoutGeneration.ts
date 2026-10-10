@@ -154,7 +154,8 @@ export function useBlockoutGeneration(nodeId: string): BlockoutGeneration {
 
       setUploading(true);
       try {
-        // 名字里带时间戳，理由同 useAudioImport：同名上传会覆盖上一张参考图。
+        // 服务端落盘时会再加一层时间戳前缀（safe_upload_filename），同名上传不会
+        // 互相覆盖；这里起名只是为了在上传目录里认得出这是哪个节点的参考图。
         const upload = file
           ? await uploadFreezoneImage(
               project,
