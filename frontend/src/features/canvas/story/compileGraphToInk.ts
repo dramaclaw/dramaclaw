@@ -248,7 +248,7 @@ export function compileGraphToInk(
   const choiceLoopClipByNodeId: Record<string, string> = {};
   const knotByNodeId: Record<string, string> = {};
   // 限时选项:源节点 id → 选项窗口秒数(>0)/默认选项在「按 order 排序后」的 0-based 位置
-  // (= inkjs choice index)。
+  // 仅兼容旧发布产物；新运行时通过 choice-default tag 在条件过滤后定位。
   const choiceTimeByNodeId: Record<string, number> = {};
   const defaultChoiceIndexByNodeId: Record<string, number> = {};
   // 叶子结局节点 → 结局页标题/标。
@@ -355,7 +355,9 @@ export function compileGraphToInk(
           if (stateChanges.length > 0) choiceStateChangesById[feedbackId] = stateChanges;
         }
         const normalizedInteraction = normalizeStoryChoiceInteraction(choice.interaction);
-        const interactionId = normalizedInteraction.presentation !== 'overlay' || (normalizedInteraction.trigger && normalizedInteraction.trigger !== 'click')
+        const interactionId = normalizedInteraction.presentation !== 'overlay'
+          || normalizedInteraction.transition !== 'fade'
+          || (normalizedInteraction.trigger && normalizedInteraction.trigger !== 'click')
           ? `interaction-${choiceInteractionSequence++}`
           : null;
         if (interactionId) choiceInteractionById[interactionId] = normalizedInteraction;
@@ -363,7 +365,13 @@ export function compileGraphToInk(
         // 避免测试/外部导入的边 id 含 `->` 等 Ink 语法字符时导致编译失败。
         const feedbackTag = feedbackId ? ` # choice-feedback: ${feedbackId}` : '';
         const interactionTag = interactionId ? ` # choice-interaction: ${interactionId}` : '';
-        lines.push(`+ ${guard}[${choice.text}${feedbackTag}${interactionTag}]`);
+        // Keep labels literal, including comment delimiters; choices occupy one Ink line.
+        const text = choice.text.replace(/[\r\n]+/g, ' ').replace(/[\\\[\]{}#|<>~*+\/]/g, '\\$&');
+        // Mark non-defaults too: if the default is filtered out, do not fall back to its old index.
+        const defaultTag = defaultPos >= 0
+          ? ` # choice-default: ${choice === visibleChoices[defaultPos] ? 'true' : 'false'}`
+          : '';
+        lines.push(`+ ${guard}[${text}${feedbackTag}${interactionTag}${defaultTag}]`);
         for (const eff of choice.effects ?? []) {
           lines.push('flag' in eff
             ? `    ~ ${eff.flag} = ${eff.value ? 'true' : 'false'}`

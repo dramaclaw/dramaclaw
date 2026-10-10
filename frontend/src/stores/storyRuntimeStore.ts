@@ -209,7 +209,12 @@ function advanceToClip(
   const limit = nodeId ? choiceTimeByNodeId[nodeId] : undefined;
   const currentChoiceTimeSec =
     currentChoices.length > 0 && typeof limit === 'number' && limit > 0 ? limit : null;
-  const defaultIdx = nodeId ? defaultChoiceIndexByNodeId[nodeId] : undefined;
+  // New compilations identify defaults on the surviving Ink choices. Keep the
+  // positional fallback only for older published stories without these tags.
+  const hasDefaultTags = story.currentChoices.some(c => c.tags?.some(tag => tag.startsWith('choice-default:')));
+  const defaultIdx = hasDefaultTags
+    ? story.currentChoices.find(c => c.tags?.includes('choice-default: true'))?.index
+    : nodeId ? defaultChoiceIndexByNodeId[nodeId] : undefined;
   const currentDefaultChoiceIndex =
     currentChoices.length > 0 && typeof defaultIdx === 'number' ? defaultIdx : null;
   // 结局只在叶子(ended)有意义。

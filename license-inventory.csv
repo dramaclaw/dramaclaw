@@ -664,6 +664,7 @@ frontend/src/__tests__/features/canvas/story/StoryBranchGraph.test.tsx,Elastic-2
 frontend/src/__tests__/features/canvas/story/StoryExperience.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/story/StoryPlayer.playback.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/story/choiceLoopBinding.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
+frontend/src/__tests__/features/canvas/story/compileGraphToInk.regression.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/story/compileGraphToInk.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/story/compileStoryGroup.test.ts,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation
 frontend/src/__tests__/features/canvas/story/evAd.test.tsx,Elastic-2.0,2026 SuperTale contributors,REUSE.toml aggregate annotation

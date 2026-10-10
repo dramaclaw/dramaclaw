@@ -213,7 +213,7 @@ export interface CompiledStory {
   knotByNodeId: Record<string, string>;
   /** 源节点 id → 选项窗口秒数(>0 才计时)。限时选项用。 */
   choiceTimeByNodeId: Record<string, number>;
-  /** 源节点 id → 默认选项的 order(超时自动选)。 */
+  /** 源节点 id → 过滤前默认选项索引，仅用于兼容旧产物；新产物使用 Ink choice-default tag。 */
   defaultChoiceIndexByNodeId: Record<string, number>;
   /** 叶子结局节点 id → 结局页标题/标(title=旁白,label=GE/NE/BE)。 */
   endingByNodeId: Record<string, StoryEnding>;
