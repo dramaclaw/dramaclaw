@@ -56,6 +56,8 @@ def display_metadata_for_task(task_type: str, payload: dict[str, Any] | None) ->
         "canvas_id",
         "node_id",
         "skill_id",
+        "batch_id",
+        "batch_size",
     ):
         value = str(payload.get(key) or "").strip()
         if value:

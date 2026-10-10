@@ -33,6 +33,12 @@ import { backendErrorToastMessage } from '@/lib/api-errors';
 import {
   stageSelectedBackgroundOutputForSkill,
 } from '@/features/canvas/application/selectedBackgroundSlot';
+import {
+  publishNodeActionAccepted,
+  publishNodeActionError,
+  publishNodeActionSuccess,
+  subscribeNodeAction,
+} from '@/features/canvas/application/nodeActionResult';
 import { canvasEventBus } from '@/features/canvas/application/canvasServices';
 import {
   type CanvasEdge,
@@ -1291,8 +1297,8 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
     }
   };
 
-  const handleSubmit = async (event: MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
+  const handleSubmit = async (event?: MouseEvent<HTMLButtonElement>) => {
+    event?.stopPropagation();
     if (!skill || !ready || isBusy) {
       return;
     }
@@ -1400,6 +1406,7 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
       if (resumeRunRef.current === runKey) {
         resumeRunRef.current = null;
       }
+      return { runId: response.run_id };
     } catch (error) {
       submitInFlightRef.current = false;
       setSubmitInFlight(false);
@@ -1425,8 +1432,20 @@ export const SkillNode = memo(({ id, data, width, selected }: SkillNodeProps) =>
           generationTaskJobId: null,
         });
       }
+      throw error;
     }
+    return {};
   };
+
+  useEffect(() => {
+    return subscribeNodeAction(({ nodeId, action, requestId }) => {
+      if (nodeId !== id || action !== 'run_skill') return;
+      publishNodeActionAccepted(requestId, id, action);
+      void handleSubmit()
+        .then((output) => publishNodeActionSuccess(requestId, id, action, output))
+        .catch((error) => publishNodeActionError(requestId, id, action, error));
+    });
+  }, [handleSubmit, id]);
 
   return (
     <div

@@ -37,6 +37,12 @@ describe("freezone projection helpers", () => {
     );
   });
 
+  it("keeps non-ascii projection scoped ids distinct after ascii sanitization", () => {
+    expect(scoped("asset:character:陈默", "projection_group_asset_character")).not.toBe(
+      scoped("asset:character:林小满", "projection_group_asset_character"),
+    );
+  });
+
   it("normalizes beat projections to the full beat workbench request", () => {
     expect(
       normalizePresetProjectionRequest({

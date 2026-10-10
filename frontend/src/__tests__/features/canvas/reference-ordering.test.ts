@@ -98,6 +98,26 @@ describe("upstreamNodesInEdgeOrder", () => {
 
     expect(ids(upstream)).toEqual(["a"]);
   });
+
+  it("excludes execution-only dependency edges from consumable upstream inputs", () => {
+    const nodes: Node[] = [{ id: "outline" }, { id: "anchor" }];
+    const edges = [
+      {
+        source: "outline",
+        target: "image",
+        data: { link_type: "dependency_for" },
+      },
+      {
+        source: "anchor",
+        target: "image",
+        data: { link_type: "media_input_for" },
+      },
+    ];
+
+    const upstream = upstreamNodesInEdgeOrder(nodes, edges, "image");
+
+    expect(ids(upstream)).toEqual(["anchor"]);
+  });
 });
 
 describe("orderedReferenceUrlsWithOwnFirst", () => {

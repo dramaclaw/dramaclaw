@@ -148,6 +148,47 @@ async def test_newapi_audio_uses_saved_custom_gateway_before_env(
     assert request.headers["authorization"] == "Bearer sk-custom-secret"
 
 
+@pytest.mark.asyncio
+async def test_newapi_audio_retries_transient_gateway_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolate_settings_db(monkeypatch, tmp_path)
+    save_custom_newapi_gateway(
+        base_url="https://custom.example",
+        api_key="sk-custom-secret",
+        activate=True,
+    )
+    sleeps: list[int] = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    monkeypatch.setattr(audio_node.asyncio, "sleep", fake_sleep)
+    with respx.mock(assert_all_called=True) as router:
+        route = router.post("https://custom.example/v1/audio/speech").mock(
+            side_effect=[
+                Response(502, text="read fal tts audio failed: connection reset by peer"),
+                Response(
+                    200,
+                    content=b"audio-bytes",
+                    headers={"content-type": "audio/mpeg"},
+                ),
+            ]
+        )
+
+        output_path = tmp_path / "audio.mp3"
+        await audio_node._write_newapi_audio_speech(
+            output_path=output_path,
+            model="LingShan-MU-11",
+            input_text="quiet piano",
+        )
+
+    assert output_path.read_bytes() == b"audio-bytes"
+    assert len(route.calls) == 2
+    assert sleeps == [1]
+
+
 def test_create_user_audio_voice_rejects_unsupported_extension(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -539,6 +580,85 @@ async def test_freezone_audio_speech_drama_first_person_uses_project_narrator(
             "emotion_prompt": "以第三人称旁白视角，用客观冷静的解说语气朗读",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_freezone_audio_preset_speech_does_not_require_reference_voice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict] = []
+    local_egress_context = object()
+
+    async def fake_write_edge_tts_speech(**kwargs):
+        calls.append(kwargs)
+        output_path = Path(kwargs["output_path"])
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"preset-speech")
+
+    monkeypatch.setattr(audio_node, "_write_edge_tts_speech", fake_write_edge_tts_speech)
+    monkeypatch.setattr(audio_node, "_duration_ms", lambda _path: 1234)
+
+    result = await audio_node.generate_freezone_audio_speech(
+        store=SimpleNamespace(),
+        username="alice",
+        project="demo",
+        project_dir=tmp_path,
+        job_id="speech-preset-1",
+        text="欢迎使用运动相机。",
+        emotion_prompt="自然、有活力",
+        speech_mode="preset",
+        # Previously generated workflows may still carry this retired default.
+        preset_model="qwen3-tts-flash",
+        preset_voice="Serena",
+        egress_context=local_egress_context,
+    )
+
+    assert result.model == "edge-tts"
+    assert result.voice_source == "preset:Serena"
+    assert result.voice_sha256 == ""
+    assert result.duration_ms == 1234
+    assert calls == [
+        {
+            "output_path": freezone_audio_speech_output_path(tmp_path, "speech-preset-1"),
+            "input_text": "欢迎使用运动相机。",
+            "voice": "zh-CN-XiaoxiaoNeural",
+            "egress_context": local_egress_context,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_edge_preset_writer_forwards_egress_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict = {}
+    local_egress_context = object()
+
+    class FakeEdgeTTSGenerator:
+        def __init__(self, *, voice, egress_context=None):
+            captured.update(voice=voice, egress_context=egress_context)
+
+        async def generate(self, **_kwargs):
+            return SimpleNamespace(success=True)
+
+    monkeypatch.setattr(
+        "novelvideo.generators.tts_generator.EdgeTTSGenerator",
+        FakeEdgeTTSGenerator,
+    )
+
+    await audio_node._write_edge_tts_speech(
+        output_path=tmp_path / "speech.mp3",
+        input_text="测试旁白。",
+        voice="zh-CN-XiaoxiaoNeural",
+        egress_context=local_egress_context,
+    )
+
+    assert captured == {
+        "voice": "zh-CN-XiaoxiaoNeural",
+        "egress_context": local_egress_context,
+    }
 
 
 @pytest.mark.asyncio

@@ -20,7 +20,9 @@ describe('generation task arbitration', () => {
       'body={"error":{"message":"Content failed safety review.","code":"moderation_blocked"}}';
     const error = new TaskCompletionError(rawError, 'failed', 'task-current');
 
-    expect(backendErrorToastMessage(error, t)).toBe('Content failed safety review.');
+    expect(backendErrorToastMessage(error, t)).toBe(
+      'common.generationContentPolicyBlocked',
+    );
     expect(resolveGenerationErrorDiagnostics(error)).toEqual({
       details: rawError,
       requestId: 'req-123',
@@ -36,7 +38,7 @@ describe('generation task arbitration', () => {
     const displayMessage = backendErrorToastMessage(error, t);
     const diagnostics = resolveGenerationErrorDiagnostics(error);
 
-    expect(displayMessage).toBe('Sensitive input image.');
+    expect(displayMessage).toBe('common.generationInputContentPolicyBlocked');
     expect(displayMessage).not.toContain(policyCode);
     expect(`${displayMessage}\n${diagnostics.details ?? ''}`).toContain(policyCode);
   });

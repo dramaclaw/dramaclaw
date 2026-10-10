@@ -4,10 +4,13 @@ import io
 import json
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
 
+import novelvideo.config as config
+import novelvideo.model_gateway_settings as gateway_settings
 from novelvideo.director_world import blockout
 from novelvideo.director_world.blockout.artifacts import (
     BlockoutGenerationError,
@@ -69,6 +72,14 @@ class FakeModel:
 
 @pytest.fixture(autouse=True)
 def default_model_names(monkeypatch):
+    # 固定在自定义网关（Advanced）：没配环境变量时落到设置页给这一行的逻辑名，
+    # 不随跑测试的机器上网关设置是什么而变。
+    monkeypatch.setattr(config, "uses_local_ce_runtime", lambda: True)
+    monkeypatch.setattr(
+        gateway_settings,
+        "get_effective_llm_config",
+        lambda: SimpleNamespace(is_brainclaw=False),
+    )
     monkeypatch.delenv("PREVIZ_BLOCKOUT_MODEL", raising=False)
     monkeypatch.delenv("FREEZONE_VISION_MODEL", raising=False)
     monkeypatch.delenv("PREVIZ_BLOCKOUT_REASONING_EFFORT", raising=False)
@@ -427,6 +438,14 @@ def test_the_model_has_its_own_settings_row(monkeypatch):
 
     monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "  ")
     assert resolve_blockout_model() == "DC-previz-blockout-LLM"
+
+    # 网关是 BrainClaw 时跟其它业务模型一样走 brainclaw。
+    monkeypatch.setattr(
+        gateway_settings,
+        "get_effective_llm_config",
+        lambda: SimpleNamespace(is_brainclaw=True),
+    )
+    assert resolve_blockout_model() == "brainclaw"
 
     monkeypatch.setenv("PREVIZ_BLOCKOUT_MODEL", "candidate-b")
     assert resolve_blockout_model() == "candidate-b"

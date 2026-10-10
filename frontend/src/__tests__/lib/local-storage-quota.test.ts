@@ -15,13 +15,59 @@ function quotaError(): DOMException {
   return new DOMException("quota", "QuotaExceededError");
 }
 
+function createTestStorage(): Storage {
+  const store = new Map<string, string>();
+  return {
+    get length() {
+      return store.size;
+    },
+    key(index: number) {
+      return [...store.keys()][index] ?? null;
+    },
+    getItem(key: string) {
+      return store.get(key) ?? null;
+    },
+    setItem(key: string, value: string) {
+      store.set(key, String(value));
+    },
+    removeItem(key: string) {
+      store.delete(key);
+    },
+    clear() {
+      store.clear();
+    },
+  };
+}
+
+const originalLocalStorage = window.localStorage;
+
+function installTestStorage(): void {
+  const storage = createTestStorage();
+  Object.defineProperty(globalThis, "localStorage", { value: storage, writable: true, configurable: true });
+  Object.defineProperty(window, "localStorage", { value: storage, writable: true, configurable: true });
+}
+
+function restoreOriginalStorage(): void {
+  Object.defineProperty(globalThis, "localStorage", {
+    value: originalLocalStorage,
+    writable: true,
+    configurable: true,
+  });
+  Object.defineProperty(window, "localStorage", {
+    value: originalLocalStorage,
+    writable: true,
+    configurable: true,
+  });
+}
+
 describe("safeLocalStorageSet", () => {
   beforeEach(() => {
-    window.localStorage.clear();
+    installTestStorage();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    restoreOriginalStorage();
   });
 
   it("writes straight through when there is room", () => {
@@ -38,7 +84,7 @@ describe("safeLocalStorageSet", () => {
     window.localStorage.setItem("junk", "big");
 
     const setItem = vi
-      .spyOn(Storage.prototype, "setItem")
+      .spyOn(window.localStorage, "setItem")
       .mockImplementationOnce(() => {
         throw quotaError();
       });
@@ -57,7 +103,7 @@ describe("safeLocalStorageSet", () => {
     const reclaim = vi.fn();
     const unregister = registerStorageReclaimer(reclaim);
 
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
       throw new Error("SecurityError");
     });
 
@@ -73,7 +119,7 @@ describe("safeLocalStorageSet", () => {
     const unregister = registerStorageReclaimer(() => {
       /* frees nothing */
     });
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
       throw quotaError();
     });
 
@@ -86,9 +132,9 @@ describe("safeLocalStorageSet", () => {
     const unregister = registerStorageReclaimer(() => {
       /* no key this reclaimer owns is freeable */
     });
-    const real = Storage.prototype.setItem;
+    const real = window.localStorage.setItem.bind(window.localStorage);
     let calls = 0;
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+    vi.spyOn(window.localStorage, "setItem").mockImplementation(function (
       this: Storage,
       k: string,
       v: string,
@@ -97,7 +143,7 @@ describe("safeLocalStorageSet", () => {
       // Initial write + post-reclaim retry both overflow; only after the
       // target key's own value is removed does the write fit.
       if (calls <= 2) throw quotaError();
-      return real.call(this, k, v);
+      return real(k, v);
     });
 
     const ok = safeLocalStorageSet("supertale-app", "payload");
@@ -125,7 +171,11 @@ describe("isStaleByTtl", () => {
 
 describe("pruneLocalStorageByPrefix", () => {
   beforeEach(() => {
-    window.localStorage.clear();
+    installTestStorage();
+  });
+
+  afterEach(() => {
+    restoreOriginalStorage();
   });
 
   it("removes matching keys the predicate rejects and keeps the rest", () => {
@@ -166,11 +216,12 @@ describe("pruneLocalStorageByPrefix", () => {
 
 describe("quotaSafeStateStorage", () => {
   beforeEach(() => {
-    window.localStorage.clear();
+    installTestStorage();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    restoreOriginalStorage();
   });
 
   it("reads and writes through like normal storage", () => {
@@ -184,7 +235,7 @@ describe("quotaSafeStateStorage", () => {
     const reclaim = vi.fn(() => window.localStorage.removeItem("junk"));
     const unregister = registerStorageReclaimer(reclaim);
     window.localStorage.setItem("junk", "big");
-    vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
+    vi.spyOn(window.localStorage, "setItem").mockImplementationOnce(() => {
       throw new DOMException("quota", "QuotaExceededError");
     });
 
@@ -196,7 +247,7 @@ describe("quotaSafeStateStorage", () => {
   });
 
   it("never throws even when storage is fully unavailable", () => {
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
       throw new DOMException("quota", "QuotaExceededError");
     });
     expect(() => quotaSafeStateStorage.setItem("k", "v")).not.toThrow();

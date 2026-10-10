@@ -133,14 +133,17 @@ def _registered_task_types() -> tuple[str, ...]:
 def test_registered_task_types_are_the_full_bridge_set() -> None:
     """Guards the iteration source itself: T1 is only meaningful if it sees them all."""
     task_types = _registered_task_types()
-    # 2026-09-29 由 19 → 20：新增 `freezone_image_to_blockout`（参考图转白模），
+    # 2026-09-29 新增 `freezone_image_to_blockout`（参考图转白模），
     # 它不声明投影需求，输入随任务 payload 走。
-    assert len(task_types) == 20, task_types
+    assert len(task_types) == 23, task_types
     assert {
         "mainline_sketch_from_context",
         "mainline_frame_from_context",
         "mainline_director_control_sketch",
         "freezone_audio_speech",
+        "freezone_workflow_confirm",
+        "freezone_image_vectorize",
+        "freezone_image_animate_gif",
     } <= set(task_types)
 
 

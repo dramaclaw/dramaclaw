@@ -20,6 +20,9 @@ import {
  */
 // i18n-exempt-start: 规范默认值，会写进画布 JSON；显示用 NODE_DISPLAY_NAME_KEYS
 export const DEFAULT_NODE_DISPLAY_NAME: Record<CanvasNodeType, string> = {
+  vectorSvgNode: '矢量图 · SVG',
+  animatedGifNode: '动态图 · GIF',
+  [CANVAS_NODE_TYPES.htmlArtifact]: '网页',
   [CANVAS_NODE_TYPES.upload]: '上传资源',
   [CANVAS_NODE_TYPES.imageEdit]: 'AI 图片',
   [CANVAS_NODE_TYPES.imageGen]: '图片节点',
@@ -75,11 +78,47 @@ function resolveExportResultDefault(data: Partial<CanvasNodeData>): string {
   return EXPORT_RESULT_DISPLAY_NAME[resolveExportResultKind(data)];
 }
 
+/**
+ * 未命名节点的自动序号：新建时写进 data.autoTitleIndex，默认名后面拼上它
+ * （「文本1」「文本2」「图片节点1」…），避免同类型节点重名分不清。
+ *
+ * 刻意不把序号写进 displayName —— displayName 的语义是「用户自己起的标题」，
+ * isNodeUsingDefaultDisplayName / UploadNode 的自动改名都依赖这一点。
+ */
 export function getDefaultNodeDisplayName(type: CanvasNodeType, data: Partial<CanvasNodeData>): string {
-  if (type === CANVAS_NODE_TYPES.exportImage) {
-    return resolveExportResultDefault(data);
+  const base =
+    type === CANVAS_NODE_TYPES.exportImage
+      ? resolveExportResultDefault(data)
+      : DEFAULT_NODE_DISPLAY_NAME[type];
+  const index = (data as { autoTitleIndex?: unknown }).autoTitleIndex;
+  return typeof index === 'number' && Number.isFinite(index) && index > 0
+    ? `${base}${index}`
+    : base;
+}
+
+/**
+ * 下一个可用的自动序号（同类型节点内）。
+ *
+ * 取「已用序号最大值」与「同类型节点个数」两者的较大值 +1：
+ * - 已用最大值 +1 保证不与现存节点重号（删掉中间的节点也不会撞）；
+ * - 同类型个数兜底老画布——历史节点没有 autoTitleIndex，直接从 1 开始会和它们
+ *   显示的无序号默认名混在一起，用个数抬高起点可以避开。
+ */
+export function nextAutoTitleIndex(
+  type: CanvasNodeType,
+  nodes: ReadonlyArray<{ type?: string | null; data?: unknown }>,
+): number {
+  let maxIndex = 0;
+  let sameTypeCount = 0;
+  for (const node of nodes) {
+    if (node.type !== type) continue;
+    sameTypeCount += 1;
+    const raw = (node.data as { autoTitleIndex?: unknown } | undefined)?.autoTitleIndex;
+    if (typeof raw === 'number' && Number.isFinite(raw) && raw > maxIndex) {
+      maxIndex = raw;
+    }
   }
-  return DEFAULT_NODE_DISPLAY_NAME[type];
+  return Math.max(maxIndex, sameTypeCount) + 1;
 }
 
 /** 默认名的显示版本，跟随界面语言。 */
@@ -110,6 +149,30 @@ export function resolveNodeDisplayName(type: CanvasNodeType, data: Partial<Canva
   }
 
   return getDefaultNodeDisplayName(type, data);
+}
+
+/**
+ * 给「没有自定义标题」的新节点补上自动序号，并把标题写成带序号的默认名。
+ *
+ * 两个字段都要写：
+ * - `displayName`：各节点定义的 createDefaultData() 本就把默认名预填进 displayName，
+ *   只写 autoTitleIndex 不会改变渲染结果，所以标题要一起覆盖成带序号的默认名；
+ * - `autoTitleIndex`：让 getDefaultNodeDisplayName 也算出同样的带序号默认名，
+ *   于是 isNodeUsingDefaultDisplayName 仍判定为「用的是默认名」（UploadNode 的
+ *   自动改名依赖这一点），用户改标题后序号自然不再露出。
+ *
+ * 调用方已经给了 displayName（各类结果节点如「抠图」「高清放大」）→ 原样返回、不发号。
+ */
+export function withAutoTitleIndex<T extends Partial<CanvasNodeData>>(
+  type: CanvasNodeType,
+  data: T,
+  existingNodes: ReadonlyArray<{ type?: string | null; data?: unknown }>,
+): T {
+  const explicitTitle = typeof data.displayName === 'string' ? data.displayName.trim() : '';
+  if (explicitTitle) return data;
+  const autoTitleIndex = nextAutoTitleIndex(type, existingNodes);
+  const withIndex = { ...data, autoTitleIndex };
+  return { ...withIndex, displayName: getDefaultNodeDisplayName(type, withIndex) };
 }
 
 /** 渲染用：用户没改过名就按当前语言显示，改过就原样显示。 */

@@ -1,0 +1,150 @@
+{
+  "plan": {
+    "schema_version": "freezone_workflow_plan.v1",
+    "skill": {
+      "id": "page"
+    },
+    "nodes": [
+      {
+        "id": "text",
+        "node_type": "textAnnotationNode",
+        "data": {
+          "content": "Build a page",
+          "semanticOutputRole": "input_text"
+        }
+      },
+      {
+        "id": "image",
+        "node_type": "imageGenNode",
+        "data": {
+          "workflowCatalog": {
+            "recipeId": "image"
+          }
+        }
+      },
+      {
+        "id": "html",
+        "node_type": "htmlArtifactNode",
+        "prompt": "Create page",
+        "data": {
+          "workflowCatalog": {
+            "recipeId": "html"
+          }
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "text",
+        "target": "html",
+        "link_type": "prompt_for"
+      },
+      {
+        "source": "image",
+        "target": "html",
+        "link_type": "media_input_for"
+      }
+    ]
+  },
+  "compiled": {
+    "ok": true,
+    "status": "workflow_graph_commands_created",
+    "schema_version": "canvas_chat_commands.v1",
+    "workflow_instance_id": "workflow_plan_a66ada61a48e0d9ffe79b4c3",
+    "run_after_create": false,
+    "commands": [
+      {
+        "type": "create_node",
+        "client_id": "text",
+        "node_type": "textAnnotationNode",
+        "position": {
+          "x": 80,
+          "y": 80
+        },
+        "data": {
+          "content": "Build a page",
+          "semanticOutputRole": "input_text",
+          "title": "text",
+          "workflowInstanceId": "workflow_plan_a66ada61a48e0d9ffe79b4c3",
+          "workflowPlanNodeId": "text"
+        }
+      },
+      {
+        "type": "create_node",
+        "client_id": "image",
+        "node_type": "imageGenNode",
+        "position": {
+          "x": 1440,
+          "y": 300
+        },
+        "data": {
+          "workflowCatalog": {
+            "recipeId": "image"
+          },
+          "workflowInstanceId": "workflow_plan_a66ada61a48e0d9ffe79b4c3",
+          "workflowPlanNodeId": "image",
+          "workflowConfigConfirmed": true,
+          "workflowConfigSource": "workflow_graph_approval"
+        }
+      },
+      {
+        "type": "html_artifact",
+        "action": "prepare",
+        "client_id": "html",
+        "position": {
+          "x": 80,
+          "y": 520
+        },
+        "workflow_data": {
+          "workflowCatalog": {
+            "recipeId": "html"
+          },
+          "prompt": "Create page",
+          "workflowInstanceId": "workflow_plan_a66ada61a48e0d9ffe79b4c3",
+          "workflowPlanNodeId": "html"
+        }
+      },
+      {
+        "type": "create_edge",
+        "source": "text",
+        "target": "html",
+        "link_type": "prompt_for"
+      },
+      {
+        "type": "create_edge",
+        "source": "image",
+        "target": "html",
+        "link_type": "media_input_for"
+      },
+      {
+        "type": "group_nodes",
+        "node_ids": [
+          "text",
+          "image",
+          "html"
+        ],
+        "label": "\u5de5\u4f5c\u6d41"
+      },
+      {
+        "type": "layout_nodes",
+        "node_ids": [
+          "text",
+          "image",
+          "html"
+        ],
+        "mode": "grid"
+      },
+      {
+        "type": "select_nodes",
+        "node_ids": [
+          "text",
+          "image",
+          "html"
+        ],
+        "focus": true
+      }
+    ],
+    "skipped_edges": [],
+    "warnings": []
+  }
+}

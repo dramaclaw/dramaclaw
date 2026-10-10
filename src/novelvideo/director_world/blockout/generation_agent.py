@@ -38,7 +38,7 @@ from novelvideo.director_world.blockout.scene_ir import (
     SceneIR,
 )
 from novelvideo.egress_context import TrustedEgressContext
-from novelvideo.official_defaults import DEFAULT_PREVIZ_BLOCKOUT_MODEL
+from novelvideo.official_defaults import ADVANCED_TEXT_MODEL_BY_ENV
 
 BLOCKOUT_MODEL_ENV = "PREVIZ_BLOCKOUT_MODEL"
 BLOCKOUT_REASONING_EFFORT_ENV = "PREVIZ_BLOCKOUT_REASONING_EFFORT"
@@ -59,15 +59,18 @@ def resolve_blockout_model(model_override: str | None = None) -> str:
     """The model one job runs on.
 
     A non-blank `model_override` (the user's pick in the dialog) wins; otherwise
-    `PREVIZ_BLOCKOUT_MODEL`, otherwise the logical name the settings page maps
-    for this feature, like every other business model.
+    `PREVIZ_BLOCKOUT_MODEL`, otherwise the route every other business model
+    takes: BrainClaw when the gateway is BrainClaw, else the logical name the
+    settings page maps for this feature.
     """
-    from novelvideo.config import get_newapi_text_model_name
+    from novelvideo.config import get_effective_newapi_text_model_name
 
-    override = (model_override or "").strip()
-    if override:
-        return override
-    return get_newapi_text_model_name(BLOCKOUT_MODEL_ENV, DEFAULT_PREVIZ_BLOCKOUT_MODEL)
+    selected = (model_override or "").strip() or os.environ.get(BLOCKOUT_MODEL_ENV, "").strip()
+    if selected:
+        return selected
+    return get_effective_newapi_text_model_name(
+        BLOCKOUT_MODEL_ENV, ADVANCED_TEXT_MODEL_BY_ENV[BLOCKOUT_MODEL_ENV]
+    )
 
 
 def resolve_blockout_model_settings() -> dict | None:

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, ValidationError, ValidationInfo, model_va
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
+from novelvideo.brainclaw_contract import BrainClawProfile
 from novelvideo.config import (
     get_newapi_structured_output_model_settings,
     get_newapi_text_pydantic_model,
@@ -670,7 +671,7 @@ class AssetCompiler:
         agent = Agent(
             get_newapi_text_pydantic_model(
                 "EPISODE_SCENE_RECONCILE_MODEL",
-                "gemini-3.5-flash",
+                brainclaw_profile=BrainClawProfile.EPISODE_SCENE_RECONCILIATION,
                 capability="text.generate.agent",
             ),
             system_prompt=BASE_SCENE_RECONCILE_PROMPT,
@@ -981,7 +982,7 @@ class AssetCompiler:
         agent = Agent(
             get_newapi_text_pydantic_model(
                 "NARRATED_SCENE_ASSET_MODEL",
-                "gemini-3.5-flash",
+                brainclaw_profile=BrainClawProfile.NARRATED_SCENE_ASSET_PLANNING,
                 capability="text.generate.agent",
             ),
             system_prompt=NARRATED_SCENE_PROMPT,
@@ -1064,7 +1065,7 @@ class AssetCompiler:
         agent = Agent(
             get_newapi_text_pydantic_model(
                 "EPISODE_SCENE_PLANNER_MODEL",
-                "gemini-3.5-flash",
+                brainclaw_profile=BrainClawProfile.EPISODE_SCENE_PLANNING,
                 capability="text.generate.agent",
             ),
             system_prompt=DERIVED_SCENE_PROMPT,
@@ -1251,7 +1252,7 @@ class AssetCompiler:
         agent = Agent(
             get_newapi_text_pydantic_model(
                 "EPISODE_PROP_PLANNER_MODEL",
-                "gemini-3.5-flash",
+                brainclaw_profile=BrainClawProfile.EPISODE_PROP_PLANNING,
                 capability="text.generate.agent",
             ),
             system_prompt=BLOCK_PROP_PROMPT,

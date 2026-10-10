@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,8 @@ from novelvideo.task_backend.registry import register_project_task_runner
 from novelvideo.task_backend.subprocesses import run_project_subprocess
 from novelvideo.task_identity import project_task_state_key
 from novelvideo.task_state import get_task_manager
+
+logger = logging.getLogger(__name__)
 
 
 def _log(manager, ctx: ProjectContext, envelope: dict[str, Any], message: str) -> None:
@@ -68,6 +71,9 @@ def _append_freezone_video_node_history(
     history_mode = payload.get("requested_gen_mode") or payload.get("gen_mode")
     if history_mode:
         extra["gen_mode"] = str(history_mode)
+    for key in ("generation_attempt_id", "product_operation_id"):
+        if payload.get(key):
+            extra[key] = str(payload[key])
 
     record = build_node_history_record(
         task_type="freezone_video_gen",
@@ -926,6 +932,43 @@ async def _run_freezone_video_gen_async(
         "output_path": str(out_path),
         "output_url": make_static_url_for_context(ctx, rel),
     }
+    if bool(payload.get("image_animate_gif")):
+        from novelvideo.task_backend.client import enqueue_project_task
+
+        gif_job_id = f"{job_id}-gif"
+        try:
+            queued = await enqueue_project_task(
+                ctx,
+                task_type="freezone_image_animate_gif",
+                product_surface="freezone",
+                queue_kind="ffmpeg",
+                episode=0,
+                scope=gif_job_id,
+                payload={
+                    "job_id": gif_job_id,
+                    "project_dir": str(project_dir),
+                    "video_path": str(out_path),
+                },
+            )
+            result.update(
+                {
+                    "gif_task_type": "freezone_image_animate_gif",
+                    "gif_job_id": gif_job_id,
+                    "gif_task_key": project_task_state_key(
+                        "freezone_image_animate_gif", ctx.project_id, 0, scope=gif_job_id
+                    ),
+                    "gif_queue": queued.queue,
+                }
+            )
+        except Exception as exc:
+            # Preserve the paid video so the canvas can retry only local conversion.
+            logger.warning(
+                "automatic GIF dispatch failed project=%s video_job=%s: %s",
+                ctx.project_id,
+                job_id,
+                exc,
+            )
+            result["gif_enqueue_error"] = "GIF 转换任务未能启动，请重试转换。"
     history_record = _append_freezone_video_node_history(
         ctx=ctx,
         project_dir=project_dir,

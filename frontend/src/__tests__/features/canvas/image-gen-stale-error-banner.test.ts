@@ -288,6 +288,16 @@ describe("stale generation-error banner", () => {
     expect(staleErrorOffenders(source)).toEqual([]);
   });
 
+  // 提交编排（handleSubmit / 产物回填）住在共用 hook 里，工作流与故事板两个视图
+  // 共用同一份。写图路径搬过去了，扫描器也得跟过去，否则这条护栏会空跑。
+  it("clears the failure state on every image write in the shared image form hook", () => {
+    expect(
+      staleErrorOffenders(
+        read("src/features/canvas/nodes/shared/useImageGenerationForm.ts"),
+      ),
+    ).toEqual([]);
+  });
+
   // 四个编辑器浮层都会往节点上写一张新图。超分是唯一原地改写源节点的
   // （其余三个都 addNode 建新结果节点），所以只有它会真的留下上一轮的失败残影；
   // 另外三个一并纳入，是为了挡住「以后被改成原地写」时悄悄退化。
@@ -338,19 +348,24 @@ describe("stale generation-error banner", () => {
     expect(successPatch).toContain("generationErrorRequestId: null,");
   });
 
+  // 计数器住在共用 hook（handleSubmit 在那里），作废动作由宿主的换图路径触发，
+  // 两边靠 invalidateInFlightGeneration 接上；断言拆成两段就是为了盯住这个接缝。
   it("invalidates late batch writes when a history image replaces the result", () => {
-    const source = read("src/features/canvas/nodes/ImageGenNode.tsx");
-    const restoreStart = source.indexOf(
+    const host = read("src/features/canvas/nodes/ImageGenNode.tsx");
+    const restoreStart = host.indexOf(
       "const handleRestoreHistory = useCallback",
     );
-    const restoreEnd = source.indexOf("// 生成结束（成功/失败）", restoreStart);
-    const restoreHandler = source.slice(restoreStart, restoreEnd);
-    const submitStart = source.indexOf("const handleSubmit = useCallback");
-    const submitEnd = source.indexOf("// ===== Step B", submitStart);
-    const submitHandler = source.slice(submitStart, submitEnd);
+    const restoreEnd = host.indexOf("// 生成结束（成功/失败）", restoreStart);
+    const restoreHandler = host.slice(restoreStart, restoreEnd);
+    expect(restoreHandler).toContain("invalidateInFlightGeneration()");
 
-    expect(source).toContain("const generationAttemptRef = useRef(0)");
-    expect(restoreHandler).toContain("generationAttemptRef.current += 1");
+    const hook = read("src/features/canvas/nodes/shared/useImageGenerationForm.ts");
+    const submitStart = hook.indexOf("const handleSubmit = useCallback");
+    const submitEnd = hook.indexOf("useEffect(() => {", submitStart);
+    const submitHandler = hook.slice(submitStart, submitEnd);
+
+    expect(hook).toContain("const generationAttemptRef = useRef(0)");
+    expect(hook).toContain("generationAttemptRef.current += 1");
     expect(submitHandler).toContain(
       "generationAttemptRef.current === generationAttempt",
     );

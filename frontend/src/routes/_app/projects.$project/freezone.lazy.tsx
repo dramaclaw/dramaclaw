@@ -1,111 +1,14 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { createLazyFileRoute, useRouterState } from "@tanstack/react-router";
-import { ReactFlowProvider } from "@xyflow/react";
-import { useEffect, useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { createLazyFileRoute } from "@tanstack/react-router";
 
-import type { SupertaleProjectSummary } from "@/api/projects";
-import { GlobalErrorDialog } from "@/components/GlobalErrorDialog";
-import {
-  subscribeOpenGlobalErrorDialog,
-  type GlobalErrorDialogDetail,
-} from "@/features/app/errorDialogEvents";
-import { FreezoneShell } from "@/features/freezone/FreezoneShell";
-import { canvasIdForFreezoneEntry } from "@/features/freezone/projections";
-import { useAllProjectSummaries } from "@/lib/queries/projects";
-import { readLastCanvas, writeUrl } from "@/lib/url-params";
-import { useAuthStore } from "@/stores/auth-store";
-
+/**
+ * 这条路由本身不再渲染画布。画布由 FreezoneCanvasHost 挂在 _app.tsx 的路由动画
+ * 容器之外，好让顶栏在「虾画 / 虾集」之间切换时不把它整棵卸载重建；这里只保留
+ * 路由本身，作为「当前在虾画」的地址标记 —— 宿主正是靠 pathname 判断显示与激活。
+ */
 function FreezoneProjectRoute() {
-  const { t } = useTranslation();
-  const { project } = Route.useParams();
-  const username = useAuthStore((state) => state.username);
-  const { data: projects, isLoading } = useAllProjectSummaries();
-  const [globalError, setGlobalError] = useState<GlobalErrorDialogDetail | null>(null);
-
-  // Read `?canvas` from the router's location so it stays consistent with an
-  // in-flight navigation (tanstack throttles history onto a microtask, so
-  // window.location — and any raw readUrl() — lags a queued canvas switch).
-  // This subscription also re-renders the route when the canvas param changes,
-  // replacing the old raw popstate listener.
-  const canvasParam = useRouterState({
-    select: (s) => {
-      const canvas = (s.location.search as { canvas?: unknown }).canvas;
-      return typeof canvas === "string" && canvas.length > 0 ? canvas : null;
-    },
-  });
-
-  useEffect(() => subscribeOpenGlobalErrorDialog(setGlobalError), []);
-
-  const freezoneProjects = useMemo<SupertaleProjectSummary[]>(
-    () =>
-      (projects ?? []).map((item) => ({
-        id: item.id,
-        name: item.name,
-        display_name: item.name,
-        updated_at: item.updatedAt,
-        episode_count: item.episodeCount,
-      })),
-    [projects],
-  );
-  const matchedProject = useMemo(
-    () =>
-      freezoneProjects.find((item) => item.id === project) ??
-      freezoneProjects.find((item) => item.name === project) ??
-      null,
-    [freezoneProjects, project],
-  );
-
-  if (isLoading || !projects) {
-    return (
-      <div className="-m-6 flex h-[calc(100%+3rem)] items-center justify-center bg-bg-dark text-text-muted">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-accent border-t-transparent" />
-      </div>
-    );
-  }
-
-  if (!matchedProject) {
-    return (
-      <div className="-m-6 flex h-[calc(100%+3rem)] items-center justify-center bg-bg-dark">
-        <div className="max-w-md rounded-2xl border border-border-default bg-surface px-6 py-8 text-center">
-          <div className="mb-2 text-base font-medium text-text">{t("project.notFound")}</div>
-          <div className="mb-6 text-sm text-text-muted">
-            {t("project.notFoundDescriptionPrefix")} <code className="rounded bg-bg-dark px-1 py-0.5">{project}</code>{t("project.notFoundDescriptionSuffix")}
-          </div>
-          <button
-            type="button"
-            onClick={() => writeUrl({ project: null, canvas: null })}
-            className="rounded-lg bg-accent/90 px-4 py-2 text-sm text-white transition hover:bg-accent"
-          >
-            {t("project.backToProjects")}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  const canvasId = canvasIdForFreezoneEntry({
-    explicitCanvasId: canvasParam ?? readLastCanvas(matchedProject.id),
-    username,
-  });
-
-  return (
-    <ReactFlowProvider>
-      <div className="-m-6 h-[calc(100%+3rem)] w-[calc(100%+3rem)] bg-bg-dark">
-        <FreezoneShell project={matchedProject} canvasId={canvasId} />
-        <GlobalErrorDialog
-          isOpen={Boolean(globalError)}
-          title={globalError?.title ?? ""}
-          message={globalError?.message ?? ""}
-          details={globalError?.details}
-          copyText={globalError?.copyText}
-          variant={globalError?.variant}
-          onClose={() => setGlobalError(null)}
-        />
-      </div>
-    </ReactFlowProvider>
-  );
+  return null;
 }
 
 export const Route = createLazyFileRoute("/_app/projects/$project/freezone")({

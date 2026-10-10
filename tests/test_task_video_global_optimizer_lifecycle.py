@@ -169,3 +169,74 @@ async def test_global_optimize_video_closes_cognee_store_on_failure(monkeypatch,
         "optimize_single_beat",
         "close",
     ]
+
+
+@pytest.mark.asyncio
+async def test_global_optimize_video_continues_after_consecutive_model_failures(
+    monkeypatch, tmp_path
+):
+    from novelvideo import cognee
+    from novelvideo.agents import global_video_optimizer
+    from novelvideo.task_backend.runners import video
+    from novelvideo.utils.path_resolver import PathResolver
+
+    beats = [{"beat_number": beat, "visual_description": "frame"} for beat in range(1, 6)]
+    for beat in range(1, 6):
+        sketch_path = PathResolver(str(tmp_path), 1).sketch(beat)
+        sketch_path.parent.mkdir(parents=True, exist_ok=True)
+        sketch_path.write_bytes(b"fake-png")
+
+    attempts: list[int] = []
+    logs: list[str] = []
+
+    class FakeTaskManager:
+        def update_progress_for_project(self, *args, **kwargs):
+            logs.extend(kwargs.get("logs") or [])
+
+    class FakeCogneeStore:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def initialize(self):
+            pass
+
+        async def load_graph_state(self):
+            pass
+
+        async def close(self):
+            pass
+
+    class FakeOptimizer:
+        async def optimize_single_beat(self, **kwargs):
+            attempts.append(kwargs["beat"]["beat_number"])
+            raise RuntimeError("invalid structured output")
+
+    monkeypatch.setattr(video, "get_task_manager", lambda: FakeTaskManager())
+    monkeypatch.setattr(cognee, "CogneeStore", FakeCogneeStore)
+    monkeypatch.setattr(
+        global_video_optimizer,
+        "prepare_global_optimizer_input",
+        lambda **kwargs: (["grid.png"], {}, len(beats)),
+    )
+    monkeypatch.setattr(
+        global_video_optimizer,
+        "get_global_video_optimizer",
+        lambda: FakeOptimizer(),
+    )
+
+    with pytest.raises(RuntimeError, match="Beat 5: invalid structured output"):
+        await video._run_global_optimize_video_async(
+            {
+                "episode": 1,
+                "payload": {
+                    "episode": 1,
+                    "beats": beats,
+                    "characters": [],
+                    "output_dir": str(tmp_path),
+                },
+            },
+            _project_ctx(tmp_path),
+        )
+
+    assert attempts == [1, 2, 3, 4, 5]
+    assert not any("提前停止全局优化" in message for message in logs)

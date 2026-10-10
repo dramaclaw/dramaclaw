@@ -1,12 +1,27 @@
+import sqlite3
+import time
+from types import SimpleNamespace
+
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
 from novelvideo.api.routes import chat as chat_route
 from novelvideo.chat.store import ChatScope
+from novelvideo.freezone import canvas_command_bridge
+from novelvideo.freezone.canvas_command_bridge import (
+    put_pending_canvas_command,
+    put_pending_clarification_event,
+    put_pending_skill_studio_event,
+    wait_canvas_command_result,
+    wait_clarification_result,
+    wait_skill_studio_result,
+)
 
 
 @pytest.mark.anyio
-async def test_send_scope_changed_returns_none_when_client_disconnected(monkeypatch) -> None:
+async def test_send_scope_changed_returns_none_when_client_disconnected(
+    monkeypatch,
+) -> None:
     class DisconnectedWebSocket:
         async def send_json(self, payload):
             raise WebSocketDisconnect(code=1006)
@@ -31,11 +46,2095 @@ def test_ws_connect_does_not_prewarm_default_home_scope() -> None:
 
 
 def test_ws_connect_can_prewarm_non_home_scope() -> None:
-    assert chat_route._should_prewarm_on_ws_connect(ChatScope(kind="project", id="project_a")) is True
+    assert (
+        chat_route._should_prewarm_on_ws_connect(
+            ChatScope(kind="project", id="project_a")
+        )
+        is True
+    )
 
 
 @pytest.mark.anyio
-async def test_ai_assistant_access_check_uses_chat_feature_key(monkeypatch) -> None:
+async def test_codex_cancel_targets_exact_scope_and_business_turn(monkeypatch) -> None:
+    calls = []
+    scope = chat_route.ChatScopePayload(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvasId="canvas-a",
+        agentId="main",
+    )
+    payload = chat_route.CancelChatTurnRequest(scope=scope, turn_id="business-a")
+
+    monkeypatch.setattr(chat_route.chat_service, "get_chat_backend_name", lambda: "codex")
+
+    async def allow_project(_user, requested_scope):
+        assert requested_scope.id == "project-a"
+        return SimpleNamespace()
+
+    async def interrupt(username, scope_key, business_turn_id):
+        calls.append((username, scope_key, business_turn_id))
+        return True
+
+    monkeypatch.setattr(chat_route, "_project_context_for_scope", allow_project)
+    monkeypatch.setattr(chat_route.chat_service, "interrupt_active_codex_turn", interrupt)
+
+    result = await chat_route.cancel_chat_turn(
+        {"username": "alice"}, payload=payload
+    )
+
+    expected_scope_key = chat_route.chat_service._codex_scope_key(
+        "project-a", agent_profile="freezone:main", canvas_id="canvas-a"
+    )
+    assert result == {"ok": True, "data": {"cancelled": True}}
+    assert calls == [("alice", expected_scope_key, "business-a")]
+
+
+@pytest.mark.anyio
+async def test_codex_cancel_requires_scope_and_business_turn(monkeypatch) -> None:
+    monkeypatch.setattr(chat_route.chat_service, "get_chat_backend_name", lambda: "codex")
+
+    with pytest.raises(chat_route.HTTPException) as missing:
+        await chat_route.cancel_chat_turn({"username": "alice"}, payload=None)
+    assert missing.value.status_code == 400
+
+    payload = chat_route.CancelChatTurnRequest(
+        scope=chat_route.ChatScopePayload(kind="home"), turn_id=" "
+    )
+    with pytest.raises(chat_route.HTTPException) as blank:
+        await chat_route.cancel_chat_turn({"username": "alice"}, payload=payload)
+    assert blank.value.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_stale_codex_cancel_does_not_force_release_a_new_turn_lock(
+    monkeypatch,
+) -> None:
+    releases = []
+    async def no_interrupt(*_args):
+        return False
+
+    monkeypatch.setattr(chat_route.chat_service, "get_chat_backend_name", lambda: "codex")
+    monkeypatch.setattr(
+        chat_route.chat_service,
+        "interrupt_active_codex_turn",
+        no_interrupt,
+    )
+    monkeypatch.setattr(
+        chat_route.chat_service,
+        "force_release_chat_run_lock",
+        lambda *args: releases.append(args),
+    )
+    payload = chat_route.CancelChatTurnRequest(
+        scope=chat_route.ChatScopePayload(kind="home"), turn_id="business-old"
+    )
+
+    result = await chat_route.cancel_chat_turn(
+        {"username": "alice"}, payload=payload
+    )
+
+    assert result == {"ok": True, "data": {"cancelled": False}}
+    assert releases == []
+
+
+@pytest.mark.anyio
+async def test_codex_cancel_without_turn_identity_fails_closed_and_keeps_lock(
+    monkeypatch, tmp_path
+) -> None:
+    from novelvideo.chat import service as chat_service
+
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(chat_service, "get_chat_backend_name", lambda: "codex")
+
+    original_lock = chat_service._acquire_chat_run_lock("alice", "")
+    try:
+        with pytest.raises(chat_route.HTTPException) as missing:
+            await chat_route.cancel_chat_turn({"username": "alice"})
+        assert missing.value.status_code == 400
+        with pytest.raises(RuntimeError, match="正在处理中"):
+            chat_service._acquire_chat_run_lock("alice", "")
+    finally:
+        chat_service._release_chat_run_lock("alice", "", original_lock)
+
+
+@pytest.mark.anyio
+async def test_hermes_cancel_recovers_stranded_home_lock(monkeypatch, tmp_path) -> None:
+    from novelvideo.chat import hermes_pool
+    from novelvideo.chat import service as chat_service
+
+    class IdleHermesPool:
+        async def close_user(self, _username):
+            return False
+
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(chat_service, "get_chat_backend_name", lambda: "hermes")
+    monkeypatch.setattr(hermes_pool, "pool", IdleHermesPool())
+    chat_service._acquire_chat_run_lock("alice", "")
+
+    result = await chat_route.cancel_chat_turn({"username": "alice"})
+
+    assert result == {"ok": True, "data": {"cancelled": False}}
+    next_lock = chat_service._acquire_chat_run_lock("alice", "")
+    chat_service._release_chat_run_lock("alice", "", next_lock)
+
+
+@pytest.mark.anyio
+async def test_hermes_cancel_error_recovers_stranded_home_lock(
+    monkeypatch, tmp_path
+) -> None:
+    from novelvideo.chat import hermes_pool
+    from novelvideo.chat import service as chat_service
+
+    class FailingHermesPool:
+        async def close_user(self, _username):
+            raise RuntimeError("worker registry unavailable")
+
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(chat_service, "get_chat_backend_name", lambda: "hermes")
+    monkeypatch.setattr(hermes_pool, "pool", FailingHermesPool())
+    chat_service._acquire_chat_run_lock("alice", "")
+
+    result = await chat_route.cancel_chat_turn({"username": "alice"})
+
+    assert result == {"ok": True, "data": {"cancelled": False}}
+    next_lock = chat_service._acquire_chat_run_lock("alice", "")
+    chat_service._release_chat_run_lock("alice", "", next_lock)
+
+
+@pytest.mark.anyio
+async def test_cancel_does_not_force_release_while_interrupt_is_settling(
+    monkeypatch,
+) -> None:
+    releases = []
+
+    async def active_turn_cancelled(_username, _scope_key, _business_turn_id):
+        return True
+
+    monkeypatch.setattr(
+        chat_route.chat_service, "get_chat_backend_name", lambda: "codex"
+    )
+    monkeypatch.setattr(
+        chat_route.chat_service,
+        "interrupt_active_codex_turn",
+        active_turn_cancelled,
+    )
+    monkeypatch.setattr(
+        chat_route.chat_service,
+        "force_release_chat_run_lock",
+        lambda *args: releases.append(args),
+    )
+
+    result = await chat_route.cancel_chat_turn(
+        {"username": "alice"},
+        payload=chat_route.CancelChatTurnRequest(
+            scope=chat_route.ChatScopePayload(kind="home"),
+            turn_id="business-a",
+        ),
+    )
+
+    assert result == {"ok": True, "data": {"cancelled": True}}
+    assert releases == []
+
+
+@pytest.mark.anyio
+async def test_cancel_stays_best_effort_when_backend_resolution_fails(
+    monkeypatch,
+) -> None:
+    releases = []
+
+    def fail_backend_resolution():
+        raise RuntimeError("configured backend is unavailable")
+
+    monkeypatch.setattr(
+        chat_route.chat_service, "get_chat_backend_name", fail_backend_resolution
+    )
+    monkeypatch.setattr(
+        chat_route.chat_service,
+        "force_release_chat_run_lock",
+        lambda *args: releases.append(args),
+    )
+
+    result = await chat_route.cancel_chat_turn({"username": "alice"})
+
+    assert result == {"ok": True, "data": {"cancelled": False}}
+    assert releases == []
+
+
+def test_scope_from_model_preserves_freezone_canvas_scope() -> None:
+    scope = chat_route._scope_from_model(
+        chat_route.ChatScopePayload(
+            kind="project",
+            id="project-a",
+            surface="freezone",
+            canvasId="canvas-a",
+            agentId="agent-2",
+        )
+    )
+
+    assert scope == ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="agent-2",
+    )
+
+
+def test_scope_from_model_ignores_agent_for_director_scope() -> None:
+    scope = chat_route._scope_from_model(
+        chat_route.ChatScopePayload(
+            kind="project",
+            id="project-a",
+            surface="director",
+            agentId="agent-2",
+        )
+    )
+
+    assert scope == ChatScope(kind="project", id="project-a", surface="director")
+
+
+def test_freezone_canvas_bridge_dir_is_agent_scoped(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+
+    main_dir = chat_route._canvas_bridge_dir("admin", profile="freezone:main")
+    second_dir = chat_route._canvas_bridge_dir("admin", profile="freezone:agent-2")
+
+    assert main_dir != second_dir
+    assert main_dir.parent == second_dir.parent
+    assert main_dir.parent.name == "supertale_canvas_command_bridge"
+    assert ".hermes-freezone" in main_dir.parts
+
+
+def test_canvas_command_wait_writes_timeout_result(tmp_path) -> None:
+    bridge_dir = tmp_path / "bridge"
+    result = wait_canvas_command_result(
+        "bridge-a",
+        timeout_seconds=0,
+        poll_seconds=0.01,
+        bridge_dir=bridge_dir,
+        timeout_result={
+            "ok": False,
+            "tool_call_status": "failed",
+            "canvas_apply_status": "timeout",
+            "cancelled": True,
+            "errors": ["Timed out waiting for frontend canvas command result."],
+        },
+    )
+
+    assert result is not None
+    assert result["ok"] is False
+    assert result["canvas_apply_status"] == "timeout"
+    assert result["cancelled"] is True
+    assert (bridge_dir / "bridge-a.result.json").exists()
+
+
+def test_canvas_command_tool_result_prefers_user_message_and_agent_hint(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    captured: dict[str, object] = {}
+
+    def fake_resolve_canvas_command(key, result, *, bridge_dir=None):
+        captured["key"] = key
+        captured["result"] = result
+        captured["bridge_dir"] = bridge_dir
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        chat_route, "resolve_canvas_command", fake_resolve_canvas_command
+    )
+
+    payload = chat_route.CanvasCommandToolResultIn(
+        bridge_key="bridge-a",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        agent_id="agent-1",
+        tool_call_status="failed",
+        canvas_apply_status="failed",
+        errors=[
+            "edge output role planning_text is not accepted by target imageGenNode"
+        ],
+        command_results=[
+            {
+                "commandIndex": -1,
+                "type": "validate",
+                "status": "error",
+                "label": "校验画布命令",
+                "error": "Expected source role input_text for link_type prompt_for",
+            }
+        ],
+        message="Frontend executor failed to apply the canvas command.",
+        user_message="当前文本需要先作为生成提示词连接到图片节点，我会按可执行的提示词来源来处理。",
+        agent_hint="Do not mention raw protocol details such as planning_text or prompt_for.",
+    )
+
+    chat_route._resolve_canvas_command_tool_result_payload(payload, username="admin")
+
+    result = captured["result"]
+    assert isinstance(result, dict)
+    assert result["message"] == payload.user_message
+    assert result["user_message"] == payload.user_message
+    assert result["agent_instruction"] == payload.agent_hint
+    assert result["agent_hint"] == payload.agent_hint
+    assert "planning_text" in result["errors"][0]
+
+
+def test_canvas_command_tool_result_accepts_background_workflow(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    captured: dict[str, object] = {}
+
+    def fake_resolve_canvas_command(key, result, *, bridge_dir=None):
+        captured["result"] = result
+        return result
+
+    monkeypatch.setattr(
+        chat_route, "resolve_canvas_command", fake_resolve_canvas_command
+    )
+
+    payload = chat_route.CanvasCommandToolResultIn(
+        bridge_key="bridge-workflow",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        tool_call_status="completed",
+        canvas_apply_status="accepted",
+        applied=True,
+    )
+
+    chat_route._resolve_canvas_command_tool_result_payload(payload, username="admin")
+
+    result = captured["result"]
+    assert isinstance(result, dict)
+    assert result["ok"] is True
+    assert result["canvas_apply_status"] == "accepted"
+    assert "submitted to the canvas" in result["agent_instruction"]
+    assert "tool was opened" in result["agent_instruction"]
+    assert "operate it manually" in result["agent_instruction"]
+    assert "Do not claim" in result["agent_instruction"]
+
+
+@pytest.mark.anyio
+async def test_canvas_background_followup_is_saved_for_agent_without_reresolving_bridge(
+    monkeypatch,
+) -> None:
+    saved: dict[str, object] = {}
+
+    async def fake_state_dir(_user, _payload):
+        return None
+
+    async def fake_project_context(_user, _scope):
+        return None
+
+    async def fake_append(username, scope, role, content, **kwargs):
+        saved.update(
+            username=username, scope=scope, role=role, content=content, **kwargs
+        )
+        return {"id": 1}
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", fake_state_dir)
+    monkeypatch.setattr(chat_route, "_project_context_for_scope", fake_project_context)
+    monkeypatch.setattr(chat_route.chat_store, "append_message_async", fake_append)
+    monkeypatch.setattr(
+        chat_route,
+        "resolve_canvas_command",
+        lambda *_args, **_kwargs: pytest.fail(
+            "settled bridge must not be resolved again"
+        ),
+    )
+    payload = chat_route.CanvasCommandToolResultIn(
+        bridge_key="bridge-workflow",
+        turn_id="turn-a",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        agent_id="agent-1",
+        followup=True,
+        tool_call_status="completed",
+        canvas_apply_status="pending",
+        applied=False,
+        agent_hint="Do not rerun generation.",
+    )
+
+    response = await chat_route.resolve_canvas_command_tool_result(
+        payload,
+        {"username": "admin"},
+    )
+
+    assert response["data"]["canvas_apply_status"] == "pending"
+    assert saved["role"] == "agent_notification"
+    assert "do not rerun generation" in str(saved["content"])
+    assert saved["idempotency_key"] == "canvas-background-result:bridge-workflow"
+    assert getattr(saved["scope"], "agent_id") == "agent-1"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "receipt_revision,receipt_task,expected_status",
+    [
+        (1, "task-1", "confirmed"),
+        (2, "task-1", "submitted"),
+        (1, "old-task", "submitted"),
+    ],
+)
+async def test_late_canvas_result_completes_durable_workflow_draft(
+    monkeypatch,
+    tmp_path,
+    receipt_revision,
+    receipt_task,
+    expected_status,
+) -> None:
+    from novelvideo.freezone.workflow_drafts import (
+        bind_workflow_draft_task,
+        claim_workflow_draft_confirmation,
+        create_workflow_draft,
+        finish_workflow_draft_confirmation,
+        read_workflow_draft,
+    )
+
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="canvas-a",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled={
+            "ok": True,
+            "skill_id": "video-ad",
+            "plan": {"nodes": [], "edges": [], "phases": []},
+        },
+    )
+    claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        revision=1,
+    )
+    bind_workflow_draft_task(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        task_id="task-1",
+        root_task_id="task-1",
+    )
+    finish_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        outcome="submitted",
+        expected_task_id="task-1",
+    )
+
+    async def project_context(_user, _scope):
+        return SimpleNamespace(state_dir=tmp_path)
+
+    monkeypatch.setattr(chat_route, "_project_context_for_scope", project_context)
+    from novelvideo import task_state
+
+    monkeypatch.setattr(
+        task_state,
+        "get_task_manager",
+        lambda: SimpleNamespace(
+            get_task_for_project=lambda *_args, **_kwargs: SimpleNamespace(
+                task_id="task-1", status="running"
+            )
+        ),
+    )
+    payload = chat_route.CanvasCommandToolResultIn(
+        bridge_key="bridge-workflow",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        tool_call_status="completed",
+        canvas_apply_status="applied",
+        applied=True,
+    )
+
+    monkeypatch.setattr(
+        chat_route,
+        "_pending_workflow_draft_receipt",
+        lambda *_, **__: {
+            "draft_id": draft["draft_id"],
+            "revision": receipt_revision,
+            "task_id": receipt_task,
+        },
+    )
+
+    async def bridge_project_state_dir(*_args, **_kwargs):
+        return tmp_path
+
+    monkeypatch.setattr(
+        chat_route, "_bridge_project_state_dir", bridge_project_state_dir
+    )
+    monkeypatch.setattr(
+        chat_route,
+        "_resolve_canvas_command_tool_result_payload",
+        lambda *_, **__: {"ok": True},
+    )
+    await chat_route.resolve_canvas_command_tool_result(
+        payload,
+        {"id": "u-admin", "username": "admin"},
+    )
+    stored, error = read_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+    )
+
+    assert error is None
+    assert stored is not None
+    assert stored["status"] == expected_status
+
+
+@pytest.mark.anyio
+async def test_old_canvas_receipt_cannot_complete_a_retried_confirmation(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from novelvideo.freezone.workflow_drafts import (
+        bind_workflow_draft_task,
+        claim_workflow_draft_confirmation,
+        create_workflow_draft,
+        finish_workflow_draft_confirmation,
+        read_workflow_draft,
+    )
+
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="canvas-a",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled={
+            "ok": True,
+            "skill_id": "video-ad",
+            "plan": {"nodes": [], "edges": [], "phases": []},
+        },
+    )
+    first, error = claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        revision=1,
+        now=1_000,
+    )
+    assert error is None
+    assert first is not None
+    bind_workflow_draft_task(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        task_id="task-1",
+        root_task_id="task-1",
+    )
+
+    async def project_context(_user, _scope):
+        finish_workflow_draft_confirmation(
+            project_dir=tmp_path,
+            canvas_id="canvas-a",
+            draft_id=draft["draft_id"],
+            outcome="ready",
+            expected_task_id="task-1",
+        )
+        retried, retry_error = claim_workflow_draft_confirmation(
+            project_dir=tmp_path,
+            canvas_id="canvas-a",
+            draft_id=draft["draft_id"],
+            revision=1,
+            now=1_001,
+        )
+        assert retry_error is None
+        assert retried is not None
+        bind_workflow_draft_task(
+            project_dir=tmp_path,
+            canvas_id="canvas-a",
+            draft_id=draft["draft_id"],
+            task_id="task-2",
+            root_task_id="task-2",
+        )
+        return SimpleNamespace(state_dir=tmp_path)
+
+    monkeypatch.setattr(chat_route, "_project_context_for_scope", project_context)
+    from novelvideo import task_state
+
+    monkeypatch.setattr(
+        task_state,
+        "get_task_manager",
+        lambda: pytest.fail("stale receipt must be rejected before task lookup"),
+    )
+    await chat_route._record_workflow_draft_canvas_result(
+        user={"id": "u-admin", "username": "admin"},
+        payload=chat_route.CanvasCommandToolResultIn(
+            bridge_key="bridge-workflow",
+            project_id="project-a",
+            canvas_id="canvas-a",
+            canvas_apply_status="applied",
+            applied=True,
+        ),
+        draft_receipt={
+            "draft_id": draft["draft_id"],
+            "revision": 1,
+            "task_id": "task-1",
+        },
+        resolved={"ok": True},
+    )
+    stored, read_error = read_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+    )
+    assert read_error is None
+    assert stored is not None
+    assert stored["status"] == "confirming"
+    assert stored["task_id"] == "task-2"
+    assert stored["confirmation_started_at"] == 1_001
+
+
+@pytest.mark.anyio
+async def test_canvas_receipt_accepts_pre_upgrade_confirmation_scope(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from novelvideo.freezone.workflow_drafts import (
+        bind_workflow_draft_task,
+        claim_workflow_draft_confirmation,
+        create_workflow_draft,
+        finish_workflow_draft_confirmation,
+        read_workflow_draft,
+    )
+
+    draft = create_workflow_draft(
+        project_dir=tmp_path,
+        project_id="project-a",
+        canvas_id="canvas-a",
+        intent={"skill_id": "video-ad", "user_goal": "广告"},
+        compiled={
+            "ok": True,
+            "skill_id": "video-ad",
+            "plan": {"nodes": [], "edges": [], "phases": []},
+        },
+    )
+    claimed, error = claim_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        revision=1,
+        now=1_000,
+    )
+    assert error is None
+    assert claimed is not None
+    bind_workflow_draft_task(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        task_id="task-1",
+        root_task_id="task-1",
+    )
+    finish_workflow_draft_confirmation(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+        outcome="submitted",
+        expected_task_id="task-1",
+    )
+
+    async def project_context(_user, _scope):
+        return SimpleNamespace(state_dir=tmp_path)
+
+    monkeypatch.setattr(chat_route, "_project_context_for_scope", project_context)
+    from novelvideo import task_state
+
+    queried_scopes: list[str] = []
+    legacy_scope = f"canvas-a:{draft['draft_id']}:1"
+
+    def get_task(*_args, **kwargs):
+        queried_scopes.append(kwargs["scope"])
+        if kwargs["scope"] == legacy_scope:
+            return SimpleNamespace(task_id="task-1", status="running")
+        return None
+
+    monkeypatch.setattr(
+        task_state,
+        "get_task_manager",
+        lambda: SimpleNamespace(get_task_for_project=get_task),
+    )
+    await chat_route._record_workflow_draft_canvas_result(
+        user={"id": "u-admin", "username": "admin"},
+        payload=chat_route.CanvasCommandToolResultIn(
+            bridge_key="bridge-workflow",
+            project_id="project-a",
+            canvas_id="canvas-a",
+            canvas_apply_status="applied",
+            applied=True,
+        ),
+        draft_receipt={
+            "draft_id": draft["draft_id"],
+            "revision": 1,
+            "task_id": "task-1",
+        },
+        resolved={"ok": True},
+    )
+    stored, read_error = read_workflow_draft(
+        project_dir=tmp_path,
+        canvas_id="canvas-a",
+        draft_id=draft["draft_id"],
+    )
+    assert read_error is None
+    assert stored is not None
+    assert stored["status"] == "confirmed"
+    assert queried_scopes == [
+        f"{legacy_scope}:{claimed['confirmation_started_at']}",
+        legacy_scope,
+    ]
+
+
+def test_pending_canvas_result_recovers_workflow_draft_identity(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    bridge_dir = tmp_path / "bridge"
+    draft_id = "workflow_draft_late_result"
+    put_pending_canvas_command(
+        key="bridge-workflow",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=[
+            {
+                "type": "create_node",
+                "node_type": "textAnnotationNode",
+                "data": {
+                    "workflowInstanceId": draft_id,
+                    "workflowDraftRevision": 1,
+                    "workflowConfirmationTaskId": "task-1",
+                },
+            }
+        ],
+        envelope={
+            "commands": [
+                {
+                    "type": "create_node",
+                    "node_type": "textAnnotationNode",
+                    "data": {
+                        "workflowInstanceId": draft_id,
+                        "workflowDraftRevision": 1,
+                        "workflowConfirmationTaskId": "task-1",
+                    },
+                }
+            ]
+        },
+        bridge_dir=bridge_dir,
+    )
+    monkeypatch.setattr(
+        chat_route,
+        "_bridge_dir_for_pending_key",
+        lambda *_args, **_kwargs: bridge_dir,
+    )
+    payload = chat_route.CanvasCommandToolResultIn(
+        bridge_key="bridge-workflow",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        canvas_apply_status="applied",
+        applied=True,
+    )
+
+    assert chat_route._pending_workflow_draft_receipt("admin", payload) == {
+        "draft_id": draft_id,
+        "revision": 1,
+        "task_id": "task-1",
+    }
+
+
+def test_canvas_command_tool_result_reports_open_node_action_as_opened_panel(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    captured: dict[str, object] = {}
+
+    def fake_resolve_canvas_command(key, result, *, bridge_dir=None):
+        captured["result"] = result
+        return result
+
+    monkeypatch.setattr(
+        chat_route, "resolve_canvas_command", fake_resolve_canvas_command
+    )
+
+    payload = chat_route.CanvasCommandToolResultIn(
+        bridge_key="bridge-open-light",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        tool_call_status="completed",
+        canvas_apply_status="applied",
+        applied=True,
+        opened_ui_actions=1,
+        command_results=[
+            {
+                "type": "run_node_action",
+                "status": "success",
+                "action": "open_light_tool",
+            }
+        ],
+    )
+
+    chat_route._resolve_canvas_command_tool_result_payload(payload, username="admin")
+
+    result = captured["result"]
+    assert isinstance(result, dict)
+    assert "panel has been opened" in result["agent_instruction"]
+    assert "processing" in result["agent_instruction"]
+    assert "submitted for generation" in result["agent_instruction"]
+
+
+@pytest.mark.anyio
+async def test_pending_canvas_command_poll_only_returns_external_mcp_commands(
+    monkeypatch, tmp_path
+) -> None:
+    async def project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", project_state)
+    bridge_dir = tmp_path / "bridge"
+    monkeypatch.setattr(
+        chat_route,
+        "_candidate_canvas_bridge_dirs_for_scope",
+        lambda *_args, **_kwargs: [bridge_dir],
+    )
+    commands = [{"type": "select_nodes", "nodeIds": ["node-a"]}]
+    put_pending_canvas_command(
+        key="chat-turn-command",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+        envelope={
+            "schema_version": "canvas_chat_commands.v1",
+            "canvas_id": "canvas-a",
+            "commands": commands,
+        },
+        bridge_dir=bridge_dir,
+    )
+    put_pending_canvas_command(
+        key="approved-external-command",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+        envelope={
+            "schema_version": "canvas_chat_commands.v1",
+            "canvas_id": "canvas-a",
+            "agent_id": "agent-2",
+            "external_mcp_command": True,
+            "turn_id": "turn-create-node",
+            "commands": commands,
+        },
+        bridge_dir=bridge_dir,
+    )
+    (bridge_dir / "approved-external-command.pending.json").unlink()
+
+    result = await chat_route.list_pending_canvas_commands(
+        chat_route.PendingCanvasCommandsIn(
+            project_id="project-a",
+            canvas_id="canvas-a",
+        ),
+        user={"username": "admin"},
+    )
+
+    frames = result["data"]["frames"]
+    assert [frame["bridge_key"] for frame in frames] == ["approved-external-command"]
+    assert frames[0]["agent_id"] == "agent-2"
+    assert frames[0]["turn_id"] == "turn-create-node"
+
+
+@pytest.mark.anyio
+async def test_pending_canvas_command_json_mirror_cannot_bypass_sqlite_lease(
+    monkeypatch, tmp_path
+) -> None:
+    async def project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", project_state)
+    bridge_dir = tmp_path / "bridge"
+    monkeypatch.setattr(
+        chat_route,
+        "_candidate_canvas_bridge_dirs_for_scope",
+        lambda *_args, **_kwargs: [bridge_dir],
+    )
+    commands = [{"type": "select_nodes", "nodeIds": ["node-a"]}]
+    put_pending_canvas_command(
+        key="leased-command",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+        envelope={
+            "schema_version": "canvas_chat_commands.v1",
+            "canvas_id": "canvas-a",
+            "external_mcp_command": True,
+            "commands": commands,
+        },
+        bridge_dir=bridge_dir,
+    )
+    request = chat_route.PendingCanvasCommandsIn(
+        project_id="project-a",
+        canvas_id="canvas-a",
+    )
+
+    first = await chat_route.list_pending_canvas_commands(
+        request,
+        user={"username": "admin"},
+    )
+    second = await chat_route.list_pending_canvas_commands(
+        request,
+        user={"username": "admin"},
+    )
+
+    assert [frame["bridge_key"] for frame in first["data"]["frames"]] == [
+        "leased-command"
+    ]
+    assert first["data"]["frames"][0]["turn_id"] == "external-agent:leased-command"
+    assert second["data"]["frames"] == []
+
+
+@pytest.mark.anyio
+async def test_expired_canvas_command_json_mirror_is_not_redelivered(
+    monkeypatch, tmp_path
+) -> None:
+    async def project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", project_state)
+    bridge_dir = tmp_path / "bridge"
+    monkeypatch.setattr(
+        chat_route,
+        "_candidate_canvas_bridge_dirs_for_scope",
+        lambda *_args, **_kwargs: [bridge_dir],
+    )
+    commands = [{"type": "select_nodes", "nodeIds": ["node-a"]}]
+    put_pending_canvas_command(
+        key="expired-command",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        commands=commands,
+        envelope={
+            "schema_version": "canvas_chat_commands.v1",
+            "canvas_id": "canvas-a",
+            "external_mcp_command": True,
+            "commands": commands,
+        },
+        bridge_dir=bridge_dir,
+    )
+    pending_path = bridge_dir / "expired-command.pending.json"
+    pending = chat_route._load_pending_canvas_command(pending_path)
+    assert pending is not None
+    pending["created_at"] = 0
+    canvas_command_bridge._write_json(pending_path, pending)
+    with sqlite3.connect(canvas_command_bridge._bridge_db_path(bridge_dir)) as conn:
+        conn.execute(
+            "UPDATE canvas_command_messages "
+            "SET created_at = 0, expires_at = 0 "
+            "WHERE bridge_key = 'expired-command'"
+        )
+
+    result = await chat_route.list_pending_canvas_commands(
+        chat_route.PendingCanvasCommandsIn(
+            project_id="project-a",
+            canvas_id="canvas-a",
+        ),
+        user={"username": "admin"},
+    )
+
+    assert result["data"]["frames"] == []
+    assert not pending_path.exists()
+
+
+@pytest.mark.parametrize(
+    ("key", "payload", "loader"),
+    [
+        (
+            "legacy-context",
+            {
+                "kind": "canvas_context",
+                "requests": [{"type": "get_selected_nodes"}],
+                "envelope": {
+                    "schema_version": "canvas_context_request.v1",
+                    "canvas_id": "canvas-a",
+                    "requests": [{"type": "get_selected_nodes"}],
+                },
+            },
+            chat_route._load_pending_canvas_context,
+        ),
+        (
+            "legacy-skill-studio",
+            {
+                "kind": "skill_studio_event",
+                "event": {
+                    "type": "skill_studio.questions",
+                    "skill_studio_session_id": "skill-studio-a",
+                },
+            },
+            chat_route._load_pending_skill_studio_event,
+        ),
+        (
+            "legacy-clarification",
+            {
+                "kind": "clarification_event",
+                "event": {
+                    "type": "assistant.clarification.request",
+                    "clarification_id": "clarification-a",
+                },
+            },
+            chat_route._load_pending_clarification_event,
+        ),
+    ],
+)
+def test_legacy_bridge_filter_accepts_each_supported_message_type(
+    tmp_path, key, payload, loader
+) -> None:
+    bridge_dir = tmp_path / "bridge"
+    bridge_dir.mkdir()
+    pending_path = bridge_dir / f"{key}.pending.json"
+    canvas_command_bridge._write_json(
+        pending_path,
+        {
+            "key": key,
+            "project_id": "project-a",
+            "canvas_id": "canvas-a",
+            "created_at": time.time(),
+            **payload,
+        },
+    )
+
+    assert loader(pending_path) is not None
+    assert chat_route._is_unmigrated_legacy_bridge_file(
+        bridge_dir=bridge_dir,
+        key=key,
+    )
+
+
+def test_legacy_bridge_filter_uses_raw_message_kind_ttl(tmp_path) -> None:
+    bridge_dir = tmp_path / "bridge"
+    bridge_dir.mkdir()
+    key = "expired-legacy-context"
+    pending_path = bridge_dir / f"{key}.pending.json"
+    canvas_command_bridge._write_json(
+        pending_path,
+        {
+            "key": key,
+            "kind": "canvas_context",
+            "created_at": time.time() - 46,
+            "requests": [{"type": "get_selected_nodes"}],
+            "envelope": {
+                "schema_version": "canvas_context_request.v1",
+                "canvas_id": "canvas-a",
+                "requests": [{"type": "get_selected_nodes"}],
+            },
+        },
+    )
+
+    assert not chat_route._is_unmigrated_legacy_bridge_file(
+        bridge_dir=bridge_dir,
+        key=key,
+    )
+    assert not pending_path.exists()
+
+
+@pytest.mark.anyio
+async def test_watch_pending_skill_studio_events_emits_freezone_bridge_event(
+    monkeypatch, tmp_path
+) -> None:
+    class CapturingWebSocket:
+        def __init__(self) -> None:
+            self.sent = []
+
+        async def send_json(self, payload):
+            self.sent.append(payload)
+            raise RuntimeError("stop watcher after first send")
+
+    bridge_dir = tmp_path / "bridge"
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: bridge_dir
+    )
+    event = {
+        "type": "skill_studio.questions",
+        "skill_studio_session_id": "skill_studio_01",
+        "title": "确定方向",
+        "questions": [{"id": "scope", "title": "主要做什么？", "options": []}],
+    }
+    put_pending_skill_studio_event(
+        key="skill-key-1",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        event=event,
+        bridge_dir=bridge_dir,
+    )
+    websocket = CapturingWebSocket()
+
+    scope = ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="agent-1",
+    )
+    chat_route.chat_store.append_message(
+        "admin", scope, "user", "创建一个 Skill", turn_id="turn-a"
+    )
+
+    await chat_route._watch_pending_skill_studio_events(
+        websocket=websocket,
+        username="admin",
+        scope=scope,
+        turn_id="turn-a",
+        send_lock=None,
+        emitted_bridge_keys=set(),
+        started_at=0,
+    )
+
+    assert websocket.sent == [
+        {
+            "type": "skill_studio.event",
+            "scope": {
+                "kind": "project",
+                "id": "project-a",
+                "surface": "freezone",
+                "canvasId": "canvas-a",
+                "agentId": "agent-1",
+            },
+            "turn_id": "turn-a",
+            "canvas_id": "canvas-a",
+            "agent_id": "agent-1",
+            "bridge_key": "skill-key-1",
+            "event": event,
+        }
+    ]
+    messages = chat_route.chat_store.list_messages("admin", scope)
+    assert messages[-1]["turn_id"] == "turn-a"
+    assert messages[-1]["ui_events"][0]["type"] == "skill_studio.questions"
+    assert messages[-1]["ui_events"][0]["skill_studio_session_id"] == "skill_studio_01"
+    assert messages[-1]["ui_events"][0]["bridge_key"] == "skill-key-1"
+    assert messages[-1]["ui_events"][0]["canvas_id"] == "canvas-a"
+    assert messages[-1]["ui_events"][0]["agent_id"] == "agent-1"
+
+
+@pytest.mark.anyio
+async def test_watch_pending_skill_studio_events_emits_status_progress_event(
+    monkeypatch, tmp_path
+) -> None:
+    class CapturingWebSocket:
+        def __init__(self) -> None:
+            self.sent = []
+
+        async def send_json(self, payload):
+            self.sent.append(payload)
+            raise RuntimeError("stop watcher after first send")
+
+    bridge_dir = tmp_path / "bridge"
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: bridge_dir
+    )
+    event = {
+        "type": "skill_studio.status",
+        "skill_studio_session_id": "skill_studio_01",
+        "status": "draft_recipe_ready",
+        "message": "已生成 Recipe 1 / 2",
+    }
+    put_pending_skill_studio_event(
+        key="skill-status-1",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        event=event,
+        bridge_dir=bridge_dir,
+    )
+    websocket = CapturingWebSocket()
+    scope = ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="agent-1",
+    )
+    chat_route.chat_store.append_message(
+        "admin", scope, "user", "创建一个 Skill", turn_id="turn-a"
+    )
+
+    await chat_route._watch_pending_skill_studio_events(
+        websocket=websocket,
+        username="admin",
+        scope=scope,
+        turn_id="turn-a",
+        send_lock=None,
+        emitted_bridge_keys=set(),
+        started_at=0,
+    )
+
+    assert websocket.sent[0]["type"] == "skill_studio.event"
+    assert websocket.sent[0]["bridge_key"] == "skill-status-1"
+    assert websocket.sent[0]["event"] == event
+    messages = chat_route.chat_store.list_messages("admin", scope)
+    assert messages[-1]["ui_events"][0]["type"] == "skill_studio.status"
+    assert messages[-1]["ui_events"][0]["message"] == "已生成 Recipe 1 / 2"
+
+
+def test_skill_studio_status_frame_uses_backend_intent_detection() -> None:
+    scope = ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="agent-1",
+    )
+
+    frame = chat_route._skill_studio_status_frame(
+        scope=scope,
+        turn_id="turn-a",
+        text="我想创建一个宣传家乡文化的海报 skill",
+    )
+
+    assert frame == {
+        "type": "skill_studio.status",
+        "scope": {
+            "kind": "project",
+            "id": "project-a",
+            "surface": "freezone",
+            "canvasId": "canvas-a",
+            "agentId": "agent-1",
+        },
+        "turn_id": "turn-a",
+        "status": "routing",
+        "message": "正在整理 Skill 方向...",
+    }
+    assert (
+        chat_route._skill_studio_status_frame(
+            scope=scope,
+            turn_id="turn-b",
+            text="帮我加一个视频节点",
+        )
+        is None
+    )
+
+
+def test_skill_studio_status_frame_uses_user_text_not_canvas_context() -> None:
+    scope = ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="agent-1",
+    )
+
+    enhanced_text = (
+        "查看下当前节点详情然后返回ok\n\n"
+        "[SUPERTALE_CANVAS_NODE_REFERENCES]\n"
+        "node_type: skillNode\n"
+        "available_actions: add_next_node, run_skill\n"
+        "[/SUPERTALE_CANVAS_NODE_REFERENCES]"
+    )
+
+    assert (
+        chat_route._skill_studio_status_frame(
+            scope=scope,
+            turn_id="turn-node-detail",
+            text=enhanced_text,
+            user_text="查看下当前节点详情然后返回ok",
+        )
+        is None
+    )
+
+
+def test_resolve_skill_studio_tool_result_writes_bridge_result(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(
+        chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path
+    )
+    payload = chat_route.SkillStudioToolResultIn(
+        turn_id="turn-a",
+        bridge_key="skill-key-1",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        agent_id="agent-1",
+        skill_studio_status="answered",
+        action="submit",
+        selections={"scope": "planning"},
+        message="用户已提交选择",
+    )
+
+    resolved = chat_route._resolve_skill_studio_tool_result_payload(
+        payload, username="alice"
+    )
+
+    assert resolved["ok"] is True
+    assert resolved["status"] == "skill_studio_frontend_result"
+    assert resolved["skill_studio_status"] == "answered"
+    assert resolved["selections"] == {"scope": "planning"}
+    assert (
+        resolved["agent_instruction"]
+        == "Continue the Skill Studio flow using the frontend response."
+    )
+    assert (
+        wait_skill_studio_result(
+            "skill-key-1", timeout_seconds=0.1, bridge_dir=tmp_path
+        )
+        == resolved
+    )
+
+
+def test_resolve_saved_skill_studio_tool_result_tells_agent_catalog_is_formal(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(
+        chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path
+    )
+    saved_items: list[tuple[str, dict]] = []
+
+    def fake_save_user_agent_config_item(
+        *, username: str, kind: str, payload: dict
+    ) -> dict:
+        assert username == "alice"
+        saved_items.append((kind, payload))
+        return payload
+
+    monkeypatch.setattr(
+        chat_route, "save_user_agent_config_item", fake_save_user_agent_config_item
+    )
+    payload = chat_route.SkillStudioToolResultIn(
+        turn_id="turn-a",
+        bridge_key="skill-key-2",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        agent_id="agent-1",
+        skill_studio_status="catalog_saved",
+        action="confirm_add",
+        draft={
+            "skill": {"id": "home-culture-poster"},
+            "recipes": [{"id": "home-culture-poster-image"}],
+        },
+        message="已保存为正式 Skill / Recipe",
+    )
+
+    resolved = chat_route._resolve_skill_studio_tool_result_payload(
+        payload, username="alice"
+    )
+
+    assert resolved["ok"] is True
+    assert resolved["skill_studio_status"] == "catalog_saved"
+    assert resolved["saved_to_catalog"] is True
+    assert resolved["saved_skill_ids"] == ["home-culture-poster"]
+    assert resolved["saved_recipe_ids"] == ["home-culture-poster-image"]
+    assert resolved["draft"] is None
+    assert "saved" in resolved["agent_instruction"]
+    assert "not the user saying 'ok'" in resolved["agent_instruction"]
+    assert (
+        "Do not apply user-profile rules for short 'ok' replies"
+        in resolved["agent_instruction"]
+    )
+    assert "Do not ask the user to save it again" in resolved["agent_instruction"]
+    assert "Reply briefly in Chinese only" in resolved["agent_instruction"]
+    assert saved_items == [
+        ("recipes", {"id": "home-culture-poster-image"}),
+        ("skills", {"id": "home-culture-poster"}),
+    ]
+    assert (
+        wait_skill_studio_result(
+            "skill-key-2", timeout_seconds=0.1, bridge_dir=tmp_path
+        )
+        == resolved
+    )
+
+
+def test_resolve_saved_skill_studio_tool_result_saves_new_recipes_before_skill(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(
+        chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path
+    )
+    available_recipe_ids: set[str] = set()
+
+    def fake_save_user_agent_config_item(
+        *, username: str, kind: str, payload: dict
+    ) -> dict:
+        assert username == "alice"
+        if kind == "recipes":
+            available_recipe_ids.add(str(payload["id"]))
+            return payload
+        missing = [
+            recipe_id
+            for recipe_id in payload.get("allowed_recipe_ids", [])
+            if recipe_id not in available_recipe_ids
+        ]
+        if missing:
+            raise ValueError("missing recipe(s): " + ", ".join(missing))
+        return payload
+
+    monkeypatch.setattr(
+        chat_route, "save_user_agent_config_item", fake_save_user_agent_config_item
+    )
+    payload = chat_route.SkillStudioToolResultIn(
+        turn_id="turn-a",
+        bridge_key="skill-key-new-recipe",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        agent_id="agent-1",
+        skill_studio_status="catalog_saved",
+        action="confirm_add",
+        draft={
+            "skill": {
+                "id": "home-culture-poster",
+                "allowed_recipe_ids": ["home-culture-poster-image"],
+            },
+            "recipes": [{"id": "home-culture-poster-image"}],
+        },
+        message="已保存为正式 Skill / Recipe",
+    )
+
+    resolved = chat_route._resolve_skill_studio_tool_result_payload(
+        payload, username="alice"
+    )
+
+    assert resolved["ok"] is True
+    assert resolved["saved_skill_ids"] == ["home-culture-poster"]
+    assert resolved["saved_recipe_ids"] == ["home-culture-poster-image"]
+    assert resolved["errors"] == []
+    assert (
+        wait_skill_studio_result(
+            "skill-key-new-recipe", timeout_seconds=0.1, bridge_dir=tmp_path
+        )
+        == resolved
+    )
+
+
+def test_resolve_cancelled_skill_studio_tool_result_stops_flow(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(
+        chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path
+    )
+    payload = chat_route.SkillStudioToolResultIn(
+        turn_id="turn-a",
+        bridge_key="skill-key-3",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        agent_id="agent-1",
+        skill_studio_status="catalog_cancelled",
+        action="cancel",
+        draft={"skill": {"id": "home-culture-poster"}, "recipes": []},
+        message="用户已取消 Skill Studio 草稿保存。",
+    )
+
+    resolved = chat_route._resolve_skill_studio_tool_result_payload(
+        payload, username="alice"
+    )
+
+    assert resolved["ok"] is True
+    assert resolved["skill_studio_status"] == "catalog_cancelled"
+    assert resolved["saved_to_catalog"] is False
+    assert resolved["draft"] is None
+    assert "Do not resubmit" in resolved["agent_instruction"]
+    assert "Do not call any Skill Studio" in resolved["agent_instruction"]
+    assert "Continue the Skill Studio flow" not in resolved["agent_instruction"]
+    assert (
+        wait_skill_studio_result(
+            "skill-key-3", timeout_seconds=0.1, bridge_dir=tmp_path
+        )
+        == resolved
+    )
+
+
+def test_tool_result_payload_includes_structured_json() -> None:
+    text = '{"ok":true,"skills":[{"id":"pixar-ip-brand-ad"}]}'
+
+    payload = chat_route._tool_result_payload(text)
+
+    assert payload["text"] == text
+    assert payload["json"] == {"ok": True, "skills": [{"id": "pixar-ip-brand-ad"}]}
+
+
+def test_tool_result_payload_prefers_explicit_structured_json() -> None:
+    payload = chat_route._tool_result_payload(
+        "freezone_get_workflow_skill result\n- **count:** 1",
+        {"ok": True, "skills": [{"id": "pixar-ip-brand-ad"}]},
+    )
+
+    assert payload["text"].startswith("freezone_get_workflow_skill result")
+    assert payload["json"] == {"ok": True, "skills": [{"id": "pixar-ip-brand-ad"}]}
+
+
+def test_resolve_revision_skill_studio_tool_result_starts_question_flow(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(
+        chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path
+    )
+    payload = chat_route.SkillStudioToolResultIn(
+        turn_id="turn-a",
+        bridge_key="skill-key-4",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        agent_id="agent-1",
+        skill_studio_status="revision_started",
+        action="start_revision",
+        draft={
+            "skill": {"id": "home-culture-poster", "description": "当前草稿"},
+            "recipes": [],
+        },
+        draft_ref={"skill_id": "home-culture-poster", "recipe_count": 0},
+        message="用户已启动 Skill Studio 草稿修改会话。",
+    )
+
+    resolved = chat_route._resolve_skill_studio_tool_result_payload(
+        payload, username="alice"
+    )
+
+    assert resolved["ok"] is True
+    assert resolved["skill_studio_status"] == "revision_started"
+    assert resolved["saved_to_catalog"] is False
+    assert resolved["draft"] is None
+    assert resolved["draft_ref"] == {
+        "skill_id": "home-culture-poster",
+        "recipe_count": 0,
+    }
+    assert resolved["message"] == payload.message
+    assert (
+        "only contains a lightweight draft reference" in resolved["agent_instruction"]
+    )
+    assert "Ask one clarification question" in resolved["agent_instruction"]
+    assert (
+        wait_skill_studio_result(
+            "skill-key-4", timeout_seconds=0.1, bridge_dir=tmp_path
+        )
+        == resolved
+    )
+
+
+@pytest.mark.anyio
+async def test_resolve_skill_studio_tool_result_persists_submitted_ui_event(
+    monkeypatch, tmp_path
+) -> None:
+    async def bridge_project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", bridge_project_state)
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path / "bridge"
+    )
+    monkeypatch.setattr(
+        chat_route, "_project_context_for_scope", lambda *_args, **_kwargs: None
+    )
+    scope = ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="agent-1",
+    )
+    chat_route.chat_store.append_message(
+        "admin", scope, "user", "创建一个 Skill", turn_id="turn-a"
+    )
+    chat_route.chat_store.append_ui_event(
+        "admin",
+        scope,
+        "turn-a",
+        {
+            "type": "skill_studio.questions",
+            "bridge_key": "skill-key-1",
+            "skill_studio_session_id": "skill_studio_01",
+            "questions": [],
+        },
+    )
+
+    await chat_route.resolve_skill_studio_tool_result(
+        chat_route.SkillStudioToolResultIn(
+            turn_id="turn-a",
+            bridge_key="skill-key-1",
+            project_id="project-a",
+            canvas_id="canvas-a",
+            agent_id="agent-1",
+            skill_studio_status="answered",
+            action="submit",
+            selections={"scope": {"option_ids": ["planning"], "custom_text": ""}},
+            message="用户已提交选择",
+        ),
+        user={"username": "admin"},
+    )
+
+    messages = chat_route.chat_store.list_messages("admin", scope)
+    submitted_events = [
+        event
+        for event in messages[-1]["ui_events"]
+        if event.get("type") == "skill_studio.questions"
+        and event.get("submitted") is True
+    ]
+    assert submitted_events
+    assert submitted_events[-1]["bridge_key"] == "skill-key-1"
+    assert submitted_events[-1]["action"] == "submit"
+    assert submitted_events[-1]["selections"] == {
+        "scope": {"option_ids": ["planning"], "custom_text": ""}
+    }
+
+
+@pytest.mark.anyio
+async def test_resolve_skill_studio_draft_tool_result_persists_submitted_ui_event(
+    monkeypatch, tmp_path
+) -> None:
+    async def bridge_project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", bridge_project_state)
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path / "bridge"
+    )
+    scope = ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="agent-1",
+    )
+    draft = {
+        "skill": {"id": "edited-skill", "description": "编辑后的草稿"},
+        "recipes": [],
+        "summary": "草稿已编辑",
+    }
+    chat_route.chat_store.append_message(
+        "admin", scope, "user", "创建一个 Skill", turn_id="turn-a"
+    )
+    chat_route.chat_store.append_ui_event(
+        "admin",
+        scope,
+        "turn-a",
+        {
+            "type": "skill_studio.draft",
+            "bridge_key": "draft-key-1",
+            "skill_studio_session_id": "skill_studio_01",
+            "skill": {"id": "original-skill"},
+            "recipes": [],
+        },
+    )
+
+    await chat_route.resolve_skill_studio_tool_result(
+        chat_route.SkillStudioToolResultIn(
+            turn_id="turn-a",
+            bridge_key="draft-key-1",
+            project_id="project-a",
+            canvas_id="canvas-a",
+            agent_id="agent-1",
+            skill_studio_status="draft_submitted",
+            action="submit_draft",
+            draft=draft,
+            message="用户已提交草稿",
+        ),
+        user={"username": "admin"},
+    )
+
+    messages = chat_route.chat_store.list_messages("admin", scope)
+    submitted_events = [
+        event
+        for event in messages[-1]["ui_events"]
+        if event.get("type") == "skill_studio.draft" and event.get("submitted") is True
+    ]
+    assert submitted_events
+    assert submitted_events[-1]["bridge_key"] == "draft-key-1"
+    assert submitted_events[-1]["action"] == "submit_draft"
+    assert submitted_events[-1]["draft"] == draft
+
+
+@pytest.mark.anyio
+async def test_receive_bridge_results_during_turn_resolves_skill_studio_result(
+    monkeypatch, tmp_path
+) -> None:
+    async def bridge_project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", bridge_project_state)
+    monkeypatch.setattr(
+        chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path / "bridge"
+    )
+    saved_items: list[tuple[str, dict]] = []
+
+    def fake_save_user_agent_config_item(
+        *, username: str, kind: str, payload: dict
+    ) -> dict:
+        assert username == "admin"
+        saved_items.append((kind, payload))
+        return payload
+
+    monkeypatch.setattr(
+        chat_route, "save_user_agent_config_item", fake_save_user_agent_config_item
+    )
+
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.frames = [
+                {
+                    "type": "skill_studio.result",
+                    "turn_id": "turn-a",
+                    "bridge_key": "skill-ws-key-1",
+                    "project_id": "project-a",
+                    "canvas_id": "canvas-a",
+                    "agent_id": "agent-1",
+                    "skill_studio_status": "catalog_saved",
+                    "action": "confirm_add",
+                    "saved_to_catalog": True,
+                    "draft": {
+                        "skill": {"id": "home-culture-video"},
+                        "recipes": [{"id": "home-culture-video-script"}],
+                    },
+                }
+            ]
+
+        async def receive_json(self):
+            if self.frames:
+                return self.frames.pop(0)
+            raise chat_route.WebSocketDisconnect()
+
+    await chat_route._receive_bridge_results_during_turn(
+        websocket=FakeWebSocket(),  # type: ignore[arg-type]
+        user={"username": "admin"},
+        username="admin",
+    )
+
+    resolved = wait_skill_studio_result(
+        "skill-ws-key-1", timeout_seconds=0.1, bridge_dir=tmp_path / "bridge"
+    )
+    assert resolved is not None
+    assert resolved["skill_studio_status"] == "catalog_saved"
+    assert resolved["saved_skill_ids"] == ["home-culture-video"]
+    assert resolved["saved_recipe_ids"] == ["home-culture-video-script"]
+    assert saved_items == [
+        ("recipes", {"id": "home-culture-video-script"}),
+        ("skills", {"id": "home-culture-video"}),
+    ]
+
+
+@pytest.mark.anyio
+async def test_receive_bridge_results_during_turn_resolves_clarification_result(
+    monkeypatch, tmp_path
+) -> None:
+    async def bridge_project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", bridge_project_state)
+    monkeypatch.setattr(
+        chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path / "bridge"
+    )
+
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.frames = [
+                {
+                    "type": "assistant.clarification.result",
+                    "turn_id": "turn-a",
+                    "bridge_key": "clarify-test-key",
+                    "project_id": "project-a",
+                    "canvas_id": "canvas-a",
+                    "agent_id": "agent-1",
+                    "clarification_status": "answered",
+                    "action": "submit",
+                    "answers": {"scope": {"option_ids": ["locals"], "custom_text": ""}},
+                    "message": "用户已完成选择，请结合当前上下文继续。",
+                }
+            ]
+
+        async def receive_json(self):
+            if self.frames:
+                return self.frames.pop(0)
+            raise chat_route.WebSocketDisconnect()
+
+    await chat_route._receive_bridge_results_during_turn(
+        websocket=FakeWebSocket(),  # type: ignore[arg-type]
+        user={"username": "admin"},
+        username="admin",
+    )
+
+    resolved = wait_clarification_result(
+        "clarify-test-key", timeout_seconds=0.1, bridge_dir=tmp_path / "bridge"
+    )
+    assert resolved is not None
+    assert resolved["clarification_status"] == "answered"
+    assert resolved["answers"]["scope"]["option_ids"] == ["locals"]
+    assert (
+        resolved["agent_instruction"]
+        == "Continue using the frontend clarification response."
+    )
+
+
+@pytest.mark.anyio
+async def test_receive_bridge_results_during_turn_accepts_consumed_disconnect() -> None:
+    class DisconnectedWebSocket:
+        async def receive_json(self):
+            raise RuntimeError(
+                'Cannot call "receive" once a disconnect message has been received.'
+            )
+
+    await chat_route._receive_bridge_results_during_turn(
+        websocket=DisconnectedWebSocket(),  # type: ignore[arg-type]
+        user={"username": "admin"},
+        username="admin",
+    )
+
+
+@pytest.mark.anyio
+async def test_watch_pending_clarification_events_emits_freezone_bridge_event(
+    monkeypatch, tmp_path
+) -> None:
+    class CapturingWebSocket:
+        def __init__(self) -> None:
+            self.sent = []
+
+        async def send_json(self, payload):
+            self.sent.append(payload)
+            raise RuntimeError("stop watcher after first send")
+
+    bridge_dir = tmp_path / "bridge"
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: bridge_dir
+    )
+    event = {
+        "type": "assistant.clarification.request",
+        "clarification_id": "clarify_01",
+        "title": "先确认方向",
+        "questions": [{"id": "scope", "title": "主要做什么？", "options": []}],
+    }
+    put_pending_clarification_event(
+        key="clarify-key-1",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        event=event,
+        bridge_dir=bridge_dir,
+    )
+    websocket = CapturingWebSocket()
+
+    scope = ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="agent-1",
+    )
+    chat_route.chat_store.append_message(
+        "admin", scope, "user", "创建一个 Skill", turn_id="turn-a"
+    )
+
+    await chat_route._watch_pending_clarification_events(
+        websocket=websocket,
+        username="admin",
+        scope=scope,
+        turn_id="turn-a",
+        send_lock=None,
+        emitted_bridge_keys=set(),
+        started_at=0,
+    )
+
+    assert websocket.sent == [
+        {
+            "type": "assistant.clarification.event",
+            "scope": {
+                "kind": "project",
+                "id": "project-a",
+                "surface": "freezone",
+                "canvasId": "canvas-a",
+                "agentId": "agent-1",
+            },
+            "turn_id": "turn-a",
+            "canvas_id": "canvas-a",
+            "agent_id": "agent-1",
+            "bridge_key": "clarify-key-1",
+            "event": event,
+        }
+    ]
+    messages = chat_route.chat_store.list_messages("admin", scope)
+    assert messages[-1]["turn_id"] == "turn-a"
+    assert messages[-1]["ui_events"][0]["type"] == "assistant.clarification.request"
+    assert messages[-1]["ui_events"][0]["clarification_id"] == "clarify_01"
+    assert messages[-1]["ui_events"][0]["bridge_key"] == "clarify-key-1"
+
+
+async def test_watch_pending_clarification_events_redelivers_unanswered_card_to_next_turn(
+    monkeypatch, tmp_path
+) -> None:
+    """A card nobody answered before the tool timed out reappears in the next turn."""
+    import asyncio
+    import sqlite3
+
+    from novelvideo.freezone import canvas_command_bridge
+
+    class CapturingWebSocket:
+        def __init__(self) -> None:
+            self.sent = []
+
+        async def send_json(self, payload):
+            self.sent.append(payload)
+            raise RuntimeError("stop watcher after first send")
+
+    bridge_dir = tmp_path / "bridge"
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: bridge_dir
+    )
+    event = {
+        "type": "assistant.clarification.request",
+        "clarification_id": "clarify_resume",
+        "questions": [{"id": "image_model", "options": []}],
+    }
+    put_pending_clarification_event(
+        key="clarify-key-resume",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        event=event,
+        bridge_dir=bridge_dir,
+    )
+    scope = ChatScope(
+        kind="project", id="project-a", surface="freezone",
+        canvas_id="canvas-a", agent_id="agent-1",
+    )
+    first = CapturingWebSocket()
+    await chat_route._watch_pending_clarification_events(
+        websocket=first, username="admin", scope=scope, turn_id="turn-a",
+        send_lock=None, emitted_bridge_keys=set(), started_at=0,
+    )
+    assert [frame["turn_id"] for frame in first.sent] == ["turn-a"]
+
+    # The delivery lease is still live: a second turn must not duplicate the card.
+    second = CapturingWebSocket()
+    watcher = asyncio.ensure_future(chat_route._watch_pending_clarification_events(
+        websocket=second, username="admin", scope=scope, turn_id="turn-b",
+        send_lock=None, emitted_bridge_keys=set(), started_at=0,
+    ))
+    await asyncio.sleep(1.0)
+    watcher.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await watcher
+    assert second.sent == []
+
+    # Once the lease lapses without an answer, the next turn shows the same card again.
+    with sqlite3.connect(canvas_command_bridge._bridge_db_path(bridge_dir)) as conn:
+        conn.execute(
+            "UPDATE canvas_command_messages SET lease_expires_at = 0 "
+            "WHERE bridge_key = 'clarify-key-resume'"
+        )
+    third = CapturingWebSocket()
+    await chat_route._watch_pending_clarification_events(
+        websocket=third, username="admin", scope=scope, turn_id="turn-c",
+        send_lock=None, emitted_bridge_keys=set(), started_at=0,
+    )
+    assert len(third.sent) == 1
+    assert third.sent[0]["turn_id"] == "turn-c"
+    assert third.sent[0]["bridge_key"] == "clarify-key-resume"
+    assert third.sent[0]["event"] == event
+    found = canvas_command_bridge.find_clarification_bridge_message(
+        project_id="project-a", canvas_id="canvas-a",
+        clarification_id="clarify_resume", bridge_dir=bridge_dir,
+    )
+    assert found is not None and found["key"] == "clarify-key-resume"
+
+
+def test_resolve_clarification_tool_result_writes_bridge_result(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(
+        chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path
+    )
+    payload = chat_route.ClarificationToolResultIn(
+        turn_id="turn-a",
+        bridge_key="clarify-key-1",
+        project_id="project-a",
+        canvas_id="canvas-a",
+        agent_id="agent-1",
+        clarification_status="answered",
+        action="submit",
+        answers={"scope": {"option_ids": ["workflow"], "custom_text": "偏海报"}},
+        message="用户已提交补充信息",
+    )
+
+    resolved = chat_route._resolve_clarification_tool_result_payload(
+        payload, username="alice"
+    )
+
+    assert resolved["ok"] is True
+    assert resolved["status"] == "clarification_frontend_result"
+    assert resolved["clarification_status"] == "answered"
+    assert resolved["answers"]["scope"]["option_ids"] == ["workflow"]
+    assert (
+        resolved["agent_instruction"]
+        == "Continue using the frontend clarification response."
+    )
+    assert (
+        wait_clarification_result(
+            "clarify-key-1", timeout_seconds=0.1, bridge_dir=tmp_path
+        )
+        == resolved
+    )
+
+
+@pytest.mark.anyio
+async def test_resolve_clarification_tool_result_persists_submitted_ui_event(
+    monkeypatch, tmp_path
+) -> None:
+    async def bridge_project_state(user, payload):
+        return tmp_path / "project"
+
+    monkeypatch.setattr(chat_route, "_bridge_project_state_dir", bridge_project_state)
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path / "bridge"
+    )
+    scope = ChatScope(
+        kind="project",
+        id="project-a",
+        surface="freezone",
+        canvas_id="canvas-a",
+        agent_id="agent-1",
+    )
+    chat_route.chat_store.append_message(
+        "admin", scope, "user", "需要补充信息", turn_id="turn-a"
+    )
+    chat_route.chat_store.append_ui_event(
+        "admin",
+        scope,
+        "turn-a",
+        {
+            "type": "assistant.clarification.request",
+            "bridge_key": "clarify-key-1",
+            "clarification_id": "clarify-1",
+            "questions": [],
+        },
+    )
+
+    await chat_route.resolve_clarification_tool_result(
+        chat_route.ClarificationToolResultIn(
+            turn_id="turn-a",
+            bridge_key="clarify-key-1",
+            project_id="project-a",
+            canvas_id="canvas-a",
+            agent_id="agent-1",
+            clarification_status="answered",
+            action="submit",
+            answers={"scope": {"option_ids": ["user"], "custom_text": ""}},
+            message="用户已提交补充信息",
+        ),
+        user={"username": "admin"},
+    )
+
+    messages = chat_route.chat_store.list_messages("admin", scope)
+    submitted_events = [
+        event
+        for event in messages[-1]["ui_events"]
+        if event.get("type") == "assistant.clarification.request"
+        and event.get("submitted") is True
+    ]
+    assert submitted_events
+    assert submitted_events[-1]["bridge_key"] == "clarify-key-1"
+    assert submitted_events[-1]["answers"] == {
+        "scope": {"option_ids": ["user"], "custom_text": ""}
+    }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "scope",
+    [ChatScope(kind="home"), ChatScope(kind="project", id="project-a")],
+)
+async def test_mainline_assistant_keeps_staging_credit_only_access(
+    monkeypatch,
+    scope,
+) -> None:
     seen = {}
 
     class FakeUsageMeter:
@@ -43,15 +2142,249 @@ async def test_ai_assistant_access_check_uses_chat_feature_key(monkeypatch) -> N
             seen.update(kwargs)
             return {"allowed": True}
 
+    async def fake_requester_user_id(_user, _scope):
+        return "usr_1"
+
+    monkeypatch.setattr(
+        chat_route,
+        "get_product_surface_access",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("mainline chat must not query Product Surface access")
+        ),
+    )
     monkeypatch.setattr(chat_route, "get_usage_meter", lambda: FakeUsageMeter())
+    monkeypatch.setattr(
+        chat_route,
+        "_requester_user_id_for_chat",
+        fake_requester_user_id,
+    )
 
     await chat_route._require_ai_assistant_access(
         user={"id": "usr_1", "username": "alice"},
-        scope=ChatScope(kind="home"),
+        scope=scope,
     )
 
     assert seen["user_id"] == "usr_1"
     assert seen["feature_key"] == "assistant.chat"
-    assert seen["project_id"] == ""
+    assert seen["project_id"] == ("project-a" if scope.kind == "project" else "")
     assert seen["resource_kind"] == "chat"
-    assert seen["metadata"]["scope"] == {"kind": "home", "id": None}
+    assert seen["metadata"]["scope"] == scope.to_dict()
+
+
+@pytest.mark.anyio
+async def test_freezone_assistant_rejects_hidden_surface_before_credit_check(
+    monkeypatch,
+) -> None:
+    credit_checked = False
+
+    class FakeProductSurfaceAccess:
+        async def get_effective_access(self, user_id):
+            assert user_id == "usr_1"
+            return [
+                {
+                    "surface_code": "freezone_assistant",
+                    "available": False,
+                    "unavailable_message": "虾导功能暂未开放",
+                }
+            ]
+
+    class FakeUsageMeter:
+        async def require_feature_credit_balance(self, **kwargs):
+            nonlocal credit_checked
+            credit_checked = True
+
+    monkeypatch.setattr(
+        chat_route,
+        "get_product_surface_access",
+        lambda: FakeProductSurfaceAccess(),
+    )
+    monkeypatch.setattr(chat_route, "get_usage_meter", lambda: FakeUsageMeter())
+
+    async def fake_requester_user_id(_user, _scope):
+        return "usr_1"
+
+    monkeypatch.setattr(
+        chat_route,
+        "_requester_user_id_for_chat",
+        fake_requester_user_id,
+    )
+
+    with pytest.raises(chat_route.HTTPException) as exc_info:
+        await chat_route._require_ai_assistant_access(
+            user={"id": "usr_1", "username": "alice"},
+            scope=ChatScope(kind="freezone", id="project-a"),
+        )
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "虾导功能暂未开放"
+    assert credit_checked is False
+
+
+@pytest.mark.anyio
+async def test_freezone_assistant_uses_its_own_product_surface(monkeypatch) -> None:
+    seen = {}
+
+    class FakeProductSurfaceAccess:
+        async def get_effective_access(self, user_id):
+            seen["user_id"] = user_id
+            return [
+                {"surface_code": "assistant", "available": False},
+                {"surface_code": "freezone_assistant", "available": True},
+            ]
+
+    async def fake_requester_user_id(user, scope):
+        assert scope.kind == "freezone"
+        return "project-user"
+
+    monkeypatch.setattr(
+        chat_route,
+        "get_product_surface_access",
+        lambda: FakeProductSurfaceAccess(),
+    )
+    monkeypatch.setattr(
+        chat_route, "_requester_user_id_for_chat", fake_requester_user_id
+    )
+
+    available = await chat_route._assistant_surface_available(
+        user={"id": "usr_1", "username": "alice"},
+        scope=ChatScope(kind="freezone", id="project-a"),
+    )
+
+    assert available is True
+    assert seen["user_id"] == "project-user"
+
+
+@pytest.mark.anyio
+async def test_project_prewarm_ignores_unavailable_assistant_surface(
+    monkeypatch,
+) -> None:
+    calls = []
+
+    async def fail_if_surface_checked(**_kwargs):
+        raise AssertionError("main project prewarm must not query Product Surface")
+
+    async def capture_prewarm(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(
+        chat_route, "_assistant_surface_available", fail_if_surface_checked
+    )
+    monkeypatch.setattr(
+        chat_route.chat_service, "prewarm_chat_backend", capture_prewarm
+    )
+
+    warmed = await chat_route._prewarm_chat_scope_if_available(
+        user={"id": "usr_1", "username": "alice"},
+        username="alice",
+        scope=ChatScope(kind="project", id="project-a", surface="director"),
+    )
+
+    assert warmed is True
+    assert calls == [
+        (("alice",), {"project": "project-a", "surface": None, "agent_id": None})
+    ]
+
+
+@pytest.mark.anyio
+async def test_freezone_prewarm_skips_unavailable_surface(monkeypatch) -> None:
+    calls = []
+
+    async def unavailable(**_kwargs):
+        return False
+
+    async def capture_prewarm(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(chat_route, "_assistant_surface_available", unavailable)
+    monkeypatch.setattr(
+        chat_route.chat_service, "prewarm_chat_backend", capture_prewarm
+    )
+
+    warmed = await chat_route._prewarm_chat_scope_if_available(
+        user={"id": "usr_1", "username": "alice"},
+        username="alice",
+        scope=ChatScope(
+            kind="project",
+            id="project-a",
+            surface="freezone",
+            agent_id="agent-1",
+        ),
+    )
+
+    assert warmed is False
+    assert calls == []
+
+
+@pytest.mark.anyio
+async def test_agent_session_cannot_forge_canvas_receipt(monkeypatch):
+    from fastapi import HTTPException
+
+    payload = chat_route.CanvasCommandToolResultIn(
+        bridge_key="bridge-workflow",
+        project_id="p",
+        canvas_id="c",
+        tool_call_status="completed",
+        canvas_apply_status="applied",
+        applied=True,
+    )
+    monkeypatch.setattr(
+        chat_route,
+        "_pending_workflow_draft_receipt",
+        lambda *_: pytest.fail(
+            "Agent receipt must be rejected before reading pending commands"
+        ),
+    )
+    with pytest.raises(HTTPException) as error:
+        await chat_route.resolve_canvas_command_tool_result(
+            payload,
+            {"username": "alice", "credential_kind": "agent_session"},
+        )
+    assert error.value.status_code == 403
+
+
+@pytest.mark.parametrize("partial", [False, True])
+def test_catalog_save_error_overrides_frontend_success(
+    monkeypatch, tmp_path, partial
+) -> None:
+    monkeypatch.setattr(
+        chat_route, "_canvas_bridge_dir", lambda *_args, **_kwargs: tmp_path
+    )
+
+    def save(*, username, kind, payload):
+        if partial and kind == "recipes":
+            return payload
+        raise ValueError("injected save failure")
+
+    monkeypatch.setattr(chat_route, "save_user_agent_config_item", save)
+    payload = chat_route.SkillStudioToolResultIn(
+        bridge_key="failed-save",
+        turn_id="turn-a",
+        action="confirm_add",
+        skill_studio_status="catalog_saved",
+        saved_to_catalog=True,
+        saved_skill_ids=["invented"],
+        saved_recipe_ids=["invented"],
+        draft={"skill": {"id": "skill-a"}, "recipes": [{"id": "recipe-a"}]},
+        message="已保存为正式 Skill / Recipe，可立即使用",
+    )
+
+    result = chat_route._resolve_skill_studio_tool_result_payload(
+        payload, username="alice"
+    )
+
+    assert result["ok"] is False
+    assert result["saved_to_catalog"] is False
+    assert result["tool_call_status"] == "failed"
+    assert result["skill_studio_status"] == (
+        "catalog_partially_saved" if partial else "catalog_save_failed"
+    )
+    assert result["saved_skill_ids"] == []
+    assert result["saved_recipe_ids"] == (["recipe-a"] if partial else [])
+    assert "可立即使用" not in result["message"]
+    assert (
+        ("部分" in result["message"])
+        if partial
+        else ("未保存任何" in result["message"])
+    )
+    assert result["draft"] == payload.draft
+    assert result["errors"]

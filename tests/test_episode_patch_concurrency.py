@@ -189,12 +189,24 @@ async def test_new_projects_are_structured_and_carry_no_embedding_binding(
         PROJECT_EMBEDDING_MODEL_KEY,
     )
 
-    state_dir = tmp_path / "user" / "fresh"
-    record = SimpleNamespace(
+    from novelvideo import config
+    from novelvideo.ports.project import ProjectRecord
+
+    monkeypatch.setattr(config, "OUTPUT_DIR", tmp_path / "output")
+    monkeypatch.setattr(config, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(config, "RUNTIME_DIR", tmp_path / "runtime")
+    state_dir = tmp_path / "state" / "someone" / "fresh"
+    record = ProjectRecord(
         id="proj_1",
-        output_dir=str(tmp_path / "out"),
+        owner_type="user",
+        owner_id="1",
+        owner_username="someone",
+        name="fresh",
+        home_node_id="local",
+        output_dir=str(tmp_path / "output" / "someone" / "fresh"),
         state_dir=str(state_dir),
-        runtime_dir=str(tmp_path / "run"),
+        runtime_dir=str(tmp_path / "runtime" / "someone" / "fresh"),
+        status="active",
     )
 
     async def create_project(**_kwargs):
@@ -208,7 +220,11 @@ async def test_new_projects_are_structured_and_carry_no_embedding_binding(
     )
     monkeypatch.setattr(projects, "validate_project_name", lambda _name: None)
     monkeypatch.setattr(projects, "user_id_from_api_user", _async(1))
-    monkeypatch.setattr(projects, "ensure_project_dirs_at_paths", lambda **_kw: None)
+    def ensure_dirs(**paths):
+        for path in paths.values():
+            Path(path).mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(projects, "ensure_project_dirs_at_paths", ensure_dirs)
     monkeypatch.setattr(
         "novelvideo.embedding_models.embedding_model_binding_for_new_project", boom
     )

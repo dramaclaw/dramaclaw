@@ -11,4 +11,3 @@ Edit this README feature illustration. Keep exact title and subtitle, black/blue
 ### storyboards
 
 Edit ONLY errors in this existing feature illustration. Preserve title, subtitle, dark layout, the two 3x3 grids, all sketch compositions and historical costume film scenes. Fix labels on EACH grid so they read row-major 'Shot 1', 'Shot 2', 'Shot 3', 'Shot 4', 'Shot 5', 'Shot 6', 'Shot 7', 'Shot 8', 'Shot 9', no duplicates or missing numbers. Refine any distorted face in the right grid into natural adult Chinese actors while preserving identity, costume and framing across shots; restrained realistic film stills, not plastic skin. Remove tiny unreadable sidebar navigation text rather than inventing text; retain simple sidebar icons. Do not add functions or metrics. Keep the two existing English headings and bottom labels exactly unchanged.
-

@@ -13,6 +13,7 @@ import {
   RotateCw,
   Box as BoxIcon,
   FileText,
+  Globe,
 } from 'lucide-react';
 
 import type { FreezoneGenerationHistoryRecord } from '@/api/ops';
@@ -40,6 +41,19 @@ export function historyRecordOutputUrl(
     if (typeof value === 'string' && value.length > 0) return value;
   }
   return null;
+}
+
+export function historyRecordHtmlIdentity(
+  record: FreezoneGenerationHistoryRecord,
+): { artifactId: string; version: number } | null {
+  if (record.media_type !== 'html') return null;
+  const result = record.result ?? {};
+  const artifactId = typeof result.artifact_id === 'string' ? result.artifact_id.trim() : '';
+  const version = result.version;
+  if (!artifactId || typeof version !== 'number' || !Number.isInteger(version) || version < 1) {
+    return null;
+  }
+  return { artifactId, version };
 }
 
 /** 3GS 扩展名;命中即视为世界模型产物。 */
@@ -326,6 +340,7 @@ function MediaFallbackIcon({ mediaType }: { mediaType: string }) {
   if (mediaType === 'audio') return <Music className={className} />;
   if (mediaType === '3d' || mediaType === 'ply') return <BoxIcon className={className} />;
   if (mediaType === 'text') return <FileText className={className} />;
+  if (mediaType === 'html') return <Globe className={className} />;
   return <ImageIcon className={className} />;
 }
 
@@ -347,6 +362,8 @@ interface NodeGenerationHistoryProps {
    */
   fallbackThumbnailUrl?: string | null;
   className?: string;
+  /** true 时整条禁用（如生成中不可恢复）：条带变暗、光标 not-allowed，行按钮原生 disabled。 */
+  disabled?: boolean;
 }
 
 /**
@@ -363,6 +380,7 @@ export function NodeGenerationHistory({
   isActive,
   fallbackThumbnailUrl,
   className,
+  disabled = false,
 }: NodeGenerationHistoryProps) {
   const { t } = useTranslation();
   // Only successful generations belong in the history strip — failed / pending
@@ -383,7 +401,9 @@ export function NodeGenerationHistory({
   if (!isLoading && sorted.length === 0) return null;
 
   return (
-    <div className={`flex flex-col gap-1.5 ${className ?? ''}`}>
+    <div
+      className={`flex flex-col gap-1.5 ${disabled ? 'cursor-not-allowed opacity-50' : ''} ${className ?? ''}`}
+    >
       <div className="flex items-center justify-between px-0.5">
         <span className="inline-flex items-center gap-1 text-[11px] font-medium text-text-muted">
           <History className="h-3 w-3" />
@@ -430,17 +450,19 @@ export function NodeGenerationHistory({
                   { variant: 'thumb' },
                 )
               : null;
-          const restorable = completed && (url || historyRecordPrompt(record));
+          const restorable = completed && Boolean(
+            url || historyRecordPrompt(record) || historyRecordHtmlIdentity(record),
+          );
           const active = completed && Boolean(isActive?.(record));
           return (
             <button
               key={record.id}
               type="button"
-              disabled={!restorable}
+              disabled={disabled || !restorable}
               aria-pressed={active}
               onClick={(event) => {
                 event.stopPropagation();
-                if (restorable) onRestore(record);
+                if (!disabled && restorable) onRestore(record);
               }}
               title={`${formatRelativeTime(record.recorded_at, t)}${
                 completed ? '' : ` · ${record.status}`
@@ -451,7 +473,7 @@ export function NodeGenerationHistory({
                   : completed
                     ? 'border-white/10 hover:border-[rgb(var(--accent-rgb))]'
                     : 'border-rose-500/40'
-              } ${restorable ? 'cursor-pointer' : 'cursor-default'}`}
+              } ${restorable && !disabled ? 'cursor-pointer' : 'cursor-not-allowed'}`}
             >
               {isImage ? (
                 <img

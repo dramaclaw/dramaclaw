@@ -1,0 +1,99 @@
+{
+  "skill_name": "dramaclaw",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "帮我看看当前第 1 集做到哪一步了",
+      "expected_output": "Activate dramaclaw, load the resume playbook, query the bound project's current episode status, and report grounded progress without starting a write task.",
+      "files": [],
+      "expectations": [
+        "Activates the dramaclaw skill",
+        "Uses current API state rather than conversation memory",
+        "Loads playbooks/resume.md but does not load both init.md and episode.md up front",
+        "Does not start a generation task"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "继续生成第 1 集视频",
+      "expected_output": "Activate dramaclaw and apply the cross-stage decomposition protocol before any write operation.",
+      "files": [],
+      "expectations": [
+        "Activates the dramaclaw skill in a bound production conversation",
+        "Does not immediately run the whole episode pipeline",
+        "Asks whether to inspect progress and recommend one next step",
+        "Starts no write task in the first turn"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "第 1 集现在缺配音声线，帮我用系统声线继续",
+      "expected_output": "Activate dramaclaw, verify current voice prerequisites, and prepare system voices only after this explicit choice; do not start TTS in the same turn.",
+      "files": [],
+      "expectations": [
+        "Checks current episode state",
+        "Calls the system voice preparation action at most once",
+        "Does not start audio generation in the same turn",
+        "Reports that voice preparation and TTS are separate steps"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "把第 2 集第 7 个 beat 的说话人改成陆星然",
+      "expected_output": "Activate dramaclaw, load update behavior, update only the requested beat, and stop before regenerating audio or composing.",
+      "files": [],
+      "expectations": [
+        "Loads references/update-behavior.md",
+        "Performs at most one write operation",
+        "Does not regenerate audio or compose in the same turn",
+        "Reports only the confirmed update and one next step"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "展示第 1 集第 3 个 beat 的当前草图",
+      "expected_output": "Activate dramaclaw and use the formal sketch display path, not sketch candidates, URLs, or text-only media output.",
+      "files": [],
+      "expectations": [
+        "Uses the current-sketch display behavior",
+        "Does not substitute candidate images or first frames",
+        "Does not print a media URL or markdown image",
+        "Keeps final natural-language text brief"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "帮我写一个赛博朋克女总裁复仇短剧",
+      "expected_output": "Activate dramaclaw because this is an explicit production request, but do not create or ingest a screenplay from the one-line idea; direct the user to upload an existing screenplay in 虾料.",
+      "files": [],
+      "expectations": [
+        "Does not call a write or generation tool",
+        "Does not create a project or screenplay",
+        "Explains the screenplay upload prerequisite concisely",
+        "Does not expand the idea into ingest content"
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "这个软件项目目前进度怎么样？",
+      "expected_output": "Do not activate dramaclaw without DramaClaw production context; ask which software project or answer from the active non-DramaClaw context.",
+      "files": [],
+      "expectations": [
+        "Does not activate dramaclaw solely because of generic project and progress words",
+        "Does not query the DramaClaw pipeline",
+        "Does not assume a bound video production"
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "你好，在吗？",
+      "expected_output": "Reply briefly without activating dramaclaw or calling project APIs.",
+      "files": [],
+      "expectations": [
+        "Does not activate dramaclaw",
+        "Does not call any DramaClaw tool",
+        "Replies as ordinary conversation"
+      ]
+    }
+  ]
+}

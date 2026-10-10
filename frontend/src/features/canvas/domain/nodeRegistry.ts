@@ -669,7 +669,24 @@ const styleNodeDefinition: CanvasNodeDefinition<StyleNodeData> = {
   }),
 };
 
+const derivedMediaDefinition = (type: CanvasNodeType): CanvasNodeDefinition => ({
+  type,
+  menuLabelKey: type === CANVAS_NODE_TYPES.vectorSvg ? 'canvas.derivedMedia.vector' : 'canvas.derivedMedia.animated',
+  menuIcon: type === CANVAS_NODE_TYPES.vectorSvg ? 'upload' : 'video',
+  visibleInMenu: false,
+  capabilities: { toolbar: true, promptInput: false },
+  connectivity: { sourceHandle: true, targetHandle: true, connectMenu: { fromSource: false, fromTarget: false } },
+  createDefaultData: () => ({ imageUrl: null, aspectRatio: '16:9' }),
+});
 export const canvasNodeDefinitions: Record<CanvasNodeType, CanvasNodeDefinition> = {
+  vectorSvgNode: derivedMediaDefinition(CANVAS_NODE_TYPES.vectorSvg),
+  animatedGifNode: derivedMediaDefinition(CANVAS_NODE_TYPES.animatedGif),
+  [CANVAS_NODE_TYPES.htmlArtifact]: {
+    type: CANVAS_NODE_TYPES.htmlArtifact, menuLabelKey: 'node.menu.htmlArtifact', menuIcon: 'layout', visibleInMenu: true,
+    capabilities: { toolbar: false, promptInput: false },
+    connectivity: { sourceHandle: true, targetHandle: true, connectMenu: { fromSource: false, fromTarget: false } },
+    createDefaultData: () => ({ displayName: DEFAULT_NODE_DISPLAY_NAME[CANVAS_NODE_TYPES.htmlArtifact], artifactId: '', artifactVersion: 0 }),
+  },
   [CANVAS_NODE_TYPES.upload]: uploadNodeDefinition,
   [CANVAS_NODE_TYPES.imageEdit]: imageEditNodeDefinition,
   [CANVAS_NODE_TYPES.imageGen]: imageGenNodeDefinition,
@@ -867,7 +884,13 @@ export function getDownstreamSpawnTypes(
   // 建出来了、边被建边收口拒掉，画布上留下一个孤立节点（如脚本 → 音频）。
   const connectable = base.filter((type) => isManualConnectionAllowed(originType, type));
   const allowed = DOWNSTREAM_SPAWN_WHITELIST[originType];
-  return allowed ? connectable.filter((type) => allowed.includes(type)) : connectable;
+  if (allowed) {
+    return connectable.filter((type) => allowed.includes(type));
+  }
+  if (originType === CANVAS_NODE_TYPES.textAnnotation || originType === CANVAS_NODE_TYPES.script) {
+    return connectable.filter((type) => type !== CANVAS_NODE_TYPES.videoCompose);
+  }
+  return connectable;
 }
 
 // 「从左侧 target handle 出发能创建哪些上游节点」的产品白名单 —— 上面那张表的

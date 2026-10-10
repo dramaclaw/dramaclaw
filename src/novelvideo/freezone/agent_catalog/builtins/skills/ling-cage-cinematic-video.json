@@ -1,0 +1,165 @@
+{
+  "schema_version": "dramaclaw.workflow-skill.v1",
+  "id": "ling-cage-cinematic-video",
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "灵笼风格科幻短片",
+  "description": "把灵感、角色设定、参考素材或脚本发展成灵笼风格半写实 3D 末世科幻动画短片，按故事脚本、分镜、关键元素、逐镜视频和音频层分阶段推进。",
+  "category": "video",
+  "triggers": {
+    "keywords": [
+      "灵笼风格",
+      "末世科幻",
+      "半写实3D",
+      "灯塔",
+      "地表废土",
+      "玛娜生态",
+      "噬极兽",
+      "尘民",
+      "猎荒者",
+      "末世动画短片"
+    ],
+    "node_scopes": [
+      "textGeneration",
+      "imageGeneration",
+      "videoGeneration",
+      "audioGeneration"
+    ]
+  },
+  "input_parameters": [
+    {
+      "id": "total_duration",
+      "label": "目标时长",
+      "type": "single_select",
+      "required": true,
+      "default": "2分钟",
+      "options": [
+        "1分钟",
+        "2分钟",
+        "3分钟"
+      ]
+    },
+    {
+      "id": "output_language",
+      "label": "输出语言",
+      "type": "single_select",
+      "required": true,
+      "default": "中文",
+      "options": [
+        "中文",
+        "英文"
+      ]
+    },
+    {
+      "id": "director_style",
+      "label": "导演风格",
+      "type": "single_select",
+      "required": true,
+      "default": "纪录沉浸",
+      "options": [
+        "纪录沉浸",
+        "史诗悲壮",
+        "恐怖惊悚",
+        "分段混合"
+      ]
+    },
+    {
+      "id": "asset_mode",
+      "label": "素材方式",
+      "type": "single_select",
+      "required": true,
+      "default": "优先使用已有素材",
+      "options": [
+        "优先使用已有素材",
+        "缺失素材再生成",
+        "统一重制风格"
+      ]
+    },
+    {
+      "id": "audio_mode",
+      "label": "背景音乐",
+      "type": "single_select",
+      "required": true,
+      "default": "生成BGM",
+      "options": [
+        "生成BGM",
+        "不生成BGM"
+      ]
+    }
+  ],
+  "allowed_recipe_ids": [
+    "sci-fi-survival-story-script",
+    "sci-fi-survival-storyboard",
+    "sci-fi-survival-key-elements",
+    "sci-fi-survival-shot-video",
+    "sci-fi-survival-audio-layers"
+  ],
+  "planning": {
+    "planning_notes": "动态执行路径：先根据 total_duration、output_language、director_style、asset_mode、audio_mode、用户输入和画布/上传素材判断入口，并在 Skill 层锁定创意规格：默认 16:9、24fps、720p、目标时长、输出语言、导演风格、素材策略、是否生成 BGM 和视觉风格；这个规格不创建独立节点。若用户只有关键词或灵感，先产出多个故事方向供选择，再扩展逐场脚本并让故事阶段产物清晰可审阅；若用户已有完整脚本，可跳过方向选择但必须做结构化提取。故事阶段完成后生成分镜，输出 Key Elements、Shot List 和 BGM 规划，并检查每个镜头是否绑定场景、角色、动作、对白/旁白、时长和转场意图。分镜完成后进入关键元素图阶段：先根据 Key Elements 列出需要跨镜复用的独立资产，再为每项资产分别创建草稿节点。每个持续出现的角色或队伍各自独立成节点；每个主要复用场景各自独立成节点；每个怪物、机械、核心道具或需要跨镜保持外观一致的环境源各自独立成节点。角色节点生成三视图，场景节点生成 2x2 无角色四宫格，怪物/机械/道具节点生成完整结构或多角度参考；优先绑定用户素材，不匹配时按原素材重制风格。不得只创建一个笼统的“关键元素”总节点，也不得把多个可独立引用的角色、场景、怪物、机械或道具合并成一张总图；只有始终作为同一整体被下游引用的资产才可共用一个节点。关键元素完成后按 Shot List 条目或明确场景段创建单镜视频：每个 Shot List 条目必须是独立的视频 intent item 和画布节点，单镜 4-15 秒，每镜只引用实际需要的角色、场景、怪物/机械/道具元素图；对白和音效写入对应视频提示词，旁白和镜头内环境声也随镜头提示词表达，不单独创建音频节点；图片引用不超过 9 张，音频引用不超过 3 条，只在强连续时引用上一镜视频。Runner 只执行已落到画布的节点，不会从已完成脚本或分镜自动扩展后续节点，因此完整草稿必须一次性列出关键元素节点、全部单镜视频节点，并只在需要配乐时创建 BGM 音频节点。若 audio_mode 为“生成BGM”，只在需要配乐时创建 BGM 音频节点；若为“不生成BGM”，不要创建独立音频节点。最后提醒用户可在画布上进行最终合成，并询问是否需要超分；最终合成和超分由画布工具处理。",
+    "prompt_guide": "输出使用清晰中文 Markdown。核心风格为灵笼气质的半写实 3D CG 电影感末世科幻：写实级渲染、轻微动画化审美、压抑暗色、废土诗意、脏旧材质、体积光、丁达尔效应、真实皮肤和战损装备。场景方向可围绕地表废土、灯塔内部、玛娜生态、龙骨村等空间展开，并保持空间关系、光色、活动区域和环境状态连续。Shot 层禁止默认字幕；旁白和对白不得重叠；用户素材优先绑定，缺失或风格不匹配才生成/重制。",
+    "conduct_rules": [
+      "先创建完整工作流草稿；故事方向/脚本、创意规格、分镜、关键元素批、场景段视频和必要的 BGM 音频节点都必须有清晰阶段产物，实际继续、重试和执行节奏由画布工作流控制。",
+      "默认 16:9、24fps、720p；目标时长按 input total_duration，默认 1-3 分钟范围。",
+      "角色必须是半写实 3D CG，战术装备、划痕、灰尘、血污和真实材质明确；禁止日漫平涂、Q版、明亮干净和过度赛博霓虹。",
+      "场景必须区分地表废土、灯塔内部、玛娜生态、龙骨村，并标注光色、空间关系和活动区域。",
+      "分镜必须包含 scene、story beat、shot size、camera height、camera movement、character orientation、transition intent。",
+      "关键元素阶段不得只创建一个笼统的“关键元素”节点。每个持续出现的角色或队伍、每个主要复用场景、每个怪物/机械/核心道具/环境源，必须各自独立成节点；不要用一张总图替代多个独立元素。",
+      "每个 Shot List 条目必须是独立的视频 intent item 和画布节点；不得只创建一个笼统的“单镜视频”节点代替完整短片。",
+      "视频生成前逐镜检查：场景参考、角色参考、对白/旁白文本、镜头内环境声、动作音效、关键动作和图片引用 <=9；对白、旁白和镜头内音效应写入对应视频提示词。",
+      "角色伤口、装备破损和环境状态必须跨镜连续，不得自动重置。",
+      "旁白与角色对白必须错开，不能语义重复；对白密集镜头通常不加旁白；BGM 只作为独立配乐音频节点处理。",
+      "创意规格只服务规划，不创建独立节点；流程结束时只提醒用户在画布合成，并询问是否需要超分。"
+    ]
+  },
+  "evaluation": {
+    "rating_bands": [
+      {
+        "score": 5,
+        "description": "流程分阶段清楚，风格锁定稳定，资产绑定完整，镜头节奏、战斗调度、情绪表演和音频错峰都明确落入产物。"
+      },
+      {
+        "score": 3,
+        "description": "流程基本完整，但部分阶段缺少素材分析、关键元素绑定、逐镜检查、转场意图、音频错峰或风格禁忌。"
+      },
+      {
+        "score": 1,
+        "description": "跳过确认、使用日漫/Q版/明亮干净风格，或忽略引用数量、角色连续性和音频冲突。"
+      }
+    ],
+    "visual_review_items": [
+      {
+        "name": "半写实末世风格",
+        "weight": 1.5,
+        "description": "画面应是半写实 3D CG 电影感，暗色压抑、脏旧真实、体积光和废土诗意并存。"
+      },
+      {
+        "name": "关键元素一致性",
+        "weight": 1.3,
+        "description": "角色三视图、场景四宫格、怪物/道具参考必须成为跨镜外观锚点。"
+      },
+      {
+        "name": "镜头空间清晰",
+        "weight": 1.2,
+        "description": "战斗和移动方向遵守轴线、地理关系、角色朝向和环境状态连续。"
+      }
+    ],
+    "text_review_items": [
+      {
+        "name": "阶段边界",
+        "weight": 1,
+        "description": "每个主要阶段都有明确产物、输入依赖和下一步，便于画布工作流审阅和推进。"
+      },
+      {
+        "name": "音频规则",
+        "weight": 1,
+        "description": "旁白、对白、BGM、SFX 的时段、职责和冲突规避必须清楚。"
+      }
+    ],
+    "quality_threshold": 4,
+    "domain_constraints": [
+      "不得使用日本动画平涂、Q版怪物、明亮干净风格或魔法特效词汇。",
+      "视频镜头引用图最多 9 张，音频引用最多 3 条。",
+      "Shot 层默认 no subtitles，字幕只在后期作为可选轨道处理。"
+    ]
+  }
+}

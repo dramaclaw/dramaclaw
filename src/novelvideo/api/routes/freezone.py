@@ -16,19 +16,30 @@ import math
 import os
 import re
 import shutil
+import time
 import uuid
 from collections.abc import Mapping
+from copy import deepcopy
 from pathlib import Path
 from typing import Annotated, Any, Awaitable, Callable, Literal, Optional
 from urllib.parse import quote, unquote, urlencode, urlsplit
 
 from fastapi import (
-    APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile,
+    APIRouter,
+    Body,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
 )
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from novelvideo.api.auth import get_api_user
+from novelvideo.chat import evidence_metrics
+from novelvideo.chat import service as chat_service
 from novelvideo.api.deps import (
     make_cognee_store_for_context,
     make_sqlite_store,
@@ -37,6 +48,9 @@ from novelvideo.api.deps import (
     sqlite_store_for_context_scope,
 )
 from novelvideo.api.schemas import (
+    FreezoneImageAnimateRequest,
+    FreezoneImageVectorizeRequest,
+    FreezoneImageAnimateGifRequest,
     CanvasPayload,
     CreateIdentityAssetRequest,
     FreezoneAnalyzeShotsRequest,
@@ -64,6 +78,11 @@ from novelvideo.api.schemas import (
     FreezoneMarkDetectRequest,
     FreezoneMarkDetectResponse,
     FreezoneOutpaintRequest,
+    FreezoneRecipeCompileBatchRequest,
+    FreezoneRecipeCompileBatchResponse,
+    FreezoneRecipeCompileRequest,
+    FreezoneRecipeCompileResponse,
+    FreezoneRecipeTextGenerateResponse,
     FreezoneRedrawRequest,
     FreezoneRelightRequest,
     FreezoneScene360Request,
@@ -91,6 +110,10 @@ from novelvideo.api.schemas import (
     ProjectionStatusRequest,
     PushRequest,
 )
+from novelvideo.chat.hermes_workspace import (
+    list_freezone_hermes_workflow_skills,
+    sync_freezone_hermes_workflow_skills,
+)
 from novelvideo.api.task_start_errors import handle_task_start_runtime_error
 from novelvideo.api.upload_workers import run_asset_upload_operation
 from novelvideo.config import (
@@ -102,6 +125,16 @@ from novelvideo.director_world import DirectorWorldService
 from novelvideo.director_world.staging_prop_ai import generate_ai_staging_prop
 from novelvideo.generators.render_identity_guard import render_ai_detection_error
 from novelvideo.freezone import canvas_store
+from novelvideo.freezone.agent_bundle_store import (
+    export_agent_bundle,
+    install_agent_bundle,
+    validate_agent_bundle,
+)
+from novelvideo.freezone.agent_config_store import (
+    delete_user_agent_config_item,
+    list_user_agent_config_items,
+    save_user_agent_config_item,
+)
 from novelvideo.freezone.asset_copy import (
     AssetCopyError,
     allocate_target_path,
@@ -109,7 +142,7 @@ from novelvideo.freezone.asset_copy import (
     parse_project_asset_url,
     resolve_source_file,
 )
-from novelvideo.i18n_message import log_lines_text
+from novelvideo.i18n_message import lmsg, log_lines_text
 from novelvideo.media_model_request_schema import (
     MediaModelSchemaError,
     media_model_request_endpoint,
@@ -148,6 +181,53 @@ from novelvideo.freezone.history import (
     read_canvas_generation_history,
     read_generation_history,
 )
+from novelvideo.freezone.workflow_drafts import (
+    bind_workflow_draft_task,
+    cancel_workflow_draft,
+    claim_workflow_draft_confirmation,
+    create_workflow_draft,
+    finish_workflow_draft_confirmation,
+    patch_workflow_draft,
+    prune_expired_workflow_drafts,
+    read_workflow_draft,
+)
+from novelvideo.freezone.agent_product_operations import (
+    PRODUCT_TASK_TYPES,
+    bind_agent_product_model_execution,
+    bind_agent_product_task,
+    create_agent_product_operation,
+    finish_agent_product_operation,
+    is_direct_voice_recipe_action,
+    list_agent_product_operations_for_session,
+    is_recipe_compile_receipt,
+    read_agent_generation_session,
+    read_agent_product_operation,
+    read_recipe_model_prompt,
+    save_agent_generation_session,
+)
+from novelvideo.freezone.workflow_runs import (
+    RECIPE_ATTEMPT_ENDED_MARKER,
+    RECIPE_ATTEMPT_ENDED_STATUSES,
+    _validate_action_artifact,
+    WorkflowRunIdempotencyConflict,
+    WorkflowRunLeaseConflict,
+    bind_workflow_action_product_operation,
+    bind_workflow_media_task,
+    claim_workflow_media_action,
+    create_workflow_run,
+    interrupt_stale_workflow_runs,
+    list_workflow_runs,
+    prune_workflow_runs,
+    read_workflow_run,
+    reclaim_failed_workflow_media_action,
+    renew_workflow_media_claim,
+    reconcile_workflow_runs_with_canvas_nodes,
+    reconcile_workflow_runs_with_canvas_results,
+    reconcile_workflow_runs_with_tasks,
+    recipe_attempt_ended_message,
+    update_workflow_run,
+    workflow_media_failure_awaits_retry,
+)
 from novelvideo.freezone.image_node import (
     DEFAULT_IMAGE_REVERSE_PROMPT_INSTRUCTION,
     reverse_prompt_from_image,
@@ -174,7 +254,15 @@ from novelvideo.freezone.presets import (
 from novelvideo.freezone.route_helpers import (
     FREEZONE_DEFAULT_IMAGE_MODEL,
 )
+from novelvideo.freezone.recipe_runtime import (
+    RecipeCompileResult,
+    RecipeRuntimeError,
+    compile_recipe_prompt_batch,
+    compile_recipe_prompt_result,
+    generate_recipe_text,
+)
 from novelvideo.ports import get_usage_meter
+from novelvideo.ports.local.usage import NoOpUsageMeter
 from novelvideo.freezone.route_helpers import (
     accepted_job_response as _accepted_job_response,
 )
@@ -308,6 +396,7 @@ from novelvideo.freezone.video_node import (
     normalize_video_resolution_for_backend,
     rename_video_character_library_item,
     resolve_freezone_video_backend,
+    supported_image_aspect_ratio,
     summarize_omni_reference_counts,
     update_video_character_folder,
     validate_omni_reference_audio_durations,
@@ -379,7 +468,13 @@ async def _resolve_freezone_project(
     )
     if require_home_node:
         require_project_home_node(ctx, operation="access freezone project files")
-    return ctx, ctx.owner_username, ctx.project_name, Path(ctx.output_dir), str(ctx.output_dir)
+    return (
+        ctx,
+        ctx.owner_username,
+        ctx.project_name,
+        Path(ctx.output_dir),
+        str(ctx.output_dir),
+    )
 
 
 def _raise_project_context_required(task_type: str) -> None:
@@ -391,6 +486,267 @@ def _raise_project_context_required(task_type: str) -> None:
 
 def _handle_task_start_runtime_error(message: str, exc: RuntimeError) -> None:
     handle_task_start_runtime_error(logger, message, exc)
+
+
+def _raise_if_recipe_attempt_ended(operation: dict[str, Any]) -> None:
+    """Refuse further work on a settled Recipe attempt; only a rerun can proceed."""
+    status = str(operation.get("status") or "")
+    if status in RECIPE_ATTEMPT_ENDED_STATUSES:
+        raise HTTPException(409, recipe_attempt_ended_message(status))
+
+
+async def _raise_if_recipe_attempt_ended_now(state_dir: Path, operation_id: str) -> None:
+    """Re-read the operation so a concurrently settled attempt reports as ended."""
+    current = await asyncio.to_thread(
+        read_agent_product_operation, project_dir=state_dir, operation_id=operation_id
+    )
+    if current is not None:
+        _raise_if_recipe_attempt_ended(current)
+
+
+def _is_recipe_attempt_ended(exc: HTTPException) -> bool:
+    return exc.status_code == 409 and RECIPE_ATTEMPT_ENDED_MARKER in str(exc.detail)
+
+
+def _verified_workflow_media_link(
+    *,
+    ctx: ProjectContext,
+    project_dir: Path,
+    canvas_id: str | None,
+    node_id: str | None,
+    operation_id: str,
+    attempt_id: str,
+) -> dict[str, str]:
+    """Bind a media submission to its admitted Recipe attempt before enqueue."""
+    if not operation_id and not attempt_id:
+        return {}
+    if not all((operation_id, attempt_id, canvas_id, node_id)):
+        raise HTTPException(400, "incomplete workflow media link")
+    operation = read_agent_product_operation(
+        project_dir=_canvas_state_project_dir(ctx, project_dir),
+        operation_id=operation_id,
+    )
+    metadata = (operation or {}).get("metadata") or {}
+    if (
+        operation is None
+        or operation.get("product_kind") != "recipe_result"
+        or operation.get("project_id") != ctx.project_id
+        or operation.get("canvas_id") != canvas_id
+        or operation.get("artifact_id") != node_id
+        or metadata.get("generation_attempt_id") != attempt_id
+        or metadata.get("node_id") != node_id
+        or not metadata.get("workflow_run_id")
+    ):
+        raise HTTPException(
+            409, "workflow media link does not match admitted Recipe attempt"
+        )
+    _raise_if_recipe_attempt_ended(operation)
+    return {
+        "product_operation_id": operation_id,
+        "generation_attempt_id": attempt_id,
+    }
+
+
+async def _enqueue_claimed_workflow_media(
+    *,
+    ctx: ProjectContext,
+    project_dir: Path,
+    task_type: str,
+    queue_kind: str,
+    payload: dict[str, Any],
+    job_id: str,
+) -> dict:
+    """Use the durable workflow claim and task scope for one media submission."""
+    operation_id = str(payload.get("product_operation_id") or "")
+    if operation_id:
+        identity = {
+            key: value
+            for key, value in payload.items()
+            if key
+            not in {
+                "job_id",
+                "project_dir",
+                "billing",
+                "task_family",
+                "task_label",
+                "display_name",
+                "task_summary",
+            }
+        }
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                {"task_type": task_type, "payload": identity},
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest()
+        async def current_claim() -> dict[str, Any]:
+            try:
+                return await asyncio.to_thread(
+                    claim_workflow_media_action,
+                    project_dir=_canvas_state_project_dir(ctx, project_dir),
+                    project_id=ctx.project_id,
+                    canvas_id=str(payload.get("canvas_id") or ""),
+                    node_id=str(payload.get("node_id") or ""),
+                    operation_id=operation_id,
+                    attempt_id=str(payload.get("generation_attempt_id") or ""),
+                    task_type=task_type,
+                    fingerprint=fingerprint,
+                )
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from exc
+
+        async def claimed_task(claimed: dict[str, Any]) -> Any:
+            scope = str(claimed["job_id"])
+            task = await asyncio.to_thread(
+                get_task_manager().get_task_for_project, ctx, task_type, 0, scope=scope
+            )
+            if task is None and not claimed["created"]:
+                deadline = time.monotonic() + 1.0
+                while task is None and time.monotonic() < deadline:
+                    await asyncio.sleep(0.05)
+                    task = await asyncio.to_thread(
+                        get_task_manager().get_task_for_project,
+                        ctx, task_type, 0, scope=scope,
+                    )
+            return task
+
+        claim = await current_claim()
+        existing = await claimed_task(claim)
+        for _ in range(3):
+            if existing is None or str(existing.status or "") != "failed":
+                break
+            # A retryable provider failure leaves the claim on a failed task;
+            # the runner's next recorded retry gets a fresh job (issue #681).
+            retry_claim = await asyncio.to_thread(
+                reclaim_failed_workflow_media_action,
+                project_dir=_canvas_state_project_dir(ctx, project_dir),
+                project_id=ctx.project_id,
+                canvas_id=str(payload.get("canvas_id") or ""),
+                run_id=claim["run_id"],
+                node_id=str(payload.get("node_id") or ""),
+                operation_id=operation_id,
+                attempt_id=str(payload.get("generation_attempt_id") or ""),
+                task_type=task_type,
+                fingerprint=fingerprint,
+                failed_job_id=str(claim["job_id"]),
+            )
+            if retry_claim is not None:
+                claim, existing = retry_claim, None
+                break
+            # A concurrent duplicate may have just moved the claim; follow it
+            # instead of handing back the failed task it replaced.
+            latest = await current_claim()
+            if latest["job_id"] == claim["job_id"]:
+                break
+            claim = latest
+            existing = await claimed_task(claim)
+        job_id = str(claim["job_id"])
+        payload["job_id"] = job_id
+        task_key = project_task_state_key(task_type, ctx.project_id, 0, scope=job_id)
+        if existing is not None:
+            await _cancel_claimed_media_if_run_cancelled(
+                ctx=ctx,
+                project_dir=project_dir,
+                canvas_id=str(payload.get("canvas_id") or ""),
+                run_id=claim["run_id"],
+                task=existing,
+            )
+            return _project_job_response(
+                task_type=task_type,
+                ctx=ctx,
+                job_id=job_id,
+                backend=str((existing.metadata or {}).get("backend") or "celery"),
+                queue=(existing.metadata or {}).get("queue"),
+                task_id=existing.task_id,
+            )
+        run = await asyncio.to_thread(
+            read_workflow_run,
+            project_dir=_canvas_state_project_dir(ctx, project_dir),
+            canvas_id=str(payload.get("canvas_id") or ""),
+            run_id=claim["run_id"],
+        )
+        if run is None or run.get("status") != "running":
+            raise HTTPException(409, "workflow run is no longer active")
+        if not claim["created"]:
+            age = time.time() - float(claim["claimed_at"] or 0)
+            if age < 10:
+                raise HTTPException(503, "workflow media submission is still starting")
+            if age > 600:
+                raise HTTPException(409, "workflow media claim needs recovery")
+            renewed = await asyncio.to_thread(
+                renew_workflow_media_claim,
+                project_dir=_canvas_state_project_dir(ctx, project_dir),
+                run_id=claim["run_id"],
+                node_id=str(payload.get("node_id") or ""),
+                operation_id=operation_id,
+                job_id=job_id,
+                claimed_at=float(claim["claimed_at"]),
+            )
+            if not renewed:
+                raise HTTPException(503, "workflow media submission is being recovered")
+    queued = await get_task_backend().enqueue_project_task(
+        ctx,
+        product_surface="freezone",
+        task_type=task_type,
+        queue_kind=queue_kind,
+        episode=0,
+        scope=job_id,
+        payload=payload,
+    )
+    if operation_id:
+        await asyncio.to_thread(
+            bind_workflow_media_task,
+            project_dir=_canvas_state_project_dir(ctx, project_dir),
+            run_id=claim["run_id"],
+            node_id=str(payload.get("node_id") or ""),
+            operation_id=operation_id,
+            job_id=job_id,
+            task_type=task_type,
+            task_key=task_key,
+        )
+        await _cancel_claimed_media_if_run_cancelled(
+            ctx=ctx,
+            project_dir=project_dir,
+            canvas_id=str(payload.get("canvas_id") or ""),
+            run_id=claim["run_id"],
+            task=queued.task_state,
+        )
+    return _project_job_response(
+        task_type=task_type,
+        ctx=ctx,
+        job_id=job_id,
+        backend=queued.backend,
+        queue=queued.queue,
+        task_id=queued.task_state.task_id,
+    )
+
+
+async def _cancel_claimed_media_if_run_cancelled(
+    *,
+    ctx: ProjectContext,
+    project_dir: Path,
+    canvas_id: str,
+    run_id: str,
+    task: Any,
+) -> None:
+    run = await asyncio.to_thread(
+        read_workflow_run,
+        project_dir=_canvas_state_project_dir(ctx, project_dir),
+        canvas_id=canvas_id,
+        run_id=run_id,
+    )
+    if run is None or run.get("status") != "cancelled":
+        return
+    if task.status not in {"pending", "starting", "submitting", "queued", "running"}:
+        return
+    try:
+        await get_task_backend().cancel_project_task(ctx, task)
+    except Exception as exc:
+        logger.exception("failed to cancel media task after workflow cancellation")
+        raise HTTPException(503, "workflow media task cancellation is pending") from exc
 
 
 async def _start_or_enqueue_freezone_video_gen(
@@ -414,6 +770,8 @@ async def _start_or_enqueue_freezone_video_gen(
     audio_setting: str | None = None,
     canvas_id: str | None = None,
     node_id: str | None = None,
+    product_operation_id: str = "",
+    generation_attempt_id: str = "",
     model_id: str | None = None,
     catalog_id: str | None = None,
     gen_mode: str | None = None,
@@ -421,16 +779,26 @@ async def _start_or_enqueue_freezone_video_gen(
     model_params: dict[str, Any] | None = None,
     request_schema: dict[str, Any] | None = None,
     capabilities: dict[str, Any] | None = None,
+    image_animate_gif: bool = False,
 ) -> dict:
     from novelvideo.api.routes.model_credits import (
         freezone_video_generate_task_billing,
     )
 
+    workflow_link: dict[str, str] = {}
     if ctx is not None:
         await _require_scoped_media_model(
             "video",
             catalog_id or model_id or backend,
             requester_user_id=ctx.requester_user_id,
+        )
+        workflow_link = _verified_workflow_media_link(
+            ctx=ctx,
+            project_dir=project_dir,
+            canvas_id=canvas_id,
+            node_id=node_id,
+            operation_id=product_operation_id,
+            attempt_id=generation_attempt_id,
         )
 
     from novelvideo.freezone.reference_validation import validate_reference_media
@@ -466,7 +834,9 @@ async def _start_or_enqueue_freezone_video_gen(
     video_duration_bounds = _catalog_reference_duration_bounds(capabilities, "video")
     measured_video_durations: list[tuple[str, float]] | None = None
     try:
-        if video_input_paths and any(value is not None for value in video_duration_bounds):
+        if video_input_paths and any(
+            value is not None for value in video_duration_bounds
+        ):
             video_seconds = await asyncio.gather(
                 *(probe_video_duration_seconds(path) for path in video_input_paths)
             )
@@ -539,6 +909,7 @@ async def _start_or_enqueue_freezone_video_gen(
         "job_id": job_id,
         "canvas_id": canvas_id or "",
         "node_id": node_id or "",
+        **workflow_link,
         "model_id": model_id or "",
         "catalog_id": catalog_id or "",
         "gen_mode": gen_mode or "",
@@ -560,30 +931,17 @@ async def _start_or_enqueue_freezone_video_gen(
         "billing": billing,
         "model_params": model_params or {},
         "request_schema": request_schema or {},
+        "image_animate_gif": image_animate_gif,
     }
     if ctx is not None:
-        queued = await get_task_backend().enqueue_project_task(
-            ctx,
-            product_surface="freezone",
+        return await _enqueue_claimed_workflow_media(
+            ctx=ctx,
+            project_dir=project_dir,
             task_type="freezone_video_gen",
             queue_kind="video",
-            episode=0,
-            scope=job_id,
             payload=payload,
+            job_id=job_id,
         )
-        return {
-            "ok": True,
-            "data": {
-                "task_type": "freezone_video_gen",
-                "job_id": job_id,
-                "task_id": queued.task_state.task_id,
-                "task_key": project_task_state_key(
-                    "freezone_video_gen", ctx.project_id, 0, scope=job_id
-                ),
-                "backend": queued.backend,
-                "queue": queued.queue,
-            },
-        }
 
     _raise_project_context_required("freezone_video_gen")
 
@@ -629,7 +987,9 @@ async def _start_or_enqueue_freezone_image_to_3gs(
         )
         return {
             "task_id": queued.task_state.task_id,
-            "task_key": project_task_state_key(task_type, ctx.project_id, 0, scope=job_id),
+            "task_key": project_task_state_key(
+                task_type, ctx.project_id, 0, scope=job_id
+            ),
             "backend": queued.backend,
             "queue": queued.queue,
         }
@@ -655,6 +1015,8 @@ async def _start_or_enqueue_freezone_gen_job(
     quality: str | None,
     canvas_id: str | None = None,
     node_id: str | None = None,
+    product_operation_id: str = "",
+    generation_attempt_id: str = "",
     model_id: str | None = None,
     catalog_id: str | None = None,
     gen_mode: str | None = None,
@@ -667,6 +1029,14 @@ async def _start_or_enqueue_freezone_gen_job(
             "image",
             catalog_id or model_id or model or FREEZONE_DEFAULT_IMAGE_MODEL,
             requester_user_id=ctx.requester_user_id,
+        )
+        workflow_link = _verified_workflow_media_link(
+            ctx=ctx,
+            project_dir=project_dir,
+            canvas_id=canvas_id,
+            node_id=node_id,
+            operation_id=product_operation_id,
+            attempt_id=generation_attempt_id,
         )
     reference_paths = _resolve_url_list(project_dir, reference_urls)
     for path_text in reference_paths:
@@ -701,13 +1071,12 @@ async def _start_or_enqueue_freezone_gen_job(
         **(task_display or {}),
     }
     if ctx is not None:
-        queued = await get_task_backend().enqueue_project_task(
-            ctx,
-            product_surface="freezone",
+        return await _enqueue_claimed_workflow_media(
+            ctx=ctx,
+            project_dir=project_dir,
             task_type="freezone_gen",
             queue_kind="default",
-            episode=0,
-            scope=job_id,
+            job_id=job_id,
             payload={
                 "job_id": job_id,
                 "project_dir": str(project_dir),
@@ -721,6 +1090,7 @@ async def _start_or_enqueue_freezone_gen_job(
                 "billing": billing,
                 "canvas_id": canvas_id or "",
                 "node_id": node_id or "",
+                **workflow_link,
                 "model_id": model_id or "",
                 "catalog_id": catalog_id or "",
                 "gen_mode": gen_mode or "",
@@ -729,19 +1099,6 @@ async def _start_or_enqueue_freezone_gen_job(
                 **display_payload,
             },
         )
-        return {
-            "ok": True,
-            "data": {
-                "task_type": "freezone_gen",
-                "job_id": job_id,
-                "task_id": queued.task_state.task_id,
-                "task_key": project_task_state_key(
-                    "freezone_gen", ctx.project_id, 0, scope=job_id
-                ),
-                "backend": queued.backend,
-                "queue": queued.queue,
-            },
-        }
 
     _raise_project_context_required("freezone_gen")
 
@@ -815,7 +1172,9 @@ async def _collect_mainline_typed_reference_urls(
         try:
             characters = await store.list_characters()  # type: ignore[attr-defined]
             for c in characters or []:
-                name = getattr(c, "name", None) or (c.get("name") if isinstance(c, dict) else None)
+                name = getattr(c, "name", None) or (
+                    c.get("name") if isinstance(c, dict) else None
+                )
                 if not name:
                     continue
                 name = str(name)
@@ -911,7 +1270,9 @@ async def _collect_mainline_typed_reference_urls(
             if include_scene_master:
                 scene_paths.append(canonical_scene_master_path(project_dir, scene_name))
             if include_scene_reverse:
-                scene_paths.append(canonical_scene_reverse_master_path(project_dir, scene_name))
+                scene_paths.append(
+                    canonical_scene_reverse_master_path(project_dir, scene_name)
+                )
             for p in scene_paths:
                 if p.exists() and p.is_file():
                     try:
@@ -942,7 +1303,9 @@ def _skill_beat_context_as_prompt_beat(input_item: ResolvedSkillInput | None) ->
         or ""
     )
     detected_identities = (
-        beat_context.get("detected_identities") or beat_context.get("detectedIdentities") or []
+        beat_context.get("detected_identities")
+        or beat_context.get("detectedIdentities")
+        or []
     )
     if str(beat_context.get("source") or "").strip().lower() == "standalone":
         visual_description = _standalone_beat_context_prompt_visual_description(
@@ -956,12 +1319,15 @@ def _skill_beat_context_as_prompt_beat(input_item: ResolvedSkillInput | None) ->
         ]
 
     return {
-        "episode_number": beat_context.get("episode") or beat_context.get("episode_number"),
+        "episode_number": beat_context.get("episode")
+        or beat_context.get("episode_number"),
         "beat_number": beat_context.get("beat") or beat_context.get("beat_number"),
         "scene_ref": scene_ref,
         "visual_description": visual_description,
         "narration_segment": (
-            beat_context.get("narration_segment") or beat_context.get("narrationSegment") or ""
+            beat_context.get("narration_segment")
+            or beat_context.get("narrationSegment")
+            or ""
         ),
         "detected_identities": detected_identities,
         "detected_props": beat_context.get("detected_props")
@@ -988,7 +1354,11 @@ def _standalone_beat_context_sketch_colors(beat_context: dict) -> dict[str, str]
 
 
 def _standalone_beat_context_prop_marker_colors(beat_context: dict) -> dict[str, str]:
-    value = beat_context.get("prop_marker_colors") or beat_context.get("propMarkerColors") or {}
+    value = (
+        beat_context.get("prop_marker_colors")
+        or beat_context.get("propMarkerColors")
+        or {}
+    )
     return dict(value) if isinstance(value, dict) else {}
 
 
@@ -1039,7 +1409,9 @@ def _standalone_beat_context_character_map(beat_context: dict) -> dict[str, dict
     identity_names = _standalone_beat_context_identity_names(beat_context)
     character_map: dict[str, dict] = {}
     for identity_name in identity_names:
-        char_name, suffix, _prompt_identity_id = _standalone_identity_prompt_parts(identity_name)
+        char_name, suffix, _prompt_identity_id = _standalone_identity_prompt_parts(
+            identity_name
+        )
         entry = character_map.setdefault(
             char_name,
             {
@@ -1080,7 +1452,8 @@ def _standalone_beat_context_unified_sketch_prompt(
 
     is_director_combined = reference_role == "director_combined"
     scene_id = _first_text_value(
-        beat_context, ("scene_id", "sceneId", "scene_name", "sceneName", "title", "name")
+        beat_context,
+        ("scene_id", "sceneId", "scene_name", "sceneName", "title", "name"),
     )
     ref = ResolvedAssetRef(
         asset_type="scene",
@@ -1088,7 +1461,9 @@ def _standalone_beat_context_unified_sketch_prompt(
         variant_id=reference_role,
         image_paths=[reference_path] if reference_path else [],
         text_description="" if is_director_combined else scene_id,
-        source_level="director_image" if is_director_combined else "selected_background_image",
+        source_level=(
+            "director_image" if is_director_combined else "selected_background_image"
+        ),
     )
     ctx = create_prompt_context(
         mode=PromptMode.SKETCH,
@@ -1309,7 +1684,9 @@ async def _mainline_single_beat_config(
     episode_obj = _episode_from_store_or_none(store, int(episode))
     prop_menu = await _runtime_prop_menu_with_global_props(store, episode_obj, beats)
     sketch_colors = (
-        store.get_sketch_colors(int(episode)) or {} if hasattr(store, "get_sketch_colors") else {}
+        store.get_sketch_colors(int(episode)) or {}
+        if hasattr(store, "get_sketch_colors")
+        else {}
     )
     if is_sketch:
         character_map = (
@@ -1810,7 +2187,9 @@ def _standalone_beat_context_frame_config(
         "style": project_config.get("visual_style", "chinese_period_drama"),
         "ethnicity": project_config.get("ethnicity", "Chinese"),
         "model": None,
-        "image_generation_selection": _resolve_render_image_selection(project_config, None),
+        "image_generation_selection": _resolve_render_image_selection(
+            project_config, None
+        ),
         "selected_panel_indices": [0],
         "sketch_colors": _standalone_beat_context_sketch_colors(
             (beat_payload or {}).get("_source_beat_context") or {}
@@ -1821,7 +2200,9 @@ def _standalone_beat_context_frame_config(
         "prop_menu": [
             {"prop_id": prop_id, "name": prop_id}
             for prop_id in _list_text_values(
-                ((beat_payload or {}).get("_source_beat_context") or {}).get("detected_props")
+                ((beat_payload or {}).get("_source_beat_context") or {}).get(
+                    "detected_props"
+                )
             )
         ],
         "sketch_aspect_padding": _resolve_render_bool_setting(
@@ -2336,7 +2717,8 @@ async def _start_or_enqueue_mainline_scene_360_task(
             "scene_name": scene_id,
             "step": step,
             "params": {
-                "description": (description or "").strip() or _build_scene_360_prompt(scene_id),
+                "description": (description or "").strip()
+                or _build_scene_360_prompt(scene_id),
                 "provider": resolved_provider or "newapi",
                 "model": resolved_model or model or FREEZONE_DEFAULT_IMAGE_MODEL,
                 "image_size": image_size or MAINLINE_SCENE_360_IMAGE_SIZE,
@@ -2709,9 +3091,7 @@ async def _enqueue_or_start_freezone_video_analysis(
             {
                 "feature_key": "freezone.video_analyze",
                 "operation": (
-                    "video_story"
-                    if task_type == "freezone_video_story"
-                    else "shots"
+                    "video_story" if task_type == "freezone_video_story" else "shots"
                 ),
             }
             if task_type in {"freezone_analyze", "freezone_video_story"}
@@ -2796,22 +3176,13 @@ async def _enqueue_freezone_background_job(
     payload: dict,
     queue_kind: str = "default",
 ) -> dict:
-    queued = await get_task_backend().enqueue_project_task(
-        ctx,
-        product_surface="freezone",
+    return await _enqueue_claimed_workflow_media(
+        ctx=ctx,
+        project_dir=project_dir,
         task_type=task_type,
         queue_kind=queue_kind,
-        episode=0,
-        scope=job_id,
-        payload={"job_id": job_id, "project_dir": str(project_dir), **payload},
-    )
-    return _project_job_response(
-        task_type=task_type,
-        ctx=ctx,
         job_id=job_id,
-        backend=queued.backend,
-        queue=queued.queue,
-        task_id=queued.task_state.task_id,
+        payload={"job_id": job_id, "project_dir": str(project_dir), **payload},
     )
 
 
@@ -2833,6 +3204,7 @@ TAG_FREEZONE_ASSETS = "freezone-assets"
 TAG_FREEZONE_COMMIT = "freezone-commit"
 TAG_FREEZONE_JOBS = "freezone-jobs"
 TAG_FREEZONE_SKILLS = "freezone-skills"
+TAG_FREEZONE_AGENT_CONFIG = "freezone-agent-config"
 
 CANVAS_EVENT_SCHEMA_VERSION = "canvas_event.v1"
 MAINLINE_SKETCH_IMAGE_SIZE = "1K"
@@ -2854,7 +3226,9 @@ def _cap_mainline_scene_360_image_size(requested: str | None) -> str:
     value = _IMAGE_SIZE_TIER_BY_CASEFOLD.get((requested or "").strip().casefold())
     if value is None:
         return MAINLINE_SCENE_360_IMAGE_SIZE
-    if _IMAGE_SIZE_TIERS.index(value) > _IMAGE_SIZE_TIERS.index(MAINLINE_SCENE_360_IMAGE_SIZE):
+    if _IMAGE_SIZE_TIERS.index(value) > _IMAGE_SIZE_TIERS.index(
+        MAINLINE_SCENE_360_IMAGE_SIZE
+    ):
         return MAINLINE_SCENE_360_IMAGE_SIZE
     return value
 
@@ -2917,7 +3291,9 @@ def _skill_run_metadata_path(project_dir: Path, run_id: str) -> Path:
 def _write_skill_run_metadata(project_dir: Path, run_id: str, metadata: dict) -> None:
     path = _skill_run_metadata_path(project_dir, run_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+    path.write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
 def _read_skill_run_metadata(project_dir: Path, run_id: str) -> dict:
@@ -2974,7 +3350,9 @@ def _skill_run_idempotency_record_path(
     skill_id: str,
     idempotency_key: str,
 ) -> Path:
-    digest = hashlib.sha256(f"{skill_id}\0{idempotency_key}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(
+        f"{skill_id}\0{idempotency_key}".encode("utf-8")
+    ).hexdigest()
     return _skill_run_idempotency_dir(project_dir) / f"{digest}.json"
 
 
@@ -3110,7 +3488,11 @@ def _inferred_slot_target_from_input(input_item: ResolvedSkillInput) -> dict | N
         kind = str(context.get("kind") or "").strip()
         role = str(context.get("role") or "").strip()
         scene_id = _first_text_value(context, ("sceneId", "scene_id", "scene"))
-        if kind == "scene" and scene_id and role in {"scene_master", "scene_reverse_master"}:
+        if (
+            kind == "scene"
+            and scene_id
+            and role in {"scene_master", "scene_reverse_master"}
+        ):
             return {"kind": role, "scene_id": scene_id}
         identity_id = _first_text_value(
             context,
@@ -3186,7 +3568,8 @@ def _canvas_references_from_inputs(
     role: str,
 ) -> list[dict]:
     return [
-        _canvas_reference_from_input(input_item, role) for input_item in grouped.get(role) or []
+        _canvas_reference_from_input(input_item, role)
+        for input_item in grouped.get(role) or []
     ]
 
 
@@ -3215,7 +3598,9 @@ def _string_id_set(value: object) -> set[str]:
     return out
 
 
-def _detected_reference_ids_from_beat_context_data(data: dict, role: str) -> set[str] | None:
+def _detected_reference_ids_from_beat_context_data(
+    data: dict, role: str
+) -> set[str] | None:
     if role == "identity":
         snake_key = "detected_identities"
         camel_key = "detectedIdentities"
@@ -3240,7 +3625,11 @@ def _detected_reference_ids_from_beat_context_data(data: dict, role: str) -> set
     contexts = data.get("mainline_context")
     if isinstance(contexts, list):
         for item in contexts:
-            if isinstance(item, dict) and item.get("kind") == "beat" and camel_key in item:
+            if (
+                isinstance(item, dict)
+                and item.get("kind") == "beat"
+                and camel_key in item
+            ):
                 return _string_id_set(item.get(camel_key))
     return None
 
@@ -3305,7 +3694,9 @@ def _reference_id_from_node(node: dict, role: str) -> str:
                 continue
             kind = str(context.get("kind") or "").strip()
             if role == "identity" and kind == "identity":
-                value = _first_text_value(context, ("identityId", "identity_id", "character"))
+                value = _first_text_value(
+                    context, ("identityId", "identity_id", "character")
+                )
             elif role == "prop" and kind == "prop":
                 value = _first_text_value(context, ("propId", "prop_id"))
             else:
@@ -3329,7 +3720,9 @@ def _synced_reference_edge_id(
     ref_id: str,
     existing_ids: set[str],
 ) -> str:
-    digest = hashlib.sha256(f"{source_id}\0{target_id}\0{role}\0{ref_id}".encode("utf-8"))
+    digest = hashlib.sha256(
+        f"{source_id}\0{target_id}\0{role}\0{ref_id}".encode("utf-8")
+    )
     base_id = f"edge_{role}_{digest.hexdigest()[:16]}"
     edge_id = base_id
     suffix = 2
@@ -3380,7 +3773,8 @@ def _filter_canvas_references_by_beat_context(
     return [
         item
         for item in items
-        if not (ref_id := _reference_id_from_canvas_reference(item, role)) or ref_id in allowed
+        if not (ref_id := _reference_id_from_canvas_reference(item, role))
+        or ref_id in allowed
     ]
 
 
@@ -3391,7 +3785,9 @@ def _sync_frame_context_reference_edges(payload: dict) -> None:
     frame_skill_ids = {
         node_id
         for node_id, node in node_by_id.items()
-        if ((node.get("data") if isinstance(node.get("data"), dict) else {}) or {}).get("skill_id")
+        if ((node.get("data") if isinstance(node.get("data"), dict) else {}) or {}).get(
+            "skill_id"
+        )
         == "freezone.frame_from_context"
     }
     if not frame_skill_ids:
@@ -3412,8 +3808,12 @@ def _sync_frame_context_reference_edges(payload: dict) -> None:
             else {}
         )
         allowed_by_skill[skill_id] = {
-            "identity": _detected_reference_ids_from_beat_context_data(context_data, "identity"),
-            "prop": _detected_reference_ids_from_beat_context_data(context_data, "prop"),
+            "identity": _detected_reference_ids_from_beat_context_data(
+                context_data, "identity"
+            ),
+            "prop": _detected_reference_ids_from_beat_context_data(
+                context_data, "prop"
+            ),
         }
     if not allowed_by_skill:
         return
@@ -3440,7 +3840,9 @@ def _sync_frame_context_reference_edges(payload: dict) -> None:
             if ref_id:
                 source_by_role_ref[role].setdefault(ref_id, source_id)
 
-    existing_ids = {str(edge.get("id") or "") for edge in pruned_edges if edge.get("id")}
+    existing_ids = {
+        str(edge.get("id") or "") for edge in pruned_edges if edge.get("id")
+    }
     existing_refs_by_skill_role: dict[tuple[str, str], set[str]] = {}
     for edge in pruned_edges:
         target = str(edge.get("target") or "")
@@ -3457,7 +3859,9 @@ def _sync_frame_context_reference_edges(payload: dict) -> None:
             allowed = allowed_by_role.get(role)
             if allowed is None:
                 continue
-            existing_refs = existing_refs_by_skill_role.setdefault((skill_id, role), set())
+            existing_refs = existing_refs_by_skill_role.setdefault(
+                (skill_id, role), set()
+            )
             for ref_id in sorted(allowed):
                 if ref_id in existing_refs:
                     continue
@@ -3524,7 +3928,9 @@ def _validate_skill_input_accepts(
                 message=f"input role {input_spec_role!r} does not accept media kind {media_kind!r}",
                 user_action_hint="Connect media whose type matches this skill input.",
             )
-    provenance_required = bool(accepts.canonical_slot_kinds or accepts.candidate_origin_skill_ids)
+    provenance_required = bool(
+        accepts.canonical_slot_kinds or accepts.candidate_origin_skill_ids
+    )
     if provenance_required:
         slot_target = _slot_target_for_input(input_item) or {}
         candidate_origin = input_item.candidate_origin or {}
@@ -3537,7 +3943,9 @@ def _validate_skill_input_accepts(
             accepts.candidate_origin_skill_ids
             and origin_skill_id in accepts.candidate_origin_skill_ids
         )
-        has_plain_media_match = bool(accepts.media_kinds and _input_media_kind(input_item))
+        has_plain_media_match = bool(
+            accepts.media_kinds and _input_media_kind(input_item)
+        )
         if not (has_slot_match or has_candidate_match or has_plain_media_match):
             _raise_skill_error(
                 422,
@@ -3697,7 +4105,9 @@ def _group_and_validate_skill_inputs(
             input_spec_role=spec.role,
             accepts=spec.accepts,
         )
-        if input_item.role == "beat_context" and not _is_standalone_beat_context_input(input_item):
+        if input_item.role == "beat_context" and not _is_standalone_beat_context_input(
+            input_item
+        ):
             _episode_and_beat_from_input(input_item)
         grouped.setdefault(input_item.role, []).append(input_item)
     for spec in skill.inputs:
@@ -3728,7 +4138,9 @@ def _single_input(
     return items[0] if items else None
 
 
-def _required_input(grouped: dict[str, list[ResolvedSkillInput]], role: str) -> ResolvedSkillInput:
+def _required_input(
+    grouped: dict[str, list[ResolvedSkillInput]], role: str
+) -> ResolvedSkillInput:
     input_item = _single_input(grouped, role)
     if input_item is None:
         _raise_skill_error(
@@ -3754,17 +4166,23 @@ def _required_image_url(input_item: ResolvedSkillInput, role: str) -> str:
     return image_url
 
 
-def _input_image_urls(grouped: dict[str, list[ResolvedSkillInput]], role: str) -> list[str]:
+def _input_image_urls(
+    grouped: dict[str, list[ResolvedSkillInput]], role: str
+) -> list[str]:
     urls: list[str] = []
     for input_item in grouped.get(role) or []:
         urls.append(_required_image_url(input_item, role))
     return urls
 
 
-def _episode_and_beat_from_input(input_item: ResolvedSkillInput | None) -> tuple[int, int]:
+def _episode_and_beat_from_input(
+    input_item: ResolvedSkillInput | None,
+) -> tuple[int, int]:
     beat_context = (input_item.beat_context if input_item else None) or {}
     try:
-        episode = int(beat_context.get("episode") or beat_context.get("episode_number") or 0)
+        episode = int(
+            beat_context.get("episode") or beat_context.get("episode_number") or 0
+        )
         beat = int(beat_context.get("beat") or beat_context.get("beat_number") or 0)
     except (TypeError, ValueError):
         _raise_skill_error(
@@ -3785,7 +4203,9 @@ def _episode_and_beat_from_input(input_item: ResolvedSkillInput | None) -> tuple
     return episode, beat
 
 
-def _slot_target_from_inputs(grouped: dict[str, list[ResolvedSkillInput]]) -> dict | None:
+def _slot_target_from_inputs(
+    grouped: dict[str, list[ResolvedSkillInput]],
+) -> dict | None:
     beat_item = _single_input(grouped, "beat_context")
     beat_target = _slot_target_for_input(beat_item)
     if beat_target:
@@ -3829,7 +4249,9 @@ def _skill_output_slot_target(
         scene_master = _single_input(grouped, "scene_master")
         scene_master_slot = _slot_target_for_input(scene_master)
         scene_id = (
-            scene_master_slot.get("scene_id") if isinstance(scene_master_slot, dict) else None
+            scene_master_slot.get("scene_id")
+            if isinstance(scene_master_slot, dict)
+            else None
         )
         if scene_id:
             return {"kind": "scene_director_pano_360", "scene_id": scene_id}
@@ -3916,12 +4338,20 @@ def _copy_director_control_bundle_to_mainline(
     rel_paths = bundle.get("rel_paths")
     rel_paths = rel_paths if isinstance(rel_paths, dict) else {}
     source_paths = {
-        "combined": _project_path_from_rel(project_dir, str(rel_paths.get("combined") or ""))
+        "combined": _project_path_from_rel(
+            project_dir, str(rel_paths.get("combined") or "")
+        )
         or fallback_combined_path,
-        "env_only": _project_path_from_rel(project_dir, str(rel_paths.get("env_only") or "")),
-        "frame_meta": _project_path_from_rel(project_dir, str(rel_paths.get("frame_meta") or "")),
+        "env_only": _project_path_from_rel(
+            project_dir, str(rel_paths.get("env_only") or "")
+        ),
+        "frame_meta": _project_path_from_rel(
+            project_dir, str(rel_paths.get("frame_meta") or "")
+        ),
     }
-    if not all(path and path.exists() and path.is_file() for path in source_paths.values()):
+    if not all(
+        path and path.exists() and path.is_file() for path in source_paths.values()
+    ):
         return None
 
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -4075,7 +4505,9 @@ def _normalize_task_result_outputs(
     return outputs
 
 
-def _skill_output_path_for_job(project_dir: Path, task_type: str, job_id: str) -> Path | None:
+def _skill_output_path_for_job(
+    project_dir: Path, task_type: str, job_id: str
+) -> Path | None:
     out = output_path_for_job(project_dir, task_type, job_id)
     if out.exists():
         return out
@@ -4088,7 +4520,11 @@ def _skill_output_path_for_job(project_dir: Path, task_type: str, job_id: str) -
 
 def _scene_id_from_scene_master_input(scene_master: ResolvedSkillInput | None) -> str:
     scene_master_slot = _slot_target_for_input(scene_master)
-    scene_id = scene_master_slot.get("scene_id") if isinstance(scene_master_slot, dict) else None
+    scene_id = (
+        scene_master_slot.get("scene_id")
+        if isinstance(scene_master_slot, dict)
+        else None
+    )
     if scene_id:
         return str(scene_id)
     _raise_skill_error(
@@ -4168,7 +4604,11 @@ async def _run_set_selected_background_skill(
         try:
             beats = await store.get_beats_as_dicts(int(episode))
             target = next(
-                (item for item in beats if int(item.get("beat_number") or 0) == int(beat)),
+                (
+                    item
+                    for item in beats
+                    if int(item.get("beat_number") or 0) == int(beat)
+                ),
                 None,
             )
             if not target:
@@ -4447,7 +4887,9 @@ async def _copy_skill_output_to_slot(
     if same_file:
         image_adaptation = {"adapted": False, "same_file": True}
     elif should_match_existing_size:
-        image_adaptation = _copy_image_matching_existing_target(source_path, target_path)
+        image_adaptation = _copy_image_matching_existing_target(
+            source_path, target_path
+        )
     else:
         image_adaptation = {"adapted": False}
         shutil.copy2(source_path, target_path)
@@ -4482,11 +4924,13 @@ async def _finalize_skill_run_outputs(
                 source_path = resolve_static_url_to_path(image_url, project_dir)
                 if not source_path.exists() or not source_path.is_file():
                     raise FileNotFoundError(source_path)
-                target_path, target_url, backup, image_adaptation = await _copy_skill_output_to_slot(
-                    project_dir=project_dir,
-                    ctx=ctx,
-                    source_path=source_path,
-                    target=target,
+                target_path, target_url, backup, image_adaptation = (
+                    await _copy_skill_output_to_slot(
+                        project_dir=project_dir,
+                        ctx=ctx,
+                        source_path=source_path,
+                        target=target,
+                    )
                 )
                 item["image_url"] = target_url
                 item["pushable"] = False
@@ -4526,7 +4970,9 @@ async def _finalize_skill_run_outputs(
     if outputs and (changed or metadata.get("status") != "completed"):
         metadata["status"] = "completed"
         metadata["outputs"] = finalized
-        _write_skill_run_metadata(project_dir, str(metadata.get("run_id") or ""), metadata)
+        _write_skill_run_metadata(
+            project_dir, str(metadata.get("run_id") or ""), metadata
+        )
         _append_canvas_event(
             project_dir=project_dir,
             project_id=project,
@@ -4611,7 +5057,9 @@ async def _review_frame_text(
         if hasattr(review, "__await__"):
             review = await review
     except Exception:
-        logger.exception("agent.review_frame reviewer failed; using deterministic fallback")
+        logger.exception(
+            "agent.review_frame reviewer failed; using deterministic fallback"
+        )
         return _deterministic_frame_review(body, grouped)
 
     if isinstance(review, str) and review.strip():
@@ -4621,7 +5069,868 @@ async def _review_frame_text(
 
 @router.get("/freezone/skills", tags=[TAG_FREEZONE_SKILLS])
 async def freezone_skills(user: dict = Depends(get_api_user)):
-    return {"ok": True, "data": [skill.model_dump(mode="json") for skill in list_skills()]}
+    return {
+        "ok": True,
+        "data": [skill.model_dump(mode="json") for skill in list_skills()],
+    }
+
+
+@router.post(
+    "/freezone/agent-config/bundles:validate", tags=[TAG_FREEZONE_AGENT_CONFIG]
+)
+async def validate_freezone_agent_bundle(
+    payload: Annotated[dict, Body()],
+    user: dict = Depends(get_api_user),
+):
+    username = str(user.get("username") or "")
+    try:
+        result = validate_agent_bundle(payload.get("bundle") or {}, username=username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "data": {key: value for key, value in result.items() if key != "bundle"},
+    }
+
+
+@router.post("/freezone/agent-config/bundles:install", tags=[TAG_FREEZONE_AGENT_CONFIG])
+async def install_freezone_agent_bundle(
+    payload: Annotated[dict, Body()],
+    user: dict = Depends(get_api_user),
+):
+    username = str(user.get("username") or "")
+    try:
+        result = install_agent_bundle(
+            username=username, payload=payload.get("bundle") or {}
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "data": result}
+
+
+@router.post("/freezone/agent-config/bundles:export", tags=[TAG_FREEZONE_AGENT_CONFIG])
+async def export_freezone_agent_bundle(
+    payload: Annotated[dict, Body()],
+    user: dict = Depends(get_api_user),
+):
+    username = str(user.get("username") or "")
+    try:
+        bundle = export_agent_bundle(
+            username=username,
+            skill_id=str(payload.get("skill_id") or ""),
+            bundle_meta=payload.get("bundle") or {},
+            include_recipes=payload.get("include_recipes", True) is not False,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "data": bundle}
+
+
+@router.get("/freezone/agent-config/{kind}", tags=[TAG_FREEZONE_AGENT_CONFIG])
+async def list_freezone_agent_config(kind: str, user: dict = Depends(get_api_user)):
+    username = str(user.get("username") or "")
+    try:
+        items = list_user_agent_config_items(username, kind)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "data": items}
+
+
+@router.get("/freezone/hermes-workflow-skills", tags=[TAG_FREEZONE_AGENT_CONFIG])
+async def list_freezone_hermes_skills(user: dict = Depends(get_api_user)):
+    username = str(user.get("username") or "")
+    return {
+        "ok": True,
+        "data": list_freezone_hermes_workflow_skills(username),
+    }
+
+
+@router.post("/freezone/agent-config/{kind}", tags=[TAG_FREEZONE_AGENT_CONFIG])
+async def save_freezone_agent_config_item(
+    kind: str,
+    payload: Annotated[dict, Body()],
+    user: dict = Depends(get_api_user),
+):
+    username = str(user.get("username") or "")
+    try:
+        item = save_user_agent_config_item(
+            username=username, kind=kind, payload=payload
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if kind == "skills":
+        sync_freezone_hermes_workflow_skills(username)
+        try:
+            from novelvideo.chat.hermes_pool import pool as hermes_pool
+
+            hermes_pool.mark_user_freezone_profiles_dirty(username)
+        except Exception:
+            logger.exception(
+                "failed to mark Freezone Hermes worker dirty after skill save"
+            )
+    return {"ok": True, "data": item}
+
+
+@router.delete(
+    "/freezone/agent-config/{kind}/{item_id}", tags=[TAG_FREEZONE_AGENT_CONFIG]
+)
+async def delete_freezone_agent_config_item(
+    kind: str,
+    item_id: str,
+    user: dict = Depends(get_api_user),
+):
+    username = str(user.get("username") or "")
+    try:
+        deleted = delete_user_agent_config_item(
+            username=username, kind=kind, item_id=item_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "data": {"deleted": deleted}}
+
+
+def _workflow_draft_api_data(
+    draft: dict[str, Any], *, summary: bool = False
+) -> dict[str, Any]:
+    """Expose compact control state without echoing the full graph by default to tools."""
+    if not summary:
+        return dict(draft)
+    from novelvideo.freezone.agent_workflows.drafts import public_workflow_draft
+
+    result = public_workflow_draft(draft, compact_preview=summary)
+    state = draft.get("status")
+    result.update(
+        status="workflow_draft_" + str(state),
+        task_id=draft.get("task_id"),
+        next_action={
+            "ready": "review_and_confirm",
+            "confirming": "wait_for_canvas_receipt",
+            "submitted": "wait_for_canvas_receipt",
+            "confirmed": "inspect_workflow_run",
+        }.get(state, "inspect_draft"),
+        message="草稿与画布确认状态；不代表媒体生成已完成。",
+    )
+    return result
+
+
+def _validate_agent_generation_session_payload(
+    *,
+    state_dir: Path,
+    generation_session_id: str,
+    project_id: str,
+    canvas_id: str,
+    manifest: dict[str, Any],
+    draft: dict[str, Any],
+    available_recipe_ids: set[str],
+) -> None:
+    """Validate Skill Studio output against durable server-side admission state."""
+
+    def reject(message: str) -> None:
+        raise ValueError(f"invalid generation manifest: {message}")
+
+    if str(manifest.get("generation_session_id") or "").strip() != generation_session_id:
+        reject("generation session identity mismatch")
+    generation_attempt_id = str(manifest.get("generation_attempt_id") or "").strip()
+    if not generation_attempt_id:
+        reject("generation_attempt_id is required")
+
+    artifact_mode = str(manifest.get("artifact_mode") or "").strip()
+    if artifact_mode not in {"skill_only", "recipe_only", "skill_and_recipes"}:
+        reject("artifact_mode is unsupported")
+    skill_manifest = manifest.get("skill")
+    if not isinstance(skill_manifest, dict):
+        reject("skill must be an object")
+    skill_generate = skill_manifest.get("generate") is True
+    skill_id = str(skill_manifest.get("id") or "").strip()
+    if skill_generate and not skill_id:
+        reject("generated Skill id is required")
+    expected_skill_generate = artifact_mode in {"skill_only", "skill_and_recipes"}
+    if skill_generate != expected_skill_generate:
+        reject("artifact_mode does not match Skill generation")
+
+    recipe_entries = manifest.get("recipes")
+    if not isinstance(recipe_entries, list):
+        reject("recipes must be an array")
+    generated_recipes: dict[int, str] = {}
+    reused_recipe_ids: set[str] = set()
+    seen_recipe_ids: set[str] = set()
+    for entry in recipe_entries:
+        if not isinstance(entry, dict):
+            reject("every Recipe entry must be an object")
+        recipe_id = str(entry.get("id") or "").strip()
+        if not recipe_id or recipe_id in seen_recipe_ids:
+            reject("Recipe ids must be non-empty and unique")
+        seen_recipe_ids.add(recipe_id)
+        generates = entry.get("generate") is True
+        reuses = entry.get("reuse") is True
+        if generates == reuses:
+            reject(f"Recipe {recipe_id} must declare exactly one of generate or reuse")
+        if reuses:
+            if recipe_id not in available_recipe_ids:
+                reject(f"reused Recipe is unavailable: {recipe_id}")
+            reused_recipe_ids.add(recipe_id)
+            continue
+        try:
+            output_index = int(entry.get("output_index"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"invalid generation manifest: Recipe {recipe_id} output_index is invalid"
+            ) from exc
+        if output_index < 0 or output_index in generated_recipes:
+            reject("generated Recipe output indexes must be unique non-negative integers")
+        if str(entry.get("generation_attempt_id") or "").strip() != generation_attempt_id:
+            reject(f"generated Recipe {recipe_id} uses another generation attempt")
+        generated_recipes[output_index] = recipe_id
+
+    if set(generated_recipes) != set(range(len(generated_recipes))):
+        reject("generated Recipe output indexes must be contiguous from zero")
+    if artifact_mode == "skill_only" and generated_recipes:
+        reject("skill_only cannot generate Recipes")
+    if artifact_mode == "recipe_only" and not generated_recipes:
+        reject("recipe_only must generate at least one Recipe")
+    if artifact_mode == "skill_and_recipes" and not generated_recipes:
+        reject("skill_and_recipes must generate at least one Recipe")
+
+    if draft.get("manifest") != manifest:
+        reject("draft manifest does not match the submitted manifest")
+    if str(draft.get("project_id") or project_id).strip() != project_id:
+        reject("draft belongs to another project")
+    if str(draft.get("canvas_id") or canvas_id).strip() != canvas_id:
+        reject("draft belongs to another canvas")
+    try:
+        expected_recipe_count = int(draft.get("expected_recipe_count") or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "invalid generation manifest: expected_recipe_count is invalid"
+        ) from exc
+    if expected_recipe_count != len(generated_recipes):
+        reject("expected Recipe count does not match generated Recipe manifest")
+
+    outline = draft.get("outline")
+    if generated_recipes or reused_recipe_ids:
+        if not isinstance(outline, dict):
+            reject("Recipe generation and reuse require an outline")
+        stages = outline.get("stages")
+        if not isinstance(stages, list):
+            reject("outline stages must be an array")
+        outline_generated: set[str] = set()
+        outline_reused: set[str] = set()
+        for stage in stages:
+            if not isinstance(stage, dict):
+                reject("every outline stage must be an object")
+            recipe_id = str(stage.get("recipe_id") or stage.get("id") or "").strip()
+            if not recipe_id:
+                reject("every outline stage must identify a Recipe")
+            if str(stage.get("reuse") or "").strip().lower() == "existing":
+                outline_reused.add(recipe_id)
+            else:
+                outline_generated.add(recipe_id)
+        if outline_generated != set(generated_recipes.values()):
+            reject("outline generated Recipes do not match the manifest")
+        if outline_reused != reused_recipe_ids:
+            reject("outline reused Recipes do not match the manifest")
+        try:
+            outline_expected = int(outline.get("expected_recipe_count") or 0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "invalid generation manifest: outline expected_recipe_count is invalid"
+            ) from exc
+        if outline_expected != len(generated_recipes):
+            reject("outline Recipe count does not match the manifest")
+
+    operations = draft.get("operations")
+    if not isinstance(operations, dict):
+        reject("draft operations must be an object")
+    recipe_operations = operations.get("recipes")
+    if not isinstance(recipe_operations, dict):
+        reject("draft Recipe operations must be an object")
+    normalized_recipe_operations: dict[int, dict[str, Any]] = {}
+    for raw_index, snapshot in recipe_operations.items():
+        try:
+            index = int(raw_index)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "invalid generation manifest: Recipe operation index is invalid"
+            ) from exc
+        if index in normalized_recipe_operations or not isinstance(snapshot, dict):
+            reject("Recipe operation indexes must be unique objects")
+        normalized_recipe_operations[index] = snapshot
+    if set(normalized_recipe_operations) != set(generated_recipes):
+        reject("Recipe operation count does not match generated Recipe manifest")
+
+    admitted = {
+        operation["operation_id"]: operation
+        for operation in list_agent_product_operations_for_session(
+            project_dir=state_dir,
+            generation_session_id=generation_session_id,
+        )
+    }
+    used_operation_ids: set[str] = set()
+
+    def canonical_operation(
+        snapshot: Any, *, product_kind: str, artifact_id: str, recipe_index: int | None
+    ) -> None:
+        if not isinstance(snapshot, dict):
+            reject(f"{product_kind} operation is required")
+        operation_id = str(snapshot.get("operation_id") or "").strip()
+        operation = admitted.get(operation_id)
+        if operation is None or operation_id in used_operation_ids:
+            reject(f"{product_kind} operation is unavailable or reused")
+        used_operation_ids.add(operation_id)
+        if operation.get("project_id") != project_id:
+            reject(f"{product_kind} operation belongs to another project")
+        if operation.get("canvas_id") != canvas_id:
+            reject(f"{product_kind} operation belongs to another canvas")
+        if operation.get("product_kind") != product_kind:
+            reject(f"operation kind does not match {product_kind}")
+        if str(operation.get("artifact_id") or "").strip() != artifact_id:
+            reject(f"{product_kind} operation artifact does not match the manifest")
+        metadata = operation.get("metadata")
+        if not isinstance(metadata, dict) or metadata.get("manifest") != manifest:
+            reject(f"{product_kind} operation was admitted for another manifest")
+        if recipe_index is not None and metadata.get("recipe_index") != recipe_index:
+            reject("Recipe operation index does not match the manifest")
+
+    skill_operation = operations.get("skill")
+    if skill_generate:
+        canonical_operation(
+            skill_operation,
+            product_kind="workflow_generate",
+            artifact_id=skill_id,
+            recipe_index=None,
+        )
+    elif skill_operation is not None and skill_operation != {}:
+        reject("manifest does not admit a Skill operation")
+    for index, recipe_id in generated_recipes.items():
+        canonical_operation(
+            normalized_recipe_operations[index],
+            product_kind="recipe_generate",
+            artifact_id=recipe_id,
+            recipe_index=index,
+        )
+
+    submitted_skill = draft.get("skill")
+    if isinstance(submitted_skill, dict) and submitted_skill:
+        if not skill_generate or str(submitted_skill.get("id") or "").strip() != skill_id:
+            reject("submitted Skill does not match the generated Skill manifest")
+    submitted_recipes = draft.get("recipes")
+    if not isinstance(submitted_recipes, dict):
+        reject("submitted Recipes must be an object")
+    for raw_index, recipe in submitted_recipes.items():
+        try:
+            index = int(raw_index)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "invalid generation manifest: submitted Recipe index is invalid"
+            ) from exc
+        expected_id = generated_recipes.get(index)
+        if (
+            expected_id is None
+            or not isinstance(recipe, dict)
+            or str(recipe.get("id") or "").strip() != expected_id
+        ):
+            reject("submitted Recipe does not match the generated Recipe manifest")
+
+
+async def _record_recipe_compile_product_evidence(
+    *,
+    body: FreezoneRecipeCompileRequest,
+    compiled: RecipeCompileResult,
+    user: dict,
+    deliver_text: bool = False,
+) -> None:
+    """Settle Recipe-product evidence from the compiler's trusted return value."""
+    operation_id = str(body.product_operation_id or "").strip()
+    project_id = str(body.project_id or "").strip()
+    if not operation_id and not project_id:
+        return
+    if not operation_id or not project_id:
+        raise HTTPException(
+            400,
+            "project_id and product_operation_id must be supplied together",
+        )
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project_id, user)
+    )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    operation = await asyncio.to_thread(
+        read_agent_product_operation,
+        project_dir=state_dir,
+        operation_id=operation_id,
+    )
+    if operation is None:
+        raise HTTPException(404, "Recipe result operation not found")
+    if operation.get("product_kind") != "recipe_result":
+        raise HTTPException(409, "operation is not a Recipe result")
+    admitted_recipe_id = str((operation.get("metadata") or {}).get("recipe_id") or "")
+    if admitted_recipe_id and admitted_recipe_id not in set(compiled.recipe_ids):
+        raise HTTPException(409, "Recipe compilation does not match admitted operation")
+    if operation.get("status") == "delivered":
+        await _reconcile_recipe_delivery(ctx=ctx, operation=operation)
+        return
+    # A concurrent request (e.g. a timed-out earlier compile) may have failed
+    # this attempt while we compiled. Returning the prompt would send the
+    # runner on to a media submission that can only 409.
+    _raise_if_recipe_attempt_ended(operation)
+    try:
+        if (
+            compiled.mode == "model"
+            and str(compiled.model_call_id or "").strip()
+            and compiled.executed_at
+        ):
+            await asyncio.to_thread(
+                bind_agent_product_model_execution,
+                project_dir=state_dir,
+                operation_id=operation_id,
+                model_call_id=compiled.model_call_id,
+                executed_at=compiled.executed_at,
+                source="server_recipe_compiler",
+                compile_mode="model",
+                compiled_prompt="" if deliver_text else compiled.prompt,
+            )
+            if deliver_text:
+                # Synchronous text generation has no separate media task. Persist
+                # the actual server-produced text in the operation's immutable
+                # result receipt, rather than waiting for a nonexistent task key.
+                # finish_agent_product_operation atomically stores this receipt and
+                # transitions to delivered; reconcile even if the worker timed out.
+                if body.node_kind != "text" or not compiled.prompt.strip():
+                    raise ValueError("text delivery requires a non-empty text result")
+                operation = await asyncio.to_thread(
+                    finish_agent_product_operation,
+                    project_dir=state_dir,
+                    operation_id=operation_id,
+                    outcome="delivered",
+                    expected_task_id=str(operation.get("task_id") or ""),
+                    result_ref={
+                        "kind": "recipe_text_result",
+                        "id": operation_id,
+                        "content": compiled.prompt,
+                    },
+                )
+                await _reconcile_recipe_delivery(ctx=ctx, operation=operation)
+            return
+        if compiled.prompt.strip() and compiled.mode in {
+            "timeout_fallback",
+            "memory_cache",
+            "persistent_cache",
+            "deterministic",
+        }:
+            # Recipe use is billable regardless of compilation mode. Persist the
+            # usable prompt as server-owned delivery evidence, not fake model evidence.
+            operation = await asyncio.to_thread(
+                finish_agent_product_operation,
+                project_dir=state_dir,
+                operation_id=operation_id,
+                outcome="delivered",
+                expected_task_id=str(operation.get("task_id") or ""),
+                result_ref={
+                    "kind": "recipe_compile_result",
+                    "id": operation_id,
+                    "reason": compiled.mode,
+                    "content": compiled.prompt,
+                },
+                server_recipe_compile=True,
+            )
+            await _reconcile_recipe_delivery(ctx=ctx, operation=operation)
+            return
+        await asyncio.to_thread(
+            finish_agent_product_operation,
+            project_dir=state_dir,
+            operation_id=operation_id,
+            outcome="failed",
+            expected_task_id=str(operation.get("task_id") or ""),
+        )
+    except ValueError:
+        # The terminal check above and these writes are separate steps; an
+        # attempt settled in between surfaces as ended, not a 500/503.
+        await _raise_if_recipe_attempt_ended_now(state_dir, operation_id)
+        raise
+
+
+async def _require_recipe_compile_product_admission(
+    *,
+    body: FreezoneRecipeCompileRequest,
+    user: dict,
+    allow_compile_replay: bool = False,
+) -> RecipeCompileResult | None:
+    """Require metered Recipe admission for every compilation strategy.
+
+    With ``allow_compile_replay`` an operation that already holds its server
+    compilation (a cache/deterministic receipt, or a model compilation awaiting
+    media delivery) returns that result instead of compiling again, so a media
+    retry of the same attempt reuses the same prompt and charge (issue #681).
+    """
+    operation_id = str(body.product_operation_id or "").strip()
+    project_id = str(body.project_id or "").strip()
+    if bool(operation_id) != bool(project_id):
+        raise HTTPException(
+            400,
+            "project_id and product_operation_id must be supplied together",
+        )
+    metered = not isinstance(get_usage_meter(), NoOpUsageMeter)
+    if not metered and not (allow_compile_replay and operation_id):
+        return None
+    if not operation_id:
+        raise HTTPException(
+            400,
+            "product_operation_id is required for metered Recipe compilation",
+        )
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project_id, user)
+    )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    try:
+        operation = await asyncio.to_thread(
+            read_agent_product_operation,
+            project_dir=state_dir,
+            operation_id=operation_id,
+        )
+    except ValueError as exc:
+        if not metered:
+            return None
+        raise HTTPException(400, str(exc)) from exc
+    if operation is None or operation.get("product_kind") != "recipe_result":
+        if not metered:
+            return None
+        raise HTTPException(409, "Recipe result operation is unavailable")
+    admitted_recipe_id = str((operation.get("metadata") or {}).get("recipe_id") or "")
+    if admitted_recipe_id and admitted_recipe_id != body.recipe_id:
+        raise HTTPException(409, "Recipe compilation does not match admitted operation")
+    if allow_compile_replay:
+        replayed = await _replayed_recipe_compilation(
+            body=body, operation=operation, state_dir=state_dir
+        )
+        if replayed is not None:
+            # The saved prompt is read after the status above; never replay an
+            # attempt that was settled failed/cancelled in between.
+            await _raise_if_recipe_attempt_ended_now(state_dir, operation_id)
+            return replayed
+        if not metered:
+            return None
+    _raise_if_recipe_attempt_ended(operation)
+    if operation.get("status") not in {"reserved", "running", "accepted", "submitted"}:
+        raise HTTPException(409, "Recipe result operation is not admitted")
+    return None
+
+
+async def _replayed_recipe_compilation(
+    *,
+    body: FreezoneRecipeCompileRequest,
+    operation: dict[str, Any],
+    state_dir: Path,
+) -> RecipeCompileResult | None:
+    operation_id = str(operation.get("operation_id") or "")
+    receipt = operation.get("result_ref")
+    receipt = receipt if isinstance(receipt, dict) else {}
+    if operation.get("status") == "delivered" and is_recipe_compile_receipt(
+        "recipe_result", operation_id, receipt
+    ):
+        prompt, mode = str(receipt["content"]), str(receipt["reason"])
+    elif operation.get("status") in {"reserved", "running", "accepted", "submitted"}:
+        prompt = await asyncio.to_thread(
+            read_recipe_model_prompt, project_dir=state_dir, operation_id=operation_id
+        )
+        mode = "model"
+        if not prompt.strip():
+            return None
+    else:
+        return None
+    recipe_ids = [body.recipe_id, *(item.id for item in body.recipe_pipeline)]
+    return RecipeCompileResult(
+        prompt=prompt,
+        mode=mode,
+        recipe_ids=tuple(dict.fromkeys(item for item in recipe_ids if item)),
+    )
+
+
+async def _fail_recipe_product_operation(
+    *, body: FreezoneRecipeCompileRequest, user: dict
+) -> None:
+    operation_id = str(body.product_operation_id or "").strip()
+    project_id = str(body.project_id or "").strip()
+    if not operation_id or not project_id:
+        return
+    try:
+        ctx, _username, _project_name, project_dir, _output_dir = (
+            await _resolve_freezone_project(project_id, user)
+        )
+        state_dir = _canvas_state_project_dir(ctx, project_dir)
+        operation = await asyncio.to_thread(
+            read_agent_product_operation,
+            project_dir=state_dir,
+            operation_id=operation_id,
+        )
+        if operation is None or operation.get("status") in {
+            "delivered",
+            "failed",
+            "cancelled",
+        }:
+            return
+        await asyncio.to_thread(
+            finish_agent_product_operation,
+            project_dir=state_dir,
+            operation_id=operation_id,
+            outcome="failed",
+            expected_task_id=str(operation.get("task_id") or ""),
+        )
+    except Exception:
+        logger.warning(
+            "could not fail Recipe product operation %s",
+            operation_id,
+            exc_info=True,
+        )
+
+
+@router.post(
+    "/freezone/recipes/compile",
+    response_model=FreezoneRecipeCompileResponse,
+    tags=[TAG_FREEZONE_AGENT_CONFIG],
+)
+async def compile_freezone_recipe(
+    body: FreezoneRecipeCompileRequest,
+    user: dict = Depends(get_api_user),
+):
+    """Compile an effective user Recipe without returning its internal definition."""
+    username = str(user.get("username") or "")
+    replayed = await _require_recipe_compile_product_admission(
+        body=body, user=user, allow_compile_replay=True
+    )
+    if replayed is not None:
+        return _recipe_compile_response(replayed)
+    try:
+        compiled = await compile_recipe_prompt_result(
+            **_recipe_compile_args(body, username)
+        )
+        await _record_recipe_compile_product_evidence(
+            body=body,
+            compiled=compiled,
+            user=user,
+        )
+    except RecipeRuntimeError as exc:
+        await _fail_recipe_product_operation(body=body, user=user)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        await _fail_recipe_product_operation(body=body, user=user)
+        logger.exception("freezone Recipe compilation failed")
+        raise HTTPException(
+            status_code=503, detail="Recipe compilation failed"
+        ) from exc
+    return _recipe_compile_response(compiled)
+
+
+def _recipe_compile_response(compiled: RecipeCompileResult) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "data": {
+            "prompt": compiled.prompt,
+            "compile_mode": compiled.mode,
+            "recipe_ids": list(compiled.recipe_ids),
+        },
+    }
+
+
+def _recipe_compile_args(
+    body: FreezoneRecipeCompileRequest,
+    username: str,
+) -> dict[str, Any]:
+    return {
+        "username": username,
+        "recipe_id": body.recipe_id,
+        "recipe_version": body.recipe_version,
+        "recipe_pipeline": [item.model_dump() for item in body.recipe_pipeline],
+        "skill_id": body.skill_id,
+        "skill_version": body.skill_version,
+        "confirmed_inputs": body.confirmed_inputs,
+        "node_kind": body.node_kind,
+        "node_prompt": body.node_prompt,
+        "user_goal": body.user_goal,
+        "upstream_text": body.upstream_text,
+        "reference_media": [item.model_dump() for item in body.reference_media],
+        "prompt_strategy": body.prompt_strategy,
+    }
+
+
+@router.post(
+    "/freezone/recipes/compile-batch",
+    response_model=FreezoneRecipeCompileBatchResponse,
+    tags=[TAG_FREEZONE_AGENT_CONFIG],
+)
+async def compile_freezone_recipe_batch(
+    body: FreezoneRecipeCompileBatchRequest,
+    user: dict = Depends(get_api_user),
+):
+    """Compile several independent node prompts without one failure cancelling the batch."""
+    username = str(user.get("username") or "")
+    replays: dict[int, RecipeCompileResult] = {}
+    # An ended attempt only stops its own node; the other items still compile.
+    ended: dict[int, str] = {}
+    for index, item in enumerate(body.items):
+        try:
+            replayed = await _require_recipe_compile_product_admission(
+                body=item, user=user, allow_compile_replay=True
+            )
+        except HTTPException as exc:
+            if not _is_recipe_attempt_ended(exc):
+                raise
+            ended[index] = str(exc.detail)
+            continue
+        if replayed is not None:
+            replays[index] = replayed
+    pending_compiles = [
+        _recipe_compile_args(item, username)
+        for index, item in enumerate(body.items)
+        if index not in replays and index not in ended
+    ]
+    compiled_outcomes = iter(
+        await compile_recipe_prompt_batch(pending_compiles) if pending_compiles else []
+    )
+    items: list[dict[str, Any]] = []
+    for index, request in enumerate(body.items):
+        if index in ended:
+            items.append(
+                {"request_id": request.request_id, "ok": False, "error": ended[index]}
+            )
+            continue
+        if index in replays:
+            items.append(
+                {"request_id": request.request_id, **_recipe_compile_response(replays[index])}
+            )
+            continue
+        outcome = next(compiled_outcomes)
+        if isinstance(outcome, RecipeRuntimeError):
+            await _fail_recipe_product_operation(body=request, user=user)
+            items.append(
+                {
+                    "request_id": request.request_id,
+                    "ok": False,
+                    "error": str(outcome),
+                }
+            )
+            continue
+        if isinstance(outcome, Exception):
+            await _fail_recipe_product_operation(body=request, user=user)
+            logger.error(
+                "freezone Recipe batch item failed request_id=%s",
+                request.request_id,
+                exc_info=(type(outcome), outcome, outcome.__traceback__),
+            )
+            items.append(
+                {
+                    "request_id": request.request_id,
+                    "ok": False,
+                    "error": "Recipe compilation failed",
+                    "retryable": True,
+                }
+            )
+            continue
+        try:
+            await _record_recipe_compile_product_evidence(
+                body=request,
+                compiled=outcome,
+                user=user,
+            )
+        except HTTPException as exc:
+            if not _is_recipe_attempt_ended(exc):
+                raise
+            items.append(
+                {"request_id": request.request_id, "ok": False, "error": str(exc.detail)}
+            )
+            continue
+        items.append(
+            {
+                "request_id": request.request_id,
+                "ok": True,
+                "data": {
+                    "prompt": outcome.prompt,
+                    "compile_mode": outcome.mode,
+                    "recipe_ids": list(outcome.recipe_ids),
+                },
+            }
+        )
+    return {"ok": True, "data": {"items": items}}
+
+
+@router.post(
+    "/freezone/recipes/generate-text",
+    response_model=FreezoneRecipeTextGenerateResponse,
+    tags=[TAG_FREEZONE_AGENT_CONFIG],
+)
+async def generate_freezone_recipe_text(
+    body: FreezoneRecipeCompileRequest,
+    user: dict = Depends(get_api_user),
+):
+    """Compile and execute one catalog-backed text node."""
+    username = str(user.get("username") or "")
+    await _require_recipe_compile_product_admission(body=body, user=user)
+    try:
+        content = await generate_recipe_text(
+            username=username,
+            recipe_id=body.recipe_id,
+            recipe_version=body.recipe_version,
+            recipe_pipeline=[item.model_dump() for item in body.recipe_pipeline],
+            skill_id=body.skill_id,
+            skill_version=body.skill_version,
+            confirmed_inputs=body.confirmed_inputs,
+            node_kind=body.node_kind,
+            node_prompt=body.node_prompt,
+            user_goal=body.user_goal,
+            upstream_text=body.upstream_text,
+            reference_media=[item.model_dump() for item in body.reference_media],
+        )
+        await _record_recipe_compile_product_evidence(
+            body=body,
+            compiled=RecipeCompileResult(
+                prompt=content,
+                mode="model",
+                recipe_ids=(body.recipe_id,),
+                model_call_id=f"recipe-text-writer:{uuid.uuid4().hex}",
+                executed_at=time.time(),
+            ),
+            user=user,
+            deliver_text=True,
+        )
+    except RecipeRuntimeError as exc:
+        await _fail_recipe_product_operation(body=body, user=user)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        await _fail_recipe_product_operation(body=body, user=user)
+        if _is_recipe_text_generation_timeout(exc):
+            logger.warning("freezone Recipe text generation timed out")
+            raise HTTPException(
+                status_code=504,
+                detail=(
+                    "Recipe 文本生成超时：模型在规定时间内未返回结果，请稍后重试。"
+                    "本轮未继续执行下游节点。"
+                ),
+            ) from exc
+        logger.exception("freezone Recipe text generation failed")
+        raise HTTPException(
+            status_code=503, detail="Recipe text generation failed"
+        ) from exc
+    return {"ok": True, "data": {"content": content}}
+
+
+def _is_recipe_text_generation_timeout(exc: BaseException) -> bool:
+    """Recognize timeout wrappers without exposing provider internals to clients."""
+
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, TimeoutError):
+            return True
+        class_name = type(current).__name__.lower()
+        message = str(current).strip().lower()
+        if "timeout" in class_name or "timed out" in message or "timeout" in message:
+            return True
+        cause = current.__cause__
+        current = cause if cause is not None else current.__context__
+    return False
 
 
 # ============================================================
@@ -4834,8 +6143,8 @@ async def freezone_three_d_viewer_screenshot(
 ):
     """保存内置 3D viewer 普通截图到 Freezone 输出目录。"""
 
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
     prefix = "data:image/png;base64,"
     data_url = (body.data_url or "").strip()
@@ -4881,8 +6190,8 @@ async def freezone_gen(
     user: dict = Depends(get_api_user),
 ):
     """图片处理：启动文生图任务，返回可供 SSE 追踪的 `task_key`。"""
-    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, output_dir = (
+        await _resolve_freezone_project(project, user)
     )
     request_schema, model_params, catalog_entry = await _resolve_catalog_request(
         "image",
@@ -4940,6 +6249,8 @@ async def freezone_gen(
         quality=body.quality,
         canvas_id=body.canvas_id or None,
         node_id=body.node_id or None,
+        product_operation_id=body.product_operation_id,
+        generation_attempt_id=body.generation_attempt_id,
         model_id=_catalog_entry_id(catalog_entry) or body.model_id or None,
         catalog_id=_catalog_entry_id(catalog_entry) or None,
         gen_mode=body.gen_mode or None,
@@ -4959,8 +6270,8 @@ async def freezone_sketch_from_context(
     user: dict = Depends(get_api_user),
 ):
     """主线上下文：从 Beat / 背景 / 导演合成图生成草图候选。"""
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
     beat = await _load_freezone_beat_context(
         ctx=ctx,
@@ -5041,8 +6352,8 @@ async def freezone_frame_from_context(
     user: dict = Depends(get_api_user),
 ):
     """主线上下文：从草图和可选背景生成分镜候选。"""
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
     beat = await _load_freezone_beat_context(
         ctx=ctx,
@@ -5090,8 +6401,8 @@ async def freezone_scene_360(
     user: dict = Depends(get_api_user),
 ):
     """图片处理：基于场景 master 源图生成 2:1 的 360 全景候选图。"""
-    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
     base_paths = _resolve_url_list(project_dir, [body.reference_url])
     if not base_paths:
@@ -5166,8 +6477,8 @@ async def freezone_ai_staging_prop(
     request: dict[str, object] = Body(default_factory=dict),
     user: dict = Depends(get_api_user),
 ):
-    ctx, _username, _project_name, _project_dir, _output_dir = await _resolve_freezone_project(
-        project, user, required_role="editor"
+    ctx, _username, _project_name, _project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="editor")
     )
     # Product requests always use the edition's effective NewAPI gateway.
     # Keep low-level overrides available to offline helpers, but never accept
@@ -5227,8 +6538,8 @@ async def freezone_skill_run(
             message="skill not found",
             user_action_hint="Refresh the skill registry and try again.",
         )
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
     idempotency_request_hash, idempotent_response = _idempotent_skill_run_response(
         project_dir,
@@ -5254,9 +6565,14 @@ async def freezone_skill_run(
     if _is_standalone_beat_context_input(_single_input(grouped, "beat_context")):
         auto_commit = False
 
-    if skill_id in {"freezone.sketch_from_context", "freezone.sketch_from_director_combined"}:
+    if skill_id in {
+        "freezone.sketch_from_context",
+        "freezone.sketch_from_director_combined",
+    }:
         parameters = _skill_run_parameters(body)
-        aspect_ratio = _normalize_mainline_skill_aspect_ratio(parameters.get("aspect_ratio"))
+        aspect_ratio = _normalize_mainline_skill_aspect_ratio(
+            parameters.get("aspect_ratio")
+        )
         beat_input = _required_input(grouped, "beat_context")
         is_standalone_beat_context = _is_standalone_beat_context_input(beat_input)
         if is_standalone_beat_context:
@@ -5378,7 +6694,9 @@ async def freezone_skill_run(
                 beat_input=beat_input,
                 sketch_url=_required_image_url(sketch, "sketch"),
                 reference_urls=(
-                    [_required_image_url(background, "background")] if background else []
+                    [_required_image_url(background, "background")]
+                    if background
+                    else []
                 ),
                 extra_reference_urls=[],
                 identity_references=identity_references,
@@ -5408,7 +6726,9 @@ async def freezone_skill_run(
                 beat_payload=_skill_beat_context_as_prompt_beat(beat_input),
                 sketch_url=_required_image_url(sketch, "sketch"),
                 reference_urls=(
-                    [_required_image_url(background, "background")] if background else []
+                    [_required_image_url(background, "background")]
+                    if background
+                    else []
                 ),
                 extra_reference_urls=[],
                 identity_references=identity_references,
@@ -5630,8 +6950,8 @@ async def freezone_multi_view(
     user: dict = Depends(get_api_user),
 ):
     """图片处理：基于单张源图做多角度重构 / 机位重定位。"""
-    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, output_dir = (
+        await _resolve_freezone_project(project, user)
     )
     return await _start_or_enqueue_freezone_edit_job(
         ctx=ctx,
@@ -5665,8 +6985,8 @@ async def freezone_relight(
     user: dict = Depends(get_api_user),
 ):
     """图片处理：打光。基于源图和打光参考图的光照重塑接口。"""
-    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, output_dir = (
+        await _resolve_freezone_project(project, user)
     )
     return await _start_or_enqueue_freezone_edit_job(
         ctx=ctx,
@@ -5676,7 +6996,9 @@ async def freezone_relight(
         output_dir=output_dir,
         prompt=_build_relight_prompt(body),
         base_url=body.source_url,
-        extra_reference_urls=[body.lighting_reference_url] if body.lighting_reference_url else [],
+        extra_reference_urls=(
+            [body.lighting_reference_url] if body.lighting_reference_url else []
+        ),
         aspect_ratio="16:9",
         image_size=body.image_size or "2K",
         camera=None,
@@ -5700,8 +7022,8 @@ async def freezone_template_edit(
     user: dict = Depends(get_api_user),
 ):
     """图片处理：九宫格下拉菜单统一编辑接口。"""
-    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, output_dir = (
+        await _resolve_freezone_project(project, user)
     )
     # 与 /freezone/edit 同一口径：EE 里目录是权威的，模型和目录身份都要在目录里
     # 对得上才放行。原来这条路由直接采信 body —— 客户端可以随便报一个便宜的
@@ -5746,7 +7068,9 @@ async def freezone_template_edit(
     )
 
 
-@router.get("/projects/{project}/freezone/image/camera-options", tags=[TAG_FREEZONE_IMAGE])
+@router.get(
+    "/projects/{project}/freezone/image/camera-options", tags=[TAG_FREEZONE_IMAGE]
+)
 async def freezone_image_camera_options(
     project: str,
     user: dict = Depends(get_api_user),
@@ -5756,7 +7080,9 @@ async def freezone_image_camera_options(
     return {"ok": True, "data": _get_freezone_image_camera_options()}
 
 
-@router.get("/projects/{project}/freezone/image/style-templates", tags=[TAG_FREEZONE_IMAGE])
+@router.get(
+    "/projects/{project}/freezone/image/style-templates", tags=[TAG_FREEZONE_IMAGE]
+)
 async def freezone_image_style_templates(
     project: str,
     user: dict = Depends(get_api_user),
@@ -5799,8 +7125,8 @@ async def freezone_image_to_3gs(
     user: dict = Depends(get_api_user),
 ):
     """图片处理：把 Freezone 图片节点作为 SHARP 输入，生成 Freezone 3GS PLY。"""
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
 
     try:
@@ -5879,8 +7205,8 @@ async def freezone_upscale(
     user: dict = Depends(get_api_user),
 ):
     """图片处理：高清放大接口。"""
-    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, output_dir = (
+        await _resolve_freezone_project(project, user)
     )
 
     try:
@@ -5938,8 +7264,8 @@ async def freezone_outpaint(
     做法是先把原图补白到目标宽高比，再复用现有图片编辑任务，
     让模型去生成新暴露出来的外部区域，而不是简单拉伸原图。
     """
-    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, output_dir = (
+        await _resolve_freezone_project(project, user)
     )
 
     try:
@@ -6003,8 +7329,8 @@ async def freezone_redraw(
     user: dict = Depends(get_api_user),
 ):
     """图片处理：重绘接口。"""
-    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, output_dir = (
+        await _resolve_freezone_project(project, user)
     )
 
     try:
@@ -6018,7 +7344,9 @@ async def freezone_redraw(
         raise HTTPException(400, "num_images is currently limited to 1")
 
     job_id = _new_job_id()
-    resolved_aspect_ratio = _resolve_outpaint_aspect_ratio(source_path, body.aspect_ratio)
+    resolved_aspect_ratio = _resolve_outpaint_aspect_ratio(
+        source_path, body.aspect_ratio
+    )
     resolved_provider, resolved_model = _split_provider_and_model(
         None,
         body.model or FREEZONE_DEFAULT_IMAGE_MODEL,
@@ -6057,9 +7385,7 @@ async def freezone_redraw(
                 quality=body.quality or "medium",
                 provider=provider,
                 model=resolved_model,
-                billing_operation=(
-                    "erase" if not body.prompt.strip() else "redraw"
-                ),
+                billing_operation=("erase" if not body.prompt.strip() else "redraw"),
             )
         except RuntimeError as e:
             _handle_task_start_runtime_error("failed to start masked redraw task", e)
@@ -6102,8 +7428,8 @@ async def freezone_extract_frames(
     user: dict = Depends(get_api_user),
 ):
     """视频处理：从视频中抽取关键帧，返回任务 `task_key`。"""
-    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, output_dir = (
+        await _resolve_freezone_project(project, user)
     )
 
     try:
@@ -6137,8 +7463,8 @@ async def freezone_analyze_shots(
     user: dict = Depends(get_api_user),
 ):
     """视频处理：分析一组关键帧的镜头内容，返回任务 `task_key`。"""
-    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, output_dir = (
+        await _resolve_freezone_project(project, user)
     )
 
     if not body.frame_urls:
@@ -6171,15 +7497,17 @@ async def freezone_analyze_shots(
     )
 
 
-@router.post("/projects/{project}/freezone/analyze-video-story", tags=[TAG_FREEZONE_VIDEO])
+@router.post(
+    "/projects/{project}/freezone/analyze-video-story", tags=[TAG_FREEZONE_VIDEO]
+)
 async def freezone_analyze_video_story(
     project: str,
     body: FreezoneAnalyzeVideoStoryRequest,
     user: dict = Depends(get_api_user),
 ):
     """视频处理：抽帧并解析视频故事，返回任务 `task_key`。"""
-    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, output_dir = (
+        await _resolve_freezone_project(project, user)
     )
 
     try:
@@ -6315,9 +7643,11 @@ def _start_freezone_text_translate_task(
                 current_task="translating_text",
                 logs=logs,
             )
-            translated_text, source_language, target_language = await translate_freezone_text(
-                text=text,
-                node_type=node_type,
+            translated_text, source_language, target_language = (
+                await translate_freezone_text(
+                    text=text,
+                    node_type=node_type,
+                )
             )
             payload = {
                 "translated_text": translated_text,
@@ -6327,7 +7657,9 @@ def _start_freezone_text_translate_task(
             }
             out = _text_translate_output_path(project_dir, job_id)
             out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            out.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
             history_record = _record_freezone_node_history(
                 project_dir=project_dir,
                 canvas_id=canvas_id,
@@ -6431,7 +7763,9 @@ def _start_freezone_text_generate_task(
             payload = {"generated_text": generated_text, "model": model}
             out = _text_generate_output_path(project_dir, job_id)
             out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            out.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
             history_record = _record_freezone_node_history(
                 project_dir=project_dir,
                 canvas_id=canvas_id,
@@ -6502,12 +7836,18 @@ async def freezone_text_generate(
     user: dict = Depends(get_api_user),
 ):
     """文本节点：根据用户要求生成可继续编辑的自由文本。"""
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
     prompt = body.prompt.strip()
     if not prompt:
         raise HTTPException(400, "prompt is required")
+
+    # Keep a legacy estimate during rolling upgrades. Old EE reserves it at
+    # enqueue time; new EE acknowledges v2 and defers to the trusted result.
+    from novelvideo.utils.document_parsers import count_billable_text_chars
+
+    legacy_billable_chars = max(1, count_billable_text_chars(prompt))
 
     try:
         job_id = _new_job_id()
@@ -6522,8 +7862,10 @@ async def freezone_text_generate(
                     "canvas_id": body.canvas_id or "",
                     "node_id": body.node_id or "",
                     "billing": {
-                        "billable_chars": count_billable_text_chars(prompt),
                         "operation": "text_generate",
+                        "quantity_source": "trusted_runner_result",
+                        "billable_chars": legacy_billable_chars,
+                        "result_billing_version": 2,
                     },
                 },
             )
@@ -6538,7 +7880,9 @@ async def freezone_text_generate(
         )
     except RuntimeError as exc:
         _handle_task_start_runtime_error("failed to start text generation task", exc)
-        raise HTTPException(503, f"failed to start text generation task: {exc}") from exc
+        raise HTTPException(
+            503, f"failed to start text generation task: {exc}"
+        ) from exc
 
     return _accepted_job_response(
         task_type="freezone_text_generate",
@@ -6559,8 +7903,8 @@ async def freezone_text_translate(
     user: dict = Depends(get_api_user),
 ):
     """文本工具：中英文互译，供各类节点编写提示词时直接调用。"""
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
 
     if not body.text.strip():
@@ -6654,7 +7998,9 @@ def _audio_separate_mute_video_output_path(project_dir: Path, job_id: str) -> Pa
 
 def _public_freezone_video_story_result(result: dict) -> dict:
     return {
-        key: value for key, value in result.items() if key not in {"output_path", "frame_paths"}
+        key: value
+        for key, value in result.items()
+        if key not in {"output_path", "frame_paths"}
     }
 
 
@@ -6772,7 +8118,11 @@ def _start_freezone_video_compose_task(
                 project,
                 episode=0,
                 scope=job_id,
-                result={"output_format": "mp4", "output_path": str(output_path)},
+                result={
+                    "output_format": "mp4",
+                    "output_path": str(output_path),
+                    "cover_url": body.cover_url or None,
+                },
                 current_task="completed",
                 logs=["视频合成完成"],
             )
@@ -6916,7 +8266,9 @@ def _start_freezone_video_upscale_task(
                 scope=job_id,
                 result={
                     "output_format": "mp4",
-                    "output_url": project_static_url(project_id, rel, local_path=output_path),
+                    "output_url": project_static_url(
+                        project_id, rel, local_path=output_path
+                    ),
                     "meta": meta,
                 },
                 current_task="completed",
@@ -7073,10 +8425,15 @@ def _start_freezone_audio_speech_task(
                 text=body.text,
                 emotion_prompt=body.emotion_prompt,
                 voice_ref=voice_ref_payload,
+                speech_mode=body.speech_mode,
+                preset_model=body.preset_model,
+                preset_voice=body.preset_voice,
                 projection=projection,
             )
             rel = result.audio_path.relative_to(project_dir).as_posix()
-            audio_url = project_static_url(project_id, rel, local_path=result.audio_path)
+            audio_url = project_static_url(
+                project_id, rel, local_path=result.audio_path
+            )
             result_payload = {
                 "url": audio_url,
                 "audio_url": audio_url,
@@ -7184,7 +8541,9 @@ def _freezone_audio_ref_payload(
 def _user_voice_media_url(project: str, voice_id: str) -> str:
     safe_project = str(project or "").strip()
     safe_voice_id = str(voice_id or "").strip()
-    return f"/api/v1/projects/{safe_project}/freezone/audio/voices/{safe_voice_id}/media"
+    return (
+        f"/api/v1/projects/{safe_project}/freezone/audio/voices/{safe_voice_id}/media"
+    )
 
 
 def _attach_user_voice_media_urls(project: str, voices: list[dict]) -> list[dict]:
@@ -7328,11 +8687,13 @@ async def freezone_audio_references(
     user: dict = Depends(get_api_user),
 ):
     """获取 Freezone 音频节点可用的账号级音色、项目解说人与角色参考音频。"""
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user, required_role="viewer"
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="viewer")
     )
     narrator_descriptor = load_narrator_reference_audio_from_state_dir(ctx.state_dir)
-    narration_style = load_effective_narration_style_for_voice_from_state_dir(ctx.state_dir)
+    narration_style = load_effective_narration_style_for_voice_from_state_dir(
+        ctx.state_dir
+    )
     requester_username = ctx.requester_username or username
     user_voices = _attach_user_voice_media_urls(
         project,
@@ -7407,7 +8768,9 @@ async def freezone_audio_references(
 )
 async def create_freezone_audio_voice(
     project: str,
-    file: Annotated[UploadFile, File(description="参考音频文件，支持 mp3/wav/m4a/aac/ogg/webm")],
+    file: Annotated[
+        UploadFile, File(description="参考音频文件，支持 mp3/wav/m4a/aac/ogg/webm")
+    ],
     name: Annotated[str, Form(description="音色名称，用于音色选择弹窗展示")] = "",
     user: dict = Depends(get_api_user),
 ):
@@ -7417,10 +8780,14 @@ async def create_freezone_audio_voice(
     它只把参考音频保存到账号级 Freezone 音色库。生成音频时传
     `voice_ref={"scope":"user_custom","voice_id":"..."}` 即可使用。
     """
-    ctx, username, _project_name, _project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, _project_name, _project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
-    username = ctx.requester_username if ctx is not None and ctx.requester_username else username
+    username = (
+        ctx.requester_username
+        if ctx is not None and ctx.requester_username
+        else username
+    )
     content = await file.read()
     try:
         voice = create_user_audio_voice(
@@ -7446,10 +8813,14 @@ async def get_freezone_audio_voice_media(
     voice_id: str,
     user: dict = Depends(get_api_user),
 ):
-    ctx, username, _project_name, _project_dir, _output_dir = await _resolve_freezone_project(
-        project, user, required_role="viewer"
+    ctx, username, _project_name, _project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="viewer")
     )
-    username = ctx.requester_username if ctx is not None and ctx.requester_username else username
+    username = (
+        ctx.requester_username
+        if ctx is not None and ctx.requester_username
+        else username
+    )
     try:
         resolved = await asyncio.to_thread(resolve_user_audio_voice, username, voice_id)
     except OSError as exc:
@@ -7625,8 +8996,8 @@ async def freezone_story_script_generate(
     user: dict = Depends(get_api_user),
 ):
     """文本工具：根据上传剧本内容生成结构化故事脚本表。"""
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
 
     source_text = body.source_text.strip()
@@ -7923,7 +9294,36 @@ def _media_model_catalog_is_authoritative() -> bool:
     return True
 
 
-def _media_model_unavailable(media_type: str, catalog: list[dict[str, Any]]) -> HTTPException:
+_SERVER_MANAGED_MEDIA_MODEL_PARAMETER_KEYS = frozenset({"thinking_level"})
+
+
+def _public_media_model_catalog(
+    catalog: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Hide provider tuning owned by the server from canvas model controls."""
+    result: list[dict[str, Any]] = []
+    for entry in catalog:
+        public_entry = dict(entry)
+        request = entry.get("request")
+        if isinstance(request, dict):
+            public_request = dict(request)
+            parameters = request.get("parameters")
+            if isinstance(parameters, list):
+                public_request["parameters"] = [
+                    dict(parameter)
+                    for parameter in parameters
+                    if isinstance(parameter, dict)
+                    and str(parameter.get("key") or "")
+                    not in _SERVER_MANAGED_MEDIA_MODEL_PARAMETER_KEYS
+                ]
+            public_entry["request"] = public_request
+        result.append(public_entry)
+    return result
+
+
+def _media_model_unavailable(
+    media_type: str, catalog: list[dict[str, Any]]
+) -> HTTPException:
     media_label = _MEDIA_TYPE_LABELS.get(media_type, "媒体")
     detail = (
         f"当前没有可用的{media_label}模型，请联系管理员或刷新后重试"
@@ -8045,7 +9445,9 @@ def _catalog_image_execution_selection(
         or ""
     ).strip()
     if not provider or not model:
-        raise HTTPException(400, "configured media model is missing provider or gateway model")
+        raise HTTPException(
+            400, "configured media model is missing provider or gateway model"
+        )
 
     clean_provider = str(requested_provider or "").strip()
     if clean_provider and clean_provider.casefold() != provider.casefold():
@@ -8104,10 +9506,14 @@ async def _resolve_catalog_request(
         defined_keys = {
             str(parameter["key"]) for parameter in full_schema.get("parameters") or []
         }
+        server_managed_keys = (
+            defined_keys & _SERVER_MANAGED_MEDIA_MODEL_PARAMETER_KEYS
+        )
         filtered_params = {
             key: value
             for key, value in (model_params or {}).items()
-            if key in active_keys or key not in defined_keys
+            if key not in server_managed_keys
+            and (key in active_keys or key not in defined_keys)
         }
         if media_type == "image" and entry.get("qualityOptions"):
             schema = {**schema, "includeQuality": True}
@@ -8147,6 +9553,39 @@ def _catalog_resolution_options(
         return None
     normalized = [str(option).strip() for option in options if str(option).strip()]
     return normalized or None
+
+
+def _catalog_ratio_options(capabilities: dict[str, Any] | None) -> list[str] | None:
+    if not capabilities:
+        return None
+    options = capabilities.get("ratioOptions")
+    if not isinstance(options, list):
+        return None
+    normalized = [str(option).strip() for option in options if str(option).strip()]
+    return normalized or None
+
+
+def _image_animate_ratio_options(
+    model: str, capabilities: dict[str, Any] | None
+) -> list[str] | None:
+    # Only fill a missing field on an already-authorized catalog entry. Explicit
+    # restrictions (including empty/auto-only lists) remain authoritative.
+    if capabilities is None or "ratioOptions" in capabilities:
+        return _catalog_ratio_options(capabilities)
+    from novelvideo.model_gateway_settings import get_bundled_media_model_catalog
+
+    identifier = str(
+        capabilities.get("gatewayModel") or capabilities.get("gateway_model") or model
+    )
+    entry = next(
+        (
+            item
+            for item in get_bundled_media_model_catalog("video")
+            if identifier in _catalog_entry_identifiers(item)
+        ),
+        None,
+    )
+    return _catalog_ratio_options(entry)
 
 
 def _catalog_reference_limits(
@@ -8191,7 +9630,9 @@ def _catalog_reference_duration_bounds(
     )
 
 
-def _catalog_audio_total_duration_max(capabilities: dict[str, Any] | None) -> float | None:
+def _catalog_audio_total_duration_max(
+    capabilities: dict[str, Any] | None,
+) -> float | None:
     """目录里配的全能参考音频**总时长**上限（秒），没配返回 None。
 
     与 `_catalog_reference_limits` 同一套「目录优先」的口径，只是这里允许小数
@@ -8219,7 +9660,9 @@ async def _probe_reference_audio_seconds(path: str) -> float | None:
     try:
         return float(await call_blocking(probe_voice_sample_duration_seconds, path))
     except Exception as exc:  # ffprobe 缺失 / 文件损坏 / 权限，都只是「测不出」
-        logger.warning("[freezone] reference audio duration probe failed: %s (%s)", path, exc)
+        logger.warning(
+            "[freezone] reference audio duration probe failed: %s (%s)", path, exc
+        )
         return None
 
 
@@ -8381,7 +9824,9 @@ async def _resolve_catalog_video_backend(
     return resolve_freezone_video_backend(model)
 
 
-@router.get("/projects/{project}/freezone/video/camera-templates", tags=[TAG_FREEZONE_VIDEO])
+@router.get(
+    "/projects/{project}/freezone/video/camera-templates", tags=[TAG_FREEZONE_VIDEO]
+)
 async def freezone_video_camera_templates(
     project: str,
     user: dict = Depends(get_api_user),
@@ -8409,7 +9854,9 @@ async def freezone_video_models(
         "data": (
             get_freezone_video_model_options()
             if catalog is None
-            else [item for item in catalog if not _is_processing_only_video_model(item)]
+            else _public_media_model_catalog(
+                [item for item in catalog if not _is_processing_only_video_model(item)]
+            )
         ),
     }
 
@@ -8428,7 +9875,7 @@ async def freezone_image_models(
         requester_user_id=ctx.requester_user_id,
     )
     if catalog is not None:
-        return {"ok": True, "data": catalog}
+        return {"ok": True, "data": _public_media_model_catalog(catalog)}
     options = image_generation_selection_options()
     data = []
     for key, label in options.items():
@@ -8513,8 +9960,8 @@ async def freezone_mark_detect(
     user: dict = Depends(get_api_user),
 ):
     """图片处理：识别单张图片中点击点或框选区域的局部元素标记。"""
-    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
     source_paths = _resolve_url_list(project_dir, [body.source_url])
     if not source_paths:
@@ -8522,7 +9969,8 @@ async def freezone_mark_detect(
 
     has_point = body.point_x is not None and body.point_y is not None
     has_box = all(
-        value is not None for value in [body.box_x, body.box_y, body.box_width, body.box_height]
+        value is not None
+        for value in [body.box_x, body.box_y, body.box_width, body.box_height]
     )
     if not (has_point or has_box):
         raise HTTPException(400, "point or box selection is required")
@@ -8670,8 +10118,8 @@ async def freezone_image_reverse_prompt(
         freezone_image_reverse_prompt_task_billing,
     )
 
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
     source_paths = _resolve_url_list(project_dir, [body.source_url])
     if not source_paths:
@@ -8679,10 +10127,7 @@ async def freezone_image_reverse_prompt(
     source_path = Path(source_paths[0])
     if not source_path.exists():
         raise HTTPException(404, f"source not found: {source_path}")
-    instruction = (
-        body.instruction.strip()
-        or DEFAULT_IMAGE_REVERSE_PROMPT_INSTRUCTION
-    )
+    instruction = body.instruction.strip() or DEFAULT_IMAGE_REVERSE_PROMPT_INSTRUCTION
     billable_chars = count_billable_text_chars(instruction)
 
     try:
@@ -8790,27 +10235,31 @@ async def freezone_image_to_blockout(
         raise HTTPException(500, f"image to blockout failed: {exc}") from exc
 
 
-@router.get("/projects/{project}/freezone/video/character-library", tags=[TAG_FREEZONE_VIDEO])
+@router.get(
+    "/projects/{project}/freezone/video/character-library", tags=[TAG_FREEZONE_VIDEO]
+)
 async def freezone_video_character_library(
     project: str,
     user: dict = Depends(get_api_user),
 ):
     """视频处理：获取文生视频角色素材库。"""
-    _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user, required_role="viewer"
+    _ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="viewer")
     )
     return {"ok": True, "data": load_video_character_library(project_dir)}
 
 
-@router.post("/projects/{project}/freezone/video/character-library", tags=[TAG_FREEZONE_VIDEO])
+@router.post(
+    "/projects/{project}/freezone/video/character-library", tags=[TAG_FREEZONE_VIDEO]
+)
 async def freezone_add_video_character_library_item(
     project: str,
     body: FreezoneVideoCharacterLibraryItemRequest,
     user: dict = Depends(get_api_user),
 ):
     """视频处理：把上传好的素材登记到资产库（图片/视频/音频）。"""
-    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
 
     if not body.name.strip():
@@ -8867,8 +10316,8 @@ async def freezone_asset_library_folders(
     user: dict = Depends(get_api_user),
 ):
     """视频处理：列出用户自建的资产库文件夹（系统文件夹由前端按保留 key 生成）。"""
-    _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user, required_role="viewer"
+    _ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="viewer")
     )
     return {"ok": True, "data": load_video_character_folders(project_dir)}
 
@@ -8883,8 +10332,8 @@ async def freezone_add_asset_library_folder(
     user: dict = Depends(get_api_user),
 ):
     """视频处理：新建一个资产库文件夹。"""
-    _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    _ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
     try:
         folder = add_video_character_folder(project_dir, name=body.name)
@@ -8904,8 +10353,8 @@ async def freezone_update_asset_library_folder(
     user: dict = Depends(get_api_user),
 ):
     """视频处理：给资产库文件夹改名或换封面。系统文件夹没有实体记录，一律 404。"""
-    _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    _ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
     if body.cover:
         # 封面只能是本项目 static 下的素材。这个字段会被所有打开资产库的协作者当
@@ -8943,8 +10392,8 @@ async def freezone_delete_asset_library_folder(
     只删索引，磁盘上的素材文件保留——画布节点可能还引用着同一个 URL，真删文件会
     造成裂图。孤儿文件归项目级清理负责，不在这条路由的职责里。
     """
-    _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    _ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
     removed = delete_video_character_folder(project_dir, folder_id)
     if removed is None:
@@ -8964,8 +10413,8 @@ async def freezone_sync_asset_library_from_mainline(
 
     走稳定合成 id（``mainline:<kind>:<name>``），重复同步只更新 URL、不产生重复。
     """
-    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
     store = await make_sqlite_store_for_context(ctx)
 
@@ -9054,7 +10503,8 @@ async def freezone_sync_asset_library_from_mainline(
 
 
 @router.patch(
-    "/projects/{project}/freezone/video/character-library/{item_id}", tags=[TAG_FREEZONE_VIDEO]
+    "/projects/{project}/freezone/video/character-library/{item_id}",
+    tags=[TAG_FREEZONE_VIDEO],
 )
 async def freezone_rename_video_character_library_item(
     project: str,
@@ -9068,8 +10518,8 @@ async def freezone_rename_video_character_library_item(
     条目也能改，但下次「从主线同步」会按主线名字覆盖回去，前端据此只对本地上传的
     条目开放这个入口。
     """
-    _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    _ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
     try:
         item = rename_video_character_library_item(project_dir, item_id, name=body.name)
@@ -9081,7 +10531,8 @@ async def freezone_rename_video_character_library_item(
 
 
 @router.delete(
-    "/projects/{project}/freezone/video/character-library/{item_id}", tags=[TAG_FREEZONE_VIDEO]
+    "/projects/{project}/freezone/video/character-library/{item_id}",
+    tags=[TAG_FREEZONE_VIDEO],
 )
 async def freezone_delete_video_character_library_item(
     project: str,
@@ -9089,8 +10540,8 @@ async def freezone_delete_video_character_library_item(
     user: dict = Depends(get_api_user),
 ):
     """视频处理：删除角色素材库条目。"""
-    _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    _ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
     deleted = delete_video_character_library_item(project_dir, item_id)
     if not deleted:
@@ -9111,14 +10562,18 @@ async def freezone_video_gen(
 
     运镜通过模板库和补充提示词控制，角色库通过已上传的人物参考图提供身份一致性。
     """
-    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, output_dir = (
+        await _resolve_freezone_project(project, user)
     )
 
     if not body.prompt.strip():
         raise HTTPException(400, "prompt is required")
-    if body.camera_template_id and not get_video_camera_template(body.camera_template_id):
-        raise HTTPException(400, f"unknown camera_template_id: {body.camera_template_id}")
+    if body.camera_template_id and not get_video_camera_template(
+        body.camera_template_id
+    ):
+        raise HTTPException(
+            400, f"unknown camera_template_id: {body.camera_template_id}"
+        )
     try:
         backend = await _resolve_catalog_video_backend(
             body.model,
@@ -9138,7 +10593,9 @@ async def freezone_video_gen(
         capabilities,
         body.gen_mode,
     )
-    character_items = _load_video_character_items_by_ids(project_dir, body.character_ids)
+    character_items = _load_video_character_items_by_ids(
+        project_dir, body.character_ids
+    )
     character_names = [str(item.get("name") or "") for item in character_items]
     character_reference_urls: list[str] = []
     for item in character_items:
@@ -9148,7 +10605,8 @@ async def freezone_video_gen(
 
     character_reference_paths = _resolve_url_list(project_dir, character_reference_urls)
     reference_items = [
-        {"type": "image", "path": path, "role": "角色参考"} for path in character_reference_paths
+        {"type": "image", "path": path, "role": "角色参考"}
+        for path in character_reference_paths
     ]
     final_prompt = build_freezone_video_prompt(
         user_prompt=body.prompt,
@@ -9185,6 +10643,8 @@ async def freezone_video_gen(
             backend=backend,
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
+            product_operation_id=body.product_operation_id,
+            generation_attempt_id=body.generation_attempt_id,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
             gen_mode="text_to_video",
@@ -9200,6 +10660,133 @@ async def freezone_video_gen(
         ) from exc
 
 
+def _image_output_source(project_dir, ctx, username, project_name, url) -> str:
+    path = unquote(urlsplit(url).path)
+    prefixes = (
+        f"/static/projects/{ctx.project_id}/",
+        f"/api/v1/projects/{ctx.project_id}/media/",
+        f"/static/{username}/{project_name}/",
+    )
+    if not path.startswith(prefixes) or ".." in Path(path).parts:
+        raise HTTPException(400, "素材必须属于当前项目")
+    try:
+        paths = _resolve_url_list(project_dir, [url])
+    except ValueError as exc:
+        raise HTTPException(400, "素材必须是当前项目内的有效路径") from exc
+    if len(paths) != 1:
+        raise HTTPException(400, "素材不存在")
+    source = Path(paths[0]).resolve()
+    if not source.is_relative_to(project_dir.resolve()) or not source.is_file():
+        raise HTTPException(400, "素材不存在或不属于当前项目")
+    return str(source)
+
+
+@router.post("/projects/{project}/freezone/image/animate", tags=[TAG_FREEZONE_VIDEO])
+async def freezone_image_animate(
+    project: str,
+    body: FreezoneImageAnimateRequest,
+    user: dict = Depends(get_api_user),
+):
+    """将当前项目的画布图片作为锁定首帧，生成固定规格的动态图。"""
+    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
+        project, user
+    )
+    source_paths = [_image_output_source(project_dir, ctx, username, project_name, body.image_url)]
+
+    model = "newapi_seedance-2.0-fast"
+    try:
+        backend = await _resolve_catalog_video_backend(
+            model,
+            requester_user_id=ctx.requester_user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    request_schema, model_params, capabilities = await _resolve_catalog_request(
+        "video", model, {}, mode="firstLastFrame", requester_user_id=ctx.requester_user_id
+    )
+    _require_catalog_video_mode(capabilities, "firstLastFrame")
+
+    try:
+        return await _start_or_enqueue_freezone_video_gen(
+            ctx=ctx,
+            username=username,
+            project=project_name,
+            project_dir=project_dir,
+            output_dir=output_dir,
+            job_id=_new_job_id(),
+            prompt="保持首帧的主体、构图、画风与背景稳定，仅添加自然轻微的循环动作。镜头固定，无切换，无新增元素。",
+            reference_items=[{"type": "image", "path": source_paths[0], "role": "首帧"}],
+            aspect_ratio=supported_image_aspect_ratio(
+                source_paths[0],
+                _image_animate_ratio_options(model, capabilities),
+            ),
+            resolution=normalize_video_resolution_for_backend(
+                backend, "720p", _catalog_resolution_options(capabilities)
+            ),
+            duration_seconds=normalize_video_duration_for_backend(
+                backend, 4, *_catalog_duration_bounds(capabilities)
+            ),
+            generate_audio=False,
+            human_review=False,
+            scene_optimize=None,
+            backend=backend,
+            canvas_id=body.canvas_id,
+            node_id=body.node_id,
+            product_operation_id=body.product_operation_id,
+            generation_attempt_id=body.generation_attempt_id,
+            model_id=model,
+            catalog_id=_catalog_entry_id(capabilities) or None,
+            # 当前模型目录的关键帧能力统一为 first_last_frame；仅提供首帧
+            # 是该模式的合法子集，不走已废弃的单独 first_frame 模式。
+            gen_mode="first_last_frame",
+            requested_gen_mode="firstLastFrame",
+            model_params=model_params,
+            request_schema=request_schema,
+            capabilities=capabilities,
+            image_animate_gif=True,
+        )
+    except RuntimeError as exc:
+        _handle_task_start_runtime_error("failed to start image animate task", exc)
+        raise HTTPException(503, f"failed to start image animate task: {exc}") from exc
+
+
+@router.post("/projects/{project}/freezone/image/vectorize", tags=[TAG_FREEZONE_IMAGE])
+async def freezone_image_vectorize(
+    project: str,
+    body: FreezoneImageVectorizeRequest,
+    user: dict = Depends(get_api_user),
+):
+    """将当前项目的图片节点异步转换为 SVG。"""
+    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
+        project, user, required_role="editor"
+    )
+    source_paths = [_image_output_source(project_dir, ctx, username, project_name, body.image_url)]
+
+    return await _enqueue_freezone_background_job(
+        ctx=ctx,
+        project_dir=project_dir,
+        task_type="freezone_image_vectorize",
+        job_id=_new_job_id(),
+        payload={
+            "source_path": str(source_paths[0]),
+            "canvas_id": body.canvas_id,
+            "node_id": body.node_id,
+        },
+        queue_kind="ffmpeg",
+    )
+
+
+@router.post("/projects/{project}/freezone/image/animate-gif", tags=[TAG_FREEZONE_VIDEO])
+async def freezone_image_animate_gif(project: str, body: FreezoneImageAnimateGifRequest, user: dict = Depends(get_api_user)):
+    ctx, username, project_name, project_dir, _ = await _resolve_freezone_project(project, user)
+    source = _image_output_source(project_dir, ctx, username, project_name, body.video_url)
+    return await _enqueue_freezone_background_job(
+        ctx=ctx, project_dir=project_dir, task_type="freezone_image_animate_gif",
+        job_id=_new_job_id(), queue_kind="ffmpeg",
+        payload={"video_path": source, "canvas_id": body.canvas_id, "node_id": body.node_id},
+    )
+
+
 @router.post("/projects/{project}/freezone/video/i2v", tags=[TAG_FREEZONE_VIDEO])
 async def freezone_video_i2v(
     project: str,
@@ -9212,12 +10799,16 @@ async def freezone_video_i2v(
     - 单图图生视频（单张图片参考，不锁定第一帧）
     - 多图图片参考视频
     """
-    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, output_dir = (
+        await _resolve_freezone_project(project, user)
     )
 
-    if body.camera_template_id and not get_video_camera_template(body.camera_template_id):
-        raise HTTPException(400, f"unknown camera_template_id: {body.camera_template_id}")
+    if body.camera_template_id and not get_video_camera_template(
+        body.camera_template_id
+    ):
+        raise HTTPException(
+            400, f"unknown camera_template_id: {body.camera_template_id}"
+        )
     try:
         backend = await _resolve_catalog_video_backend(
             body.model,
@@ -9270,8 +10861,7 @@ async def freezone_video_i2v(
         )
 
     reference_items = [
-        {"type": "image", "path": path, "role": "图片参考"}
-        for path in source_paths
+        {"type": "image", "path": path, "role": "图片参考"} for path in source_paths
     ]
     final_prompt = build_freezone_image_to_video_prompt(
         user_prompt=body.prompt,
@@ -9308,6 +10898,8 @@ async def freezone_video_i2v(
             backend=backend,
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
+            product_operation_id=body.product_operation_id,
+            generation_attempt_id=body.generation_attempt_id,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
             gen_mode=execution_mode,
@@ -9335,12 +10927,16 @@ async def freezone_video_keyframes(
 
     接受仅首帧、首帧+尾帧或仅尾帧；至少需要提供一个。
     """
-    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, output_dir = (
+        await _resolve_freezone_project(project, user)
     )
 
-    if body.camera_template_id and not get_video_camera_template(body.camera_template_id):
-        raise HTTPException(400, f"unknown camera_template_id: {body.camera_template_id}")
+    if body.camera_template_id and not get_video_camera_template(
+        body.camera_template_id
+    ):
+        raise HTTPException(
+            400, f"unknown camera_template_id: {body.camera_template_id}"
+        )
     if body.gen_mode == "firstFrame":
         if not body.first_frame_url:
             raise HTTPException(400, "firstFrame requires first_frame_url")
@@ -9439,6 +11035,8 @@ async def freezone_video_keyframes(
             last_frame_path=last_path or None,
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
+            product_operation_id=body.product_operation_id,
+            generation_attempt_id=body.generation_attempt_id,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
             gen_mode=execution_mode,
@@ -9466,14 +11064,18 @@ async def freezone_video_omni_gen(
 
     支持文本、图像、视频、音频、文件和公开网页链接混合输入。
     """
-    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, output_dir = (
+        await _resolve_freezone_project(project, user)
     )
 
     if not body.prompt.strip():
         raise HTTPException(400, "prompt is required")
-    if body.camera_template_id and not get_video_camera_template(body.camera_template_id):
-        raise HTTPException(400, f"unknown camera_template_id: {body.camera_template_id}")
+    if body.camera_template_id and not get_video_camera_template(
+        body.camera_template_id
+    ):
+        raise HTTPException(
+            400, f"unknown camera_template_id: {body.camera_template_id}"
+        )
     try:
         backend = await _resolve_catalog_video_backend(
             body.model,
@@ -9626,6 +11228,8 @@ async def freezone_video_omni_gen(
             backend=backend,
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
+            product_operation_id=body.product_operation_id,
+            generation_attempt_id=body.generation_attempt_id,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
             gen_mode="all_reference",
@@ -9659,12 +11263,16 @@ async def freezone_video_edit(
 
     输入 1 个源视频，并按目录能力发送参考图片和独立参考音频。
     """
-    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, output_dir = (
+        await _resolve_freezone_project(project, user)
     )
 
-    if body.camera_template_id and not get_video_camera_template(body.camera_template_id):
-        raise HTTPException(400, f"unknown camera_template_id: {body.camera_template_id}")
+    if body.camera_template_id and not get_video_camera_template(
+        body.camera_template_id
+    ):
+        raise HTTPException(
+            400, f"unknown camera_template_id: {body.camera_template_id}"
+        )
     try:
         backend = await _resolve_catalog_video_backend(
             body.model,
@@ -9766,6 +11374,8 @@ async def freezone_video_edit(
             audio_setting=body.audio_setting,
             canvas_id=body.canvas_id or None,
             node_id=body.node_id or None,
+            product_operation_id=body.product_operation_id,
+            generation_attempt_id=body.generation_attempt_id,
             model_id=body.model,
             catalog_id=_catalog_entry_id(capabilities) or None,
             gen_mode="video_edit",
@@ -9898,8 +11508,8 @@ async def freezone_video_erase(
     - `smart_subtitle`：自动估计底部字幕区域后执行视频擦除
     - `box`：按前端传入的固定框执行区域擦除
     """
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
 
     try:
@@ -9908,8 +11518,15 @@ async def freezone_video_erase(
         raise HTTPException(400, str(exc)) from exc
     if not source_path.exists():
         raise HTTPException(404, f"video source not found: {source_path}")
-    if body.mode == "box" and None in {body.box_x, body.box_y, body.box_width, body.box_height}:
-        raise HTTPException(400, "box mode requires box_x, box_y, box_width and box_height")
+    if body.mode == "box" and None in {
+        body.box_x,
+        body.box_y,
+        body.box_width,
+        body.box_height,
+    }:
+        raise HTTPException(
+            400, "box mode requires box_x, box_y, box_width and box_height"
+        )
 
     try:
         job_id = _new_job_id()
@@ -9939,8 +11556,12 @@ async def freezone_video_erase(
             body=body,
         )
     except RuntimeError as exc:
-        _handle_task_start_runtime_error("failed to start freezone video erase task", exc)
-        raise HTTPException(503, f"failed to start freezone video erase task: {exc}") from exc
+        _handle_task_start_runtime_error(
+            "failed to start freezone video erase task", exc
+        )
+        raise HTTPException(
+            503, f"failed to start freezone video erase task: {exc}"
+        ) from exc
 
     return _accepted_job_response(
         task_type="freezone_video_erase",
@@ -10082,7 +11703,9 @@ async def freezone_video_upscale(
             processing_models=processing_models,
         )
     except RuntimeError as exc:
-        _handle_task_start_runtime_error("failed to start freezone video upscale task", exc)
+        _handle_task_start_runtime_error(
+            "failed to start freezone video upscale task", exc
+        )
         raise HTTPException(
             503,
             f"failed to start freezone video upscale task: {exc}",
@@ -10149,8 +11772,8 @@ async def freezone_audio_separate(
     - 提取出的纯音频
     - 去掉音轨后的无声视频
     """
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
 
     try:
@@ -10186,8 +11809,12 @@ async def freezone_audio_separate(
             target_beat=body.target_beat,
         )
     except RuntimeError as exc:
-        _handle_task_start_runtime_error("failed to start freezone audio separate task", exc)
-        raise HTTPException(503, f"failed to start freezone audio separate task: {exc}") from exc
+        _handle_task_start_runtime_error(
+            "failed to start freezone audio separate task", exc
+        )
+        raise HTTPException(
+            503, f"failed to start freezone audio separate task: {exc}"
+        ) from exc
 
     return _accepted_job_response(
         task_type="freezone_audio_separate",
@@ -10208,11 +11835,21 @@ async def freezone_audio_speech(
     user: dict = Depends(get_api_user),
 ):
     """Freezone 音频节点：文本生成语音。"""
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    workflow_link = _verified_workflow_media_link(
+        ctx=ctx,
+        project_dir=project_dir,
+        canvas_id=body.canvas_id,
+        node_id=body.node_id,
+        operation_id=body.product_operation_id,
+        attempt_id=body.generation_attempt_id,
     )
     account_voice_username = (
-        ctx.requester_username if ctx is not None and ctx.requester_username else username
+        ctx.requester_username
+        if ctx is not None and ctx.requester_username
+        else username
     )
 
     if not body.text.strip():
@@ -10222,32 +11859,41 @@ async def freezone_audio_speech(
     billable_chars = count_billable_text_chars(body.text)
 
     voice_ref_payload = body.voice_ref.model_dump() if body.voice_ref else None
-    store = await make_sqlite_store_for_context(ctx)
-    try:
-        narration_style, speech_voice = await resolve_speech_voice(
-            store=store,
-            username=username,
-            project=project_name,
-            account_voice_username=account_voice_username,
-            project_dir=project_dir,
-            voice_ref=voice_ref_payload,
-        )
-    except VoicePrerequisiteError as exc:
-        logger.info(
-            "freezone_audio_speech_voice_prereq_failed",
-            extra={
-                "project_id": ctx.project_id,
-                "voice_ref_present": body.voice_ref is not None,
-                "voice_ref_scope": str((voice_ref_payload or {}).get("scope") or "default"),
-                "error_code": exc.error_code,
-            },
-        )
-        return JSONResponse(
-            status_code=409,
-            content={"ok": False, "code": exc.error_code, "error": str(exc)},
-        )
-    finally:
-        await store.close()
+    if body.speech_mode == "preset":
+        # System voices are zero-config and must never be gated by project/custom
+        # reference audio. The worker handles the preset model and voice directly.
+        narration_style = ""
+        speech_voice_source = f"preset:{body.preset_voice}"
+    else:
+        store = await make_sqlite_store_for_context(ctx)
+        try:
+            narration_style, speech_voice = await resolve_speech_voice(
+                store=store,
+                username=username,
+                project=project_name,
+                account_voice_username=account_voice_username,
+                project_dir=project_dir,
+                voice_ref=voice_ref_payload,
+            )
+            speech_voice_source = speech_voice.source
+        except VoicePrerequisiteError as exc:
+            logger.info(
+                "freezone_audio_speech_voice_prereq_failed",
+                extra={
+                    "project_id": ctx.project_id,
+                    "voice_ref_present": body.voice_ref is not None,
+                    "voice_ref_scope": str(
+                        (voice_ref_payload or {}).get("scope") or "default"
+                    ),
+                    "error_code": exc.error_code,
+                },
+            )
+            return JSONResponse(
+                status_code=409,
+                content={"ok": False, "code": exc.error_code, "error": str(exc)},
+            )
+        finally:
+            await store.close()
 
     logger.info(
         "freezone_audio_speech_voice_resolved",
@@ -10256,7 +11902,7 @@ async def freezone_audio_speech(
             "narration_style": narration_style,
             "voice_ref_present": body.voice_ref is not None,
             "voice_ref_scope": str((voice_ref_payload or {}).get("scope") or "default"),
-            "speech_voice_source": speech_voice.source,
+            "speech_voice_source": speech_voice_source,
         },
     )
 
@@ -10286,9 +11932,21 @@ async def freezone_audio_speech(
                     "text": body.text,
                     "emotion_prompt": body.emotion_prompt,
                     "voice_ref": voice_ref_payload,
+                    **(
+                        {
+                            "speech_mode": body.speech_mode,
+                            "preset_model": body.preset_model,
+                            "preset_voice": body.preset_voice,
+                        }
+                        if body.speech_mode == "preset"
+                        else {}
+                    ),
                     "account_voice_username": account_voice_username,
                     "target_episode": body.target_episode,
                     "target_beat": body.target_beat,
+                    **({"canvas_id": body.canvas_id} if body.canvas_id else {}),
+                    **({"node_id": body.node_id} if body.node_id else {}),
+                    **workflow_link,
                     "billing": freezone_audio_task_billing(
                         "freezone.audio_speech",
                         {
@@ -10310,8 +11968,12 @@ async def freezone_audio_speech(
             body=body,
         )
     except RuntimeError as exc:
-        _handle_task_start_runtime_error("failed to start freezone audio speech task", exc)
-        raise HTTPException(503, f"failed to start freezone audio speech task: {exc}") from exc
+        _handle_task_start_runtime_error(
+            "failed to start freezone audio speech task", exc
+        )
+        raise HTTPException(
+            503, f"failed to start freezone audio speech task: {exc}"
+        ) from exc
 
     return _accepted_job_response(
         task_type="freezone_audio_speech",
@@ -10332,8 +11994,16 @@ async def freezone_audio_eleven_music(
     user: dict = Depends(get_api_user),
 ):
     """Freezone 音频节点：文本生成音乐。"""
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    workflow_link = _verified_workflow_media_link(
+        ctx=ctx,
+        project_dir=project_dir,
+        canvas_id=body.canvas_id,
+        node_id=body.node_id,
+        operation_id=body.product_operation_id,
+        attempt_id=body.generation_attempt_id,
     )
 
     prompt = body.input.strip()
@@ -10362,6 +12032,9 @@ async def freezone_audio_eleven_music(
                     "force_instrumental": body.force_instrumental,
                     "respect_sections_durations": body.respect_sections_durations,
                     "output_format": body.output_format,
+                    "canvas_id": body.canvas_id,
+                    "node_id": body.node_id,
+                    **workflow_link,
                     "billing": freezone_audio_task_billing(
                         "freezone.audio_music",
                         {
@@ -10374,8 +12047,12 @@ async def freezone_audio_eleven_music(
             )
         _raise_project_context_required("freezone_audio_eleven_music")
     except RuntimeError as exc:
-        _handle_task_start_runtime_error("failed to start freezone audio music task", exc)
-        raise HTTPException(503, f"failed to start freezone audio music task: {exc}") from exc
+        _handle_task_start_runtime_error(
+            "failed to start freezone audio music task", exc
+        )
+        raise HTTPException(
+            503, f"failed to start freezone audio music task: {exc}"
+        ) from exc
 
     return _accepted_job_response(
         task_type="freezone_audio_eleven_music",
@@ -10403,8 +12080,8 @@ async def freezone_video_compose(
     - 支持附加音频轨混音
     - 暂不支持重叠视频轨、转场和复杂特效
     """
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
 
     if not body.tracks:
@@ -10464,10 +12141,12 @@ async def freezone_video_compose(
                 payload={
                     "title": body.title,
                     "canvas_id": body.canvas_id,
+                    "node_id": body.node_id,
                     "resolution": body.resolution,
                     "fps": body.fps,
                     "background_color": body.background_color,
                     "keep_original_audio": body.keep_original_audio,
+                    "cover_url": body.cover_url,
                     "tracks": resolved_tracks,
                 },
             )
@@ -10480,8 +12159,12 @@ async def freezone_video_compose(
             resolved_tracks=resolved_tracks,
         )
     except RuntimeError as exc:
-        _handle_task_start_runtime_error("failed to start freezone video compose task", exc)
-        raise HTTPException(503, f"failed to start freezone video compose task: {exc}") from exc
+        _handle_task_start_runtime_error(
+            "failed to start freezone video compose task", exc
+        )
+        raise HTTPException(
+            503, f"failed to start freezone video compose task: {exc}"
+        ) from exc
 
     return _accepted_job_response(
         task_type="freezone_video_compose",
@@ -10502,8 +12185,8 @@ async def freezone_edit(
     user: dict = Depends(get_api_user),
 ):
     """图片处理：启动图生图 / 图编辑任务，返回 `task_key`。"""
-    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, output_dir = (
+        await _resolve_freezone_project(project, user)
     )
     request_schema, model_params, catalog_entry = await _resolve_catalog_request(
         "image",
@@ -10546,7 +12229,8 @@ async def freezone_edit(
 
 
 @router.get(
-    "/projects/{project}/freezone/jobs/{task_type}/{job_id}/result", tags=[TAG_FREEZONE_JOBS]
+    "/projects/{project}/freezone/jobs/{task_type}/{job_id}/result",
+    tags=[TAG_FREEZONE_JOBS],
 )
 async def freezone_job_result(
     project: str,
@@ -10568,6 +12252,8 @@ async def freezone_job_result(
         "freezone_image_reverse_prompt",
         "freezone_image_to_3gs",
         "freezone_image_to_blockout",
+        "freezone_image_vectorize",
+        "freezone_image_animate_gif",
         "freezone_text_generate",
         "freezone_text_translate",
         "freezone_story_script",
@@ -10580,8 +12266,8 @@ async def freezone_job_result(
     前端通过 `/projects/{project_id}/tasks/stream` 的 SSE 知道任务是否完成；
     这个接口只负责把 `(task_type, job_id)` 翻译成实际的 `/static/...` URL。
     """
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user, required_role="viewer"
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="viewer")
     )
     if ctx is not None:
         task = await run_in_threadpool(
@@ -10640,7 +12326,9 @@ async def freezone_job_result(
                             rel = Path(value).relative_to(project_dir).as_posix()
                         except ValueError:
                             continue
-                        splat_url = make_static_url_for_context(ctx, rel, local_path=value)
+                        splat_url = make_static_url_for_context(
+                            ctx, rel, local_path=value
+                        )
                         data[key] = splat_url
                 if splat_url:
                     data.setdefault("output_url", splat_url)
@@ -10651,7 +12339,9 @@ async def freezone_job_result(
                 return {"ok": True, "data": data}
 
         artifact_dir = outputs_dir(project_dir, "freezone_image_to_3gs") / job_id
-        candidates = sorted(artifact_dir.glob("*.sog")) or sorted(artifact_dir.glob("*.ply"))
+        candidates = sorted(artifact_dir.glob("*.sog")) or sorted(
+            artifact_dir.glob("*.ply")
+        )
         if candidates:
             out = candidates[0]
             rel = out.relative_to(project_dir).as_posix()
@@ -10673,6 +12363,8 @@ async def freezone_job_result(
         return {"ok": False, "info": "job result not yet on disk", "status": "unknown"}
 
     out = output_path_for_job(project_dir, task_type, job_id)
+    if task_type in {"freezone_image_vectorize", "freezone_image_animate_gif"}:
+        out = out.with_suffix(".svg" if task_type == "freezone_image_vectorize" else ".gif")
     if task_type == "freezone_image_reverse_prompt":
         out = _image_reverse_prompt_output_path(project_dir, job_id)
     if task_type == "freezone_image_to_blockout":
@@ -10700,8 +12392,16 @@ async def freezone_job_result(
                         "status": task.status,
                         "current_task": task.current_task,
                     }
-            return {"ok": False, "info": "job result not yet on disk", "status": "unknown"}
-        audio_rel = audio_out.relative_to(project_dir).as_posix() if audio_out.exists() else None
+            return {
+                "ok": False,
+                "info": "job result not yet on disk",
+                "status": "unknown",
+            }
+        audio_rel = (
+            audio_out.relative_to(project_dir).as_posix()
+            if audio_out.exists()
+            else None
+        )
         mute_rel = mute_video_out.relative_to(project_dir).as_posix()
         task_result = getattr(task, "result", None) if task is not None else None
         push_metadata = {}
@@ -10713,7 +12413,9 @@ async def freezone_job_result(
         return {
             "ok": True,
             "data": {
-                "audio_url": make_static_url_for_context(ctx, audio_rel) if audio_rel else None,
+                "audio_url": (
+                    make_static_url_for_context(ctx, audio_rel) if audio_rel else None
+                ),
                 "audio_size": audio_out.stat().st_size if audio_out.exists() else 0,
                 "mute_video_url": make_static_url_for_context(ctx, mute_rel),
                 "mute_video_size": mute_video_out.stat().st_size,
@@ -10753,7 +12455,9 @@ async def freezone_job_result(
             if task_type == "freezone_video_story":
                 task_result = _public_freezone_video_story_result(task_result)
             return {"ok": True, "data": task_result}
-        analysis_out = outputs_dir(project_dir, "freezone_analyze") / job_id / "analysis.json"
+        analysis_out = (
+            outputs_dir(project_dir, "freezone_analyze") / job_id / "analysis.json"
+        )
         if analysis_out.exists():
             data = json.loads(analysis_out.read_text(encoding="utf-8"))
             if task_type == "freezone_video_story" and isinstance(data, dict):
@@ -10794,10 +12498,17 @@ async def freezone_job_result(
     task_result = getattr(task, "result", None) if task is not None else None
     push_metadata = {}
     if isinstance(task_result, dict):
+        for key in ("gif_task_type", "gif_job_id", "gif_task_key", "gif_queue", "gif_enqueue_error", "gif_url", "svg_url", "output_url"):
+            if key in task_result:
+                push_metadata[key] = task_result[key]
         if task_result.get("pushable"):
             push_metadata["pushable"] = True
         if isinstance(task_result.get("slot_target"), dict):
             push_metadata["slot_target"] = task_result["slot_target"]
+        if task_type == "freezone_video_compose" and isinstance(
+            task_result.get("cover_url"), str
+        ):
+            push_metadata["cover_url"] = task_result["cover_url"]
     return {
         "ok": True,
         "data": {
@@ -10818,14 +12529,18 @@ async def freezone_skill_run_result(
     run_id: str,
     user: dict = Depends(get_api_user),
 ):
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user, required_role="viewer"
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="viewer")
     )
     metadata = _read_skill_run_metadata(project_dir, run_id)
     if isinstance(metadata.get("outputs"), list):
         return SkillRunResult(
             run_id=run_id,
-            status="done" if metadata.get("status") == "completed" else str(metadata.get("status")),
+            status=(
+                "done"
+                if metadata.get("status") == "completed"
+                else str(metadata.get("status"))
+            ),
             outputs=[SkillRunOutput(**item) for item in metadata["outputs"]],
             task_key=metadata.get("task_key"),
             task_type=metadata.get("task_type"),
@@ -10850,7 +12565,9 @@ async def freezone_skill_run_result(
     task_scope = str(metadata.get("task_scope") or job_id)
     task_beat_num_raw = metadata.get("task_beat_num")
     try:
-        task_beat_num = int(task_beat_num_raw) if task_beat_num_raw is not None else None
+        task_beat_num = (
+            int(task_beat_num_raw) if task_beat_num_raw is not None else None
+        )
     except (TypeError, ValueError):
         task_beat_num = None
     if ctx is not None:
@@ -10987,7 +12704,11 @@ def _default_push_target_for_preset(body: PresetCanvasRequest) -> dict:
             "episode": body.episode,
             "beat": body.beat,
         }
-    if body.scope == "asset" and body.asset_kind in {"identity", "portrait", "character"}:
+    if body.scope == "asset" and body.asset_kind in {
+        "identity",
+        "portrait",
+        "character",
+    }:
         if body.asset_kind in {"portrait", "character"}:
             return {"kind": "portrait", "character": body.character}
         return {
@@ -11052,27 +12773,45 @@ def _preset_key_from_canvas_metadata(metadata: dict | None) -> str | None:
     try:
         return preset_key_for_request(
             scope=scope,
-            episode=preset.get("episode") if isinstance(preset.get("episode"), int) else None,
+            episode=(
+                preset.get("episode")
+                if isinstance(preset.get("episode"), int)
+                else None
+            ),
             beat=preset.get("beat") if isinstance(preset.get("beat"), int) else None,
             primary_slot=(
-                preset.get("primary_slot") if isinstance(preset.get("primary_slot"), str) else None
+                preset.get("primary_slot")
+                if isinstance(preset.get("primary_slot"), str)
+                else None
             ),
             asset_kind=(
-                preset.get("asset_kind") if isinstance(preset.get("asset_kind"), str) else None
+                preset.get("asset_kind")
+                if isinstance(preset.get("asset_kind"), str)
+                else None
             ),
             character=(
-                preset.get("character") if isinstance(preset.get("character"), str) else None
+                preset.get("character")
+                if isinstance(preset.get("character"), str)
+                else None
             ),
             identity_id=(
-                preset.get("identity_id") if isinstance(preset.get("identity_id"), str) else None
+                preset.get("identity_id")
+                if isinstance(preset.get("identity_id"), str)
+                else None
             ),
-            asset_id=(preset.get("asset_id") if isinstance(preset.get("asset_id"), str) else None),
+            asset_id=(
+                preset.get("asset_id")
+                if isinstance(preset.get("asset_id"), str)
+                else None
+            ),
         )
     except ValueError:
         return None
 
 
-def _canvas_state_project_dir(ctx: ProjectContext | None, output_project_dir: Path) -> Path:
+def _canvas_state_project_dir(
+    ctx: ProjectContext | None, output_project_dir: Path
+) -> Path:
     if ctx is not None:
         return Path(ctx.state_dir)
     return output_project_dir
@@ -11086,7 +12825,11 @@ def _canvas_scope_from_payload(canvas_id: str, payload: dict) -> str:
     raw_scope = payload.get("canvas_scope")
     if raw_scope in {"default", "episode", "beat", "asset"}:
         return raw_scope
-    preset = (payload.get("metadata") or {}).get("preset") if isinstance(payload, dict) else None
+    preset = (
+        (payload.get("metadata") or {}).get("preset")
+        if isinstance(payload, dict)
+        else None
+    )
     preset_scope = preset.get("scope") if isinstance(preset, dict) else None
     if preset_scope in {"episode", "beat", "asset"}:
         return preset_scope
@@ -11142,18 +12885,26 @@ def _prepare_canvas_payload_for_write(
         or "user"
     )
     payload["owner_principal_id"] = (
-        payload.get("owner_principal_id") or (existing or {}).get("owner_principal_id") or actor_id
+        payload.get("owner_principal_id")
+        or (existing or {}).get("owner_principal_id")
+        or actor_id
     )
     payload["access_model"] = (
-        payload.get("access_model") or (existing or {}).get("access_model") or "project_role"
+        payload.get("access_model")
+        or (existing or {}).get("access_model")
+        or "project_role"
     )
     payload["min_project_role"] = (
-        payload.get("min_project_role") or (existing or {}).get("min_project_role") or "editor"
+        payload.get("min_project_role")
+        or (existing or {}).get("min_project_role")
+        or "editor"
     )
     payload["created_by"] = (
         (existing or {}).get("created_by") or payload.get("created_by") or actor_id
     )
-    payload["created_at"] = (existing or {}).get("created_at") or payload.get("created_at") or now
+    payload["created_at"] = (
+        (existing or {}).get("created_at") or payload.get("created_at") or now
+    )
     payload["updated_by"] = actor_id
     payload["updated_at"] = now
     payload["revision"] = (current_revision + 1) if current_revision is not None else 1
@@ -11169,7 +12920,9 @@ async def _refresh_preset_canvas_payload_on_read(
     project_dir: Path,
     payload: dict,
 ) -> dict:
-    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    metadata = (
+        payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    )
     preset = metadata.get("preset") if isinstance(metadata.get("preset"), dict) else {}
     if preset.get("scope") != "beat":
         return payload
@@ -11247,7 +13000,11 @@ def _stamp_canvas_mainline_context_project_id(payload: dict, project_id: str) ->
     def stamp_contexts(value) -> None:
         if isinstance(value, list):
             for item in value:
-                if isinstance(item, dict) and item.get("kind") and not item.get("projectId"):
+                if (
+                    isinstance(item, dict)
+                    and item.get("kind")
+                    and not item.get("projectId")
+                ):
                     item["projectId"] = project_id
 
     stamp_contexts(payload.get("mainline_context"))
@@ -11310,7 +13067,9 @@ def _raise_canvas_store_http(exc: Exception) -> None:
     raise exc
 
 
-def _merge_restored_preset_canvas(new_payload: dict, existing_payload: dict | None) -> dict:
+def _merge_restored_preset_canvas(
+    new_payload: dict, existing_payload: dict | None
+) -> dict:
     """Restore preset-managed graph while preserving user experiment nodes.
 
     Preset restore should refresh protected mainline context/workflow/artifact
@@ -11339,7 +13098,9 @@ def _merge_restored_preset_canvas(new_payload: dict, existing_payload: dict | No
             continue
         preserved_nodes.append(node)
 
-    final_node_ids = new_node_ids | {str(n.get("id")) for n in preserved_nodes if n.get("id")}
+    final_node_ids = new_node_ids | {
+        str(n.get("id")) for n in preserved_nodes if n.get("id")
+    }
     # preset-managed 节点之间的 edge 归 preset 管 — 旧 preset emit 过、新 preset
     # 不 emit 了的(比如 edge 方向反转、删了 workflow trigger 等)就该消失。
     # 不然旧 edge 会跟新 edge 共存,画布出现重复/交叉连线 (X 形)。
@@ -11377,7 +13138,9 @@ def _merge_restored_preset_canvas(new_payload: dict, existing_payload: dict | No
 
     new_payload["nodes"] = [*new_nodes, *preserved_nodes]
     new_payload["edges"] = [*new_edges, *preserved_edges]
-    new_payload["viewport"] = existing_payload.get("viewport") or new_payload.get("viewport")
+    new_payload["viewport"] = existing_payload.get("viewport") or new_payload.get(
+        "viewport"
+    )
     return new_payload
 
 
@@ -11397,10 +13160,15 @@ def _is_replaceable_projection_node(node: dict, projection_key: str) -> bool:
     data = node.get("data") if isinstance(node.get("data"), dict) else {}
     if data.get("user_spawned") is True:
         return False
-    return data.get("preset_managed") is True and data.get("projection_key") == projection_key
+    return (
+        data.get("preset_managed") is True
+        and data.get("projection_key") == projection_key
+    )
 
 
-def _projection_is_intact_in_payload(existing_payload: dict | None, projection_key: str) -> bool:
+def _projection_is_intact_in_payload(
+    existing_payload: dict | None, projection_key: str
+) -> bool:
     """画布里这个投影是不是还「成组」的。
 
     facts_signature 只描述上游事实（角色/分镜的内容），完全看不到画布自己的结构。
@@ -11413,7 +13181,9 @@ def _projection_is_intact_in_payload(existing_payload: dict | None, projection_k
     """
     if not isinstance(existing_payload, dict):
         return True
-    nodes = [node for node in existing_payload.get("nodes") or [] if isinstance(node, dict)]
+    nodes = [
+        node for node in existing_payload.get("nodes") or [] if isinstance(node, dict)
+    ]
     own_group_ids = {
         str(node.get("id"))
         for node in nodes
@@ -11424,7 +13194,8 @@ def _projection_is_intact_in_payload(existing_payload: dict | None, projection_k
     members = [
         node
         for node in nodes
-        if node.get("type") != "groupNode" and _is_replaceable_projection_node(node, projection_key)
+        if node.get("type") != "groupNode"
+        and _is_replaceable_projection_node(node, projection_key)
     ]
     if not members:
         return True
@@ -11435,7 +13206,10 @@ def _is_replaceable_projection_edge(edge: dict, projection_key: str) -> bool:
     data = edge.get("data") if isinstance(edge.get("data"), dict) else {}
     if data.get("user_spawned") is True:
         return False
-    return data.get("preset_managed") is True and data.get("projection_key") == projection_key
+    return (
+        data.get("preset_managed") is True
+        and data.get("projection_key") == projection_key
+    )
 
 
 def _archive_projection_node(node: dict) -> dict:
@@ -11519,18 +13293,30 @@ def _merge_projected_preset_canvas(
     existing_replaceable_nodes_by_id = {
         node.get("id"): node
         for node in existing_nodes
-        if isinstance(node.get("id"), str) and _is_replaceable_projection_node(node, projection_key)
+        if isinstance(node.get("id"), str)
+        and _is_replaceable_projection_node(node, projection_key)
     }
     next_incoming_nodes: list[dict] = []
     for node in incoming_nodes:
         node_id = node.get("id")
         existing_node = existing_replaceable_nodes_by_id.get(node_id)
-        if isinstance(existing_node, dict) and node.get("type") == existing_node.get("type"):
+        if isinstance(existing_node, dict) and node.get("type") == existing_node.get(
+            "type"
+        ):
             updated_node = dict(node)
-            for layout_key in ("position", "style", "width", "height", "parentId", "extent"):
+            for layout_key in (
+                "position",
+                "style",
+                "width",
+                "height",
+                "parentId",
+                "extent",
+            ):
                 if layout_key in existing_node:
                     value = existing_node[layout_key]
-                    updated_node[layout_key] = dict(value) if isinstance(value, dict) else value
+                    updated_node[layout_key] = (
+                        dict(value) if isinstance(value, dict) else value
+                    )
             next_incoming_nodes.append(updated_node)
             continue
         next_incoming_nodes.append(node)
@@ -11546,7 +13332,9 @@ def _merge_projected_preset_canvas(
             merged_nodes.append(_archive_projection_node(node))
     merged_nodes.extend(next_incoming_nodes)
 
-    final_node_ids = {node.get("id") for node in merged_nodes if isinstance(node.get("id"), str)}
+    final_node_ids = {
+        node.get("id") for node in merged_nodes if isinstance(node.get("id"), str)
+    }
     merged_edges: list[dict] = []
     for edge in existing_edges:
         if _is_replaceable_projection_edge(edge, projection_key):
@@ -11574,7 +13362,9 @@ def _merge_projected_preset_canvas(
         else {}
     )
     projections = dict(
-        metadata.get("projections") if isinstance(metadata.get("projections"), dict) else {}
+        metadata.get("projections")
+        if isinstance(metadata.get("projections"), dict)
+        else {}
     )
     incoming_projections = (
         incoming_metadata.get("projections")
@@ -11615,7 +13405,9 @@ def _remove_projected_preset_canvas(
         for node in existing_nodes
         if not _is_replaceable_projection_node(node, projection_key)
     ]
-    kept_node_ids = {node.get("id") for node in kept_nodes if isinstance(node.get("id"), str)}
+    kept_node_ids = {
+        node.get("id") for node in kept_nodes if isinstance(node.get("id"), str)
+    }
 
     kept_edges: list[dict] = []
     for edge in existing_edges:
@@ -11638,7 +13430,9 @@ def _remove_projected_preset_canvas(
         else {}
     )
     projections = dict(
-        metadata.get("projections") if isinstance(metadata.get("projections"), dict) else {}
+        metadata.get("projections")
+        if isinstance(metadata.get("projections"), dict)
+        else {}
     )
     projections.pop(projection_key, None)
     metadata["projections"] = projections
@@ -11713,7 +13507,9 @@ def _preset_facts_signature(payload: dict) -> str:
     canonical = {
         "nodes": sorted(
             (_canonical_preset_facts_value(node) for node in nodes),
-            key=lambda node: str(node.get("id") or "") if isinstance(node, dict) else "",
+            key=lambda node: (
+                str(node.get("id") or "") if isinstance(node, dict) else ""
+            ),
         ),
         "edges": sorted(
             (_canonical_preset_facts_value(edge) for edge in edges),
@@ -11869,7 +13665,8 @@ def _wrap_projection_payload_in_group(
     child_nodes = [
         node
         for node in nodes
-        if node.get("type") != "groupNode" and _is_replaceable_projection_node(node, projection_key)
+        if node.get("type") != "groupNode"
+        and _is_replaceable_projection_node(node, projection_key)
     ]
     if not child_nodes:
         return payload
@@ -11881,7 +13678,9 @@ def _wrap_projection_payload_in_group(
         "max_y": float("-inf"),
     }
     for node in child_nodes:
-        position = node.get("position") if isinstance(node.get("position"), dict) else {}
+        position = (
+            node.get("position") if isinstance(node.get("position"), dict) else {}
+        )
         try:
             x = float(position.get("x") or 0)
         except (TypeError, ValueError):
@@ -11897,7 +13696,10 @@ def _wrap_projection_payload_in_group(
         bounds["max_y"] = max(bounds["max_y"], y + height)
 
     if not all(
-        map(lambda value: value != float("inf") and value != float("-inf"), bounds.values())
+        map(
+            lambda value: value != float("inf") and value != float("-inf"),
+            bounds.values(),
+        )
     ):
         return payload
 
@@ -11907,7 +13709,9 @@ def _wrap_projection_payload_in_group(
     group_x = round(bounds["min_x"] - side_padding)
     group_y = round(bounds["min_y"] - top_padding)
     group_width = round(max(220, bounds["max_x"] - bounds["min_x"] + side_padding * 2))
-    group_height = round(max(140, bounds["max_y"] - bounds["min_y"] + top_padding + bottom_padding))
+    group_height = round(
+        max(140, bounds["max_y"] - bounds["min_y"] + top_padding + bottom_padding)
+    )
     group_id = _projection_group_id(projection_key)
     group_node = {
         "id": group_id,
@@ -11934,7 +13738,9 @@ def _wrap_projection_payload_in_group(
                 next_nodes.append(node)
             continue
         updated = dict(node)
-        position = updated.get("position") if isinstance(updated.get("position"), dict) else {}
+        position = (
+            updated.get("position") if isinstance(updated.get("position"), dict) else {}
+        )
         try:
             x = float(position.get("x") or 0)
         except (TypeError, ValueError):
@@ -12189,7 +13995,9 @@ async def _build_projection_payload_for_request(
     return payload, preset_key, incoming_facts_signature
 
 
-@router.post("/projects/{project}/freezone/canvases:from-preset", tags=[TAG_FREEZONE_CANVAS])
+@router.post(
+    "/projects/{project}/freezone/canvases:from-preset", tags=[TAG_FREEZONE_CANVAS]
+)
 async def create_canvas_from_preset(
     project: str,
     body: PresetCanvasRequest,
@@ -12201,10 +14009,12 @@ async def create_canvas_from_preset(
     如果项目里已有相同 preset 的画布，会复用最近更新的那张，避免同一主线入口
     不断生成副本。
     """
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project,
-        user,
-        require_home_node=False,
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(
+            project,
+            user,
+            require_home_node=False,
+        )
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
 
@@ -12247,7 +14057,9 @@ async def create_canvas_from_preset(
             },
         }
     if overwrite_canvas_id:
-        existing_payload = canvas_store.read_canvas(canvas_project_dir, overwrite_canvas_id)
+        existing_payload = canvas_store.read_canvas(
+            canvas_project_dir, overwrite_canvas_id
+        )
         if not isinstance(existing_payload, dict):
             raise HTTPException(404, "canvas not found")
         existing_preset_key = _preset_key_from_canvas_metadata(
@@ -12425,11 +14237,20 @@ async def create_canvas_from_preset(
     def skip_if_same_preset_facts(existing_payload: dict | None) -> dict | None:
         if not overwrite_canvas_id:
             return None
-        if _preset_facts_signature_from_payload(existing_payload) != incoming_facts_signature:
+        if (
+            _preset_facts_signature_from_payload(existing_payload)
+            != incoming_facts_signature
+        ):
             return None
-        revision = existing_payload.get("revision") if isinstance(existing_payload, dict) else None
+        revision = (
+            existing_payload.get("revision")
+            if isinstance(existing_payload, dict)
+            else None
+        )
         updated_at = (
-            existing_payload.get("updated_at") if isinstance(existing_payload, dict) else None
+            existing_payload.get("updated_at")
+            if isinstance(existing_payload, dict)
+            else None
         )
         return {
             "saved": False,
@@ -12487,13 +14308,16 @@ async def create_canvas_from_preset(
             "edge_count": len(payload.get("edges") or []),
             "overwrote_existing": bool(overwrite_canvas_id),
             "backup_path": (
-                canvas_store.relative_project_path(canvas_project_dir, saved_canvas.backup_path)
+                canvas_store.relative_project_path(
+                    canvas_project_dir, saved_canvas.backup_path
+                )
                 if saved_canvas.backup_path
                 else None
             ),
             "preset_facts_unchanged": (
                 isinstance(saved_canvas.response_cache, dict)
-                and saved_canvas.response_cache.get("noop_reason") == "preset_facts_unchanged"
+                and saved_canvas.response_cache.get("noop_reason")
+                == "preset_facts_unchanged"
             ),
         },
     )
@@ -12516,10 +14340,12 @@ async def build_projection_from_preset(
     body: ProjectionPresetCanvasRequest,
     user: dict = Depends(get_api_user),
 ):
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project,
-        user,
-        require_home_node=False,
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(
+            project,
+            user,
+            require_home_node=False,
+        )
     )
     payload, _preset_key, facts_signature = await _build_projection_payload_for_request(
         ctx=ctx,
@@ -12556,35 +14382,47 @@ async def project_canvas_from_preset(
 ):
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project,
-        user,
-        require_home_node=False,
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(
+            project,
+            user,
+            require_home_node=False,
+        )
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
 
-    payload, preset_key, incoming_facts_signature = await _build_projection_payload_for_request(
-        ctx=ctx,
-        username=username,
-        project_name=project_name,
-        project_dir=project_dir,
-        body=body,
+    payload, preset_key, incoming_facts_signature = (
+        await _build_projection_payload_for_request(
+            ctx=ctx,
+            username=username,
+            project_name=project_name,
+            project_dir=project_dir,
+            body=body,
+        )
     )
 
     def skip_if_same_projection_facts(existing_payload: dict | None) -> dict | None:
         if body.force_refresh:
             return None
         if (
-            _projection_facts_signature_from_payload(existing_payload, body.projection_key)
+            _projection_facts_signature_from_payload(
+                existing_payload, body.projection_key
+            )
             != incoming_facts_signature
         ):
             return None
         # 事实没变但组散了：照样得重建，否则这张画布再也回不到成组状态。
         if not _projection_is_intact_in_payload(existing_payload, body.projection_key):
             return None
-        revision = existing_payload.get("revision") if isinstance(existing_payload, dict) else None
+        revision = (
+            existing_payload.get("revision")
+            if isinstance(existing_payload, dict)
+            else None
+        )
         updated_at = (
-            existing_payload.get("updated_at") if isinstance(existing_payload, dict) else None
+            existing_payload.get("updated_at")
+            if isinstance(existing_payload, dict)
+            else None
         )
         return {
             "saved": False,
@@ -12672,7 +14510,9 @@ async def project_canvas_from_preset(
         _raise_canvas_store_http(exc)
 
     response_cache = (
-        saved_canvas.response_cache if isinstance(saved_canvas.response_cache, dict) else {}
+        saved_canvas.response_cache
+        if isinstance(saved_canvas.response_cache, dict)
+        else {}
     )
     payload = saved_canvas.payload
     revision = payload.get("revision")
@@ -12692,7 +14532,9 @@ async def project_canvas_from_preset(
             "node_count": len(payload.get("nodes") or []),
             "edge_count": len(payload.get("edges") or []),
             "backup_path": (
-                canvas_store.relative_project_path(canvas_project_dir, saved_canvas.backup_path)
+                canvas_store.relative_project_path(
+                    canvas_project_dir, saved_canvas.backup_path
+                )
                 if saved_canvas.backup_path
                 else None
             ),
@@ -12723,23 +14565,37 @@ async def remove_canvas_projection(
 ):
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
-    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project,
-        user,
-        require_home_node=False,
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(
+            project,
+            user,
+            require_home_node=False,
+        )
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
 
     def skip_if_projection_missing(existing_payload: dict | None) -> dict | None:
         if not isinstance(existing_payload, dict):
             return None
-        metadata = existing_payload.get("metadata") if isinstance(existing_payload, dict) else None
-        projections = metadata.get("projections") if isinstance(metadata, dict) else None
+        metadata = (
+            existing_payload.get("metadata")
+            if isinstance(existing_payload, dict)
+            else None
+        )
+        projections = (
+            metadata.get("projections") if isinstance(metadata, dict) else None
+        )
         if isinstance(projections, dict) and body.projection_key in projections:
             return None
-        revision = existing_payload.get("revision") if isinstance(existing_payload, dict) else None
+        revision = (
+            existing_payload.get("revision")
+            if isinstance(existing_payload, dict)
+            else None
+        )
         updated_at = (
-            existing_payload.get("updated_at") if isinstance(existing_payload, dict) else None
+            existing_payload.get("updated_at")
+            if isinstance(existing_payload, dict)
+            else None
         )
         return {
             "saved": False,
@@ -12811,7 +14667,9 @@ async def remove_canvas_projection(
 
     payload = saved_canvas.payload
     response_cache = (
-        saved_canvas.response_cache if isinstance(saved_canvas.response_cache, dict) else {}
+        saved_canvas.response_cache
+        if isinstance(saved_canvas.response_cache, dict)
+        else {}
     )
     revision = payload.get("revision")
     no_op = response_cache.get("noop_reason") == "projection_missing"
@@ -12853,11 +14711,13 @@ async def projection_status(
 ):
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project,
-        user,
-        required_role="viewer",
-        require_home_node=False,
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(
+            project,
+            user,
+            required_role="viewer",
+            require_home_node=False,
+        )
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
     existing = canvas_store.read_canvas(canvas_project_dir, canvas_id)
@@ -12957,11 +14817,13 @@ async def projection_status(
 
 @router.get("/projects/{project}/freezone/canvases", tags=[TAG_FREEZONE_CANVAS])
 async def list_canvases(project: str, user: dict = Depends(get_api_user)):
-    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project,
-        user,
-        required_role="viewer",
-        require_home_node=False,
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(
+            project,
+            user,
+            required_role="viewer",
+            require_home_node=False,
+        )
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
     try:
@@ -12975,15 +14837,54 @@ async def list_canvases(project: str, user: dict = Depends(get_api_user)):
         _raise_canvas_store_http(exc)
 
 
-@router.get("/projects/{project}/freezone/canvases/{canvas_id}", tags=[TAG_FREEZONE_CANVAS])
+@router.get(
+    "/projects/{project}/freezone/canvases/{canvas_id}/revision",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def get_canvas_revision(
+    project: str, canvas_id: str, user: dict = Depends(get_api_user)
+):
+    """Read only the revision used to detect external direct-MCP writes."""
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(
+            project, user, required_role="viewer", require_home_node=False
+        )
+    )
+    canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
+    try:
+        if canvas_id == "default":
+            canvas_store.ensure_default_canvas(
+                canvas_project_dir,
+                project_id=ctx.project_id,
+                actor_id=_canvas_actor_id(user),
+            )
+        payload = canvas_store.read_canvas(canvas_project_dir, canvas_id)
+    except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
+        _raise_canvas_store_http(exc)
+    return {
+        "ok": True,
+        "data": {
+            "canvas_id": canvas_id,
+            "revision": payload.get("revision") if isinstance(payload, dict) else None,
+        },
+    }
+
+
+@router.get(
+    "/projects/{project}/freezone/canvases/{canvas_id}", tags=[TAG_FREEZONE_CANVAS]
+)
 async def get_canvas(project: str, canvas_id: str, user: dict = Depends(get_api_user)):
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project,
-        user,
-        required_role="viewer",
-        require_home_node=False,
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(
+            project,
+            user,
+            required_role="viewer",
+            require_home_node=False,
+        )
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
     try:
@@ -13042,17 +14943,1810 @@ async def list_canvas_history(
 ):
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
-    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project,
-        user,
-        required_role="viewer",
-        require_home_node=False,
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(
+            project,
+            user,
+            required_role="viewer",
+            require_home_node=False,
+        )
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
     try:
-        return {"ok": True, "data": canvas_store.list_canvas_history(canvas_project_dir, canvas_id)}
+        return {
+            "ok": True,
+            "data": canvas_store.list_canvas_history(canvas_project_dir, canvas_id),
+        }
     except canvas_store.CanvasStoreError as exc:
         _raise_canvas_store_http(exc)
+
+
+@router.get(
+    "/projects/{project}/freezone/workflow-capabilities", tags=[TAG_FREEZONE_CANVAS]
+)
+async def get_workflow_capabilities(project: str, user: dict = Depends(get_api_user)):
+    await _resolve_freezone_project(project, user, required_role="viewer")
+    from novelvideo.freezone.workflow_transactions import CONTRACT_VERSION
+
+    return {
+        "ok": True,
+        "data": {
+            "ok": True,
+            "status": "workflow_capabilities",
+            "schema_version": CONTRACT_VERSION,
+            "capabilities": {
+                "server_runtime_preflight": True,
+                "run_observation": True,
+                "server_prepare": True,
+                "server_revise": True,
+                "compact_status": True,
+                "input_bindings": True,
+                "confirmation_adapter": "canvas_approval_bridge",
+                "headless_execution": False,
+            },
+        },
+    }
+
+
+async def _check_workflow_runtime(compiled: dict, *, project: str, user: dict) -> dict:
+    """Resolve catalogs with request identity; never trust caller preflight evidence."""
+    from novelvideo.freezone.workflow_preflight import evaluate_workflow_preflight
+    from novelvideo.api.routes.tasks import get_project_task_limits
+
+    nodes = (compiled.get("plan") or {}).get("nodes") or []
+    loaders = {
+        "imageGenNode": freezone_image_models,
+        "videoNode": freezone_video_models,
+    }
+    requested = [
+        kind
+        for kind in loaders
+        if any(
+            node.get("node_type") == kind and (node.get("data") or {}).get("model")
+            for node in nodes
+            if isinstance(node, dict)
+        )
+    ]
+
+    async def safe_load(loader):
+        try:
+            return await loader(project=project, user=user)
+        except Exception:
+            return {"ok": False}
+
+    results = await asyncio.gather(
+        *(safe_load(loaders[kind]) for kind in requested),
+        safe_load(get_project_task_limits),
+    )
+    preflight = evaluate_workflow_preflight(
+        compiled,
+        model_responses=dict(zip(requested, results[:-1])),
+        limits=results[-1],
+    )
+    if preflight["blockers"]:
+        from novelvideo.freezone.workflow_preflight import (
+            generation_clarification_request,
+            preflight_failure_blocker,
+        )
+
+        clarification = generation_clarification_request(preflight)
+        if clarification is not None:
+            # Missing generation choices are a user question, not a dead end:
+            # return the standard clarification structure the agent recovers
+            # from with one freezone_request_user_clarification call. Only
+            # when every blocker is such a question, though: beside a
+            # queue_disabled / model_unavailable blocker the answers could
+            # not unblock the draft, so that case falls through below.
+            raise HTTPException(
+                400,
+                {
+                    **clarification,
+                    "preflight": preflight,
+                    "retryable": True,
+                    "next_action": "request_user_clarification",
+                },
+            )
+        raise HTTPException(
+            400,
+            {
+                "ok": False,
+                "status": "workflow_preflight_failed",
+                "error": preflight_failure_blocker(preflight)["message"],
+                "preflight": preflight,
+                "retryable": False,
+                "next_action": "resolve_preflight_blockers",
+            },
+        )
+    return preflight
+
+
+async def _prepare_workflow_source(body: dict, user: dict) -> dict:
+    from novelvideo.freezone.workflow_transactions import (
+        WorkflowOperationError,
+        prepare_workflow_source,
+    )
+
+    try:
+        return await asyncio.to_thread(
+            prepare_workflow_source, body, username=str(user.get("username") or "")
+        )
+    except WorkflowOperationError as exc:
+        raise HTTPException(400, exc.result) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+async def _validate_workflow_draft_submission(body: dict, user: dict) -> dict:
+    """Rebuild validation evidence at the HTTP boundary, not in the agent."""
+    from novelvideo.freezone.agent_workflows.catalog import validate_agent_workflow_plan
+    from novelvideo.freezone.agent_workflows.graph import build_workflow_graph_commands
+
+    compiled = body.get("compiled")
+    plan = compiled.get("plan") if isinstance(compiled, dict) else None
+    intent = body.get("intent")
+    if isinstance(intent, dict) and "plan" in intent and intent["plan"] != plan:
+        raise HTTPException(400, "workflow intent and compiled plan differ")
+    if "run_after_create" in body and not isinstance(body["run_after_create"], bool):
+        raise HTTPException(400, "run_after_create must be a boolean")
+    try:
+        # ``body`` is a stored draft (its only caller is the claim route). Only
+        # per-node video modes a server-side revision recorded in the server's
+        # own ``compiled`` payload count; anything inside the plan is
+        # caller-writable, including drafts stored before #711.
+        stored_confirmations = compiled.get("mode_confirmations") if isinstance(
+            compiled, dict
+        ) else None
+        validated = await asyncio.to_thread(
+            validate_agent_workflow_plan,
+            plan,
+            username=str(user.get("username") or ""),
+            mode_confirmations=(
+                stored_confirmations if isinstance(stored_confirmations, dict) else None
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not validated.get("ok"):
+        raise HTTPException(400, validated)
+    if compiled.get("skill_id") != validated.get("skill_id"):
+        raise HTTPException(400, "compiled Skill does not match the validated plan")
+    built = build_workflow_graph_commands({"plan": validated["plan"]})
+    if not built.get("ok") or built.get("skipped_edges"):
+        raise HTTPException(
+            400,
+            {
+                "code": "invalid_workflow_commands",
+                "errors": built.get("errors") or built.get("skipped_edges"),
+            },
+        )
+    return validated
+
+
+async def _resolve_workflow_draft_external_inputs(
+    compiled: dict, *, state_dir: Path, canvas_id: str, project_id: str,
+    expected: dict | None = None, require_verified: bool = False,
+) -> dict:
+    from novelvideo.freezone.workflow_external_inputs import resolve_external_image_inputs
+
+    plan = compiled.get("plan") or {}
+    if not plan.get("external_inputs"):
+        return {}
+    if require_verified and not expected:
+        raise HTTPException(409, "workflow external input binding is missing")
+    canvas = await asyncio.to_thread(canvas_store.read_canvas, state_dir, canvas_id)
+    try:
+        return resolve_external_image_inputs(
+            plan, canvas, project_id=project_id, canvas_id=canvas_id, expected=expected,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post(
+    "/projects/{project}/freezone/canvases/{canvas_id}/workflow-drafts",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def create_canvas_workflow_draft(
+    project: str,
+    canvas_id: str,
+    body: dict = Body(...),
+    user: dict = Depends(get_api_user),
+):
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    operation_id = str(body.get("operation_id") or "").strip()
+    metered_runtime = not isinstance(get_usage_meter(), NoOpUsageMeter)
+    if not operation_id and metered_runtime:
+        raise HTTPException(400, "workflow result operation_id is required")
+    operation = None
+    if operation_id:
+        try:
+            operation = await asyncio.to_thread(
+                read_agent_product_operation,
+                project_dir=state_dir,
+                operation_id=operation_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+    logger.info(
+        "workflow_draft.create.start project_id=%s canvas_id=%s operation_id=%s "
+        "operation_status=%s operation_task_id=%s",
+        ctx.project_id,
+        canvas_id,
+        operation_id or "unmetered",
+        str((operation or {}).get("status") or "none"),
+        str((operation or {}).get("task_id") or "none"),
+    )
+    if operation_id and operation is not None and operation.get("product_kind") != "workflow_result":
+        actual_product_kind = str(operation.get("product_kind") or "")
+        raise HTTPException(
+            400,
+            "workflow draft requires product_kind='workflow_result'; "
+            f"received product_kind={actual_product_kind!r}. "
+            "Start a new admission and use product_kind='workflow_result' with its operation_id; "
+            "workflow_generate is reserved for creating a Workflow Skill definition.",
+        )
+    if operation_id and operation is None:
+        raise HTTPException(400, "workflow result operation is unavailable")
+    if operation is not None:
+        operation_canvas_id = str(operation.get("canvas_id") or "").strip()
+        if operation_canvas_id != canvas_id:
+            raise HTTPException(
+                400,
+                "workflow result operation does not match target canvas: "
+                f"operation.canvas_id={operation_canvas_id!r}, "
+                f"expected canvas_id={canvas_id!r}",
+            )
+        compiled = body.get("compiled") if isinstance(body.get("compiled"), dict) else {}
+        intent = body.get("intent") if isinstance(body.get("intent"), dict) else {}
+        plan = body.get("plan", intent.get("plan", compiled.get("plan")))
+        skill = plan.get("skill") if isinstance(plan, dict) else {}
+        skill = skill if isinstance(skill, dict) else {}
+        compiled_skill_id = str(
+            compiled.get("skill_id") or intent.get("skill_id") or skill.get("id") or ""
+        ).strip()
+        operation_skill_id = str(
+            (operation.get("metadata") or {}).get("skill_id") or ""
+        ).strip()
+        operation_skill_version = str(
+            (operation.get("metadata") or {}).get("skill_version") or ""
+        ).strip()
+        artifact_id = str(operation.get("artifact_id") or "").strip()
+        artifact_skill_id, separator, artifact_skill_version = artifact_id.partition("@")
+        artifact_skill_id = artifact_skill_id.strip()
+        artifact_skill_version = artifact_skill_version.strip() if separator else ""
+        if (
+            not compiled_skill_id
+            or operation_skill_id != compiled_skill_id
+            or artifact_skill_id != compiled_skill_id
+            or not operation_skill_version
+            or operation_skill_version != artifact_skill_version
+        ):
+            raise HTTPException(
+                400,
+                "workflow result operation does not match compiled Skill: "
+                f"operation.skill_id={operation_skill_id!r}, "
+                f"operation.skill_version={operation_skill_version!r}, "
+                f"operation.artifact_id={artifact_id!r}, "
+                f"expected skill_id={compiled_skill_id!r}",
+            )
+    if (
+        operation
+        and operation.get("status") == "delivered"
+        and operation.get("result_ref")
+    ):
+        existing_id = str(operation["result_ref"].get("id") or "")
+        existing, error = await asyncio.to_thread(
+            read_workflow_draft,
+            project_dir=state_dir,
+            canvas_id=canvas_id,
+            draft_id=existing_id,
+        )
+        if existing is not None:
+            await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
+            return {
+                "ok": True,
+                "data": _workflow_draft_api_data(
+                    existing, summary=body.get("response_view") == "summary"
+                ),
+            }
+        raise HTTPException(409, error or "delivered workflow result is missing")
+    if operation and operation.get("status") not in {
+        "reserved",
+        "running",
+        "accepted",
+        "submitted",
+    }:
+        raise HTTPException(409, "workflow result operation is not admitted")
+    if operation and not (operation.get("model_evidence") or {}).get("model_call_id"):
+        evidence_metrics.observe("agent_product_evidence_rejected")
+        logger.warning(
+            "workflow_draft.create.rejected project_id=%s canvas_id=%s "
+            "operation_id=%s reason=model_evidence_missing operation_status=%s",
+            ctx.project_id,
+            canvas_id,
+            operation_id,
+            str(operation.get("status") or ""),
+        )
+        raise HTTPException(
+            409,
+            "workflow result has no server-observed model execution evidence",
+        )
+    prepared = await _prepare_workflow_source(body, user)
+    validated = prepared["compiled"]
+    validated["external_inputs_verified"] = await _resolve_workflow_draft_external_inputs(
+        validated, state_dir=state_dir, canvas_id=canvas_id, project_id=ctx.project_id,
+    )
+    validated["preflight"] = await _check_workflow_runtime(
+        validated, project=project, user=user
+    )
+    plan = validated.get("plan") if isinstance(validated.get("plan"), dict) else {}
+    logger.info(
+        "workflow_draft.create.validated project_id=%s canvas_id=%s operation_id=%s "
+        "skill_id=%s node_count=%d edge_count=%d",
+        ctx.project_id,
+        canvas_id,
+        operation_id or "unmetered",
+        str(validated.get("skill_id") or ""),
+        len(plan.get("nodes") or []),
+        len(plan.get("edges") or []),
+    )
+    if isinstance(prepared["intent"].get("plan"), dict):
+        prepared["intent"]["plan"] = deepcopy(validated["plan"])
+    if operation is not None:
+        validated_skill = (
+            validated.get("plan", {}).get("skill")
+            if isinstance(validated.get("plan"), dict)
+            and isinstance(validated.get("plan", {}).get("skill"), dict)
+            else {}
+        )
+        validated_skill_version = str(validated_skill.get("version") or "").strip()
+        if (
+            validated.get("skill_id") != compiled_skill_id
+            or (
+                validated_skill_version
+                and validated_skill_version != operation_skill_version
+            )
+        ):
+            raise HTTPException(
+                400, "workflow result operation does not match compiled Skill identity"
+            )
+    try:
+        await asyncio.to_thread(
+            prune_expired_workflow_drafts,
+            project_dir=state_dir,
+            canvas_id=canvas_id,
+        )
+        draft = await asyncio.to_thread(
+            create_workflow_draft,
+            project_dir=state_dir,
+            project_id=ctx.project_id,
+            canvas_id=canvas_id,
+            intent=prepared["intent"],
+            compiled=validated,
+            run_after_create=bool(body.get("run_after_create")),
+            operation_id=operation_id,
+        )
+    except ValueError as exc:
+        logger.warning(
+            "workflow_draft.create.failed project_id=%s canvas_id=%s "
+            "operation_id=%s phase=persist error_type=%s error=%s",
+            ctx.project_id,
+            canvas_id,
+            operation_id or "unmetered",
+            type(exc).__name__,
+            str(exc)[:240],
+        )
+        if operation is not None:
+            operation = await asyncio.to_thread(
+                finish_agent_product_operation,
+                project_dir=state_dir,
+                operation_id=operation_id,
+                outcome="failed",
+                expected_task_id=str(operation.get("task_id") or ""),
+            )
+            await _settle_failed_agent_product_task(
+                ctx=ctx,
+                operation=operation,
+                error=str(exc),
+            )
+        raise HTTPException(400, str(exc)) from exc
+    if operation is not None:
+        operation = await asyncio.to_thread(
+            finish_agent_product_operation,
+            project_dir=state_dir,
+            operation_id=operation_id,
+            outcome="delivered",
+            expected_task_id=str(operation.get("task_id") or ""),
+            result_ref={
+                "kind": "workflow_draft",
+                "id": draft["draft_id"],
+                "revision": draft["revision"],
+                "digest": draft["plan_digest"],
+            },
+        )
+        await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
+    logger.info(
+        "workflow_draft.create.delivered project_id=%s canvas_id=%s operation_id=%s "
+        "draft_id=%s revision=%s operation_status=%s",
+        ctx.project_id,
+        canvas_id,
+        operation_id or "unmetered",
+        str(draft.get("draft_id") or ""),
+        str(draft.get("revision") or ""),
+        str((operation or {}).get("status") or "unmetered"),
+    )
+    return {
+        "ok": True,
+        "data": _workflow_draft_api_data(
+            draft, summary=body.get("response_view") == "summary"
+        ),
+    }
+
+
+@router.get(
+    "/projects/{project}/freezone/canvases/{canvas_id}/workflow-drafts/{draft_id}",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def get_canvas_workflow_draft(
+    project: str,
+    canvas_id: str,
+    draft_id: str,
+    user: dict = Depends(get_api_user),
+    view: str = Query("full"),
+):
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="viewer")
+    )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    try:
+        draft, error = await asyncio.to_thread(
+            read_workflow_draft,
+            project_dir=state_dir,
+            canvas_id=canvas_id,
+            draft_id=draft_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if draft is None:
+        return {
+            "ok": False,
+            "status": "workflow_draft_unavailable",
+            "error": error or "workflow draft not found",
+        }
+    return {
+        "ok": True,
+        "data": _workflow_draft_api_data(draft, summary=view == "summary"),
+    }
+
+
+@router.post(
+    "/projects/{project}/freezone/canvases/{canvas_id}/workflow-drafts/{draft_id}/cancel",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def cancel_canvas_workflow_draft(
+    project: str,
+    canvas_id: str,
+    draft_id: str,
+    body: dict = Body(...),
+    user: dict = Depends(get_api_user),
+):
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    if type(body.get("expected_revision")) is not int:
+        raise HTTPException(400, "expected_revision must be an integer")
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    try:
+        draft, error = await asyncio.to_thread(
+            cancel_workflow_draft,
+            project_dir=_canvas_state_project_dir(ctx, project_dir),
+            canvas_id=canvas_id,
+            draft_id=draft_id,
+            expected_revision=body["expected_revision"],
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if draft is None:
+        return error
+    return {"ok": True, "data": _workflow_draft_api_data(draft)}
+
+
+@router.patch(
+    "/projects/{project}/freezone/canvases/{canvas_id}/workflow-drafts/{draft_id}",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def patch_canvas_workflow_draft(
+    project: str,
+    canvas_id: str,
+    draft_id: str,
+    body: dict = Body(...),
+    user: dict = Depends(get_api_user),
+):
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    if type(body.get("expected_revision")) is not int:
+        raise HTTPException(400, "expected_revision must be an integer")
+    try:
+        expected_revision = int(body.get("expected_revision"))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, "expected_revision must be an integer") from exc
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    if "run_after_create" in body and not isinstance(body["run_after_create"], bool):
+        raise HTTPException(400, "run_after_create must be boolean")
+    if "changes" in body:
+        from novelvideo.freezone.workflow_transactions import (
+            WorkflowOperationError,
+            revise_workflow_source,
+        )
+
+        if any(key in body for key in ("plan", "intent", "compiled", "last_changes")):
+            raise HTTPException(400, "changes cannot be mixed with replacement source")
+        current, error = await asyncio.to_thread(
+            read_workflow_draft,
+            project_dir=state_dir,
+            canvas_id=canvas_id,
+            draft_id=draft_id,
+        )
+        if current is None:
+            raise HTTPException(404, error or "workflow draft not found")
+        if current["revision"] != expected_revision:
+            return {
+                "ok": False,
+                "status": "workflow_draft_revision_conflict",
+                "current_revision": current["revision"],
+                "retryable": False,
+                "next_action": "read_current_draft",
+            }
+        try:
+            prepared = await asyncio.to_thread(
+                revise_workflow_source,
+                current,
+                body["changes"],
+                username=str(user.get("username") or ""),
+            )
+        except WorkflowOperationError as exc:
+            raise HTTPException(400, exc.result) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        body = {**body, **prepared}
+    else:
+        prepared = await _prepare_workflow_source(body, user)
+    validated = prepared["compiled"]
+    validated["external_inputs_verified"] = await _resolve_workflow_draft_external_inputs(
+        validated, state_dir=state_dir, canvas_id=canvas_id, project_id=ctx.project_id,
+    )
+    validated["preflight"] = await _check_workflow_runtime(
+        validated, project=project, user=user
+    )
+    if isinstance(prepared["intent"].get("plan"), dict):
+        prepared["intent"]["plan"] = deepcopy(validated["plan"])
+    try:
+        draft, error = await asyncio.to_thread(
+            patch_workflow_draft,
+            project_dir=state_dir,
+            canvas_id=canvas_id,
+            draft_id=draft_id,
+            expected_revision=expected_revision,
+            intent=prepared["intent"],
+            compiled=validated,
+            last_changes=(
+                body.get("last_changes")
+                if isinstance(body.get("last_changes"), dict)
+                else None
+            ),
+            run_after_create=(
+                bool(body.get("run_after_create"))
+                if "run_after_create" in body
+                else None
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if draft is None:
+        return error
+    return {
+        "ok": True,
+        "data": _workflow_draft_api_data(
+            draft, summary=body.get("response_view") == "summary"
+        ),
+    }
+
+
+@router.post(
+    "/projects/{project}/freezone/agent-product-operations",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def begin_agent_product_operation(
+    project: str,
+    body: dict = Body(...),
+    user: dict = Depends(get_api_user),
+):
+    """Admit and reserve one model-produced product before generation starts."""
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    product_kind = str(body.get("product_kind") or "").strip()
+    generation_session_id = str(body.get("generation_session_id") or "").strip()
+    artifact_id = str(body.get("artifact_id") or "").strip()
+    normalized_inputs_hash = str(body.get("normalized_inputs_hash") or "").strip()
+    if not normalized_inputs_hash:
+        raise HTTPException(400, "normalized_inputs_hash is required")
+    idempotency_key = ":".join(
+        (
+            "freezone-agent-product",
+            str(ctx.requester_user_id),
+            str(ctx.project_id),
+            product_kind,
+            generation_session_id,
+            artifact_id or "result",
+            normalized_inputs_hash,
+        )
+    )
+    try:
+        operation = await asyncio.to_thread(
+            create_agent_product_operation,
+            project_dir=state_dir,
+            project_id=ctx.project_id,
+            product_kind=product_kind,
+            idempotency_key=idempotency_key,
+            generation_session_id=generation_session_id,
+            canvas_id=str(body.get("canvas_id") or ""),
+            artifact_id=artifact_id,
+            metadata={
+                **(
+                    body.get("metadata")
+                    if isinstance(body.get("metadata"), dict)
+                    else {}
+                ),
+                "normalized_inputs_hash": normalized_inputs_hash,
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if operation.get("task_id"):
+        return {"ok": True, "data": operation}
+    queued = await get_task_backend().enqueue_project_task(
+        ctx,
+        task_type=str(operation["task_type"]),
+        product_surface="freezone_assistant",
+        queue_kind="default",
+        episode=0,
+        scope=str(operation["operation_id"]),
+        payload={
+            "operation_id": operation["operation_id"],
+            "product_kind": operation["product_kind"],
+            "generation_session_id": operation["generation_session_id"],
+            "artifact_id": operation["artifact_id"],
+        },
+    )
+    task_id = str(queued.task_state.task_id)
+    operation = await asyncio.to_thread(
+        bind_agent_product_task,
+        project_dir=state_dir,
+        operation_id=operation["operation_id"],
+        task_id=task_id,
+        root_task_id=task_id,
+    )
+    return {"ok": True, "data": operation}
+
+
+@router.get(
+    "/projects/{project}/freezone/agent-product-operations/{operation_id}",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def get_agent_product_operation(
+    project: str,
+    operation_id: str,
+    user: dict = Depends(get_api_user),
+):
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    operation = await asyncio.to_thread(
+        read_agent_product_operation,
+        project_dir=_canvas_state_project_dir(ctx, project_dir),
+        operation_id=operation_id,
+    )
+    if operation is None:
+        raise HTTPException(404, "agent product operation not found")
+    if operation.get("product_kind") == "recipe_result":
+        await _reconcile_recipe_delivery(ctx=ctx, operation=operation)
+    else:
+        await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
+    return {"ok": True, "data": operation}
+
+
+async def _settle_delivered_agent_product_task(
+    *, ctx: ProjectContext, operation: dict[str, Any]
+) -> None:
+    """Confirm a durable late result from trusted task metadata, idempotently."""
+    if operation.get("status") != "delivered":
+        return
+    task_type = str(operation.get("task_type") or "")
+    operation_id = str(operation.get("operation_id") or "")
+    expected_task_id = str(operation.get("task_id") or "")
+    if (
+        operation.get("project_id") != ctx.project_id
+        or PRODUCT_TASK_TYPES.get(operation.get("product_kind")) != task_type
+        or not operation_id
+        or not expected_task_id
+    ):
+        return
+    manager = get_task_manager()
+    task = manager.get_task_for_project(ctx, task_type, 0, scope=operation_id)
+    if task is None or task.task_id != expected_task_id:
+        return
+    metadata = task.metadata if isinstance(task.metadata, dict) else {}
+    reservation_id = str(
+        metadata.get("feature_credit_reservation_id")
+        or metadata.get("feature_credit_charge_id")
+        or ""
+    ).strip()
+    if reservation_id:
+        settlement = await get_usage_meter().settle_feature_credit_reservation(
+            reservation_id,
+            action="confirm",
+            metadata={
+                "source": "agent_product_late_delivery",
+                "business_outcome": "delivered",
+                "operation_id": operation_id,
+            },
+        )
+        if (
+            not isinstance(settlement, dict)
+            or settlement.get("status") not in {"pending", "completed"}
+            or settlement.get("action") not in {None, "confirm"}
+        ):
+            logger.error(
+                "Agent product late delivery credit confirmation unavailable: "
+                "operation_id=%s reservation_id=%s status=%s action=%s error_code=%s",
+                operation_id,
+                reservation_id,
+                settlement.get("status") if isinstance(settlement, dict) else None,
+                settlement.get("action") if isinstance(settlement, dict) else None,
+                settlement.get("error_code") if isinstance(settlement, dict) else None,
+            )
+            evidence_metrics.observe("agent_product_awaiting_reconciliation")
+            raise RuntimeError(
+                "delivered agent product credit confirmation unavailable"
+            )
+    if (
+        task.status in {"failed", "running"}
+        and metadata.get("error_code") == "AGENT_PRODUCT_SETTLEMENT_PENDING"
+    ):
+        completed = manager.complete_task_for_project(
+            ctx,
+            task_type,
+            0,
+            scope=operation_id,
+            result={
+                "ok": True,
+                "operation_id": operation_id,
+                "product_kind": operation.get("product_kind"),
+                "delivery_status": "delivered",
+                "model_evidence": operation.get("model_evidence") or {},
+                "result_ref": operation.get("result_ref") or {},
+            },
+            current_task="完成（晚到结果已对账）",
+            metadata={"settlement_status": "reconciled", "error_code": None},
+            expected_task_id=expected_task_id,
+        )
+        if not completed:
+            current = manager.get_task_for_project(ctx, task_type, 0, scope=operation_id)
+            if current is None or current.task_id != expected_task_id or current.status != "completed":
+                raise RuntimeError("delivered agent product task did not reconcile")
+        evidence_metrics.observe("agent_product_reconciled")
+
+
+async def _settle_failed_agent_product_task(
+    *, ctx: ProjectContext, operation: dict[str, Any], error: str
+) -> None:
+    """Terminalize a waiting workflow-result task after definitive delivery failure."""
+    if operation.get("status") != "failed":
+        return
+    task_type = str(operation.get("task_type") or "")
+    operation_id = str(operation.get("operation_id") or "")
+    expected_task_id = str(operation.get("task_id") or "")
+    if (
+        operation.get("project_id") != ctx.project_id
+        or PRODUCT_TASK_TYPES.get(operation.get("product_kind")) != task_type
+        or not operation_id
+        or not expected_task_id
+    ):
+        return
+    manager = get_task_manager()
+    task = manager.get_task_for_project(ctx, task_type, 0, scope=operation_id)
+    if task is None or task.task_id != expected_task_id:
+        return
+    metadata = task.metadata if isinstance(task.metadata, dict) else {}
+    if (
+        task.status == "running"
+        and metadata.get("error_code") == "AGENT_PRODUCT_SETTLEMENT_PENDING"
+    ):
+        manager.fail_task_for_project(
+            ctx,
+            task_type,
+            0,
+            scope=operation_id,
+            error=error,
+            current_task=lmsg(
+                "tasks.progress.workflowDraftDeliveryFailed",
+                "Agent 交付工作流草稿失败",
+            ),
+            metadata={
+                "operation_status": "failed",
+                "settlement_status": "failed",
+            },
+            expected_task_id=expected_task_id,
+        )
+
+
+_RECIPE_SETTLEMENT_RETRY_DELAYS = (1, 5, 15)
+_recipe_settlement_retries: dict[tuple[str, str], asyncio.Task] = {}
+
+
+async def _reconcile_recipe_delivery(
+    *, ctx: ProjectContext, operation: dict[str, Any]
+) -> None:
+    """A saved result stays successful even when billing is temporarily unavailable."""
+    try:
+        await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
+        return
+    except Exception:
+        logger.warning(
+            "Recipe delivery saved; settlement pending: %s",
+            operation["operation_id"],
+            exc_info=True,
+        )
+    # The immutable delivered receipt survives process restarts. Preserve the
+    # original reservation for review, never refund or create a second charge.
+    try:
+        task = get_task_manager().get_task_for_project(
+            ctx,
+            operation["task_type"],
+            0,
+            scope=operation["operation_id"],
+        )
+        if task and task.task_id == operation.get("task_id"):
+            metadata = task.metadata if isinstance(task.metadata, dict) else {}
+            reservation_id = metadata.get(
+                "feature_credit_reservation_id"
+            ) or metadata.get("feature_credit_charge_id")
+            if reservation_id:
+                await get_usage_meter().mark_feature_credit_settlement_for_review(
+                    str(reservation_id),
+                    metadata={
+                        "source": "recipe_delivery_settlement_pending",
+                        "operation_id": operation["operation_id"],
+                        "operation_status": "delivered",
+                        "settlement_status": "awaiting_reconciliation",
+                    },
+                )
+    except Exception:
+        logger.warning(
+            "Recipe settlement review deferred: %s",
+            operation["operation_id"],
+            exc_info=True,
+        )
+    _schedule_recipe_settlement_retry(ctx=ctx, operation=operation)
+
+
+def _schedule_recipe_settlement_retry(
+    *, ctx: ProjectContext, operation: dict[str, Any]
+) -> None:
+    key = (str(ctx.project_id), str(operation["operation_id"]))
+    if key in _recipe_settlement_retries:
+        return
+
+    async def retry() -> None:
+        try:
+            for delay in _RECIPE_SETTLEMENT_RETRY_DELAYS:
+                await asyncio.sleep(delay)
+                try:
+                    await _settle_delivered_agent_product_task(
+                        ctx=ctx, operation=operation
+                    )
+                    return
+                except Exception:
+                    logger.warning(
+                        "Recipe settlement retry pending: %s", key[1], exc_info=True
+                    )
+        finally:
+            _recipe_settlement_retries.pop(key, None)
+
+    _recipe_settlement_retries[key] = asyncio.create_task(retry())
+
+
+@router.get(
+    "/projects/{project}/freezone/agent-generation-sessions/{generation_session_id}",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def get_agent_generation_session(
+    project: str,
+    generation_session_id: str,
+    user: dict = Depends(get_api_user),
+):
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    session = await asyncio.to_thread(
+        read_agent_generation_session,
+        project_dir=_canvas_state_project_dir(ctx, project_dir),
+        generation_session_id=generation_session_id,
+    )
+    if session is None:
+        raise HTTPException(404, "agent generation session not found")
+    return {"ok": True, "data": session}
+
+
+@router.put(
+    "/projects/{project}/freezone/agent-generation-sessions/{generation_session_id}",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def put_agent_generation_session(
+    project: str,
+    generation_session_id: str,
+    body: dict = Body(...),
+    user: dict = Depends(get_api_user),
+):
+    ctx, _owner_username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    manifest = body.get("manifest") if isinstance(body.get("manifest"), dict) else {}
+    draft = body.get("draft") if isinstance(body.get("draft"), dict) else {}
+    canvas_id = str(body.get("canvas_id") or "").strip()
+    # Private account Recipes belong to the requester, even in shared projects.
+    catalog_username = str(user.get("username") or "")
+    available_recipe_ids = {
+        str(item.get("id") or "").strip()
+        for item in list_user_agent_config_items(catalog_username, "recipes")
+        if item.get("enabled") is not False and str(item.get("id") or "").strip()
+    }
+    try:
+        await asyncio.to_thread(
+            _validate_agent_generation_session_payload,
+            state_dir=state_dir,
+            generation_session_id=generation_session_id,
+            project_id=ctx.project_id,
+            canvas_id=canvas_id,
+            manifest=manifest,
+            draft=draft,
+            available_recipe_ids=available_recipe_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    session = await asyncio.to_thread(
+        save_agent_generation_session,
+        project_dir=state_dir,
+        generation_session_id=generation_session_id,
+        project_id=ctx.project_id,
+        canvas_id=canvas_id,
+        manifest=manifest,
+        draft=draft,
+    )
+    return {"ok": True, "data": session}
+
+
+@router.post(
+    "/projects/{project}/freezone/agent-product-operations/{operation_id}/finish",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def complete_agent_product_operation(
+    project: str,
+    operation_id: str,
+    body: dict = Body(...),
+    user: dict = Depends(get_api_user),
+):
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    result_ref = (
+        body.get("result_ref") if isinstance(body.get("result_ref"), dict) else {}
+    )
+    outcome = str(body.get("outcome") or "")
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    try:
+        current = await asyncio.to_thread(
+            read_agent_product_operation,
+            project_dir=state_dir,
+            operation_id=operation_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if current is None:
+        raise HTTPException(404, "agent product operation not found")
+    if str(current.get("task_id") or "") != str(body.get("task_id") or ""):
+        raise HTTPException(400, "agent product operation task identity mismatch")
+    if result_ref.get("kind") in {"recipe_compile_result", "recipe_nonbillable"}:
+        raise HTTPException(
+            400, "Recipe reuse receipts are recorded only by the server compiler"
+        )
+    if outcome == "delivered":
+        product_kind = str(current.get("product_kind") or "")
+        if product_kind not in {"workflow_generate", "recipe_generate"}:
+            raise HTTPException(
+                400,
+                "result operations are settled only from their server-observed result path",
+            )
+        session = await asyncio.to_thread(
+            read_agent_generation_session,
+            project_dir=state_dir,
+            generation_session_id=str(current.get("generation_session_id") or ""),
+        )
+        session_draft = session.get("draft") if isinstance(session, dict) else None
+        artifact_id = str(result_ref.get("id") or "")
+        admitted_artifact_id = str(current.get("artifact_id") or "")
+        if product_kind == "workflow_generate":
+            persisted = (
+                session_draft.get("skill")
+                if isinstance(session_draft, dict)
+                and isinstance(session_draft.get("skill"), dict)
+                else {}
+            )
+            result_matches = (
+                result_ref.get("kind") == "workflow_skill_definition"
+                and str(persisted.get("id") or "") == artifact_id
+                and admitted_artifact_id == artifact_id
+            )
+        else:
+            persisted_recipes = (
+                session_draft.get("recipes")
+                if isinstance(session_draft, dict)
+                and isinstance(session_draft.get("recipes"), dict)
+                else {}
+            )
+            result_matches = (
+                result_ref.get("kind") == "recipe_definition"
+                and any(
+                    isinstance(recipe, dict)
+                    and str(recipe.get("id") or "") == artifact_id
+                    for recipe in persisted_recipes.values()
+                )
+                and admitted_artifact_id == artifact_id
+            )
+        if not result_matches:
+            raise HTTPException(409, "durable generated product result is unavailable")
+    try:
+        operation = await asyncio.to_thread(
+            finish_agent_product_operation,
+            project_dir=state_dir,
+            operation_id=operation_id,
+            outcome=outcome,
+            expected_task_id=str(body.get("task_id") or ""),
+            result_ref=result_ref,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
+    return {"ok": True, "data": operation}
+
+
+@router.post(
+    "/projects/{project}/freezone/canvases/{canvas_id}/workflow-drafts/{draft_id}/claim",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def claim_canvas_workflow_draft(
+    project: str,
+    canvas_id: str,
+    draft_id: str,
+    body: dict = Body(...),
+    user: dict = Depends(get_api_user),
+):
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    try:
+        revision = int(body.get("revision"))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, "revision must be an integer") from exc
+    current_draft, current_error = await asyncio.to_thread(
+        read_workflow_draft,
+        project_dir=state_dir,
+        canvas_id=canvas_id,
+        draft_id=draft_id,
+    )
+    if current_draft is None:
+        return {
+            "ok": False,
+            "status": "workflow_draft_unavailable",
+            "error": current_error or "workflow draft not found",
+        }
+    if current_draft["revision"] != revision:
+        return {
+            "ok": False,
+            "status": "workflow_draft_revision_conflict",
+            "current_revision": current_draft["revision"],
+        }
+    # Revalidate old drafts and catalog revocations before admitting a task.
+    validated = await _validate_workflow_draft_submission(current_draft, user)
+    await _resolve_workflow_draft_external_inputs(
+        current_draft["compiled"], state_dir=state_dir, canvas_id=canvas_id,
+        project_id=ctx.project_id,
+        expected=current_draft["compiled"].get("external_inputs_verified"),
+        require_verified=True,
+    )
+    await _check_workflow_runtime(validated, project=project, user=user)
+    try:
+        draft, error = await asyncio.to_thread(
+            claim_workflow_draft_confirmation,
+            project_dir=state_dir,
+            canvas_id=canvas_id,
+            draft_id=draft_id,
+            revision=revision,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if draft is None:
+        return error
+    attempt_started_at = draft["confirmation_started_at"]
+    try:
+        queued = await get_task_backend().enqueue_project_task(
+            ctx,
+            task_type="freezone_workflow_confirm",
+            product_surface="freezone_assistant",
+            queue_kind="default",
+            episode=0,
+            scope=f"{canvas_id}:{draft_id}:{revision}:{attempt_started_at}",
+            payload={
+                "draft_id": draft_id,
+                "canvas_id": canvas_id,
+                "revision": revision,
+                "plan_digest": draft.get("plan_digest"),
+                "confirmation_started_at": attempt_started_at,
+            },
+        )
+    except Exception:
+        await asyncio.to_thread(
+            finish_workflow_draft_confirmation,
+            project_dir=state_dir,
+            canvas_id=canvas_id,
+            draft_id=draft_id,
+            outcome="ready",
+            expected_confirmation_started_at=attempt_started_at,
+        )
+        raise
+    task_id = str(queued.task_state.task_id)
+    try:
+        persisted = await asyncio.to_thread(
+            bind_workflow_draft_task,
+            project_dir=state_dir,
+            canvas_id=canvas_id,
+            draft_id=draft_id,
+            task_id=task_id,
+            root_task_id=task_id,
+            expected_confirmation_started_at=attempt_started_at,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if persisted is None:
+        raise RuntimeError("workflow draft disappeared after durable task enqueue")
+    return {"ok": True, "data": _workflow_draft_api_data(persisted)}
+
+
+@router.post(
+    "/projects/{project}/freezone/canvases/{canvas_id}/workflow-drafts/{draft_id}/finish",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def finish_canvas_workflow_draft(
+    project: str,
+    canvas_id: str,
+    draft_id: str,
+    body: dict = Body(...),
+    user: dict = Depends(get_api_user),
+):
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    outcome = str(body.get("outcome") or "")
+    if outcome == "confirmed":
+        raise HTTPException(
+            403, "workflow completion requires an authoritative canvas receipt"
+        )
+    task_id = str(body.get("task_id") or "").strip()
+    if not task_id:
+        raise HTTPException(400, "workflow confirmation task_id is required")
+    revision = body.get("revision")
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision <= 0:
+        raise HTTPException(400, "workflow confirmation revision is required")
+    try:
+        draft = await asyncio.to_thread(
+            finish_workflow_draft_confirmation,
+            project_dir=state_dir,
+            canvas_id=canvas_id,
+            draft_id=draft_id,
+            outcome=outcome,
+            expected_task_id=task_id,
+            expected_revision=revision,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if draft is None:
+        return {
+            "ok": False,
+            "status": "workflow_draft_unavailable",
+            "error": "workflow draft not found",
+        }
+    return {"ok": True, "data": _workflow_draft_api_data(draft)}
+
+
+@router.post(
+    "/projects/{project}/freezone/canvases/{canvas_id}/workflow-runs",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def create_canvas_workflow_run(
+    project: str,
+    canvas_id: str,
+    body: dict = Body(...),
+    user: dict = Depends(get_api_user),
+):
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    state_dir = _canvas_state_project_dir(ctx, project_dir)
+    actions = body.get("actions") if isinstance(body.get("actions"), list) else []
+    metered_runtime = not isinstance(get_usage_meter(), NoOpUsageMeter)
+    if metered_runtime:
+        for action in actions:
+            if not isinstance(action, dict):
+                continue
+            action_name = str(action.get("action") or "")
+            if (
+                (
+                    action_name
+                    in {
+                        "generate_text",
+                        "generate_story_script",
+                        "generate_image",
+                        "generate_video",
+                        "generate_text_video",
+                        "generate_audio",
+                        "generate_3gs_world",
+                    }
+                    or (action_name == "generate_html" and action.get("recipe_id"))
+                )
+                and (action_name == "generate_text" or action.get("recipe_id"))
+                and (
+                    not action.get("recipe_id")
+                    or not action.get("generation_attempt_id")
+                )
+            ):
+                raise HTTPException(
+                    400,
+                    "model workflow actions require recipe_id and generation_attempt_id",
+                )
+    try:
+        run = await asyncio.to_thread(
+            create_workflow_run,
+            project_dir=state_dir,
+            project_id=ctx.project_id,
+            canvas_id=canvas_id,
+            actions=actions,
+            actor_id=_canvas_actor_id(user),
+            metadata=(
+                body.get("metadata") if isinstance(body.get("metadata"), dict) else None
+            ),
+            idempotency_key=(
+                body.get("idempotency_key")
+                if isinstance(body.get("idempotency_key"), str)
+                else ""
+            ),
+            runner_id=(
+                body.get("runner_id") if isinstance(body.get("runner_id"), str) else ""
+            ),
+        )
+    except (WorkflowRunLeaseConflict, WorkflowRunIdempotencyConflict) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (ValueError, CanvasLockBusy) as exc:
+        raise HTTPException(
+            400 if isinstance(exc, ValueError) else 503, str(exc)
+        ) from exc
+    if not metered_runtime:
+        return {"ok": True, "data": run}
+    admitted_operations: list[dict[str, Any]] = []
+    try:
+        for action in run.get("actions") or []:
+            action_name = str(action.get("action") or "")
+            if action_name not in {
+                "generate_text",
+                "generate_story_script",
+                "generate_image",
+                "generate_video",
+                "generate_text_video",
+                "generate_audio",
+                "generate_3gs_world",
+            } and not (action_name == "generate_html" and action.get("recipe_id")):
+                continue
+            # Ordinary media/script nodes use their generation endpoint's model
+            # billing. Only catalog Recipe executions need a recipe_result
+            # admission; do not invent a Recipe or charge both product paths.
+            if not action.get("recipe_id"):
+                continue
+            node_id = str(action.get("node_id") or "")
+            recipe_id = str(action.get("recipe_id") or "")
+            recipe_version = str(action.get("recipe_version") or "")
+            attempt_id = str(action.get("generation_attempt_id") or "")
+            operation = await asyncio.to_thread(
+                create_agent_product_operation,
+                project_dir=state_dir,
+                project_id=ctx.project_id,
+                product_kind="recipe_result",
+                idempotency_key=(
+                    f"freezone-agent-product:{ctx.requester_user_id}:{ctx.project_id}:"
+                    f"{run['run_id']}:{node_id}:{recipe_id}:{recipe_version}:{attempt_id}"
+                ),
+                generation_session_id=str(run["run_id"]),
+                canvas_id=canvas_id,
+                artifact_id=node_id,
+                metadata={
+                    "workflow_run_id": run["run_id"],
+                    "node_id": node_id,
+                    "recipe_id": recipe_id,
+                    "recipe_version": recipe_version,
+                    "generation_attempt_id": attempt_id,
+                },
+            )
+            if not operation.get("task_id"):
+                queued = await get_task_backend().enqueue_project_task(
+                    ctx,
+                    task_type=str(operation["task_type"]),
+                    product_surface="freezone_assistant",
+                    queue_kind="default",
+                    episode=0,
+                    scope=str(operation["operation_id"]),
+                    payload={
+                        "operation_id": operation["operation_id"],
+                        "product_kind": "recipe_result",
+                        "generation_session_id": run["run_id"],
+                        "artifact_id": node_id,
+                    },
+                )
+                task_id = str(queued.task_state.task_id)
+                operation = await asyncio.to_thread(
+                    bind_agent_product_task,
+                    project_dir=state_dir,
+                    operation_id=operation["operation_id"],
+                    task_id=task_id,
+                    root_task_id=task_id,
+                )
+            admitted_operations.append(operation)
+            run = await asyncio.to_thread(
+                bind_workflow_action_product_operation,
+                project_dir=state_dir,
+                canvas_id=canvas_id,
+                run_id=run["run_id"],
+                node_id=node_id,
+                action=action_name,
+                operation_id=operation["operation_id"],
+            )
+    except Exception:
+        for operation in admitted_operations:
+            try:
+                await asyncio.to_thread(
+                    finish_agent_product_operation,
+                    project_dir=state_dir,
+                    operation_id=operation["operation_id"],
+                    outcome="failed",
+                    expected_task_id=operation["task_id"],
+                )
+            except ValueError:
+                pass
+        await asyncio.to_thread(
+            update_workflow_run,
+            project_dir=state_dir,
+            canvas_id=canvas_id,
+            run_id=run["run_id"],
+            status="failed",
+        )
+        raise
+    return {"ok": True, "data": run}
+
+
+@router.get(
+    "/projects/{project}/freezone/canvases/{canvas_id}/workflow-runs",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def get_canvas_workflow_runs(
+    project: str,
+    canvas_id: str,
+    limit: int = Query(20, ge=1, le=200),
+    user: dict = Depends(get_api_user),
+):
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="viewer")
+    )
+    canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
+    try:
+        stale_after_seconds = max(
+            int(os.getenv("ST_WORKFLOW_RUN_STALE_SECONDS", "300")), 60
+        )
+    except ValueError:
+        stale_after_seconds = 300
+    try:
+        await asyncio.to_thread(
+            interrupt_stale_workflow_runs,
+            project_dir=canvas_project_dir,
+            canvas_id=canvas_id,
+            stale_after_seconds=stale_after_seconds,
+        )
+    except CanvasLockBusy:
+        pass
+    try:
+        canvas_payload = await asyncio.to_thread(
+            canvas_store.read_canvas, canvas_project_dir, canvas_id
+        )
+        canvas_nodes = [
+            node
+            for node in (canvas_payload or {}).get("nodes") or []
+            if isinstance(node, dict)
+        ]
+        await asyncio.to_thread(
+            reconcile_workflow_runs_with_canvas_results,
+            project_dir=canvas_project_dir,
+            canvas_id=canvas_id,
+            canvas_nodes=canvas_nodes,
+        )
+        await asyncio.to_thread(
+            reconcile_workflow_runs_with_canvas_nodes,
+            project_dir=canvas_project_dir,
+            canvas_id=canvas_id,
+            existing_node_ids={
+                str(node.get("id") or "")
+                for node in canvas_nodes
+                if str(node.get("id") or "")
+            },
+            run_statuses={"failed", "interrupted"},
+        )
+    except (canvas_store.CanvasStoreError, CanvasLockBusy):
+        # Recovery records are optional. A transient canvas read/lock failure
+        # must not make the canvas itself unavailable.
+        pass
+    tasks_by_key: dict[str, dict[str, Any]] = {}
+    generation_history: list[dict[str, Any]] = []
+    try:
+        for task in get_task_manager().list_tasks_for_project(ctx):
+            task_status = str(task.status or "")
+            if (
+                task_status in {"submitting", "queued", "running"}
+                and task.progress >= 1.0
+                and str(task.current_task or "").strip().lower()
+                in {"完成", "completed", "done"}
+            ):
+                task_status = "completed"
+            task_key = project_task_state_key(
+                task.task_type,
+                ctx.project_id,
+                task.episode,
+                beat_num=task.beat_num,
+                scope=task.scope,
+            )
+            tasks_by_key[task_key] = {
+                "status": task_status,
+                "result": task.result,
+                "error": task.error,
+            }
+        generation_history = await asyncio.to_thread(
+            read_canvas_generation_history,
+            project_dir=project_dir,
+            canvas_id=canvas_id,
+            limit=1000,
+        )
+        await asyncio.to_thread(
+            reconcile_workflow_runs_with_tasks,
+            project_dir=canvas_project_dir,
+            canvas_id=canvas_id,
+            tasks_by_key=tasks_by_key,
+            generation_history=generation_history,
+        )
+    except Exception as exc:
+        # Task reconciliation is best-effort and must not block canvas loading.
+        logger.warning("workflow task reconciliation skipped: %s", exc)
+    try:
+        retention_days = max(int(os.getenv("ST_WORKFLOW_RUN_RETENTION_DAYS", "30")), 1)
+        max_terminal_records = max(
+            int(os.getenv("ST_WORKFLOW_RUN_MAX_TERMINAL_RECORDS", "200")),
+            1,
+        )
+        await asyncio.to_thread(
+            prune_workflow_runs,
+            project_dir=canvas_project_dir,
+            canvas_id=canvas_id,
+            retention_days=retention_days,
+            max_terminal_records=max_terminal_records,
+        )
+    except (CanvasLockBusy, OSError, ValueError):
+        pass
+    runs = await asyncio.to_thread(
+        list_workflow_runs,
+        project_dir=canvas_project_dir,
+        canvas_id=canvas_id,
+        limit=limit,
+    )
+    history_by_task_node: dict[tuple[str, str], dict[str, Any]] = {}
+    history_by_operation_attempt: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for record in generation_history:
+        if not isinstance(record, dict):
+            continue
+        task_key = str(record.get("task_key") or "").strip()
+        node_id = str(record.get("node_id") or "").strip()
+        if task_key and node_id:
+            history_by_task_node.setdefault((task_key, node_id), record)
+            operation_id = str(record.get("product_operation_id") or "").strip()
+            attempt_id = str(record.get("generation_attempt_id") or "").strip()
+            if operation_id and attempt_id:
+                history_by_operation_attempt.setdefault(
+                    (operation_id, attempt_id, node_id), []
+                ).append(record)
+    for run in runs:
+        for action in run.get("actions") or []:
+            operation_id = str(action.get("product_operation_id") or "")
+            task_key = str(action.get("task_key") or "")
+            recovered_history: dict[str, Any] | None = None
+            if operation_id and not task_key:
+                # The media endpoint validated this Recipe attempt before enqueue;
+                # the worker persisted that link with its completed result.
+                # Completion may follow cancellation, so no run-end bound applies.
+                expected_task_types = {
+                    "generate_image": {"freezone_gen"},
+                    "generate_video": {"freezone_video_gen"},
+                    "generate_text_video": {"freezone_video_gen"},
+                    "generate_audio": {"freezone_audio_speech", "freezone_audio_eleven_music"},
+                }.get(str(action.get("action") or ""), set())
+                attempt_id = str(action.get("generation_attempt_id") or "").strip()
+                node_id = str(action.get("node_id") or "").strip()
+                candidates = [
+                    record
+                    for record in history_by_operation_attempt.get(
+                        (operation_id, attempt_id, node_id), []
+                    )
+                    if record.get("task_type") in expected_task_types
+                    and record.get("status") == "completed"
+                    and str(
+                        tasks_by_key.get(
+                            str(record.get("task_key") or ""), {}
+                        ).get("status") or ""
+                    ) == "completed"
+                ]
+                if len({str(record.get("task_key") or "") for record in candidates}) == 1:
+                    recovered_history = candidates[0]
+                    task_key = str(recovered_history["task_key"])
+            task = tasks_by_key.get(task_key)
+            if not operation_id or task is None:
+                continue
+            task_status = str(task.get("status") or "")
+            artifact_status = str(action.get("artifact_status") or "")
+            if task_status == "completed" and artifact_status != "valid":
+                # A cancelled run is deliberately not rewritten by the workflow
+                # reconciler. Its media task can nevertheless finish late, and
+                # that durable result must settle the separate Recipe operation.
+                artifact_status, _artifact_error = await asyncio.to_thread(
+                    _validate_action_artifact,
+                    action=str(action.get("action") or ""),
+                    task_result=task.get("result") if isinstance(task.get("result"), dict) else None,
+                    history_record=history_by_task_node.get(
+                        (task_key, str(action.get("node_id") or ""))
+                    ),
+                    project_dir=canvas_project_dir,
+                )
+            operation = await asyncio.to_thread(
+                read_agent_product_operation,
+                project_dir=canvas_project_dir,
+                operation_id=operation_id,
+            )
+            if operation is None or operation.get("status") in {
+                "delivered",
+                "failed",
+                "cancelled",
+            }:
+                continue
+            evidence = operation.get("model_evidence") or {}
+            operation_metadata = operation.get("metadata") or {}
+            direct_voice = (
+                is_direct_voice_recipe_action(
+                    recipe_id=str(action.get("recipe_id") or ""),
+                    action=str(action.get("action") or ""),
+                    task_type=str(action.get("task_type") or ""),
+                )
+                and operation_metadata.get("recipe_id") == action.get("recipe_id")
+                and operation_metadata.get("recipe_version") == action.get("recipe_version")
+            )
+            if (
+                task_status == "completed"
+                and artifact_status == "valid"
+                and (
+                    direct_voice
+                    or (evidence.get("compile_mode") == "model" and evidence.get("model_call_id"))
+                )
+            ):
+                outcome = "delivered"
+                result_ref = {
+                    "kind": "recipe_result",
+                    "id": str(
+                        action.get("job_id")
+                        or (recovered_history or {}).get("job_id")
+                        or task_key
+                    ),
+                    "workflow_run_id": run["run_id"],
+                    "node_id": action.get("node_id"),
+                    "recipe_id": action.get("recipe_id"),
+                }
+            elif task_status == "failed" and workflow_media_failure_awaits_retry(
+                project_dir=canvas_project_dir,
+                run=run,
+                action=action,
+                error=task.get("error"),
+            ):
+                # The runner is about to resubmit this attempt (issue #681).
+                continue
+            elif task_status in {"failed", "cancelled"}:
+                outcome = "failed" if task_status == "failed" else "cancelled"
+                result_ref = {}
+            elif task_status == "completed" and artifact_status == "valid":
+                # Media delivery proves only the media provider task.  Without
+                # a fresh model Recipe compilation this product operation is
+                # non-billable (cache/deterministic/fallback or missing proof).
+                outcome = "failed"
+                result_ref = {}
+            else:
+                continue
+            operation = await asyncio.to_thread(
+                finish_agent_product_operation,
+                project_dir=canvas_project_dir,
+                operation_id=operation_id,
+                outcome=outcome,
+                expected_task_id=str(operation.get("task_id") or ""),
+                result_ref=result_ref,
+                server_recipe_direct_audio=direct_voice and outcome == "delivered",
+            )
+            await _settle_delivered_agent_product_task(ctx=ctx, operation=operation)
+    return {"ok": True, "data": {"runs": runs}}
+
+
+@router.get(
+    "/projects/{project}/freezone/canvases/{canvas_id}/workflow-runs/{run_id}",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def get_canvas_workflow_run(
+    project: str,
+    canvas_id: str,
+    run_id: str,
+    user: dict = Depends(get_api_user),
+    view: str = Query("full"),
+    wait_seconds: int = Query(0, ge=0, le=20),
+    after: str = Query("", max_length=64),
+):
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="viewer")
+    )
+    from novelvideo.freezone.workflow_observation import summarize_workflow_run
+    from novelvideo.freezone.workflow_runs import RUN_ID_RE
+
+    if not RUN_ID_RE.fullmatch(run_id):
+        raise HTTPException(400, "invalid workflow run id")
+    deadline = asyncio.get_running_loop().time() + wait_seconds
+    token = after
+    while True:
+        # Reuse the same task, artifact and canvas reconciliation as the canvas run list.
+        await get_canvas_workflow_runs(
+            project=project, canvas_id=canvas_id, limit=200, user=user
+        )
+        run = await asyncio.to_thread(
+            read_workflow_run,
+            project_dir=_canvas_state_project_dir(ctx, project_dir),
+            canvas_id=canvas_id,
+            run_id=run_id,
+        )
+        if run is None:
+            raise HTTPException(404, "workflow run not found")
+        summary = summarize_workflow_run(run)
+        changed = bool(token and summary["observation_token"] != token)
+        remaining = deadline - asyncio.get_running_loop().time()
+        if not wait_seconds or summary["terminal"] or changed or remaining <= 0:
+            if view == "summary":
+                return {"ok": True, "data": {**summary, "changed": changed}}
+            return {"ok": True, "data": run}
+        token = summary["observation_token"]
+        await asyncio.sleep(min(2, remaining))
+
+
+@router.patch(
+    "/projects/{project}/freezone/canvases/{canvas_id}/workflow-runs/{run_id}",
+    tags=[TAG_FREEZONE_CANVAS],
+)
+async def patch_canvas_workflow_run(
+    project: str,
+    canvas_id: str,
+    run_id: str,
+    body: dict = Body(...),
+    user: dict = Depends(get_api_user),
+):
+    if not CANVAS_ID_RE.match(canvas_id):
+        raise HTTPException(400, "invalid canvas_id")
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
+    )
+    try:
+        run = await asyncio.to_thread(
+            update_workflow_run,
+            project_dir=_canvas_state_project_dir(ctx, project_dir),
+            canvas_id=canvas_id,
+            run_id=run_id,
+            status=body.get("status") if isinstance(body.get("status"), str) else None,
+            action_updates=(
+                body.get("action_updates")
+                if isinstance(body.get("action_updates"), list)
+                else None
+            ),
+            runner_id=(
+                body.get("runner_id") if isinstance(body.get("runner_id"), str) else ""
+            ),
+        )
+    except WorkflowRunLeaseConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (ValueError, CanvasLockBusy) as exc:
+        raise HTTPException(
+            400 if isinstance(exc, ValueError) else 503, str(exc)
+        ) from exc
+    if run is None:
+        raise HTTPException(404, "workflow run not found")
+    if body.get("status") == "cancelled":
+        task_keys = {
+            str(item.get("task_key") or "").strip()
+            for item in run.get("actions") or []
+            if isinstance(item, dict) and str(item.get("task_key") or "").strip()
+        }
+        if task_keys:
+            backend = get_task_backend()
+            for task in get_task_manager().list_tasks_for_project(ctx):
+                task_key = project_task_state_key(
+                    task.task_type,
+                    ctx.project_id,
+                    task.episode,
+                    beat_num=task.beat_num,
+                    scope=task.scope,
+                )
+                if task_key not in task_keys or task.status not in {
+                    "pending",
+                    "starting",
+                    "submitting",
+                    "queued",
+                    "running",
+                }:
+                    continue
+                try:
+                    await backend.cancel_project_task(ctx, task)
+                except Exception as exc:
+                    logger.warning(
+                        "failed to cancel workflow task %s for run %s: %s",
+                        task_key,
+                        run_id,
+                        exc,
+                    )
+    return {"ok": True, "data": run}
 
 
 @router.post(
@@ -13069,10 +16763,12 @@ async def restore_canvas_history(
         raise HTTPException(400, "invalid canvas_id")
     history_id = str(body.get("history_id") or "").strip()
     base_revision = body.get("base_revision")
-    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project,
-        user,
-        require_home_node=False,
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(
+            project,
+            user,
+            require_home_node=False,
+        )
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
 
@@ -13155,11 +16851,13 @@ async def get_node_generation_history(
     """Return backend-side generation attempts recorded for one canvas node."""
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
-    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project,
-        user,
-        required_role="viewer",
-        require_home_node=False,
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(
+            project,
+            user,
+            required_role="viewer",
+            require_home_node=False,
+        )
     )
     try:
         records = read_generation_history(
@@ -13241,11 +16939,13 @@ async def get_canvas_generation_history(
     """
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
-    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project,
-        user,
-        required_role="viewer",
-        require_home_node=False,
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(
+            project,
+            user,
+            required_role="viewer",
+            require_home_node=False,
+        )
     )
     try:
         records = read_canvas_generation_history(
@@ -13274,7 +16974,9 @@ async def get_canvas_generation_history(
     return {"ok": True, "data": {"records": records}}
 
 
-@router.put("/projects/{project}/freezone/canvases/{canvas_id}", tags=[TAG_FREEZONE_CANVAS])
+@router.put(
+    "/projects/{project}/freezone/canvases/{canvas_id}", tags=[TAG_FREEZONE_CANVAS]
+)
 async def put_canvas(
     project: str,
     canvas_id: str,
@@ -13283,10 +16985,12 @@ async def put_canvas(
 ):
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
-    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project,
-        user,
-        require_home_node=False,
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(
+            project,
+            user,
+            require_home_node=False,
+        )
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
 
@@ -13335,6 +17039,19 @@ async def put_canvas(
     except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
         _raise_canvas_store_http(exc)
     payload = saved_canvas.payload
+    try:
+        await asyncio.to_thread(
+            reconcile_workflow_runs_with_canvas_nodes,
+            project_dir=canvas_project_dir,
+            canvas_id=canvas_id,
+            existing_node_ids={
+                str(node.get("id") or "")
+                for node in payload.get("nodes") or []
+                if isinstance(node, dict) and str(node.get("id") or "")
+            },
+        )
+    except CanvasLockBusy as exc:
+        _raise_canvas_store_http(exc)
     if not saved_canvas.idempotent:
         _append_canvas_event(
             project_dir=canvas_project_dir,
@@ -13364,16 +17081,28 @@ async def put_canvas(
     return {"ok": True, "data": response_data}
 
 
-@router.delete("/projects/{project}/freezone/canvases/{canvas_id}", tags=[TAG_FREEZONE_CANVAS])
-async def delete_canvas(project: str, canvas_id: str, user: dict = Depends(get_api_user)):
+@router.delete(
+    "/projects/{project}/freezone/canvases/{canvas_id}", tags=[TAG_FREEZONE_CANVAS]
+)
+async def delete_canvas(
+    project: str, canvas_id: str, user: dict = Depends(get_api_user)
+):
     if not CANVAS_ID_RE.match(canvas_id):
         raise HTTPException(400, "invalid canvas_id")
-    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project,
-        user,
-        require_home_node=False,
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(
+            project,
+            user,
+            require_home_node=False,
+        )
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
+    await chat_service.archive_codex_canvas_threads(
+        username,
+        project_name,
+        canvas_id,
+        project_state_dir=ctx.state_dir,
+    )
     try:
         deleted_canvas = canvas_store.soft_delete_canvas(
             canvas_project_dir,
@@ -13381,6 +17110,15 @@ async def delete_canvas(project: str, canvas_id: str, user: dict = Depends(get_a
             deleted_by=_canvas_actor_id(user),
         )
     except (canvas_store.CanvasStoreError, CanvasLockBusy) as exc:
+        _raise_canvas_store_http(exc)
+    try:
+        await asyncio.to_thread(
+            reconcile_workflow_runs_with_canvas_nodes,
+            project_dir=canvas_project_dir,
+            canvas_id=canvas_id,
+            existing_node_ids=set(),
+        )
+    except CanvasLockBusy as exc:
         _raise_canvas_store_http(exc)
     existing = deleted_canvas.existing
     _append_canvas_event(
@@ -13390,7 +17128,9 @@ async def delete_canvas(project: str, canvas_id: str, user: dict = Depends(get_a
         event_type="canvas.deleted",
         actor=_canvas_event_actor(user),
         payload={
-            "revision": existing.get("revision") if isinstance(existing, dict) else None,
+            "revision": (
+                existing.get("revision") if isinstance(existing, dict) else None
+            ),
             "deleted_path": canvas_store.relative_project_path(
                 canvas_project_dir,
                 deleted_canvas.deleted_path,
@@ -13435,7 +17175,11 @@ def _asset_record_from_path(
         media_type = "file"
     if exists and not project_id:
         raise ValueError("project_id is required for freezone asset static URLs")
-    url = project_static_url(project_id, rel_path, local_path=abs_path) if exists else None
+    url = (
+        project_static_url(project_id, rel_path, local_path=abs_path)
+        if exists
+        else None
+    )
     slot_target = _slot_target_for_asset_record(kind=kind, role=role, meta=meta or {})
     record = {
         "id": f"{kind}:{role}:{rel_path}",
@@ -13518,7 +17262,9 @@ def _asset_record_from_optional_project_path(
     )
 
 
-def _character_asset_history_links(project_id: str, role: str, meta: dict) -> dict | None:
+def _character_asset_history_links(
+    project_id: str, role: str, meta: dict
+) -> dict | None:
     character = str(meta.get("character") or "").strip()
     if not character:
         return None
@@ -13572,9 +17318,17 @@ def _slot_target_for_asset_record(*, kind: str, role: str, meta: dict) -> dict |
     if role == "character_identity" and character and identity_id:
         return {"kind": "identity", "character": character, "identity_id": identity_id}
     if role == "identity_costume" and character and identity_id:
-        return {"kind": "identity_costume", "character": character, "identity_id": identity_id}
+        return {
+            "kind": "identity_costume",
+            "character": character,
+            "identity_id": identity_id,
+        }
     if role == "identity_portrait" and character and identity_id:
-        return {"kind": "identity_portrait", "character": character, "identity_id": identity_id}
+        return {
+            "kind": "identity_portrait",
+            "character": character,
+            "identity_id": identity_id,
+        }
     if role in {"character_portrait", "character_reference"} and character:
         return {"kind": "portrait", "character": character}
 
@@ -13691,7 +17445,9 @@ def _is_mainline_beat_director_control_ref(role: str, rel_path: str) -> bool:
     if role != "director_combined":
         return False
     normalized = str(rel_path or "")
-    return _is_beat_director_control_path(normalized) and normalized.endswith("/combined.png")
+    return _is_beat_director_control_path(normalized) and normalized.endswith(
+        "/combined.png"
+    )
 
 
 def _director_control_bundle_from_combined_ref(
@@ -13705,7 +17461,9 @@ def _director_control_bundle_from_combined_ref(
     rel = str(rel_path or "").strip()
     combined_url = str(url or "").strip()
     combined_url_path = combined_url.split("?", 1)[0]
-    if not rel.endswith("/combined.png") or not combined_url_path.endswith("/combined.png"):
+    if not rel.endswith("/combined.png") or not combined_url_path.endswith(
+        "/combined.png"
+    ):
         return None
     rel_base = rel[: -len("/combined.png")]
     url_base = combined_url_path[: -len("/combined.png")]
@@ -13859,7 +17617,9 @@ def _freezone_director_control_frames_dir(project_dir: Path) -> Path:
     return freezone_root(project_dir) / "director_control_frames"
 
 
-def _freezone_director_capture_base(project_dir: Path, episode: int, beat: int) -> tuple[Path, str]:
+def _freezone_director_capture_base(
+    project_dir: Path, episode: int, beat: int
+) -> tuple[Path, str]:
     ep_dir = f"ep{int(episode):03d}"
     beat_dir = f"beat_{int(beat):02d}"
     base_dir = _freezone_director_control_frames_dir(project_dir) / ep_dir / beat_dir
@@ -13887,16 +17647,21 @@ def _director_capture_file_payload(
                 "rel_path": rel_path,
                 "exists": exists,
                 "url": (
-                    make_static_url_for_context(ctx, rel_path, local_path=path) if exists else None
+                    make_static_url_for_context(ctx, rel_path, local_path=path)
+                    if exists
+                    else None
                 ),
                 "media_type": (
                     "image"
-                    if Path(filename).suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+                    if Path(filename).suffix.lower()
+                    in {".png", ".jpg", ".jpeg", ".webp"}
                     else "json"
                 ),
                 "size": path.stat().st_size if exists else 0,
                 "modified_at": (
-                    canvas_store.timestamp_utc_iso(path.stat().st_mtime) if exists else None
+                    canvas_store.timestamp_utc_iso(path.stat().st_mtime)
+                    if exists
+                    else None
                 ),
             }
         )
@@ -13921,7 +17686,9 @@ async def _beat_for_capture(
         close = getattr(store, "close", None)
         if close:
             await close()
-    target = next((b for b in beats if int(b.get("beat_number") or -1) == int(beat)), None)
+    target = next(
+        (b for b in beats if int(b.get("beat_number") or -1) == int(beat)), None
+    )
     if not target:
         raise HTTPException(404, f"beat not found: ep{episode} beat{beat}")
     return target
@@ -13968,8 +17735,8 @@ async def freezone_impact(
     body: ImpactRequest,
     user: dict = Depends(get_api_user),
 ):
-    ctx, username, project_name, _project_dir, _output_dir = await _resolve_freezone_project(
-        project, user, required_role="viewer"
+    ctx, username, project_name, _project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="viewer")
     )
     impacted = await compute_slot_impact(username, project_name, body.target)
     return {
@@ -13982,7 +17749,9 @@ async def freezone_impact(
     }
 
 
-def _sync_env_only_to_selected_background(project_dir: Path, episode: int, beat: int) -> bool:
+def _sync_env_only_to_selected_background(
+    project_dir: Path, episode: int, beat: int
+) -> bool:
     """Lazy mirror env_only.png → selected_background.png if env_only is newer.
 
     Why mirror at all:
@@ -14002,7 +17771,9 @@ def _sync_env_only_to_selected_background(project_dir: Path, episode: int, beat:
     Failure is silent (logged) — never block the calling route.
     """
     try:
-        env_only_path = canonical_beat_director_env_only_path(project_dir, int(episode), int(beat))
+        env_only_path = canonical_beat_director_env_only_path(
+            project_dir, int(episode), int(beat)
+        )
         if not env_only_path.is_file():
             return False
         selected_path = canonical_beat_selected_background_path(
@@ -14047,8 +17818,8 @@ async def freezone_director_capture_manifest(
     returns from director stage) should POST
     `/projects/{project}/freezone/director-capture/sync-background` first.
     """
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user, required_role="viewer"
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="viewer")
     )
     beat_data = await _beat_for_capture(
         username,
@@ -14099,9 +17870,9 @@ async def freezone_director_capture_manifest(
             "scene_id": scene_name,
             "canvas_id": canvas_id,
             "node_id": node_id or "director_capture",
-            "capture_dir": _freezone_director_capture_base(project_dir, int(episode), int(beat))[
-                0
-            ].as_posix(),
+            "capture_dir": _freezone_director_capture_base(
+                project_dir, int(episode), int(beat)
+            )[0].as_posix(),
             "editor_url": editor_url,
             "can_open_stage": can_open_stage,
             "files": files,
@@ -14137,11 +17908,14 @@ async def freezone_director_capture_sync_background(
     Idempotent — if env_only.png is missing OR already older-than /
     equal-to selected_background.png, no copy happens (returns synced=False).
     """
-    _ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user, required_role="editor"
+    _ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="editor")
     )
     synced = _sync_env_only_to_selected_background(project_dir, int(episode), int(beat))
-    return {"ok": True, "data": {"synced": synced, "episode": int(episode), "beat": int(beat)}}
+    return {
+        "ok": True,
+        "data": {"synced": synced, "episode": int(episode), "beat": int(beat)},
+    }
 
 
 @router.get(
@@ -14172,8 +17946,8 @@ async def freezone_scene_assets_for_beat(
     yet (e.g. user hasn't run scene-master generation). Caller renders only
     the available sources.
     """
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user, required_role="viewer"
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="viewer")
     )
     beat_data = await _beat_for_capture(
         username,
@@ -14203,16 +17977,24 @@ async def freezone_scene_assets_for_beat(
     )
     if scene_name:
         master_url = _resolve(canonical_scene_master_path(project_dir, scene_name))
-        reverse_url = _resolve(canonical_scene_reverse_master_path(project_dir, scene_name))
+        reverse_url = _resolve(
+            canonical_scene_reverse_master_path(project_dir, scene_name)
+        )
         # scene_director_pano_360 lives under director_worlds/<scene>/v1 —
         # `stage_manifest.resolve_pano_path` already encodes that.
         try:
             from novelvideo.director_world import stage_manifest
 
-            pano_360_url = _resolve(stage_manifest.resolve_pano_path(project_dir, scene_name))
+            pano_360_url = _resolve(
+                stage_manifest.resolve_pano_path(project_dir, scene_name)
+            )
             ply_url = _resolve(stage_manifest.resolve_ply_path(project_dir, scene_name))
-        except Exception as exc:  # noqa: BLE001 — manifest issues should not 500 the listing
-            logger.warning("scene-assets-for-beat: stage_manifest lookup failed: %s", exc)
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 — manifest issues should not 500 the listing
+            logger.warning(
+                "scene-assets-for-beat: stage_manifest lookup failed: %s", exc
+            )
 
     return {
         "ok": True,
@@ -14231,14 +18013,16 @@ async def freezone_scene_assets_for_beat(
 
 
 @router.post("/projects/{project}/freezone/push", tags=[TAG_FREEZONE_COMMIT])
-async def freezone_push(project: str, body: PushRequest, user: dict = Depends(get_api_user)):
+async def freezone_push(
+    project: str, body: PushRequest, user: dict = Depends(get_api_user)
+):
     """把 Freezone candidate 媒体写回主流程 canonical slot。
 
     源文件通常来自 `freezone/_outputs/`，也允许来自同项目作用域内的其他静态资源。
     写入前会自动备份已有目标文件。
     """
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
 
     try:
@@ -14351,8 +18135,8 @@ async def list_freezone_assets(
     返回里同时保留 `exists` 和 `url`，这样调用方可以区分：
     “这是一个已知资产概念” 和 “这是一个当前可直接引用的文件”。
     """
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user, required_role="viewer"
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="viewer")
     )
     store = await make_sqlite_store_for_context(ctx)
 
@@ -14393,8 +18177,12 @@ async def list_freezone_assets(
                     "scope": "character_default",
                     "slot": "default",
                     "age_group": str(getattr(character, "age_group", "") or ""),
-                    "sha256": str(getattr(character, "reference_audio_sha256", "") or ""),
-                    "updated_at": str(getattr(character, "reference_audio_updated_at", "") or ""),
+                    "sha256": str(
+                        getattr(character, "reference_audio_sha256", "") or ""
+                    ),
+                    "updated_at": str(
+                        getattr(character, "reference_audio_updated_at", "") or ""
+                    ),
                 },
             )
             if default_voice is not None:
@@ -14436,9 +18224,12 @@ async def list_freezone_assets(
                     or "identity"
                 )
                 identity_id = (
-                    getattr(identity, "identity_id", "") or f"{character.name}_{identity_name}"
+                    getattr(identity, "identity_id", "")
+                    or f"{character.name}_{identity_name}"
                 )
-                identity_path = canonical_identity_path(project_dir, character.name, identity_name)
+                identity_path = canonical_identity_path(
+                    project_dir, character.name, identity_name
+                )
                 assets.append(
                     _asset_record_from_path(
                         username=username,
@@ -14515,14 +18306,18 @@ async def list_freezone_assets(
                     role="identity_voice",
                     label=f"{character.name} / {identity_name}声线",
                     sublabel=character.name,
-                    stored_path=str(getattr(identity, "reference_audio_path", "") or ""),
+                    stored_path=str(
+                        getattr(identity, "reference_audio_path", "") or ""
+                    ),
                     meta={
                         "character": character.name,
                         "identity_id": identity_id,
                         "identity_name": identity_name,
                         "scope": "identity",
                         "age_group": str(getattr(identity, "age_group", "") or ""),
-                        "sha256": str(getattr(identity, "reference_audio_sha256", "") or ""),
+                        "sha256": str(
+                            getattr(identity, "reference_audio_sha256", "") or ""
+                        ),
                         "updated_at": str(
                             getattr(identity, "reference_audio_updated_at", "") or ""
                         ),
@@ -14592,10 +18387,22 @@ async def list_freezone_assets(
             if stage_manifest_module is not None:
                 seen_stage_asset_paths: set[str] = set()
                 for ply_kind, role, label in [
-                    ("master", "scene_3gs_master_ply", f"{scene_name} / 3D 世界（正面）"),
-                    ("reverse", "scene_3gs_reverse_ply", f"{scene_name} / 3D 世界（背面）"),
+                    (
+                        "master",
+                        "scene_3gs_master_ply",
+                        f"{scene_name} / 3D 世界（正面）",
+                    ),
+                    (
+                        "reverse",
+                        "scene_3gs_reverse_ply",
+                        f"{scene_name} / 3D 世界（背面）",
+                    ),
                     ("pano", "scene_3gs_pano_ply", f"{scene_name} / 3D 世界（360）"),
-                    ("custom", "scene_3gs_custom_scene", f"{scene_name} / 3D 世界（自定义）"),
+                    (
+                        "custom",
+                        "scene_3gs_custom_scene",
+                        f"{scene_name} / 3D 世界（自定义）",
+                    ),
                 ]:
                     ply_path = stage_manifest_module.resolve_ply_path(
                         project_dir,
@@ -14655,7 +18462,9 @@ async def list_freezone_assets(
     return {"ok": True, "data": assets}
 
 
-@router.get("/projects/{project}/freezone/assets/beat-context", tags=[TAG_FREEZONE_ASSETS])
+@router.get(
+    "/projects/{project}/freezone/assets/beat-context", tags=[TAG_FREEZONE_ASSETS]
+)
 async def list_freezone_beat_context_assets(
     project: str,
     episode: Optional[int] = None,
@@ -14668,8 +18477,8 @@ async def list_freezone_beat_context_assets(
     或 `freezone/_outputs`。用于 default 画布展示全局 Beat 资源；具体 Beat
     预设画布仍可继续读取 canvas `metadata.references`。
     """
-    ctx, username, project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user, required_role="viewer"
+    ctx, username, project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user, required_role="viewer")
     )
     store = await make_sqlite_store_for_context(ctx)
 
@@ -14708,7 +18517,9 @@ async def list_freezone_beat_context_assets(
             try:
                 beats = await store.get_beats_as_dicts(ep_num)
             except Exception as exc:
-                logger.warning("failed to load beats for asset context ep%s: %s", ep_num, exc)
+                logger.warning(
+                    "failed to load beats for asset context ep%s: %s", ep_num, exc
+                )
                 beats = []
             beat_numbers = sorted(
                 {
@@ -14752,19 +18563,27 @@ async def list_freezone_beat_context_assets(
                     )
                     continue
 
-                beat_data = context.get("beat_data") if isinstance(context, dict) else {}
+                beat_data = (
+                    context.get("beat_data") if isinstance(context, dict) else {}
+                )
                 refs = context.get("refs") if isinstance(context, dict) else []
                 beat_facts = {
-                    "visual_description": str((beat_data or {}).get("visual_description") or ""),
-                    "narration_segment": str((beat_data or {}).get("narration_segment") or ""),
+                    "visual_description": str(
+                        (beat_data or {}).get("visual_description") or ""
+                    ),
+                    "narration_segment": str(
+                        (beat_data or {}).get("narration_segment") or ""
+                    ),
                     "scene_id": beat_scene_id(beat_data or {}),
-                    "detected_identities": (beat_data or {}).get("detected_identities") or [],
+                    "detected_identities": (beat_data or {}).get("detected_identities")
+                    or [],
                     "detected_props": (beat_data or {}).get("detected_props") or [],
                     "sketch_colors": (
                         (context.get("sketch_context") or {}).get("sketch_colors") or {}
                     ),
                     "prop_marker_colors": (
-                        (context.get("sketch_context") or {}).get("prop_marker_colors") or {}
+                        (context.get("sketch_context") or {}).get("prop_marker_colors")
+                        or {}
                     ),
                 }
                 assets = [
@@ -14783,7 +18602,9 @@ async def list_freezone_beat_context_assets(
                     if asset is not None
                 ]
                 existing_assets = [
-                    asset for asset in assets if asset.get("exists") and asset.get("url")
+                    asset
+                    for asset in assets
+                    if asset.get("exists") and asset.get("url")
                 ]
                 flat_assets.extend(existing_assets)
                 beat_groups.append(
@@ -14799,7 +18620,9 @@ async def list_freezone_beat_context_assets(
                         "visual_description": str(
                             (beat_data or {}).get("visual_description") or ""
                         ),
-                        "narration_segment": str((beat_data or {}).get("narration_segment") or ""),
+                        "narration_segment": str(
+                            (beat_data or {}).get("narration_segment") or ""
+                        ),
                         "assets": assets,
                         "asset_count": len(existing_assets),
                     }
@@ -14825,7 +18648,9 @@ async def list_freezone_beat_context_assets(
     }
 
 
-@router.post("/projects/{project}/freezone/assets/identities", tags=[TAG_FREEZONE_ASSETS])
+@router.post(
+    "/projects/{project}/freezone/assets/identities", tags=[TAG_FREEZONE_ASSETS]
+)
 async def freezone_create_identity_asset(
     project: str,
     body: CreateIdentityAssetRequest,
@@ -14837,8 +18662,8 @@ async def freezone_create_identity_asset(
     `push` 是覆盖已有 canonical slot，
     这里则是新建一个全新的 identity slot，并注册进项目存储。
     """
-    ctx, username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
 
     character = body.character.strip()
@@ -14869,7 +18694,9 @@ async def freezone_create_identity_asset(
             age_group=body.age_group.strip(),
             source="freezone",
         )
-        if any(existing.identity_id == identity.identity_id for existing in char.identities):
+        if any(
+            existing.identity_id == identity.identity_id for existing in char.identities
+        ):
             raise HTTPException(409, f"identity already exists: {identity.identity_id}")
         target = slot_target_path(
             project_dir,
@@ -14879,7 +18706,9 @@ async def freezone_create_identity_asset(
             ),
         )
         if target.exists():
-            raise HTTPException(409, f"identity image already exists: {identity.identity_id}")
+            raise HTTPException(
+                409, f"identity image already exists: {identity.identity_id}"
+            )
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
             from PIL import Image
@@ -14921,8 +18750,8 @@ async def freezone_create_identity_asset(
 @router.post("/projects/{project}/freezone/init", tags=[TAG_FREEZONE_BOOTSTRAP])
 async def init_freezone(project: str, user: dict = Depends(get_api_user)):
     """懒创建 Freezone 目录树，可重复调用且幂等。"""
-    ctx, _username, _project_name, project_dir, _output_dir = await _resolve_freezone_project(
-        project, user
+    ctx, _username, _project_name, project_dir, _output_dir = (
+        await _resolve_freezone_project(project, user)
     )
     canvas_project_dir = _canvas_state_project_dir(ctx, project_dir)
     freezone_root(project_dir).mkdir(parents=True, exist_ok=True)

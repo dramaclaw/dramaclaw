@@ -40,6 +40,7 @@ import pytest
 
 from novelvideo import ports
 from novelvideo.chat.hermes_egress import HOME_SCOPE_EGRESS_PROJECT_ID
+from novelvideo.chat.store import ChatScope
 from novelvideo.model_gateway_runtime import current_model_gateway_context
 from novelvideo.ports.auth_contract import AgentSessionToken
 from novelvideo.ports.authz import AdmissionContext, AuthzError, BillingPrincipal
@@ -57,7 +58,7 @@ _TASK_TYPE = "agent.hermes.text"
 PLATFORM_KEY_CANARY = "PLATFORM_KEY_CANARY"
 ORG_KEY_CANARY = "ORG_KEY_CANARY"
 _PLATFORM_BASE_URL = "https://platform.canary.invalid/v1"
-_ORG_BASE_URL = "https://org.canary.invalid/v1"
+_ORG_BASE_URL = _PLATFORM_BASE_URL
 
 
 # --- doubles ---------------------------------------------------------------
@@ -167,6 +168,7 @@ class _FakeThread:
         self.id = session_id
         self.closed = False
         self._on_stream = on_stream
+        self.gateway_api_keys: list[str | None] = []
 
     async def close(self) -> None:
         self.closed = True
@@ -178,7 +180,17 @@ class _FakeThread:
     async def warm(self) -> None:
         return None
 
-    async def stream(self, prompt: str, *, current_project: str | None = None):
+    async def stream(
+        self,
+        prompt: str,
+        *,
+        current_project: str | None = None,
+        trajectory_id: str | None = None,
+        project_id: str | None = None,
+        gateway_api_key: str | None = None,
+    ):
+        del prompt, current_project, trajectory_id, project_id
+        self.gateway_api_keys.append(gateway_api_key)
         yield SimpleNamespace(
             type="thread_started", thread_id=self.id, turn_id="turn-1"
         )
@@ -225,6 +237,7 @@ def harness(monkeypatch, tmp_path):
     workspace = tmp_path / "hermes-home"
     for path in (output_dir, state_dir, runtime_dir, workspace):
         path.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("NOVELVIDEO_STATE_DIR", str(state_dir))
 
     ctx = SimpleNamespace(
         project_id=_PROJECT_ID,
@@ -287,13 +300,14 @@ def harness(monkeypatch, tmp_path):
             return self._thread(session_id)
 
     monkeypatch.setattr(hermes_pool, "_hermes_cli_path", lambda: fake_cli)
+    monkeypatch.setattr(hermes_pool, "require_hermes_fork", lambda _path: None)
     monkeypatch.setattr(
-        hermes_pool, "ensure_user_hermes_workspace", lambda _u: workspace
+        hermes_pool, "ensure_user_hermes_workspace", lambda _u, **_kwargs: workspace
     )
     monkeypatch.setattr(hermes_pool, "HermesSdkClient", FakeHermesSdkClient)
     monkeypatch.setattr(hermes_pool, "get_auth_session_port", lambda: auth_sessions)
     monkeypatch.setattr(
-        hermes_pool, "effective_gateway_fingerprint", lambda: "gateway-1"
+        hermes_pool, "gateway_origin_fingerprint", lambda: "gateway-1"
     )
     monkeypatch.setattr(
         hermes_pool,
@@ -304,7 +318,7 @@ def harness(monkeypatch, tmp_path):
     pool = hermes_pool.HermesPool(max_workers=5)
 
     async def fake_project_env(*_args, **_kwargs):
-        return {}
+        return {"DRAMACLAW_PROJECT_STATE_DIR": str(tmp_path / "project-state")}
 
     monkeypatch.setattr(pool, "_project_env", fake_project_env)
     monkeypatch.setattr(hermes_pool, "pool", pool)
@@ -364,7 +378,8 @@ def _send_home_turn(harness, *, text: str = "帮我想个故事") -> list[dict]:
 
     收帧不能停在 `chat.done`：`_stream_home_turn` 的 `finally` 先发 `chat.done`，
     异常才冒到 WS 主循环变成 `error` 帧。停在 `chat.done` 会把拒绝读成成功。
-    这里改用哨兵事件——路由对未知事件的固定回应——收到它才算本轮帧收全。
+    这里在收到 `chat.done` 后再发哨兵事件。活跃回合有独立的客户端事件接收器，
+    提前发送会被它消费；等回合结束后发送，才能由 WS 主循环确认帧已收全。
     """
     frames: list[dict] = []
     with harness.client.websocket_connect("/api/v1/chat/ws") as websocket:
@@ -377,19 +392,29 @@ def _send_home_turn(harness, *, text: str = "帮我想个故事") -> list[dict]:
                 "text": text,
             }
         )
-        websocket.send_json({"type": _DRAIN_EVENT})
+        drain_sent = False
         while True:
             frame = websocket.receive_json()
             if frame.get("message") == _DRAIN_REPLY:
                 break
             frames.append(frame)
+            if frame.get("type") in {"chat.done", "error"} and not drain_sent:
+                websocket.send_json({"type": _DRAIN_EVENT})
+                drain_sent = True
     return frames
 
 
-def _assert_org_key_only(env: dict[str, str]) -> None:
-    assert env.get("NEWAPI_API_KEY") == ORG_KEY_CANARY, env
-    leaked = [key for key, value in env.items() if PLATFORM_KEY_CANARY in str(value)]
-    assert leaked == [], f"platform canary leaked into child env keys: {leaked}"
+def _assert_worker_env_is_keyless(env: dict[str, str]) -> None:
+    assert env.get("NEWAPI_API_KEY") == "dramaclaw-per-turn-placeholder", env
+    assert env.get("OPENAI_API_KEY") in {None, "dramaclaw-per-turn-placeholder"}, env
+    assert env.get("DRAMACLAW_GATEWAY_CREDENTIAL_MODE") == "per_turn_required", env
+    assert ORG_KEY_CANARY not in str(env)
+    assert PLATFORM_KEY_CANARY not in str(env)
+
+
+def _assert_last_turn_key(harness, expected: str) -> None:
+    assert harness.threads, "no Hermes thread was created"
+    assert harness.threads[-1].gateway_api_keys == [expected]
 
 
 # --- C2-01 -----------------------------------------------------------------
@@ -405,7 +430,8 @@ def test_c2_01_home_turn_launches_hermes_with_the_org_key(harness):
     assert [f for f in frames if f.get("type") == "error"] == [], frames
     assert frames[-1]["type"] == "chat.done"
     assert len(harness.envs) == 1, harness.envs
-    _assert_org_key_only(harness.envs[0])
+    _assert_worker_env_is_keyless(harness.envs[0])
+    _assert_last_turn_key(harness, ORG_KEY_CANARY)
     assert harness.envs[0]["NEWAPI_BASE_URL"] == _ORG_BASE_URL
     # 喂给 admit_model_task 的必须是 user_id，不是登录名。
     assert [call[0] for call in authz.calls] == [_USER_ID]
@@ -439,7 +465,8 @@ def test_c2_02_session_identity_stays_home_and_the_sentinel_never_reaches_the_ch
     assert [f for f in frames if f.get("type") == "error"] == [], frames
     env = harness.envs[0]
     # 出网侧确实用了哨兵……
-    _assert_org_key_only(env)
+    _assert_worker_env_is_keyless(env)
+    _assert_last_turn_key(harness, ORG_KEY_CANARY)
     assert harness.observed[0].project_id == HOME_SCOPE_EGRESS_PROJECT_ID
     # ……但会话侧仍是 home：子进程里没有 project id，哨兵一个字节都没漏进去。
     assert "DRAMACLAW_PROJECT_ID" not in env, env
@@ -482,8 +509,8 @@ def test_c2_04_platform_identity_path_is_unchanged(harness):
     assert [f for f in frames if f.get("type") == "error"] == [], frames
     assert frames[-1]["type"] == "chat.done"
     assert len(harness.envs) == 1
-    assert harness.envs[0]["NEWAPI_API_KEY"] == PLATFORM_KEY_CANARY
-    assert "NEWAPI_BASE_URL" not in harness.envs[0]
+    _assert_worker_env_is_keyless(harness.envs[0])
+    _assert_last_turn_key(harness, PLATFORM_KEY_CANARY)
     assert ORG_KEY_CANARY not in str(harness.envs[0])
     # 平台路径逐字节不变：不绑上下文、不解组织凭证、不动账本。
     assert harness.observed == [None]
@@ -507,7 +534,8 @@ def test_c2_05_gray_disabled_behaves_exactly_like_the_platform_path(harness):
     assert frames[-1]["type"] == "chat.done"
     assert len(authz.calls) == 1
     assert len(harness.envs) == 1
-    assert harness.envs[0]["NEWAPI_API_KEY"] == PLATFORM_KEY_CANARY
+    _assert_worker_env_is_keyless(harness.envs[0])
+    _assert_last_turn_key(harness, PLATFORM_KEY_CANARY)
     assert ORG_KEY_CANARY not in str(harness.envs[0])
     assert harness.observed == [None]
     assert credentials.admissions == []
@@ -547,7 +575,8 @@ def test_c2_07_identity_is_decided_by_user_id_not_by_login_name(harness):
     frames = _send_home_turn(harness)
 
     assert frames[-1]["type"] == "chat.done", frames
-    _assert_org_key_only(harness.envs[0])
+    _assert_worker_env_is_keyless(harness.envs[0])
+    _assert_last_turn_key(harness, ORG_KEY_CANARY)
     # 判定侧一律 user_id；登录名一次都不许出现在身份判定入参里。
     assert [call[0] for call in authz.calls] == [_USER_ID]
     assert _USERNAME not in [call[0] for call in authz.calls]
@@ -681,6 +710,52 @@ def test_c2_09_scope_does_not_leak_out_of_the_turn(harness):
     assert current_model_gateway_context() is None
 
 
+def test_home_codex_uses_backend_neutral_service_without_hermes_worker(harness):
+    captured: dict[str, object] = {}
+
+    async def fake_stream(username, project, prompt, on_event, **kwargs):
+        captured.update(
+            username=username,
+            project=project,
+            prompt=prompt,
+            egress_project_id=kwargs.get("egress_project_id"),
+            store_scope=kwargs.get("store_scope"),
+        )
+        await on_event(
+            {"type": "thread_started", "thread_id": "codex-thread", "turn_id": "turn-1"}
+        )
+        await on_event({"type": "assistant_delta", "text": "codex says hello"})
+        message = {
+            "id": 1,
+            "role": "assistant",
+            "content": "codex says hello",
+            "media": [],
+        }
+        await on_event({"type": "done", "message": message})
+        return message
+
+    harness.monkeypatch.setattr(
+        harness.chat_service, "get_chat_backend_name", lambda: "codex"
+    )
+    harness.monkeypatch.setattr(
+        harness.chat_service, "stream_assistant_reply", fake_stream
+    )
+    _use_authz(harness.monkeypatch, _Authz(kind="platform"))
+
+    frames = _send_home_turn(harness)
+
+    assert [frame for frame in frames if frame.get("type") == "error"] == []
+    assert any(frame.get("type") == "thread.started" for frame in frames)
+    assert any(frame.get("type") == "assistant.delta" for frame in frames)
+    assert any(frame.get("type") == "assistant.message" for frame in frames)
+    assert any(frame.get("type") == "chat.done" for frame in frames)
+    assert captured["username"] == _USERNAME
+    assert captured["project"] == ""
+    assert captured["egress_project_id"] == HOME_SCOPE_EGRESS_PROJECT_ID
+    assert captured["store_scope"] == ChatScope(kind="home")
+    assert harness.envs == []
+
+
 def test_c2_09b_scope_does_not_leak_on_the_exception_path(harness):
     _use_authz(harness.monkeypatch, _Authz(kind="organization"))
     _use_org_credentials(harness.monkeypatch)
@@ -773,12 +848,15 @@ def _send_project_turn(harness, *, text: str = "画个分镜") -> list[dict]:
                 "text": text,
             }
         )
-        websocket.send_json({"type": _DRAIN_EVENT})
+        drain_sent = False
         while True:
             frame = websocket.receive_json()
             if frame.get("message") == _DRAIN_REPLY:
                 break
             frames.append(frame)
+            if frame.get("type") in {"chat.done", "error"} and not drain_sent:
+                websocket.send_json({"type": _DRAIN_EVENT})
+                drain_sent = True
     return frames
 
 
@@ -797,8 +875,8 @@ def test_c2_11_concurrent_home_turn_runs_its_own_admission(harness):
     本用例就是这条闭合的守门人。
 
     反证形式：在 authz 假件上断言 `admit_model_task` 被调用**两次**
-    （两次 root_task_id 互不相同），并断言没有第二个 worker 被起起来——
-    继承一旦发生，第二个 worker 会带着组织 Key 出现在 `harness.envs` 里。
+    （两次 root_task_id 互不相同），并验证因 scope 不同创建的两个 worker 都不含
+    真实密钥，各回合只通过逐轮参数收到自己的组织凭据。
     """
     authz = _Authz(kind="organization")
     _use_authz(harness.monkeypatch, authz)
@@ -809,6 +887,8 @@ def test_c2_11_concurrent_home_turn_runs_its_own_admission(harness):
     async def concurrent_home_turn() -> None:
         # project 回合正在流式输出（slot.active_turns == 1）时，另一个标签页发来
         # 一条 home 消息。走的是同一个 app 的同一条 WS 路由。
+        # 钩子只触发一次；并发请求若创建自己的线程，不得递归再发同一请求。
+        harness.stream_hook["fn"] = None
         home_frames.extend(
             await _home_turn_via_asgi(
                 harness, text="顺便讲个笑话", turn_id="turn-home-concurrent"
@@ -822,7 +902,8 @@ def test_c2_11_concurrent_home_turn_runs_its_own_admission(harness):
     # project 回合本身没被并发调用破坏，且仍是组织 Key。
     assert [f for f in project_frames if f.get("type") == "error"] == [], project_frames
     assert project_frames[-1]["type"] == "chat.done"
-    _assert_org_key_only(harness.envs[0])
+    _assert_worker_env_is_keyless(harness.envs[0])
+    assert harness.threads[0].gateway_api_keys == [ORG_KEY_CANARY]
 
     # 反证一：home 回合跑了**自己的** admit，两次 root_task_id 互不相同。
     assert len(authz.calls) == 2, authz.calls
@@ -838,23 +919,24 @@ def test_c2_11_concurrent_home_turn_runs_its_own_admission(harness):
         HOME_SCOPE_EGRESS_PROJECT_ID,
     }
 
-    # 真正的安全属性：**没有**第二个 worker 被起起来。
-    # 继承那条缝若还在，`_rotate_slot_locked` 会用 project 回合的 authorization
-    # 再起一个带组织 Key 的 worker——那一轮从未走过准入。
-    assert len(harness.envs) == 1, harness.envs
-    assert harness.auth_sessions.created == 1
+    # scope 不同会创建独立 worker，但真实凭据不能落入任一 worker 环境。
+    assert len(harness.envs) == 2, harness.envs
+    assert harness.auth_sessions.created == 2
+    for env in harness.envs:
+        _assert_worker_env_is_keyless(env)
+    assert [thread.gateway_api_keys for thread in harness.threads] == [
+        [ORG_KEY_CANARY],
+        [ORG_KEY_CANARY],
+    ]
 
-    # 带 authorization 的并发调用撞上在途的组织 slot，走的是拆除重建路径；
-    # 在途回合还没结束时它拿不到 worker，于是这一轮被拒。拒绝＝不继承，
-    # 正是本用例要的结果（用户重试即可，与任何并发组织调用的既有语义一致）。
-    # （收帧用的哨兵事件本身也回一条 error 帧，排掉它再数。）
+    # 两个回合均完成，且没有继承/并发边界错误。
     home_errors = [
         f
         for f in home_frames
         if f.get("type") == "error" and f.get("message") != _DRAIN_REPLY
     ]
-    assert len(home_errors) == 1, home_frames
-    assert home_errors[0]["turn_id"] == "turn-home-concurrent"
+    assert home_errors == [], home_frames
+    assert any(f.get("type") == "chat.done" for f in home_frames)
     assert ORG_KEY_CANARY not in str(home_frames)
 
 

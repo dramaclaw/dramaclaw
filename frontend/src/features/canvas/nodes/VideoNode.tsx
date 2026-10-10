@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
+import { selectVideoModel } from "@/features/canvas/domain/catalogVideoModels";
+import { compileWorkflowNodePrompt } from "@/features/canvas/application/workflowRecipeRuntime";
 import {
   memo,
   useCallback,
@@ -64,6 +66,12 @@ import {
   type VideoGenQuality,
   type VideoNodeData,
 } from "@/features/canvas/domain/canvasNodes";
+import {
+  publishNodeActionAccepted,
+  publishNodeActionError,
+  publishNodeActionSuccess,
+  subscribeNodeAction,
+} from "@/features/canvas/application/nodeActionResult";
 import {
   audioReferenceDurationRejection,
   MAX_AUDIO_REFERENCE_DURATION_MS,
@@ -171,6 +179,10 @@ import {
 } from "@/features/canvas/ui/NodeSideActionRail";
 import { VideoClipPanel } from "@/features/canvas/nodes/VideoClipPanel";
 import {
+  submitVideoUpscale,
+  VIDEO_UPSCALE_RESOLUTIONS,
+} from "@/features/canvas/application/videoUpscale";
+import {
   CAMERA_MOVEMENT_PRESETS,
   findCameraMovementPreset,
   type CameraMovementPreset,
@@ -195,6 +207,7 @@ import {
   type FreezoneVideoAspectRatio,
   type FreezoneVideoReferenceItem,
   type FreezoneVideoResolution,
+  type FreezoneVideoUpscaleResolution,
 } from "@/api/ops";
 import {
   awaitTaskCompletion,
@@ -661,21 +674,10 @@ export const VideoNode = memo(
       isLoading: videoModelsLoading,
       isFallback: videoModelsFallback,
     } = useFreezoneVideoModels();
-    // Same fix as ImageGenNode: when no model is explicitly picked, default to
-    // the FIRST live model (what ProviderModelPicker displays) rather than the
-    // static DEFAULT_VIDEO_MODEL_ID, so the displayed model matches the value
-    // actually sent to /freezone/video/gen.
-    const selectedVideoModel = useMemo(() => {
-      const persisted =
-        typeof data.model === "string" && data.model.length > 0
-          ? data.model
-          : null;
-      return (
-        (persisted
-          ? availableVideoModels.find((model) => model.id === persisted)
-          : undefined) ?? availableVideoModels[0]
-      );
-    }, [availableVideoModels, data.model]);
+    const selectedVideoModel = useMemo(
+      () => selectVideoModel(availableVideoModels, data.model),
+      [availableVideoModels, data.model],
+    );
     const modelId = selectedVideoModel?.id ?? "";
     const selectedVideoModelId = selectedVideoModel?.apiModel ?? selectedVideoModel?.id ?? modelId;
     const isHappyHorseModel = isHappyHorseVideoModel(selectedVideoModelId);
@@ -1536,7 +1538,7 @@ export const VideoNode = memo(
       } else {
         target = "textToVideo";
       }
-      if (genMode !== target) {
+      if (genMode !== target && isVideoModeSupportedByModel(target, selectedVideoModel)) {
         updateNodeData(id, { genMode: target });
       }
     }, [
@@ -2112,12 +2114,28 @@ export const VideoNode = memo(
       const userPrompt = [upstreamTextJoined, trimmedPrompt]
         .filter((s) => s.length > 0)
         .join("\n\n");
-      const composedPrompt = fragment
+      const fallbackPrompt = fragment
         ? userPrompt
           ? `${fragment}，${userPrompt}`
           : fragment
         : userPrompt;
       try {
+        const composedPrompt = await compileWorkflowNodePrompt({
+          nodeId: id,
+          nodeData: data,
+          nodeKind: "video",
+          nodePrompt: trimmedPrompt,
+          upstreamText: upstreamTextJoined,
+          upstreamContents,
+          fallbackPrompt,
+          onCompileMetadata: ({ mode, prompt: compiledPrompt, recipeIds }) => updateNodeData(id, {
+            workflowRecipeCompileMode: mode,
+            workflowRecipeCompiledAt: new Date().toISOString(),
+            workflowRecipeCompiledPrompt: compiledPrompt,
+            prompt: compiledPrompt,
+            workflowRecipeIds: recipeIds,
+          }),
+        });
         // Walk the current edges/nodes once — used by every non-textToVideo
         // branch to collect upstream resources. 必须与 UI 编号侧（useUpstreamNodes）
         // 同源：按连线顺序收集。曾按 state.nodes 顺序（节点创建顺序）收集，先创建
@@ -2766,7 +2784,13 @@ export const VideoNode = memo(
         void refreshHistory();
       } catch (error) {
         console.error("[video-node] video gen failed", error);
-        updateNodeData(id, { isGenerating: false, generationStartedAt: null });
+        // Failures before any run starts (e.g. Recipe compilation) must land on
+        // the node too, or the workflow runner only sees "no videoUrl".
+        updateNodeData(id, {
+          isGenerating: false,
+          generationStartedAt: null,
+          generationError: backendErrorToastMessage(error, t),
+        });
         setAlbumPendingTotal(id, 0);
       }
       } finally {
@@ -2801,7 +2825,59 @@ export const VideoNode = memo(
       t,
       updateNodeData,
       upstreamTextJoined,
+      upstreamContents,
     ]);
+
+    useEffect(() => {
+      return subscribeNodeAction(({ nodeId, action, executionMode, requestId }) => {
+        if (nodeId !== id || action !== "generate_video") return;
+        publishNodeActionAccepted(requestId, id, action);
+        const latest = useCanvasStore.getState().nodes.find((node) => node.id === id);
+        const latestData = isVideoNode(latest) ? latest.data : data;
+        if (latestData.isUpscaleNode === true) {
+          const sourceUrl =
+            typeof latestData.upscaleSourceUrl === "string" ? latestData.upscaleSourceUrl : "";
+          const resolution =
+            typeof latestData.upscaleResolution === "string" &&
+            VIDEO_UPSCALE_RESOLUTIONS.includes(
+              latestData.upscaleResolution as FreezoneVideoUpscaleResolution,
+            )
+              ? (latestData.upscaleResolution as FreezoneVideoUpscaleResolution)
+              : "1080p";
+          if (!sourceUrl) {
+            publishNodeActionError(requestId, id, action, new Error("缺少高清视频源"));
+            return;
+          }
+          void submitVideoUpscale(id, { sourceUrl, resolution })
+            .then(() => {
+              const finished = useCanvasStore.getState().nodes.find((node) => node.id === id);
+              const videoUrl =
+                isVideoNode(finished) && typeof finished.data.videoUrl === "string"
+                  ? finished.data.videoUrl
+                  : undefined;
+              publishNodeActionSuccess(requestId, id, action, {
+                ...(videoUrl ? { videoUrl } : {}),
+                ...(executionMode === "single" ? { submitted: true } : {}),
+              });
+            })
+            .catch((error) => publishNodeActionError(requestId, id, action, error));
+          return;
+        }
+        void handleSubmit()
+          .then(() => {
+            const finished = useCanvasStore.getState().nodes.find((node) => node.id === id);
+            const videoUrl =
+              isVideoNode(finished) && typeof finished.data.videoUrl === "string"
+                ? finished.data.videoUrl
+                : undefined;
+            publishNodeActionSuccess(requestId, id, action, {
+              ...(videoUrl ? { videoUrl } : {}),
+              ...(executionMode === "single" ? { submitted: true } : {}),
+            });
+          })
+          .catch((error) => publishNodeActionError(requestId, id, action, error));
+      });
+    }, [data, handleSubmit, id]);
 
     const hasMainlineContext = hasMainlineContexts(
       (data as { mainline_context?: unknown }).mainline_context,

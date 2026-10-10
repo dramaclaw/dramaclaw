@@ -1,0 +1,284 @@
+import i18next from "i18next";
+import type { CanvasChatCommandApplyResult } from "@/features/freezone/canvasChatCommands";
+import {
+  canvasCommandAgentHintFromResult,
+  canvasCommandUserMessageFromResult,
+} from "@/features/freezone/canvasCommandUserMessages";
+import { api } from "@/lib/api";
+
+type CanvasApplyStatus = "accepted" | "applied" | "pending" | "partially_applied" | "failed" | "cancelled_by_user";
+
+const workflowResultSyncPendingMessage = () => i18next.t(
+  "freezone.chat.workflowOutputSyncPendingMessage",
+  { defaultValue: "工作流已完成，画布节点产物待同步；请稍后刷新画布核对结果，暂勿重复生成。" },
+);
+const WORKFLOW_RESULT_SYNC_PENDING_HINT =
+  "The server workflow completed, but the canvas node output is not visible yet. " +
+  "Do not claim the artifact is ready. Do not rerun generation. Ask the user to wait and refresh the canvas.";
+const workflowReconciliationPendingMessage = () => i18next.t(
+  "freezone.chat.workflowReconciliationPendingMessage",
+  { defaultValue: "画布产物已生成，服务端仍在核对任务产物；请稍后检查运行状态，暂勿重复生成。" },
+);
+const WORKFLOW_RECONCILIATION_PENDING_HINT =
+  "The canvas output is visible, but the server is still verifying the task artifact. " +
+  "Do not claim the workflow finished. Do not rerun generation. Ask the user to check the run status later.";
+
+export const FREEZONE_CANVAS_COMMAND_TOOL_RESULT_EVENT = "freezone/canvas-command-tool-result";
+const CANVAS_COMMAND_RECEIPTS_STORAGE_KEY = "dramaclaw.canvas-command-receipts.v1";
+const CANVAS_COMMAND_RECEIPT_TTL_MS = 24 * 60 * 60 * 1000;
+const CANVAS_COMMAND_RECEIPT_LIMIT = 100;
+
+export type CanvasCommandToolResultPayload = {
+  type: "canvas.command.result";
+  received_at?: number;
+  turn_id?: string | null;
+  anchor_text_prefix?: string | null;
+  bridge_key: string;
+  followup?: boolean;
+  project_id: string | null;
+  canvas_id: string | null;
+  agent_id?: string | null;
+  tool_call_status: "completed" | "cancelled" | "failed";
+  canvas_apply_status: CanvasApplyStatus;
+  applied: boolean;
+  cancelled: boolean;
+  errors: string[];
+  applied_count: number;
+  opened_ui_actions: number;
+  created_node_ids: string[];
+  command_results: Array<Record<string, unknown>>;
+  message: string;
+  user_message?: string;
+  agent_hint?: string;
+};
+
+type StoredCanvasCommandReceipt = {
+  storedAt: number;
+  payload: CanvasCommandToolResultPayload;
+};
+
+function loadCanvasCommandReceipts(): Record<string, StoredCanvasCommandReceipt> {
+  if (typeof window === "undefined") return {};
+  try {
+    const decoded = JSON.parse(window.localStorage.getItem(CANVAS_COMMAND_RECEIPTS_STORAGE_KEY) ?? "{}");
+    return decoded && typeof decoded === "object" && !Array.isArray(decoded)
+      ? decoded as Record<string, StoredCanvasCommandReceipt>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function storeCanvasCommandReceipt(payload: CanvasCommandToolResultPayload) {
+  if (typeof window === "undefined" || !payload.bridge_key) return;
+  const now = Date.now();
+  const receipts = Object.entries(loadCanvasCommandReceipts())
+    .filter(([, receipt]) => receipt?.storedAt >= now - CANVAS_COMMAND_RECEIPT_TTL_MS)
+    .sort(([, left], [, right]) => left.storedAt - right.storedAt)
+    .slice(-(CANVAS_COMMAND_RECEIPT_LIMIT - 1));
+  const next = Object.fromEntries(receipts);
+  next[receiptStorageKey(payload)] = { storedAt: now, payload };
+  try {
+    window.localStorage.setItem(CANVAS_COMMAND_RECEIPTS_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // Private browsing and storage quotas must not block result delivery.
+  }
+}
+
+function receiptStorageKey(payload: CanvasCommandToolResultPayload): string {
+  return payload.followup ? `${payload.bridge_key}:followup` : payload.bridge_key;
+}
+
+function removeCanvasCommandReceipt(payload: CanvasCommandToolResultPayload) {
+  if (typeof window === "undefined" || !payload.bridge_key) return;
+  const receipts = loadCanvasCommandReceipts();
+  const key = receiptStorageKey(payload);
+  if (!(key in receipts)) return;
+  delete receipts[key];
+  try {
+    window.localStorage.setItem(CANVAS_COMMAND_RECEIPTS_STORAGE_KEY, JSON.stringify(receipts));
+  } catch {
+    // A failed cleanup only causes a harmless idempotent replay on reconnect.
+  }
+}
+
+export function readCanvasCommandReceipt(
+  bridgeKey: string,
+): CanvasCommandToolResultPayload | null {
+  const receipt = loadCanvasCommandReceipts()[bridgeKey];
+  if (!receipt || receipt.storedAt < Date.now() - CANVAS_COMMAND_RECEIPT_TTL_MS) return null;
+  return receipt.payload?.bridge_key === bridgeKey ? receipt.payload : null;
+}
+
+function emitCanvasCommandToolResult(payload: CanvasCommandToolResultPayload) {
+  window.dispatchEvent(new CustomEvent(FREEZONE_CANVAS_COMMAND_TOOL_RESULT_EVENT, { detail: payload }));
+  const { type: _type, ...body } = payload;
+  void api.post("api/v1/chat/canvas-command-tool-result", {
+    json: body,
+    timeout: 30_000,
+  }).then(() => {
+    removeCanvasCommandReceipt(payload);
+  }).catch((error) => {
+    console.warn("[freezone-canvas-command] failed to report canvas command result", error);
+  });
+}
+
+export function replayCanvasCommandToolResult(payload: CanvasCommandToolResultPayload) {
+  emitCanvasCommandToolResult(payload);
+}
+
+export function replayPendingCanvasCommandFollowups() {
+  const now = Date.now();
+  for (const receipt of Object.values(loadCanvasCommandReceipts())) {
+    if (receipt?.payload?.followup && receipt.storedAt >= now - CANVAS_COMMAND_RECEIPT_TTL_MS) {
+      emitCanvasCommandToolResult(receipt.payload);
+    }
+  }
+}
+
+function workflowExecutionFailed(result: CanvasChatCommandApplyResult): boolean {
+  const workflowCommandIndexes = new Set(
+    result.commandResults
+      .filter((step) => step.type === "run_workflow")
+      .map((step) => step.commandIndex),
+  );
+  return result.commandResults.some((step) =>
+    step.status === "error" && workflowCommandIndexes.has(step.commandIndex));
+}
+
+function canvasApplyStatusFromResult(result: CanvasChatCommandApplyResult): CanvasApplyStatus {
+  if (workflowExecutionFailed(result)) return "failed";
+  const successCount = result.commandResults.filter((step) => step.status === "success").length;
+  const errorCount = result.commandResults.filter((step) => step.status === "error").length;
+  if (successCount > 0 && errorCount > 0) return "partially_applied";
+  if (errorCount > 0 || result.errors.length > 0) return "failed";
+  if (result.commandResults.some((step) => step.status === "pending")) return "pending";
+  return "applied";
+}
+
+export function reportCanvasCommandToolResult({
+  bridgeKey,
+  turnId,
+  anchorTextPrefix,
+  projectId,
+  canvasId,
+  agentId,
+  result,
+  cancelled = false,
+  accepted = false,
+  followup = false,
+}: {
+  bridgeKey?: string | null;
+  turnId?: string | null;
+  anchorTextPrefix?: string | null;
+  projectId?: string | null;
+  canvasId?: string | null;
+  agentId?: string | null;
+  result?: CanvasChatCommandApplyResult;
+  cancelled?: boolean;
+  accepted?: boolean;
+  followup?: boolean;
+}) {
+  if (!bridgeKey) return;
+  const payload = buildCanvasCommandToolResultPayload({
+    bridgeKey,
+    turnId,
+    anchorTextPrefix,
+    projectId,
+    canvasId,
+    agentId,
+    result,
+    cancelled,
+    accepted,
+    followup,
+  });
+  storeCanvasCommandReceipt(payload);
+  emitCanvasCommandToolResult(payload);
+}
+
+function buildCanvasCommandToolResultPayload({
+  bridgeKey,
+  turnId,
+  anchorTextPrefix,
+  projectId,
+  canvasId,
+  agentId,
+  result,
+  cancelled = false,
+  accepted = false,
+  followup = false,
+}: {
+  bridgeKey?: string | null;
+  turnId?: string | null;
+  anchorTextPrefix?: string | null;
+  projectId?: string | null;
+  canvasId?: string | null;
+  agentId?: string | null;
+  result?: CanvasChatCommandApplyResult;
+  cancelled?: boolean;
+  accepted?: boolean;
+  followup?: boolean;
+}): CanvasCommandToolResultPayload {
+  const workflowFailed = result ? workflowExecutionFailed(result) : false;
+  const canvasApplyStatus: CanvasApplyStatus = accepted
+    ? "accepted"
+    : cancelled
+    ? "cancelled_by_user"
+    : result
+      ? canvasApplyStatusFromResult(result)
+      : "failed";
+  const reconciliationPending = result?.commandResults.some((step) =>
+    step.status === "pending" && step.output?.reason === "workflow_server_reconciliation_pending") ?? false;
+  const userMessage = accepted
+    ? undefined
+    : cancelled
+    ? "画布操作已取消，没有应用到画布。"
+    : canvasApplyStatus === "pending"
+      ? reconciliationPending ? workflowReconciliationPendingMessage() : workflowResultSyncPendingMessage()
+    : canvasApplyStatus === "failed"
+      ? canvasCommandUserMessageFromResult(result?.errors, result?.commandResults)
+      : undefined;
+  const agentHint = accepted
+    ? "The canvas command has been submitted to the canvas. Reply briefly that it has been submitted; do not say a tool was opened or ask the user to operate it manually."
+    : cancelled
+    ? "Do not claim the canvas change was applied; ask the user before retrying."
+    : canvasApplyStatus === "pending"
+      ? reconciliationPending ? WORKFLOW_RECONCILIATION_PENDING_HINT : WORKFLOW_RESULT_SYNC_PENDING_HINT
+    : canvasApplyStatus === "failed"
+      ? canvasCommandAgentHintFromResult(result?.errors, result?.commandResults)
+      : undefined;
+  return {
+    type: "canvas.command.result",
+    received_at: Date.now(),
+    turn_id: turnId ?? null,
+    anchor_text_prefix: anchorTextPrefix ?? null,
+    bridge_key: bridgeKey ?? "",
+    ...(followup ? { followup: true } : {}),
+    project_id: projectId ?? null,
+    canvas_id: canvasId ?? null,
+    agent_id: agentId ?? null,
+    tool_call_status: cancelled ? "cancelled" : canvasApplyStatus === "failed" ? "failed" : "completed",
+    canvas_apply_status: canvasApplyStatus,
+    applied: accepted || (!cancelled && !workflowFailed && canvasApplyStatus !== "pending"
+      && Boolean(result && (result.applied > 0 || result.openedUiActions > 0))),
+    cancelled,
+    errors: result?.errors ?? [],
+    applied_count: result?.applied ?? 0,
+    opened_ui_actions: result?.openedUiActions ?? 0,
+    created_node_ids: result?.createdNodeIds ?? [],
+    command_results: result?.commandResults ?? [],
+    message: accepted
+      ? "Canvas command was submitted to the canvas."
+      : cancelled
+      ? "画布操作已取消，没有应用到画布。"
+      : canvasApplyStatus === "pending"
+        ? userMessage ?? workflowResultSyncPendingMessage()
+      : canvasApplyStatus === "failed"
+        ? userMessage ?? "画布操作没有完成，我会换一种方式再试。"
+        : "Frontend executor reported the canvas command result.",
+    ...(userMessage ? { user_message: userMessage } : {}),
+    ...(agentHint ? { agent_hint: agentHint } : {}),
+  };
+}
+
+export const buildCanvasCommandToolResultPayloadForTest = buildCanvasCommandToolResultPayload;

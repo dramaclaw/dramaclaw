@@ -1325,6 +1325,7 @@ async def test_freezone_image_reverse_prompt_enqueues_feature_billing(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setenv("ST_EDITION", "ee")
     monkeypatch.setenv("FREEZONE_VISION_MODEL", "freezone-vision-model")
     project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
     source = project_dir / "freezone" / "_uploads" / "source.png"
@@ -2179,6 +2180,7 @@ def test_template_edit_aspect_ratio_maps_modes() -> None:
     assert _template_edit_aspect_ratio("character_face_three_view") == "3:2"
     assert _template_edit_aspect_ratio("storyboard_25_grid") == "original"
     assert _template_edit_aspect_ratio("cinematic_light_correction") == "original"
+    assert _template_edit_aspect_ratio("scene_setting_sheet") == "16:9"
 
 
 @pytest.mark.asyncio
@@ -2943,6 +2945,17 @@ async def test_delete_canvas_soft_deletes_and_hides_tombstone_from_list(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _project_dir, _output_dir = _patch_freezone_project(monkeypatch, tmp_path)
+    archived = []
+
+    async def archive_threads(username, project, canvas_id, **kwargs):
+        archived.append((username, project, canvas_id, kwargs["project_state_dir"]))
+        return 1
+
+    monkeypatch.setattr(
+        freezone_routes.chat_service,
+        "archive_codex_canvas_threads",
+        archive_threads,
+    )
     state_dir = _canvas_state_dir(tmp_path)
     canvas_file = state_dir / "freezone" / "canvases" / "experiment.json"
     canvas_file.parent.mkdir(parents=True)
@@ -2965,6 +2978,7 @@ async def test_delete_canvas_soft_deletes_and_hides_tombstone_from_list(
     )
 
     assert deleted["data"]["deleted"] is True
+    assert archived == [("admin", "58", "experiment", state_dir)]
     assert not canvas_file.exists()
     tombstone = canvas_file.with_name("experiment.deleted.json")
     assert tombstone.exists()
@@ -3370,6 +3384,36 @@ def test_storyboard_25_grid_prompt_preserves_cell_aspect_ratio() -> None:
     assert "Use OTS only when the source contains" in prompt
     assert "Do not crop each storyboard frame into a different ratio" in prompt
     assert "5x5 grid with thin dividers" in prompt
+
+
+def test_scene_setting_sheet_prompt_lists_all_eight_blocks() -> None:
+    prompt = _build_template_edit_prompt(
+        freezone_routes.FreezoneTemplateEditRequest(
+            source_url="/static/admin/59/freezone/_uploads/source.png",
+            mode="scene_setting_sheet",
+            prompt="遗忘的悬浮神庙",
+        )
+    )
+
+    assert "libtv-style scene setting sheet" in prompt
+    assert "one single landscape design sheet" in prompt
+    assert "dark neutral background" in prompt
+    # 八个板块缺一不可——少一块产出就退化成普通概念图，跟角色三视图撞脸。
+    for block in (
+        "1 scene key visual",
+        "2 mood concept sketches",
+        "3 color and material reference",
+        "4 scene viewpoint reference",
+        "5 architecture and structure design",
+        "6 set prop design",
+        "7 vegetation and nature design",
+        "8 atmosphere variants",
+    ):
+        assert block in prompt
+    assert "short title block" in prompt
+    assert "same language as the user prompt" in prompt
+    # 用户补充提示词照旧拼在模板后面。
+    assert prompt.endswith("User prompt:\n遗忘的悬浮神庙")
 
 
 def test_template_edit_projection_prompt_requires_visible_time_change() -> None:
@@ -4071,11 +4115,19 @@ async def test_freezone_celery_text_generate_runner_records_project_node_history
         def update_progress_for_project(self, *_args, **_kwargs):
             return None
 
+    reservations: list[dict] = []
+
+    class FakeUsageMeter:
+        async def reserve_feature_start_credits(self, **kwargs):
+            reservations.append(kwargs)
+            return {"id": "reservation_actual_text"}
+
     monkeypatch.setattr(
         "novelvideo.freezone.text_node.generate_freezone_text",
         fake_generate_freezone_text,
     )
     monkeypatch.setattr(freezone_runner, "get_task_manager", lambda: FakeTaskManager())
+    monkeypatch.setattr(freezone_runner, "get_usage_meter", lambda: FakeUsageMeter())
 
     result = await freezone_runner._run_freezone_text_generate_async(
         {
@@ -4085,7 +4137,12 @@ async def test_freezone_celery_text_generate_runner_records_project_node_history
                 "prompt": "写一段雨夜重逢",
                 "canvas_id": "canvas_a",
                 "node_id": "node_text",
-            }
+            },
+            "billing_metadata": {
+                "feature_key": "freezone.text_generate",
+                "result_billing_version_ack": 2,
+            },
+            "__run_task_id": "task_text_generate",
         },
         ctx,
     )
@@ -4096,8 +4153,118 @@ async def test_freezone_celery_text_generate_runner_records_project_node_history
         node_id="node_text",
     )
     assert result["generated_text"] == "雨夜里，他们在旧站台重逢。"
+    assert result["billing"] == {
+        "operation": "text_generate",
+        "billable_chars": 13,
+        "pricing_quantity": 13,
+        "quantity_source": "generated_text",
+    }
+    assert result["__feature_credit_reservation_id"] == "reservation_actual_text"
+    assert reservations[0]["quantity"] == 13
+    assert reservations[0]["params"]["pricing_metrics"]["billable_chars"] == 13
     assert history[-1]["task_type"] == "freezone_text_generate"
     assert history[-1]["model"] == "DC-freezone-text-writer-LLM"
+
+    reservations.clear()
+    legacy_result = await freezone_runner._run_freezone_text_generate_async(
+        {
+            "payload": {
+                "job_id": "job_text_generate_legacy",
+                "project_dir": str(project_dir),
+                "prompt": "写一段雨夜重逢",
+            },
+            "billing_metadata": {
+                "feature_key": "freezone.text_generate",
+                "feature_credit_reservation_id": "legacy_reservation",
+            },
+            "__run_task_id": "task_text_generate_legacy",
+        },
+        ctx,
+    )
+    assert reservations == []
+    assert "__feature_credit_reservation_id" not in legacy_result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["insufficient", "missing_id", "publication", None])
+async def test_text_result_billing_gates_publication(tmp_path, monkeypatch, failure):
+    from novelvideo.freezone.history import read_generation_history
+    from novelvideo.freezone.paths import outputs_dir
+    from novelvideo.task_backend.runners import freezone as runner
+
+    ctx = _project_ctx(tmp_path)
+    out = outputs_dir(ctx.output_dir, "freezone_text_generate") / "paid_text.json"
+
+    def history():
+        return read_generation_history(
+            project_dir=ctx.output_dir, canvas_id="canvas_a", node_id="node_text"
+        )
+
+    async def generate(*, prompt):
+        return "text-model", "Generated paid text"
+
+    reviews = []
+
+    class Meter:
+        async def reserve_feature_start_credits(self, **kwargs):
+            assert not out.exists()
+            assert history() == []
+            assert kwargs["quantity"] > 0
+            if failure == "insufficient":
+                raise ValueError("insufficient credits")
+            return {} if failure == "missing_id" else {"id": "text_reservation"}
+
+        async def mark_feature_credit_settlement_for_review(
+            self, reservation_id, **kwargs
+        ):
+            reviews.append(reservation_id)
+
+    monkeypatch.setattr(
+        "novelvideo.freezone.text_node.generate_freezone_text", generate
+    )
+    monkeypatch.setattr(runner, "_update", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runner, "get_usage_meter", lambda: Meter())
+    if failure == "publication":
+
+        def fail_history(**kwargs):
+            raise OSError("history storage unavailable")
+
+        monkeypatch.setattr(runner, "_append_node_history", fail_history)
+
+    envelope = {
+        "payload": {
+            "job_id": "paid_text",
+            "prompt": "Write text",
+            "canvas_id": "canvas_a",
+            "node_id": "node_text",
+        },
+        "billing_metadata": {
+            "feature_key": "freezone.text_generate",
+            "result_billing_version_ack": 2,
+        },
+        "__run_task_id": "paid_text_task",
+    }
+    if failure:
+        expected = {
+            "insufficient": (ValueError, "insufficient credits"),
+            "missing_id": (RuntimeError, "reservation ID"),
+            "publication": (OSError, "history storage unavailable"),
+        }[failure]
+        with pytest.raises(expected[0], match=expected[1]):
+            await runner._run_freezone_text_generate_async(envelope, ctx)
+        assert history() == []
+        if failure == "publication":
+            assert reviews == ["text_reservation"]
+        else:
+            assert not out.exists()
+            assert reviews == []
+    else:
+        result = await runner._run_freezone_text_generate_async(envelope, ctx)
+        assert json.loads(out.read_text())["generated_text"] == "Generated paid text"
+        assert history()[-1]["result"]["generated_text"] == "Generated paid text"
+        assert result["__feature_credit_reservation_id"] == "text_reservation"
+        assert "__feature_credit_reservation_id" not in history()[-1]["result"]
+        assert reviews == []
 
 
 @pytest.mark.asyncio
@@ -4330,7 +4497,7 @@ async def test_freezone_text_job_preserves_canvas_node_context_in_celery_payload
 
 
 @pytest.mark.asyncio
-async def test_freezone_text_generate_job_uses_visible_chars_for_billing(
+async def test_freezone_text_generate_job_defers_quantity_to_trusted_result(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4366,8 +4533,10 @@ async def test_freezone_text_generate_job_uses_visible_chars_for_billing(
     assert captured["payload"]["canvas_id"] == "canvas_a"
     assert captured["payload"]["node_id"] == "node_text"
     assert captured["payload"]["billing"] == {
-        "billable_chars": 7,
         "operation": "text_generate",
+        "quantity_source": "trusted_runner_result",
+        "billable_chars": 7,
+        "result_billing_version": 2,
     }
 
 
@@ -8311,6 +8480,61 @@ async def test_freezone_image_models_prefers_ee_catalog(
     assert result == {"ok": True, "data": catalog}
 
 
+def test_freezone_image_request_defaults_quality_to_medium() -> None:
+    request = freezone_routes.FreezoneGenRequest(prompt="test")
+
+    assert request.quality == "medium"
+
+
+@pytest.mark.asyncio
+async def test_freezone_image_models_hides_server_managed_thinking_level(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_freezone_project(monkeypatch, tmp_path, project="58")
+    catalog = [
+        {
+            "id": "custom-image",
+            "providerId": "fal",
+            "apiModel": "nano-banana-2",
+            "request": {
+                "endpoint": "images/generations",
+                "parameters": [
+                    {
+                        "key": "thinking_level",
+                        "control": "select",
+                        "requestPath": "thinking_level",
+                        "options": ["low", "medium", "high"],
+                        "default": "low",
+                    },
+                    {
+                        "key": "style",
+                        "control": "select",
+                        "requestPath": "style",
+                        "options": ["natural", "vivid"],
+                        "default": "natural",
+                    },
+                ],
+            },
+        }
+    ]
+
+    async def fake_catalog(media_type: str) -> list[dict[str, object]]:
+        assert media_type == "image"
+        return catalog
+
+    monkeypatch.setattr(freezone_routes, "_ee_media_model_catalog", fake_catalog)
+
+    result = await freezone_routes.freezone_image_models(
+        project="58",
+        user={"username": "admin"},
+    )
+
+    parameters = result["data"][0]["request"]["parameters"]
+    assert [parameter["key"] for parameter in parameters] == ["style"]
+    assert len(catalog[0]["request"]["parameters"]) == 2
+
+
 def test_ce_media_catalog_overlay_preserves_unconfigured_defaults() -> None:
     defaults = [
         {
@@ -8427,6 +8651,52 @@ async def test_image_catalog_pixel_floor_is_added_to_execution_schema(
     assert schema["minPixels"] == 3_686_400
     assert values == {}
     assert entry is catalog[0]
+
+
+@pytest.mark.asyncio
+async def test_catalog_request_uses_default_for_server_managed_thinking_level(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = [
+        {
+            "id": "custom-image-id",
+            "providerId": "fal",
+            "apiModel": "nano-banana-2",
+            "request": {
+                "endpoint": "images/generations",
+                "parameters": [
+                    {
+                        "key": "thinking_level",
+                        "control": "select",
+                        "requestPath": "thinking_level",
+                        "options": ["low", "medium", "high"],
+                        "default": "low",
+                    },
+                    {
+                        "key": "style",
+                        "control": "select",
+                        "requestPath": "style",
+                        "options": ["natural", "vivid"],
+                        "default": "natural",
+                    },
+                ],
+            },
+        }
+    ]
+
+    async def fake_catalog(media_type: str) -> list[dict[str, object]]:
+        assert media_type == "image"
+        return catalog
+
+    monkeypatch.setattr(freezone_routes, "_ee_media_model_catalog", fake_catalog)
+
+    _schema, values, _entry = await freezone_routes._resolve_catalog_request(
+        "image",
+        "custom-image-id",
+        {"thinking_level": "high", "style": "vivid"},
+    )
+
+    assert values == {"thinking_level": "low", "style": "vivid"}
 
 
 @pytest.mark.asyncio

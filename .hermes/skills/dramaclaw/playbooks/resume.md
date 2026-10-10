@@ -8,7 +8,7 @@
 
 读取响应：
 - `global` 段：全局准备是否完成（ingested, configured, characters, episodes, portraits_done）
-- `episode_status` 段：当前集各步骤（identity_plan, identity_images, script, scene_anchors, sketches, coloring, global_optimize, first_frames, tts, video）
+- `episode_status` 段：当前集各步骤（identity_plan, identity_images, script, sketches, coloring, global_optimize, first_frames, tts, video）
   - 辅助任务 type：`content_rewriter`（解说改写）、`script_writer`（剧本生成）。这些辅助步骤通过 `GET /projects/{P}/tasks/{task_type}/{N}` 主动查
   - 当前后端没有场景锚图 `anchor-image/*` 和 `scene_anchor` task
 - `next_step` + `next_step_name`：从断点继续
@@ -51,7 +51,7 @@
 **运行模式优先（但所有模式都受一步执行协议限制）**：
 - 若用户本会话已选 / 现在表示要**逐步确认模式** → `Read references/run-modes.md` 模式一，
   从断点起**每个写操作步骤前都停下问用户，一次只推进一步**。
-- 若用户选**自动推进模式** → 按 `pipeline/status.next_step` 自动选择当前一步，但每轮仍最多启动一个写任务，启动后立即收口；如果已有 queued/running 任务，立即告知后台正在生成中并停止。
+- 若用户选**自动推进模式**，或当前消息包含 UI 注入的 `[DRAMACLAW_RUN_MODE] mode=episode_auto` → 按 `pipeline/status.next_step` 自动选择当前一步，不再询问每步确认，但每轮仍最多启动一个写任务，启动后立即收口；如果已有 queued/running 任务，立即告知后台正在生成中并停止。
 - 若用户只说「继续」且**未指定过模式** → 先问一句「每步确认还是自动推进（每轮一步）？」再决定（除非用户明显赶时间/已说过别问）。
 
 先根据用户请求判断恢复模式：

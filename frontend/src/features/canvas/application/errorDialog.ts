@@ -118,9 +118,11 @@ export function showTaskStillRunningDialog(params: {
  * write a generation error (the job is still running and the node still holds a
  * resumable task handle). Pass the component's `t`.
  */
-export function notifyTaskStillRunning(t: TFunction): void {
+export function notifyTaskStillRunning(t?: TFunction): void {
   showTaskStillRunningDialog({
-    title: t('errorDialog.stillRunningTitle'),
-    message: t('errorDialog.stillRunningMessage'),
+    title: t ? t('errorDialog.stillRunningTitle') : '仍在生成中',
+    message: t
+      ? t('errorDialog.stillRunningMessage')
+      : '本次生成耗时较长，页面已停止等待，但任务仍在后台继续。可稍后刷新页面查看结果，或到任务中心查看进度。',
   });
 }

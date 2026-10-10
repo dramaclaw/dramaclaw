@@ -95,7 +95,7 @@ async def test_standard_drama_prop_planner_reports_string_list_validation_error(
     captured: dict[str, object] = {}
 
     def fake_newapi_model(
-        model_env: str, default_model: str, *, capability: str = "text.generate"
+        model_env: str, default_model: str | None = None, **_kwargs
     ) -> str:
         return "prop-model"
 
@@ -117,7 +117,9 @@ async def test_standard_drama_prop_planner_reports_string_list_validation_error(
                 )
             )
 
-    monkeypatch.setattr(asset_compiler, "get_newapi_text_pydantic_model", fake_newapi_model)
+    monkeypatch.setattr(
+        asset_compiler, "get_newapi_text_pydantic_model", fake_newapi_model
+    )
     monkeypatch.setattr(
         asset_compiler,
         "get_newapi_structured_output_model_settings",
@@ -213,13 +215,17 @@ async def test_short_block_reuses_prior_episode_prop_without_ai_reanalysis(monke
             )
         ]
 
-    monkeypatch.setattr(asset_compiler.AssetCompiler, "_analyze_block_props", fake_analyze)
+    monkeypatch.setattr(
+        asset_compiler.AssetCompiler, "_analyze_block_props", fake_analyze
+    )
 
     store = _FakeCogneeStore()
     compiler = asset_compiler.AssetCompiler(store)
     logs: list[str] = []
 
-    prop_menu = await compiler._compile_props(blocks, SimpleNamespace(number=1), logs.append)
+    prop_menu = await compiler._compile_props(
+        blocks, SimpleNamespace(number=1), logs.append
+    )
 
     assert [item.prop_id for item in prop_menu] == ["笔记本"]
     assert calls == ["场次（4）地点：旧书店一楼，晨，内；出场人物：陆辰"]

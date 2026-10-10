@@ -5,12 +5,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, options?: { returnObjects?: boolean }) => {
+    t: (key: string, options?: Record<string, unknown>) => {
       if (key === "aiAssistant.waitingResponses" && options?.returnObjects) {
         return ["Understanding the request", "Reviewing the context"];
       }
       if (key === "aiAssistant.waitingLongResponse") return "Processing more context";
       if (key === "aiAssistant.waitingVeryLongResponse") return "Still waiting for a response";
+      if (key === "aiAssistant.waitingStageElapsed") {
+        return `${String((options as Record<string, unknown>)?.label)} · ${String((options as Record<string, unknown>)?.seconds)}s`;
+      }
+      if (key === "aiAssistant.waitingStageVeryLong") {
+        return `Still working: ${String((options as Record<string, unknown>)?.label)} · ${String((options as Record<string, unknown>)?.seconds)}s`;
+      }
       return key;
     },
   }),
@@ -63,6 +69,38 @@ describe("ComposerWaitingStatus", () => {
 
     expect(screen.getByLabelText("Understanding the request")).toBeInTheDocument();
     expect(screen.getByText("Understanding the request")).toHaveClass("opacity-100");
+  });
+
+  it("shows a live agent activity instead of rotating placeholder text", () => {
+    render(
+      <ComposerWaitingStatus
+        label="Waiting"
+        activityLabel="正在读取画布资产"
+        visible
+      />,
+    );
+
+    act(() => vi.advanceTimersByTime(100));
+
+    expect(screen.getByLabelText("正在读取画布资产")).toBeInTheDocument();
+    expect(screen.queryByText("Understanding the request")).not.toBeInTheDocument();
+
+    act(() => vi.advanceTimersByTime(10_000));
+    expect(screen.getByLabelText("正在读取画布资产 · 10s")).toBeInTheDocument();
+  });
+
+  it("makes a long-running live activity explicit instead of looking frozen", () => {
+    render(
+      <ComposerWaitingStatus
+        label="Waiting"
+        activityLabel="正在调用项目工具"
+        visible
+      />,
+    );
+
+    act(() => vi.advanceTimersByTime(45_000));
+
+    expect(screen.getByLabelText("Still working: 调用项目工具 · 45s")).toBeInTheDocument();
   });
 
   it("settles on the long-wait label without changing the wave speed", () => {

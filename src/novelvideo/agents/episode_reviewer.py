@@ -5,7 +5,7 @@
 """
 
 from enum import Enum
-from typing import Callable, Optional, Union
+from typing import TYPE_CHECKING, Callable, Optional, Union
 
 from pydantic_ai import Agent
 from pydantic import BaseModel, Field
@@ -372,7 +372,7 @@ class EpisodePlanReviewer:
                             severity="critical",
                             episode_number=ep.number,
                             message=f"第 {ep.number} 集和第 {next_ep.number} 集之间缺少第 {gap_start}-{gap_end} 章",
-                            suggestion=f"扩展相邻剧集的章节范围",
+                            suggestion="扩展相邻剧集的章节范围",
                         )
                     )
                     penalty += 2.0
@@ -462,7 +462,7 @@ class EpisodePlanReviewer:
                     issue_type=EpisodePlanIssueType.INVALID_CHARACTER,
                     severity="warning",
                     message=f"角色 '{char}' 不在已分析的角色列表中 (出现在第 {episodes_str} 集)",
-                    suggestion=f"使用已分析的角色名",
+                    suggestion="使用已分析的角色名",
                 )
             )
 
@@ -563,7 +563,5 @@ def create_episode_plan_reviewer() -> EpisodePlanReviewer:
     return EpisodePlanReviewer()
 
 
-# 类型提示的前向引用
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from novelvideo.agents.episode_planner import SeriesPlan, EpisodePlan
+    from novelvideo.agents.episode_planner import SeriesPlan

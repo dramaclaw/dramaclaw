@@ -15,16 +15,33 @@
  * UI 编号（@图片N / 引用行 chip，走 useUpstreamNodes）与提交时收集 references
  * 必须用同一个函数：曾经提交侧按 `state.nodes.filter(...)`（节点创建顺序）收集，
  * 先创建但后连线的节点会被排到 references 前面，prompt 里的 @图片1 在后端就
- * 指向另一张图（后端按 references 里图片的位置解释 图片N）。
+ * 指向另一张图（后端按 references 里图片的位置解释 图片N）。执行依赖
+ * (`dependency_for`) 只控制先后，不属于可消费的上游参考。
  */
+type UpstreamEdge = {
+  source: string;
+  target: string;
+  data?: unknown;
+};
+
+export function isExecutionDependencyEdge(edge: UpstreamEdge): boolean {
+  const data = edge.data;
+  return (
+    typeof data === "object"
+    && data !== null
+    && !Array.isArray(data)
+    && (data as { link_type?: unknown }).link_type === "dependency_for"
+  );
+}
+
 export function upstreamNodesInEdgeOrder<T extends { id: string }>(
   nodes: T[],
-  edges: ReadonlyArray<{ source: string; target: string }>,
+  edges: ReadonlyArray<UpstreamEdge>,
   targetId: string,
 ): T[] {
   const byId = new Map(nodes.map((node) => [node.id, node]));
   return edges
-    .filter((edge) => edge.target === targetId)
+    .filter((edge) => edge.target === targetId && !isExecutionDependencyEdge(edge))
     .map((edge) => byId.get(edge.source))
     .filter((node): node is T => node !== undefined);
 }
