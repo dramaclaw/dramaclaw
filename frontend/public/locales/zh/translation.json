@@ -985,7 +985,22 @@
         "skippedQuestions": "已跳过问题",
         "submittedAnswers": "已提交回答 · {{count}} 个",
         "noAnswersSkipped": "本次问题已跳过。",
-        "noAnswersSubmitted": "本次未提交具体选项。"
+        "noAnswersSubmitted": "本次未提交具体选项。",
+        "videoGenerationMode": {
+          "title": "请选择视频生成模式",
+          "description": "请选择视频节点使用文字和参考素材的方式。",
+          "recommended": "{{label}}（推荐）",
+          "options": {
+            "textToVideo": "仅根据文字描述生成视频，不使用参考图片。",
+            "imageReference": "使用多张图片作为人物、场景与视觉风格参考。",
+            "allReference": "将图片、视频和音频等素材作为综合参考。",
+            "firstFrame": "将参考图片锁定为视频首帧，再从首帧继续生成。",
+            "imageToVideo": "使用一张图片作为整体画面基础生成视频。",
+            "firstLastFrame": "分别锁定视频首帧和尾帧，并生成中间过程。",
+            "videoEdit": "以现有视频为基础进行编辑生成。",
+            "videoExtend": "延长现有视频并继续生成后续内容。"
+          }
+        }
       }
     },
     "workflowRecovery": {

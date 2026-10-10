@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { act, render, renderHook, waitFor } from "@testing-library/react";
+import type { TFunction } from "i18next";
 import { createElement } from "react";
 import { useCanvasStore } from "@/stores/canvasStore";
 import {
@@ -3270,6 +3271,46 @@ describe("Skill Studio draft response", () => {
 });
 
 describe("Canvas command approval image params", () => {
+  it("localizes video mode option ids instead of exposing backend enum names", () => {
+    const translations: Record<string, string> = {
+      "freezone.chat.clarification.videoGenerationMode.title": "请选择视频生成模式",
+      "freezone.chat.clarification.videoGenerationMode.options.imageReference": "多图参考说明",
+      "freezone.chat.clarification.videoGenerationMode.options.firstFrame": "首帧说明",
+      "node.videoOps.modes.imageReference": "多图参考",
+      "node.videoOps.modes.firstFrame": "首帧",
+    };
+    const t = ((key: string, options?: { defaultValue?: string; label?: string }) => {
+      if (key === "freezone.chat.clarification.videoGenerationMode.recommended") {
+        return `${options?.label}（推荐）`;
+      }
+      return translations[key] ?? options?.defaultValue ?? key;
+    }) as TFunction;
+
+    const questions = clarificationQuestionsWithLiveModelCatalogsForTest(
+      [{
+        id: "video_generation_mode",
+        title: "backend title",
+        options: [
+          { id: "imageReference", label: "imageReference (Recommended)", description: "backend" },
+          { id: "firstFrame", label: "firstFrame 首帧锁定", description: "backend" },
+        ],
+      }],
+      [],
+      [],
+      {},
+      t,
+    );
+
+    expect(questions[0]).toMatchObject({
+      title: "请选择视频生成模式",
+      question: "请选择视频生成模式",
+      options: [
+        { id: "imageReference", label: "多图参考（推荐）", description: "多图参考说明" },
+        { id: "firstFrame", label: "首帧", description: "首帧说明" },
+      ],
+    });
+  });
+
   it("replaces a shortened image-model clarification with the complete live catalog", () => {
     const questions = clarificationQuestionsWithLiveModelCatalogsForTest(
       [{

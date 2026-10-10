@@ -4264,6 +4264,7 @@ type ClarificationOptionsSource =
   | "selected_video_model_resolutions"
   | "selected_video_model_durations"
   | "selected_video_model_audio"
+  | "video_generation_modes"
   | "video_variant_counts";
 
 const CLARIFICATION_SOURCE_BY_QUESTION_ID: Record<string, ClarificationOptionsSource> = {
@@ -4277,8 +4278,54 @@ const CLARIFICATION_SOURCE_BY_QUESTION_ID: Record<string, ClarificationOptionsSo
   video_resolution: "selected_video_model_resolutions",
   video_duration_seconds: "selected_video_model_durations",
   video_generate_audio: "selected_video_model_audio",
+  video_generation_mode: "video_generation_modes",
   video_variants_per_node: "video_variant_counts",
 };
+
+const LOCALIZED_VIDEO_GENERATION_MODES = new Set([
+  "textToVideo",
+  "allReference",
+  "imageToVideo",
+  "firstFrame",
+  "firstLastFrame",
+  "imageReference",
+  "videoEdit",
+  "videoExtend",
+]);
+
+function localizedVideoGenerationModeQuestion(
+  question: AssistantClarificationQuestion,
+  t?: TFunction,
+): AssistantClarificationQuestion {
+  if (normalizedClarificationId(question.id) !== "video_generation_mode" || !t) {
+    return question;
+  }
+  return {
+    ...question,
+    title: String(t("freezone.chat.clarification.videoGenerationMode.title")),
+    question: String(t("freezone.chat.clarification.videoGenerationMode.title")),
+    options: (question.options ?? []).map((option) => {
+      const id = option.id?.trim() ?? "";
+      if (!LOCALIZED_VIDEO_GENERATION_MODES.has(id)) return option;
+      const recommended = /(?:\(|（)\s*(?:recommended|推荐)\s*(?:\)|）)/i.test(
+        option.label ?? "",
+      );
+      const label = String(t(`node.videoOps.modes.${id}`, { defaultValue: id }));
+      return {
+        ...option,
+        label: recommended
+          ? String(t("freezone.chat.clarification.videoGenerationMode.recommended", {
+              label,
+            }))
+          : label,
+        description: String(t(
+          `freezone.chat.clarification.videoGenerationMode.options.${id}`,
+          { defaultValue: option.description ?? "" },
+        )),
+      };
+    }),
+  };
+}
 
 export function assistantClarificationIsGenerationCard(
   questions: AssistantClarificationQuestion[],
@@ -4467,14 +4514,15 @@ function clarificationQuestionsWithLiveModelCatalogs(
     (question) => normalizedClarificationId(question.id) === "video_model",
   );
   return questions.map((question) => {
-    const questionId = normalizedClarificationId(question.id);
+    const localizedQuestion = localizedVideoGenerationModeQuestion(question, t);
+    const questionId = normalizedClarificationId(localizedQuestion.id);
     const source = question.options_source ?? CLARIFICATION_SOURCE_BY_QUESTION_ID[questionId];
-    const existingOptions = question.options ?? [];
+    const existingOptions = localizedQuestion.options ?? [];
     const normalized = (value: unknown) => String(value ?? "").trim().toLowerCase();
     if (source === "image_models" || source === "video_models") {
       const models = source === "image_models" ? imageModels : videoModels;
       return {
-        ...question,
+        ...localizedQuestion,
         options_source: source,
         allow_custom: false,
         options: models.map((model) => {
@@ -4499,14 +4547,14 @@ function clarificationQuestionsWithLiveModelCatalogs(
     if (source?.startsWith("selected_image_model_") && !selectedImageModel) {
       return hasImageModelQuestion || imageModels.length === 0
         || Boolean(clarificationSelectedValue(questions, answers, "image_model"))
-        ? { ...question, options_source: source, options: [], allow_custom: false }
-        : question;
+        ? { ...localizedQuestion, options_source: source, options: [], allow_custom: false }
+        : localizedQuestion;
     }
     if (source?.startsWith("selected_video_model_") && !selectedVideoModel) {
       return hasVideoModelQuestion || videoModels.length === 0
         || Boolean(clarificationSelectedValue(questions, answers, "video_model"))
-        ? { ...question, options_source: source, options: [], allow_custom: false }
-        : question;
+        ? { ...localizedQuestion, options_source: source, options: [], allow_custom: false }
+        : localizedQuestion;
     }
     if (source === "selected_image_model_ratios") {
       values = clarificationCapabilityOptions(
@@ -4565,15 +4613,19 @@ function clarificationQuestionsWithLiveModelCatalogs(
           ? "freezone.chat.generationParams.generateAudio"
           : "freezone.chat.generationParams.muteAudio",
       ) ?? (value === true ? "Generate audio" : "Mute audio"));
+    } else if (source === "video_generation_modes") {
+      values = existingOptions.map((option) => option.id ?? "").filter(Boolean);
+      labelFor = (value) => existingOptions.find((option) => option.id === value)?.label
+        ?? String(value);
     } else if (source === "video_variant_counts") {
       values = CANVAS_APPROVAL_VIDEO_COUNT_OPTIONS;
       labelFor = (value) => String(t?.("freezone.chat.generationParams.videoCount", {
         count: Number(value),
       }) ?? `${value} videos`);
     }
-    if (values === null) return question;
+    if (values === null) return localizedQuestion;
     return {
-      ...question,
+      ...localizedQuestion,
       options_source: source,
       options: clarificationOptions(values, existingOptions, labelFor),
       allow_custom: false,
@@ -6875,7 +6927,8 @@ function SkillStudioQuestionsCard({
 
 function AssistantClarificationSummaryCard({ event }: { event: AssistantClarificationUiEvent }) {
   const { t } = useTranslation();
-  const questions = Array.isArray(event.questions) ? event.questions : [];
+  const questions = (Array.isArray(event.questions) ? event.questions : [])
+    .map((question) => localizedVideoGenerationModeQuestion(question, t));
   const answers = event.answers && typeof event.answers === "object" ? event.answers : {};
   const timelineItems = visibleAssistantClarificationTimelineItems(
     questions,
@@ -7073,6 +7126,9 @@ function AssistantClarificationInputCard({
   const hasPrevious = activeQuestionPosition > 0;
   const hasNext = activeQuestionPosition < selectableQuestions.length - 1;
   const activeSelectedCount = activeSelection.optionIds.length + (activeSelection.customText.trim() ? 1 : 0);
+  const activeDescription = normalizedClarificationId(activeQuestion?.id) === "video_generation_mode"
+    ? t("freezone.chat.clarification.videoGenerationMode.description")
+    : event.description;
   const continueLabel = hasNext
     ? "下一题"
     : allQuestionsAnswered
@@ -7093,9 +7149,9 @@ function AssistantClarificationInputCard({
 	          <div className="line-clamp-2 break-words text-sm font-medium leading-5 text-foreground">
 	            {activeQuestion?.title || activeQuestion?.question || event.title || "需要你补充一点信息"}
 	          </div>
-	          {event.description && (
+	          {activeDescription && (
 	            <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
-	              {event.description}
+	              {activeDescription}
 	            </div>
 	          )}
 	        </div>

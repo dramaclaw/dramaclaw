@@ -985,7 +985,22 @@
         "skippedQuestions": "Questions skipped",
         "submittedAnswers": "Submitted answers · {{count}}",
         "noAnswersSkipped": "These questions were skipped.",
-        "noAnswersSubmitted": "No specific options were submitted."
+        "noAnswersSubmitted": "No specific options were submitted.",
+        "videoGenerationMode": {
+          "title": "Choose a video generation mode",
+          "description": "Choose how the video node should use text and reference media.",
+          "recommended": "{{label}} (Recommended)",
+          "options": {
+            "textToVideo": "Generate the video from text only, without reference images.",
+            "imageReference": "Use multiple images as character, scene, and visual-style references.",
+            "allReference": "Use images, videos, and audio together as comprehensive references.",
+            "firstFrame": "Lock the reference image as the first frame, then continue generating from it.",
+            "imageToVideo": "Use one image as the overall visual basis for the generated video.",
+            "firstLastFrame": "Lock both the first and last frames and generate the motion between them.",
+            "videoEdit": "Generate an edit based on an existing video.",
+            "videoExtend": "Extend an existing video with newly generated content."
+          }
+        }
       }
     },
     "workflowRecovery": {
