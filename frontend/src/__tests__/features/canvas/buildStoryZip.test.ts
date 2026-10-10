@@ -1,4 +1,5 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { Blob as NodeBlob } from 'node:buffer';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { type FileEntry, BlobReader, ZipReader, TextWriter, Uint8ArrayWriter } from '@zip.js/zip.js';
 import { buildStoryZip } from '@/features/canvas/story/export/buildStoryZip';
 import type { CompiledStory } from '@/features/canvas/story/storyTypes';
@@ -10,6 +11,9 @@ const compiled = {
   endingByNodeId: {}, placeholderByNodeId: {}, choiceFeedbackById: {},
   choiceStateChangesById: {}, choiceInteractionById: {}, warnings: [], variables: [],
 } satisfies CompiledStory;
+// Response.blob() returns a Node Blob. In Node 22, jsdom's Blob constructor
+// stringifies that foreign Blob instead of preserving its ZIP bytes.
+beforeEach(() => vi.stubGlobal('Blob', NodeBlob));
 afterEach(() => vi.unstubAllGlobals());
 it('writes an extractable ZIP with unchanged video bytes, deduplication and a self-contained relative-path player', async () => {
   const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(new Uint8Array([0, 1, 128, 255]), {

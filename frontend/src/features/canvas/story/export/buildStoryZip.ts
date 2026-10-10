@@ -50,8 +50,9 @@ export async function buildStoryZip(
     choiceLoopClipByNodeId: replace(compiled.choiceLoopClipByNodeId),
   }, storyJson, { title, mediaPaths: 'relative' });
   await writer.add('index.html', new TextReader(html));
+  // The portable archive intentionally includes instructions in both languages.
   await writer.add('README.txt', new TextReader(
-    '完整解压此 ZIP，然后打开 index.html。请保留 videos 文件夹的位置。\n播放器、剧情探索和视频支持离线使用；外部链接需要网络。\n\nExtract the entire ZIP, then open index.html. Keep the videos folder beside it.\nPlayer, story exploration and videos work offline; external links require internet.\n',
+    '完整解压此 ZIP，然后打开 index.html。请保留 videos 文件夹的位置。\n播放器、剧情探索和视频支持离线使用；外部链接需要网络。\n\nExtract the entire ZIP, then open index.html. Keep the videos folder beside it.\nPlayer, story exploration and videos work offline; external links require internet.\n', // i18n-exempt
   ));
   return writer.close();
 }
