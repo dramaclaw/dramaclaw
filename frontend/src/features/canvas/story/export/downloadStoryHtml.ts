@@ -17,5 +17,5 @@ export function downloadStoryHtml(html: string, title?: string): void {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }

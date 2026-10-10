@@ -42,6 +42,62 @@ async function openExport(story = compiled(), rejectPlay = false, options: Build
 afterEach(() => { windows.splice(0).forEach((window) => window.close()); });
 
 describe('exported HTML using the shared player', () => {
+  it('exports the exploration map, progress, rewind and clear controls without app services', async () => {
+    const { document, errors, html } = await openExport(compiled({
+      explorationNodes: [
+        { id: 'intro', label: '开场', successors: ['ending'], choices: [{ target: 'ending', text: '继续' }], isEnding: false },
+        { id: 'ending', label: '终章', successors: [], isEnding: true },
+      ],
+    }));
+    const click = async (selector: string) => {
+      const button = document.querySelector(selector) as HTMLButtonElement;
+      expect(button).not.toBeNull();
+      button.click();
+      await pause();
+    };
+    await click('button[aria-label="打开剧情探索"]');
+    expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('剧情探索');
+    expect(document.querySelector('.story-exploration-summary')?.textContent).toBe('已解锁 1/2 个片段 · 结局 0/1');
+    expect(document.querySelectorAll('.story-graph-node')).toHaveLength(2);
+    expect(document.querySelectorAll('[data-story-graph-edge]')).toHaveLength(1);
+    expect(document.querySelector('.story-graph-choice')?.textContent).toBe('继续');
+    expect(document.querySelector('.story-graph-node[data-current="false"] button')?.hasAttribute('disabled')).toBe(true);
+    await click('button[aria-label="关闭剧情探索"]');
+    await click('[data-choice-stage] button');
+    await pause(550);
+    expect(document.querySelector('.story-ending-progress')?.textContent).toBe('已达成 1/1 个结局 · 探索 100%');
+    await click('button[aria-label="打开剧情探索"]');
+    await click('.story-graph-node[data-current="false"] button');
+    await click('.story-graph-replay');
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.querySelector('[data-choice-stage]')).not.toBeNull();
+    await click('button[aria-label="打开剧情探索"]');
+    expect(document.querySelector('.story-exploration-summary')?.textContent).toBe('已解锁 2/2 个片段 · 结局 1/1');
+    await click('button[aria-label="清除探索进度"]');
+    await click('.story-exploration-confirm-buttons button:last-child');
+    await click('button[aria-label="打开剧情探索"]');
+    expect(document.querySelector('.story-exploration-summary')?.textContent).toBe('已解锁 1/2 个片段 · 结局 0/1');
+    expect(document.querySelector('script[src]')).toBeNull();
+    expect(html).toContain('.story-exploration-panel');
+    expect(document.querySelector('#app')?.textContent).not.toContain('canvas.story.exploration.');
+    expect(errors).toEqual([]);
+  });
+
+  it('keeps ZIP relative video paths playable from file:// through choices and restart', async () => {
+    const media = 'videos/0001.mp4';
+    const { document, window, errors } = await openExport(compiled({ clipByNodeId: { intro: media } }), false, { mediaPaths: 'relative' });
+    expect(document.querySelector('video')?.getAttribute('src')).toBe(media);
+    document.querySelector('video')!.dispatchEvent(new window.Event('ended', { bubbles: true }));
+    await pause();
+    (document.querySelector('[data-choice-stage] button') as HTMLButtonElement).click();
+    await pause(550);
+    expect(document.querySelector('[data-story-ending]')?.textContent).toContain('抵达结局');
+    (Array.from(document.querySelectorAll('[data-story-ending] button')).find((button) => button.textContent === '重新开始') as HTMLButtonElement).click();
+    await pause();
+    expect(document.querySelector('video')?.getAttribute('src')).toBe(media);
+    expect(errors).toEqual([]);
+  });
+
   it('uses supplied English labels for CTA endings in the exported runtime', async () => {
     const { document } = await openExport(compiled({
       ink: '-> ending\n=== ending ===\n# clip:ending\nDone\n-> END',
@@ -53,7 +109,7 @@ describe('exported HTML using the shared player', () => {
       ctaUnconfigured: 'Destination not configured',
     } });
     const ending = document.querySelector('[data-story-ending]')!;
-    expect(ending.querySelector('button')?.textContent).toBe('Experience again');
+    expect(Array.from(ending.querySelectorAll('button')).some((button) => button.textContent === 'Experience again')).toBe(true);
     expect(ending.querySelector('[role="status"]')?.textContent).toBe('Book a test drive · Destination not configured');
   });
 
@@ -69,7 +125,7 @@ describe('exported HTML using the shared player', () => {
     const ending = document.querySelector('[data-story-ending]')!;
     expect(ending.querySelector('h2')).toBeNull();
     expect(ending.textContent?.match(/预约试驾/g)).toHaveLength(1);
-    expect(ending.querySelector('button')?.textContent).toBe('重新体验');
+    expect(Array.from(ending.querySelectorAll('button')).some((button) => button.textContent === '重新体验')).toBe(true);
     expect(ending.className).toContain('safe-area-inset-bottom');
   });
   it('exports functional HTTPS CTA and emits a click event without claiming a lead', async () => {
@@ -92,7 +148,7 @@ describe('exported HTML using the shared player', () => {
     (document.querySelector('[data-choice-stage] button') as HTMLButtonElement).click();
     await pause(550);
     expect(document.querySelector('[data-story-ending]')?.textContent).toContain('抵达结局');
-    (document.querySelector('[data-story-ending] button') as HTMLButtonElement).click();
+    (Array.from(document.querySelectorAll('[data-story-ending] button')).find((button) => button.textContent === '重新开始') as HTMLButtonElement).click();
     await pause();
     expect(document.querySelector('[data-story-placeholder]')).not.toBeNull();
     expect(errors).toEqual([]);

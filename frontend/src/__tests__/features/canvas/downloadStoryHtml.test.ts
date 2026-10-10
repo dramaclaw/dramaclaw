@@ -17,9 +17,10 @@ describe('safeFileName', () => {
 });
 
 describe('downloadStoryHtml', () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
   it('用清洗后的文件名触发 a[download] 下载', () => {
+    vi.useFakeTimers();
     const createObjectURL = vi.fn(() => 'blob:x');
     const revokeObjectURL = vi.fn();
     // jsdom 默认无 URL.createObjectURL
@@ -31,6 +32,8 @@ describe('downloadStoryHtml', () => {
 
     expect(createObjectURL).toHaveBeenCalledOnce();
     expect(click).toHaveBeenCalledOnce();
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(5000);
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:x');
   });
 });

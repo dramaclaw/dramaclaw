@@ -1,9 +1,9 @@
 import { createPortal } from 'react-dom';
 import { StoryPublicationPanel } from '@/features/canvas/story/StoryPublicationPanel';
 import { StoryOverviewPanel } from '@/components/canvas/StoryOverviewPanel';
-import { memo, useCallback, useState } from 'react';
+import { memo, useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ListTree, Play, ScrollText, ShieldCheck, SlidersHorizontal, Upload } from 'lucide-react';
+import { Download, ListTree, Play, ScrollText, ShieldCheck, SlidersHorizontal, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { useStoryRuntimeStore } from '@/stores/storyRuntimeStore';
@@ -35,6 +35,34 @@ export const StoryGroupToolbar = memo(function StoryGroupToolbar() {
 
 function StoryGroupActions({ id, data, onPublish, onOverview }: { id: string; data: GroupNodeData; onPublish: () => void; onOverview: () => void }) {
   const { t } = useTranslation();
+  const exportingRef = useRef(false);
+  const [exportProgress, setExportProgress] = useState<string | null>(null);
+  const handleExport = async () => {
+    if (exportingRef.current) return;
+    exportingRef.current = true;
+    setExportProgress('');
+    try {
+      const { nodes, edges } = useCanvasStore.getState();
+      const compiled = compileStoryGroup(id, nodes, edges);
+      const [{ Compiler }, { buildStoryZip }, { downloadBlobAsFile }, { safeFileName }] = await Promise.all([
+        import('inkjs/full'),
+        import('@/features/canvas/story/export/buildStoryZip'),
+        import('@/lib/browserDownload'),
+        import('@/features/canvas/story/export/downloadStoryHtml'),
+      ]);
+      const storyJson = new Compiler(compiled.ink).Compile().ToJson();
+      if (!storyJson) throw new Error('story-compile-failed');
+      const title = resolveNodeDisplayName(CANVAS_NODE_TYPES.group, data);
+      const zip = await buildStoryZip(compiled, storyJson, title, (done, total) => setExportProgress(`${done}/${total}`));
+      downloadBlobAsFile(zip, safeFileName(title).replace(/\.html$/, '.zip'));
+      toast.success(t('canvas.story.htmlExport.success'));
+    } catch (error) {
+      toast.error(error instanceof StoryCompileError ? error.message : t('canvas.story.htmlExport.failed'));
+    } finally {
+      exportingRef.current = false;
+      setExportProgress(null);
+    }
+  };
   const handleStoryGroupPlay = useCallback((groupId: string) => {
     const { nodes, edges } = useCanvasStore.getState();
     try {
@@ -91,6 +119,12 @@ function StoryGroupActions({ id, data, onPublish, onOverview }: { id: string; da
         </button>
         <button type="button" className={ACTION_CLASS} onClick={() => useCanvasStore.getState().openStoryLint(id)}>
           <ShieldCheck className="size-4" />{t('canvas.story.lint.open')}
+        </button>
+        <button type="button" className={`${ACTION_CLASS} disabled:cursor-not-allowed disabled:opacity-40`}
+          disabled={exportProgress !== null} aria-busy={exportProgress !== null}
+          title={t('canvas.story.htmlExport.hint')} onClick={() => void handleExport()}>
+          <Download className="size-4" aria-hidden="true" />
+          {exportProgress !== null ? t('canvas.story.htmlExport.progress', { progress: exportProgress }) : t('canvas.story.htmlExport.label')}
         </button>
         <button type="button" className={ACTION_CLASS} onClick={onPublish}>
           <Upload className="size-4" aria-hidden="true" />{t('storyPublication.publish')}

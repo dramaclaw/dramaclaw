@@ -1,5 +1,5 @@
 import { createRoot } from 'react-dom/client';
-import { StoryPlayer } from '../StoryPlayer';
+import { StoryExperience } from '../StoryExperience';
 import { useStoryRuntimeStore } from '@/stores/storyRuntimeStore';
 import type { CompiledStory } from '../storyTypes';
 import type { PlayerLabels } from './buildPlayerHtml';
@@ -7,6 +7,8 @@ import './standalone.css';
 
 type StoryData = {
   storyJson: string;
+  title: string;
+  explorationNodes: CompiledStory['explorationNodes'];
   clips: CompiledStory['clipByNodeId'];
   choiceLoops: CompiledStory['choiceLoopClipByNodeId'];
   choiceTime: CompiledStory['choiceTimeByNodeId'];
@@ -20,6 +22,7 @@ type StoryData = {
 };
 const data = (window as unknown as { __STORY__: StoryData }).__STORY__;
 const labelKeys: Record<string, keyof PlayerLabels> = {
+  'canvas.story.tree.ending': 'treeEnding',
   'canvas.story.error': 'loadError',
   'canvas.story.defaultChoice': 'defaultChoice',
   'canvas.story.endingFallback': 'endingFallback',
@@ -41,10 +44,17 @@ const labelKeys: Record<string, keyof PlayerLabels> = {
 };
 function t(key: string, values?: Record<string, unknown>): string {
   if (key === 'canvas.story.endingBadge') return `${data.labels.endingBadge} · ${values?.label ?? ''}`;
-  return data.labels[labelKeys[key]] ?? String(values?.defaultValue ?? key);
+  const explorationPrefix = 'canvas.story.exploration.';
+  const translated = key.startsWith(explorationPrefix)
+    ? data.labels.exploration?.[key.slice(explorationPrefix.length)]
+    : data.labels[labelKeys[key]];
+  const text = typeof translated === 'string' ? translated : String(values?.defaultValue ?? key);
+  return text.replace(/\{\{\s*(\w+)\s*\}\}/g, (match, name: string) =>
+    values?.[name] === undefined ? match : String(values[name]));
 }
 useStoryRuntimeStore.getState().enterPlay({
   ink: '',
+  explorationNodes: data.explorationNodes,
   clipByNodeId: data.clips,
   choiceLoopClipByNodeId: data.choiceLoops,
   choiceTimeByNodeId: data.choiceTime,
@@ -56,4 +66,4 @@ useStoryRuntimeStore.getState().enterPlay({
   choiceInteractionById: data.choiceInteraction,
   knotByNodeId: {}, variables: [], warnings: [],
 }, { storyJson: data.storyJson });
-createRoot(document.getElementById('app')!).render(<StoryPlayer t={t} />);
+createRoot(document.getElementById('app')!).render(<StoryExperience t={t} title={data.title} />);

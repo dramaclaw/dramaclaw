@@ -40,7 +40,8 @@ describe('buildPlayerHtml', () => {
         endingBadge: 'Ending',
         loadError: 'Failed to load the story',
       });
-      expect(Object.values(extractData(english).labels as Record<string, string>)
+      expect(Object.values(extractData(english).labels as Record<string, string | Record<string, string>>)
+        .flatMap((label) => typeof label === 'string' ? [label] : Object.values(label))
         .every((label) => !/[一-鿿]/.test(label) && !label.startsWith('canvas.'))).toBe(true);
       await i18next.changeLanguage('zh');
       const chinese = buildPlayerHtml(baseCompiled(), '{}');

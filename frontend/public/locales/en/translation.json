@@ -4913,6 +4913,13 @@
       }
     },
     "story": {
+      "htmlExport": {
+        "label": "Export offline ZIP",
+        "hint": "Includes player, exploration and videos. Extract the ZIP and open index.html.",
+        "progress": "Exporting {{progress}}",
+        "success": "Offline ZIP exported. Extract it and open index.html.",
+        "failed": "Export failed. Check that the videos play, then retry."
+      },
       "messages": {
         "previousLastFrame": "Previous shot last frame",
         "videoFirstFrame": "Video first frame",

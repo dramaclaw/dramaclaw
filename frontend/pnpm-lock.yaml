@@ -68,6 +68,9 @@ importers:
       '@xyflow/react':
         specifier: ^12.10.2
         version: 12.10.2(@types/react@19.2.15)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@zip.js/zip.js':
+        specifier: ^2.23.0
+        version: 2.23.0
       border-beam-vanilla:
         specifier: ^1.0.2
         version: 1.0.2
@@ -1843,6 +1846,10 @@ packages:
 
   '@xyflow/system@0.0.76':
     resolution: {integrity: sha512-hvwvnRS1B3REwVDlWexsq7YQaPZeG3/mKo1jv38UmnpWmxihp14bW6VtEOuHEwJX2FvzFw8k77LyKSk/wiZVNA==}
+
+  '@zip.js/zip.js@2.23.0':
+    resolution: {integrity: sha512-K5obAqfrO7zhycnCupM9aaoZ9kx0SA0kv7+Z2oOUsdpWquv4s/Z4zyD7AdTqxrK3pgPM+ozaUi8kdRQbCWaIrQ==}
+    engines: {bun: '>=0.7.0', deno: '>=1.0.0', node: '>=18.0.0'}
 
   accepts@2.0.0:
     resolution: {integrity: sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==}
@@ -5722,6 +5729,8 @@ snapshots:
       d3-interpolate: 3.0.1
       d3-selection: 3.0.0
       d3-zoom: 3.0.0
+
+  '@zip.js/zip.js@2.23.0': {}
 
   accepts@2.0.0:
     dependencies:

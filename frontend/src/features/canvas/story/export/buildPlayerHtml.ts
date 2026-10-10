@@ -23,6 +23,8 @@ export interface PlayerLabels {
   flagOff?: string;
   replayExperience?: string;
   ctaUnconfigured?: string;
+  exploration?: Record<string, string>;
+  treeEnding?: string;
 }
 
 export interface BuildPlayerHtmlOptions {
@@ -30,10 +32,14 @@ export interface BuildPlayerHtmlOptions {
   /** 视频绝对 URL 的源（默认当前页 origin）。 */
   origin?: string;
   labels?: PlayerLabels;
+  /** ZIP media paths must stay relative to index.html for file:// playback. */
+  mediaPaths?: 'absolute' | 'relative';
 }
 
 function defaultLabels(): PlayerLabels {
   return {
+    exploration: i18next.t('canvas.story.exploration', { returnObjects: true }) as Record<string, string>,
+    treeEnding: i18next.t('canvas.story.tree.ending'),
     defaultChoice: i18next.t('canvas.story.defaultChoice'),
     endingBadge: i18next.t('canvas.story.messages.endingBadge'),
     endingFallback: i18next.t('canvas.story.endingFallback'),
@@ -85,7 +91,7 @@ function bakeClips(clipByNodeId: Record<string, string>, origin: string): Record
 }
 
 /**
- * 组装单 HTML：内联共享 React 播放器（包含 inkjs）与剧情，视频保持绝对链接。
+ * 组装单 HTML：内联共享 React 播放器（包含 inkjs）与剧情，视频保留内嵌 data URL，普通路径转为绝对链接。
  * @param compiled compileGraphToInk/compileStoryGroup 的产物
  * @param storyJson `story.ToJson()`（由调用方编译得到）
  */
@@ -100,8 +106,9 @@ export function buildPlayerHtml(
 
   const data = {
     storyJson,
-    clips: bakeClips(compiled.clipByNodeId, origin),
-    choiceLoops: bakeClips(compiled.choiceLoopClipByNodeId, origin),
+    explorationNodes: compiled.explorationNodes,
+    clips: opts.mediaPaths === 'relative' ? compiled.clipByNodeId : bakeClips(compiled.clipByNodeId, origin),
+    choiceLoops: opts.mediaPaths === 'relative' ? compiled.choiceLoopClipByNodeId : bakeClips(compiled.choiceLoopClipByNodeId, origin),
     choiceTime: compiled.choiceTimeByNodeId,
     defaultChoice: compiled.defaultChoiceIndexByNodeId,
     endings: compiled.endingByNodeId,

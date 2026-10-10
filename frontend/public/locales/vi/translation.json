@@ -4688,6 +4688,13 @@
       "templates": "Mẫu dựng sẵn"
     },
     "story": {
+      "htmlExport": {
+        "label": "Xuất ZIP ngoại tuyến",
+        "hint": "Bao gồm trình phát, khám phá cốt truyện và video. Giải nén ZIP rồi mở index.html.",
+        "progress": "Đang xuất {{progress}}",
+        "success": "Đã xuất ZIP. Giải nén rồi mở index.html.",
+        "failed": "Xuất thất bại. Kiểm tra video rồi thử lại."
+      },
       "messages": {
         "previousLastFrame": "Khung hình cuối của cảnh trước",
         "videoFirstFrame": "Khung hình đầu của video",

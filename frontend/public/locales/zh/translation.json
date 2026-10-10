@@ -4913,6 +4913,13 @@
       }
     },
     "story": {
+      "htmlExport": {
+        "label": "导出离线包",
+        "hint": "包含播放器、剧情探索和视频。完整解压 ZIP 后打开 index.html",
+        "progress": "导出中 {{progress}}",
+        "success": "离线包已导出，解压后打开 index.html",
+        "failed": "导出失败，请确认视频可播放后重试"
+      },
       "messages": {
         "previousLastFrame": "上一镜尾帧",
         "videoFirstFrame": "视频首帧",
