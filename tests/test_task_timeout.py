@@ -280,10 +280,10 @@ def test_agent_product_pending_timeout_is_reviewed_without_refund(
 
 @pytest.mark.parametrize(
     "compile_mode",
-    ["timeout_fallback", "memory_cache", "persistent_cache", "deterministic"],
+    ["timeout_fallback", "memory_cache", "persistent_cache", "deterministic", "direct_voice"],
 )
 @pytest.mark.parametrize("confirm_fails", [False, True])
-def test_recipe_reuse_confirms_original_reservation_without_refund(
+def test_recipe_delivery_confirms_original_reservation_without_refund(
     monkeypatch, tmp_path, compile_mode, confirm_fails
 ):
     from novelvideo.freezone.agent_product_operations import (
@@ -297,12 +297,46 @@ def test_recipe_reuse_confirms_original_reservation_without_refund(
         _run_freezone_agent_product_async,
     )
 
+    from novelvideo.freezone.workflow_runs import (
+        bind_workflow_action_product_operation,
+        claim_workflow_media_action,
+        create_workflow_run,
+    )
+
+    direct_voice = compile_mode == "direct_voice"
+    metadata = {}
+    if direct_voice:
+        run = create_workflow_run(
+            project_dir=tmp_path,
+            project_id="proj_timeout",
+            canvas_id="default",
+            actions=[
+                {
+                    "node_id": "voice-1",
+                    "action": "generate_audio",
+                    "recipe_id": "drama-shot-voice",
+                    "recipe_version": "1.0.0",
+                    "generation_attempt_id": "attempt-voice",
+                }
+            ],
+        )
+        metadata = {
+            "workflow_run_id": run["run_id"],
+            "node_id": "voice-1",
+            "recipe_id": "drama-shot-voice",
+            "recipe_version": "1.0.0",
+            "generation_attempt_id": "attempt-voice",
+        }
+
     operation = create_agent_product_operation(
         project_dir=tmp_path,
         project_id="proj_timeout",
         product_kind="recipe_result",
         idempotency_key="recipe-reuse",
         generation_session_id="recipe-reuse",
+        canvas_id="default",
+        artifact_id="voice-1" if direct_voice else "",
+        metadata=metadata,
     )
     operation_id = operation["operation_id"]
     bind_agent_product_task(
@@ -311,18 +345,46 @@ def test_recipe_reuse_confirms_original_reservation_without_refund(
         task_id="task_1",
         root_task_id="task_1",
     )
+    receipt = {
+        "kind": "recipe_compile_result",
+        "id": operation_id,
+        "reason": compile_mode,
+        "content": "usable prompt",
+    }
+    if direct_voice:
+        bind_workflow_action_product_operation(
+            project_dir=tmp_path,
+            canvas_id="default",
+            run_id=run["run_id"],
+            node_id="voice-1",
+            action="generate_audio",
+            operation_id=operation_id,
+        )
+        claim = claim_workflow_media_action(
+            project_dir=tmp_path,
+            project_id="proj_timeout",
+            canvas_id="default",
+            node_id="voice-1",
+            operation_id=operation_id,
+            attempt_id="attempt-voice",
+            task_type="freezone_audio_speech",
+            fingerprint="a" * 64,
+        )
+        receipt = {
+            "kind": "recipe_result",
+            "id": claim["job_id"],
+            "workflow_run_id": run["run_id"],
+            "node_id": "voice-1",
+            "recipe_id": "drama-shot-voice",
+        }
     finish_agent_product_operation(
         project_dir=tmp_path,
         operation_id=operation_id,
         outcome="delivered",
         expected_task_id="task_1",
-        result_ref={
-            "kind": "recipe_compile_result",
-            "id": operation_id,
-            "reason": compile_mode,
-            "content": "usable prompt",
-        },
-        server_recipe_compile=True,
+        result_ref=receipt,
+        server_recipe_compile=not direct_voice,
+        server_recipe_direct_audio=direct_voice,
     )
 
     events: list[tuple[str, str]] = []
@@ -392,11 +454,30 @@ def test_recipe_reuse_confirms_original_reservation_without_refund(
     )
 
     assert result["delivery_status"] == "delivered"
-    assert result["compile_mode"] == compile_mode
+    assert result["result_ref"] == receipt
     assert events == [("confirm", "reservation_1")]
     assert manager.failed == []
     assert len(manager.completed) == 1
-    assert "正常计费" in manager.completed[0]["current_task"]
+    if direct_voice:
+        # Replaying delivery must reconfirm the same reservation, never refund it.
+        replay = run_core.run_project_task_core_sync(
+            _verified_delivery(task_type="freezone_agent_recipe_result"),
+            SimpleNamespace(
+                project_id="proj_timeout",
+                requester_user_id="usr_1",
+                is_home_node=True,
+                state_dir=tmp_path,
+            ),
+            manager,
+            run_task_id="task_1",
+        )
+        assert replay == result
+        assert events == [("confirm", "reservation_1")] * 2
+        assert manager.failed == []
+        assert result["model_evidence"] == {}
+    else:
+        assert result["compile_mode"] == compile_mode
+        assert "正常计费" in manager.completed[0]["current_task"]
 
 
 def test_run_project_task_core_rejects_raw_dict_before_side_effects():
