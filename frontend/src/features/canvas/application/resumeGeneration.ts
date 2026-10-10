@@ -17,6 +17,7 @@ import { completeDerivedMedia } from './derivedMedia';
 import type { CanvasNode, CanvasNodeType } from '@/features/canvas/domain/canvasNodes';
 import { CANVAS_NODE_TYPES } from '@/features/canvas/domain/canvasNodes';
 import {
+  fetchFreezoneImageToBlockoutResult,
   fetchFreezoneJobResult,
   fetchFreezoneReversePromptResult,
   fetchFreezoneStoryScriptResult,
@@ -39,10 +40,18 @@ import {
 import {
   shouldWriteGenerationError,
 } from '@/features/canvas/application/generationTaskArbitration';
+import {
+  holdUnfetchedBlockout,
+  landBlockoutResult,
+  reportBlockoutFailure,
+} from '@/features/previz/blockoutLanding';
 import { sessionOwnsGenerationTask } from './generationTaskDescriptor';
 import { resumePersistedHtmlGeneration } from './workflowHtmlRuntime';
 
-export { generationTaskDescriptor } from './generationTaskDescriptor';
+export {
+  generationTaskDescriptor,
+  handedOffGenerationTaskDescriptor,
+} from './generationTaskDescriptor';
 export type { GenerationTaskDescriptor } from './generationTaskDescriptor';
 
 type FreezoneTaskType = FreezoneJobRef['task_type'];
@@ -160,6 +169,7 @@ type ResumeKind =
   | 'script'
   | 'reverse-prompt'
   | 'text-generate'
+  | 'blockout'
   | 'html';
 
 function resumeKindForNode(type: CanvasNodeType, taskType: FreezoneTaskType): ResumeKind | null {
@@ -181,6 +191,8 @@ function resumeKindForNode(type: CanvasNodeType, taskType: FreezoneTaskType): Re
       return 'script';
     case CANVAS_NODE_TYPES.textAnnotation:
       return taskType === 'freezone_text_generate' ? 'text-generate' : 'reverse-prompt';
+    case CANVAS_NODE_TYPES.previz:
+      return 'blockout';
     case CANVAS_NODE_TYPES.htmlArtifact:
       return taskType === 'freezone_text_generate' ? 'html' : null;
     default:
@@ -239,13 +251,22 @@ export const CLEARED_GENERATION_TASK_FIELDS = {
   generationTaskJobId: null,
 } as const;
 
+/** 白模落地要读节点上的最新数据（导入模式、编辑器关着时的场景），这一步之前的 patch 不够用。 */
+interface ResumeNodeContext {
+  nodeId: string;
+  readNodeData: () => Record<string, unknown>;
+  /** 节点上的任务句柄还是不是这一个。取结果要等，等完得再问一次。 */
+  stillOwnsTask: () => boolean;
+}
+
 async function buildSuccessPatch(
   kind: ResumeKind,
   completed: TaskState,
   taskType: FreezoneTaskType,
   jobId: string,
   projectId: string,
-): Promise<Record<string, unknown>> {
+  context: ResumeNodeContext,
+): Promise<Record<string, unknown> | null> {
   switch (kind) {
     case 'derived-media': return {};
     case 'image': {
@@ -314,12 +335,44 @@ async function buildSuccessPatch(
         model: result.model,
       };
     }
+    case 'blockout': {
+      let body: unknown;
+      try {
+        body = await fetchFreezoneImageToBlockoutResult(projectId, jobId);
+      } catch (error) {
+        if (!context.stillOwnsTask()) return null;
+        // 到这里任务已经完成、积分已经扣了，失败的只是取结果这一趟。走通用错误分支会把
+        // 节点清成什么都没发生，花了钱的结果就丢了；留着任务号让人按号再取。
+        return {
+          ...CLEARED_GENERATION_TASK_FIELDS,
+          blockoutImportMode: null,
+          blockoutHeld: holdUnfetchedBlockout(jobId, error),
+        };
+      }
+      // 落地不只是算补丁：编辑器开着时它当场改 store、弹提示，事后拦不回来。任务
+      // 句柄在取结果期间被清掉或换成别的任务，这份结果就不该再进场景。
+      if (!context.stillOwnsTask()) return null;
+      // 节点数据也要等结果回来再读：等的这段时间里用户可能改了场景并关掉编辑器，
+      // 拿等之前读的那份去落地，会把刚存进节点的修改盖掉。
+      const nodeData = context.readNodeData();
+      const mode = nodeData.blockoutImportMode === 'append' ? 'append' : 'replace';
+      return {
+        ...CLEARED_GENERATION_TASK_FIELDS,
+        blockoutImportMode: null,
+        ...landBlockoutResult({ nodeId: context.nodeId, nodeData, jobId, body, mode }),
+      };
+    }
     default:
       return { ...CLEARED_GENERATION_TASK_FIELDS };
   }
 }
 
 function buildErrorPatch(kind: ResumeKind, error: unknown): Record<string, unknown> {
+  if (kind === 'blockout') {
+    // 预演台节点卡片上没有错误位，取消/失败都用 toast 说；生成态照常清掉。
+    reportBlockoutFailure(error);
+    return { ...CLEARED_GENERATION_TASK_FIELDS, blockoutImportMode: null };
+  }
   if (isTaskCancelledError(error)) {
     // 用户主动终止过的任务恢复时只清理生成态，不当错误展示。
     return { ...CLEARED_GENERATION_TASK_FIELDS };
@@ -428,8 +481,12 @@ export async function resumeNodeGeneration(params: {
       });
       return;
     }
-    const patch = await buildSuccessPatch(kind, completed, taskType, jobId, projectId);
-    if (!stillOwnsTask()) return;
+    const patch = await buildSuccessPatch(kind, completed, taskType, jobId, projectId, {
+      nodeId: node.id,
+      readNodeData: readLatestNodeData,
+      stillOwnsTask,
+    });
+    if (!patch || !stillOwnsTask()) return;
     updateNodeData(node.id, patch);
   } catch (error) {
     console.warn('[resume-generation] task resume failed', { nodeId: node.id, taskKey, error });

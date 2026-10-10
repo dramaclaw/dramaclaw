@@ -238,6 +238,27 @@ interface CanvasState {
     aspectRatio: string,
     previewImageUrl?: string
   ) => string | null;
+  /**
+   * 在源节点右边接一个视频节点。与 `addDerivedUploadNode` 同构，只是承载的是
+   * videoUrl —— 预演台录制、以及后续任何「产出一段视频」的节点内动作都走这里。
+   */
+  addDerivedVideoNode: (
+    sourceNodeId: string,
+    videoUrl: string,
+    aspectRatio: string,
+    displayName?: string | null,
+    durationMs?: number | null
+  ) => string | null;
+  /**
+   * 在目标节点左边接一个上传图节点并连上线（图 → 目标），`addDerived*` 的镜像：
+   * 那几个把产物挂到下游，这个把用过的素材留在上游。节点和边是同一步撤销。
+   */
+  addUpstreamUploadNode: (
+    targetNodeId: string,
+    imageUrl: string,
+    aspectRatio: string,
+    displayName?: string | null
+  ) => string | null;
   addDerivedExportNode: (
     sourceNodeId: string,
     imageUrl: string,
@@ -2364,6 +2385,98 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       nodes: [...state.nodes, node],
       selectedNodeId: node.id,
       activeToolDialog: null,
+      history: {
+        past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)),
+        future: [],
+      },
+      dragHistorySnapshot: null,
+      ...trackEdit(state),
+    });
+
+    return node.id;
+  },
+
+  addDerivedVideoNode: (sourceNodeId, videoUrl, aspectRatio, displayName, durationMs) => {
+    const state = get();
+    // 源节点已经被删掉时不建节点：连线会指向一个不存在的目标，画布 store 会悄悄丢掉
+    // 那条边，留下一个孤儿节点。
+    if (!state.nodes.some((node) => node.id === sourceNodeId)) return null;
+    // 画幅按调用方给的算，不走 resolveDerivedAspectRatio：录制出来的比例是预演台
+    // 自己的出片画幅，源节点上那个 aspectRatio 说的是别的事。
+    const derivedSize = resolveGeneratedImageNodeDimensions(aspectRatio);
+    const position = state.findNodePosition(sourceNodeId, derivedSize.width, derivedSize.height);
+    const node = canvasNodeFactory.createNode(CANVAS_NODE_TYPES.video, position, {
+      videoUrl,
+      aspectRatio,
+      displayName: displayName ?? null,
+      durationMs: durationMs ?? null,
+      sourceFileName: null,
+    } as Partial<CanvasNodeData>);
+    node.width = derivedSize.width;
+    node.height = derivedSize.height;
+    node.style = {
+      ...(node.style ?? {}),
+      width: derivedSize.width,
+      height: derivedSize.height,
+    };
+
+    set({
+      nodes: [...state.nodes, node],
+      selectedNodeId: node.id,
+      activeToolDialog: null,
+      history: {
+        past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)),
+        future: [],
+      },
+      dragHistorySnapshot: null,
+      ...trackEdit(state),
+    });
+
+    return node.id;
+  },
+
+  addUpstreamUploadNode: (targetNodeId, imageUrl, aspectRatio, displayName) => {
+    const state = get();
+    const targetNode = state.nodes.find((node) => node.id === targetNodeId);
+    // 目标已经被删掉、或者这条线本来就连不上时不建节点：留下的只会是个孤儿。
+    if (
+      !targetNode ||
+      !nodeHasTargetHandle(targetNode.type) ||
+      !isUpstreamConnectionAllowed(CANVAS_NODE_TYPES.upload, targetNode.type)
+    ) {
+      return null;
+    }
+    const size = resolveGeneratedImageNodeDimensions(aspectRatio);
+    // 已有的上游一个个往下排，新来的接在最底下那个的下面，不叠在别人身上。
+    const upstreamIds = new Set(
+      state.edges.filter((edge) => edge.target === targetNodeId).map((edge) => edge.source),
+    );
+    const upstreamBottom = state.nodes
+      .filter((node) => upstreamIds.has(node.id))
+      .map((node) => node.position.y + (node.measured?.height ?? node.height ?? 200));
+    const node = canvasNodeFactory.createNode(
+      CANVAS_NODE_TYPES.upload,
+      {
+        x: targetNode.position.x - size.width - 100,
+        y: upstreamBottom.length > 0 ? Math.max(...upstreamBottom) + 24 : targetNode.position.y,
+      },
+      { imageUrl, aspectRatio, ...(displayName ? { displayName } : {}) },
+    );
+    node.width = size.width;
+    node.height = size.height;
+    node.style = { ...(node.style ?? {}), width: size.width, height: size.height };
+    const edge: CanvasEdge = {
+      id: `e-${node.id}-${targetNodeId}`,
+      source: node.id,
+      target: targetNodeId,
+      sourceHandle: 'source',
+      targetHandle: 'target',
+      type: 'disconnectableEdge',
+    };
+
+    set({
+      nodes: [...state.nodes, node],
+      edges: [...state.edges, edge],
       history: {
         past: pushSnapshot(state.history.past, createSnapshot(state.nodes, state.edges)),
         future: [],

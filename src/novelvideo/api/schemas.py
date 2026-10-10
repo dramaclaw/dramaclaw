@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from novelvideo.models import SceneRef
+from novelvideo.director_world.blockout.prompts import MAX_DESCRIPTION_CHARS
 from novelvideo.freezone.asset_copy import MAX_SOURCE_URL_LENGTH, MAX_SOURCES_PER_REQUEST
 from novelvideo.freezone.slots import PushTarget
 
@@ -1421,6 +1422,32 @@ class FreezoneImageReversePromptRequest(BaseModel):
     instruction: str = Field(default="", description="可选：反推提示词的补充要求")
     canvas_id: str = Field(default="", description="可选：来源画布 id，用于记录节点生成历史")
     node_id: str = Field(default="", description="可选：来源节点 id，用于记录节点生成历史")
+
+
+class FreezoneImageToBlockoutRequest(BaseModel):
+    """参考图转预演台白模请求。"""
+
+    source_url: str = Field(description="参考图静态地址")
+    description: str = Field(
+        default="",
+        max_length=MAX_DESCRIPTION_CHARS,
+        description="可选：对场景的补充说明，如真实尺寸、要保留的物件",
+    )
+    canvas_id: str = Field(default="", description="可选：来源画布 id")
+    node_id: str = Field(default="", description="可选：来源节点 id")
+    picture_check: bool = Field(
+        default=False,
+        description="可选：画面核对——把白模投影回参考图校验坐标、尺寸和相机是否自洽，多耗一到两轮模型调用",
+    )
+    render_check: bool = Field(
+        default=False,
+        description="可选：渲染核对——把白模渲染成图和参考图放在一起让模型对照修改，多耗两轮模型调用",
+    )
+    model: str = Field(
+        default="",
+        max_length=200,
+        description="可选：本次使用的网关模型，须在 /freezone/blockout/models 列表内；空为默认",
+    )
 
 
 class FreezoneImageReversePromptData(BaseModel):

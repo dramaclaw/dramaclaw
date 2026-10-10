@@ -467,6 +467,11 @@ FREEZONE_LEAF_EGRESS: dict[str, LeafEgressRule] = {
     "reverse_prompt_from_image": LeafEgressRule(
         "novelvideo.freezone.image_node", LeafEgress.NETWORK, "EG-18b"
     ),
+    "generate_blockout_from_image": LeafEgressRule(
+        "novelvideo.director_world.blockout.generation_agent",
+        LeafEgress.NETWORK,
+        "EG-18b",
+    ),
     # EG-18a `freezone.text.generate` / `.structured`（:51，`gateway-routed`）
     "translate_freezone_text": LeafEgressRule(
         "novelvideo.freezone.text_node", LeafEgress.NETWORK, "EG-18a"
@@ -1720,6 +1725,63 @@ async def _run_freezone_image_reverse_prompt_async(
     return result
 
 
+async def _run_freezone_image_to_blockout_async(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    from novelvideo.api.deps import make_static_url_for_context
+    from novelvideo.director_world.blockout.artifacts import (
+        RESULT_FILENAME,
+        BlockoutGenerationError,
+        write_blockout_artifacts,
+        write_blockout_failure_artifacts,
+    )
+    from novelvideo.director_world.blockout.generation_agent import (
+        generate_blockout_from_image,
+    )
+    from novelvideo.freezone.jobs import ensure_freezone_dirs
+    from novelvideo.freezone.paths import outputs_dir
+
+    payload = envelope.get("payload") or {}
+    job_id = str(payload["job_id"])
+    project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
+    ensure_freezone_dirs(project_dir)
+    source_path = Path(str(payload["source_path"]))
+    out_dir = outputs_dir(project_dir, "freezone_image_to_blockout") / job_id
+    _update(ctx, "freezone_image_to_blockout", job_id, 0.1, "正在根据参考图搭建白模...")
+    try:
+        generation = await _call_freezone_leaf(
+            envelope,
+            generate_blockout_from_image,
+            "generate_blockout_from_image",
+            image_path=source_path,
+            description=str(payload.get("description") or ""),
+            picture_check=bool(payload.get("picture_check", False)),
+            render_check=bool(payload.get("render_check", False)),
+            model=str(payload.get("model") or "") or None,
+        )
+    except BlockoutGenerationError as exc:
+        write_blockout_failure_artifacts(out_dir, exc)
+        raise
+    _update(ctx, "freezone_image_to_blockout", job_id, 0.9, "正在保存白模...")
+    written = write_blockout_artifacts(out_dir, generation)
+    out = out_dir / RESULT_FILENAME
+    rel = out.relative_to(project_dir).as_posix()
+    # 物件清单只落盘，不进任务状态：任务状态会随进度事件反复下发，150 件物件不该跟着走。
+    return {
+        "job_id": job_id,
+        "output_format": "json",
+        "output_path": str(out),
+        "output_url": make_static_url_for_context(ctx, rel),
+        "reference_camera_id": written["reference_camera_id"],
+        "counts": written["counts"],
+        "warnings": written["warnings"],
+        "compiler_version": written["compiler_version"],
+        "model": generation.model,
+        "retries": max(len(generation.attempts) - 1, 0),
+    }
+
+
 def run_freezone_text_translate(
     envelope: dict[str, Any], ctx: ProjectContext
 ) -> dict[str, Any]:
@@ -1744,6 +1806,15 @@ def run_freezone_image_reverse_prompt(
 ) -> dict[str, Any]:
     return _run_cancellable(
         envelope, _run_freezone_image_reverse_prompt_async(envelope, ctx)
+    )
+
+
+def run_freezone_image_to_blockout(
+    envelope: dict[str, Any],
+    ctx: ProjectContext,
+) -> dict[str, Any]:
+    return _run_cancellable(
+        envelope, _run_freezone_image_to_blockout_async(envelope, ctx)
     )
 
 
@@ -1951,6 +2022,11 @@ register_project_task_runner(
 register_project_task_runner(
     "freezone_image_reverse_prompt",
     run_freezone_image_reverse_prompt,
+    requires_home_node=False,
+)
+register_project_task_runner(
+    "freezone_image_to_blockout",
+    run_freezone_image_to_blockout,
     requires_home_node=False,
 )
 register_project_task_runner(

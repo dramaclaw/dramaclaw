@@ -1,0 +1,1312 @@
+// SPDX-License-Identifier: Elastic-2.0
+// Copyright (c) 2026 ClaymoreLab
+import { beforeEach, describe, expect, it } from "vitest";
+
+import { PREVIZ_OBJECT_LIMITS } from "@/features/previz/domain/limits";
+import {
+  PREVIZ_DEFAULT_HEIGHT_CM,
+  PREVIZ_MAX_HEIGHT_CM,
+  createPrevizObject,
+} from "@/features/previz/domain/objects";
+import {
+  PREVIZ_MIN_DURATION_FRAMES,
+  createDefaultScene,
+  type PrevizPathClip,
+  type PrevizScene,
+} from "@/features/previz/domain/scene";
+import { PREVIZ_TIMELINE_ZOOM } from "@/features/previz/domain/timeline";
+import {
+  PREVIZ_HISTORY_LIMIT,
+  PREVIZ_PLAYBACK_RATES,
+  usePrevizStore,
+} from "@/features/previz/store";
+
+function sceneWithDuration(frames: number): PrevizScene {
+  const scene = createDefaultScene();
+  scene.settings.durationFrames = frames;
+  return scene;
+}
+
+describe("previz store", () => {
+  beforeEach(() => {
+    usePrevizStore.getState().loadScene(createDefaultScene());
+  });
+
+  it("marks the scene dirty on apply and clean on save", () => {
+    expect(usePrevizStore.getState().dirty).toBe(false);
+
+    usePrevizStore.getState().applyScene(sceneWithDuration(200));
+    expect(usePrevizStore.getState().dirty).toBe(true);
+
+    usePrevizStore.getState().markSaved();
+    expect(usePrevizStore.getState().dirty).toBe(false);
+  });
+
+  it("undoes and redoes scene edits", () => {
+    usePrevizStore.getState().applyScene(sceneWithDuration(200));
+    usePrevizStore.getState().applyScene(sceneWithDuration(300));
+
+    usePrevizStore.getState().undo();
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(200);
+
+    usePrevizStore.getState().undo();
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(120);
+
+    usePrevizStore.getState().redo();
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(200);
+
+    usePrevizStore.getState().redo();
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(300);
+  });
+
+  // 栈空时必须是「引用恒等的真空操作」：不止场景没变，dirty / past / future 也
+  // 一个都不许动。只断言 durationFrames 的话，`set({ dirty: true })` 后再 return
+  // 的实现照样全绿——用例名也就名不副实了。
+  it("ignores undo and redo when there is nothing to move to", () => {
+    const before = usePrevizStore.getState();
+
+    usePrevizStore.getState().undo();
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(120);
+
+    usePrevizStore.getState().redo();
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(120);
+
+    expect(usePrevizStore.getState()).toBe(before);
+  });
+
+  it("drops the redo stack after a new edit", () => {
+    usePrevizStore.getState().applyScene(sceneWithDuration(200));
+    usePrevizStore.getState().undo();
+    usePrevizStore.getState().applyScene(sceneWithDuration(300));
+
+    expect(usePrevizStore.getState().future).toEqual([]);
+  });
+
+  it("loading a scene resets history and the dirty flag", () => {
+    usePrevizStore.getState().applyScene(sceneWithDuration(200));
+    usePrevizStore.getState().loadScene(sceneWithDuration(360));
+
+    const state = usePrevizStore.getState();
+    expect(state.scene.settings.durationFrames).toBe(360);
+    expect(state.past).toEqual([]);
+    expect(state.future).toEqual([]);
+    expect(state.dirty).toBe(false);
+  });
+
+  it("caps the undo stack and keeps the most recent entries", () => {
+    for (let index = 0; index < PREVIZ_HISTORY_LIMIT + 10; index += 1) {
+      usePrevizStore.getState().applyScene(sceneWithDuration(1 + index));
+    }
+
+    // History records the scene *before* each edit, so the pushes are
+    // [120, 1, 2, ... 59] and the cap must drop the oldest 10, not the newest.
+    const past = usePrevizStore.getState().past;
+    expect(past).toHaveLength(PREVIZ_HISTORY_LIMIT);
+    expect(past.map((scene) => scene.settings.durationFrames)).toEqual(
+      Array.from({ length: PREVIZ_HISTORY_LIMIT }, (_, index) => index + 10),
+    );
+
+    usePrevizStore.getState().undo();
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(59);
+  });
+
+  // redo 必须把当前场景压回 past，否则「redo 之后再 undo」会静默失灵——而这条
+  // 路径只有折返才可观测：用例 2 是 undo 到底再 redo 回顶的单向走法，抓不到。
+  it("keeps undo working after a redo", () => {
+    usePrevizStore.getState().applyScene(sceneWithDuration(200));
+    usePrevizStore.getState().applyScene(sceneWithDuration(300));
+
+    usePrevizStore.getState().undo();
+    usePrevizStore.getState().undo();
+    usePrevizStore.getState().redo();
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(200);
+
+    usePrevizStore.getState().undo();
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(120);
+  });
+
+  // markSaved 只该动 dirty。历史一起清掉的实现能通过其余所有用例，但用户一保存
+  // 就丢光 undo 历史。
+  it("markSaved clears only the dirty flag", () => {
+    usePrevizStore.getState().applyScene(sceneWithDuration(200));
+    const before = usePrevizStore.getState();
+
+    usePrevizStore.getState().markSaved();
+
+    const after = usePrevizStore.getState();
+    expect(after.dirty).toBe(false);
+    expect(after.scene).toBe(before.scene);
+    expect(after.past).toBe(before.past);
+    expect(after.future).toBe(before.future);
+
+    usePrevizStore.getState().undo();
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(120);
+  });
+
+  // undo / redo 无条件置脏是刻意的保守选择（宁可多存不可少存），必须有测试钉住，
+  // 否则被误删没人发现，将来真要改成与保存点比对时也没有红线提示边界在哪。
+  it("marks the scene dirty again when undo or redo moves it", () => {
+    usePrevizStore.getState().applyScene(sceneWithDuration(200));
+    usePrevizStore.getState().markSaved();
+    expect(usePrevizStore.getState().dirty).toBe(false);
+
+    usePrevizStore.getState().undo();
+    expect(usePrevizStore.getState().dirty).toBe(true);
+
+    usePrevizStore.getState().markSaved();
+    usePrevizStore.getState().redo();
+    expect(usePrevizStore.getState().dirty).toBe(true);
+  });
+});
+
+describe("previz store object editing", () => {
+  beforeEach(() => {
+    usePrevizStore.getState().loadScene(createDefaultScene());
+  });
+
+  it("adds an object, selects it, and returns its id", () => {
+    const id = usePrevizStore.getState().addObject("character");
+
+    const state = usePrevizStore.getState();
+    expect(id).not.toBeNull();
+    expect(state.scene.objects).toHaveLength(1);
+    expect(state.selectedObjectId).toBe(id);
+    expect(state.dirty).toBe(true);
+    // 每次新建都进历史：撤销一次应该恰好退掉这一个对象。
+    expect(state.past).toHaveLength(1);
+  });
+
+  it("refuses to add past the per-kind limit and leaves the scene untouched", () => {
+    const store = usePrevizStore.getState();
+    for (let index = 0; index < PREVIZ_OBJECT_LIMITS.light; index += 1) {
+      expect(store.addObject("light")).not.toBeNull();
+    }
+
+    const before = usePrevizStore.getState().scene;
+    expect(usePrevizStore.getState().addObject("light")).toBeNull();
+    // 同一个引用：越界那次连一份新场景都不该建出来，否则 undo 栈里多一步空操作。
+    expect(usePrevizStore.getState().scene).toBe(before);
+  });
+
+  it("patches only the addressed object", () => {
+    const first = usePrevizStore.getState().addObject("camera")!;
+    const second = usePrevizStore.getState().addObject("camera")!;
+
+    usePrevizStore.getState().updateObject(first, { focalMm: 85, name: "主机位" });
+
+    const objects = usePrevizStore.getState().scene.objects;
+    const patched = objects.find((object) => object.id === first);
+    const untouched = objects.find((object) => object.id === second);
+    expect(patched?.name).toBe("主机位");
+    expect(patched?.kind === "camera" && patched.focalMm).toBe(85);
+    expect(untouched?.kind === "camera" && untouched.focalMm).toBe(50);
+  });
+
+  // 未改动的对象要保持引用不变：一次属性编辑只重建被改的那一条，不把整份 objects
+  // 翻新。（这不是给哪个消费者的前置条件——`PrevizSceneGraph.sync()` 是可以每帧调的
+  // 全量重写，不做引用比较——而是「谁被改了」在 store 之外仍然看得出来。）
+  it("keeps untouched objects referentially stable across a patch", () => {
+    const first = usePrevizStore.getState().addObject("camera")!;
+    const second = usePrevizStore.getState().addObject("camera")!;
+    const before = usePrevizStore
+      .getState()
+      .scene.objects.find((object) => object.id === second);
+
+    usePrevizStore.getState().updateObject(first, { focalMm: 85 });
+
+    const after = usePrevizStore.getState().scene.objects.find((object) => object.id === second);
+    expect(after).toBe(before);
+  });
+
+  // 属性面板的数字输入框会送来清空后的 NaN 与随手敲出的越界值。原样落进场景的话，
+  // three 的 PerspectiveCamera 静默接受 NaN 焦距，画面全黑而故障点在几个文件之外。
+  it("clamps out-of-range and non-finite numbers in a patch", () => {
+    const id = usePrevizStore.getState().addObject("character")!;
+
+    usePrevizStore.getState().updateObject(id, { heightCm: 9999 });
+    const clamped = usePrevizStore.getState().scene.objects[0];
+    expect(clamped.kind === "character" && clamped.heightCm).toBe(PREVIZ_MAX_HEIGHT_CM);
+
+    usePrevizStore.getState().updateObject(id, { heightCm: Number.NaN });
+    const restored = usePrevizStore.getState().scene.objects[0];
+    expect(restored.kind === "character" && restored.heightCm).toBe(PREVIZ_DEFAULT_HEIGHT_CM);
+  });
+
+  // PrevizObjectPatch 是四个 kind 的 Partial 求交，所以往人物身上写 focalMm 编译期
+  // 拦不住。落进场景的对象必须仍然只带自己 kind 的字段，否则 node.data 里会攒下
+  // 一堆没人读、也过不了下一次 parseScene 的垃圾字段。
+  it("drops fields that do not belong to the patched object's kind", () => {
+    const id = usePrevizStore.getState().addObject("character")!;
+
+    usePrevizStore.getState().updateObject(id, { focalMm: 85 });
+
+    const patched = usePrevizStore.getState().scene.objects[0];
+    expect(patched.id).toBe(id);
+    expect("focalMm" in patched).toBe(false);
+  });
+
+  // 名字清空后落回类型基名，而不是留一个空串：图层面板按名字列条目，空串就是一行
+  // 看不见的东西。这条与 parseScene 读盘时的兜底是同一个答案，不是 store 另立的规矩。
+  //
+  // 期望值写字面量而不是 `PREVIZ_OBJECT_BASE_NAME.light`：后者两边同源，改了那张表
+  // 断言跟着一起动，永远不会红。实测过——把 `PREVIZ_OBJECT_BASE_NAME.prop` 从「物件」
+  // 改成「道具」，整个 `__tests__/features/previz/` 目录零新增失败。这三处
+  // （本条与下面新建编号那条）是那张表在测试里仅有的锚点。
+  it("falls back to the kind base name when a rename blanks it out", () => {
+    const id = usePrevizStore.getState().addObject("light")!;
+
+    usePrevizStore.getState().updateObject(id, { name: "   " });
+
+    expect(usePrevizStore.getState().scene.objects[0].name).toBe("灯光");
+  });
+
+  // 属性面板的 patch 是「有就带上」拼出来的，`{ name: maybeName }`（string | undefined）
+  // 在 exactOptionalPropertyTypes 关着时照样过类型检查。原样合并的话 undefined 会盖掉
+  // 已有的值，接着被 normalizeObject 「修」成字段默认值——一次这样的补丁就能把用户改过的
+  // 名字抹回基名、把隐藏的对象重新显示出来、把锁定的解锁、把身高和变换清回默认。
+  it("treats undefined patch fields as absent instead of resetting them", () => {
+    const id = usePrevizStore.getState().addObject("character")!;
+    usePrevizStore.getState().updateObject(id, {
+      name: "阿离",
+      visible: false,
+      locked: true,
+      heightCm: 200,
+      transform: { position: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    });
+
+    const maybeName: string | undefined = undefined;
+    usePrevizStore.getState().updateObject(id, {
+      name: maybeName,
+      visible: undefined,
+      locked: undefined,
+      heightCm: undefined,
+      transform: undefined,
+    });
+
+    const patched = usePrevizStore.getState().scene.objects[0];
+    expect(patched.name).toBe("阿离");
+    expect(patched.visible).toBe(false);
+    expect(patched.locked).toBe(true);
+    expect(patched.kind === "character" && patched.heightCm).toBe(200);
+    expect(patched.transform.position).toEqual([1, 2, 3]);
+  });
+
+  // updateObject 是唯一一个改场景、却没有任何用例盯着它的历史行为的 CRUD 方法：把它
+  // 改成直接 `set({ scene })`（很可能是为了「一次改名不该压满 50 步历史」而绕开
+  // applyScene）能让整份用例全绿，用户看到的却是「改完属性 Ctrl+Z 撤不回来」。
+  // 任务卡的「一律经过 applyScene」是条不变式，不变式要有红线。
+  it("routes an object patch through the history too", () => {
+    const id = usePrevizStore.getState().addObject("camera")!;
+    const past = usePrevizStore.getState().past.length;
+
+    usePrevizStore.getState().updateObject(id, { focalMm: 85 });
+    expect(usePrevizStore.getState().past).toHaveLength(past + 1);
+
+    usePrevizStore.getState().undo();
+
+    const restored = usePrevizStore.getState().scene.objects[0];
+    expect(restored.kind === "camera" && restored.focalMm).toBe(50);
+  });
+
+  it("ignores a patch for an unknown id", () => {
+    const before = usePrevizStore.getState().scene;
+    usePrevizStore.getState().updateObject("nope", { name: "x" });
+    expect(usePrevizStore.getState().scene).toBe(before);
+  });
+
+  // `loadScene` / `applyScene` 的入参是调用方自建的 PrevizScene，不经 parseScene，
+  // 所以空 id 这类脏值进得来：`.some()` 守卫放行、`parseObject` 却因空 id 返回 null。
+  // 少了归一化那一步的兜底，`scene.objects` 就会变成 `[undefined]`，接着被
+  // JSON.stringify 原样写进 node.data。宁可留一个没规范化的对象。
+  it("never lets a patch put undefined into the objects array", () => {
+    const scene = createDefaultScene();
+    scene.objects = [{ ...createPrevizObject("prop", []), id: "" }];
+    usePrevizStore.getState().loadScene(scene);
+
+    usePrevizStore.getState().updateObject("", { name: "x" });
+
+    const objects = usePrevizStore.getState().scene.objects;
+    expect(objects).toHaveLength(1);
+    expect(objects[0]).toBeDefined();
+    expect(objects[0]?.id).toBe("");
+  });
+
+  it("removes an object together with its timeline track and selection", () => {
+    const id = usePrevizStore.getState().addObject("prop")!;
+    usePrevizStore.getState().applyScene({
+      ...usePrevizStore.getState().scene,
+      timeline: { ...usePrevizStore.getState().scene.timeline, tracks: [{ id: "t1", objectId: id, clips: [] }] },
+    });
+
+    usePrevizStore.getState().removeObject(id);
+
+    const state = usePrevizStore.getState();
+    expect(state.scene.objects).toHaveLength(0);
+    // 留着轨道等于留一个悬空引用，P3 的求值器会撞上它。
+    expect(state.scene.timeline.tracks).toHaveLength(0);
+    expect(state.selectedObjectId).toBeNull();
+  });
+
+  it("keeps tracks that point at surviving objects", () => {
+    const removed = usePrevizStore.getState().addObject("prop")!;
+    const kept = usePrevizStore.getState().addObject("prop")!;
+    usePrevizStore.getState().applyScene({
+      ...usePrevizStore.getState().scene,
+      timeline: {
+        ...usePrevizStore.getState().scene.timeline,
+        tracks: [
+          { id: "t1", objectId: removed, clips: [] },
+          { id: "t2", objectId: kept, clips: [] },
+        ],
+      },
+    });
+
+    usePrevizStore.getState().removeObject(removed);
+
+    expect(usePrevizStore.getState().scene.timeline.tracks.map((track) => track.id)).toEqual([
+      "t2",
+    ]);
+  });
+
+  it("ignores a removal for an unknown id", () => {
+    const before = usePrevizStore.getState().scene;
+    usePrevizStore.getState().removeObject("nope");
+    expect(usePrevizStore.getState().scene).toBe(before);
+  });
+
+  it("clears the active camera when that camera is removed", () => {
+    const id = usePrevizStore.getState().addObject("camera")!;
+    usePrevizStore.getState().setActiveCamera(id);
+
+    usePrevizStore.getState().removeObject(id);
+
+    expect(usePrevizStore.getState().activeCameraId).toBeNull();
+  });
+
+  // 退出监看走的就是 `setActiveCamera(null)`，和 `selectObject(null)` 一样得先钉住
+  // 「传 null 真的清空」。上面那条只覆盖「机位被删掉时顺带清」，下面那条只覆盖
+  // 「整场重载时清」，都不经过这个 setter 的 null 入参。缺了这条，将来给
+  // setActiveCamera 补一条「只收场景里真实存在的机位 id」守卫时会把 null 一起挡掉——
+  // 表现是退出监看的按钮点了没反应、视口永远卡在机位视角，而用例全绿。
+  it("switches monitoring off when the active camera is set to null", () => {
+    const id = usePrevizStore.getState().addObject("camera")!;
+    usePrevizStore.getState().setActiveCamera(id);
+    expect(usePrevizStore.getState().activeCameraId).toBe(id);
+
+    usePrevizStore.getState().setActiveCamera(null);
+
+    expect(usePrevizStore.getState().activeCameraId).toBeNull();
+  });
+
+  // 删掉的不是当前选中项 / 不是监看机位时，两者都不许被顺手清掉。
+  it("leaves the selection and active camera alone when another object is removed", () => {
+    const camera = usePrevizStore.getState().addObject("camera")!;
+    const doomed = usePrevizStore.getState().addObject("prop")!;
+    usePrevizStore.getState().setActiveCamera(camera);
+    usePrevizStore.getState().selectObject(camera);
+
+    usePrevizStore.getState().removeObject(doomed);
+
+    const state = usePrevizStore.getState();
+    expect(state.selectedObjectId).toBe(camera);
+    expect(state.activeCameraId).toBe(camera);
+  });
+
+  it("keeps selection out of the undo stack", () => {
+    const id = usePrevizStore.getState().addObject("light")!;
+    const before = usePrevizStore.getState();
+    usePrevizStore.getState().markSaved();
+
+    // 先断言取消选中真的生效：`addObject` 已经把 id 选上了，直接选回来的话这条用例
+    // 连「selectObject 是个空实现」都区分不出来。
+    usePrevizStore.getState().selectObject(null);
+    expect(usePrevizStore.getState().selectedObjectId).toBeNull();
+    usePrevizStore.getState().selectObject(id);
+
+    // 选中态是会话态：既不进历史，也不算一次未落盘的场景改动。
+    const state = usePrevizStore.getState();
+    expect(state.past).toHaveLength(before.past.length);
+    expect(state.future).toBe(before.future);
+    expect(state.scene).toBe(before.scene);
+    expect(state.dirty).toBe(false);
+    expect(state.selectedObjectId).toBe(id);
+  });
+
+  // 撤销一次删除该把对象撤回来，而不是顺带换掉用户当前选的东西。
+  it("keeps the selection when undo brings a deleted object back", () => {
+    const kept = usePrevizStore.getState().addObject("light")!;
+    const doomed = usePrevizStore.getState().addObject("light")!;
+    usePrevizStore.getState().selectObject(kept);
+
+    usePrevizStore.getState().removeObject(doomed);
+    expect(usePrevizStore.getState().selectedObjectId).toBe(kept);
+
+    usePrevizStore.getState().undo();
+
+    const state = usePrevizStore.getState();
+    expect(state.scene.objects).toHaveLength(2);
+    expect(state.selectedObjectId).toBe(kept);
+  });
+
+  // 撤销一次「新建」之后，选中 id 仍指着一个已经不在场景里的对象。这是「undo 不碰
+  // 会话态」的直接后果，而且是想要的：redo 把同一个 id 放回来时，选中态自己就接回去了
+  // （下面半条断言就是在钉这个来回）。代价是消费者不能假设 `selectedObjectId` 一定能在
+  // `scene.objects` 里找得到——属性面板那边写 `objects.find(…)!` 会在这一步拿到 undefined。
+  // 把这条契约钉在这里，免得日后有人把它当 bug「修」成「undo 顺手清空选中」，那等于
+  // 让撤销去动会话态，正是规范禁止的。
+  it("leaves the selection pointing at an object undo has taken away", () => {
+    const id = usePrevizStore.getState().addObject("character")!;
+
+    usePrevizStore.getState().undo();
+
+    const state = usePrevizStore.getState();
+    expect(state.scene.objects).toHaveLength(0);
+    expect(state.selectedObjectId).toBe(id);
+
+    usePrevizStore.getState().redo();
+    expect(usePrevizStore.getState().scene.objects[0]?.id).toBe(id);
+    expect(usePrevizStore.getState().selectedObjectId).toBe(id);
+  });
+
+  it("routes settings changes through the history too", () => {
+    usePrevizStore.getState().setDisplayMode("clay");
+    usePrevizStore.getState().setOutputAspect("9:16");
+
+    const state = usePrevizStore.getState();
+    expect(state.scene.settings.displayMode).toBe("clay");
+    expect(state.scene.settings.outputAspect).toBe("9:16");
+    expect(state.past).toHaveLength(2);
+
+    state.undo();
+    expect(usePrevizStore.getState().scene.settings.outputAspect).toBe("16:9");
+  });
+
+  it("drops the selection when a fresh scene is loaded", () => {
+    usePrevizStore.getState().addObject("character");
+    // 用真的机位 id，不用一个场景里不存在的字符串：后者等于把「setActiveCamera 接受
+    // 任何 id」写成测试契约，将来真要加 kind 守卫就得回头改这条用例。
+    usePrevizStore.getState().setActiveCamera(usePrevizStore.getState().addObject("camera")!);
+    usePrevizStore.getState().loadScene(createDefaultScene());
+
+    expect(usePrevizStore.getState().selectedObjectId).toBeNull();
+    expect(usePrevizStore.getState().activeCameraId).toBeNull();
+  });
+
+  it("adds an object carrying overrides", () => {
+    const id = usePrevizStore
+      .getState()
+      .addObject("prop", { assetUrl: "/static/x.glb", assetFormat: "glb" })!;
+
+    const created = usePrevizStore.getState().scene.objects.find((object) => object.id === id);
+    expect(created?.kind === "prop" && created.assetUrl).toBe("/static/x.glb");
+    // 工厂本身仍要被用到，而且要拿到**当前场景的对象列表**：编号是照着已有同类对象算
+    // 出来的，实现里把 `scene.objects` 换成 `[]` 的话第二个物件也会叫「物件 1」。
+    // 拿 `createPrevizObject("prop", [])` 的名字来比就抓不到这条——两边同源，恒等成立。
+    expect(created?.name).toBe("物件 1");
+
+    const second = usePrevizStore
+      .getState()
+      .addObject("prop", { assetUrl: "/static/y.glb", assetFormat: "glb" })!;
+    const next = usePrevizStore.getState().scene.objects.find((object) => object.id === second);
+    expect(next?.name).toBe("物件 2");
+  });
+
+  // overrides 按 kind 收窄，写错 kind 的字段要在编译期就红——store 的 addObject 是
+  // createPrevizObject 那次泛型收窄唯一的生产调用点，这里放宽等于那次收窄白做。
+  // 这条断言由 `tsc -p tsconfig.app.json` 执行：错误不再出现时 tsc 会报
+  // 「Unused '@ts-expect-error' directive」。
+  it("rejects overrides belonging to another kind at compile time", () => {
+    // @ts-expect-error assetUrl 是物件字段，写不到人物身上。
+    const id = usePrevizStore.getState().addObject("character", { assetUrl: "/x.glb" });
+
+    const created = usePrevizStore.getState().scene.objects.find((object) => object.id === id);
+    // 类型挡不住的 JS 调用方也不该把它留在场景里。
+    expect("assetUrl" in created!).toBe(false);
+  });
+
+  // 导入路径也会把脏数值带进 overrides，新建这一步同样要收敛。
+  it("clamps overrides passed to a new object", () => {
+    const id = usePrevizStore.getState().addObject("character", { heightCm: 9999 })!;
+
+    const created = usePrevizStore.getState().scene.objects.find((object) => object.id === id);
+    expect(created?.kind === "character" && created.heightCm).toBe(PREVIZ_MAX_HEIGHT_CM);
+  });
+
+  it("clamps the playhead into the scene duration", () => {
+    usePrevizStore.getState().applyScene(sceneWithDuration(200));
+
+    usePrevizStore.getState().setTimelineFrame(500);
+    expect(usePrevizStore.getState().timelineFrame).toBe(200);
+
+    usePrevizStore.getState().setTimelineFrame(-10);
+    expect(usePrevizStore.getState().timelineFrame).toBe(0);
+
+    // 帧号是整数：小数帧在刻度尺上落在两格之间，读数也会抖。
+    usePrevizStore.getState().setTimelineFrame(12.6);
+    expect(usePrevizStore.getState().timelineFrame).toBe(13);
+  });
+
+  it("keeps the playhead out of the undo stack", () => {
+    usePrevizStore.getState().setTimelineFrame(30);
+    // 播放头是会话态，和选中对象同一类：撤销一次删除该把对象撤回来，
+    // 而不是顺带把播放头也拽走。
+    expect(usePrevizStore.getState().past).toHaveLength(0);
+    expect(usePrevizStore.getState().dirty).toBe(false);
+  });
+
+  it("pulls the playhead back when a shorter scene is loaded", () => {
+    usePrevizStore.getState().setTimelineFrame(120);
+    usePrevizStore.getState().loadScene(sceneWithDuration(60));
+    // 换节点时留在旧位置的话，播放头会停在时间轴之外，拖回来才动得了。
+    expect(usePrevizStore.getState().timelineFrame).toBe(0);
+    expect(usePrevizStore.getState().timelinePlaying).toBe(false);
+  });
+
+  it("advances the playhead at the playback rate", () => {
+    usePrevizStore.getState().applyScene(sceneWithDuration(120));
+    usePrevizStore.getState().setTimelineRate(2);
+    usePrevizStore.getState().setTimelinePlaying(true);
+
+    usePrevizStore.getState().tickPlayback(1);
+
+    // 30 fps × 1 秒 × 2 倍速 = 60 帧。
+    expect(usePrevizStore.getState().timelineFrame).toBe(60);
+  });
+
+  it("stops at the last frame instead of looping", () => {
+    usePrevizStore.getState().applyScene(sceneWithDuration(120));
+    usePrevizStore.getState().setTimelinePlaying(true);
+
+    usePrevizStore.getState().tickPlayback(10);
+
+    // 实测参照实现：播放到末尾停住，不回零、不循环（循环默认关）。
+    expect(usePrevizStore.getState().timelineFrame).toBe(120);
+    expect(usePrevizStore.getState().timelinePlaying).toBe(false);
+  });
+
+  it("carries the sub-frame remainder between ticks", () => {
+    usePrevizStore.getState().applyScene(sceneWithDuration(120));
+    // 倍速是模块级单例上的会话态，上一条用例调过 setTimelineRate；这里点名 1×。
+    usePrevizStore.getState().setTimelineRate(1);
+    usePrevizStore.getState().setTimelinePlaying(true);
+
+    // rAF 的一次心跳大约 16ms，在 30fps 的时间轴上是 0.48 帧。每次都取整就永远是 0，
+    // 播放头卡在第 0 帧一格都不走——三次心跳该攒够一帧。
+    usePrevizStore.getState().tickPlayback(0.016);
+    expect(usePrevizStore.getState().timelineFrame).toBe(0);
+    usePrevizStore.getState().tickPlayback(0.016);
+    usePrevizStore.getState().tickPlayback(0.016);
+
+    expect(usePrevizStore.getState().timelineFrame).toBe(1);
+  });
+
+  it("drops the carried remainder when the playhead is moved by hand", () => {
+    usePrevizStore.getState().applyScene(sceneWithDuration(120));
+    usePrevizStore.getState().setTimelineRate(1);
+    usePrevizStore.getState().setTimelinePlaying(true);
+    usePrevizStore.getState().tickPlayback(0.03);
+
+    usePrevizStore.getState().setTimelineFrame(10);
+    usePrevizStore.getState().tickPlayback(0.001);
+
+    // 攒着的那 0.9 帧是上一段播放的余数；留着会让手动定位之后第一格就提前跳。
+    expect(usePrevizStore.getState().timelineFrame).toBe(10);
+  });
+
+  it("ignores playback ticks while stopped", () => {
+    usePrevizStore.getState().tickPlayback(1);
+    expect(usePrevizStore.getState().timelineFrame).toBe(0);
+  });
+
+  it("rewinds to zero on stop", () => {
+    usePrevizStore.getState().setTimelineFrame(60);
+    usePrevizStore.getState().stopPlayback();
+    expect(usePrevizStore.getState().timelineFrame).toBe(0);
+    expect(usePrevizStore.getState().timelinePlaying).toBe(false);
+  });
+
+  it("clamps the playback rate to the offered ones", () => {
+    usePrevizStore.getState().setTimelineRate(99);
+    // 下拉框只给这五档；99 倍速一帧就跑完整条时间轴。
+    expect(PREVIZ_PLAYBACK_RATES).toEqual([0.25, 0.5, 1, 1.5, 2]);
+    expect(usePrevizStore.getState().timelineRate).toBe(2);
+  });
+
+  it("clears the clip and point selection when the object selection changes", () => {
+    usePrevizStore.getState().selectClip("clip-1");
+    usePrevizStore.getState().selectPathPoint("point-1");
+
+    usePrevizStore.getState().selectObject("other");
+
+    // 选中的片段属于上一个对象；留着它，属性面板会显示一个跟当前选中对象无关的片段。
+    expect(usePrevizStore.getState().selectedClipId).toBeNull();
+    expect(usePrevizStore.getState().selectedPointId).toBeNull();
+  });
+
+  it("clears the point selection when another clip is selected", () => {
+    usePrevizStore.getState().selectClip("clip-1");
+    usePrevizStore.getState().selectPathPoint("point-1");
+
+    usePrevizStore.getState().selectClip("clip-2");
+
+    expect(usePrevizStore.getState().selectedPointId).toBeNull();
+  });
+
+  it("clamps the drawing spacing into its range", () => {
+    usePrevizStore.getState().setPathSpacing(0);
+    expect(usePrevizStore.getState().pathSpacingM).toBe(0.05);
+    usePrevizStore.getState().setPathSpacing(99);
+    expect(usePrevizStore.getState().pathSpacingM).toBe(5);
+  });
+
+  it("clamps the drawing speed into its range", () => {
+    usePrevizStore.getState().setPathSpeed(0);
+    expect(usePrevizStore.getState().pathSpeedMps).toBe(0.1);
+    usePrevizStore.getState().setPathSpeed(999);
+    expect(usePrevizStore.getState().pathSpeedMps).toBe(20);
+  });
+
+  function addCharacter(): string {
+    const id = usePrevizStore.getState().addObject("character");
+    if (!id) throw new Error("expected the character to be created");
+    return id;
+  }
+
+  it("creates a track and a clip as long as the stroke takes to walk", () => {
+    const id = addCharacter();
+    // 速度与间距都是 store 上的全局设置，别的用例调过之后 loadScene 不会复位，
+    // 所以要读出帧数的用例一律自己钉一遍。1 m/s 让长度和秒数一一对应，好对账。
+    usePrevizStore.getState().setPathSpeed(1);
+
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [3, 0, 0],
+    ]);
+
+    const track = usePrevizStore.getState().scene.timeline.tracks[0];
+    expect(track.objectId).toBe(id);
+    const clip = track.clips[0] as PrevizPathClip;
+    expect(clip.kind).toBe("path");
+    // 3 米、1 m/s = 3 秒 = 90 帧。铺满时间轴的老做法等于「画多长都是 4 秒」，
+    // 长轨迹只是走得更快，而画得更长想要的正是走得更久。
+    expect([clip.startFrame, clip.endFrame]).toEqual([0, 90]);
+    expect(clip.points.length).toBeGreaterThan(1);
+  });
+
+  it("gives a longer stroke a longer clip", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().setPathSpeed(1);
+
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [2, 0, 0],
+    ]);
+    const short = usePrevizStore.getState().scene.timeline.tracks[0].clips[0].endFrame;
+
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [8, 0, 0],
+    ]);
+    const long = usePrevizStore.getState().scene.timeline.tracks[0].clips[0].endFrame;
+
+    expect(short).toBe(60);
+    expect(long).toBe(240);
+  });
+
+  it("walks the same stroke faster when the speed goes up", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().setPathSpeed(1);
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [6, 0, 0],
+    ]);
+    const slow = usePrevizStore.getState().scene.timeline.tracks[0].clips[0].endFrame;
+
+    usePrevizStore.getState().setPathSpeed(3);
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [6, 0, 0],
+    ]);
+    const fast = usePrevizStore.getState().scene.timeline.tracks[0].clips[0].endFrame;
+
+    expect(slow).toBe(180);
+    expect(fast).toBe(60);
+  });
+
+  it("stretches the timeline to fit a stroke that runs past its end", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().setPathSpeed(1);
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(120);
+
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [7, 0, 0],
+    ]);
+
+    // 片段伸到时间轴外面的话，这一笔后半段既播不到也剪不着。
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(210);
+  });
+
+  it("leaves the timeline alone for a stroke that fits", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().setPathSpeed(1);
+
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [2, 0, 0],
+    ]);
+
+    // 只撑不缩：时间轴是整个场景共用的，为了一条短轨迹裁短它，别的对象的片段跟着遭殃。
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(120);
+  });
+
+  it("caps a very long stroke at the longest timeline there is", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().setPathSpeed(0.1);
+
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [100, 0, 0],
+    ]);
+
+    // 30000 帧的片段绝大部分永远落在时间轴外面：既播不到，也剪不着。
+    const clip = usePrevizStore.getState().scene.timeline.tracks[0].clips[0];
+    expect(clip.endFrame).toBe(360);
+    expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(360);
+  });
+
+  it("keeps where a redrawn clip starts and only re-times its end", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().setPathSpeed(1);
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [3, 0, 0],
+    ]);
+    const clipId = usePrevizStore.getState().scene.timeline.tracks[0].clips[0].id;
+    // 这条片段被挪到了时间轴中段，和别的片段排好了先后。
+    usePrevizStore.getState().moveClipBy(clipId, 30);
+    usePrevizStore.getState().setTimelineFrame(60);
+
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [1, 0, 0],
+    ]);
+
+    const clip = usePrevizStore.getState().scene.timeline.tracks[0].clips[0];
+    // 把它甩回 0 帧等于把用户排好的先后推翻重来。
+    expect([clip.startFrame, clip.endFrame]).toEqual([30, 60]);
+  });
+
+  it("redraws into the clip under the playhead instead of stacking a new one", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [3, 0, 0],
+    ]);
+    const first = usePrevizStore.getState().scene.timeline.tracks[0].clips[0].id;
+
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [0, 0, 6],
+    ]);
+
+    const clips = usePrevizStore.getState().scene.timeline.tracks[0].clips;
+    // 重画是改这条轨迹，不是叠一条新的——叠起来两条同时覆盖同一帧，谁生效全靠运气。
+    expect(clips).toHaveLength(1);
+    expect(clips[0].id).toBe(first);
+    expect((clips[0] as PrevizPathClip).points[0].position).toEqual([0, 0, 0]);
+  });
+
+  it("starts a camera stroke from the aim it had and swings it with the path", () => {
+    const id = usePrevizStore.getState().addObject("camera")!;
+    usePrevizStore.getState().updateObject(id, {
+      transform: { position: [0, 3, 8], rotation: [-16.7, 200, 0], scale: [1, 1, 1] },
+    });
+
+    // 间距显式钉成 1 m：它是 store 上的全局设置，别的用例调过之后不会被 loadScene 复位，
+    // 而重采样出多少个点直接决定这条曲线上量得到多少转角。
+    usePrevizStore.getState().setPathSpacing(1);
+    // 一条向右拐 90° 的笔画。每条边多给几个点，拐角才不会被三轮平滑抹平——两三个点
+    // 的折线平滑完基本是直线，这条用例也就测不到「跟着转」了。
+    usePrevizStore.getState().drawPath(id, [
+      [0, 3, 0],
+      [2, 3, 0],
+      [4, 3, 0],
+      [6, 3, 0],
+      [6, 3, 2],
+      [6, 3, 4],
+      [6, 3, 6],
+    ]);
+
+    const clip = usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as PrevizPathClip;
+    const yaws = clip.points.map((point) => point.rotation[1]);
+    // 起手的取景不能被切线抹掉：200° 与 -160° 是同一条视线，收进 ±180 是为了让轨迹点
+    // 检查器上的滑杆够得着。
+    expect(yaws[0]).toBeCloseTo(-160, 6);
+    // 走完这个弯，镜头也跟着摇了差不多 90°（平滑削掉了拐角上的几度）。盯死一个方向的
+    // 话这里会是 0。取最短弧：yaw 是循环量，直接相减会得到绕远路的那个 270°。
+    const swing = ((yaws[yaws.length - 1] - yaws[0] + 540) % 360) - 180;
+    expect(swing).toBeLessThan(-70);
+    expect(swing).toBeGreaterThan(-95);
+    // 俯角是切线给不出的，整笔都得原样留住，不然一画完机位就自己抬平了。
+    expect(clip.points.every((point) => point.rotation[0] === -16.7)).toBe(true);
+  });
+
+  it("still turns a character along its own stroke", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [3, 0, 0],
+    ]);
+
+    const clip = usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as PrevizPathClip;
+    // 人走路就是朝行进方向走：+X 方向对应 yaw -90。
+    expect(clip.points[0].rotation[1]).toBeCloseTo(-90, 6);
+  });
+
+  it("selects the clip it just drew", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [3, 0, 0],
+    ]);
+    expect(usePrevizStore.getState().selectedClipId).toBe(
+      usePrevizStore.getState().scene.timeline.tracks[0].clips[0].id,
+    );
+  });
+
+  it("ignores a stroke with nothing in it", () => {
+    const id = addCharacter();
+    const before = usePrevizStore.getState().past.length;
+
+    usePrevizStore.getState().drawPath(id, []);
+
+    // 空笔画建了片段就是往 undo 栈里塞一步什么都没干的操作。
+    expect(usePrevizStore.getState().scene.timeline.tracks).toHaveLength(0);
+    expect(usePrevizStore.getState().past).toHaveLength(before);
+  });
+
+  it("puts every timeline edit on the undo stack", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [3, 0, 0],
+    ]);
+
+    usePrevizStore.getState().undo();
+
+    // 画一条轨迹是一次场景改动，撤销该把它整条撤掉。
+    expect(usePrevizStore.getState().scene.timeline.tracks).toHaveLength(0);
+  });
+
+  it("adds an empty clip for an object that has no track yet", () => {
+    const id = addCharacter();
+
+    usePrevizStore.getState().addObjectToTimeline(id);
+
+    const clip = usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as PrevizPathClip;
+    expect(clip.points).toHaveLength(0);
+    expect([clip.startFrame, clip.endFrame]).toEqual([0, 120]);
+  });
+
+  it("splits the selected clip at the playhead", () => {
+    const id = addCharacter();
+    // 4 米、1 m/s 正好 120 帧，下面那两段读起来就是「一半一半」。
+    usePrevizStore.getState().setPathSpeed(1);
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [4, 0, 0],
+    ]);
+    const clipId = usePrevizStore.getState().scene.timeline.tracks[0].clips[0].id;
+    usePrevizStore.getState().setTimelineFrame(60);
+
+    usePrevizStore.getState().splitClipAtPlayhead(clipId);
+
+    const clips = usePrevizStore.getState().scene.timeline.tracks[0].clips;
+    expect(clips.map((clip) => [clip.startFrame, clip.endFrame])).toEqual([
+      [0, 60],
+      [60, 120],
+    ]);
+    // 被切的那条已经不存在了，选中态得跟着放开。
+    expect(usePrevizStore.getState().selectedClipId).toBeNull();
+  });
+
+  it("inserts a keyframe at the playhead", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [3, 0, 0],
+    ]);
+    const clipId = usePrevizStore.getState().scene.timeline.tracks[0].clips[0].id;
+    const before = (usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as PrevizPathClip)
+      .points.length;
+    usePrevizStore.getState().setTimelineFrame(37);
+
+    usePrevizStore.getState().insertKeyframe(clipId);
+
+    const points = (usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as PrevizPathClip)
+      .points;
+    expect(points.length).toBe(before + 1);
+  });
+
+  it("marks a rotated keyframe as edited", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [3, 0, 0],
+    ]);
+    const clip = usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as PrevizPathClip;
+
+    usePrevizStore.getState().updateKeyframe(clip.id, clip.points[0].id, { rotation: [0, 45, 0] });
+
+    const points = (usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as PrevizPathClip)
+      .points;
+    expect(points[0].rotationEdited).toBe(true);
+  });
+
+  it("drops the track when the object is removed from the timeline", () => {
+    const id = addCharacter();
+    usePrevizStore.getState().drawPath(id, [
+      [0, 0, 0],
+      [3, 0, 0],
+    ]);
+
+    usePrevizStore.getState().removeTrackFor(id);
+
+    expect(usePrevizStore.getState().scene.timeline.tracks).toHaveLength(0);
+    // 对象本身还在——删轨道不是删人。
+    expect(usePrevizStore.getState().scene.objects).toHaveLength(1);
+  });
+
+  describe("markPathPoint", () => {
+    function markedPoints() {
+      const clip = usePrevizStore.getState().scene.timeline.tracks[0].clips[0] as PrevizPathClip;
+      return clip.points;
+    }
+
+    it("starts a one-point clip on the first mark and selects it", () => {
+      const id = addCharacter();
+
+      const clipId = usePrevizStore.getState().markPathPoint(id, [1, 0, 2], null);
+
+      const track = usePrevizStore.getState().scene.timeline.tracks[0];
+      expect(track.objectId).toBe(id);
+      const clip = track.clips[0] as PrevizPathClip;
+      expect(clip.id).toBe(clipId);
+      expect(clip.points.map((point) => point.position)).toEqual([[1, 0, 2]]);
+      // 一个点没有长度，片段取最短时长：0 帧的片段 frameToU 无解、时间轴上也点不中。
+      expect([clip.startFrame, clip.endFrame]).toEqual([0, PREVIZ_MIN_DURATION_FRAMES]);
+      expect(usePrevizStore.getState().selectedClipId).toBe(clipId);
+    });
+
+    it("appends later marks to the same clip and re-times it by length", () => {
+      const id = addCharacter();
+      usePrevizStore.getState().setPathSpeed(1);
+
+      const first = usePrevizStore.getState().markPathPoint(id, [0, 0, 0], null);
+      const second = usePrevizStore.getState().markPathPoint(id, [3, 0, 0], first);
+      const third = usePrevizStore.getState().markPathPoint(id, [3, 0, 4], second);
+
+      expect(second).toBe(first);
+      expect(third).toBe(first);
+      const track = usePrevizStore.getState().scene.timeline.tracks[0];
+      expect(track.clips).toHaveLength(1);
+      const clip = track.clips[0] as PrevizPathClip;
+      expect(clip.points.map((point) => point.position)).toEqual([
+        [0, 0, 0],
+        [3, 0, 0],
+        [3, 0, 4],
+      ]);
+      // 3 m + 4 m，1 m/s = 7 秒 = 210 帧；时间轴跟着撑到 210。
+      expect([clip.startFrame, clip.endFrame]).toEqual([0, 210]);
+      expect(usePrevizStore.getState().scene.settings.durationFrames).toBe(210);
+    });
+
+    it("keeps the earlier points' ids while re-spacing them", () => {
+      const id = addCharacter();
+      const clipId = usePrevizStore.getState().markPathPoint(id, [0, 0, 0], null);
+      const firstId = markedPoints()[0].id;
+
+      usePrevizStore.getState().markPathPoint(id, [2, 0, 0], clipId);
+      usePrevizStore.getState().markPathPoint(id, [2, 0, 6], clipId);
+
+      expect(markedPoints()[0].id).toBe(firstId);
+      expect(markedPoints().map((point) => point.u)).toEqual([0, 0.25, 1]);
+    });
+
+    it("undoes one mark at a time", () => {
+      const id = addCharacter();
+      const clipId = usePrevizStore.getState().markPathPoint(id, [0, 0, 0], null);
+      usePrevizStore.getState().markPathPoint(id, [3, 0, 0], clipId);
+      usePrevizStore.getState().markPathPoint(id, [3, 0, 4], clipId);
+
+      usePrevizStore.getState().undo();
+
+      // 每一下都是一步：撤销退掉的是最后那个点，不是整条轨迹。
+      expect(markedPoints().map((point) => point.position)).toEqual([
+        [0, 0, 0],
+        [3, 0, 0],
+      ]);
+    });
+
+    it("starts over in the clip under the playhead when the clip id is stale", () => {
+      const id = addCharacter();
+      usePrevizStore.getState().setPathSpeed(1);
+      usePrevizStore.getState().drawPath(id, [
+        [0, 0, 0],
+        [3, 0, 0],
+      ]);
+      const drawn = usePrevizStore.getState().scene.timeline.tracks[0].clips[0].id;
+      usePrevizStore.getState().moveClipBy(drawn, 30);
+      usePrevizStore.getState().setTimelineFrame(60);
+
+      const clipId = usePrevizStore.getState().markPathPoint(id, [5, 0, 5], "gone");
+
+      // 重打是改播放头下的那条轨迹，不是叠一条新的；沿用原来的起点、只重新定终点。
+      expect(clipId).toBe(drawn);
+      const track = usePrevizStore.getState().scene.timeline.tracks[0];
+      expect(track.clips).toHaveLength(1);
+      const clip = track.clips[0] as PrevizPathClip;
+      expect(clip.points.map((point) => point.position)).toEqual([[5, 0, 5]]);
+      expect([clip.startFrame, clip.endFrame]).toEqual([30, 30 + PREVIZ_MIN_DURATION_FRAMES]);
+    });
+
+    it("appends to the session clip even after the playhead has left it", () => {
+      const id = addCharacter();
+      usePrevizStore.getState().setPathSpeed(1);
+      const clipId = usePrevizStore.getState().markPathPoint(id, [0, 0, 0], null);
+      usePrevizStore.getState().markPathPoint(id, [3, 0, 0], clipId);
+      usePrevizStore.getState().setTimelineFrame(110);
+
+      usePrevizStore.getState().markPathPoint(id, [3, 0, 4], clipId);
+
+      // 打点跟着片段 id 走，不跟播放头：片段随着点越打越长，播放头却停在原地，很快就落到
+      // 片段外面——那时按播放头找会另起一条，把一次打点拆成两条轨迹。
+      const track = usePrevizStore.getState().scene.timeline.tracks[0];
+      expect(track.clips).toHaveLength(1);
+      expect(track.clips[0].endFrame).toBe(210);
+    });
+
+    it("keeps a camera's framing while it follows the marked path", () => {
+      const id = usePrevizStore.getState().addObject("camera");
+      if (!id) throw new Error("expected the camera to be created");
+      usePrevizStore.getState().updateObject(id, {
+        transform: { position: [0, 4, 0], rotation: [-20, 45, 0], scale: [1, 1, 1] },
+      });
+
+      const clipId = usePrevizStore.getState().markPathPoint(id, [0, 4, 0], null);
+      usePrevizStore.getState().markPathPoint(id, [2, 4, 0], clipId);
+      usePrevizStore.getState().markPathPoint(id, [2, 4, -6], clipId);
+
+      // 俯角原样留住；yaw 相对行进方向偏多少就一直偏多少：第二段相对首段转了 +90°。
+      expect(markedPoints().map((point) => point.rotation[0])).toEqual([-20, -20, -20]);
+      expect(markedPoints()[0].rotation[1]).toBeCloseTo(45, 10);
+      expect(markedPoints()[1].rotation[1]).toBeCloseTo(135, 10);
+    });
+
+    it("rejects an unknown object and a non-finite point without touching the scene", () => {
+      const id = addCharacter();
+      const before = usePrevizStore.getState().scene;
+      const pastBefore = usePrevizStore.getState().past.length;
+
+      expect(usePrevizStore.getState().markPathPoint("nobody", [0, 0, 0], null)).toBeNull();
+      expect(usePrevizStore.getState().markPathPoint(id, [Number.NaN, 0, 0], null)).toBeNull();
+
+      expect(usePrevizStore.getState().scene).toBe(before);
+      expect(usePrevizStore.getState().past).toHaveLength(pastBefore);
+    });
+  });
+});
+
+describe("previz store timeline zoom", () => {
+  beforeEach(() => {
+    usePrevizStore.getState().loadScene(createDefaultScene());
+  });
+
+  it("starts at the default scale and reloads back to it", () => {
+    expect(usePrevizStore.getState().timelineZoom).toBe(PREVIZ_TIMELINE_ZOOM.default);
+
+    usePrevizStore.getState().zoomTimelineBy(2);
+    usePrevizStore.getState().loadScene(sceneWithDuration(300));
+    // 换一个节点等于换一条时间轴，上一条缩到多大跟这条没关系。
+    expect(usePrevizStore.getState().timelineZoom).toBe(PREVIZ_TIMELINE_ZOOM.default);
+  });
+
+  it("scales by a factor and clamps at both ends", () => {
+    usePrevizStore.getState().zoomTimelineBy(2);
+    expect(usePrevizStore.getState().timelineZoom).toBe(PREVIZ_TIMELINE_ZOOM.default * 2);
+
+    for (let index = 0; index < 20; index += 1) usePrevizStore.getState().zoomTimelineBy(2);
+    expect(usePrevizStore.getState().timelineZoom).toBe(PREVIZ_TIMELINE_ZOOM.max);
+
+    for (let index = 0; index < 40; index += 1) usePrevizStore.getState().zoomTimelineBy(0.5);
+    expect(usePrevizStore.getState().timelineZoom).toBe(PREVIZ_TIMELINE_ZOOM.min);
+  });
+
+  it("fits the whole duration into the measured lane", () => {
+    usePrevizStore.getState().loadScene(sceneWithDuration(120));
+
+    usePrevizStore.getState().fitTimelineZoom(600);
+    // 120 帧 / 30fps = 4s，铺满 600px 就是 150px 每秒。
+    expect(usePrevizStore.getState().timelineZoom).toBe(150);
+  });
+
+  it("keeps zoom out of the undo stack", () => {
+    usePrevizStore.getState().zoomTimelineBy(2);
+
+    // 缩放是看的方式，不是场景内容：进了 undo 栈，撤销就得先撤销几十次缩放。
+    expect(usePrevizStore.getState().dirty).toBe(false);
+    expect(usePrevizStore.getState().past).toHaveLength(0);
+  });
+});
+
+describe("previz store clip editing", () => {
+  beforeEach(() => {
+    usePrevizStore.getState().loadScene(createDefaultScene());
+  });
+
+  function seedClip(): { objectId: string; clipId: string } {
+    const objectId = usePrevizStore.getState().addObject("character");
+    if (!objectId) throw new Error("expected the character to be created");
+    // 4 米、1 m/s = 120 帧，正好铺满默认时间轴：下面那些用例读的是修剪与拼接，
+    // 片段边界写成整数好对账。速度是 store 上的全局设置，得自己钉一遍。
+    usePrevizStore.getState().setPathSpeed(1);
+    usePrevizStore.getState().drawPath(objectId, [
+      [0, 0, 0],
+      [4, 0, 0],
+    ]);
+    return { objectId, clipId: usePrevizStore.getState().scene.timeline.tracks[0].clips[0].id };
+  }
+
+  it("trims either edge to an absolute frame", () => {
+    const { clipId } = seedClip();
+
+    usePrevizStore.getState().setClipEdge(clipId, "start", 30);
+    usePrevizStore.getState().setClipEdge(clipId, "end", 90);
+
+    const clip = usePrevizStore.getState().scene.timeline.tracks[0].clips[0];
+    expect(clip.startFrame).toBe(30);
+    expect(clip.endFrame).toBe(90);
+  });
+
+  it("keeps a trimmed clip at least one frame long", () => {
+    const { clipId } = seedClip();
+
+    usePrevizStore.getState().setClipEdge(clipId, "start", 999);
+
+    // 拖过头把片段拖成 0 长，`frameToU` 就无解了，时间轴上也再点不中它。
+    expect(usePrevizStore.getState().scene.timeline.tracks[0].clips[0].startFrame).toBe(119);
+  });
+
+  it("appends a clip into the gap after the last one", () => {
+    const { objectId, clipId } = seedClip();
+    usePrevizStore.getState().setClipEdge(clipId, "end", 60);
+
+    usePrevizStore.getState().appendClip(objectId);
+
+    const clips = usePrevizStore.getState().scene.timeline.tracks[0].clips;
+    expect(clips).toHaveLength(2);
+    expect(clips[1].startFrame).toBe(60);
+    expect(clips[1].endFrame).toBe(120);
+    // 新片段接着被选中：紧接着就要给它画轨迹，不选中还得再点一下。
+    expect(usePrevizStore.getState().selectedClipId).toBe(clips[1].id);
+  });
+
+  it("refuses to append when the last clip already reaches the end", () => {
+    const { objectId } = seedClip();
+
+    usePrevizStore.getState().appendClip(objectId);
+
+    // 时间轴已经铺满，再追加只能得到一个 0 长片段。
+    expect(usePrevizStore.getState().scene.timeline.tracks[0].clips).toHaveLength(1);
+  });
+
+  it("pins a track to the top", () => {
+    const first = usePrevizStore.getState().addObject("character");
+    const second = usePrevizStore.getState().addObject("character");
+    usePrevizStore.getState().addObjectToTimeline(first!);
+    usePrevizStore.getState().addObjectToTimeline(second!);
+
+    usePrevizStore.getState().pinTrackToTop(second!);
+
+    expect(usePrevizStore.getState().scene.timeline.tracks[0].objectId).toBe(second);
+  });
+});
+
+describe("previz store track solo", () => {
+  beforeEach(() => {
+    usePrevizStore.getState().loadScene(createDefaultScene());
+  });
+
+  it("toggles an object in and out of the solo set", () => {
+    const store = usePrevizStore.getState();
+    const a = store.addObject("character")!;
+    const b = usePrevizStore.getState().addObject("character")!;
+    // S 长在轨道头上：先有轨道才点得到。
+    usePrevizStore.getState().addObjectToTimeline(a);
+    usePrevizStore.getState().addObjectToTimeline(b);
+
+    usePrevizStore.getState().toggleSolo(a);
+    usePrevizStore.getState().toggleSolo(b);
+    expect(usePrevizStore.getState().soloObjectIds).toEqual([a, b]);
+
+    usePrevizStore.getState().toggleSolo(a);
+    expect(usePrevizStore.getState().soloObjectIds).toEqual([b]);
+  });
+
+  it("keeps solo out of the scene and the undo stack", () => {
+    const id = usePrevizStore.getState().addObject("character")!;
+    const before = usePrevizStore.getState();
+
+    before.toggleSolo(id);
+
+    const after = usePrevizStore.getState();
+    expect(after.scene).toBe(before.scene);
+    expect(after.past).toBe(before.past);
+  });
+
+  it("drops a removed object from the solo set", () => {
+    const id = usePrevizStore.getState().addObject("character")!;
+    usePrevizStore.getState().toggleSolo(id);
+
+    usePrevizStore.getState().removeObject(id);
+
+    expect(usePrevizStore.getState().soloObjectIds).toEqual([]);
+  });
+
+  it("drops a removed track from the solo set", () => {
+    const id = usePrevizStore.getState().addObject("character")!;
+    usePrevizStore.getState().addObjectToTimeline(id);
+    usePrevizStore.getState().toggleSolo(id);
+
+    usePrevizStore.getState().removeTrackFor(id);
+
+    // 轨道没了 S 也点不到了，留着就是一个看不见的独奏把全场冻住。
+    expect(usePrevizStore.getState().soloObjectIds).toEqual([]);
+  });
+
+  it("forgets a soloed object whose track was undone away", () => {
+    const a = usePrevizStore.getState().addObject("character")!;
+    const b = usePrevizStore.getState().addObject("character")!;
+    usePrevizStore.getState().addObjectToTimeline(b);
+    usePrevizStore.getState().addObjectToTimeline(a);
+    usePrevizStore.getState().toggleSolo(a);
+
+    // 撤销「把 a 加到时间轴」：a 的轨道没了，它的 S 也点不到了。
+    usePrevizStore.getState().undo();
+    usePrevizStore.getState().toggleSolo(b);
+    usePrevizStore.getState().redo();
+
+    // 重做把 a 的轨道带回来，但它不该悄悄重新独奏。
+    expect(usePrevizStore.getState().soloObjectIds).toEqual([b]);
+  });
+
+  it("clears the solo set when another scene loads", () => {
+    const id = usePrevizStore.getState().addObject("character")!;
+    usePrevizStore.getState().toggleSolo(id);
+
+    usePrevizStore.getState().loadScene(createDefaultScene());
+
+    expect(usePrevizStore.getState().soloObjectIds).toEqual([]);
+  });
+});

@@ -247,6 +247,34 @@ async def test_freezone_upload_accepts_long_legal_filename_without_staging_overf
 
 
 @pytest.mark.asyncio
+async def test_freezone_upload_keeps_both_files_when_the_same_name_is_uploaded_twice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """同名再传一次不能顶掉上一份：预演台的模型、动作都是按原文件名上传的，
+    而第一份的 URL 早已写进场景存了盘。"""
+    _stub_freezone_upload_context(tmp_path, monkeypatch, safe_filename=None)
+
+    async def upload(contents: bytes) -> dict:
+        result = await freezone.freezone_upload(
+            project="demo",
+            file=UploadFile(filename="chair.glb", file=BytesIO(contents)),
+            user={"username": "admin"},
+        )
+        return result["data"]
+
+    first = await upload(b"first chair")
+    second = await upload(b"second chair")
+
+    assert first["url"] != second["url"]
+    upload_dir = tmp_path / "freezone" / "_uploads"
+    assert (upload_dir / first["filename"]).read_bytes() == b"first chair"
+    assert (upload_dir / second["filename"]).read_bytes() == b"second chair"
+    assert first["filename"].endswith("_chair.glb")
+    assert second["filename"].endswith("_chair.glb")
+
+
+@pytest.mark.asyncio
 async def test_cancelled_freezone_upload_finishes_cleanup_before_reraising(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

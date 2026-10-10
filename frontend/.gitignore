@@ -37,3 +37,6 @@ graphify-out/
 # Local docs editor state
 docs/.obsidian/
 /acceptance-logs
+
+# Playwright 冒烟测试的产物
+/e2e/test-results/

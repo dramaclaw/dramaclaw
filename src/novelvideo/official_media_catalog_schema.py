@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from novelvideo.media_model_request_schema import (
+    MEDIA_MODEL_CATALOG_TYPES,
     validate_media_model_catalog_config,
     validate_media_request_schema,
 )
@@ -31,7 +32,7 @@ def validate_official_media_catalog(payload: object) -> dict[str, Any]:
         if not str(model).strip() or not isinstance(item, dict):
             raise ValueError("official media catalog contains an invalid model")
         media_type = str(item.get("mediaType") or "").strip().lower()
-        if media_type not in {"image", "video", "audio"}:
+        if media_type not in {*MEDIA_MODEL_CATALOG_TYPES, "audio"}:
             raise ValueError(f"invalid mediaType for official media model {model}")
         if not str(item.get("provider") or "").strip():
             raise ValueError(f"provider is required for official media model {model}")
@@ -56,7 +57,7 @@ def validate_official_media_catalog(payload: object) -> dict[str, Any]:
                 f"aliases must contain unique non-empty strings for official media model {model}"
             )
         config = item.get("config", {})
-        if media_type in {"image", "video"}:
+        if media_type in MEDIA_MODEL_CATALOG_TYPES:
             validate_media_model_catalog_config(config, media_type)
         elif not isinstance(config, dict):
             raise ValueError(f"config must be an object for official media model {model}")

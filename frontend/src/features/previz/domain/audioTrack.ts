@@ -1,0 +1,130 @@
+// SPDX-License-Identifier: Elastic-2.0
+// Copyright (c) 2026 ClaymoreLab
+import { v4 as uuidv4 } from 'uuid';
+
+import { PREVIZ_MIN_CLIP_FRAMES, type PrevizAudioClip, type PrevizScene } from './scene';
+
+/** 音频片段上限。一条轨道 20 段已经是配音级别的密度，再多就该去剪辑软件里做。 */
+export const PREVIZ_MAX_AUDIO_CLIPS = 20;
+/** 单个音频文件上限：20 MB，约一小时的 48 kbps mp3，或两分钟的 44.1 kHz 立体声 wav。 */
+export const PREVIZ_MAX_AUDIO_BYTES = 20 * 1024 * 1024;
+/** mp3/wav 三大内核都能解；m4a/ogg 依赖系统解码器，解不出来时由播放层的解码失败分支兜底。 */
+export const PREVIZ_AUDIO_EXTENSIONS = ['mp3', 'wav', 'm4a', 'ogg'] as const;
+
+/** 建片段需要的素材信息。`durationMs` 由调用方探测好再传进来，域层不碰 DOM。 */
+export interface PrevizAudioSource {
+  audioUrl: string;
+  sourceName: string;
+  durationMs: number;
+  sourceNodeId: string | null;
+}
+
+/** 毫秒换整帧。加 eps 的原因见 `audioFramesAvailable`：offsetMs 多半是帧换算来的循环小数。 */
+export function msToFrames(ms: number, fps: number): number {
+  return Math.floor((ms * fps) / 1000 + 1e-6);
+}
+
+/** 素材从 `offsetMs` 起还剩多少整帧。向下取整：多出的半帧没有声音可放。 */
+export function audioFramesAvailable(durationMs: number, offsetMs: number, fps: number): number {
+  // offsetMs 多半是帧换算来的循环小数，乘回去会差在小数点后十几位，别让它吞掉一帧。
+  return Math.max(0, msToFrames(durationMs - offsetMs, fps));
+}
+
+export function framesToMs(frames: number, fps: number): number {
+  return (frames * 1000) / fps;
+}
+
+export type AudioInsertRejection = 'no-room' | 'limit';
+
+/**
+ * 不看素材时长就能定下的拒绝理由。上传一个 20 MB 的 wav 要几十秒，传完才说
+ * 「音频轨最多 20 段」既白费了这段等待，也在后端的 `_uploads/` 里留下一个
+ * 谁都不会引用的孤儿文件——所以「添加」按下的那一刻先问一次这里。
+ * 剩下的「素材比空隙还短」得知道时长，仍由 `insertAudioClip` 兜底。
+ */
+export function audioInsertBlockedAt(
+  scene: PrevizScene,
+  frame: number,
+): AudioInsertRejection | null {
+  const audio = scene.timeline.audio;
+  if (audio.length >= PREVIZ_MAX_AUDIO_CLIPS) return 'limit';
+  // 帧号不是有限数就没有「这一帧」可放，按没空间处理，别让 NaN 混进快照。
+  if (!Number.isFinite(frame)) return 'no-room';
+  const at = Math.max(0, Math.round(frame));
+  if (audio.some((clip) => clip.startFrame <= at && at < clip.endFrame)) return 'no-room';
+  return audioGapAt(scene, at) < PREVIZ_MIN_CLIP_FRAMES ? 'no-room' : null;
+}
+
+/** 从 `at` 到下一段开头（没有下一段就到时间轴末尾）还剩多少帧。 */
+function audioGapAt(scene: PrevizScene, at: number): number {
+  const next = scene.timeline.audio.find((clip) => clip.startFrame > at);
+  return (next ? next.startFrame : scene.settings.durationFrames) - at;
+}
+
+export type InsertAudioClipResult =
+  | { ok: true; scene: PrevizScene; clipId: string }
+  | { ok: false; reason: AudioInsertRejection };
+
+/**
+ * 在播放头处放一段音频：起点 = 播放头，长度 = min(素材帧数, 到下一段或时间轴末尾的空隙)。
+ * 播放头压在既有片段里、空隙不足一帧、或已到上限时不建——同 `insertCut`，拒绝时不给场景。
+ * 上限先查：到了 20 段换个位置也没用，提示「已到上限」比「没空间」更能指路。
+ */
+export function insertAudioClip(
+  scene: PrevizScene,
+  frame: number,
+  source: PrevizAudioSource,
+): InsertAudioClipResult {
+  const audio = scene.timeline.audio;
+  // 上限、越界帧、压在片段上、空隙不足一帧——这四条不看时长就能判，跟上传前的
+  // 预检查共用同一个判断，免得两处的边界各走各的。
+  const blocked = audioInsertBlockedAt(scene, frame);
+  if (blocked) return { ok: false, reason: blocked };
+  // 素材时长不是有限正数就没有帧可放——`HTMLMediaElement.duration` 在元数据到位前就是 NaN。
+  if (!Number.isFinite(source.durationMs) || source.durationMs <= 0) {
+    return { ok: false, reason: 'no-room' };
+  }
+
+  const at = Math.max(0, Math.round(frame));
+  const nextIndex = audio.findIndex((clip) => clip.startFrame > at);
+  const length = Math.min(
+    audioGapAt(scene, at),
+    audioFramesAvailable(source.durationMs, 0, scene.settings.fps),
+  );
+  if (length < PREVIZ_MIN_CLIP_FRAMES) return { ok: false, reason: 'no-room' };
+
+  const clip: PrevizAudioClip = {
+    id: uuidv4(),
+    kind: 'audio',
+    startFrame: at,
+    endFrame: at + length,
+    audioUrl: source.audioUrl,
+    sourceName: source.sourceName,
+    durationMs: source.durationMs,
+    offsetMs: 0,
+    sourceNodeId: source.sourceNodeId,
+  };
+  const next =
+    nextIndex >= 0
+      ? [...audio.slice(0, nextIndex), clip, ...audio.slice(nextIndex)]
+      : [...audio, clip];
+  return {
+    ok: true,
+    scene: { ...scene, timeline: { ...scene.timeline, audio: next } },
+    clipId: clip.id,
+  };
+}
+
+/** 小写、不带点的扩展名；没有点就是空串。 */
+export function audioFileExtension(name: string): string {
+  const dot = name.lastIndexOf('.');
+  return dot < 0 ? '' : name.slice(dot + 1).toLowerCase();
+}
+
+/** 前端能做的两项校验。后端还会再查一次类型，这里只是省一次白传。 */
+export function isAcceptedAudioFile(name: string, bytes: number): 'ok' | 'extension' | 'size' {
+  const extension = audioFileExtension(name);
+  if (!(PREVIZ_AUDIO_EXTENSIONS as readonly string[]).includes(extension)) return 'extension';
+  if (bytes > PREVIZ_MAX_AUDIO_BYTES) return 'size';
+  return 'ok';
+}
