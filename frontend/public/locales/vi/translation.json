@@ -6252,6 +6252,10 @@
       "script": "Kịch bản",
       "pano360Viewer": "Góc nhìn 360°",
       "threeDWorld": "Thế giới 3D",
+      "interactiveStory": "Truyện tương tác",
+      "interactiveAd": "Quảng cáo tương tác",
+      "interactiveStoryDraft": "Tôi muốn tạo truyện tương tác. Hãy giúp tôi phát triển dàn ý trước. Ý tưởng của tôi là: ",
+      "interactiveAdDraft": "Tôi muốn tạo quảng cáo tương tác. Hãy giúp tôi phát triển dàn ý trước. Sản phẩm và điểm nổi bật là: ",
       "sectionAddNode": "Thêm node",
       "sectionAddResource": "Thêm tài nguyên",
       "sectionSkillNode": "Node kỹ năng",
@@ -8525,6 +8529,10 @@
     }
   },
   "superchat": {
+    "runtime": {
+      "waitingForGenerationParameters": "Đang chờ chọn thông số tạo",
+      "clarificationPaused": "Đã tạm dừng chờ câu trả lời"
+    },
     "spec": {
       "characterFallback": "Nhân vật {{index}}",
       "roleLabel": "Vai",

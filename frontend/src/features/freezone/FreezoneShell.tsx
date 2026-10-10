@@ -1,3 +1,5 @@
+import { canvasCreationActions } from "@/features/canvas/application/nodeCatalog";
+import { uuidGenerator } from "@/features/canvas/infrastructure/idGenerator";
 import { htmlArtifactNodePatches } from '@/features/html-artifacts/nodeMetadata';
 import { HtmlArtifactEditor } from '@/features/html-artifacts/HtmlArtifactEditor';
 import { HTML_ARTIFACT_OPEN_EVENT, HTML_ARTIFACT_REFERENCE_EVENT, HTML_ARTIFACT_UPDATED_EVENT, type HtmlArtifactTarget } from '@/features/html-artifacts/api';
@@ -1003,6 +1005,21 @@ export function FreezoneShell({
   const handlePendingChatExternalSubmitConsumed = useCallback(() => {
     setPendingChatExternalSubmit(null);
   }, []);
+  // 保活画布共享事件总线，仅当前活动画布接收创作入口事件，避免把草稿填到其他画布。
+  // draft 复用聊天面板的追加与聚焦逻辑，保留已有输入，由用户补充后发送，不自动生成。
+  useEffect(() => {
+    if (!active) return;
+    return canvasEventBus.subscribe("freezone/start-creation", ({ actionId }) => {
+      const action = canvasCreationActions.find((entry) => entry.id === actionId);
+      if (!action) return;
+      setChatOpen(true);
+      setPendingChatExternalSubmit({
+        id: `creation:${actionId}:${uuidGenerator.next()}`,
+        text: t(action.draftKey),
+        mode: "draft",
+      });
+    });
+  }, [active, t]);
   const handleOutlineConfirmed = useCallback(
     (outline: PendingStoryOutline) => {
       // 确认成功的同一动线里展开虾导并代投「继续创作」，不等用户回聊天再说一遍；

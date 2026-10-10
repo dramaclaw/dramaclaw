@@ -6375,6 +6375,10 @@
       "script": "Script",
       "pano360Viewer": "360° View",
       "threeDWorld": "3D World",
+      "interactiveStory": "Interactive story",
+      "interactiveAd": "Interactive ad",
+      "interactiveStoryDraft": "I want to create an interactive story. Help me develop the outline first. My story idea is: ",
+      "interactiveAdDraft": "I want to create an interactive ad. Help me develop the outline first. My product and selling points are: ",
       "sectionAddNode": "Add Node",
       "sectionAddResource": "Add Resource",
       "sectionSkillNode": "Skill Nodes",
@@ -8648,6 +8652,10 @@
     }
   },
   "superchat": {
+    "runtime": {
+      "waitingForGenerationParameters": "Waiting for generation parameters",
+      "clarificationPaused": "Waiting for an answer is paused"
+    },
     "spec": {
       "characterFallback": "Character {{index}}",
       "roleLabel": "Role",

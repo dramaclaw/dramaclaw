@@ -2096,15 +2096,16 @@ function workflowDraftOperationId(toolMessage: ChatMessage): string {
 }
 
 function toolStatusRuntimeText(params: {
+  t: TFunction;
   status: "running" | "done" | "failed";
   title: string;
   toolMessage: ChatMessage;
 }): string {
-  const { status, title, toolMessage } = params;
+  const { status, title, toolMessage, t } = params;
   const raw = toolRawRecord(toolMessage);
   const businessStatus = toolBusinessStatus(toolMessage);
-  if (businessStatus === "clarification_required") return "等待选择生成参数";
-  if (businessStatus === "clarification_frontend_timeout") return "等待回答已暂停";
+  if (businessStatus === "clarification_required") return t("superchat.runtime.waitingForGenerationParameters");
+  if (businessStatus === "clarification_frontend_timeout") return t("superchat.runtime.clarificationPaused");
   if (
     status === "failed" &&
     (raw?.name === "freezone_put_agent_catalog_draft_outline" ||
@@ -2287,6 +2288,7 @@ function AgentRuntimeTimeline({
   streaming: boolean;
   hideSettledToolStatus?: boolean;
 }) {
+  const { t } = useTranslation();
   const runtimeParts = agentRuntimeDisplayParts(parts, { streaming, hideSettledToolStatus });
   if (runtimeParts.length === 0) return null;
   return (
@@ -2304,7 +2306,7 @@ function AgentRuntimeTimeline({
           const detail = status === "failed" && error ? error : "";
           const title = display?.title ?? genericToolTitle(toolMessage);
           const repeatText = toolPart.repeatCount && toolPart.repeatCount > 1 ? ` × ${toolPart.repeatCount}` : "";
-          const statusText = toolStatusRuntimeText({ status, title, toolMessage });
+          const statusText = toolStatusRuntimeText({ status, title, toolMessage, t });
           return (
             <div
               key={part.id}

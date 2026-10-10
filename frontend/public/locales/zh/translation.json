@@ -6375,6 +6375,10 @@
       "script": "脚本",
       "pano360Viewer": "360° 全景",
       "threeDWorld": "导演世界",
+      "interactiveStory": "互动影游",
+      "interactiveAd": "互动广告",
+      "interactiveStoryDraft": "我想创作互动影游，请先和我一起完善故事大纲。我的故事想法是：",
+      "interactiveAdDraft": "我想创作互动广告，请先和我一起完善广告大纲。我的产品和卖点是：",
       "sectionAddNode": "添加节点",
       "sectionAddResource": "添加资源",
       "sectionSkillNode": "技能节点",
@@ -8648,6 +8652,10 @@
     }
   },
   "superchat": {
+    "runtime": {
+      "waitingForGenerationParameters": "等待选择生成参数",
+      "clarificationPaused": "等待回答已暂停"
+    },
     "spec": {
       "characterFallback": "角色 {{index}}",
       "roleLabel": "角色",

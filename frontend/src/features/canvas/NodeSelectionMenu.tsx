@@ -384,6 +384,7 @@ export function NodeSelectionMenu({
             <>
               <CanvasMenuSectionHeader label={t('node.menu.sectionAddNode')} className="pb-4" />
               <CanvasAddNodeGrid
+                onActionSelected={handleClose}
                 onItemPointerEnter={scheduleSkillPanelClose}
                 transitionDelayForIndex={(index) => (isVisible ? `${index * 30}ms` : '0ms')}
                 onSelectNode={(type, clientPosition) => {

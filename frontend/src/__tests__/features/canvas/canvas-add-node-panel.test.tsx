@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { CANVAS_NODE_TYPES } from "@/features/canvas/domain/canvasNodes";
+import { canvasEventBus } from "@/features/canvas/application/canvasServices";
 import { CanvasAddNodePanel } from "@/features/canvas/ui/CanvasAddNodePanel";
 
 const translations: Record<string, string> = {
@@ -23,6 +24,8 @@ const translations: Record<string, string> = {
   "node.menu.videoStory": "视频故事",
   "node.menu.videoCompose": "视频合成",
   "node.menu.script": "脚本",
+  "node.menu.interactiveStory": "互动影游",
+  "node.menu.interactiveAd": "互动广告",
   "node.menu.pano360Viewer": "360° 全景",
   "node.menu.threeDWorld": "3D 世界",
 };
@@ -34,6 +37,25 @@ vi.mock("react-i18next", () => ({
 }));
 
 describe("CanvasAddNodePanel", () => {
+  it.each([
+    ["互动影游", "interactive-story"],
+    ["互动广告", "interactive-ad"],
+  ])("dispatches %s without creating a standalone node", async (label, actionId) => {
+    const onSelectNode = vi.fn();
+    const onClose = vi.fn();
+    const listener = vi.fn();
+    const unsubscribe = canvasEventBus.subscribe("freezone/start-creation", listener);
+    try {
+      render(<CanvasAddNodePanel skillItems={[]} onSelectNode={onSelectNode} onSelectSkill={vi.fn()} onClose={onClose} />);
+      await userEvent.setup().click(screen.getByRole("button", { name: label }));
+      expect(listener).toHaveBeenCalledExactlyOnceWith({ actionId });
+      expect(onClose).toHaveBeenCalledOnce();
+      expect(onSelectNode).not.toHaveBeenCalled();
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it("shows standalone shot context in the quick add panel", async () => {
     const user = userEvent.setup();
     const onSelectNode = vi.fn();

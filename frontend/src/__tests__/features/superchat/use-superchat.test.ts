@@ -1,3 +1,4 @@
+import { enT, zhT } from "@/__tests__/helpers/i18n-fixtures";
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { act, render, renderHook, waitFor } from "@testing-library/react";
@@ -6324,6 +6325,7 @@ describe("tool status parts", () => {
     const toolMessage = (part as { event: ChatMessage }).event;
 
     expect(toolStatusRuntimeTextForTest({
+      t: zhT,
       status: "failed",
       title: genericToolTitleForTest(toolMessage),
       toolMessage,
@@ -6354,16 +6356,19 @@ describe("tool status parts", () => {
     }, "turn-a") as { event: ChatMessage }).event;
 
     expect(toolStatusRuntimeTextForTest({
+      t: zhT,
       status: "done",
       title: genericToolTitleForTest(prepareCompleted),
       toolMessage: prepareCompleted,
     })).toBe("已生成工作流草稿");
     expect(toolStatusRuntimeTextForTest({
+      t: zhT,
       status: "failed",
       title: genericToolTitleForTest(prepareFailed),
       toolMessage: prepareFailed,
     })).toBe("待重新生成工作流草稿");
     expect(toolStatusRuntimeTextForTest({
+      t: zhT,
       status: "done",
       title: genericToolTitleForTest(confirmCompleted),
       toolMessage: confirmCompleted,
@@ -6386,10 +6391,32 @@ describe("tool status parts", () => {
     }, "turn-a") as { event: ChatMessage }).event;
 
     expect(toolStatusRuntimeTextForTest({
+      t: zhT,
       status: "failed",
       title: genericToolTitleForTest(waiting),
       toolMessage: waiting,
     })).toBe("等待选择生成参数");
+  });
+
+  it.each([
+    ["clarification_required", "Waiting for generation parameters"],
+    ["clarification_frontend_timeout", "Waiting for an answer is paused"],
+  ])("translates %s in the English interface", (businessStatus, expected) => {
+    const toolMessage = (toolStatusPartForTest("agent.tool.updated", {
+      type: "agent.tool.updated",
+      turn_id: "turn-a",
+      call_id: "call-clarification",
+      name: "freezone_prepare_workflow_draft",
+      status: "failed",
+      result: { ok: false, status: businessStatus },
+    }, "turn-a") as { event: ChatMessage }).event;
+
+    expect(toolStatusRuntimeTextForTest({
+      t: enT,
+      status: "failed",
+      title: genericToolTitleForTest(toolMessage),
+      toolMessage,
+    })).toBe(expected);
   });
 
   it("hides a superseded parameter handoff after the same draft operation succeeds", () => {
