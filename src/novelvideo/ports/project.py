@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import AsyncContextManager, Protocol
 
 from fastapi import HTTPException
 
@@ -35,6 +35,7 @@ class ProjectRecord:
     created_at: str = ""
     updated_at: str = ""
     purged_at: str | None = None
+    purge_started_at: str | None = None
     storage_org_id: str | None = None
     storage_org_name: str | None = None
 
@@ -55,6 +56,8 @@ def require_role_value(actual: str | None, required: str) -> None:
 
 
 class ProjectRegistry(Protocol):
+    def purge_lock(self, project_id: str) -> AsyncContextManager[bool]: ...
+
     async def get_project(self, project_id: str) -> ProjectRecord | None: ...
 
     async def get_project_by_owner_name(
@@ -87,6 +90,8 @@ class ProjectRegistry(Protocol):
     ) -> ProjectRecord | None: ...
 
     async def mark_project_purged(self, project_id: str) -> ProjectRecord | None: ...
+
+    async def begin_project_purge(self, project_id: str) -> ProjectRecord | None: ...
 
     async def delete_uncommitted_project(self, project_id: str) -> None: ...
 

@@ -81,6 +81,8 @@ async def test_sqlite_project_registry_persists_and_reads_all_project_methods(
     assert archived.status == "archived"
     assert archived.updated_at >= created.updated_at
 
+    await registry.update_project_status(created.id, "deleted")
+    await registry.begin_project_purge(created.id)
     purged = await registry.mark_project_purged(created.id)
     assert purged is not None
     assert purged.status == "deleted"
