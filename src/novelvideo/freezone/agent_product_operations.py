@@ -459,6 +459,45 @@ def read_recipe_model_prompt(*, project_dir: Path, operation_id: str) -> str:
     return str(row["prompt"] or "")
 
 
+def _is_recipe_direct_audio_receipt(
+    conn: sqlite3.Connection, operation: dict[str, Any], result: dict[str, Any]
+) -> bool:
+    metadata = operation["metadata"]
+    if not (
+        operation["product_kind"] == "recipe_result"
+        and metadata.get("recipe_id") == DIRECT_VOICE_RECIPE_ID
+        and result.get("kind") == "recipe_result"
+        and result.get("workflow_run_id") == metadata.get("workflow_run_id")
+        and result.get("node_id") == metadata.get("node_id")
+        and result.get("recipe_id") == DIRECT_VOICE_RECIPE_ID
+        and bool(result.get("id"))
+    ):
+        return False
+    linked_action = conn.execute(
+        """SELECT job_id, task_type, recipe_id, recipe_version
+           FROM workflow_run_actions
+           WHERE run_id = ? AND node_id = ? AND product_operation_id = ?""",
+        (result["workflow_run_id"], result["node_id"], operation["operation_id"]),
+    ).fetchone()
+    return bool(
+        linked_action
+        and linked_action["job_id"] == result["id"]
+        and linked_action["task_type"] == "freezone_audio_speech"
+        and linked_action["recipe_id"] == DIRECT_VOICE_RECIPE_ID
+        and linked_action["recipe_version"] == metadata.get("recipe_version")
+    )
+
+
+def is_recipe_direct_audio_receipt(
+    *, project_dir: Path, operation: dict[str, Any]
+) -> bool:
+    """Revalidate a persisted direct TTS receipt against its server-claimed action."""
+    with _connect(project_dir) as conn:
+        return _is_recipe_direct_audio_receipt(
+            conn, operation, operation.get("result_ref") or {}
+        )
+
+
 def finish_agent_product_operation(
     *,
     project_dir: Path,
@@ -489,34 +528,8 @@ def finish_agent_product_operation(
         )
         direct_audio_delivery = (
             server_recipe_direct_audio
-            and payload["product_kind"] == "recipe_result"
-            and payload["metadata"].get("recipe_id") == DIRECT_VOICE_RECIPE_ID
-            and result.get("kind") == "recipe_result"
-            and result.get("workflow_run_id")
-            == payload["metadata"].get("workflow_run_id")
-            and result.get("node_id") == payload["metadata"].get("node_id")
-            and result.get("recipe_id") == DIRECT_VOICE_RECIPE_ID
-            and bool(result.get("id"))
+            and _is_recipe_direct_audio_receipt(conn, payload, result)
         )
-        if direct_audio_delivery:
-            linked_action = conn.execute(
-                """SELECT job_id, task_type, recipe_id, recipe_version
-                   FROM workflow_run_actions
-                   WHERE run_id = ? AND node_id = ? AND product_operation_id = ?""",
-                (
-                    result["workflow_run_id"],
-                    result["node_id"],
-                    operation_id,
-                ),
-            ).fetchone()
-            direct_audio_delivery = bool(
-                linked_action
-                and linked_action["job_id"] == result["id"]
-                and linked_action["task_type"] == "freezone_audio_speech"
-                and linked_action["recipe_id"] == DIRECT_VOICE_RECIPE_ID
-                and linked_action["recipe_version"]
-                == payload["metadata"].get("recipe_version")
-            )
         if result.get("kind") == "recipe_compile_result" and (
             not server_recipe_compile or not recipe_delivery or status != "delivered"
         ):

@@ -83,6 +83,7 @@ async def _run_freezone_agent_product_async(
         PENDING_STATUSES,
         RECIPE_COMPILE_MESSAGES,
         is_recipe_compile_receipt,
+        is_recipe_direct_audio_receipt,
         read_agent_product_operation,
     )
 
@@ -141,7 +142,16 @@ async def _run_freezone_agent_product_async(
                     "message": RECIPE_COMPILE_MESSAGES[reason],
                     "result_ref": result_ref,
                 }
-            if not evidence.get("model_call_id") or not result_ref.get("id"):
+            direct_audio_delivery = False
+            if not evidence.get("model_call_id"):
+                direct_audio_delivery = await asyncio.to_thread(
+                    is_recipe_direct_audio_receipt,
+                    project_dir=Path(ctx.state_dir),
+                    operation=operation,
+                )
+            if (
+                not evidence.get("model_call_id") and not direct_audio_delivery
+            ) or not result_ref.get("id"):
                 raise RuntimeError(
                     "agent product result lacks trusted delivery evidence"
                 )
