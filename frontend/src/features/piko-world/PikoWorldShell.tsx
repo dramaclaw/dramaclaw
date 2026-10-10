@@ -2,6 +2,7 @@
 // Copyright (c) 2026 ClaymoreLab
 import { retainDogWorldSession } from "./runtime/dog-world-session";
 import { PikoChatTranslation } from "./PikoChatTranslation";
+import { PikoChatTextBubble } from "./PikoChatTextBubble";
 import { PIKO_MAP_TRAVEL_TIMING } from "./piko-map-timing";
 import { usePikoCursors } from "./use-piko-cursors";
 import { PikoPrivateChat } from "./PikoPrivateChat";
@@ -649,7 +650,7 @@ export function PikoWorldShell({ character = null, playerGender, onMusicMapChang
                 <article
                   key={message.id}
                   className={cn(
-                    "flex max-w-[88%] flex-col gap-1",
+                    "flex w-fit min-w-0 max-w-[88%] flex-col gap-1",
                     message.mine ? "self-end items-end" : "self-start items-start",
                   )}
                 >
@@ -660,16 +661,15 @@ export function PikoWorldShell({ character = null, playerGender, onMusicMapChang
                     <time>{message.time}</time>
                   </div>
                   <PikoChatTranslation text={message.body ?? t(message.bodyKey ?? "")} conversation="public:town">
-                  <p
+                  <PikoChatTextBubble
+                    body={message.body ?? t(message.bodyKey ?? "")}
                     className={cn(
-                      "whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[min(var(--radius-sm),8px)] border px-2.5 py-1.5 text-xs leading-4 text-primary-foreground/80",
+                      "rounded-[min(var(--radius-sm),8px)] border px-2.5 py-1.5 text-xs leading-4 text-primary-foreground/80",
                       message.mine
                         ? "border-amber-900/15 bg-amber-100/55"
                         : "border-amber-950/10 bg-white/55",
                     )}
-                  >
-                    {message.body ?? t(message.bodyKey ?? "")}
-                  </p>
+                  />
                   </PikoChatTranslation>
                 </article>
               ))

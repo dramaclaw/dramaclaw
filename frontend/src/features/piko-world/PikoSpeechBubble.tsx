@@ -22,9 +22,9 @@ export function PikoSpeechBubble({ body, position, fit, headOffset = 132 }: { bo
     observer.observe(parent); observer.observe(element);
     return () => observer.disconnect();
   }, [body, position.x, position.y, fit.x, fit.y, fit.scale, headOffset]);
-  return <div ref={ref} className={`${popupStyles.surface} pointer-events-none absolute z-10 w-max max-w-[min(13rem,calc(100%-1rem))] px-2.5 py-1.5 text-xs leading-4`}
+  return <div ref={ref} className={`${popupStyles.surface} pointer-events-none absolute z-10 h-auto w-fit max-w-[min(13rem,calc(100%-1rem))] whitespace-pre-wrap break-words px-2.5 py-1.5 text-xs leading-4 [overflow-wrap:anywhere]`}
     style={{ left: placement.left, top: placement.top }} aria-hidden="true">
-    <span className="break-words [overflow-wrap:anywhere]">{body}</span>
+    {body}
     <span className="absolute -bottom-[5px] size-2 rotate-45 border-b border-r border-[#c5a12d] bg-amber-100" style={{ left: placement.tail }} />
   </div>;
 }

@@ -9,6 +9,7 @@ import type {
   PikoPrivateChatRequest,
 } from "./piko-world-client";
 import { PikoChatTranslation } from "./PikoChatTranslation";
+import { PikoChatTextBubble } from "./PikoChatTextBubble";
 import inputStyles from "./piko-input.module.css";
 import styles from "./piko-private-chat.module.css";
 import popup from "./piko-popup.module.css";
@@ -139,7 +140,7 @@ function PrivateConversation({ peer, messages, ownCharacterId, ownNickname, onOp
           {messages.map(message => {
             const mine = message.from_character_id === ownCharacterId;
             return <article key={message.id}
-              className={`flex max-w-[88%] flex-col gap-1 ${mine ? "self-end items-end" : "self-start items-start"}`}>
+              className={`flex w-fit min-w-0 max-w-[88%] flex-col gap-1 ${mine ? "self-end items-end" : "self-start items-start"}`}>
               <div className="flex items-center gap-2 px-1 text-[10px] leading-4 text-amber-950/55">
                 <span className="font-medium">{mine ? ownNickname : peer.nickname}</span>
                 <time>{new Date(message.sent_at).toLocaleTimeString([], {
@@ -147,9 +148,8 @@ function PrivateConversation({ peer, messages, ownCharacterId, ownNickname, onOp
                 })}</time>
               </div>
               <PikoChatTranslation text={message.body} conversation={`private:${peer.character_id}`}>
-                <p className={`m-0 whitespace-pre-wrap break-words rounded-[min(var(--radius-sm),8px)] border px-2.5 py-1.5 text-xs leading-4 text-amber-950/80 [overflow-wrap:anywhere] ${mine ? "border-amber-900/15 bg-amber-100/55" : "border-amber-950/10 bg-white/55"}`}>
-                  {message.body}
-                </p>
+                <PikoChatTextBubble body={message.body}
+                  className={`rounded-[min(var(--radius-sm),8px)] border px-2.5 py-1.5 text-xs leading-4 text-amber-950/80 ${mine ? "border-amber-900/15 bg-amber-100/55" : "border-amber-950/10 bg-white/55"}`} />
               </PikoChatTranslation>
             </article>;
           })}
