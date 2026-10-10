@@ -43,19 +43,11 @@ import {
   contextPromptPaletteInsertionText,
   type ContextPromptPaletteEntry,
 } from '@/features/canvas/nodes/contextPromptPalette';
-import {
-  ProviderModelPicker,
-  type ModelOption,
-} from '@/features/canvas/ui/ProviderModelPicker';
+import { ProviderModelPicker, type ModelOption } from '@/features/canvas/ui/ProviderModelPicker';
 import { MediaModelParameterChip } from '@/features/canvas/ui/MediaModelParameterChip';
 import type { MediaModelParameterDefinition } from '@/api/ops';
-import {
-  CreditCostPill,
-  type CreditPromotionDisplay,
-} from '@/components/credits/credit-visual';
-import {
-  CANVAS_NODE_INPUT_PLACEHOLDER_CLASS,
-} from '@/features/canvas/ui/nodeFrameStyles';
+import { CreditCostPill, type CreditPromotionDisplay } from '@/components/credits/credit-visual';
+import { CANVAS_NODE_INPUT_PLACEHOLDER_CLASS } from '@/features/canvas/ui/nodeFrameStyles';
 import {
   NODE_COUNT_POPOVER_CLASS,
   NODE_CREDIT_PILL_FLAT_CLASS,
@@ -271,7 +263,7 @@ function StyleChip({ selectedId, selectedLabel, onChange, onOpenChange }: StyleC
   }, [isOpen]);
 
   const isActive = Boolean(selectedId);
-  const label = isActive ? selectedLabel ?? '风格' : '风格';
+  const label = isActive ? (selectedLabel ?? '风格') : '风格';
 
   return (
     <div className="relative">
@@ -282,7 +274,7 @@ function StyleChip({ selectedId, selectedLabel, onChange, onOpenChange }: StyleC
           event.stopPropagation();
           setIsOpen((prev) => !prev);
         }}
-        title={isActive ? selectedLabel ?? undefined : '风格'}
+        title={isActive ? (selectedLabel ?? undefined) : '风格'}
         className={`${NODE_TEXT_CONTROL_TRIGGER_CLASS} max-w-[160px]`}
       >
         <Palette className={`${NODE_TEXT_CONTROL_ICON_CLASS} shrink-0`} />
@@ -372,7 +364,7 @@ function CameraChip({ selection, summary, onChange }: CameraChipProps) {
           event.stopPropagation();
           setIsOpen((prev) => !prev);
         }}
-        title={isActive ? summary ?? undefined : '摄像机'}
+        title={isActive ? (summary ?? undefined) : '摄像机'}
         className={`${NODE_TEXT_CONTROL_TRIGGER_CLASS} max-w-[220px]`}
       >
         <Camera className={`${NODE_TEXT_CONTROL_ICON_CLASS} shrink-0`} />
@@ -520,6 +512,8 @@ export interface ImageGenerationFormProps {
   modelParameters: MediaModelParameterDefinition[] | undefined;
   modelParams: Record<string, unknown> | undefined;
   modelParamsMode: string | undefined;
+  hideImagineControls?: boolean;
+  onModelParametersOpenChange?: (open: boolean) => void;
   /** 模型对参考图数量有上限时，超限的提示语；null 表示没问题。 */
   selectedModelReferenceError: string | null;
   /** 模型下拉里逐项的禁用理由（同样是参考图上限）。 */
@@ -601,6 +595,8 @@ export const ImageGenerationForm = memo((props: ImageGenerationFormProps) => {
     modelParameters,
     modelParams,
     modelParamsMode,
+    hideImagineControls = false,
+    onModelParametersOpenChange,
     selectedModelReferenceError,
     getModelOptionDisabledReason,
     cameraSelection,
@@ -625,26 +621,21 @@ export const ImageGenerationForm = memo((props: ImageGenerationFormProps) => {
 
   // 弹层与编辑器同在面板里、编辑器恒已挂载，故插入直接走命令式 API，回调保持稳定引用
   // （无需依赖 prompt，避免每次按键重建回调、连带调色盘按钮重渲染）。
-  const insertContextPaletteEntry = useCallback(
-    (entry: ContextPromptPaletteEntry) => {
-      promptEditorRef.current?.insertTextAtCursor(
-        contextPromptPaletteInsertionText(entry),
-      );
-    },
-    [],
-  );
+  const insertContextPaletteEntry = useCallback((entry: ContextPromptPaletteEntry) => {
+    promptEditorRef.current?.insertTextAtCursor(contextPromptPaletteInsertionText(entry));
+  }, []);
 
   // Hover preview state for the upstream image thumbnails in the reference row.
   // Mirrors the @-mention chip preview UX so users can peek a full-size image
   // without leaving the prompt editor.
-  const [refHover, setRefHover] = useState<{ imageUrl: string; rect: DOMRect } | null>(null);
+  const [refHover, setRefHover] = useState<{
+    imageUrl: string;
+    rect: DOMRect;
+  } | null>(null);
   const refPreviewStyle = useMemo(() => {
     if (!refHover) return null;
     const SIZE = 220;
-    const left = Math.min(
-      Math.max(8, refHover.rect.left),
-      window.innerWidth - SIZE - 8,
-    );
+    const left = Math.min(Math.max(8, refHover.rect.left), window.innerWidth - SIZE - 8);
     const top = refHover.rect.top - SIZE - 8;
     return { left, top: Math.max(8, top), size: SIZE };
   }, [refHover]);
@@ -762,6 +753,7 @@ export const ImageGenerationForm = memo((props: ImageGenerationFormProps) => {
             popoverPlacement="top"
             getOptionDisabledReason={getModelOptionDisabledReason}
           />
+          {!hideImagineControls && (
           <AspectSizeChip
             aspectRatio={aspectRatio}
             size={size}
@@ -772,17 +764,21 @@ export const ImageGenerationForm = memo((props: ImageGenerationFormProps) => {
             showQuality={showQuality}
             onChange={(patch) => updateNodeData(nodeId, patch)}
           />
+          )}
           <MediaModelParameterChip
             parameters={modelParameters}
             values={modelParams}
             mode={modelParamsMode}
+            onOpenChange={onModelParametersOpenChange}
             onChange={(next) => updateNodeData(nodeId, { modelParams: next })}
           />
+          {!hideImagineControls && (
           <CameraChip
             selection={cameraSelection}
             summary={cameraSummary}
             onChange={(next) => updateNodeData(nodeId, { cameraSelection: next })}
           />
+          )}
           {showCountSelect && (
             <CountSelect
               value={count}

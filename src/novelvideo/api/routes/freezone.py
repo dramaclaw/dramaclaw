@@ -76,6 +76,7 @@ from novelvideo.api.schemas import (
     FreezoneKeyframeVideoRequest,
     FreezoneMarkDetectRequest,
     FreezoneMarkDetectResponse,
+    FreezoneMidjourneyActionRequest,
     FreezoneOutpaintRequest,
     FreezoneRecipeCompileBatchRequest,
     FreezoneRecipeCompileBatchResponse,
@@ -1021,6 +1022,8 @@ async def _start_or_enqueue_freezone_gen_job(
     task_display: dict[str, str] | None = None,
     model_params: dict[str, Any] | None = None,
     request_schema: dict[str, Any] | None = None,
+    billing_operation: str = "",
+    midjourney_followup: dict[str, str] | None = None,
 ) -> dict:
     if ctx is not None:
         await _require_scoped_media_model(
@@ -1057,6 +1060,7 @@ async def _start_or_enqueue_freezone_gen_job(
             "image_selection": image_selection,
             "size": image_size,
             **({"quality": quality} if quality else {}),
+            **({"operation": billing_operation} if billing_operation else {}),
             **({"catalog_id": catalog_id} if catalog_id else {}),
             **({"pricing_model": resolved_model} if catalog_id else {}),
         }
@@ -1094,6 +1098,11 @@ async def _start_or_enqueue_freezone_gen_job(
                 "gen_mode": gen_mode or "",
                 "model_params": model_params or {},
                 "request_schema": request_schema or {},
+                **(
+                    {"midjourney_followup": midjourney_followup}
+                    if midjourney_followup
+                    else {}
+                ),
                 **display_payload,
             },
         )
@@ -6203,6 +6212,18 @@ async def freezone_gen(
         requested_provider=body.provider,
         requested_model=body.model,
     )
+    _require_catalog_image_mode(catalog_entry, body.gen_mode or "text_to_image")
+    model_params = _validate_midjourney_image_operation(
+        request_schema=request_schema,
+        model_params=model_params,
+        requested_reference_mode=str(model_params.get("reference_mode") or ""),
+        reference_count=len(body.reference_urls or []),
+        prompt=body.prompt,
+    )
+    reference_mode = str(model_params.get("reference_mode") or "")
+    billing_operation = (
+        reference_mode if reference_mode in {"edit", "blend"} else "imagine"
+    ) if request_schema.get("adapter") == "relayclaw_midjourney" else ""
     reference_image_max = (
         catalog_entry.get("referenceImageMax") if catalog_entry else None
     )
@@ -6254,6 +6275,7 @@ async def freezone_gen(
         gen_mode=body.gen_mode or None,
         model_params=model_params,
         request_schema=request_schema,
+        billing_operation=billing_operation,
     )
 
 
@@ -9486,6 +9508,12 @@ async def _resolve_catalog_request(
         if full_schema and full_schema.get("endpoint") != expected_endpoint:
             raise MediaModelSchemaError(f"endpoint must be {expected_endpoint}")
         schema = media_request_schema_for_mode(full_schema, mode)
+        # Adapter/capability metadata is catalog-level, not part of the wire
+        # request schema. Preserve the validator's strictness, then carry these
+        # trusted fields to the task runner explicitly.
+        for key in ("adapter", "supportedOperations"):
+            if key in entry:
+                schema[key] = entry[key]
         active_keys = {
             str(parameter["key"]) for parameter in schema.get("parameters") or []
         }
@@ -9516,8 +9544,71 @@ def _catalog_mode_enabled(
 ) -> bool | None:
     if capabilities is None:
         return None
-    modes = capabilities.get("supportedModes") or []
+    modes = capabilities.get("supportedModes")
+    if not isinstance(modes, list) or not modes:
+        return None
     return mode in modes
+
+
+def _require_catalog_image_mode(
+    capabilities: dict[str, Any] | None, mode: str
+) -> None:
+    normalized = normalize_media_model_mode(mode)
+    if _catalog_mode_enabled(capabilities, normalized) is False:
+        raise HTTPException(400, f"this model does not support {normalized} mode")
+
+
+def _validate_midjourney_image_operation(
+    *,
+    request_schema: dict[str, Any],
+    model_params: dict[str, Any],
+    requested_reference_mode: str | None,
+    reference_count: int,
+    prompt: str,
+) -> dict[str, Any]:
+    """Validate MJ reference semantics against the Admin capability declaration."""
+    if str(request_schema.get("adapter") or "") != "relayclaw_midjourney":
+        return model_params
+    params = dict(model_params)
+    mode = str(requested_reference_mode or params.get("reference_mode") or "").strip()
+    operation = mode if mode in {"edit", "blend"} else "imagine"
+    supported = {
+        str(value).strip() for value in request_schema.get("supportedOperations") or []
+    }
+    if supported and operation not in supported:
+        raise HTTPException(400, f"Midjourney operation {operation} is not enabled")
+    if operation == "blend":
+        if reference_count < 2:
+            raise HTTPException(400, "Midjourney Blend requires at least two images")
+        if reference_count > 5:
+            raise HTTPException(400, "Midjourney Blend supports at most five images")
+    else:
+        if not str(prompt or "").strip():
+            raise HTTPException(400, "Midjourney prompt is required")
+        if operation == "edit" and reference_count < 1:
+            raise HTTPException(400, "Midjourney Edit requires at least one image")
+    if mode:
+        params["reference_mode"] = mode
+    return params
+
+
+def _midjourney_button_operation(custom_id: str) -> str:
+    value = str(custom_id or "").lower()
+    if "low_variation" in value:
+        return "low_variation"
+    if "high_variation" in value:
+        return "high_variation"
+    if "upsample" in value or "upscale" in value:
+        return "upscale"
+    if "variation" in value:
+        return "variation"
+    if "reroll" in value:
+        return "reroll"
+    if "pan_" in value:
+        return "pan"
+    if "outpaint" in value or "zoom" in value:
+        return "zoom"
+    return "action"
 
 
 def _require_catalog_video_mode(
@@ -12069,6 +12160,19 @@ async def freezone_edit(
         requested_provider=body.provider,
         requested_model=body.model,
     )
+    _require_catalog_image_mode(catalog_entry, body.gen_mode or "image_to_image")
+    model_params = _validate_midjourney_image_operation(
+        request_schema=request_schema,
+        model_params=model_params,
+        requested_reference_mode=str(model_params.get("reference_mode") or ""),
+        reference_count=1 + len(body.extra_reference_urls or []),
+        prompt=body.prompt,
+    )
+    reference_mode = str(model_params.get("reference_mode") or "")
+    is_midjourney = request_schema.get("adapter") == "relayclaw_midjourney"
+    billing_operation = (
+        reference_mode if reference_mode in {"edit", "blend"} else "imagine"
+    ) if is_midjourney else (body.gen_mode or "edit")
     return await _start_or_enqueue_freezone_edit_job(
         ctx=ctx,
         username=username,
@@ -12092,8 +12196,76 @@ async def freezone_edit(
         gen_mode=body.gen_mode or None,
         model_params=model_params,
         request_schema=request_schema,
-        billing_feature_key="freezone.image_edit",
-        billing_operation=body.gen_mode or "edit",
+        billing_feature_key=(
+            "freezone.image_generate" if is_midjourney else "freezone.image_edit"
+        ),
+        billing_operation=billing_operation,
+    )
+
+
+@router.post(
+    "/projects/{project}/freezone/midjourney/action",
+    response_model=FreezoneJobAcceptedResponse,
+    tags=[TAG_FREEZONE_IMAGE],
+)
+async def freezone_midjourney_action(
+    project: str,
+    body: FreezoneMidjourneyActionRequest,
+    user: dict = Depends(get_api_user),
+):
+    """Submit a server-validated Midjourney button action."""
+    ctx, username, project_name, project_dir, output_dir = await _resolve_freezone_project(
+        project, user
+    )
+    request_schema, _model_params, catalog_entry = await _resolve_catalog_request(
+        "image",
+        body.model_id,
+        {},
+        mode="text_to_image",
+        requester_user_id=ctx.requester_user_id,
+    )
+    if request_schema.get("adapter") != "relayclaw_midjourney":
+        raise HTTPException(400, "selected model is not a Midjourney adapter")
+    operation = _midjourney_button_operation(body.custom_id)
+    supported = {
+        str(value).strip()
+        for value in request_schema.get("supportedOperations") or []
+    }
+    if operation != "upscale" or operation not in supported:
+        raise HTTPException(400, "Midjourney Upscale is not enabled")
+    provider, model = _catalog_image_execution_selection(
+        catalog_entry,
+        requested_provider=None,
+        requested_model=None,
+    )
+    return await _start_or_enqueue_freezone_gen_job(
+        ctx=ctx,
+        username=username,
+        project=project_name,
+        project_dir=project_dir,
+        output_dir=output_dir,
+        prompt="",
+        aspect_ratio="1:1",
+        image_size="1K",
+        reference_urls=[],
+        camera=None,
+        style=None,
+        provider=provider,
+        model=model,
+        quality=None,
+        canvas_id=body.canvas_id or None,
+        node_id=body.node_id or None,
+        model_id=_catalog_entry_id(catalog_entry),
+        catalog_id=_catalog_entry_id(catalog_entry),
+        gen_mode="text_to_image",
+        model_params={},
+        request_schema=request_schema,
+        billing_operation="upscale",
+        midjourney_followup={
+            "task_id": body.task_id,
+            "custom_id": body.custom_id,
+            "operation": operation,
+        },
     )
 
 

@@ -23,21 +23,21 @@ import { setAlbumPendingTotal } from '@/features/canvas/nodes/shared/albumPendin
 import { resolveImageGenerationCompletionMode } from '@/features/canvas/nodes/imageGenCompletionMode';
 import { compileWorkflowNodePrompt } from '@/features/canvas/application/workflowRecipeRuntime';
 import { useCanvasStore } from '@/stores/canvasStore';
-import {
-  fetchFreezoneJobResult,
-  submitFreezoneGen,
-  type FreezoneProvider,
-} from '@/api/ops';
+import { fetchFreezoneJobResult, submitFreezoneGen, type FreezoneProvider } from '@/api/ops';
 import { translateNodeText } from '@/features/canvas/application/translateText';
 import { canvasEventBus } from '@/features/canvas/application/canvasServices';
 import { awaitTaskCompletion } from '@/api/tasks';
 import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
-import {
-  BillingRuleNotConfiguredError,
-  backendErrorToastMessage,
-} from '@/lib/api-errors';
+import { BillingRuleNotConfiguredError, backendErrorToastMessage } from '@/lib/api-errors';
 import { readUrl } from '@/lib/url-params';
-import { SHARED_MODELS } from '@/features/canvas/ui/ProviderModelPicker';
+import { SHARED_MODELS, type ModelOption } from '@/features/canvas/ui/ProviderModelPicker';
+import {
+  availableMidjourneyReferenceModes,
+  resolveMidjourneyReferenceMode,
+  midjourneyBillingOperation,
+  midjourneyImageOperationError,
+  midjourneyTaskFromResult,
+} from '@/features/canvas/domain/midjourneyImageOperations';
 import { extractRequestId } from '@/features/canvas/application/generationErrorReport';
 import { useFreezoneImageModels } from '@/features/canvas/hooks/useFreezoneImageModels';
 import { describeCameraSelection } from '@/features/canvas/nodes/CameraPickerPopover';
@@ -49,14 +49,25 @@ import {
 import { useFreezoneCameraOptions } from '@/features/canvas/hooks/useFreezoneCameraOptions';
 import { describeStyleSelection } from '@/features/canvas/nodes/StylePickerPopover';
 import { useFreezoneStyleTemplates } from '@/features/canvas/hooks/useFreezoneStyleTemplates';
-import { extractUpstreamContent, joinUpstreamText } from '@/features/canvas/application/graphContentResolver';
+import {
+  extractUpstreamContent,
+  joinUpstreamText,
+} from '@/features/canvas/application/graphContentResolver';
 import { useUpstreamContents } from '@/features/canvas/application/useUpstreamGraph';
 import { useNodeGenerationTaskState } from '@/features/canvas/application/useNodeGenerationTaskState';
 import { type MentionCandidate } from '@/features/canvas/nodes/PromptMentionEditor';
 import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
 import { hasImageGenPromptOverride } from '@/features/canvas/nodes/imageGenPrompt';
-import { orderedReferenceUrlsWithOwnFirst, upstreamNodesInEdgeOrder } from '@/features/canvas/nodes/referenceOrdering';
-import { matchesReference, referenceIssueName, referenceIssues, type ReferenceIssue } from '@/features/canvas/nodes/shared/ReferenceValidationDialog';
+import {
+  orderedReferenceUrlsWithOwnFirst,
+  upstreamNodesInEdgeOrder,
+} from '@/features/canvas/nodes/referenceOrdering';
+import {
+  matchesReference,
+  referenceIssueName,
+  referenceIssues,
+  type ReferenceIssue,
+} from '@/features/canvas/nodes/shared/ReferenceValidationDialog';
 import { useReferenceMentionSync } from '@/features/canvas/nodes/useReferenceMentionSync';
 import type { ImageGenerationFormProps } from '@/features/canvas/nodes/shared/ImageGenerationForm';
 
@@ -99,6 +110,7 @@ export interface UseImageGenerationFormOptions {
 }
 
 export interface UseImageGenerationFormResult {
+  selectedModel: ModelOption | undefined;
   /** 直接展开给 `<ImageGenerationForm {...formProps} />`。 */
   formProps: ImageGenerationFormBoundProps;
   /**
@@ -114,9 +126,9 @@ export interface UseImageGenerationFormResult {
    * 提交生成。completionMode='submitted' 时提交完成即返回任务句柄，产物在后台
    * 回填（工作流配方按单节点执行时用）；默认 'completed' 等产物落地后再返回。
    */
-  submit: (
-    options?: { completionMode?: 'submitted' | 'completed' },
-  ) => Promise<Record<string, unknown> | undefined>;
+  submit: (options?: {
+    completionMode?: 'submitted' | 'completed';
+  }) => Promise<Record<string, unknown> | undefined>;
   canAutoCommitOnGenerate: boolean;
   referenceImageUrl: string | null;
   referenceErrors: ReferenceIssue[];
@@ -147,9 +159,8 @@ export function useImageGenerationForm(
   const onGenerationSettled = options?.onGenerationSettled;
   const id = nodeId;
 
-  const data = (useCanvasStore(
-    (state) => state.nodes.find((node) => node.id === nodeId)?.data,
-  ) ?? EMPTY_NODE_DATA) as ImageGenNodeData;
+  const data = (useCanvasStore((state) => state.nodes.find((node) => node.id === nodeId)?.data) ??
+    EMPTY_NODE_DATA) as ImageGenNodeData;
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const deleteEdge = useCanvasStore((state) => state.deleteEdge);
 
@@ -262,7 +273,7 @@ export function useImageGenerationForm(
     ?? qualityOptions[0]
     ?? DEFAULT_IMAGE_QUALITY;
   const imageSelectionForCost =
-    imageModelsLoading || imageModelsFallback ? null : selectedModel?.apiModel ?? null;
+    imageModelsLoading || imageModelsFallback ? null : (selectedModel?.apiModel ?? null);
   const imageQuantity = Math.min(Math.max(effectiveCount, 1), 4);
   // 统一计费（#210）：按 feature 键询价，模型身份走 buildImageFeatureBillingParams
   // 拼进 params。与 ImageGenNode 从前的写法必须逐字一致，否则同一个节点在工作流
@@ -273,6 +284,14 @@ export function useImageGenerationForm(
     {
       surface: 'canvas',
       params: buildImageFeatureBillingParams(selectedModel, {
+        ...(midjourneyBillingOperation(selectedModel?.adapter, data.modelParams?.reference_mode)
+          ? {
+              operation: midjourneyBillingOperation(
+                selectedModel?.adapter,
+                data.modelParams?.reference_mode,
+              ),
+            }
+          : {}),
         size: effectiveImageSize,
         ...(supportsImageQuality ? { quality: effectiveQuality } : {}),
         pricing_quantity: imageQuantity,
@@ -329,16 +348,11 @@ export function useImageGenerationForm(
       ),
     [upstreamContents],
   );
-  const upstreamTextJoined = useMemo(
-    () => joinUpstreamText(upstreamContents),
-    [upstreamContents],
-  );
-  const freezoneSource = (data.__freezone_source as
-    | { role?: string; meta?: Record<string, unknown> }
-    | undefined) ?? undefined;
-  const sourceRole = typeof freezoneSource?.role === "string"
-    ? freezoneSource.role
-    : "";
+  const upstreamTextJoined = useMemo(() => joinUpstreamText(upstreamContents), [upstreamContents]);
+  const freezoneSource =
+    (data.__freezone_source as { role?: string; meta?: Record<string, unknown> } | undefined) ??
+    undefined;
+  const sourceRole = typeof freezoneSource?.role === 'string' ? freezoneSource.role : '';
   const shouldInlineUpstreamTextAsPrompt =
     sourceRole === "scene_master" || sourceRole === "scene_reverse_master";
   const upstreamReferenceUrls = useMemo(
@@ -360,8 +374,51 @@ export function useImageGenerationForm(
     () => orderedReferenceUrlsWithOwnFirst(referenceImageUrl, upstreamReferenceUrls),
     [referenceImageUrl, upstreamReferenceUrls],
   );
-  const generationMode =
-    orderedReferenceUrls.length > 0 ? 'image_to_image' : 'text_to_image';
+  const generationMode = orderedReferenceUrls.length > 0 ? 'image_to_image' : 'text_to_image';
+  const modelParameters = useMemo(
+    () =>
+      selectedModel?.request?.parameters?.map((parameter) => {
+        if (parameter.requestPath !== 'midjourney.reference_mode') return parameter;
+        const options = availableMidjourneyReferenceModes(
+          selectedModel?.supportedOperations,
+          parameter.options,
+          orderedReferenceUrls.length,
+        );
+        return {
+          ...parameter,
+          options,
+          default: resolveMidjourneyReferenceMode(
+            parameter.default,
+            selectedModel?.supportedOperations,
+            parameter.options,
+            orderedReferenceUrls.length,
+          ),
+        };
+      }),
+    [selectedModel, orderedReferenceUrls.length],
+  );
+  useEffect(() => {
+    const parameter = modelParameters?.find(
+      (item) => item.requestPath === 'midjourney.reference_mode',
+    );
+    if (!parameter || data.modelParams?.[parameter.key] === undefined) return;
+    const current = String(data.modelParams[parameter.key]).trim().toLowerCase();
+    if (orderedReferenceUrls.length > 0 && parameter.options?.includes(current)) return;
+    const next = { ...data.modelParams };
+    if (orderedReferenceUrls.length === 0 || !parameter.options?.length) delete next[parameter.key];
+    else next[parameter.key] = parameter.default;
+    updateNodeData(id, { modelParams: next });
+  }, [modelParameters, orderedReferenceUrls.length, data.modelParams, id, updateNodeData]);
+  const isMidjourney = selectedModel?.adapter === 'relayclaw_midjourney';
+  const referenceMode = resolveMidjourneyReferenceMode(
+    data.modelParams?.reference_mode,
+    selectedModel?.supportedOperations,
+    selectedModel?.request?.parameters?.find(
+      (item) => item.requestPath === 'midjourney.reference_mode',
+    )?.options,
+    orderedReferenceUrls.length,
+  );
+  const isBlend = isMidjourney && referenceMode === 'blend';
 
   // 候选按 orderedReferenceUrls 编号（自身参考图在场时就是图片1），保证 @ 出来的
   // 缩略图与后端解析到的 图片N 是同一张。key 优先用上游 nodeId；自身参考图没有
@@ -450,6 +507,15 @@ export function useImageGenerationForm(
     selectedModel?.referenceImageMax != null &&
     orderedReferenceUrls.length > selectedModel.referenceImageMax
       ? `该模型最多支持 ${selectedModel.referenceImageMax} 张图片素材`
+      : isMidjourney &&
+          midjourneyImageOperationError(
+            referenceMode,
+            orderedReferenceUrls.length,
+            hasEffectivePrompt,
+          )
+        ? t(
+            `node.imageGen.${midjourneyImageOperationError(referenceMode, orderedReferenceUrls.length, hasEffectivePrompt)}`,
+          )
       : null;
   // 下拉里逐项标灰：换到上限更小的模型前就能看见「该模型最多支持 N 张」。
   const getModelOptionDisabledReason = useCallback(
@@ -462,7 +528,7 @@ export function useImageGenerationForm(
   const submitDisabled =
     isGenerating ||
     !selectedModel ||
-    !hasEffectivePrompt ||
+    (!hasEffectivePrompt && !isBlend) ||
     imageBillingRuleMissing ||
     selectedModelReferenceError !== null;
 
@@ -474,9 +540,8 @@ export function useImageGenerationForm(
     generationAttemptRef.current += 1;
   }, []);
 
-  const handleSubmit = useCallback(async (
-    options: { completionMode?: 'submitted' | 'completed' } = {},
-  ) => {
+  const handleSubmit = useCallback(
+    async (options: { completionMode?: 'submitted' | 'completed' } = {}) => {
     const completionMode = options.completionMode ?? 'completed';
     if (submittingRef.current) {
       return await new Promise<Record<string, unknown> | undefined>((resolve) => {
@@ -533,10 +598,8 @@ export function useImageGenerationForm(
     );
     const ownPrompt = prompt.trim();
     const fallbackPrompt = shouldInlineUpstreamTextAsPrompt
-      ? (ownPrompt || (hasUserEditedPromptRef.current ? "" : upstreamTextJoined.trim()))
-      : [upstreamTextJoined, ownPrompt]
-        .filter((s) => s.length > 0)
-        .join('\n\n');
+          ? ownPrompt || (hasUserEditedPromptRef.current ? '' : upstreamTextJoined.trim())
+          : [upstreamTextJoined, ownPrompt].filter((s) => s.length > 0).join('\n\n');
     // 工作流配方节点用配方编译出的最终 prompt；非配方节点回落上面这段拼接。
     const effectivePrompt = await compileWorkflowNodePrompt({
       nodeId: id,
@@ -635,7 +698,11 @@ export function useImageGenerationForm(
           let url = resolveOutputUrl(completed.result as Record<string, unknown> | null);
           if (!url) {
             try {
-              const fallback = await fetchFreezoneJobResult(projectId, ref.task_type, ref.job_id);
+                  const fallback = await fetchFreezoneJobResult(
+                    projectId,
+                    ref.task_type,
+                    ref.job_id,
+                  );
               url = fallback.url;
             } catch (error) {
               console.warn('[image-gen] fallback fetch failed', error);
@@ -648,6 +715,15 @@ export function useImageGenerationForm(
             updateNodeData(id, {
               // 第 1 张完成的设为主图并结束 loading；后续只扩充画册。
               ...(isFirstCompleted ? buildImageGenerationSuccessPatch(url) : {}),
+                  ...(isFirstCompleted && midjourneyTaskFromResult(completed.result)
+                    ? {
+                        midjourneyGridSource: {
+                          imageUrl: url,
+                          task: midjourneyTaskFromResult(completed.result)!,
+                        },
+                        midjourneyUpscaleResults: {},
+                      }
+                    : {}),
               ...(total > 1 ? { generationBatch: [...completedUrls] } : {}),
             });
             if (canAutoCommitOnGenerate && isFirstCompleted) {
@@ -662,7 +738,10 @@ export function useImageGenerationForm(
             // 只有 run 0（任务句柄的归属者）且尚无任何成功时才终结 loading——
             // 非首个任务先「无 URL 完成」不能把还在跑的整体 loading 提前掐掉。
             if (runIndex === 0 && completedUrls.length === 0) {
-              updateNodeData(id, { isGenerating: false, generationStartedAt: null });
+                  updateNodeData(id, {
+                    isGenerating: false,
+                    generationStartedAt: null,
+                  });
             }
             throw new Error('图片生成完成但未返回图片地址');
           }
@@ -704,8 +783,10 @@ export function useImageGenerationForm(
                 content.imageUrl,
                 'referenceImageUrl' in node.data ? node.data.referenceImageUrl : null,
               ];
-              return values.some((url) =>
-                typeof url === 'string' && matchesReference(url, issue.reference_key));
+                    return values.some(
+                      (url) =>
+                        typeof url === 'string' && matchesReference(url, issue.reference_key),
+                    );
             });
             const source = matching.length === 1 ? matching[0] : undefined;
             return {
@@ -713,7 +794,8 @@ export function useImageGenerationForm(
               nodeId: source?.id,
               label: referenceIssueName(issue, source?.data.sourceFileName),
             };
-          }));
+                }),
+              );
           setReferenceErrorsOpen(true);
           updateNodeData(id, {
             isGenerating: false,
@@ -737,10 +819,17 @@ export function useImageGenerationForm(
             && isStaleGenerationTask({ nodeData: latestNodeData, taskKey })
           ) return;
           if (
-            taskKey
-            && !shouldWriteGenerationError({ nodeData: latestNodeData, taskKey, error })
+                taskKey &&
+                !shouldWriteGenerationError({
+                  nodeData: latestNodeData,
+                  taskKey,
+                  error,
+                })
           ) {
-            updateNodeData(id, { isGenerating: false, generationStartedAt: null });
+                updateNodeData(id, {
+                  isGenerating: false,
+                  generationStartedAt: null,
+                });
             return;
           }
         }
@@ -840,7 +929,8 @@ export function useImageGenerationForm(
     upstreamTextJoined,
     onGenerationSettled,
     t,
-  ]);
+    ],
+  );
 
   useEffect(() => {
     if (!shouldInlineUpstreamTextAsPrompt) return;
@@ -850,11 +940,7 @@ export function useImageGenerationForm(
     const nextPrompt = upstreamTextJoined.trim();
     if (!nextPrompt) return;
     setPromptDraft(nextPrompt);
-  }, [
-    externalPrompt,
-    shouldInlineUpstreamTextAsPrompt,
-    upstreamTextJoined,
-  ]);
+  }, [externalPrompt, shouldInlineUpstreamTextAsPrompt, upstreamTextJoined]);
 
   return {
     formProps: {
@@ -891,7 +977,8 @@ export function useImageGenerationForm(
       quality: effectiveQuality,
       qualityOptions,
       showQuality: supportsImageQuality,
-      modelParameters: selectedModel?.request?.parameters,
+      modelParameters,
+      hideImagineControls: isBlend,
       modelParams: data.modelParams,
       modelParamsMode: generationMode,
       selectedModelReferenceError:
@@ -919,5 +1006,6 @@ export function useImageGenerationForm(
     closeReferenceErrors: () => setReferenceErrorsOpen(false),
     openReferenceErrors: () => setReferenceErrorsOpen(true),
     invalidateInFlightGeneration,
+    selectedModel,
   };
 }

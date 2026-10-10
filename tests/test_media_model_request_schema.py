@@ -777,6 +777,28 @@ def test_image_catalog_accepts_reference_image_limit_and_pixel_floor():
     assert validate_media_model_catalog_config(config, "image") is config
 
 
+def test_image_catalog_accepts_midjourney_generation_modes():
+    config = {
+        "supportedModes": ["text_to_image", "image_to_image"],
+        "referenceImageMax": 4,
+        "request": {"endpoint": "images/generations", "parameters": []},
+    }
+
+    assert validate_media_model_catalog_config(config, "image") is config
+
+
+@pytest.mark.parametrize("mode", ["text_to_video", "image_to_video", "unknown_mode"])
+def test_image_catalog_rejects_non_image_modes(mode):
+    with pytest.raises(MediaModelSchemaError, match="supportedModes"):
+        validate_media_model_catalog_config(
+            {
+                "supportedModes": [mode],
+                "request": {"endpoint": "images/generations", "parameters": []},
+            },
+            "image",
+        )
+
+
 @pytest.mark.parametrize("value", [0, -1, 1.5, True, 16_777_217, 2**53])
 def test_image_catalog_rejects_invalid_min_pixels(value):
     with pytest.raises(MediaModelSchemaError, match="minPixels"):

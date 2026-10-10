@@ -439,6 +439,17 @@ export interface ImageGenNodeData extends NodeImageData {
   generationError?: string | null;
   /** Gateway request id parsed from the last failure, for support tracing. */
   generationErrorRequestId?: string | null;
+  /** Original Imagine task retained while derived U1-U4 images are viewed. */
+  midjourneyGridSource?: {
+    imageUrl: string;
+    task: {
+      task_id: string;
+      operation: string;
+      buttons: Array<{ custom_id: string; label: string }>;
+    };
+  } | null;
+  /** Completed Upscale image URL, keyed by the provider button custom id. */
+  midjourneyUpscaleResults?: Record<string, string>;
 }
 
 export interface StoryboardFrameItem {

@@ -5590,7 +5590,14 @@
     },
     "modelParams": {
       "title": "Model parameters",
-      "defaultOption": "Default"
+      "defaultOption": "Default",
+      "midjourneyReferenceModes": {
+        "image_prompt": "Content reference",
+        "style_reference": "Style reference",
+        "omni_reference": "Subject reference",
+        "edit": "Image edit",
+        "blend": "Image blend"
+      }
     },
     "multiConnect": {
       "label": "Connect selection",
@@ -6053,6 +6060,16 @@
       "insertRef": "Insert {{label}}"
     },
     "imageGen": {
+      "selectUpscaleCandidate": "Select {{label}}",
+      "confirmUpscale": "Upscale",
+      "viewUpscale": "View {{label}} HD image",
+      "previewFullImage": "Preview full image",
+      "prompt_required": "Enter a prompt to generate or edit an image",
+      "edit_image_required": "Add an image to edit",
+      "blend_images_required": "Add at least two images to blend",
+      "upscaleCached": "HD image available; no additional credits charged",
+      "upscaleCost": "Estimated credits: {{cost}}",
+      "upscaleConfirmHint": "Upscaling uses credits",
       "contextPalette": {
         "button": "Context palette",
         "actors": "Actor colors",
