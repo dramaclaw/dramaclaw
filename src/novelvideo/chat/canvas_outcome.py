@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 CANVAS_FINAL_RESPONSE_INSTRUCTIONS = (
     "Your final response must be exactly one JSON object with message, mode, and "
     "canvas_receipts. No Markdown fences, headings, or prose outside that object. "
     "Put all user-facing explanations and success summaries in the message field. "
-    "For an interactive-story or interactive-ad proposal, put the complete "
+    "For an interactive-story or interactive-ad proposal with no write tools called, put the complete "
     "natural-language outline inside message and use mode=read_only with "
     "canvas_receipts=[]. Do not output the outline as top-level Markdown. "
     "Instructions from tools to report success apply only to the message field; "
@@ -18,6 +21,10 @@ CANVAS_FINAL_RESPONSE_INSTRUCTIONS = (
     "use mode=mutation and include every exact same-turn successful receipt as "
     "{\"bridge_key\":\"actual returned key\",\"revision\":null}, or "
     "{\"bridge_key\":null,\"revision\":actual_returned_integer} for direct apply. "
+    "Saving a story outline and confirming story stages are canvas mutations, even "
+    "when no visible nodes are created. If a turn confirms stages and submits a "
+    "workflow, include BOTH the stage write revision and the workflow bridge key; "
+    "the last receipt never replaces earlier receipts from this turn. "
     "Never invent receipts. For read_only or blocked, use canvas_receipts=[]. "
     "Validation/read tools may return a newer snapshot revision; that value is not "
     "a write receipt. For a mutation, copy the revision from the successful write "
@@ -160,11 +167,28 @@ def finalize_canvas_reply(
         return "画布操作等待确认或执行回执，尚未完成。"
     if draft_ready and not attempts:
         return "工作流草稿已准备完成，等待你确认后创建画布节点；尚未执行生成。"
+
+    def verified_status() -> str:
+        # Report only host evidence, never the rejected model prose. A bridge
+        # receipt proves admission, not completion of background generation.
+        logger.warning(
+            "canvas reply receipt omission: reporting verified status writes=%d receipts=%d",
+            len(attempts), len(receipts),
+        )
+        parts = []
+        if any(not key for key, _ in receipts):
+            parts.append("本轮画布修改已保存。")
+        if any(key for key, _ in receipts):
+            parts.append("本轮画布执行请求已受理，生成进度请以画布任务状态为准。")
+        return "".join(parts) + "回复确认信息不完整，请查看画布结果，无需重复提交已成功的操作。"
+
     reply, envelope_error = _parse_canvas_envelope(text)
     if reply is None:
         return envelope_error
     message, mode, claims = reply["message"], reply["mode"], reply["canvas_receipts"]
     if mode == "mutation":
+        if attempts and receipts and not claims:
+            return verified_status()
         if not attempts or not claims:
             return "画布操作未完成：本轮没有可验证的画布写入回执，请重试。"
         references = set()
@@ -177,8 +201,10 @@ def finalize_canvas_reply(
                 return "画布操作未完成：成功声明与本轮写入回执不匹配，请重试。"
             references.add(reference)
         if references != receipts:
-            return "画布操作未完成：成功声明未覆盖本轮全部写入回执，请重试。"
+            return verified_status()
     elif claims or attempts:
+        if mode == "read_only" and not claims and attempts and receipts:
+            return verified_status()
         return _REPLY_CONTRACT_FAILURE + "操作声明与工具结果不一致，请重试。"
     return message.strip()
 

@@ -187,17 +187,70 @@ def test_missing_or_invalid_structured_reply_fails_closed(text):
 
 
 def test_read_only_mode_cannot_hide_actual_canvas_writes():
-    assert "不一致" in finalize_canvas_reply(
-        reply(), attempts={"call-a": "succeeded"}, receipts={("bridge-a", None)}
+    result = finalize_canvas_reply(
+        reply(message="大纲已保存，可以直接生成全部视频。"),
+        attempts={"save-outline": "succeeded"}, receipts={("", 1)}
     )
+    assert "画布修改已保存" in result
+    assert "无需重复提交" in result
+    assert "直接生成" not in result
+    assert "请重试" not in result
 
 
 def test_claims_must_cover_all_successful_writes():
-    assert "未覆盖" in finalize_canvas_reply(
-        reply("mutation", [{"bridge_key": "bridge-a", "revision": None}]),
-        attempts={"call-a": "succeeded", "call-b": "succeeded"},
-        receipts={("bridge-a", None), ("bridge-b", None)},
+    result = finalize_canvas_reply(
+        reply("mutation", [{"bridge_key": "bridge-a", "revision": None}],
+              message="角色已确认，三张场景图已经全部生成。"),
+        attempts={"confirm-characters": "succeeded", "submit-scenes": "succeeded"},
+        receipts={("", 14), ("bridge-a", None)},
     )
+    assert "画布修改已保存" in result
+    assert "执行请求已受理" in result
+    assert "全部生成" not in result
+    assert "请重试" not in result
+
+
+@pytest.mark.parametrize("mode", ["read_only", "mutation"])
+def test_empty_claims_report_only_verified_browser_admission(mode):
+    result = finalize_canvas_reply(
+        reply(mode, message="视频已生成完毕。"),
+        attempts={"submit": "succeeded"}, receipts={("bridge-a", None)},
+    )
+    assert "执行请求已受理" in result
+    assert "画布修改已保存" not in result
+    assert "视频已生成完毕" not in result
+
+
+@pytest.mark.parametrize("state", ["failed", "timeout", "cancelled", "in_progress"])
+def test_omitted_receipts_cannot_hide_an_unfinished_story_write(state):
+    result = finalize_canvas_reply(
+        reply("mutation", [{"bridge_key": "bridge-a", "revision": None}]),
+        attempts={"confirm": state, "submit": "succeeded"},
+        receipts={("bridge-a", None)},
+    )
+    assert "无需重复提交" not in result
+    assert "回复确认信息不完整" not in result
+
+
+def test_invented_receipt_is_not_treated_as_an_omission():
+    result = finalize_canvas_reply(
+        reply("mutation", [{"bridge_key": None, "revision": 15}]),
+        attempts={"confirm": "succeeded", "submit": "succeeded"},
+        receipts={("", 14), ("bridge-a", None)},
+    )
+    assert "不匹配" in result
+
+
+def test_complete_story_and_workflow_receipts_preserve_the_response():
+    result = finalize_canvas_reply(
+        reply("mutation", [
+            {"bridge_key": None, "revision": 14},
+            {"bridge_key": "bridge-a", "revision": None},
+        ], message="角色已确认，场景图生成已提交。"),
+        attempts={"confirm": "succeeded", "submit": "succeeded"},
+        receipts={("", 14), ("bridge-a", None)},
+    )
+    assert result == "角色已确认，场景图生成已提交。"
 
 
 @pytest.mark.parametrize("revision", [True, "3", 3.5])

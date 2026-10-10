@@ -455,7 +455,7 @@ _CODEX_FMV_INTERACTIVE_STORY_INSTRUCTIONS = (
 # Freezone browser-bridge contract changes so a turn cannot silently resume a
 # thread with incompatible tool definitions.
 _CODEX_THREAD_PROTOCOL_VERSION = "tool-discovery-v4"
-_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v31"
+_CODEX_FREEZONE_THREAD_PROTOCOL_VERSION = "canvas-workflows-v32"
 
 
 def _codex_developer_instructions(tool_mode: str | None) -> str:
