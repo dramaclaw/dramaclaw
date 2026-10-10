@@ -84,6 +84,21 @@ function validPlayer(value: unknown): value is PikoRemotePlayer {
     && ["north", "south", "east", "west"].includes(String(player.facing));
 }
 
+export function upsertRemotePlayer(
+  players: PikoRemotePlayer[],
+  next: PikoRemotePlayer,
+  now = Date.now(),
+) {
+  const previous = players.find(player => player.character_id === next.character_id);
+  const speech = previous?.speech && previous.speech.expiresAt > now
+    ? previous.speech
+    : undefined;
+  return [
+    ...players.filter(player => player.character_id !== next.character_id),
+    speech ? { ...next, speech } : next,
+  ];
+}
+
 export function usePikoWorldConnection(character: PikoCharacter | null, sceneId: string) {
   const [remotePlayers, setRemotePlayers] = useState<PikoRemotePlayer[]>([]);
   const [chatMessages, setChatMessages] = useState<PikoWorldChatMessage[]>([]);
@@ -131,7 +146,7 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
         }
         if ((frame.type === "player.joined" || frame.type === "player.moved") && validPlayer(frame.player)) {
           const next = frame.player;
-          setRemotePlayers(players => [...players.filter(player => player.character_id !== next.character_id), next]);
+          setRemotePlayers(players => upsertRemotePlayer(players, next));
           return;
         }
         if (frame.type === "player.left" && typeof frame.character_id === "string") {
