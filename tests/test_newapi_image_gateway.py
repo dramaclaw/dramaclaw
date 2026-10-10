@@ -26,6 +26,7 @@ def _isolate_settings_db(monkeypatch, tmp_path):
 
 @pytest.fixture(autouse=True)
 def _isolated_model_gateway(monkeypatch, tmp_path):
+    monkeypatch.delenv("NEWAPI_IMAGE_EDIT_REFERENCE_FORMAT", raising=False)
     _isolate_settings_db(monkeypatch, tmp_path)
     # This module tests low-level environment-driven gateway adapters. CE
     # database precedence is covered in test_model_gateway_settings.py.
@@ -818,6 +819,97 @@ def test_newapi_image_call_relays_reference_images(monkeypatch):
     assert posted["json"]["output_format"] == "png"
     assert posted["json"]["input_fidelity"] == "high"
     assert "extra_fields" not in posted["json"]
+
+
+@pytest.mark.parametrize("reference_count", [1, 2])
+@pytest.mark.parametrize("configure_via_env", [False, True], ids=["config", "env"])
+def test_newapi_image_edit_supports_cockpit_reference_format(
+    monkeypatch, reference_count, configure_via_env
+):
+    import json
+    import httpx
+    from novelvideo.generators import nanobanana_grid
+
+    posted = []
+    real_client = httpx.AsyncClient
+
+    def handle_request(request):
+        posted.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(
+            200,
+            json={"data": [{"b64_json": base64.b64encode(b"edited-image").decode()}]},
+        )
+
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(
+            transport=httpx.MockTransport(handle_request), **kwargs
+        ),
+    )
+    monkeypatch.setattr(
+        nanobanana_grid,
+        "upload_image_bytes",
+        lambda data, **_kwargs: f"https://relay.test/{data.decode()}.png",
+    )
+    image_config = {"aspect_ratio": "3:4", "image_size": "1K"}
+    if configure_via_env:
+        monkeypatch.setenv("NEWAPI_IMAGE_EDIT_REFERENCE_FORMAT", "images")
+    else:
+        monkeypatch.delenv("NEWAPI_IMAGE_EDIT_REFERENCE_FORMAT", raising=False)
+        image_config["reference_image_format"] = "images"
+
+    image_bytes, _text, error = run_async(
+        nanobanana_grid._call_newapi_image_api(
+            api_key="test-token",
+            model="LingShan-G2",
+            prompt="identity prompt",
+            reference_images=[f"ref-{i}".encode() for i in range(reference_count)],
+            image_config=image_config,
+            base_url="http://newapi.test/v1",
+        )
+    )
+
+    assert image_bytes == b"edited-image"
+    assert error == ""
+    assert len(posted) == 1
+    path, payload = posted[0]
+    assert path == "/v1/images/edits"
+    expected_images = [{"image_url": "https://relay.test/ref-0.png"}]
+    if reference_count == 2:
+        expected_images.append({"image_url": "https://relay.test/ref-1.png"})
+    assert payload["images"] == expected_images
+    assert "image" not in payload
+    context = nanobanana_grid._newapi_safe_request_context(
+        endpoint="http://newapi.test/v1",
+        request_path="/images/edits",
+        model="LingShan-G2",
+        payload=payload,
+        prompt="identity prompt",
+    )
+    assert context["reference_image_count"] == reference_count
+    assert "https://relay.test" not in str(context)
+
+
+def test_newapi_image_edit_rejects_unknown_reference_format_before_upload(monkeypatch):
+    from novelvideo.generators import nanobanana_grid
+
+    def unexpected_upload(*_args, **_kwargs):
+        pytest.fail("invalid format must not upload reference images")
+
+    monkeypatch.setattr(nanobanana_grid, "upload_image_bytes", unexpected_upload)
+    image_bytes, _text, error = run_async(
+        nanobanana_grid._call_newapi_image_api(
+            api_key="test-token",
+            model="LingShan-G2",
+            prompt="identity prompt",
+            reference_images=[b"ref"],
+            image_config={"reference_image_format": "typo"},
+            base_url="http://newapi.test/v1",
+        )
+    )
+    assert image_bytes is None
+    assert "reference image format" in error.lower()
 
 
 def test_newapi_image_call_preserves_reference_image_extensions(monkeypatch):
