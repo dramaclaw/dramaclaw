@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useRouterState } from "@tanstack/react-router";
-import { Suspense, lazy, useEffect, useRef, useState } from "react";
+import {
+  Suspense,
+  lazy,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -57,6 +64,18 @@ export function FreezoneCanvasHost() {
       setMountedProject(null);
     }
   }, [isFreezone, project, mountedProject]);
+
+  // 画布皮肤（index.css 里 [data-surface="canvas"] 那组变量）只在虾画处于前台时
+  // 生效。画布保活后切到虾集它还挂着，所以不能跟着挂载走，得跟着 isFreezone 走。
+  // layout effect：赶在绘制前换，避免先闪一帧全站默认配色。
+  useLayoutEffect(() => {
+    if (!isFreezone) return;
+    const root = document.documentElement;
+    root.dataset.surface = "canvas";
+    return () => {
+      delete root.dataset.surface;
+    };
+  }, [isFreezone]);
 
   // 画布不再被卸载，正在播的视频/音频就不会跟着停 —— 切到虾集后会变成看不见的
   // 后台声音。隐藏时统一暂停一次（只暂停、不恢复：切回来是否继续播由用户决定，

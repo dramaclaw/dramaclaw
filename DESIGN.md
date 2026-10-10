@@ -1,505 +1,516 @@
 ---
 version: alpha
-name: DramaClaw
-description: >-
-  DramaClaw AIGC 视频引擎的视觉规范：暗色优先、信息密集的工作台。
-  token 逐值对齐 frontend/src/index.css；以暗色为准，亮色值以 light-* 前缀并行。
+name: Runwai-design-analysis
+description: An inspired interpretation of Runwai's design language — an editorial, gallery-grade marketing system for an AI creative-tools company. Cinematic photographic heroes give way to crisp white reading surfaces, a tight monochrome neutral ladder, and a single proprietary sans (abcNormal) carrying every level of the hierarchy. The system reads like a film festival programme more than a SaaS site: black ink on paper-white, generous air, hairline dividers, and reserved use of restrained slate-blue for secondary text. Pure black solid pills serve every primary action, with no accent colour competing for attention.
+
 colors:
-  # ── 画布 / freezone 表面（来源：index.css 的 --*-rgb，.dark 块）──
-  background: "#0a0c12"
-  surface: "#15161d"
-  surface-panel: "#13141b"
-  surface-modal: "#1b1c23"
-  surface-field: "#0d0e14"
-  border-soft: "#1f2026"
-  border-strong: "#2f3036"
-  border: "#22232c"
-  text: "#e8eaf0"
-  text-muted: "#6f7079"
-  accent: "#5ba0ff"
-  # ── shadcn 语义层（来源：.dark 块的 oklch 值）──
-  primary: "#00bdcf"
-  primary-foreground: "#111b21"
-  secondary: "#0e333c"
-  foreground: "#e9edef"
-  card: "#1f2c34"
-  muted: "#182229"
-  muted-foreground: "#8696a0"
-  ui-border: "#2a3942"
-  sidebar: "#111b21"
-  destructive: "#ea4335"
-  success: "#51bf6f"
-  warning: "#efa831"
-  chart-1: "#00bdcf"
-  chart-2: "#009c9c"
-  chart-3: "#31a7cd"
-  chart-4: "#34b7f1"
-  chart-5: "#51bf6f"
-  # ── 亮色主题（来源：:root 块）——角色相同，取值更亮 ──
-  light-background: "#ffffff"
-  light-surface: "#f5f5f5"
-  light-border: "#e0e0e0"
-  light-text: "#000000"
-  light-text-muted: "#666666"
-  light-accent: "#3b82f6"
-  light-primary: "#008198"
-  light-foreground: "#111b21"
-  light-card: "#ffffff"
-  light-muted: "#f0f2f5"
-  light-muted-foreground: "#667781"
-  light-ui-border: "#e9edef"
+  primary: "#000000"
+  on-primary: "#ffffff"
+  ink: "#030303"
+  ink-soft: "#1a1a1a"
+  graphite: "#404040"
+  slate: "#676f7b"
+  slate-soft: "#727a85"
+  mute: "#6b7280"
+  stone: "#939393"
+  ash: "#999999"
+  hairline: "#e7eaf0"
+  hairline-soft: "#c9ccd1"
+  surface-cool: "#d0d4d4"
+  canvas: "#ffffff"
+  canvas-warm: "#fefefe"
+  scrim: "#1a1a1a"
+  footer: "#030303"
+
 typography:
-  display-lg:
-    fontFamily: Inter
-    fontSize: 30px
-    fontWeight: 700
-    lineHeight: 1.2
-    letterSpacing: -0.02em
-  headline-lg:
-    fontFamily: Inter
+  display:
+    fontFamily: abcNormal
+    fontSize: 48px
+    fontWeight: 400
+    lineHeight: 1
+    letterSpacing: -1.2px
+  display-sm:
+    fontFamily: abcNormal
+    fontSize: 40px
+    fontWeight: 400
+    lineHeight: 1
+    letterSpacing: -1px
+  heading-md:
+    fontFamily: abcNormal
+    fontSize: 36px
+    fontWeight: 400
+    lineHeight: 1
+    letterSpacing: -0.9px
+  heading-sm:
+    fontFamily: abcNormal
     fontSize: 24px
-    fontWeight: 600
-    lineHeight: 1.33
-  headline-md:
-    fontFamily: Inter
+    fontWeight: 400
+    lineHeight: 1
+  subtitle:
+    fontFamily: abcNormal
     fontSize: 20px
-    fontWeight: 600
-    lineHeight: 1.4
-  title-lg:
-    fontFamily: Inter
-    fontSize: 18px
-    fontWeight: 600
-    lineHeight: 1.55
-  body-lg:
-    fontFamily: Inter
+    fontWeight: 400
+    lineHeight: 1
+  body:
+    fontFamily: abcNormal
     fontSize: 16px
     fontWeight: 400
     lineHeight: 1.5
-  body-md:
-    fontFamily: Inter
+  body-strong:
+    fontFamily: abcNormal
+    fontSize: 16px
+    fontWeight: 600
+    lineHeight: 1.5
+  body-tight:
+    fontFamily: abcNormal
+    fontSize: 16px
+    fontWeight: 400
+    lineHeight: 1.3
+    letterSpacing: -0.16px
+  link-sm:
+    fontFamily: abcNormal
     fontSize: 14px
-    fontWeight: 400
+    fontWeight: 600
     lineHeight: 1.43
-  body-sm:
-    fontFamily: Inter
-    fontSize: 12px
+  meta:
+    fontFamily: abcNormal
+    fontSize: 13px
     fontWeight: 400
-    lineHeight: 1.33
-  label-md:
-    fontFamily: Inter
-    fontSize: 12px
+    lineHeight: 1.3
+    letterSpacing: -0.26px
+  eyebrow:
+    fontFamily: abcNormal
+    fontSize: 14px
     fontWeight: 500
-    lineHeight: 1.25
-  label-strong:
-    fontFamily: Inter
+    lineHeight: 1.43
+    letterSpacing: 0.35px
+  micro-caps:
+    fontFamily: abcNormal
+    fontSize: 11px
+    fontWeight: 450
+    lineHeight: 1.3
+    letterSpacing: 0.2px
+  button:
+    fontFamily: abcNormal
     fontSize: 14px
     fontWeight: 600
     lineHeight: 1.43
-  mono-sm:
-    fontFamily: SFMono-Regular
-    fontSize: 12px
-    fontWeight: 400
-    lineHeight: 1.33
-  counter-pixel:
-    fontFamily: PikoCountdownPixel
-    fontSize: 72px
-    fontWeight: 600
-    lineHeight: 1
+
 rounded:
-  sm: 12px
-  md: 14px
-  lg: 16px
-  xl: 20px
-  field: 12px
-  node: 14px
-  panel: 16px
-  full: 9999px
-spacing:
-  base: 4px
+  none: 0px
   xs: 4px
-  sm: 8px
-  md: 12px
+  sm: 6px
+  md: 8px
   lg: 16px
-  xl: 24px
-  2xl: 32px
-  button-y: 4px
-  button-x: 11px
-  node-gutter: 12px
+  full: 9999px
+
+spacing:
+  xxs: 4px
+  xs: 8px
+  sm: 12px
+  md: 16px
+  lg: 24px
+  xl: 32px
+  xxl: 48px
+  section: 64px
+  section-lg: 96px
+
 components:
-  modal:
-    backgroundColor: "{colors.surface-modal}"
-    textColor: "{colors.text}"
-    rounded: "{rounded.xl}"
-    padding: "{spacing.xl}"
-  panel:
-    backgroundColor: "{colors.surface-panel}"
-    textColor: "{colors.text}"
-    rounded: "{rounded.panel}"
-    padding: "{spacing.md}"
-  button-quiet:
-    backgroundColor: "#0f1117"
-    textColor: "{colors.text}"
-    typography: "{typography.label-md}"
-    rounded: "{rounded.full}"
-    padding: 4px 11px
-  button-quiet-hover:
-    backgroundColor: "#15161c"
-  button-quiet-primary:
-    backgroundColor: "#0f1117"
-    textColor: "{colors.accent}"
-    typography: "{typography.label-md}"
-    rounded: "{rounded.full}"
-  button-quiet-primary-hover:
-    backgroundColor: "#1f2a3f"
-    textColor: "{colors.accent}"
   button-primary:
     backgroundColor: "{colors.primary}"
-    textColor: "{colors.primary-foreground}"
-    typography: "{typography.label-strong}"
-    rounded: "{rounded.md}"
-    height: 36px
-    padding: 0 16px
-  chip:
-    backgroundColor: "#101118"
-    textColor: "{colors.text-muted}"
-    typography: "{typography.body-sm}"
+    textColor: "{colors.on-primary}"
+    typography: "{typography.button}"
     rounded: "{rounded.full}"
-    padding: 2px 10px
-  chip-active:
-    backgroundColor: "#23334d"
-    textColor: "{colors.accent}"
-  field:
-    backgroundColor: "{colors.surface-field}"
-    textColor: "{colors.text}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.field}"
-    padding: 8px 12px
-    height: 36px
-  field-focus:
-    backgroundColor: "{colors.surface-field}"
-    textColor: "{colors.text}"
-  canvas-node:
-    backgroundColor: "{colors.surface-panel}"
-    textColor: "{colors.text}"
-    rounded: "{rounded.node}"
-    padding: "{spacing.md}"
-  canvas-node-selected:
-    backgroundColor: "{colors.surface-panel}"
-    textColor: "{colors.accent}"
-  popover:
-    backgroundColor: "{colors.card}"
-    textColor: "{colors.foreground}"
+    padding: 12px
+    height: 40px
+  button-primary-on-dark:
+    backgroundColor: "{colors.on-primary}"
+    textColor: "{colors.primary}"
+    typography: "{typography.button}"
+    rounded: "{rounded.full}"
+    padding: 12px
+    height: 40px
+  button-ghost:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink}"
+    typography: "{typography.button}"
+    rounded: "{rounded.full}"
+    padding: 12px
+    height: 40px
+  button-text-link:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink}"
+    typography: "{typography.link-sm}"
+    rounded: "{rounded.xs}"
+    padding: 4px
+  nav-bar:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink}"
+    typography: "{typography.link-sm}"
+    height: 64px
+    padding: 24px
+  nav-link:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink-soft}"
+    typography: "{typography.link-sm}"
+    padding: 8px
+  pricing-card:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body}"
+    rounded: "{rounded.none}"
+    padding: 24px
+    width: 224px
+  pricing-card-featured:
+    backgroundColor: "{colors.hairline}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body}"
+    rounded: "{rounded.none}"
+    padding: 24px
+    width: 224px
+  pricing-tier-name:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink}"
+    typography: "{typography.heading-md}"
+  pricing-amount:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink}"
+    typography: "{typography.display}"
+  research-card:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body}"
+    rounded: "{rounded.md}"
+    padding: 16px
+  media-thumbnail:
+    backgroundColor: "{colors.surface-cool}"
+    textColor: "{colors.ink}"
+    rounded: "{rounded.md}"
+  hero-photo:
+    backgroundColor: "{colors.scrim}"
+    textColor: "{colors.on-primary}"
     rounded: "{rounded.lg}"
-    padding: "{spacing.md}"
-  badge-muted:
-    backgroundColor: "{colors.muted}"
-    textColor: "{colors.muted-foreground}"
-    typography: "{typography.body-sm}"
-    rounded: "{rounded.full}"
-  status-failed:
-    backgroundColor: "{colors.muted}"
-    textColor: "{colors.destructive}"
-    typography: "{typography.label-md}"
-    rounded: "{rounded.full}"
-  status-succeeded:
-    backgroundColor: "{colors.muted}"
-    textColor: "{colors.success}"
-    typography: "{typography.label-md}"
-    rounded: "{rounded.full}"
-  status-degraded:
-    backgroundColor: "{colors.muted}"
-    textColor: "{colors.warning}"
-    typography: "{typography.label-md}"
-    rounded: "{rounded.full}"
-  sidebar-item:
-    backgroundColor: "{colors.sidebar}"
-    textColor: "{colors.foreground}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.sm}"
-    padding: "{spacing.sm}"
-  # ── 亮色变体（无 `.dark` 时）。组件相同，改引 light-* token。──
-  panel-light:
-    backgroundColor: "{colors.light-card}"
-    textColor: "{colors.light-foreground}"
-    rounded: "{rounded.panel}"
-    padding: "{spacing.md}"
-  canvas-node-light:
-    backgroundColor: "{colors.light-surface}"
-    textColor: "{colors.light-text}"
-    rounded: "{rounded.node}"
-    padding: "{spacing.md}"
-  field-light:
-    backgroundColor: "{colors.light-background}"
-    textColor: "{colors.light-text}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.field}"
-    padding: 8px 12px
-  chip-light:
-    backgroundColor: "{colors.light-muted}"
-    textColor: "{colors.light-text-muted}"
-    typography: "{typography.body-sm}"
-    rounded: "{rounded.full}"
-  button-primary-light:
-    backgroundColor: "{colors.light-primary}"
-    textColor: "{colors.light-background}"
-    typography: "{typography.label-strong}"
+    padding: 48px
+  studios-tile:
+    backgroundColor: "{colors.canvas-warm}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body-tight}"
     rounded: "{rounded.md}"
-    height: 36px
-  button-quiet-primary-light:
-    backgroundColor: "{colors.light-surface}"
-    textColor: "{colors.light-accent}"
-    typography: "{typography.label-md}"
+    padding: 16px
+  studios-tag:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.slate}"
+    typography: "{typography.micro-caps}"
     rounded: "{rounded.full}"
-  badge-muted-light:
-    backgroundColor: "{colors.light-muted}"
-    textColor: "{colors.light-muted-foreground}"
-    typography: "{typography.body-sm}"
-    rounded: "{rounded.full}"
+    padding: 6px
+  form-field:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body}"
+    rounded: "{rounded.none}"
+    padding: 12px
+  form-field-focused:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body}"
+    rounded: "{rounded.none}"
+    padding: 12px
+  alert-banner:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body-tight}"
+    rounded: "{rounded.lg}"
+    padding: 16px
+  footer:
+    backgroundColor: "{colors.footer}"
+    textColor: "{colors.on-primary}"
+    typography: "{typography.body}"
+    padding: 64px
+  footer-link:
+    backgroundColor: "{colors.footer}"
+    textColor: "{colors.on-primary}"
+    typography: "{typography.body}"
+  footer-eyebrow:
+    backgroundColor: "{colors.footer}"
+    textColor: "{colors.stone}"
+    typography: "{typography.eyebrow}"
 ---
-
-# DramaClaw DESIGN.md
-
-本文件是 `frontend/src/index.css` 的机读镜像。CSS 变量一改，本文件必须同 commit 更新——
-靠 `npx @google/design.md diff` 跟上一版比对，才能抓出视觉回归。
-
-> 章节标题保持英文（Overview / Colors / …），因为 DESIGN.md 规范按英文标题解析章节，
-> 改成中文会被 linter 判为「缺失章节」。token 名、CSS 变量名、类名、属性名、色值同理保持原文。
 
 ## Overview
 
-DramaClaw（虾导）是一个专业 AIGC 视频工作台：节点画布、故事板、生成队列、长任务面板。
-用户是会把工具开一整天的创作者，所以 UI 定性为**暗色优先、信息密集、克制**——
-`theme: 'dark'` 是持久化的默认值，亮色是受支持的备选，不是主战场。
+Runwai treats its marketing site as a curatorial space — closer in feeling to the programme guide of a film festival than to a typical AI-tooling site. Photography sets the temperature: cinematic, atmospheric stills (a forest at dusk, a lone figure under an indigo night sky) anchor full-bleed hero modules in `{colors.scrim}`, while the rest of the document drops onto pure `{colors.canvas}` for unbroken reading. The colour story is restraint to the point of austerity — black ink on paper-white, with five tiers of grey carrying every nuance from caption to divider, and a single slate-blue (`{colors.slate-soft}` / `{colors.slate}`) reserved for secondary text on rare occasions.
 
-调性是「仪表盘，不是海报」。界面外壳退到近黑的半透明玻璃里；一屏之内唯一的高饱和色，
-只属于用户正在操作的那个东西。密集是刻意的：12px 是主力字号，4–8px 是主力间距。
-动效短促且减速——表面是「落定」，绝不回弹。
+Typography does almost all of the heavy lifting. A single proprietary sans, `abcNormal`, carries every level from 11px micro-caps to 48px editorial display, with negative letter-spacing on every heading (`-0.9px` to `-1.2px`) tightening the headline silhouette into something that reads as deliberate and quiet rather than punchy. There is no decorative ornament, no card glow, no gradient buttons — every primary action is a black solid pill (`{colors.primary}` background, `{colors.on-primary}` text, `{rounded.full}` corners), reused with absolute consistency across hero CTAs, pricing subscriptions, and form submissions.
 
-明确不要的东西：营销感渐变、装饰性插画、俏皮的回弹缓动、同一表面上出现第二种强调色。
+The layout discipline is editorial: hairline dividers (`{colors.hairline}`), uppercase eyebrows (`{typography.eyebrow}`), and an 8-px spacing grid that resolves to large 64–96px section gutters. Sections cycle through a tight rhythm — dark photographic hero → white reading band → research grid on canvas → photographic full-width interlude → dark CTA strip → black footer — letting black ink and black-and-white photography do the dramatic work that other sites delegate to colour.
 
-以上以及本文件其余全部规则，适用范围是**登录之后的产品界面**。未登录就能访问的对外落地页
-（下载页、登录页）是一小块有意划出的例外，边界写在 Scope & Exceptions 里。
+**Key Characteristics:**
+- Cinematic dark photographic heroes (`{colors.scrim}` over editorial stills) bookending crisp `{colors.canvas}` reading bands
+- A single proprietary sans (`abcNormal`) covering every typographic role, with tight negative tracking on display sizes
+- Black-only primary action language: every CTA is `{button-primary}` (`{colors.primary}` pill with `{rounded.full}` corners and 14px/600 button text)
+- Five-tier neutral ladder (`{colors.ink}` → `{colors.graphite}` → `{colors.slate}` → `{colors.stone}` → `{colors.hairline}`) carries the entire UI without accent colour
+- 5-column pricing grid where the featured tier is signalled by a `{colors.hairline}` infill rather than a coloured border
+- Hairline dividers and uppercase `{typography.eyebrow}` lock-ups give marketing sections an editorial, exhibition-catalogue cadence
+- Photography is treated as content, not decoration — full-bleed, cinematic, and tonal rather than vivid
 
 ## Colors
 
-两套色板共存，但**同一个表面上不得混用**：
+### Brand & Accent
+- **Black** (`{colors.primary}`): The single brand action colour. Every primary CTA, every pricing-tier subscription button, every form submit pill resolves to this exact black. Used as the footer canvas as well, which extends the brand voice through the bottom of every page.
+- **Paper White** (`{colors.on-primary}`): Type colour on `{colors.primary}` surfaces; canvas of every reading section.
 
-- **画布色板**（`background` #0a0c12 → `surface` #15161d → `border` #22232c，
-  文字 `text` #e8eaf0 / `text-muted` #6f7079，强调色 `accent` #5ba0ff）。
-  驱动 freezone 画布、节点主体、悬浮工具条，以及所有 `.tap-*` / `.ui-*` 类。
-  取值以空格分隔的 RGB 三元组形式存放（`--bg-rgb`），便于叠加 alpha：
-  `rgb(var(--accent-rgb) / 0.22)`。
-- **shadcn 语义色板**（`primary` #00bdcf 电光青、`card` #1f2c34、
-  `muted-foreground` #8696a0、`ui-border` #2a3942，外加 `destructive` / `success` /
-  `warning`）。驱动 shadcn 原语——弹窗、下拉、Tab、表单——用 `oklch()` 书写以保证
-  感知均匀。
+### Surface
+- **Canvas** (`{colors.canvas}`): Primary reading-page background.
+- **Canvas Warm** (`{colors.canvas-warm}`): Near-imperceptible off-white used to lift studios-page tiles a half-tone above pure white without losing the paper feel.
+- **Featured Surface** (`{colors.hairline}`): The infill behind the featured pricing tier ("Pro") and behind certain table-style banners — chosen for its near-zero saturation so it reads as a tonal step rather than a fill.
+- **Hairline Soft** (`{colors.hairline-soft}`): 1-pixel column dividers in the pricing grid and table separators.
+- **Cool Surface** (`{colors.surface-cool}`): Default placeholder fill for media thumbnails and image-loading frames before the asset paints.
+- **Scrim** (`{colors.scrim}`): The atmospheric dark layer that cinematic hero photography is laid into; behaves as the "stage" colour for full-bleed image modules.
+- **Footer** (`{colors.footer}`): Near-pure black footer canvas, one notch warmer than `{colors.primary}` so it sits visually distinct when the two stack.
 
-规则：
+### Text
+- **Ink** (`{colors.ink}`): Primary heading and body text on `{colors.canvas}`; closest the system gets to absolute black for type.
+- **Ink Soft** (`{colors.ink-soft}`): Nav links, secondary headings, body emphasis — one click softer than ink.
+- **Graphite** (`{colors.graphite}`): Standard body copy across marketing sections, balancing readability with calm.
+- **Slate** (`{colors.slate}`) / **Slate Soft** (`{colors.slate-soft}`): The system's only tinted neutrals — barely-blue greys reserved for tertiary metadata, footer-section headings on dark, and small-caps labels.
+- **Mute** (`{colors.mute}`): Lighter neutral for inline disabled or fine-print copy.
+- **Stone** (`{colors.stone}`): Footer eyebrow caps and field placeholders.
+- **Ash** (`{colors.ash}`): The lightest readable neutral — captions on tiles, pricing fine-print.
 
-- 语义状态色两套色板共用：`destructive` #ea4335 表示危险与失败，`success` #51bf6f
-  表示完成，`warning` #efa831 表示降级或额度受限。**不要再造第二个红。**
-- `accent`（蓝）和 `primary`（青）是**历史遗留的两个强调色**，不是设计决策。
-  画布表面用蓝，shadcn 表面用青。按「表面归属哪套色板」来选，不要按品味选，
-  另见 Do's and Don'ts。
-- 静止表面上彩度必须低。shadcn 的 `secondary` / `accent` 是带青调的灰
-  （暗色 #0e333c、亮色 #def6fa），正是为了让下拉和 Tab 的 hover 态足够安静。
-- 亮色模式把 `background` 翻成纯白、`text` 翻成纯黑，强调色换 `light-accent` #3b82f6；
-  `card` 变纯白，衬在 #f0f2f5 的页面底上。
-- `chart-1` … `chart-5` 是唯一批准的数据序列色，走「青 → 蓝绿 → 天蓝 → 湖蓝 → 绿」，
-  保证同一色系不重复出现。
+### Semantic
+The system does not introduce signal colours (red, green, yellow). Validation states in forms rely on borders and copy rather than colour shifts. Where the contact form indicates a required field, the only visual cue is an asterisk in `{colors.ink}` paired with helper text in `{colors.graphite}`.
 
 ## Typography
 
-拉丁字形用 **Inter**，CJK 依次回退 `Noto Sans SC` → `PingFang SC` → `Microsoft YaHei`
-（见 `--font-family-ui-default`；macOS 走更短的 `--font-family-ui-macos`）。
-产品文案以中文为主，因此：
+### Font Family
+The entire system runs on a single proprietary sans, **abcNormal**, with `abcNormal Fallback` declared as the substitute. It is a humanist neo-grotesque in the lineage of ABC Diatype — uniform stroke contrast, flat terminals, slightly compressed counters, and a confident lowercase that suits Runwai's all-lowercase wordmark. The face is used at every level; there is no second display font, no monospace, no italic specimen across marketing pages.
 
-- **CJK 正文永远不要设 `letterSpacing`**。对 Inter 好看的字距会破坏汉字的字面间距。
-  负字距只保留给 `display-lg`。
-- 同样 px 下 CJK 字形看起来比拉丁小约一档。中英混排的标签优先用 `body-md`（14px），
-  而不是 `body-sm`（12px）。
-- `line-height` 一律用无单位数值，这样能随 CJK 回退字体更大的 x-height 一起缩放。
+### Hierarchy
 
-实际层级分工：`body-sm`（12px）和 `body-md`（14px）承担约 90% 的产品文本——
-属性面板行、节点标签、任务列表。`label-md`（12px/500）用于 chip、按钮、工具条控件。
-`headline-*` 每个面板标题只出现一次。`display-lg` 只留给空状态和弹窗标题。
-`mono-sm` 仅用于 ID、路径、seed、时间码。`counter-pixel`（方舟像素数字子集）
-只作用于 Piko 小游戏倒计时，不得外泄到产品界面。
+| Token | Size | Weight | Line Height | Letter Spacing | Use |
+|---|---|---|---|---|---|
+| `{typography.display}` | 48px | 400 | 1.0 | -1.2px | Page-level editorial display ("Runwai Pricing", "Looking to get in touch?") |
+| `{typography.display-sm}` | 40px | 400 | 1.0 | -1px | Pricing tier amount, hero secondary headlines |
+| `{typography.heading-md}` | 36px | 400 | 1.0 | -0.9px | Section headlines ("Our latest Research and Products"), tier names |
+| `{typography.heading-sm}` | 24px | 400 | 1.0 | 0 | Card titles, sub-section heads, link text in featured cards |
+| `{typography.subtitle}` | 20px | 400 | 1.0 | 0 | Hero sub-copy and lead paragraphs |
+| `{typography.body}` | 16px | 400 | 1.5 | 0 | Default body copy, form fields, footer link list |
+| `{typography.body-strong}` | 16px | 600 | 1.5 | 0 | Inline emphasis, "Get Started"-class label text |
+| `{typography.body-tight}` | 16px | 400 | 1.3 | -0.16px | Tight-leading body for marketing cards and CTA cards |
+| `{typography.link-sm}` | 14px | 600 | 1.43 | 0 | Nav links, button labels, "Learn More" text links |
+| `{typography.eyebrow}` | 14px | 500 | 1.43 | 0.35px | Uppercase eyebrows above section headings |
+| `{typography.meta}` | 13px | 400 | 1.3 | -0.26px | Tertiary metadata (dates, fine print, table footnotes) |
+| `{typography.micro-caps}` | 11px | 450 | 1.3 | 0.2px | Footer column headings, small-caps tags ("PRESS", "RESOURCES") |
+| `{typography.button}` | 14px | 600 | 1.43 | 0 | Every button label across the system |
 
-## Layout & Spacing
+### Principles
+- **One face, every level.** Hierarchy is articulated through size, weight, and tracking — never through a contrasting display family. The result is a uniform editorial cadence that reads as confident rather than expressive.
+- **Negative tracking on display, neutral tracking on body.** Headings 24–48px sit at -0.9 to -1.2px to tighten silhouettes; body copy stays at 0 for legibility.
+- **Tight leading on display, generous leading on body.** Display sizes lock to `line-height: 1.0`; body relaxes to `1.5`. The contrast gives sections a clear "headline-then-paragraph" rhythm.
+- **Uppercase reserved for two roles.** `{typography.eyebrow}` for section labels, `{typography.micro-caps}` for footer columns and small tags. Body copy is never set in uppercase.
 
-**4px 基准单位**（`--spacing: 0.25rem`），之上叠 8/12/16 的节奏。这是密集型工具：
-代码里出现最多的两个间距是 `gap-1`（4px）和 `gap-2`（8px），面板内边距是 8–12px，
-不是 24px。
+### Note on Font Substitutes
+If `abcNormal` is unavailable, the closest open-source substitutes are **ABC Diatype** (commercial) or **Inter** at -0.02em tracking on display sizes. When using Inter, lift display sizes by ~1px and pull `letter-spacing` slightly tighter (-1.4px at 48px) to recover the compressed silhouette of the original.
 
-- 外壳：固定左侧栏 + 流式工作区。画布满幅铺开；面板浮在它上面，而不是把它挤变形。
-- 悬浮面板（工具条、属性面板、popover）用 `position: fixed`、12px 内边距，
-  并以 16px 安全边距被夹在视口内。
-- 节点内部用 12px 的沟槽，元素间 8px 堆叠。属性面板行间距 4px；组之间用 12px 分隔，
-  绝不用分割线。
-- 列表和网格在 `.ui-scrollbar` 内滚动（7px 细滑块，`rgba(148,163,184,0.5)`）。
-  横向滚动条通过 `.ui-scrollbar-vertical` 隐藏，但仍可用手势滚动。
-- 页面 body 永不横向滚动。宽内容自带 `overflow-x: auto` 容器。
+## Layout
+
+### Spacing System
+- **Base unit**: 8px (with 4px and 6px micro-steps for inline element gaps).
+- **Tokens (front matter)**: `{spacing.xxs}` 4px · `{spacing.xs}` 8px · `{spacing.sm}` 12px · `{spacing.md}` 16px · `{spacing.lg}` 24px · `{spacing.xl}` 32px · `{spacing.xxl}` 48px · `{spacing.section}` 64px · `{spacing.section-lg}` 96px.
+- Card internal padding sits at `{spacing.lg}` (24px). Section vertical rhythm alternates between `{spacing.section}` (64px) for tight reading bands and `{spacing.section-lg}` (96px) for editorial breaks between major modules. Inline button padding is `{spacing.sm}` vertical / `{spacing.lg}` horizontal.
+
+### Grid & Container
+- Marketing pages render inside a centred container that caps near 1280px on widescreen breakpoints; the document maintains generous left/right gutters (~`{spacing.xxl}`) at every breakpoint above 1024px.
+- The pricing surface is a 5-column equal-width grid (Free / Standard / Pro / Unlimited / Enterprise) on widescreen; each column is a vertical strip separated by 1-pixel `{colors.hairline-soft}` rules rather than gaps.
+- Research/products listings use a 12-column underlying grid where each row presents a 5/7 split: media thumbnail on the left (5 columns), aligned text block on the right (7 columns).
+- Studios pages break the discipline deliberately: a dense, irregular masonry of editorial poster tiles, captioned in `{typography.body-tight}`, with no consistent column count — the page is meant to read as a programme grid.
+
+### Whitespace Philosophy
+Whitespace at Runwai is structural, not decorative. Sections are separated by 64–96px verticals; cards inside a section are separated by 16–24px gaps. There are no card shadows or coloured surfaces standing in for layout — `{colors.canvas}` carries through, and rhythm comes from line-height and section spacing alone. The studios pages are the exception; their dense poster grids feel almost cluttered by contrast, which is the point — they read like a printed catalogue.
 
 ## Elevation & Depth
 
-层次来自**近黑底上的半透明玻璃**，不是靠堆阴影。每个悬浮表面都是：
-半透明填充 + 1px 细边 + 一层柔和阴影。
+| Level | Treatment | Use |
+|---|---|---|
+| Flat | No shadow, optional 1px `{colors.hairline}` divider | Default state for cards, pricing columns, research rows, footer surfaces |
+| Photographic | Full-bleed image laid into `{colors.scrim}`, no border, `{rounded.lg}` corners on contained variants | Hero modules, "We are building foundational simulation World Models" interlude, mid-page CTA panels |
+| Subtle Surface Lift | `{colors.hairline}` infill behind a card on a `{colors.canvas}` page | The featured pricing tier ("Pro") — the only "elevation" cue in the entire pricing module |
 
-- **Level 0 — 底场：** `background` #0a0c12。不透明，永不模糊。
-- **Level 1 — 节点 / 内联表面：** `surface-panel`，细边 `border-soft`
-  （`rgba(255,255,255,0.05)`），不加模糊。
-- **Level 2 — 悬浮面板**（`.tap-panel` / `.ui-panel`）：
-  `background: rgba(21,22,29,0.78)`、`border-soft`，以及
-  `--ui-shadow-panel` = `0 14px 34px rgba(0,0,0,0.5)` 加一道
-  `0 1px 0 rgba(255,255,255,0.03) inset` 顶部高光。压在画布上时配 `.backdrop-blur-tap`
-  （`saturate(180%) blur(18px)`）。
-- **Level 3 — 弹窗 / popover：** 产品工作台里的决策弹窗使用中性
-  `surface-modal` #1b1c23 配 `ui-border`；通用 shadcn popover 继续使用 `card`。
-  模态不模糊——它是要你做决定的。
-- **焦点与选中用发光，不用阴影：** hover-primary 用 `--ui-glow-accent` =
-  `0 0 24px rgb(var(--accent-rgb) / 0.25)`；聚焦输入框用
-  `0 0 0 3px rgb(var(--accent-rgb) / 0.12)` 的 ring。
-- 亮色模式把同样三层换成 #f0f2f5 上的不透明白卡片，阴影柔和得多
-  （`0 2px 10px rgba(0,0,0,0.10)`）；玻璃隐喻在那边是刻意弱化的。
+The system avoids drop shadows entirely. Depth is created by photographic layering and tonal surface shifts, never by blurred shadows. This is a deliberate aesthetic choice — Runwai communicates polish through editorial restraint, not material affordance.
 
-动效 token 也是层次的一部分：`--duration-fast` 150ms 用于 hover 和变色，
-`--duration-base` 220ms 用于面板入场，`--duration-slow` 320ms 用于布局位移，
-一律搭配 `--ease-out-quint` `cubic-bezier(0.22,1,0.36,1)` 或 `--ease-standard`。
-**绝不用 bounce / elastic**——真实物体只会平滑减速。
+### Decorative Depth
+- **Cinematic photography as backdrop.** The hero on the homepage uses an indigo night-sky photograph; the mid-page interlude uses a fog-and-trees forest scene rendered into `{colors.scrim}`. Both function as atmospheric surfaces that the next white reading band breaks against, creating a perceived "stage" depth without any CSS effect.
+- **Tonal surface stepping.** Pricing's featured-tier infill (`{colors.hairline}` against `{colors.canvas}`) is the system's quietest possible "this one is special" cue — perceptible, never loud.
 
 ## Shapes
 
-两套圆角家族，相对小字号都偏大：
+### Border Radius Scale
 
-- **胶囊**（`rounded.full`，9999px）用于一切「可点但不是提交」的东西：安静按钮、
-  chip、筛选器、标签。这是签名形状——`rounded-full` 是代码里用得最多的圆角。
-- **柔和矩形**用于容器：输入框 `field` 12px，画布节点 `node` 14px，
-  悬浮面板 `panel` 16px，大抽屉 `xl` 20px。
+| Token | Value | Use |
+|---|---|---|
+| `{rounded.none}` | 0px | Pricing-grid cells, table rows, form fields, footer link blocks |
+| `{rounded.xs}` | 4px | Small inline accents, focus rings, secondary link chips |
+| `{rounded.sm}` | 6px | Tag chips, secondary link buttons |
+| `{rounded.md}` | 8px | Research-card thumbnails, studios poster tiles, media containers |
+| `{rounded.lg}` | 16px | Alert banners, hero-photograph containers, full-bleed CTA panels |
+| `{rounded.full}` | 9999px | Every primary button (CTA pills), studios tag pills |
 
-`--radius` 是 1rem，shadcn 的档位由它推导（`sm` 12px → `xl` 20px），所以这个项目里
-Tailwind 的 `rounded-md` 是 14px，不是 6px。不要写死圆角，引用这些 token。
-图标 1.5–2px 描边、圆头端点，尺寸取 14/16/20px，与 `label-md` 保持同一视觉基线。
+### Photography Geometry
+- **Hero stills** are full-bleed, no rounding — they extend to the page edges to feel cinematic rather than card-like.
+- **Contained hero panels** (mid-page interludes) take `{rounded.lg}` corners, signalling "module" rather than "page".
+- **Research thumbnails** are 16:9 with `{rounded.md}` corners and a `{colors.surface-cool}` placeholder fill.
+- **Studios poster tiles** vary in aspect ratio (square, 4:5, landscape) and use `{rounded.md}` corners; the deliberate aspect-ratio inconsistency is what gives the studios grid its programme-catalogue feel.
+- **Avatar/logo lockups** in the partner row are rendered without rounding, in flat black wordmarks on `{colors.canvas}`, evenly spaced.
 
 ## Components
 
-**安静按钮**（`.tap-button`）是默认的操作控件：胶囊、4px/11px 内边距、12px 标签、
-细边框、半透明填充。它在 hover 之前不宣示任何存在感；hover 时边框加强、填充升到
-`surface`/0.88。它的主操作变体（`.tap-button-quiet-primary`）只把**文字**染成 `accent`
-并加上强调色发光——它仍然是一个安静按钮。禁用态是 `opacity: 0.4` 加
-`cursor: not-allowed`；不要再单独把标签置灰。
+### Buttons
 
-**实心按钮**（shadcn `button-primary`，近黑底上的青）每屏最多一个：表单或弹窗的提交动作。
-画布上优先用安静主操作按钮。
+**`button-primary`** — every primary CTA across the marketing surface ("Try Runwai", "Get Started", "Subscribe Now", "Send Message", "Learn More" filled variant)
+- Background `{colors.primary}`, text `{colors.on-primary}`, type `{typography.button}`, padding `{spacing.sm}` × `{spacing.lg}`, rounded `{rounded.full}`, height 40px.
+- The system uses the same pill at every scale; no large/small distinction.
 
-**Chip**（`.tap-chip`）是带弱化文字的胶囊；`data-state="active"` 时文字翻成 `accent`，
-底色变 `accent`/0.22 填充并加 1px 强调色 ring。激活状态由 `data-state` 承载，不用类名开关，
-这样 React Flow 的 portal 也能被样式命中。
+**`button-primary-on-dark`** — the inverse used when the surface itself is `{colors.scrim}` (dark hero CTAs)
+- Background `{colors.on-primary}`, text `{colors.primary}`, otherwise identical token set to `{button-primary}`.
 
-**输入框**（`.tap-field` / `.ui-field`）是 `surface-field` 上 12px 圆角的输入，静止态无可见描边；
-聚焦时加 0.5 alpha 的强调色边框和 3px 强调色 ring。占位符和辅助文字有专属 token
-（`--canvas-node-input-placeholder`、`--canvas-node-input-helper`），
-让节点输入压在玻璃上仍然可读——用它们，不要用 `text-muted`。
+**`button-ghost`** — secondary actions on light surfaces ("Schedule a Demo", "Sign Up" on the Free tier)
+- Background `{colors.canvas}`, text `{colors.ink}`, type `{typography.button}`, rounded `{rounded.full}`, with a 1px `{colors.ink}` border.
 
-**画布节点**是 Level 1 表面，14px 圆角、12px 沟槽。选中态是强调色 ring 加强调色标题；
-绝不用投影——那读起来像正在拖拽。
+**`button-text-link`** — inline secondary actions, table-row "Subscribe Now" labels, and "View More" links
+- Background `{colors.canvas}`, text `{colors.ink}`, underline-on-active, type `{typography.link-sm}`.
 
-**Popover / 下拉 / tooltip** 用不透明的 `card` 表面配 `ui-border`、16px 圆角，
-hover 行用 shadcn 的 `accent`（#0e333c）——刻意不用画布的蓝强调色，
-因为它们渲染在语义色板里。
+### Navigation
+
+**`nav-bar`** — the persistent top bar
+- Background `{colors.canvas}`, height ~64px, padding `{spacing.lg}` horizontal, `{typography.link-sm}` for menu items.
+- Layout: lowercase `runwai` wordmark left → centred 5-item primary menu (Research, Product, Resources, Solutions, Company) → right cluster (`Enterprise Sales` text link, `Log In` text link, `Try Runwai` `{button-primary}` pill).
+- The bar sits flush against the document top and is divided from the page only by spacing, not by a hairline.
+
+**`nav-link`** — top-bar menu items
+- Background `{colors.canvas}`, text `{colors.ink-soft}`, type `{typography.link-sm}`, padding `{spacing.xs}` vertical.
+
+### Cards & Containers
+
+**`pricing-card`** — every standard tier (Free, Standard, Unlimited, Enterprise)
+- Background `{colors.canvas}`, text `{colors.ink}`, padding `{spacing.lg}`, no rounding, separated from neighbouring tiers by 1px `{colors.hairline-soft}` column rules.
+- Internal stack: tier name (`{typography.heading-md}`) → one-line description (`{typography.body}` in `{colors.graphite}`) → amount (`{typography.display-sm}`) → unit caption (`{typography.meta}` in `{colors.stone}`) → action button (`{button-primary}` for paid tiers, `{button-ghost}` for Free) → feature list (`{typography.body}` bullets).
+
+**`pricing-card-featured`** — the "Pro" tier
+- Identical structure to `{pricing-card}` but the column infill is `{colors.hairline}` instead of `{colors.canvas}`. No coloured border, no badge, no shadow — just the surface-step.
+
+**`pricing-tier-name`** — header line of each pricing column
+- Background `{colors.canvas}`, text `{colors.ink}`, type `{typography.heading-md}` set in title-case ("Free", "Standard", "Pro").
+
+**`pricing-amount`** — large monetary display in each pricing card
+- Background `{colors.canvas}`, text `{colors.ink}`, type `{typography.display}` paired with a `{typography.meta}` "per user/month" caption beside it.
+
+**`research-card`** — each row of "Our latest Research and Products"
+- Layout: `{media-thumbnail}` left (16:9) + text block right.
+- Right block: title (`{typography.heading-sm}`) → description (`{typography.body}` in `{colors.graphite}`) → footer link (`{typography.link-sm}`, underlined on active).
+
+**`studios-tile`** — poster cards on the studios index
+- Background `{colors.canvas-warm}`, image fills the tile, optional caption strip below in `{typography.body-tight}` (`{colors.graphite}`).
+- Tiles are deliberately heterogeneous in aspect ratio.
+
+**`studios-tag`** — small-caps category pills on studios cards
+- Background `{colors.canvas}`, text `{colors.slate}`, type `{typography.micro-caps}`, padding `{spacing.xxs}` × `{spacing.sm}`, rounded `{rounded.full}`.
+
+**`hero-photo`** — full-bleed cinematic hero blocks
+- `{colors.scrim}` background carrying a photographic still, padding `{spacing.xxl}`, rounded `{rounded.lg}` on contained variants and `{rounded.none}` on edge-to-edge variants.
+- Internal stack: optional eyebrow (`{typography.eyebrow}` in `{colors.on-primary}` at 70% opacity) → display headline (`{typography.display}` in `{colors.on-primary}`) → optional sub-copy (`{typography.subtitle}` in `{colors.on-primary}`) → `{button-primary-on-dark}` CTA.
+
+**`media-thumbnail`** — image placeholder
+- Background `{colors.surface-cool}`, rounded `{rounded.md}`, ratio 16:9 by default, image lazy-loads on top.
+
+### Inputs & Forms
+
+**`form-field`** — every contact-form input (select, text, textarea)
+- Background `{colors.canvas}`, text `{colors.ink}`, label above field in `{typography.body}` `{colors.ink}`, helper text in `{typography.meta}` `{colors.stone}`.
+- The field itself is a 1px bottom rule in `{colors.hairline-soft}` (no full-border box) — placeholder ("Type your full name") sits in `{colors.stone}`.
+- Padding `{spacing.sm}` vertical, no rounding.
+
+**`form-field-focused`** — focused state
+- Bottom rule deepens to `{colors.ink}`. No glow, no colour shift on the field background.
+
+**`alert-banner`** — privacy/cookie disclosure copy
+- Background `{colors.canvas}`, text `{colors.ink}`, `{typography.body-tight}`, padding `{spacing.md}`, rounded `{rounded.lg}`, 1px `{colors.hairline-soft}` border.
+
+### Footer
+
+**`footer`** — the system's terminal surface
+- Background `{colors.footer}`, text `{colors.on-primary}`, padding `{spacing.section}` vertical, `{spacing.lg}` horizontal.
+- Layout: 6-column link grid → bottom strip with the lowercase `runwai` wordmark left and legal/copyright links right.
+
+**`footer-eyebrow`** — small-caps column headings ("Product", "Initiatives", "Company")
+- Background `{colors.footer}`, text `{colors.stone}`, type `{typography.eyebrow}`.
+
+**`footer-link`** — link-list items
+- Background `{colors.footer}`, text `{colors.on-primary}`, type `{typography.body}`.
+
+### Signature Components
+
+**Pricing 5-Column Slab** — Runwai's pricing module is unusually flat: a 5-tier slab with no coloured borders, no shadow, no badge ribbon. The featured tier is signalled by a single tonal step (`{colors.hairline}` infill) and a slightly heavier action button. The decision to render Free → Enterprise as one continuous slab instead of separate floating cards is the page's central design move.
+
+**Editorial Eyebrow + Display Lockup** — Across the site, headline modules follow a fixed three-part rhythm: uppercase `{typography.eyebrow}` label → 36–48px `{typography.display}` headline → `{typography.body}` lead paragraph. Section spacing locks to `{spacing.section}` between modules. The lockup is what gives marketing pages their festival-programme cadence.
+
+**Cinematic Atmospheric Interlude** — Mid-document interludes (the "We are building foundational simulation World Models" forest scene, the "We are building AI to simulate the world…" closing strip) use a contained `{hero-photo}` panel with `{rounded.lg}` corners. They function as pacing breaks between research grids and CTA bands rather than promotional units.
 
 ## Do's and Don'ts
 
-- **要**从 `frontend/src/index.css` 的 CSS 变量里读颜色、圆角、间距、动效。
-  **不要**在组件里写死 hex、px 圆角或 ms 时长——写死字面量正是两套色板开始漂移的方式。
-- **要**按「表面归属哪套色板」决定用蓝还是青（画布 → `accent` 蓝，shadcn 原语 →
-  `primary` 青）。**不要**引入第三个强调色，也**不要**只改一侧表面去「对齐」另一侧。
-  统一这两个色相是已知的待决事项，必须作为一次跨两套色板的有意改动落地。
-- **要**保证一屏只有一个高饱和元素。**不要**把实心主按钮、激活 chip、发光节点堆在一起——
-  眼睛会找不到主体。
-- **要**用 `rgb(var(--x-rgb) / a)` 合成半透明，这样一条声明同时适配两种主题。
-  **不要**在组件里手写 `rgba(255,255,255,0.05)`；用 `--ui-border-soft` /
-  `--ui-border-strong`。
-- **要**在压住画布的半透明面板上配 `.backdrop-blur-tap`。**不要**给全屏模态加模糊，
-  也不要嵌两层模糊——第二层模糊要付一次全视口合成的代价，却看不出差别。
-- **要**让任何用户必须读的文字满足 WCAG AA（4.5:1）。有四处**已知欠账**已经实测记录，
-  它们是债务而不是先例——不要把这些比值抄进新组件：
-  - `chip` 静止态标签，`text-muted` 压在 chip 填充上——**3.83:1**
-    （「未激活就安静」的意图，但对必读标签而言低于 AA）
-  - `status-failed`，`destructive` #ea4335 压在 `muted` 上——**4.12:1**
-    （暗色下的错误文字；修法是文字改用更亮的红，填充保留 #ea4335）
-  - `button-quiet-primary-light`，`light-accent` #3b82f6 压在 `light-surface` 上——
-    **3.37:1**（亮色模式最薄弱的一环）
-  - `badge-muted-light`，`light-muted-foreground` 压在 `light-muted` 上——**4.14:1**
-- **要**放心用 `body-sm`（12px）承载元信息，中英混排一律用 `body-md`（14px）。
-  **不要**低于 12px，也不要在同一个面板里用超过两种字重。
-- **要**把 hover 反馈控制在 150ms 内、面板入场 220ms 并配 `ease-out-quint`。
-  **不要**在画布表面上动画 `width`/`height`/`top`/`left`——只动 transform 和 opacity。
-- **要**在收工前验两套主题：给 `<html>` 切 `.dark`，重点看玻璃表面——它们是亮色下
-  最先崩的东西。
+### Do
+- Reserve `{colors.primary}` for primary actions and the footer; use `{button-primary}` for every primary CTA without varying corner radius or fill.
+- Stack uppercase `{typography.eyebrow}` over `{typography.display}` for every major section opener — it is the system's signature lockup.
+- Use `{colors.hairline}` infill — never a coloured border — when one item in a comparison must read as featured.
+- Set body copy in `{colors.graphite}` against `{colors.canvas}` for paragraphs, and reserve `{colors.ink}` for headings and emphasis only.
+- Treat photography as content: full-bleed, cinematic, aligned to the page edge in heroes; `{rounded.lg}` only when the photo is contained inside a section.
+- Lock display headings to negative letter-spacing (`-0.9px` to `-1.2px`) — the tight tracking is core to the brand voice.
+- Use `{rounded.full}` pills for buttons and `{rounded.none}` for table/grid cells. Never mix.
 
-## Scope & Exceptions
+### Don't
+- Don't introduce accent colours (blue, green, red) into marketing surfaces — Runwai's voice is monochrome plus photography.
+- Don't apply drop shadows or glows to cards. Depth is photographic and tonal, not material.
+- Don't badge the featured pricing tier with a coloured ribbon or border — the surface step is the badge.
+- Don't break headings into bold + light contrast; every heading is regular weight (`400`) with tight tracking.
+- Don't centre body paragraphs longer than one sentence — the system uses left-aligned reading bands almost exclusively.
+- Don't use uppercase for body or button copy. Uppercase is reserved for `{typography.eyebrow}` (14px) and `{typography.micro-caps}` (11px).
+- Don't render the runwai wordmark in title-case or with a brand colour. It is always lowercase, in `{colors.ink}` on light surfaces and `{colors.on-primary}` on dark.
 
-本文件默认约束的是**登录之后的产品界面**——画布、面板、列表、弹窗，一切用户开一整天的东西。
-未登录就能访问的**对外落地页**是唯一的例外区，因为它们的任务不同：产品界面要让人忘记界面本身，
-落地页要在十秒内说服一个还没有账号的人。用工作台的 token 去做落地页，结果是一张没人会转发的
-说明书。
+## Responsive Behavior
 
-例外仅限以下两处，**是白名单，不是「凡是新页面都能声明例外」**：
+### Breakpoints
 
-- `/download` — `src/components/download/download.module.css`、`DownloadCanvasPreview.tsx`
-- `/login` — `src/components/login/login.module.css`、`poster-wall.module.css`、`light-rays.css`
+| Name | Width | Key Changes |
+|---|---|---|
+| 2xl | 1600px | Full editorial container; pricing 5-up; research rows 5/7 split |
+| xl | 1536px | Same layout, marginally tighter gutters |
+| lg | 1280px | Default desktop reading view |
+| md | 1200px | Pricing grid still 5-up but tier text tightens |
+| sm | 1024px | Pricing collapses to 3 → 2 tier rows; research rows stack at certain breakpoints |
+| xs | 768px | Top nav collapses to a hamburger; section padding drops to `{spacing.section}` |
+| xxs | 640px | Single-column reading; hero display drops to `{typography.display-sm}`; pricing tiers stack 1-up |
 
-新增落地页要进这份白名单，必须同 commit 更新本节。任何登录后可达的界面一律不在其中，
-包括从落地页跳进去的第一屏。
+### Touch Targets
+- Every `{button-primary}` is 40px tall — at the lower edge of the 44×44 WCAG target. On mobile the buttons grow to 48px height (still `{rounded.full}`, still `{typography.button}`).
+- `{nav-link}` items get `{spacing.sm}` vertical padding inside the mobile menu, expanding the tap target without changing typography.
+- Pricing-tier `{button-primary}` extends full-column-width on mobile.
 
-### 例外区内允许的偏离
+### Collapsing Strategy
+- **Nav.** Centred desktop menu collapses into a single hamburger that opens an overlay sheet; the right-side `{button-primary}` "Try Runwai" stays visible above the hamburger as the persistent action.
+- **Pricing.** 5-column slab collapses to single-column stacked cards at xxs; the featured `{colors.hairline}` infill is preserved on the Pro card so the tonal cue survives the stack.
+- **Research grid.** 5/7 split collapses to image-on-top, text-below at sm; thumbnail rounding (`{rounded.md}`) is preserved.
+- **Footer.** 6-column link grid collapses to 2-column at sm and 1-column at xxs; the lowercase `runwai` wordmark stays bottom-left, legal links stack underneath.
 
-- **自带色板，不引 `index.css` 的 token。** 下载页取自品牌 DC 标的材质——镀锌钢
-  （`--zinc` #a8b4be）加锈蚀氧化（`--rust` #d9603a / `--rust-hot` #ee7549）。
-  这确实是第三个强调色，只在例外区内成立：**`rust` 一族不得出现在任何产品界面里**，
-  且在页内继续守「一屏一个主导高饱和元素」——静止态的锈橙只给 hero 的 `DC` 字样、
-  「你的系统」标记、主下载按钮、hero 底部校准条，以及预览 SVG 里正在渲染的那个节点；
-  其余出现的地方只能是焦点环和 hover 反馈。
-- **拉丁字形用 Geist Variable**（`@fontsource-variable/geist`），CJK 回退链不变。
-  字体只能随落地页的 lazy chunk 加载；一旦它出现在主 chunk 里，例外就失效了。
-- **元信息层可以低到 10px，包括中文标签。** 落地页是海报式排版，行宽和留白都远大于工作台，
-  等宽刻度字压到 10–11.5px 才有仪器感：眉标（`.eyebrow` 11px）、规格表键名（`.spec dl` 11.5px）、
-  校验和值与说明（10.5 / 11px）、更新日志时间（11.5px）。边界：**这一档只给「扫一眼就够、
-  不需要逐字读」的标签**——凡是需要读完的段落，字号仍守住产品的 12px 下限
-  （落地页实测 12.5–17px：`.heroNote` 12.5px、`.capabilityCell p` / `.changelog p` 13.5px、
-  `.faqAnswer` 14px、hero 正文 16–17px）。中文在 11px 是有代价的，别把这一档扩大到正文。
-- **进场与装饰动效可以超过 320ms。** 区块进场 700ms、hero 校准条推进 1400ms，都配
-  `cubic-bezier(0.16,1,0.3,1)` 减速，且只允许动 `opacity` / `transform` / `width`。
-  交互反馈也放宽了一档：hover / 焦点 / 展开走 140–240ms，而不是产品界面的 150ms 上限——
-  落地页的元素更大、位移更长，150ms 会显得生硬。边界：**交互反馈的上限仍是产品的 320ms
-  `--duration-slow`**，超过 320ms 的只能是一次性进场和装饰动画；依然禁 bounce / elastic。
-- **允许营销渐变与装饰图形。** hero 与卡片底纹用 radial / linear 渐变，画布预览是一张内联 SVG。
+### Image Behavior
+- Hero photographs swap to a tighter crop on mobile (vertical-leaning) so the focal subject stays centred at xxs widths.
+- `{media-thumbnail}` containers preserve their 16:9 ratio at every breakpoint; the `{colors.surface-cool}` placeholder fill paints during lazy-load.
+- Studios poster tiles preserve their original aspect ratios at every breakpoint — the masonry simply re-flows into fewer columns.
 
-### 例外区内依然不许违反的
+## Iteration Guide
 
-- 暗色优先。落地页锁死深色，不提供亮色变体。
-- 用户必须读的文字满足 WCAG AA（4.5:1）。
-- body 永不横向滚动；宽内容自带 `overflow-x: auto`。
-- `@media (prefers-reduced-motion: reduce)` 必须把动画关掉——超长动效正是这条不能省的原因。
-- 例外区的样式必须收在自己的样式文件里（优先 CSS Module；`light-rays.css` 这类页面私有全局
-  CSS 要保证类名带页面前缀）。**不得反向修改 `index.css` 的全局变量**，也不得把落地页的类名
-  泄漏到产品界面。
-
-`design.md lint` 只校验本文件自身，不读 CSS，所以这一节是靠 review 执行的约定，不是靠工具。
-评审落地页时看这一节；评审其余界面时，这一节不适用。
-
-## Linting
-
-```bash
-npx @google/design.md lint DESIGN.md          # 0 errors 是准入线
-npx @google/design.md diff old.md DESIGN.md   # token 级视觉回归
-npx @google/design.md export DESIGN.md --format css-vars   # 或 tailwind | dtcg
-```
-
-预期基线：**0 errors，15 warnings。** 其中 4 条是上面列出的实测对比度欠账；
-11 条是 `orphaned-tokens`，落在 `border` / `border-soft` / `border-strong` /
-`ui-border` / `light-border` / `light-ui-border` / `chart-1..5` 上——
-alpha 版规范既没有 border 属性也没有图表序列概念，这些 token 无法被 component 引用。
-**不要为了消警告删掉它们**，它们在 `index.css` 里是承重的。
-出现任何**新的 error**，或 warning 数超过 15，都意味着回归。
+1. Focus on ONE component at a time. Start with `{button-primary}` and `{nav-bar}` — they appear on every page and anchor the system.
+2. Reference component names and tokens directly (`{colors.ink}`, `{button-primary-on-dark}`, `{rounded.full}`) — do not paraphrase or substitute hex values.
+3. Run `npx @google/design.md lint DESIGN.md` after edits — `broken-ref`, `contrast-ratio`, and `orphaned-tokens` warnings flag drift automatically.
+4. Add new variants as separate `components:` entries (`-pressed`, `-disabled`, `-focused`) — never bury them inside prose.
+5. Default body copy to `{typography.body}` and emphasis to `{typography.body-strong}`. Reserve `{typography.eyebrow}` and `{typography.micro-caps}` for their two specific roles (section openers and footer columns).
+6. Keep `{colors.primary}` scarce — if more than one black-pill action appears in a single viewport, neutralise the secondary one to `{button-ghost}`.
+7. When introducing photography, lay it into `{colors.scrim}` and let the next white band break against it. Avoid mid-section photographic accents that don't span the full content width — they read as off-system.
