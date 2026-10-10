@@ -313,6 +313,9 @@ class PikoWorldHub:
                 player.x, player.y = x, y
         except (KeyError, TypeError, ValueError):
             pass
+        facing = str(payload.get("facing") or player.facing)
+        if facing in {"north", "south", "east", "west"}:
+            player.facing = facing
         async with self._lock:
             snapshot = [
                 current.public_dict() for current in self._players.values()

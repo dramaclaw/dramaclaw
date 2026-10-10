@@ -194,6 +194,8 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
     const remoteActors = new Map<string, {
       actor: ReturnType<typeof createResidentActor>;
       target: { x: number; y: number };
+      occlusion: ReturnType<typeof createBakedActorOcclusion>;
+      silhouette: ReturnType<typeof createResidentOcclusionSilhouette>;
     }>();
     let playerAccessory: ReturnType<typeof createPlayerAccessory> | null = null;
     let residentActor: ReturnType<typeof createResidentActor> | null = null;
@@ -265,7 +267,11 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
       mayorActor?.destroy();
       playerAccessory?.destroy();
       residentActor?.destroy();
-      remoteActors.forEach(({ actor }) => actor.destroy());
+      remoteActors.forEach(({ actor, occlusion, silhouette }) => {
+        occlusion.destroy();
+        silhouette.destroy();
+        actor.destroy();
+      });
       remoteActors.clear();
       npcActors.forEach(actor => actor.destroy());
       changeResidentRef.current = () => {};
@@ -629,6 +635,8 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
             const currentRemoteIds = new Set(remotePlayersRef.current.map(player => player.character_id));
             for (const [id, remote] of remoteActors) {
               if (!currentRemoteIds.has(id)) {
+                remote.occlusion.destroy();
+                remote.silhouette.destroy();
                 remote.actor.destroy();
                 remoteActors.delete(id);
               }
@@ -637,12 +645,15 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
               const existing = remoteActors.get(remote.character_id);
               if (existing) {
                 existing.target = { x: remote.x, y: remote.y };
+                existing.actor.setFacing(remote.facing);
                 if (Math.hypot(existing.actor.container.x - remote.x, existing.actor.container.y - remote.y) > 400) {
                   existing.actor.container.position.set(remote.x, remote.y);
                 }
                 continue;
               }
               const state = { x: remote.x, y: remote.y };
+              let remoteOcclusion: ReturnType<typeof createBakedActorOcclusion> | null = null;
+              let remoteSilhouette: ReturnType<typeof createResidentOcclusionSilhouette> | null = null;
               const actor = createResidentActor(
                 remote.gender === "female" ? remoteFemaleTexture : remoteMaleTexture,
                 nextApp.ticker,
@@ -670,13 +681,38 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
                     actor.body.scale.set(scale);
                     actor.shadow.scale.set(scale);
                     actor.container.zIndex = actor.container.y;
+                    remoteOcclusion?.update();
+                    remoteSilhouette?.update();
                   },
                 },
               );
-              remoteActors.set(remote.character_id, { actor, target: state });
+              remoteOcclusion = createBakedActorOcclusion(
+                actor.container,
+                bakedOccluders,
+                manifest.size,
+                () => actor.container.zIndex,
+              );
+              remoteSilhouette = createResidentOcclusionSilhouette(
+                actor.container,
+                actor.body,
+                occlusion.occluders,
+                animatedTree ? new Set([animatedTree.id]) : undefined,
+                () => actor.container.zIndex,
+              );
+              remoteActors.set(remote.character_id, {
+                actor,
+                target: state,
+                occlusion: remoteOcclusion,
+                silhouette: remoteSilhouette,
+              });
               addCharacterPresentation(actor.container, remote.nickname, false, 6);
               actor.container.zIndex = actor.container.y;
-              world.addChild(actor.container);
+              world.addChild(
+                actor.container,
+                remoteOcclusion.mask,
+                remoteSilhouette.container,
+                remoteSilhouette.mask,
+              );
             }
             const canGreet = canInteract() && !reducedMotion?.matches && !document.hidden && document.hasFocus();
             if (canGreet) worldDog?.greetNearby(mapId, residentActor?.container ?? { x: playerX, y: playerY }, now,
@@ -796,7 +832,13 @@ export function PikoWorldCanvas({ mapId, spawnId, onExit, nickname, speech, task
         available={loadState === "ready" && showMayorHint && !movementBlocked && !welcomeOpen && !speech}
         onInteract={() => stopPlayerRef.current()} />}
       {loadState === "ready" && showMayorHint && speech && !playerHeadOccluded && <PikoSpeechBubble body={speech.body} position={playerPosition} fit={worldFit} headOffset={(playerSeated ? 73 : 128) * mapPerspectiveScale(mapId, playerPosition.y) + playerNameGap} />}
-      {loadState === "ready" && showMayorHint && remotePlayers.map(player => player.speech && player.speech.expiresAt > Date.now() ? (
+      {loadState === "ready" && showMayorHint && remotePlayers.map(player => player.speech
+        && player.speech.expiresAt > Date.now()
+        && (!debugOcclusion || !isResidentHeadOccluded(
+          { x: player.x, y: player.y },
+          debugOcclusion,
+          RESIDENT_WORLD_SCALE * mapPerspectiveScale(mapId, player.y),
+        )) ? (
         <PikoSpeechBubble key={player.speech.id} body={player.speech.body}
           position={{ x: player.x, y: player.y }} fit={worldFit}
           headOffset={128 * mapPerspectiveScale(mapId, player.y) + 6} />

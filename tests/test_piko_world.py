@@ -106,10 +106,28 @@ async def test_scene_chat_and_presence_are_broadcast_only_inside_scene(tmp_path:
     assert second_socket.frames[-1]["type"] == "player.moved"
     assert outsider_socket.frames[-1]["type"] == "world.snapshot"
 
+    await hub.handle(
+        first_online,
+        {
+            "type": "scene.join",
+            "scene_id": "artisan-market",
+            "x": 111,
+            "y": 222,
+            "facing": "north",
+        },
+    )
+    assert outsider_socket.frames[-1]["type"] == "player.joined"
+    assert outsider_socket.frames[-1]["player"]["facing"] == "north"
+
     await hub.disconnect(first_socket)  # type: ignore[arg-type]
     restored = store.get("user-a")
     assert restored is not None
-    assert (restored.position_x, restored.position_y, restored.facing) == (321, 654, "east")
+    assert (
+        restored.scene_id,
+        restored.position_x,
+        restored.position_y,
+        restored.facing,
+    ) == ("artisan-market", 111, 222, "north")
 
 
 @pytest.mark.asyncio

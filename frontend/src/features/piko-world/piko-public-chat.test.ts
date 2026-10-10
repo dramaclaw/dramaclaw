@@ -32,7 +32,7 @@ it("replaces the bubble, expires from the latest send and hides it for other acc
   rerender({ owner: "someone-else" });
   expect(result.current.speech).toBeNull();
   rerender({ owner: "bubble-test" });
-  act(() => vi.advanceTimersByTime(3000));
+  act(() => vi.advanceTimersByTime(8000));
   expect(result.current.speech).toBeNull();
   unmount(); expect(vi.getTimerCount()).toBe(0);
 });

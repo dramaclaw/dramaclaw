@@ -139,7 +139,10 @@ export function createResidentActor(sheet: Texture, ticker: Ticker, isActive: ()
   controls.host.addEventListener("pointerdown",focus);
   }
   ticker.add(tick);
-  return { ...actor, stop: clear, sit(texture: Texture, exit: Point, idleTexture?: Texture | null, depthY?: number) {
+  return { ...actor, stop: clear, setFacing(nextFacing: Facing) {
+    facing = nextFacing;
+    actor.setFrame(FACINGS.indexOf(facing) * columns);
+  }, sit(texture: Texture, exit: Point, idleTexture?: Texture | null, depthY?: number) {
     if (!keyboardControlled || !isActive() || document.hidden) return false;
     focus(); clear(); seated = true; seatDepthY = depthY; seatExit = { ...exit }; facing = "south";
     seatedTextures = idleTexture ? [texture, idleTexture] : [texture]; seatedElapsed = 0; seatedFrame = 0;

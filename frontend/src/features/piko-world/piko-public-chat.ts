@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 export const PIKO_CHAT_COOLDOWN_MS = 3000;
 export const PIKO_CHAT_MAX_LENGTH = 80;
-export const PIKO_CHAT_BUBBLE_MS = 5000;
+export const PIKO_CHAT_BUBBLE_MS = 10000;
 export type PikoSpeech = { id: number; body: string; expiresAt: number; owner: string | null };
 
 /** Browser-session rehearsal only; real multiplayer requires server enforcement. */

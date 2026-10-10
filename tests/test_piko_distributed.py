@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import fakeredis.aioredis
@@ -94,6 +95,45 @@ async def test_players_and_chat_cross_realtime_server_processes() -> None:
         second_message = await wait_for_frame(second_socket, "chat.message")
         assert first_message == second_message
         assert second_message["message"]["body"] == "跨进程你好"
+    finally:
+        await first_hub.close()
+        await second_hub.close()
+
+
+@pytest.mark.asyncio
+async def test_scene_change_broadcasts_and_persists_new_facing() -> None:
+    server = fakeredis.FakeServer()
+    store = FakeStore()
+    first_hub = DistributedPikoWorldHub(store, redis_url="redis://unused")  # type: ignore[arg-type]
+    second_hub = DistributedPikoWorldHub(store, redis_url="redis://unused")  # type: ignore[arg-type]
+    first_hub.redis = fakeredis.aioredis.FakeRedis(server=server, decode_responses=True)
+    second_hub.redis = fakeredis.aioredis.FakeRedis(server=server, decode_responses=True)
+    first_socket, second_socket = FakeWebSocket(), FakeWebSocket()
+
+    try:
+        first = await first_hub.join(
+            first_socket, user_id="user-1", character=character(1)  # type: ignore[arg-type]
+        )
+        observer = replace(character(2), scene_id="artisan-market")
+        await second_hub.join(
+            second_socket, user_id="user-2", character=observer  # type: ignore[arg-type]
+        )
+        second_socket.frames.clear()
+
+        await first_hub.handle(
+            first,
+            {
+                "type": "scene.join",
+                "scene_id": "artisan-market",
+                "x": 111,
+                "y": 222,
+                "facing": "west",
+            },
+        )
+
+        joined = await wait_for_frame(second_socket, "player.joined")
+        assert joined["player"]["facing"] == "west"
+        assert store.locations[-1] == ("user-1", "artisan-market", 111, 222, "west")
     finally:
         await first_hub.close()
         await second_hub.close()

@@ -460,6 +460,9 @@ class DistributedPikoWorldHub:
                 player.x, player.y = x, y
         except (KeyError, TypeError, ValueError):
             pass
+        facing = str(payload.get("facing") or player.facing)
+        if facing in {"north", "south", "east", "west"}:
+            player.facing = facing
         player.instance_id = await self._allocate_room(scene_id, player.character_id)
         await self._refresh_player(player)
         await self.store.update_location(

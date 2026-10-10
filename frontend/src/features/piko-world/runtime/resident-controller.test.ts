@@ -233,5 +233,10 @@ it("uses compact player rows while retaining facing on stopping", () => {
   window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyW" }));
   tick({ deltaMS: 16 });
   expect(mock.setFrame).toHaveBeenLastCalledWith(21);
+  actor.setFacing("west");
+  expect(mock.setFrame).toHaveBeenLastCalledWith(6);
+  window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyW" }));
+  tick({ deltaMS: 16 });
+  expect(mock.setFrame).toHaveBeenLastCalledWith(6);
   actor.destroy();
 });

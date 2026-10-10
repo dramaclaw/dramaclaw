@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient } from "@/api/client";
 import type { PikoPlayerGender } from "./piko-player";
+import { PIKO_CHAT_BUBBLE_MS } from "./piko-public-chat";
 
 export type PikoCharacter = {
   id: string;
@@ -143,7 +144,11 @@ export function usePikoWorldConnection(character: PikoCharacter | null, sceneId:
           setChatMessages(messages => [...messages.slice(-99), message]);
           if (message.character_id !== character.id) {
             setRemotePlayers(players => players.map(player => player.character_id === message.character_id
-              ? { ...player, speech: { id: message.id, body: message.body, expiresAt: Date.now() + 5000 } }
+              ? { ...player, speech: {
+                  id: message.id,
+                  body: message.body,
+                  expiresAt: Date.now() + PIKO_CHAT_BUBBLE_MS,
+                } }
               : player));
           }
           return;
