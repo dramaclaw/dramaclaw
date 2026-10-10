@@ -1319,7 +1319,40 @@ def update_provider_channel_credentials(
         channel_type=int(channel_type or preset["type"]),
     )
     if not existing:
-        raise LookupError(f"NewAPI channel {channel_name} does not exist")
+        # Credentials are saved before model selection; create a channel with no
+        # routable models, then let the model-mapping flow populate it later.
+        payload = {
+            "mode": "single",
+            "channel": {
+                "name": channel_name,
+                "type": int(channel_type or preset["type"]),
+                "key": key,
+                "base_url": str(base_url or "").strip().rstrip("/"),
+                "models": "",
+                "model_mapping": "{}",
+                "group": "default",
+                "status": 1,
+                "auto_ban": 1,
+                "setting": "{}",
+                "settings": "{}",
+            },
+        }
+        result = create_channel(cfg, admin, payload)
+        created = (
+            find_channel_by_name(
+                cfg, admin, name=channel_name,
+                channel_type=payload["channel"]["type"],
+            )
+            if result.get("ok") else None
+        )
+        return {
+            **result,
+            "sentPayload": payload,
+            "action": "create",
+            "channelId": created.get("id") if created else None,
+            "name": channel_name,
+            "provider": provider_key,
+        }
 
     detail = get_channel_detail(cfg, admin, existing["id"])
     allowed_fields = {
