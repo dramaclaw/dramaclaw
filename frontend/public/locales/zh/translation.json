@@ -5590,7 +5590,14 @@
     },
     "modelParams": {
       "title": "模型参数",
-      "defaultOption": "默认"
+      "defaultOption": "默认",
+      "midjourneyReferenceModes": {
+        "image_prompt": "内容参考",
+        "style_reference": "风格参考",
+        "omni_reference": "主体参考",
+        "edit": "图片编辑",
+        "blend": "图片融合"
+      }
     },
     "multiConnect": {
       "label": "批量连线",
@@ -6053,6 +6060,16 @@
       "insertRef": "插入 {{label}}"
     },
     "imageGen": {
+      "selectUpscaleCandidate": "选择 {{label}}",
+      "confirmUpscale": "放大",
+      "viewUpscale": "查看 {{label}} 高清图",
+      "previewFullImage": "整图预览",
+      "prompt_required": "请输入生成或编辑提示词",
+      "edit_image_required": "请添加要编辑的图片",
+      "blend_images_required": "请至少添加两张融合图片",
+      "upscaleCached": "已有高清图，不重复扣费",
+      "upscaleCost": "预计积分：{{cost}}",
+      "upscaleConfirmHint": "放大会消耗积分",
       "contextPalette": {
         "button": "上下文调色盘",
         "actors": "人物颜色",

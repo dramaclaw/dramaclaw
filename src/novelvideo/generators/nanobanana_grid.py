@@ -105,6 +105,8 @@ SINGLE_CELL_RENDER_MODE_BY_ASPECT = {
 }
 logger = logging.getLogger(__name__)
 NEWAPI_MEDIA_INPUT_MIN_TTL_SECONDS = 2 * 60 * 60
+_MIDJOURNEY_POLL_INTERVAL_SECONDS = 2.0
+_MIDJOURNEY_MAX_POLLS = 300
 
 
 @dataclass(frozen=True, slots=True)
@@ -2904,6 +2906,7 @@ async def generate_text_to_image(
     config: Optional[dict] = None,
     egress_context: TrustedEgressContext | None = None,
     egress_capability: str = "image.generate",
+    result_metadata: dict[str, Any] | None = None,
 ) -> Path:
     """Generate one image from a prompt only — no reference images.
 
@@ -2922,6 +2925,7 @@ async def generate_text_to_image(
         config=config,
         egress_context=egress_context,
         egress_capability=egress_capability,
+        result_metadata=result_metadata,
     )
 
 
@@ -2937,6 +2941,7 @@ async def generate_reference_edit_image(
     config: Optional[dict] = None,
     egress_context: TrustedEgressContext | None = None,
     egress_capability: str = "image.edit",
+    result_metadata: dict[str, Any] | None = None,
 ) -> Path:
     """Generate one edited image from reference images plus a free-form edit prompt.
 
@@ -2958,6 +2963,7 @@ async def generate_reference_edit_image(
         config=config,
         egress_context=egress_context,
         egress_capability=egress_capability,
+        result_metadata=result_metadata,
     )
 
 
@@ -2973,6 +2979,7 @@ async def _generate_image(
     config: Optional[dict],
     egress_context: TrustedEgressContext | None,
     egress_capability: str,
+    result_metadata: dict[str, Any] | None,
 ) -> Path:
     """Shared body for text-only and image-edit single-image generation."""
     ref_paths = list(reference_image_paths or [])
@@ -3069,31 +3076,53 @@ async def _generate_image(
             )
     elif generator.provider == "newapi":
         ref_bytes = [(Path(path).read_bytes(), path) for path in ref_paths]
-        trace: dict[str, str] = {}
+        trace: dict[str, Any] = {}
         delivery_state: dict[str, bool | str] = {}
-        image_bytes, _, error_detail = await _call_newapi_image_api(
+        request_schema = generator.newapi_request_schema
+        use_midjourney = (
+            str(request_schema.get("adapter") or "").strip()
+            == "relayclaw_midjourney"
+            or generator.model.startswith("mj_")
+        )
+        image_call = _call_midjourney_image_api if use_midjourney else _call_newapi_image_api
+        native_image_config = {
+            "aspect_ratio": aspect_ratio,
+            "image_size": image_size,
+            "request_schema": request_schema,
+            "model_params": generator.newapi_model_params,
+        }
+        if not use_midjourney:
+            native_image_config["quality"] = quality or generator.openai_image_quality
+        image_bytes, _, error_detail = await image_call(
             api_key=generator.api_key,
             model=generator.model,
             prompt=prompt,
             reference_images=ref_bytes or None,
-            image_config={
-                "aspect_ratio": aspect_ratio,
-                "image_size": image_size,
-                "quality": quality or generator.openai_image_quality,
-                "request_schema": generator.newapi_request_schema,
-                "model_params": generator.newapi_model_params,
-            },
+            image_config=native_image_config,
             base_url=generator.base_url,
             trace=trace,
-            egress_context=context,
-            delivery_path=output_path,
-            delivery_state=delivery_state,
-            read_copied_bytes=False,
+            **(
+                {"followup": effective_config.get("midjourney_followup")}
+                if use_midjourney and effective_config and effective_config.get("midjourney_followup")
+                else {}
+            ),
+            **(
+                {}
+                if use_midjourney
+                else {
+                    "egress_context": context,
+                    "delivery_path": output_path,
+                    "delivery_state": delivery_state,
+                    "read_copied_bytes": False,
+                }
+            ),
         )
         if not image_bytes and not delivery_state.get("copied"):
             raise ValueError(
                 f"DramaClawAPI image generation failed: {error_detail or 'empty image'}"
             )
+        if result_metadata is not None and trace.get("midjourney"):
+            result_metadata["midjourney"] = trace["midjourney"]
     else:
         from google import genai
         from google.genai import types
@@ -3142,6 +3171,275 @@ async def _generate_image(
         result_ref=str(output),
     )
     return output
+
+
+def _midjourney_prompt(
+    prompt: str,
+    aspect_ratio: str,
+    model_params: dict[str, Any] | None = None,
+) -> str:
+    """Compile typed catalog values into a Midjourney prompt.
+
+    Explicit flags in the prompt are authoritative.  Catalog values are only
+    appended when their matching flag is absent, which keeps advanced prompts
+    backward compatible while still allowing the Admin-driven controls.
+    """
+
+    result = str(prompt or "").strip()
+    params = model_params or {}
+
+    def _has(*flags: str) -> bool:
+        return any(re.search(rf"(?:^|\s)--{re.escape(flag)}(?:\s|$)", result) for flag in flags)
+
+    def _append(flag: str, value: object, *aliases: str) -> None:
+        nonlocal result
+        if value in (None, "", False) or _has(flag, *aliases):
+            return
+        result = f"{result} --{flag} {value}".strip()
+
+    ratio = str(aspect_ratio or "").strip().lower()
+    if ratio and ratio not in {"auto", "adaptive"}:
+        _append("ar", ratio)
+    _append("s", params.get("stylize"), "stylize")
+    _append("c", params.get("chaos"), "chaos")
+    _append("weird", params.get("weird"))
+    _append("q", params.get("quality"), "quality")
+    _append("seed", params.get("seed"))
+    _append("stop", params.get("stop"))
+
+    version = str(params.get("version") or "").strip()
+    if version.lower().startswith("niji"):
+        parts = version.split(maxsplit=1)
+        _append("niji", parts[1] if len(parts) > 1 else "")
+    elif version:
+        _append("v", version, "version")
+
+    for flag in ("raw", "draft", "tile"):
+        if params.get(flag) is True and not _has(flag):
+            result = f"{result} --{flag}".strip()
+
+    excluded = str(params.get("no") or "").strip()
+    if excluded:
+        if "--" in excluded:
+            raise ValueError("invalid parameter: no")
+        _append("no", excluded)
+    return result
+
+
+def _midjourney_base_url(base_url: str | None) -> str:
+    endpoint = str(base_url or "").strip().rstrip("/")
+    if endpoint.endswith("/v1"):
+        endpoint = endpoint[:-3]
+    return endpoint
+
+
+def _midjourney_data_url(image_ref: bytes | tuple[bytes, str] | tuple[str, bytes, str]) -> str:
+    raw = _reference_image_bytes(image_ref)
+    path = ""
+    if isinstance(image_ref, tuple):
+        path = str(image_ref[-1] if len(image_ref) == 2 else image_ref[2])
+    suffix = Path(path).suffix.lower()
+    mime = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }.get(suffix, "image/png")
+    return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+
+
+async def _call_midjourney_image_api(
+    *,
+    api_key: str,
+    model: str,
+    prompt: str,
+    reference_images: (
+        list[bytes | tuple[bytes, str] | tuple[str, bytes, str]] | None
+    ) = None,
+    image_config: dict[str, Any] | None = None,
+    base_url: str | None = None,
+    trace: dict[str, Any] | None = None,
+    followup: dict[str, str] | None = None,
+) -> tuple[bytes | None, str, str]:
+    """Call RelayClaw's native asynchronous Midjourney task API."""
+    import httpx
+
+    if not api_key:
+        return None, "", "DramaClawAPI API key is missing"
+    endpoint = _midjourney_base_url(base_url)
+    if not endpoint:
+        return None, "", "DramaClawAPI base URL is missing"
+
+    config = image_config or {}
+    params = dict(config.get("model_params") or {})
+    reference_mode = str(params.pop("reference_mode", "") or "").strip().lower()
+    refs = list(reference_images or [])
+    operation = str((followup or {}).get("operation") or "imagine")
+    parent_task_id = str((followup or {}).get("task_id") or "")
+
+    try:
+        if followup:
+            submit_path = "/mj/submit/action"
+            payload: dict[str, Any] = {
+                "customId": str(followup.get("custom_id") or ""),
+                "taskId": parent_task_id,
+            }
+        elif reference_mode == "blend":
+            if not 2 <= len(refs) <= 5:
+                return None, "", "Midjourney Blend requires two to five images"
+            blend_mode = str(params.get("mode") or "").strip().upper()
+            bot_type = str(params.get("botType") or "").strip().upper()
+            dimensions = str(params.get("dimensions") or "").strip().upper()
+            if blend_mode and blend_mode not in {"RELAX", "FAST", "TURBO"}:
+                return None, "", "Midjourney Blend mode must be RELAX, FAST or TURBO"
+            if bot_type and bot_type not in {"MID_JOURNEY", "NIJI_JOURNEY"}:
+                return None, "", "Midjourney Blend botType must be MID_JOURNEY or NIJI_JOURNEY"
+            if dimensions and dimensions not in {"SQUARE", "PORTRAIT", "LANDSCAPE"}:
+                return None, "", "Midjourney Blend dimensions must be SQUARE, PORTRAIT or LANDSCAPE"
+            operation = "blend"
+            submit_path = "/mj/submit/blend"
+            # Preserve provider defaults; hidden Imagine controls are not Blend options.
+            payload = {"base64Array": [_midjourney_data_url(item) for item in refs]}
+            for key, value in (
+                ("dimensions", dimensions), ("mode", blend_mode), ("botType", bot_type)
+            ):
+                if value:
+                    payload[key] = value
+        elif reference_mode == "edit":
+            operation = "edit"
+            submit_path = "/mj/submit/edits"
+            payload = {
+                "prompt": _midjourney_prompt(
+                    prompt,
+                    str(config.get("aspect_ratio") or "1:1"),
+                    params,
+                ),
+                "base64Array": [_midjourney_data_url(item) for item in refs],
+            }
+        else:
+            submit_path = "/mj/submit/imagine"
+            compiled_prompt = _midjourney_prompt(
+                prompt,
+                str(config.get("aspect_ratio") or "1:1"),
+                params,
+            )
+            if refs:
+                upload_response_payload: dict[str, Any]
+                async with httpx.AsyncClient(
+                    timeout=NEWAPI_IMAGE_HTTP_TIMEOUT_SECONDS,
+                    follow_redirects=True,
+                ) as upload_client:
+                    upload_response = await upload_client.post(
+                        f"{endpoint}/mj/submit/upload-discord-images",
+                        headers={
+                            "Authorization": f"Bearer {api_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json={"base64Array": [_midjourney_data_url(item) for item in refs]},
+                    )
+                    upload_response.raise_for_status()
+                    upload_response_payload = upload_response.json()
+                uploaded = upload_response_payload.get("result") or []
+                if not isinstance(uploaded, list) or not uploaded:
+                    return None, "", "Midjourney reference upload returned no URLs"
+                uploaded_urls = [str(url) for url in uploaded if str(url).strip()]
+                weight_key = {
+                    "style_reference": "style_weight",
+                    "omni_reference": "omni_weight",
+                }.get(reference_mode, "image_weight")
+                weight_flag = {
+                    "style_reference": "sw",
+                    "omni_reference": "ow",
+                }.get(reference_mode, "iw")
+                weight = params.get(weight_key)
+                if weight not in (None, "") and not re.search(
+                    rf"(?:^|\s)--{weight_flag}(?:\s|$)", compiled_prompt
+                ):
+                    compiled_prompt = f"{compiled_prompt} --{weight_flag} {weight}".strip()
+                if reference_mode == "style_reference":
+                    compiled_prompt = (
+                        f"{compiled_prompt} --sref {' '.join(uploaded_urls)}"
+                    ).strip()
+                elif reference_mode == "omni_reference":
+                    compiled_prompt = (
+                        f"{compiled_prompt} --oref {uploaded_urls[0]}"
+                    ).strip()
+                else:
+                    compiled_prompt = (
+                        f"{' '.join(uploaded_urls)} {compiled_prompt}"
+                    ).strip()
+            payload = {"prompt": compiled_prompt}
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        await update_current_model_call_log(request_payload=payload)
+        async with httpx.AsyncClient(
+            timeout=NEWAPI_IMAGE_HTTP_TIMEOUT_SECONDS,
+            follow_redirects=True,
+        ) as client:
+            response = await client.post(
+                f"{endpoint}{submit_path}", headers=headers, json=payload
+            )
+            response.raise_for_status()
+            submitted = response.json()
+            task_id = str(submitted.get("result") or submitted.get("id") or "").strip()
+            if not task_id:
+                return None, "", f"Midjourney submit returned no task id: {submitted}"
+            if trace is not None:
+                trace["request_id"] = task_id
+                trace["response_id"] = task_id
+
+            task: dict[str, Any] = {}
+            for _ in range(_MIDJOURNEY_MAX_POLLS):
+                fetched = await client.get(
+                    f"{endpoint}/mj/task/{task_id}/fetch", headers=headers
+                )
+                fetched.raise_for_status()
+                task = fetched.json() or {}
+                status = str(task.get("status") or "").upper()
+                if status in {"SUCCESS", "COMPLETED", "DONE"}:
+                    break
+                if status in {"FAILURE", "FAILED", "ERROR", "CANCELLED"}:
+                    return None, "", str(
+                        task.get("failReason")
+                        or task.get("description")
+                        or f"Midjourney task {status.lower()}"
+                    )
+                await asyncio.sleep(_MIDJOURNEY_POLL_INTERVAL_SECONDS)
+            else:
+                return None, "", "Midjourney task polling timed out"
+
+            buttons = []
+            for raw in task.get("buttons") or []:
+                if not isinstance(raw, dict):
+                    continue
+                custom_id = str(raw.get("customId") or raw.get("custom_id") or "")
+                label = str(raw.get("label") or raw.get("emoji") or "")
+                if custom_id:
+                    buttons.append({"custom_id": custom_id, "label": label})
+            if trace is not None:
+                trace["midjourney"] = {
+                    "task_id": task_id,
+                    "parent_task_id": parent_task_id,
+                    "operation": operation,
+                    "status": str(task.get("status") or "SUCCESS"),
+                    "buttons": buttons,
+                    "seed": str(task.get("seed") or ""),
+                }
+            image_response = await client.get(
+                f"{endpoint}/mj/image/{task_id}", headers=headers
+            )
+            image_response.raise_for_status()
+            await update_current_model_call_log(response_payload=task)
+            return image_response.content, "", ""
+    except httpx.HTTPStatusError as exc:
+        return None, "", f"Midjourney HTTP {exc.response.status_code}"
+    except Exception as exc:
+        if is_fatal_billing_error(exc):
+            raise
+        return None, "", f"Midjourney request failed: {type(exc).__name__}: {exc}"
 
 
 def _pick_nxn_mode(n: int, aspect_ratio: str = DEFAULT_SKETCH_ASPECT_RATIO):

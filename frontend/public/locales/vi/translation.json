@@ -5476,7 +5476,14 @@
     },
     "modelParams": {
       "title": "Tham số model",
-      "defaultOption": "Mặc định"
+      "defaultOption": "Mặc định",
+      "midjourneyReferenceModes": {
+        "image_prompt": "Tham chiếu nội dung",
+        "style_reference": "Tham chiếu phong cách",
+        "omni_reference": "Tham chiếu chủ thể",
+        "edit": "Chỉnh sửa ảnh",
+        "blend": "Trộn ảnh"
+      }
     },
     "multiConnect": {
       "label": "Nối vùng chọn",
@@ -5930,6 +5937,16 @@
       "insertRef": "Chèn {{label}}"
     },
     "imageGen": {
+      "selectUpscaleCandidate": "Chọn {{label}}",
+      "confirmUpscale": "Phóng to",
+      "viewUpscale": "Xem ảnh HD {{label}}",
+      "previewFullImage": "Xem trước toàn bộ ảnh",
+      "prompt_required": "Nhập lời nhắc để tạo hoặc chỉnh sửa ảnh",
+      "edit_image_required": "Thêm ảnh để chỉnh sửa",
+      "blend_images_required": "Thêm ít nhất hai ảnh để phối trộn",
+      "upscaleCached": "Đã có ảnh HD; không trừ thêm điểm",
+      "upscaleCost": "Điểm dự kiến: {{cost}}",
+      "upscaleConfirmHint": "Phóng to sẽ sử dụng điểm",
       "contextPalette": {
         "button": "Bảng màu bối cảnh",
         "actors": "Màu diễn viên",

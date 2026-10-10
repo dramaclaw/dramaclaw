@@ -625,6 +625,7 @@ async def _run_freezone_gen_async(
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
     _update(ctx, task_type, job_id, 0.1, "调用图像生成器...")
+    result_metadata: dict[str, Any] = {}
     out_path = await _await_with_cancel_watch(
         _call_freezone_leaf(
             envelope,
@@ -642,6 +643,8 @@ async def _run_freezone_gen_async(
             model_params=payload.get("model_params") or None,
             request_schema=payload.get("request_schema") or None,
             output_task_type=task_type,
+            result_metadata=result_metadata,
+            midjourney_followup=payload.get("midjourney_followup") or None,
         ),
         project_id=ctx.project_id,
         task_type=task_type,
@@ -654,6 +657,12 @@ async def _run_freezone_gen_async(
         "job_id": job_id,
         "output_path": str(out_path),
         "output_url": make_static_url_for_context(ctx, rel),
+        **result_metadata,
+        **(
+            {"midjourney_action": payload["midjourney_followup"]}
+            if payload.get("midjourney_followup")
+            else {}
+        ),
     }
     history_record = _append_node_history(
         ctx=ctx,
@@ -664,6 +673,11 @@ async def _run_freezone_gen_async(
         media_type="image",
         result=result,
         **_history_model_mode_extra(payload),
+        **(
+            {"midjourney_action": payload["midjourney_followup"]}
+            if payload.get("midjourney_followup")
+            else {}
+        ),
     )
     if history_record:
         result["generation_history_record"] = history_record
@@ -683,6 +697,7 @@ async def _run_freezone_edit_async(
     project_dir = Path(str(payload.get("project_dir") or ctx.output_dir))
     ensure_freezone_dirs(project_dir)
     _update(ctx, task_type, job_id, 0.1, "调用图像编辑器...")
+    result_metadata: dict[str, Any] = {}
     out_path = await _await_with_cancel_watch(
         _call_freezone_leaf(
             envelope,
@@ -701,6 +716,7 @@ async def _run_freezone_edit_async(
             model_params=payload.get("model_params") or None,
             request_schema=payload.get("request_schema") or None,
             output_task_type=task_type,
+            result_metadata=result_metadata,
         ),
         project_id=ctx.project_id,
         task_type=task_type,
@@ -713,6 +729,7 @@ async def _run_freezone_edit_async(
         "job_id": job_id,
         "output_path": str(out_path),
         "output_url": make_static_url_for_context(ctx, rel),
+        **result_metadata,
     }
     history_record = _append_node_history(
         ctx=ctx,

@@ -511,6 +511,14 @@ class FreezoneEditRequest(BaseModel):
     )
 
 
+class FreezoneMidjourneyActionRequest(BaseModel):
+    task_id: str = Field(min_length=1)
+    custom_id: str = Field(min_length=1)
+    canvas_id: str = ""
+    node_id: str = ""
+    model_id: str = Field(min_length=1)
+
+
 class FreezoneSketchFromContextRequest(BaseModel):
     episode: int
     beat: int

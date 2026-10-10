@@ -1,12 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Handle,
-  Position,
-  useUpdateNodeInternals,
-  type NodeProps,
-} from '@xyflow/react';
+import { Handle, Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react';
 import {
   AlertTriangle,
   ChevronDown,
@@ -18,11 +13,23 @@ import {
   X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-
+import { MidjourneyUpscalePicker } from '@/features/canvas/ui/MidjourneyUpscalePicker';
+import { CanvasImagePreviewButton } from '@/features/canvas/ui/CanvasImagePreviewButton';
 import {
-  CANVAS_NODE_TYPES,
-  type ImageGenNodeData,
-} from '@/features/canvas/domain/canvasNodes';
+  midjourneyTaskFromResult,
+  midjourneyUpscaleResultsFromHistory,
+  midjourneyUpscaleCandidates,
+  cachedMidjourneyUpscaleUrl,
+} from '@/features/canvas/domain/midjourneyImageOperations';
+import { submitFreezoneMidjourneyAction, fetchFreezoneJobResult } from '@/api/ops';
+import { awaitTaskCompletion, isTaskPollTimeoutError } from '@/api/tasks';
+import { generationTaskDescriptor } from '@/features/canvas/application/resumeGeneration';
+import { backendErrorToastMessage, BillingRuleNotConfiguredError } from '@/lib/api-errors';
+import { extractRequestId } from '@/features/canvas/application/generationErrorReport';
+import { useGenerationCreditCost } from '@/lib/queries/generation-credit-cost';
+import { buildImageFeatureBillingParams } from '@/features/canvas/domain/imageBilling';
+
+import { CANVAS_NODE_TYPES, type ImageGenNodeData } from '@/features/canvas/domain/canvasNodes';
 import {
   resolveImageDisplayUrl,
   withImageCacheBust,
@@ -37,10 +44,7 @@ import {
   mainlineNodeVisualState,
   nodeMainlineFlags,
 } from '@/features/canvas/domain/mainlineNodeFlags';
-import {
-  NodeHeader,
-  NODE_HEADER_FLOATING_POSITION_CLASS,
-} from '@/features/canvas/ui/NodeHeader';
+import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canvas/ui/NodeHeader';
 import { AddNodeToChatButton } from '@/features/canvas/ui/AddNodeToChatButton';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { PanelExpandButton } from '@/features/canvas/ui/PanelExpandButton';
@@ -64,9 +68,7 @@ import { useCanvasStore, useIsBoxSelecting } from '@/stores/canvasStore';
 import { useShallow } from 'zustand/react/shallow';
 import { getFreezoneCanvasMetadata } from '@/features/freezone/canvasMetadataContext';
 import { uploadFreezoneImage } from '@/api/ops';
-import {
-  uploadAndAutoCommitSelectedBackgroundCandidate,
-} from '@/features/canvas/application/selectedBackgroundSlot';
+import { uploadAndAutoCommitSelectedBackgroundCandidate } from '@/features/canvas/application/selectedBackgroundSlot';
 import { canvasEventBus } from '@/features/canvas/application/canvasServices';
 import {
   publishNodeActionAccepted,
@@ -93,9 +95,7 @@ import {
   historyRecordOutputUrl,
 } from '@/features/canvas/ui/NodeGenerationHistory';
 import { CandidateBindingBadges } from '@/features/freezone/context/NodeContextBadges';
-import {
-  collectCandidateBindingsForNode,
-} from '@/features/freezone/context/mainlineContext';
+import { collectCandidateBindingsForNode } from '@/features/freezone/context/mainlineContext';
 import { RegenerateButton } from '@/features/canvas/ui/RegenerateButton';
 import {
   NODE_SIDE_ACTION_BUTTON_CLASS,
@@ -172,6 +172,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     closeReferenceErrors,
     openReferenceErrors,
     invalidateInFlightGeneration,
+    selectedModel,
   } = useImageGenerationForm(id, { onGenerationSettled: refreshHistory });
 
   // 功能节点（工具条「九宫格」下拉点某一项后建出来的那种）：输入框里多一枚可切可删
@@ -194,6 +195,8 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [errorDetailsCopied, setErrorDetailsCopied] = useState(false);
+  const [modelParametersOpen, setModelParametersOpen] = useState(false);
+  const upscaleAttemptRef = useRef(0);
 
   const handleCopyErrorDetails = useCallback(async () => {
     const copyText = generationErrorDetails || generationError || generationErrorRequestId;
@@ -225,6 +228,8 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       // 用户挑的这张历史图作数，上一批还在结算的请求全部作废——否则它们回来会把
       // 刚恢复的图盖掉。
       invalidateInFlightGeneration();
+      upscaleAttemptRef.current += 1;
+      const restoredTask = midjourneyTaskFromResult(record.result);
       updateNodeData(id, {
         imageUrl: url,
         previewImageUrl: url,
@@ -233,6 +238,9 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
         // 恢复的是单张历史结果，旧批次画册已与主图脱钩（没有任何一张会命中
         // 「主图」标记，点画册格还会静默丢掉刚恢复的图）——一并清掉。
         generationBatch: null,
+        ...(restoredTask?.operation === 'imagine' || restoredTask?.operation === 'blend'
+          ? { midjourneyGridSource: { imageUrl: url, task: restoredTask } }
+          : {}),
         // 节点上已经换成历史里那张成功的图了，上一次失败的横幅不能再盖着。
         ...GENERATION_ERROR_CLEARED_PATCH,
       });
@@ -245,12 +253,10 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     if (!isGenerating) setHistoryPreviewUrl(null);
   }, [isGenerating]);
 
-  const freezoneSource = (data.__freezone_source as
-    | { role?: string; meta?: Record<string, unknown> }
-    | undefined) ?? undefined;
-  const sourceRole = typeof freezoneSource?.role === "string"
-    ? freezoneSource.role
-    : "";
+  const freezoneSource =
+    (data.__freezone_source as { role?: string; meta?: Record<string, unknown> } | undefined) ??
+    undefined;
+  const sourceRole = typeof freezoneSource?.role === 'string' ? freezoneSource.role : '';
   // collectCandidateBindingsForNode 只关心连到 this node 的边。用 useShallow 只订阅
   // 本节点相连的边(逐元素比较),拖动无关节点时边引用稳定,本节点不再重渲染。
   const connectedEdges = useCanvasStore(
@@ -302,12 +308,148 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   const visiblePreviewUrl = isGenerating ? null : previewUrl;
 
   const hasGeneratedResult = Boolean(data.imageUrl);
+  const midjourneyGridSource = data.midjourneyGridSource ?? null;
+  const historicalUpscaleResults = useMemo(
+    () => midjourneyUpscaleResultsFromHistory(historyRecords, midjourneyGridSource?.task.task_id),
+    [historyRecords, midjourneyGridSource?.task.task_id],
+  );
+  const midjourneyUpscaleResults = useMemo(
+    () => ({
+      ...historicalUpscaleResults,
+      ...(data.midjourneyUpscaleResults ?? {}),
+    }),
+    [data.midjourneyUpscaleResults, historicalUpscaleResults],
+  );
+  const midjourneyCandidates = useMemo(
+    () =>
+      midjourneyUpscaleCandidates(
+        midjourneyGridSource?.task.buttons,
+        selectedModel?.supportedOperations,
+      ),
+    [midjourneyGridSource?.task.buttons, selectedModel?.supportedOperations],
+  );
+  const upscaleCreditCost = useGenerationCreditCost(
+    'feature',
+    selected && midjourneyCandidates.length > 0 && data.imageUrl === midjourneyGridSource?.imageUrl
+      ? 'freezone.image_generate'
+      : null,
+    {
+      surface: 'canvas',
+      params: buildImageFeatureBillingParams(selectedModel, {
+        operation: 'upscale',
+        pricing_quantity: 1,
+      }),
+      quantity: 1,
+    },
+  );
+
+  const handleMidjourneyUpscale = useCallback(
+    async (customId: string) => {
+      const source = data.midjourneyGridSource;
+      const cached = cachedMidjourneyUpscaleUrl(midjourneyUpscaleResults, customId);
+      if (cached) {
+        invalidateInFlightGeneration();
+        upscaleAttemptRef.current += 1;
+        updateNodeData(id, {
+          imageUrl: cached,
+          previewImageUrl: cached,
+          ...GENERATION_ERROR_CLEARED_PATCH,
+        });
+        return;
+      }
+      const projectId = readUrl().project;
+      const catalogId = selectedModel?.catalogId;
+      if (!projectId || !catalogId || !source || isGenerating) return;
+      const attempt = ++upscaleAttemptRef.current;
+      const stillCurrent = () => {
+        const latest = useCanvasStore.getState().nodes.find((node) => node.id === id)?.data as ImageGenNodeData | undefined;
+        return attempt === upscaleAttemptRef.current
+          && latest?.midjourneyGridSource?.task.task_id === source.task.task_id
+          && latest.imageUrl === source.imageUrl;
+      };
+      try {
+        const ref = await submitFreezoneMidjourneyAction(projectId, {
+          taskId: source.task.task_id,
+          customId,
+          modelId: catalogId,
+          canvasId: readUrl().canvas ?? 'default',
+          nodeId: id,
+        });
+        if (!stillCurrent()) return;
+        updateNodeData(id, {
+          isGenerating: true,
+          generationStartedAt: Date.now(),
+          ...generationTaskDescriptor(ref),
+          ...GENERATION_ERROR_CLEARED_PATCH,
+        });
+        const completed = await awaitTaskCompletion(ref.task_key, projectId, {
+          taskType: ref.task_type,
+        });
+        let url = historyRecordOutputUrl({
+          result: completed.result,
+        } as Parameters<typeof historyRecordOutputUrl>[0]);
+        if (!url) {
+          url = await fetchFreezoneJobResult(projectId, ref.task_type, ref.job_id)
+            .then((result) => result.url)
+            .catch(() => null);
+        }
+        if (!url) throw new Error('Midjourney Upscale completed without image');
+        if (!stillCurrent()) return;
+        const latest = useCanvasStore.getState().nodes.find((node) => node.id === id)?.data as
+          | ImageGenNodeData
+          | undefined;
+        updateNodeData(id, {
+          imageUrl: url,
+          previewImageUrl: url,
+          isGenerating: false,
+          generationStartedAt: null,
+          generationTaskKey: null,
+          generationTaskType: null,
+          generationTaskJobId: null,
+          midjourneyUpscaleResults: {
+            ...(latest?.midjourneyUpscaleResults ?? {}),
+            [customId]: url,
+          },
+          ...GENERATION_ERROR_CLEARED_PATCH,
+        });
+        void refreshHistory();
+      } catch (error) {
+        if (!stillCurrent()) return;
+        if (isTaskPollTimeoutError(error)) {
+          // The task remains available to the existing recovery flow.
+          return;
+        }
+        const raw = error instanceof Error ? error.message : String(error);
+        updateNodeData(id, {
+          isGenerating: false,
+          generationStartedAt: null,
+          generationError: backendErrorToastMessage(error, t),
+          generationErrorDetails: raw,
+          generationErrorRequestId: extractRequestId(raw),
+        });
+      }
+    },
+    [
+      data.midjourneyGridSource,
+      id,
+      isGenerating,
+      invalidateInFlightGeneration,
+      midjourneyUpscaleResults,
+      refreshHistory,
+      selectedModel?.catalogId,
+      t,
+      updateNodeData,
+    ],
+  );
   // Natural pixel size of the displayed image, mirrored from data when present
   // (persisted by the onLoad handler below) and refreshed on every <img> load so
   // the resolution badge shows even for nodes whose size already matched (those
   // skip the persist branch). Lets us render a top-right resolution chip like the
   // video node.
-  const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(() => {
+  const [naturalSize, setNaturalSize] = useState<{
+    width: number;
+    height: number;
+  } | null>(() => {
     const w = (data as { imageNaturalWidth?: unknown }).imageNaturalWidth;
     const h = (data as { imageNaturalHeight?: unknown }).imageNaturalHeight;
     return typeof w === 'number' && typeof h === 'number' && w > 0 && h > 0
@@ -391,7 +533,11 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       const store = useCanvasStore.getState();
       const selectionChanges = store.nodes
         .filter((node) => node.selected)
-        .map((node) => ({ id: node.id, type: 'select' as const, selected: false }));
+        .map((node) => ({
+          id: node.id,
+          type: 'select' as const,
+          selected: false,
+        }));
       if (selectionChanges.length > 0) {
         store.onNodesChange(selectionChanges);
       }
@@ -534,14 +680,15 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   const [bgCropperOpen, setBgCropperOpen] = useState(false);
   const [directorStageBusy, setDirectorStageBusy] = useState(false);
   const [directorStageOpen, setDirectorStageOpen] = useState(false);
-  const [directorStageManifest, setDirectorStageManifest] = useState<DirectorStageManifest | null>(null);
+  const [directorStageManifest, setDirectorStageManifest] = useState<DirectorStageManifest | null>(
+    null,
+  );
   // 从 canvas metadata 拿到当前镜头的 episode/beat 定位信息 (selectedBackground 在
   // beat preset 里 emit 时跟 beat-scope 节点同步,但本节点 (scene_master 等) 来自
   // _add_scene_refs 没带 episode/beat meta — 从 canvas metadata.preset 兜底)。
   const canvasMetaForBeat = getFreezoneCanvasMetadata();
-  const canvasPresetMeta = (canvasMetaForBeat?.preset as
-    | { episode?: number; beat?: number }
-    | undefined) ?? undefined;
+  const canvasPresetMeta =
+    (canvasMetaForBeat?.preset as { episode?: number; beat?: number } | undefined) ?? undefined;
   const effectiveEpisode = sourceEpisode ?? canvasPresetMeta?.episode ?? null;
   const effectiveBeat = sourceBeat ?? canvasPresetMeta?.beat ?? null;
 
@@ -551,7 +698,11 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
     if (!projectId || effectiveEpisode === null || effectiveBeat === null) return;
     setDirectorStageBusy(true);
     try {
-      const manifest = await getBeatDirectorStageManifest(projectId, effectiveEpisode, effectiveBeat);
+      const manifest = await getBeatDirectorStageManifest(
+        projectId,
+        effectiveEpisode,
+        effectiveBeat,
+      );
       setDirectorStageManifest(manifest);
       setDirectorStageOpen(true);
     } catch (err) {
@@ -608,7 +759,13 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
   //   ordinary           — 都没有:默认白色 border
   //
   const mainlineFlags = useMemo(
-    () => nodeMainlineFlags({ data, id, type: 'imageGenNode', position: { x: 0, y: 0 } } as never),
+    () =>
+      nodeMainlineFlags({
+        data,
+        id,
+        type: 'imageGenNode',
+        position: { x: 0, y: 0 },
+      } as never),
     [data, id],
   );
   const visualState = mainlineNodeVisualState(mainlineFlags);
@@ -618,7 +775,11 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
       case 'preset_locked':
         return canvasNodeFrameClass({ selected, mainline: true });
       case 'candidate_pushable':
-        return canvasNodeFrameClass({ selected, mainline: true, dashed: true });
+        return canvasNodeFrameClass({
+          selected,
+          mainline: true,
+          dashed: true,
+        });
       case 'context_only':
         return canvasNodeFrameClass({ selected, mainline: true });
       case 'ordinary':
@@ -771,7 +932,9 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                       : { width: naturalW, height: naturalH },
                   );
                 }
-                const forceNaturalSize = shouldForceNaturalImageSize(data as Record<string, unknown>);
+                const forceNaturalSize = shouldForceNaturalImageSize(
+                  data as Record<string, unknown>,
+                );
                 if (data.isSizeManuallyAdjusted === true && !forceNaturalSize) {
                   return;
                 }
@@ -803,6 +966,25 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
               }}
               className="h-full w-full object-contain"
             />
+            {selected &&
+              !modelParametersOpen &&
+              !isGenerating &&
+              data.imageUrl === midjourneyGridSource?.imageUrl &&
+              midjourneyCandidates.length > 0 && (
+                <MidjourneyUpscalePicker
+                  key={`${midjourneyGridSource?.task.task_id}:${data.imageUrl}`}
+                  candidates={midjourneyCandidates}
+                  results={midjourneyUpscaleResults}
+                  onAction={handleMidjourneyUpscale}
+                  costLabel={upscaleCreditCost.data?.data.display}
+                  billingUnavailable={
+                    upscaleCreditCost.error instanceof BillingRuleNotConfiguredError
+                  }
+                />
+              )}
+            {selected && hasGeneratedResult && !modelParametersOpen && (
+              <CanvasImagePreviewButton imageUrl={visiblePreviewUrl} />
+            )}
             {!hasGeneratedResult && referenceImageUrl && !isGenerating && (
               <button
                 type="button"
@@ -825,7 +1007,9 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
                   handleToggleAlbumExpanded();
                 }}
                 onPointerDown={(event) => event.stopPropagation()}
-                title={t('node.imageGen.album.expandCount', { count: albumTotalSlots })}
+                title={t('node.imageGen.album.expandCount', {
+                  count: albumTotalSlots,
+                })}
                 className="nodrag group/albumpill absolute right-2 top-2 z-10 hidden items-center gap-1 rounded-full bg-black/65 px-2.5 py-1 text-[12px] font-medium tabular-nums text-white shadow-lg backdrop-blur-sm transition-colors hover:bg-black/85 group-hover:inline-flex"
               >
                 {albumPendingCount > 0
@@ -994,7 +1178,10 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
           style={{ width: resolvedWidth * 2 + 12 + 24 }}
           onClick={(event) => event.stopPropagation()}
           onPointerDownCapture={(event) => {
-            albumPointerDownPosRef.current = { x: event.clientX, y: event.clientY };
+            albumPointerDownPosRef.current = {
+              x: event.clientX,
+              y: event.clientY,
+            };
           }}
         >
           <div className="mb-2 flex items-center gap-1.5 px-1 text-[12px] font-medium text-white/60">
@@ -1159,6 +1346,7 @@ export const ImageGenNode = memo(({ id, data, selected, width, height }: ImageGe
           />
           <ImageGenerationForm
             {...imageGenerationFormProps}
+            onModelParametersOpenChange={setModelParametersOpen}
             onStylePickerOpenChange={setStylePickerOpen}
             onOpenAssetLibrary={() => setIsAssetLibraryOpen(true)}
             {...(opFormProps ?? {})}

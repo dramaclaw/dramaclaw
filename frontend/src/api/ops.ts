@@ -281,6 +281,11 @@ export interface FreezoneGenerationHistoryRecord {
   model?: string;
   /** 生成模式（视频 genMode / 图片 generationMode）。旧记录无此字段。 */
   gen_mode?: string;
+  midjourney_action?: {
+    task_id?: string;
+    custom_id?: string;
+    operation?: string;
+  };
 }
 
 /**
@@ -910,6 +915,30 @@ export async function submitFreezoneGen(
   );
 }
 
+export async function submitFreezoneMidjourneyAction(
+  project: string,
+  payload: {
+    taskId: string;
+    customId: string;
+    modelId: string;
+    canvasId?: string | null;
+    nodeId?: string | null;
+  },
+): Promise<FreezoneJobRef> {
+  return await apiCall<FreezoneJobRef>(
+    `projects/${encodeURIComponent(project)}/freezone/midjourney/action`,
+    {
+      method: "POST",
+      json: {
+        task_id: payload.taskId,
+        custom_id: payload.customId,
+        model_id: payload.modelId,
+        ...nodeContextBody(payload),
+      },
+    },
+  );
+}
+
 // /freezone/video/erase --------------------------------------------------- //
 
 /**
@@ -1266,6 +1295,9 @@ export interface FreezoneImageModelInfo extends ReferenceMediaLimits {
   qualityOptions?: string[];
   ratioOptions?: string[];
   referenceImageMax?: number | null;
+  adapter?: string;
+  supportedModes?: string[];
+  supportedOperations?: string[];
   request?: MediaModelRequestSchema;
 }
 
@@ -1370,6 +1402,13 @@ function modelEntryFromObject(entry: Record<string, unknown>): FreezoneImageMode
     ratioOptions: pickStringArray(entry, "ratioOptions", "ratio_options"),
     ...readReferenceMediaLimits(entry),
     referenceImageMax: pickNumber(entry, "referenceImageMax", "reference_image_max"),
+    adapter: pickString(entry, "adapter") ?? undefined,
+    supportedModes: pickStringArray(entry, "supportedModes", "supported_modes"),
+    supportedOperations: pickStringArray(
+      entry,
+      "supportedOperations",
+      "supported_operations",
+    ),
     request: pickMediaRequestSchema(entry.request),
   };
 }

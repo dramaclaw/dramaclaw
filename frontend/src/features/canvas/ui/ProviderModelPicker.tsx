@@ -58,7 +58,9 @@ export interface ModelOption {
   sceneOptimizeOptions?: Array<'anime' | 'realistic'>;
   defaultSceneOptimize?: 'anime' | 'realistic' | null;
   ratioOptions?: string[];
+  adapter?: string;
   supportedModes?: string[];
+  supportedOperations?: string[];
   referenceImageMax?: number | null;
   referenceVideoMax?: number | null;
   referenceAudioMax?: number | null;
