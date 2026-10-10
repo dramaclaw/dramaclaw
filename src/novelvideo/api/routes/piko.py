@@ -1,4 +1,5 @@
 """Piko character, realtime world and translation routes."""
+import inspect
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
@@ -14,11 +15,18 @@ from novelvideo.api.egress_binding import request_egress_scope
 from novelvideo.piko.translation import Language, Translation, TranslationBusy, TranslationCache
 from novelvideo.project_context import user_id_from_api_user
 from novelvideo.ports.authz import AuthzError
-from novelvideo.piko.world import character_store, parse_client_payload, world_hub
+from novelvideo.piko.backend import character_store, world_hub
+from novelvideo.piko.world import parse_client_payload
 from novelvideo.task_backend.subprocesses import EgressBoundaryError
 
 router = APIRouter(prefix="/piko")
 _cache = TranslationCache()
+
+
+async def _store_call(method, *args, **kwargs):
+    """Allow the unchanged sync demo store and async PostgreSQL store to coexist."""
+    result = method(*args, **kwargs)
+    return await result if inspect.isawaitable(result) else result
 
 
 class CharacterUpsertRequest(BaseModel):
@@ -39,7 +47,7 @@ class CharacterUpsertRequest(BaseModel):
 @router.get("/character")
 async def get_character(user: dict = Depends(get_api_user)) -> dict[str, Any]:
     user_id = await user_id_from_api_user(user)
-    character = character_store.get(user_id)
+    character = await _store_call(character_store.get, user_id)
     return {"character": character.public_dict() if character else None}
 
 
@@ -48,7 +56,8 @@ async def put_character(
     body: CharacterUpsertRequest, user: dict = Depends(get_api_user)
 ) -> dict[str, Any]:
     user_id = await user_id_from_api_user(user)
-    character = character_store.create_or_update(
+    character = await _store_call(
+        character_store.create_or_update,
         user_id, nickname=body.nickname, gender=body.gender, bio=body.bio.strip()
     )
     return {"character": character.public_dict()}
@@ -69,7 +78,7 @@ async def piko_world_ws(websocket: WebSocket) -> None:
     try:
         user = await _authenticate_piko_ws(websocket)
         user_id = await user_id_from_api_user(user)
-        character = character_store.get(user_id)
+        character = await _store_call(character_store.get, user_id)
         if character is None:
             await websocket.send_json({"type": "error", "code": "character_required"})
             await websocket.close(code=1008)

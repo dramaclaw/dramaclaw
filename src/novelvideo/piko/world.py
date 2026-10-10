@@ -156,9 +156,12 @@ class OnlinePlayer:
     y: float
     facing: str
     websocket: WebSocket
+    instance_id: str = ""
+    connection_token: str = ""
     last_chat_at: float = 0.0
     last_chat_request_at: float = 0.0
     last_private_chat_at: float = 0.0
+    last_move_at: float = 0.0
     last_persist_at: float = 0.0
 
     def public_dict(self) -> dict[str, Any]:
